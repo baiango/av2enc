@@ -89,9 +89,55 @@ benchmark score, not an intrinsic codec property. For cross-machine comparisons,
 run a fixed reference encoder on each machine and report the ratio.
 
 Every `quality.py` report records `host.cpu_model`, physical/logical cores, RAM,
-OS, and GPU. `score_speed.py` refuses to compare reports from different CPU
-models unless `--allow-mixed-hardware` is passed. Use `docs/hardware.md` as the
-reference for the Mac and Vast.ai machines.
+OS, and GPU. `score_speed.py` and `score_tradeoff.py` refuse to compare reports
+from different CPU models unless `--allow-mixed-hardware` is passed. Use
+`docs/hardware.md` as the reference for the Mac and Vast.ai machines.
+
+## QBS: Quality-Bitrate-Speed
+
+CSS answers “how fast at a given quality,” but it still shows bitrate only as
+context. The encoder decision is three-dimensional:
+
+```text
+maximize CVVDP
+minimize bitrate
+maximize encode speed
+```
+
+Use the Pareto front for the full trade-off, and a budgeted score for the
+headline number:
+
+```text
+QBS = max CVVDP  subject to  bitrate <= R_max  and  speed >= S_min
+```
+
+This is deliberately constrained: speed cannot buy its way out of the rate
+ceiling, and quality cannot buy its way out of the speed floor. The tool also
+reports:
+
+```text
+min bitrate  subject to CVVDP >= Q_min and speed >= S_min
+max speed    subject to CVVDP >= Q_min and bitrate <= R_max
+```
+
+```sh
+python3 tools/score_tradeoff.py \
+  --reference AVM \
+  --q-min 9.0 --r-max 500 --s-min 0.02 \
+  bench/avm_baseline/qp*.json bench/ours/*.json \
+  --json bench/qbs.json
+```
+
+Current AVM examples on the M4:
+
+| Budget | Feasible | QBS | Point |
+|---|---:|---:|---|
+| Q ≥ 9.0, R ≤ 500 kbps, S ≥ 0.02× | yes | **9.7221 JOD** | QP 185, 498.5 kbps, 0.0236× |
+| Q ≥ 9.0, R ≤ 400 kbps, S ≥ 0.02× | yes | **9.3623 JOD** | QP 200, 368.6 kbps, 0.0291× |
+
+The 400 kbps point is the initial bar for our encoder at 720p60. Speed is
+compared against AVM rerun on the same machine; quality and bitrate are
+machine-independent.
 
 
 ## Rules

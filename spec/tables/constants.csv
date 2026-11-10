@@ -1,0 +1,338 @@
+name,value,expression,description
+ADST_ADST,3,3,Inverse transform rows with ADST and columns with ADST
+ADST_DCT,1,1,Inverse transform rows with DCT and columns with ADST
+ADST_FLIPADST,7,7,Inverse transform rows with FLIPADST and columns with ADST
+AFFINE,2,2,Warp model is a general affine transform
+ANGLE_STEP,3,3,Number of degrees of step-per-unit increase in AngleDeltaY or AngleDeltaUV .
+BANK_REFS_PER_FRAME,9,9,Number of parameter banks for motion vectors
+BAWP_SCALES_CTX_COUNT,3,3,Number of contexts for explicit_bawp
+BLEND_WEIGHT_MAX,32,32,A blend weight used in smooth intra prediction
+BLOCK_INVALID,29,29,Sentinel value to mark partition choices that are not allowed
+BLOCK_SIZES,29,29,Number of different block sizes used
+BLOCK_SIZE_GROUPS,4,4,Number of contexts when decoding y_mode
+BR_CDF_SIZE,4,4,Number of values for coeff_br
+CCSO_BAND_NUM,64,64,Maximum number of bands allowed in CCSO
+CCSO_CONTEXT,4,4,Number of contexts when decoding ccso_blk
+CCSO_INPUT_INTERVAL,3,3,Number of classes for CCSO
+CCSO_LUMA_SIZE_LOG2,8,8,Base 2 logarithm of size of CCSO blocks (measured in luma samples)
+CCTX_PREC_BITS,8,8,Precision bits used during cross component transform
+CCTX_TYPES,7,7,Number of values for cctx_type
+CDEF_ON_SKIP_TXFM_ADAPTIVE,2,2,Value indicating CDEF has a frame level enabled for whether it is used on skipped transform blocks
+CDEF_ON_SKIP_TXFM_ALWAYS_ON,1,1,Value indicating CDEF is enabled on skipped transform blocks
+CDEF_ON_SKIP_TXFM_DISABLED,0,0,Value indicating CDEF is disabled on skipped transform block s
+CDEF_STRENGTH_INDEX0_CTX,4,4,Number of contexts for cdef_index0
+CFL_ALPHABET_SIZE,8,8,Number of values for cfl_alpha_u and cfl_alpha_v
+CFL_ALPHA_CONTEXTS,6,6,Number of contexts for cfl_alpha_u and cfl_alpha_v
+CFL_CONTEXTS,3,3,Number of contexts for is_cfl
+CFL_JOINT_SIGNS,8,8,Number of values for cfl_alpha_signs
+CHROMA_MODE_COUNT,8,8,Number of values for uv_mode
+COEFF_BASE_PH_CONTEXTS,5,5,Number of contexts for coeff_base when the parity is hidden
+COEFF_BASE_RANGE,3,3,Number of values for coeff_br ( coeff_br extends the range of coeff_base )
+COEFF_CDF_Q_CTXS,4,4,Number of selectable context types for the coeffs( ) syntax structure
+COMPOUND_MODES,7,7,Number of values for compound_mode
+COMPOUND_MODE_CONTEXTS,5,5,Number of contexts for compound_mode
+COMPOUND_TYPES,2,2,Number of values for compound_type
+COMP_GROUP_IDX_CONTEXTS,12,12,Number of contexts for comp_group_idx
+COMP_INTER_CONTEXTS,5,5,Number of contexts for comp_mode
+CWP_EQUAL,8,8,Value for CwpIdx that corresponds to equal weighting for two inter references
+DBL_REG_DECIS_LEN,9,9,Length of Q_First array
+DCT_ADST,2,2,Inverse transform rows with ADST and columns with DCT
+DCT_DCT,0,0,Inverse transform rows with DCT and columns with DCT
+DCT_FLIPADST,5,5,Inverse transform rows with FLIPADST and columns with DCT
+DC_SIGN_CONTEXTS,3,3,Number of contexts for dc_sign
+DC_SIGN_GROUPS,2,2,Number of groups of contexts for dc_sign (corresponding to whether the sign is hidden or not)
+DECAY_DIST_CAP,6,6,Maximum distance that can use array Dist_Score_Lookup
+DELTAWARP,3,3,Use delta warp motion compensation
+DELTA_DCQUANT_BITS,5,5,"Number of bits for base_y_dc_delta_q , base_uv_dc_delta_q , and base_uv_ac_delta_q"
+DELTA_DCQUANT_MAX,8,(1<<(DELTA_DCQUANT_BITS-2)),Maximum value for BaseYDcDeltaQ and BaseUVDcDeltaQ
+DELTA_DCQUANT_MIN,-23,(DELTA_DCQUANT_MAX-(1<<DELTA_DCQUANT_BITS)+1),Minimum value for BaseYDcDeltaQ and BaseUVDcDeltaQ
+DELTA_Q_SMALL,7,7,Value indicating alternative encoding of quantizer index delta values
+DF_DELTA_SCALE,8,8,Scale factor for DfDeltaQ
+DF_SHIFT,8,8,Shift used in deblocking filter
+DIP_CTXS,3,3,Number of contexts for use_dip
+DIRECTIONAL_MODES_COUNT,56,56,Number of directional intra modes
+DISPLAY_ORDER_HINT_BITS,30,30,Number of order hint bits
+DIST_WEIGHT_BITS,6,6,Scaling used in scoring reference frames
+DIV_LUT_BITS,7,7,Number of fractional bits for lookup in divisor lookup table
+DIV_LUT_NUM,129,129,Number of entries in divisor lookup table
+DIV_LUT_PREC_BITS,9,9,Number of fractional bits of entries in divisor lookup table
+DIV_PREC_BITS,14,14,Number of bits used in get_division_scale_shift
+DIV_PREC_BITS_POW2,8,8,Number of regions used in get_division_scale_shift
+DIV_SLOT_BITS,3,3,Base 2 logarithm of regions used in get_division_scale_shift
+DRL_MODE_CONTEXTS,5,5,Number of contexts for drl_mode
+EC_PROB_SHIFT,7,7,Number of bits to reduce CDF precision during arithmetic coding
+EOB_PLANE_CTXS,3,3,Number of contexts for EOB -related syntax elements
+EXTENDWARP,4,4,Use extended warp motion compensation
+EXT_PARTITION_TYPES,10,10,Number of partition types
+EXT_TX_SIZES,4,4,Number of size classes (each size class has a different choice of transform types)
+EXT_WARP_PHASES,64,64,Number of phases for extended warp filtering
+EXT_WARP_PHASES_LOG2,6,6,Base 2 logarithm of number of phases for extended warp filtering
+EXT_WARP_ROUND_BITS,10,WARPEDMODEL_PREC_BITS-EXT_WARP_PHASES_LOG2,Difference between bits used for the warp model and bits needed to specify the phase for extended warp filtering
+EXT_WARP_TAPS,6,6,Number of taps in extended warp filtering
+FILTER_BITS,7,7,Number of bits used in Wiener filter coefficients
+FIRST_MODE_COUNT,13,13,Number of values coded via the first intra mode set
+FLIPADST_ADST,8,8,Inverse transform rows with ADST and columns with FLIPADST
+FLIPADST_DCT,4,4,Inverse transform rows with DCT and columns with FLIPADST
+FLIPADST_FLIPADST,6,6,Inverse transform rows with FLIPADST and columns with FLIPADST
+FSC_BSIZE_CONTEXTS,6,6,Number of block size groups in context for fsc_mode
+FSC_MAX,32,32,Max width/height for blocks to use forward skip coding
+FSC_MODES,2,2,Number of values of fsc_mode
+FSC_MODE_CONTEXTS,4,4,Number of contexts for fsc_mode
+FSC_TX_SIZE_CONTEXTS,3,3,Number of transform size context groups for forward skip coding
+GDF_DIAG0,2,2,GDF first diagonal direction
+GDF_DIAG1,3,3,GDF second diagonal direction
+GDF_HOR,1,1,GDF horizontal direction
+GDF_MIN_SIZE,128,128,Minimum size of GDF blocks when gdf_unit_matches_sb_size is equal to 0
+GDF_VER,0,0,GDF vertical direction
+GLOBAL_XLAYER_ID,31,31,Value for xlayer_id that indicates global scope
+GM_ABS_ALPHA_BITS,9,9,Number of bits encoded for non-translational components of global motion models
+GM_ABS_TRANS_BITS,14,14,"Number of bits encoded for translational components of global motion models, if part of a ROTZOOM or AFFINE model"
+GM_ALPHA_MAX,511,(1<<GM_ABS_ALPHA_BITS)-1,Maximum non-translational value
+GM_ALPHA_MIN,-511,-GM_ALPHA_MAX,Minimum non-translational value
+GM_ALPHA_PREC_BITS,10,10,Number of fractional bits for sending non-translational warp model coefficients
+GM_ALPHA_PREC_DIFF,6,WARPEDMODEL_PREC_BITS-GM_ALPHA_PREC_BITS,Difference between warped model and non-translational precision
+GM_TRANS_MAX,16383,(1<<GM_ABS_TRANS_BITS)-1,Maximum translational value
+GM_TRANS_MIN,-16383,-GM_TRANS_MAX,Minimum translational value
+GM_TRANS_ONLY_PREC_DIFF,13,WARPEDMODEL_PREC_BITS-3,Difference between warped model and motion vector precision
+GM_TRANS_PREC_BITS,3,3,Number of fractional bits for sending translational warp model coefficients
+GM_TRANS_PREC_DIFF,13,WARPEDMODEL_PREC_BITS-GM_TRANS_PREC_BITS,Difference between warped model and translational precision
+H_ADST,13,13,Inverse transform rows with ADST and columns with identity
+H_DCT,11,11,Inverse transform rows with DCT and columns with identity
+H_FLIPADST,15,15,Inverse transform rows with FLIPADST and columns with identity
+H_WEDGE_ANGLES,10,10,Number of wedge angles when wedge_angle_dir is equal to 0
+IBC_BUFFER_SIZE,64,64,Size of buffer used in local intra block copy
+IBC_BUFFER_SIZE_LOG2,6,6,Base 2 logarithm of size of buffer used in local intra block copy
+IBC_NUM_BUFFERS,4,4,Number of buffers used in local intra block copy
+IBP_WEIGHT_MAX,128,128,Sum of weights used in IBP
+IBP_WEIGHT_SHIFT,7,7,Scaling shift for IBP process
+IBP_WEIGHT_SIZE,16,1<<IBP_WEIGHT_SIZE_LOG2,Size of weights used in IBP
+IBP_WEIGHT_SIZE_LOG2,4,4,Base 2 logarithm of size of weights used in IBP
+IDENTITY,0,0,Warp model is just an identity transform
+IDTX,9,9,Inverse transform rows with identity and columns with identity
+IDTX_LEVEL_CONTEXTS,7,7,Number of contexts per transform size group for coeff_br_idtx
+IDTX_SIGN_CONTEXTS,9,9,Number of contexts per transform size group for idtx_sign
+IDTX_SIG_COEF_CONTEXTS,7,7,Number of contexts per transform size group for coeff_base_idtx
+INT32MAX,2147483647,(1<<31)-1,Largest number representable with 32-bit signed integer
+INT32MIN,-2147483648,-(1<<31),Smallest number representable with 32-bit signed integer
+INTERINTRA,1,1,Use inter intra motion compensation
+INTERINTRA_MODES,4,4,Number of inter intra modes
+INTERP_FILTERS,3,3,Number of values for interp_filter
+INTERP_FILTER_CONTEXTS,16,16,Number of contexts for interp_filter
+INTER_SDP_BSIZE_GROUP,4,4,Number of contexts for region_type
+INTER_SDP_MAX_BLOCK_SIZE,64,64,Maximum size for switching partitioning scheme
+INTRABC_CONTEXTS,3,3,Number of contexts for use_intrabc
+INTRABC_DELAY_PIXELS,256,256,Number of horizontal luma samples before intra block copy can be used
+INTRABC_DELAY_SB64,4,4,Number of 64 by 64 blocks before intra block copy can be used
+INTRA_EDGE_KERNELS,3,3,Number of filter kernels for the intra edge filter
+INTRA_EDGE_TAPS,5,5,Number of kernel taps for the intra edge filter
+INTRA_MODES,13,13,Number of values for y_mode
+INTRA_MODE_SETS,4,4,Number of values for y_mode_set
+INTRA_REGION,0,0,Value for region_type that indicates intra coding
+INTRA_TX_TYPES,7,7,Number of values for intra_tx_type
+IST_4X4_HEIGHT,8,8,Height of matrix used in 4x4 secondary transform
+IST_4X4_WIDTH,16,16,Width of matrix used in 4x4 secondary transform
+IST_8X8_HEIGHT,32,32,Height of matrix used in 8x8 secondary transform
+IST_8X8_HEIGHT_RED,20,20,Reduced height of matrix used in special case of 8x8 secondary transform
+IST_8X8_WIDTH,48,48,Width of matrix used in 8x8 secondary transform
+IST_DIR_SIZE,7,7,Number of directional groups in secondary transform kernels
+IST_REDUCE_SET_SIZE_ADST_ADST,4,4,Number of different sets of secondary transforms for ADST
+IST_SET_SIZE_4X4,14,14,Number of different sets of 4x4 secondary transforms
+IST_SET_SIZE_8X8,11,11,Number of different sets of 8x8 secondary transforms
+IS_INTER_CONTEXTS,4,4,Number of contexts for is_inter
+JOINT_AMVD_SCALE_FACTOR_CNT,3,3,Number of values for jmvd_scale_mode when use_amvd is equal to 1
+JOINT_NEWMV_SCALE_FACTOR_CNT,5,5,Number of values for jmvd_scale_mode when use_amvd is equal to 0
+LEAST_SQUARES_SAMPLES_MAX,8,8,Largest number of samples used when computing a local warp
+LEVEL_CONTEXTS,7,7,Number of contexts for coeff_br for high frequency luma coefficients
+LEVEL_CONTEXTS_UV,4,4,Number of contexts for coeff_br for high frequency chroma coefficients
+LF_BASE_SYMBOLS,6,6,Number of values for coeff_base for low frequency coefficients
+LF_LEVEL_CONTEXTS,14,14,Number of contexts for coeff_br for low frequency luma coefficients
+LF_NUM_BASE_LEVELS,4,LF_BASE_SYMBOLS-2,Base level threshold for low frequency coefficients for deciding to read coeff_br
+LF_SIG_COEF_CONTEXTS,33,LF_SIG_COEF_CONTEXTS_2D+LF_SIG_COEF_CONTEXTS_1D,Number of contexts for coeff_base for low frequency luma coefficients
+LF_SIG_COEF_CONTEXTS_1D,12,12,Number of contexts for 1d luma transform class
+LF_SIG_COEF_CONTEXTS_1D_UV,4,4,Number of contexts for 1d chroma transform class
+LF_SIG_COEF_CONTEXTS_2D,21,21,Number of contexts for 2d luma transform class
+LF_SIG_COEF_CONTEXTS_2D_UV,8,8,Number of contexts for 2d chroma transform class
+LF_SIG_COEF_CONTEXTS_UV,12,LF_SIG_COEF_CONTEXTS_2D_UV+LF_SIG_COEF_CONTEXTS_1D_UV,Number of contexts for coeff_base for low frequency chroma coefficients
+LOCALWARP,2,2,Use local warp motion compensation
+LR_BANK_SIZE,4,4,Size of coefficient cache used for loop restoration
+LS_MV_MAX,256,256,Largest motion vector difference to include in local warp computation
+MASK_MASTER_SIZE,128,128,Size of MasterMask array
+MAXQ_8_BITS,255,255,Maximum quantizer when bit depth is 8
+MAXQ_10_BITS,303,MAXQ_8_BITS+2*MAXQ_OFFSET,Maximum quantizer when bit depth is 10
+MAXQ_BITS,351,MAXQ_8_BITS+4*MAXQ_OFFSET,Maximum quantizer irrespective of the bit depth
+MAXQ_OFFSET,24,24,Increase in allowed quantizer for each increase in bit depth
+MAX_AMVD_INDEX,8,8,Number of values for amvd_index
+MAX_ANGLE_DELTA,3,3,Maximum magnitude of AngleDeltaY and AngleDeltaUV
+MAX_ATLAS_COLS,64,64,Maximum number of Atlas region columns
+MAX_ATLAS_ROWS,64,64,Maximum number of Atlas region rows
+MAX_BASE_BR_RANGE,6,COEFF_BASE_RANGE+NUM_BASE_LEVELS+1,The maximum value for coeff_base and coeff_br combined
+MAX_COL_TRUNCATED_UNARY_VAL,2,2,Maximum times col_mv_greater can be coded per motion vector
+MAX_CWP_NUM,5,5,Number of values for CwpIdx
+MAX_DBL_FLT_LEN,8,8,Maximum distance from edge for samples used in the deblocking filter
+MAX_DR_PR_NUM,2,2,Used to limit the number of derived motion vector pruning operations
+MAX_DR_STACK_SIZE,4,4,Maximum number of motion vectors in the derived stack
+MAX_FILM_GRAIN,8,8,Maximum number of film grain configurations
+MAX_FRAME_DISTANCE,31,31,Maximum distance when computing weighted prediction
+MAX_LR_FLEX_SWITCHABLE_BITS,3,3,Maximum number of loop restoration tools to switch between
+MAX_LS_BITS,26,26,Maximum bits in least squares calculations
+MAX_MFH_NUM,16,16,Maximum number of multi-frame headers
+MAX_NUM_ATLAS_SEGMENTS,256,256,Maximum number of Atlas segments
+MAX_NUM_MLAYERS,8,8,Maximum number of embedded layer s
+MAX_NUM_TLAYERS,4,4,Maximum number of temporal layer s
+MAX_PR_NUM,16,16,Used to limit the number of motion vector pruning operations
+MAX_REF_BV_STACK_SIZE,4,4,Maximum number of motion vectors in the stack for intra block copy
+MAX_REF_MV_STACK_SIZE,6,6,Maximum number of motion vectors in the stack
+MAX_RMB_SB_HITS,64,64,Maximum number of accesses to the bank of motion vectors per superblock
+MAX_SEGMENTS,16,16,Number of segments allowed in segmentation map
+MAX_SEQ_NUM,16,16,Maximum number of sequence headers
+MAX_SIDE_TABLE,296,296,Length of Side_Thresholds array
+MAX_TILE_AREA,9437184,4096*2304,Maximum area of a tile in units of luma samples
+MAX_TILE_COLS,64,64,Maximum number of tile columns
+MAX_TILE_ROWS,64,64,Maximum number of tile rows
+MAX_TILE_WIDTH,4096,4096,Maximum width of a tile in units of luma samples
+MAX_WARP_REF_CANDIDATES,4,4,Maximum number of warp reference candidates
+MAX_WARP_SB_HITS,64,64,Maximum number of accesses to the warp parameter bank per superblock
+MFMV_STACK_SIZE,4,4,Stack size for motion field motion vectors
+MHCCP_BITS,16,16,Number of bits used in MHCCP
+MIXED_REGION,1,1,Value for region_type that indicates mixed intra coding and inter coding
+MI_SIZE,4,4,Smallest size of a mode info block in luma samples
+MI_SIZE_LOG2,2,2,Base 2 logarithm of smallest size of a mode info block
+MODE_INDEX_COUNT,8,8,Number of values for y_mode_index
+MODE_OFFSET_COUNT,6,6,Number of values for y_mode_offset
+MOTION_MODES,5,5,Number of values for motion modes
+MRL_INDEX_CONTEXTS,3,3,Number of contexts for mrl_index
+MV_BORDER,128,128,Value used when clipping motion vectors
+MV_CONTEXTS,2,2,Number of contexts for decoding motion vectors including one for intra block copy
+MV_INTRABC_CONTEXT,1,1,Motion vector context used for intra block copy
+MV_IN_USE_BITS,16,16,Number of bits for motion vectors (not including sign bit)
+MV_JOINTS,4,4,Number of values for mv_joint
+MV_LOW,-65536,-(1<<MV_IN_USE_BITS),Exclusive lower bound on motion vectors
+MV_REFINE_PREC_BITS,4,4,Number of bits for motion vectors from optical flow
+MV_UPP,65536,(1<<MV_IN_USE_BITS),Exclusive upper bound on motion vectors
+NON_DIRECTIONAL_MODES_COUNT,5,5,Number of non-directional intra modes
+NUM_BASE_LEVELS,2,2,Number of quantizer base levels
+NUM_CTX_COL_MV_GTX,2,2,Number of contexts for col_mv_greater
+NUM_CTX_COL_MV_INDEX,4,4,Number of contexts for col_mv_index
+NUM_CUSTOM_QMS,15,15,Maximum number of quantization matrices that can be present
+NUM_PARA_COMBINATIONS,125,125,Number of adaptation rates
+NUM_PARA_INTERVALS,3,3,Number of time intervals for computing adaptation rates
+NUM_PC_WIENER_FILTERS,64,64,Number of filters in pixel-classified Wiener filtering
+NUM_PC_WIENER_LUT_CLASSES,256,256,Number of classes in pixel-classified Wiener filtering
+NUM_RECT_PARTS,2,2,Number of types of rectangle
+NUM_REF_FRAMES,16,16,Number of frames that can be stored for future reference
+NUM_REF_SAM_CFL,8,8,Number of samples used in chroma from luma prediction
+NUM_UNEVEN_4WAY_PARTS,2,2,Number of uneven partition types
+NUM_WEDGE_DIST,4,4,Number of distances for the wedge mask process
+OPFL_GRAD_UNIT,16,16,Size of unit used in gradient computation
+OPFL_GRAD_UNIT_LOG2,4,4,Base 2 logarithm of size of unit used in gradient computation
+OPFL_MV_DELTA_LIMIT,16,1<<MV_REFINE_PREC_BITS,Maximum adjustment for motion vectors from optical flow
+PALETTE_COLORS,8,8,Number of values for palette_color
+PALETTE_COLOR_CONTEXTS,5,5,Number of values for color contexts
+PALETTE_MAX_COLOR_CONTEXT_HASH,8,8,Number of mappings between color context hash and color context
+PALETTE_NUM_NEIGHBORS,3,3,Number of neighbors considered within palette computation
+PALETTE_ROW_FLAG_CONTEXTS,4,4,Number of values for identity row contexts
+PALETTE_SIZES,7,7,Number of values for palette_size
+PARTITION_CONTEXTS,64,64,Number of contexts when decoding partition syntax elements
+PARTITION_STRUCTURE_NUM,2,2,Maximum number of partitions for a block (luma and chroma can have different partitions)
+PC_WIENER_COEFFS,13,13,Number of coefficients in pixel-classified Wiener filtering
+PC_WIENER_LAG,4,4,Number of lagging taps in pixel-classified Wiener filtering
+PC_WIENER_LEAD,1,1,Number of leading taps in pixel-classified Wiener filtering
+PC_WIENER_NUM_FEATURES,4,4,Number of features for pixel-classified Wiener filtering
+PC_WIENER_PREC_BITS,7,7,Bit precision for pixel-classified Wiener filtering
+PC_WIENER_PREC_FEATURE,14,14,Bit precision for pixel-classified features
+PC_WIENER_TAPS,25,PC_WIENER_COEFFS*2-1,Number of taps in pixel-classified Wiener filtering
+PHTHRESH,4,4,Number of non-zero coefficients that will allow the parity to be hidden
+PLANE_TYPES,2,2,Number of different plane types ( luma or chroma )
+PRIMARY_REF_CHOOSE,8,8,"Value of primary_ref_frame , indicating that the primary reference frame is chosen automatically from the available reference frames"
+PRIMARY_REF_NONE,7,7,"Value of primary_ref_frame , indicating that there is no primary reference frame"
+QUANT_TABLE_BITS,3,3,Number of bits to discard from quantizer before application
+RECT_HORZ,0,0,Block is split with a horizontal cut
+RECT_INVALID,2,2,Block cannot be split into rectangles
+RECT_VERT,1,1,Block is split with a vertical cut
+REFINEMV_CONTEXTS,24,24,Number of contexts for use_refinemv
+REFMVS_LIMIT,2047,(1<<11)-1,Largest reference MV component that can be saved
+REFS_PER_FRAME,7,7,Number of reference frame s that can be used for inter prediction
+REF_CONTEXTS,3,3,Number of contexts for single_ref
+REF_MV_BANK_SIZE,4,4,Size of the parameter bank for motion vectors
+REF_SCALE_SHIFT,14,14,Number of bits of precision when scaling reference frames
+RESTORATION_TILESIZE_MAX,512,512,Maximum size of a loop restoration tile
+RESTORE_SWITCHABLE_TYPES,,RESTORE_SWITCHABLE,Number of switchable loop restoration types
+RESTRICTED_OH,-1,-1,Sentinel order hint to mark restricted reference frames
+ROTZOOM,1,1,Warp model is a rotation + symmetric zoom + translation
+SCALE_SUBPEL_BITS,10,10,Number of bits of precision when computing inter prediction locations
+SECOND_MODE_COUNT,16,16,Number of values for y_second_mode
+SEGMENT_ID_CONTEXTS,3,3,Number of contexts for segment_id
+SEGMENT_ID_PREDICTED_CONTEXTS,3,3,Number of contexts for segment_id_predicted
+SEG_LVL_ALT_Q,0,0,Index for quantizer segment feature
+SEG_LVL_GLOBALMV,2,2,Index for global mv feature
+SEG_LVL_MAX,3,3,Number of segment features
+SEG_LVL_SKIP,1,1,Index for skip segment feature
+SELECT_INTEGER_MV,2,2,Value that indicates the force_integer_mv syntax element is coded
+SELECT_SCREEN_CONTENT_TOOLS,2,2,Value that indicates the allow_screen_content_tools syntax element is coded
+SIG_COEF_CONTEXTS,20,20,Number of contexts for coeff_base for luma
+SIG_COEF_CONTEXTS_BOB,3,3,Number of contexts for coeff_base_bob
+SIG_COEF_CONTEXTS_EOB,4,4,Number of contexts for coeff_base_eob
+SIG_COEF_CONTEXTS_UV,12,12,Number of contexts for coeff_base for chroma
+SIG_REF_DIFF_OFFSET_NUM,5,5,Maximum number of context samples to be used in determining the context index for coeff_base and coeff_base_eob .
+SIMPLE,0,0,Use translation or global motion compensation
+SINGLE_MODE_CONTEXTS,5,5,Number of contexts for single_mode
+SKIP_CONTEXTS,6,6,Number of contexts for decoding skip
+SKIP_MODE_CONTEXTS,3,3,Number of contexts for decoding skip_mode
+SQUARE_SPLIT_CONTEXTS,8,8,Number of contexts for do_square_split syntax element
+STX_TYPES,4,4,Number of secondary transform types
+SUBPEL_BITS,4,4,Number of bits of precision when choosing an inter prediction filter kernel
+SUBPEL_MASK,15,15,( 1 << SUBPEL_BITS ) - 1
+TIP_CONTEXTS,3,3,Number of contexts for tip_mode
+TIP_MFMV_STACK_SIZE,3,3,Stack size for motion field motion vectors related to TIP
+TOTAL_ANGLE_DELTA_COUNT,7,7,Number of different angle deltas
+TXB_SKIP_CONTEXTS,10,10,Number of contexts for all_zero per group
+TXFM_SPLIT_GROUP,9,9,Number of groups of transform split types
+TX_CLASS_2D,0,0,Transform class for transform types performing non-identity transforms in both directions
+TX_CLASS_HORIZ,1,1,Transform class for transforms performing only a horizontal non-identity transform
+TX_CLASS_VERT,2,2,Transform class for transforms performing only a vertical non-identity transform
+TX_PARTITION_TYPE_NUM,7,7,Number of contexts for tx_partition_type
+TX_PARTITION_TYPE_NUM_VERT_AND_HORZ,14,14,Number of values (not equal to BLOCK_INVALID ) in the output range of Size_To_Tx_Type_Group_Vert_And_Horz
+TX_PARTITION_TYPE_NUM_VERT_OR_HORZ,3,3,Number of values (not equal to BLOCK_INVALID ) in the output range of Size_To_Tx_Type_Group_Vert_Or_Horz
+TX_SET_TYPES_INTER,9,9,Number of inter transform set types
+TX_SET_TYPES_INTRA,7,7,Number of intra transform set types
+TX_SIZES,5,5,Number of square transform sizes
+TX_SIZES_ALL,25,25,Number of transform sizes (including non-square sizes)
+TX_TYPES,16,16,Number of inverse transform types
+UV_INTRA_MODES_CFL_ALLOWED,14,14,Number of values for uv_mode when chroma from luma is allowed
+UV_INTRA_MODES_CFL_NOT_ALLOWED,13,13,Number of values for uv_mode when chroma from luma is not allowed
+UV_MODE_CONTEXTS,2,2,Number of contexts for uv_mode
+V_ADST,12,12,Inverse transform rows with identity and columns with ADST
+V_DCT,10,10,Inverse transform rows with identity and columns with DCT
+V_FLIPADST,14,14,Inverse transform rows with identity and columns with FLIPADST
+V_TXB_SKIP_CONTEXTS,12,12,Number of contexts for all_zero for the V plane
+WAIP_WH_RATIO_2_THRES,61,61,Threshold used in WAIP
+WAIP_WH_RATIO_4_THRES,73,73,Threshold used in WAIP
+WAIP_WH_RATIO_8_THRES,82,82,Threshold used in WAIP
+WAIP_WH_RATIO_16_THRES,86,86,Threshold used in WAIP
+WARPEDDIFF_PREC_BITS,10,10,Number of extra bits of precision in warped filtering
+WARPEDMODEL_PREC_BITS,16,16,Internal precision of warped motion models
+WARPEDMODEL_TRANS_CLAMP,134217728,1<<27,Clamping value used for translation components of warp
+WARPEDPIXEL_PREC_SHIFTS,64,1<<6,Number of phases used in warped filtering
+WARPMV_MODE_CONTEXT,5,5,Number of contexts when decoding is_warp
+WARP_CAUSAL_MODE_CTX,4,4,Number of contexts when decoding use_local_warp
+WARP_DELTA_NUM_SYMBOLS_HIGH,8,8,Number of values for warp_delta_param_high
+WARP_DELTA_NUM_SYMBOLS_LOW,8,8,Number of values for warp_delta_param_low
+WARP_DELTA_STEP_BITS,10,10,Shift to apply to warp_delta_param
+WARP_PARAM_BANK_SIZE,4,4,Size of the parameter bank for warp
+WARP_PARAM_REDUCE_BITS,6,6,Rounding bitwidth for the parameters to the shear process
+WEDGE_ANGLES,20,20,Number of angles for the wedge mask process
+WEDGE_BLD_LUT_SIZE,32,32,Size of table lookup in the wedge mask process
+WEDGE_BOUNDARY_SHARP,0,0,Value indicating a sharp boundary
+WEDGE_BOUNDARY_SMOOTH,1,1,Value indicating a smooth boundary
+WEDGE_BOUNDARY_TYPES,2,2,Number of different boundary types
+WEDGE_TYPES,68,68,Number of types of wedge
+WIENER_COEFFS,3,3,Number of Wiener filter coefficients to read
+WIENER_NS_CHROMA_COEFFS,18,18,Number of chroma non-separable Wiener filter coefficients
+WIENER_NS_CLASSES,16,16,Number of classes of non-separable Wiener filter coefficients
+WIENER_NS_LUMA_COEFFS,16,16,Number of luma non-separable Wiener filter coefficients
+WIENER_NS_PLANES,3,3,Number of planes of non-separable Wiener filter coefficients
+WIENER_NS_PREC_BITS,7,7,Number of bits used in non-separable Wiener filter coefficients
+WIENER_NS_SHORT_COEFFS,6,6,Number of short non-separable Wiener filter coefficients
+WIENER_NS_TAPS_UV,12,12,Number of chroma non-separable Wiener filter taps
+WIENER_NS_TAPS_Y,32,32,Number of luma non-separable Wiener filter taps
+Y_MODE_CONTEXTS,3,3,Number of contexts for y_mode_index and y_second_mode

@@ -16,6 +16,7 @@ Reference encoder baseline for the 720p test clip.
 | 135 | 126,782 | 1014.3 | 49.990 | 50.912 | 0.99716 | 9.8641 | 54.5 s | 0.0183 |
 | 160 | 93,050 | 744.4 | 48.616 | 49.619 | 0.99636 | 9.8266 | 49.3 s | 0.0203 |
 | 185 | 62,315 | 498.5 | 46.545 | 47.654 | 0.99460 | 9.7221 | 42.3 s | 0.0236 |
+| 200 | 46,080 | 368.6 | 44.198 | 45.404 | 0.99119 | 9.3623 | 34.4 s | 0.0291 |
 | 210 | 33,543 | 268.3 | 41.649 | 42.897 | 0.98484 | 8.6225 | 37.4 s | 0.0268 |
 | 235 | 3,273 | 26.2 | 31.674 | 33.071 | 0.93018 | 5.8911 | 27.1 s | 0.0369 |
 
@@ -37,10 +38,10 @@ At iso-CVVDP, interpolated from the six operating points:
 |---:|---:|---:|
 | 8.0 | 0.0291× realtime | 213 kbps |
 | 8.5 | 0.0272× realtime | 258 kbps |
-| 9.0 | 0.0257× realtime | 347 kbps |
-| 9.5 | 0.0243× realtime | 452 kbps |
+| 9.0 | 0.0279× realtime | 320 kbps |
+| 9.5 | 0.0270× realtime | 418 kbps |
 
-**CSS-AUC over CVVDP [8.0, 9.5] = 0.0265× realtime** for AVM.
+**CSS-AUC over CVVDP [8.0, 9.5] = 0.0279× realtime** for AVM.
 
 The curve extends down to 5.89 JOD (QP 235), but the 8.0–9.5 range is the useful
 comparison window for a first-generation encoder. If our encoder cannot reach
@@ -57,6 +58,30 @@ python3 tools/score_speed.py --reference AVM \
 `CSS(C)` is the encode speed at a target CVVDP; `CSS-AUC` is the mean speed over
 the common CVVDP range. Higher is better, but read it with the iso-quality
 bitrate.
+
+## QBS
+
+Using `CVVDP >= 9.0 JOD`, `speed >= 0.02×`:
+
+| Bitrate ceiling | Feasible | QBS | Point |
+|---|---:|---:|---|
+| 500 kbps | yes | **9.7221 JOD** | QP 185, 498.5 kbps, 0.0236× |
+| 400 kbps | yes | **9.3623 JOD** | QP 200, 368.6 kbps, 0.0291× |
+
+At the 500 kbps budget, the minimum-rate feasible point is QP 200
+(368.6 kbps, 9.3623 JOD), and the fastest feasible point is also QP 200
+(0.0291×). At 400 kbps, QP 200 is the QBS point.
+
+This is the bar for our encoder: **at 720p60, reach at least 9.36 JOD at
+≤400 kbps, with speed measured against AVM on the same machine.** Tighten from
+there.
+
+```sh
+python3 tools/score_tradeoff.py --reference AVM \
+  --q-min 9.0 --r-max 400 --s-min 0.02 \
+  bench/avm_baseline/qp*.json \
+  --json bench/avm_baseline/qbs_400kbps.json
+```
 
 ## Reproduce
 

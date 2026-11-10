@@ -229,14 +229,28 @@ def gen_cdfs(text: str, out: Path) -> tuple[dict, dict]:
     check(len(arrays) > 150, f"expected ~180 default CDFs, found {len(arrays)}")
 
     all_cdfs = {}
+    bad = []
     for arr in arrays:
         vals = arr.values
         check(all(isinstance(v, int) for v in vals), f"{arr.name}: non-numeric entry")
+        # Structural sanity: shape is [..., N+1]; entries 0..N-2 are a
+        # non-decreasing cumulative distribution, entry N-1 is the base rate
+        # and entry N is the adaptation count (0 before first use).
+        n_plus_1 = arr.shape[-1]
+        rows = [vals[i:i + n_plus_1] for i in range(0, len(vals), n_plus_1)]
+        for row in rows:
+            cdf_vals = row[:-2]
+            if any(b < a for a, b in zip(cdf_vals[:-1], cdf_vals[1:])) or row[-1] != 0:
+                bad.append((arr.name, row))
+                break
         all_cdfs[arr.name] = {
             "shape": arr.shape,
             "dims_decl": arr.dims_decl,
             "data": vals,
         }
+    if bad:
+        for name, row in bad[:10]:
+            print(f"warning: suspicious CDF row in {name}: {row}", file=sys.stderr)
     dump_json(out / "default_cdf.json", {"clause": "9.3", "arrays": all_cdfs})
 
     m0 = {}
@@ -283,6 +297,88 @@ def gen_m0_cdf_header(m0: dict, out: Path) -> None:
     (out / "m0_cdf.h").write_text("\n".join(lines))
 
 
+def verify_dims(all_cdfs: dict, constants: dict[str, int]) -> None:
+    """Every array's element count must equal the product of its declared dims."""
+    from extract_constants import evaluate
+
+    failures = []
+    for name, entry in all_cdfs.items():
+        try:
+            dims = [evaluate(d, constants) for d in entry["dims_decl"]]
+        except (KeyError, ValueError, SyntaxError):
+            continue  # symbolic dimension; shape check below still applies
+        expected = 1
+        for d in dims:
+            expected *= d
+        if expected != len(entry["data"]):
+            failures.append((name, dims, expected, len(entry["data"])))
+    if failures:
+        for name, dims, expected, got in failures[:10]:
+            print(f"error: {name}: declared {dims} -> {expected} values, parsed {got}",
+                  file=sys.stderr)
+        raise SystemExit(f"{len(failures)} CDF tables disagree with their declared dimensions")
+
+
+def selfcheck(btables: dict, quant: dict, kernels: dict, scans: dict) -> None:
+    """Spot-check values that are independently visible in the spec text."""
+    bs = btables["enum_block_size"]["data"]
+    tx = btables["enum_tx_size"]["data"]
+    mtsr = btables["Max_Tx_Size_Rect"]["data"]
+    check(mtsr[bs.index("BLOCK_32X32")] == tx.index("TX_32X32"),
+          "Max_Tx_Size_Rect[BLOCK_32X32] != TX_32X32")
+    check(btables["Num_4x4_Blocks_Wide"]["data"][bs.index("BLOCK_64X64")] == 16,
+          "Num_4x4_Blocks_Wide[BLOCK_64X64] != 16")
+    check(btables["Partition_Subsize"]["data"][0][bs.index("BLOCK_32X32")]
+          == bs.index("BLOCK_32X32"), "Partition_Subsize[NONE][32x32] wrong")
+    check(len(btables["Tx_Size_Sqr_Up"]["data"]) == 25, "Tx_Size_Sqr_Up size")
+    check(quant["Ac_Qlookup"][0] == 64, "Ac_Qlookup[0] != 64")
+    check(kernels["Dct_Kernel32"][0][0] == 64 and kernels["Dct_Kernel32"][1][0] == 90,
+          "Dct_Kernel32 spot check failed")
+    scan32 = scans["scans"]["32"]
+    check(scan32[:3] == [0, 32, 1], f"scan32 head {scan32[:3]}")
+    check(len(scan32) == 1024 and sorted(scan32) == list(range(1024)),
+          "scan32 is not a permutation")
+
+
+def parse_pipe_enum(text: str, header: str) -> dict[str, int]:
+    """Parse a `Name | 0 | SYMBOL` enum table (HTML) or `0 SYMBOL` (PDF)."""
+    idx = text.index(header)
+    out: dict[str, int] = {}
+    started = False
+    for line in text[idx:].split("\n")[1:60]:
+        m = re.match(r"\s*(\d+)\s*\|?\s*([A-Z][A-Z0-9_]*)\s*$", line)
+        if not m:
+            if started:
+                break
+            continue
+        started = True
+        out[m.group(2)] = int(m.group(1))
+    return out
+
+
+def gen_intra_modes(text: str, out: Path) -> dict:
+    y = parse_pipe_enum(text, "Name of YMode")
+    uv = parse_pipe_enum(text, "Name of UVMode")
+    check(len(y) == 13 and y["DC_PRED"] == 0, f"YMode enum parse: {y}")
+    check(len(uv) == 14 and uv["UV_CFL_PRED"] == 13, f"UVMode enum parse: {uv}")
+    reordered = get(text, "Reordered_Y_Mode")
+    list_y = get(text, "Default_Mode_List_Y")
+    list_uv = get(text, "Default_Mode_List_Uv")
+    obj = {
+        "clause": "6.19.5.5 / 6.19.5.6 / 5.20.5.5 / 5.20.5.6",
+        "YMode": y,
+        "UVMode": uv,
+        "Reordered_Y_Mode": [y[n] for n in reordered.data],
+        "Default_Mode_List_Y": list_y.data,
+        "Default_Mode_List_Uv": [uv[n] for n in list_uv.data],
+        "NON_DIRECTIONAL_MODES_COUNT": 5,
+        "DIRECTIONAL_MODES_COUNT": 56,
+        "note": "DC_PRED == 0 in both enums, so DC is coded as y_mode_set=0, y_mode_index=0 and uv_mode=0.",
+    }
+    dump_json(out / "intra_modes.json", obj)
+    return obj
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
@@ -306,9 +402,17 @@ def main() -> None:
     gen_quant(text, args.out, constants)
     gen_transforms(text, args.out)
     gen_scan(args.out)
-    _, m0 = gen_cdfs(text, args.out)
+    gen_intra_modes(text, args.out)
+    all_cdfs, m0 = gen_cdfs(text, args.out)
+    verify_dims(all_cdfs, constants)
     gen_m0_cdf_header(m0, args.out)
-    print(f"wrote tables to {args.out}")
+
+    btables = json.loads((args.out / "block_tables.json").read_text())
+    quant = json.loads((args.out / "quant.json").read_text())
+    kernels = json.loads((args.out / "dct_kernels.json").read_text())["kernels"]
+    scans = json.loads((args.out / "scan.json").read_text())
+    selfcheck(btables, quant, kernels, scans)
+    print(f"wrote tables to {args.out} (self-check passed)")
 
 
 if __name__ == "__main__":

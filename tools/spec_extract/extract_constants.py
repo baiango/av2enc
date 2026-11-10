@@ -104,16 +104,28 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     env: dict[str, int] = {}
     unresolved: list[str] = []
+    pending = list(rows)
+    # Several constants reference names defined later in the table
+    # (e.g. MAXQ_10_BITS uses MAXQ_OFFSET), so iterate to a fixed point.
+    for _ in range(6):
+        if not pending:
+            break
+        still = []
+        for name, value, desc in pending:
+            value = value.replace("\u2212", "-").replace(" ", "")
+            try:
+                env[name] = evaluate(value, env)
+            except (KeyError, ValueError, SyntaxError):
+                still.append((name, value, desc))
+        if len(still) == len(pending):
+            break
+        pending = still
+    unresolved = [name for name, _, _ in pending]
+
     out_rows = []
     for name, value, desc in rows:
         value = value.replace("\u2212", "-").replace(" ", "")
-        try:
-            number = evaluate(value, env)
-            env[name] = number
-            out_rows.append((name, str(number), value, desc))
-        except (KeyError, ValueError, SyntaxError):
-            unresolved.append(name)
-            out_rows.append((name, "", value, desc))
+        out_rows.append((name, str(env.get(name, "")), value, desc))
 
     with (OUT / "constants.csv").open("w", newline="") as fh:
         w = csv.writer(fh)

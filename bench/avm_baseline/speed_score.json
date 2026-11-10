@@ -33,12 +33,12 @@
     },
     {
       "cvvdp": 9.0,
-      "reference_speed": 0.02568681971421174,
-      "reference_kbps": 347.364953073845,
+      "reference_speed": 0.027946963403588515,
+      "reference_kbps": 319.52234549878347,
       "encoders": {
         "AVM": {
-          "realtime_x": 0.02568681971421174,
-          "kbps": 347.364953073845,
+          "realtime_x": 0.027946963403588515,
+          "kbps": 319.52234549878347,
           "speedup_vs_ref": 1.0,
           "rate_ratio_vs_ref": 1.0
         }
@@ -46,12 +46,12 @@
     },
     {
       "cvvdp": 9.5,
-      "reference_speed": 0.024266140262801116,
-      "reference_kbps": 452.02846707893787,
+      "reference_speed": 0.027000280718618347,
+      "reference_kbps": 418.3467148415789,
       "encoders": {
         "AVM": {
-          "realtime_x": 0.024266140262801116,
-          "kbps": 452.02846707893787,
+          "realtime_x": 0.027000280718618347,
+          "kbps": 418.3467148415789,
           "speedup_vs_ref": 1.0,
           "rate_ratio_vs_ref": 1.0
         }
@@ -60,7 +60,7 @@
   ],
   "summary": {
     "AVM": {
-      "css_auc_realtime_x": 0.026511646581700216
+      "css_auc_realtime_x": 0.027932708882025602
     }
   },
   "hardware": {
