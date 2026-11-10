@@ -13,6 +13,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # CUDA is the product target. The CPU-only build exists only for reference
 # tests and should not be used to judge encoder support.
 option(AV2ENC_ENABLE_CUDA "Build the CUDA encoder backend (requires nvcc)" ON)
+option(AV2ENC_ALLOW_CPU_ONLY
+  "Allow a CPU-only reference/test build (not a supported encoder target)" OFF)
 
 include(CheckLanguage)
 check_language(CUDA)
@@ -35,13 +37,23 @@ if(AV2ENC_ENABLE_CUDA)
     set(AV2ENC_HAVE_CUDA ON)
     message(STATUS "av2enc: CUDA backend enabled (architectures: ${CMAKE_CUDA_ARCHITECTURES})")
   else()
+    if(NOT AV2ENC_ALLOW_CPU_ONLY)
+      message(FATAL_ERROR
+        "av2enc: CUDA is required for the encoder target, but no CUDA compiler "
+        "was found. Pass -DAV2ENC_ENABLE_CUDA=OFF -DAV2ENC_ALLOW_CPU_ONLY=ON "
+        "only for the CPU reference/test path.")
+    endif()
     message(WARNING
-      "av2enc: AV2ENC_ENABLE_CUDA=ON but no CUDA compiler was found. "
-      "Building the CPU-only reference path; this is NOT a supported encoder "
-      "target. The product build is Linux + CUDA.")
+      "av2enc: no CUDA compiler; building the CPU-only reference path. "
+      "This is NOT a supported encoder target. The product build is Linux + CUDA.")
   endif()
 else()
-  message(STATUS "av2enc: CUDA backend disabled (AV2ENC_ENABLE_CUDA=OFF)")
+  if(NOT AV2ENC_ALLOW_CPU_ONLY)
+    message(FATAL_ERROR
+      "av2enc: AV2ENC_ENABLE_CUDA=OFF requires AV2ENC_ALLOW_CPU_ONLY=ON. "
+      "The encoder target is Linux + CUDA.")
+  endif()
+  message(STATUS "av2enc: CPU-only reference build (unsupported encoder target)")
 endif()
 
 function(av2enc_apply_warnings target)
@@ -63,13 +75,18 @@ add_library(av2enc_core STATIC
   src/io/y4m.cpp
   src/io/ivf.cpp
   src/bitstream/bitwriter.cpp
-  src/bitstream/obu.cpp)
+  src/bitstream/obu.cpp
+  src/bitstream/m0_headers.cpp
+  src/profile/profiler.cpp)
 target_include_directories(av2enc_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(av2enc_core PUBLIC cxx_std_20)
 av2enc_apply_warnings(av2enc_core)
 
 if(AV2ENC_HAVE_CUDA)
+  find_package(CUDAToolkit REQUIRED)
+  target_include_directories(av2enc_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_compile_definitions(av2enc_core PUBLIC AV2ENC_HAVE_CUDA=1)
+  target_link_libraries(av2enc_core PUBLIC CUDA::cudart)
 else()
   target_compile_definitions(av2enc_core PUBLIC AV2ENC_HAVE_CUDA=0)
 endif()

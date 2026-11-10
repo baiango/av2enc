@@ -13,6 +13,11 @@ target_link_libraries(y4m_test PRIVATE av2enc_core)
 av2enc_apply_warnings(y4m_test)
 add_test(NAME y4m_test COMMAND y4m_test)
 
+add_executable(m0_headers_test m0_headers_test.cpp)
+target_link_libraries(m0_headers_test PRIVATE av2enc_core)
+av2enc_apply_warnings(m0_headers_test)
+add_test(NAME m0_headers_test COMMAND m0_headers_test)
+
 # Pinned decoder smoke test. The wrapper exits 77 when no dav2d binary is
 # available, which CTest reports as a clean skip.
 add_test(NAME dav2d_smoke
