@@ -16,9 +16,9 @@ output, compare pixels). Do not read or copy their encoder-side code.
 
 - Primary target: **8 GB Ampere (`sm_86`)** — RTX 3060 8 GB, RTX 3050 8 GB,
   RTX 3070 8 GB. Default profile `compat8g` with a 7,500 MB VRAM cap.
-- Dev box: RTX 3060 12 GB, but it must pass with the same 7,500 MB cap. No
-  12 GB-only tuning.
-- Secondary: RTX 5070 (`sm_120`) build/smoke test only. No Blackwell-only code.
+- Development environment (fixed): **RTX 3060 12 GB running `compat8g`**, i.e.
+  8 GB emulation. No other GPU rentals or profiles are current work.
+- RTX 5070 (`sm_120`) is a build/smoke target only. No Blackwell-only code.
 - Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja**. CPU is a reference/test
   path only, not the product.
 - Fat binary: `sm_86;sm_120`. No Blackwell-only accelerators (TMA, clusters,
