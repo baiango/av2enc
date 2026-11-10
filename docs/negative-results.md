@@ -54,6 +54,21 @@ Status legend:
 | OPEN | Claim measured multi-GPU speedup | `bench/multi_gpu_plan` is an analytic model; no 2-GPU host | Label as simulation; validate on real hardware |
 | OPEN | Use 16x2 tiles without decoding them | Only 1x1 through 8x2 have been verified with `dav2d` | Test 16x2 with the pinned decoder first |
 
+## Input / NVDEC
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Trust `ffmpeg -hwaccel cuda` exit 0 | On this box it silently falls back to software decode; GPU stayed at 0% | Check `pix_fmt == AV_PIX_FMT_CUDA` after `avcodec_open2`, or run `-c:v vp9_cuvid` and treat failure as failure |
+| CONFIRMED | Block M0 on NVDEC in this container | `cuvidGetDecoderCaps` returns `CUDA_ERROR_NO_DEVICE` (100) on driver 570.181; NVIDIA container-toolkit multi-GPU regression | Use `Y4mInputSource`/software decode + pinned upload for now |
+| CONFIRMED | Alias `/dev/nvidia*` or fight the container from inside | Device cgroup is read-only; aliases still return 100 | Fix at instance launch: expose all host GPUs or the host's last GPU, select with `CUDA_VISIBLE_DEVICES` |
+| CONFIRMED | Install/upgrade NVIDIA drivers in the container | Host driver is injected; this breaks compute | Report the infrastructure blocker; do not touch drivers |
+| OPEN | Quote NVDEC fps from this box | NVDEC never opened a decoder here | 3060 hardware is viable; throughput is unmeasured until the container is fixed |
+
+Software decode baseline on the E5 box (shared, ranges vary): 4K VP9 ~113 fps,
+1080p ~283 fps. Pinned 4K NV12 upload is ~1.05 ms/frame at 11.8 GB/s. The
+synthetic FFmpeg CUDA-hwframe handoff works: device pointers,
+`host_accessible=no`, 0 host frame bytes, checksum match.
+
 ## Build / tooling
 
 | Status | Do not do | Why | Do instead |
