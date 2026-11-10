@@ -1,7 +1,8 @@
+#include "bitstream/m0_headers.h"
+#include "encoder/m0_still.h"
 #include "io/ivf.h"
 #include "io/y4m.h"
 
-#include <array>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -19,7 +20,7 @@ struct Options {
   std::filesystem::path input;
   std::filesystem::path output;
   std::uint64_t max_frames = 0;  // 0 = all frames
-  int qp = 32;
+  int qp = 90;
   bool help = false;
 };
 
@@ -32,14 +33,15 @@ enum class ParseStatus {
 void print_usage(std::ostream& out) {
   out << "Usage: av2enc <input.y4m> -o <output.ivf> [--frames N] [--qp Q]\n"
          "\n"
-         "M0 scaffold: reads 8-bit 4:2:0 Y4M and writes placeholder IVF frames.\n"
-         "No AV2 bitstream syntax is emitted yet.\n"
+         "M0 still-picture encoder: 8-bit 4:2:0, one key frame, one tile,\n"
+         "64x64 superblocks, 32x32 DCT, DC intra only, no loop filters.\n"
+         "Writes one AV2 frame (TD + SEQ + CLK) into an IVF with fourcc AV02.\n"
+         "Input dimensions must be multiples of 64.\n"
          "\n"
          "Options:\n"
          "  -o, --output <file>  Output IVF path (required)\n"
-         "  --frames <N>         Encode at most N frames (default: all)\n"
-         "  --qp <Q>             Quantizer for the future encoder (default: 32;\n"
-         "                       recorded in the placeholder payload only)\n"
+         "  --frames <N>         M0 encodes one frame; values > 1 are clamped to 1\n"
+         "  --qp <Q>             base_q_idx (default: 90; M0 pins Q = 90)\n"
          "  -h, --help           Show this help\n";
 }
 
@@ -142,37 +144,6 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
   return ParseStatus::kOk;
 }
 
-void append_le32(std::vector<std::uint8_t>& out, std::uint32_t value) {
-  out.push_back(static_cast<std::uint8_t>(value & 0xFFU));
-  out.push_back(static_cast<std::uint8_t>((value >> 8U) & 0xFFU));
-  out.push_back(static_cast<std::uint8_t>((value >> 16U) & 0xFFU));
-  out.push_back(static_cast<std::uint8_t>((value >> 24U) & 0xFFU));
-}
-
-void append_le64(std::vector<std::uint8_t>& out, std::uint64_t value) {
-  for (unsigned i = 0; i < 8; ++i) {
-    out.push_back(static_cast<std::uint8_t>((value >> (8U * i)) & 0xFFU));
-  }
-}
-
-// Placeholder payload so the IVF container and CLI plumbing can be exercised
-// before the real AV2 syntax exists. It is NOT an AV2 frame and must be
-// replaced by the bitstream/entropy path in the next milestone.
-std::vector<std::uint8_t> make_placeholder_payload(std::uint64_t frame_index,
-                                                   const av2enc::Y4mFrame& frame,
-                                                   int qp) {
-  constexpr std::array<std::uint8_t, 8> kMagic = {'A', 'V', '2', 'E',
-                                                  'N', 'C', 'P', '0'};
-  std::vector<std::uint8_t> payload;
-  payload.reserve(28);
-  payload.insert(payload.end(), kMagic.begin(), kMagic.end());
-  append_le64(payload, frame_index);
-  append_le32(payload, frame.width());
-  append_le32(payload, frame.height());
-  append_le32(payload, static_cast<std::uint32_t>(qp));
-  return payload;
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -225,23 +196,47 @@ int main(int argc, char** argv) {
     return 1;
   };
 
-  av2enc::Y4mFrame frame;
-  std::uint64_t frame_count = 0;
-  while (options.max_frames == 0 || frame_count < options.max_frames) {
-    const av2enc::Y4mReadResult result = reader.read_frame(frame, error);
-    if (result == av2enc::Y4mReadResult::kEof) {
-      break;
-    }
-    if (result == av2enc::Y4mReadResult::kError) {
-      return fail_encode(error);
-    }
+  if (y4m.width % 64U != 0U || y4m.height % 64U != 0U) {
+    std::cerr << "av2enc: error: M0 requires dimensions that are multiples of 64, got "
+              << y4m.width << "x" << y4m.height << "\n";
+    return 1;
+  }
+  if (options.qp != 90) {
+    std::cerr << "av2enc: error: M0 pins --qp 90 (coefficient CDF qctx slice 0)\n";
+    return 1;
+  }
 
-    const std::vector<std::uint8_t> payload =
-        make_placeholder_payload(frame_count, frame, options.qp);
-    if (!writer.write_frame(payload, frame_count, error)) {
-      return fail_encode(error);
-    }
-    ++frame_count;
+  av2enc::Y4mFrame frame;
+  const av2enc::Y4mReadResult read_result = reader.read_frame(frame, error);
+  if (read_result == av2enc::Y4mReadResult::kEof) {
+    return fail_encode("input has no frames");
+  }
+  if (read_result == av2enc::Y4mReadResult::kError) {
+    return fail_encode(error);
+  }
+
+  av2enc::m0::StillPicture picture;
+  picture.width = frame.width();
+  picture.height = frame.height();
+  picture.y = frame.y();
+  picture.u = frame.u();
+  picture.v = frame.v();
+
+  av2enc::m0::StillPictureConfig config;
+  config.max_frame_width = static_cast<std::uint16_t>(y4m.width);
+  config.max_frame_height = static_cast<std::uint16_t>(y4m.height);
+  config.base_q_idx = static_cast<std::uint8_t>(options.qp);
+  // M0 ships with frozen CDFs. The normative §8.2.6 adaptation is legal, but
+  // the reference entropy module currently rejects adapted CDFs whose
+  // cumulative values equalise, so adaptive mode is not enabled yet.
+  config.disable_cdf_update = true;
+
+  av2enc::m0::StillEncodeResult encoded;
+  if (!av2enc::m0::encode_still_picture(picture, config, encoded, error)) {
+    return fail_encode(error);
+  }
+  if (!writer.write_frame(encoded.frame, 0, error)) {
+    return fail_encode(error);
   }
 
   if (!writer.close(error)) {
@@ -249,12 +244,14 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::cout << "av2enc: placeholder encode complete (no AV2 syntax emitted)\n"
-            << "  input:  " << options.input.string() << " (" << y4m.width << "x" << y4m.height
-            << ", " << y4m.colorspace << ", " << y4m.fps_num << "/" << y4m.fps_den << " fps)\n"
-            << "  output: " << options.output.string() << " (" << writer.bytes_written()
+  std::cout << "av2enc: M0 still-picture encode complete\n"
+            << "  input:   " << options.input.string() << " (" << y4m.width << "x"
+            << y4m.height << ", " << y4m.colorspace << ", " << y4m.fps_num << "/"
+            << y4m.fps_den << " fps)\n"
+            << "  output:  " << options.output.string() << " (" << writer.bytes_written()
             << " bytes IVF)\n"
-            << "  frames: " << frame_count << ", qp " << options.qp
-            << " (recorded, not applied)\n";
+            << "  frames:  1, base_q_idx " << options.qp << ", tile "
+            << encoded.tile_bytes << " bytes, temporal unit " << encoded.frame_bytes
+            << " bytes\n";
   return 0;
 }

@@ -4,6 +4,23 @@
 > **OpenCode**, with AI subagents writing most of the code and a human directing
 > the architecture and review. Treat it accordingly.
 
+## Status (2026-11-11)
+
+**First frame decodes with `dav2d`.** A 64×64, 8-bit 4:2:0, one-tile M0
+still picture is produced by the CPU reference path:
+
+```text
+IVF:       1,138 bytes, FourCC AV02
+Decoded:   64x64 yuv420p, 1 frame
+MD5:       7efc3162bc0a4785685eba291a8096fd
+PSNR:      Y 41.72 dB, average 42.13 dB
+Gate:      tools/validate_dav2d.sh out.ivf  -> exit 0
+```
+
+Locked by `tests/m0_encode_smoke.sh`. The CUDA kernels are not wired into the
+encode path yet; this proves the bitstream, not the GPU backend. Adaptive CDFs
+are disabled (`disable_cdf_update=1`) for this first frame.
+
 ## Hard constraint
 
 No encoder code from AVM, SVT-AV1/AV2, clave, or any other encoder.

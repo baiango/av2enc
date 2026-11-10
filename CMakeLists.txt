@@ -77,6 +77,8 @@ add_library(av2enc_core STATIC
   src/bitstream/bitwriter.cpp
   src/bitstream/obu.cpp
   src/bitstream/m0_headers.cpp
+  src/encoder/m0_still.cpp
+  src/entropy/av2/av2_entropy.cpp
   src/profile/profiler.cpp)
 target_include_directories(av2enc_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(av2enc_core PUBLIC cxx_std_20)

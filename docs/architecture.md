@@ -349,8 +349,13 @@ Still-picture encoder, 8-bit 4:2:0, one tile:
 - no loop filters, film grain, SVC, palette, CfL
 - output: IVF containing one frame
 
-M0 is done when `avmdec` decodes the IVF and the decoded YUV is close to the
-source. Bit-exactness of our reconstruction vs the decoder is the next gate.
+M0 status: **achieved 2026-11-11** with the CPU reference path. A 64×64
+DC-intra stream (1,138 bytes) decodes with `dav2d` f9dafbc; MD5
+`7efc3162bc0a4785685eba291a8096fd`, PSNR 42.13 dB. The CUDA kernels are not
+wired into the encode path yet. Adaptive CDFs are disabled for this frame.
+
+The original gate was `avmdec`; `dav2d` is the hard decoder gate now.
+Bit-exactness of our reconstruction vs the decoder is the next correctness step.
 
 ## Module layout
 

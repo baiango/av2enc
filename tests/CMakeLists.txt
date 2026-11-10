@@ -18,6 +18,15 @@ target_link_libraries(m0_headers_test PRIVATE av2enc_core)
 av2enc_apply_warnings(m0_headers_test)
 add_test(NAME m0_headers_test COMMAND m0_headers_test)
 
+# End-to-end first frame: encode a 64x64 still picture, require dav2d to decode
+# it and match the pinned MD5. Exit 77 (skip) when no decoder is available.
+add_test(NAME m0_encode_smoke
+  COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/m0_encode_smoke.sh"
+          $<TARGET_FILE:av2enc> "${PROJECT_SOURCE_DIR}")
+set_tests_properties(m0_encode_smoke PROPERTIES
+  SKIP_RETURN_CODE 77
+  TIMEOUT 180)
+
 # Pinned decoder smoke test. The wrapper exits 77 when no dav2d binary is
 # available, which CTest reports as a clean skip.
 add_test(NAME dav2d_smoke

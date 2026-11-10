@@ -1,9 +1,11 @@
 build/
+build*/
 *.o
 *.a
 *.so
 *.ivf
 *.y4m
+!tests/data/*.y4m
 *.yuv
 *.raw
 testdata/
