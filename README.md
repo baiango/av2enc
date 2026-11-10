@@ -1,5 +1,9 @@
 # av2enc — from-scratch GPU AV2 encoder
 
+> **Vibe-coded:** This project is built with **DeepSeek V4.1 Flash** in
+> **OpenCode**, with AI subagents writing most of the code and a human directing
+> the architecture and review. Treat it accordingly.
+
 ## Hard constraint
 
 No encoder code from AVM, SVT-AV1/AV2, clave, or any other encoder.
@@ -12,9 +16,9 @@ output, compare pixels). Do not read or copy their encoder-side code.
 
 - GPU: RTX 3060 12GB (Vast.ai), CUDA 12.8, compute capability 8.6
 - Host: Linux, C++20, CUDA, CMake + Ninja
-- Encoder architecture:
-  - CPU: bitstream syntax, entropy coding, rate control, orchestration
-  - GPU: transforms/quantization, intra search, motion estimation, reconstruction
+- Encoder architecture: GPU-resident. CPU only launches work, handles OBU
+  headers and file I/O; pixel work, mode decision, filters, and tile entropy
+  stay on the GPU.
 
 ## Remote box
 
