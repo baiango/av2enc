@@ -21,6 +21,15 @@ Status legend:
 | CONFIRMED | Copy AVM/SVT/clave/av2-turbo encoder code | Project constraint is spec-only | Implement from the spec; use decoders as black boxes |
 | DEFERRED | Inter frames, loop filters, RDO, rate control | M0 is still-picture only | Finish the CUDA M0 path first |
 
+## RDO / rate control
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Use the default RDOQ rate model for quality decisions | It is a bring-up/test model, not an entropy-derived estimate | Replace the coefficient/EOB rate callbacks with real entropy costs |
+| CONFIRMED | Trust the placeholder QP→lambda calibration | It is documented as a placeholder | Use `lambda_sse_from_quant_step()` and calibrate `sse_scale` |
+| CONFIRMED | Port RDO to GPU before it matches CPU decisions | The CPU framework is the reference | Bit-exact decision tests first |
+| OPEN | Claim RDO gains before integration | No bitstream is produced by the RDO component | Decode-gate and measure after wiring |
+
 ## CUDA
 
 | Status | Do not do | Why | Do instead |
