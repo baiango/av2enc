@@ -98,3 +98,15 @@ matched bitrate, and always confirm `dav2d` decoded the stream first.
 the three-way budget: max CVVDP subject to bitrate <= R_max and speed >= S_min.
 The planned 720p60 gate is CVVDP >= 9.0 at <= 500 kbps, with speed measured
 against AVM on the same machine.
+
+## Profiling
+
+The encoder has a built-in profiler that works without GPU counter permissions:
+
+```sh
+AV2ENC_PROFILE=/tmp/run.jsonl AV2ENC_VRAM_LIMIT_MB=7500 ./build-cuda/av2enc ...
+```
+
+It logs per-frame CPU and CUDA stage times, JSONL plus a summary, and VRAM
+peak/capacity. `AV2ENC_PROFILE_NVTX=1` adds NVTX ranges for Nsight Systems.
+See `docs/profiling.md`.
