@@ -36,6 +36,9 @@ Status legend:
 | CONFIRMED | Trust the placeholder QP→lambda calibration | It is documented as a placeholder | Use `lambda_sse_from_quant_step()` and calibrate `sse_scale` |
 | CONFIRMED | Port RDO to GPU before it matches CPU decisions | The CPU framework is the reference | Bit-exact decision tests first |
 | OPEN | Claim RDO gains before integration | No bitstream is produced by the RDO component | Decode-gate and measure after wiring |
+| CONFIRMED | Select coefficient CDFs from a delta-Q or segment qindex | The coefficient CDF slice comes from `base_q_idx`, not the effective per-block qindex | Use `base_q_idx`; M0 tables only cover qctx 0 (`<=90`) until 1–3 are generated |
+| CONFIRMED | Plan delta-Q once per frame | The decoder resets `CurrentQIndex` to `base_q_idx` at every tile | Plan delta-Q per tile |
+| CONFIRMED | Treat the VBR controller as a VBV/HRD model | It is an EMA virtual-buffer placeholder with no lookahead/two-pass | Add VBV/HRD/two-pass later; do not claim conformance |
 
 ## Filters
 
