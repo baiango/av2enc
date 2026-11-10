@@ -395,24 +395,20 @@ for r = MiRowStart (0) .. < MiRowEnd (16) step 16:      # one SB row
 `enable_ext_partitions = 0`, `enable_uneven_4way_partitions = 0`,
 `MaxPbAspectRatio = 8`, `FrameIsIntra = 1`):
 
-**(a) 64x64 block at (0,0)** — `partition_implied()` returns not-implied
-(`partition_implied_at_boundary` sees room in both directions), and
-`init_allowed_partitions()` allows NONE and SPLIT, so:
+**(a) 64x64 block at (0,0)** — In AV2 v1.0.0, `Partition_Subsize` defines
+`PARTITION_SPLIT` only for 128x128→64x64 and 256x256→128x128. SPLIT is
+**illegal at 64x64 and below**. The allowed partitions here are NONE, HORZ,
+VERT. M0 uses VERT first:
 
 | # | Symbol | Value | CDF | Context |
 |---|---|---|---|---|
-| 1 | `do_split` | 1 | `TileDoSplitCdf[0][ctx]` | `ctx = 12` |
-| 2 | `do_square_split` | 1 | `TileDoSquareSplitCdf[0][ctx]` | `ctx = 0` |
+| 1 | `do_split` | 1 | `TileDoSplitCdf[0][ctx]` | 12 |
+| 2 | `rect_type` | VERT (1) | `TileRectTypeCdf[0][ctx]` | size-adjust + neighbours |
 
-`do_split` context: `Partition_Size_Adjust[BLOCK_64X64] = 3` → `3*4 = 12`;
-`ctx1 = Mi_Height_Log2[LeftMiSizes[0][0]] < bsh` → `6 < 4` false;
-`ctx2` likewise false. `do_square_split` context: `left = above = 0` (no
-neighbours inside the tile) and `bSize != BLOCK_256X256` → `0`.
-(This encodes `PARTITION_SPLIT`.)
+Each 32x64 child then codes `do_split=1` + `rect_type=HORZ (0)`, yielding two
+32x32 leaves per child.
 
-**(b) four 32x32 blocks** at (0,0), (0,8), (8,0), (8,8) — `partition_implied()`
-is not implied for `BLOCK_32X32` (only `bSize == BLOCK_4X4 || bSize >= BLOCK_4X32`
-is auto-NONE, and `BLOCK_32X32` is enum 9, below `BLOCK_4X32` = 25). Each codes:
+**(b) four 32x32 blocks** at (0,0), (0,8), (8,0), (8,8). Each codes:
 
 | # | Symbol | Value | CDF | Context |
 |---|---|---|---|---|

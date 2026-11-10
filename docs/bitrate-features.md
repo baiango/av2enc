@@ -112,6 +112,11 @@ of prediction, transform, and mode signaling at the same time. M0 fixes a 64x64
 superblock and a 32x32 coding block, which is the single largest quality/rate
 handicap after DC-only intra.
 
+**AV2 v1.0.0 correction:** `PARTITION_SPLIT` is defined only for
+128x128→64x64 and 256x256→128x128. It is illegal at 64x64 and below; use
+`PARTITION_HORZ`/`VERT` (the M0 rect tree) to reach 32x32 quadrants. Do not
+implement SPLIT at 64x64.
+
 | Tool | Spec § | Side | Complexity / depends on | What it buys (est.) | Needed? | dav2d gate |
 |---|---|---|---|---|---|---|
 | Recursive square partition tree (`PARTITION_NONE` / `PARTITION_SPLIT`) | §5.20.3.1, §5.20.3.2, §6.19.3.1, §6.19.3.2 | B | M; needs block bookkeeping and neighbor availability | 10–20% BD-rate vs fixed 32x32; the base for every later tool | M1 | U1 — unverified |

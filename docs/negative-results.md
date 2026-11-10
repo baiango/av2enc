@@ -16,6 +16,8 @@ Status legend:
 | CONFIRMED | Use `src/entropy/range_coder.*` for the AV2 stream | It is a generic arithmetic coder, not the normative §8.2 state machine; it cannot produce AV2-decodable bytes | Use `src/entropy/av2/` |
 | CONFIRMED | Pad 640x360 to 640x384 | Product owner rejected padding; exact 640x360 is now supported | Encode exact dimensions; use edge partition handling |
 | CONFIRMED | Use `PARTITION_VERT` at a bottom-edge superblock | `dav2d` returns `Error decoding frame: Invalid argument`; VERT is not allowed when `has_rows` is false | Use `PARTITION_NONE` at the 64x64 SB for the 640x360 bottom edge; 32x16/32x8 implied paths for narrower edges |
+| CONFIRMED | Use `PARTITION_SPLIT` at 64x64 or below | AV2 v1.0.0 `Partition_Subsize` defines SPLIT only for 128→64 and 256→128; it is illegal at 64 and below | Use `HORZ`/`VERT` (the M0 rect tree) for 32x32 quadrants; do not "fix" it into SPLIT |
+| CONFIRMED | Compute `MiCols`/`MiRows` as `ceil(width/4)` | Spec is `2 * ((dimension + 7) >> 3)`, which differs for non-multiple-of-8 sizes | Use the spec formula |
 | CONFIRMED | Hand-type CDF, scan, DCT, or quant tables | Error-prone and already generated | Use `spec/tables/` and `src/encoder/generate_*.py` |
 | CONFIRMED | Enable adaptive CDFs by default | It changes pinned MD5s | Keep `disable_cdf_update=1`; opt in with `--adaptive-cdf` |
 | CONFIRMED | Copy AVM/SVT/clave/av2-turbo encoder code | Project constraint is spec-only | Implement from the spec; use decoders as black boxes |
@@ -35,8 +37,6 @@ Status legend:
 | OPEN | Claim RDO gains before integration | No bitstream is produced by the RDO component | Decode-gate and measure after wiring |
 
 ## CUDA
-
-**Open:** GPU CfL is not validated. The derived-alpha CUDA test returns alpha 0; fix it before integration. CPU CfL passes.
 
 | Status | Do not do | Why | Do instead |
 |---|---|---|---|
