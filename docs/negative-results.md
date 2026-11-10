@@ -40,6 +40,15 @@ Status legend:
 | CONFIRMED | Plan delta-Q once per frame | The decoder resets `CurrentQIndex` to `base_q_idx` at every tile | Plan delta-Q per tile |
 | CONFIRMED | Treat the VBR controller as a VBV/HRD model | It is an EMA virtual-buffer placeholder with no lookahead/two-pass | Add VBV/HRD/two-pass later; do not claim conformance |
 
+## Formats
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Try to signal 12-bit in AV2 v1.0.0 | `bit_depth_idc` is one bit: 0 = 10-bit, 1 = 8-bit; 12-bit is reserved | Keep 12-bit internal-only; 8/10-bit are the signalable depths |
+| CONFIRMED | Derive coefficient CDF sets from the effective/delta qindex | §8.3.1 selects from raw `base_q_idx` (90/140/190 thresholds) | Use `base_q_idx` |
+| CONFIRMED | Assume `MaxQ` is 255 at high bit depth | `MaxQ` is 255/303/351 at 8/10/12-bit | Validate `base_q_idx` against the format's `MaxQ` |
+| OPEN | Claim 10-bit/4:2:2/4:4:4 encoding | No header/entropy/recon path is wired and nothing decodes | Integrate format by format, gate each with `dav2d` |
+
 ## Filters
 
 | Status | Do not do | Why | Do instead |
