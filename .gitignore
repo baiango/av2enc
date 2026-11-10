@@ -1,0 +1,10 @@
+build/
+*.o
+*.a
+*.so
+*.ivf
+*.y4m
+*.yuv
+*.raw
+bench/hello_cuda/build/
+.DS_Store

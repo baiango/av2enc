@@ -1,0 +1,62 @@
+# av2enc — from-scratch GPU AV2 encoder
+
+## Hard constraint
+
+No encoder code from AVM, SVT-AV1/AV2, clave, or any other encoder.
+Implement from the **AV2 v1.0.0 specification**.
+
+`avmdec` / `dav2d` may only be used as **black-box validators** (decode our
+output, compare pixels). Do not read or copy their encoder-side code.
+
+## Target
+
+- GPU: RTX 3060 12GB (Vast.ai), CUDA 12.8, compute capability 8.6
+- Host: Linux, C++20, CUDA, CMake + Ninja
+- Encoder architecture:
+  - CPU: bitstream syntax, entropy coding, rate control, orchestration
+  - GPU: transforms/quantization, intra search, motion estimation, reconstruction
+
+## Remote box
+
+```
+ssh -p <port> <user>@<host>
+/workspace/av2enc
+```
+
+`/workspace` is **not** a persistent volume. The local repo at
+`$HOME/work/av2enc` is the source of truth; sync to the box before builds.
+Disk is 16GB: keep test media tiny (<100MB total), prefer 64x64/256x256 frames.
+
+## First milestone
+
+A valid AV2 still-picture IVF:
+
+- 8-bit, 4:2:0
+- one tile
+- 64x64 and 256x256
+- key frame only
+- DC intra prediction
+- DCT 32x32
+- fixed QP
+- no deblock/CDEF/CCSO/GDF/loop restoration, no film grain, no SVC, no palette/CfL
+
+Success = `avmdec` (or `dav2d`) decodes the stream and output is close to source.
+
+## Directory ownership
+
+| Path | Owner |
+|---|---|
+| `docs/spec-*`, `spec/tables/`, `tools/spec_extract/` | spec agent |
+| `src/io/`, `src/bitstream/`, `src/main.cpp`, `tests/`, `CMakeLists.txt` | scaffold agent |
+| `bench/hello_cuda/`, `docs/remote-env.md` | CUDA agent |
+| `src/entropy/`, `src/cpu/`, `src/cuda/` | later agents |
+
+Do not edit outside your area without coordinating.
+
+## Rules
+
+1. Spec-only. Cite section numbers. Mark unknowns instead of inventing syntax.
+2. Generate tables with scripts; never hand-type CDF/transform tables.
+3. Write a scalar CPU reference before every CUDA kernel; assert bit-exactness.
+4. Do not GPU the entropy coder. It is serial per tile.
+5. Pin the spec version and decoder commit. AV2 is still moving.
