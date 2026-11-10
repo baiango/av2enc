@@ -1,0 +1,54 @@
+{
+  "budget": {
+    "q_min": 5.0,
+    "r_max_kbps": 4000.0,
+    "s_min_realtime_x": 0.016666666666666666,
+    "min_encode_fps": 1.0,
+    "source_fps": 60.0
+  },
+  "encoders": {
+    "AVM": {
+      "feasible": false,
+      "qbs_cvvdp": null,
+      "qbs_kbps": null,
+      "qbs_realtime_x": null,
+      "min_kbps_at_q_s": null,
+      "max_realtime_x_at_q_r": 0.011745360582569885,
+      "pareto": [
+        {
+          "qp": "110",
+          "cvvdp": 9.9084,
+          "kbps": 3306.192,
+          "realtime_x": 0.005809225049378412
+        },
+        {
+          "qp": "135",
+          "cvvdp": 9.819,
+          "kbps": 1813.008,
+          "realtime_x": 0.007335680751173709
+        },
+        {
+          "qp": "160",
+          "cvvdp": 9.5485,
+          "kbps": 995.664,
+          "realtime_x": 0.00924898261191269
+        },
+        {
+          "qp": "200",
+          "cvvdp": 8.3386,
+          "kbps": 332.928,
+          "realtime_x": 0.011066843736166444
+        },
+        {
+          "qp": "235",
+          "cvvdp": 5.5824,
+          "kbps": 33.888,
+          "realtime_x": 0.011745360582569885
+        }
+      ],
+      "cpu": [
+        "Apple M4"
+      ]
+    }
+  }
+}

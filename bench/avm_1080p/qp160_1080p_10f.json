@@ -1,0 +1,47 @@
+{
+  "ref": "testdata/shine_1920x1080_10f.y4m",
+  "test": "bench/avm_1080p/qp160_1080p_10f.ivf",
+  "frames": 10,
+  "fps": "60/1",
+  "psnr": {
+    "psnr_y": 45.496602,
+    "psnr_u": 51.630336,
+    "psnr_v": 51.502612,
+    "psnr_avg": 46.751384
+  },
+  "ssim": {
+    "ssim_y": 0.991312,
+    "ssim_all": 0.992938
+  },
+  "cvvdp_jod": 9.5485,
+  "cvvdp_version": "0.5.7",
+  "cvvdp_display": "standard_fhd",
+  "cvvdp_device": "mps",
+  "host": {
+    "hostname": "Mac-mini.local",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu_logical_cores": 10,
+    "ram_gb": 17.2,
+    "cpu_model": "Apple M4",
+    "cpu_physical_cores": 10,
+    "gpu": null
+  },
+  "target_host": {
+    "gpu_memory_mib": 8192,
+    "compute_cap": "8.6",
+    "is_target": false
+  },
+  "ivf_bytes": 20743,
+  "bitrate_kbps": 995.664,
+  "decoder": "dav2d-macos",
+  "decode_threads": "0",
+  "decode_seconds": 0.07919379200029653,
+  "decode_fps": 126.27252398726604,
+  "decode_realtime_x": 2.104542066454434,
+  "encoder": "AVM",
+  "qp": "160",
+  "encode_seconds": 18.02,
+  "encode_fps": 0.5549389567147613,
+  "realtime_x": 0.00924898261191269
+}
