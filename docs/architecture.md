@@ -250,6 +250,56 @@ max CVVDP  subject to  encode_fps >= 1.0 at 1080p
 Compare quality and bitrate at the fixed 1 fps target. Extra frames per second
 are not a win; extra CVVDP at the same bitrate is.
 
+## Multi-GPU: 2× 3060 and beyond
+
+Each GPU owns its own `compat8g` arena (7,500 MB). VRAM is **not pooled**; a
+2× 3060 machine has 2 × 7.5 GB usable, not 15 GB for one process.
+
+Two modes:
+
+### Tile-parallel (default)
+
+- Split the frame's independent tiles across GPUs: 4×2, 8×2, 16×2 depending on
+  resolution and GPU count.
+- Each GPU encodes a contiguous tile range with its own CDF state.
+- The coordinator merges tile payloads into one frame OBU.
+- Reference frames are duplicated on each GPU. At 1080p this is ~3 MB per frame;
+  at 4K ~12 MB. Consumer 3060s have no NVLink and GeForce P2P is restricted, so
+  use host-mediated copies or duplicate refs; PCIe traffic is negligible at 1 fps.
+- For determinism: reset CDFs per tile, disable cross-tile prediction, and use a
+  fixed tile order. Loop filters across tile boundaries must be explicitly
+  handled or disabled; measure the bitrate cost.
+- 8×2 = 16 tiles, so 2 GPUs get 8 each. 4 GPUs need 16×2 or GOP mode.
+
+### GOP-parallel
+
+- Split the sequence into closed GOPs; each GPU encodes independent GOPs.
+- Near-linear scaling and no per-frame synchronization.
+- Every segment starts with a keyframe, so expect a bitrate penalty at segment
+  boundaries. Use longer GOPs to amortize it.
+
+CLI:
+
+```text
+--gpus 0,1
+--multi-gpu tile|gop
+--scale-mode quality|throughput
+```
+
+Default is `tile` + `quality`: the 1080p 1 fps floor stays fixed, and extra GPUs
+buy more RDO/search/tiles until quality saturates. `throughput` mode raises fps
+instead.
+
+Scaling target: 2 GPUs in tile mode should reach **1.8–1.95×** the single-GPU
+work at the same quality; report per-GPU utilization and load imbalance. Real
+multi-GPU validation is pending hardware. The profiler must aggregate per-GPU
+stage times and peak VRAM.
+
+**Multi-GPU development target:** N× RTX 3060 **12 GB** cards, each running
+`compat8g` with a 7,500 MB cap. This is the 8 GB emulation, not actual 8 GB
+cards. The target-validation requirement of an 8192 MiB enumerated card remains
+separate and applies to final single-GPU performance/QBS claims.
+
 ## Quality gate
 
 GPU residency must not reduce compression. Speed is only scored after the

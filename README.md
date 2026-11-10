@@ -20,6 +20,9 @@ output, compare pixels). Do not read or copy their encoder-side code.
   running `compat8g` is only a compatibility proxy, not a performance/QBS
   validation host.
 - RTX 5070 (`sm_120`) is a build/smoke target only. No Blackwell-only code.
+- Multi-GPU development: **N× RTX 3060 12 GB**, each running `compat8g` with a
+  7,500 MB cap (8 GB emulation). Not actual 8 GB cards. Target validation on an
+  enumerated 8192 MiB card remains separate.
 - Product speed target: **≥1 encoded fps at 1080p on the 8192 MiB 3060**.
   Surplus compute goes into quality (RDOQ, partitions, modes, search,
   references), never into more fps.
