@@ -32,6 +32,9 @@ Status legend:
 | CONFIRMED | Per-bit global writes from the entropy coder | Latency-bound | Buffer tile output in shared/global memory and flush bytes/words |
 | CONFIRMED | Use `__fadd_rn` / `__fmul_rn` for `double` DCT math | They are **float** intrinsics and silently down-convert doubles; produced ~1.27M coefficient mismatches | Use `__dadd_rn` / `__dmul_rn` plus `-fmad=false`; compile CPU with `-ffp-contract=off` |
 | CONFIRMED | Launch one kernel per transform/helper | ~30 µs dispatch per launch; a 1-block 4-launch pipeline is 271 µs, latency-bound | Batch `nblocks` and fuse stages |
+| CONFIRMED | Use one block/launch for intra/recon at video scale | 640x360 raster is 3.6–5.2 ms/frame; 1080p extrapolates to 31–44 ms/frame, almost all launch overhead | Batch `dc_predict_residual_batch` where predictions are frozen, or use a wavefront/CUDA-graph scheduler |
+| CONFIRMED | Use `dc_predict_residual_batch` on dependent blocks | Batch jobs assume frozen prediction inputs; later blocks depend on earlier reconstruction | Use the raster path until a wavefront scheduler exists |
+| CONFIRMED | Pass tightly packed strides or omit `maxX`/`maxY` | Edge blocks read/write outside the visible plane | Pass the padded plane stride plus visible bounds; see `src/cuda/intra.h` |
 | CONFIRMED | Use 64x32 / 32x64 transform modes | CPU reference calls `dct_kernel(64)` while looping to 64, an out-of-bounds read; only diagnostic modes use them | Fix the CPU reference first; default `k32x32` and 64x64 edge path are covered |
 | CONFIRMED | Recompute `scale_*`/`quant_factor` with a different expression | Breaks bit-exactness | Use `make_tx_params()` from `src/cuda/transform.h` |
 | DEFERRED | Tune 4/6/16/24 GB profiles or Turing `sm_75` | Current scope is 8 GB Ampere | Use `compat8g`; leave other profiles as estimates |
