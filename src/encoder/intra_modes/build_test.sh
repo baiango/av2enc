@@ -4,6 +4,7 @@
 #   ./build_test.sh                 # -O2 build + run
 #   ./build_test.sh --no-run        # build only
 #   SANITIZE=1 ./build_test.sh      # ASan + UBSan build + run
+#   WERROR=1 ./build_test.sh        # promote warnings to errors
 #   CXX=clang++ ./build_test.sh     # alternate compiler
 #
 # Self-contained: does not touch the root CMake build or any other component.
@@ -14,6 +15,7 @@ cd "$(dirname "$0")"
 CXX="${CXX:-c++}"
 BUILD_DIR="${BUILD_DIR:-build-intra-modes}"
 SANITIZE="${SANITIZE:-0}"
+WERROR="${WERROR:-0}"
 RUN=1
 
 for arg in "$@"; do
@@ -35,6 +37,9 @@ done
 mkdir -p "$BUILD_DIR"
 
 FLAGS=(-std=c++20 -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+if [ "$WERROR" = "1" ]; then
+  FLAGS+=(-Werror)
+fi
 if [ "$SANITIZE" = "1" ]; then
   FLAGS+=(-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer)
 else

@@ -284,7 +284,7 @@ void test_edge_filter_strength() {
 }
 
 // ---------------------------------------------------------------------------
-// §7.13.2.18 edge filter: in-place, sequential update
+// §7.13.2.18 edge filter: five taps on a snapshot of the original edge
 // ---------------------------------------------------------------------------
 
 void test_edge_filter_golden() {
@@ -296,13 +296,36 @@ void test_edge_filter_golden() {
   row[2] = 0;
   row[3] = 0;
   av2enc::intra::intra_edge_filter(row, 5, 1);
-  // Computed by hand from the spec kernel {0,4,8,4,0}; later taps see the
-  // already filtered samples.
+  // Computed by hand from the spec kernel {0,4,8,4,0} and the derived
+  // snapshot edge[] (§7.13.2.18); later taps must not see filtered samples.
   CHECK_EQ(row[-1], 0);
   CHECK_EQ(row[0], 64);
-  CHECK_EQ(row[1], 144);
-  CHECK_EQ(row[2], 36);
-  CHECK_EQ(row[3], 9);
+  CHECK_EQ(row[1], 128);
+  CHECK_EQ(row[2], 64);
+  CHECK_EQ(row[3], 0);
+
+  // Explicit snapshot reference for all three strengths on a longer row.
+  constexpr int kKernels[3][5] = {{0, 4, 8, 4, 0},
+                                  {0, 5, 6, 5, 0},
+                                  {2, 4, 4, 4, 2}};
+  constexpr int kSize = 8;
+  EdgeRow input;
+  input.clear();
+  for (int i = -1; i < kSize - 1; ++i) {
+    input[i] = static_cast<std::int16_t>(17 + 23 * (i + 1));
+  }
+  for (int strength = 1; strength <= 3; ++strength) {
+    EdgeRow filtered = input;
+    av2enc::intra::intra_edge_filter(filtered, kSize, strength);
+    for (int i = 1; i < kSize; ++i) {
+      int sum = 0;
+      for (int j = 0; j < 5; ++j) {
+        const int k = std::max(0, std::min(kSize - 1, i - 2 + j));
+        sum += kKernels[strength - 1][j] * input[k - 1];
+      }
+      CHECK_EQ(filtered[i - 1], (sum + 8) >> 4);
+    }
+  }
 
   // Strength 0 and size 1 are no-ops.
   EdgeRow untouched = row;

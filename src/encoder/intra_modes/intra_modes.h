@@ -235,9 +235,10 @@ int build_mode_candidates(std::span<ModeCandidate> out,
 int edge_filter_strength(int w, int h, bool smooth_neighbors,
                          int delta) noexcept;
 
-// §7.13.2.18. In-place five-tap filter of one edge row. `size` is the number
-// of pixels to consider (1..129); filtering touches logical indices -1..size-2
-// and reads previously updated samples, exactly like the spec process.
+// §7.13.2.18. Five-tap filter of one edge row. `size` is the number of pixels
+// to consider (1..129). Reads come from a snapshot of the original samples
+// (the spec's derived `edge[]` array); writes go to logical indices
+// -1..size-2, so filtered samples are never fed back into later taps.
 void intra_edge_filter(EdgeRow& row, int size, int strength) noexcept;
 
 }  // namespace av2enc::intra

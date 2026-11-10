@@ -32,7 +32,7 @@ Nothing outside this directory is modified.
 | §7.13.2.13 | SMOOTH, SMOOTH_V, SMOOTH_H |
 | §7.13.2.14 | Filter corner |
 | §7.13.2.17 | Intra edge filter strength selection |
-| §7.13.2.18 | Intra edge filter (in-place five-tap, sequential) |
+| §7.13.2.18 | Intra edge filter (five-tap on a snapshot of the original edge) |
 
 Modes: `DC, V, H, D45, D135, D113, D157, D203, D67, SMOOTH, SMOOTH_V,
 SMOOTH_H, PAETH`. The 8 directional modes are V/H plus the six named angles.
@@ -56,12 +56,13 @@ cd src/encoder/intra_modes
 ./build_test.sh                 # -O2, build + run
 ./build_test.sh --no-run        # build only
 SANITIZE=1 ./build_test.sh      # ASan + UBSan
+WERROR=1 ./build_test.sh        # warnings promoted to errors
 ```
 
 Expected output:
 
 ```text
-intra_modes_test: PASS (48037 checks)
+intra_modes_test: PASS (48058 checks)
 ```
 
 The build uses `-std=c++20 -Wall -Wextra -Wpedantic -Wconversion -Wshadow`.
@@ -162,8 +163,9 @@ The CUDA implementation must reproduce, in this order:
 - `approx_divide(num, den) = Round2(num * Div_Lut[f], n + DIV_LUT_PREC_BITS)`
   with the §7.13.3.22 `resolve_divisor` derivation; do not substitute a hardware
   divide.
-- Edge filtering updates samples in place, top to bottom; later taps read
-  already-filtered samples. This is observable (see the impulse test).
+- Edge filtering derives `edge[i] = LeftCol[i-1]` (or `AboveRow[i-1]`) from a
+  snapshot of the original samples and writes the filtered values back to
+  `LeftCol`/`AboveRow`. Later taps never read filtered samples.
 - Luma directional prediction always uses the 4-tap IDIF; chroma directional
   prediction uses the 2-tap linear form. `enableIdif = (plane == 0)`, not a
   sequence option.
@@ -182,7 +184,7 @@ No floating point is used anywhere in the prediction path.
 |---|---|
 | mode/tables/angles | `Mode_To_Angle`, directional-mode set, ±3×3° deltas, wide-angle mapping for 4:1 and 1:4 blocks |
 | edge filter strength | Both filter types across every `w+h` bucket and threshold boundary |
-| edge filter golden | Hand-computed in-place impulse response (depends on sequential update); strength-0/size-1 no-ops |
+| edge filter golden | Hand-computed snapshot impulse response (must not feed filtered samples into later taps); explicit snapshot convolution for all three strengths; strength-0/size-1 no-ops |
 | edge fillers | No-neighbour 127/129/128 fillers; above-only/left-only replication; real corner |
 | edge clamping | Right/bottom frame edges; `num4` extension; chroma >32 rule; padded stride with sentinel bytes |
 | DC | Both/left-only/above-only/none; hand-computed `approx_divide`; 64×64 power-of-two average |

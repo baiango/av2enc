@@ -407,11 +407,20 @@ void intra_edge_filter(EdgeRow& row, int size, int strength) noexcept {
                                  {0, 5, 6, 5, 0},
                                  {2, 4, 4, 4, 2}};
   const int* taps = kKernel[strength - 1];
+
+  // §7.13.2.18: edge[i] = LeftCol[i-1] / AboveRow[i-1] is a snapshot of the
+  // original samples. Filtered outputs are written back to LeftCol/AboveRow
+  // (logical indices -1..size-2) and must not be read by later taps.
+  std::array<int, EdgeRow::kMaxIndex + 1> edge{};
+  for (int i = 0; i < size; ++i) {
+    edge[static_cast<std::size_t>(i)] = row[i - 1];
+  }
+
   for (int i = 1; i < size; ++i) {
     int sum = 0;
     for (int j = 0; j < 5; ++j) {
       const int k = clip3(0, size - 1, i - 2 + j);
-      sum += taps[j] * row[k - 1];
+      sum += taps[j] * edge[static_cast<std::size_t>(k)];
     }
     row[i - 1] = static_cast<std::int16_t>((sum + 8) >> 4);
   }
