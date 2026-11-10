@@ -1,5 +1,12 @@
 # entropy/ — adaptive multi-symbol range coder
 
+> **Normative AV2 coder:** the conformant §8.2 implementation is now in
+> [`av2/`](av2/README.md) (`av2_entropy.h`, `av2_entropy.cpp`,
+> `av2_entropy_test.cpp`).  It is a separate, from-scratch 15-bit
+> `SymbolRange`/`SymbolValue` state machine and is the coder that must be used
+> for AV2 tile payloads.  The generic scaffold below is retained for its
+> arithmetic-coding tests and is **not** AV2-compatible.
+
 Standalone arithmetic-coding foundation for the AV2 encoder.  It implements a
 32-bit range coder with byte renormalization and an adaptive multi-symbol CDF
 (1–16 symbols).  It contains **no AV2 syntax** and is **not** the normative AV2

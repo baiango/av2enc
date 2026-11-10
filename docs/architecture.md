@@ -68,6 +68,24 @@ AV2's range coder is serial **within a tile**, but tiles are independent. So:
 - If a layout fails `dav2d`, fall back to one tile and a single overlapped CPU
   entropy thread; do not silently emit streams the gate rejects.
 
+Implementation status: the normative §8.2 CPU coder is in `src/entropy/av2/`
+(115,080 checks passing, ASan/UBSan clean, `nvcc -arch=sm_86` compile check).
+It is the correctness reference for the CUDA port.
+
+CUDA occupancy warning: a tile is strictly serial, so 4×2 = 8 blocks and
+8×2 = 16 blocks, each with one active coding lane. On a 28-SM 3060 that is far
+below one warp per SM. The entropy stage will be latency-bound. Mitigations:
+
+- overlap tile entropy with the next frame's GPU compute
+- buffer tile output in shared memory and flush bytes/words, never per-bit
+  global writes
+- batch independent keyframes/tiles where dependencies allow
+- treat a short serial entropy tail as acceptable; tile count alone will not
+  saturate the GPU
+
+The full CDF set is ~46.7 KiB of shared memory per workgroup; keep the tile
+state POD and caller-owned.
+
 ## GPU portability: 3060 primary, 5070 secondary
 
 The **RTX 3060 (sm_86, 12 GB, 28 SMs)** is the baseline. The **RTX 5070
@@ -149,16 +167,21 @@ The default gate remains the **8 GB-compatible profile**.
 
 Initial profiles (starting points, tune with profiling):
 
-| Profile | VRAM cap | Lookahead | Refs | Tiles | RDO cache | Search |
-|---|---:|---:|---:|---:|---:|---:|
-| `compat8g` (default) | 7,500 MB | 4 | 4 | 4×2 | 1× | ±64 |
-| `auto12g` | 11,000 MB | 12 | 8 | 8×2 | 2× | ±96 |
-| `auto16g` | 15,000 MB | 16 | 12 | 8×2 / 16×2 | 3× | ±112 |
-| `auto24g` | 20,000 MB | 24 | 16 | 8×2 / 16×2 | 4× | ±128 |
+| Profile | VRAM cap | Lookahead | Refs | Tiles | RDO cache | Search | Notes |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `compat4g` | 3,500 MB | 1 | 2 | 2×2 | 1× | ±32 | 1080p recommended |
+| `compat6g` | 5,500 MB | 2 | 3 | 2×2 / 4×2 | 1× | ±48 | 1080p, light 1440p |
+| `compat8g` (default) | 7,500 MB | 4 | 4 | 4×2 | 1× | ±64 | 8 GB 3060 |
+| `auto12g` | 11,000 MB | 12 | 8 | 8×2 | 2× | ±96 | 12 GB 3060 |
+| `auto16g` | 15,000 MB | 16 | 12 | 8×2 / 16×2 | 3× | ±112 | 16 GB cards |
+| `auto24g` | 20,000 MB | 24 | 16 | 8×2 / 16×2 | 4× | ±128 | 24 GB cards |
 
-`auto` picks the profile from total VRAM and memory bandwidth. A 16 GB card
-could be a 4060 Ti, 5070 Ti, 4070 Ti Super, or something else; capacity alone
-does not determine whether aggressive precompute pays. Bandwidth does.
+`auto` picks by capacity (4/6/8/12/16/24 GB) and memory bandwidth. A 4 GB
+GTX 1650 and a 4 GB RTX 3050 are not the same target: the former is Turing
+(`sm_75`), the latter Ampere (`sm_86`). The current fatbin is `sm_86;sm_120`.
+Supporting Turing requires a separate `sm_75` build and a synchronous-load
+fallback for code that assumes `cp.async`; that is not enabled yet.
+
 
 Priority order when spending extra VRAM:
 
