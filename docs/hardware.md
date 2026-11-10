@@ -5,7 +5,10 @@ the CPU model, physical/logical cores, RAM, OS, and GPU. `score_speed.py` refuse
 to compare reports from different CPU models unless `--allow-mixed-hardware` is
 passed.
 
-## Mac benchmark host (AVM baseline)
+## Mac benchmark host (AVM/CVVDP only)
+
+**Not an encoder build target.** This machine is used only to run AVM and score
+quality with CVVDP/MPS.
 
 | | |
 |---|---|
@@ -20,7 +23,7 @@ passed.
 This is the machine used for the AVM baseline. It is fast single-threaded, which
 matters for encoder orchestration, mode decision, and entropy coding.
 
-## Vast.ai box (GPU development)
+## Vast.ai box (encoder target)
 
 | | |
 |---|---|

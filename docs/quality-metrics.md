@@ -12,6 +12,9 @@ The reference decoder is the gate; the metrics are the scoreboard.
 | CVVDP | ColorVideoVDP 0.5.7 | JOD, `standard_fhd`, MPS on Apple Silicon |
 | Decode gate | dav2d f9dafbc | must decode every stream |
 
+The Mac is used for AVM encoding and CVVDP scoring only. It is **not** an encoder
+build target.
+
 ## One command
 
 ```sh

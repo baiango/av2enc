@@ -15,7 +15,8 @@ output, compare pixels). Do not read or copy their encoder-side code.
 ## Target
 
 - GPU: RTX 3060 12GB (Vast.ai), CUDA 12.8, compute capability 8.6
-- Host: Linux, C++20, CUDA, CMake + Ninja
+- Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja**. CPU is a reference/test
+  path only, not the product.
 - Encoder architecture: GPU-resident. CPU only launches work, handles OBU
   headers and file I/O; pixel work, mode decision, filters, and tile entropy
   stay on the GPU.
@@ -33,8 +34,11 @@ Disk is 16GB: keep test media tiny (<100MB total), prefer 64x64/256x256 frames.
 
 ## Platforms
 
-- **macOS arm64** — development, AVM baseline, CVVDP/MPS, host tests.
-- **Linux x86_64** — Vast.ai RTX 3060 build/run, dav2d gate, CUDA benchmarks.
+- **Linux x86_64 + CUDA** — the only supported encoder target (Vast.ai RTX 3060,
+  CUDA 12.8).
+- **macOS arm64** — **not an encoder build target.** It is used only for the AVM
+  baseline, AVM encoding, and CVVDP/MPS quality scoring. CPU reference tests may
+  run there, but Mac encoder support is not promised.
 - **Windows** — unsupported and untested. There is no Windows machine here, so
   if you want to run this on Windows: **good luck**. The C++20/CUDA sources are
   portable in principle, but the tooling is POSIX (`tools/*.sh`, SSH/tar sync).

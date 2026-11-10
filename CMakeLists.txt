@@ -10,9 +10,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# CUDA is optional. Keep the option OFF by default; detect nvcc so the build
-# still works on macOS and other CPU-only hosts.
-option(AV2ENC_ENABLE_CUDA "Build the optional CUDA backend (requires nvcc)" OFF)
+# CUDA is the product target. The CPU-only build exists only for reference
+# tests and should not be used to judge encoder support.
+option(AV2ENC_ENABLE_CUDA "Build the CUDA encoder backend (requires nvcc)" ON)
 
 include(CheckLanguage)
 check_language(CUDA)
@@ -32,8 +32,9 @@ if(AV2ENC_ENABLE_CUDA)
     message(STATUS "av2enc: CUDA backend enabled (architectures: ${CMAKE_CUDA_ARCHITECTURES})")
   else()
     message(WARNING
-      "av2enc: AV2ENC_ENABLE_CUDA=ON but no CUDA compiler was found; "
-      "building the CPU-only encoder")
+      "av2enc: AV2ENC_ENABLE_CUDA=ON but no CUDA compiler was found. "
+      "Building the CPU-only reference path; this is NOT a supported encoder "
+      "target. The product build is Linux + CUDA.")
   endif()
 else()
   message(STATUS "av2enc: CUDA backend disabled (AV2ENC_ENABLE_CUDA=OFF)")

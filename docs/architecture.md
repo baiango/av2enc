@@ -2,9 +2,13 @@
 
 ## Language / toolchain (locked)
 
+- **CUDA/Linux is the product target.** macOS is not an encoder target; it is
+  only an AVM/CVVDP scoring host.
 - Host: **C++20**
 - GPU: **CUDA C++**, CUDA 12.8, `sm_86`
 - Build: CMake >= 3.24 + Ninja
+- CPU scalar code is a correctness/test reference, not a supported encoder
+  deliverable.
 - Warnings: `-Wall -Wextra -Wpedantic -Wconversion -Wshadow`
 - No exceptions in hot paths; use error codes / `std::optional`
 - Prefer `std::span`, `std::byte`, `std::unique_ptr`, RAII
