@@ -21,6 +21,8 @@ output, compare pixels). Do not read or copy their encoder-side code.
   tensor-core/FP4 paths) are required.
 - VRAM: hard default ceiling **7,500 MB**, so the 8 GB RTX 3060 variant is
   supported. The 12 GB box is tested with the same cap.
+- Extra VRAM scales **precompute** (`compat8g` default, `auto12g` /
+  `auto24g` opt-in), never compression-tool shortcuts.
 - Encoder architecture: GPU-resident. CPU only launches work, handles OBU
   headers and file I/O; pixel work, mode decision, filters, and tile entropy
   stay on the GPU.

@@ -142,6 +142,40 @@ Rough frame sizes (8-bit 4:2:0):
 7.5 GB; the risk is per-block RDO buffers, so those live in the capped scratch
 arena and are reused.
 
+### Precompute scaling
+
+More VRAM may buy more precompute, but only in a deterministic, logged profile.
+The default gate remains the **8 GB-compatible profile**.
+
+Initial profiles (starting points, tune with profiling):
+
+| Profile | VRAM cap | Lookahead | Refs | Tiles | RDO cache | Search |
+|---|---:|---:|---:|---:|---:|---:|
+| `compat8g` (default) | 7,500 MB | 4 | 4 | 4×2 | 1× | ±64 |
+| `auto12g` | 11,000 MB | 12 | 8 | 8×2 | 2× | ±96 |
+| `auto24g` | 20,000 MB | 24 | 16 | 8×2 / 16×2 | 4× | ±128 |
+
+Priority order when spending extra VRAM:
+
+1. reference pool (quality)
+2. lookahead / temporal decisions (quality)
+3. RDO candidate cache (quality and speed)
+4. tile batching (GPU occupancy)
+5. larger search ranges (quality, compute-heavy)
+
+Rules:
+
+- `--vram-limit-mb` and `--precompute <compat8g|auto12g|auto24g|auto>` select the
+  profile. `auto` picks from total VRAM and memory bandwidth.
+- Estimate `frame_bytes × (refs + lookahead + 2) + scratch + candidate cache`
+  before allocating. Keep at least 512 MB headroom.
+- 8 GB cards have less bandwidth; extra precompute may not pay off. The 5070’s
+  higher bandwidth makes aggressive precompute more attractive.
+- Log `precompute_profile`, `precompute_level`, `vram_limit_mb`, and
+  `peak_vram_mb`. Compare QBS only at the same profile.
+- Precompute may change encoder decisions, but the output must still pass
+  `dav2d`; it must never reduce quality just to use memory.
+
 ## Quality gate
 
 GPU residency must not reduce compression. Speed is only scored after the
