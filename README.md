@@ -1,25 +1,21 @@
 # av2enc — from-scratch GPU AV2 encoder
 
-> **Vibe-coded:** This project is built with **DeepSeek V4.1 Flash** in
+> **Vibe-coded:** This project is built with **DeepSeek V4.1 Flash 1017** in
 > **OpenCode**, with AI subagents writing most of the code and a human directing
 > the architecture and review. Treat it accordingly.
 
 ## Status (2026-11-11)
 
-**First frame decodes with `dav2d`.** A 64×64, 8-bit 4:2:0, one-tile M0
-still picture is produced by the CPU reference path:
+**First frames decode with `dav2d`.** The CPU reference path produces real AV2
+still pictures; the CUDA kernels are not wired into the encode path yet.
 
-```text
-IVF:       1,138 bytes, FourCC AV02
-Decoded:   64x64 yuv420p, 1 frame
-MD5:       7efc3162bc0a4785685eba291a8096fd
-PSNR:      Y 41.72 dB, average 42.13 dB
-Gate:      tools/validate_dav2d.sh out.ivf  -> exit 0
-```
+| Case | IVF | MD5 | PSNR avg |
+|---|---:|---|---:|
+| 64x64 | 1,138 B | `7efc3162bc0a4785685eba291a8096fd` | 42.13 dB |
+| 640x360 | 19,751 B | `56f11d4a63ff07f2356ef5064b84fe0e` | 47.20 dB |
 
-Locked by `tests/m0_encode_smoke.sh`. The CUDA kernels are not wired into the
-encode path yet; this proves the bitstream, not the GPU backend. Adaptive CDFs
-are disabled (`disable_cdf_update=1`) for this first frame.
+Both are gated by `tests/m0_encode_smoke.sh`; the CUDA build passes 6/6 tests.
+Adaptive CDFs are disabled (`disable_cdf_update=1`) for these frames.
 
 ## Hard constraint
 

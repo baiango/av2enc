@@ -31,5 +31,6 @@ Notes:
 - Our current 640x384 padded 360p still was 19,772 bytes / 47.48 dB; it is not
   an apples-to-apples comparison because of the pad and the lack of inter
   prediction.
-- Exact 640x360 support in `av2enc` is in progress; the current stream is
-  rejected by `dav2d` due to the bottom partial superblock partition.
+- `av2enc` M0 now supports exact 640x360: 19,751 bytes, PSNR 47.20 dB, MD5
+  `56f11d4a63ff07f2356ef5064b84fe0e`. AVM is still ~1.95× smaller and ~2.8 dB
+  better on the same one-frame input because M0 is DC-intra only.

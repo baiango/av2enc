@@ -36,7 +36,7 @@ void print_usage(std::ostream& out) {
          "M0 still-picture encoder: 8-bit 4:2:0, one key frame, one tile,\n"
          "64x64 superblocks, 32x32 DCT, DC intra only, no loop filters.\n"
          "Writes one AV2 frame (TD + SEQ + CLK) into an IVF with fourcc AV02.\n"
-         "Input dimensions must be multiples of 64.\n"
+         "Input dimensions must be even (4:2:0); edge superblocks may be partial.\n"
          "\n"
          "Options:\n"
          "  -o, --output <file>  Output IVF path (required)\n"
@@ -196,8 +196,8 @@ int main(int argc, char** argv) {
     return 1;
   };
 
-  if (y4m.width % 64U != 0U || y4m.height % 64U != 0U) {
-    std::cerr << "av2enc: error: M0 requires dimensions that are multiples of 64, got "
+  if (y4m.width % 2U != 0U || y4m.height % 2U != 0U) {
+    std::cerr << "av2enc: error: M0 4:2:0 requires even dimensions, got "
               << y4m.width << "x" << y4m.height << "\n";
     return 1;
   }

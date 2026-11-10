@@ -50,7 +50,7 @@ def main():
         lines.append(fmt_flat(scan))
         lines.append("};")
         lines.append("")
-    for n in (16, 32):
+    for n in (4, 8, 16, 32):
         kernel = kernels[f"Dct_Kernel{n}"]
         assert len(kernel) == n and all(len(row) == n for row in kernel)
         lines.append(f"// Dct_Kernel{n}[j][i]: j = input coefficient, i = output sample.")
