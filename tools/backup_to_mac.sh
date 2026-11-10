@@ -36,6 +36,8 @@ COPYFILE_DISABLE=1 tar czf "$DEST/worktree.tar.gz" \
   --exclude='./tools/bin' \
   --exclude='./src/profile/build' \
   --exclude='./bench/hello_cuda/build*' \
+  --exclude='*.y4m' --exclude='*.ivf' --exclude='*.webm' --exclude='*.mp4' \
+  --exclude='*.log' --exclude='*.nsys-rep' --exclude='*.sqlite' \
   .
 
 echo "==> remote snapshot"
@@ -43,7 +45,9 @@ set +e
 COPYFILE_DISABLE=1 ssh -p "$PORT" -o BatchMode=yes "$REMOTE" \
   "cd /workspace/av2enc && tar czf - \
      --exclude='./build*' --exclude='./testdata' --exclude='./tools/bin' \
-     --exclude='./src/profile/build' --exclude='./bench/hello_cuda/build*' ." \
+     --exclude='./src/profile/build' --exclude='./bench/hello_cuda/build*' \
+     --exclude='*.y4m' --exclude='*.ivf' --exclude='*.webm' --exclude='*.mp4' \
+     --exclude='*.log' --exclude='*.nsys-rep' --exclude='*.sqlite' ." \
   > "$DEST/remote-worktree.tar.gz"
 RC=$?
 set -e
