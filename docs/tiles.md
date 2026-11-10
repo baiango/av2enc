@@ -399,9 +399,10 @@ Differences, exhaustively:
   reported to decode 1x1, 2x1, 2x2, 4x2 and 8x2 layouts, but this has not been
   verified in this repo. TODO: run `tools/validate_dav2d.sh` on a 2x2 stream and
   confirm the decoded YUV matches the 1x1 encode of the same frame.
-- **8-row/8-column layouts at 720p**: `sbRows = 12` → `maxLog2TileRows = 3` (8 rows
-  possible), columns `sbCols = 20` → `maxLog2TileCols = 5`. 8x2 is within limits at
-  level 5.0 only if `maxTileWidthSb` ≥ 20 SB; at level 5.0 it is 64 SB. OK.
+- **8-row/8-column layouts at 720p**: `sbRows = 12` →
+  `maxLog2TileRows = tile_log2(1, 12) = 4` (up to 16 rows), `sbCols = 20` →
+  `maxLog2TileCols = tile_log2(1, 20) = 5` (up to 32 columns). 8x2 is within both
+  limits; the width bound at level 5.0 is `maxTileWidthSb = 64` SBs. OK.
 - **Tile size field width**: the `f(2)` range only allows 1..4 bytes. For very high
   bitrate/large tiles a 4-byte limit may force smaller tiles. Not yet modelled.
 - **`context_update_tile_id` in non-still profiles**: exact encoder policy is a

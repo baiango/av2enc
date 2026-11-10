@@ -1,0 +1,3647 @@
+[
+{
+"id": "subtitle",
+"level": 2,
+"title": ""
+},
+{
+"id": "profile-and-date",
+"level": 3,
+"title": "Final Deliverable, 28 May 2026"
+},
+{
+"id": "abstract",
+"level": 2,
+"title": "Abstract"
+},
+{
+"id": "contents",
+"level": 2,
+"title": "Table of Contents"
+},
+{
+"id": "introduction",
+"level": 2,
+"title": "Introduction"
+},
+{
+"id": "scope",
+"level": 2,
+"title": "1. Scope"
+},
+{
+"id": "terms_and_definitions",
+"level": 2,
+"title": "2. Terms and definitions"
+},
+{
+"id": "symbols",
+"level": 2,
+"title": "3. Symbols"
+},
+{
+"id": "conventions",
+"level": 2,
+"title": "4. Conventions"
+},
+{
+"id": "conventions-general",
+"level": 3,
+"title": "4.1. General"
+},
+{
+"id": "conventions-arithmetic-operators",
+"level": 3,
+"title": "4.2. Arithmetic operators"
+},
+{
+"id": "conventions-ternary-operator",
+"level": 3,
+"title": "4.3. Ternary operator"
+},
+{
+"id": "conventions-logical-operators",
+"level": 3,
+"title": "4.4. Logical operators"
+},
+{
+"id": "conventions-relational-operators",
+"level": 3,
+"title": "4.5. Relational operators"
+},
+{
+"id": "conventions-bitwise-operators",
+"level": 3,
+"title": "4.6. Bitwise operators"
+},
+{
+"id": "conventions-assignment",
+"level": 3,
+"title": "4.7. Assignment"
+},
+{
+"id": "conventions-mathematical-functions",
+"level": 3,
+"title": "4.8. Mathematical functions"
+},
+{
+"id": "conventions-bitstream-syntax",
+"level": 3,
+"title": "4.9. Method of describing bitstream syntax"
+},
+{
+"id": "conventions-functions",
+"level": 3,
+"title": "4.10. Functions"
+},
+{
+"id": "conventions-descriptors",
+"level": 3,
+"title": "4.11. Descriptors"
+},
+{
+"id": "conventions-descriptors-general",
+"level": 4,
+"title": "4.11.1. General"
+},
+{
+"id": "conventions-descriptors-fn",
+"level": 4,
+"title": "4.11.2. f(n)"
+},
+{
+"id": "conventions-descriptors-uvlc",
+"level": 4,
+"title": "4.11.3. uvlc()"
+},
+{
+"id": "conventions-descriptors-svlc",
+"level": 4,
+"title": "4.11.4. svlc()"
+},
+{
+"id": "conventions-descriptors-len",
+"level": 4,
+"title": "4.11.5. le(n)"
+},
+{
+"id": "conventions-descriptors-leb128",
+"level": 4,
+"title": "4.11.6. leb128()"
+},
+{
+"id": "conventions-descriptors-sun",
+"level": 4,
+"title": "4.11.7. su(n)"
+},
+{
+"id": "conventions-descriptors-nsn",
+"level": 4,
+"title": "4.11.8. ns(n)"
+},
+{
+"id": "conventions-descriptors-tumx",
+"level": 4,
+"title": "4.11.9. tu(mx)"
+},
+{
+"id": "conventions-descriptors-rgn",
+"level": 4,
+"title": "4.11.10. rg(n)"
+},
+{
+"id": "conventions-descriptors-ln",
+"level": 4,
+"title": "4.11.11. L(n)"
+},
+{
+"id": "conventions-descriptors-s",
+"level": 4,
+"title": "4.11.12. S()"
+},
+{
+"id": "conventions-descriptors-nsn2",
+"level": 4,
+"title": "4.11.13. NS(n)"
+},
+{
+"id": "syntax_structures",
+"level": 2,
+"title": "5. Syntax structures"
+},
+{
+"id": "syntax_general",
+"level": 3,
+"title": "5.1. General"
+},
+{
+"id": "obu_syntax",
+"level": 3,
+"title": "5.2. OBU syntax"
+},
+{
+"id": "general_obu_syntax",
+"level": 4,
+"title": "5.2.1. General OBU syntax"
+},
+{
+"id": "obu_header_syntax",
+"level": 4,
+"title": "5.2.2. OBU header syntax"
+},
+{
+"id": "trailing_bits_syntax",
+"level": 4,
+"title": "5.2.3. Trailing bits syntax"
+},
+{
+"id": "byte_alignment_syntax",
+"level": 4,
+"title": "5.2.4. Byte alignment syntax"
+},
+{
+"id": "reserved_obu_syntax",
+"level": 3,
+"title": "5.3. Reserved OBU syntax"
+},
+{
+"id": "sequence_header_obu_syntax",
+"level": 3,
+"title": "5.4. Sequence header OBU syntax"
+},
+{
+"id": "general_sequence_header_obu_syntax",
+"level": 4,
+"title": "5.4.1. General sequence header OBU syntax"
+},
+{
+"id": "sequence_tile_config_syntax",
+"level": 4,
+"title": "5.4.2. Sequence tile config syntax"
+},
+{
+"id": "sequence_partition_config_syntax",
+"level": 4,
+"title": "5.4.3. Sequence partition config syntax"
+},
+{
+"id": "sequence_segment_config_syntax",
+"level": 4,
+"title": "5.4.4. Sequence segment config syntax"
+},
+{
+"id": "sequence_intra_config_syntax",
+"level": 4,
+"title": "5.4.5. Sequence intra config syntax"
+},
+{
+"id": "sequence_inter_config_syntax",
+"level": 4,
+"title": "5.4.6. Sequence inter config syntax"
+},
+{
+"id": "sequence_scc_config_syntax",
+"level": 4,
+"title": "5.4.7. Sequence screen content config syntax"
+},
+{
+"id": "sequence_transform_quant_entropy_config_syntax",
+"level": 4,
+"title": "5.4.8. Sequence transform quant entropy config syntax"
+},
+{
+"id": "segment_information_syntax",
+"level": 4,
+"title": "5.4.9. Segment information syntax"
+},
+{
+"id": "sequence_filter_config_syntax",
+"level": 4,
+"title": "5.4.10. Sequence filter config syntax"
+},
+{
+"id": "user_defined_qm_syntax",
+"level": 4,
+"title": "5.4.11. User defined QM syntax"
+},
+{
+"id": "timing_info_syntax",
+"level": 4,
+"title": "5.4.12. Timing info syntax"
+},
+{
+"id": "seq_decoder_model_info_syntax",
+"level": 4,
+"title": "5.4.13. Sequence decoder model info syntax"
+},
+{
+"id": "temporal_delimiter_obu_syntax",
+"level": 3,
+"title": "5.5. Temporal delimiter OBU syntax"
+},
+{
+"id": "multistream_decoder_operation_obu_syntax",
+"level": 3,
+"title": "5.6. Multi Stream Decoder Operation OBU syntax"
+},
+{
+"id": "multi_frame_header_obu_syntax",
+"level": 3,
+"title": "5.7. Multi frame header OBU syntax"
+},
+{
+"id": "layer_config_record_obu_syntax",
+"level": 3,
+"title": "5.8. Layer config record OBU syntax"
+},
+{
+"id": "lcr_global_info_syntax",
+"level": 4,
+"title": "5.8.1. LCR global info syntax"
+},
+{
+"id": "lcr_local_info_syntax",
+"level": 4,
+"title": "5.8.2. LCR local info syntax"
+},
+{
+"id": "lcr_aggregate_info",
+"level": 4,
+"title": "5.8.3. LCR aggregate info syntax"
+},
+{
+"id": "lcr_seq_profile_tier_level_info",
+"level": 4,
+"title": "5.8.4. LCR sequence profile tier level information syntax"
+},
+{
+"id": "lcr_global_payload_syntax",
+"level": 4,
+"title": "5.8.5. LCR global payload syntax"
+},
+{
+"id": "lcr_xlayer_info_syntax",
+"level": 4,
+"title": "5.8.6. LCR xlayer info syntax"
+},
+{
+"id": "lcr_rep_info_syntax",
+"level": 4,
+"title": "5.8.7. LCR rep info syntax"
+},
+{
+"id": "lcr_embedded_layer_info_syntax",
+"level": 4,
+"title": "5.8.8. LCR embedded layer info syntax"
+},
+{
+"id": "lcr_xlayer_color_info_syntax",
+"level": 4,
+"title": "5.8.9. LCR xlayer color info syntax"
+},
+{
+"id": "atlas_segment_info_obu_syntax",
+"level": 3,
+"title": "5.9. Atlas segment info OBU syntax"
+},
+{
+"id": "ats_label_segment_info_syntax",
+"level": 4,
+"title": "5.9.1. Atlas label segment info syntax"
+},
+{
+"id": "ats_enhanced_atlas_info_syntax",
+"level": 4,
+"title": "5.9.2. Atlas enhanced atlas info syntax"
+},
+{
+"id": "ats_region_info_syntax",
+"level": 5,
+"title": "5.9.2.1. Atlas region info syntax"
+},
+{
+"id": "ats_region_to_segment_mapping_syntax",
+"level": 5,
+"title": "5.9.2.2. Atlas region to segment mapping syntax"
+},
+{
+"id": "ats_multistream_info_syntax",
+"level": 4,
+"title": "5.9.3. Atlas multistream info syntax"
+},
+{
+"id": "ats_multistream_with_alpha_info_syntax",
+"level": 4,
+"title": "5.9.4. Atlas multistream with alpha info syntax"
+},
+{
+"id": "ats_basic_info_syntax",
+"level": 4,
+"title": "5.9.5. Atlas basic info syntax"
+},
+{
+"id": "operating_point_set_obu_syntax",
+"level": 3,
+"title": "5.10. Operating point set OBU syntax"
+},
+{
+"id": "operating_point_payload_syntax",
+"level": 3,
+"title": "5.11. Operating point payload syntax"
+},
+{
+"id": "ops_aggregate_info",
+"level": 4,
+"title": "5.11.1. Operating point set aggregate info syntax"
+},
+{
+"id": "ops_seq_profile_tier_level_info",
+"level": 4,
+"title": "5.11.2. Operating point set sequence profile tier level information syntax"
+},
+{
+"id": "ops_decoder_model_info_syntax",
+"level": 4,
+"title": "5.11.3. Operating point set decoder model info syntax"
+},
+{
+"id": "ops_color_info_syntax",
+"level": 4,
+"title": "5.11.4. Operating point set color info syntax"
+},
+{
+"id": "ops_mlayer_info_syntax",
+"level": 4,
+"title": "5.11.5. Operating point set mlayer info syntax"
+},
+{
+"id": "buffer_removal_timing_obu_syntax",
+"level": 3,
+"title": "5.12. Buffer removal timing OBU syntax"
+},
+{
+"id": "quantizer_matrix_obu_syntax",
+"level": 3,
+"title": "5.13. Quantizer Matrix OBU syntax"
+},
+{
+"id": "film_grain_obu_syntax",
+"level": 3,
+"title": "5.14. Film grain OBU syntax"
+},
+{
+"id": "content_interpretation_obu_syntax",
+"level": 3,
+"title": "5.15. Content interpretation OBU syntax"
+},
+{
+"id": "padding_obu_syntax",
+"level": 3,
+"title": "5.16. Padding OBU syntax"
+},
+{
+"id": "metadata_obu_syntax",
+"level": 3,
+"title": "5.17. Metadata OBU syntax"
+},
+{
+"id": "metadata_unit_syntax",
+"level": 4,
+"title": "5.17.1. Metadata unit syntax"
+},
+{
+"id": "metadata_short_obu_syntax",
+"level": 4,
+"title": "5.17.2. Metadata short OBU syntax"
+},
+{
+"id": "metadata_group_obu_syntax",
+"level": 4,
+"title": "5.17.3. Metadata group OBU syntax"
+},
+{
+"id": "metadata_itut_t35_syntax",
+"level": 4,
+"title": "5.17.4. Metadata ITUT T35 syntax"
+},
+{
+"id": "metadata_high_dynamic_range_content_light_level_syntax",
+"level": 4,
+"title": "5.17.5. Metadata high dynamic range content light level syntax"
+},
+{
+"id": "metadata_high_dynamic_range_mastering_display_color_volume_syntax",
+"level": 4,
+"title": "5.17.6. Metadata high dynamic range mastering display color volume syntax"
+},
+{
+"id": "metadata_timecode_syntax",
+"level": 4,
+"title": "5.17.7. Metadata timecode syntax"
+},
+{
+"id": "metadata_banding_hints_syntax",
+"level": 4,
+"title": "5.17.8. Metadata banding hints syntax"
+},
+{
+"id": "metadata_icc_profile_syntax",
+"level": 4,
+"title": "5.17.9. Metadata ICC profile syntax"
+},
+{
+"id": "metadata_scan_type_syntax",
+"level": 4,
+"title": "5.17.10. Metadata scan type syntax"
+},
+{
+"id": "metadata_temporal_point_info_syntax",
+"level": 4,
+"title": "5.17.11. Metadata temporal point info syntax"
+},
+{
+"id": "metadata_decoded_frame_hash_syntax",
+"level": 4,
+"title": "5.17.12. Metadata decoded frame hash syntax"
+},
+{
+"id": "metadata_user_data_unregistered_syntax",
+"level": 4,
+"title": "5.17.13. Metadata user data unregistered syntax"
+},
+{
+"id": "frame_header_syntax",
+"level": 3,
+"title": "5.18. Frame header syntax"
+},
+{
+"id": "general_frame_header_syntax",
+"level": 4,
+"title": "5.18.1. General frame header syntax"
+},
+{
+"id": "frame_header_info_syntax",
+"level": 4,
+"title": "5.18.2. Frame header info syntax"
+},
+{
+"id": "frame_configuration_structures",
+"level": 4,
+"title": "5.18.3. Frame configuration structures"
+},
+{
+"id": "get_relative_distance_function",
+"level": 5,
+"title": "5.18.3.1. Get relative distance function"
+},
+{
+"id": "frame_opfl_refine_type_syntax",
+"level": 5,
+"title": "5.18.3.2. Frame optical flow refine type syntax"
+},
+{
+"id": "screen_content_params_syntax",
+"level": 5,
+"title": "5.18.3.3. Screen content params syntax"
+},
+{
+"id": "intrabc_params_syntax",
+"level": 5,
+"title": "5.18.3.4. Intra block copy params syntax"
+},
+{
+"id": "frame_size_structures",
+"level": 4,
+"title": "5.18.4. Frame size structures"
+},
+{
+"id": "frame_size_syntax",
+"level": 5,
+"title": "5.18.4.1. Frame size syntax"
+},
+{
+"id": "frame_size_with_bridge_syntax",
+"level": 5,
+"title": "5.18.4.2. Frame size with bridge syntax"
+},
+{
+"id": "frame_size_with_refs_syntax",
+"level": 5,
+"title": "5.18.4.3. Frame size with refs syntax"
+},
+{
+"id": "compute_image_size_function",
+"level": 5,
+"title": "5.18.4.4. Compute image size function"
+},
+{
+"id": "filtering_structures_frame_header",
+"level": 4,
+"title": "5.18.5. Filtering structures"
+},
+{
+"id": "interpolation_filter_syntax",
+"level": 5,
+"title": "5.18.5.1. Interpolation filter syntax"
+},
+{
+"id": "deblocking_filter_params_syntax",
+"level": 5,
+"title": "5.18.5.2. Deblocking filter params syntax"
+},
+{
+"id": "quantization_structures",
+"level": 4,
+"title": "5.18.6. Quantization structures"
+},
+{
+"id": "quantization_params_syntax",
+"level": 5,
+"title": "5.18.6.1. Quantization params syntax"
+},
+{
+"id": "setup_qm_params_syntax",
+"level": 5,
+"title": "5.18.6.2. Setup QM params syntax"
+},
+{
+"id": "delta_quantizer_syntax",
+"level": 5,
+"title": "5.18.6.3. Delta quantizer syntax"
+},
+{
+"id": "segmentation_and_tiling_structures",
+"level": 4,
+"title": "5.18.7. Segmentation and tiling structures"
+},
+{
+"id": "segmentation_params_syntax",
+"level": 5,
+"title": "5.18.7.1. Segmentation params syntax"
+},
+{
+"id": "tile_info_syntax",
+"level": 5,
+"title": "5.18.7.2. Tile info syntax"
+},
+{
+"id": "tile_params_syntax",
+"level": 5,
+"title": "5.18.7.3. Tile params syntax"
+},
+{
+"id": "reuse_tile_params",
+"level": 5,
+"title": "5.18.7.4. Reuse tile params function"
+},
+{
+"id": "uniform_spacing_function",
+"level": 5,
+"title": "5.18.7.5. Uniform spacing function"
+},
+{
+"id": "get_seq_sb_size_function",
+"level": 5,
+"title": "5.18.7.6. Get sequence superblock size function"
+},
+{
+"id": "tile_size_calculation_function",
+"level": 5,
+"title": "5.18.7.7. Tile size calculation function"
+},
+{
+"id": "quantizer_index_delta_parameters_syntax",
+"level": 5,
+"title": "5.18.7.8. Quantizer index delta parameters syntax"
+},
+{
+"id": "gdf_params_syntax",
+"level": 5,
+"title": "5.18.7.9. GDF params syntax"
+},
+{
+"id": "cdef_params_syntax",
+"level": 5,
+"title": "5.18.7.10. CDEF params syntax"
+},
+{
+"id": "loop_restoration_params_syntax",
+"level": 5,
+"title": "5.18.7.11. Loop restoration params syntax"
+},
+{
+"id": "ccso_params_syntax",
+"level": 5,
+"title": "5.18.7.12. CCSO params syntax"
+},
+{
+"id": "transform_and_coding_mode_structures",
+"level": 4,
+"title": "5.18.8. Transform and coding mode structures"
+},
+{
+"id": "tx_mode_syntax",
+"level": 5,
+"title": "5.18.8.1. TX mode syntax"
+},
+{
+"id": "skip_mode_params_syntax",
+"level": 5,
+"title": "5.18.8.2. Skip mode params syntax"
+},
+{
+"id": "frame_reference_mode_syntax",
+"level": 5,
+"title": "5.18.8.3. Frame reference mode syntax"
+},
+{
+"id": "global_motion_structures",
+"level": 4,
+"title": "5.18.9. Global motion structures"
+},
+{
+"id": "global_motion_params_syntax",
+"level": 5,
+"title": "5.18.9.1. Global motion params syntax"
+},
+{
+"id": "global_param_syntax",
+"level": 5,
+"title": "5.18.9.2. Global param syntax"
+},
+{
+"id": "decode_signed_subexp_with_ref_syntax",
+"level": 5,
+"title": "5.18.9.3. Decode signed subexp with ref syntax"
+},
+{
+"id": "decode_unsigned_subexp_with_ref_syntax",
+"level": 5,
+"title": "5.18.9.4. Decode unsigned subexp with ref syntax"
+},
+{
+"id": "decode_subexp_syntax",
+"level": 5,
+"title": "5.18.9.5. Decode subexp syntax"
+},
+{
+"id": "inverse_recenter_function",
+"level": 5,
+"title": "5.18.9.6. Inverse recenter function"
+},
+{
+"id": "film_grain_structures",
+"level": 4,
+"title": "5.18.10. Film grain structures"
+},
+{
+"id": "film_grain_config_syntax",
+"level": 5,
+"title": "5.18.10.1. Film grain config syntax"
+},
+{
+"id": "film_grain_model_syntax",
+"level": 5,
+"title": "5.18.10.2. Film grain model syntax"
+},
+{
+"id": "tile_group_obu_syntax",
+"level": 3,
+"title": "5.19. Tile group OBU syntax"
+},
+{
+"id": "tile_group_payload_syntax",
+"level": 3,
+"title": "5.20. Tile group payload syntax"
+},
+{
+"id": "general_tile_group_payload_syntax",
+"level": 4,
+"title": "5.20.1. General tile group payload syntax"
+},
+{
+"id": "tile_level_structures",
+"level": 4,
+"title": "5.20.2. Tile-level structures"
+},
+{
+"id": "decode_tile_syntax",
+"level": 5,
+"title": "5.20.2.1. Decode tile syntax"
+},
+{
+"id": "reset_refmv_bank_function",
+"level": 5,
+"title": "5.20.2.2. Reset reference motion vector bank function"
+},
+{
+"id": "clear_block_decoded_flags_function",
+"level": 5,
+"title": "5.20.2.3. Clear block decoded flags function"
+},
+{
+"id": "partition_structures",
+"level": 4,
+"title": "5.20.3. Partition structures"
+},
+{
+"id": "decode_partition_syntax",
+"level": 5,
+"title": "5.20.3.1. Decode partition syntax"
+},
+{
+"id": "read_partition_syntax",
+"level": 5,
+"title": "5.20.3.2. Read partition syntax"
+},
+{
+"id": "block_decoding_structures",
+"level": 4,
+"title": "5.20.4. Block decoding structures"
+},
+{
+"id": "decode_block_syntax",
+"level": 5,
+"title": "5.20.4.1. Decode block syntax"
+},
+{
+"id": "mode_information_structures",
+"level": 4,
+"title": "5.20.5. Mode information structures"
+},
+{
+"id": "mode_info_syntax",
+"level": 5,
+"title": "5.20.5.1. Mode info syntax"
+},
+{
+"id": "bru_mode_info_syntax",
+"level": 5,
+"title": "5.20.5.2. BRU mode info syntax"
+},
+{
+"id": "intra_frame_mode_info_syntax",
+"level": 5,
+"title": "5.20.5.3. Intra frame mode info syntax"
+},
+{
+"id": "read_intra_bc_syntax",
+"level": 5,
+"title": "5.20.5.4. Read intra block copy syntax"
+},
+{
+"id": "read_intra_y_mode_syntax",
+"level": 5,
+"title": "5.20.5.5. Read intra Y mode syntax"
+},
+{
+"id": "read_intra_uv_mode_syntax",
+"level": 5,
+"title": "5.20.5.6. Read intra UV mode syntax"
+},
+{
+"id": "intra_segment_id_syntax",
+"level": 5,
+"title": "5.20.5.7. Intra segment ID syntax"
+},
+{
+"id": "read_segment_id_syntax",
+"level": 5,
+"title": "5.20.5.8. Read segment ID syntax"
+},
+{
+"id": "skip_mode_syntax",
+"level": 5,
+"title": "5.20.5.9. Skip mode syntax"
+},
+{
+"id": "skip_syntax",
+"level": 5,
+"title": "5.20.5.10. Skip syntax"
+},
+{
+"id": "quantizer_index_delta_syntax",
+"level": 5,
+"title": "5.20.5.11. Quantizer index delta syntax"
+},
+{
+"id": "segmentation_feature_active_function",
+"level": 5,
+"title": "5.20.5.12. Segmentation feature active function"
+},
+{
+"id": "transform_and_quantization_structures",
+"level": 4,
+"title": "5.20.6. Transform and quantization structures"
+},
+{
+"id": "tx_size_syntax",
+"level": 5,
+"title": "5.20.6.1. TX size syntax"
+},
+{
+"id": "block_tx_size_syntax",
+"level": 5,
+"title": "5.20.6.2. Block TX size syntax"
+},
+{
+"id": "read_tx_partition_syntax",
+"level": 5,
+"title": "5.20.6.3. Read TX partition syntax"
+},
+{
+"id": "motion_vector_and_prediction_structures",
+"level": 4,
+"title": "5.20.7. Motion vector and prediction structures"
+},
+{
+"id": "inter_frame_mode_info_syntax",
+"level": 5,
+"title": "5.20.7.1. Inter frame mode info syntax"
+},
+{
+"id": "inter_segment_id_syntax",
+"level": 5,
+"title": "5.20.7.2. Inter segment ID syntax"
+},
+{
+"id": "is_inter_syntax",
+"level": 5,
+"title": "5.20.7.3. Is inter syntax"
+},
+{
+"id": "get_segment_id_function",
+"level": 5,
+"title": "5.20.7.4. Get segment ID function"
+},
+{
+"id": "intra_block_mode_info_syntax",
+"level": 5,
+"title": "5.20.7.5. Intra block mode info syntax"
+},
+{
+"id": "inter_block_mode_info_syntax",
+"level": 5,
+"title": "5.20.7.6. Inter block mode info syntax"
+},
+{
+"id": "read_warp_delta_syntax",
+"level": 5,
+"title": "5.20.7.7. Read warp delta syntax"
+},
+{
+"id": "read_drl_idx_syntax",
+"level": 5,
+"title": "5.20.7.8. Read drl idx syntax"
+},
+{
+"id": "dip_mode_info_syntax",
+"level": 5,
+"title": "5.20.7.9. DIP mode info syntax"
+},
+{
+"id": "ref_frames_syntax",
+"level": 5,
+"title": "5.20.7.10. Ref frames syntax"
+},
+{
+"id": "read_compound_ref_syntax",
+"level": 5,
+"title": "5.20.7.11. Read compound ref syntax"
+},
+{
+"id": "read_single_ref_syntax",
+"level": 5,
+"title": "5.20.7.12. Read single ref syntax"
+},
+{
+"id": "assign_mv_syntax",
+"level": 5,
+"title": "5.20.7.13. Assign MV syntax"
+},
+{
+"id": "read_motion_mode_syntax",
+"level": 5,
+"title": "5.20.7.14. Read motion mode syntax"
+},
+{
+"id": "read_inter_intra_syntax",
+"level": 5,
+"title": "5.20.7.15. Read inter intra syntax"
+},
+{
+"id": "read_compound_type_syntax",
+"level": 5,
+"title": "5.20.7.16. Read compound type syntax"
+},
+{
+"id": "read_refinemv_syntax",
+"level": 5,
+"title": "5.20.7.17. Read refine mv syntax"
+},
+{
+"id": "read_wedge_mode_syntax",
+"level": 5,
+"title": "5.20.7.18. Read wedge mode syntax"
+},
+{
+"id": "get_mode_function",
+"level": 5,
+"title": "5.20.7.19. Get mode function"
+},
+{
+"id": "mv_syntax",
+"level": 5,
+"title": "5.20.7.20. MV syntax"
+},
+{
+"id": "mv_component_syntax",
+"level": 5,
+"title": "5.20.7.21. MV component syntax"
+},
+{
+"id": "compute_prediction_syntax",
+"level": 5,
+"title": "5.20.7.22. Compute prediction syntax"
+},
+{
+"id": "residual_syntax",
+"level": 5,
+"title": "5.20.7.23. Residual syntax"
+},
+{
+"id": "transform_block_syntax",
+"level": 5,
+"title": "5.20.7.24. Transform block syntax"
+},
+{
+"id": "get_tx_size_function",
+"level": 5,
+"title": "5.20.7.25. Get TX size function"
+},
+{
+"id": "get_plane_residual_size_function",
+"level": 5,
+"title": "5.20.7.26. Get plane residual size function"
+},
+{
+"id": "coefficients_syntax",
+"level": 5,
+"title": "5.20.7.27. Coefficients syntax"
+},
+{
+"id": "read_quant_syntax",
+"level": 5,
+"title": "5.20.7.28. Read quantized coefficient syntax"
+},
+{
+"id": "compute_transform_type_function",
+"level": 5,
+"title": "5.20.7.29. Compute transform type function"
+},
+{
+"id": "get_scan_function",
+"level": 5,
+"title": "5.20.7.30. Get scan function"
+},
+{
+"id": "is_directional_mode_function",
+"level": 5,
+"title": "5.20.7.31. Is directional mode function"
+},
+{
+"id": "read_cfl_alphas_syntax",
+"level": 5,
+"title": "5.20.7.32. Read CFL alphas syntax"
+},
+{
+"id": "coding_tools_structures",
+"level": 4,
+"title": "5.20.8. Coding tools structures"
+},
+{
+"id": "palette_mode_info_syntax",
+"level": 5,
+"title": "5.20.8.1. Palette mode info syntax"
+},
+{
+"id": "transform_type_syntax",
+"level": 5,
+"title": "5.20.8.2. Transform type syntax"
+},
+{
+"id": "get_transform_set_function",
+"level": 5,
+"title": "5.20.8.3. Get transform set function"
+},
+{
+"id": "palette_tokens_syntax",
+"level": 5,
+"title": "5.20.8.4. Palette tokens syntax"
+},
+{
+"id": "palette_color_context_function",
+"level": 5,
+"title": "5.20.8.5. Palette color context function"
+},
+{
+"id": "helper_functions",
+"level": 4,
+"title": "5.20.9. Helper functions"
+},
+{
+"id": "is_inside_function",
+"level": 5,
+"title": "5.20.9.1. Is inside function"
+},
+{
+"id": "is_inside_frame_function",
+"level": 5,
+"title": "5.20.9.2. Is inside frame function"
+},
+{
+"id": "is_inside_filter_region_function",
+"level": 5,
+"title": "5.20.9.3. Is inside filter region function"
+},
+{
+"id": "clamp_mv_row_function",
+"level": 5,
+"title": "5.20.9.4. Clamp MV row function"
+},
+{
+"id": "clamp_mv_col_function",
+"level": 5,
+"title": "5.20.9.5. Clamp MV col function"
+},
+{
+"id": "clear_cdef_function",
+"level": 5,
+"title": "5.20.9.6. Clear CDEF function"
+},
+{
+"id": "filtering_structures",
+"level": 4,
+"title": "5.20.10. Filtering structures"
+},
+{
+"id": "read_cdef_syntax",
+"level": 5,
+"title": "5.20.10.1. Read CDEF syntax"
+},
+{
+"id": "read_ccso_syntax",
+"level": 5,
+"title": "5.20.10.2. Read CCSO syntax"
+},
+{
+"id": "read_gdf_syntax",
+"level": 5,
+"title": "5.20.10.3. Read GDF syntax"
+},
+{
+"id": "read_loop_restoration_syntax",
+"level": 5,
+"title": "5.20.10.4. Read loop restoration syntax"
+},
+{
+"id": "read_loop_restoration_unit_syntax",
+"level": 5,
+"title": "5.20.10.5. Read loop restoration unit syntax"
+},
+{
+"id": "read_wiener_ns_syntax",
+"level": 5,
+"title": "5.20.10.6. Read Wiener NS syntax"
+},
+{
+"id": "syntax_structures_semantics",
+"level": 2,
+"title": "6. Syntax structures semantics"
+},
+{
+"id": "semantics_general",
+"level": 3,
+"title": "6.1. General"
+},
+{
+"id": "obu_semantics",
+"level": 3,
+"title": "6.2. OBU semantics"
+},
+{
+"id": "general_obu_semantics",
+"level": 4,
+"title": "6.2.1. General OBU semantics"
+},
+{
+"id": "obu_header_semantics",
+"level": 4,
+"title": "6.2.2. OBU header semantics"
+},
+{
+"id": "trailing_bits_semantics",
+"level": 4,
+"title": "6.2.3. Trailing bits semantics"
+},
+{
+"id": "byte_alignment_semantics",
+"level": 4,
+"title": "6.2.4. Byte alignment semantics"
+},
+{
+"id": "reserved_obu_semantics",
+"level": 3,
+"title": "6.3. Reserved OBU semantics"
+},
+{
+"id": "sequence_header_obu_semantics",
+"level": 3,
+"title": "6.4. Sequence header OBU semantics"
+},
+{
+"id": "general_sequence_header_obu_semantics",
+"level": 4,
+"title": "6.4.1. General sequence header OBU semantics"
+},
+{
+"id": "sequence_tile_config_semantics",
+"level": 4,
+"title": "6.4.2. Sequence tile config semantics"
+},
+{
+"id": "sequence_partition_config_semantics",
+"level": 4,
+"title": "6.4.3. Sequence partition config semantics"
+},
+{
+"id": "sequence_segment_config_semantics",
+"level": 4,
+"title": "6.4.4. Sequence segment config semantics"
+},
+{
+"id": "sequence_intra_config_semantics",
+"level": 4,
+"title": "6.4.5. Sequence intra config semantics"
+},
+{
+"id": "sequence_inter_config_semantics",
+"level": 4,
+"title": "6.4.6. Sequence inter config semantics"
+},
+{
+"id": "sequence_scc_config_semantics",
+"level": 4,
+"title": "6.4.7. Sequence screen content config semantics"
+},
+{
+"id": "sequence_transform_quant_entropy_config_semantics",
+"level": 4,
+"title": "6.4.8. Sequence transform quant entropy config semantics"
+},
+{
+"id": "segment_information_semantics",
+"level": 4,
+"title": "6.4.9. Segment information semantics"
+},
+{
+"id": "sequence_filter_config_semantics",
+"level": 4,
+"title": "6.4.10. Sequence filter config semantics"
+},
+{
+"id": "user_defined_qm_semantics",
+"level": 4,
+"title": "6.4.11. User defined QM semantics"
+},
+{
+"id": "timing_info_semantics",
+"level": 4,
+"title": "6.4.12. Timing info semantics"
+},
+{
+"id": "seq_decoder_model_info_semantics",
+"level": 4,
+"title": "6.4.13. Sequence decoder model info semantics"
+},
+{
+"id": "temporal_delimiter_obu_semantics",
+"level": 3,
+"title": "6.5. Temporal delimiter OBU semantics"
+},
+{
+"id": "multistream_decoder_operation_obu_semantics",
+"level": 3,
+"title": "6.6. Multi Stream Decoder Operation OBU semantics"
+},
+{
+"id": "multi_frame_header_obu_semantics",
+"level": 3,
+"title": "6.7. Multi frame header OBU semantics"
+},
+{
+"id": "layer_config_record_obu_semantics",
+"level": 3,
+"title": "6.8. Layer config record OBU semantics"
+},
+{
+"id": "lcr_general",
+"level": 4,
+"title": "6.8.1. General"
+},
+{
+"id": "lcr_global_info_semantics",
+"level": 4,
+"title": "6.8.2. LCR global info semantics"
+},
+{
+"id": "lcr_local_info_semantics",
+"level": 4,
+"title": "6.8.3. LCR local info semantics"
+},
+{
+"id": "lcr_aggregate_info_semantics",
+"level": 4,
+"title": "6.8.4. LCR aggregate info semantics"
+},
+{
+"id": "lcr_seq_profile_tier_level_info_semantics",
+"level": 4,
+"title": "6.8.5. LCR sequence profile tier level information semantics"
+},
+{
+"id": "lcr_global_payload_semantics",
+"level": 4,
+"title": "6.8.6. LCR global payload semantics"
+},
+{
+"id": "lcr_xlayer_info_semantics",
+"level": 4,
+"title": "6.8.7. LCR xlayer info semantics"
+},
+{
+"id": "lcr_rep_info_semantics",
+"level": 4,
+"title": "6.8.8. LCR rep info semantics"
+},
+{
+"id": "lcr_embedded_layer_info_semantics",
+"level": 4,
+"title": "6.8.9. LCR embedded layer info semantics"
+},
+{
+"id": "lcr_xlayer_color_info_semantics",
+"level": 4,
+"title": "6.8.10. LCR xlayer color info semantics"
+},
+{
+"id": "atlas_segment_info_obu_semantics",
+"level": 3,
+"title": "6.9. Atlas segment info OBU semantics"
+},
+{
+"id": "atlas_general",
+"level": 4,
+"title": "6.9.1. General"
+},
+{
+"id": "ats_label_segment_info_semantics",
+"level": 4,
+"title": "6.9.2. Atlas label segment info semantics"
+},
+{
+"id": "ats_enhanced_atlas_info_semantics",
+"level": 4,
+"title": "6.9.3. Atlas enhanced atlas info semantics"
+},
+{
+"id": "ats_region_info_semantics",
+"level": 5,
+"title": "6.9.3.1. Atlas region info semantics"
+},
+{
+"id": "ats_region_to_segment_mapping_semantics",
+"level": 5,
+"title": "6.9.3.2. Atlas region to segment mapping semantics"
+},
+{
+"id": "ats_multistream_info_semantics",
+"level": 4,
+"title": "6.9.4. Atlas multistream info semantics"
+},
+{
+"id": "ats_multistream_with_alpha_info_semantics",
+"level": 4,
+"title": "6.9.5. Atlas multistream with alpha info semantics"
+},
+{
+"id": "ats_basic_info_semantics",
+"level": 4,
+"title": "6.9.6. Atlas basic info semantics"
+},
+{
+"id": "operating_point_set_obu_semantics",
+"level": 3,
+"title": "6.10. Operating point set OBU semantics"
+},
+{
+"id": "ops_general_semantics",
+"level": 4,
+"title": "6.10.1. General"
+},
+{
+"id": "ops_obu_syntax_elements",
+"level": 4,
+"title": "6.10.2. Operating point set OBU syntax elements"
+},
+{
+"id": "ops_aggregate_info_semantics",
+"level": 4,
+"title": "6.10.3. Operating point set aggregate info semantics"
+},
+{
+"id": "ops_seq_profile_tier_level_info_semantics",
+"level": 4,
+"title": "6.10.4. Operating point set sequence profile tier level information semantics"
+},
+{
+"id": "ops_decoder_model_info_semantics",
+"level": 4,
+"title": "6.10.5. Operating point set decoder model info semantics"
+},
+{
+"id": "ops_color_info_semantics",
+"level": 4,
+"title": "6.10.6. Operating point set color info semantics"
+},
+{
+"id": "ops_mlayer_info_semantics",
+"level": 4,
+"title": "6.10.7. Operating point set mlayer info semantics"
+},
+{
+"id": "buffer_removal_timing_obu_semantics",
+"level": 3,
+"title": "6.11. Buffer removal timing OBU semantics"
+},
+{
+"id": "quantizer_matrix_obu_semantics",
+"level": 3,
+"title": "6.12. Quantizer Matrix OBU semantics"
+},
+{
+"id": "film_grain_obu_semantics",
+"level": 3,
+"title": "6.13. Film grain OBU semantics"
+},
+{
+"id": "content_interpretation_obu_semantics",
+"level": 3,
+"title": "6.14. Content interpretation OBU semantics"
+},
+{
+"id": "padding_obu_semantics",
+"level": 3,
+"title": "6.15. Padding OBU semantics"
+},
+{
+"id": "metadata_obu_semantics",
+"level": 3,
+"title": "6.16. Metadata OBU semantics"
+},
+{
+"id": "metadata_unit_semantics",
+"level": 4,
+"title": "6.16.1. Metadata unit semantics"
+},
+{
+"id": "metadata_short_obu_semantics",
+"level": 4,
+"title": "6.16.2. Metadata short OBU semantics"
+},
+{
+"id": "metadata_group_obu_semantics",
+"level": 4,
+"title": "6.16.3. Metadata group OBU semantics"
+},
+{
+"id": "metadata_itut_t35_semantics",
+"level": 4,
+"title": "6.16.4. Metadata ITUT T35 semantics"
+},
+{
+"id": "metadata_high_dynamic_range_content_light_level_semantics",
+"level": 4,
+"title": "6.16.5. Metadata high dynamic range content light level semantics"
+},
+{
+"id": "metadata_high_dynamic_range_mastering_display_color_volume_semantics",
+"level": 4,
+"title": "6.16.6. Metadata high dynamic range mastering display color volume semantics"
+},
+{
+"id": "metadata_timecode_semantics",
+"level": 4,
+"title": "6.16.7. Metadata timecode semantics"
+},
+{
+"id": "metadata_banding_hints_semantics",
+"level": 4,
+"title": "6.16.8. Metadata banding hints semantics"
+},
+{
+"id": "metadata_icc_profile_semantics",
+"level": 4,
+"title": "6.16.9. Metadata ICC profile semantics"
+},
+{
+"id": "metadata_scan_type_semantics",
+"level": 4,
+"title": "6.16.10. Metadata scan type semantics"
+},
+{
+"id": "metadata_temporal_point_info_semantics",
+"level": 4,
+"title": "6.16.11. Metadata temporal point info semantics"
+},
+{
+"id": "metadata_user_data_unregistered_semantics",
+"level": 4,
+"title": "6.16.12. Metadata user data unregistered semantics"
+},
+{
+"id": "metadata_decoded_frame_hash_semantics",
+"level": 4,
+"title": "6.16.13. Metadata decoded frame hash semantics"
+},
+{
+"id": "frame_header_obu_semantics",
+"level": 3,
+"title": "6.17. Frame header OBU semantics"
+},
+{
+"id": "general_frame_header_semantics",
+"level": 4,
+"title": "6.17.1. General frame header semantics"
+},
+{
+"id": "frame_header_info_semantics",
+"level": 4,
+"title": "6.17.2. Frame header info semantics"
+},
+{
+"id": "frame_configuration_structures_semantics",
+"level": 4,
+"title": "6.17.3. Frame configuration structures"
+},
+{
+"id": "frame_opfl_refine_type_semantics",
+"level": 5,
+"title": "6.17.3.1. Frame optical flow refine type semantics"
+},
+{
+"id": "screen_content_params_semantics",
+"level": 5,
+"title": "6.17.3.2. Screen content params semantics"
+},
+{
+"id": "intrabc_params_semantics",
+"level": 5,
+"title": "6.17.3.3. Intra block copy params semantics"
+},
+{
+"id": "frame_size_structures_semantics",
+"level": 4,
+"title": "6.17.4. Frame size structures"
+},
+{
+"id": "frame_size_semantics",
+"level": 5,
+"title": "6.17.4.1. Frame size semantics"
+},
+{
+"id": "frame_size_with_bridge_semantics",
+"level": 5,
+"title": "6.17.4.2. Frame size with bridge semantics"
+},
+{
+"id": "frame_size_with_refs_semantics",
+"level": 5,
+"title": "6.17.4.3. Frame size with refs semantics"
+},
+{
+"id": "compute_image_size_semantics",
+"level": 5,
+"title": "6.17.4.4. Compute image size function semantics"
+},
+{
+"id": "filtering_structures_frame_header_semantics",
+"level": 4,
+"title": "6.17.5. Filtering structures"
+},
+{
+"id": "interpolation_filter_semantics",
+"level": 5,
+"title": "6.17.5.1. Interpolation filter semantics"
+},
+{
+"id": "deblocking_filter_params_semantics",
+"level": 5,
+"title": "6.17.5.2. Deblocking filter params semantics"
+},
+{
+"id": "quantization_structures_semantics",
+"level": 4,
+"title": "6.17.6. Quantization structures"
+},
+{
+"id": "quantization_params_semantics",
+"level": 5,
+"title": "6.17.6.1. Quantization params semantics"
+},
+{
+"id": "setup_qm_params_semantics",
+"level": 5,
+"title": "6.17.6.2. Setup QM params semantics"
+},
+{
+"id": "delta_quantizer_semantics",
+"level": 5,
+"title": "6.17.6.3. Delta quantizer semantics"
+},
+{
+"id": "segmentation_and_tiling_structures_semantics",
+"level": 4,
+"title": "6.17.7. Segmentation and tiling structures"
+},
+{
+"id": "segmentation_params_semantics",
+"level": 5,
+"title": "6.17.7.1. Segmentation params semantics"
+},
+{
+"id": "tile_info_semantics",
+"level": 5,
+"title": "6.17.7.2. Tile info semantics"
+},
+{
+"id": "tile_params_semantics",
+"level": 5,
+"title": "6.17.7.3. Tile params semantics"
+},
+{
+"id": "quantizer_index_delta_parameters_semantics",
+"level": 5,
+"title": "6.17.7.4. Quantizer index delta parameters semantics"
+},
+{
+"id": "gdf_params_semantics",
+"level": 5,
+"title": "6.17.7.5. GDF params semantics"
+},
+{
+"id": "cdef_params_semantics",
+"level": 5,
+"title": "6.17.7.6. CDEF params semantics"
+},
+{
+"id": "loop_restoration_params_semantics",
+"level": 5,
+"title": "6.17.7.7. Loop restoration params semantics"
+},
+{
+"id": "ccso_params_semantics",
+"level": 5,
+"title": "6.17.7.8. CCSO params semantics"
+},
+{
+"id": "transform_and_coding_mode_structures_semantics",
+"level": 4,
+"title": "6.17.8. Transform and coding mode structures"
+},
+{
+"id": "tx_mode_semantics",
+"level": 5,
+"title": "6.17.8.1. TX mode semantics"
+},
+{
+"id": "skip_mode_params_semantics",
+"level": 5,
+"title": "6.17.8.2. Skip mode params semantics"
+},
+{
+"id": "frame_reference_mode_semantics",
+"level": 5,
+"title": "6.17.8.3. Frame reference mode semantics"
+},
+{
+"id": "global_motion_structures_semantics",
+"level": 4,
+"title": "6.17.9. Global motion structures"
+},
+{
+"id": "global_motion_params_semantics",
+"level": 5,
+"title": "6.17.9.1. Global motion params semantics"
+},
+{
+"id": "global_param_semantics",
+"level": 5,
+"title": "6.17.9.2. Global param semantics"
+},
+{
+"id": "decode_signed_subexp_with_ref_semantics",
+"level": 5,
+"title": "6.17.9.3. Decode signed subexp with ref semantics"
+},
+{
+"id": "decode_unsigned_subexp_with_ref_semantics",
+"level": 5,
+"title": "6.17.9.4. Decode unsigned subexp with ref semantics"
+},
+{
+"id": "decode_subexp_semantics",
+"level": 5,
+"title": "6.17.9.5. Decode subexp semantics"
+},
+{
+"id": "film_grain_structures_semantics",
+"level": 4,
+"title": "6.17.10. Film grain structures"
+},
+{
+"id": "film_grain_config_semantics",
+"level": 5,
+"title": "6.17.10.1. Film grain config semantics"
+},
+{
+"id": "film_grain_model_semantics",
+"level": 5,
+"title": "6.17.10.2. Film grain model semantics"
+},
+{
+"id": "tile_group_obu_semantics",
+"level": 3,
+"title": "6.18. Tile group OBU semantics"
+},
+{
+"id": "tile_group_payload_semantics",
+"level": 3,
+"title": "6.19. Tile group payload semantics"
+},
+{
+"id": "general_tile_group_payload_semantics",
+"level": 4,
+"title": "6.19.1. General tile group payload semantics"
+},
+{
+"id": "tile_level_structures_semantics",
+"level": 4,
+"title": "6.19.2. Tile-level structures"
+},
+{
+"id": "decode_tile_semantics",
+"level": 5,
+"title": "6.19.2.1. Decode tile semantics"
+},
+{
+"id": "reset_refmv_bank_semantics",
+"level": 5,
+"title": "6.19.2.2. Reset reference motion vector bank function semantics"
+},
+{
+"id": "clear_block_decoded_flags_semantics",
+"level": 5,
+"title": "6.19.2.3. Clear block decoded flags function semantics"
+},
+{
+"id": "partition_structures_semantics",
+"level": 4,
+"title": "6.19.3. Partition structures"
+},
+{
+"id": "decode_partition_semantics",
+"level": 5,
+"title": "6.19.3.1. Decode partition semantics"
+},
+{
+"id": "read_partition_semantics",
+"level": 5,
+"title": "6.19.3.2. Read partition semantics"
+},
+{
+"id": "block_decoding_structures_semantics",
+"level": 4,
+"title": "6.19.4. Block decoding structures"
+},
+{
+"id": "decode_block_semantics",
+"level": 5,
+"title": "6.19.4.1. Decode block semantics"
+},
+{
+"id": "mode_information_structures_semantics",
+"level": 4,
+"title": "6.19.5. Mode information structures"
+},
+{
+"id": "mode_info_semantics",
+"level": 5,
+"title": "6.19.5.1. Mode info semantics"
+},
+{
+"id": "bru_mode_info_semantics",
+"level": 5,
+"title": "6.19.5.2. BRU mode info semantics"
+},
+{
+"id": "intra_frame_mode_info_semantics",
+"level": 5,
+"title": "6.19.5.3. Intra frame mode info semantics"
+},
+{
+"id": "read_intra_bc_semantics",
+"level": 5,
+"title": "6.19.5.4. Read intra block copy semantics"
+},
+{
+"id": "read_intra_y_mode_semantics",
+"level": 5,
+"title": "6.19.5.5. Read intra Y mode semantics"
+},
+{
+"id": "read_intra_uv_mode_semantics",
+"level": 5,
+"title": "6.19.5.6. Read intra UV mode semantics"
+},
+{
+"id": "intra_segment_id_semantics",
+"level": 5,
+"title": "6.19.5.7. Intra segment ID semantics"
+},
+{
+"id": "read_segment_id_semantics",
+"level": 5,
+"title": "6.19.5.8. Read segment ID semantics"
+},
+{
+"id": "skip_mode_semantics",
+"level": 5,
+"title": "6.19.5.9. Skip mode semantics"
+},
+{
+"id": "skip_semantics",
+"level": 5,
+"title": "6.19.5.10. Skip semantics"
+},
+{
+"id": "quantizer_index_delta_semantics",
+"level": 5,
+"title": "6.19.5.11. Quantizer index delta semantics"
+},
+{
+"id": "transform_and_quantization_structures_semantics",
+"level": 4,
+"title": "6.19.6. Transform and quantization structures"
+},
+{
+"id": "tx_size_semantics",
+"level": 5,
+"title": "6.19.6.1. TX size semantics"
+},
+{
+"id": "block_tx_size_semantics",
+"level": 5,
+"title": "6.19.6.2. Block TX size semantics"
+},
+{
+"id": "read_tx_partition_semantics",
+"level": 5,
+"title": "6.19.6.3. Read TX partition semantics"
+},
+{
+"id": "motion_vector_and_prediction_structures_semantics",
+"level": 4,
+"title": "6.19.7. Motion vector and prediction structures"
+},
+{
+"id": "inter_frame_mode_info_semantics",
+"level": 5,
+"title": "6.19.7.1. Inter frame mode info semantics"
+},
+{
+"id": "inter_segment_id_semantics",
+"level": 5,
+"title": "6.19.7.2. Inter segment ID semantics"
+},
+{
+"id": "is_inter_semantics",
+"level": 5,
+"title": "6.19.7.3. Is inter semantics"
+},
+{
+"id": "intra_block_mode_info_semantics",
+"level": 5,
+"title": "6.19.7.4. Intra block mode info semantics"
+},
+{
+"id": "inter_block_mode_info_semantics",
+"level": 5,
+"title": "6.19.7.5. Inter block mode info semantics"
+},
+{
+"id": "read_warp_delta_semantics",
+"level": 5,
+"title": "6.19.7.6. Read warp delta semantics"
+},
+{
+"id": "read_drl_idx_semantics",
+"level": 5,
+"title": "6.19.7.7. Read drl idx semantics"
+},
+{
+"id": "dip_mode_info_semantics",
+"level": 5,
+"title": "6.19.7.8. DIP mode info semantics"
+},
+{
+"id": "ref_frames_semantics",
+"level": 5,
+"title": "6.19.7.9. Ref frames semantics"
+},
+{
+"id": "read_compound_ref_semantics",
+"level": 5,
+"title": "6.19.7.10. Read compound ref semantics"
+},
+{
+"id": "read_single_ref_semantics",
+"level": 5,
+"title": "6.19.7.11. Read single ref semantics"
+},
+{
+"id": "assign_mv_semantics",
+"level": 5,
+"title": "6.19.7.12. Assign MV semantics"
+},
+{
+"id": "read_motion_mode_semantics",
+"level": 5,
+"title": "6.19.7.13. Read motion mode semantics"
+},
+{
+"id": "read_inter_intra_semantics",
+"level": 5,
+"title": "6.19.7.14. Read inter intra semantics"
+},
+{
+"id": "read_compound_type_semantics",
+"level": 5,
+"title": "6.19.7.15. Read compound type semantics"
+},
+{
+"id": "read_refinemv_semantics",
+"level": 5,
+"title": "6.19.7.16. Read refine mv semantics"
+},
+{
+"id": "read_wedge_mode_semantics",
+"level": 5,
+"title": "6.19.7.17. Read wedge mode semantics"
+},
+{
+"id": "mv_semantics",
+"level": 5,
+"title": "6.19.7.18. MV semantics"
+},
+{
+"id": "mv_component_semantics",
+"level": 5,
+"title": "6.19.7.19. MV component semantics"
+},
+{
+"id": "compute_prediction_semantics",
+"level": 5,
+"title": "6.19.7.20. Compute prediction semantics"
+},
+{
+"id": "residual_semantics",
+"level": 5,
+"title": "6.19.7.21. Residual semantics"
+},
+{
+"id": "transform_block_semantics",
+"level": 5,
+"title": "6.19.7.22. Transform block semantics"
+},
+{
+"id": "coefficients_semantics",
+"level": 5,
+"title": "6.19.7.23. Coefficients semantics"
+},
+{
+"id": "read_quant_semantics",
+"level": 5,
+"title": "6.19.7.24. Read quantized coefficient semantics"
+},
+{
+"id": "read_cfl_alphas_semantics",
+"level": 5,
+"title": "6.19.7.25. Read CFL alphas semantics"
+},
+{
+"id": "coding_tools_structures_semantics",
+"level": 4,
+"title": "6.19.8. Coding tools structures"
+},
+{
+"id": "palette_mode_info_semantics",
+"level": 5,
+"title": "6.19.8.1. Palette mode info semantics"
+},
+{
+"id": "transform_type_semantics",
+"level": 5,
+"title": "6.19.8.2. Transform type semantics"
+},
+{
+"id": "palette_tokens_semantics",
+"level": 5,
+"title": "6.19.8.3. Palette tokens semantics"
+},
+{
+"id": "palette_color_context_semantics",
+"level": 5,
+"title": "6.19.8.4. Palette color context function semantics"
+},
+{
+"id": "filtering_structures_semantics",
+"level": 4,
+"title": "6.19.9. Filtering structures"
+},
+{
+"id": "read_cdef_semantics",
+"level": 5,
+"title": "6.19.9.1. Read CDEF semantics"
+},
+{
+"id": "read_ccso_semantics",
+"level": 5,
+"title": "6.19.9.2. Read CCSO semantics"
+},
+{
+"id": "read_gdf_semantics",
+"level": 5,
+"title": "6.19.9.3. Read GDF semantics"
+},
+{
+"id": "read_loop_restoration_semantics",
+"level": 5,
+"title": "6.19.9.4. Read loop restoration semantics"
+},
+{
+"id": "read_loop_restoration_unit_semantics",
+"level": 5,
+"title": "6.19.9.5. Read loop restoration unit semantics"
+},
+{
+"id": "read_wiener_ns_semantics",
+"level": 5,
+"title": "6.19.9.6. Read Wiener NS semantics"
+},
+{
+"id": "decoding_process",
+"level": 2,
+"title": "7. Decoding process"
+},
+{
+"id": "general_decoding_process",
+"level": 3,
+"title": "7.1. General decoding process"
+},
+{
+"id": "decode_frame_wrapup_process",
+"level": 3,
+"title": "7.2. Decode frame wrapup process"
+},
+{
+"id": "ordering_of_obus",
+"level": 3,
+"title": "7.3. Ordering of OBUs"
+},
+{
+"id": "ordering_of_obus_general",
+"level": 4,
+"title": "7.3.1. General"
+},
+{
+"id": "coded_multistream_video_sequence_boundaries",
+"level": 4,
+"title": "7.3.2. Coded multistream video sequence boundaries"
+},
+{
+"id": "ordering_of_obus_output_picture",
+"level": 4,
+"title": "7.3.3. Coded output frame unit"
+},
+{
+"id": "ordering_of_obus_nonoutput_picture",
+"level": 4,
+"title": "7.3.4. Coded non-output frame unit"
+},
+{
+"id": "ordering_of_obus_coded_frame_unit",
+"level": 4,
+"title": "7.3.5. Coded frame unit"
+},
+{
+"id": "ordering_of_obus_extended_layer",
+"level": 4,
+"title": "7.3.6. Coded extended layer unit"
+},
+{
+"id": "ordering_of_obus_temporal_unit",
+"level": 4,
+"title": "7.3.7. Temporal unit"
+},
+{
+"id": "availability_of_hls_obus",
+"level": 4,
+"title": "7.3.8. Availability of high level syntax OBUs"
+},
+{
+"id": "availability_of_hls_obus_general",
+"level": 5,
+"title": "7.3.8.1. General"
+},
+{
+"id": "msdo_obu_availability",
+"level": 5,
+"title": "7.3.8.2. MSDO availability"
+},
+{
+"id": "lcr_obu_availability",
+"level": 5,
+"title": "7.3.8.3. LCR availability"
+},
+{
+"id": "atlas_obu_availability",
+"level": 5,
+"title": "7.3.8.4. Atlas segment OBU availability"
+},
+{
+"id": "ops_obu_availability",
+"level": 5,
+"title": "7.3.8.5. OPS availability"
+},
+{
+"id": "sh_obu_availability",
+"level": 5,
+"title": "7.3.8.6. Sequence header availability"
+},
+{
+"id": "mfh_obu_availability",
+"level": 5,
+"title": "7.3.8.7. Multi-frame header availability"
+},
+{
+"id": "fg_obu_availability",
+"level": 5,
+"title": "7.3.8.8. Film grain OBU availability"
+},
+{
+"id": "qm_obu_availability",
+"level": 5,
+"title": "7.3.8.9. Quantization matrix OBU availability"
+},
+{
+"id": "ci_obu_availability",
+"level": 5,
+"title": "7.3.8.10. Content interpretation OBU availability"
+},
+{
+"id": "ci_params_initialization",
+"level": 5,
+"title": "7.3.8.11. Content interpretation parameters initialization"
+},
+{
+"id": "availability_of_ltr_frames",
+"level": 4,
+"title": "7.3.9. Availability of long-term reference frames"
+},
+{
+"id": "availability_of_ltr_frames_general",
+"level": 5,
+"title": "7.3.9.1. General"
+},
+{
+"id": "random_access_decoding",
+"level": 3,
+"title": "7.4. Random access decoding"
+},
+{
+"id": "random_access_decoding_general",
+"level": 4,
+"title": "7.4.1. General"
+},
+{
+"id": "random_access_wrt_ltr",
+"level": 4,
+"title": "7.4.2. Random access and use of long-term reference frames"
+},
+{
+"id": "random_access_with_ltr",
+"level": 5,
+"title": "7.4.2.1. Random access with long-term reference frames"
+},
+{
+"id": "random_access_without_ltr",
+"level": 5,
+"title": "7.4.2.2. Random access without long-term reference frames"
+},
+{
+"id": "random_access_closed_loop_key",
+"level": 4,
+"title": "7.4.3. Closed Random Access"
+},
+{
+"id": "random_access_open_loop_key",
+"level": 4,
+"title": "7.4.4. Open Random Access"
+},
+{
+"id": "random_access_switch_frame",
+"level": 4,
+"title": "7.4.5. Random Access Switch"
+},
+{
+"id": "multistream_random_access",
+"level": 4,
+"title": "7.4.6. Multistream Random Access"
+},
+{
+"id": "frame_end_update_cdf_process",
+"level": 3,
+"title": "7.5. Frame end update CDF process"
+},
+{
+"id": "extended_layer_context_management",
+"level": 3,
+"title": "7.6. Extended layer context management"
+},
+{
+"id": "get_ref_frames_process",
+"level": 3,
+"title": "7.7. Get ref frames process"
+},
+{
+"id": "get_past_future_cur_ref_lists_process",
+"level": 3,
+"title": "7.8. Get past future cur ref lists process"
+},
+{
+"id": "motion_field_estimation_process",
+"level": 3,
+"title": "7.9. Motion field estimation process"
+},
+{
+"id": "motion_field_estimation_process_general",
+"level": 4,
+"title": "7.9.1. General"
+},
+{
+"id": "fill_traj_mv_gap_process",
+"level": 4,
+"title": "7.9.2. Fill trajectory motion vector gap process"
+},
+{
+"id": "projection_process",
+"level": 4,
+"title": "7.9.3. Projection process"
+},
+{
+"id": "get_mv_projection_process",
+"level": 4,
+"title": "7.9.4. Get MV projection process"
+},
+{
+"id": "get_mv_projection_clamp_process",
+"level": 4,
+"title": "7.9.5. Get MV projection clamp process"
+},
+{
+"id": "get_sampled_position_process",
+"level": 4,
+"title": "7.9.6. Get sampled position process"
+},
+{
+"id": "get_block_position_no_constraint_process",
+"level": 4,
+"title": "7.9.7. Get block position no constraint process"
+},
+{
+"id": "check_block_position_process",
+"level": 4,
+"title": "7.9.8. Check block position process"
+},
+{
+"id": "setup_tip_motion_field_process",
+"level": 3,
+"title": "7.10. Setup TIP motion field process"
+},
+{
+"id": "setup_tip_motion_field_process_general",
+"level": 4,
+"title": "7.10.1. General"
+},
+{
+"id": "tip_temporal_scale_motion_field_process",
+"level": 4,
+"title": "7.10.2. TIP temporal scale motion field process"
+},
+{
+"id": "tip_fill_motion_field_holes_process",
+"level": 4,
+"title": "7.10.3. TIP fill motion field holes process"
+},
+{
+"id": "tip_blk_average_filter_mv_process",
+"level": 4,
+"title": "7.10.4. TIP block average filter motion vector process"
+},
+{
+"id": "fill_tpl_mvs_sample_gap_process",
+"level": 4,
+"title": "7.10.5. Fill temporal motion vectors sample gap process"
+},
+{
+"id": "build_tip_process",
+"level": 4,
+"title": "7.10.6. Build TIP process"
+},
+{
+"id": "motion_vector_context_processes",
+"level": 3,
+"title": "7.11. Motion vector context processes"
+},
+{
+"id": "motion_vector_context_processes_general",
+"level": 4,
+"title": "7.11.1. General"
+},
+{
+"id": "find_mode_ctx_process",
+"level": 4,
+"title": "7.11.2. Find mode context process"
+},
+{
+"id": "scan_point_ctx_process",
+"level": 4,
+"title": "7.11.3. Scan point context process"
+},
+{
+"id": "scan_point_warp_ctx_process",
+"level": 4,
+"title": "7.11.4. Scan point warp context process"
+},
+{
+"id": "motion_vector_prediction_processes",
+"level": 3,
+"title": "7.12. Motion vector prediction processes"
+},
+{
+"id": "motion_vector_prediction_processes_general",
+"level": 4,
+"title": "7.12.1. General"
+},
+{
+"id": "find_mv_stack_process",
+"level": 4,
+"title": "7.12.2. Find MV stack process"
+},
+{
+"id": "setup_global_mv_process",
+"level": 5,
+"title": "7.12.2.1. Setup global MV process"
+},
+{
+"id": "get_warp_motion_vector_process",
+"level": 5,
+"title": "7.12.2.2. Get warp motion vector process"
+},
+{
+"id": "generate_points_from_corners_process",
+"level": 5,
+"title": "7.12.2.3. Generate points from corners process"
+},
+{
+"id": "warp_corner_process",
+"level": 5,
+"title": "7.12.2.4. Warp corner process"
+},
+{
+"id": "scan_col_process",
+"level": 5,
+"title": "7.12.2.5. Scan col process"
+},
+{
+"id": "scan_point_process",
+"level": 5,
+"title": "7.12.2.6. Scan point process"
+},
+{
+"id": "temporal_scan_process",
+"level": 5,
+"title": "7.12.2.7. Temporal scan process"
+},
+{
+"id": "temporal_sample_process",
+"level": 5,
+"title": "7.12.2.8. Temporal sample process"
+},
+{
+"id": "add_warp_motion_vector_process",
+"level": 5,
+"title": "7.12.2.9. Add warp motion vector process"
+},
+{
+"id": "add_reference_motion_vector_process",
+"level": 5,
+"title": "7.12.2.10. Add reference motion vector process"
+},
+{
+"id": "insert_warp_candidate_process",
+"level": 5,
+"title": "7.12.2.11. Insert warp candidate process"
+},
+{
+"id": "search_stack_process",
+"level": 5,
+"title": "7.12.2.12. Search stack process"
+},
+{
+"id": "compound_search_stack_process",
+"level": 5,
+"title": "7.12.2.13. Compound search stack process"
+},
+{
+"id": "compound_add_derived_process",
+"level": 5,
+"title": "7.12.2.14. Compound add derived process"
+},
+{
+"id": "derive_ref_mv_candidate_from_tip_mode_process",
+"level": 5,
+"title": "7.12.2.15. Derive ref mv candidate from tip mode process"
+},
+{
+"id": "single_add_derived_process",
+"level": 5,
+"title": "7.12.2.16. Single add derived process"
+},
+{
+"id": "derive_single_ref_mv_candidate_from_tip_mode_process",
+"level": 5,
+"title": "7.12.2.17. Derive single ref mv candidate from TIP mode process"
+},
+{
+"id": "tip_add_derived_process",
+"level": 5,
+"title": "7.12.2.18. TIP add derived process"
+},
+{
+"id": "sorting_process",
+"level": 5,
+"title": "7.12.2.19. Sorting process"
+},
+{
+"id": "extra_search_process",
+"level": 5,
+"title": "7.12.2.20. Extra search process"
+},
+{
+"id": "fill_mvp_from_ref_mv_bank_process",
+"level": 5,
+"title": "7.12.2.21. Fill mvp from ref mv bank process"
+},
+{
+"id": "fill_mvp_from_derived_smvp_process",
+"level": 5,
+"title": "7.12.2.22. Fill mvp from derived smvp process"
+},
+{
+"id": "clamping_process",
+"level": 5,
+"title": "7.12.2.23. Clamping process"
+},
+{
+"id": "find_warp_samples_process",
+"level": 4,
+"title": "7.12.3. Find warp samples process"
+},
+{
+"id": "find_warp_samples_process_general",
+"level": 5,
+"title": "7.12.3.1. General"
+},
+{
+"id": "add_sample_process",
+"level": 5,
+"title": "7.12.3.2. Add sample process"
+},
+{
+"id": "prediction_processes",
+"level": 3,
+"title": "7.13. Prediction processes"
+},
+{
+"id": "prediction_processes_general",
+"level": 4,
+"title": "7.13.1. General"
+},
+{
+"id": "intra_prediction_process",
+"level": 4,
+"title": "7.13.2. Intra prediction process"
+},
+{
+"id": "intra_prediction_process_general",
+"level": 5,
+"title": "7.13.2.1. General"
+},
+{
+"id": "basic_intra_prediction_process",
+"level": 5,
+"title": "7.13.2.2. Basic intra prediction process"
+},
+{
+"id": "data_driven_intra_prediction_process",
+"level": 5,
+"title": "7.13.2.3. Data driven intra prediction process"
+},
+{
+"id": "dip_features_process",
+"level": 5,
+"title": "7.13.2.4. DIP features process"
+},
+{
+"id": "dip_transform_process",
+"level": 5,
+"title": "7.13.2.5. DIP transform process"
+},
+{
+"id": "dip_resample_process",
+"level": 5,
+"title": "7.13.2.6. DIP resample process"
+},
+{
+"id": "directional_intra_prediction_process",
+"level": 5,
+"title": "7.13.2.7. Directional intra prediction process"
+},
+{
+"id": "dr_predictor_process",
+"level": 5,
+"title": "7.13.2.8. Single directional prediction process"
+},
+{
+"id": "ibp_weights_process",
+"level": 5,
+"title": "7.13.2.9. IBP weights process"
+},
+{
+"id": "dc_intra_prediction_process",
+"level": 5,
+"title": "7.13.2.10. DC intra prediction process"
+},
+{
+"id": "dc_intra_prediction_subsampled_process",
+"level": 5,
+"title": "7.13.2.11. DC intra prediction subsampled process"
+},
+{
+"id": "ibp_dc_process",
+"level": 5,
+"title": "7.13.2.12. IBP DC process"
+},
+{
+"id": "smooth_intra_prediction_process",
+"level": 5,
+"title": "7.13.2.13. Smooth intra prediction process"
+},
+{
+"id": "filter_corner_process",
+"level": 5,
+"title": "7.13.2.14. Filter corner process"
+},
+{
+"id": "intra_filter_type_above_process",
+"level": 5,
+"title": "7.13.2.15. Intra filter type above process"
+},
+{
+"id": "intra_filter_type_left_process",
+"level": 5,
+"title": "7.13.2.16. Intra filter type left process"
+},
+{
+"id": "intra_edge_filter_strength_selection_process",
+"level": 5,
+"title": "7.13.2.17. Intra edge filter strength selection process"
+},
+{
+"id": "intra_edge_filter_process",
+"level": 5,
+"title": "7.13.2.18. Intra edge filter process"
+},
+{
+"id": "inter_prediction_process",
+"level": 4,
+"title": "7.13.3. Inter prediction process"
+},
+{
+"id": "inter_prediction_process_general",
+"level": 5,
+"title": "7.13.3.1. General"
+},
+{
+"id": "predict_tip_process",
+"level": 5,
+"title": "7.13.3.2. Predict TIP process"
+},
+{
+"id": "predict_refinemv_process",
+"level": 5,
+"title": "7.13.3.3. Predict refine mv process"
+},
+{
+"id": "get_ref_area_process",
+"level": 5,
+"title": "7.13.3.4. Get ref area process"
+},
+{
+"id": "get_ref_area_single_process",
+"level": 5,
+"title": "7.13.3.5. Get ref area single process"
+},
+{
+"id": "search_refinemv_process",
+"level": 5,
+"title": "7.13.3.6. Search refine mv process"
+},
+{
+"id": "predict_block_process",
+"level": 5,
+"title": "7.13.3.7. Predict block process"
+},
+{
+"id": "predict_optflow_block_process",
+"level": 5,
+"title": "7.13.3.8. Predict optflow block process"
+},
+{
+"id": "get_optflow_based_mv_process",
+"level": 5,
+"title": "7.13.3.9. Get optflow based mv process"
+},
+{
+"id": "optflow_diff_process",
+"level": 5,
+"title": "7.13.3.10. Optflow difference process"
+},
+{
+"id": "compute_grad_process",
+"level": 5,
+"title": "7.13.3.11. Compute gradient process"
+},
+{
+"id": "compute_opfl_mv_process",
+"level": 5,
+"title": "7.13.3.12. Compute optflow motion vector process"
+},
+{
+"id": "make_inter_predictions_process",
+"level": 5,
+"title": "7.13.3.13. Make inter predictions process"
+},
+{
+"id": "predict_subblock_process",
+"level": 5,
+"title": "7.13.3.14. Predict subblock process"
+},
+{
+"id": "save_subpu_size_process",
+"level": 5,
+"title": "7.13.3.15. Save subpu size process"
+},
+{
+"id": "rounding_variables_derivation_process",
+"level": 5,
+"title": "7.13.3.16. Rounding variables derivation process"
+},
+{
+"id": "motion_vector_scaling_process",
+"level": 5,
+"title": "7.13.3.17. Motion vector scaling process"
+},
+{
+"id": "block_inter_prediction_process",
+"level": 5,
+"title": "7.13.3.18. Block inter prediction process"
+},
+{
+"id": "block_warp_process",
+"level": 5,
+"title": "7.13.3.19. Block warp process"
+},
+{
+"id": "ext_block_warp_process",
+"level": 5,
+"title": "7.13.3.20. Extended block warp process"
+},
+{
+"id": "setup_shear_process",
+"level": 5,
+"title": "7.13.3.21. Setup shear process"
+},
+{
+"id": "resolve_divisor_process",
+"level": 5,
+"title": "7.13.3.22. Resolve divisor process"
+},
+{
+"id": "warp_estimation_process",
+"level": 5,
+"title": "7.13.3.23. Warp estimation process"
+},
+{
+"id": "extend_warp_estimation_process",
+"level": 5,
+"title": "7.13.3.24. Extend warp estimation process"
+},
+{
+"id": "block_adaptive_weighted_prediction_process",
+"level": 5,
+"title": "7.13.3.25. Block adaptive weighted prediction process"
+},
+{
+"id": "build_morph_pred_process",
+"level": 5,
+"title": "7.13.3.26. Build morphological prediction process"
+},
+{
+"id": "wedge_mask_process",
+"level": 5,
+"title": "7.13.3.27. Wedge mask process"
+},
+{
+"id": "difference_weight_mask_process",
+"level": 5,
+"title": "7.13.3.28. Difference weight mask process"
+},
+{
+"id": "intra_mode_variant_mask_process",
+"level": 5,
+"title": "7.13.3.29. Intra mode variant mask process"
+},
+{
+"id": "mask_blend_process",
+"level": 5,
+"title": "7.13.3.30. Mask blend process"
+},
+{
+"id": "palette_prediction_process",
+"level": 4,
+"title": "7.13.4. Palette prediction process"
+},
+{
+"id": "predict_chroma_from_luma_process",
+"level": 4,
+"title": "7.13.5. Predict chroma from luma process"
+},
+{
+"id": "mhccp_process",
+"level": 4,
+"title": "7.13.6. MHCCP process"
+},
+{
+"id": "derive_multi_param_process",
+"level": 4,
+"title": "7.13.7. Derive multi param process"
+},
+{
+"id": "gauss_elimination_mhccp",
+"level": 4,
+"title": "7.13.8. Gaussian elimination process"
+},
+{
+"id": "reconstruction_and_dequantization",
+"level": 3,
+"title": "7.14. Reconstruction and dequantization"
+},
+{
+"id": "reconstruction_and_dequantization_general",
+"level": 4,
+"title": "7.14.1. General"
+},
+{
+"id": "dequantization_functions",
+"level": 4,
+"title": "7.14.2. Dequantization functions"
+},
+{
+"id": "reconstruct_process",
+"level": 4,
+"title": "7.14.3. Reconstruct process"
+},
+{
+"id": "dequant_process",
+"level": 4,
+"title": "7.14.4. Dequantization process"
+},
+{
+"id": "save_dequant_process",
+"level": 4,
+"title": "7.14.5. Save dequant process"
+},
+{
+"id": "get_dequant_process",
+"level": 4,
+"title": "7.14.6. Get dequant process"
+},
+{
+"id": "inverse_transform_process",
+"level": 3,
+"title": "7.15. Inverse transform process"
+},
+{
+"id": "inverse_transform_process_general",
+"level": 4,
+"title": "7.15.1. General"
+},
+{
+"id": "1d_transforms",
+"level": 4,
+"title": "7.15.2. 1D transforms"
+},
+{
+"id": "oned_matrix_transform_process",
+"level": 5,
+"title": "7.15.2.1. 1d inverse transform process"
+},
+{
+"id": "inverse_walsh_hadamard_transform_process",
+"level": 5,
+"title": "7.15.2.2. Inverse Walsh-Hadamard transform process"
+},
+{
+"id": "inverse_identity_transform_process",
+"level": 5,
+"title": "7.15.2.3. Inverse identity transform process"
+},
+{
+"id": "secondary_transform_process",
+"level": 4,
+"title": "7.15.3. Secondary transform process"
+},
+{
+"id": "twod_inverse_transform_process",
+"level": 4,
+"title": "7.15.4. 2D inverse transform process"
+},
+{
+"id": "twod_matrix_transform_process",
+"level": 5,
+"title": "7.15.4.1. 2D matrix transform process"
+},
+{
+"id": "deblocking_filter_tip",
+"level": 3,
+"title": "7.16. Deblocking filter for TIP process"
+},
+{
+"id": "deblocking_filter_process",
+"level": 3,
+"title": "7.17. Deblocking filter process"
+},
+{
+"id": "deblocking_filter_process_general",
+"level": 4,
+"title": "7.17.1. General"
+},
+{
+"id": "edge_deblocking_filter_process",
+"level": 4,
+"title": "7.17.2. Edge deblocking filter process"
+},
+{
+"id": "filter_maximum_width_process",
+"level": 4,
+"title": "7.17.3. Filter maximum width process"
+},
+{
+"id": "filter_size_process",
+"level": 4,
+"title": "7.17.4. Filter size process"
+},
+{
+"id": "adaptive_filter_strength_process",
+"level": 4,
+"title": "7.17.5. Adaptive filter strength process"
+},
+{
+"id": "adaptive_filter_strength_selection_process",
+"level": 4,
+"title": "7.17.6. Adaptive filter strength selection process"
+},
+{
+"id": "sample_filtering_process",
+"level": 4,
+"title": "7.17.7. Sample filtering process"
+},
+{
+"id": "sample_filtering_process_general",
+"level": 5,
+"title": "7.17.7.1. General"
+},
+{
+"id": "filter_choice_process",
+"level": 5,
+"title": "7.17.7.2. Filter choice process"
+},
+{
+"id": "cdef_process",
+"level": 3,
+"title": "7.18. CDEF process"
+},
+{
+"id": "cdef_block_process",
+"level": 4,
+"title": "7.18.1. CDEF block process"
+},
+{
+"id": "cdef_direction_process",
+"level": 4,
+"title": "7.18.2. CDEF direction process"
+},
+{
+"id": "cdef_filter_process",
+"level": 4,
+"title": "7.18.3. CDEF filter process"
+},
+{
+"id": "ccso_process",
+"level": 3,
+"title": "7.19. CCSO process"
+},
+{
+"id": "apply_ccso_filter_process",
+"level": 4,
+"title": "7.19.1. Apply CCSO filter process"
+},
+{
+"id": "loop_restoration_process",
+"level": 3,
+"title": "7.20. Loop restoration process"
+},
+{
+"id": "loop_restore_block_process",
+"level": 4,
+"title": "7.20.1. Loop restore block process"
+},
+{
+"id": "get_source_sample_process",
+"level": 4,
+"title": "7.20.2. Get source sample process"
+},
+{
+"id": "ns_wiener_filter_process",
+"level": 4,
+"title": "7.20.3. Non-separable Wiener filter process"
+},
+{
+"id": "pc_wiener_filter_process",
+"level": 4,
+"title": "7.20.4. Pixel classified Wiener filter process"
+},
+{
+"id": "apply_gdf_filter_process",
+"level": 4,
+"title": "7.20.5. Apply GDF filter process"
+},
+{
+"id": "output_processes",
+"level": 3,
+"title": "7.21. Output processes"
+},
+{
+"id": "output_process",
+"level": 4,
+"title": "7.21.1. Output process"
+},
+{
+"id": "intermediate_output_preparation_process",
+"level": 4,
+"title": "7.21.2. Intermediate output preparation process"
+},
+{
+"id": "output_successive_frames_process",
+"level": 4,
+"title": "7.21.3. Output successive frames process"
+},
+{
+"id": "output_implicit_output_frame_process",
+"level": 4,
+"title": "7.21.4. Output implicit output frame process"
+},
+{
+"id": "flush_implicit_output_frames_process",
+"level": 4,
+"title": "7.21.5. Flush implicit output frames process"
+},
+{
+"id": "output_frame_buffers_process",
+"level": 4,
+"title": "7.21.6. Output frame buffers process"
+},
+{
+"id": "film_grain_synthesis_process",
+"level": 4,
+"title": "7.21.7. Film grain synthesis process"
+},
+{
+"id": "fgsp_general",
+"level": 5,
+"title": "7.21.7.1. General"
+},
+{
+"id": "random_number_process",
+"level": 5,
+"title": "7.21.7.2. Random number process"
+},
+{
+"id": "generate_grain_process",
+"level": 5,
+"title": "7.21.7.3. Generate grain process"
+},
+{
+"id": "scaling_lookup_initialization_process",
+"level": 5,
+"title": "7.21.7.4. Scaling lookup initialization process"
+},
+{
+"id": "add_noise_synthesis_process",
+"level": 5,
+"title": "7.21.7.5. Add noise synthesis process"
+},
+{
+"id": "motion_field_motion_vector_storage_process",
+"level": 3,
+"title": "7.22. Motion field motion vector storage process"
+},
+{
+"id": "reference_frame_update_process",
+"level": 3,
+"title": "7.23. Reference frame update process"
+},
+{
+"id": "parsing_process",
+"level": 2,
+"title": "8. Parsing process"
+},
+{
+"id": "parsing_process_for_fn",
+"level": 3,
+"title": "8.1. Parsing process for f(n)"
+},
+{
+"id": "parsing_process_for_symbol_decoder",
+"level": 3,
+"title": "8.2. Parsing process for symbol decoder"
+},
+{
+"id": "parsing_process_for_symbol_decoder_general",
+"level": 4,
+"title": "8.2.1. General"
+},
+{
+"id": "initialization_process_for_symbol_decoder",
+"level": 4,
+"title": "8.2.2. Initialization process for symbol decoder"
+},
+{
+"id": "boolean_decoding_process",
+"level": 4,
+"title": "8.2.3. Boolean decoding process"
+},
+{
+"id": "exit_process_for_symbol_decoder",
+"level": 4,
+"title": "8.2.4. Exit process for symbol decoder"
+},
+{
+"id": "parsing_process_for_read_literal",
+"level": 4,
+"title": "8.2.5. Parsing process for read_literal"
+},
+{
+"id": "symbol_decoding_process",
+"level": 4,
+"title": "8.2.6. Symbol decoding process"
+},
+{
+"id": "parsing_process_for_cdf_encoded_syntax_elements",
+"level": 3,
+"title": "8.3. Parsing process for CDF encoded syntax elements"
+},
+{
+"id": "parsing_process_for_cdf_encoded_syntax_elements_general",
+"level": 4,
+"title": "8.3.1. General"
+},
+{
+"id": "cdf_selection_process",
+"level": 4,
+"title": "8.3.2. Cdf selection process"
+},
+{
+"id": "additional_tables",
+"level": 2,
+"title": "9. Additional tables"
+},
+{
+"id": "tables_general",
+"level": 3,
+"title": "9.1. General"
+},
+{
+"id": "conversion_tables",
+"level": 3,
+"title": "9.2. Conversion tables"
+},
+{
+"id": "default_cdf_tables",
+"level": 3,
+"title": "9.3. Default CDF tables"
+},
+{
+"id": "quantizer_matrix_tables",
+"level": 3,
+"title": "9.4. Quantizer matrix tables"
+},
+{
+"id": "quantizer_matrix_tables_general",
+"level": 4,
+"title": "9.4.1. General"
+},
+{
+"id": "derivation-process-informative",
+"level": 4,
+"title": "9.4.2. Derivation process (Informative)"
+},
+{
+"id": "tables",
+"level": 4,
+"title": "9.4.3. Tables"
+},
+{
+"id": "warp_filter_tables",
+"level": 3,
+"title": "9.5. Warp filter tables"
+},
+{
+"id": "oned_tranform_tables",
+"level": 3,
+"title": "9.6. 1d transform tables"
+},
+{
+"id": "secondary_transform_tables",
+"level": 3,
+"title": "9.7. Secondary transform tables"
+},
+{
+"id": "loop_restoration_tables",
+"level": 3,
+"title": "9.8. Loop restoration tables"
+},
+{
+"id": "annex_a",
+"level": 2,
+"title": "Annex A: Profiles, levels, and tiers"
+},
+{
+"id": "annex_a_general",
+"level": 3,
+"title": "A.1. General"
+},
+{
+"id": "annex_a_profiles",
+"level": 3,
+"title": "A.2. Profiles"
+},
+{
+"id": "annex_a_configurations",
+"level": 3,
+"title": "A.3. Multi-sequence configurations"
+},
+{
+"id": "annex_a_levels",
+"level": 3,
+"title": "A.4. Levels"
+},
+{
+"id": "decoder_conformance",
+"level": 3,
+"title": "A.5. Decoder Conformance"
+},
+{
+"id": "annex_b",
+"level": 2,
+"title": "Annex B: Length delimited bitstream format"
+},
+{
+"id": "annex_b_overview",
+"level": 3,
+"title": "B.1. Overview"
+},
+{
+"id": "length_delimited_bitstream_syntax",
+"level": 3,
+"title": "B.2. Length delimited bitstream syntax"
+},
+{
+"id": "length_delimited_bitstream_semantics",
+"level": 3,
+"title": "B.3. Length delimited bitstream semantics"
+},
+{
+"id": "annex_c",
+"level": 2,
+"title": "Annex C: Error resilience behavior (informative)"
+},
+{
+"id": "annex_c_general",
+"level": 3,
+"title": "C.1. General"
+},
+{
+"id": "definition_of_processable_frames",
+"level": 3,
+"title": "C.2. Definition of processable frames"
+},
+{
+"id": "recommendation_for_processable_frames",
+"level": 3,
+"title": "C.3. Recommendation for processable frames"
+},
+{
+"id": "encoder_consequences_of_processable_frames",
+"level": 3,
+"title": "C.4. Encoder consequences of processable frames"
+},
+{
+"id": "decoder_consequences_of_processable_frames",
+"level": 3,
+"title": "C.5. Decoder consequences of processable frames"
+},
+{
+"id": "annex_d",
+"level": 2,
+"title": "Annex D: Multistream composition process (informative)"
+},
+{
+"id": "annex_d_general",
+"level": 3,
+"title": "D.1. General"
+},
+{
+"id": "chroma_format_determination",
+"level": 3,
+"title": "D.2. Chroma format determination process"
+},
+{
+"id": "array_initialization_process",
+"level": 3,
+"title": "D.3. Array initialization process"
+},
+{
+"id": "background_color_determination_process",
+"level": 4,
+"title": "D.3.1. Background color determination process"
+},
+{
+"id": "spatial_mapping_process",
+"level": 3,
+"title": "D.4. Spatial mapping process"
+},
+{
+"id": "spatial_mapping_with_alpha_process",
+"level": 3,
+"title": "D.5. Spatial mapping with alpha process"
+},
+{
+"id": "frame_resampling_process",
+"level": 4,
+"title": "D.5.1. Frame resampling process"
+},
+{
+"id": "mono_frame_resampling_process",
+"level": 4,
+"title": "D.5.2. Monochrome frame resampling process"
+},
+{
+"id": "annex_e",
+"level": 2,
+"title": "Annex E: Decoder model"
+},
+{
+"id": "annex_e_general",
+"level": 3,
+"title": "E.1. General"
+},
+{
+"id": "operating_point_selection",
+"level": 3,
+"title": "E.2. Operating point selection"
+},
+{
+"id": "decoder_model_definitions",
+"level": 3,
+"title": "E.3. Decoder model definitions"
+},
+{
+"id": "operating_modes",
+"level": 3,
+"title": "E.4. Operating modes"
+},
+{
+"id": "resource_availability_mode",
+"level": 4,
+"title": "E.4.1. Resource availability mode"
+},
+{
+"id": "decoding_schedule_mode",
+"level": 4,
+"title": "E.4.2. Decoding schedule mode"
+},
+{
+"id": "establishing_bitstream_conformance",
+"level": 4,
+"title": "E.4.3. Establishing bitstream conformance"
+},
+{
+"id": "when_timing_information_is_not_present_in_the_bitstream",
+"level": 4,
+"title": "E.4.4. When timing information is not present in the bitstream"
+},
+{
+"id": "frame_timing_definitions",
+"level": 3,
+"title": "E.5. Frame timing definitions"
+},
+{
+"id": "start_of_dfg_bits_arrival",
+"level": 4,
+"title": "E.5.1. Start of DFG bits arrival"
+},
+{
+"id": "end_of_dfg_bits_arrival",
+"level": 4,
+"title": "E.5.2. End of DFG bits arrival"
+},
+{
+"id": "scheduled_removal_times",
+"level": 4,
+"title": "E.5.3. Scheduled removal times"
+},
+{
+"id": "removal_times_in_decoding_schedule_mode",
+"level": 4,
+"title": "E.5.4. Removal times in decoding schedule mode"
+},
+{
+"id": "removal_times_in_resource_availability_mode",
+"level": 4,
+"title": "E.5.5. Removal times in resource availability mode"
+},
+{
+"id": "frame_decode_timing",
+"level": 4,
+"title": "E.5.6. Frame decode timing"
+},
+{
+"id": "frame_presentation_timing",
+"level": 4,
+"title": "E.5.7. Frame presentation timing"
+},
+{
+"id": "decoder_model",
+"level": 3,
+"title": "E.6. Decoder model"
+},
+{
+"id": "decoder_model_structure",
+"level": 4,
+"title": "E.6.1. Decoder model structure"
+},
+{
+"id": "decoder_model_functions",
+"level": 4,
+"title": "E.6.2. Decoder model functions"
+},
+{
+"id": "decoder_model_error_codes",
+"level": 4,
+"title": "E.6.3. Decoder model error codes"
+},
+{
+"id": "bitstream_conformance",
+"level": 3,
+"title": "E.7. Bitstream conformance"
+},
+{
+"id": "general",
+"level": 4,
+"title": "E.7.1. General"
+},
+{
+"id": "decoder_buffer_delay_consistency_across_random_access_points_(applies_to_decoding_schedule_mode)",
+"level": 4,
+"title": "E.7.2. Decoder buffer delay consistency across random access points (applies to decoding schedule mode)"
+},
+{
+"id": "smoothing_buffer_overflow",
+"level": 4,
+"title": "E.7.3. Smoothing buffer overflow"
+},
+{
+"id": "smoothing_buffer_underflow",
+"level": 4,
+"title": "E.7.4. Smoothing buffer underflow"
+},
+{
+"id": "minimum_decode_time_(applies_to_decoding_schedule_mode)",
+"level": 4,
+"title": "E.7.5. Minimum decode time (applies to decoding schedule mode)"
+},
+{
+"id": "minimum_presentation_interval",
+"level": 4,
+"title": "E.7.6. Minimum presentation interval"
+},
+{
+"id": "decode_deadline",
+"level": 4,
+"title": "E.7.7. Decode deadline"
+},
+{
+"id": "level_imposed_constraints",
+"level": 4,
+"title": "E.7.8. Level imposed constraints"
+},
+{
+"id": "decode_process_constraints",
+"level": 4,
+"title": "E.7.9. Decode Process constraints"
+},
+{
+"id": "annex_f_sub_bitstream",
+"level": 2,
+"title": "Annex F: Sub-bitstream extraction (informative)"
+},
+{
+"id": "annex_f_general",
+"level": 3,
+"title": "F.1. General"
+},
+{
+"id": "annex_f_op_usage",
+"level": 3,
+"title": "F.2. Operating point usage"
+},
+{
+"id": "annex_f_decoder_operation",
+"level": 4,
+"title": "F.2.1. General decoder operation"
+},
+{
+"id": "annex_f_multistream_decoder",
+"level": 4,
+"title": "F.2.2. Multistream bitstream decoder operation"
+},
+{
+"id": "annex_f_multistream_full",
+"level": 5,
+"title": "F.2.2.1. Full bitstream decoding"
+},
+{
+"id": "annex_f_multistream_per_layer",
+"level": 5,
+"title": "F.2.2.2. Per-layer operating point selection"
+},
+{
+"id": "annex_f_multistream_global",
+"level": 5,
+"title": "F.2.2.3. Global operating point selection"
+},
+{
+"id": "annex_f_singlestream_decoder",
+"level": 4,
+"title": "F.2.3. Singlestream bitstream decoder operation"
+},
+{
+"id": "annex_f_singlestream_full",
+"level": 5,
+"title": "F.2.3.1. Full bitstream decoding"
+},
+{
+"id": "annex_f_singlestream_local",
+"level": 5,
+"title": "F.2.3.2. Local operating point selection"
+},
+{
+"id": "annex_f_extraction_processes",
+"level": 3,
+"title": "F.3. Sub-bitstream extraction processes"
+},
+{
+"id": "annex_f_operating_point_selection",
+"level": 4,
+"title": "F.3.1. Operating point selection and analysis process"
+},
+{
+"id": "annex_f_sub_bitstream_extraction",
+"level": 4,
+"title": "F.3.2. Sub-bitstream extraction process"
+},
+{
+"id": "annex_f_preserved_obus",
+"level": 4,
+"title": "F.3.3. Preserved OBU types"
+},
+{
+"id": "annex_g_lcr_atlas_usage",
+"level": 2,
+"title": "Annex G: Layer composition and Atlas usage examples (informative)"
+},
+{
+"id": "annex_g_general",
+"level": 3,
+"title": "G.1. General"
+},
+{
+"id": "annex_g_360_viewport_example",
+"level": 3,
+"title": "G.2. 360-degree viewport-dependent streaming with subpictures"
+},
+{
+"id": "annex_g_360_layer_structure",
+"level": 4,
+"title": "G.2.1. Layer structure"
+},
+{
+"id": "annex_g_360_lcr",
+"level": 4,
+"title": "G.2.2. LCR configuration"
+},
+{
+"id": "annex_g_360_atlas",
+"level": 4,
+"title": "G.2.3. Atlas configuration"
+},
+{
+"id": "annex_g_360_streaming",
+"level": 4,
+"title": "G.2.4. Viewport-dependent streaming process"
+},
+{
+"id": "annex_g_360_benefits",
+"level": 4,
+"title": "G.2.5. Benefits for 360-degree streaming"
+},
+{
+"id": "annex_g_subpicture_example",
+"level": 3,
+"title": "G.3. Subpicture composition example"
+},
+{
+"id": "annex_g_subpicture_lcr",
+"level": 4,
+"title": "G.3.1. LCR configuration"
+},
+{
+"id": "annex_g_subpicture_atlas",
+"level": 4,
+"title": "G.3.2. Atlas configuration"
+},
+{
+"id": "annex_g_subpicture_rendering",
+"level": 4,
+"title": "G.3.3. Rendering and adaptive streaming"
+},
+{
+"id": "annex_g_roi_example",
+"level": 3,
+"title": "G.4. Region-of-interest scalability example with encoder padding"
+},
+{
+"id": "annex_g_roi_lcr",
+"level": 4,
+"title": "G.4.1. LCR configuration"
+},
+{
+"id": "annex_g_roi_atlas",
+"level": 4,
+"title": "G.4.2. Atlas configuration"
+},
+{
+"id": "annex_g_roi_rendering",
+"level": 4,
+"title": "G.4.3. Rendering scenarios"
+},
+{
+"id": "annex_g_implementation",
+"level": 3,
+"title": "G.5. Implementation considerations"
+},
+{
+"id": "annex_g_decoder_requirements",
+"level": 4,
+"title": "G.5.1. Decoder requirements"
+},
+{
+"id": "annex_g_encoder_recommendations",
+"level": 4,
+"title": "G.5.2. Encoder recommendations"
+},
+{
+"id": "annex_g_interoperability",
+"level": 4,
+"title": "G.5.3. Interoperability"
+},
+{
+"id": "index",
+"level": 2,
+"title": "Index"
+},
+{
+"id": "index-defined-here",
+"level": 3,
+"title": "Terms defined by this specification"
+},
+{
+"id": "references",
+"level": 2,
+"title": "References"
+},
+{
+"id": "normative",
+"level": 3,
+"title": "Normative References"
+},
+{
+"id": "informative",
+"level": 3,
+"title": "Informative References"
+}
+]
