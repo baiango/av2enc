@@ -14,3 +14,4 @@ bench/hello_cuda/build/
 bench/avm_baseline/*.ivf
 bench/avm_baseline/*.log
 spec/tables/_cache/
+src/profile/build/

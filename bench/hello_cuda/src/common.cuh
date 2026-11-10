@@ -28,6 +28,11 @@ constexpr int kDctSizes[kDctNumSizes] = {8, 16, 32};
 // Fills the host-side basis tables and uploads them to device constant memory.
 void init_dct_basis();
 
+// Architecture of the kernel image the driver selected for this device
+// (binaryVersion: 86 on RTX 3060, 120 on RTX 5070). Used to confirm which
+// fatbin slice actually executes.
+int loaded_binary_version();
+
 // Returns a 32x32 row-major table for size index 0 (8), 1 (16), 2 (32).
 const int32_t* host_dct_basis(int size_index);
 

@@ -116,6 +116,12 @@ const int32_t* host_dct_basis(int size_index) {
   return g_host_basis[size_index];
 }
 
+int loaded_binary_version() {
+  cudaFuncAttributes attrs{};
+  CUDA_CHECK(cudaFuncGetAttributes(&attrs, dct_naive_kernel<8, 0>));
+  return attrs.binaryVersion;
+}
+
 void launch_vector_add(const float* a, const float* b, float* out, int n,
                        cudaStream_t stream) {
   constexpr int kThreads = 256;

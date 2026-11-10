@@ -528,11 +528,19 @@ void print_device_info() {
   cudaDeviceProp prop{};
   CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
 
+  int optin_shared = 0;
+  CUDA_CHECK(cudaDeviceGetAttribute(&optin_shared,
+                                     cudaDevAttrMaxSharedMemoryPerBlockOptin, 0));
+
   std::printf("=== av2enc CUDA baseline ===\n");
   std::printf("device: %s (sm_%d%d), %d MiB, %d SMs, clock %.2f GHz\n", prop.name,
               prop.major, prop.minor,
               static_cast<int>(prop.totalGlobalMem >> 20), prop.multiProcessorCount,
               static_cast<double>(prop.clockRate) / 1e6);
+  std::printf(
+      "shared memory: %zu KiB/block default, %d KiB/block opt-in, %zu KiB/SM\n",
+      prop.sharedMemPerBlock / 1024, optin_shared / 1024,
+      prop.sharedMemPerMultiprocessor / 1024);
   std::printf("runtime: CUDA %d.%d, driver: CUDA %d.%d, nvcc: %d.%d\n",
               runtime_version / 1000, (runtime_version % 1000) / 10,
               driver_version / 1000, (driver_version % 1000) / 10,
@@ -555,6 +563,7 @@ int main(int argc, char** argv) {
 
   print_device_info();
   init_dct_basis();
+  std::printf("loaded kernel image: sm_%d\n\n", loaded_binary_version());
 
   std::printf("--- correctness ---\n");
   int failures = 0;
@@ -565,6 +574,7 @@ int main(int argc, char** argv) {
 
   if (tiny) {
     std::printf("\n(tiny mode: benchmark suite skipped)\n");
+    std::printf("%s\n", failures == 0 ? "ALL CHECKS PASSED" : "CHECKS FAILED");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
   }
 
