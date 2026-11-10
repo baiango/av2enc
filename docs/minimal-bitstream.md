@@ -106,17 +106,38 @@ OBU type values used (§6.2.2): `OBU_SEQUENCE_HEADER = 1`,
 
 Header byte for our three OBUs:
 
+The AV2 header packs `obu_header_extension_flag` **first**, then `obu_type` (5
+bits), then `obu_tlayer_id` (2 bits) — this is *not* AV1's layout, where the
+extension flag sits after the type. Do not reuse an AV1 OBU writer.
+
 | OBU | extension | type | header bits | first byte |
 |---|---|---|---|---|
-| TD | 0 | 2 | `0 00010 00` | `0x10` |
-| SEQ | 0 | 1 | `0 00001 00` | `0x08` |
-| CLK | 0 | 4 | `0 00100 00` | `0x20` |
+| TD | 0 | 2 | `0 00010 00` | `0x08` |
+| SEQ | 0 | 1 | `0 00001 00` | `0x04` |
+| CLK | 0 | 4 | `0 00100 00` | `0x10` |
 
-(The low 2 bits are `obu_tlayer_id = 0`.)
+(The low 2 bits are `obu_tlayer_id = 0`. Sanity check: `(0x08 >> 2) & 0x1f == 2`,
+`(0x04 >> 2) & 0x1f == 1`, `(0x10 >> 2) & 0x1f == 4`.)
 
-Non-tile OBUs must end with `trailing_bits(remainingPayloadBits)` (§5.2.1), i.e. a
-single 1 bit then zero padding to the byte boundary. The sequence-header OBU
-therefore ends `...0 1` padded with zeros.
+Sequence headers are **extensible OBUs**: `open_bitstream_unit()` appends
+`obu_extension_flag f(1)` to the payload and then codes `trailing_bits(
+remainingPayloadBits - 1)` (§5.2.1, `is_extensible_obu()`). So the SEQ payload is
+
+```
+sequence_header_obu() syntax  (83 bits for 64x64, 87 for 256x256)
+obu_extension_flag = 0        1 bit
+trailing_bits: 1 then zeros   to the byte boundary
+```
+
+64x64: 83 + 1 + 1 = 85 bits → 3 zero bits → **11-byte payload**.
+256x256: 87 + 1 + 1 = 89 bits → 6 zero bits → **12-byte payload**.
+The last payload byte of the 64x64 header is `0x08` (the `trailing_bits` pattern
+`...0 1000`), not a bare `trailing_bits` byte.
+
+The temporal-delimiter payload is empty, so `obuPayloadSize = 0` and
+`open_bitstream_unit()` skips the trailing-bits block entirely
+(`if (obuPayloadSize > 0 && !usedArith)`, §5.2.1). The TD is just
+`01 08` (size 1, header 0x08).
 
 The tile-group OBU does **not** get `trailing_bits` from `open_bitstream_unit`:
 `usedArith = is_tile_group()` and the whole payload is consumed by the tile group
@@ -217,8 +238,15 @@ Fields in exact order. "Bits" is what you actually write.
 | 50 | `seq_tile_info_present_flag` | `f(1)` | **0** (tiles described per frame) | 1 | 5.4.2 |
 | 51 | `film_grain_params_present` | `f(1)` | 0 | 1 | 5.4.1 |
 
-Total **83 bits** for 64x64 (88 with `trailing_bits` → an 11-byte payload, so the
-whole OBU is 12 bytes including the 1-byte header).
+Bit budget:
+
+| Frame | Syntax bits | + ext flag | + trailing 1 | pad | Payload | OBU (with header) |
+|---|---|---|---|---|---|---|
+| 64x64 | **83** | 1 | 1 | 3 | **11 bytes** | 12 bytes (`0c 04 …`) |
+| 256x256 | **87** | 1 | 1 | 6 | **12 bytes** | 13 bytes (`0d 04 …`) |
+
+(256x256 is 4 bits longer because `max_frame_width_minus_1` and
+`max_frame_height_minus_1` need 8-bit fields instead of 6-bit.)
 
 Notes:
 
@@ -274,7 +302,7 @@ Fields in exact order:
 | 7 | `uniform_tile_spacing_flag` | `f(1)` | **1** | 1 | 5.18.7.3 |
 | — | `increment_tile_cols_log2` | — | none: `minLog2TileCols = maxLog2TileCols = 0` | 0 | 5.18.7.3 |
 | — | `increment_tile_rows_log2` | — | none: same | 0 | 5.18.7.3 |
-| 8 | `base_q_idx` | `f(8)` | e.g. 90 | 8 | 5.18.6.1 |
+| 8 | `base_q_idx` | `f(8)` | **90** (locked header test; qctx slice 0) | 8 | 5.18.6.1 |
 | 9 | `segmentation_enabled` | `f(1)` | **0** | 1 | 5.18.7.1 |
 | 10 | `using_qmatrix` | `f(1)` | 0 | 1 | 5.18.6.2 |
 | 11 | `delta_q_present` | `f(1)` | 0 | 1 | 5.18.7.8 |
@@ -285,7 +313,13 @@ Fields in exact order:
 | 13 | `reduced_tx_set` | `f(2)` | 0 | 2 | 5.18.2 |
 
 **22 bits**, then `byte_alignment()` zeros. With `is_first_tile_group` (1 bit) the
-frame header occupies exactly **3 bytes**.
+frame header occupies exactly **3 bytes** (`e2 b4 00` for QP 90).
+
+This count is for 64x64 (one superblock, so `tile_params()` codes no increment
+bits). **256x256 is 24 bits**, because `sbCols = sbRows = 4` makes
+`maxLog2TileCols = maxLog2TileRows = 2`, so `tile_params()` codes
+`increment_tile_cols_log2 = 0` and `increment_tile_rows_log2 = 0`; its tile-group
+header is 4 bytes. See §9.
 
 Fields that are *not* written at all for this configuration, and why:
 
@@ -329,12 +363,13 @@ matching normal AV2 behaviour) but test 1 first.
 | # | Field | Descriptor | Value | Bits |
 |---|---|---|---|---|
 | 1 | `is_first_tile_group` | `f(1)` | 1 | 1 |
-| 2 | `frame_header(isFirst=1)` | | §4 above | 22 |
+| 2 | `frame_header(isFirst=1)` | | §4 above (22 bits at 64x64, 24 at 256x256) | 22/24 |
 | 3 | `tile_start_and_end_present_flag` | — | absent (`NumTiles == 1`) | 0 |
-| 4 | `byte_alignment()` | | zero bits | 1 |
+| 4 | `byte_alignment()` | | zero bits | 1/0 |
 
-So after the frame header: `1` (is_first) + 22 bits + 1 zero bit = 24 bits = 3 bytes,
-then the tile payload starts at a byte boundary.
+So after the frame header: `1` (is_first) + 22 bits + 1 zero bit = 24 bits = 3 bytes
+at 64x64 (`e2 b4 00`), and `1 + 24 + 1 = 32` bits = 4 bytes at 256x256. Then the
+tile payload starts at a byte boundary.
 
 Then `tile_group_payload(sz)` (§5.20.1) with `tg_start = tg_end = 0`,
 `lastTile = 1` → `tileSize = sz` (the rest of the OBU). No `tile_size_minus_1`
@@ -579,14 +614,26 @@ Everything above is identical except:
 | `all_zero` ctx for luma | 0 always | **0 always** (tx 32x32 == block 32x32 → the `bw==w && bh==h` branch) |
 
 The 256x256 frame has 16 superblocks. `LeftMiSizes` / `AboveMiSizes` persist across
-SBs (only reset per SB *row* / per tile), so `do_split` and `all_zero` contexts vary
-across the frame. See §5.20.5 / §8.3.2 for the derivations; `docs/tiles.md` has the
+SBs (only reset per SB *row* / per tile), so `do_split` contexts vary across the
+frame. `all_zero` for luma does **not** vary: the 32x32 transform block always
+equals the 32x32 residual block, so the `bw == w && bh == h` branch gives `ctx = 0`
+everywhere. See §5.20.3 / §8.3.2 for the derivations; `docs/tiles.md` has the
 tile-boundary rules.
 
-For 256x256 the tile grid is 4x4 SBs, so `increment_tile_cols_log2` /
-`increment_tile_rows_log2` *can* be coded — but M0 keeps one tile and writes
-`uniform_tile_spacing_flag = 1` followed by nothing (min = max = 0), exactly as for
-64x64.
+For 256x256 the tile grid is 4x4 SBs, so `maxLog2TileCols = maxLog2TileRows =
+tile_log2(1, 4) = 2`. `tile_params()` therefore codes the while-loop at least
+once even for a single tile:
+
+```
+uniform_tile_spacing_flag      f(1)  = 1
+increment_tile_cols_log2       f(1)  = 0      # tileColsLog2 stays minLog2TileCols = 0
+increment_tile_rows_log2       f(1)  = 0      # tileRowsLog2 stays 0
+```
+
+That is **2 extra bits**: the 256x256 frame header is **24 bits**, not 22. For
+64x64 the same loops do not run (`maxLog2 = 0`), so its header stays 22 bits.
+The 256x256 tile-group header is therefore `1 + 24 = 25` bits → one zero pad →
+**32 bits = 4 bytes** (64x64: `1 + 22 = 23` → 24 bits = 3 bytes).
 
 ---
 
@@ -595,26 +642,60 @@ For 256x256 the tile grid is 4x4 SBs, so `increment_tile_cols_log2` /
 ```
 IVF header (32 B)
 
-OBU 1: TD
+OBU 1: TD                                 01 08
   leb128(1)                      0x01
-  header 0x10
-OBU 2: SEQ
-  leb128(12)                     0x0c   (1-byte header + 11-byte payload)
-  header 0x08
-  8 bytes of sequence header bits (see §3), last byte ends with the trailing 1 bit
-OBU 3: CLK
+  header 0x08                            (type 2, ext 0, tlayer 0)
+OBU 2: SEQ                                 0c 04 <11 bytes>
+  leb128(12)                     0x0c    (1-byte header + 11-byte payload)
+  header 0x04                            (type 1)
+  83 syntax bits + obu_extension_flag=0 + trailing_bits
+  payload bytes: 82 7a 55 ff f0 00 04 00 1b 80 08
+OBU 3: CLK                                 <size> 10 <tile-group header> <tile data>
   leb128(n)
-  header 0x20
+  header 0x10                            (type 4)
   is_first_tile_group = 1               1 bit
   frame header                          22 bits
-  byte_alignment                        2 zero bits
-  ---- byte aligned ----
+  byte_alignment                        1 zero bit
+  ---- 24 bits = 3 bytes: e2 b4 00 ----
   tile payload:
     range-coded symbols, then exit_symbol padding (1 + zeros)
     the last byte(s) are the OBU trailing bits
 ```
 
 `n` = 1 (OBU header) + 3 (tile-group bit + frame header + alignment) + tile bytes.
+
+### 10.1 Locked header bytes (`tests/m0_headers_test.cpp`)
+
+The exact TD+SEQ+CLK header bytes for the 64x64 M0 still picture are locked by
+`tests/m0_headers_test.cpp` and must not drift. Byte-for-byte:
+
+```
+01 08 0c 04 82 7a 55 ff f0 00 04 00 1b 80 08 05 10 e2 b4 00 00
+```
+
+Breakdown:
+
+| Bytes | Meaning |
+|---|---|
+| `01 08` | TD: leb128 size 1, header `0x08` |
+| `0c 04 82 7a 55 ff f0 00 04 00 1b 80 08` | SEQ: size 12, header `0x04`, 11-byte payload |
+| `05 10 e2 b4 00` | CLK: size 5, header `0x10`, 3-byte tile-group header (`e2 b4 00`) |
+| `00` | placeholder tile byte in the header-only test — a real frame replaces it with range-coded tile data and a larger CLK size |
+
+The same test locks these constants:
+
+| Constant | 64x64 | 256x256 |
+|---|---|---|
+| sequence-header **syntax** bits | 83 | 87 |
+| sequence-header **payload** bytes | 11 | 12 |
+| frame-header **syntax** bits | 22 | 24 |
+| tile-group header bytes | 3 | 4 |
+
+256x256 frame-header bits: `110001000101101000000000` (24) — note the two extra
+`0` bits for `increment_tile_cols_log2` / `increment_tile_rows_log2` after
+`uniform_tile_spacing_flag = 1` and the 8-bit `base_q_idx = 90`.
+64x64 frame-header bits: `1100010101101000000000` (22).
+64x64 tile-group bits: `111000101011010000000000` = `e2 b4 00` (1 + 22 + 1 pad).
 
 ---
 
