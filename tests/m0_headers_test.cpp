@@ -65,16 +65,22 @@ constexpr std::string_view kSequenceBits256 =
 static_assert(kSequenceBits256.size() == av2enc::m0::kSequenceHeaderSyntaxBits256x256);
 
 // §5.18.2 frame_header_info() for a CLK, 8-bit, QP 90, one-tile frame.
-constexpr std::string_view kFrameBits64 = "1100010101101000000000";
+// Default M0 configuration: frozen CDFs (disable_cdf_update = 1).
+constexpr std::string_view kFrameBits64 = "1100110101101000000000";
 static_assert(kFrameBits64.size() == av2enc::m0::kFrameHeaderSyntaxBits64x64);
 
+// Same frame with enable_cdf_adaptation = true (disable_cdf_update = 0).
+constexpr std::string_view kFrameBits64Adaptive = "1100010101101000000000";
+static_assert(kFrameBits64Adaptive.size() ==
+              av2enc::m0::kFrameHeaderSyntaxBits64x64);
+
 // 256x256 adds increment_tile_cols_log2 = 0 and increment_tile_rows_log2 = 0.
-constexpr std::string_view kFrameBits256 = "110001000101101000000000";
+constexpr std::string_view kFrameBits256 = "110011000101101000000000";
 static_assert(kFrameBits256.size() == av2enc::m0::kFrameHeaderSyntaxBits256x256);
 
 // §5.19: is_first_tile_group + frame_header + byte_alignment.
 constexpr std::string_view kTileGroupBits64 =
-    "111000101011010000000000";  // 1 + 22 + 1 zero bit
+    "111001101011010000000000";  // 1 + 22 + 1 zero bit
 static_assert(kTileGroupBits64.size() == 24);
 
 constexpr std::array<std::uint8_t, 11> kSequencePayload64{
@@ -96,7 +102,7 @@ constexpr std::array<std::uint8_t, 12> kSequencePayload256{
 // TD bytes 01 08 and uses 0x04 / 0x10 for its sequence-header / CLK headers.
 constexpr std::array<std::uint8_t, 21> kAssembledPlaceholder64{
     0x01, 0x08, 0x0c, 0x04, 0x82, 0x7a, 0x55, 0xff, 0xf0, 0x00, 0x04,
-    0x00, 0x1b, 0x80, 0x08, 0x05, 0x10, 0xe2, 0xb4, 0x00, 0x00};
+    0x00, 0x1b, 0x80, 0x08, 0x05, 0x10, 0xe6, 0xb4, 0x00, 0x00};
 
 std::string bit_string(const BitWriter& writer) {
   std::string out;
@@ -394,7 +400,7 @@ void test_frame_header_64x64() {
   CHECK(writer.bit_size() == 22U);
   CHECK(writer.byte_size() == 3U);
   CHECK(bit_string(writer) == std::string(kFrameBits64));
-  CHECK(writer.bytes()[0] == 0xc5U);
+  CHECK(writer.bytes()[0] == 0xcdU);
   CHECK(writer.bytes()[1] == 0x68U);
   CHECK(writer.bytes()[2] == 0x00U);
 }
@@ -409,14 +415,28 @@ void test_frame_header_256x256() {
   CHECK(bit_string(writer) == std::string(kFrameBits256));
 }
 
+void test_frame_header_adaptive_cdf() {
+  StillPictureConfig config;
+  config.enable_cdf_adaptation = true;
+
+  BitWriter writer;
+  CHECK(av2enc::m0::write_frame_header(writer, config) == 22U);
+  CHECK(bit_string(writer) == std::string(kFrameBits64Adaptive));
+}
+
 void test_frame_header_disable_cdf_update() {
   StillPictureConfig config;
   config.disable_cdf_update = true;
 
   BitWriter writer;
   CHECK(av2enc::m0::write_frame_header(writer, config) == 22U);
-  // Field 5 flips from 0 to 1: 110001 -> 110011.
-  CHECK(bit_string(writer) == "1100110101101000000000");
+  CHECK(bit_string(writer) == std::string(kFrameBits64));
+
+  // The explicit adaptation opt-in overrides the legacy disable field.
+  config.enable_cdf_adaptation = true;
+  BitWriter adaptive_writer;
+  CHECK(av2enc::m0::write_frame_header(adaptive_writer, config) == 22U);
+  CHECK(bit_string(adaptive_writer) == std::string(kFrameBits64Adaptive));
 }
 
 void test_tile_group_header_64x64() {
@@ -428,7 +448,7 @@ void test_tile_group_header_64x64() {
   CHECK(writer.byte_size() == 3U);
   CHECK(bit_string(writer) == std::string(kTileGroupBits64));
 
-  const std::array<std::uint8_t, 3> expected{0xe2, 0xb4, 0x00};
+  const std::array<std::uint8_t, 3> expected{0xe6, 0xb4, 0x00};
   CHECK(expect_bytes(writer.bytes(), expected));
 }
 
@@ -440,7 +460,7 @@ void test_tile_group_header_256x256() {
   BitWriter writer;
   CHECK(av2enc::m0::write_tile_group_header(writer, config) == 32U);
   CHECK(writer.byte_size() == 4U);
-  const std::array<std::uint8_t, 4> expected{0xe2, 0x2d, 0x00, 0x00};
+  const std::array<std::uint8_t, 4> expected{0xe6, 0x2d, 0x00, 0x00};
   CHECK(expect_bytes(writer.bytes(), expected));
 }
 
@@ -451,13 +471,13 @@ void test_closed_loop_key_obu() {
     // Header only, no tile data yet: payload is the 3-byte tile-group header,
     // and num_bytes_in_obu = 1 + 3 = 4.
     const std::vector<std::uint8_t> obu = av2enc::m0::make_closed_loop_key_obu(config, {});
-    const std::array<std::uint8_t, 5> expected{0x04, 0x10, 0xe2, 0xb4, 0x00};
+    const std::array<std::uint8_t, 5> expected{0x04, 0x10, 0xe6, 0xb4, 0x00};
     CHECK(expect_bytes(obu, expected));
   }
   {
     const std::vector<std::uint8_t> obu = av2enc::m0::make_closed_loop_key_obu(
         config, std::span<const std::uint8_t>(av2enc::m0::kPlaceholderTilePayload));
-    const std::array<std::uint8_t, 6> expected{0x05, 0x10, 0xe2, 0xb4, 0x00, 0x00};
+    const std::array<std::uint8_t, 6> expected{0x05, 0x10, 0xe6, 0xb4, 0x00, 0x00};
     CHECK(expect_bytes(obu, expected));
   }
 
@@ -471,7 +491,7 @@ void test_closed_loop_key_obu() {
   CHECK(header_matches(parsed.header, ObuType::kClosedLoopKey));
   CHECK(parsed.payload_size == 4U);
   CHECK(parsed.payload_offset == 2U);  // one leb128 byte + one header byte
-  CHECK(obu[parsed.payload_offset + 0U] == 0xe2U);
+  CHECK(obu[parsed.payload_offset + 0U] == 0xe6U);
   CHECK(obu[parsed.payload_offset + 1U] == 0xb4U);
   CHECK(obu[parsed.payload_offset + 2U] == 0x00U);
   CHECK(obu[parsed.payload_offset + 3U] == 0x00U);
@@ -515,7 +535,7 @@ void test_assemble_m0_still_picture() {
   CHECK(clk.header == 0x10U);
   CHECK(header_matches(clk.header, ObuType::kClosedLoopKey));
   CHECK(clk.payload_size == 4U);
-  CHECK(stream[clk.payload_offset + 0U] == 0xe2U);
+  CHECK(stream[clk.payload_offset + 0U] == 0xe6U);
   CHECK(stream[clk.payload_offset + 1U] == 0xb4U);
   CHECK(stream[clk.payload_offset + 2U] == 0x00U);
   CHECK(stream[clk.payload_offset + 3U] == 0x00U);
@@ -535,6 +555,7 @@ int main() {
   test_sequence_header_256x256();
   test_frame_header_64x64();
   test_frame_header_256x256();
+  test_frame_header_adaptive_cdf();
   test_frame_header_disable_cdf_update();
   test_tile_group_header_64x64();
   test_tile_group_header_256x256();

@@ -300,7 +300,7 @@ std::size_t write_frame_header(BitWriter& writer,
   // refresh_frame_flags = allFrames; primary_ref_frame = PRIMARY_REF_NONE.
   writer.put_bit(false);  // allow_screen_content_tools
   writer.put_bit(false);  // allow_intrabc
-  writer.put_bit(config.disable_cdf_update);  // disable_cdf_update (§8.2.6)
+  writer.put_bit(config.cdf_update_disabled());  // disable_cdf_update (§8.2.6)
 
   const std::size_t tile_info_bits = write_tile_info(writer, config);
   (void)tile_info_bits;

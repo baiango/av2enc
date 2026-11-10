@@ -97,10 +97,18 @@ in `SymbolValue`).  It may go negative during `read_symbol`/`read_bool`.
 `cdf` is the inverse CDF:
 
 ```
-cdf[0..N-2]  strictly increasing values in [0, 32767]
+cdf[0..N-2]  non-decreasing inverse CDF values in [0, 32767]
 cdf[N-1]     constant base adaptation rate, index into Para_Adjustment_List
 cdf[N]       use count, 0..32
 ```
+
+Adjacent `cdf[]` entries may become equal after adaptation.  That encodes a
+zero-probability symbol, which is legal: §8.2.6's `do/while` skips a repeated
+derived boundary because the decoder only advances while `SymbolValue < cur`.
+With the v1.0.0 `Prob_Inc` table, equality in `cdf[]` normally maps to a small
+positive range-coder interval rather than an exactly repeated boundary, so the
+symbol may remain selectable at the floor rate; both cases are handled.
+`cdf_is_valid` therefore accepts equality and only rejects a decrease.
 
 Boundaries (`EC_PROB_SHIFT = 7`):
 
@@ -110,12 +118,16 @@ for s = 0..N-1:
     f   = (s == N-1) ? 0 : (1 << 15) - cdf[s]
     pp  = ((f >> 7) << 4) + Prob_Inc[N-2][s]
     cur = (((SymbolRange >> 8) * pp) >> 7) << 3
-    if cur >= prev: invalid CDF
+    if cur > prev: invalid CDF       // equal cur is a zero-width symbol
     boundary[s] = cur
     prev = cur
 ```
 
-Decode selects the first `s` with `SymbolValue >= boundary[s]`, then:
+Decode selects the first `s` with `SymbolValue >= boundary[s]`; repeated
+boundaries are skipped by that same condition.  The encoder must not request a
+symbol whose computed interval is exactly zero (`Width == 0`); it returns
+`kInvalidSymbol` without changing coder state.  Non-selected zero-width entries
+are harmless and are exercised by the adaptive tests.
 
 ```
 newRange = prev - cur          // prev is boundary[s-1], or SymbolRange for s=0
@@ -226,8 +238,9 @@ zeros.  This always exists because the interval width is at least `2^15`.
 4. The encoder `range` is in `[32768, 65535]`, `low < 32768`, and the final
    code lies in `[prefix*2^15 + low, prefix*2^15 + low + range)`.
 5. Encoder and decoder CDF arrays are identical before each symbol and after
-   every update.  CDF values stay strictly increasing; `cdf[N-1]` is untouched;
-   `cdf[N]` is capped at 32.
+   every update.  CDF values stay non-decreasing and in `[0, 32767]`; adjacent
+   values may be equal after adaptation, which denotes a zero-width symbol.
+   `cdf[N-1]` is untouched; `cdf[N]` is capped at 32.
 6. No tile reads or writes another tile's state or CDF array.  There are no
    globals and no allocations in the hot path.
 7. `exit_symbol` is valid once.  A failed decoder/encoder is poisoned
@@ -242,15 +255,18 @@ zeros.  This always exists because the interval width is at least `2^15`.
 `Prob_Inc[7][8]`; the specification's §9.3 default arrays have at most 8
 symbols, and the `ns` descriptor says "at most 8 entries".  It requires:
 
-- `cdf[0..N-2]` strictly increasing and `< 32768`;
+- `cdf[0..N-2]` non-decreasing (equality is legal after adaptation) and
+  `< 32768`;
 - `cdf[N-1] < 125` (the Para table has 125 rows);
 - `cdf[N] <= 32`;
-- all computed intervals strictly positive.
+- all computed boundaries non-increasing (`cur <= prev`); a repeated boundary
+  is a zero-width symbol, not an error.
 
-All 4,715 default CDF rows in `spec/tables/default_cdf.json` satisfy these
-conditions, and were checked over random adaptation sequences while developing
-this module.  `Prob_Inc` and `Para_Adjustment_List` were extracted from §9.2 of
-the PDF and byte-compared against the official v1.0.0 attachment headers.
+All 4,715 default CDF rows in `spec/tables/default_cdf.json` are strictly
+increasing, so the frozen path never depends on equality.  The adaptive path
+does: the 640x360 M0 encode reaches e.g. `{27718, 32641, 32641, 90, 32}`.
+`Prob_Inc` and `Para_Adjustment_List` were extracted from §9.2 of the PDF and
+byte-compared against the official v1.0.0 attachment headers.
 
 ## What is verified
 
@@ -258,6 +274,9 @@ the PDF and byte-compared against the official v1.0.0 attachment headers.
 
 - round trips for every symbol count N = 1..8, with adaptation on and off,
   uniform and spec-derived CDFs, every symbol value, and multiple rates/counts;
+- adaptive CDF states with equal adjacent entries (zero-width symbols),
+  including the exact `{27718, 32641, 32641, 90, 32}` table from the 640x360
+  M0 encode, with encoder/decoder updates in lockstep;
 - every CDF `timeInterval` threshold (0/15/16/31/32), the `Min(FloorLog2(N),2)`
   term, exact `Para_Adjustment_List` rates, and the count cap;
 - interleaved `read_symbol`/`read_bool`/`read_literal` streams, including all

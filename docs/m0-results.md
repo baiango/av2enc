@@ -27,6 +27,22 @@ The bottom partial superblock (360 = 5×64 + 40) uses `PARTITION_NONE` at the
 transforms are implemented for narrower edge cases. Both 64x64 and 640x360 are
 locked by `tests/m0_encode_smoke.sh`.
 
+## Adaptive CDFs (opt-in)
+
+`--adaptive-cdf` enables §8.2.6 adaptation. Default remains frozen CDFs so the
+pinned bitstreams do not change.
+
+| Frame | Mode | IVF | MD5 | PSNR avg |
+|---|---|---:|---|---:|
+| 64x64 | frozen | 1,138 B | `7efc…` | 42.13 dB |
+| 64x64 | adaptive | 1,094 B | `7efc…` | 42.13 dB |
+| 640x360 | frozen | 19,751 B | `56f1…` | 47.20 dB |
+| 640x360 | adaptive | 18,807 B | `56f1…` | 47.20 dB |
+
+Adaptive CDFs save **3.9%** at 64x64 and **4.8%** at 640x360 with identical
+reconstruction and `dav2d` decoding.
+
+
 ## AVM comparison, exact 640x360, QP 90
 
 | | AVM | av2enc M0 |

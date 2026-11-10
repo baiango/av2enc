@@ -21,6 +21,7 @@ struct Options {
   std::filesystem::path output;
   std::uint64_t max_frames = 0;  // 0 = all frames
   int qp = 90;
+  bool adaptive_cdf = false;
   bool help = false;
 };
 
@@ -32,6 +33,7 @@ enum class ParseStatus {
 
 void print_usage(std::ostream& out) {
   out << "Usage: av2enc <input.y4m> -o <output.ivf> [--frames N] [--qp Q]\n"
+         "              [--adaptive-cdf]\n"
          "\n"
          "M0 still-picture encoder: 8-bit 4:2:0, one key frame, one tile,\n"
          "64x64 superblocks, 32x32 DCT, DC intra only, no loop filters.\n"
@@ -42,6 +44,8 @@ void print_usage(std::ostream& out) {
          "  -o, --output <file>  Output IVF path (required)\n"
          "  --frames <N>         M0 encodes one frame; values > 1 are clamped to 1\n"
          "  --qp <Q>             base_q_idx (default: 90; M0 pins Q = 90)\n"
+         "  --adaptive-cdf       Enable normative §8.2.6 CDF adaptation\n"
+         "                       (default off: frozen CDFs, pinned bitstream)\n"
          "  -h, --help           Show this help\n";
 }
 
@@ -118,6 +122,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
       options.qp = qp;
+      continue;
+    }
+
+    if (argument == "--adaptive-cdf") {
+      options.adaptive_cdf = true;
       continue;
     }
 
@@ -226,10 +235,9 @@ int main(int argc, char** argv) {
   config.max_frame_width = static_cast<std::uint16_t>(y4m.width);
   config.max_frame_height = static_cast<std::uint16_t>(y4m.height);
   config.base_q_idx = static_cast<std::uint8_t>(options.qp);
-  // M0 ships with frozen CDFs. The normative §8.2.6 adaptation is legal, but
-  // the reference entropy module currently rejects adapted CDFs whose
-  // cumulative values equalise, so adaptive mode is not enabled yet.
-  config.disable_cdf_update = true;
+  // Frozen CDFs are the default M0 bitstream. Adaptive coding is an opt-in
+  // normative §8.2.6 mode used to test the CDF-update path.
+  config.enable_cdf_adaptation = options.adaptive_cdf;
 
   av2enc::m0::StillEncodeResult encoded;
   if (!av2enc::m0::encode_still_picture(picture, config, encoded, error)) {

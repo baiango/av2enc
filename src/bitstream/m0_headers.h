@@ -73,8 +73,19 @@ struct StillPictureConfig {
   std::uint16_t max_frame_height = 64;
   std::uint8_t seq_level_idx = 7;  // 7 = level 5.1 (Annex A.4); M0 pins this.
   std::uint8_t base_q_idx = 90;    // §5.18.6.1; must be >= 1 (0 is lossless).
-  // §5.18.2 / §8.2.6 debug lever. M0 ships with adaptive CDFs (false).
-  bool disable_cdf_update = false;
+  // §5.18.2 / §8.2.6. M0 defaults to frozen CDFs (disable_cdf_update = 1) so
+  // the pinned regression bitstreams do not change.
+  bool disable_cdf_update = true;
+  // Opt-in normative CDF adaptation. Default off. When true the frame header
+  // codes disable_cdf_update = 0 and the encoder adapts after every symbol.
+  bool enable_cdf_adaptation = false;
+
+  // Explicit adaptation enable overrides the legacy disable field; otherwise
+  // the field is the raw frame-header bit. This keeps old callers that set
+  // disable_cdf_update = false adaptive while defaulting new callers to frozen.
+  bool cdf_update_disabled() const noexcept {
+    return enable_cdf_adaptation ? false : disable_cdf_update;
+  }
 };
 
 // Exact syntax lengths for the two M0 frame sizes. See write_sequence_header()

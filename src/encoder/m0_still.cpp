@@ -213,7 +213,7 @@ class TileEncoder {
                    partition_mode == M0PartitionMode::k32x32HorzFirst;
     tile_buffer_.resize(kTileCapacityBytes);
     enc_.init_symbol(tile_buffer_.data(), tile_buffer_.size());
-    enc_.disable_cdf_update = config.disable_cdf_update ? 1 : 0;
+    enc_.disable_cdf_update = config.cdf_update_disabled() ? 1 : 0;
 
     recon_[0].resize(padded_width, padded_height, 128);
     recon_[1].resize((padded_width + 1) / 2, (padded_height + 1) / 2, 128);

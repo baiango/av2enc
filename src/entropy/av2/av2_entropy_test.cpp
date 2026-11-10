@@ -666,6 +666,44 @@ void test_adaptation_exact() {
   }
 }
 
+void test_zero_width_cdf_entries() {
+  // Adaptation of a skewed N=4 table eventually equalises cdf[0] and cdf[1]
+  // (symbol 1 becomes zero-probability).  The table must stay valid and both
+  // sides must keep coding in lockstep through and past that point.
+  {
+    Cdf cdf = cdf_from_list({100, 200, 300, 90, 0});
+    const Cdf initial = cdf;
+    std::vector<int> symbols;
+    for (int i = 0; i < 500; ++i) {
+      symbols.push_back(0);
+      av2enc::av2::adapt_cdf(cdf.data(), 4, 0);
+      CHECK(av2enc::av2::cdf_is_valid(cdf.data(), 4));
+    }
+    CHECK(cdf.v[0] == cdf.v[1]);  // zero-width entry was actually reached
+    check_roundtrip(initial.data(), 4, symbols, false);
+  }
+
+  // The exact adapted table from the failing 640x360 encode: cdf[1] == cdf[2].
+  // Encode every symbol, including the zero-probability one, and require the
+  // decoder to reproduce it and the final CDF.
+  {
+    Cdf cdf = cdf_from_list({27718, 32641, 32641, 90, 32});
+    CHECK(av2enc::av2::cdf_is_valid(cdf.data(), 4));
+    const std::vector<int> symbols = {2, 1, 2, 3, 0, 2, 3, 3, 1, 2,
+                                      0, 1, 3, 2, 2, 0, 3, 1, 0, 2};
+    check_roundtrip(cdf.data(), 4, symbols, false);
+  }
+
+  // A zero-probability entry can remain equal across updates (both indices on
+  // the same side of `symbol`) and separate again when a boundary is crossed.
+  {
+    Cdf cdf = cdf_from_list({27718, 32641, 32641, 90, 32});
+    const std::vector<int> symbols = {2, 2, 2, 1, 1, 2, 3, 0, 1, 2,
+                                      2, 0, 1, 1, 3, 2, 0, 1, 2, 3};
+    check_roundtrip(cdf.data(), 4, symbols, false);
+  }
+}
+
 void test_cdf_validation() {
   {
     Cdf cdf = cdf_from_list({32768, 0, 0});
@@ -682,6 +720,19 @@ void test_cdf_validation() {
   {
     Cdf cdf = cdf_from_list({200, 100, 5, 0});
     CHECK(!av2enc::av2::cdf_is_valid(cdf.data(), 3));
+  }
+  {
+    // Equal adjacent inverse-CDF entries are legal after adaptation.  This is
+    // the exact shape observed in the 640x360 adaptive M0 encode.
+    Cdf cdf = cdf_from_list({27718, 32641, 32641, 90, 32});
+    CHECK(av2enc::av2::cdf_is_valid(cdf.data(), 4));
+    Boundaries boundaries{};
+    CHECK_STATUS(av2enc::av2::compute_boundaries(32768, cdf.data(), 4,
+                                                 boundaries),
+                 Status::kOk);
+    CHECK(boundaries.cur[0] >= boundaries.cur[1]);
+    CHECK(boundaries.cur[1] >= boundaries.cur[2]);
+    CHECK(boundaries.cur[2] >= boundaries.cur[3]);
   }
   {
     Cdf cdf = cdf_from_list({1, 2, 3, 4, 5, 6, 7, 8, 0, 0});
@@ -1071,6 +1122,7 @@ int main() {
   test_golden_vectors();
   test_read_bool_and_literal();
   test_adaptation_exact();
+  test_zero_width_cdf_entries();
   test_cdf_validation();
   test_truncation_and_corruption();
   test_buffer_limits();

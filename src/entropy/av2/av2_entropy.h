@@ -114,9 +114,16 @@ AV2_ENTROPY_HD inline uint32_t min_u32(uint32_t a, uint32_t b) noexcept {
 }
 
 // A normative CDF array has N+1 entries:
-//   cdf[0..N-2]  inverse CDF values, strictly increasing in [0, 32767]
+//   cdf[0..N-2]  inverse CDF values, non-decreasing in [0, 32767]
 //   cdf[N-1]     constant base adaptation rate (index into Para list, < 125)
 //   cdf[N]       use count, 0..32
+//
+// Adjacent entries may become equal after §8.2.6 adaptation.  That is a
+// zero-probability symbol in the model, not a malformed CDF: the §8.2.6
+// do/while decoder skips a repeated boundary.  `Prob_Inc` may still leave a
+// small positive range-coder interval, in which case the symbol remains
+// decodable.  Equality is therefore legal; only a decrease (which would make
+// the boundary sequence non-monotonic) is rejected here.
 AV2_ENTROPY_HD inline bool cdf_is_valid(const uint16_t* cdf, int n) noexcept {
   if (cdf == nullptr || n < 1 || n > kMaxSymbols) {
     return false;
@@ -131,7 +138,7 @@ AV2_ENTROPY_HD inline bool cdf_is_valid(const uint16_t* cdf, int n) noexcept {
     if (cdf[i] >= kCdfScale) {
       return false;
     }
-    if (i > 0 && cdf[i] <= cdf[i - 1]) {
+    if (i > 0 && cdf[i] < cdf[i - 1]) {
       return false;
     }
   }
@@ -139,7 +146,10 @@ AV2_ENTROPY_HD inline bool cdf_is_valid(const uint16_t* cdf, int n) noexcept {
 }
 
 // §8.2.6 inverse-CDF boundaries.  `cur[s]` is the cumulative boundary for
-// symbol s; the boundaries are strictly descending and cur[N-1] == 0.
+// symbol s; the boundaries are non-increasing and cur[N-1] == 0.  A zero-width
+// interval (`cur[s] == prev`) is legal after adaptation: the decoder's
+// do/while loop never selects it because SymbolValue < prev was already true
+// when it advanced past the previous symbol.
 struct Boundaries {
   uint32_t cur[kMaxSymbols];
 };
@@ -161,8 +171,8 @@ AV2_ENTROPY_HD inline Status compute_boundaries(
     const uint32_t pp = ((f >> kProbShift) << 4) +
                         static_cast<uint32_t>(kProbInc[n - 2][s]);
     const uint32_t cur = (((symbol_range >> 8) * pp) >> 7) << 3;
-    if (cur >= prev) {
-      return Status::kInvalidCdf;  // non-positive interval
+    if (cur > prev) {
+      return Status::kInvalidCdf;  // boundary sequence is not monotonic
     }
     out.cur[s] = cur;
     prev = cur;
@@ -456,6 +466,13 @@ AV2_ENTROPY_HD inline Status Encoder::encode_symbol(uint16_t* cdf, int n,
   const uint32_t cur = boundaries.cur[symbol];
   const uint32_t prev = (symbol == 0) ? range : boundaries.cur[symbol - 1];
   const uint32_t width = prev - cur;
+  if (width == 0u) {
+    // A zero-probability symbol cannot be represented by the range coder.
+    // Non-selected zero-width entries are fine and the decoder skips them;
+    // requesting one here is an encoder-side symbol/CDF error, and the coder
+    // state is left untouched.
+    return Status::kInvalidSymbol;
+  }
   const uint32_t l = (symbol == 0) ? 0u : (range - boundaries.cur[symbol - 1]);
   const uint32_t renorm_bits = 15u - floor_log2(width);
 
@@ -623,6 +640,10 @@ AV2_ENTROPY_HD inline Status Decoder::decode_symbol(uint16_t* cdf, int n,
   }
 
   // §8.2.6 do/while: symbol 0 is the interval [boundary[0], range).
+  // Repeated boundaries are zero-width symbols.  The do/while condition
+  // advances past them automatically: reaching symbol s means
+  // SymbolValue < boundaries.cur[s-1], so a later equal boundary cannot be
+  // selected.
   uint32_t prev = range;
   uint32_t cur = boundaries.cur[0];
   int selected = 0;
@@ -636,6 +657,10 @@ AV2_ENTROPY_HD inline Status Decoder::decode_symbol(uint16_t* cdf, int n,
   }
 
   const uint32_t new_range = prev - cur;
+  if (new_range == 0u) {
+    // Defensive: the do/while above cannot stop on a zero-width interval.
+    return Status::kInvalidCdf;
+  }
   const uint32_t new_value = value - cur;
   const uint32_t bits = 15u - floor_log2(new_range);
 
