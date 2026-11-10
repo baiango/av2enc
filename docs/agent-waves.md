@@ -48,6 +48,10 @@ Wave 1 components are wired into the bitstream by an integration pass after
 their tests pass. Do not let component agents edit the M0 core. Wave 2 starts
 after M1 is integrated, measured, and still passes `dav2d`.
 
+The M1 integration agent owns `src/encoder/m1/` and may touch `src/main.cpp`,
+the root `CMakeLists.txt`, and `tests/CMakeLists.txt` only for wiring. Everything
+else stays component-only.
+
 ## Quality gates
 
 - Per-tool: minimal stream using only that tool + M0 baseline must decode.
