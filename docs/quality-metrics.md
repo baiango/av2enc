@@ -142,6 +142,34 @@ The 400 kbps point is the initial bar for our encoder at 720p60. Speed is
 compared against AVM rerun on the same machine; quality and bitrate are
 machine-independent.
 
+## QBS@1fps (1080p)
+
+The product target is **≥1 encoded frame per second at 1080p**, not maximum
+throughput. At that fixed speed, the score becomes:
+
+```text
+QBS@1fps = max CVVDP
+           subject to  encode_fps >= 1.0 at 1080p
+                       bitrate    <= R_max
+```
+
+Speed above 1 fps is not a win. It must be spent on quality: RDOQ, deeper
+partitions, more modes, larger search, more references/lookahead within the
+7.5 GB cap. If the encoder drops below 1 fps, remove those extras in reverse
+order — never the core tools (partitions, full intra, transforms, deblock, CfL).
+
+Report `encode_fps`, `quality_level`, `frame_time_ms`, and `peak_vram_mb` with
+the QBS@1fps result. A 1080p60 clip at 1 fps is 1/60 realtime; a 1080p30 clip is
+1/30 realtime.
+
+```sh
+python3 tools/score_tradeoff.py --reference AVM \
+  --q-min 9.0 --r-max 500 --min-encode-fps 1.0 --source-fps 60 \
+  bench/avm_baseline/qp*.json bench/ours/*.json
+```
+
+
+
 
 ## Rules
 

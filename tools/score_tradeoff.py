@@ -65,11 +65,22 @@ def main() -> int:
                     help="minimum CVVDP JOD (default 9.0)")
     ap.add_argument("--r-max", type=float, required=True,
                     help="maximum bitrate kbps")
-    ap.add_argument("--s-min", type=float, required=True,
+    ap.add_argument("--s-min", type=float,
                     help="minimum encode speed, realtime x")
+    ap.add_argument("--min-encode-fps", type=float,
+                    help="alternative to --s-min: minimum encoded frames/second")
+    ap.add_argument("--source-fps", type=float, default=60.0,
+                    help="source frame rate for --min-encode-fps (default 60)")
     ap.add_argument("--allow-mixed-hardware", action="store_true")
     ap.add_argument("--json", type=Path)
     args = ap.parse_args()
+
+    if args.s_min is None:
+        if args.min_encode_fps is None:
+            raise SystemExit("pass --s-min or --min-encode-fps")
+        if args.source_fps <= 0:
+            raise SystemExit("--source-fps must be positive")
+        args.s_min = args.min_encode_fps / args.source_fps
 
     by_enc = load_points(args.reports, None)
     if not by_enc:
@@ -94,7 +105,8 @@ def main() -> int:
 
     print()
     print(f"## Budget: CVVDP >= {args.q_min:.3f} JOD, "
-          f"bitrate <= {args.r_max:.1f} kbps, speed >= {args.s_min:.4f}x")
+          f"bitrate <= {args.r_max:.1f} kbps, speed >= {args.s_min:.4f}x "
+          f"(>= {args.s_min * args.source_fps:.2f} fps at {args.source_fps:g} fps source)")
     print("| encoder | feasible | QBS (max CVVDP) | min kbps at Q/S | max speed at Q/R |")
     print("|---|---:|---:|---:|---:|")
 
@@ -103,6 +115,8 @@ def main() -> int:
             "q_min": args.q_min,
             "r_max_kbps": args.r_max,
             "s_min_realtime_x": args.s_min,
+            "min_encode_fps": args.min_encode_fps,
+            "source_fps": args.source_fps,
         },
         "encoders": {},
     }

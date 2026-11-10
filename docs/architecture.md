@@ -209,6 +209,44 @@ Rules:
 - Precompute may change encoder decisions, but the output must still pass
   `dav2d`; it must never reduce quality just to use memory.
 
+## Speed target: 1080p at 1 fps, quality governor
+
+Product target: **at least 1 encoded frame per second at 1080p** on the 8 GB
+Ampere profile. This is not 1× realtime; at 1080p60 it is 1/60 realtime. The
+encoder is allowed to be slow; it is not allowed to miss 1 fps at 1080p.
+
+If a frame finishes faster than 1 s, the surplus time is spent on quality, in
+this order:
+
+1. RDOQ / trellis quantization
+2. deeper partition search
+3. more intra/inter modes and candidates
+4. larger motion search range and subpel refinement
+5. more references/lookahead (only if the 7.5 GB cap allows)
+6. multi-pass / temporal analysis
+
+If a frame takes longer than 1 s, reduce in reverse order. Protect the core
+tools: partitions, full intra, transforms, deblock, CfL. Never disable those to
+hit the speed target.
+
+Controller:
+
+- `--target-fps 1.0 --target-resolution 1080p`
+- sliding window over the last N frames, target 0.9–1.1 s/frame with hysteresis
+- adjust a quality-level index, not individual kernels ad hoc
+- log `quality_level`, `encode_fps`, and `frame_time_ms` in the profiler summary
+- first frames may run at a conservative level until the estimate stabilizes
+
+The QBS gate becomes **QBS@1fps**:
+
+```text
+max CVVDP  subject to  encode_fps >= 1.0 at 1080p
+                       bitrate    <= R_max
+```
+
+Compare quality and bitrate at the fixed 1 fps target. Extra frames per second
+are not a win; extra CVVDP at the same bitrate is.
+
 ## Quality gate
 
 GPU residency must not reduce compression. Speed is only scored after the

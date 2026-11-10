@@ -19,6 +19,8 @@ output, compare pixels). Do not read or copy their encoder-side code.
 - Development environment (fixed): **RTX 3060 12 GB running `compat8g`**, i.e.
   8 GB emulation. No other GPU rentals or profiles are current work.
 - RTX 5070 (`sm_120`) is a build/smoke target only. No Blackwell-only code.
+- Product speed target: **≥1 encoded fps at 1080p**. Surplus compute goes into
+  quality (RDOQ, partitions, modes, search, references), never into more fps.
 - Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja**. CPU is a reference/test
   path only, not the product.
 - Fat binary: `sm_86;sm_120`. No Blackwell-only accelerators (TMA, clusters,
