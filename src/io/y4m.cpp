@@ -174,6 +174,11 @@ bool Y4mReader::parse_header_line(const std::string& line, std::string& error) {
         header.colorspace = token;
         break;
       default:
+        // Y4M extensions are allowed to be ignored; ffmpeg emits
+        // XYSCSS=..., XCOLORRANGE=..., etc.
+        if (field == 'X') {
+          break;
+        }
         error = "unsupported Y4M header token '" + token + "'";
         return false;
     }
