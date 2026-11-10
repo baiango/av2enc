@@ -1,0 +1,73 @@
+{
+  "reference": "AVM",
+  "range": [
+    8.0,
+    9.5
+  ],
+  "targets": [
+    {
+      "cvvdp": 8.0,
+      "reference_speed": 0.029079923878638576,
+      "reference_kbps": 213.15450010983375,
+      "encoders": {
+        "AVM": {
+          "realtime_x": 0.029079923878638576,
+          "kbps": 213.15450010983375,
+          "speedup_vs_ref": 1.0,
+          "rate_ratio_vs_ref": 1.0
+        }
+      }
+    },
+    {
+      "cvvdp": 8.5,
+      "reference_speed": 0.02721607554240419,
+      "reference_kbps": 257.48341568426446,
+      "encoders": {
+        "AVM": {
+          "realtime_x": 0.02721607554240419,
+          "kbps": 257.48341568426446,
+          "speedup_vs_ref": 1.0,
+          "rate_ratio_vs_ref": 1.0
+        }
+      }
+    },
+    {
+      "cvvdp": 9.0,
+      "reference_speed": 0.02568681971421174,
+      "reference_kbps": 347.364953073845,
+      "encoders": {
+        "AVM": {
+          "realtime_x": 0.02568681971421174,
+          "kbps": 347.364953073845,
+          "speedup_vs_ref": 1.0,
+          "rate_ratio_vs_ref": 1.0
+        }
+      }
+    },
+    {
+      "cvvdp": 9.5,
+      "reference_speed": 0.024266140262801116,
+      "reference_kbps": 452.02846707893787,
+      "encoders": {
+        "AVM": {
+          "realtime_x": 0.024266140262801116,
+          "kbps": 452.02846707893787,
+          "speedup_vs_ref": 1.0,
+          "rate_ratio_vs_ref": 1.0
+        }
+      }
+    }
+  ],
+  "summary": {
+    "AVM": {
+      "css_auc_realtime_x": 0.026511646581700216
+    }
+  },
+  "hardware": {
+    "AVM": [
+      "Apple M4"
+    ]
+  },
+  "mixed_hardware": false,
+  "definition": "S(C)=video_seconds/encode_seconds at iso-CVVDP; CSS-AUC=mean S(C) over the common CVVDP range"
+}

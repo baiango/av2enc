@@ -6,5 +6,10 @@ build/
 *.y4m
 *.yuv
 *.raw
+testdata/
+tools/bin/
 bench/hello_cuda/build/
 .DS_Store
+.venv-cvvdp/
+bench/avm_baseline/*.ivf
+bench/avm_baseline/*.log

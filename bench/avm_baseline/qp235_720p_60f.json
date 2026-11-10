@@ -1,0 +1,37 @@
+{
+  "ref": "testdata/shine_1280x720_60f.y4m",
+  "test": "bench/avm_baseline/qp235_720p_60f.ivf",
+  "frames": 60,
+  "fps": "60/1",
+  "psnr": {
+    "psnr_y": 31.673509,
+    "psnr_u": 38.604581,
+    "psnr_v": 40.031307,
+    "psnr_avg": 33.071454
+  },
+  "ssim": {
+    "ssim_y": 0.913865,
+    "ssim_all": 0.930175
+  },
+  "cvvdp_jod": 5.8911,
+  "cvvdp_version": "0.5.7",
+  "cvvdp_display": "standard_fhd",
+  "cvvdp_device": "mps",
+  "ivf_bytes": 3273,
+  "bitrate_kbps": 26.184,
+  "encoder": "AVM",
+  "qp": "235",
+  "encode_seconds": 27.07,
+  "encode_fps": 2.2164758034724787,
+  "realtime_x": 0.03694126339120798,
+  "host": {
+    "hostname": "Mac-mini.local",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu_logical_cores": 10,
+    "ram_gb": 17.2,
+    "cpu_model": "Apple M4",
+    "cpu_physical_cores": 10,
+    "gpu": null
+  }
+}

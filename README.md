@@ -60,3 +60,9 @@ Do not edit outside your area without coordinating.
 3. Write a scalar CPU reference before every CUDA kernel; assert bit-exactness.
 4. Do not GPU the entropy coder. It is serial per tile.
 5. Pin the spec version and decoder commit. AV2 is still moving.
+
+## Quality
+
+`tools/quality.py` computes bitrate, PSNR, SSIM, and CVVDP (JOD) for an IVF.
+The AVM reference baseline is in `bench/avm_baseline/README.md`. Compare at
+matched bitrate, and always confirm `dav2d` decoded the stream first.
