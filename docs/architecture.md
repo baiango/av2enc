@@ -153,7 +153,12 @@ Initial profiles (starting points, tune with profiling):
 |---|---:|---:|---:|---:|---:|---:|
 | `compat8g` (default) | 7,500 MB | 4 | 4 | 4×2 | 1× | ±64 |
 | `auto12g` | 11,000 MB | 12 | 8 | 8×2 | 2× | ±96 |
+| `auto16g` | 15,000 MB | 16 | 12 | 8×2 / 16×2 | 3× | ±112 |
 | `auto24g` | 20,000 MB | 24 | 16 | 8×2 / 16×2 | 4× | ±128 |
+
+`auto` picks the profile from total VRAM and memory bandwidth. A 16 GB card
+could be a 4060 Ti, 5070 Ti, 4070 Ti Super, or something else; capacity alone
+does not determine whether aggressive precompute pays. Bandwidth does.
 
 Priority order when spending extra VRAM:
 
