@@ -82,11 +82,15 @@ if [ ! -s "$OUT" ]; then
     exit 1
 fi
 
+FRAMES=""
 if command -v ffprobe >/dev/null 2>&1; then
     ffprobe -v error -f yuv4mpegpipe -i "$OUT" \
         -count_frames \
         -show_entries stream=width,height,pix_fmt,nb_read_frames \
         -of default=nw=1
+    FRAMES=$(ffprobe -v error -f yuv4mpegpipe -i "$OUT" \
+        -count_frames -show_entries stream=nb_read_frames \
+        -of default=nw=1:nk=1)
 else
     echo "warning: ffprobe not found; skipping stream properties" >&2
 fi
@@ -104,10 +108,25 @@ if [ -n "$SRC" ]; then
     if ! command -v ffmpeg >/dev/null 2>&1; then
         echo "warning: ffmpeg not found; skipping PSNR" >&2
     else
-        echo "quality:"
-        ffmpeg -hide_banner -v info -i "$OUT" -i "$SRC" \
-            -lavfi "[0:v][1:v]psnr" -f null - 2>&1 \
-            | grep -E "PSNR|average" | tail -3
+        SRC_FRAMES=""
+        if command -v ffprobe >/dev/null 2>&1; then
+            SRC_FRAMES=$(ffprobe -v error -f yuv4mpegpipe -i "$SRC" \
+                -count_frames -show_entries stream=nb_read_frames \
+                -of default=nw=1:nk=1)
+        fi
+        if [ -n "$FRAMES" ] && [ -n "$SRC_FRAMES" ] && [ "$FRAMES" != "$SRC_FRAMES" ]; then
+            echo "warning: decoded $FRAMES frame(s) vs reference $SRC_FRAMES;" \
+                 "skipping PSNR (use tools/quality.py for normalized metrics)" >&2
+        else
+            echo "quality:"
+            FRAME_ARGS=()
+            if [ -n "$FRAMES" ]; then
+                FRAME_ARGS=(-frames:v "$FRAMES")
+            fi
+            ffmpeg -hide_banner -v info -i "$OUT" -i "$SRC" \
+                -lavfi "[0:v][1:v]psnr" "${FRAME_ARGS[@]}" -f null - 2>&1 \
+                | grep -E "PSNR|average" | tail -3
+        fi
     fi
 fi
 

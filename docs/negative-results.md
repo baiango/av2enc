@@ -59,6 +59,7 @@ Status legend:
 | CONFIRMED | Treat the 12 GB 3060 with a 7.5 GB cap as 8 GB validation | It is an emulation/proxy | Run `tools/check_target_host.py`; target is 8192 MiB enumerated, cc 8.6 |
 | CONFIRMED | Use `ffmpeg -r 60` to fix `dav2d` Y4M `F32:1` | It duplicated 60 frames to 113 and broke alignment | `tools/quality.py` rewrites only the header |
 | CONFIRMED | Compare raw ffmpeg PSNR without normalizing frame rate | Wrong result: 35.98 dB instead of 49.62 dB | Use `tools/quality.py` |
+| CONFIRMED | Trust `validate_dav2d.sh` PSNR for a 1-frame test against a multi-frame reference | It reported 41.10 dB vs the correct 49.79 dB | Use `tools/quality.py`, which truncates both to the common frame count |
 | CONFIRMED | Use a 10-frame AVM bitrate as steady-state | Keyframe-dominated | Use the 2-second clip; see `bench/avm_1080p/` |
 | CONFIRMED | Assume area-based tile assignment proves 2-GPU scaling | Content skew/throttling: a 10% straggler drops the modeled 1.917× to ~1.77× | Use previous-frame cost-aware LPT or finer tiles; measure per-tile time |
 | OPEN | Claim measured multi-GPU speedup | `bench/multi_gpu_plan` is an analytic model; no 2-GPU host | Label as simulation; validate on real hardware |

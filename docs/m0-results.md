@@ -67,23 +67,38 @@ is still on the CPU; `src/cuda/entropy.*` is ready but not wired in yet.
 
 
 
-## AVM comparison, exact 640x360, QP 90
+## AVM comparison, one frame, QP 90
 
-| | AVM | av2enc M0 |
+### 640x360
+
+| | AVM | av2enc frozen | av2enc adaptive |
+|---|---:|---:|---:|
+| IVF | 10,129 B | 19,751 B | 18,807 B |
+| PSNR-Y | 48.98 dB | 46.62 dB | 46.62 dB |
+| PSNR average | 49.99 dB | 47.20 dB | 47.20 dB |
+| CVVDP | 9.9556 JOD | 9.9300 | 9.9300 |
+| Encode | 2.38 s (M4 CPU) | ~0.04 s (CPU) | ~0.04 s (CPU) |
+
+### 1080p
+
+| | AVM | av2enc |
 |---|---:|---:|
-| One frame, IVF | 10,129 B | 19,751 B |
-| PSNR-Y | 48.98 dB | 46.62 dB |
-| PSNR average | 49.99 dB | 47.20 dB |
-| CVVDP | 9.9556 JOD | not measured |
-| Encode time | 2.38 s | < 0.1 s (CPU reference) |
+| IVF | 43,526 B | 83,228 B |
+| PSNR-Y | 50.62 dB | 49.38 dB |
+| PSNR average | 51.64 dB | 49.79 dB |
+| CVVDP | 9.9306 JOD | 9.9152 |
+| Encode | 9.54 s (M4 CPU) | 0.11 s (CPU reference) |
 
-AVM is about **1.95× smaller** and **2.8 dB better** on the same frame. That is
-expected: AVM uses full intra prediction, partitions, and RDO; M0 is DC-intra
-only with a fixed 32×32 tree.
+AVM is consistently about **1.9× smaller** and **1.8–2.8 dB better** at the same
+nominal QP. The CVVDP gap is small near saturation (about 0.02 JOD), but that
+does not mean the encoders are close: AVM spends half the rate for higher PSNR.
+M0 is DC-intra only with a fixed 32×32 tree; AVM uses full intra prediction,
+partitions, transforms, and RDO. The encode-time column is CPU-only reference
+speed, not the product target.
 
-AVM 2-second inter encode (120 frames, QP 90): 114,419 bytes, 457.7 kbps,
-PSNR average 52.86 dB, CVVDP 9.9306, encode 43.36 s (2.77 fps, 0.046× realtime
-on M4), decode 0.083 s (1,439 fps, 24× realtime). Our encoder is still-picture
-only, so this is the video target, not a direct comparison.
+AVM 2-second 1080p inter encode (120 frames, QP 90): 258,186 bytes,
+1,032.7 kbps, PSNR average 51.02 dB, CVVDP 9.7657, encode 147.7 s (0.812 fps on
+M4), decode 172 fps. Our encoder is still-picture only, so this is the video
+target, not a direct comparison.
 
 The earlier 640x384 padded proxy is obsolete; exact 640x360 is supported.
