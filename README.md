@@ -14,9 +14,13 @@ output, compare pixels). Do not read or copy their encoder-side code.
 
 ## Target
 
-- GPU: RTX 3060 12GB (Vast.ai), CUDA 12.8, compute capability 8.6
+- GPU: **RTX 3060 12GB (sm_86) primary**, RTX 5070 (sm_120) secondary
 - Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja**. CPU is a reference/test
   path only, not the product.
+- Fat binary: `sm_86;sm_120`. No Blackwell-only accelerators (TMA, clusters,
+  tensor-core/FP4 paths) are required.
+- VRAM: hard default ceiling **7,500 MB**, so the 8 GB RTX 3060 variant is
+  supported. The 12 GB box is tested with the same cap.
 - Encoder architecture: GPU-resident. CPU only launches work, handles OBU
   headers and file I/O; pixel work, mode decision, filters, and tile entropy
   stay on the GPU.

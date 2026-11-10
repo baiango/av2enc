@@ -25,7 +25,11 @@ set(AV2ENC_HAVE_CUDA OFF)
 if(AV2ENC_ENABLE_CUDA)
   if(AV2ENC_CUDA_AVAILABLE)
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-      set(CMAKE_CUDA_ARCHITECTURES 86)
+      # 86 = RTX 3060 (primary target), 120 = RTX 5070 / Blackwell (secondary).
+      # The code must use the sm_86 feature baseline; sm_120 is only a build
+      # target, not permission to use Blackwell-only instructions.
+      set(CMAKE_CUDA_ARCHITECTURES "86;120" CACHE STRING
+          "CUDA architectures (86 = RTX 3060 primary, 120 = RTX 5070 secondary)")
     endif()
     enable_language(CUDA)
     set(AV2ENC_HAVE_CUDA ON)

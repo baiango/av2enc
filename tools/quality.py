@@ -109,12 +109,23 @@ def host_info() -> dict:
     if shutil.which("nvidia-smi"):
         p = run([
             "nvidia-smi",
-            "--query-gpu=name,memory.total,driver_version",
+            "--query-gpu=name,memory.total,driver_version,compute_cap",
             "--format=csv,noheader",
         ])
         if p.returncode == 0:
             gpus = [x.strip() for x in p.stdout.splitlines() if x.strip()]
     info["gpu"] = gpus or None
+    if gpus:
+        parts = [x.strip() for x in gpus[0].split(",")]
+        if len(parts) >= 4:
+            info["gpu_name"] = parts[0]
+            mem = parts[1].split()
+            try:
+                info["gpu_memory_mib"] = int(mem[0])
+            except (ValueError, IndexError):
+                pass
+            info["gpu_driver"] = parts[2]
+            info["gpu_compute_cap"] = parts[3]
     return info
 
 

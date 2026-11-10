@@ -68,6 +68,80 @@ AV2's range coder is serial **within a tile**, but tiles are independent. So:
 - If a layout fails `dav2d`, fall back to one tile and a single overlapped CPU
   entropy thread; do not silently emit streams the gate rejects.
 
+## GPU portability: 3060 primary, 5070 secondary
+
+The **RTX 3060 (sm_86, 12 GB, 28 SMs)** is the baseline. The **RTX 5070
+(sm_120, Blackwell)** is a secondary target. The encoder must not depend on
+Blackwell-only accelerators.
+
+Allowed baseline (works on both):
+
+- standard CUDA cores, shared memory, warp shuffles
+- `__dp4a` integer dot product
+- `cp.async` asynchronous copies
+- CUDA graphs, events, streams
+- blocks up to 1024 threads; <= 48 KB static/shared memory baseline
+
+Do **not** require:
+
+- tensor cores, FP4/FP6/FP8
+- TMA / `cp.async.bulk`
+- thread-block clusters / distributed shared memory
+- `wgmma`, `tcgen05`, `setmaxnreg`, `griddepcontrol`
+- Hopper/Blackwell-only PTX or architecture-specific fast paths
+
+Build fat binaries for both architectures:
+
+```sh
+cmake -S . -B build-cuda -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DAV2ENC_ENABLE_CUDA=ON \
+  -DCMAKE_CUDA_ARCHITECTURES="86;120"
+```
+
+The runtime selects native SASS; no JIT. Verify with:
+
+```sh
+cuobjdump -lelf build-cuda/av2enc
+```
+
+Query SM count, shared memory, and compute capability at runtime. Never hardcode
+28 SMs or 3060-specific launch geometry. The 5070 has more SMs and bandwidth; the
+same kernels should scale, with launch-config tuning only if profiling shows it.
+
+## VRAM budget: 8 GB target
+
+The 8 GB RTX 3060 is a supported variant. Default hard ceiling: **7,500 MB**
+(leaves ~500 MB for the driver/context on an 8 GB card). The 12 GB box must run
+with the same cap so compatibility is tested, not assumed.
+
+Rules:
+
+- Allocate one persistent arena at init; no `cudaMalloc` after warm-up.
+- Split into persistent regions (frame/reference pools, CDF/state, graphs) and a
+  reusable scratch region (RDO candidates, tile buffers).
+- Before allocating, estimate: frames × bytes/frame, reference count, tile
+  buffers, lookahead, and scratch. Choose a config that fits under the cap.
+- If the requested config does not fit, reduce lookahead/reference count/tile
+  batch or fail with a clear message. Do not silently OOM.
+- `--vram-limit-mb` default `7500`; `0` means auto (90% of device memory, for
+  12 GB experiments only).
+- Log `peak_vram_mb`, `vram_capacity_mb`, and `vram_limit_mb` in the profiler
+  summary and quality report.
+- The 8 GB card has a 128-bit bus (~240 GB/s vs ~360 GB/s). Memory-bound kernels
+  (ME/SAD) will be slower; correctness and the cap are the same.
+
+Rough frame sizes (8-bit 4:2:0):
+
+| Resolution | Per frame | 16 refs | Notes |
+|---|---:|---:|---|
+| 1080p | 3.1 MB | ~50 MB | easy |
+| 4K | 12.4 MB | ~200 MB | fits; scratch dominates |
+| 8K | 49.8 MB | ~800 MB | tile/stream; not an initial target |
+
+10-bit doubles the frame sizes. 4K10 with a deep reference pool still fits in
+7.5 GB; the risk is per-block RDO buffers, so those live in the capped scratch
+arena and are reused.
+
 ## Quality gate
 
 GPU residency must not reduce compression. Speed is only scored after the
