@@ -36,6 +36,14 @@ Status legend:
 | CONFIRMED | Port RDO to GPU before it matches CPU decisions | The CPU framework is the reference | Bit-exact decision tests first |
 | OPEN | Claim RDO gains before integration | No bitstream is produced by the RDO component | Decode-gate and measure after wiring |
 
+## Filters
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Enable deblocking on M0 streams or assume it is on | M0 frame headers have all apply flags cleared; enabling it changes the bitstream | Add deblock in M1 with the header flags and a decoded gate |
+| CONFIRMED | Run deblock before reconstruction or after CDEF/LR | Wrong reference frame and wrong filter order | Reconstruct → deblock → CDEF/CCSO/LR |
+| OPEN | Claim BRU, 10-bit, 4:2:2, or 4:4:4 deblock | Current implementation is 8-bit 4:2:0; BRU is inter-only and not implemented | Extend and gate separately |
+
 ## CUDA
 
 | Status | Do not do | Why | Do instead |
