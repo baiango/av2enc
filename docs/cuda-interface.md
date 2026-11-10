@@ -23,7 +23,10 @@ difference and a PSNR comparison; do not silently change the test.
 | `src/cuda/context.*`, `arena.*`, `error.*`, `CMakeLists.txt`, `build_test.sh` | runtime agent |
 | `src/cuda/transform.*`, `transform_test.cu` | transform agent |
 | `src/cuda/intra.*`, `intra_test.cu` | intra agent |
-| `src/cuda/m0_pipeline.*`, end-to-end integration | integration agent (later) |
+| `src/cuda/entropy.*`, `entropy_test.cu` | entropy agent |
+| `src/cuda/m0_pipeline.*` | integration agent |
+| `bench/cuda_dct_perf/` | DCT performance agent |
+| `bench/avm_1080p/` | 1080p baseline agent |
 
 Do not edit `src/encoder/m0_still.cpp`, `src/entropy/av2/`, `src/bitstream/`,
 `src/main.cpp`, or the root `CMakeLists.txt`.
