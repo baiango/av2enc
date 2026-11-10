@@ -1,5 +1,9 @@
 # Hardware identity
 
+**Primary target: 8 GB Ampere (`sm_86`)** — RTX 3060 8 GB, RTX 3050 8 GB, RTX
+3070 8 GB. The development box is a 12 GB RTX 3060; it must pass with the
+`compat8g` 7,500 MB cap. Actual 8 GB hardware validation is still pending.
+
 CSS/CVVDP speed scores are hardware-specific. Every `quality.py` report records
 the CPU model, physical/logical cores, RAM, OS, and GPU. `score_speed.py` refuses
 to compare reports from different CPU models unless `--allow-mixed-hardware` is
@@ -23,10 +27,11 @@ quality with CVVDP/MPS.
 This is the machine used for the AVM baseline. It is fast single-threaded, which
 matters for encoder orchestration, mode decision, and entropy coding.
 
-## Vast.ai box (encoder target)
+## Vast.ai box (8 GB emulation / dev)
 
 | | |
 |---|---|
+| Role | Dev box; must run `compat8g` (7,500 MB) to emulate 8 GB Ampere |
 | CPU | **2× Intel Xeon E5-2690 v4 @ 2.60 GHz** |
 | Topology | 14 cores/socket, 2 threads/core, 2 sockets = **28C / 56T** |
 | Observed scaling | `CPU(s) scaling MHz: 38–43%` (effective clock is well below 2.6 GHz; varies by run) |

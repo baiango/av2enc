@@ -86,11 +86,16 @@ below one warp per SM. The entropy stage will be latency-bound. Mitigations:
 The full CDF set is ~46.7 KiB of shared memory per workgroup; keep the tile
 state POD and caller-owned.
 
-## GPU portability: 3060 primary, 5070 secondary
+## GPU target: 8 GB Ampere primary
 
-The **RTX 3060 (sm_86, 12 GB, 28 SMs)** is the baseline. The **RTX 5070
-(sm_120, Blackwell)** is a secondary target. The encoder must not depend on
-Blackwell-only accelerators.
+The baseline is **8 GB Ampere (`sm_86`)**: RTX 3060 8 GB, RTX 3050 8 GB, RTX 3070
+8 GB. The dev box is an RTX 3060 12 GB, but it must run the same `compat8g`
+7,500 MB cap so 8 GB behavior is tested, not assumed. The RTX 5070 (`sm_120`)
+is a secondary build/smoke target only.
+
+Profiles above `compat8g` remain documented as estimates but are **frozen**; no
+current tuning work goes into 12/16/24 GB or 4/6 GB cards. Turing (`sm_75`) is
+out of scope.
 
 Allowed baseline (works on both):
 
@@ -128,9 +133,9 @@ same kernels should scale, with launch-config tuning only if profiling shows it.
 
 ## VRAM budget: 8 GB target
 
-The 8 GB RTX 3060 is a supported variant. Default hard ceiling: **7,500 MB**
-(leaves ~500 MB for the driver/context on an 8 GB card). The 12 GB box must run
-with the same cap so compatibility is tested, not assumed.
+**8 GB Ampere is the primary target.** Default hard ceiling: **7,500 MB**
+(leaves ~500 MB for the driver/context on an 8 GB card). The 12 GB dev box must
+run with the same cap so compatibility is tested, not assumed.
 
 Rules:
 
