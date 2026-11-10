@@ -17,6 +17,8 @@ Read these before writing code:
 - Every stream must pass `tools/validate_dav2d.sh` before it is called working.
 - No `cudaMalloc` in hot paths; use `src/cuda/arena.*`.
 - No Blackwell-only instructions (TMA, clusters, `wgmma`/`tcgen05`, FP4).
+- CPU-only mode is a correctness oracle, not a performance target. Do not
+  benchmark or optimize it for speed; the product is GPU-resident on Vast.ai.
 - Do not edit another agent's files. Check `docs/cuda-interface.md` ownership.
 - Commit source/docs, never build dirs, test media, or `tools/bin`.
 

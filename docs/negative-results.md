@@ -80,6 +80,8 @@ synthetic FFmpeg CUDA-hwframe handoff works: device pointers,
 
 | Status | Do not do | Why | Do instead |
 |---|---|---|---|
+| CONFIRMED | Benchmark or optimize the CPU-only encoder as the product | The deployment target is a weak Vast.ai Xeon plus a 3060; CPU mode is a correctness oracle with no SIMD/threading tuning | Measure on the GPU path; treat CPU-only as reference |
+| CONFIRMED | Judge CUDA design by CPU-only speed | CPU-only is deliberately simple and may be far slower | Use GPU stage timings and end-to-end MD5/dav2d gates |
 | CONFIRMED | Build/debug the encoder on macOS | Not a supported encoder target | Linux + CUDA; Mac only for AVM/CVVDP |
 | CONFIRMED | Support Windows | No Windows machine, POSIX tooling | Good luck; not a target |
 | CONFIRMED | Use `rsync` to the Vast.ai box | Not installed | `tools/sync_remote.sh` tar pipe |

@@ -23,6 +23,18 @@ Both are gated by `tests/m0_encode_smoke.sh`; the CUDA build passes 6/6 tests.
 The 640x360 CUDA path is launch-bound (2,740 launches) and keeps entropy on the
 CPU. Adaptive CDFs are opt-in (`--adaptive-cdf`); defaults stay bit-identical.
 
+## Performance expectations
+
+- **Product target:** Vast.ai Linux instance, RTX 3060, GPU-resident encoder.
+  The host CPU is a weak, shared, downclocked Xeon; it is a launch/control
+  processor, not a pixel engine.
+- **CPU-only mode:** correctness reference and test oracle only. It is not
+  optimized, has no SIMD/threading work, and may be far slower than the GPU path.
+  Do not benchmark it as the product or use it to judge CUDA design.
+- **macOS:** AVM/CVVDP scoring only; not an encoder target.
+- The 1080p ≥1 fps target is measured on an 8192 MiB RTX 3060, not on CPU or the
+  12 GB dev proxy.
+
 ## Hard constraint
 
 No encoder code from AVM, SVT-AV1/AV2, clave, or any other encoder.

@@ -86,6 +86,17 @@ below one warp per SM. The entropy stage will be latency-bound. Mitigations:
 The full CDF set is ~46.7 KiB of shared memory per workgroup; keep the tile
 state POD and caller-owned.
 
+## CPU-only path is not a performance target
+
+The CPU reference is a correctness oracle. It is deliberately simple: no SIMD,
+no CPU threading, no cache tuning. Do not benchmark it as the product and do not
+optimize it for speed. The deployment target is a Vast.ai Linux container with a
+weak, shared Xeon and a GPU; CPU work is limited to launch/control, OBU headers,
+rate-control policy, and (for now) entropy. Pixel work, transforms, prediction,
+reconstruction, and filters belong on the 3060.
+
+AVM on the Mac is a quality/rate anchor, not a speed prediction for our encoder.
+
 ## Fast decode mode (deferred)
 
 After quality and encode speed are settled, add an optional fast-decode
