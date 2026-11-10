@@ -36,6 +36,10 @@ Status legend:
 | CONFIRMED | Keep a duplicate fallback transform/intra implementation in the pipeline | Diverges from the bit-exact components and creates two codepaths | Use `transform.*` and `intra.*`; only the 64x64 predictor adapter is allowed |
 | CONFIRMED | Use one kernel per M0 stage | A 32x32 block costs ~13 launches; 640x360 uses 2,740 launches and is launch-bound at ~34 ms/frame | Wavefront/CUDA graph batching is the next optimization |
 | CONFIRMED | Claim GPU entropy in the CUDA M0 path | Entropy is still `av2::Encoder` on the CPU; `src/cuda/entropy.*` is not wired | Keep CPU entropy until tile-parallel GPU entropy is integrated and gated |
+| CONFIRMED | Use float/fixed-point DCT as the unguarded normative path | Float flips 3 coefficients in one 1080p luma frame; fixed flips 2/frame; both need correction/fallback | Use double or the bit-exact hybrid; `bench/cuda_dct_perf/README.md` |
+| CONFIRMED | Serialize one DCT block per launch | 65.5 µs/block; 6,120 launches is ~0.4 s/frame before entropy | Batch `nblocks`; the transform API already supports it |
+| CONFIRMED | Judge DCT speed by coefficient accuracy alone | The benchmark uses a block-mean predictor, not M0 reconstruction | End-to-end MD5 and `dav2d` remain the gate |
+| OPEN | Assume fixed-point Q20/Q60 is safe without correction | Q20 needs the delta correction (37 → 3,084 failures/2.1M otherwise); Q60 needs ceil for 16x16 | Keep double/hybrid until a fixed path is proven end-to-end |
 | CONFIRMED | Use `dc_predict_residual_batch` on dependent blocks | Batch jobs assume frozen prediction inputs; later blocks depend on earlier reconstruction | Use the raster path until a wavefront scheduler exists |
 | CONFIRMED | Pass tightly packed strides or omit `maxX`/`maxY` | Edge blocks read/write outside the visible plane | Pass the padded plane stride plus visible bounds; see `src/cuda/intra.h` |
 | CONFIRMED | Use 64x32 / 32x64 transform modes | CPU reference calls `dct_kernel(64)` while looping to 64, an out-of-bounds read; only diagnostic modes use them | Fix the CPU reference first; default `k32x32` and 64x64 edge path are covered |

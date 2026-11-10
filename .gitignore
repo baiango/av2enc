@@ -19,3 +19,4 @@ spec/tables/_cache/
 src/profile/build/
 bench/avm_360p/*.log
 src/cuda/build*/
+bench/cuda_dct_perf/build*/
