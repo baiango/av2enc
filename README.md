@@ -27,6 +27,15 @@ ssh -p <port> <user>@<host>
 `$HOME/work/av2enc` is the source of truth; sync to the box before builds.
 Disk is 16GB: keep test media tiny (<100MB total), prefer 64x64/256x256 frames.
 
+## Platforms
+
+- **macOS arm64** — development, AVM baseline, CVVDP/MPS, host tests.
+- **Linux x86_64** — Vast.ai RTX 3060 build/run, dav2d gate, CUDA benchmarks.
+- **Windows** — unsupported and untested. There is no Windows machine here, so
+  if you want to run this on Windows: **good luck**. The C++20/CUDA sources are
+  portable in principle, but the tooling is POSIX (`tools/*.sh`, SSH/tar sync).
+  Ports and PRs are welcome; Windows is not a supported target.
+
 ## First milestone
 
 A valid AV2 still-picture IVF:
