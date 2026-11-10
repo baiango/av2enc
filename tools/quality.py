@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -307,13 +308,18 @@ def main() -> int:
 
     tmp = Path(tempfile.mkdtemp(prefix="av2qual-"))
     try:
+        decode_seconds = None
+        decoder_name = None
         if args.ivf:
             if not args.ivf.is_file():
                 raise SystemExit(f"missing ivf: {args.ivf}")
             test_y4m = tmp / "decoded.y4m"
             dav2d = find_dav2d()
+            decoder_name = Path(dav2d).name
+            t0 = time.perf_counter()
             p = run([dav2d, "-q", "-i", str(args.ivf), "-o", str(test_y4m),
                      "--threads", os.environ.get("DAV2D_THREADS", "0")])
+            decode_seconds = time.perf_counter() - t0
             if p.returncode != 0 or not test_y4m.is_file():
                 sys.stderr.write(p.stdout or "")
                 sys.stderr.write(p.stderr or "")
@@ -370,6 +376,17 @@ def main() -> int:
             duration = n * den / num
             report["ivf_bytes"] = size
             report["bitrate_kbps"] = size * 8 / duration / 1000
+
+        if decode_seconds is not None:
+            num, den = (int(x) for x in fps.split("/"))
+            video_seconds = n * den / num
+            report["decoder"] = decoder_name
+            report["decode_threads"] = os.environ.get("DAV2D_THREADS", "0")
+            report["decode_seconds"] = decode_seconds
+            report["decode_fps"] = n / decode_seconds if decode_seconds > 0 else None
+            report["decode_realtime_x"] = (
+                video_seconds / decode_seconds if decode_seconds > 0 else None
+            )
 
         if args.encoder:
             report["encoder"] = args.encoder

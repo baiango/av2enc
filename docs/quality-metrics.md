@@ -178,6 +178,27 @@ python3 tools/check_target_host.py bench/ours/qbs_1080p.json
 Reports with `gpu_memory_mib = 12288` are compatibility tests, not target QBS
 results.
 
+## Decode speed
+
+`tools/quality.py` now records decode cost for every IVF:
+
+```json
+"decoder": "dav2d-macos",
+"decode_threads": "0",
+"decode_seconds": 0.42,
+"decode_fps": 142.8,
+"decode_realtime_x": 2.38
+```
+
+`decode_realtime_x` is `video_seconds / decode_seconds`. Measure it on the same
+hardware and with the same `DAV2D_THREADS` setting when comparing.
+
+A future **fast-decode profile** would trade compression for decoder work:
+larger/fewer partitions, no warps/OBMC/compound, no film grain, and a smaller
+tool set. That is explicitly deferred until quality and encode speed are
+settled. Decode speed is recorded now so the baseline exists.
+
+
 
 
 

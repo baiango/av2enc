@@ -86,6 +86,25 @@ below one warp per SM. The entropy stage will be latency-bound. Mitigations:
 The full CDF set is ~46.7 KiB of shared memory per workgroup; keep the tile
 state POD and caller-owned.
 
+## Fast decode mode (deferred)
+
+After quality and encode speed are settled, add an optional fast-decode
+profile. It trades compression efficiency for decoder work:
+
+- no film grain
+- no warps/OBMC/compound prediction
+- no B-frames / deep references
+- limit partitions to 32x32/64x64, no deep RDO splits
+- optionally disable CDEF/GDF/restoration (measure the quality cost)
+- tile layout chosen for decoder parallelism, not just encoder occupancy
+
+Measure `decode_fps` / `decode_realtime_x` with `dav2d` on the target hardware.
+The gate is: fast-decode mode must still pass `dav2d` and meet a decode-speed
+target at the chosen QBS budget. Do not silently disable tools to claim it.
+
+This is not implemented yet. `tools/quality.py` records decode speed now so the
+baseline exists.
+
 ## GPU target: 8 GB Ampere primary
 
 The baseline is **8 GB Ampere (`sm_86`)**: RTX 3060 8 GB, RTX 3050 8 GB, RTX 3070

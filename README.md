@@ -115,8 +115,10 @@ Do not edit outside your area without coordinating.
 ## Quality
 
 `tools/quality.py` computes bitrate, PSNR, SSIM, and CVVDP (JOD) for an IVF.
-The AVM reference baseline is in `bench/avm_baseline/README.md`. Compare at
-matched bitrate, and always confirm `dav2d` decoded the stream first.
+It also records `decode_fps` and `decode_realtime_x` from `dav2d`. The AVM
+reference baseline is in `bench/avm_baseline/README.md`; compare at matched
+bitrate, and always confirm `dav2d` decoded the stream first. A fast-decode
+profile is deferred until quality and encode speed are settled.
 
 `tools/score_speed.py` reports speed vs CVVDP. `tools/score_tradeoff.py` enforces
 the three-way budget: max CVVDP subject to bitrate <= R_max and speed >= S_min.
