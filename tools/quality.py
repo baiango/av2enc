@@ -339,6 +339,13 @@ def main() -> int:
 
         jod, ver = run_cvvdp(ref_n, test_n)
 
+        host = host_info()
+        target_mem = 8192
+        is_target = (
+            host.get("gpu_memory_mib") == target_mem
+            and str(host.get("gpu_compute_cap", "")).strip() == "8.6"
+        )
+
         report = {
             "ref": str(args.ref),
             "test": str(args.ivf or args.test),
@@ -350,7 +357,12 @@ def main() -> int:
             "cvvdp_version": ver,
             "cvvdp_display": os.environ.get("CVVDP_DISPLAY", "standard_fhd"),
             "cvvdp_device": default_device(),
-            "host": host_info(),
+            "host": host,
+            "target_host": {
+                "gpu_memory_mib": target_mem,
+                "compute_cap": "8.6",
+                "is_target": is_target,
+            },
         }
         if args.ivf:
             size = args.ivf.stat().st_size

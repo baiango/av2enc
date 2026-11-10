@@ -211,9 +211,12 @@ Rules:
 
 ## Speed target: 1080p at 1 fps, quality governor
 
-Product target: **at least 1 encoded frame per second at 1080p** on the 8 GB
-Ampere profile. This is not 1× realtime; at 1080p60 it is 1/60 realtime. The
-encoder is allowed to be slow; it is not allowed to miss 1 fps at 1080p.
+Product target: **at least 1 encoded frame per second at 1080p on an RTX 3060
+enumerating 8192 MiB**. This is not 1× realtime; at 1080p60 it is 1/60 realtime.
+The 12 GB dev box with the 7,500 MB cap is a compatibility proxy only; its
+192-bit/360 GB/s memory is faster than the 8 GB card's 128-bit/240 GB/s, so its
+speed is optimistic. The encoder is allowed to be slow; it is not allowed to
+miss 1 fps on the target 8 GB card.
 
 If a frame finishes faster than 1 s, the surplus time is spent on quality, in
 this order:

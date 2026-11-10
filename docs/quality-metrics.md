@@ -168,6 +168,16 @@ python3 tools/score_tradeoff.py --reference AVM \
   bench/avm_baseline/qp*.json bench/ours/*.json
 ```
 
+**Target validation requires an RTX 3060 enumerating 8192 MiB** (compute
+capability 8.6). The 12 GB dev box is a proxy. Check every final report:
+
+```sh
+python3 tools/check_target_host.py bench/ours/qbs_1080p.json
+```
+
+Reports with `gpu_memory_mib = 12288` are compatibility tests, not target QBS
+results.
+
 
 
 

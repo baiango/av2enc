@@ -1,9 +1,10 @@
 # Hardware identity
 
-**Primary target: 8 GB Ampere (`sm_86`).** Development is fixed to the **RTX
-3060 12 GB dev box running `compat8g` with a 7,500 MB VRAM cap**, i.e. an 8 GB
-emulation. No other GPU rentals or profiles are part of current work. Actual
-8 GB hardware validation remains pending, but it is not blocking development.
+**Primary target: 8 GB Ampere (`sm_86`).** Target validation requires an RTX
+3060 that **enumerates 8192 MiB** in `nvidia-smi`. The development box is a
+12 GB RTX 3060 running the `compat8g` 7,500 MB cap; it is a compatibility proxy
+only, not a performance/QBS validation host. Its 192-bit/360 GB/s memory is
+faster than the 8 GB card's 128-bit/240 GB/s.
 
 CSS/CVVDP speed scores are hardware-specific. Every `quality.py` report records
 the CPU model, physical/logical cores, RAM, OS, and GPU. `score_speed.py` refuses

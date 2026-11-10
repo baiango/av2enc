@@ -16,11 +16,13 @@ output, compare pixels). Do not read or copy their encoder-side code.
 
 - Primary target: **8 GB Ampere (`sm_86`)** — RTX 3060 8 GB, RTX 3050 8 GB,
   RTX 3070 8 GB. Default profile `compat8g` with a 7,500 MB VRAM cap.
-- Development environment (fixed): **RTX 3060 12 GB running `compat8g`**, i.e.
-  8 GB emulation. No other GPU rentals or profiles are current work.
+- Target validation host: **RTX 3060 enumerating 8192 MiB**. The 12 GB dev box
+  running `compat8g` is only a compatibility proxy, not a performance/QBS
+  validation host.
 - RTX 5070 (`sm_120`) is a build/smoke target only. No Blackwell-only code.
-- Product speed target: **≥1 encoded fps at 1080p**. Surplus compute goes into
-  quality (RDOQ, partitions, modes, search, references), never into more fps.
+- Product speed target: **≥1 encoded fps at 1080p on the 8192 MiB 3060**.
+  Surplus compute goes into quality (RDOQ, partitions, modes, search,
+  references), never into more fps.
 - Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja**. CPU is a reference/test
   path only, not the product.
 - Fat binary: `sm_86;sm_120`. No Blackwell-only accelerators (TMA, clusters,
@@ -99,7 +101,9 @@ matched bitrate, and always confirm `dav2d` decoded the stream first.
 `tools/score_speed.py` reports speed vs CVVDP. `tools/score_tradeoff.py` enforces
 the three-way budget: max CVVDP subject to bitrate <= R_max and speed >= S_min.
 The planned 720p60 gate is CVVDP >= 9.0 at <= 500 kbps, with speed measured
-against AVM on the same machine.
+against AVM on the same machine. The product target is **1080p at >=1 fps on a
+3060 enumerating 8192 MiB**; the 12 GB dev box is only a proxy. Validate with
+`tools/check_target_host.py`.
 
 ## Profiling
 
