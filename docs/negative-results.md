@@ -55,6 +55,7 @@ Status legend:
 | CONFIRMED | Depend on Nsight Compute counters | `ncu` fails with `ERR_NVGPUCTRPERM` in the unprivileged Vast.ai container | Use Nsight Systems 2025.1.3, NVTX, and the built-in profiler |
 | CONFIRMED | Use Blackwell-only features | 3060 `sm_86` is primary | Standard CUDA, `__dp4a`, `cp.async`, CUDA graphs; no TMA/clusters/`wgmma`/`tcgen05`/FP4 |
 | CONFIRMED | `cudaMalloc` in the block/frame loop | Fragmentation, sync, and no hard cap | Use the 7,500 MB arena (`src/cuda/arena.*`) |
+| CONFIRMED | Disable the VRAM cap in normal runs or CI | Target/CI must prove 8 GB compatibility | Keep 7500 MB; `--skip-vram-check` is an explicit experiment only |
 | CONFIRMED | Assume 8/16 tile blocks saturate the GPU | 4x2=8, 8x2=16 blocks on a 28-SM 3060; entropy is serial per tile | Overlap entropy with next-frame compute; buffer output; batch where legal |
 | CONFIRMED | Per-bit global writes from the entropy coder | Latency-bound | Buffer tile output in shared/global memory and flush bytes/words |
 | CONFIRMED | Use `__fadd_rn` / `__fmul_rn` for `double` DCT math | They are **float** intrinsics and silently down-convert doubles; produced ~1.27M coefficient mismatches | Use `__dadd_rn` / `__dmul_rn` plus `-fmad=false`; compile CPU with `-ffp-contract=off` |

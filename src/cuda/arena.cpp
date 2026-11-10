@@ -9,6 +9,7 @@ namespace av2enc::cuda {
 namespace {
 
 std::atomic<std::uint64_t> g_reserved_bytes{0};
+std::atomic<std::uint64_t> g_cap_bytes{Arena::kHardCapBytes};
 
 bool is_valid_alignment(std::size_t alignment) noexcept {
   return alignment >= Arena::kAlignment && (alignment & (alignment - 1)) == 0;
@@ -53,6 +54,19 @@ std::uint64_t Arena::process_reserved_bytes() noexcept {
   return g_reserved_bytes.load(std::memory_order_relaxed);
 }
 
+std::uint64_t Arena::cap_bytes() noexcept {
+  return g_cap_bytes.load(std::memory_order_relaxed);
+}
+
+void Arena::set_cap_bytes(std::uint64_t bytes) noexcept {
+  g_cap_bytes.store(bytes == 0 ? kHardCapBytes : bytes, std::memory_order_relaxed);
+}
+
+void Arena::disable_cap() noexcept {
+  g_cap_bytes.store(std::numeric_limits<std::uint64_t>::max(),
+                    std::memory_order_relaxed);
+}
+
 Status Arena::init(std::uint64_t capacity_bytes, std::size_t alignment, std::string* error) {
   if (raw_ != nullptr) {
     set_error(error, "Arena::init", Status::kAlreadyInitialized);
@@ -62,10 +76,11 @@ Status Arena::init(std::uint64_t capacity_bytes, std::size_t alignment, std::str
     set_error(error, "Arena::init: zero capacity", Status::kInvalidArgument);
     return Status::kInvalidArgument;
   }
-  if (capacity_bytes > kHardCapBytes) {
+  const std::uint64_t cap = cap_bytes();
+  if (capacity_bytes > cap) {
     set_error(error,
               "Arena::init: " + mib_text(capacity_bytes) + " request exceeds the " +
-                  mib_text(kHardCapBytes) + " hard cap",
+                  mib_text(cap) + " hard cap",
               Status::kCapExceeded);
     return Status::kCapExceeded;
   }
@@ -79,10 +94,10 @@ Status Arena::init(std::uint64_t capacity_bytes, std::size_t alignment, std::str
   // hard cap, even if each individual arena is small.
   std::uint64_t reserved = g_reserved_bytes.load(std::memory_order_relaxed);
   for (;;) {
-    if (reserved > kHardCapBytes || capacity_bytes > kHardCapBytes - reserved) {
+    if (reserved > cap || capacity_bytes > cap - reserved) {
       set_error(error,
                 "Arena::init: " + mib_text(capacity_bytes) + " request would exceed the " +
-                    mib_text(kHardCapBytes) + " process cap (" + mib_text(reserved) +
+                    mib_text(cap) + " process cap (" + mib_text(reserved) +
                     " already reserved)",
                 Status::kCapExceeded);
       return Status::kCapExceeded;

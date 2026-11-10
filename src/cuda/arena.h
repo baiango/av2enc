@@ -38,6 +38,13 @@ class Arena {
   static constexpr std::uint64_t kDefaultCapacityBytes = kHardCapBytes - kHeadroomBytes;
   static constexpr std::size_t kAlignment = 256;
 
+  // Process-wide cap override, for explicit experiments on a larger GPU.
+  // set_cap_bytes(0) restores kHardCapBytes; disable_cap() removes the cap.
+  // Intended to be set once, before any Arena::init(), from the CLI flag.
+  static void set_cap_bytes(std::uint64_t bytes) noexcept;
+  static void disable_cap() noexcept;
+  static std::uint64_t cap_bytes() noexcept;
+
   Arena() = default;
   ~Arena();
 
