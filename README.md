@@ -10,16 +10,18 @@
 
 ## Status (2026-11-11)
 
-**First frames decode with `dav2d`.** The CPU reference path produces real AV2
-still pictures; the CUDA kernels are not wired into the encode path yet.
+**First frames decode with `dav2d`, on both CPU and CUDA.** The CUDA M0 path
+uses the runtime/transform/intra components and produces a bitstream identical
+to the CPU reference.
 
-| Case | IVF | MD5 | PSNR avg |
-|---|---:|---|---:|
-| 64x64 | 1,138 B | `7efc3162bc0a4785685eba291a8096fd` | 42.13 dB |
-| 640x360 | 19,751 B | `56f11d4a63ff07f2356ef5064b84fe0e` | 47.20 dB |
+| Case | IVF | MD5 | PSNR avg | CUDA time |
+|---|---:|---|---:|---:|
+| 64x64 | 1,138 B | `7efc3162bc0a4785685eba291a8096fd` | 42.13 dB | 1.34 ms |
+| 640x360 | 19,751 B | `56f11d4a63ff07f2356ef5064b84fe0e` | 47.20 dB | ~34 ms |
 
 Both are gated by `tests/m0_encode_smoke.sh`; the CUDA build passes 6/6 tests.
-Adaptive CDFs are disabled (`disable_cdf_update=1`) for these frames.
+The 640x360 CUDA path is launch-bound (2,740 launches) and keeps entropy on the
+CPU. Adaptive CDFs are opt-in (`--adaptive-cdf`); defaults stay bit-identical.
 
 ## Hard constraint
 

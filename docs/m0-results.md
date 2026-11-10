@@ -42,6 +42,30 @@ pinned bitstreams do not change.
 Adaptive CDFs save **3.9%** at 64x64 and **4.8%** at 640x360 with identical
 reconstruction and `dav2d` decoding.
 
+## CUDA M0 pipeline
+
+The CUDA path is bit-identical to the CPU reference:
+
+| Case | CPU/GPU frame MD5 | `dav2d` MD5 | Recon | CUDA time |
+|---|---|---|---|---|
+| 64x64 | `08c906ab…` | `7efc3162…` | bit-exact | 1.34 ms |
+| 640x360 | `1bbe4c63…` | `56f11d4a…` | bit-exact (PSNR ∞) | 34.1 ms |
+
+640x360 timing breakdown from the shared 3060:
+
+```text
+upload    0.049 ms
+kernel   25.773 ms
+download  0.138 ms
+entropy   7.633 ms
+total    34.100 ms   (2,740 launches)
+```
+
+The CPU reference is 42.0 ms for the same frame, so this is 1.23×. The CUDA path
+is **launch-bound**, not compute-bound: 2,740 launches is the problem. Entropy
+is still on the CPU; `src/cuda/entropy.*` is ready but not wired in yet.
+
+
 
 ## AVM comparison, exact 640x360, QP 90
 
