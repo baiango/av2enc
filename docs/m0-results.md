@@ -65,6 +65,23 @@ The CPU reference is 42.0 ms for the same frame, so this is 1.23×. The CUDA pat
 is **launch-bound**, not compute-bound: 2,740 launches is the problem. Entropy
 is still on the CPU; `src/cuda/entropy.*` is ready but not wired in yet.
 
+## Wavefront scheduler
+
+`src/cuda/scheduler/` batches independent blocks and replays the frame with one
+CUDA graph launch:
+
+| Picture | M0 per-block wall | wavefront + graph | Kernels | Speedup |
+|---|---:|---:|---:|---:|
+| 64x64 | 0.57 ms | 0.37 ms | 34 | 1.6× |
+| 640x360 | 26.2 ms | 4.39 ms | 386 | 6.0× |
+| 1280x720 | 111.0 ms | 10.12 ms | 798 | 11.0× |
+| 1920x1080 | 239.9 ms | ~21 ms | 1,188 | ~10–15× |
+
+Reconstruction, coefficients, and predictors are bit-exact against the
+per-block path; 64x64 and 640x360 bitstreams still pass the pinned `dav2d` MD5s.
+The scheduler is a component: the CLI, CPU entropy, and bitstream writer are not
+wired into it yet.
+
 
 
 ## AVM comparison, one frame, QP 90

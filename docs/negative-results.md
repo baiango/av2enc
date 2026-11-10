@@ -58,7 +58,11 @@ Status legend:
 | CONFIRMED | Launch one kernel per transform/helper | ~30 µs dispatch per launch; a 1-block 4-launch pipeline is 271 µs, latency-bound | Batch `nblocks` and fuse stages |
 | CONFIRMED | Use one block/launch for intra/recon at video scale | 640x360 raster is 3.6–5.2 ms/frame; 1080p extrapolates to 31–44 ms/frame, almost all launch overhead | Batch `dc_predict_residual_batch` where predictions are frozen, or use a wavefront/CUDA-graph scheduler |
 | CONFIRMED | Keep a duplicate fallback transform/intra implementation in the pipeline | Diverges from the bit-exact components and creates two codepaths | Use `transform.*` and `intra.*`; only the 64x64 predictor adapter is allowed |
-| CONFIRMED | Use one kernel per M0 stage | A 32x32 block costs ~13 launches; 640x360 uses 2,740 launches and is launch-bound at ~34 ms/frame | Wavefront/CUDA graph batching is the next optimization |
+| CONFIRMED | Use one kernel per M0 stage | A 32x32 block costs ~13 launches; 640x360 uses 2,740 launches and is launch-bound at ~34 ms/frame | Wavefront/CUDA graph batching; scheduler is implemented but not wired |
+| CONFIRMED | Mix `tx_variants` rectangular pre-scale with the M0 transform | Odd log2-difference rectangles use `Round2(Dequant*2896,12)` and differ by 4096/2896 from `src/cuda/transform.*` | Use `tx_variants` consistently for those sizes |
+| CONFIRMED | Assume length-32 ADST/FDST are distinct transforms | §7.15.2.1 aliases them to DCT | Treat 32x32/64x64 ADST/FLIPADST as DCT |
+| CONFIRMED | Use a uniform block stride in `_multi` kernels | Mixed transform sizes shift offsets; first mismatch at block 1 | Pass explicit `TxBlockJob` in/out offsets |
+| CONFIRMED | Claim `tx_variants` is integrated | It has no bitstream path yet | Wire after M1 integration and re-gate with `dav2d` |
 | CONFIRMED | Claim GPU entropy in the CUDA M0 path | Entropy is still `av2::Encoder` on the CPU; `src/cuda/entropy.*` is not wired | Keep CPU entropy until tile-parallel GPU entropy is integrated and gated |
 | CONFIRMED | Use GPU tile entropy at 8/16 tiles expecting a speedup | Byte-exact, but one 2048-symbol tile is ~4.57 ms vs ~100–135 µs CPU; 34–46× slower per tile; 8/16 blocks are below one warp/SM | Keep CPU entropy for M0; use GPU only for large batches, many tiles, or overlapped next-frame work |
 | CONFIRMED | Reuse adapted CDF copies across launches | The kernel mutates caller CDF memory; reuse caused spurious `kInvalidTrailingBits` | Reset per-tile CDFs before each independent encode/decode |
