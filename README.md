@@ -4,6 +4,10 @@
 > **OpenCode**, with AI subagents writing most of the code and a human directing
 > the architecture and review. Treat it accordingly.
 
+> **Agents:** read `AGENTS.md`, `docs/cuda-interface.md`, and
+> `docs/negative-results.md` before coding. Do not repeat listed failed
+> approaches.
+
 ## Status (2026-11-11)
 
 **First frames decode with `dav2d`.** The CPU reference path produces real AV2
