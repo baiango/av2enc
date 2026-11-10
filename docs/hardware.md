@@ -54,6 +54,18 @@ Do not compare CSS across the two machines. For a like-for-like speed ratio:
 2. Use the same source clip, resolution, frame rate, and decoder.
 3. Compare at iso-CVVDP, and report the CPU model with the score.
 
+## Rental proxies
+
+| Card | VRAM | Role | Caveat |
+|---|---:|---|---|
+| RTX 3060 12 GB | 12 GB | cheap dev box, `compat8g` cap | same GPU as 8 GB but 192-bit/360 GB/s vs 128-bit/240 GB/s; speed is optimistic |
+| RTX 3060 Ti 8 GB | 8 GB | capacity validation only | 4864 CUDA cores, 256-bit/448 GB/s; much faster than either 3060, not a speed proxy |
+| RTX 3060 8 GB | 8 GB | actual target | preferred when available |
+
+Do not pay a premium for a 3060 Ti just to get 8 GB. Use the cheaper 3060 12 GB
+with the 7,500 MB cap for development, and rent an 8 GB card only for a short
+capacity/OOM validation run. The Ti is a different performance class.
+
 ## Capture
 
 ```sh
