@@ -72,8 +72,10 @@ BRT, QM OBU, film grain OBU, metadata), §5.18.5.1 (interpolation filter), §5.1
   `GLOBAL_XLAYER_ID` for `OBU_TEMPORAL_DELIMITER`/`OBU_MSDO`, else 0. So a TD OBU
   differs from other OBUs in its inferred layer.
 - Every non-tile OBU payload ends with `trailing_bits()`: a 1 bit then zeros
-  (§5.2.1, §5.2.3). Tile-group payloads end with the range coder's own trailing
-  bits inside the last tile (§8.2.4).
+  (§5.2.1, §5.2.3). Extensible OBUs (`is_extensible_obu()`, e.g. the sequence
+  header) carry an extra `obu_extension_flag f(1)` first, so their payload is
+  `syntax + obu_extension_flag(0) + trailing_bits` (§5.2.1). Tile-group payloads
+  end with the range coder's own trailing bits inside the last tile (§8.2.4).
 - `byte_alignment()` writes only zero bits (§5.2.4) — there is no "alignment one
   bit" as in some other codecs.
 - OBU types (§6.2.2): 1 seq header, 2 temporal delimiter, 4 closed-loop key,
