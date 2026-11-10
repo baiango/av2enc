@@ -21,7 +21,9 @@ to the CPU reference.
 
 Both are gated by `tests/m0_encode_smoke.sh`; the CUDA build passes 6/6 tests.
 The 640x360 CUDA path is launch-bound (2,740 launches) and keeps entropy on the
-CPU. Adaptive CDFs are opt-in (`--adaptive-cdf`); defaults stay bit-identical.
+CPU. A byte-exact GPU tile entropy coder exists, but it is 34–46× slower per tile
+at M0 tile counts, so CPU entropy remains the default.
+Adaptive CDFs are opt-in (`--adaptive-cdf`); defaults stay bit-identical.
 
 ## Performance expectations
 

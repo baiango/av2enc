@@ -68,23 +68,19 @@ AV2's range coder is serial **within a tile**, but tiles are independent. So:
 - If a layout fails `dav2d`, fall back to one tile and a single overlapped CPU
   entropy thread; do not silently emit streams the gate rejects.
 
-Implementation status: the normative §8.2 CPU coder is in `src/entropy/av2/`
-(115,080 checks passing, ASan/UBSan clean, `nvcc -arch=sm_86` compile check).
-It is the correctness reference for the CUDA port.
+Implementation status:
 
-CUDA occupancy warning: a tile is strictly serial, so 4×2 = 8 blocks and
-8×2 = 16 blocks, each with one active coding lane. On a 28-SM 3060 that is far
-below one warp per SM. The entropy stage will be latency-bound. Mitigations:
-
-- overlap tile entropy with the next frame's GPU compute
-- buffer tile output in shared memory and flush bytes/words, never per-bit
-  global writes
-- batch independent keyframes/tiles where dependencies allow
-- treat a short serial entropy tail as acceptable; tile count alone will not
-  saturate the GPU
-
-The full CDF set is ~46.7 KiB of shared memory per workgroup; keep the tile
-state POD and caller-owned.
+- CPU normative §8.2 coder: `src/entropy/av2/`, 116k checks, ASan/UBSan clean.
+- CUDA tile coder: `src/cuda/entropy.*`, byte-identical to CPU, 986k checks,
+  zero-width/adaptive CDFs included.
+- **Measured:** one 2048-symbol GPU tile is ~4.57 ms vs ~100–135 µs on the CPU,
+  so the GPU coder is **34–46× slower per tile** at M0 tile counts. 4×2 = 8 and
+  8×2 = 16 blocks are below one warp per SM.
+- Therefore **M0 keeps CPU entropy**. GPU entropy is only for 256+ tiles,
+  batched independent frames, or overlapped next-frame work — not a default.
+- The 4 KiB shared staging window is smaller than the full ~46.7 KiB CDF set;
+  larger sets fall back to global memory. Reset per-tile CDFs before each
+  independent launch; the kernel mutates caller CDF copies.
 
 ## CPU-only path is not a performance target
 

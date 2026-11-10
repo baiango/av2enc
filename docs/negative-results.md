@@ -36,6 +36,9 @@ Status legend:
 | CONFIRMED | Keep a duplicate fallback transform/intra implementation in the pipeline | Diverges from the bit-exact components and creates two codepaths | Use `transform.*` and `intra.*`; only the 64x64 predictor adapter is allowed |
 | CONFIRMED | Use one kernel per M0 stage | A 32x32 block costs ~13 launches; 640x360 uses 2,740 launches and is launch-bound at ~34 ms/frame | Wavefront/CUDA graph batching is the next optimization |
 | CONFIRMED | Claim GPU entropy in the CUDA M0 path | Entropy is still `av2::Encoder` on the CPU; `src/cuda/entropy.*` is not wired | Keep CPU entropy until tile-parallel GPU entropy is integrated and gated |
+| CONFIRMED | Use GPU tile entropy at 8/16 tiles expecting a speedup | Byte-exact, but one 2048-symbol tile is ~4.57 ms vs ~100–135 µs CPU; 34–46× slower per tile; 8/16 blocks are below one warp/SM | Keep CPU entropy for M0; use GPU only for large batches, many tiles, or overlapped next-frame work |
+| CONFIRMED | Reuse adapted CDF copies across launches | The kernel mutates caller CDF memory; reuse caused spurious `kInvalidTrailingBits` | Reset per-tile CDFs before each independent encode/decode |
+| CONFIRMED | Assume the full ~46.7 KiB CDF set fits shared staging | Shared staging cap is 4 KiB; larger sets fall back to global and are slower | Keep the M0 table small or accept the slower path |
 | CONFIRMED | Use float/fixed-point DCT as the unguarded normative path | Float flips 3 coefficients in one 1080p luma frame; fixed flips 2/frame; both need correction/fallback | Use double or the bit-exact hybrid; `bench/cuda_dct_perf/README.md` |
 | CONFIRMED | Serialize one DCT block per launch | 65.5 µs/block; 6,120 launches is ~0.4 s/frame before entropy | Batch `nblocks`; the transform API already supports it |
 | CONFIRMED | Judge DCT speed by coefficient accuracy alone | The benchmark uses a block-mean predictor, not M0 reconstruction | End-to-end MD5 and `dav2d` remain the gate |
