@@ -31,6 +31,7 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -362,8 +363,29 @@ bool ensure_runtime(int device, std::string& error) {
   rt.device = device;
   rt.context_ready = true;
   detail.clear();
-  Status arena_status =
-      rt.arena.init(Arena::kDefaultCapacityBytes, Arena::kAlignment, &detail);
+  // Default behavior keeps the 7,500 MB cap and the 7244 MiB arena. An explicit
+  // --skip-vram-check experiment raises the process cap to a device-derived
+  // value; in that case size the arena to that cap (bounded by the device) so
+  // the extra VRAM is actually usable.
+  std::uint64_t requested_capacity = Arena::kDefaultCapacityBytes;
+  if (Arena::cap_bytes() != Arena::kHardCapBytes) {
+    constexpr std::uint64_t kHeadroomBytes = 512ull * Arena::kMiB;
+    const auto minus_headroom = [](std::uint64_t bytes) -> std::uint64_t {
+      return bytes > kHeadroomBytes ? bytes - kHeadroomBytes : 0;
+    };
+    requested_capacity = Arena::cap_bytes();
+    requested_capacity =
+        std::min(requested_capacity,
+                 minus_headroom(rt.context.total_vram_bytes()));
+    requested_capacity =
+        std::min(requested_capacity,
+                 minus_headroom(rt.context.free_vram_bytes()));
+    if (requested_capacity < Arena::kMiB) {
+      requested_capacity = Arena::kMiB;
+    }
+  }
+  Status arena_status = rt.arena.init(requested_capacity, Arena::kAlignment,
+                                      &detail);
   if (!is_ok(arena_status)) {
     // A shared/dev box may not have the full compat8g reservation available.
     // 1 GiB is ample for the M0 still path and still respects the hard cap.

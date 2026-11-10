@@ -78,6 +78,15 @@ add_library(av2enc_core STATIC
   src/bitstream/obu.cpp
   src/bitstream/m0_headers.cpp
   src/encoder/m0_still.cpp
+  src/encoder/partition/partition.cpp
+  src/encoder/intra_modes/intra_modes.cpp
+  src/encoder/tx_variants/tx_variants.cpp
+  src/encoder/tx_variants/tx_select.cpp
+  src/encoder/cfl/cfl.cpp
+  src/encoder/filters/deblock/deblock.cpp
+  src/encoder/rdo/rdo.cpp
+  src/encoder/m1/m1_headers.cpp
+  src/encoder/m1/m1_still.cpp
   src/entropy/av2/av2_entropy.cpp
   src/profile/profiler.cpp)
 target_include_directories(av2enc_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -86,6 +95,10 @@ av2enc_apply_warnings(av2enc_core)
 
 if(AV2ENC_HAVE_CUDA)
   find_package(CUDAToolkit REQUIRED)
+  # Host-side CUDA runtime used by the CLI (device query and arena cap policy).
+  target_sources(av2enc_core PRIVATE
+    src/cuda/arena.cpp
+    src/cuda/context.cpp)
   target_include_directories(av2enc_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_compile_definitions(av2enc_core PUBLIC AV2ENC_HAVE_CUDA=1)
   target_link_libraries(av2enc_core PUBLIC CUDA::cudart)

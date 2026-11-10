@@ -1,9 +1,16 @@
 #include "bitstream/m0_headers.h"
 #include "encoder/m0_still.h"
+#include "encoder/m1/m1_still.h"
 #include "io/ivf.h"
 #include "io/y4m.h"
 
+#if AV2ENC_HAVE_CUDA
+#include "cuda/arena.h"
+#include "cuda/context.h"
+#endif
+
 #include <charconv>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -22,6 +29,13 @@ struct Options {
   std::uint64_t max_frames = 0;  // 0 = all frames
   int qp = 90;
   bool adaptive_cdf = false;
+  bool m1 = false;
+  bool m1_cfl = true;
+  bool m1_deblock = true;
+  bool m1_single = false;
+  bool m1_dc = false;
+  int m1_depth = -1;  // -1 = component default
+  bool skip_vram_check = false;
   bool help = false;
 };
 
@@ -33,19 +47,25 @@ enum class ParseStatus {
 
 void print_usage(std::ostream& out) {
   out << "Usage: av2enc <input.y4m> -o <output.ivf> [--frames N] [--qp Q]\n"
-         "              [--adaptive-cdf]\n"
+         "              [--adaptive-cdf] [--m1] [--no-cfl] [--no-deblock]\n"
          "\n"
-         "M0 still-picture encoder: 8-bit 4:2:0, one key frame, one tile,\n"
-         "64x64 superblocks, 32x32 DCT, DC intra only, no loop filters.\n"
-         "Writes one AV2 frame (TD + SEQ + CLK) into an IVF with fourcc AV02.\n"
-         "Input dimensions must be even (4:2:0); edge superblocks may be partial.\n"
+         "M0 still-picture encoder (default): 8-bit 4:2:0, one key frame,\n"
+         "one tile, 64x64 superblocks, 32x32 DCT, DC intra only, no filters.\n"
+         "M1 (--m1): partition tree, full intra modes, variable TX sizes,\n"
+         "CfL and deblock. Both write one AV2 frame (TD + SEQ + CLK) into an\n"
+         "IVF with fourcc AV02.\n"
          "\n"
          "Options:\n"
          "  -o, --output <file>  Output IVF path (required)\n"
-         "  --frames <N>         M0 encodes one frame; values > 1 are clamped to 1\n"
-         "  --qp <Q>             base_q_idx (default: 90; M0 pins Q = 90)\n"
+         "  --frames <N>         Encodes one frame; values > 1 are clamped to 1\n"
+         "  --qp <Q>             base_q_idx (default: 90; both paths pin Q = 90)\n"
          "  --adaptive-cdf       Enable normative §8.2.6 CDF adaptation\n"
-         "                       (default off: frozen CDFs, pinned bitstream)\n"
+         "  --m1                 Enable the integrated M1 still-picture path\n"
+         "  --no-cfl             M1: disable chroma-from-luma\n"
+         "  --no-deblock         M1: disable the deblocking filter\n"
+         "  --skip-vram-check    EXPERIMENT ONLY: remove the 7,500 MB arena cap\n"
+         "                       and size the CUDA arena from the device\n"
+         "                       (do not use for target/CI verification)\n"
          "  -h, --help           Show this help\n";
 }
 
@@ -78,6 +98,50 @@ bool parse_int(std::string_view text, int& value) {
   value = parsed;
   return true;
 }
+
+#if AV2ENC_HAVE_CUDA
+// Explicit-experiment path: remove the 7,500 MB process cap and size the
+// persistent arena from the selected device. The target/CI path never calls
+// this; it keeps Arena::kDefaultCapacityBytes and the 7,500 MB cap.
+bool configure_arena_from_device(std::string& error) {
+  using av2enc::cuda::Arena;
+  Arena::disable_cap();  // must happen before any Arena::init()
+
+  av2enc::cuda::DeviceInfo info;
+  const av2enc::cuda::Status status = av2enc::cuda::query_device(0, &info);
+  if (status != av2enc::cuda::Status::kOk) {
+    Arena::set_cap_bytes(0);  // restore the default 7,500 MB cap
+    error = std::string("--skip-vram-check: query_device(0) failed: ") +
+            av2enc::cuda::status_name(status);
+    return false;
+  }
+
+  constexpr std::uint64_t kHeadroomBytes = 512ull * Arena::kMiB;
+  const auto minus_headroom = [](std::uint64_t bytes) -> std::uint64_t {
+    return bytes > kHeadroomBytes ? bytes - kHeadroomBytes : 0;
+  };
+  std::uint64_t capacity =
+      std::min(minus_headroom(info.total_vram_bytes),
+               minus_headroom(info.free_vram_bytes));
+  if (capacity < Arena::kMiB) {
+    capacity = Arena::kMiB;
+  }
+  // Store the chosen value as the process cap so later Arena::init() calls
+  // cannot exceed it. (The 7,500 MB hard cap is intentionally gone here.)
+  Arena::set_cap_bytes(capacity);
+
+  std::cout << "av2enc: WARNING: --skip-vram-check is an explicit experiment\n"
+            << "  device:   " << info.name << " (" << info.cc_major << "."
+            << info.cc_minor << ", " << info.total_vram_bytes / Arena::kMiB
+            << " MiB total, " << info.free_vram_bytes / Arena::kMiB
+            << " MiB free)\n"
+            << "  capacity: " << capacity / Arena::kMiB
+            << " MiB (min(total, free) - 512 MiB; default is "
+            << Arena::kDefaultCapacityBytes / Arena::kMiB << " MiB)\n"
+            << "  target/CI verification must not use this flag\n";
+  return true;
+}
+#endif
 
 ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string& error) {
   for (int i = 1; i < argc; ++i) {
@@ -130,6 +194,50 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--m1") {
+      options.m1 = true;
+      continue;
+    }
+
+    if (argument == "--no-cfl") {
+      options.m1_cfl = false;
+      continue;
+    }
+
+    if (argument == "--no-deblock") {
+      options.m1_deblock = false;
+      continue;
+    }
+
+    if (argument == "--m1-single") {
+      options.m1_single = true;
+      continue;
+    }
+
+    if (argument == "--m1-dc") {
+      options.m1_dc = true;
+      continue;
+    }
+
+    if (argument == "--m1-depth") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--m1-depth'";
+        return ParseStatus::kError;
+      }
+      int depth = 0;
+      if (!parse_int(argv[++i], depth) || depth < 0 || depth > 8) {
+        error = "--m1-depth must be an integer in [0, 8]";
+        return ParseStatus::kError;
+      }
+      options.m1_depth = depth;
+      continue;
+    }
+
+    if (argument == "--skip-vram-check") {
+      options.skip_vram_check = true;
+      continue;
+    }
+
     if (!argument.empty() && argument.front() == '-') {
       error = "unknown option '" + std::string(argument) + "'";
       return ParseStatus::kError;
@@ -167,6 +275,18 @@ int main(int argc, char** argv) {
     std::cerr << "av2enc: " << error << "\n\n";
     print_usage(std::cerr);
     return 2;
+  }
+
+  if (options.skip_vram_check) {
+#if AV2ENC_HAVE_CUDA
+    if (!configure_arena_from_device(error)) {
+      std::cerr << "av2enc: " << error << "\n";
+      return 1;
+    }
+#else
+    std::cerr << "av2enc: note: --skip-vram-check has no effect in this "
+                 "CPU-only build\n";
+#endif
   }
 
   av2enc::Y4mReader reader(options.input);
@@ -224,27 +344,62 @@ int main(int argc, char** argv) {
     return fail_encode(error);
   }
 
-  av2enc::m0::StillPicture picture;
-  picture.width = frame.width();
-  picture.height = frame.height();
-  picture.y = frame.y();
-  picture.u = frame.u();
-  picture.v = frame.v();
+  std::uint32_t tile_bytes = 0;
+  std::uint32_t frame_bytes = 0;
+  if (options.m1) {
+    av2enc::m1::StillPicture picture;
+    picture.width = frame.width();
+    picture.height = frame.height();
+    picture.y = frame.y();
+    picture.u = frame.u();
+    picture.v = frame.v();
 
-  av2enc::m0::StillPictureConfig config;
-  config.max_frame_width = static_cast<std::uint16_t>(y4m.width);
-  config.max_frame_height = static_cast<std::uint16_t>(y4m.height);
-  config.base_q_idx = static_cast<std::uint8_t>(options.qp);
-  // Frozen CDFs are the default M0 bitstream. Adaptive coding is an opt-in
-  // normative §8.2.6 mode used to test the CDF-update path.
-  config.enable_cdf_adaptation = options.adaptive_cdf;
+    av2enc::m1::M1Options m1_options;
+    m1_options.base_q_idx = static_cast<std::uint8_t>(options.qp);
+    m1_options.enable_cfl = options.m1_cfl;
+    m1_options.enable_deblock = options.m1_deblock;
+    m1_options.adaptive_cdf = options.adaptive_cdf;
+    m1_options.force_single_block = options.m1_single;
+    m1_options.force_dc = options.m1_dc;
+    if (options.m1_depth >= 0) {
+      m1_options.max_partition_depth = options.m1_depth;
+    }
 
-  av2enc::m0::StillEncodeResult encoded;
-  if (!av2enc::m0::encode_still_picture(picture, config, encoded, error)) {
-    return fail_encode(error);
-  }
-  if (!writer.write_frame(encoded.frame, 0, error)) {
-    return fail_encode(error);
+    av2enc::m1::M1Result encoded;
+    if (!av2enc::m1::encode_m1_still_picture(picture, m1_options, encoded,
+                                             error)) {
+      return fail_encode(error);
+    }
+    if (!writer.write_frame(encoded.frame, 0, error)) {
+      return fail_encode(error);
+    }
+    tile_bytes = encoded.tile_bytes;
+    frame_bytes = encoded.frame_bytes;
+  } else {
+    av2enc::m0::StillPicture picture;
+    picture.width = frame.width();
+    picture.height = frame.height();
+    picture.y = frame.y();
+    picture.u = frame.u();
+    picture.v = frame.v();
+
+    av2enc::m0::StillPictureConfig config;
+    config.max_frame_width = static_cast<std::uint16_t>(y4m.width);
+    config.max_frame_height = static_cast<std::uint16_t>(y4m.height);
+    config.base_q_idx = static_cast<std::uint8_t>(options.qp);
+    // Frozen CDFs are the default M0 bitstream. Adaptive coding is an opt-in
+    // normative §8.2.6 mode used to test the CDF-update path.
+    config.enable_cdf_adaptation = options.adaptive_cdf;
+
+    av2enc::m0::StillEncodeResult encoded;
+    if (!av2enc::m0::encode_still_picture(picture, config, encoded, error)) {
+      return fail_encode(error);
+    }
+    if (!writer.write_frame(encoded.frame, 0, error)) {
+      return fail_encode(error);
+    }
+    tile_bytes = encoded.tile_bytes;
+    frame_bytes = encoded.frame_bytes;
   }
 
   if (!writer.close(error)) {
@@ -252,14 +407,15 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::cout << "av2enc: M0 still-picture encode complete\n"
-            << "  input:   " << options.input.string() << " (" << y4m.width << "x"
-            << y4m.height << ", " << y4m.colorspace << ", " << y4m.fps_num << "/"
-            << y4m.fps_den << " fps)\n"
-            << "  output:  " << options.output.string() << " (" << writer.bytes_written()
-            << " bytes IVF)\n"
+  std::cout << "av2enc: " << (options.m1 ? "M1" : "M0")
+            << " still-picture encode complete\n"
+            << "  input:   " << options.input.string() << " (" << y4m.width
+            << "x" << y4m.height << ", " << y4m.colorspace << ", "
+            << y4m.fps_num << "/" << y4m.fps_den << " fps)\n"
+            << "  output:  " << options.output.string() << " ("
+            << writer.bytes_written() << " bytes IVF)\n"
             << "  frames:  1, base_q_idx " << options.qp << ", tile "
-            << encoded.tile_bytes << " bytes, temporal unit " << encoded.frame_bytes
+            << tile_bytes << " bytes, temporal unit " << frame_bytes
             << " bytes\n";
   return 0;
 }
