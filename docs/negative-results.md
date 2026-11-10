@@ -36,6 +36,8 @@ Status legend:
 
 ## CUDA
 
+**Open:** GPU CfL is not validated. The derived-alpha CUDA test returns alpha 0; fix it before integration. CPU CfL passes.
+
 | Status | Do not do | Why | Do instead |
 |---|---|---|---|
 | CONFIRMED | Depend on Nsight Compute counters | `ncu` fails with `ERR_NVGPUCTRPERM` in the unprivileged Vast.ai container | Use Nsight Systems 2025.1.3, NVTX, and the built-in profiler |
