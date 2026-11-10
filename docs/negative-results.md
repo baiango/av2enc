@@ -21,6 +21,10 @@ Status legend:
 | CONFIRMED | Copy AVM/SVT/clave/av2-turbo encoder code | Project constraint is spec-only | Implement from the spec; use decoders as black boxes |
 | DEFERRED | Inter frames, loop filters, RDO, rate control | M0 is still-picture only | Finish the CUDA M0 path first |
 
+| CONFIRMED | Skip luma directional IDIF | The decoder applies it; prediction will mismatch | Implement the exact §7.13.2 IDIF path |
+| CONFIRMED | Read edge samples outside the visible plane | Wrong prediction and out-of-bounds reads | Clamp to `max_x`/`max_y` and pass the padded stride |
+| OPEN | Claim intra-mode gains before integration | The component emits no bitstream | Wire it, pass `dav2d`, then measure |
+
 ## RDO / rate control
 
 | Status | Do not do | Why | Do instead |
