@@ -11,7 +11,8 @@
 //   * per-leaf inter candidates: GLOBALMV (zero MV), NEARMV (spatial MV stack)
 //     and NEWMV (src/encoder/inter/me search quantised to 1/8 pel)
 //   * per-leaf intra fallback: DC intra + DCT residual (M1 transform path)
-//   * inter leaves use skip_flag = 1 (no residual in this milestone)
+//   * inter leaves default to skip_flag = 1; the gated `enable_inter_residual`
+//     option codes a quantised inter residual (feature 1)
 //
 // This is a CPU correctness reference. The CUDA M2 tree is intentionally
 // separate and not required for this gate.
@@ -48,6 +49,12 @@ struct M2Options {
   bool force_global_mv = false;
   bool force_intra = false;
   bool force_single_block = false;
+  // Feature 1: inter residual.  Off by default; the baseline is skip-only.
+  // When true, a non-skip inter leaf codes transform coefficients for all
+  // three planes.  force_inter_residual bypasses the rate heuristic and codes
+  // residual on every inter leaf (gate stress mode).
+  bool enable_inter_residual = false;
+  bool force_inter_residual = false;
   int min_block_size = 16;
   int max_partition_depth = 4;
   // ME integer search radius in luma samples.

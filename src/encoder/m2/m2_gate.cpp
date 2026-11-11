@@ -14,6 +14,7 @@
 #include "io/y4m.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -207,10 +208,55 @@ CompareResult compare_y4m(const std::string& decoded_path,
   return result;
 }
 
+// PSNR of the encoder reconstruction against the source, per plane, in dB.
+// Reported by every gate phase (bytes + quality); it is informational and does
+// not affect pass/fail.
+struct PsnrResult {
+  double y = 0.0;
+  double u = 0.0;
+  double v = 0.0;
+  double yuv = 0.0;
+};
+
+PsnrResult compute_psnr(const std::vector<OwnedFrame>& frames,
+                        const std::vector<av2enc::m2::M2ReconFrame>& recon) {
+  PsnrResult out;
+  std::uint64_t sse[3] = {0, 0, 0};
+  std::uint64_t count[3] = {0, 0, 0};
+  const std::size_t n = std::min(frames.size(), recon.size());
+  for (std::size_t i = 0; i < n; ++i) {
+    const OwnedFrame& src = frames[i];
+    const av2enc::m2::M2ReconFrame& dec = recon[i];
+    const auto accum = [](std::span<const std::uint8_t> a,
+                          const std::vector<std::uint8_t>& b,
+                          std::uint64_t& sum, std::uint64_t& cnt) {
+      for (std::size_t k = 0; k < a.size() && k < b.size(); ++k) {
+        const int d = static_cast<int>(a[k]) - static_cast<int>(b[k]);
+        sum += static_cast<std::uint64_t>(d * d);
+        ++cnt;
+      }
+    };
+    accum(std::span<const std::uint8_t>(src.y), dec.y, sse[0], count[0]);
+    accum(std::span<const std::uint8_t>(src.u), dec.u, sse[1], count[1]);
+    accum(std::span<const std::uint8_t>(src.v), dec.v, sse[2], count[2]);
+  }
+  const auto to_db = [](std::uint64_t sum, std::uint64_t cnt) {
+    if (cnt == 0 || sum == 0) return 99.0;
+    const double mse = static_cast<double>(sum) / static_cast<double>(cnt);
+    return 10.0 * std::log10((255.0 * 255.0) / mse);
+  };
+  out.y = to_db(sse[0], count[0]);
+  out.u = to_db(sse[1], count[1]);
+  out.v = to_db(sse[2], count[2]);
+  const std::uint64_t total_sse = sse[0] + sse[1] + sse[2];
+  const std::uint64_t total_count = count[0] + count[1] + count[2];
+  out.yuv = to_db(total_sse, total_count);
+  return out;
+}
+
 bool write_ivf(const std::string& path,
                const av2enc::m2::M2SequenceResult& sequence,
-               std::uint32_t width, std::uint32_t height, std::string& error) {
-  av2enc::IvfWriter writer;
+               std::uint32_t width, std::uint32_t height, std::string& error) {  av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
   header.height = static_cast<std::uint16_t>(height);
@@ -258,6 +304,19 @@ bool run_phase(const char* name, const std::vector<OwnedFrame>& frames,
               << " tile=" << sequence.tile_bytes[i]
               << " inter=" << sequence.inter_blocks[i]
               << " intra=" << sequence.intra_blocks[i] << "\n";
+  }
+  {
+    std::uint64_t total_bytes = 0;
+    for (const std::uint32_t bytes : sequence.frame_bytes) {
+      total_bytes += bytes;
+    }
+    const PsnrResult psnr = compute_psnr(frames, sequence.recon);
+    std::cout.setf(std::ios::fixed);
+    std::cout.precision(3);
+    std::cout << "  total_bytes=" << total_bytes
+              << " psnr_y=" << psnr.y << " psnr_u=" << psnr.u
+              << " psnr_v=" << psnr.v << " psnr_yuv=" << psnr.yuv << "\n";
+    std::cout.unsetf(std::ios::fixed);
   }
 
   const std::string dav2d = find_dav2d();
@@ -324,13 +383,23 @@ int main(int argc, char** argv) {
       options.force_global_mv = true;
     } else if (arg == "--single-block") {
       options.force_single_block = true;
+    } else if (arg == "--inter-residual") {
+      options.enable_inter_residual = true;
+    } else if (arg == "--force-inter-residual") {
+      options.enable_inter_residual = true;
+      options.force_inter_residual = true;
+    } else if (arg == "--min-block" && i + 1 < argc) {
+      options.min_block_size = std::atoi(argv[++i]);
+    } else if (arg == "--max-depth" && i + 1 < argc) {
+      options.max_partition_depth = std::atoi(argv[++i]);
     } else if (arg == "--trace") {
       options.trace = true;
     } else if (arg == "--help") {
       std::cout << "usage: m2_gate [--input clip.y4m] [--frames N] "
                    "[--out out.ivf] [--force-intra] [--no-newmv] "
                    "[--no-intra-fallback] [--force-global] [--single-block] "
-                   "[--trace]\n";
+                   "[--inter-residual] [--force-inter-residual] "
+                   "[--min-block N] [--max-depth N] [--trace]\n";
       return 0;
     } else {
       std::cerr << "unknown argument: " << arg << "\n";

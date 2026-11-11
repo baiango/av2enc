@@ -15,6 +15,7 @@
 #include "encoder/tx_variants/tx_variants.h"
 #include "entropy/av2/av2_entropy.h"
 #include "encoder/inter/mc/mc.h"
+#include "encoder/m2/merge/merge.h"
 
 #include <algorithm>
 #include <array>
@@ -37,6 +38,11 @@ using partition::PartitionType;
 // same §9.2/§9.3 defaults the M1 syntax writer uses, so share them rather than
 // duplicating 180 CDF arrays.
 using namespace av2enc::m1;
+
+// AV2 RefFrame labels (§6.19.7.9): LAST_FRAME = 0, INTRA_FRAME = 8.  The
+// merge layer's MI grid uses these, not the MC-internal labels.
+constexpr std::int8_t kRefLastAv2 = 0;
+constexpr std::int8_t kRefIntraAv2 = 8;
 
 // YMode numeric values (§6.19.5.5).
 constexpr int kDcPred = 0;
@@ -160,6 +166,51 @@ TxTypeSyntax luma_tx_type_syntax(int tx_size, int eob) {
   return TxTypeSyntax::kIntraSet1;
 }
 
+// Inter luma transform set from get_tx_set(txSz, 0) for reduced_tx_set = 0
+// and enable_chroma_dctonly = 1.  §5.20.8.2 codes a TX_TYPE for every inter
+// luma TX block whose set is not TX_SET_DCTONLY, including eob == 1 (the
+// eob == 1 shortcut is intra-only).
+enum class InterTxSet {
+  kDctOnly,
+  kDctIdtx,   // 32x32
+  kInter1,    // square <= 8x8 / rectangles with sqr <= 8x8
+  kInter2,    // 16x16
+  kWide32,
+  kHigh32,
+  kWide64,
+  kHigh64,
+};
+InterTxSet inter_tx_set(int tx_size) {
+  const int sqr = kTxSizeSqr[tx_size];
+  const int sqr_up = kTxSizeSqrUp[tx_size];
+  const auto params =
+      txv::make_tx_params(static_cast<txv::TxSize>(tx_size),
+                          txv::TxType::kDctDct);
+  const bool wider = params.has_value() && params->coded_w > params->coded_h;
+  if (sqr_up > 3) {
+    if (sqr >= 3) return InterTxSet::kDctOnly;
+    return wider ? InterTxSet::kWide64 : InterTxSet::kHigh64;
+  }
+  if (sqr_up == 3 && sqr != 3) {
+    return wider ? InterTxSet::kWide32 : InterTxSet::kHigh32;
+  }
+  if (sqr_up == 3) return InterTxSet::kDctIdtx;
+  return sqr == 2 ? InterTxSet::kInter2 : InterTxSet::kInter1;
+}
+
+// §8.3.2 inter_tx_type context from the final EOB.
+int inter_tx_type_context(int eob, int coded_w, int coded_h, bool use_min) {
+  const int bwl = std::min(floor_log2(coded_w), 5);
+  const int eoby = (eob - 1) >> bwl;
+  const int eobx = (eob - 1) - (eoby << bwl);
+  const int diag = eobx + eoby;
+  const int w = use_min ? std::min(coded_w, 32) : coded_w;
+  const int h = use_min ? std::min(coded_h, 32) : coded_h;
+  if (diag < 2) return 1;
+  if (diag > w + h - 4) return 2;
+  return 0;
+}
+
 // Default_Eob_Pt_16_Cdf [3][6] and Default_Eob_Pt_32_Cdf [3][7] (§9.3),
 // COEFF_CDF_Q_CTXS slice 0.  The M1 syntax path previously had no 4x4/4x8
 // transform and only imported the 64+ tables, so these two live here.
@@ -227,6 +278,16 @@ struct CdfState {
   std::uint16_t offset_other[16][3];
   std::uint16_t col_mv_greater[2][3];
   std::uint16_t col_mv_index[4][3];
+
+  // Inter residual luma transform-type symbols (§5.20.8.2).
+  std::uint16_t inter_tx_type_set1[3][2][3];
+  std::uint16_t inter_tx_type_set2[3][3];
+  std::uint16_t inter_tx_type_set3[3][4][3];
+  std::uint16_t inter_tx_type_long[3][4][5];
+  std::uint16_t inter_tx_type_index_set1[3][9];
+  std::uint16_t inter_tx_type_offset_set1[3][9];
+  std::uint16_t inter_tx_type_index_set2[3][9];
+  std::uint16_t inter_tx_type_offset_set2[3][5];
 };
 
 template <typename T, std::size_t N>
@@ -285,6 +346,14 @@ void init_cdfs(CdfState& c) {
   copy_array(c.offset_other, kShellOffsetOtherClassCdf);
   copy_array(c.col_mv_greater, kColMvGreaterCdf);
   copy_array(c.col_mv_index, kColMvIndexCdf);
+  copy_array(c.inter_tx_type_set1, kInterTxTypeSet1Cdf);
+  copy_array(c.inter_tx_type_set2, kInterTxTypeSet2Cdf);
+  copy_array(c.inter_tx_type_set3, kInterTxTypeSet3Cdf);
+  copy_array(c.inter_tx_type_long, kInterTxTypeLongCdf);
+  copy_array(c.inter_tx_type_index_set1, kInterTxTypeIndexSet1Cdf);
+  copy_array(c.inter_tx_type_offset_set1, kInterTxTypeOffsetSet1Cdf);
+  copy_array(c.inter_tx_type_index_set2, kInterTxTypeIndexSet2Cdf);
+  copy_array(c.inter_tx_type_offset_set2, kInterTxTypeOffsetSet2Cdf);
 }
 
 // One in-frame child slot of a partition (§9.2 Partition_Subsize).
@@ -840,7 +909,7 @@ class Writer {
   // ---------------------------------------------------------------------
   // Residual syntax
   // ---------------------------------------------------------------------
-  bool write_eob(int eob, int plane, int coded_w, int coded_h) {
+  bool write_eob(int eob, int plane, int coded_w, int coded_h, bool is_inter) {
     int eob_pt = 1;
     if (eob == 2) {
       eob_pt = 2;
@@ -852,7 +921,7 @@ class Writer {
     std::uint16_t* cdf = nullptr;
     int escape_bits = 0;
     int cdf_n = 8;
-    const int cdf_ctx = plane > 0 ? 2 : 0;
+    const int cdf_ctx = plane > 0 ? 2 : (is_inter ? 1 : 0);
     switch (multisize) {
       case 0:
         // §5.20.7.27 / §8.3.2: eobMultisize 0 (TX_4X4) codes eob_pt_16,
@@ -986,10 +1055,50 @@ class Writer {
     return 0;
   }
 
+  // Luma inter transform-type syntax (§5.20.8.2).  M2 signals DCT_DCT for
+  // every codable inter TX block.  The symbol mapping is set-dependent:
+  //   INTER_1: type group 0 + offset 7  -> Tx_Type_Inter_Inv_Set1[7] = DCT_DCT
+  //   INTER_2: type group 0 + offset 3  -> Inv_Set2[3]          = DCT_DCT
+  //   DCT_IDTX: symbol 1                -> Inv_Set3[1]          = DCT_DCT
+  //   long sets: is_long_side_dct = 1, type 0 -> Inv_Long[1][*][0]
+  bool write_inter_tx_type(int tx_size, int eob, int coded_w, int coded_h) {
+    const InterTxSet set = inter_tx_set(tx_size);
+    if (set == InterTxSet::kDctOnly) return true;
+    const int ctx = inter_tx_type_context(eob, coded_w, coded_h, true);
+    const int sqr = kTxSizeSqr[tx_size];
+    switch (set) {
+      case InterTxSet::kWide64:
+      case InterTxSet::kHigh64:
+        // WIDE_64/HIGH_64 imply is_long_side_dct = 1; only the type is coded.
+        return sym(&cdfs_.inter_tx_type_long[ctx][sqr][0], 4, 0);
+      case InterTxSet::kWide32:
+      case InterTxSet::kHigh32:
+        if (!sym(&cdfs_.is_long_side_dct[1][0], 2, 1)) return false;
+        return sym(&cdfs_.inter_tx_type_long[ctx][sqr][0], 4, 0);
+      case InterTxSet::kInter1: {
+        if (!sym(&cdfs_.inter_tx_type_set1[ctx][sqr][0], 2, 0)) return false;
+        const int off_ctx =
+            inter_tx_type_context(eob, coded_w, coded_h, false);
+        return sym(&cdfs_.inter_tx_type_index_set1[off_ctx][0], 8, 7);
+      }
+      case InterTxSet::kInter2: {
+        if (!sym(&cdfs_.inter_tx_type_set2[ctx][0], 2, 0)) return false;
+        const int off_ctx =
+            inter_tx_type_context(eob, coded_w, coded_h, false);
+        return sym(&cdfs_.inter_tx_type_index_set2[off_ctx][0], 8, 3);
+      }
+      case InterTxSet::kDctIdtx:
+        return sym(&cdfs_.inter_tx_type_set3[ctx][sqr][0], 2, 1);
+      case InterTxSet::kDctOnly:
+        return true;
+    }
+    return false;
+  }
+
   // `level_base` is the index of this plane's first scan-order level.
   bool code_tx(const BlockSyntax& node, int plane, std::size_t level_base,
                int bsize_w, int bsize_h, std::size_t levels_end,
-               std::string& error) {
+               bool is_inter, std::string& error) {
     const int tx_size = node.tx_size[plane];
     if (tx_size >= 25) {
       error = "invalid tx_size " + std::to_string(tx_size) + " on plane " +
@@ -1070,8 +1179,9 @@ class Writer {
     }
 
     const int tsc = tx_sz_ctx(tx_size);
-    std::uint16_t* skip_cdf = plane == 2 ? &cdfs_.v_txb_skip[ctx][0]
-                                         : &cdfs_.txb_skip[0][tsc][ctx][0];
+    std::uint16_t* skip_cdf =
+        plane == 2 ? &cdfs_.v_txb_skip[ctx][0]
+                   : &cdfs_.txb_skip[is_inter ? 1 : 0][tsc][ctx][0];
     if (!sym(skip_cdf, 2, eob == 0 ? 1 : 0)) return false;
     if (eob == 0) {
       for (int i = 0; i < w4; ++i) {
@@ -1086,12 +1196,17 @@ class Writer {
       return true;
     }
 
-    if (!write_eob(eob, plane, coded_w, coded_h)) {
+    if (!write_eob(eob, plane, coded_w, coded_h, is_inter)) {
       error = error_;
       return false;
     }
     if (plane == 0) {
-      switch (luma_tx_type_syntax(tx_size, eob)) {
+      if (is_inter) {
+        if (!write_inter_tx_type(tx_size, eob, coded_w, coded_h)) {
+          return false;
+        }
+      } else {
+        switch (luma_tx_type_syntax(tx_size, eob)) {
         case TxTypeSyntax::kNone:
           break;
         case TxTypeSyntax::kIntraSet1:
@@ -1113,6 +1228,7 @@ class Writer {
             return false;
           }
           break;
+        }
       }
     }
 
@@ -1528,9 +1644,9 @@ class Writer {
       return false;
     }
 
-    // Validate the decision against the shared MC MV-stack component. This
+    // Validate the decision against the spec-exact merge/MV-stack layer.  This
     // catches producer bugs before they desynchronise the decoder.
-    inter::mc::MvStackParams params;
+    merge::StackParams params;
     params.mi_row = node.mi_row;
     params.mi_col = node.mi_col;
     params.bw4 = cur_w4_;
@@ -1539,11 +1655,17 @@ class Writer {
     params.mi_cols = mi_cols_;
     params.mi_rows = mi_rows_;
     params.mi = mv_grid_.data();
-    params.ref_frame = inter::mc::kRefLast;
-    params.global_mv = inter::mc::Mv{0, 0};
-    params.reorder = inter::mc::DrlReorder::kNever;
-    inter::mc::MvStack stack;
-    if (inter::mc::build_mv_stack(params, &stack) != inter::mc::McStatus::kOk) {
+    params.ref_frame[0] = kRefLastAv2;
+    params.ref_frame[1] = merge::kRefNone;
+    params.is_compound = false;
+    params.global_mv[0] = inter::mc::Mv{0, 0};
+    params.global_mv[1] = inter::mc::Mv{0, 0};
+    // DRL reordering is not gated; the sequence header signals DISABLED.
+    params.reorder = merge::DrlReorder::kDisabled;
+    params.max_drl_bits_minus_1 =
+        static_cast<int>(config_.max_drl_bits_minus_1);
+    merge::MvStack stack;
+    if (merge::build_stack_checked(params, &stack) != merge::Status::kOk) {
       error = "build_mv_stack failed";
       return false;
     }
@@ -1558,21 +1680,19 @@ class Writer {
         error = "empty MV stack";
         return false;
       }
-      inter::mc::ModeDecision decision;
-      decision.mode = node.inter_mode == kInterNearMv
-                          ? inter::mc::InterMode::kNearmv
-                          : inter::mc::InterMode::kNewmv;
-      decision.drl_index = node.inter_mode == kInterNewMv ? 0 : node.drl_index;
-      decision.ref_frame = inter::mc::kRefLast;
-      decision.filter = inter::mc::InterpFilter::kEighttap;
-      decision.mvd = inter::mc::Mv{node.mvd_y, node.mvd_x};
-      inter::mc::ResolvedMode resolved;
-      if (inter::mc::resolve_mode(stack, params, decision, &resolved) !=
-          inter::mc::McStatus::kOk) {
+      const int drl = node.inter_mode == kInterNewMv ? 0 : node.drl_index;
+      const merge::SingleMode mode = node.inter_mode == kInterNearMv
+                                         ? merge::SingleMode::kNearMv
+                                         : merge::SingleMode::kNewMv;
+      merge::ResolvedMode resolved;
+      if (merge::resolve_single_mode(
+              stack, params, mode, drl,
+              inter::mc::Mv{node.mvd_y, node.mvd_x}, &resolved) !=
+          merge::Status::kOk) {
         error = "resolve_mode failed";
         return false;
       }
-      if (resolved.mv.y != node.mv_y || resolved.mv.x != node.mv_x) {
+      if (resolved.mv[0].y != node.mv_y || resolved.mv[0].x != node.mv_x) {
         error = "block MV does not match the signalled inter mode";
         return false;
       }
@@ -1631,9 +1751,8 @@ class Writer {
                 : node.y_mode;
         inter::mc::MiInfo& mi = mv_grid_[idx];
         mi = inter::mc::MiInfo{};
-        mi.ref[0] = node.is_inter ? inter::mc::kRefLast
-                                  : inter::mc::kRefIntra;
-        mi.ref[1] = inter::mc::kRefNone;
+        mi.ref[0] = node.is_inter ? kRefLastAv2 : kRefIntraAv2;
+        mi.ref[1] = merge::kRefNone;
         mi.mv[0][0] = node.mv_y;
         mi.mv[0][1] = node.mv_x;
         mi.mv[1][0] = node.mv_y;
@@ -1710,14 +1829,59 @@ class Writer {
       return false;
     }
     std::size_t level_base = node.levels_offset;
-    if (!code_tx(node, 0, level_base, w, h, levels_end, error)) return false;
+    if (!code_tx(node, 0, level_base, w, h, levels_end, false, error)) {
+      return false;
+    }
     level_base += node.eob[0];
-    if (!code_tx(node, 1, level_base, cw, ch, levels_end, error)) return false;
+    if (!code_tx(node, 1, level_base, cw, ch, levels_end, false, error)) {
+      return false;
+    }
     level_base += node.eob[1];
-    if (!code_tx(node, 2, level_base, cw, ch, levels_end, error)) return false;
+    if (!code_tx(node, 2, level_base, cw, ch, levels_end, false, error)) {
+      return false;
+    }
     if (error.empty() && !error_.empty()) error = error_;
     return true;
   }
+
+  // Inter residual syntax: transform coefficients for a non-skip inter leaf.
+  // Mirrors write_intra_leaf's residual half; prediction is already applied by
+  // the producer.  Chroma never signals a transform type and M2 does not
+  // enable CCTX/parity hiding/TCQ, so the plane order is luma, U, V.
+  bool write_inter_residual(const BlockSyntax& node, int w, int h, int cw,
+                            int ch, std::string& error) {
+    const int coded_w[kPlaneCount] = {w, cw, cw};
+    const int coded_h[kPlaneCount] = {h, ch, ch};
+    for (int plane = 0; plane < kPlaneCount; ++plane) {
+      const auto params_opt = txv::make_tx_params(
+          static_cast<txv::TxSize>(node.tx_size[plane]),
+          txv::TxType::kDctDct);
+      if (!params_opt.has_value() ||
+          params_opt->coded_w != coded_w[plane] ||
+          params_opt->coded_h != coded_h[plane]) {
+        error = "inter tx_size on plane " + std::to_string(plane) +
+                " does not match the TX_MODE_LARGEST block size";
+        return false;
+      }
+    }
+
+    const std::size_t levels_end = levels_.size();
+    std::size_t level_base = node.levels_offset;
+    if (!code_tx(node, 0, level_base, w, h, levels_end, true, error)) {
+      return false;
+    }
+    level_base += node.eob[0];
+    if (!code_tx(node, 1, level_base, cw, ch, levels_end, true, error)) {
+      return false;
+    }
+    level_base += node.eob[1];
+    if (!code_tx(node, 2, level_base, cw, ch, levels_end, true, error)) {
+      return false;
+    }
+    if (error.empty() && !error_.empty()) error = error_;
+    return true;
+  }
+
 
   // ---------------------------------------------------------------------
   // Coding a leaf block
@@ -1754,12 +1918,12 @@ class Writer {
           error = error_;
           return false;
         }
-        if (!node.skip_flag) {
-          error = "M2 inter blocks currently require skip_flag = 1";
+        if (!write_inter_mode_info(node, error)) return false;
+        if (node.skip_flag) {
+          reset_coeff_contexts(r, c, w4, h4);
+        } else if (!write_inter_residual(node, w, h, cw, ch, error)) {
           return false;
         }
-        if (!write_inter_mode_info(node, error)) return false;
-        reset_coeff_contexts(r, c, w4, h4);
       } else {
         if (!write_intra_leaf(node, w, h, cw, ch, error)) return false;
       }

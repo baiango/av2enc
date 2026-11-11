@@ -7,6 +7,7 @@
 #include "encoder/tx_variants/tx_variants.h"
 #include "encoder/inter/mc/mc.h"
 #include "encoder/inter/me/me.h"
+#include "encoder/m2/merge/merge.h"
 
 #include <algorithm>
 #include <array>
@@ -26,6 +27,12 @@ using partition::BlockSize;
 using partition::FrameGeometry;
 using partition::PartitionNode;
 using partition::PartitionType;
+
+// AV2 RefFrame labels used by the merge layer's MI grid.  mc::kRefLast is an
+// internal MC label (1); §6.19.7.9 numbers LAST_FRAME = 0 and
+// INTRA_FRAME = 8.
+constexpr std::int8_t kRefLastAv2 = 0;
+constexpr std::int8_t kRefIntraAv2 = 8;
 
 struct Plane {
   int width = 0;
@@ -206,6 +213,22 @@ bool compute_tx(const M2InputFrame& frame, int plane, int x0, int y0, int cw,
     }
   }
   return true;
+}
+
+// Rough coefficient rate estimate used only for the skip/residual decision.
+// The actual cost is measured by the entropy coder; this heuristic is not
+// normative and never affects bitstream correctness.
+double estimate_tx_bits(const TxPlan& plan, bool is_inter_luma) {
+  if (plan.eob == 0) return 1.0;
+  double bits = 8.0;  // EOB symbol + extra bits
+  if (is_inter_luma) bits += 4.0;  // inter TX_TYPE syntax
+  int nonzero = 0;
+  for (int c = 0; c < plan.eob; ++c) {
+    const int level = plan.levels[static_cast<std::size_t>(c)];
+    if (level != 0) ++nonzero;
+  }
+  bits += static_cast<double>(nonzero) * 2.5 + plan.eob * 0.5;
+  return bits;
 }
 
 void write_plane_block(Plane& plane, int x0, int y0, int w, int h,
@@ -399,9 +422,9 @@ class InterFrameEncoder {
     return true;
   }
 
-  inter::mc::MvStackParams make_stack_params(int mi_row, int mi_col, int w4,
-                                             int h4) const {
-    inter::mc::MvStackParams params;
+  merge::StackParams make_stack_params(int mi_row, int mi_col, int w4,
+                                       int h4) const {
+    merge::StackParams params;
     params.mi_row = mi_row;
     params.mi_col = mi_col;
     params.bw4 = w4;
@@ -410,18 +433,22 @@ class InterFrameEncoder {
     params.mi_cols = mi_cols_;
     params.mi_rows = mi_rows_;
     params.mi = mv_grid_.data();
-    params.ref_frame = inter::mc::kRefLast;
-    params.global_mv = inter::mc::Mv{0, 0};
-    params.reorder = inter::mc::DrlReorder::kNever;
+    // The merge layer uses AV2 RefFrame labels: LAST = 0, INTRA = 8.
+    params.ref_frame[0] = kRefLastAv2;
+    params.ref_frame[1] = merge::kRefNone;
+    params.is_compound = false;
+    params.global_mv[0] = inter::mc::Mv{0, 0};
+    params.global_mv[1] = inter::mc::Mv{0, 0};
+    // DRL reordering is not gated (see src/encoder/m2/README.md).
+    params.reorder = merge::DrlReorder::kDisabled;
+    params.max_drl_bits_minus_1 = 4;
     return params;
   }
 
   bool load_stack(int mi_row, int mi_col, int w4, int h4,
-                  inter::mc::MvStackParams& params,
-                  inter::mc::MvStack& stack) const {
+                  merge::StackParams& params, merge::MvStack& stack) const {
     params = make_stack_params(mi_row, mi_col, w4, h4);
-    return inter::mc::build_mv_stack(params, &stack) ==
-           inter::mc::McStatus::kOk;
+    return merge::build_stack_checked(params, &stack) == merge::Status::kOk;
   }
 
   bool predict_luma(inter::mc::Mv mv, int x0, int y0, int w, int h,
@@ -524,8 +551,8 @@ class InterFrameEncoder {
       if (!best.valid || cand.sse < best.sse) best = cand;
     };
 
-    inter::mc::MvStackParams stack_params;
-    inter::mc::MvStack stack;
+    merge::StackParams stack_params;
+    merge::MvStack stack;
     bool have_stack = false;
     if (!keyframe_) {
       have_stack = load_stack(r, c, w4, h4, stack_params, stack);
@@ -549,35 +576,32 @@ class InterFrameEncoder {
 
     if (!keyframe_ && have_stack && !options_.force_global_mv) {
       if (options_.enable_nearmv) {
-        // The spec inserts MVP-combination candidates only when both block
-        // dimensions exceed 32. The shared MC component inserts them
-        // unconditionally, so for smaller blocks only the first two
-        // (pre-combination) candidates are guaranteed to exist on the
-        // decoder's stack.
+        // §7.12.2.20 inserts MVP-combination candidates only when both
+        // dimensions exceed 32.  merge::build_stack_checked already applies
+        // that gate; keep the conservative index cap for the baseline so the
+        // default bitstream stays unchanged.
         const int near_limit =
             (w > 32 && h > 32) ? stack.count : std::min(stack.count, 2);
         for (int i = 0; i < near_limit; ++i) {
-          inter::mc::ModeDecision decision;
-          decision.mode = inter::mc::InterMode::kNearmv;
-          decision.drl_index = i;
-          decision.ref_frame = inter::mc::kRefLast;
-          decision.filter = inter::mc::InterpFilter::kEighttap;
-          inter::mc::ResolvedMode resolved;
-          if (inter::mc::resolve_mode(stack, stack_params, decision, &resolved) !=
-              inter::mc::McStatus::kOk) {
+          merge::ResolvedMode resolved;
+          if (merge::resolve_single_mode(stack, stack_params,
+                                         merge::SingleMode::kNearMv, i,
+                                         inter::mc::Mv{0, 0}, &resolved) !=
+              merge::Status::kOk) {
             continue;
           }
           std::vector<std::uint8_t> luma;
-          if (!predict_luma(resolved.mv, x0, y0, w, h, luma)) continue;
+          const inter::mc::Mv near_mv = resolved.mv[0];
+          if (!predict_luma(near_mv, x0, y0, w, h, luma)) continue;
           InterCandidate cand;
           cand.valid = true;
           cand.mode = syntax::kInterNearMv;
           cand.drl_index = i;
-          cand.mv = resolved.mv;
+          cand.mv = near_mv;
           cand.sse = sse_against_source(source_, 0, x0, y0, w, h, luma);
           if (trace_) {
-            std::cerr << "  cand near drl=" << i << " mv=(" << resolved.mv.y
-                      << "," << resolved.mv.x << ") sse=" << cand.sse << "\n";
+            std::cerr << "  cand near drl=" << i << " mv=(" << near_mv.y
+                      << "," << near_mv.x << ") sse=" << cand.sse << "\n";
           }
           consider(cand);
         }
@@ -586,31 +610,28 @@ class InterFrameEncoder {
       if (options_.enable_newmv) {
         inter::mc::Mv me_mv{};
         if (run_me(x0, y0, w, h, me_mv, error)) {
-          inter::mc::ModeDecision decision;
-          decision.mode = inter::mc::InterMode::kNewmv;
-          decision.drl_index = 0;
-          decision.ref_frame = inter::mc::kRefLast;
-          decision.filter = inter::mc::InterpFilter::kEighttap;
-          decision.me_mv = me_mv;
-          decision.me_absolute = true;
-          inter::mc::ResolvedMode resolved;
-          if (inter::mc::resolve_mode(stack, stack_params, decision, &resolved) ==
-              inter::mc::McStatus::kOk) {
+          const inter::mc::Mv pred = stack.cand[0].mv[0];
+          const inter::mc::Mv mvd{me_mv.y - pred.y, me_mv.x - pred.x};
+          merge::ResolvedMode resolved;
+          if (merge::resolve_single_mode(stack, stack_params,
+                                         merge::SingleMode::kNewMv, 0, mvd,
+                                         &resolved) == merge::Status::kOk) {
             std::vector<std::uint8_t> luma;
-            if (predict_luma(resolved.mv, x0, y0, w, h, luma)) {
+            const inter::mc::Mv new_mv = resolved.mv[0];
+            if (predict_luma(new_mv, x0, y0, w, h, luma)) {
               InterCandidate cand;
               cand.valid = true;
               cand.mode = syntax::kInterNewMv;
               cand.drl_index = 0;
-              cand.mv = resolved.mv;
-              cand.mvd = resolved.mvd;
+              cand.mv = new_mv;
+              cand.mvd = resolved.mvd[0];
               cand.sse =
                   sse_against_source(source_, 0, x0, y0, w, h, luma);
               if (trace_) {
                 std::cerr << "  cand new me=(" << me_mv.y << "," << me_mv.x
-                          << ") res=(" << resolved.mv.y << ","
-                          << resolved.mv.x << ") mvd=(" << resolved.mvd.y
-                          << "," << resolved.mvd.x << ") sse=" << cand.sse
+                          << ") res=(" << new_mv.y << "," << new_mv.x
+                          << ") mvd=(" << resolved.mvd[0].y << ","
+                          << resolved.mvd[0].x << ") sse=" << cand.sse
                           << "\n";
               }
               consider(cand);
@@ -654,9 +675,69 @@ class InterFrameEncoder {
       have_intra = true;
     }
 
+    // Inter residual (feature 1).  The predictor comes from the winner of the
+    // motion search; when enabled, a quantised residual is coded for Y/U/V and
+    // the reconstructed block is pred + dequantised residual.  The decision is
+    // an SSE + lambda * estimated-bits comparison against skip_flag = 1.
+    std::vector<std::uint8_t> inter_y;
+    std::vector<std::uint8_t> inter_u;
+    std::vector<std::uint8_t> inter_v;
+    bool inter_residual = false;
+    TxPlan res_y;
+    TxPlan res_u;
+    TxPlan res_v;
+    std::int64_t inter_luma_sse = best.sse;
+    if (!keyframe_ && best.valid) {
+      if (!predict_all(best.mv, x0, y0, w, h, inter_y, inter_u, inter_v)) {
+        error = "inter prediction failed";
+        return false;
+      }
+      inter_luma_sse =
+          sse_against_source(source_, 0, x0, y0, w, h, inter_y);
+      if (options_.enable_inter_residual) {
+        const std::int64_t pred_total =
+            inter_luma_sse +
+            sse_against_source(source_, 1, cx0, cy0, cw, ch, inter_u) +
+            sse_against_source(source_, 2, cx0, cy0, cw, ch, inter_v);
+        if (!compute_tx(source_, 0, x0, y0, w, h, inter_y, res_y, error) ||
+            !compute_tx(source_, 1, cx0, cy0, cw, ch, inter_u, res_u, error) ||
+            !compute_tx(source_, 2, cx0, cy0, cw, ch, inter_v, res_v, error)) {
+          return false;
+        }
+        const std::int64_t res_total =
+            sse_against_source(source_, 0, x0, y0, w, h, res_y.recon) +
+            sse_against_source(source_, 1, cx0, cy0, cw, ch, res_u.recon) +
+            sse_against_source(source_, 2, cx0, cy0, cw, ch, res_v.recon);
+        const bool all_zero =
+            res_y.eob == 0 && res_u.eob == 0 && res_v.eob == 0;
+        // QP-90 dequant step is 66; sse_scale 0.5 (M1 calibrated value).
+        constexpr double kLambda = 0.5 * 66.0 * 66.0;
+        const double res_bits = 3.0 + estimate_tx_bits(res_y, true) +
+                                estimate_tx_bits(res_u, false) +
+                                estimate_tx_bits(res_v, false);
+        const bool want =
+            options_.force_inter_residual ||
+            (!all_zero &&
+             static_cast<double>(res_total) + kLambda * res_bits <
+                 static_cast<double>(pred_total) + kLambda * 2.0);
+        if (want) {
+          inter_residual = true;
+          inter_y = res_y.recon;
+          inter_u = res_u.recon;
+          inter_v = res_v.recon;
+          inter_luma_sse =
+              sse_against_source(source_, 0, x0, y0, w, h, inter_y);
+        }
+      }
+      if (trace_) {
+        std::cerr << "  cand inter final sse=" << inter_luma_sse
+                  << " residual=" << (inter_residual ? 1 : 0) << "\n";
+      }
+    }
+
     const bool use_intra =
         keyframe_ || options_.force_intra || !best.valid ||
-        (have_intra && intra_sse < best.sse);
+        (have_intra && intra_sse < inter_luma_sse);
 
     if (use_intra) {
       if (!have_intra) {
@@ -691,31 +772,41 @@ class InterFrameEncoder {
                   << " sse=" << intra_sse << "\n";
       }
     } else {
-      std::vector<std::uint8_t> luma;
-      std::vector<std::uint8_t> u;
-      std::vector<std::uint8_t> v;
-      if (!predict_all(best.mv, x0, y0, w, h, luma, u, v)) {
-        error = "inter prediction failed";
-        return false;
-      }
       entry.is_inter = 1;
-      entry.skip_flag = 1;
+      entry.skip_flag = inter_residual ? 0 : 1;
       entry.inter_mode = static_cast<std::uint8_t>(best.mode);
       entry.drl_index = static_cast<std::uint8_t>(best.drl_index);
       entry.mv_y = best.mv.y;
       entry.mv_x = best.mv.x;
       entry.mvd_y = best.mvd.y;
       entry.mvd_x = best.mvd.x;
-      write_plane_block(recon_[0], x0, y0, w, h, luma);
-      write_plane_block(recon_[1], cx0, cy0, cw, ch, u);
-      write_plane_block(recon_[2], cx0, cy0, cw, ch, v);
+      write_plane_block(recon_[0], x0, y0, w, h, inter_y);
+      write_plane_block(recon_[1], cx0, cy0, cw, ch, inter_u);
+      write_plane_block(recon_[2], cx0, cy0, cw, ch, inter_v);
+      if (inter_residual) {
+        entry.levels_offset = static_cast<std::uint32_t>(levels_.size());
+        const TxPlan* plans[3] = {&res_y, &res_u, &res_v};
+        for (int plane = 0; plane < 3; ++plane) {
+          entry.tx_size[plane] =
+              static_cast<std::uint8_t>(plans[plane]->tx_size);
+          entry.eob[plane] = static_cast<std::uint32_t>(plans[plane]->eob);
+          const int area = plans[plane]->adj_w * plans[plane]->adj_h;
+          std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
+          syntax::build_scan(plans[plane]->adj_w, plans[plane]->adj_h, scan);
+          for (int c2 = 0; c2 < plans[plane]->eob; ++c2) {
+            levels_.push_back(plans[plane]->levels[scan[
+                static_cast<std::size_t>(c2)]]);
+          }
+        }
+      }
       update_mv_grid(r, c, w4, h4, 1, best.mv);
       ++inter_blocks_;
       if (trace_) {
         std::cerr << "m2 inter r=" << r << " c=" << c << " " << w << "x" << h
                   << " mode=" << static_cast<int>(best.mode)
                   << " drl=" << best.drl_index << " mv=(" << best.mv.y << ","
-                  << best.mv.x << ") sse=" << best.sse << "\n";
+                  << best.mv.x << ") sse=" << inter_luma_sse
+                  << " skip=" << static_cast<int>(entry.skip_flag) << "\n";
       }
     }
 
@@ -736,9 +827,8 @@ class InterFrameEncoder {
                          static_cast<std::size_t>(mi_cols_) +
                      static_cast<std::size_t>(cc)];
         mi = inter::mc::MiInfo{};
-        mi.ref[0] =
-            is_inter ? inter::mc::kRefLast : inter::mc::kRefIntra;
-        mi.ref[1] = inter::mc::kRefNone;
+        mi.ref[0] = is_inter ? kRefLastAv2 : kRefIntraAv2;
+        mi.ref[1] = merge::kRefNone;
         mi.mv[0][0] = mv.y;
         mi.mv[0][1] = mv.x;
         mi.mv[1][0] = mv.y;

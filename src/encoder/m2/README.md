@@ -21,7 +21,9 @@ and is gated sample-by-sample against the pinned `dav2d`.
   - `GLOBALMV` (zero MV), `NEARMV` (the spatial MV-stack / merge path) and
     `NEWMV` (ME result quantised to 1/8 pel).
   - Per-block intra fallback (`is_inter = 0`, DC intra + DCT residual).
-  - Inter leaves use `skip_flag = 1` (no inter residual in this milestone).
+  - Inter leaves use `skip_flag = 1` by default. The gated feature-1 path
+  (`--inter-residual`) codes a quantised inter residual with the normative
+  inter `TX_TYPE` and coefficient contexts (see the tile syntax section).
 - Normative subpel prediction through `src/encoder/inter/mc/` (1/8 pel MV,
   eight-tap switchable filters, four-tap downgrade for <=4 sample passes).
 - Motion search through `src/encoder/inter/me/`: integer + half + quarter
@@ -40,6 +42,7 @@ src/encoder/m2/
   m2_frame.h/.cpp         multi-frame loop, mode decision, recon, IVF units
   m2_gate.cpp             standalone gate (encode -> dav2d -> recon compare)
   build_and_test.sh       standalone build/run (no CMake changes)
+  merge/                  spec-exact §7.12.2 MV stack + skip/DRL API
   README.md               this file
 ```
 
@@ -211,6 +214,20 @@ sizes). For each leaf:
    - `skip_flag = 1` suppresses `read_block_tx_size` syntax and all residual
      symbols. A skip block resets the coefficient level/DC contexts over its
      area, mirroring `reset_block_context()`.
+   - With inter residual enabled (feature 1, off by default) `skip_flag = 0`
+     codes the residual transform blocks. `TX_MODE_LARGEST` makes
+     `read_block_tx_size()` bitless, so luma uses
+     `Max_Tx_Size_Rect[MiSize]` and chroma the subsampled residual size. Each
+     luma block then codes its inter `TX_TYPE` (`DCT_DCT`):
+     `TX_SET_INTER_1` (type group 0 + offset 7), `TX_SET_INTER_2` (group 0 +
+     offset 3), `TX_SET_DCT_IDTX` (32x32, symbol 1), `TX_SET_{WIDE,HIGH}_32`
+     (`is_long_side_dct = 1` + type 0) and `TX_SET_{WIDE,HIGH}_64` (type 0;
+     the long-side flag is implied). `TX_SET_DCTONLY` sizes (64x64, 64x32,
+     32x64) code no type. Inter changes three coefficient contexts:
+     `TileTxbSkipCdf[is_inter]`, luma `eobCtx = is_inter`, and the inter TX
+     type CDF family in §8.3.2. CCTX, parity hiding, TCQ and FSC are disabled
+     in the sequence header, so the coefficient loop is otherwise identical to
+     the intra path.
 
 The entropy CDFs are §9.3 defaults (`m2_cdf_tables.h`) plus the M1 intra
 tables. `disable_cdf_update = 1` and `disable_cross_frame_cdf_init = 1` keep
@@ -244,6 +261,9 @@ Useful options:
 ./src/encoder/m2/build_and_test.sh --no-newmv             # GLOBALMV/NEARMV only
 ./src/encoder/m2/build_and_test.sh --force-global         # zero-MV only
 ./src/encoder/m2/build_and_test.sh --single-block         # one 64x64 per SB
+./src/encoder/m2/build_and_test.sh --inter-residual       # feature 1: rate-based
+./src/encoder/m2/build_and_test.sh --force-inter-residual # feature 1: always on
+./src/encoder/m2/build_and_test.sh --min-block 8 --max-depth 6  # full tree
 ./src/encoder/m2/build_and_test.sh --trace
 ```
 
@@ -275,6 +295,57 @@ Useful options:
   PASS: 8 frame(s) decoded, recon exact
 ```
 
+### Feature 1 results: inter residual
+
+Both 2-frame and 8-frame 720p streams decode with `dav2d` and match the
+encoder reconstruction exactly (0 diffs, Y/U/V). The rate-based mode
+(`--inter-residual`) keeps skip blocks when the predictor is already good and
+codes residual on noisy blocks; the stress mode (`--force-inter-residual`)
+codes residual on every inter leaf.
+
+Full variance-driven partition tree, 8x 1280x720:
+
+| mode | bytes | PSNR Y | PSNR YUV |
+|---|---:|---:|---:|
+| baseline (`skip_flag = 1` only) | 245,609 | 45.497 | 46.516 |
+| forced inter residual | 177,229 | 45.789 | 46.776 |
+
+Single 64x64 leaf per superblock (`--single-block`), 8x 1280x720:
+
+| mode | bytes | PSNR Y | PSNR YUV |
+|---|---:|---:|---:|
+| baseline | 41,447 | 35.250 | 36.919 |
+| forced inter residual | 113,751 | 35.365 | 37.040 |
+
+The single-block forced result is expected to be much larger: every one of the
+240 64x64 leaves pays a full residual even when the 1/8-pel predictor is
+already near-exact. On this clip the rate-based mode declines every residual
+(the 8x tree output is byte-identical to the baseline), so the forced tree row
+is the meaningful quality/rate point: residual coding pays off on the blocks
+where motion compensation leaves error.
+
+### Feature 2 status: true skip/merge and DRL reordering — BLOCKED
+
+- `skip_mode` (merge) requires `is_comp_ref_allowed()`, which is false with
+  `NumTotalRefs = 1` and `reference_select = 0`. It cannot be exercised until
+  feature 3 (multiple references + compound) lands, so true skip/merge is
+  blocked on that work rather than faked here.
+- DRL reordering is **not gated and stays DISABLED in the sequence header**
+  (`disable_drl_reorder = 1`). Experimental runs with
+  `DRL_REORDER_CONSTRAINT` desync at frame 2 of the 8x720p clip
+  (real samples differ, first diff at (768,129)); `DRL_REORDER_ALWAYS` passes
+  the plain clip but desyncs at frame 7 when combined with inter residual.
+  Streams still parse, so this is an MV-stack order disagreement with the
+  decoder, not a syntax error. The baseline (no reorder) is unaffected.
+  No `--drl-reorder` switch is exposed until the stack is reconciled.
+- The MV-stack `>32` gate is now handled by the spec-exact M2 stack builder in
+  `src/encoder/m2/merge/` (`merge::build_stack_checked`), which inserts
+  MVP-combination candidates only when both block dimensions exceed 32
+  (§7.12.2.20). The encoder and tile writer both use it; the default bitstream
+  is byte-identical to the pre-feature-2 baseline. The M2 encoder still caps
+  DRL indices at 0..1 for blocks with a dimension <= 32 so the index space
+  never depends on shared-component behaviour.
+
 ## Not implemented yet
 
 - B frames, `frame_type` beyond KEY/INTER, output-order reordering.
@@ -282,21 +353,18 @@ Useful options:
   `reference_select`, compound refs.
 - True `skip_mode` (merge) with two references / compound frames. The current
   "skip" is `skip_flag = 1` plus NEARMV/GLOBALMV on a single reference.
-- Inter residual coding and inter transform types. Every inter leaf is
-  `skip_flag = 1`; only intra fallback blocks carry coefficients.
+- Inter transform types beyond `DCT_DCT`: the syntax writer emits the mandatory
+  inter `TX_TYPE`, but candidate selection always chooses `DCT_DCT`.
 - Subpel beyond the current ME stages: the integrated path signals 1/8-pel MVs
   and MC uses the normative filters, but there is no RDO/refinement, no
   adaptive MV precision, and `enable_flex_mvres = 0`.
 - Advanced inter tools: warp/affine, OBMC, inter-intra, BAWP, TIP, OPFL,
   refine-MV, temporal MV projection, ref-MV bank, local warp, CWP.
-- DRL reordering (`disable_drl_reorder = 1`), short refresh flags, long-term
-  references, multi-tile, 10-bit, 4:2:2/4:4:4, film grain, loop filters.
-- The shared `mc::build_mv_stack` component inserts MVP-combination candidates
-  unconditionally, while AV2 §7.12.2.20 gates them on
-  `Block_Width > 32 && Block_Height > 32`. To stay decoder-exact, the M2
-  encoder limits NEARMV DRL indices to 0..1 when either block dimension is
-  <= 32; larger blocks use the full stack. Fixing the shared component (outside
-  this directory) would remove that restriction.
+- DRL reordering, short refresh flags, long-term references, multi-tile,
+  10-bit, 4:2:2/4:4:4, film grain, loop filters.
+- `src/encoder/m2/merge/` provides a spec-exact stack with the §7.12.2.20
+  MVP-combination gate; the encoder still caps NEARMV DRL indices to 0..1 when
+  either block dimension is <= 32 for baseline stability.
 - CUDA. `src/cuda/m2/` is reserved for the device implementation; this
   milestone's gate is the CPU reference.
 

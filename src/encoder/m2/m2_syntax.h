@@ -11,8 +11,10 @@
 //       single_mode / drl_idx / read_mv (shell coding) §5.20.7.8, §5.20.7.20
 //
 // Intra blocks inside the P frame reuse the M1 intra mode and residual syntax.
-// Inter blocks in this milestone are coded with skip_flag = 1 (no residual),
-// so no inter residual or inter transform-type syntax is emitted.
+// Inter blocks default to skip_flag = 1 (no residual).  With feature 1 enabled
+// the writer emits the inter transform block: TX_MODE_LARGEST transform sizes,
+// the mandatory inter luma TX_TYPE (DCT_DCT), and §8.3.2 inter coefficient
+// contexts.
 //
 // The writer derives every entropy context from the block stream exactly as
 // the decoder does. The producer supplies decisions and reconstruction data,

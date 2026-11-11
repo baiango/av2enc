@@ -34,6 +34,17 @@ ARRAYS = [
     ("kShellOffsetOtherClassCdf", "Default_Shell_Offset_Other_Class_Cdf"),
     ("kColMvGreaterCdf", "Default_Col_Mv_Greater_Cdf"),
     ("kColMvIndexCdf", "Default_Col_Mv_Index_Cdf"),
+    # Inter residual: transform-type symbols.  AV2 codes an inter TX_TYPE for
+    # every luma TX block whose transform set is not DCTONLY, unlike M1's
+    # intra-only type syntax.
+    ("kInterTxTypeSet1Cdf", "Default_Inter_Tx_Type_Set1_Cdf"),
+    ("kInterTxTypeSet2Cdf", "Default_Inter_Tx_Type_Set2_Cdf"),
+    ("kInterTxTypeSet3Cdf", "Default_Inter_Tx_Type_Set3_Cdf"),
+    ("kInterTxTypeLongCdf", "Default_Inter_Tx_Type_Long_Cdf"),
+    ("kInterTxTypeIndexSet1Cdf", "Default_Inter_Tx_Type_Index_Set1_Cdf"),
+    ("kInterTxTypeOffsetSet1Cdf", "Default_Inter_Tx_Type_Offset_Set1_Cdf"),
+    ("kInterTxTypeIndexSet2Cdf", "Default_Inter_Tx_Type_Index_Set2_Cdf"),
+    ("kInterTxTypeOffsetSet2Cdf", "Default_Inter_Tx_Type_Offset_Set2_Cdf"),
 ]
 
 

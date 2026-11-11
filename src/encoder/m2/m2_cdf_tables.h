@@ -90,5 +90,59 @@ inline constexpr unsigned short kColMvIndexCdf[4][3] = {
     13445, 1, 0, 13541, 1, 0, 14045, 1, 0, 12888, 31, 0,
 };
 
+// Default_Inter_Tx_Type_Set1_Cdf [3, 2, 3]
+inline constexpr unsigned short kInterTxTypeSet1Cdf[3][2][3] = {
+    14122, 25, 0, 8962, 31, 0, 16423, 26, 0, 23446, 0, 0, 23352, 25, 0, 17069,
+    56, 0,
+};
+
+// Default_Inter_Tx_Type_Set2_Cdf [3, 3]
+inline constexpr unsigned short kInterTxTypeSet2Cdf[3][3] = {
+    20835, 0, 0, 30720, 3, 0, 28857, 17, 0,
+};
+
+// Default_Inter_Tx_Type_Set3_Cdf [3, 4, 3]
+inline constexpr unsigned short kInterTxTypeSet3Cdf[3][4][3] = {
+    16384, 0, 0, 16384, 0, 0, 16384, 0, 0, 16384, 0, 0, 16384, 0, 0, 16384, 0,
+    0, 16384, 0, 0, 16384, 0, 0, 16384, 0, 0, 16384, 0, 0, 16384, 0, 0, 16384,
+    0, 0,
+};
+
+// Default_Inter_Tx_Type_Long_Cdf [3, 4, 5]
+inline constexpr unsigned short kInterTxTypeLongCdf[3][4][5] = {
+    8347, 20254, 24536, 31, 0, 15994, 26294, 32748, 1, 0, 21212, 27810, 32748,
+    1, 0, 8192, 16384, 24576, 0, 0, 21815, 25084, 26230, 62, 0, 29354, 31747,
+    32748, 37, 0, 31614, 32529, 32748, 36, 0, 8192, 16384, 24576, 0, 0, 10501,
+    20590, 24181, 31, 0, 17596, 26388, 32748, 37, 0, 15407, 26475, 32732, 60,
+    0, 8192, 16384, 24576, 0, 0,
+};
+
+// Default_Inter_Tx_Type_Index_Set1_Cdf [3, 9]
+inline constexpr unsigned short kInterTxTypeIndexSet1Cdf[3][9] = {
+    8914, 10732, 12270, 14822, 17128, 19586, 21964, 25, 0, 1160, 1555, 1972,
+    3414, 3962, 5151, 5908, 31, 0, 22819, 24338, 25592, 27001, 28395, 29648,
+    30990, 25, 0,
+};
+
+// Default_Inter_Tx_Type_Offset_Set1_Cdf [3, 9]
+inline constexpr unsigned short kInterTxTypeOffsetSet1Cdf[3][9] = {
+    3121, 6470, 9191, 12280, 17811, 22588, 27697, 93, 0, 338, 377, 571, 743,
+    7932, 11860, 17524, 1, 0, 3314, 7625, 10639, 14206, 19363, 23456, 28033,
+    93, 0,
+};
+
+// Default_Inter_Tx_Type_Index_Set2_Cdf [3, 9]
+inline constexpr unsigned short kInterTxTypeIndexSet2Cdf[3][9] = {
+    1140, 1725, 2324, 14653, 19072, 23618, 28109, 31, 0, 58, 261, 587, 32317,
+    32556, 32626, 32708, 2, 0, 17404, 17669, 18403, 24052, 26393, 28506,
+    30676, 57, 0,
+};
+
+// Default_Inter_Tx_Type_Offset_Set2_Cdf [3, 5]
+inline constexpr unsigned short kInterTxTypeOffsetSet2Cdf[3][5] = {
+    8669, 16533, 24855, 93, 0, 9441, 16413, 25276, 90, 0, 8767, 17611, 24876,
+    10, 0,
+};
+
 }  // namespace av2enc::m2
 
