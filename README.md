@@ -25,7 +25,6 @@ plus all subagent sessions — as of **2026-11-11**:
 | **Input + output + reasoning** | **~35.1 M** |
 | Cached context reads | 2,103,170,304 |
 | **Including cache reads** | **~2.14 B** |
-| Recorded cost | $0.00 |
 
 58 sessions (main + subagents). Cache reads dominate because every subagent
 re-reads a long context; they are normally billed at a fraction of fresh input.
