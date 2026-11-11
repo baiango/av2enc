@@ -13,8 +13,8 @@ component is not wired into the M0/M1 encode path.
 | Loop restoration framework (units, stripes, source sampling) | §5.18.7.11, §6.17.7.7, §5.20.10.4–§5.20.10.5, §7.20–§7.20.2 | yes | yes | yes | **implemented** |
 | Non-separable Wiener (luma 32-tap, chroma 12-tap + 6 luma taps) | §5.20.10.6, §7.20.3 | yes | yes | yes | **implemented** |
 | Frame-level Wiener with pixel classes | §5.18.7.11 `frame_filters_on`, §7.20.3 | partial | partial | yes | arithmetic done; the class map must be supplied (see blockers) |
-| PC-Wiener (classification + filtering) | §7.20.4 | no | no | — | **TODO — normative tables missing** |
-| GDF (guided detail filter) | §5.18.7.9, §7.20.5 | no | no | — | **TODO — normative tables missing** |
+| PC-Wiener (classification + filtering) | §7.20.4 | no | no | — | reference in `../spec_tables/`; stream integration pending |
+| GDF (guided detail filter) | §5.18.7.9, §7.20.5 | no | no | — | reference in `../spec_tables/`; stream integration pending |
 | Film grain synthesis | §5.14, §7.21.7 | no | no | — | **TODO — Gaussian table missing** |
 
 Nothing here has been decoded with `dav2d`; the filters have no syntax path yet.
@@ -146,7 +146,7 @@ CPU reference:
 |---|---|
 | `wiener_tables.h` | spec constants, `Wiener_Ns_Taps_Present`, `Shuffled_Index`, `Mode_Weights/Offsets`, `get_q` (§7.14.2), `Encode/Decode_Num_Filter_Classes` |
 | `wiener_cdfs.h`, `wiener_qlookup.h` | generated from `spec/tables/default_cdf.json` / `quant.json` (`generate_classes_tables.py`); never hand-edited |
-| `wiener_class.*` | §7.20.4 `FilterClass` derivation and `SubclassLookup` mapping.  The algorithm is implemented; the `Pc_Wiener_Lut_To_Class` / `Pc_Wiener_Sub_Classify2` tables are **absent from the spec text** and are caller-supplied |
+| `wiener_class.*` | §7.20.4 `FilterClass` derivation and `SubclassLookup` mapping.  The algorithm is implemented; `Pc_Wiener_Lut_To_Class` / `Pc_Wiener_Sub_Classify2` are now generated in `../spec_tables/` (recovered from the pinned PDF and hash-pinned attachments) and are caller-supplied |
 | `wiener_fit.*` | stripe-aware least-squares fit of the 16 luma / 18 chroma coefficients, per-subset and `uv_sym` variants, deterministic quantisation and clipping |
 | `wiener_syntax.*` | exact §5.18.7.11 header order and §5.20.10.4–.6 tile order, including `search_frame_filters` group coding, `wiener_ns_length`, bank merges, CDF adaptation, temporal frame-filter prediction, and `wiener_write_tile` in `read_lr()` order |
 | `wiener_decision.*` | per-unit vs frame-level selection, `use_wiener_ns`/`LrType`, unit-size search, class merging, RD cost from exact syntax bits |

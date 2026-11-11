@@ -38,3 +38,6 @@ __pycache__/
 spec/AV2_Spec_v1.0.0.pdf
 
 *.pch
+
+# AV2 spec attachments: fetched+hash-verified, never redistributed
+src/encoder/filters/spec_tables/raw/
