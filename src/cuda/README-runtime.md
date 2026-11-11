@@ -13,8 +13,8 @@ target itself. The integration agent owns the root `CMakeLists.txt` change.
 |---|---|
 | `error.h` | `Status` enum, `status_name()`, `cuda_error_name()`, `status_from_cuda()`, `last_error()`, `format_status()`. Header-only. |
 | `context.h/.cpp` | Device enumeration/query, one non-blocking stream, explicit sync, pinned `StagingBuffer`, raw async upload/download helpers. |
-| `arena.h/.cpp` | One persistent `cudaMalloc` block, 256-byte bump allocator, process-wide 7500 MiB cap, peak tracking, `cudaMemGetInfo` reporting. |
-| `context_test.cu` | Device query, stream lifecycle, cap/alignment/peak, pinned round-trip, kernel round-trip, no-malloc, VRAM reporting tests. |
+| `arena.h/.cpp` | One persistent `cudaMalloc` block, 256-byte bump allocator, device-derived capacity with optional `--vram-cap`, peak tracking, `cudaMemGetInfo` reporting. |
+| `context_test.cu` | Device query, stream lifecycle, limits/alignment/peak, pinned round-trip, kernel round-trip, no-malloc, VRAM reporting tests. |
 | `build_runtime_test.sh` | Standalone `nvcc` build and run for the test (no CMake). |
 | `README-runtime.md` | This file. |
 
@@ -34,7 +34,7 @@ av2enc::cuda::Status status = context.init(/*device_index=*/0, &error);
 if (!av2enc::cuda::is_ok(status)) { /* log error */ }
 
 av2enc::cuda::Arena arena;
-status = arena.init(Arena::kDefaultCapacityBytes, Arena::kAlignment, &error);
+status = arena.init(/*capacity_bytes=*/device_capacity, Arena::kAlignment, &error);
 if (!av2enc::cuda::is_ok(status)) { /* log error; do not silently shrink */ }
 
 av2enc::cuda::StagingBuffer upload;
@@ -140,15 +140,16 @@ stream has finished.
 
 ```cpp
 class Arena {
-  static constexpr std::uint64_t kHardCapBytes       = 7500 MiB;
-  static constexpr std::uint64_t kHeadroomBytes      = 256 MiB;
-  static constexpr std::uint64_t kDefaultCapacityBytes = 7244 MiB;
-  static constexpr std::size_t   kAlignment          = 256;
+  static constexpr std::uint64_t kDeviceHeadroomBytes = 512 MiB;
+  static constexpr std::size_t   kAlignment            = 256;
 
-  Status init(std::uint64_t capacity = kDefaultCapacityBytes,
+  Status init(std::uint64_t capacity_bytes,
               std::size_t alignment = kAlignment, std::string* error = nullptr);
   Status init_mb(std::uint32_t capacity_mb, ...);
   void release();
+
+  static void set_capacity_cap_bytes(std::uint64_t bytes);  // 0 = no bound
+  static std::uint64_t capacity_cap_bytes();
 
   void* allocate(std::size_t bytes, std::size_t alignment = kAlignment);
   Status allocate_checked(std::size_t bytes, void** out,
@@ -178,17 +179,21 @@ class Arena {
 };
 ```
 
-## VRAM cap policy
+## VRAM sizing policy
 
-The 8 GB target is enforced in two layers:
+There is no fixed preset and no validation cap. The runtime queries the device
+at first use and reserves:
 
-1. **Hard cap:** `Arena::kHardCapBytes` is 7500 MiB. A single request above it
-   returns `kCapExceeded` before any `cudaMalloc`. The cap is process-wide: the
-   sum of all live `Arena` reservations also may not exceed 7500 MiB.
-2. **Default headroom:** `Arena::init()` defaults to 7244 MiB
-   (7500 - 256 MiB), matching `bench/vram_budget`. The 256 MiB covers the
-   primary context, driver allocations and fragmentation. A larger arena may
-   be requested explicitly, up to 7500 MiB, at the caller's risk.
+```text
+capacity = min(total_vram, free_vram) - 512 MiB
+```
+
+An optional `--vram-cap <MiB>` bounds that value; `0` means the maximum the
+device can serve. If the reservation fails because another process grew between
+the query and `cudaMalloc`, the pipeline halves the request and retries.
+
+`Arena::set_capacity_cap_bytes()` only records the request bound; it does not
+reject allocations. `cudaMalloc` is the hard limit.
 
 `Arena::init()` is the only device allocation. `allocate()` only advances a
 bump pointer; `restart`/`rewind` reuse a scratch region. There is no
@@ -206,9 +211,9 @@ automatically per allocation. Call it after large allocations or at frame
 boundaries. Device statistics remain readable after `release()` for reporting.
 
 `cudaMemGetInfo()` is device-wide, so on a shared GPU it includes other
-processes. The full-cap test therefore checks the arena delta (7244 MiB +/- 256
-MiB) rather than requiring the device-wide peak to be <= 7500 MiB when another
-container is resident.
+processes. The full-cap test therefore checks the arena delta rather than
+requiring the device-wide peak to match the reservation when another container
+is resident.
 
 ## Build and test
 
@@ -240,9 +245,9 @@ provides `${CMAKE_CURRENT_SOURCE_DIR}/src` as an include directory and links
 |---|---|
 | `device_query` | Device count/name, CC 8.6, 28 SMs, shared memory, total/free VRAM, bandwidth, invalid-index handling. |
 | `context_stream` | Init/shutdown/re-init, one non-blocking stream, refresh, idle query, sync. |
-| `arena_cap` | 7500 MiB hard cap, 256 MiB headroom, 7244 MiB default, over-cap rejection, zero-cap rejection, process reservation accounting. |
+| `arena_cap` | Request-bound API, 512 MiB device headroom, zero-cap rejection, process reservation accounting. |
 | `arena_alignment` | 256-byte and 4096-byte alignment, size rounding, invalid alignments, mark/rewind/peak behavior. |
-| `arena_over_cap` | Per-request over-cap rejection, `SIZE_MAX` rejection, exact-fill and rewind. |
+| `arena_over_cap` | `SIZE_MAX` rejection, exact-fill and rewind (no fixed cap). |
 | `arena_peak` | Peak high-water tracking across alloc/reset/rewind, failed allocations do not raise the peak. |
 | `staging_roundtrip` | Pinned allocation, 1 MiB H2D/D2H round-trip twice, error cases, release/re-init. |
 | `kernel_roundtrip` | Arena memory is writable by a kernel on the context stream; D2H result matches. |

@@ -50,14 +50,13 @@ output, compare pixels). Do not read or copy their encoder-side code.
 ## Target
 
 - Primary target: **8 GB Ampere (`sm_86`)** — RTX 3060 8 GB, RTX 3050 8 GB,
-  RTX 3070 8 GB. Default profile `compat8g` with a 7,500 MB VRAM cap.
+  RTX 3070 8 GB.
 - Target validation host: **RTX 3060 enumerating 8192 MiB**. The 12 GB dev box
-  running `compat8g` is only a compatibility proxy, not a performance/QBS
-  validation host.
+  is only a compatibility proxy, not a performance/QBS validation host.
 - RTX 5070 (`sm_120`) is a build/smoke target only. No Blackwell-only code.
-- Multi-GPU development: **N× RTX 3060 12 GB**, each running `compat8g` with a
-  7,500 MB cap (8 GB emulation). Not actual 8 GB cards. Target validation on an
-  enumerated 8192 MiB card remains separate.
+- Multi-GPU development: **N× RTX 3060 12 GB**, each with a device-sized arena.
+  Not actual 8 GB cards. Target validation on an enumerated 8192 MiB card
+  remains separate.
 - Product speed target: **≥1 encoded fps at 1080p on the 8192 MiB 3060**.
   Surplus compute goes into quality (RDOQ, partitions, modes, search,
   references), never into more fps.
@@ -65,13 +64,32 @@ output, compare pixels). Do not read or copy their encoder-side code.
   path only, not the product.
 - Fat binary: `sm_86;sm_120`. No Blackwell-only accelerators (TMA, clusters,
   tensor-core/FP4 paths) are required.
-- VRAM: hard default ceiling **7,500 MB**, so the 8 GB RTX 3060 variant is
-  supported. The 12 GB box is tested with the same cap.
-- Extra VRAM scales **precompute** (`compat8g` default; `compat4g`, `compat6g`,
-  `auto12g`, `auto16g`, `auto24g` opt-in), never compression-tool shortcuts.
+- VRAM: **no fixed preset**. The arena reserves
+  `min(device_total, device_free) - 512 MiB`, optionally bounded by
+  `--vram-cap <MiB>`. Extra VRAM scales **precompute**, never compression-tool
+  shortcuts.
 - Encoder architecture: GPU-resident. CPU only launches work, handles OBU
   headers and file I/O; pixel work, mode decision, filters, and tile entropy
   stay on the GPU.
+
+## VRAM arena sizing
+
+There is no hard-coded 7,500 MB ceiling and no "compat" profile switch. At first
+GPU use the encoder queries the device and reserves the largest block it can
+obtain, leaving 512 MiB for the context and driver:
+
+```text
+capacity = min(total_vram, free_vram) - 512 MiB
+```
+
+`--vram-cap <MiB>` sets an optional upper bound; `0` (the default) means "take
+the maximum". If another process takes memory between the query and the
+reservation, the encoder halves the request and retries instead of failing.
+CPU-only builds accept `--vram-cap` as a no-op.
+
+On an 8 GB card this naturally produces a sub-7,500 MB arena; 8 GB validation
+still has to run on an actual 8192 MiB card rather than being emulated on a
+larger one.
 
 ## Remote box
 
@@ -150,7 +168,7 @@ against AVM on the same machine. The product target is **1080p at >=1 fps on a
 The encoder has a built-in profiler that works without GPU counter permissions:
 
 ```sh
-AV2ENC_PROFILE=/tmp/run.jsonl AV2ENC_VRAM_LIMIT_MB=7500 ./build-cuda/av2enc ...
+AV2ENC_PROFILE=/tmp/run.jsonl ./build-cuda/av2enc ...
 ```
 
 It logs per-frame CPU and CUDA stage times, JSONL plus a summary, and VRAM

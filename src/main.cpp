@@ -35,7 +35,7 @@ struct Options {
   bool m1_single = false;
   bool m1_dc = false;
   int m1_depth = -1;  // -1 = component default
-  bool skip_vram_check = false;
+  std::uint64_t vram_cap_mib = 0;  // 0 = largest reservation the device can serve
   bool help = false;
 };
 
@@ -63,9 +63,8 @@ void print_usage(std::ostream& out) {
          "  --m1                 Enable the integrated M1 still-picture path\n"
          "  --no-cfl             M1: disable chroma-from-luma\n"
          "  --no-deblock         M1: disable the deblocking filter\n"
-         "  --skip-vram-check    EXPERIMENT ONLY: remove the 7,500 MB arena cap\n"
-         "                       and size the CUDA arena from the device\n"
-         "                       (do not use for target/CI verification)\n"
+         "  --vram-cap <MiB>     Upper bound for the CUDA arena; default 0 takes\n"
+         "                       the largest reservation the device can serve\n"
          "  -h, --help           Show this help\n";
 }
 
@@ -100,45 +99,16 @@ bool parse_int(std::string_view text, int& value) {
 }
 
 #if AV2ENC_HAVE_CUDA
-// Explicit-experiment path: remove the 7,500 MB process cap and size the
-// persistent arena from the selected device. The target/CI path never calls
-// this; it keeps Arena::kDefaultCapacityBytes and the 7,500 MB cap.
-bool configure_arena_from_device(std::string& error) {
-  using av2enc::cuda::Arena;
-  Arena::disable_cap();  // must happen before any Arena::init()
-
-  av2enc::cuda::DeviceInfo info;
-  const av2enc::cuda::Status status = av2enc::cuda::query_device(0, &info);
-  if (status != av2enc::cuda::Status::kOk) {
-    Arena::set_cap_bytes(0);  // restore the default 7,500 MB cap
-    error = std::string("--skip-vram-check: query_device(0) failed: ") +
-            av2enc::cuda::status_name(status);
+// Nothing to query here: the pipeline sizes the arena from the device at first
+// use. This only records the optional upper bound.
+bool apply_vram_cap(std::uint64_t cap_mib, std::string& error) {
+  if (cap_mib > std::numeric_limits<std::uint64_t>::max() /
+                   av2enc::cuda::Arena::kMiB) {
+    error = "--vram-cap is too large";
     return false;
   }
-
-  constexpr std::uint64_t kHeadroomBytes = 512ull * Arena::kMiB;
-  const auto minus_headroom = [](std::uint64_t bytes) -> std::uint64_t {
-    return bytes > kHeadroomBytes ? bytes - kHeadroomBytes : 0;
-  };
-  std::uint64_t capacity =
-      std::min(minus_headroom(info.total_vram_bytes),
-               minus_headroom(info.free_vram_bytes));
-  if (capacity < Arena::kMiB) {
-    capacity = Arena::kMiB;
-  }
-  // Store the chosen value as the process cap so later Arena::init() calls
-  // cannot exceed it. (The 7,500 MB hard cap is intentionally gone here.)
-  Arena::set_cap_bytes(capacity);
-
-  std::cout << "av2enc: WARNING: --skip-vram-check is an explicit experiment\n"
-            << "  device:   " << info.name << " (" << info.cc_major << "."
-            << info.cc_minor << ", " << info.total_vram_bytes / Arena::kMiB
-            << " MiB total, " << info.free_vram_bytes / Arena::kMiB
-            << " MiB free)\n"
-            << "  capacity: " << capacity / Arena::kMiB
-            << " MiB (min(total, free) - 512 MiB; default is "
-            << Arena::kDefaultCapacityBytes / Arena::kMiB << " MiB)\n"
-            << "  target/CI verification must not use this flag\n";
+  av2enc::cuda::Arena::set_capacity_cap_bytes(
+      cap_mib * av2enc::cuda::Arena::kMiB);
   return true;
 }
 #endif
@@ -233,8 +203,13 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
-    if (argument == "--skip-vram-check") {
-      options.skip_vram_check = true;
+    if (argument == "--vram-cap") {
+      if (i + 1 >= argc ||
+          !parse_uint64(argv[++i], options.vram_cap_mib) ||
+          options.vram_cap_mib == 0) {
+        error = "--vram-cap requires a positive MiB value";
+        return ParseStatus::kError;
+      }
       continue;
     }
 
@@ -277,14 +252,14 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  if (options.skip_vram_check) {
+  if (options.vram_cap_mib != 0) {
 #if AV2ENC_HAVE_CUDA
-    if (!configure_arena_from_device(error)) {
+    if (!apply_vram_cap(options.vram_cap_mib, error)) {
       std::cerr << "av2enc: " << error << "\n";
-      return 1;
+      return 2;
     }
 #else
-    std::cerr << "av2enc: note: --skip-vram-check has no effect in this "
+    std::cerr << "av2enc: note: --vram-cap has no effect in this "
                  "CPU-only build\n";
 #endif
   }

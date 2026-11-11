@@ -44,7 +44,8 @@ Do not edit `src/encoder/m0_still.cpp`, `src/entropy/av2/`, `src/bitstream/`,
 Provide a small `av2enc::cuda` layer:
 
 - device selection, stream creation, error checking
-- persistent arena with a 7,500 MB hard cap and peak tracking
+- persistent arena sized from the device (`min(total, free) - 512 MiB`, optional
+  `--vram-cap`) with peak tracking
 - `upload` / `download` helpers (pinned staging preferred)
 - no hidden `cudaDeviceSynchronize()` in kernels; one sync per frame at most
 - no `cudaMalloc` after init

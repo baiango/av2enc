@@ -1,19 +1,21 @@
-# VRAM budget and `compat8g` precompute profile
+# VRAM budget and precompute planning
 
 ## Focus
 
 | Item | Status |
 |---|---|
 | **Primary target** | **8 GB Ampere, sm_86** |
-| **Dev box** | 12 GB RTX 3060 running the same **7500 MiB** cap |
-| 12 GB behaviour | **12 GB emulation of the 8 GB budget; actual 8 GB hardware pending** |
+| **Dev box** | 12 GB RTX 3060, arena sized from the device |
+| 12 GB behaviour | **Not an 8 GB emulation; actual 8 GB hardware pending** |
 | RTX 5070 | Build/smoke only; not a performance target; runtime pending host |
-| 4 / 6 / 16 / 24 GB profiles | Estimate-only, out of scope; not tuned |
+| 4 / 6 / 16 / 24 GB capacity profiles | Estimate-only; the encoder does not select one |
 | Turing sm_75 | Out of scope; not supported by the current sm_86;sm_120 fatbin |
 
-The default VRAM ceiling is **7500 MB (MiB)**. It is the only supported
-configuration while the primary target is the 8 GB RTX 3060. The 12 GB dev box
-is intentionally run under that same cap, not at its full capacity.
+There is no fixed VRAM ceiling. At first GPU use the encoder reserves
+`min(device_total, device_free) - 512 MiB`, optionally bounded by
+`--vram-cap <MiB>`. On an 8 GB card this yields a sub-7,500 MiB arena
+automatically. The 12 GB dev box therefore runs at its own capacity; 8 GB
+compatibility must be validated on an 8192 MiB enumerated card.
 
 ## RTX 3060 8 GB vs 12 GB
 
@@ -24,11 +26,11 @@ Both are GA106, sm_86, 28 SMs. Only capacity and bandwidth differ:
 | VRAM | 8 GB class | 11920 MiB reported by CUDA |
 | Bus / bandwidth | 128-bit, ≈240 GB/s | 192-bit, ≈360 GB/s (measured 360.0) |
 | Compute | 28 SMs, sm_86 | 28 SMs, sm_86 |
-| Encoder cap | **7500 MiB** | **7500 MiB** (emulates the 8 GB budget) |
+| Encoder arena | device-sized, ≤ physical | device-sized, ≤ physical |
 
 The 8 GB card is not physically attached. Every "8 GB" result in this document
-is **12 GB emulation, actual 8 GB hardware pending**, unless explicitly labelled
-otherwise.
+is a model or a 12 GB proxy, **actual 8 GB hardware pending**, unless explicitly
+labelled otherwise.
 
 ## Frame sizes (4:2:0, uncompressed)
 
@@ -65,11 +67,11 @@ total             = persistent + scratch + candidate + headroom
 - **Headroom** — 512 MiB in the estimator. `vram_budget` uses 256 MiB direct
   arena headroom because it measures the allocation itself.
 
-## Active profile: `compat8g`
+## Planning example: 8 GB class
 
 | Parameter | Value |
 |---|---:|
-| Cap | **7500 MiB** |
+| Arena | device-sized (≈7.4 GiB on an 8 GB card) |
 | Lookahead | 4 |
 | Reference frames | 4 |
 | Tiles | 4×2 (8) |
@@ -77,8 +79,8 @@ total             = persistent + scratch + candidate + headroom
 | Motion-search radius | ±64 (tunable starting point) |
 | Recommendation | 1080p / 4K light |
 
-`compat8g` is the only profile under active tuning. The search radius is a
-quality/latency starting point and is not part of the byte estimate.
+This is a sizing example for an 8 GB card, not a runtime preset. The search
+radius is a quality/latency starting point and is not part of the byte estimate.
 
 Example estimates:
 
@@ -89,10 +91,11 @@ Example estimates:
 
 These are model estimates, not measured allocations.
 
-## Measured: `compat8g` under the 7500 MiB cap
+## Measured: historical `compat8g` benchmark
 
-Actual `bench/vram_budget` run on the 12 GB RTX 3060 with
-`VRAM_LIMIT_MB=7500`:
+This `bench/vram_budget` run predates the device-derived arena. It is kept as a
+capacity-planning data point, not as the current encoder policy. It was run on
+the 12 GB RTX 3060 with `VRAM_LIMIT_MB=7500`:
 
 ```text
 === av2enc VRAM budget check ===
@@ -163,9 +166,8 @@ validated and must not be presented as hardware results:
 | `auto16g` | 15000 | 16 | 12 | 8×2/16×2 | 3× | ±112 | 16 GB estimate, out of scope |
 | `auto24g` | 20000 | 24 | 16 | 8×2/16×2 | 4× | ±128 | 24 GB estimate, out of scope |
 
-`auto` still chooses among them by capacity/bandwidth for experimentation.
-On the dev box, always pass `--cap-mb 7500` to select `compat8g`. No further
-tuning is planned for the non-target profiles.
+`auto`/`compat*` names are accepted by the offline estimator for planning.
+They are not runtime presets; the encoder always sizes from the device.
 
 ## sm_75 caveat (out of scope)
 
@@ -186,10 +188,10 @@ no-cp.async fallback; the estimator refuses to select a precompute profile.
 
 1. Estimate first: query `cudaMemGetInfo`, device total, bandwidth, and compute
    capability.
-2. Use `compat8g` with the 7500 MiB cap as the default on both 8 GB hardware and
-   the 12 GB dev box.
-3. If `persistent + scratch + candidate + headroom > 7500 MiB`, reduce tile
-   batch → lookahead → refs → RDO cache, then fail.
+2. Reserve `min(total, free) - 512 MiB`; an optional `--vram-cap` may lower it.
+   Do not hard-code a card-specific ceiling.
+3. If `persistent + scratch + candidate + headroom` exceeds the available
+   capacity, reduce tile batch → lookahead → refs → RDO cache, then fail.
 4. Never silently over-allocate. Fail with a non-zero exit and a clear message.
 5. Allocate the persistent arena once; reuse one scratch workspace. No
    `cudaMalloc` in per-frame or per-block paths.

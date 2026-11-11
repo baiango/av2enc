@@ -37,12 +37,12 @@
 //   AV2ENC_PROFILE_NVTX=1       Emit NVTX ranges (requires AV2ENC_HAVE_NVTX).
 //                               May be used without AV2ENC_PROFILE for a
 //                               stats-only/Nsight Systems run.
-//   AV2ENC_VRAM_LIMIT_MB=<MiB>  VRAM accounting budget.  Default 7500 (the
-//                               8 GB compatibility target); 0 disables the
-//                               over-budget warning.
+//   AV2ENC_VRAM_LIMIT_MB=<MiB>  VRAM accounting budget. Default 0 = no fixed
+//                               limit (the arena is device-sized); a non-zero
+//                               value only enables the over-budget warning.
 //
-// The summary always records precompute_profile (default "compat8g") and
-// vram_limit_mb.  Compatibility profiles above 8 GB are frozen estimates.
+// The summary always records precompute_profile (default "auto") and
+// vram_limit_mb. There is no fixed VRAM preset.
 //
 // Everything is a no-op when the profiler is disabled.
 
@@ -68,11 +68,10 @@ inline constexpr std::uint32_t kMaxStages = 64;
 inline constexpr std::size_t kMaxStageName = 48;
 inline constexpr std::uint32_t kInvalidCudaToken = 0xFFFFFFFFU;
 
-// Focus freeze: the primary target is 8 GB Ampere.  compat8g is the default
-// and only supported configuration.  12/16/24 GB profiles are frozen estimates
-// and are not implemented by the profiler.
-inline constexpr std::string_view kDefaultPrecomputeProfile = "compat8g";
-inline constexpr std::uint32_t kDefaultVramLimitMb = 7500;
+// The primary target is 8 GB Ampere. The arena is device-sized; there is no
+// fixed VRAM preset. precompute_profile is only a summary label (default auto).
+inline constexpr std::string_view kDefaultPrecomputeProfile = "auto";
+inline constexpr std::uint32_t kDefaultVramLimitMb = 0;
 inline constexpr std::size_t kMaxPrecomputeProfile = 32;
 
 class Profiler;
@@ -202,10 +201,9 @@ class Profiler {
   StageId stage(std::string_view name) noexcept;
   std::string_view stage_name(StageId id) const noexcept;
 
-  // Record the precompute profile name in the summary.  The default is
-  // "compat8g" (8 GB Ampere target, 7500 MiB cap); set this before encoding
-  // when the CLI exposes --precompute.  Names are copied and truncated to 31
-  // characters; an empty name restores "compat8g".
+  // Record the precompute profile label in the summary. The default is "auto"
+  // (device-sized arena). Names are copied and truncated to 31 characters; an
+  // empty name restores "auto".
   void set_precompute_profile(std::string_view name) noexcept;
   std::string_view precompute_profile() const noexcept;
 

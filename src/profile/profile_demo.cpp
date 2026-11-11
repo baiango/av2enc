@@ -160,7 +160,7 @@ bool verify_summary(const std::filesystem::path& path, bool expect_vram,
     return false;
   }
   const char* required[] = {"\"profiler\": \"av2enc\"",
-                            "\"precompute_profile\": \"compat8g\"",
+                            "\"precompute_profile\": \"auto\"",
                             "\"vram_limit_mb\"",
                             "\"wall_ms\"",
                             "\"frames\"",

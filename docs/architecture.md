@@ -115,13 +115,13 @@ baseline exists.
 ## GPU target: 8 GB Ampere primary
 
 The baseline is **8 GB Ampere (`sm_86`)**: RTX 3060 8 GB, RTX 3050 8 GB, RTX 3070
-8 GB. The dev box is an RTX 3060 12 GB, but it must run the same `compat8g`
-7,500 MB cap so 8 GB behavior is tested, not assumed. The RTX 5070 (`sm_120`)
-is a secondary build/smoke target only.
+8 GB. The dev box is an RTX 3060 12 GB; it sizes the arena from the device
+(`min(total, free) - 512 MiB`), so 8 GB behavior must be validated on an actual
+8192 MiB card, not emulated. The RTX 5070 (`sm_120`) is a secondary
+build/smoke target only.
 
-Profiles above `compat8g` remain documented as estimates but are **frozen**; no
-current tuning work goes into 12/16/24 GB or 4/6 GB cards. Turing (`sm_75`) is
-out of scope.
+There are no fixed "compat" presets. Extra VRAM only changes how much precompute
+fits; it never changes the encoded tool set.
 
 Allowed baseline (works on both):
 
@@ -159,25 +159,27 @@ same kernels should scale, with launch-config tuning only if profiling shows it.
 
 ## VRAM budget: 8 GB target
 
-**8 GB Ampere is the primary target.** Default hard ceiling: **7,500 MB**
-(leaves ~500 MB for the driver/context on an 8 GB card). The 12 GB dev box must
-run with the same cap so compatibility is tested, not assumed.
+**8 GB Ampere is the primary target.** There is no fixed VRAM ceiling. The
+runtime reserves the largest block the device can serve, minus a 512 MiB
+headroom, and an optional `--vram-cap <MiB>` bounds it. On an 8 GB card this
+lands below the physical limit automatically.
 
 Rules:
 
-- Allocate one persistent arena at init; no `cudaMalloc` after warm-up.
+- Allocate one persistent arena at first GPU use; no `cudaMalloc` after warm-up.
 - Split into persistent regions (frame/reference pools, CDF/state, graphs) and a
   reusable scratch region (RDO candidates, tile buffers).
 - Before allocating, estimate: frames × bytes/frame, reference count, tile
-  buffers, lookahead, and scratch. Choose a config that fits under the cap.
+  buffers, lookahead, and scratch. Keep the reservation inside the device-derived
+  capacity.
 - If the requested config does not fit, reduce lookahead/reference count/tile
   batch or fail with a clear message. Do not silently OOM.
-- `--vram-limit-mb` default `7500`; `0` means auto (90% of device memory, for
-  12 GB experiments only).
+- `--vram-cap <MiB>` is an optional upper bound; `0` (default) takes the
+  device-derived maximum. `cudaMalloc` is the only hard limit.
 - Log `peak_vram_mb`, `vram_capacity_mb`, and `vram_limit_mb` in the profiler
   summary and quality report.
 - The 8 GB card has a 128-bit bus (~240 GB/s vs ~360 GB/s). Memory-bound kernels
-  (ME/SAD) will be slower; correctness and the cap are the same.
+  (ME/SAD) will be slower; correctness and the sizing rule are the same.
 
 Rough frame sizes (8-bit 4:2:0):
 
@@ -196,7 +198,8 @@ arena and are reused.
 More VRAM may buy more precompute, but only in a deterministic, logged profile.
 The default gate remains the **8 GB-compatible profile**.
 
-Initial profiles (starting points, tune with profiling):
+Historical planning estimates (the encoder no longer selects a preset; these
+remain only as precompute sizing examples):
 
 | Profile | VRAM cap | Lookahead | Refs | Tiles | RDO cache | Search | Notes |
 |---|---:|---:|---:|---:|---:|---:|---|
@@ -224,8 +227,8 @@ Priority order when spending extra VRAM:
 
 Rules:
 
-- `--vram-limit-mb` and `--precompute <compat8g|auto12g|auto24g|auto>` select the
-  profile. `auto` picks from total VRAM and memory bandwidth.
+- `--vram-cap <MiB>` bounds the device-derived reservation; there is no
+  preset switch.
 - Estimate `frame_bytes × (refs + lookahead + 2) + scratch + candidate cache`
   before allocating. Keep at least 512 MB headroom.
 - 8 GB cards have less bandwidth; extra precompute may not pay off. The 5070’s
@@ -278,8 +281,8 @@ are not a win; extra CVVDP at the same bitrate is.
 
 ## Multi-GPU: 2× 3060 and beyond
 
-Each GPU owns its own `compat8g` arena (7,500 MB). VRAM is **not pooled**; a
-2× 3060 machine has 2 × 7.5 GB usable, not 15 GB for one process.
+Each GPU owns its own device-sized arena (no fixed preset). VRAM is **not
+pooled**; a 2× 3060 machine has two independent arenas, not one 24 GB process.
 
 Two modes:
 
@@ -321,10 +324,9 @@ work at the same quality; report per-GPU utilization and load imbalance. Real
 multi-GPU validation is pending hardware. The profiler must aggregate per-GPU
 stage times and peak VRAM.
 
-**Multi-GPU development target:** N× RTX 3060 **12 GB** cards, each running
-`compat8g` with a 7,500 MB cap. This is the 8 GB emulation, not actual 8 GB
-cards. The target-validation requirement of an 8192 MiB enumerated card remains
-separate and applies to final single-GPU performance/QBS claims.
+**Multi-GPU development target:** N× RTX 3060 **12 GB** cards, each with its own
+device-sized arena. The target-validation requirement of an 8192 MiB enumerated
+card remains separate and applies to final single-GPU performance/QBS claims.
 
 ## Quality gate
 

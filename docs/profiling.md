@@ -25,13 +25,13 @@ AV2ENC_PROFILE=/tmp/run.jsonl ./build/av2enc input.y4m -o out.ivf --frames 60
 # Files:
 #   /tmp/run.jsonl                 per-event JSONL
 #   /tmp/run.jsonl.summary.json    aggregate JSON, written on close
-# The summary always records precompute_profile=compat8g and vram_limit_mb=7500.
+# The summary always records precompute_profile=auto and vram_limit_mb=0.
 
 jq '.stages[] | select(.cpu.calls > 0)' /tmp/run.jsonl.summary.json
 jq 'select(.type == "frame") | .wall_ms' /tmp/run.jsonl
 
 # Prove 8 GB compatibility while running on the 12 GB card:
-AV2ENC_VRAM_LIMIT_MB=7500 AV2ENC_PROFILE=/tmp/run.jsonl ./build/av2enc ...
+AV2ENC_PROFILE=/tmp/run.jsonl ./build/av2enc ...
 ```
 
 Nsight Systems timeline with NVTX stage ranges:
@@ -66,7 +66,7 @@ slow?*
 |---|---|
 | `AV2ENC_PROFILE=<path>` | Write per-event JSONL to `<path>`. On close, write `<path>.summary.json`. The path must be writable. |
 | `AV2ENC_PROFILE_NVTX=1` | Emit NVTX ranges. Requires compiling `profiler.cpp` with `AV2ENC_HAVE_NVTX=1` and linking `nvToolsExt`. Can be used without `AV2ENC_PROFILE` for an NVTX-only run. |
-| `AV2ENC_VRAM_LIMIT_MB=<MiB>` | VRAM budget used for accounting and warnings. Default **7500**; `0` disables the limit warning. |
+| `AV2ENC_VRAM_LIMIT_MB=<MiB>` | Optional VRAM accounting budget. Default **0** = no fixed limit (the arena is device-sized); a non-zero value enables the over-budget warning. |
 
 Truthy values are `1`, `true`, `yes`, and `on`. With neither variable set, the
 profiler is disabled: every scope is a no-op branch, no JSON is written, and no
@@ -120,8 +120,8 @@ Written to `<path>.summary.json` on `close()` (also called by the destructor):
   "profiler": "av2enc",
   "version": 1,
   "jsonl": "/tmp/run.jsonl",
-  "precompute_profile": "compat8g",
-  "vram_limit_mb": 7500,
+  "precompute_profile": "auto",
+  "vram_limit_mb": 0,
   "wall_ms": 123.456789,
   "frames": 60,
   "events": 780,
@@ -154,7 +154,7 @@ Notes:
 - `cuda_events_dropped` counts `CudaScope` intervals lost because the pending
   event pool filled up. It stays zero if `end_frame()` is called every frame.
 - `precompute_profile` and `vram_limit_mb` are configuration fields and are
-  always recorded. The default profile is `compat8g` with a 7500 MiB cap.
+  always recorded. The default label is `auto`; there is no fixed VRAM cap.
 - The measured VRAM fields (`peak_vram_mb`, `vram_capacity_mb`, `vram_free_mb`)
   are present only when a CUDA device is visible. They are omitted in CPU-only
   builds and on hosts without a CUDA device; they are never written as zeros.
@@ -248,8 +248,8 @@ if (!profiler.open_from_env(&profile_error) && !profile_error.empty()) {
 // open_from_env() returning false with an empty error simply means
 // AV2ENC_PROFILE was not set. That is not an error.
 
-// Optional: set when the CLI exposes --precompute. The default is compat8g.
-profiler.set_precompute_profile("compat8g");
+// Optional summary label. The default is auto.
+profiler.set_precompute_profile("auto");
 
 // Optional: register custom stages once.
 const StageId kMyStage = profiler.stage("my_stage");
@@ -401,28 +401,27 @@ launch/control bottleneck. A dozen CPU scopes per frame is acceptable.
 
 ## Precompute profile and VRAM accounting
 
-### Focus freeze: compat8g
+### Focus: device-sized arena
 
 The primary target is **8 GB Ampere (`sm_86`)**. The profiler defaults to the
-**`compat8g`** profile and records it in every summary:
+**`auto`** label and records it in every summary:
 
 ```json
-"precompute_profile": "compat8g",
-"vram_limit_mb": 7500
+"precompute_profile": "auto",
+"vram_limit_mb": 0
 ```
 
-`set_precompute_profile()` exists so the encoder CLI can record the profile it
-actually selected, but `compat8g` is the only configuration under active
-development. Profiles above it (`auto12g`, `auto16g`, `auto24g`) remain frozen
-estimates; the profiler does not implement 12/16/24 GB paths, and macOS is not an
-encoder target. Do not spend tuning effort on those profiles.
+`set_precompute_profile()` is only a summary label. The runtime sizes the
+arena from the device; `compat*`/`auto*g` names are offline planning estimates,
+not encoder presets. macOS is not an encoder target.
 
 ### VRAM budget
 
-The profiler tracks device-wide VRAM so a run on the 12 GB RTX 3060 can prove
-that the encoder fits an 8 GB card.
+The profiler tracks device-wide VRAM for reporting. It is not the allocator:
+the runtime sizes the arena from the device (`min(total, free) - 512 MiB`).
 
-- `AV2ENC_VRAM_LIMIT_MB` defaults to **7500** (MiB). `0` disables the warning.
+- `AV2ENC_VRAM_LIMIT_MB` defaults to **0** (no warning). Set a value only for
+  an explicit budget check.
 - At `open()`, `cudaMemGetInfo()` records total capacity and free VRAM.
 - `end_frame()` and `close()` sample `cudaMemGetInfo()` again and update the
   peak used value. Call `profiler.sample_vram()` manually after large
@@ -437,8 +436,8 @@ Summary fields:
 
 | Field | Always present? | Meaning |
 |---|---|---|
-| `precompute_profile` | yes | Profile name, default `compat8g`. |
-| `vram_limit_mb` | yes | `AV2ENC_VRAM_LIMIT_MB` value, default 7500. |
+| `precompute_profile` | yes | Label, default `auto`. |
+| `vram_limit_mb` | yes | `AV2ENC_VRAM_LIMIT_MB` value, default 0 (unlimited). |
 | `peak_vram_mb` | with CUDA device | Highest sampled used VRAM. |
 | `vram_capacity_mb` | with CUDA device | Device total, e.g. `11920.75` on the 12 GB RTX 3060. |
 | `vram_free_mb` | with CUDA device | Free VRAM at the last sample (normally close). |
@@ -454,12 +453,12 @@ If sampled use exceeds the limit, the profiler prints one warning to stderr:
 av2enc profile: VRAM use 8123 MB exceeds AV2ENC_VRAM_LIMIT_MB=7500 (device capacity 11920 MB)
 ```
 
-**The 12 GB box must be run with the 7500 MB cap** (the default) when proving
-8 GB compatibility. Do not look at `vram_capacity_mb` and assume the encoder may
-use 11.9 GB: the capacity is reported for context, but the budget is 7500 MiB.
+8 GB compatibility must be validated on an 8192 MiB card. The 12 GB dev box
+sizes the arena from its own device and is a proxy, not proof. Do not look at `vram_capacity_mb` and assume the encoder may
+use 11.9 GB: set `AV2ENC_VRAM_LIMIT_MB` explicitly if you want that warning.
 The profiler does not fail the encode when the limit is exceeded; a hard budget
 must be enforced by the allocator/workspace layer. For now, the gate is:
-`peak_vram_mb <= 7500` on every test configuration.
+`peak_vram_mb` is recorded on every test configuration (no fixed target).
 
 Caveats:
 
@@ -473,7 +472,7 @@ Caveats:
 Example:
 
 ```sh
-AV2ENC_PROFILE=/tmp/run.jsonl AV2ENC_VRAM_LIMIT_MB=7500 \
+AV2ENC_PROFILE=/tmp/run.jsonl \
   ./build/av2enc input.y4m -o out.ivf --frames 60
 jq '{precompute_profile, vram_limit_mb, peak_vram_mb,
      vram_capacity_mb, vram_free_mb}' /tmp/run.jsonl.summary.json
@@ -639,7 +638,7 @@ For a quick text sample of a running process, `sample <pid> 10 -file
 |---|---|
 | Did stage X regress run-over-run? | Built-in stage timers (`AV2ENC_PROFILE`) |
 | Which frame stage dominates wall time? | Built-in `summary.json` + JSONL |
-| Are we under 7500 MiB on the 12 GB card? | Built-in VRAM accounting |
+| What is peak VRAM? | Built-in VRAM accounting |
 | Where is the gap between two kernels? | Nsight Systems timeline + NVTX |
 | Which kernel is slow, and how long does it run? | `nsys` `cuda_gpu_kern_sum` |
 | Why is a kernel slow (stalls, occupancy, memory)? | Nsight Compute — **blocked here** |
@@ -649,7 +648,7 @@ For a quick text sample of a running process, `sample <pid> 10 -file
 Workflow:
 
 1. **Regression:** fixed clip, fixed QP, fixed frame count, same box and clocks.
-   Run with `AV2ENC_PROFILE` and `AV2ENC_VRAM_LIMIT_MB=7500`. Record the commit,
+   Run with `AV2ENC_PROFILE` (and `--vram-cap` if a budget is required). Record the commit,
    GPU/driver, resolution, frame count, and stage means/max plus `peak_vram_mb`.
    Compare stage means, not a single frame.
 2. **Attribution:** use `nsys` with `AV2ENC_PROFILE_NVTX=1` to align stages with

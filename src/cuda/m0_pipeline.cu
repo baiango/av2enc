@@ -342,6 +342,14 @@ PipelineRuntime& runtime() {
   return *instance;
 }
 
+void set_vram_cap_bytes(std::uint64_t bytes) noexcept {
+  Arena::set_capacity_cap_bytes(bytes);
+}
+
+std::uint64_t vram_cap_bytes() noexcept {
+  return Arena::capacity_cap_bytes();
+}
+
 bool ensure_runtime(int device, std::string& error) {
   PipelineRuntime& rt = runtime();
   if (rt.context_ready) {
@@ -363,35 +371,33 @@ bool ensure_runtime(int device, std::string& error) {
   rt.device = device;
   rt.context_ready = true;
   detail.clear();
-  // Default behavior keeps the 7,500 MB cap and the 7244 MiB arena. An explicit
-  // --skip-vram-check experiment raises the process cap to a device-derived
-  // value; in that case size the arena to that cap (bounded by the device) so
-  // the extra VRAM is actually usable.
-  std::uint64_t requested_capacity = Arena::kDefaultCapacityBytes;
-  if (Arena::cap_bytes() != Arena::kHardCapBytes) {
-    constexpr std::uint64_t kHeadroomBytes = 512ull * Arena::kMiB;
-    const auto minus_headroom = [](std::uint64_t bytes) -> std::uint64_t {
-      return bytes > kHeadroomBytes ? bytes - kHeadroomBytes : 0;
-    };
-    requested_capacity = Arena::cap_bytes();
-    requested_capacity =
-        std::min(requested_capacity,
-                 minus_headroom(rt.context.total_vram_bytes()));
-    requested_capacity =
-        std::min(requested_capacity,
-                 minus_headroom(rt.context.free_vram_bytes()));
-    if (requested_capacity < Arena::kMiB) {
-      requested_capacity = Arena::kMiB;
-    }
+
+  // No fixed VRAM preset. Take the largest reservation the device can serve,
+  // keeping a small headroom for the context/driver, and honor an explicit
+  // --vram-cap when one was set. The only real limit is cudaMalloc.
+  std::uint64_t capacity =
+      std::min(rt.context.total_vram_bytes(), rt.context.free_vram_bytes());
+  capacity = capacity > Arena::kDeviceHeadroomBytes
+                 ? capacity - Arena::kDeviceHeadroomBytes
+                 : 0;
+  const std::uint64_t user_cap = vram_cap_bytes();
+  if (user_cap != 0 && user_cap < capacity) {
+    capacity = user_cap;
   }
-  Status arena_status = rt.arena.init(requested_capacity, Arena::kAlignment,
-                                      &detail);
-  if (!is_ok(arena_status)) {
-    // A shared/dev box may not have the full compat8g reservation available.
-    // 1 GiB is ample for the M0 still path and still respects the hard cap.
+  if (capacity < Arena::kMiB) {
+    capacity = Arena::kMiB;
+  }
+
+  Status arena_status = Status::kOk;
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    arena_status = rt.arena.init(capacity, Arena::kAlignment, &detail);
+    if (is_ok(arena_status) || capacity <= 256ull * Arena::kMiB) {
+      break;
+    }
+    // Something else took VRAM between the query and the reservation: back off
+    // and try again rather than failing the encode outright.
+    capacity /= 2;
     detail.clear();
-    arena_status = rt.arena.init(1024ull * 1024ull * 1024ull,
-                                 Arena::kAlignment, &detail);
   }
   if (!is_ok(arena_status)) {
     error = std::string("Arena::init failed: ") + status_name(arena_status) +

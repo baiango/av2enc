@@ -11,7 +11,9 @@ Read these before writing code:
 
 - Encoder target: Linux + CUDA, 8 GB Ampere `sm_86` primary. macOS is not an
   encoder build target. Windows is unsupported.
-- 7,500 MB VRAM cap, `compat8g`. No 12/16/24 GB tuning.
+- VRAM arena is sized from the device: `min(total, free) - 512 MiB`, optionally
+  bounded by `--vram-cap <MiB>`. There is no fixed 7,500 MB preset. Do not tune
+  for one specific larger card.
 - No encoder code from AVM, SVT-AV1/AV2, clave, or av2-turbo. Use the AV2 v1.0.0
   spec. `dav2d`/`avmdec` are black-box validators only.
 - Every stream must pass `tools/validate_dav2d.sh` before it is called working.

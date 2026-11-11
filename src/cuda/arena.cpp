@@ -9,7 +9,7 @@ namespace av2enc::cuda {
 namespace {
 
 std::atomic<std::uint64_t> g_reserved_bytes{0};
-std::atomic<std::uint64_t> g_cap_bytes{Arena::kHardCapBytes};
+std::atomic<std::uint64_t> g_capacity_cap_bytes{0};
 
 bool is_valid_alignment(std::size_t alignment) noexcept {
   return alignment >= Arena::kAlignment && (alignment & (alignment - 1)) == 0;
@@ -54,17 +54,12 @@ std::uint64_t Arena::process_reserved_bytes() noexcept {
   return g_reserved_bytes.load(std::memory_order_relaxed);
 }
 
-std::uint64_t Arena::cap_bytes() noexcept {
-  return g_cap_bytes.load(std::memory_order_relaxed);
+void Arena::set_capacity_cap_bytes(std::uint64_t bytes) noexcept {
+  g_capacity_cap_bytes.store(bytes, std::memory_order_relaxed);
 }
 
-void Arena::set_cap_bytes(std::uint64_t bytes) noexcept {
-  g_cap_bytes.store(bytes == 0 ? kHardCapBytes : bytes, std::memory_order_relaxed);
-}
-
-void Arena::disable_cap() noexcept {
-  g_cap_bytes.store(std::numeric_limits<std::uint64_t>::max(),
-                    std::memory_order_relaxed);
+std::uint64_t Arena::capacity_cap_bytes() noexcept {
+  return g_capacity_cap_bytes.load(std::memory_order_relaxed);
 }
 
 Status Arena::init(std::uint64_t capacity_bytes, std::size_t alignment, std::string* error) {
@@ -76,29 +71,19 @@ Status Arena::init(std::uint64_t capacity_bytes, std::size_t alignment, std::str
     set_error(error, "Arena::init: zero capacity", Status::kInvalidArgument);
     return Status::kInvalidArgument;
   }
-  const std::uint64_t cap = cap_bytes();
-  if (capacity_bytes > cap) {
-    set_error(error,
-              "Arena::init: " + mib_text(capacity_bytes) + " request exceeds the " +
-                  mib_text(cap) + " hard cap",
-              Status::kCapExceeded);
-    return Status::kCapExceeded;
-  }
   if (!is_valid_alignment(alignment)) {
     set_error(error, "Arena::init: alignment must be a power of two >= 256 bytes",
               Status::kInvalidArgument);
     return Status::kInvalidArgument;
   }
 
-  // Process-wide cap: the sum of live arena reservations may not exceed the
-  // hard cap, even if each individual arena is small.
+  // Account the process-wide reservation, but do not impose a fixed cap: the
+  // device-derived sizing (or the explicit --vram-cap) is the caller's limit.
+  // This only rejects an arithmetic overflow of the running total.
   std::uint64_t reserved = g_reserved_bytes.load(std::memory_order_relaxed);
   for (;;) {
-    if (reserved > cap || capacity_bytes > cap - reserved) {
-      set_error(error,
-                "Arena::init: " + mib_text(capacity_bytes) + " request would exceed the " +
-                    mib_text(cap) + " process cap (" + mib_text(reserved) +
-                    " already reserved)",
+    if (capacity_bytes > std::numeric_limits<std::uint64_t>::max() - reserved) {
+      set_error(error, "Arena::init: reservation overflow",
                 Status::kCapExceeded);
       return Status::kCapExceeded;
     }

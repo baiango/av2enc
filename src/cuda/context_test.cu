@@ -194,34 +194,25 @@ void test_context() {
 }
 
 void test_arena_cap() {
-  begin_test("arena_cap");
+  begin_test("arena_limits");
 
-  CHECK(Arena::kHardCapBytes == 7500ull * kMiB);
-  CHECK(Arena::kHeadroomBytes == 256ull * kMiB);
-  CHECK(Arena::kDefaultCapacityBytes == Arena::kHardCapBytes - Arena::kHeadroomBytes);
-  CHECK(Arena::kDefaultCapacityBytes == 7244ull * kMiB);
+  CHECK(Arena::kDeviceHeadroomBytes == 512ull * kMiB);
   CHECK(Arena::kAlignment == 256);
 
   const std::uint64_t baseline = Arena::process_reserved_bytes();
   CHECK(baseline == 0);
 
-  {
-    Arena over;
-    std::string error;
-    CHECK(over.init(Arena::kHardCapBytes + 1, Arena::kAlignment, &error) ==
-          Status::kCapExceeded);
-    CHECK(!over.initialized());
-    CHECK(!error.empty());
-    if (!error.empty()) {
-      std::printf("  over-cap error: %s\n", error.c_str());
-    }
-  }
-  CHECK(Arena::process_reserved_bytes() == baseline);
+  // The cap is a request-time bound, not a validation gate.
+  Arena::set_capacity_cap_bytes(1234ull * kMiB);
+  CHECK(Arena::capacity_cap_bytes() == 1234ull * kMiB);
+  Arena::set_capacity_cap_bytes(0);
+  CHECK(Arena::capacity_cap_bytes() == 0);
 
   {
     Arena zero;
     std::string error;
     CHECK(zero.init(0, Arena::kAlignment, &error) == Status::kInvalidArgument);
+    CHECK(!zero.initialized());
     CHECK(!error.empty());
   }
 
@@ -259,7 +250,7 @@ void test_arena_cap() {
   }
   CHECK(Arena::process_reserved_bytes() == baseline);
 
-  end_test("arena_cap");
+  end_test("arena_limits");
 }
 
 void test_arena_alignment() {
@@ -613,16 +604,16 @@ void test_full_cap(Context& context) {
 
   Arena arena;
   std::string error;
-  CHECK_OK(arena.init(Arena::kDefaultCapacityBytes, Arena::kAlignment, &error));
-  CHECK(arena.reserved_bytes() == Arena::kDefaultCapacityBytes);
-  CHECK(arena.capacity() == Arena::kDefaultCapacityBytes);
+  const std::uint64_t capacity = 512ull * kMiB;
+  CHECK_OK(arena.init(capacity, Arena::kAlignment, &error));
+  CHECK(arena.reserved_bytes() == capacity);
+  CHECK(arena.capacity() == capacity);
   CHECK(arena.used() == 0);
   CHECK(arena.remaining() == arena.usable_capacity());
   CHECK(arena.device_total_bytes() == total);
 
-  std::printf("  arena: reserved=%llu MiB (hard cap %llu MiB, headroom %llu MiB)\n",
-              ull(to_mib(arena.reserved_bytes())), ull(to_mib(Arena::kHardCapBytes)),
-              ull(to_mib(Arena::kHeadroomBytes)));
+  std::printf("  arena: reserved=%llu MiB (device-derived; no fixed preset)\n",
+              ull(to_mib(arena.reserved_bytes())));
   std::printf("  VRAM before alloc: total=%llu MiB free=%llu MiB used=%llu MiB\n",
               ull(to_mib(total)), ull(to_mib(free_before)),
               ull(to_mib(total - free_before)));
@@ -667,18 +658,15 @@ void test_full_cap(Context& context) {
   const std::uint64_t peak_increment =
       (peak > used_before) ? peak - used_before : 0;
   constexpr std::uint64_t kNoiseTolerance = 256ull * kMiB;
-  const std::uint64_t device_spare =
-      (peak < Arena::kHardCapBytes) ? Arena::kHardCapBytes - peak : 0;
   CHECK(peak_increment >= arena.capacity() - kNoiseTolerance);
   CHECK(peak_increment <= arena.capacity() + kNoiseTolerance);
   CHECK(arena.device_peak_used_bytes() >= arena.device_used_bytes());
 
   std::printf("  VRAM peak: device used=%llu MiB (baseline %llu MiB, arena delta %llu MiB)\n",
               ull(to_mib(peak)), ull(to_mib(used_before)), ull(to_mib(peak_increment)));
-  std::printf("  budget: arena %llu MiB + headroom %llu MiB = hard cap %llu MiB; "
-              "device-wide spare=%llu MiB\n",
-              ull(to_mib(arena.capacity())), ull(to_mib(Arena::kHeadroomBytes)),
-              ull(to_mib(Arena::kHardCapBytes)), ull(to_mib(device_spare)));
+  std::printf("  budget: arena %llu MiB reserved on demand (headroom %llu MiB)\n",
+              ull(to_mib(arena.capacity())),
+              ull(to_mib(Arena::kDeviceHeadroomBytes)));
 
   arena.release();
   CHECK(!arena.initialized());

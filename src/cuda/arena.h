@@ -5,14 +5,9 @@
 // 256-byte aligned; allocation sizes are rounded up to the same alignment so
 // every bump offset (and therefore every mark) stays aligned.
 //
-// Cap policy (8 GB Ampere target):
-//   * kHardCapBytes = 7500 MiB is the process-wide ceiling. The sum of all
-//     live Arena reservations may never exceed it, and a single request above
-//     it is rejected with Status::kCapExceeded.
-//   * kHeadroomBytes = 256 MiB covers the primary context, driver allocations
-//     and fragmentation on an 8 GB card. The default arena is
-//     kHardCapBytes - kHeadroomBytes = 7244 MiB, matching bench/vram_budget.
-//     A larger arena may be requested explicitly, up to the hard cap.
+// There is no fixed VRAM preset. Callers size the arena from the device:
+// min(total_vram, free_vram) minus a small headroom, optionally bounded by an
+// explicit `--vram-cap`. The only hard limit is what cudaMalloc can serve.
 //
 // Methods are not thread-safe: use the arena from the single launch/control
 // thread. Device VRAM statistics remain readable after release() for reporting.
@@ -33,17 +28,13 @@ namespace av2enc::cuda {
 class Arena {
  public:
   static constexpr std::uint64_t kMiB = 1024ull * 1024ull;
-  static constexpr std::uint64_t kHardCapBytes = 7500ull * kMiB;
-  static constexpr std::uint64_t kHeadroomBytes = 256ull * kMiB;
-  static constexpr std::uint64_t kDefaultCapacityBytes = kHardCapBytes - kHeadroomBytes;
+  static constexpr std::uint64_t kDeviceHeadroomBytes = 512ull * kMiB;
   static constexpr std::size_t kAlignment = 256;
 
-  // Process-wide cap override, for explicit experiments on a larger GPU.
-  // set_cap_bytes(0) restores kHardCapBytes; disable_cap() removes the cap.
-  // Intended to be set once, before any Arena::init(), from the CLI flag.
-  static void set_cap_bytes(std::uint64_t bytes) noexcept;
-  static void disable_cap() noexcept;
-  static std::uint64_t cap_bytes() noexcept;
+  // Optional request-time upper bound, in bytes; 0 = unbounded. This is not a
+  // validation cap: it only limits how much capacity the runtime asks for.
+  static void set_capacity_cap_bytes(std::uint64_t bytes) noexcept;
+  static std::uint64_t capacity_cap_bytes() noexcept;
 
   Arena() = default;
   ~Arena();
@@ -51,10 +42,10 @@ class Arena {
   Arena(const Arena&) = delete;
   Arena& operator=(const Arena&) = delete;
 
-  // Reserve one persistent device block. `capacity_bytes` must be in
-  // (0, kHardCapBytes]. The default leaves kHeadroomBytes for the context and
-  // driver. `alignment` must be a power of two >= kAlignment.
-  Status init(std::uint64_t capacity_bytes = kDefaultCapacityBytes,
+  // Reserve one persistent device block. Sizing is the caller's policy: the
+  // device-derived capacity (see the pipeline) or an explicit cap. `alignment`
+  // must be a power of two >= kAlignment.
+  Status init(std::uint64_t capacity_bytes,
               std::size_t alignment = kAlignment, std::string* error = nullptr);
 
   Status init_mb(std::uint32_t capacity_mb, std::size_t alignment = kAlignment,
