@@ -1,0 +1,5 @@
+# Pinned M2 multi-tile-group framing golden. One line per group,
+# lowercase hex of the complete OBU payload (OBU header excluded).
+8c720000070e151c
+46396002293037525960676e757c838a91
+4639f07b828990979ea5ac
