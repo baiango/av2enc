@@ -185,10 +185,13 @@ def compare(a: Ivf, b: Ivf, limit_report: int = 8) -> dict:
     }
 
 
-def print_report(a: Ivf, b: Ivf, result: dict) -> None:
-    print(f"cpu ivf:  {a.path}  ({a.width}x{a.height} {a.fourcc}, "
+def print_report(a: Ivf, b: Ivf, result: dict,
+                 label_a: str = "cpu", label_b: str = "gpu") -> None:
+    print(f"{label_a} ivf:{' ' * max(1, 6 - len(label_a))}{a.path}  "
+          f"({a.width}x{a.height} {a.fourcc}, "
           f"{len(a.payloads)} frame(s), {a.file_bytes} B)")
-    print(f"gpu ivf:  {b.path}  ({b.width}x{b.height} {b.fourcc}, "
+    print(f"{label_b} ivf:{' ' * max(1, 6 - len(label_b))}{b.path}  "
+          f"({b.width}x{b.height} {b.fourcc}, "
           f"{len(b.payloads)} frame(s), {b.file_bytes} B)")
     if a.declared_frames != len(a.payloads) or b.declared_frames != len(b.payloads):
         print(f"note:     IVF header declares {a.declared_frames}/"
@@ -204,15 +207,16 @@ def print_report(a: Ivf, b: Ivf, result: dict) -> None:
         if not entry["identical"] or shown < limited:
             status = "IDENTICAL" if entry["identical"] else "DIFFERS"
             print(f"  frame {entry['frame']}: payload {entry['bytes']} B  "
-                  f"md5 cpu={entry['md5']} gpu={entry['md5_other']}  {status}")
+                  f"md5 {label_a}={entry['md5']} {label_b}={entry['md5_other']}  "
+                  f"{status}")
             if not entry["identical"]:
                 print(f"    first byte offset {entry['first_diff_offset']} "
                       f"(0x{entry['first_diff_offset']:x}): "
-                      f"cpu={entry['first_diff_cpu']} "
-                      f"gpu={entry['first_diff_gpu']}, "
+                      f"{label_a}={entry['first_diff_cpu']} "
+                      f"{label_b}={entry['first_diff_gpu']}, "
                       f"{entry['differing_bytes']} byte(s) differ")
-                print(f"    cpu ctx: {entry['context_cpu']}")
-                print(f"    gpu ctx: {entry['context_gpu']}")
+                print(f"    {label_a} ctx: {entry['context_cpu']}")
+                print(f"    {label_b} ctx: {entry['context_gpu']}")
             shown += 1
         if shown >= limited and not entry["identical"]:
             remaining = result["differing_frames"] - 1
@@ -221,8 +225,8 @@ def print_report(a: Ivf, b: Ivf, result: dict) -> None:
             break
 
     print(f"  payload bytes: {result['payload_bytes']}")
-    print(f"  file md5:      cpu={result['file_md5_cpu']} "
-          f"gpu={result['file_md5_gpu']}")
+    print(f"  file md5:      {label_a}={result['file_md5_cpu']} "
+          f"{label_b}={result['file_md5_gpu']}")
     if result["ok"]:
         print(f"RESULT: IVF FRAME BYTES IDENTICAL "
               f"({len(a.payloads)} frame(s), {result['payload_bytes']} bytes)")
@@ -241,6 +245,10 @@ def main() -> int:
                         help="print a machine-readable JSON result")
     parser.add_argument("--limit-report", type=int, default=8,
                         help="max frame lines to print in detail (default 8)")
+    parser.add_argument("--label-a", default="cpu",
+                        help="label for the first file (default cpu)")
+    parser.add_argument("--label-b", default="gpu",
+                        help="label for the second file (default gpu)")
     args = parser.parse_args()
 
     for path in (args.cpu, args.gpu):
@@ -256,7 +264,7 @@ def main() -> int:
                    if not key.startswith("_")}
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        print_report(a, b, result)
+        print_report(a, b, result, args.label_a, args.label_b)
     return 0 if result["ok"] else 1
 
 

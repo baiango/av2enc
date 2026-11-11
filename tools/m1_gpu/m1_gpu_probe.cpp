@@ -42,6 +42,8 @@ void usage(std::ostream& out) {
          "  -i, --input <file>      input Y4M (required)\n"
          "  -o, --output <file>     recon dump path (required)\n"
          "  --stats <file>          write the stats JSON here\n"
+         "  --repeat N              encode N times in this process (default 1);\n"
+         "                          reports in-process byte determinism\n"
          "  --qp N                  base_q_idx (default 90)\n"
          "  --depth N               max_partition_depth 0..8 (default 4)\n"
          "  --min-block-size N      partition floor (default 8)\n"
@@ -96,6 +98,7 @@ struct Cli {
   std::filesystem::path output;
   std::filesystem::path stats;
   av2enc::cuda::m1gpu::GpuOptions options;
+  int repeat = 1;
   bool print_json = false;
   bool help = false;
   Cli() { options.allow_cpu_fallback = false; }
@@ -122,6 +125,14 @@ int parse_args(int argc, char** argv, Cli& cli) {
     } else if (arg == "--stats") {
       if (!next("--stats", value)) return 2;
       cli.stats = value;
+    } else if (arg == "--repeat") {
+      if (!next("--repeat", value)) return 2;
+      int repeat = 0;
+      if (!parse_int(value, repeat) || repeat < 1 || repeat > 16) {
+        std::cerr << "m1_gpu_probe: --repeat must be in [1, 16]\n";
+        return 2;
+      }
+      cli.repeat = repeat;
     } else if (arg == "--qp") {
       if (!next("--qp", value)) return 2;
       int qp = 0;
@@ -208,10 +219,22 @@ bool any_gpu_stage(const av2enc::cuda::m1gpu::GpuStageStatus& stages) {
          stages.deblock == StageState::kGpu || stages.sched == StageState::kGpu;
 }
 
+long long frame_diff_offset(const std::vector<std::uint8_t>& a,
+                            const std::vector<std::uint8_t>& b) {
+  const std::size_t limit = a.size() < b.size() ? a.size() : b.size();
+  for (std::size_t i = 0; i < limit; ++i) {
+    if (a[i] != b[i]) return static_cast<long long>(i);
+  }
+  if (a.size() != b.size()) return static_cast<long long>(limit);
+  return -1;
+}
+
 std::string stats_json(const Cli& cli, std::uint32_t width,
                        std::uint32_t height,
                        const av2enc::cuda::m1gpu::GpuResult& result,
-                       double wall_ms) {
+                       double wall_ms, bool repeat_identical,
+                       long long repeat_first_diff,
+                       const std::vector<double>& walls) {
   using av2enc::cuda::m1gpu::StageState;
   const bool gpu_bytes = any_gpu_stage(result.stages) &&
                          !result.frame_bytes_from_cpu;
@@ -227,6 +250,17 @@ std::string stats_json(const Cli& cli, std::uint32_t width,
   j += ",\"launches\":" + std::to_string(s.kernel_launches);
   j += ",\"sync_count\":" + std::to_string(s.sync_count);
   j += ",\"cuda_events\":false";
+  j += ",\"repeat\":" + std::to_string(static_cast<int>(walls.size()));
+  j += ",\"repeat_identical\":";
+  j += flag(repeat_identical);
+  j += ",\"repeat_first_diff_offset\":";
+  j += std::to_string(repeat_first_diff);
+  j += ",\"repeat_wall_ms\":[";
+  for (std::size_t i = 0; i < walls.size(); ++i) {
+    if (i != 0) j += ",";
+    j += std::to_string(walls[i]);
+  }
+  j += "]";
   j += ",\"encode_ns\":";
   j += std::to_string(static_cast<long long>(wall_ms * 1e6));
   j += ",\"orchestrator_ms\":" + std::to_string(s.total_ms);
@@ -353,28 +387,47 @@ int main(int argc, char** argv) {
   picture.u = frame.u();
   picture.v = frame.v();
 
-  av2enc::cuda::m1gpu::GpuResult result;
-  const auto start = std::chrono::steady_clock::now();
-  const bool ok = av2enc::cuda::m1gpu::encode_m1_gpu(picture, cli.options,
-                                                     result, error);
-  const auto stop = std::chrono::steady_clock::now();
-  if (!ok) {
-    std::cerr << "m1_gpu_probe: " << error << "\n";
-    return 1;
+  av2enc::cuda::m1gpu::GpuResult first;
+  std::vector<std::uint8_t> first_frame;
+  std::vector<double> walls;
+  bool repeat_identical = true;
+  long long repeat_first_diff = -1;
+  walls.reserve(static_cast<std::size_t>(cli.repeat));
+  for (int run = 0; run < cli.repeat; ++run) {
+    av2enc::cuda::m1gpu::GpuResult result;
+    const auto start = std::chrono::steady_clock::now();
+    const bool ok = av2enc::cuda::m1gpu::encode_m1_gpu(picture, cli.options,
+                                                       result, error);
+    const auto stop = std::chrono::steady_clock::now();
+    if (!ok) {
+      std::cerr << "m1_gpu_probe: run " << (run + 1) << ": " << error << "\n";
+      return 1;
+    }
+    walls.push_back(
+        std::chrono::duration<double, std::milli>(stop - start).count());
+    if (run == 0) {
+      first_frame = result.frame;
+      first = std::move(result);
+    } else if (result.frame != first_frame) {
+      if (repeat_identical) {
+        repeat_first_diff = frame_diff_offset(first_frame, result.frame);
+      }
+      repeat_identical = false;
+    }
   }
-  const double wall_ms =
-      std::chrono::duration<double, std::milli>(stop - start).count();
+  const double wall_ms = walls.empty() ? 0.0 : walls.front();
 
   const std::string header = dump_header(picture.width, picture.height, cli,
-                                         result);
-  if (!write_dump(cli.output, header, result.recon_y, result.recon_u,
-                  result.recon_v)) {
+                                         first);
+  if (!write_dump(cli.output, header, first.recon_y, first.recon_u,
+                  first.recon_v)) {
     std::cerr << "m1_gpu_probe: failed to write " << cli.output << "\n";
     return 1;
   }
 
   const std::string stats = stats_json(cli, picture.width, picture.height,
-                                       result, wall_ms);
+                                       first, wall_ms, repeat_identical,
+                                       repeat_first_diff, walls);
   if (!cli.stats.empty()) {
     std::ofstream out(cli.stats, std::ios::binary | std::ios::trunc);
     if (!out || !(out << stats << "\n")) {
@@ -386,16 +439,22 @@ int main(int argc, char** argv) {
     std::cout << stats << "\n";
   }
 
-  const bool gpu_bytes = any_gpu_stage(result.stages) &&
-                         !result.frame_bytes_from_cpu;
+  const bool gpu_bytes = any_gpu_stage(first.stages) &&
+                         !first.frame_bytes_from_cpu;
   std::cout << "m1_gpu_probe: " << picture.width << "x" << picture.height
             << " backend=" << (gpu_bytes ? "gpu" : "cpu-reference")
-            << " launches=" << result.stats.kernel_launches
-            << " arena_peak=" << result.stats.arena_used_bytes << "B"
+            << " launches=" << first.stats.kernel_launches
+            << " arena_peak=" << first.stats.arena_used_bytes << "B"
             << " wall=" << wall_ms << "ms"
-            << " tile=" << result.tile_bytes << "B"
-            << " frame=" << result.frame_bytes << "B"
+            << " repeat=" << cli.repeat
+            << " repeat_identical=" << (repeat_identical ? "true" : "false")
+            << " tile=" << first.tile_bytes << "B"
+            << " frame=" << first.frame_bytes << "B"
             << " -> " << cli.output << "\n";
+  if (!repeat_identical) {
+    std::cout << "m1_gpu_probe: repeat mismatch at frame offset "
+              << repeat_first_diff << "\n";
+  }
   if (!gpu_bytes) {
     std::cout << "m1_gpu_probe: note: frame bytes came from the CPU reference "
                  "or no stage reported kGpu\n";

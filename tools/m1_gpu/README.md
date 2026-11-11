@@ -23,7 +23,7 @@ while proving nothing. Hence the byte gate plus an execution attestation.
 
 | File | Purpose |
 |---|---|
-| `verify_gpu.sh` | CPU-vs-GPU gate: frame bytes, MD5, `dav2d` decode, decoded-plane compare, recon parity, attestation, PASS/FAIL/SKIP. |
+| `verify_gpu.sh` | CPU-vs-GPU gate: frame bytes, MD5, `dav2d` decode, decoded-plane compare, recon parity, determinism, sanitizer, attestation, PASS/FAIL/SKIP. Also runs the option matrix. |
 | `ivf_compare.py` | IVF frame-payload byte comparison (parses the 32-byte IVF header and 12-byte frame headers). |
 | `plane_compare.py` | Bit-exact first-frame Y/U/V comparison; reads Y4M or `M1DUMP1` dumps. |
 | `bench.py` | Wall/kernel/launch/VRAM benchmark at 64x64, 640x360 and 1080p, with proxy-hardware labelling. |
@@ -36,9 +36,9 @@ while proving nothing. Hence the byte gate plus an execution attestation.
 | Exit | Verdict | Meaning |
 |---:|---|---|
 | 0 | `PASS` | GPU execution attested, frame bytes identical, both streams decode, decoded planes identical (and recon planes identical when a dump exists). |
-| 1 | `FAIL` | Any byte/plane/decode difference, a GPU crash, or a missing GPU stream that was not a stub. |
+| 1 | `FAIL` | Any byte/plane/decode difference, a GPU crash, a nondeterministic GPU encode, a sanitizer error, or a missing GPU stream that was not a stub. |
 | 2 | setup | Missing encoder/decoder/ffmpeg/input; bad arguments. |
-| 3 | `SKIP` | `--m1-gpu` absent from the build; GPU run reported a stub/blocked path; GPU exited 0 without an IVF; or bytes matched but **GPU execution could not be attested** (possible CPU fallback). A SKIP is never a pass. |
+| 3 | `SKIP` | `--m1-gpu` absent; blocked/stub path; CPU-reference staging; GPU exited 0 without an IVF; compute-sanitizer saw no CUDA work; or bytes matched but **GPU execution could not be attested** (possible CPU fallback). A SKIP is never a pass. |
 
 `ALLOW_SKIP=1` (or `--allow-skip` for `bench.py`) maps `SKIP` to exit 0 for CI
 that only wants "no regression", without hiding the verdict line.
@@ -54,8 +54,14 @@ tools/m1_gpu/verify_gpu.sh
 # explicit input and recon parity
 tools/m1_gpu/verify_gpu.sh testdata/frame.y4m --recon
 
-# 1080p, keep artifacts, JSON-ish tool output
+# native 1080p input (testsrc2 at 1920x1080), keep artifacts
 tools/m1_gpu/verify_gpu.sh --size 1920x1080 --keep
+
+# option matrix (14 modes x 8 sizes), determinism, sanitizer
+tools/m1_gpu/verify_gpu.sh --matrix
+tools/m1_gpu/verify_gpu.sh --matrix --sizes 64x64,136x88 \
+    --modes default,full-intra,no-cfl --determinism
+tools/m1_gpu/verify_gpu.sh --size 64x64 --sanitize --racecheck
 ```
 
 From a laptop, using the prescribed tunnel:
@@ -80,15 +86,84 @@ Options worth knowing:
 
 | Option | Effect |
 |---|---|
-| `--size WxH` | Generate a testsrc2 input when no input file is given. |
-| `--cpu-args "..."` / `--gpu-args "..."` | Extra CLI flags for one side only (`--m1-full-intra`, `--no-cfl`, …). |
+| `--size WxH` | Generate a **native** testsrc2 input when no input file is given. |
+| `--m1-args "..."` | M1 flags for both encodes; mapped to `m1_dump`/probe args automatically. |
+| `--cpu-args "..."` / `--gpu-args "..."` | Extra CLI flags for one side only. |
 | `--recon` | Also compare encoder-side reconstructions. |
 | `--gpu-dump PATH` | GPU `M1DUMP1` file to compare (implies `--recon`). |
 | `--gpu-dump-arg FLAG` | Append `FLAG <workdir>/gpu-recon.dump` to the GPU command. |
 | `--require-recon` | `SKIP` when no GPU recon dump is available. |
 | `--no-attestation` | Explicitly unsafe: PASS on identical bytes even with no GPU evidence. |
 | `--no-nsys` | Do not fall back to Nsight Systems attestation (faster, more SKIPs). |
+| `--determinism` | Encode twice with the CLI; byte mismatch fails with the exact offset. |
+| `--determinism-probe` | Also encode twice in one process via `m1_gpu_probe`. |
+| `--sanitize` | Run the GPU encode under `compute-sanitizer --tool memcheck`. |
+| `--racecheck` | Additionally run `--tool racecheck` at 64x64 (skipped elsewhere). |
 | `--keep` | Keep IVF/log/dump artifacts. |
+
+### Matrix mode
+
+```sh
+tools/m1_gpu/verify_gpu.sh --matrix
+```
+
+Default dimensions: `64x64, 136x88, 640x360, 1280x720, 1920x1080` plus three
+seeded random even sizes (`--seed`, `--random-count`). Default modes:
+`default, full-intra, no-cfl, no-deblock, depth-0..4, depth-8, single, dc,
+adaptive-cdf, vram-cap-64` (14 modes, 112 cases). Narrow with
+`--sizes`/`--modes`.
+
+Each case is an independent `verify_gpu.sh` run, so a failure cannot poison the
+next case. Inputs are generated once per size natively and reused. The matrix
+prints one progress line per case, a summary, **every failing case with the
+exact byte offset / first sample / decoder error**, and grouped SKIP reasons.
+Failure attribution (CPU-reference decode vs GPU decode vs byte diff vs
+sanitizer) is printed so an invalid reference stream is not mistaken for a GPU
+parity bug.
+
+Runtime is bounded: `--matrix-budget SEC` (default 1800, 0 = unlimited) stops
+starting new cases and reports the remainder as SKIP; `--max-cases N` refuses
+an oversized matrix before it starts; `--timeout SEC` bounds each command.
+Matrices above 40 cases print a warning; `--sanitize` above 8 cases warns
+again because instrumentation is slow. Exit: all PASS → 0; any FAIL → 1; any
+unverified SKIP → 3.
+
+### Determinism
+
+`--determinism` runs the GPU encode a second time (separate process, separate
+IVF) and byte-compares both streams with MD5. A difference fails with the first
+differing payload offset and a 16-byte context around it. The second run's
+stats file is also required to attest, so a fallback second run cannot pass.
+
+`--determinism-probe` additionally runs `m1_gpu_probe --repeat 2`: two
+`encode_m1_gpu` calls in one process. Its stats JSON carries
+`repeat_identical` and `repeat_first_diff_offset`. A CPU-reference probe is
+ignored; an in-process difference fails the gate.
+
+### Compute Sanitizer
+
+`--sanitize` replaces the normal GPU run with
+`compute-sanitizer --tool memcheck --error-exitcode 99`. The sanitized run's
+IVF is the one byte-gated, decoded and plane-compared. Parsing:
+
+* `ERROR SUMMARY: N errors` with `N > 0` → FAIL (errors are printed).
+* `Target application terminated before first instrumented API call` → SKIP
+  (no CUDA work; usually the CPU-reference staging path).
+* no `ERROR SUMMARY` → FAIL (sanitizer did not complete).
+
+Sanitizer output is **not** used as execution attestation: it can instrument
+`cudaMalloc` without running a kernel. The normal stats/marker/nsys attestation
+still applies.
+
+`--racecheck` runs `--tool racecheck` as well, at 64x64 only. Any reported
+error or warning fails the case; other sizes print `racecheck: skipped`. The
+race run uses separate output paths so it never overwrites the gated IVF.
+
+### Native inputs
+
+`--size WxH` and the matrix generate testsrc2 at the exact requested size.
+There is no 640x360→1080p upscale proxy any more, so 720p/1080p exercise real
+bottom/right edge geometry. `bench.py` uses the same native generation.
 
 ## Execution attestation (contract)
 
@@ -213,8 +288,9 @@ CPU rows are opt-in (`--cpu-baseline`) and labelled oracle/reference only.
 Per `AGENTS.md`, CPU-only mode is a correctness oracle, not a performance
 target.
 
-Defaults are deliberately light (`--iterations 3`, one warmup) because the box
-is shared with other agents.
+Inputs are generated natively (testsrc2 at the requested size); 1080p is no
+longer an upscale proxy. Defaults are deliberately light (`--iterations 3`,
+one warmup) because the box is shared with other agents.
 
 ## Hardware disclaimer
 
@@ -232,37 +308,60 @@ comparison, not as an absolute product number.
 
 ## Current status (2026-11-11)
 
-The working tree now has `src/cuda/m1/` and the `--m1-gpu` CLI wiring, but the
-orchestrator still stages a CPU reference while stage hooks are missing:
-`GpuResult::frame_bytes_from_cpu` is true. The `build-cuda` binary on the 3060
-box at the time of testing was older than the tree and rejected the flag
-outright. Both are `SKIP`:
+The 3060 `build-cuda` now runs the integrated GPU pipeline: every stage reports
+`gpu`, `frame_bytes_from_cpu` is false, and the gate passes at 64x64, 640x360
+and native 1920x1080. All PASS rows are attested by Nsight Systems kernel
+counts because the CLI does not yet write `AV2ENC_GPU_STATS`; the probe does.
+
+Full matrix on the live path (`--matrix`, 14 modes x 8 sizes, 209 s):
 
 ```
-# blocked build
-av2enc: error: --m1-gpu is not available in this build: the M1 GPU pipeline
-(src/cuda/m1/m1_gpu.h) is not integrated yet. Use --m1 for the CPU M1 path.
-RESULT: SKIP (GPU run reported an unimplemented/blocked path (exit 2))
-
-# staged CPU-reference orchestrator (exit 0, byte-identical output)
-av2enc: note: M1 GPU stage hooks are not linked yet; frame bytes came from
-        the CPU M1 reference
-RESULT: SKIP (GPU run used CPU-reference staging; frame bytes did not come
-        from GPU stages)
+result:   50 PASS, 62 FAIL, 0 SKIP
+attribution: 35 CPU-reference encode failures, 27 CPU-reference decode failures
+            0 byte differences, 0 GPU decode failures, 0 plane differences
 ```
 
-A build without the flag takes the earlier exit: `RESULT: SKIP (GPU path not
-present in this encoder build)`. All are the intended behaviour for "not wired
-yet": no false pass. The CPU reference path itself is covered separately by
-`tools/m1_verify/`.
+Representative PASS (1920x1080, default mode, 14,421 kernels observed):
 
-The gate has also been exercised against local fakes: a silent CPU fallback
-that claims `--m1-gpu` (SKIP: unattested), a real `--m1-gpu` blocker (SKIP), a
-staged CPU-reference shim that prints the orchestrator's note (SKIP), a stub
-that prints "not implemented" (SKIP), a corrupted GPU stream (FAIL at the byte
-gate and at decode), recon mismatch (FAIL), and stats/nsys-attested runs (PASS,
-including the real `nsys` kernel-count path on the 3060). Sample output is in
-the handoff report, not committed.
+```
+frame 0: payload 87928 B  md5 cpu=… gpu=…  IDENTICAL
+RESULT: IVF FRAME BYTES IDENTICAL
+kernels:  14421 (GPU work observed)
+cpu decode: ok (threads=1)
+gpu decode: ok (threads=1)
+RESULT: PLANES BIT-EXACT (0 differing samples)
+RESULT: PASS
+```
+
+`--recon` at 1920x1080 compares `GpuResult::recon_*` to a freshly rebuilt CPU
+`m1_dump` and is bit-exact (Y/U/V md5s match the decoded stream as well).
+`--determinism`, `--determinism-probe`, `--sanitize` (memcheck 0 errors) and
+`--racecheck` (0 hazards) pass at 64x64/640x360.
+
+The 62 matrix failures are all in the **CPU reference**, before GPU parity can
+be judged. They are real correctness bugs for the M1 encoder workstream, not
+harness bugs:
+
+| Size | PASS / FAIL | Cause |
+|---|---|---|
+| 64x64, 640x360, 1920x1080 | 13 / 1 | `depth-8`: `EOB multisize 0 is not supported by M1 transform sizes` |
+| 532x368 | 11 / 3 | `depth-0`, `depth-8`, `single`: `partition decision failed … spec-forced partition conflicts` |
+| 136x88 | 0 / 14 | `dav2d`: `Invalid argument`; depths 0–3/8/single fail in the encoder |
+| 1280x720 | 0 / 14 | `dav2d`: `Invalid argument`; depth 0/1/8/single fail in the encoder |
+| 416x208 | 0 / 14 | `dav2d`: `Invalid argument`; depth 0–2/8/single fail in the encoder |
+| 518x322 | 0 / 14 | encoder: `spec-forced partition conflicts` (all modes) |
+
+A 640x360/depth-4 case failed once with **identical payload MD5s** but three
+decoded samples differing; it did not reproduce in 200 straight decodes or
+20 gate runs. The plane gate now decodes both streams back-to-back with
+`--threads 1` and, when payloads are identical but planes differ, retries the
+pair once and reports `decoded YUV: IDENTICAL (decoder retry)`. The clean
+matrix above ran with that behaviour (zero retries needed).
+
+A build without the flag, a blocker, or a staged CPU-reference orchestrator
+still takes the earlier paths: `RESULT: SKIP (GPU path not present …)`,
+`RESULT: SKIP (GPU run reported an unimplemented/blocked path)`, or
+`RESULT: SKIP (GPU run used CPU-reference staging …)`. A SKIP is never a pass.
 
 ## Limitations
 
@@ -271,6 +370,10 @@ the handoff report, not committed.
 * IVF timestamps are reported but not part of the byte gate (they are not
   stream data).
 * `plane_compare.py` supports 8-bit 4:2:0 only, matching M1 scope.
+* The plane gate decodes both streams back-to-back with `DAV2D_THREADS`
+  (default 1) and retries the pair once if identical payloads decode
+  differently. The retry keeps a rare decoder inconsistency from being
+  reported as a GPU parity failure; the byte gate remains authoritative.
 * If the encoder emits a stats file only on a clean exit, a crashed GPU run is
   classified FAIL (stub text) or SKIP (no IVF), not PASS.
 * `nsys` attestation only proves that *some* CUDA kernel ran; it cannot prove
@@ -283,3 +386,16 @@ the handoff report, not committed.
   same encode options as the CPU `M1Result` dump, and from the GPU run that
   produced the IVF being gated. A dump from a second encode is not cross-checked
   against the IVF beyond the option fields in the header.
+* A matrix FAIL can come from the CPU reference itself (for example the
+  geometry bug in the snapshot above). The summary attributes CPU-reference
+  decode failures separately so they are not mistaken for GPU parity failures.
+  Strictness is intentional: a case whose reference does not decode cannot
+  pass.
+* `compute-sanitizer` output is not execution attestation. Memcheck can
+  instrument `cudaMalloc` without a single kernel; the stats/marker/nsys
+  channels still decide whether the GPU path ran.
+* Racecheck is only run at 64x64 (per the gate contract). Any hazard error or
+  warning fails the case; it is intentionally strict and may need tuning once
+  real kernels land.
+* `--sanitize` is slow (instrumented execution) and is meant for small
+  dimensions; the matrix warns when it is combined with many cases.

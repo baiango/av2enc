@@ -131,36 +131,21 @@ def make_input(path: Path, width: int, height: int, force: bool = False) -> None
     if not shutil.which("ffmpeg"):
         die(f"ffmpeg not found; cannot generate {width}x{height} input")
     path.parent.mkdir(parents=True, exist_ok=True)
-    src_w, src_h = width, height
-    prefilter = []
-    tmp = None
-    if width > 640:
-        # Match tools/m1_verify/run_matrix.sh: build 640x360, Lanczos upscale.
-        tmp = path.with_name(f".src-{path.stem}.y4m")
-        src_w, src_h = 640, 360
+    if width % 2 or height % 2:
+        die(f"4:2:0 needs even dimensions, got {width}x{height}")
+    # Native testsrc2 at the requested size. This avoids an upscale proxy for
+    # 1080p/720p and exercises real edge geometry.
     cmd = [
         "ffmpeg", "-hide_banner", "-v", "error", "-y",
         "-f", "lavfi", "-i",
-        f"testsrc2=size={src_w}x{src_h}:rate=1",
+        f"testsrc2=size={width}x{height}:rate=1",
         "-frames:v", "1", "-pix_fmt", "yuv420p",
+        "-f", "yuv4mpegpipe", str(path),
     ]
-    if tmp is not None:
-        cmd += ["-f", "yuv4mpegpipe", str(tmp)]
+    try:
         proc = run(cmd, timeout=300)
-        if proc.returncode != 0:
-            die(f"ffmpeg failed generating {tmp}: {proc.stderr.strip()}")
-        cmd = [
-            "ffmpeg", "-hide_banner", "-v", "error", "-y",
-            "-i", str(tmp),
-            "-vf", f"scale={width}:{height}:flags=lanczos",
-            "-frames:v", "1", "-pix_fmt", "yuv420p",
-            "-f", "yuv4mpegpipe", str(path),
-        ]
-    else:
-        cmd += ["-f", "yuv4mpegpipe", str(path)]
-    proc = run(cmd, timeout=300)
-    if tmp is not None:
-        tmp.unlink(missing_ok=True)
+    except subprocess.TimeoutExpired:
+        die(f"ffmpeg timed out generating {width}x{height} input")
     if proc.returncode != 0 or not path.is_file():
         die(f"ffmpeg failed generating {width}x{height} input: "
             f"{proc.stderr.strip()}")
