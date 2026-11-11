@@ -106,6 +106,24 @@ The mode search is SSE-only; it needs a rate term (RDO) before it can pay for
 the mode signalling. Until then `--m1` stays DC-safe and `--m1-full-intra`
 enables the search.
 
+## Unified RDO loop
+
+`src/encoder/m1/rdo_loop/` replaces the SSE-only partition/mode decisions with a
+joint `SSE + lambda * coded-bits` search over real coefficient bits
+(`lambda = sse_scale * 66^2`, QP 90 step 66). Measured at QP 90, one frame,
+`--m1` plus the loop (`AV2ENC_RDO_LOOP=1`, scale 0.0005):
+
+| Still | Heuristic | Unified loop | Delta |
+|---|---|---|---|
+| 64x64 | 936 B / 43.28 dB / 9.9009 | 918 B / 43.57 dB / 9.9191 | -2.0% B, +0.17 dB, +0.018 JOD |
+| 640x360 | 13,355 B / 46.37 dB / 9.8867 | 13,693 B / 49.06 dB / 9.9505 | +2.5% B, +3.03 dB, +0.064 JOD |
+| 1080p | 61,574 B / 47.73 dB / 9.8976 | 61,894 B / 51.02 dB / 9.9253 | +0.5% B, +3.68 dB, +0.028 JOD |
+
+This is the first change that improves PSNR **and** CVVDP together on every
+fixture. It supersedes the `heuristic + tools` row, which is worse than the
+heuristic alone. The loop is default-off until the M1 core calls it; the
+patched binary is byte-identical to the reference when the hook is unset.
+
 ## Known limits
 
 - Directional/smooth **chroma** is available behind `M1Options::uv_full`
