@@ -173,7 +173,8 @@ inline void naive_ccso(TestFrame& f, const CcsoFrameParams& params,
                        const std::uint16_t* mcs = nullptr,
                        const std::uint16_t* mce = nullptr,
                        const std::uint16_t* mrs = nullptr,
-                       const std::uint16_t* mre = nullptr) {
+                       const std::uint16_t* mre = nullptr,
+                       int sb_width = 64, int sb_height = 64) {
   const int mi_cols = f.mi_cols;
   const int mi_rows = f.mi_rows;
   for (int plane = 0; plane < 3; ++plane) {
@@ -189,8 +190,8 @@ inline void naive_ccso(TestFrame& f, const CcsoFrameParams& params,
     const int blkW = 1 << shiftX;
     const int planeWidth = (mi_cols * 4) >> subX;
     const int planeHeight = (mi_rows * 4) >> subY;
-    const int sbBlkW = (64 >> subX);
-    const int sbBlkH = (64 >> subY);
+    const int sbBlkW = (sb_width >> subX);
+    const int sbBlkH = (sb_height >> subY);
     const int quantStep = kCcsoQuantSz[cp.scale_idx][cp.quant_idx];
     const int dy = kCcsoPos[cp.ext_filter][0];
     const int dx = kCcsoPos[cp.ext_filter][1];
@@ -289,6 +290,8 @@ struct NaiveLrFrame {
   const std::uint16_t* mrs = nullptr;
   const std::uint16_t* mre = nullptr;
   int disable_across_tiles = 0;
+  const std::uint8_t* filter_class_grid = nullptr;
+  const std::uint8_t* subclass_lookup = nullptr;
   const std::uint8_t* subclass_grid = nullptr;
   int cfl_ds_filter_index = 0;
 };
@@ -455,7 +458,20 @@ inline void naive_loop_restoration(const NaiveLrFrame& n,
             int subcls = 0;
             const bool frameFilters = p.frame_filters_on[plane] != 0;
             if (plane == 0 && p.frame_filters_on[0] && p.num_filter_classes > 1) {
-              subcls = n.subclass_grid[(py >> 2) * f.mi_cols + (px >> 2)];
+              const int cell = (py >> 2) * f.mi_cols + (px >> 2);
+              if (n.filter_class_grid != nullptr) {
+                int cls = n.filter_class_grid[cell];
+                if (cls < 0 || cls >= 16) {
+                  cls = 0;
+                }
+                subcls = n.subclass_lookup != nullptr ? n.subclass_lookup[cls]
+                                                      : cls;
+              } else if (n.subclass_grid != nullptr) {
+                subcls = n.subclass_grid[cell];
+              }
+              if (subcls < 0 || subcls >= p.num_filter_classes) {
+                subcls = 0;
+              }
             }
             const std::int16_t* frameCoeffs =
                 frameFilters ? p.frame_coeffs[plane] +
@@ -484,7 +500,7 @@ inline void naive_loop_restoration(const NaiveLrFrame& n,
                 }
               }
             }
-            const int v = s >= 0 ? (s + 64) >> 7 : -((-s + 64) >> 7);
+            const int v = (s + (1 << (7 - 1))) >> 7;  // §4.8 Round2(s, 7)
             out[plane][static_cast<std::size_t>(py * f.stride[plane] + px)] =
                 static_cast<std::uint8_t>(clip3i(0, 255, v));
           }

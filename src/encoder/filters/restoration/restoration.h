@@ -34,6 +34,9 @@
 
 namespace av2enc::restoration {
 
+struct CcsoFrameParams;
+struct LoopRestorationParams;
+
 struct RestorationPlane {
   std::uint8_t* data = nullptr;
   int stride = 0;
@@ -92,8 +95,9 @@ enum class RestorationStatus {
   kUnsupportedSubsampling,
   kUnsupportedPcWiener,   // needs tables that are not in the spec text
   kUnsupportedGdf,        // needs tables that are not in the spec text
-  kUnsupportedCcsoUnitSize,  // CCSO unit smaller than the superblock
+  kUnsupportedCcsoUnitSize,  // reserved (CCSO units below the SB are legal)
   kMissingSubclassGrid,   // frame_filters_on without a §7.20.4 class map
+  kNonConformingUnitSize, // LoopRestorationSize / unit grid violates §6.17.7.7
 };
 
 const char* restoration_status_string(RestorationStatus status);
@@ -101,6 +105,14 @@ const char* restoration_status_string(RestorationStatus status);
 // Required plane extent helpers (derived from the MI grid, as in §7.19.1).
 int restoration_plane_width(const RestorationFrame& frame, int plane);
 int restoration_plane_height(const RestorationFrame& frame, int plane);
+
+// Parameters-only validation, for callers that assemble device-side structs
+// and want to reject a configuration before any kernel launch.  Both return
+// kOk without touching pixel memory.
+RestorationStatus ccso_validate(const RestorationFrame& frame,
+                                const CcsoFrameParams& params);
+RestorationStatus loop_restoration_validate(const RestorationFrame& frame,
+                                            const LoopRestorationParams& params);
 
 // §5.20.10.4 count_units_in_frame().
 int restoration_count_units(int unit_size, int frame_size);
@@ -125,7 +137,10 @@ struct CcsoParams {
 
 struct CcsoFrameParams {
   CcsoParams plane[3];
-  int ccso_luma_size_log2 = kCcsoLumaSizeLog2;
+  // §5.18.7.12 CcsoLumaSizeLog2: 6, 7 or 8.  For M1's 64x64 superblocks with
+  // ccso_unit_matches_sb_size = 1 this is 6
+  // (ccso_select_luma_size_log2(64, a, true) == 6).
+  int ccso_luma_size_log2 = 6;
   // CcsoBlks[plane]: one byte per luma CCSO unit, row-major.
   const std::uint8_t* blks[3] = {nullptr, nullptr, nullptr};
   int blk_cols[3] = {0, 0, 0};
@@ -142,6 +157,11 @@ int ccso_offset_count(const CcsoParams& params);
 // syntax reads them.  Returns false on bad indices/counts.
 bool ccso_set_offsets(CcsoParams& params, const std::uint8_t* indices,
                       std::size_t count);
+
+// True when the scalar fields are representable by §5.18.7.12: max_band_log2
+// fits f(2 + bo_only) and edge_clf fits f(1).  The filter core accepts a wider
+// range for diagnostics; a real bitstream writer must pass this check.
+bool ccso_header_conforms(const CcsoParams& params);
 
 // Applies §7.19 / §7.19.1 in place to `frame.cdef`.
 RestorationStatus ccso_frame(const RestorationFrame& frame,
@@ -170,13 +190,21 @@ struct LoopRestorationParams {
   const std::int16_t* unit_coeffs[3] = {nullptr, nullptr, nullptr};
 
   // Frame-level Wiener filters (§5.18.7.11 frame_filters_on).  When set, the
-  // per-unit coefficient arrays are ignored.  `subclass_grid` is the luma MI
-  // grid of FilterClass/SubclassLookup results; producing it requires §7.20.4
-  // pixel classification, whose LUT is not in the spec text, so it must be
-  // supplied by the caller.
+  // per-unit coefficient arrays are ignored.
+  //
+  // §7.20.3 needs a per-4x4 luma *pixel class* (FilterClass from §7.20.4) and
+  // then SubclassLookup[class] -> coefficient index.  Producing FilterClass
+  // requires §7.20.4 pixel classification, whose Pc_Wiener_* tables are not in
+  // the spec text, so an encoder must either (a) supply both
+  // `filter_class_grid` and a 16-entry `subclass_lookup`, or (b) use the legacy
+  // `subclass_grid`, which is already the looked-up coefficient index per 4x4
+  // cell.  `subclass_grid` is kept so existing callers/tests remain valid; new
+  // code should prefer the two-field form.
   int frame_filters_on[3] = {0, 0, 0};
   int num_filter_classes = 1;
-  const std::uint8_t* subclass_grid = nullptr;
+  const std::uint8_t* filter_class_grid = nullptr;  // mi_cols x mi_rows
+  const std::uint8_t* subclass_lookup = nullptr;    // kWienerNsClasses
+  const std::uint8_t* subclass_grid = nullptr;      // legacy, pre-looked-up
   const std::int16_t* frame_coeffs[3] = {nullptr, nullptr, nullptr};
 
   // GDF is not implemented; a nonzero request fails with kUnsupportedGdf.

@@ -49,6 +49,12 @@ struct LrCorePlane {
   // FrameLrWienerNs[plane][class][coeff], stride kWienerNsCoeffStride, used
   // when frame_filters_on[plane] is set.
   const std::int16_t* frame_coeffs = nullptr;
+
+  // Optional §7.20.3/§7.20.4 class map.  `filter_class_grid` is FilterClass on
+  // the luma MI grid; `subclass_lookup` maps it to a coefficient class.
+  // `subclass_grid` is the legacy shortcut: already-looked-up subclasses.
+  const std::uint8_t* filter_class_grid = nullptr;
+  const std::uint8_t* subclass_lookup = nullptr;
 };
 
 struct LrCoreFrame {
@@ -65,8 +71,12 @@ struct LrCoreFrame {
   int frame_filters_on[3] = {0, 0, 0};
   int num_filter_classes = 1;
 
-  // FilterClass / SubclassLookup result, luma MI grid: one byte per 4x4 luma
-  // cell.  Only read when frame_filters_on[0] && num_filter_classes > 1.
+  // FilterClass / SubclassLookup inputs, luma MI grid.  For frame-level luma
+  // filters with num_filter_classes > 1:
+  //   * if filter_class_grid != nullptr, subcls = subclass_lookup[cls];
+  //   * else the legacy subclass_grid is used directly.
+  const std::uint8_t* filter_class_grid = nullptr;
+  const std::uint8_t* subclass_lookup = nullptr;
   const std::uint8_t* subclass_grid = nullptr;
 
   const std::uint8_t* segment_ids = nullptr;
@@ -342,9 +352,18 @@ AV2ENC_LR_HD void wiener_ns_block(const LrCoreFrame& f, const LrBlock& b,
 
       int subcls = 0;
       if (plane == 0 && f.frame_filters_on[0] != 0 &&
-          f.num_filter_classes > 1 && f.subclass_grid != nullptr) {
-        subcls = f.subclass_grid[(sy >> kMiSizeLog2) * f.mi_cols +
-                                 (sx >> kMiSizeLog2)];
+          f.num_filter_classes > 1) {
+        const int cell = (sy >> kMiSizeLog2) * f.mi_cols +
+                         (sx >> kMiSizeLog2);
+        if (f.filter_class_grid != nullptr) {
+          int cls = f.filter_class_grid[cell];
+          if (cls < 0 || cls >= kWienerNsClasses) {
+            cls = 0;
+          }
+          subcls = f.subclass_lookup != nullptr ? f.subclass_lookup[cls] : cls;
+        } else if (f.subclass_grid != nullptr) {
+          subcls = f.subclass_grid[cell];
+        }
         if (subcls < 0 || subcls >= f.num_filter_classes) {
           subcls = 0;
         }

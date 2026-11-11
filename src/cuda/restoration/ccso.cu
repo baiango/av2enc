@@ -69,14 +69,11 @@ bool validate(const CcsoCoreFrame& f) {
     }
     const int sub_x = (p == 0) ? 0 : f.sub_x;
     const int sub_y = (p == 0) ? 0 : f.sub_y;
-    const int blk_w = 1 << (f.ccso_luma_size_log2 - sub_x);
-    const int blk_h = 1 << (f.ccso_luma_size_log2 - sub_y);
-    if (blk_w < (f.sb_width >> sub_x) || blk_h < (f.sb_height >> sub_y)) {
-      return false;  // §7.19.1 loop ambiguity, see the CPU README
-    }
-    const int cols = (width + blk_w - 1) / blk_w;
-    const int rows =
-        (av2enc::restoration::ccso_plane_height(f, p) + blk_h - 1) / blk_h;
+    int cols = 0;
+    int rows = 0;
+    av2enc::restoration::ccso_blk_grid_size(
+        width, av2enc::restoration::ccso_plane_height(f, p),
+        f.ccso_luma_size_log2, sub_x, sub_y, &cols, &rows);
     if (c.blk_cols < cols || c.blk_rows < rows) {
       return false;  // CcsoBlks must cover the plane
     }

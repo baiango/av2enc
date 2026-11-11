@@ -63,13 +63,16 @@ int units_for(int unit_size, int frame_size) {
 }
 
 void setup_params(const TestFrame& f, int unit_size, RestorationType t,
-                  LoopRestorationParams* p, LrTest* tst) {
+                  LoopRestorationParams* p, LrTest* tst,
+                  int chroma_unit_size = -1) {
   for (int pl = 0; pl < 3; ++pl) {
+    const int us = (pl == 0 || chroma_unit_size <= 0) ? unit_size
+                                                      : chroma_unit_size;
     p->frame_type[pl] = t;
-    p->unit_size[pl] = unit_size;
+    p->unit_size[pl] = us;
     const int sub = (pl == 0) ? 0 : 1;
-    const int rows = units_for(unit_size, (f.mi_rows * 4) >> sub);
-    const int cols = units_for(unit_size, (f.mi_cols * 4) >> sub);
+    const int rows = units_for(us, (f.mi_rows * 4) >> sub);
+    const int cols = units_for(us, (f.mi_cols * 4) >> sub);
     p->unit_rows[pl] = rows;
     p->unit_cols[pl] = cols;
     tst->type[pl].assign(static_cast<std::size_t>(rows * cols),
@@ -111,6 +114,8 @@ void run_naive(const TestFrame& f, const LoopRestorationParams& params,
   NaiveLrFrame nn = n;
   nn.src = &f;
   nn.params = &params;
+  nn.filter_class_grid = params.filter_class_grid;
+  nn.subclass_lookup = params.subclass_lookup;
   nn.subclass_grid = params.subclass_grid;
   naive_loop_restoration(nn, out->lr);
 }
@@ -316,6 +321,53 @@ void test_frame_filters_and_subclass() {
   std::cout << "  frame filters: 2 pixel classes\n";
 }
 
+void test_class_grid_and_lookup() {
+  TestFrame f = make_frame(16, 12);
+  Rng rng(45);
+  fill_random(f, rng);
+  LoopRestorationParams params;
+  LrTest tst;
+  setup_params(f, 64, kRestoreWienerNs, &params, &tst);
+  params.frame_filters_on[0] = 1;
+  params.num_filter_classes = 2;
+
+  // FilterClass lives in 0..15; SubclassLookup maps it to one of the two
+  // coefficient classes.  This is the §7.20.3 shape, distinct from the legacy
+  // pre-looked-up subclass_grid.
+  std::vector<std::uint8_t> cls(static_cast<std::size_t>(f.mi_cols * f.mi_rows),
+                                0);
+  for (std::size_t i = 0; i < cls.size(); ++i) {
+    cls[i] = static_cast<std::uint8_t>(rng.range(0, 15));
+  }
+  std::vector<std::uint8_t> lookup(16, 0);
+  for (int i = 0; i < 16; ++i) {
+    lookup[static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(i & 1);
+  }
+  params.filter_class_grid = cls.data();
+  params.subclass_lookup = lookup.data();
+  for (int pl = 0; pl < 3; ++pl) {
+    tst.frame_coeffs[pl].assign(2 * kWienerNsCoeffStride, 0);
+    params.frame_coeffs[pl] = tst.frame_coeffs[pl].data();
+    if (pl == 0) {
+      tst.frame_coeffs[0][0] = 17;
+      tst.frame_coeffs[0][18 + 1] = -9;
+    } else {
+      tst.frame_coeffs[pl][2] = 7;
+      tst.frame_coeffs[pl][18 + 5] = -5;
+    }
+  }
+  RestorationFrame view = f.view();
+  TestFrame want;
+  NaiveLrFrame n;
+  run_naive(f, params, n, &want);
+  CHECK(loop_restoration_frame(view, params) == RestorationStatus::kOk,
+        "filter-class grid + lookup ok");
+  compare_all(f, want,
+              "FilterClass + SubclassLookup matches the oracle");
+  std::cout << "  frame filters: FilterClass grid + SubclassLookup\n";
+}
+
+
 void test_per_unit_types_and_partial() {
   // 100x36 luma, unit 64 -> 2x1 luma units, 1 unit for chroma 50x18.
   TestFrame f = make_frame(25, 9);
@@ -360,12 +412,15 @@ void test_per_unit_types_and_partial() {
 }
 
 void test_tile_clipping() {
-  TestFrame f = make_frame(32, 20);
+  TestFrame f = make_frame(32, 32);
   Rng rng(66);
   fill_random(f, rng);
   LoopRestorationParams params;
   LrTest tst;
-  setup_params(f, 64, kRestoreWienerNs, &params, &tst);
+  // §6.17.7.7 check_ru_size: maxPlaneRuSize = max(64, 32 << 1) = 64, so the
+  // 64x64 synthetic tiles below are conforming.  This also exercises distinct
+  // luma/chroma unit sizes.
+  setup_params(f, 64, kRestoreWienerNs, &params, &tst, /*chroma=*/32);
   for (int pl = 0; pl < 3; ++pl) {
     tst.coeffs[pl][0] = 30;
     tst.coeffs[pl][1] = -20;
@@ -381,8 +436,8 @@ void test_tile_clipping() {
       const std::size_t i = static_cast<std::size_t>(y * f.mi_cols + x);
       mcs[i] = static_cast<std::uint16_t>(x < 16 ? 0 : 16);
       mce[i] = static_cast<std::uint16_t>(x < 16 ? 16 : 32);
-      mrs[i] = static_cast<std::uint16_t>(y < 10 ? 0 : 10);
-      mre[i] = static_cast<std::uint16_t>(y < 10 ? 10 : 20);
+      mrs[i] = static_cast<std::uint16_t>(y < 16 ? 0 : 16);
+      mre[i] = static_cast<std::uint16_t>(y < 16 ? 16 : 32);
     }
   }
   RestorationFrame view = f.view();
@@ -520,6 +575,64 @@ void test_validation() {
             RestorationStatus::kMissingSubclassGrid,
         "frame filters without a subclass grid rejected");
 
+  LoopRestorationParams cls_no_lookup = params;
+  cls_no_lookup.frame_filters_on[0] = 1;
+  cls_no_lookup.num_filter_classes = 2;
+  for (int pl = 0; pl < 3; ++pl) {
+    cls_no_lookup.frame_coeffs[pl] = frame_coeffs.data();
+  }
+  cls_no_lookup.filter_class_grid = tst.type[0].data();
+  CHECK(loop_restoration_frame(view, cls_no_lookup) ==
+            RestorationStatus::kMissingSubclassGrid,
+        "FilterClass grid without SubclassLookup rejected");
+
+  LoopRestorationParams bad_classes = params;
+  bad_classes.frame_filters_on[0] = 1;
+  bad_classes.num_filter_classes = 5;  // not in Decode_Num_Filter_Classes
+  bad_classes.frame_coeffs[0] = frame_coeffs.data();
+  bad_classes.subclass_grid = tst.type[0].data();
+  CHECK(loop_restoration_frame(view, bad_classes) ==
+            RestorationStatus::kInvalidArgument,
+        "num_filter_classes outside Decode_Num_Filter_Classes rejected");
+
+  LoopRestorationParams small_luma = params;
+  small_luma.unit_size[0] = 32;
+  CHECK(loop_restoration_frame(view, small_luma) ==
+            RestorationStatus::kNonConformingUnitSize,
+        "luma restoration unit below one stripe rejected");
+
+  LoopRestorationParams bad_chroma = params;
+  bad_chroma.unit_size[1] = 32;
+  bad_chroma.unit_size[2] = 64;
+  CHECK(loop_restoration_frame(view, bad_chroma) ==
+            RestorationStatus::kNonConformingUnitSize,
+        "LoopRestorationSize[2] != [1] rejected");
+
+  // A 64-sample tile boundary with unit sizes that imply maxPlaneRu = 128
+  // violates §6.17.7.7 check_ru_size().
+  const int n = f.mi_cols * f.mi_rows;
+  std::vector<std::uint16_t> mcs(static_cast<std::size_t>(n), 0);
+  std::vector<std::uint16_t> mce(static_cast<std::size_t>(n), 0);
+  std::vector<std::uint16_t> mrs(static_cast<std::size_t>(n), 0);
+  std::vector<std::uint16_t> mre(static_cast<std::size_t>(n), 0);
+  for (int y = 0; y < f.mi_rows; ++y) {
+    for (int x = 0; x < f.mi_cols; ++x) {
+      const std::size_t i = static_cast<std::size_t>(y * f.mi_cols + x);
+      mcs[i] = static_cast<std::uint16_t>(x < 8 ? 0 : 8);
+      mce[i] = static_cast<std::uint16_t>(x < 8 ? 8 : 16);
+      mrs[i] = 0;
+      mre[i] = static_cast<std::uint16_t>(f.mi_rows);
+    }
+  }
+  RestorationFrame tiles = view;
+  tiles.mi_col_start = mcs.data();
+  tiles.mi_col_end = mce.data();
+  tiles.mi_row_start = mrs.data();
+  tiles.mi_row_end = mre.data();
+  CHECK(loop_restoration_frame(tiles, params) ==
+            RestorationStatus::kNonConformingUnitSize,
+        "tile boundary not divisible by maxPlaneRuSize rejected");
+
   RestorationFrame alias = view;
   alias.lr[0].data = alias.cdef[0].data;
   CHECK(loop_restoration_frame(alias, params) ==
@@ -563,7 +676,7 @@ void test_randomized_oracle() {
     fill_random(f, rng, rng.range(0, 40), rng.range(200, 255));
     LoopRestorationParams params;
     LrTest tst;
-    const int unit_size = rng.range(0, 1) ? 32 : 64;
+    const int unit_size = rng.range(0, 1) ? 64 : 128;
     setup_params(f, unit_size, kRestoreSwitchable, &params, &tst);
     const bool frame_filters = rng.range(0, 3) == 0;
     for (int pl = 0; pl < 3; ++pl) {
@@ -625,6 +738,7 @@ int main() {
   test_chroma_from_luma_and_cfl();
   test_stripe_sourcing();
   test_frame_filters_and_subclass();
+  test_class_grid_and_lookup();
   test_per_unit_types_and_partial();
   test_tile_clipping();
   test_lossless_and_bru();

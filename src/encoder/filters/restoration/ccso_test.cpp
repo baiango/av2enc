@@ -511,6 +511,83 @@ void test_partial_units_and_clipping() {
   std::cout << "  partial units (68x20) and 0/255 clipping\n";
 }
 
+void test_unit_selection_and_small_unit() {
+  // §5.18.7.12 CcsoLumaSizeLog2 derivation.
+  CHECK(ccso_select_luma_size_log2(64, 0, true) == 6,
+        "64 SB with unit==SB selects 64x64 CCSO units");
+  CHECK(ccso_select_luma_size_log2(128, 0, true) == 7,
+        "128 SB with unit==SB selects 128x128 CCSO units");
+  CHECK(ccso_select_luma_size_log2(256, 0, true) == 8,
+        "256 SB with unit==SB selects 256x256 CCSO units");
+  CHECK(ccso_select_luma_size_log2(64, 0, false) == 8,
+        "64-aligned tile starts permit 256x256 CCSO units");
+  CHECK(ccso_select_luma_size_log2(64, 32, false) == 7,
+        "32-aligned tile starts select 128x128 CCSO units");
+  CHECK(ccso_select_luma_size_log2(64, 16, false) == 6,
+        "otherwise CCSO units are 64x64");
+  int cols = 0;
+  int rows = 0;
+  ccso_blk_grid_size(640, 360, 6, 0, 0, &cols, &rows);
+  CHECK(cols == 10 && rows == 6, "640x360 luma needs a 10x6 CcsoBlks grid");
+  ccso_blk_grid_size(320, 180, 6, 1, 1, &cols, &rows);
+  CHECK(cols == 10 && rows == 6, "4:2:0 chroma keeps the same grid");
+
+  // §5.18.7.12 f(2 + bo_only) and f(1) limits.
+  {
+    CcsoParams normal = base_params(3, false, 0, 0).plane[0];
+    CHECK(ccso_header_conforms(normal), "3-band non-bo_only header-conforming");
+    normal.max_band_log2 = 4;
+    CHECK(!ccso_header_conforms(normal),
+          "4-band non-bo_only is not signalable by f(2)");
+    CcsoParams bo = base_params(6, true, 0, 0).plane[0];
+    CHECK(ccso_header_conforms(bo), "6-band bo_only header-conforming");
+    CcsoParams edge = base_params(3, false, 2, 0).plane[0];
+    CHECK(!ccso_header_conforms(edge), "edge_clf=2 is not signalable by f(1)");
+    CcsoParams zero = base_params(3, false, 1, 0).plane[0];
+    zero.scale_idx = 0;
+    zero.quant_idx = 3;  // CCSO_Quant_Sz[0][3] == 0
+    CHECK(!ccso_header_conforms(zero),
+          "quantStep 0 forces edge_clf 0 in the header");
+  }
+
+  // A 64x64 unit inside a 128x128 superblock: the §7.19.1 inner loops step by
+  // sbBlkH/sbBlkW, so every sample is still visited exactly once.
+  TestFrame f = make_frame(16, 8);
+  Rng rng(12);
+  fill_random(f, rng);
+  CcsoFrameParams params = base_params(4, /*bo_only=*/false, 1, 3);
+  params.ccso_luma_size_log2 = 6;
+  for (int p = 1; p < 3; ++p) {
+    params.plane[p] = params.plane[0];
+    params.plane[p].enabled = true;
+  }
+  std::vector<std::uint8_t> blks(1, 1);
+  for (int p = 0; p < 3; ++p) {
+    params.blks[p] = blks.data();
+    params.blk_cols[p] = 1;
+    params.blk_rows[p] = 1;
+  }
+  TestFrame naive = f;
+  naive_ccso(naive, params, nullptr, nullptr, nullptr, nullptr, 0, nullptr,
+             nullptr, nullptr, nullptr, /*sb_width=*/128, /*sb_height=*/128);
+  RestorationFrame view = f.view();
+  view.sb_width = 128;
+  view.sb_height = 128;
+  CHECK(ccso_frame(view, params) == RestorationStatus::kOk,
+        "CCSO with unit < superblock accepted");
+  for (int p = 0; p < 3; ++p) {
+    for (int y = 0; y < f.height[p]; ++y) {
+      for (int x = 0; x < f.width[p]; ++x) {
+        CHECK(f.at(f.cdef[p], p, y, x) == naive.at(naive.cdef[p], p, y, x),
+              "unit < SB matches the naive oracle");
+      }
+    }
+  }
+  CHECK(f.guard_intact(), "unit < SB leaves guard samples untouched");
+  std::cout << "  unit selection: header derivation, unit < superblock\n";
+}
+
+
 void test_validation() {
   TestFrame f = make_frame(16, 8);
   CcsoFrameParams params = base_params();
@@ -566,15 +643,13 @@ void test_validation() {
   p2.ccso_luma_size_log2 = 5;  // not a legal CcsoLumaSizeLog2 value
   CHECK(ccso_frame(view, p2) == RestorationStatus::kInvalidArgument,
         "log2=5 rejected as non-conforming");
-  // 128x128 superblock with a 64x64 CCSO unit: the §7.19.1 sample loop would
-  // visit samples twice, so the ambiguous configuration is refused.
+  // A 64x64 CCSO unit inside a 128x128 superblock is conforming: §7.19.1's
+  // inner loops step by sbBlkH/sbBlkW and run once per unit.  It is exercised
+  // in test_ccso_unit_smaller_than_sb.
   p2 = params;
-  RestorationFrame big = view;
-  big.sb_width = 128;
-  big.sb_height = 128;
-  CHECK(ccso_frame(big, p2) ==
-            RestorationStatus::kUnsupportedCcsoUnitSize,
-        "CCSO unit smaller than the superblock rejected");
+  p2.ccso_luma_size_log2 = 6;
+  CHECK(ccso_frame(view, p2) == RestorationStatus::kOk,
+        "64x64 CCSO unit accepted");
   CHECK(std::strcmp(restoration_status_string(RestorationStatus::kOk), "ok") ==
             0,
         "status string ok");
@@ -657,6 +732,7 @@ int main() {
   test_lossless_and_bru();
   test_tile_clipping();
   test_partial_units_and_clipping();
+  test_unit_selection_and_small_unit();
   test_validation();
   test_randomized_oracle();
   std::cout << (g_failures == 0 ? "PASS" : "FAIL") << ": " << g_checks

@@ -37,77 +37,16 @@ int ceil_div(int a, int b) { return (a + b - 1) / b; }
 bool validate(const av2enc::restoration::RestorationFrame& f,
               const av2enc::restoration::LoopRestorationParams& p,
               cudaError_t* err) {
-  if (f.mi_cols <= 0 || f.mi_rows <= 0 || f.bit_depth != 8 ||
-      f.subsampling_x != 1 || f.subsampling_y != 1) {
-    *err = cudaErrorInvalidValue;
-    return false;
+  const av2enc::restoration::RestorationStatus st =
+      av2enc::restoration::loop_restoration_validate(f, p);
+  if (st == av2enc::restoration::RestorationStatus::kOk) {
+    return true;
   }
-  if (f.sb_shift < 0 || f.sb_shift > 8) {
-    *err = cudaErrorInvalidValue;
-    return false;
-  }
-  if (p.gdf_frame_enable != 0) {
-    *err = cudaErrorNotSupported;
-    return false;
-  }
-  if (p.num_filter_classes < 1 ||
-      p.num_filter_classes > av2enc::restoration::kWienerNsClasses) {
-    *err = cudaErrorInvalidValue;
-    return false;
-  }
-  for (int plane = 0; plane < 3; ++plane) {
-    const int sub_x = (plane == 0) ? 0 : f.subsampling_x;
-    const int sub_y = (plane == 0) ? 0 : f.subsampling_y;
-    const int width = (f.mi_cols * 4) >> sub_x;
-    const int height = (f.mi_rows * 4) >> sub_y;
-    if (width <= 0 || height <= 0) {
-      *err = cudaErrorInvalidValue;
-      return false;
-    }
-    if (f.curr[plane].data == nullptr || f.cdef[plane].data == nullptr ||
-        f.lr[plane].data == nullptr || f.curr[plane].stride < width ||
-        f.cdef[plane].stride < width || f.lr[plane].stride < width) {
-      *err = cudaErrorInvalidValue;
-      return false;
-    }
-    if (f.lr[plane].data == f.cdef[plane].data) {
-      *err = cudaErrorInvalidValue;
-      return false;
-    }
-    const int type = static_cast<int>(p.frame_type[plane]);
-    if (type < av2enc::restoration::kRestoreNone ||
-        type > av2enc::restoration::kRestoreSwitchable) {
-      *err = cudaErrorInvalidValue;
-      return false;
-    }
-    if (type == av2enc::restoration::kRestorePcWiener) {
-      *err = cudaErrorNotSupported;
-      return false;
-    }
-    if (type == av2enc::restoration::kRestoreNone) {
-      continue;
-    }
-    if (p.unit_size[plane] <= 0 || p.unit_type[plane] == nullptr ||
-        p.unit_rows[plane] <= 0 || p.unit_cols[plane] <= 0) {
-      *err = cudaErrorInvalidValue;
-      return false;
-    }
-    if (p.frame_filters_on[plane] != 0) {
-      if (p.frame_coeffs[plane] == nullptr) {
-        *err = cudaErrorInvalidValue;
-        return false;
-      }
-    } else if (p.unit_coeffs[plane] == nullptr) {
-      *err = cudaErrorInvalidValue;
-      return false;
-    }
-  }
-  if (p.frame_filters_on[0] != 0 && p.num_filter_classes > 1 &&
-      p.subclass_grid == nullptr) {
-    *err = cudaErrorInvalidValue;
-    return false;
-  }
-  return true;
+  *err = (st == av2enc::restoration::RestorationStatus::kUnsupportedGdf ||
+          st == av2enc::restoration::RestorationStatus::kUnsupportedPcWiener)
+             ? cudaErrorNotSupported
+             : cudaErrorInvalidValue;
+  return false;
 }
 
 }  // namespace

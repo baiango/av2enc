@@ -75,10 +75,12 @@ argument.
 ## Validation behaviour
 
 `cudaErrorInvalidValue` for bad geometry, null/missing buffers, short strides,
-aliasing `LrFrame`/`CdefFrame`, missing metadata, out-of-range parameters, or a
-CCSO unit smaller than the superblock (the §7.19.1 loop ambiguity documented in
-the CPU README).  `cudaErrorNotSupported` for `gdf_frame_enable != 0` and for
-`RESTORE_PC_WIENER`.
+aliasing `LrFrame`/`CdefFrame`, missing metadata, out-of-range parameters,
+non-conforming `LoopRestorationSize` (§6.17.7.7), or a missing frame-filter class
+map.  For a frame-level Wiener filter the caller supplies either
+`filter_class_grid` + `subclass_lookup` or the legacy pre-looked-up
+`subclass_grid`; see the CPU README.  `cudaErrorNotSupported` for
+`gdf_frame_enable != 0` and for `RESTORE_PC_WIENER`.
 
 For `RESTORE_SWITCHABLE` the per-unit `LrType` grid is device memory, so the
 launcher cannot verify that no unit selects PC-Wiener; such a unit is left as a

@@ -6,7 +6,9 @@
 
 #include "encoder/filters/restoration/restoration.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <vector>
 
 namespace av2enc::restoration {
 namespace {
@@ -83,9 +85,12 @@ const char* restoration_status_string(RestorationStatus status) {
     case RestorationStatus::kUnsupportedGdf:
       return "GDF needs gdf_*.h tables (not in the spec text)";
     case RestorationStatus::kUnsupportedCcsoUnitSize:
-      return "CCSO unit smaller than the superblock (spec loop ambiguity)";
+      return "reserved (CCSO units smaller than the superblock are legal)";
     case RestorationStatus::kMissingSubclassGrid:
       return "frame_filters_on needs a §7.20.4 subclass grid";
+    case RestorationStatus::kNonConformingUnitSize:
+      return "LoopRestorationSize violates §6.17.7.7 (power of two, >= stripe, "
+             "tile-aligned)";
   }
   return "unknown";
 }
@@ -117,6 +122,27 @@ int ccso_offset_count(const CcsoParams& params) {
     return 0;
   }
   return bands * interval * interval;
+}
+
+bool ccso_header_conforms(const CcsoParams& params) {
+  if (!params.enabled) {
+    return true;
+  }
+  const int max_band =
+      params.bo_only ? kCcsoMaxBandLog2BoOnly : kCcsoMaxBandLog2Normal;
+  if (params.max_band_log2 < 0 || params.max_band_log2 > max_band) {
+    return false;
+  }
+  if (!params.bo_only && params.edge_clf > kCcsoMaxEdgeClf) {
+    return false;
+  }
+  if (!params.bo_only &&
+      kCcsoQuantSz[params.scale_idx & 3][params.quant_idx & 3] == 0 &&
+      params.edge_clf != 0) {
+    // §5.18.7.12: quantStep == 0 forces ccso_edge_clf to 0.
+    return false;
+  }
+  return true;
 }
 
 bool ccso_set_offsets(CcsoParams& params, const std::uint8_t* indices,
@@ -196,26 +222,6 @@ CcsoCoreFrame ccso_to_core(const RestorationFrame& frame,
 
 namespace {
 
-// The §7.19.1 pseudocode steps the *sample* loop by the superblock size while
-// the outer loop steps by the CCSO unit size.  When the unit is smaller than
-// the superblock those loops overlap and a sample would be visited twice; the
-// text does not disambiguate that case.  All conforming configurations with
-// 64x64 superblocks (our target) have unit >= superblock, so we accept only
-// that range and reject the ambiguous one explicitly.
-bool ccso_unit_ok(const RestorationFrame& frame, const CcsoFrameParams& params,
-                  int plane) {
-  if (!params.plane[plane].enabled) {
-    return true;
-  }
-  const int sub_x = (plane == 0) ? 0 : frame.subsampling_x;
-  const int sub_y = (plane == 0) ? 0 : frame.subsampling_y;
-  const int blk_w = 1 << (params.ccso_luma_size_log2 - sub_x);
-  const int blk_h = 1 << (params.ccso_luma_size_log2 - sub_y);
-  const int sb_w = frame.sb_width >> sub_x;
-  const int sb_h = frame.sb_height >> sub_y;
-  return blk_w >= sb_w && blk_h >= sb_h;
-}
-
 // The CcsoBlks grid must cover every CCSO block of the plane, otherwise the
 // filter would silently skip samples.
 bool ccso_grid_covers(const RestorationFrame& frame,
@@ -225,64 +231,26 @@ bool ccso_grid_covers(const RestorationFrame& frame,
   }
   const int sub_x = (plane == 0) ? 0 : frame.subsampling_x;
   const int sub_y = (plane == 0) ? 0 : frame.subsampling_y;
-  const int blk_w = 1 << (params.ccso_luma_size_log2 - sub_x);
-  const int blk_h = 1 << (params.ccso_luma_size_log2 - sub_y);
-  const int width = restoration_plane_width(frame, plane);
-  const int height = restoration_plane_height(frame, plane);
-  const int cols = (width + blk_w - 1) / blk_w;
-  const int rows = (height + blk_h - 1) / blk_h;
+  int cols = 0;
+  int rows = 0;
+  ccso_blk_grid_size(restoration_plane_width(frame, plane),
+                     restoration_plane_height(frame, plane),
+                     params.ccso_luma_size_log2, sub_x, sub_y, &cols, &rows);
   return params.blk_cols[plane] >= cols && params.blk_rows[plane] >= rows;
 }
 
 }  // namespace
 
-RestorationStatus ccso_plane_frame(const RestorationFrame& frame,
-                                   const CcsoFrameParams& params, int plane) {
-  if (plane < 0 || plane > 2) {
-    return RestorationStatus::kInvalidArgument;
-  }
+RestorationStatus ccso_validate(const RestorationFrame& frame,
+                                const CcsoFrameParams& params) {
   const RestorationStatus st = validate_frame(frame);
   if (st != RestorationStatus::kOk) {
     return st;
   }
-  if (params.ccso_luma_size_log2 < 6 || params.ccso_luma_size_log2 > 8) {
-    return RestorationStatus::kInvalidArgument;
-  }
-  if (!ccso_unit_ok(frame, params, plane)) {
-    return RestorationStatus::kUnsupportedCcsoUnitSize;
-  }
-  if (!ccso_params_valid(params.plane[plane])) {
-    return RestorationStatus::kInvalidArgument;
-  }
-  if (params.plane[plane].enabled) {
-    if (params.blks[plane] == nullptr || params.blk_cols[plane] <= 0 ||
-        params.blk_rows[plane] <= 0) {
-      return RestorationStatus::kInvalidArgument;
-    }
-    if (!ccso_grid_covers(frame, params, plane)) {
-      return RestorationStatus::kInvalidArgument;
-    }
-  }
-  const CcsoCoreFrame core = ccso_to_core(frame, params);
-  ccso_plane(core, plane);
-  return RestorationStatus::kOk;
-}
-
-RestorationStatus ccso_frame(const RestorationFrame& frame,
-                             const CcsoFrameParams& params) {
-  const RestorationStatus st = validate_frame(frame);
-  if (st != RestorationStatus::kOk) {
-    return st;
-  }
-  // Validate every enabled plane before touching any pixel so a bad parameter
-  // set cannot leave the frame half-filtered.
   if (params.ccso_luma_size_log2 < 6 || params.ccso_luma_size_log2 > 8) {
     return RestorationStatus::kInvalidArgument;
   }
   for (int p = 0; p < 3; ++p) {
-    if (!ccso_unit_ok(frame, params, p)) {
-      return RestorationStatus::kUnsupportedCcsoUnitSize;
-    }
     if (!ccso_params_valid(params.plane[p])) {
       return RestorationStatus::kInvalidArgument;
     }
@@ -295,6 +263,29 @@ RestorationStatus ccso_frame(const RestorationFrame& frame,
         return RestorationStatus::kInvalidArgument;
       }
     }
+  }
+  return RestorationStatus::kOk;
+}
+
+RestorationStatus ccso_plane_frame(const RestorationFrame& frame,
+                                   const CcsoFrameParams& params, int plane) {
+  if (plane < 0 || plane > 2) {
+    return RestorationStatus::kInvalidArgument;
+  }
+  const RestorationStatus st = ccso_validate(frame, params);
+  if (st != RestorationStatus::kOk) {
+    return st;
+  }
+  const CcsoCoreFrame core = ccso_to_core(frame, params);
+  ccso_plane(core, plane);
+  return RestorationStatus::kOk;
+}
+
+RestorationStatus ccso_frame(const RestorationFrame& frame,
+                             const CcsoFrameParams& params) {
+  const RestorationStatus st = ccso_validate(frame, params);
+  if (st != RestorationStatus::kOk) {
+    return st;
   }
   const CcsoCoreFrame core = ccso_to_core(frame, params);
   for (int p = 0; p < 3; ++p) {
@@ -325,6 +316,8 @@ LrCoreFrame loop_restoration_to_core(const RestorationFrame& frame,
     c.unit_rows = params.unit_rows[p];
     c.unit_coeffs = params.unit_coeffs[p];
     c.frame_coeffs = params.frame_coeffs[p];
+    c.filter_class_grid = params.filter_class_grid;
+    c.subclass_lookup = params.subclass_lookup;
   }
   core.mi_cols = frame.mi_cols;
   core.mi_rows = frame.mi_rows;
@@ -337,6 +330,8 @@ LrCoreFrame loop_restoration_to_core(const RestorationFrame& frame,
     core.frame_filters_on[p] = params.frame_filters_on[p];
   }
   core.num_filter_classes = params.num_filter_classes;
+  core.filter_class_grid = params.filter_class_grid;
+  core.subclass_lookup = params.subclass_lookup;
   core.subclass_grid = params.subclass_grid;
   core.segment_ids = frame.segment_ids;
   core.chroma_segment_ids = frame.chroma_segment_ids;
@@ -374,14 +369,75 @@ bool grid_has_pc_wiener(const std::uint8_t* grid, int rows, int cols) {
   return false;
 }
 
+bool is_power_of_two(int v) { return v > 0 && (v & (v - 1)) == 0; }
+
+bool num_filter_classes_valid(int n) {
+  for (int i = 0; i < 8; ++i) {
+    if (kDecodeNumFilterClasses[i] == n) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// §6.17.7.7 check_ru_size(): restoration units must not cross internal tile
+// boundaries.  Tile boundaries are recovered from the per-MI tile grids; a
+// null grid is a single tile.
+bool check_ru_size(const RestorationFrame& frame,
+                   const LoopRestorationParams& params) {
+  const int sub = (frame.subsampling_x > frame.subsampling_y)
+                      ? frame.subsampling_x
+                      : frame.subsampling_y;
+  const bool uses_chroma = params.frame_type[1] != kRestoreNone ||
+                           params.frame_type[2] != kRestoreNone;
+  const int chroma_scaled =
+      uses_chroma ? (params.unit_size[1] << sub) : 0;
+  const int max_plane_ru =
+      params.unit_size[0] > chroma_scaled ? params.unit_size[0]
+                                          : chroma_scaled;
+  if (max_plane_ru <= 0) {
+    return false;
+  }
+  if (frame.mi_col_start == nullptr || frame.mi_col_end == nullptr ||
+      frame.mi_row_start == nullptr || frame.mi_row_end == nullptr) {
+    return true;  // single tile
+  }
+  const int n = frame.mi_cols * frame.mi_rows;
+  std::vector<int> cols;
+  std::vector<int> rows;
+  cols.reserve(static_cast<std::size_t>(frame.mi_cols));
+  rows.reserve(static_cast<std::size_t>(frame.mi_rows));
+  for (int i = 0; i < n; ++i) {
+    cols.push_back(static_cast<int>(frame.mi_col_start[i]));
+    rows.push_back(static_cast<int>(frame.mi_row_start[i]));
+  }
+  auto check_starts = [max_plane_ru](std::vector<int>& v) {
+    std::sort(v.begin(), v.end());
+    v.erase(std::unique(v.begin(), v.end()), v.end());
+    for (std::size_t i = 1; i < v.size(); ++i) {
+      const int width = (v[i] - v[i - 1]) * kMiSize;
+      if (width <= 0 || width % max_plane_ru != 0) {
+        return false;
+      }
+    }
+    return true;
+  };
+  return check_starts(cols) && check_starts(rows);
+}
+
 RestorationStatus validate_lr(const RestorationFrame& frame,
                               const LoopRestorationParams& params) {
   if (params.gdf_frame_enable != 0) {
     return RestorationStatus::kUnsupportedGdf;
   }
   if (params.num_filter_classes < 1 ||
-      params.num_filter_classes > kWienerNsClasses) {
+      params.num_filter_classes > kWienerNsClasses ||
+      !num_filter_classes_valid(params.num_filter_classes)) {
     return RestorationStatus::kInvalidArgument;
+  }
+  if (params.unit_size[1] != params.unit_size[2]) {
+    // §5.18.7.11 sets LoopRestorationSize[2] = LoopRestorationSize[1].
+    return RestorationStatus::kNonConformingUnitSize;
   }
   for (int p = 0; p < 3; ++p) {
     if (!frame_type_in_range(params.frame_type[p])) {
@@ -406,6 +462,21 @@ RestorationStatus validate_lr(const RestorationFrame& frame,
     }
     const int sub_x = (p == 0) ? 0 : frame.subsampling_x;
     const int sub_y = (p == 0) ? 0 : frame.subsampling_y;
+    // §5.18.7.11/§6.17.7.7: LoopRestorationSize is a power of two no larger
+    // than RESTORATION_TILESIZE_MAX; chroma is at least one stripe high
+    // (64 >> SubsamplingY), luma at least 64.
+    if (!is_power_of_two(params.unit_size[p]) ||
+        params.unit_size[p] >
+            (kRestorationTileSizeMax >> ((p == 0) ? 0 : sub_y))) {
+      return RestorationStatus::kNonConformingUnitSize;
+    }
+    if (p == 0) {
+      if (params.unit_size[0] < 64) {
+        return RestorationStatus::kNonConformingUnitSize;
+      }
+    } else if (params.unit_size[p] < (64 >> sub_y)) {
+      return RestorationStatus::kNonConformingUnitSize;
+    }
     const int need_rows = restoration_count_units(
         params.unit_size[p], (frame.mi_rows * kMiSize) >> sub_y);
     const int need_cols = restoration_count_units(
@@ -414,11 +485,10 @@ RestorationStatus validate_lr(const RestorationFrame& frame,
         params.unit_cols[p] < need_cols) {
       return RestorationStatus::kInvalidArgument;
     }
-    if (params.frame_type[p] == kRestoreSwitchable &&
-        grid_has_pc_wiener(params.unit_type[p], params.unit_rows[p],
-                           params.unit_cols[p])) {
-      return RestorationStatus::kUnsupportedPcWiener;
-    }
+    // For RESTORE_SWITCHABLE, the per-unit LrType grid may be host or device
+    // memory; this validator never dereferences it.  The CPU path checks host
+    // grids in loop_restoration_frame(); the CUDA kernel leaves a PC-Wiener
+    // unit as a copy of CdefFrame and callers must not signal one.
     if (params.frame_filters_on[p] != 0) {
       if (params.frame_coeffs[p] == nullptr) {
         return RestorationStatus::kInvalidArgument;
@@ -427,18 +497,51 @@ RestorationStatus validate_lr(const RestorationFrame& frame,
       return RestorationStatus::kInvalidArgument;
     }
     if (p == 0 && params.frame_filters_on[0] != 0 &&
-        params.num_filter_classes > 1 && params.subclass_grid == nullptr) {
-      return RestorationStatus::kMissingSubclassGrid;
+        params.num_filter_classes > 1) {
+      if (params.filter_class_grid != nullptr) {
+        if (params.subclass_lookup == nullptr) {
+          return RestorationStatus::kMissingSubclassGrid;
+        }
+      } else if (params.subclass_grid == nullptr) {
+        return RestorationStatus::kMissingSubclassGrid;
+      }
     }
-  }
-  if (params.frame_filters_on[0] != 0 && params.num_filter_classes > 1 &&
-      params.subclass_grid == nullptr) {
-    return RestorationStatus::kMissingSubclassGrid;
   }
   return RestorationStatus::kOk;
 }
 
 }  // namespace
+
+// Checks that need to dereference host metadata grids.  The CUDA path cannot
+// use these (the grids are device memory), so they are applied only by the CPU
+// reference entry points.
+namespace {
+
+RestorationStatus validate_lr_host_grids(const RestorationFrame& frame,
+                                         const LoopRestorationParams& params) {
+  for (int p = 0; p < 3; ++p) {
+    if (params.frame_type[p] == kRestoreSwitchable &&
+        grid_has_pc_wiener(params.unit_type[p], params.unit_rows[p],
+                           params.unit_cols[p])) {
+      return RestorationStatus::kUnsupportedPcWiener;
+    }
+  }
+  if (!check_ru_size(frame, params)) {
+    return RestorationStatus::kNonConformingUnitSize;
+  }
+  return RestorationStatus::kOk;
+}
+
+}  // namespace
+
+RestorationStatus loop_restoration_validate(
+    const RestorationFrame& frame, const LoopRestorationParams& params) {
+  const RestorationStatus st = validate_frame(frame);
+  if (st != RestorationStatus::kOk) {
+    return st;
+  }
+  return validate_lr(frame, params);
+}
 
 RestorationStatus loop_restoration_plane(const RestorationFrame& frame,
                                          const LoopRestorationParams& params,
@@ -446,13 +549,13 @@ RestorationStatus loop_restoration_plane(const RestorationFrame& frame,
   if (plane < 0 || plane > 2) {
     return RestorationStatus::kInvalidArgument;
   }
-  const RestorationStatus st = validate_frame(frame);
-  if (st != RestorationStatus::kOk) {
-    return st;
-  }
-  const RestorationStatus lr = validate_lr(frame, params);
+  const RestorationStatus lr = loop_restoration_validate(frame, params);
   if (lr != RestorationStatus::kOk) {
     return lr;
+  }
+  const RestorationStatus grids = validate_lr_host_grids(frame, params);
+  if (grids != RestorationStatus::kOk) {
+    return grids;
   }
   LrCoreFrame core = loop_restoration_to_core(frame, params);
   lr_copy_plane(core, plane);
@@ -464,13 +567,13 @@ RestorationStatus loop_restoration_plane(const RestorationFrame& frame,
 
 RestorationStatus loop_restoration_frame(const RestorationFrame& frame,
                                          const LoopRestorationParams& params) {
-  const RestorationStatus st = validate_frame(frame);
-  if (st != RestorationStatus::kOk) {
-    return st;
-  }
-  const RestorationStatus lr = validate_lr(frame, params);
+  const RestorationStatus lr = loop_restoration_validate(frame, params);
   if (lr != RestorationStatus::kOk) {
     return lr;
+  }
+  const RestorationStatus grids = validate_lr_host_grids(frame, params);
+  if (grids != RestorationStatus::kOk) {
+    return grids;
   }
   LrCoreFrame core = loop_restoration_to_core(frame, params);
   // §7.20: LrFrame := CdefFrame before any filtering.
