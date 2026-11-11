@@ -20,3 +20,16 @@ src/profile/build/
 bench/avm_360p/*.log
 src/cuda/build*/
 bench/cuda_dct_perf/build*/
+
+# Secrets / local environment (never publish)
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+.ssh/
+*.bundle
+*.pcap
+__pycache__/
+*.pyc
