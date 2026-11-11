@@ -80,8 +80,8 @@ struct MultiFrameHeader {
   std::uint32_t seq_header_id = 0;  // mfh_seq_header_id, < MAX_SEQ_NUM
   std::uint32_t mfh_id = 1;         // mfh_id_minus_1 + 1, in [1, MAX_MFH_NUM)
   std::uint8_t tlayer_id = 0;       // obu_tlayer_id (2 bits) -> MfhTLayerId
-  // obu_mlayer_id is inferred 0 because §6.2.1 requires
-  // obu_extension_flag == 0 in conforming bitstreams.
+  // obu_mlayer_id is inferred 0 because §6.2.1 requires the OBU header's
+  // obu_header_extension_flag to be 0 in conforming bitstreams.
 
   bool frame_size_present = false;  // mfh_frame_size_present_flag
   // 1..16; 0 means "derive the minimum width that fits frame_width - 1".
@@ -114,8 +114,15 @@ std::size_t write_multi_frame_header_syntax(BitWriter& writer,
                                             std::string* error);
 
 // Complete Annex B.2 OBU:
-//   leb128(1 + payload_bytes) obu_header() payload trailing_bits
-// The OBU header is byte 0x0C for tlayer 0 (extension flag 0, type 3).
+//   leb128(1 + payload_bytes) obu_header() payload
+// where the payload is the §5.7 syntax followed by the §5.2.1 extensible-OBU
+// trailer:
+//   obu_extension_flag f(1)   // always 0; §6.2.1 forbids 1
+//   trailing_bits()
+// OBU_MULTI_FRAME_HEADER is in is_extensible_obu() (§5.2.1), so the flag is
+// mandatory even though conforming streams always code 0.
+// The OBU header is byte 0x0C for tlayer 0 (obu_header_extension_flag 0,
+// type 3).
 std::vector<std::uint8_t> make_multi_frame_header_obu(
     const MultiFrameHeader& header, std::string* error);
 
@@ -137,9 +144,10 @@ struct ObuView {
 bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
                ObuView* out, std::string* error);
 
-// Parses and validates a §5.7 MFH payload (excluding the OBU header and
-// trailing bits are checked).  `out->tlayer_id` is not set here: the OBU
-// header carries it.
+// Parses and validates a §5.7 MFH payload (excluding the OBU header).  The
+// §5.2.1 extensible-OBU trailer is checked: obu_extension_flag must be 0 and
+// trailing_bits() must be a one bit followed by zero padding.  `out->tlayer_id`
+// is not set here: the OBU header carries it.
 bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
                                       MultiFrameHeader* out, std::string* error);
 

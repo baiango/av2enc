@@ -14,7 +14,7 @@ src/encoder/frame/mfh/
   mfh.h                 §5.7 syntax structs, writer/reader, inheritance resolver
   mfh.cpp               implementation; bit reader; §5.18 precedence rules
   mfh_m2_adapter.h/.cpp the exact M2 frame-header mirror used by the gate
-  mfh_test.cpp          201 checks: goldens, round-trips, errors, precedence
+  mfh_test.cpp          216 checks: goldens, round-trips, errors, precedence
   mfh_gate.cpp          M2 stream + one MFH + pinned dav2d gate
   build_and_test.sh     standalone build/run (no CMake changes)
   README.md             this file
@@ -28,6 +28,9 @@ src/encoder/frame/mfh/
 | MFH field semantics | §6.7 (the task brief calls it §6.6; this PDF revision numbers it §6.7) |
 | `OBU_MULTI_FRAME_HEADER = 3`, layer-specific | §6.2.2 Table 6.1 |
 | `obu_extension_flag` must be 0 | §6.2.1 |
+| `open_bitstream_unit()` extensible-OBU trailer | §5.2.1 |
+| `is_extensible_obu()` includes `OBU_MULTI_FRAME_HEADER` | §5.2.1 |
+| `trailing_bits( nbBits )` | §5.2.3 |
 | `MAX_MFH_NUM = 16`, `MAX_SEQ_NUM = 16` | §6.2.1 constants |
 | `cur_mfh_id`, `seq_header_id_in_frame_header` | §5.18.2, §6.17.2 |
 | `load_sequence_header( MfhSeqHeaderId[ cur_mfh_id ] )` | §5.18.2 |
@@ -65,30 +68,41 @@ multi_frame_header_obu() {
     seg_info( ext ? 16 : 8 )             // §5.4.9
   }
 }
+// §5.2.1 open_bitstream_unit(), because is_extensible_obu() contains type 3:
+f(1)      obu_extension_flag             // payload trailer, must be 0
+trailing_bits( remainingPayloadBits - 1 )
 ```
 
-The OBU header byte is `0x0C` for `obu_tlayer_id = 0` (extension flag 0, type 3,
-tlayer 0). Annex B.2 framing is `leb128(header + payload) header payload`.
+There are **two** different extension flags:
+
+* `obu_header_extension_flag` — bit 7 of the OBU header byte. The MFH OBU
+  header is `0x0C` for `obu_tlayer_id = 0` (header flag 0, type 3, tlayer 0).
+* `obu_extension_flag` — the §5.2.1 extensible-payload trailer bit, read after
+  the §5.7 syntax and before `trailing_bits()`. §6.2.1 requires it to be 0.
+
+Annex B.2 framing is `leb128(header + payload) header payload`.
 `mfh_seq_header_id` must be `< MAX_SEQ_NUM`; `mfh_id` must be in
 `[1, MAX_MFH_NUM)`. `obu_mlayer_id` is inferred 0 because conforming streams
-must have `obu_extension_flag == 0` (§6.2.1).
+must have `obu_header_extension_flag == 0` as well.
 
 ## Pinned bit goldens
 
-These are asserted verbatim in `mfh_test.cpp`.
+These are recomputed from the writer and asserted verbatim in `mfh_test.cpp`.
 
 | Case | Complete OBU |
 |---|---|
-| minimal: seq 0, id 1, nothing else | `02 0c c4` |
-| 64×64, size present, deblocking update with `{0,0,0,0}`, 8-seg table all disabled | `08 0c ea bf ff 08 00 00 01` |
-| 1920×1080, size present, deblocking `{1,0,1,0}`, no segments | `06 0c f5 5d fe 1b e9` |
+| minimal: seq 0, id 1, nothing else | `02 0c c2` |
+| 64×64, size present, deblocking update with `{0,0,0,0}`, 8-seg table all disabled | `09 0c ea bf ff 08 00 00 00 80` |
+| 1920×1080, size present, deblocking `{1,0,1,0}`, no segments | `07 0c f5 5d fe 1b e8 80` |
 
 Hand derivation of the minimal payload: `uvlc(0)=1`, `uvlc(0)=1`,
-`size_present=0`, `update=0`, `seg_present=0` → `1 1 0 0 0`; trailing `1` at
-bit 5 and zero padding → `11000100` = `0xc4`. The 64×64 case ends with the
-24 zero `feature_enabled` bits, the trailing one bit and seven zero pad bits
-(`... 00 00 01`). Note that the OBU extension flag lives in the OBU **header**,
-not in the payload; counting it as a payload bit is a common off-by-one.
+`size_present=0`, `update=0`, `seg_present=0` → `1 1 0 0 0`; then
+`obu_extension_flag = 0` at bit 5, the trailing one bit at bit 6 and a zero pad
+bit at bit 7 → `11000010` = `0xc2`. The 64×64 case has 55 syntax bits, then the
+flag at bit 55, the trailing one at bit 56 and zero padding to 64 bits
+(`... 00 00 00 80`). The 1080p case has 39 syntax bits and a 6-byte payload.
+An audit that looks only at the OBU header will miss the payload flag; both are
+required.
 
 ## Inheritance semantics and precedence
 
@@ -156,7 +170,8 @@ ignore; the reader enforces bitstream requirements.
 | `mfh_seq_header_id < 16` | reject | reject |
 | `mfh_id` in `[1, 16)` | reject | reject |
 | `obu_tlayer_id <= 3` | reject | reject |
-| `obu_extension_flag == 0` | writer always clears | reject |
+| payload `obu_extension_flag == 0` (§5.2.1 trailer) | writer always clears | reject |
+| `obu_header_extension_flag == 0` (OBU header byte) | writer always clears | reject |
 | frame size present but width/height 0 | reject | reject (0 underflows to 0 after `+1`) |
 | `mfh_frame_*_bits` outside `[1, 16]` | reject | encoded field is 4 bits + 1 |
 | size minus 1 does not fit the coded width | reject | cannot occur from a read |
@@ -287,14 +302,18 @@ src/encoder/frame/mfh/build_and_test.sh
 SANITIZE=1 src/encoder/frame/mfh/build_and_test.sh
 ```
 
-201 checks cover:
+216 checks cover:
 
 * the three pinned goldens above;
 * full-field round-trips for 8- and 16-segment tables, explicit size bit
   widths, all deblocking flags, ALT_Q at both limits;
 * scanning several MFHs in one temporal unit, `MfhStore` insert/overwrite/reset;
+* the §5.2.1 extensible-OBU trailer: an explicit bit-position assertion that
+  `obu_extension_flag` follows the §5.7 syntax and precedes `trailing_bits()`,
+  plus a reader rejection for `obu_extension_flag == 1` with no extension data;
 * every writer rejection listed above, plus payload truncation, wrong OBU type,
-  `obu_extension_flag == 1`, a corrupted trailing bit and an empty payload;
+  `obu_header_extension_flag == 1`, a corrupted trailing bit and an empty
+  payload;
 * frame-size precedence (sequence → MFH → explicit override), missing MFH,
   missing sequence header, oversized MFH and oversized explicit size;
 * deblocking precedence (MFH, explicit, CodedLossless, chroma-forced-off,
@@ -335,10 +354,10 @@ The gate:
 Example output (8-frame synthetic 64×64 clip, pinned `dav2d` `f9dafbc`):
 
 ```
-mfh_test: 201 checks, 0 failures
+mfh_test: 216 checks, 0 failures
 mfh_gate: decoder tools/bin/dav2d-macos
 mfh_gate: 8 frame(s) 64x64, base q 90
-  baseline payload 7021 bytes; reheader 7021; MFH 7030 (+9 MFH)
+  baseline payload 7021 bytes; reheader 7021; MFH 7031 (+10 MFH)
   baseline 8 frame(s), 0 sample diff(s)
   reheader 8 frame(s), 0 sample diff(s)
   mfh      8 frame(s), 0 sample diff(s)
@@ -346,7 +365,9 @@ mfh_gate: 6 checks, 0 failure(s)
 MFH GATE PASS
 ```
 
-The 1280×720 4-frame run also passes (`baseline 130513`, `MFH 130524`, 0 diffs).
+The 1280×720 4-frame run also passes (`baseline 130513`, `MFH 130524`, 0 diffs;
+the 720p MFH stays 11 bytes because the extra flag bit fits in existing byte
+padding).
 
 What the gate proves with this pinned decoder:
 
@@ -464,9 +485,9 @@ No core file was modified. To ship MFH in the encoder:
 ## Cost note
 
 For the gate's MFH (id + frame size + deblocking update + 8-segment disabled
-table) the OBU is **9 bytes = 72 bits**. Each frame saves the two deblocking
+table) the OBU is **10 bytes = 80 bits**. Each frame saves the two deblocking
 apply bits and pays one extra `cur_mfh_id` uvlc bit, i.e. **1 bit/frame**.
-Break-even is therefore ~72 frames for this particular field mix. MFH is not a
+Break-even is therefore ~80 frames for this particular field mix. MFH is not a
 win for a 2-frame GOP; it pays off with long sequences, repeated explicit frame
 sizes / segment tables, or 16-segment tables with several enabled features
 (8×3 or 16×3 feature bits plus 10-bit ALT_Q values per enabled entry). The cost
@@ -481,10 +502,11 @@ tooling decision for `src/main.cpp`, not a conformance requirement.
   frame needs the `frame_size_with_refs()` `found_ref` bits first; the adapter
   rejects it rather than emitting a wrong header. The real M2 writer would add
   those bits in its existing `frame_size` slot.
-* `obu_extension_flag` writers are not supported: §6.2.1 requires the flag to be
-  0, so `obu_mlayer_id` is always 0. Multi-layer MFH references can be
-  *validated* with an explicit `LayerDependencyMap` but cannot be *written* with
-  a non-zero mlayer id.
+* `obu_header_extension_flag` writers are not supported: §6.2.1 requires the
+  OBU header flag to be 0, so `obu_mlayer_id` is always 0. The mandatory payload
+  `obu_extension_flag` trailer (§5.2.1) is always written as 0. Multi-layer MFH
+  references can be *validated* with an explicit `LayerDependencyMap` but
+  cannot be *written* with a non-zero mlayer id.
 * The gate cannot prove segment-table inheritance because enabling
   `segmentation_enabled` changes the M2 tile syntax (`segment_id` symbols). The
   resolver and bit writer/reader are covered by unit tests; the gate proves

@@ -79,7 +79,7 @@ void test_pinned_goldens() {
     std::string error;
     const auto obu = make_multi_frame_header_obu(header, &error);
     check(error.empty(), "minimal golden: no error");
-    check_hex(obu, "020cc4", "minimal MFH OBU");
+    check_hex(obu, "020cc2", "minimal MFH OBU");
   }
 
   // 64x64, frame size present with 6-bit fields, deblocking update with all
@@ -98,7 +98,7 @@ void test_pinned_goldens() {
     std::string error;
     const auto obu = make_multi_frame_header_obu(header, &error);
     check(error.empty(), "64x64 golden: no error");
-    check_hex(obu, "080ceabfff08000001", "64x64 MFH OBU");
+    check_hex(obu, "090ceabfff0800000080", "64x64 MFH OBU");
   }
 
   // 1920x1080 with 11-bit size fields and deblocking {1,0,1,0}.
@@ -112,8 +112,86 @@ void test_pinned_goldens() {
     std::string error;
     const auto obu = make_multi_frame_header_obu(header, &error);
     check(error.empty(), "1080p golden: no error");
-    check_hex(obu, "060cf55dfe1be9", "1080p MFH OBU");
+    check_hex(obu, "070cf55dfe1be880", "1080p MFH OBU");
   }
+}
+
+bool payload_bit(std::span<const std::uint8_t> payload, std::size_t index) {
+  return ((payload[index >> 3U] >> (7U - (index & 7U))) & 1U) != 0U;
+}
+
+void test_obu_extension_flag_position() {
+  std::string error;
+
+  // §5.2.1: after the §5.7 payload, an extensible OBU codes
+  //   obu_extension_flag f(1)
+  //   trailing_bits()
+  // The minimal MFH has 5 syntax bits, so the payload byte is
+  //   bits 0..4 = 1 1 0 0 0 (syntax)
+  //   bit 5     = 0       (obu_extension_flag)
+  //   bit 6     = 1       (trailing_one_bit)
+  //   bit 7     = 0       (trailing_zero_bit)
+  MultiFrameHeader minimal;
+  const auto minimal_obu = make_multi_frame_header_obu(minimal, &error);
+  check(error.empty(), "ext flag: minimal write");
+  ObuView minimal_view;
+  check(parse_obu(minimal_obu, 0, &minimal_view, &error),
+        "ext flag: minimal parse");
+  const auto minimal_payload = std::span<const std::uint8_t>(minimal_obu)
+                                   .subspan(minimal_view.payload_offset,
+                                            minimal_view.payload_size);
+  check(minimal_payload.size() == 1, "ext flag: minimal payload is one byte");
+  check(minimal_payload[0] == 0xC2, "ext flag: minimal payload 0xc2");
+  check(!payload_bit(minimal_payload, 5),
+        "ext flag: bit 5 (obu_extension_flag) is 0");
+  check(payload_bit(minimal_payload, 6),
+        "ext flag: bit 6 is the trailing one bit");
+  check(!payload_bit(minimal_payload, 7),
+        "ext flag: bit 7 is trailing zero padding");
+
+  // The OBU *header* extension flag is a different bit in a different byte.
+  const std::uint8_t header_byte =
+      minimal_obu[minimal_view.payload_offset - 1];
+  check((header_byte & 0x80U) == 0,
+        "ext flag: obu_header_extension_flag is 0");
+  check(((header_byte >> 2U) & 0x1FU) == kObuTypeMultiFrameHeader,
+        "ext flag: OBU header type is 3");
+
+  // For a field-rich header, the flag sits exactly at the end of the §5.7
+  // syntax, followed by the trailing one bit.
+  MultiFrameHeader full;
+  full.frame_size_present = true;
+  full.frame_width = 64;
+  full.frame_height = 64;
+  full.deblocking_filter_update = true;
+  full.apply_deblocking_filter = {false, false, false, false};
+  full.seg_info_present = true;
+  BitWriter syntax;
+  const std::size_t syntax_bits =
+      write_multi_frame_header_syntax(syntax, full, &error);
+  check(syntax_bits == 55, "ext flag: 64x64 syntax is 55 bits");
+  const auto full_obu = make_multi_frame_header_obu(full, &error);
+  ObuView full_view;
+  check(parse_obu(full_obu, 0, &full_view, &error),
+        "ext flag: full parse");
+  const auto full_payload = std::span<const std::uint8_t>(full_obu)
+                                .subspan(full_view.payload_offset,
+                                         full_view.payload_size);
+  check(!payload_bit(full_payload, syntax_bits),
+        "ext flag: flag is the first bit after the syntax");
+  check(payload_bit(full_payload, syntax_bits + 1U),
+        "ext flag: trailing one follows the flag");
+
+  // A reader must reject obu_extension_flag == 1.  This payload is a valid
+  // 7-bit header (seq id 1, id 1, nothing else) with the flag in bit 7 and no
+  // extension data or trailing bits after it.
+  const std::vector<std::uint8_t> flag_set_without_data{0x51};
+  MultiFrameHeader parsed;
+  check(!parse_multi_frame_header_payload(flag_set_without_data, &parsed,
+                                          &error),
+        "ext flag: reader rejects flag=1 with no extension data");
+  check(error.find("obu_extension_flag") != std::string::npos,
+        "ext flag: reader error names obu_extension_flag");
 }
 
 void test_round_trip() {
@@ -336,6 +414,7 @@ void test_validation_errors() {
       return bits;
     };
     auto pack = [](std::string bits) {
+      bits.push_back('0');  // obu_extension_flag (§5.2.1)
       bits.push_back('1');  // trailing_bits
       while ((bits.size() & 7U) != 0U) bits.push_back('0');
       std::vector<std::uint8_t> bytes;
@@ -974,6 +1053,7 @@ void test_field_source_strings() {
 
 int main() {
   test_pinned_goldens();
+  test_obu_extension_flag_position();
   test_round_trip();
   test_scan_and_store();
   test_validation_errors();

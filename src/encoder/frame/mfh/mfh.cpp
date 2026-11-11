@@ -432,9 +432,17 @@ std::vector<std::uint8_t> make_multi_frame_header_obu(
     if (error != nullptr) *error = local_error;
     return {};
   }
-  syntax.put_bit(true);  // §5.2.3 trailing_bits
+  // §5.2.1 open_bitstream_unit(): OBU_MULTI_FRAME_HEADER is extensible
+  // (is_extensible_obu(), §5.2.3), so the payload ends with
+  //   obu_extension_flag f(1)
+  //   trailing_bits()
+  // The flag is the *payload* extension flag, separate from the
+  // obu_header_extension_flag bit in the OBU header byte.  §6.2.1 requires it
+  // to be 0 in conforming bitstreams.
+  syntax.put_bit(false);  // obu_extension_flag
+  syntax.put_bit(true);   // §5.2.3 trailing_bits
   syntax.align_to_byte();
-  // OBU_MULTI_FRAME_HEADER == 3, obu_extension_flag == 0 (§6.2.1 requires it),
+  // OBU_MULTI_FRAME_HEADER == 3, obu_header_extension_flag == 0,
   // obu_tlayer_id from the MFH.
   const m0::ObuHeader obu_header{
       static_cast<m0::ObuType>(kObuTypeMultiFrameHeader), header.tlayer_id,
@@ -612,6 +620,22 @@ bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
     }
   }
 
+  // §5.2.1: the extensible-OBU trailer is
+  //   obu_extension_flag f(1)
+  //   trailing_bits( remainingPayloadBits - 1 )
+  // §6.2.1 requires obu_extension_flag == 0; a conforming decoder rejects a
+  // set flag (and this module does not implement obu_extension_data).
+  bool obu_extension_flag = false;
+  if (!reader.read_bit(&obu_extension_flag)) {
+    if (error != nullptr) *error = reader.error();
+    return false;
+  }
+  if (obu_extension_flag) {
+    if (error != nullptr) {
+      *error = "OBU_MULTI_FRAME_HEADER has obu_extension_flag == 1";
+    }
+    return false;
+  }
   if (!reader.read_trailing_bits()) {
     if (error != nullptr) *error = reader.error();
     return false;
