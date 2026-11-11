@@ -122,8 +122,10 @@ bool m1_cdef_build_mi_grids(const CdefMiInputs& inputs, CdefMiGrids* out,
 // ---------------------------------------------------------------------------
 
 // One host-side plane binding.  `src` is the unfiltered (deblocked)
-// reconstruction, `dst` the CDEF output; they must not alias.  The plane is
-// MI-aligned: `mi_cols*4` x `mi_rows*4` samples, luma stride >= that width.
+// reconstruction, `dst` the CDEF output; they must not alias.  `dst` may be
+// null for a planning-only call (`m1_cdef_plan` never writes pixels, which is
+// what the M2 adapter uses).  The plane is MI-aligned: `mi_cols*4` x
+// `mi_rows*4` samples, luma stride >= that width.
 struct CdefPlaneBinding {
   const std::uint8_t* src = nullptr;
   std::uint8_t* dst = nullptr;

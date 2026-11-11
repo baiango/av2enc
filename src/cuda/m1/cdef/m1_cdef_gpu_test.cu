@@ -29,9 +29,13 @@
 #include <string>
 #include <vector>
 
+#include "bitstream/bitwriter.h"
+#include "cuda/m1/cdef/m1_cdef_cdf.h"
 #include "cuda/m1/cdef/m1_cdef_cuda.h"
+#include "cuda/m1/cdef/m1_cdef_index_syntax.h"
 #include "encoder/filters/cdef/cdef.h"
 #include "encoder/filters/cdef/cdef_search.h"
+#include "encoder/m1/filters_stream/filters_stream.h"
 
 namespace {
 
@@ -203,6 +207,156 @@ std::vector<std::uint8_t> crop(const std::vector<std::uint8_t>& plane, int strid
                 static_cast<std::size_t>(w));
   }
   return out;
+}
+
+
+// §5.18.7.10 header parity: the stage's packed header must produce exactly the
+// bits the verified M1 header writer produces for the same plan, and the
+// reader must recover the same parameters.
+void check_header_parity(const av2enc::cdef::CdefSearchResult& plan,
+                         const char* label) {
+  namespace fs = av2enc::m1::filters_stream;
+  using av2enc::cuda::m1::CdefHeaderParams;
+  CdefHeaderParams header;
+  std::string error;
+  CHECK(av2enc::cuda::m1::m1_cdef_build_header(plan.options,
+                                               /*single_picture_header=*/true,
+                                               &header, &error),
+        "header builds");
+  fs::CdefParams params;
+  params.frame_enable = header.frame_enable;
+  params.damping_minus_3 = header.damping_minus_3;
+  params.strengths_minus_1 = header.strengths_minus_1;
+  params.num_strengths = header.num_strengths;
+  params.on_skip_txfm_frame_enable = header.on_skip_txfm_frame_enable;
+  for (int i = 0; i < header.num_strengths; ++i) {
+    params.set[i].y_pri = header.set[i].y_pri_strength;
+    params.set[i].y_sec = header.set[i].y_sec_value;
+    params.set[i].uv_pri = header.set[i].uv_pri_strength;
+    params.set[i].uv_sec = header.set[i].uv_sec_value;
+  }
+  fs::CdefHeaderContext context;
+  context.coded_lossless = false;
+  context.enable_cdef = true;
+  context.single_picture_header_flag = true;
+  context.cdef_on_skip_txfm = 2;
+  context.num_planes = 3;
+  av2enc::BitWriter writer;
+  const std::size_t bits =
+      fs::write_cdef_params(writer, params, context, &error);
+  CHECK(error.empty(), "filters_stream cdef_params writes");
+  CHECK(static_cast<int>(bits) == header.bits,
+        "header bit count matches filters_stream");
+  const std::vector<std::uint8_t> bytes = writer.take_bytes();
+  fs::BitReader reader(bytes, bits);
+  fs::CdefParams decoded;
+  CHECK(fs::read_cdef_params(reader, context, &decoded, &error),
+        "cdef_params reads back");
+  bool equal = decoded.frame_enable == params.frame_enable &&
+               decoded.damping_minus_3 == params.damping_minus_3 &&
+               decoded.strengths_minus_1 == params.strengths_minus_1 &&
+               decoded.on_skip_txfm_frame_enable ==
+                   params.on_skip_txfm_frame_enable;
+  for (int i = 0; equal && i < params.num_strengths; ++i) {
+    equal = decoded.set[i].y_pri == params.set[i].y_pri &&
+            decoded.set[i].y_sec == params.set[i].y_sec &&
+            decoded.set[i].uv_pri == params.set[i].uv_pri &&
+            decoded.set[i].uv_sec == params.set[i].uv_sec;
+  }
+  CHECK(equal, "cdef_params round-trips");
+  std::printf("%s header: %d strengths, %d bits\n", label,
+              header.num_strengths, header.bits);
+}
+
+// §5.20.10.1 parity for the selected grid: encode it with the normative coders
+// and require the decoded grid to equal plan.cdef_idx.  The same calls are the
+// M1/M2 syntax hook.
+void check_index_grid_parity(const av2enc::cdef::CdefSearchResult& plan,
+                             int mi_cols, int mi_rows, const char* label) {
+  using av2enc::cuda::m1::CdefIndexCdfs;
+  using av2enc::cuda::m1::CdefIndexGrid;
+  if (plan.num_strengths == 1) {
+    for (std::int8_t idx : plan.cdef_idx) {
+      CHECK(idx == 0, "single strength forces index 0");
+    }
+    std::printf("%s index: no symbols (CdefStrengths == 1)\n", label);
+    return;
+  }
+  std::vector<std::uint8_t> buffer(1U << 16, 0);
+  std::uint16_t index0[4][3];
+  std::memcpy(index0, av2enc::cuda::m1::kCdefIndex0Cdf, sizeof(index0));
+  std::uint16_t minus1[8] = {0};
+  const std::uint16_t* source =
+      av2enc::cuda::m1::cdef_index_minus1_default(plan.num_strengths);
+  if (source != nullptr) {
+    std::memcpy(minus1, source,
+                sizeof(std::uint16_t) *
+                    static_cast<std::size_t>(plan.num_strengths));
+  }
+  CdefIndexCdfs cdfs;
+  cdfs.index0 = &index0[0][0];
+  cdfs.minus1 = minus1;
+  av2enc::av2::Encoder encoder;
+  CHECK(encoder.init_symbol(buffer.data(), buffer.size()) ==
+            av2enc::av2::Status::kOk,
+        "index encoder init");
+  CdefIndexGrid grid;
+  grid.reset(mi_cols, mi_rows);
+  bool ok = true;
+  for (int br = 0; br < plan.n64_rows && ok; ++br) {
+    for (int bc = 0; bc < plan.n64_cols && ok; ++bc) {
+      const int idx = static_cast<int>(
+          plan.cdef_idx[static_cast<std::size_t>(br) *
+                           static_cast<std::size_t>(plan.n64_cols) +
+                       static_cast<std::size_t>(bc)]);
+      ok = av2enc::cuda::m1::cdef_encode_block_index(
+          &grid, plan.num_strengths, 4, 0, 0, br * 16, bc * 16, idx, cdfs,
+          [&encoder](std::uint16_t* cdf, int n, int symbol) {
+            return encoder.encode_symbol(cdf, n, symbol) ==
+                   av2enc::av2::Status::kOk;
+          });
+    }
+  }
+  CHECK(ok, "selected index grid encodes");
+  std::size_t payload_bytes = 0;
+  CHECK(encoder.exit_symbol(&payload_bytes) == av2enc::av2::Status::kOk,
+        "index encoder exit");
+  std::memcpy(index0, av2enc::cuda::m1::kCdefIndex0Cdf, sizeof(index0));
+  if (source != nullptr) {
+    std::memcpy(minus1, source,
+                sizeof(std::uint16_t) *
+                    static_cast<std::size_t>(plan.num_strengths));
+  }
+  av2enc::av2::Decoder decoder;
+  CHECK(decoder.init_symbol(buffer.data(), buffer.size(), payload_bytes) ==
+            av2enc::av2::Status::kOk,
+        "index decoder init");
+  CdefIndexGrid decoded;
+  decoded.reset(mi_cols, mi_rows);
+  ok = true;
+  for (int br = 0; br < plan.n64_rows && ok; ++br) {
+    for (int bc = 0; bc < plan.n64_cols && ok; ++bc) {
+      int idx = -1;
+      ok = av2enc::cuda::m1::cdef_decode_block_index(
+          &decoded, plan.num_strengths, 4, 0, 0, br * 16, bc * 16, cdfs,
+          [&decoder](std::uint16_t* cdf, int n) -> int {
+            int symbol = -1;
+            if (decoder.decode_symbol(cdf, n, &symbol) !=
+                av2enc::av2::Status::kOk) {
+              return -1;
+            }
+            return symbol;
+          },
+          &idx);
+    }
+  }
+  CHECK(ok, "selected index grid decodes");
+  CHECK(decoder.exit_symbol() == av2enc::av2::Status::kOk,
+        "index decoder sees clean trailing bits");
+  CHECK(decoded.origins(plan.n64_cols, plan.n64_rows) == plan.cdef_idx,
+        "decoded index grid equals the selected grid");
+  std::printf("%s index: %zu bytes, %d strengths\n", label, payload_bytes,
+              plan.num_strengths);
 }
 
 }  // namespace
@@ -459,6 +613,12 @@ int main(int argc, char** argv) {
   }
   CHECK(strengths_equal, "GPU table selects the same strength sets");
 
+  // ---- Header and index-grid parity for the selected plan ----------------
+  check_header_parity(cpu_plan, "cpu-plan");
+  check_header_parity(gpu_plan, "gpu-plan");
+  check_index_grid_parity(cpu_plan, host.mi_cols, host.mi_rows, "cpu-plan");
+  check_index_grid_parity(gpu_plan, host.mi_cols, host.mi_rows, "gpu-plan");
+
   // ---- GPU filter with the CPU plan's grid ------------------------------
   CUDA_TRY(cudaMemcpy(dev.idx, cpu_plan.cdef_idx.data(),
                       static_cast<std::size_t>(nblocks), cudaMemcpyHostToDevice),
@@ -491,6 +651,31 @@ int main(int argc, char** argv) {
   CHECK(plane_mismatch[0] == 0 && plane_mismatch[1] == 0 &&
             plane_mismatch[2] == 0,
         "GPU filter is bit-exact with the CPU reference");
+
+  // ---- Copy path: cdef_idx == -1 must copy every sample ------------------
+  {
+    std::vector<std::int8_t> copy_grid(static_cast<std::size_t>(nblocks), -1);
+    CUDA_TRY(cudaMemcpy(dev.idx, copy_grid.data(), copy_grid.size(),
+                        cudaMemcpyHostToDevice),
+             "upload copy grid");
+    CUDA_TRY(m1_cdef_filter(device_frame, cpu_plan.options), "GPU copy filter");
+    CUDA_TRY(cudaDeviceSynchronize(), "sync copy filter");
+    int copy_mismatch[3] = {0, 0, 0};
+    for (int plane = 0; plane < 3; ++plane) {
+      std::vector<std::uint8_t> out(host.src[plane].size());
+      CUDA_TRY(cudaMemcpy(out.data(), dev.dst[plane], out.size(),
+                          cudaMemcpyDeviceToHost),
+               "download copy dst");
+      for (std::size_t i = 0; i < out.size(); ++i) {
+        if (out[i] != host.src[plane][i]) ++copy_mismatch[plane];
+      }
+    }
+    std::printf("copy path: Y %d U %d V %d mismatches\n", copy_mismatch[0],
+                copy_mismatch[1], copy_mismatch[2]);
+    CHECK(copy_mismatch[0] == 0 && copy_mismatch[1] == 0 &&
+              copy_mismatch[2] == 0,
+          "cdef_idx == -1 copies every plane byte-exactly on the GPU");
+  }
 
   // ---- Quality vs source -------------------------------------------------
   const int cw = (source.width + 1) / 2;

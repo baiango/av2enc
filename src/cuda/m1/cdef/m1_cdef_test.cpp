@@ -25,8 +25,10 @@
 #include "cuda/m1/cdef/m1_cdef.h"
 #include "cuda/m1/cdef/m1_cdef_cdf.h"
 #include "cuda/m1/cdef/m1_cdef_index_syntax.h"
+#include "bitstream/bitwriter.h"
 #include "encoder/filters/cdef/cdef.h"
 #include "encoder/filters/cdef/cdef_test_common.h"
+#include "encoder/m1/filters_stream/filters_stream.h"
 #include "entropy/av2/av2_entropy.h"
 
 namespace {
@@ -589,6 +591,262 @@ void print_plan_summary(const char* label, const CdefStagePlan& plan) {
       plan.index_bits_estimate);
 }
 
+// Exact §5.18.7.10 parity: the M1 stage's packed header params must produce
+// the same bits as the verified M1 header writer, and the reader must recover
+// the same parameters.  This runs on the plan the GPU test selects.
+void check_header_parity(const CdefStagePlan& plan, const char* label) {
+  namespace fs = av2enc::m1::filters_stream;
+  fs::CdefParams params;
+  params.frame_enable = plan.header.frame_enable;
+  params.damping_minus_3 = plan.header.damping_minus_3;
+  params.strengths_minus_1 = plan.header.strengths_minus_1;
+  params.num_strengths = plan.header.num_strengths;
+  params.on_skip_txfm_frame_enable = plan.header.on_skip_txfm_frame_enable;
+  for (int i = 0; i < plan.header.num_strengths; ++i) {
+    params.set[i].y_pri = plan.header.set[i].y_pri_strength;
+    params.set[i].y_sec = plan.header.set[i].y_sec_value;
+    params.set[i].uv_pri = plan.header.set[i].uv_pri_strength;
+    params.set[i].uv_sec = plan.header.set[i].uv_sec_value;
+  }
+  fs::CdefHeaderContext context;
+  context.coded_lossless = false;
+  context.enable_cdef = true;
+  context.single_picture_header_flag = true;  // M1 still picture
+  context.cdef_on_skip_txfm = 2;              // ADAPTIVE is forced
+  context.num_planes = 3;
+  av2enc::BitWriter writer;
+  std::string error;
+  const std::size_t bits =
+      fs::write_cdef_params(writer, params, context, &error);
+  check(error.empty(), "filters_stream cdef_params writes");
+  check(static_cast<int>(bits) == plan.header.bits,
+        "filters_stream bit count matches CdefHeaderParams::bits");
+  const std::vector<std::uint8_t> bytes = writer.take_bytes();
+  fs::BitReader reader(bytes, bits);
+  fs::CdefParams decoded;
+  check(fs::read_cdef_params(reader, context, &decoded, &error),
+        "filters_stream cdef_params reads back");
+  bool equal = decoded.frame_enable == params.frame_enable &&
+               decoded.damping_minus_3 == params.damping_minus_3 &&
+               decoded.strengths_minus_1 == params.strengths_minus_1 &&
+               decoded.on_skip_txfm_frame_enable ==
+                   params.on_skip_txfm_frame_enable;
+  for (int i = 0; equal && i < params.num_strengths; ++i) {
+    equal = decoded.set[i].y_pri == params.set[i].y_pri &&
+            decoded.set[i].y_sec == params.set[i].y_sec &&
+            decoded.set[i].uv_pri == params.set[i].uv_pri &&
+            decoded.set[i].uv_sec == params.set[i].uv_sec;
+  }
+  check(equal, "filters_stream cdef_params round-trips");
+  std::printf("%s header: %d strengths, %d bits\n", label,
+              plan.header.num_strengths, plan.header.bits);
+}
+
+// Writes and decodes the plan's per-64x64 cdef_idx grid with the normative
+// §8.2 coder, exactly as read_cdef() will consume it.
+void check_index_grid_parity(const CdefStagePlan& plan, int mi_cols,
+                             int mi_rows, const char* label) {
+  if (plan.num_strengths == 1) {
+    check(plan.index_bits_estimate == 0, "single strength costs no index bits");
+    for (std::int8_t idx : plan.cdef_idx) {
+      check(idx == 0, "single strength forces index 0");
+    }
+    std::printf("%s index: no symbols (CdefStrengths == 1)\n", label);
+    return;
+  }
+  std::vector<std::uint8_t> buffer(1U << 16, 0);
+  std::uint16_t index0[4][3];
+  std::memcpy(index0, av2enc::cuda::m1::kCdefIndex0Cdf, sizeof(index0));
+  std::uint16_t minus1[8] = {0};
+  if (const std::uint16_t* p =
+          av2enc::cuda::m1::cdef_index_minus1_default(plan.num_strengths)) {
+    std::memcpy(minus1, p,
+                sizeof(std::uint16_t) *
+                    static_cast<std::size_t>(plan.num_strengths));
+  }
+  CdefIndexCdfs cdfs;
+  cdfs.index0 = &index0[0][0];
+  cdfs.minus1 = minus1;
+  av2enc::av2::Encoder encoder;
+  check(encoder.init_symbol(buffer.data(), buffer.size()) ==
+            av2enc::av2::Status::kOk,
+        "plan index encoder init");
+  CdefIndexGrid grid;
+  grid.reset(mi_cols, mi_rows);
+  bool ok = true;
+  for (int br = 0; br < plan.n64_rows && ok; ++br) {
+    for (int bc = 0; bc < plan.n64_cols && ok; ++bc) {
+      const int idx = static_cast<int>(
+          plan.cdef_idx[static_cast<std::size_t>(br) *
+                           static_cast<std::size_t>(plan.n64_cols) +
+                       static_cast<std::size_t>(bc)]);
+      ok = av2enc::cuda::m1::cdef_encode_block_index(
+          &grid, plan.num_strengths, 4, 0, 0, br * 16, bc * 16, idx, cdfs,
+          [&encoder](std::uint16_t* cdf, int n, int symbol) {
+            return encoder.encode_symbol(cdf, n, symbol) ==
+                   av2enc::av2::Status::kOk;
+          });
+    }
+  }
+  check(ok, "plan index grid encodes");
+  std::size_t payload_bytes = 0;
+  check(encoder.exit_symbol(&payload_bytes) == av2enc::av2::Status::kOk,
+        "plan index encoder exit");
+
+  std::memcpy(index0, av2enc::cuda::m1::kCdefIndex0Cdf, sizeof(index0));
+  if (const std::uint16_t* p =
+          av2enc::cuda::m1::cdef_index_minus1_default(plan.num_strengths)) {
+    std::memcpy(minus1, p,
+                sizeof(std::uint16_t) *
+                    static_cast<std::size_t>(plan.num_strengths));
+  }
+  av2enc::av2::Decoder decoder;
+  check(decoder.init_symbol(buffer.data(), buffer.size(), payload_bytes) ==
+            av2enc::av2::Status::kOk,
+        "plan index decoder init");
+  CdefIndexGrid decoded;
+  decoded.reset(mi_cols, mi_rows);
+  ok = true;
+  for (int br = 0; br < plan.n64_rows && ok; ++br) {
+    for (int bc = 0; bc < plan.n64_cols && ok; ++bc) {
+      int idx = -1;
+      ok = av2enc::cuda::m1::cdef_decode_block_index(
+          &decoded, plan.num_strengths, 4, 0, 0, br * 16, bc * 16, cdfs,
+          [&decoder](std::uint16_t* cdf, int n) -> int {
+            int symbol = -1;
+            if (decoder.decode_symbol(cdf, n, &symbol) !=
+                av2enc::av2::Status::kOk) {
+              return -1;
+            }
+            return symbol;
+          },
+          &idx);
+    }
+  }
+  check(ok, "plan index grid decodes");
+  check(decoder.exit_symbol() == av2enc::av2::Status::kOk,
+        "plan index decoder sees clean trailing bits");
+  check(decoded.origins(plan.n64_cols, plan.n64_rows) == plan.cdef_idx,
+        "decoded index grid equals the plan grid");
+  std::printf("%s index: %zu bytes (%zu bits), %d strengths\n", label,
+              payload_bytes, payload_bytes * 8U, plan.num_strengths);
+}
+
+// Reads the plane dump written by run_stream_gate --dump-planes:
+//   "CDEFPL01", u32 width, u32 height, recon Y/U/V, source Y/U/V.
+bool load_plane_dump(const std::string& path,
+                     av2enc::cdef::test::TestFrame* recon,
+                     av2enc::cdef::test::TestFrame* source) {
+  FILE* f = std::fopen(path.c_str(), "rb");
+  if (f == nullptr) return false;
+  char magic[8];
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  if (std::fread(magic, 1, 8, f) != 8 ||
+      std::memcmp(magic, "CDEFPL01", 8) != 0 ||
+      std::fread(&width, 4, 1, f) != 1 ||
+      std::fread(&height, 4, 1, f) != 1 ||
+      width == 0 || height == 0 || (width % 8) != 0 || (height % 8) != 0) {
+    std::fclose(f);
+    return false;
+  }
+  const int mi_cols = 2 * ((static_cast<int>(width) + 7) >> 3);
+  const int mi_rows = 2 * ((static_cast<int>(height) + 7) >> 3);
+  *recon = av2enc::cdef::test::make_frame(mi_cols, mi_rows);
+  *source = av2enc::cdef::test::make_frame(mi_cols, mi_rows);
+  const int cw = static_cast<int>(width) / 2;
+  const int ch = static_cast<int>(height) / 2;
+  bool ok = true;
+  for (int plane = 0; plane < 3; ++plane) {
+    const int w = plane == 0 ? static_cast<int>(width) : cw;
+    const int h = plane == 0 ? static_cast<int>(height) : ch;
+    std::vector<std::uint8_t> row(static_cast<std::size_t>(w));
+    for (int which = 0; which < 2 && ok; ++which) {
+      av2enc::cdef::test::TestFrame* dst = which == 0 ? recon : source;
+      for (int y = 0; y < h && ok; ++y) {
+        ok = std::fread(row.data(), 1, row.size(), f) == row.size();
+        if (ok) {
+          std::memcpy(dst->src[plane].data() +
+                          static_cast<std::size_t>(y) *
+                              static_cast<std::size_t>(dst->stride[plane]),
+                      row.data(), row.size());
+        }
+      }
+    }
+  }
+  std::fclose(f);
+  return ok;
+}
+
+// Header + index-grid parity on the real reconstruction the CUDA parity test
+// consumes.  This is the host-runnable half of the GPU parity contract: the
+// GPU test asserts the filtered bytes and the SSE table; both use this plan.
+void test_real_recon_dump(const std::string& path) {
+  av2enc::cdef::test::TestFrame recon;
+  av2enc::cdef::test::TestFrame source;
+  if (!load_plane_dump(path, &recon, &source)) {
+    std::fprintf(stderr, "skip: cannot read plane dump %s\n", path.c_str());
+    return;
+  }
+  StageFixture fx;
+  fx.recon = recon;
+  fx.ref = source;
+  fx.skip.assign(static_cast<std::size_t>(recon.mi_cols) *
+                     static_cast<std::size_t>(recon.mi_rows), 0);
+  fx.lossless.assign(fx.skip.size(), 0);
+  fx.lossless_chroma.assign(fx.skip.size(), 0);
+  fx.view = CdefStageFrame{};
+  for (int plane = 0; plane < 3; ++plane) {
+    fx.view.plane[plane].src = fx.recon.src[plane].data();
+    fx.view.plane[plane].dst = fx.recon.dst[plane].data();
+    fx.view.plane[plane].stride = fx.recon.stride[plane];
+    fx.view.plane[plane].height = fx.recon.height[plane];
+    fx.view.ref[plane] = fx.ref.src[plane].data();
+    fx.view.ref_stride[plane] = fx.ref.stride[plane];
+  }
+  fx.view.width = recon.mi_cols * 4;
+  fx.view.height = recon.mi_rows * 4;
+  fx.view.mi_cols = recon.mi_cols;
+  fx.view.mi_rows = recon.mi_rows;
+  fx.view.skip = fx.skip.data();
+  fx.view.lossless = fx.lossless.data();
+  fx.view.lossless_chroma = fx.lossless_chroma.data();
+
+  for (int strengths : {1, 4}) {
+    CdefStageOptions options;
+    options.num_strengths = strengths;
+    CdefStagePlan plan;
+    std::string error;
+    check(av2enc::cuda::m1::m1_cdef_plan(fx.view, options, &plan, &error),
+          "real-dump plan");
+    check(fx.filtered_sse(plan) == plan.sse_total,
+          "real-dump plan SSE equals the filtered samples");
+    check_header_parity(plan, "real-dump");
+    check_index_grid_parity(plan, recon.mi_cols, recon.mi_rows, "real-dump");
+    print_plan_summary("real-dump", plan);
+
+    // Copy semantics: an all -1 grid must leave every sample untouched, and a
+    // block assigned the all-zero set must be a byte-exact copy.
+    const std::vector<std::int8_t> signed_grid = plan.cdef_idx;
+    av2enc::cdef::test::reset_dst(fx.recon);
+    std::vector<std::int8_t> copy_grid(signed_grid.size(), -1);
+    for (std::size_t i = 0; i < fx.recon.idx.size(); ++i) {
+      fx.recon.idx[i] = copy_grid[i];
+    }
+    av2enc::cdef::CdefFrame frame = fx.recon.view();
+    check(av2enc::cdef::cdef_frame(frame, plan.search.options) ==
+              CdefStatus::kOk,
+          "copy-grid filter");
+    bool all_copied = true;
+    for (int plane = 0; plane < 3; ++plane) {
+      all_copied = all_copied && std::equal(fx.recon.dst[plane].begin(),
+                                            fx.recon.dst[plane].end(),
+                                            fx.recon.src[plane].begin());
+    }
+    check(all_copied, "cdef_idx == -1 copies every plane byte-exactly");
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -598,6 +856,9 @@ int main(int argc, char** argv) {
   test_index_context_matches_spec();
   test_index_syntax_roundtrip();
   test_index_syntax_edge_cases();
+  if (argc > 2) {
+    test_real_recon_dump(argv[2]);
+  }
 
   // Real reconstructed 640x360 content, if available.
   const std::string real = argc > 1 ? argv[1] : "decoded.y4m";

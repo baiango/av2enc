@@ -62,11 +62,16 @@ M1_SOURCES=(
   "$ROOT/src/bitstream/m0_headers.cpp"
   "$ROOT/src/encoder/partition/partition.cpp"
   "$ROOT/src/encoder/intra_modes/intra_modes.cpp"
+  "$ROOT/src/encoder/rdoq/rdoq.cpp"
+  "$ROOT/src/encoder/rdoq/rdoq_av2_model.cpp"
+  "$ROOT/src/encoder/tx_type/tx_type.cpp"
   "$ROOT/src/encoder/tx_variants/tx_variants.cpp"
   "$ROOT/src/encoder/tx_variants/tx_select.cpp"
   "$ROOT/src/encoder/cfl/cfl.cpp"
   "$ROOT/src/encoder/filters/deblock/deblock.cpp"
+  "$ROOT/src/encoder/filters/restoration/restoration.cpp"
   "$ROOT/src/encoder/rdo/rdo.cpp"
+  "$ROOT/src/encoder/rdo/intra_decision.cpp"
   "$ROOT/src/entropy/av2/av2_entropy.cpp"
   "$ROOT/src/io/y4m.cpp"
   "$ROOT/src/io/ivf.cpp"
@@ -79,6 +84,8 @@ if [ "$RUN" -eq 1 ] || [ "$DO_CUDA" -eq 0 ]; then
   "$CXX" -std=c++20 -O2 -g $WARN $INC \
     "$SELF/m1_cdef_test.cpp" "$SELF/m1_cdef.cpp" \
     "$ROOT/src/encoder/filters/cdef/cdef.cpp" \
+    "$ROOT/src/encoder/m1/filters_stream/filters_stream.cpp" \
+    "$ROOT/src/bitstream/bitwriter.cpp" \
     "$ROOT/src/entropy/av2/av2_entropy.cpp" \
     -o "$BUILD_DIR/m1_cdef_test"
   "$CXX" -std=c++20 -O2 -g -w $INC \
@@ -89,7 +96,11 @@ if [ "$RUN" -eq 1 ] || [ "$DO_CUDA" -eq 0 ]; then
 fi
 
 if [ "$RUN" -eq 1 ]; then
-  "$BUILD_DIR/m1_cdef_test" "$ROOT/decoded.y4m"
+  DUMP_ARG=""
+  if [ -s "$BUILD_DIR/recon.bin" ]; then
+    DUMP_ARG="$BUILD_DIR/recon.bin"
+  fi
+  "$BUILD_DIR/m1_cdef_test" "$ROOT/decoded.y4m" "$DUMP_ARG"
   if [ -n "$GATE_FRAME" ]; then
     DAV2D="${DAV2D:-$ROOT/tools/bin/dav2d}"
     "$BUILD_DIR/run_stream_gate" "$GATE_FRAME" "$BUILD_DIR/gate" \
@@ -107,6 +118,9 @@ if [ "$DO_CUDA" -eq 1 ]; then
     -Xcompiler -Wall,-Wextra,-Wconversion,-Wshadow \
     "$SELF/m1_cdef.cu" "$SELF/m1_cdef_gpu_test.cu" \
     "$SELF/m1_cdef.cpp" "$ROOT/src/encoder/filters/cdef/cdef.cpp" \
+    "$ROOT/src/encoder/m1/filters_stream/filters_stream.cpp" \
+    "$ROOT/src/bitstream/bitwriter.cpp" \
+    "$ROOT/src/entropy/av2/av2_entropy.cpp" \
     -o "$BUILD_DIR/m1_cdef_gpu_test"
   if [ "$RUN" -eq 1 ]; then
     if [ -z "$DUMP" ]; then

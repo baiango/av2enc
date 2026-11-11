@@ -174,7 +174,11 @@ bool m1_cdef_plan(const CdefStageFrame& frame, const CdefStageOptions& options,
     if (frame.plane[plane].src == nullptr || frame.plane[plane].stride < width) {
       return fail("missing or short source plane");
     }
-    if (frame.plane[plane].src == frame.plane[plane].dst) {
+    // Planning does not write pixels, so `dst` may be null.  When it is
+    // supplied it must not alias the source (the filter is a pure function of
+    // the unfiltered frame).
+    if (frame.plane[plane].dst != nullptr &&
+        frame.plane[plane].src == frame.plane[plane].dst) {
       return fail("CDEF source and destination must not alias");
     }
     if (frame.plane[plane].height != 0 &&

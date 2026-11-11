@@ -346,7 +346,19 @@ to `generate_m1_tables.py` (the JSON keys are `Default_Cdef_Index0_Cdf` and
 * every candidate row of the GPU SSE table to equal the host table;
 * the GPU table to select the same header strengths and `cdef_idx` grid;
 * every filtered byte on all three planes to equal the CPU reference;
+* the §5.18.7.10 header parity: `m1_cdef_build_header()` /
+  `CdefHeaderParams::bits` must equal the bits and the round-trip of the
+  verified `filters_stream::write_cdef_params()` for both the CPU-selected and
+  the GPU-selected plan, in the M1 single-picture context;
+* the §5.20.10.1 index-grid parity: the selected grid must encode and decode
+  through the normative §8.2 coder to the same `cdef_idx` for both plans;
+* the copy path: an all-`-1` grid must copy every sample on all three planes
+  byte-exactly (the `cdef_idx == -1` branch of §7.18.1);
 * timings (search kernel, filter kernel) and the PSNR delta.
+
+The header and index checks are the same ones `m1_cdef_test.cpp` now runs on
+the real dump on the host (`test_real_recon_dump`), so they are executed even
+without a GPU; only the kernel byte comparison needs CUDA.
 
 It needs `nvcc` on the 3060 box:
 
@@ -355,11 +367,15 @@ cd src/cuda/m1/cdef
 ./build_and_test.sh --gate <src.y4m> --cuda --arch=sm_86
 ```
 
-**Not run here:** this dev box has no CUDA toolkit, so the GPU numbers are
-pending. The kernel uses the same inline arithmetic as the CPU path
-(`cdef_filter_sample`, `cdef_direction`, `cdef_luma_params`,
-`cdef_chroma_params`, `cdef_eval_block`), so bit-exactness is structural; the
-test is the check.
+**Not run here:** this dev box has no CUDA toolkit (and no reachable GPU host),
+so the kernel byte comparison and the GPU timings are pending. The kernel uses
+the same inline arithmetic as the CPU path (`cdef_filter_sample`,
+`cdef_direction`, `cdef_luma_params`, `cdef_chroma_params`, `cdef_eval_block`),
+so bit-exactness is structural; the test is the check. The host half
+(`m1_cdef_test` on the gate's `recon.bin`) passes: 603 checks, 0 failures, with
+the real 640×360 plan producing a 20-bit single-strength header and a 4-set
+grid whose 96-bit index stream round-trips.
+
 
 ## Indirect verification performed here (no M1 edits)
 
