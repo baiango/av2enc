@@ -27,6 +27,21 @@ Adaptive CDFs are opt-in (`--adaptive-cdf`); defaults stay bit-identical.
 The wavefront/CUDA-graph scheduler component reaches ~4.4 ms at 640×360 and
 ~21 ms at 1080p, but is not wired into the CLI/entropy writer yet.
 
+### M1 (opt-in, `--m1`)
+
+Partition tree + full intra + variable transforms + CfL + deblock. It is
+**bit-exact against `dav2d` on all planes** (verified per sample, not by PSNR):
+
+| Still | M1 IVF | Avg PSNR | M0 IVF | M0 avg |
+|---|---:|---:|---:|---:|
+| 64×64 | 936 B | 43.28 dB | 1,138 B | 42.13 dB |
+| 640×360 | 13,355 B | 46.37 dB | 19,751 B | 47.20 dB |
+| 1080p | 37,856 B | 51.41 dB | 83,228 B | 49.79 dB |
+
+Full directional intra (`--m1-full-intra`) is also bit-exact but not a
+rate/quality win at QP 90 yet, so it stays opt-in. Details and limits:
+`docs/m1-results.md`.
+
 ## Performance expectations
 
 - **Product target:** Vast.ai Linux instance, RTX 3060, GPU-resident encoder.

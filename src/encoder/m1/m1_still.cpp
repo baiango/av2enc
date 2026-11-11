@@ -379,9 +379,13 @@ class Encoder {
     enc_.disable_cdf_update =
         (options_.adaptive_cdf ? 0 : 1);
 
-    recon_[0].resize(luma_stride_, luma_height_, 128);
-    recon_[1].resize(chroma_stride_, chroma_padded_height_, 128);
-    recon_[2].resize(chroma_stride_, chroma_padded_height_, 128);
+    // dav2d initializes CurrFrame to 0. CfL's L/lumaAvg read the reconstructed
+    // luma below/right of the current block (clamped only at block edges), so
+    // zero padding is part of the encoder/decoder contract; 128 shifts CfL
+    // predictions by 1 LSB and then cascades.
+    recon_[0].resize(luma_stride_, luma_height_, 0);
+    recon_[1].resize(chroma_stride_, chroma_padded_height_, 0);
+    recon_[2].resize(chroma_stride_, chroma_padded_height_, 0);
 
     for (int plane = 0; plane < 3; ++plane) {
       const int n = (plane == 0 ? mi_cols_ : mi_cols_ / 2) + 16;
@@ -468,6 +472,7 @@ class Encoder {
       error = "partition tree invalid: " + error;
       return false;
     }
+    leaves_ = frame.leaves;
 
     clear_above_context();
     for (int sbi = 0; sbi < static_cast<int>(frame.superblocks.size()); ++sbi) {
@@ -515,6 +520,7 @@ class Encoder {
 
   const Plane& recon(int plane) const { return recon_[plane]; }
   Plane& recon_mut(int plane) { return recon_[plane]; }
+  int leaves() const { return leaves_; }
   int mi_cols() const { return mi_cols_; }
   int mi_rows() const { return mi_rows_; }
   int deblock_cols() const { return deblock_cols_; }
@@ -757,13 +763,13 @@ class Encoder {
     const int rel_x = abs_x4 - sb_c0;
     const int rel_y = abs_y4 - sb_r0;
     const int sb_h = sb_rows_plane_[plane];
-    // Same border rule on the left edge: MiRowEnd is the tile end.
-    const int plane_rows = plane == 0 ? mi_rows_ : mi_rows_ / 2;
-    const int border_h = std::min(2 * (16 >> sub), plane_rows - sb_r0);
+    // clear_block_decoded_flags() presets the left border only within the
+    // current SB (and clears the boundary row), so below-left availability can
+    // never extend into the next SB row.
     int count = 0;
     for (int i = 0; i < h4; ++i) {
       const int y = rel_y + h4 + i;
-      if (y >= (rel_x == 0 ? border_h : sb_h)) break;
+      if (y >= sb_h) break;
       if (rel_x - 1 >= 0 &&
           !decoded_[plane].at(sb_c0 + rel_x - 1, sb_r0 + y)) {
         break;
@@ -1048,7 +1054,6 @@ class Encoder {
         break;
       }
     }
-
     std::vector<std::int32_t> dequant(
         static_cast<std::size_t>(params.w) * static_cast<std::size_t>(params.h));
     std::vector<std::int16_t> recon_residual(
@@ -1855,8 +1860,8 @@ class Encoder {
                       cfl::Block& block) {
     block.luma = recon_[0].samples.data();
     block.luma_stride = recon_[0].width;
-    block.luma_max_x = recon_[0].width - 1;
-    block.luma_max_y = recon_[0].height - 1;
+    block.luma_max_x = mi_cols_ * 4 - 1;
+    block.luma_max_y = mi_rows_ * 4 - 1;
     block.sb_top_y = (cy0 * 2 / 64) * 64;
     block.chroma = recon_[plane].samples.data();
     block.chroma_stride = recon_[plane].width;
@@ -1915,6 +1920,10 @@ class Encoder {
     for (int i = 0; i < count; ++i) {
       const intra::Mode mode = candidates[static_cast<std::size_t>(i)].first;
       const int delta = candidates[static_cast<std::size_t>(i)].second;
+      // M1 default: chroma is DC or CfL. Directional chroma prediction is not
+      // bit-exact against the pinned decoder yet, so do not select it in the
+      // default path (see --m1-full-intra for the luma search).
+      if (options_.enable_cfl && mode != intra::Mode::kDc) continue;
       if (!predict_block(1, cx0, cy0, cw, ch, mode, delta, pred)) return false;
       const std::int64_t sse = sse_against_source(1, cx0, cy0, cw, ch, pred);
       if (sse < best.sse) {
@@ -2065,6 +2074,7 @@ class Encoder {
   bool trace_ = std::getenv("AV2ENC_M1_TRACE") != nullptr;
 
   std::array<std::vector<deblock::DeblockMi>, 3> deblock_mi_;
+  int leaves_ = 0;
   int deblock_cols_ = 0;
   int deblock_rows_ = 0;
 
@@ -2125,6 +2135,7 @@ bool encode_m1_still_picture(const StillPicture& picture,
   result.frame = assemble_m1_still_picture(config, tile_payload);
   result.tile_bytes = static_cast<std::uint32_t>(tile_payload.size());
   result.frame_bytes = static_cast<std::uint32_t>(result.frame.size());
+  result.leaves = encoder.leaves();
 
   // Deblock the reconstruction before reporting it. Intra prediction already
   // used the unfiltered reconstruction, matching normative filter order.
