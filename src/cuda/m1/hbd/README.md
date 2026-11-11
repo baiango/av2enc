@@ -1,13 +1,15 @@
 # 10-bit M1 path (`src/cuda/m1/hbd/`)
 
-Status: **integration-ready component, not integrated.** This directory plus
-`src/encoder/format/` and `src/cuda/format/` implements the 10-bit 4:2:0
-sample, geometry, transform/quant, dequant and inverse-reconstruction path. It
-does not write a header or entropy payload, and **no 10-bit stream has been
-encoded or decoded in this tree**. The M1 header writer still hard-codes
-`bit_depth_idc = 1` (8-bit) and an 8-bit `base_q_idx`, so a 10-bit still
-requires the integration steps below. Do not claim 10-bit before
-`gate_10bit_still.sh` passes.
+Status: **component + standalone stream delivered.** `src/encoder/m10/`
+now writes a 10-bit 4:2:0 still stream using this directory and
+`src/encoder/format/`; `dav2d` decodes it and every decoded sample matches the
+encoder reconstruction (0 LSB) at 64x64 and 640x360.  This directory itself is
+still not wired into the M1 core, so `--m1` remains 8-bit.  The exact M1
+integration steps live in `src/encoder/m10/README.md` and are summarized below.
+The GPU block stage (`src/cuda/format/m10_gpu.cu`) and its CPU-vs-GPU test are
+written but were not executed on the macOS host (no `nvcc`); run
+`src/cuda/format/build_m10_gpu_test.sh` on `sm_86` before claiming GPU parity.
+Do not claim 10-bit M1 (`--m1`) support until its gate passes.
 
 12-bit is not signalable in AV2 v1.0.0 (`bit_depth_idc` is one bit:
 `0 = 10-bit`, `1 = 8-bit`; greater values are reserved, §6.4.1 Table 6.3).

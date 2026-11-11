@@ -1,10 +1,11 @@
 # Format / high-bit-depth component (`src/encoder/format/`)
 
-Status: **standalone component, not integrated.** This directory implements the
-format layer needed for 10-bit, 4:2:2 and 4:4:4 support, plus the CPU reference
-for the GPU sample path. It does **not** write a sequence header, frame header,
-tile payload, or bitstream, and nothing here is wired into
-`src/encoder/m0_still.cpp`. No 10-bit stream has been encoded or decoded.
+Status: **standalone component; now consumed by the M10 10-bit stream.**
+`src/encoder/m10/` uses this format layer plus `src/cuda/m1/hbd/` to write a
+10-bit 4:2:0 still that `dav2d` decodes with a 0-LSB reconstruction match.
+Nothing here is wired into `src/encoder/m0_still.cpp` or the M1 core yet; `--m1`
+remains 8-bit.  See `src/encoder/m10/README.md` for the stream, gate and the
+exact M1 integration checklist.
 
 The 10-bit M1 transform/sample companion lives in `src/cuda/m1/hbd/`. It uses
 `BitDepthLimits` / `clip_*` from this header as the single source of truth for
