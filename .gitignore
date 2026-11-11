@@ -33,3 +33,6 @@ id_ed25519*
 *.pcap
 __pycache__/
 *.pyc
+
+# Normative spec PDF: obtain separately, do not redistribute
+spec/AV2_Spec_v1.0.0.pdf

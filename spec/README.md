@@ -9,6 +9,11 @@
 
 This is the normative reference for the encoder. Do not edit it.
 
+**The PDF is not redistributed in this repository.** Download it from the
+source URL and place it at `spec/AV2_Spec_v1.0.0.pdf` (verify the SHA-256) only
+if you need to regenerate tables or constants. The generated tables under
+`spec/tables/` are committed, so normal builds and tests do not need the PDF.
+
 Use it for:
 - M0 still-picture bitstream syntax
 - entropy coder and CDF tables
