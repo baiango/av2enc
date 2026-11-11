@@ -1,9 +1,13 @@
 # Refactor plan — preparing to restructure the tree
 
-Status: **preparation only**. No file moves are proposed until the current
-feature wave is wired and every component has a stream gate. The goal of this
-document is to make the eventual move mechanical, reviewable, and provably
-bitstream-neutral.
+Status: **preparation only**. The goal is to make the eventual move
+mechanical, reviewable, and provably bitstream-neutral.
+
+**Sequencing decision (binding):** new AV2 features land as standalone,
+gate-tested components. **No component is wired into the M1/M2 core until this
+refactor is finished.** Integration is a separate pass that starts only after
+Phase 7, so it is done once, against the final directory layout, instead of
+twice.
 
 ## 1. Why this is now urgent
 
@@ -66,7 +70,9 @@ Generate `refactor/baseline.json` plus a human-readable
 - **Pinned streams**: M0 64/640, M1 64/640, native 1080p, QP 90/91/141/191/255
   qctx set, M2 2f/8f 720p, tiled 2/4/8/16/32-tile cases, palette/MRL/IBC
   gate streams. Store *encoder MD5* and *decoded MD5* separately.
-- **Gate inventory**: `ctest` list (10), `feature_gate.sh` (30 cases),
+- **Gate inventory**: `ctest` list (10), `feature_gate.sh` (30 cases), every
+  component `build_and_test.sh` added by the feature waves (including the 20
+  in-flight feature modules),
   `m3_streams`, `m3_gpu` matrix, M1 GPU matrix (112 cases), per-module check
   counts (e.g. `qm_test: 258446`).
 - **Timings**: clean CPU build, clean CUDA build, full `ctest`, so later
@@ -186,7 +192,19 @@ Mapping of today's directories:
 | `src/encoder/pipeline`, `tiles`, `svc` | `pipeline/…` |
 | `src/encoder/rc/twopass` | `codec/rate/rc/twopass` |
 | `src/encoder/svc` | `pipeline/svc` |
-| `src/encoder/hdr` | `frame/metadata/hdr` |
+| `src/encoder/hdr`, `metadata/{content_interpretation,types}` | `frame/metadata/…` |
+| `src/encoder/hbd`, `format/chroma` | `codec/format/{hbd,chroma}` |
+| `src/encoder/inter/{longterm,random_access,sef,leading,tlayers,drl_reorder,gme,temporal,advanced,me2,mc}` | `codec/inter/…` |
+| `src/encoder/frame/mfh`, `syntax/small_header` | `frame/{mfh,small_header}` |
+| `src/encoder/rc/hrd` | `codec/rate/hrd` |
+| `src/encoder/sb256` | `codec/partition/sb256` |
+| `src/encoder/m2/ddt` | `codec/transform/ddt` |
+| `src/encoder/entropy/avg_cdf` | `codec/entropy/avg_cdf` |
+| `src/encoder/tcq/parity` | `codec/transform/tcq/parity` |
+| `src/encoder/quant/dcdeltaq` | `codec/quant/dcdeltaq` |
+| `src/encoder/filters/lr_chroma` | `codec/filters/lr_chroma` |
+| `src/encoder/cfl/ds_filters` | `codec/intra/cfl/ds_filters` |
+| `src/multi_gpu/runtime` | `pipeline/dispatch/multi_gpu` |
 | `src/multi_gpu/runtime` | `pipeline/dispatch/multi_gpu` |
 
 ## 5. Execution order
@@ -297,7 +315,31 @@ and after to prove the symbol set only reorganizes.
 - If a phase cannot pass `verify_baseline.sh --check`, revert the phase tag
   rather than debugging forward.
 
-## 8. Effort estimate
+## 8. Integration pass — starts only after Phase 7
+
+The 28 existing components plus the 20 features currently in flight are *not*
+wired during the refactor. Once the tree is final, integration runs in
+dependency order, one tool per commit, each with the same gate discipline:
+
+1. shared primitives (shared `spec_math`, CDF registry, qlookup) — no stream change;
+2. intra tools: MRL, palette, IntraBC, DIP, IBP, CfL variants, MHCCP;
+3. transform/quant: QM, DC/AC delta-Q, IST, TCQ, parity hiding;
+4. entropy/header: delta-Q/segmentation, average CDF, MFH, content
+   interpretation, timing/decoder model/BRT, metadata types;
+5. partitions/SB: 128 and 256 superblocks, SDP, extended partitions, sub-8;
+6. filters: CDEF, CCSO, Wiener NS, PC-Wiener, GDF, chroma LR, film grain;
+7. inter: multi-ref, compound, B-frames, DRL reorder, subpel, warp, GME,
+   inter-intra, BAWP, TIP, OPFL, refine-MV, temporal MV, temporal layers;
+8. frame types: long-term refs, OLK, RAS/switch, SEF, leading frames;
+9. formats: 10-bit, 4:2:2/4:4:4/4:0:0;
+10. pipelines: tiles, SVC, two-pass/RC, multi-GPU;
+11. CLI and final pinned-stream re-baseline.
+
+Rule: integration commits may change bitstreams (that is their purpose), but
+they must be opt-in, default-off, and must leave every pinned default stream
+byte-identical. A gate failure reverts the integration commit, not the pin.
+
+## 9. Effort estimate
 
 | Phase | Effort | Risk |
 |---|---|---|
