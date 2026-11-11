@@ -137,6 +137,60 @@ synthetic edge geometry, and asserts: GPU-sourced bytes, one sync, 3 TX jobs
 per block, GPU stage status, coefficient planes present, plan/EOB invariants,
 byte-identical frame and all recon planes, and arena reuse on the second call.
 
+## Hardening matrix (2026-11-11)
+
+105-case integrated run (CPU `--m1` vs `--m1 --m1-gpu`, same options; full IVF
+file bytes, MD5, `dav2d` decode, per-sample Y/U/V compare, GPU repeated in a
+second process):
+
+- **72 PASS**: bytes identical, Y/U/V differences `0/0`, deterministic MD5,
+  GPU bytes (no `frame_bytes_from_cpu` note). Covers 64x64 and 640x360 with all
+  13 options; native 1080p `testdata/shine_1920x1080_10f.y4m` with all options
+  except depth 8; natural 3840x2160 with default/no-deblock/depth-0/adaptive;
+  ten random even natural sizes with default/full-intra/no-CfL.
+- **17 DECODE-FAIL**: GPU bytes equal CPU bytes, but the pinned `dav2d` rejects
+  the CPU-sourced stream. `136x88` is strict-incompliant (decodes with
+  `--strict 0`); `1280x720` fails even with `--strict 0`, and the **M0 CPU
+  encoder fails the same way** while the AVM 720p baseline decodes. Isolated to
+  the shared CPU bitstream/header/plan, not this orchestrator.
+- **16 REJECT**: both CPU and GPU reject identically: 8x8/8x16/16x8
+  (spec-forced partition conflict), depth 8 on 640x360/1080p/136x88/720p
+  (`EOB multisize 0 is not supported by M1 transform sizes`), and depth
+  0/1/2/3/`--m1-single` on 136x88/720p (spec-forced partition conflict).
+- One transient decode anomaly: an early 1080p default run reported 2 V samples
+  differing; re-decoding the identical IVF is bit-exact and the clean run with
+  `dav2d --threads 1` had 0 diffs. The same transient appeared once in
+  `run_matrix.sh` (1080p full, 2 Y samples); re-running `verify.py` on the same
+  IVF+dump reports `BIT-EXACT`. The pinned decoder occasionally produces a
+  couple of different samples under concurrent load; use `--threads 1`.
+
+Additional gates:
+
+- `compute-sanitizer --tool memcheck`: 0 errors at 64x64, 640x360 and 64x64
+  full-intra. `--tool racecheck`: 0 hazards at 64x64.
+- Determinism: every PASS case repeated in a second process with the same MD5;
+  the unit test performs two encodes per case in one process (arena reuse),
+  including a 16 MiB `--vram-cap` and a 64x64 -> 640x360 growth/reinit.
+- Error paths: odd 63x65 rejected by the CLI; no input -> usage/exit 2; CPU-only
+  build -> clear `--m1-gpu requires a CUDA build`; `--vram-cap` below the working
+  set -> `--vram-cap N MiB is below the required working set (M MiB)`; no CUDA
+  device -> CPU fallback with a note and identical bytes; unsupported tiny
+  geometries -> clear partition error (CPU and GPU).
+
+Integration fixes from this pass:
+
+1. `validate_options` rejects odd dimensions before plan/GPU work.
+2. An explicit `--vram-cap` below the required working set is now a hard error
+   instead of a silent CPU fallback; an explicit cap also forces the arena to
+   shrink/reinit if a previous reservation exceeded it.
+3. `m1_gpu_test --vram-cap N` exercises capped arenas and the growth/retry path
+   in one process.
+
+No bitstream-integration bug was found: every encodable case has identical CPU
+and GPU IVF bytes. The decode failures and depth-8 rejections are in the shared
+CPU plan/syntax/header path (outside `src/cuda/m1/` root files) and are
+reported, not worked around.
+
 ## Runtime ownership
 
 - One `Context` + persistent `Arena` per process. Capacity is device-derived

@@ -833,12 +833,21 @@ RuntimeState ensure_runtime(const GpuOptions& options, const FramePlan* plan,
                  ? available - kDeviceHeadroomBytes
                  : 0;
   }
+  const std::uint64_t cap_bytes =
+      options.vram_cap_mb > 0
+          ? static_cast<std::uint64_t>(options.vram_cap_mb) * kMiB
+          : 0;
+  if (cap_bytes > 0 && cap_bytes < need_device) {
+    const std::uint64_t need_mib = (need_device + kMiB - 1u) / kMiB;
+    error = "M1 GPU: --vram-cap " + std::to_string(options.vram_cap_mb) +
+            " MiB is below the required working set (" +
+            std::to_string(need_mib) + " MiB)";
+    return RuntimeState::kError;
+  }
   std::uint64_t desired = std::max(
       kArenaFloorBytes, need_device + need_device / 2u + kArenaSlackBytes);
-  if (options.vram_cap_mb > 0) {
-    const std::uint64_t cap =
-        static_cast<std::uint64_t>(options.vram_cap_mb) * kMiB;
-    desired = std::min(desired, cap);
+  if (cap_bytes > 0) {
+    desired = std::min(desired, cap_bytes);
   }
   if (budget > 0) {
     desired = std::min(desired, budget);
@@ -847,22 +856,27 @@ RuntimeState ensure_runtime(const GpuOptions& options, const FramePlan* plan,
     if (options.allow_cpu_fallback) {
       return RuntimeState::kCpuFallback;
     }
-    error = "M1 GPU: the arena cap cannot hold the working set (" +
+    error = "M1 GPU: the device budget cannot hold the working set (" +
             std::to_string(need_device) + " bytes)";
     return RuntimeState::kError;
   }
 
-  const bool need_grow =
-      !gpu.arena.initialized() || desired > gpu.arena.capacity();
+  // An explicit cap also forces a shrink if a previous frame reserved more.
+  const bool over_cap = cap_bytes > 0 && gpu.arena.initialized() &&
+                        gpu.arena.capacity() > cap_bytes;
+  const bool need_grow = !gpu.arena.initialized() ||
+                         desired > gpu.arena.capacity() || over_cap;
   const bool need_buffers =
       plan != nullptr && (need_device > 0) &&
       !buffers_fit(*plan, gpu.buffers, stage1);
   if (need_grow || need_buffers) {
-    // Grow-only; releasing and re-initialising is a frame-boundary operation,
-    // never a block-loop one.
+    // Releasing and re-initialising is a frame-boundary operation, never a
+    // block-loop one.  With an explicit cap the reservation must not exceed it;
+    // otherwise stay grow-only across frames.
     const std::uint64_t capacity =
-        gpu.arena.initialized() ? std::max(desired, gpu.arena.capacity())
-                                : desired;
+        (gpu.arena.initialized() && !over_cap)
+            ? std::max(desired, gpu.arena.capacity())
+            : desired;
     gpu.buffers = DeviceBuffers{};
     gpu.upload.release();
     gpu.download.release();
@@ -1009,6 +1023,10 @@ bool hook_present(Fn fn) {
 bool validate_options(const GpuOptions& options,
                       const ::av2enc::m1::StillPicture& picture,
                       std::string& error) {
+  if ((picture.width & 1u) != 0u || (picture.height & 1u) != 0u) {
+    error = "M1 4:2:0 requires even dimensions";
+    return false;
+  }
   if (options.base_q_idx != 90) {
     error = "M1 pins base_q_idx = 90 (coefficient CDF qctx slice 0)";
     return false;

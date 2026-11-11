@@ -36,6 +36,18 @@ struct M1Config {
 };
 
 std::vector<std::uint8_t> make_sequence_header_obu(const M1Config& config);
+
+// Writes frame_header(isFirst = 1) -> frame_header_info() (§5.18.1-§5.18.2),
+// without the leading is_first_tile_group bit and without byte_alignment().
+// Returns the number of syntax bits written.
+//
+// Deblocking planes follow deblocking_filter_params() (§5.18.5.2): after
+// apply_deblocking_filter[0..3], each enabled plane writes one
+// df_delta_q_present f(1) before tx_mode_select. M1 always sends delta 0, so
+// an enabled plane contributes exactly one zero bit. When deblocking is off no
+// delta bit is present.
+std::size_t write_frame_header(BitWriter& writer, const M1Config& config);
+
 std::vector<std::uint8_t> assemble_m1_still_picture(
     const M1Config& config, std::span<const std::uint8_t> tile_payload);
 

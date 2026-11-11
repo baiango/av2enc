@@ -157,7 +157,7 @@ std::size_t write_sequence_header(BitWriter& writer, const M1Config& c) {
   return writer.bit_size() - start;
 }
 
-std::size_t write_frame_header(BitWriter& writer, const M1Config& c) {
+std::size_t write_frame_header_syntax(BitWriter& writer, const M1Config& c) {
   const std::size_t start = writer.bit_size();
   assert(c.base_q_idx >= 1U);
 
@@ -172,12 +172,26 @@ std::size_t write_frame_header(BitWriter& writer, const M1Config& c) {
   writer.put_bit(false);              // segmentation_enabled
   writer.put_bit(false);              // using_qmatrix
   writer.put_bit(false);              // delta_q_present
-  writer.put_bit(c.apply_deblock_y_vert);
-  writer.put_bit(c.apply_deblock_y_horz);
-  if (c.apply_deblock_y_vert || c.apply_deblock_y_horz) {
-    writer.put_bit(c.apply_deblock_u);
-    writer.put_bit(c.apply_deblock_v);
+
+  // deblocking_filter_params() (§5.18.5.2). Chroma flags are only coded when
+  // at least one luma direction is enabled.
+  writer.put_bit(c.apply_deblock_y_vert);    // apply_deblocking_filter[0]
+  writer.put_bit(c.apply_deblock_y_horz);    // apply_deblocking_filter[1]
+  const bool have_chroma_deblock =
+      c.apply_deblock_y_vert || c.apply_deblock_y_horz;
+  if (have_chroma_deblock) {
+    writer.put_bit(c.apply_deblock_u);       // apply_deblocking_filter[2]
+    writer.put_bit(c.apply_deblock_v);       // apply_deblocking_filter[3]
   }
+
+  // §5.18.5.2: one df_delta_q_present f(1) per enabled plane, in plane order,
+  // after all apply_deblocking_filter[] bits and before tx_mode_select. M1
+  // sends DfDeltaQ = 0, so the bit is 0. A disabled plane has no bit.
+  if (c.apply_deblock_y_vert) writer.put_bit(false);
+  if (c.apply_deblock_y_horz) writer.put_bit(false);
+  if (have_chroma_deblock && c.apply_deblock_u) writer.put_bit(false);
+  if (have_chroma_deblock && c.apply_deblock_v) writer.put_bit(false);
+
   writer.put_bit(c.tx_mode_select);  // 0 = TX_MODE_LARGEST
   writer.put_bits(0U, 2U);           // reduced_tx_set
 
@@ -190,6 +204,10 @@ std::vector<std::uint8_t> make_temporal_delimiter_obu() {
 }
 
 }  // namespace
+
+std::size_t write_frame_header(BitWriter& writer, const M1Config& config) {
+  return write_frame_header_syntax(writer, config);
+}
 
 std::vector<std::uint8_t> make_sequence_header_obu(const M1Config& config) {
   BitWriter writer;
@@ -204,7 +222,7 @@ std::vector<std::uint8_t> assemble_m1_still_picture(
     const M1Config& config, std::span<const std::uint8_t> tile_payload) {
   BitWriter writer;
   writer.put_bit(true);  // is_first_tile_group
-  write_frame_header(writer, config);
+  write_frame_header_syntax(writer, config);
   writer.align_to_byte();
 
   std::vector<std::uint8_t> payload = writer.take_bytes();

@@ -18,6 +18,11 @@ target_link_libraries(m0_headers_test PRIVATE av2enc_core)
 av2enc_apply_warnings(m0_headers_test)
 add_test(NAME m0_headers_test COMMAND m0_headers_test)
 
+add_executable(m1_headers_test m1_headers_test.cpp)
+target_link_libraries(m1_headers_test PRIVATE av2enc_core)
+av2enc_apply_warnings(m1_headers_test)
+add_test(NAME m1_headers_test COMMAND m1_headers_test)
+
 # End-to-end first frame: encode a 64x64 still picture, require dav2d to decode
 # it and match the pinned MD5. Exit 77 (skip) when no decoder is available.
 add_test(NAME m0_encode_smoke

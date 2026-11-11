@@ -400,6 +400,7 @@ std::string stage_summary(const av2enc::cuda::m1gpu::GpuStageStatus& stages) {
 }
 
 int failures = 0;
+std::uint32_t g_vram_cap_mb = 0;
 
 void fail(const std::string& message) {
   std::fprintf(stderr, "FAIL: %s\n", message.c_str());
@@ -435,6 +436,7 @@ bool run_case(const std::string& name, const Frame& frame, bool verbose,
   GpuOptions options;
   options.verbose = verbose;
   options.verify_against_cpu = true;
+  options.vram_cap_mb = g_vram_cap_mb;
   if (stage1) {
     options.enable_stage1_gpu = true;
     options.force_dc = true;
@@ -619,10 +621,24 @@ int main(int argc, char** argv) {
       require_gpu = false;
     } else if (arg == "--no-stage1") {
       stage1_cases = false;
+    } else if (arg == "--vram-cap" && i + 1 < argc) {
+      const std::string value = argv[++i];
+      unsigned long parsed = 0;
+      try {
+        parsed = std::stoul(value);
+      } catch (...) {
+        parsed = 0;
+      }
+      if (parsed == 0) {
+        std::fprintf(stderr, "bad --vram-cap value\n");
+        return 2;
+      }
+      g_vram_cap_mb = static_cast<std::uint32_t>(parsed);
     } else if (arg == "-h" || arg == "--help") {
       std::printf(
           "usage: %s [--input FILE.y4m]... [--synthetic WxH]... "
-          "[--verbose] [--allow-no-gpu] [--no-stage1]\n",
+          "[--verbose] [--allow-no-gpu] [--no-stage1] "
+          "[--vram-cap MiB]\n",
           argv[0]);
       return 0;
     } else {

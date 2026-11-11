@@ -8,6 +8,37 @@ M1 scope is unchanged: 8-bit 4:2:0, one tile, one keyframe, QP 90, partition
 tree + intra + variable TX + CfL + deblock. Entropy stays on the CPU until the
 GPU coder is proven at these tile counts.
 
+## Policy: correctness before performance
+
+Do not optimize the GPU path until the integrated correctness matrix is green
+(byte identity vs CPU M1, decoded-plane identity, memory safety, determinism,
+all supported options, edge/odd sizes). The unoptimized pipeline is workable:
+
+| Still (parity check on) | Wall |
+|---|---:|
+| 64x64 | 0.38 s |
+| 640x360 | 0.49 s |
+| 1080p | 1.36 s |
+
+It is currently slower than the CPU M1 path, which is expected: per-block
+ordered launches plus an in-process CPU parity encode. That is acceptable for
+testing, so scheduler/wavefront optimization is deferred until correctness is
+signed off.
+
+## Correctness matrix (verified 2026-11-11)
+
+`tools/m1_gpu/verify_gpu.sh --matrix` → **112/112 PASS** (14 modes x 8 sizes):
+
+- sizes: 64x64, 136x88, 640x360, 1280x720, native 1920x1080, 416x208, 518x322, 532x368
+- modes: default, full-intra, no-cfl, no-deblock, depth 0/1/2/3/4/8, single, dc, adaptive-cdf, vram-cap
+- each PASS: GPU frame bytes identical to CPU M1, `dav2d --strict 1` decode, Y/U/V 0 differing samples, Nsight-attested kernels
+- determinism: repeat encodes and two in-process encodes identical
+- memcheck/racecheck: 0 errors/hazards
+
+This pass required fixing the partition allowed-mask test, boundary-forced partitions,
+the min-block floor, and the mandatory `df_delta_q_present` header bits. M0 has a
+separate legacy edge-tree defect for some partial sizes; M1 is the correct path.
+
 ## Staged plan
 
 1. **Stage 1 — GPU block coding.** Host decides the tree and modes (existing
@@ -41,7 +72,7 @@ Y4M frame (host, 8-bit 4:2:0)
   -> IVF/OBU frame
 ```
 
-## Shared PODs (`src/cuda/m1/m1_gpu.h`, owner: orchestrator)
+## Shared PODs (`src/cuda/m1/m1_gpu.h` (namespace `av2enc::cuda::m1gpu`), owner: orchestrator)
 
 All stages exchange plain PODs; device pointers are explicit. No stage allocates
 or synchronizes; the orchestrator owns the arena and stream.

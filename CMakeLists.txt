@@ -123,6 +123,15 @@ if(AV2ENC_HAVE_CUDA)
       "/(run_[^/]*|[^/]*_test|[^/]*_dump|[^/]*_bench)\\.(cu|cpp)$")
     if(AV2ENC_M1_GPU_SOURCES)
       set(AV2ENC_HAVE_M1_GPU ON)
+      # Host-side support for the M1 filter/format stages.
+      foreach(host_support
+          src/encoder/filters/cdef/cdef.cpp
+          src/encoder/filters/restoration/restoration.cpp
+          src/encoder/format/format.cpp)
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${host_support}")
+          target_sources(av2enc_core PRIVATE "${host_support}")
+        endif()
+      endforeach()
       # Shared CUDA components the M1 stages call directly.  These are only
       # pulled in with the M1 GPU target, not with the CPU core library.
       set(AV2ENC_M1_GPU_SUPPORT_SOURCES)
@@ -130,7 +139,10 @@ if(AV2ENC_HAVE_CUDA)
           src/cuda/cfl/cfl.cu
           src/cuda/deblock/deblock.cu
           src/cuda/intra_modes/intra_modes.cu
-          src/cuda/tx_variants/tx_variants.cu)
+          src/cuda/tx_variants/tx_variants.cu
+          src/cuda/cdef/cdef.cu
+          src/cuda/restoration/ccso.cu
+          src/cuda/restoration/wiener.cu)
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${support_source}")
           list(APPEND AV2ENC_M1_GPU_SUPPORT_SOURCES "${support_source}")
         endif()
