@@ -19,14 +19,14 @@ plus all subagent sessions — as of **2026-11-11**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 26,021,244 |
-| Output | 3,889,256 |
-| Reasoning | 5,230,799 |
-| **Input + output + reasoning** | **~35.1 M** |
-| Cached context reads | 2,103,170,304 |
-| **Including cache reads** | **~2.14 B** |
+| Fresh input | 41,937,477 |
+| Output | 6,943,152 |
+| Reasoning | 8,209,576 |
+| **Input + output + reasoning** | **~57.1 M** |
+| Cached context reads | 3,694,648,192 |
+| **Including cache reads** | **~3.75 B** |
 
-58 sessions (main + subagents). Cache reads dominate because every subagent
+94 sessions (main + subagents). Cache reads dominate because every subagent
 re-reads a long context; they are normally billed at a fraction of fresh input.
 The figures keep growing while work continues, so treat them as a snapshot, not
 a final total.
@@ -70,6 +70,12 @@ Partition tree + full intra + variable transforms + CfL + deblock. It is
 | 64×64 | 936 B | 43.28 dB | 1,138 B | 42.13 dB |
 | 640×360 | 13,355 B | 46.37 dB | 19,751 B | 47.20 dB |
 | 1080p, native | 61,574 B | 47.73 dB | 83,228 B | 49.79 dB |
+
+CPU M1 accepts `--qp 1..255` (default 90). `base_q_idx` selects the §8.3.1
+coefficient-CDF qctx slice (`<=90`, `<=140`, `<=190`, else) and the §7.14.2
+`qlookup` quantiser step; all four slices are gated against `dav2d --strict 1`
+with zero reconstruction differences. `--m1-gpu`, M0 and the M1 GPU TX stage
+still pin 90.
 
 Full directional intra (`--m1-full-intra`) is also bit-exact but not a
 rate/quality win at QP 90 yet, so it stays opt-in. On the native 1080p frame M1
