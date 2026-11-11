@@ -40,11 +40,12 @@ Partition tree + full intra + variable transforms + CfL + deblock. It is
 |---|---:|---:|---:|---:|
 | 64×64 | 936 B | 43.28 dB | 1,138 B | 42.13 dB |
 | 640×360 | 13,355 B | 46.37 dB | 19,751 B | 47.20 dB |
-| 1080p | 37,856 B | 51.41 dB | 83,228 B | 49.79 dB |
+| 1080p, native | 61,574 B | 47.73 dB | 83,228 B | 49.79 dB |
 
 Full directional intra (`--m1-full-intra`) is also bit-exact but not a
-rate/quality win at QP 90 yet, so it stays opt-in. Details and limits:
-`docs/m1-results.md`.
+rate/quality win at QP 90 yet, so it stays opt-in. On the native 1080p frame M1
+is 26% smaller than M0 but 3.0 dB lower PSNR-Y; AVM is still 2.45× smaller than
+M1 at comparable CVVDP. Source clip and the AVM comparison: `docs/m1-results.md`.
 
 ## Performance expectations
 

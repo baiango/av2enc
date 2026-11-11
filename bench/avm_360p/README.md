@@ -3,6 +3,8 @@
 Exact **640x360**, no padding. Source: 2 seconds (120 frames, 60 fps) from the
 user's 4K VP9 clip at 10 s.
 
+Source clip: **[LG QNED 8K MiniLED │Shine 8K HDR 60fps](https://youtu.be/WEwgbKr5R9I)**, 10 s cut.
+
 Encoder: AVM macOS arm64 nightly `cd7d8bc3db`, `--end-usage=q --qp=90
 --cpu-used=6 --threads=8`.
 Decoder: `dav2d` f9dafbc. Metrics: `tools/quality.py`, CVVDP 0.5.7

@@ -27,7 +27,7 @@ split described in [`docs/nvdec.md`](../../docs/nvdec.md), with software decode
 
 | Item | Value |
 |---|---|
-| File | `<media>/<source.webm>` |
+| File | [LG QNED 8K MiniLED │Shine 8K HDR 60fps](https://youtu.be/WEwgbKr5R9I) (local 4K VP9 download) |
 | Container / codec | WebM (Matroska) / VP9 Profile 0 |
 | Resolution | 3840×2160 |
 | Pixel format | `yuv420p` — 8-bit 4:2:0 |

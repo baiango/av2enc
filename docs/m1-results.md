@@ -4,24 +4,67 @@ Status: **bit-exact against `dav2d` f9dafbc**, verified per sample on all three
 planes. M1 is opt-in (`--m1`); M0 remains the default until M1 is measured more
 broadly.
 
+## Benchmark clip
+
+Source: **[LG QNED 8K MiniLED │Shine 8K HDR 60fps](https://youtu.be/WEwgbKr5R9I)**
+(VP9, 3840×2160, 8-bit 4:2:0 SDR, 60 fps). The benchmark frame is a 10 s cut,
+scaled to the target resolution. AVM numbers use the same frame and the same
+quality tooling.
+
 ## Verified streams (QP 90, one frame, one tile)
 
-| Still | IVF | Y / U / V PSNR | Avg | Verify |
-|---|---:|---|---:|---|
-| 64×64 | 936 B | 42.50 / 45.80 / 45.12 | **43.28 dB** | BIT-EXACT |
-| 640×360 | 13,355 B | 45.09 / 52.45 / 50.53 | **46.37 dB** | BIT-EXACT |
-| 1080p (proxy) | 37,856 B | 50.68 / 52.59 / 54.29 | **51.41 dB** | BIT-EXACT |
+| Still | IVF | Y / U / V PSNR | Avg | CVVDP | Verify |
+|---|---:|---|---:|---:|---|
+| 64×64 | 936 B | 42.50 / 45.80 / 45.12 | **43.28 dB** | — | BIT-EXACT |
+| 640×360 | 13,355 B | 45.09 / 52.45 / 50.53 | **46.37 dB** | 9.8867 | BIT-EXACT |
+| 1080p, native | 61,574 B | 46.36 / 54.12 / 53.15 | **47.73 dB** | 9.8976 | BIT-EXACT |
 
-M0 reference for the same stills:
+The earlier 37,856 B / 51.41 dB "1080p" row was a **Lanczos upscale of the
+640×360 frame**; it flattered the encoder and is not used for comparisons. The
+native 1920×1080 frame (`testdata/shine_1920x1080_10f.y4m`) is authoritative.
 
-| Still | M0 IVF | M0 avg PSNR |
-|---|---:|---:|
-| 64×64 | 1,138 B | 42.13 dB |
-| 640×360 | 19,751 B | 47.20 dB |
-| 1080p | 83,228 B | 49.79 dB |
+## M1 vs M0 vs AVM (same frame, project metrics)
 
-M1 is 18% smaller at 64×64 (+1.15 dB), 32% smaller at 640×360 (−0.83 dB), and
-54% smaller at 1080p (+1.62 dB).
+One frame, 8-bit 4:2:0, `dav2d` decode, `tools/quality.py` (CVVDP 0.5.7,
+`standard_fhd`, MPS). Bitrate is the one-frame payload normalized over 1/60 s;
+it is not comparable to a video bitrate.
+
+**640×360, QP 90:**
+
+| Encoder | IVF | PSNR-Y | PSNR avg | SSIM | CVVDP |
+|---|---:|---:|---:|---:|---:|
+| av2enc M1 | 13,355 B | 45.09 | 46.37 | 0.9938 | 9.8867 |
+| av2enc M0 | 19,751 B | 46.62 | 47.20 | — | — |
+| AVM QP 90 | **10,129 B** | **48.98** | **49.99** | **0.9972** | **9.9556** |
+
+AVM is 25% smaller and +2.6 dB PSNR-Y / +0.07 JOD at the same QP.
+
+**1920×1080, native frame:**
+
+| Encoder | IVF | PSNR-Y | PSNR avg | SSIM | CVVDP |
+|---|---:|---:|---:|---:|---:|
+| av2enc M1 (QP 90) | 61,574 B | 46.36 | 47.73 | 0.9958 | 9.8976 |
+| av2enc M0 (QP 90) | 83,228 B | 49.38 | 49.79 | 0.9954 | 9.9152 |
+| AVM QP 110 | **25,093 B** | 47.13 | 48.36 | 0.9948 | 9.8135 |
+| AVM QP 135 | 12,242 B | 43.31 | 44.60 | 0.9886 | 9.4498 |
+| AVM QP 160 | 5,485 B | 39.60 | 40.89 | 0.9746 | 8.8244 |
+
+At comparable perceptual quality (M1 9.90 JOD vs AVM QP 110 9.81 JOD), AVM
+spends **2.45× less rate** and has +0.77 dB PSNR-Y. At equal rate AVM would be
+ahead on every axis. M1 is 26% smaller than M0 on this frame but gives up 3.0 dB
+PSNR-Y and 0.02 JOD.
+
+## What about QBS?
+
+QBS is defined as **max CVVDP subject to a bitrate ceiling and an encode-speed
+floor** (`tools/score_tradeoff.py`) and is measured on video, on one host. M1 is
+still-picture only and the GPU path is not wired, so a QBS number now would mix
+a Mac CPU AVM run with a GPU M1 claim. We therefore report the quality axis
+(CVVDP/SSIM/PSNR) and rate, and defer QBS until M1 video exists.
+
+The video reference remains AVM's 2-second 1080p point: **9.77 JOD at
+1,033 kbps** (QP 160), and the 720p60 QBS budget of 400 kbps is documented in
+`docs/architecture.md`.
 
 ## Verification method
 
