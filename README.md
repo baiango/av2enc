@@ -45,7 +45,19 @@ Partition tree + full intra + variable transforms + CfL + deblock. It is
 Full directional intra (`--m1-full-intra`) is also bit-exact but not a
 rate/quality win at QP 90 yet, so it stays opt-in. On the native 1080p frame M1
 is 26% smaller than M0 but 3.0 dB lower PSNR-Y; AVM is still 2.45× smaller than
-M1 at comparable CVVDP. Source clip and the AVM comparison: `docs/m1-results.md`.
+M1 at comparable CVVDP. Details, source clip, and the AVM comparison:
+`docs/m1-results.md`.
+
+### M1 GPU (opt-in, `--m1-gpu`)
+
+`--m1-gpu` selects the GPU-resident M1 pipeline (`src/cuda/m1/`, see
+`docs/m1-gpu.md`) and implies `--m1`; M0 remains the default. It takes the same
+`--no-cfl`, `--no-deblock`, `--m1-full-intra`, `--m1-depth`, and `--vram-cap`
+options as the CPU M1 path. The target is byte-identical output to CPU M1.
+`--m1` stays the CPU reference path. CPU-only builds parse the flag but reject
+it with a clear error, and a CUDA build without the orchestrator entry point
+(`src/cuda/m1/m1_gpu.cu`) reports the path as unavailable rather than silently
+falling back.
 
 ## Performance expectations
 

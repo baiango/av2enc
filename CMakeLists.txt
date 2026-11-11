@@ -86,7 +86,9 @@ add_library(av2enc_core STATIC
   src/encoder/filters/deblock/deblock.cpp
   src/encoder/rdo/rdo.cpp
   src/encoder/m1/m1_headers.cpp
+  src/encoder/m1/m1_syntax.cpp
   src/encoder/m1/m1_still.cpp
+  src/encoder/m1/stream/m1_stream_bridge.cpp
   src/entropy/av2/av2_entropy.cpp
   src/profile/profiler.cpp)
 target_include_directories(av2enc_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -102,12 +104,87 @@ if(AV2ENC_HAVE_CUDA)
   target_include_directories(av2enc_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_compile_definitions(av2enc_core PUBLIC AV2ENC_HAVE_CUDA=1)
   target_link_libraries(av2enc_core PUBLIC CUDA::cudart)
+
+  # M1 GPU pipeline (src/cuda/m1/, owner: orchestrator).  Several agents land
+  # pieces of this tree, so only pull it in once the public contract header and
+  # the orchestrator entry point exist.  GLOB_RECURSE covers the component
+  # subdirectories (plan/search/tx/recon/chroma/...); per-component tests,
+  # dumps and AppleDouble files from the macOS sync tar are not library sources.
+  set(AV2ENC_M1_GPU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/m1")
+  set(AV2ENC_HAVE_M1_GPU OFF)
+  if(EXISTS "${AV2ENC_M1_GPU_DIR}/m1_gpu.h" AND
+     (EXISTS "${AV2ENC_M1_GPU_DIR}/m1_gpu.cu" OR
+      EXISTS "${AV2ENC_M1_GPU_DIR}/m1_gpu.cpp"))
+    file(GLOB_RECURSE AV2ENC_M1_GPU_SOURCES CONFIGURE_DEPENDS
+      "${AV2ENC_M1_GPU_DIR}/*.cu"
+      "${AV2ENC_M1_GPU_DIR}/*.cpp")
+    list(FILTER AV2ENC_M1_GPU_SOURCES EXCLUDE REGEX "/\\._[^/]*$")
+    list(FILTER AV2ENC_M1_GPU_SOURCES EXCLUDE REGEX
+      "/(run_[^/]*|[^/]*_test|[^/]*_dump|[^/]*_bench)\\.(cu|cpp)$")
+    if(AV2ENC_M1_GPU_SOURCES)
+      set(AV2ENC_HAVE_M1_GPU ON)
+      # Shared CUDA components the M1 stages call directly.  These are only
+      # pulled in with the M1 GPU target, not with the CPU core library.
+      set(AV2ENC_M1_GPU_SUPPORT_SOURCES)
+      foreach(support_source
+          src/cuda/cfl/cfl.cu
+          src/cuda/deblock/deblock.cu
+          src/cuda/intra_modes/intra_modes.cu
+          src/cuda/tx_variants/tx_variants.cu)
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${support_source}")
+          list(APPEND AV2ENC_M1_GPU_SUPPORT_SOURCES "${support_source}")
+        endif()
+      endforeach()
+      # Separate object target: the stage adapters register through weak hook
+      # references in m1_gpu.cu, so a static archive would drop objects that
+      # nothing strongly references.  Linking these objects directly into the
+      # executable keeps every stage present without whole-archiving unrelated
+      # av2enc_core objects.
+      add_library(av2enc_m1_gpu OBJECT
+        ${AV2ENC_M1_GPU_SOURCES}
+        ${AV2ENC_M1_GPU_SUPPORT_SOURCES})
+      target_link_libraries(av2enc_m1_gpu PUBLIC av2enc_core CUDA::cudart)
+      target_include_directories(av2enc_m1_gpu PRIVATE
+        ${CUDAToolkit_INCLUDE_DIRS})
+      target_compile_definitions(av2enc_m1_gpu PRIVATE
+        AV2ENC_HAVE_CUDA=1
+        AV2ENC_HAVE_M1_GPU=1)
+      av2enc_apply_warnings(av2enc_m1_gpu)
+      # The M1 gates require byte-identical output; FP contraction changes the
+      # double-precision transform results (docs/negative-results.md).
+      foreach(m1_source IN LISTS AV2ENC_M1_GPU_SOURCES
+                             AV2ENC_M1_GPU_SUPPORT_SOURCES)
+        if(m1_source MATCHES "\\.cu$")
+          set_source_files_properties("${m1_source}" PROPERTIES
+            COMPILE_OPTIONS "--fmad=false")
+        endif()
+      endforeach()
+      message(STATUS
+        "av2enc: M1 GPU pipeline enabled (${AV2ENC_M1_GPU_DIR})")
+    endif()
+  endif()
+  if(NOT AV2ENC_HAVE_M1_GPU)
+    message(STATUS
+      "av2enc: M1 GPU entry point not present; --m1-gpu will be unavailable")
+  endif()
+  if(AV2ENC_HAVE_M1_GPU)
+    target_compile_definitions(av2enc_core PUBLIC AV2ENC_HAVE_M1_GPU=1)
+  else()
+    target_compile_definitions(av2enc_core PUBLIC AV2ENC_HAVE_M1_GPU=0)
+  endif()
 else()
-  target_compile_definitions(av2enc_core PUBLIC AV2ENC_HAVE_CUDA=0)
+  target_compile_definitions(av2enc_core PUBLIC
+    AV2ENC_HAVE_CUDA=0
+    AV2ENC_HAVE_M1_GPU=0)
 endif()
 
 add_executable(av2enc src/main.cpp)
 target_link_libraries(av2enc PRIVATE av2enc_core)
+if(TARGET av2enc_m1_gpu)
+  # OBJECT library: all M1 GPU stage objects are linked directly, so weak
+  # stage-hook references resolve without --whole-archive on av2enc_core.
+  target_link_libraries(av2enc PRIVATE av2enc_m1_gpu)
+endif()
 av2enc_apply_warnings(av2enc)
 
 include(CTest)
