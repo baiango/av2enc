@@ -12,13 +12,22 @@
 #include "encoder/m1/m1_still.h"
 
 #include "encoder/cfl/cfl.h"
+#include "encoder/filters/cdef/cdef.h"
 #include "encoder/filters/deblock/deblock.h"
+#include "encoder/filters/restoration/restoration.h"
 #include "encoder/intra_modes/intra_modes.h"
 #include "encoder/m1/m1_headers.h"
 #include "encoder/m1/m1_syntax.h"
 #include "encoder/m1/m1_tables.h"
 #include "encoder/partition/partition.h"
+#include "encoder/rdo/intra_decision.h"
+#include "encoder/rdo/rdo.h"
+#include "encoder/rdoq/rdoq.h"
+#include "encoder/rdoq/rdoq_av2_model.h"
+#include "encoder/tx_type/tx_type.h"
 #include "encoder/tx_variants/tx_variants.h"
+
+#include "cuda/m1/cdef/m1_cdef.h"
 
 #include <algorithm>
 #include <array>
@@ -109,6 +118,7 @@ struct Plane {
 struct TxPlan {
   int plane = 0;
   int tx_size = 0;
+  int tx_type = 0;  // txv::TxType; luma may signal it, chroma is DCT_DCT
   int coded_w = 0;
   int coded_h = 0;
   int adj_w = 0;
@@ -628,6 +638,13 @@ class Encoder {
     pred.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
     const bool base_only = std::getenv("AV2ENC_M1_BASE_ONLY") != nullptr;
     const bool no_directional = std::getenv("AV2ENC_M1_NO_DIR") != nullptr;
+    std::vector<av2enc::rdo::IntraCandidateCost> rdo_candidates;
+    const av2enc::rdo::IntraRdoConfig rdo_config =
+        av2enc::rdo::make_intra_rdo_config(
+            static_cast<double>(txv::kQuantStep), options_.rdo_sse_scale, true);
+    if (options_.rdo_intra) {
+      rdo_candidates.reserve(static_cast<std::size_t>(count));
+    }
     best.sse = std::numeric_limits<std::int64_t>::max();
     for (int i = 0; i < count; ++i) {
       intra::PredictParams params;
@@ -650,6 +667,46 @@ class Encoder {
         best.mode = params.mode;
         best.angle_delta = params.angle_delta;
         best.av2_mode = av2_y_mode(params.mode);
+      }
+      if (options_.rdo_intra) {
+        // Probe the real quantised levels for this candidate.  compute_tx()
+        // reads only the source and the predictor, so it does not perturb the
+        // reconstruction state.
+        TxPlan probe;
+        if (!compute_tx(0, x0, y0, w, h, pred, probe)) {
+          error_ = "rate-aware intra: compute_tx probe failed";
+          return false;
+        }
+        std::vector<std::uint16_t> probe_scan(
+            static_cast<std::size_t>(probe.adj_w * probe.adj_h));
+        syntax::build_scan(probe.adj_w, probe.adj_h, probe_scan);
+        std::vector<std::int32_t> probe_levels;
+        probe_levels.reserve(static_cast<std::size_t>(probe.eob));
+        for (int scan_pos = 0; scan_pos < probe.eob; ++scan_pos) {
+          probe_levels.push_back(
+              probe.levels[probe_scan[static_cast<std::size_t>(scan_pos)]]);
+        }
+        av2enc::rdo::IntraCandidateCost candidate;
+        candidate.mode = av2_y_mode(params.mode);
+        candidate.angle_delta = params.angle_delta;
+        candidate.sse = static_cast<double>(sse);
+        candidate.syntax_rate_bits =
+            av2enc::rdo::default_intra_syntax_rate_bits(candidate.mode,
+                                                        candidate.angle_delta);
+        candidate.coefficient_rate_bits =
+            av2enc::rdo::intra_coefficient_rate_bits_from_levels(
+                probe_levels, probe.eob, probe.adj_w * probe.adj_h);
+        rdo_candidates.push_back(candidate);
+      }
+    }
+    if (options_.rdo_intra && !rdo_candidates.empty()) {
+      const av2enc::rdo::IntraModeChoice choice =
+          av2enc::rdo::select_intra_mode(rdo_candidates, rdo_config);
+      if (choice.found) {
+        best.mode = static_cast<intra::Mode>(choice.mode);
+        best.angle_delta = choice.angle_delta;
+        best.av2_mode = choice.mode;
+        best.sse = static_cast<std::int64_t>(choice.sse);
       }
     }
     return true;
@@ -686,21 +743,16 @@ class Encoder {
   // Transform / reconstruction
   // ---------------------------------------------------------------------
   bool compute_tx(int plane, int x0, int y0, int cw, int ch,
-                  const std::vector<std::uint8_t>& pred, TxPlan& plan) {
-    const auto params_opt =
+                  const std::vector<std::uint8_t>& pred, TxPlan& plan,
+                  bool choose_tx_type = false, int y_mode = 0,
+                  int y_angle_delta = 0) {
+    std::optional<txv::TxParams> params_opt =
         txv::make_tx_params(cw, ch, txv::TxType::kDctDct);
     if (!params_opt.has_value()) {
       error_ = "unsupported transform size";
       return false;
     }
-    const txv::TxParams& params = *params_opt;
-    plan.plane = plane;
-    plan.tx_size = params.tx_size;
-    plan.coded_w = cw;
-    plan.coded_h = ch;
-    plan.adj_w = params.w;
-    plan.adj_h = params.h;
-    plan.pred = pred;
+    txv::TxType tx_type = txv::TxType::kDctDct;
     const int coded_pels = cw * ch;
     std::vector<std::int16_t> residual_coded(
         static_cast<std::size_t>(coded_pels));
@@ -716,29 +768,163 @@ class Encoder {
             static_cast<std::int16_t>(src - p);
       }
     }
-    std::vector<std::int16_t> residual_adj(
-        static_cast<std::size_t>(params.w) * static_cast<std::size_t>(params.h));
-    txv::downsample_residual(residual_coded.data(), params,
-                             residual_adj.data());
-    std::vector<double> coeff(
-        static_cast<std::size_t>(params.w) * static_cast<std::size_t>(params.h));
-    plan.levels.assign(coeff.size(), 0);
-    txv::forward_transform(residual_adj.data(), params, coeff.data(),
-                           plan.levels.data());
 
-    const int area = params.w * params.h;
-    if (plane == 0 && std::getenv("AV2ENC_M1_ZERO_DC") != nullptr) {
-      plan.levels[0] = 0;
-    }
-    std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
-    syntax::build_scan(params.w, params.h, scan);
-    plan.eob = 0;
-    for (int c = area - 1; c >= 0; --c) {
-      if (plan.levels[scan[static_cast<std::size_t>(c)]] != 0) {
-        plan.eob = c + 1;
-        break;
+    // Intra luma TX_TYPE selection.  The chooser runs the full candidate set
+    // (SSE + lambda * rate); we then re-run the chosen type through the common
+    // quantise/RDOQ/inverse path below so both features compose.
+    if (choose_tx_type) {
+      int mapped_mode = txtype::map_intra_mode(y_mode, y_angle_delta, cw, ch);
+      if (mapped_mode < 0) mapped_mode = 0;
+      txtype::TxTypeQuery query;
+      query.coded_w = cw;
+      query.coded_h = ch;
+      query.mapped_mode = mapped_mode;
+      query.reduced_tx_set = 0;
+      query.dct_only = false;
+      txtype::TxTypeCostConfig cost;
+      cost.lambda = av2enc::rdo::lambda_sse_from_quant_step(
+          1.0 / params_opt->quant_factor, options_.tx_type_sse_scale);
+      txtype::TxTypeChoice choice;
+      // §5.4.8: M1 signals enable_idtx_intra = 0, so identity-based intra
+      // transforms (IDTX / V_DCT / H_DCT) are not allowed.  The long-side sets
+      // list them, so filter those candidates before the decision.
+      txtype::TxTypeSet candidates;
+      if (!txtype::intra_tx_candidates(query, &candidates)) {
+        error_ = "tx_type candidate enumeration failed";
+        return false;
       }
+      txtype::TxTypeCandidate usable[txtype::kMaxTxTypeCandidates];
+      int usable_count = 0;
+      for (int i = 0; i < candidates.count; ++i) {
+        const txtype::TxTypeCandidate& candidate = candidates.candidates[i];
+        // enable_idtx_intra = 0 forbids any 1D identity transform, which
+        // covers IDTX, V/H_DCT, V/H_ADST and V/H_FLIPADST.
+        txv::Tx1dType row_type = txv::Tx1dType::kDct;
+        txv::Tx1dType col_type = txv::Tx1dType::kDct;
+        txv::tx_1d_types(candidate.type, &row_type, &col_type);
+        if (row_type == txv::Tx1dType::kIdt ||
+            col_type == txv::Tx1dType::kIdt) {
+          continue;
+        }
+        usable[usable_count++] = candidate;
+      }
+      if (usable_count == 0) {
+        error_ = "no legal non-identity intra tx_type for this size/mode";
+        return false;
+      }
+      if (!txtype::choose_tx_type_from_candidates(
+              residual_coded.data(), query, usable, usable_count, cost,
+              &choice, /*levels_out=*/nullptr, /*recon_out=*/nullptr)) {
+        error_ = "tx_type selection failed";
+        return false;
+      }
+      tx_type = choice.candidate.type;
+      const auto chosen =
+          txv::make_tx_params(cw, ch, tx_type);
+      if (!chosen.has_value()) {
+        error_ = "unsupported transform size for the chosen tx_type";
+        return false;
+      }
+      params_opt = chosen;
     }
+    plan.plane = plane;
+    plan.coded_w = cw;
+    plan.coded_h = ch;
+    plan.pred = pred;
+
+    // Quantise/inverse parameterised by the effective transform.  Runs once
+    // for the chosen TX type, and a second time as DCT_DCT when TX_TYPE
+    // selection plus RDOQ leaves eob <= 1 (the decoder infers DCT there).
+    const auto run_quant = [&](const txv::TxParams& p) -> bool {
+      std::vector<std::int16_t> residual_adj(
+          static_cast<std::size_t>(p.w) * static_cast<std::size_t>(p.h));
+      txv::downsample_residual(residual_coded.data(), p, residual_adj.data());
+      std::vector<double> coeff(
+          static_cast<std::size_t>(p.w) * static_cast<std::size_t>(p.h));
+      plan.levels.assign(coeff.size(), 0);
+      txv::forward_transform(residual_adj.data(), p, coeff.data(),
+                             plan.levels.data());
+
+      const int area = p.w * p.h;
+      std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
+      syntax::build_scan(p.w, p.h, scan);
+
+      // Full-trellis RDOQ: same syntax, better coefficient levels.  The
+      // trellis rate model is the static qctx-0 AV2 model; the syntax writer
+      // and the reconstruction both consume the returned levels, so the
+      // stream stays decoder-exact.
+      if (options_.rdoq) {
+        std::vector<std::int32_t> scalar_scan(
+            static_cast<std::size_t>(area));
+        std::vector<av2enc::rdoq::Coefficient> input(
+            static_cast<std::size_t>(area));
+        for (int c = 0; c < area; ++c) {
+          const int pos = scan[static_cast<std::size_t>(c)];
+          scalar_scan[static_cast<std::size_t>(c)] = plan.levels[pos];
+          input[static_cast<std::size_t>(c)].original = coeff[pos];
+          input[static_cast<std::size_t>(c)].scalar_level = plan.levels[pos];
+          input[static_cast<std::size_t>(c)].level_context = 0;
+        }
+        av2enc::rdoq::av2::BlockInfo info;
+        info.plane = plane;
+        info.params = p;
+        info.txb_skip_context = 0;
+        info.dc_sign_context = 0;
+        av2enc::rdoq::av2::Model model;
+        std::string rdoq_error;
+        if (!model.init(info, scalar_scan, &rdoq_error)) {
+          error_ = "rdoq model init failed: " + rdoq_error;
+          return false;
+        }
+        av2enc::rdoq::Config rdoq_config;
+        rdoq_config.quant_step = 1.0 / p.quant_factor;
+        rdoq_config.lambda = av2enc::rdo::lambda_sse_from_quant_step(
+            rdoq_config.quant_step, options_.rdoq_sse_scale);
+        rdoq_config.max_coefficients = area;
+        av2enc::rdoq::RdoqResult rdoq_result;
+        if (!av2enc::rdoq::rdoq_quantize(input, rdoq_config,
+                                         model.rate_model(), rdoq_result,
+                                         &rdoq_error)) {
+          error_ = "rdoq quantize failed: " + rdoq_error;
+          return false;
+        }
+        std::fill(plan.levels.begin(), plan.levels.end(), 0);
+        for (int c = 0; c < rdoq_result.eob; ++c) {
+          plan.levels[scan[static_cast<std::size_t>(c)]] =
+              rdoq_result.levels[static_cast<std::size_t>(c)];
+        }
+      }
+
+      if (plane == 0 && std::getenv("AV2ENC_M1_ZERO_DC") != nullptr) {
+        plan.levels[0] = 0;
+      }
+      plan.eob = 0;
+      for (int c = area - 1; c >= 0; --c) {
+        if (plan.levels[scan[static_cast<std::size_t>(c)]] != 0) {
+          plan.eob = c + 1;
+          break;
+        }
+      }
+      return true;
+    };
+
+    if (!run_quant(*params_opt)) return false;
+    if (plane == 0 && tx_type != txv::TxType::kDctDct && plan.eob <= 1) {
+      const auto dct = txv::make_tx_params(cw, ch, txv::TxType::kDctDct);
+      if (!dct.has_value()) {
+        error_ = "unsupported transform size for the DCT fallback";
+        return false;
+      }
+      tx_type = txv::TxType::kDctDct;
+      params_opt = dct;
+      if (!run_quant(*params_opt)) return false;
+    }
+
+    const txv::TxParams& params = *params_opt;
+    plan.tx_size = params.tx_size;
+    plan.tx_type = static_cast<int>(tx_type);
+    plan.adj_w = params.w;
+    plan.adj_h = params.h;
     std::vector<std::int32_t> dequant(
         static_cast<std::size_t>(params.w) * static_cast<std::size_t>(params.h));
     std::vector<std::int16_t> recon_residual(
@@ -816,7 +1002,10 @@ class Encoder {
       return false;
     }
     TxPlan luma_plan;
-    if (!compute_tx(0, x0, y0, w, h, luma_pred, luma_plan)) return false;
+    if (!compute_tx(0, x0, y0, w, h, luma_pred, luma_plan,
+                    options_.tx_type, y.av2_mode, y.angle_delta)) {
+      return false;
+    }
     write_recon(0, x0, y0, w, h, luma_plan);
 
     const BlockSize chroma_size =
@@ -916,6 +1105,7 @@ class Encoder {
     for (int plane = 0; plane < 3; ++plane) {
       const TxPlan& plan = *plans[plane];
       leaf.tx_size[plane] = static_cast<std::uint8_t>(plan.tx_size);
+      leaf.tx_type[plane] = static_cast<std::uint8_t>(plan.tx_type);
       leaf.eob[plane] = static_cast<std::uint32_t>(plan.eob);
       append_levels(plan);
     }
@@ -1246,38 +1436,7 @@ bool encode_m1_still_picture(const StillPicture& picture,
     return false;
   }
 
-  M1Config config;
-  config.max_frame_width = static_cast<std::uint16_t>(picture.width);
-  config.max_frame_height = static_cast<std::uint16_t>(picture.height);
-  config.base_q_idx = options.base_q_idx;
-  config.disable_cdf_update = !options.adaptive_cdf;
-  config.enable_intra_edge_filter =
-      options.enable_intra_edge_filter &&
-      std::getenv("AV2ENC_M1_NO_EDGE") == nullptr;
-  config.enable_cfl_intra = options.enable_cfl;
-  config.enable_chroma_dctonly = true;
-  config.tx_mode_select = false;
-  config.apply_deblock_y_vert = options.enable_deblock;
-  config.apply_deblock_y_horz = options.enable_deblock;
-  config.apply_deblock_u = options.enable_deblock;
-  config.apply_deblock_v = options.enable_deblock;
-
-  // Syntax writing is a separate stage: it re-derives every CDF context from
-  // the block stream, exactly like the GPU path will.
-  syntax::FramePlan plan;
-  plan.width = static_cast<int>(picture.width);
-  plan.height = static_cast<int>(picture.height);
-  plan.sb_size = 64;
-  std::size_t tile_bytes = 0;
-  if (!syntax::assemble_m1_frame(plan, stream.blocks, stream.levels, config,
-                                 result.frame, error, &tile_bytes)) {
-    return false;
-  }
-  result.tile_bytes = static_cast<std::uint32_t>(tile_bytes);
-  result.frame_bytes = static_cast<std::uint32_t>(result.frame.size());
-  result.leaves = encoder.leaves();
-
-  // Deblock the reconstruction before reporting it. Intra prediction already
+  // Deblock the reconstruction before CDEF or output.  Intra prediction already
   // used the unfiltered reconstruction, matching normative filter order.
   if (options.enable_deblock) {
     deblock::DeblockFrame frame;
@@ -1302,6 +1461,347 @@ bool encode_m1_still_picture(const StillPicture& picture,
       return false;
     }
   }
+
+  // CDEF (§7.18) runs after deblock and before output.  The search needs the
+  // original picture (only for the SSE metric) and the deblocked reconstruction.
+  cuda::m1::CdefStagePlan cdef_plan;
+  cuda::m1::CdefMiGrids cdef_grids;
+  Plane cdef_planes[3];
+  bool cdef_ready = false;
+  if (options.enable_cdef) {
+    if (options.cdef_num_strengths < 1 || options.cdef_num_strengths > 8) {
+      error = "cdef_num_strengths outside 1..8";
+      return false;
+    }
+    cuda::m1::CdefMiInputs mi_inputs;
+    mi_inputs.mi_cols = encoder.mi_cols();
+    mi_inputs.mi_rows = encoder.mi_rows();
+    if (!cuda::m1::m1_cdef_build_mi_grids(mi_inputs, &cdef_grids, &error)) {
+      return false;
+    }
+
+    // The search/filter want MI-aligned reference planes; the visible picture
+    // may be narrower.  Only the visible area is scored, so zero padding is
+    // sufficient.
+    const int mi_luma_w = encoder.mi_cols() * 4;
+    const int mi_luma_h = encoder.mi_rows() * 4;
+    const int mi_chroma_w = mi_luma_w / 2;
+    const int mi_chroma_h = mi_luma_h / 2;
+    const int ref_w[3] = {mi_luma_w, mi_chroma_w, mi_chroma_w};
+    const int ref_h[3] = {mi_luma_h, mi_chroma_h, mi_chroma_h};
+    const int vis_w[3] = {static_cast<int>(picture.width),
+                          static_cast<int>((picture.width + 1U) / 2U),
+                          static_cast<int>((picture.width + 1U) / 2U)};
+    const int vis_h[3] = {static_cast<int>(picture.height),
+                          static_cast<int>((picture.height + 1U) / 2U),
+                          static_cast<int>((picture.height + 1U) / 2U)};
+    std::vector<std::uint8_t> ref_planes[3];
+    const std::uint8_t* ref_ptr[3] = {nullptr, nullptr, nullptr};
+    for (int plane = 0; plane < 3; ++plane) {
+      const std::span<const std::uint8_t> src =
+          plane == 0 ? picture.y : (plane == 1 ? picture.u : picture.v);
+      ref_planes[plane].assign(
+          static_cast<std::size_t>(ref_w[plane]) *
+              static_cast<std::size_t>(ref_h[plane]),
+          0);
+      for (int y = 0; y < vis_h[plane]; ++y) {
+        std::copy_n(src.begin() +
+                        static_cast<std::ptrdiff_t>(y) * vis_w[plane],
+                    vis_w[plane],
+                    ref_planes[plane].begin() +
+                        static_cast<std::ptrdiff_t>(y) * ref_w[plane]);
+      }
+      ref_ptr[plane] = ref_planes[plane].data();
+    }
+
+    cuda::m1::CdefStageFrame cdef_frame{};
+    for (int plane = 0; plane < 3; ++plane) {
+      const Plane& recon = encoder.recon(plane);
+      cdef_planes[plane].resize(recon.width, recon.height, 0);
+      cdef_frame.plane[plane].src = recon.samples.data();
+      cdef_frame.plane[plane].dst = cdef_planes[plane].samples.data();
+      cdef_frame.plane[plane].stride = recon.width;
+      cdef_frame.plane[plane].height = recon.height;
+      cdef_frame.ref[plane] = ref_ptr[plane];
+      cdef_frame.ref_stride[plane] = ref_w[plane];
+    }
+    cdef_frame.width = vis_w[0];
+    cdef_frame.height = vis_h[0];
+    cdef_frame.mi_cols = encoder.mi_cols();
+    cdef_frame.mi_rows = encoder.mi_rows();
+    cdef_frame.skip = cdef_grids.skip.data();
+    cdef_frame.lossless = cdef_grids.lossless.data();
+    cdef_frame.lossless_chroma = cdef_grids.lossless_chroma.data();
+
+    cuda::m1::CdefStageOptions cdef_options;
+    cdef_options.damping = options.cdef_damping;
+    cdef_options.num_strengths = options.cdef_num_strengths;
+    cdef_options.on_skip_txfm = options.cdef_on_skip_txfm;
+    cdef_options.include_off = true;
+    if (!cuda::m1::m1_cdef_plan(cdef_frame, cdef_options, &cdef_plan,
+                                &error)) {
+      error = "cdef plan failed: " + error;
+      return false;
+    }
+
+    // Every coding block whose 64x64 origin is already coded writes nothing;
+    // fill every leaf so the syntax writer validates the value everywhere.
+    const int n64_cols = cdef_plan.n64_cols;
+    for (syntax::BlockSyntax& leaf : stream.blocks) {
+      if (leaf.partition != static_cast<std::uint8_t>(PartitionType::kNone)) {
+        continue;
+      }
+      const int br = leaf.mi_row >> 4;
+      const int bc = leaf.mi_col >> 4;
+      if (br < 0 || bc < 0 || br >= cdef_plan.n64_rows ||
+          bc >= n64_cols) {
+        error = "cdef index grid does not cover a coding block";
+        return false;
+      }
+      leaf.cdef_idx = cdef_plan.cdef_idx[static_cast<std::size_t>(br) *
+                                             static_cast<std::size_t>(n64_cols) +
+                                         static_cast<std::size_t>(bc)];
+    }
+    cdef_ready = true;
+  }
+
+  // CCSO reads the *pre-CDEF* luma for its band classifier, so keep a copy of
+  // the deblocked planes before CDEF overwrites the reconstruction.
+  Plane pre_cdef_planes[3];
+  if (options.enable_ccso) {
+    for (int plane = 0; plane < 3; ++plane) {
+      pre_cdef_planes[plane] = encoder.recon(plane);
+    }
+  }
+
+  // Apply CDEF now: CCSO consumes the post-CDEF frame, and the syntax stage
+  // only needs the decisions (already in `stream`).
+  if (cdef_ready) {
+    cdef::CdefFrame filter_frame{};
+    for (int plane = 0; plane < 3; ++plane) {
+      const Plane& recon = encoder.recon(plane);
+      filter_frame.planes[plane].src = recon.samples.data();
+      filter_frame.planes[plane].dst = cdef_planes[plane].samples.data();
+      filter_frame.planes[plane].stride = recon.width;
+    }
+    filter_frame.mi_cols = encoder.mi_cols();
+    filter_frame.mi_rows = encoder.mi_rows();
+    filter_frame.subsampling_x = 1;
+    filter_frame.subsampling_y = 1;
+    filter_frame.skip = cdef_grids.skip.data();
+    filter_frame.lossless = cdef_grids.lossless.data();
+    filter_frame.lossless_chroma = cdef_grids.lossless_chroma.data();
+    filter_frame.cdef_idx = cdef_plan.cdef_idx.data();
+    filter_frame.n64_cols = cdef_plan.n64_cols;
+    filter_frame.n64_rows = cdef_plan.n64_rows;
+    const cdef::CdefStatus status =
+        cdef::cdef_frame(filter_frame, cdef_plan.search.options);
+    if (status != cdef::CdefStatus::kOk) {
+      error = std::string("cdef filter failed: ") +
+              cdef::cdef_status_string(status);
+      return false;
+    }
+    for (int plane = 0; plane < 3; ++plane) {
+      encoder.recon_mut(plane).samples.swap(cdef_planes[plane].samples);
+    }
+  }
+
+  M1Config config;
+
+  // CCSO (§7.19).  Band-offset-only, one offset per band and plane; the fit
+  // minimises SSE against the original picture on visible samples.
+  restoration::CcsoFrameParams ccso_params;
+  std::vector<std::uint8_t> ccso_blk_grid;
+  int ccso_blk_cols = 0;
+  int ccso_blk_rows = 0;
+  bool ccso_ready = false;
+  if (options.enable_ccso) {
+    const int bands_log2 = options.ccso_bands_log2;
+    if (bands_log2 < 0 || bands_log2 > 6) {
+      error = "ccso_bands_log2 outside 0..6";
+      return false;
+    }
+    const int bands = 1 << bands_log2;
+    const int vis_w[3] = {static_cast<int>(picture.width),
+                          static_cast<int>((picture.width + 1U) / 2U),
+                          static_cast<int>((picture.width + 1U) / 2U)};
+    const int vis_h[3] = {static_cast<int>(picture.height),
+                          static_cast<int>((picture.height + 1U) / 2U),
+                          static_cast<int>((picture.height + 1U) / 2U)};
+    const std::span<const std::uint8_t> src_planes[3] = {
+        picture.y, picture.u, picture.v};
+    const Plane& curr_luma = pre_cdef_planes[0];
+    const int band_shift = 8 - bands_log2;
+    for (int plane = 0; plane < 3; ++plane) {
+      const int sub = plane == 0 ? 0 : 1;
+      const Plane& rec = encoder.recon(plane);
+      std::vector<double> sum_e(static_cast<std::size_t>(bands), 0.0);
+      std::vector<double> sum_e2(static_cast<std::size_t>(bands), 0.0);
+      std::vector<double> count(static_cast<std::size_t>(bands), 0.0);
+      for (int y = 0; y < vis_h[plane]; ++y) {
+        for (int x = 0; x < vis_w[plane]; ++x) {
+          const int lx = x << sub;
+          const int ly = y << sub;
+          const int band = curr_luma.at(lx, ly) >> band_shift;
+          const int src = src_planes[plane][static_cast<std::size_t>(y) *
+                                                static_cast<std::size_t>(
+                                                    vis_w[plane]) +
+                                            static_cast<std::size_t>(x)];
+          const int d = src - rec.at(x, y);
+          sum_e[static_cast<std::size_t>(band)] += d;
+          sum_e2[static_cast<std::size_t>(band)] +=
+              static_cast<double>(d) * d;
+          count[static_cast<std::size_t>(band)] += 1.0;
+        }
+      }
+      M1CcsoPlane& plane_config = config.ccso.plane[plane];
+      plane_config.enabled = true;
+      plane_config.bo_only = true;
+      plane_config.scale_idx = 0;
+      plane_config.max_band_log2 = bands_log2;
+      int nonzero = 0;
+      for (int band = 0; band < bands; ++band) {
+        int best_idx = 0;
+        double best_sse = sum_e2[static_cast<std::size_t>(band)];
+        for (int i = 0; i < 8; ++i) {
+          const double off = static_cast<double>(restoration::kCcsoOffset[i]);
+          const double sse = sum_e2[static_cast<std::size_t>(band)] -
+                             2.0 * off * sum_e[static_cast<std::size_t>(band)] +
+                             off * off * count[static_cast<std::size_t>(band)];
+          if (sse < best_sse - 1e-9) {
+            best_sse = sse;
+            best_idx = i;
+          }
+        }
+        plane_config.offset_idx[band] =
+            static_cast<std::uint8_t>(best_idx);        if (best_idx != 0) ++nonzero;
+      }
+      if (nonzero == 0 && plane == 0) {
+        plane_config.enabled = false;
+      }
+      restoration::CcsoParams& params = ccso_params.plane[plane];
+      params.enabled = plane_config.enabled;
+      params.bo_only = true;
+      params.scale_idx = plane_config.scale_idx;
+      params.quant_idx = 0;
+      params.ext_filter = 0;
+      params.edge_clf = 0;
+      params.max_band_log2 = bands_log2;
+      if (params.enabled &&
+          !restoration::ccso_set_offsets(params, plane_config.offset_idx,
+                                         static_cast<std::size_t>(bands))) {
+        error = "ccso_set_offsets failed";
+        return false;
+      }
+    }
+    ccso_params.ccso_luma_size_log2 = 6;
+    for (int plane = 0; plane < 3; ++plane) {
+      const int sub = plane == 0 ? 0 : 1;
+      const int plane_w = (encoder.mi_cols() * 4) >> sub;
+      const int plane_h = (encoder.mi_rows() * 4) >> sub;
+      int cols = 0;
+      int rows = 0;
+      restoration::ccso_blk_grid_size(plane_w, plane_h, 6, sub, sub, &cols,
+                                      &rows);
+      ccso_blk_cols = cols;
+      ccso_blk_rows = rows;
+      break;
+    }
+    ccso_blk_grid.assign(static_cast<std::size_t>(ccso_blk_cols) *
+                             static_cast<std::size_t>(ccso_blk_rows),
+                         1);
+    for (int plane = 0; plane < 3; ++plane) {
+      ccso_params.blks[plane] = ccso_blk_grid.data();
+      ccso_params.blk_cols[plane] = ccso_blk_cols;
+      ccso_params.blk_rows[plane] = ccso_blk_rows;
+    }
+    restoration::RestorationFrame filter_frame{};
+    for (int plane = 0; plane < 3; ++plane) {
+      const Plane& curr = pre_cdef_planes[plane];
+      Plane& rec = encoder.recon_mut(plane);
+      filter_frame.curr[plane].data =
+          const_cast<std::uint8_t*>(curr.samples.data());
+      filter_frame.curr[plane].stride = curr.width;
+      filter_frame.cdef[plane].data = rec.samples.data();
+      filter_frame.cdef[plane].stride = rec.width;
+      filter_frame.lr[plane].data = rec.samples.data();
+      filter_frame.lr[plane].stride = rec.width;
+    }
+    filter_frame.mi_cols = encoder.mi_cols();
+    filter_frame.mi_rows = encoder.mi_rows();
+    filter_frame.subsampling_x = 1;
+    filter_frame.subsampling_y = 1;
+    const restoration::RestorationStatus status =
+        restoration::ccso_frame(filter_frame, ccso_params);
+    if (status != restoration::RestorationStatus::kOk) {
+      error = std::string("ccso failed: ") +
+              restoration::restoration_status_string(status);
+      return false;
+    }
+    bool any_plane = false;
+    for (int plane = 0; plane < 3; ++plane) {
+      any_plane = any_plane || config.ccso.plane[plane].enabled;
+    }
+    if (!any_plane) {
+      config.ccso.enable = false;
+      ccso_ready = false;
+    } else {
+      config.ccso.enable = true;
+      ccso_ready = true;
+    }
+  }
+
+  config.max_frame_width = static_cast<std::uint16_t>(picture.width);
+  config.max_frame_height = static_cast<std::uint16_t>(picture.height);
+  config.base_q_idx = options.base_q_idx;
+  config.disable_cdf_update = !options.adaptive_cdf;
+  config.enable_intra_edge_filter =
+      options.enable_intra_edge_filter &&
+      std::getenv("AV2ENC_M1_NO_EDGE") == nullptr;
+  config.enable_cfl_intra = options.enable_cfl;
+  config.enable_chroma_dctonly = true;
+  config.enable_idtx_intra = false;
+  config.tx_mode_select = false;
+  config.reduced_tx_set = 0;
+  config.apply_deblock_y_vert = options.enable_deblock;
+  config.apply_deblock_y_horz = options.enable_deblock;
+  config.apply_deblock_u = options.enable_deblock;
+  config.apply_deblock_v = options.enable_deblock;
+  if (cdef_ready) {
+    const cuda::m1::CdefHeaderParams& header = cdef_plan.header;
+    config.cdef.enable = header.frame_enable;
+    config.cdef.damping = header.damping_minus_3 + 3;
+    config.cdef.num_strengths = header.num_strengths;
+    config.cdef.on_skip_txfm = header.on_skip_txfm_frame_enable;
+    for (int i = 0; i < header.num_strengths; ++i) {
+      config.cdef.strengths[i].y_pri = header.set[i].y_pri_strength;
+      config.cdef.strengths[i].y_sec = header.set[i].y_sec_value;
+      config.cdef.strengths[i].uv_pri = header.set[i].uv_pri_strength;
+      config.cdef.strengths[i].uv_sec = header.set[i].uv_sec_value;
+    }
+  }
+
+  // Syntax writing is a separate stage: it re-derives every CDF context from
+  // the block stream, exactly like the GPU path will.
+  syntax::FramePlan plan;
+  plan.width = static_cast<int>(picture.width);
+  plan.height = static_cast<int>(picture.height);
+  plan.sb_size = 64;
+  if (ccso_ready) {
+    for (int plane = 0; plane < 3; ++plane) {
+      plan.ccso_blks[plane] = ccso_blk_grid.data();
+      plan.ccso_blk_cols[plane] = ccso_blk_cols;
+      plan.ccso_blk_rows[plane] = ccso_blk_rows;
+    }
+  }
+  std::size_t tile_bytes = 0;
+  if (!syntax::assemble_m1_frame(plan, stream.blocks, stream.levels, config,
+                                 result.frame, error, &tile_bytes)) {
+    return false;
+  }
+  result.tile_bytes = static_cast<std::uint32_t>(tile_bytes);
+  result.frame_bytes = static_cast<std::uint32_t>(result.frame.size());
+  result.leaves = encoder.leaves();
 
   const auto crop = [](const Plane& plane, int width, int height) {
     std::vector<std::uint8_t> out(static_cast<std::size_t>(width) *

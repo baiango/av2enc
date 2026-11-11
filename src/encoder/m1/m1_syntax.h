@@ -87,8 +87,15 @@ struct BlockSyntax {
 
   // --- leaf residual ---
   std::uint8_t tx_size[kPlaneCount] = {0, 0, 0};  // AV2 TX_SIZE 0..24
+  // AV2 TX_TYPE (txv::TxType).  Only luma can signal a non-DCT type; chroma is
+  // derived from the DCT-only rule.  Ignored for eob <= 1 (spec forces DCT).
+  std::uint8_t tx_type[kPlaneCount] = {0, 0, 0};
   std::uint32_t eob[kPlaneCount] = {0, 0, 0};     // scan-position EOB per plane
   std::uint32_t levels_offset = 0;  // first level index for this leaf
+  // §5.20.10.1 cdef_idx for the 64x64 block containing this leaf's origin.
+  // Only the first coding block of each 64x64 origin codes the symbol; the
+  // writer ignores repeats.  Ignored when CDEF is disabled.
+  std::int8_t cdef_idx = 0;
 };
 
 // Frame geometry and ordering metadata.  `blocks` (passed to
@@ -98,6 +105,11 @@ struct FramePlan {
   int width = 0;   // visible luma width  (before MiCols rounding)
   int height = 0;  // visible luma height (before MiRows rounding)
   int sb_size = 64;
+  // CCSO (§5.20.10.2 read_ccso) per-plane unit-enable grids.  Null/zero when
+  // CCSO is disabled.  Values are the ccso_blk symbols (0/1) in unit order.
+  const std::uint8_t* ccso_blks[kPlaneCount] = {nullptr, nullptr, nullptr};
+  int ccso_blk_cols[kPlaneCount] = {0, 0, 0};
+  int ccso_blk_rows[kPlaneCount] = {0, 0, 0};
 
   int sb_cols() const;
   int sb_rows() const;

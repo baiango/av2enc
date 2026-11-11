@@ -36,3 +36,5 @@ __pycache__/
 
 # Normative spec PDF: obtain separately, do not redistribute
 spec/AV2_Spec_v1.0.0.pdf
+
+*.pch

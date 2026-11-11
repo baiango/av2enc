@@ -50,6 +50,16 @@ Adaptive CDFs are opt-in (`--adaptive-cdf`); defaults stay bit-identical.
 The wavefront/CUDA-graph scheduler component reaches ~4.4 ms at 640×360 and
 ~21 ms at 1080p, but is not wired into the CLI/entropy writer yet.
 
+Partial edge superblocks follow the §5.20.3.2 implied-partition recursion, not
+a blanket 64×64 `PARTITION_NONE`. M0 leaf coders cover 64×64, 32×32, 32×16 and
+32×8 (64×32/32×64 are partition nodes only), with the normative rectangular DC
+predictor (`Div_Lut`), rectangular pre-scale, and luma transform-type syntax.
+If the boundary recursion needs a smaller block (for example 136×88 or 518×322,
+which reach 16×16/8×32, or right-edge 16×32 cases), `m0::geometry_supported()`
+refuses the geometry and the CLI prints a note and uses the M1 still path
+rather than emitting a desynchronised stream. `tests/m0_edge_smoke.sh` gates
+the five reported sizes plus 64×64, 640×360 and 1080p.
+
 ### M1 (opt-in, `--m1`)
 
 Partition tree + full intra + variable transforms + CfL + deblock. It is

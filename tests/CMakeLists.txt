@@ -39,3 +39,18 @@ add_test(NAME dav2d_smoke
 set_tests_properties(dav2d_smoke PROPERTIES
   SKIP_RETURN_CODE 77
   TIMEOUT 180)
+
+# Deterministic Y4M generator for edge-geometry tests (no ffmpeg dependency).
+add_executable(gen_y4m gen_y4m.cpp)
+av2enc_apply_warnings(gen_y4m)
+
+# Edge superblock decode gate: the five reported failing sizes plus the pinned
+# 64x64 / 640x360 / 1080p regressions. M0 must handle every size it claims to
+# support; 136x88 and 518x322 must fall back to M1 with a clear note.
+add_test(NAME m0_edge_smoke
+  COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/m0_edge_smoke.sh"
+          $<TARGET_FILE:av2enc> $<TARGET_FILE:gen_y4m>
+          "${PROJECT_SOURCE_DIR}")
+set_tests_properties(m0_edge_smoke PROPERTIES
+  SKIP_RETURN_CODE 77
+  TIMEOUT 600)

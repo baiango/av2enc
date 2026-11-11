@@ -12,8 +12,12 @@
 #include "encoder/m1/m1_cdf_tables.h"
 #include "encoder/m1/m1_tables.h"
 #include "encoder/partition/partition.h"
+#include "encoder/tx_type/tx_type.h"
 #include "encoder/tx_variants/tx_variants.h"
 #include "entropy/av2/av2_entropy.h"
+
+#include "cuda/m1/cdef/m1_cdef_cdf.h"
+#include "cuda/m1/cdef/m1_cdef_index_syntax.h"
 
 #include <algorithm>
 #include <array>
@@ -168,6 +172,13 @@ constexpr std::uint16_t kEobPt32Cdf[3][7] = {
     {11670, 14271, 19287, 23919, 27084, 31, 0},
 };
 
+// Default_Ccso_Blk_Cdf[3][CCSO_CONTEXT=4][3] (§9.3), copied verbatim.
+constexpr std::uint16_t kCcsoBlkCdf[3][4][3] = {
+    {{18469, 62, 0}, {16384, 0, 0}, {4949, 37, 0}, {16384, 0, 0}},
+    {{23470, 37, 0}, {16384, 0, 0}, {6666, 37, 0}, {16384, 0, 0}},
+    {{22914, 37, 0}, {16384, 0, 0}, {6993, 37, 0}, {16384, 0, 0}},
+};
+
 struct CdfState {
   std::uint16_t do_split[2][64][3];
   std::uint16_t rect_type[2][64][3];
@@ -204,6 +215,7 @@ struct CdfState {
   std::uint16_t intra_tx_type_set1[3][8];
   std::uint16_t intra_tx_type_long[4][5];
   std::uint16_t is_long_side_dct[2][3];
+  std::uint16_t ccso_blk[3][4][3];
 };
 
 template <typename T, std::size_t N>
@@ -247,6 +259,7 @@ void init_cdfs(CdfState& c) {
   copy_array(c.intra_tx_type_set1, av2enc::m0::kIntraTxTypeSet1Cdf);
   copy_array(c.intra_tx_type_long, kIntraTxTypeLongCdf);
   copy_array(c.is_long_side_dct, kIsLongSideDctCdf);
+  copy_array(c.ccso_blk, kCcsoBlkCdf);
 }
 
 // One in-frame child slot of a partition (§9.2 Partition_Subsize).
@@ -332,6 +345,21 @@ class Writer {
     }
     clear_above_context();
     trace_ = std::getenv("AV2ENC_M1_TRACE") != nullptr;
+
+    // §5.20.9.6 clear_cdef() at frame start: one tile, so a whole-grid reset
+    // covers every superblock.  CDEF is opt-in; the grid stays empty otherwise.
+    cdef_grid_.reset(mi_cols_, mi_rows_);
+    std::memcpy(cdef_index0_, av2enc::cuda::m1::kCdefIndex0Cdf,
+                sizeof(cdef_index0_));
+    cdef_cdfs_.index0 = &cdef_index0_[0][0];
+    cdef_cdfs_.minus1 = cdef_minus1_;
+    if (const std::uint16_t* minus1 =
+            av2enc::cuda::m1::cdef_index_minus1_default(
+                config_.cdef.num_strengths)) {
+      std::memcpy(cdef_minus1_, minus1,
+                  sizeof(std::uint16_t) *
+                      static_cast<std::size_t>(config_.cdef.num_strengths));
+    }
   }
 
   bool run(std::size_t* tile_bytes, std::string& error) {
@@ -1041,28 +1069,54 @@ class Writer {
       return false;
     }
     if (plane == 0) {
-      switch (luma_tx_type_syntax(tx_size, eob)) {
-        case TxTypeSyntax::kNone:
-          break;
-        case TxTypeSyntax::kIntraSet1:
-          // DCT_DCT is symbol 0 in every TX_SET_INTRA_1 mode table.
-          if (!sym(&cdfs_.intra_tx_type_set1[kTxSizeSqr[tx_size]][0], 7, 0)) {
-            return false;
-          }
-          break;
-        case TxTypeSyntax::kLong32:
-          // A wide/high 32 TX set codes both the long-side flag and the type.
-          if (!sym(&cdfs_.is_long_side_dct[0][0], 2, 1)) return false;
-          if (!sym(&cdfs_.intra_tx_type_long[kTxSizeSqr[tx_size]][0], 4, 0)) {
-            return false;
-          }
-          break;
-        case TxTypeSyntax::kLong64:
-          // WIDE_64/HIGH_64 imply is_long_side_dct = 1; only the type is coded.
-          if (!sym(&cdfs_.intra_tx_type_long[kTxSizeSqr[tx_size]][0], 4, 0)) {
-            return false;
-          }
-          break;
+      const TxTypeSyntax type_syntax = luma_tx_type_syntax(tx_size, eob);
+      if (type_syntax != TxTypeSyntax::kNone) {
+        int mapped_mode = txtype::map_intra_mode(
+            node.y_mode, node.y_angle_delta, bsize_w, bsize_h);
+        if (mapped_mode < 0) mapped_mode = 0;
+        txtype::TxTypeQuery query;
+        query.coded_w = bsize_w;
+        query.coded_h = bsize_h;
+        query.mapped_mode = mapped_mode;
+        query.reduced_tx_set = config_.reduced_tx_set;
+        query.dct_only = false;
+        int symbol = -1;
+        bool is_long_side_dct = false;
+        if (!txtype::tx_type_symbol(query, static_cast<txtype::TxType>(
+                                                node.tx_type[0]),
+                                     &symbol, &is_long_side_dct)) {
+          error = "tx_type is not codable for this size/mode";
+          return false;
+        }
+        switch (type_syntax) {
+          case TxTypeSyntax::kNone:
+            break;
+          case TxTypeSyntax::kIntraSet1:
+            if (!sym(&cdfs_.intra_tx_type_set1[kTxSizeSqr[tx_size]][0], 7,
+                     symbol)) {
+              return false;
+            }
+            break;
+          case TxTypeSyntax::kLong32:
+            // A wide/high 32 set codes both the long-side flag and the type.
+            if (!sym(&cdfs_.is_long_side_dct[0][0], 2,
+                     is_long_side_dct ? 1 : 0)) {
+              return false;
+            }
+            if (!sym(&cdfs_.intra_tx_type_long[kTxSizeSqr[tx_size]][0], 4,
+                     symbol)) {
+              return false;
+            }
+            break;
+          case TxTypeSyntax::kLong64:
+            // WIDE_64/HIGH_64 imply is_long_side_dct = 1; only the type is
+            // coded.
+            if (!sym(&cdfs_.intra_tx_type_long[kTxSizeSqr[tx_size]][0], 4,
+                     symbol)) {
+              return false;
+            }
+            break;
+        }
       }
     }
 
@@ -1270,6 +1324,56 @@ class Writer {
     return true;
   }
 
+  // §5.20.10.2 read_ccso(): one binary symbol per enabled plane at every CCSO
+  // unit origin (64x64 for M1's 64x64 superblocks).  Each plane's unit grid
+  // carries the decision; the context is the left unit's coded value.
+  bool write_ccso(const BlockSyntax& node, std::string& error) {
+    if (!config_.ccso.enable) return true;
+    constexpr int kCcsoShift = 4;  // CcsoLumaSizeLog2(6) - MI_SIZE_LOG2(2)
+    constexpr int kCcsoUnitMi = 1 << kCcsoShift;
+    const int mi_row = node.mi_row;
+    const int mi_col = node.mi_col;
+    if ((mi_row & (kCcsoUnitMi - 1)) != 0 ||
+        (mi_col & (kCcsoUnitMi - 1)) != 0) {
+      return true;
+    }
+    const int unit_row = mi_row >> kCcsoShift;
+    const int unit_col = mi_col >> kCcsoShift;
+    for (int plane = 0; plane < kPlaneCount; ++plane) {
+      if (!config_.ccso.plane[plane].enabled) continue;
+      const std::uint8_t* grid = plan_.ccso_blks[plane];
+      const int cols = plan_.ccso_blk_cols[plane];
+      const int rows = plan_.ccso_blk_rows[plane];
+      if (unit_row >= rows || unit_col >= cols) {
+        error = "CCSO unit grid does not cover a coding block";
+        return false;
+      }
+      const int value =
+          grid != nullptr
+              ? (grid[static_cast<std::size_t>(unit_row) *
+                          static_cast<std::size_t>(cols) +
+                      static_cast<std::size_t>(unit_col)] != 0
+                     ? 1
+                     : 0)
+              : 1;
+      int ctx = 0;
+      if (mi_col - kCcsoUnitMi >= 0) {
+        const int left_col = (mi_col - kCcsoUnitMi) >> kCcsoShift;
+        const std::uint8_t left =
+            grid != nullptr
+                ? grid[static_cast<std::size_t>(unit_row) *
+                           static_cast<std::size_t>(cols) +
+                       static_cast<std::size_t>(left_col)]
+                : 1;
+        ctx = 2 * (left != 0 ? 1 : 0);
+      }
+      if (!sym(&cdfs_.ccso_blk[plane][ctx][0], 2, value)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   // ---------------------------------------------------------------------
   // Coding a leaf block
   // ---------------------------------------------------------------------
@@ -1312,6 +1416,23 @@ class Writer {
     }
 
     const std::size_t levels_end = levels_.size();
+    // §5.20.10.1 read_cdef(): after intra_segment_id(), before
+    // read_intra_y_mode().  M1 has no segment/skip syntax here, so this is the
+    // first symbol of the leaf.  Repeats within one 64x64 block are no-ops.
+    if (config_.cdef.enable &&
+        !av2enc::cuda::m1::cdef_encode_block_index(
+            &cdef_grid_, config_.cdef.num_strengths, /*sb_width_log2=*/4,
+            /*tile_mi_col_start=*/0, /*tile_mi_row_start=*/0, r, c,
+            node.cdef_idx, cdef_cdfs_,
+            [this](std::uint16_t* cdf, int n, int symbol) {
+              return sym(cdf, n, symbol);
+            })) {
+      error = "cdef_idx is not signallable (block mi " +
+              std::to_string(r) + "," + std::to_string(c) + ", idx " +
+              std::to_string(static_cast<int>(node.cdef_idx)) + ")";
+      return false;
+    }
+    if (!write_ccso(node, error)) return false;
     if (!code_y_mode(node)) {
       error = error_;
       return false;
@@ -1390,6 +1511,12 @@ class Writer {
   std::vector<int> left_mi_;
   std::vector<int> intra_joint_;
   std::vector<std::uint8_t> uvcfl_;
+
+  // §5.20.10.1 CDEF index state (fresh CDF copies so adaptive mode can update).
+  av2enc::cuda::m1::CdefIndexGrid cdef_grid_;
+  av2enc::cuda::m1::CdefIndexCdfs cdef_cdfs_{};
+  std::uint16_t cdef_index0_[4][3] = {};
+  std::uint16_t cdef_minus1_[8] = {};
 
   int cur_r_ = 0;
   int cur_c_ = 0;

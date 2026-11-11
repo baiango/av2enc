@@ -35,6 +35,32 @@ struct M1Options {
   // DC/CfL only. Off by default until forced-UV decoder verification passes on
   // the M1 still corpus. CLI: --m1-uv-full (to be wired by the orchestrator).
   bool uv_full = false;
+  // Rate-aware luma intra mode decision (`src/encoder/rdo/intra_decision.*`).
+  // Off by default: the lambda scale is a documented calibration placeholder.
+  bool rdo_intra = false;
+  double rdo_sse_scale = 0.125;
+  // Full-trellis coefficient RDOQ (`src/encoder/rdoq/`).  Same syntax, only the
+  // quantised levels change.  Off by default; sse_scale is a calibration
+  // placeholder (see the RDOQ README's lambda table).
+  bool rdoq = false;
+  double rdoq_sse_scale = 0.125;
+  // Intra luma TX_TYPE search (`src/encoder/tx_type/`).  Chroma stays DCT_DCT
+  // (enable_chroma_dctonly).  Off by default.
+  bool tx_type = false;
+  double tx_type_sse_scale = 0.125;
+  // Opt-in CDEF (§7.18).  The strength search runs after deblock and its
+  // filtered planes replace the reconstruction/output.  Default off so the
+  // pinned `--m1` MD5s do not change.
+  bool enable_cdef = false;
+  // CdefStrengths: 1 forces one global set (no index symbols); 2..8 signal a
+  // per-64x64 index.  4 is the search default ladder size.
+  int cdef_num_strengths = 4;
+  int cdef_damping = 3;
+  bool cdef_on_skip_txfm = false;
+  // Opt-in CCSO band-offset-only (§7.19, post-CDEF).  `ccso_bands_log2` sets
+  // ccso_max_band_log2 (0..6; 3 = 8 bands).
+  bool enable_ccso = false;
+  int ccso_bands_log2 = 6;
 };
 
 struct M1Result {

@@ -56,4 +56,17 @@ bool encode_still_picture(const StillPicture& picture,
                           std::string& error,
                           M0PartitionMode partition_mode = M0PartitionMode::k32x32);
 
+// Returns true when the default (k32x32) M0 path can represent every
+// superblock of a `width` x `height` 8-bit 4:2:0 still picture.
+//
+// Full superblocks use the fixed 64x64 -> 32x64 -> 32x32 tree. Partial edge
+// superblocks follow the §5.20.3.2 implied-partition recursion, which can
+// force smaller blocks than that tree produces. M0's coding-block leaf set is
+// 64x64, 32x32, 32x16 and 32x8 (64x32/32x64 appear only as partition nodes).
+// When the boundary recursion requires anything smaller, this returns false
+// and `reason` names the missing size(s). Callers should then use the M1
+// still path rather than emit an invalid stream.
+bool geometry_supported(std::uint32_t width, std::uint32_t height,
+                        std::string& reason);
+
 }  // namespace av2enc::m0

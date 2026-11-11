@@ -128,7 +128,7 @@ std::size_t write_sequence_header(BitWriter& writer, const M1Config& c) {
 
   // §5.4.8 sequence_transform_quant_entropy_config().
   writer.put_bit(false);  // enable_fsc
-  writer.put_bit(false);  // enable_idtx_intra
+  writer.put_bit(c.enable_idtx_intra);  // enable_idtx_intra
   writer.put_bit(false);  // enable_intra_ist
   writer.put_bit(false);  // enable_inter_ist
   writer.put_bit(c.enable_chroma_dctonly);
@@ -143,10 +143,14 @@ std::size_t write_sequence_header(BitWriter& writer, const M1Config& c) {
 
   // §5.4.10 sequence_filter_config().
   writer.put_bit(false);  // disable_loopfilters_across_tiles
-  writer.put_bit(false);  // enable_cdef
+  writer.put_bit(c.cdef.enable);  // enable_cdef
   writer.put_bit(false);  // enable_gdf
   writer.put_bit(false);  // enable_restoration
-  writer.put_bit(false);  // enable_ccso
+  // §5.4.10 sequence_filter_config() CCSO row.
+  writer.put_bit(c.ccso.enable);  // enable_ccso
+  if (c.ccso.enable) {
+    writer.put_bit(true);  // ccso_unit_matches_sb_size (64x64 units)
+  }
   writer.put_bits(0U, 2U);  // df_par_bits_minus_2
 
   // §5.4.2 sequence_tile_config().
@@ -192,8 +196,67 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const M1Config& c) {
   if (have_chroma_deblock && c.apply_deblock_u) writer.put_bit(false);
   if (have_chroma_deblock && c.apply_deblock_v) writer.put_bit(false);
 
+  // §5.18.7.10 cdef_params().  single_picture_header_flag implies
+  // cdef_frame_enable = 1, so no bit is coded for it here.
+  if (c.cdef.enable) {
+    assert(c.cdef.damping >= 3 && c.cdef.damping <= 6);
+    assert(c.cdef.num_strengths >= 1 && c.cdef.num_strengths <= 8);
+    writer.put_bits(static_cast<std::uint32_t>(c.cdef.damping - 3), 2U);
+    writer.put_bits(static_cast<std::uint32_t>(c.cdef.num_strengths - 1), 3U);
+    writer.put_bit(c.cdef.on_skip_txfm);
+    for (int i = 0; i < c.cdef.num_strengths; ++i) {
+      const M1CdefStrength& s = c.cdef.strengths[i];
+      assert(s.y_pri >= 0 && s.y_pri <= 15);
+      assert(s.uv_pri >= 0 && s.uv_pri <= 15);
+      assert(s.y_sec == 0 || s.y_sec == 1 || s.y_sec == 2 || s.y_sec == 4);
+      assert(s.uv_sec == 0 || s.uv_sec == 1 || s.uv_sec == 2 || s.uv_sec == 4);
+      writer.put_bit(s.y_pri == 0);
+      if (s.y_pri != 0) {
+        writer.put_bits(static_cast<std::uint32_t>(s.y_pri), 4U);
+      }
+      // The syntax value 3 decodes to 4; a decoded 4 is written as 3.
+      writer.put_bits(static_cast<std::uint32_t>(s.y_sec == 4 ? 3 : s.y_sec),
+                      2U);
+      writer.put_bit(s.uv_pri == 0);
+      if (s.uv_pri != 0) {
+        writer.put_bits(static_cast<std::uint32_t>(s.uv_pri), 4U);
+      }
+      writer.put_bits(static_cast<std::uint32_t>(s.uv_sec == 4 ? 3 : s.uv_sec),
+                      2U);
+    }
+  }
+
+  // §5.18.7.12 ccso_params().  single_picture_header_flag implies
+  // ccso_frame_flag = 1, so no bit is coded for it.  M1 only signals the
+  // band-offset-only form.
+  if (c.ccso.enable) {
+    for (int plane = 0; plane < 3; ++plane) {
+      const M1CcsoPlane& p = c.ccso.plane[plane];
+      writer.put_bit(p.enabled);
+      if (!p.enabled) continue;
+      assert(p.bo_only);
+      assert(p.scale_idx >= 0 && p.scale_idx <= 3);
+      assert(p.max_band_log2 >= 0 && p.max_band_log2 <= 6);
+      writer.put_bit(p.bo_only);  // ccso_bo_only
+      writer.put_bits(static_cast<std::uint32_t>(p.scale_idx), 2U);
+      // bo_only => quant/ext/edge are inferred to 0.
+      const int band_bits = 2 + (p.bo_only ? 1 : 0);
+      writer.put_bits(static_cast<std::uint32_t>(p.max_band_log2),
+                      static_cast<unsigned>(band_bits));
+      const int bands = 1 << p.max_band_log2;
+      for (int band = 0; band < bands; ++band) {
+        // ccso_offset_idx tu(7): ones until the value, then a terminating 0
+        // unless the maximum (7) is reached.
+        const int idx = p.offset_idx[band];
+        assert(idx >= 0 && idx <= 7);
+        for (int i = 0; i < idx; ++i) writer.put_bit(true);
+        if (idx < 7) writer.put_bit(false);
+      }
+    }
+  }
+
   writer.put_bit(c.tx_mode_select);  // 0 = TX_MODE_LARGEST
-  writer.put_bits(0U, 2U);           // reduced_tx_set
+  writer.put_bits(static_cast<std::uint32_t>(c.reduced_tx_set), 2U);
 
   return writer.bit_size() - start;
 }

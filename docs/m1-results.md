@@ -124,3 +124,11 @@ enables the search.
   not a natural 1080p corpus.
 - Target validation still requires an RTX 3060 enumerating 8192 MiB; the 12 GB
   dev box is a proxy.
+
+## Opt-in feature integration
+
+CDEF, coefficient RDOQ, intra luma TX-type selection, rate-aware intra, full
+chroma UV and band-offset CCSO are now wired as opt-in M1 flags, each with a
+`dav2d --strict 1` gate and pinned MD5s.  The default `--m1` baseline is
+unchanged.  Status, flags, and what is still off (Wiener NS, extended
+partitions, 10-bit, GPU ports): `docs/m1-features.md`.

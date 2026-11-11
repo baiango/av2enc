@@ -208,6 +208,14 @@ struct GpuOptions {
   bool adaptive_cdf = false;
   bool force_single_block = false;
   bool force_dc = false;
+  bool uv_full = false;
+  // Tools integrated on the CPU path but not yet ported to the GPU pipeline.
+  // Setting any of these makes encode_m1_gpu fail loudly instead of silently
+  // ignoring the option (see m1_gpu.cu validate_options).
+  bool enable_cdef = false;
+  bool rdoq = false;
+  bool tx_type = false;
+  bool rdo_intra = false;
 
   int device = 0;                    // CUDA ordinal
   std::uint32_t vram_cap_mb = 0;     // 0 = device-derived (see README)

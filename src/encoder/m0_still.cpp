@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -73,8 +74,246 @@ constexpr int kSizeIndex(int block_size) {
   }
 }
 
-constexpr std::size_t kTileCapacityBytes = 4U * 1024U * 1024U;
+// ---------------------------------------------------------------------------
+// Edge-superblock recursion (§5.20.3.2)
+// ---------------------------------------------------------------------------
+//
+// The default M0 tree is 64x64 -> 32x64 -> 32x32 for full superblocks. A
+// partial superblock must follow the spec's implied-partition rules instead,
+// which can force a different tree (and smaller blocks) at the frame edge.
+// These are the block sizes M0 can actually code. Anything below them is a
+// hard limitation of this path; `geometry_supported()` reports it so the CLI
+// can use M1 instead of emitting a desynchronised stream.
+enum M0EdgeBlock : int {
+  kM0Block64x64 = 0,
+  kM0Block64x32 = 1,
+  kM0Block32x64 = 2,
+  kM0Block32x32 = 3,
+  kM0Block32x16 = 4,
+  kM0Block16x32 = 5,
+  kM0Block32x8 = 6,
+  kM0BlockCount = 7,
+};
 
+constexpr int kM0BlockSize[kM0BlockCount] = {
+    kBlock64x64, kBlock64x32, kBlock32x64, kBlock32x32,
+    kBlock32x16, kBlock16x32, kBlock32x8};
+// Width/height in 4x4 units and Mi_*_Log2 for each supported block.
+constexpr int kM0W4[kM0BlockCount] = {16, 16, 8, 8, 8, 4, 8};
+constexpr int kM0H4[kM0BlockCount] = {16, 8, 16, 8, 4, 8, 2};
+constexpr int kM0WLog2[kM0BlockCount] = {4, 4, 3, 3, 3, 2, 3};
+constexpr int kM0HLog2[kM0BlockCount] = {4, 3, 4, 3, 2, 3, 1};
+// Partition_Subsize for HORZ/VERT. -1 means M0 has no coder for that subsize.
+constexpr int kM0HorzSub[kM0BlockCount] = {
+    kM0Block64x32, -1, kM0Block32x32, kM0Block32x16,
+    kM0Block32x8,  -1, -1};
+constexpr int kM0VertSub[kM0BlockCount] = {
+    kM0Block32x64, kM0Block32x32, -1, kM0Block16x32,
+    -1,            -1,            -1};
+
+struct M0Boundary {
+  bool has_rows = false;
+  bool has_cols = false;
+  bool implied = false;
+  int partition = -1;  // kRectHorz / kRectVert when implied.
+};
+
+// partition_implied_at_boundary() (§5.20.3.2) for the M0 block set.
+M0Boundary m0_boundary(int mi_row, int mi_col, int mi_rows, int mi_cols,
+                       int block) {
+  M0Boundary out;
+  const int w4 = kM0W4[block];
+  const int h4 = kM0H4[block];
+  out.has_rows = (mi_row + (h4 >> 1)) < mi_rows;
+  out.has_cols = (mi_col + (w4 >> 1)) < mi_cols;
+  if (out.has_rows && out.has_cols) {
+    return out;
+  }
+  int partition = -1;
+  if (w4 == h4) {
+    partition = out.has_rows ? kRectVert : kRectHorz;
+  } else if (h4 > w4) {
+    if (!out.has_rows) {
+      partition = kRectHorz;
+    } else {
+      const bool sub_has_cols = (mi_col + (w4 >> 2)) < mi_cols;
+      if (w4 >= 4 && !sub_has_cols) {
+        partition = kRectHorz;
+      }
+    }
+  } else {
+    if (!out.has_cols) {
+      partition = kRectVert;
+    } else {
+      const bool sub_has_rows = (mi_row + (h4 >> 2)) < mi_rows;
+      if (h4 >= 4 && !sub_has_rows) {
+        partition = kRectVert;
+      }
+    }
+  }
+  out.implied = partition != -1;
+  out.partition = partition;
+  return out;
+}
+
+// One node of the edge tree: either PARTITION_NONE (partition == -1) or a
+// HORZ/VERT split with in-frame children in decode order.
+struct EdgePlanNode {
+  int mi_row = 0;
+  int mi_col = 0;
+  int block = kM0Block64x64;
+  int partition = -1;
+  bool forced = false;        // no partition syntax is coded
+  bool none_allowed = false;  // PARTITION_NONE is in the spec's allowed set
+  bool rect_coded = false;    // rect_type is coded (both orientations legal)
+  std::vector<EdgePlanNode> children;
+};
+
+// Plans the edge recursion using only blocks M0 can code.  If the spec forces
+// (or the best legal choice needs) a smaller block, the plan fails and records
+// the missing size so the caller can explain the limitation.
+class EdgePlanner {
+ public:
+  EdgePlanner(int mi_rows, int mi_cols)
+      : mi_rows_(mi_rows), mi_cols_(mi_cols) {}
+
+  bool build_superblock(int mi_row, int mi_col, EdgePlanNode* out) {
+    missing_.clear();
+    missing_list_.clear();
+    return build(mi_row, mi_col, kM0Block64x64, out);
+  }
+
+  std::string missing_sizes() const {
+    std::string result;
+    for (const std::string& size : missing_list_) {
+      if (!result.empty()) {
+        result += ", ";
+      }
+      result += size;
+    }
+    return result;
+  }
+
+ private:
+  // 64x32 and 32x64 are partition nodes only: M0 has no correct transform for
+  // them (Adjusted_Tx_Size maps both to TX_32X32, which the M0 residual writer
+  // does not implement; its diagnostic block writers use zero residual).
+  // Blocks below 32 pixels in either dimension are also excluded: their
+  // coefficient/tx-type paths are not part of the validated M0 set, so the CLI
+  // falls back to M1 instead of risking a desynchronised stream.
+  static bool leaf_codable(int block) {
+    switch (block) {
+      case kM0Block64x64:
+      case kM0Block32x32:
+      case kM0Block32x16:
+      case kM0Block32x8:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  // Nodes that may appear in the planned tree. 64x32/32x64 are split further
+  // (they have no valid M0 leaf coder); everything else must be a leaf.
+  static bool usable_node(int block) {
+    return leaf_codable(block) || block == kM0Block64x32 ||
+           block == kM0Block32x64;
+  }
+
+  int subsize(int block, int partition) const {
+    return partition == kRectHorz ? kM0HorzSub[block] : kM0VertSub[block];
+  }
+
+  void note_missing(int block, int partition) {
+    const int w4 = partition == kRectVert ? (kM0W4[block] >> 1) : kM0W4[block];
+    const int h4 = partition == kRectHorz ? (kM0H4[block] >> 1) : kM0H4[block];
+    const std::string name =
+        std::to_string(w4 * 4) + "x" + std::to_string(h4 * 4);
+    if (missing_.insert(name).second) {
+      missing_list_.push_back(name);
+    }
+  }
+
+  bool build_children(int mi_row, int mi_col, int block, int sub,
+                      int partition, std::vector<EdgePlanNode>* out) {
+    const int second_row =
+        mi_row + (partition == kRectHorz ? (kM0H4[block] >> 1) : 0);
+    const int second_col =
+        mi_col + (partition == kRectVert ? (kM0W4[block] >> 1) : 0);
+    EdgePlanNode child;
+    if (mi_row < mi_rows_ && mi_col < mi_cols_) {
+      if (!build(mi_row, mi_col, sub, &child)) {
+        return false;
+      }
+      out->push_back(std::move(child));
+    }
+    EdgePlanNode second;
+    if (second_row < mi_rows_ && second_col < mi_cols_) {
+      if (!build(second_row, second_col, sub, &second)) {
+        return false;
+      }
+      out->push_back(std::move(second));
+    }
+    return true;
+  }
+
+  bool build(int mi_row, int mi_col, int block, EdgePlanNode* out) {
+    const M0Boundary boundary =
+        m0_boundary(mi_row, mi_col, mi_rows_, mi_cols_, block);
+    out->mi_row = mi_row;
+    out->mi_col = mi_col;
+    out->block = block;
+    out->partition = -1;
+    out->forced = false;
+    out->none_allowed = boundary.has_rows && boundary.has_cols;
+    out->rect_coded = false;
+    out->children.clear();
+
+    if (boundary.implied) {
+      const int sub = subsize(block, boundary.partition);
+      if (sub < 0 || !usable_node(sub)) {
+        note_missing(block, boundary.partition);
+        return false;
+      }
+      out->partition = boundary.partition;
+      out->forced = true;
+      return build_children(mi_row, mi_col, block, sub, boundary.partition,
+                            &out->children);
+    }
+    if (out->none_allowed && leaf_codable(block)) {
+      // NONE is legal and M0 can code this block size directly.
+      return true;
+    }
+
+    // PARTITION_NONE is either not allowed, or this is a 64x32/32x64 node that
+    // exists only to be split. Both HORZ and VERT are spec-valid for every
+    // block in the M0 set, so rect_type is coded; try HORZ first, then VERT,
+    // and keep the first tree M0 can represent.
+    for (const int candidate : {kRectHorz, kRectVert}) {
+      const int sub = subsize(block, candidate);
+      if (sub < 0 || !usable_node(sub)) {
+        note_missing(block, candidate);
+        continue;
+      }
+      std::vector<EdgePlanNode> children;
+      if (!build_children(mi_row, mi_col, block, sub, candidate, &children)) {
+        continue;
+      }
+      out->partition = candidate;
+      out->rect_coded = true;
+      out->children = std::move(children);
+      return true;
+    }
+    return false;
+  }
+
+  int mi_rows_ = 0;
+  int mi_cols_ = 0;
+  std::set<std::string> missing_;
+  std::vector<std::string> missing_list_;
+};
+
+constexpr std::size_t kTileCapacityBytes = 4U * 1024U * 1024U;
 // The generated header carries qctx slice 0, i.e. base_q_idx <= 90.
 constexpr std::uint8_t kPinnedBaseQ = 90;
 
@@ -105,7 +344,21 @@ struct CdfState {
   std::uint16_t coeff_br_uv[4][5];
   std::uint16_t dc_sign[2][2][3][3];
   std::uint16_t intra_tx_type_set1[3][8];
+  std::uint16_t intra_tx_type_long[4][5];
+  std::uint16_t is_long_side_dct[2][3];
 };
+
+// §9.3 default CDFs for the luma transform-type syntax. These are needed only
+// for the rectangular coding blocks the edge recursion can reach (32x16,
+// 32x8, 16x32); square 32x32 and 64x64 are TX_SET_DCTONLY and code nothing.
+constexpr std::uint16_t kDefaultIntraTxTypeLongCdf[4][5] = {
+    {10692, 26586, 29231, 31, 0},
+    {26700, 32160, 32748, 6, 0},
+    {26915, 32411, 32748, 6, 0},
+    {8192, 16384, 24576, 0, 0}};
+constexpr std::uint16_t kDefaultIsLongSideDctCdf[2][3] = {
+    {36, 0, 0},
+    {128, 31, 0}};
 
 template <typename T, std::size_t N>
 void copy_array(T (&dst)[N], const T (&src)[N]) {
@@ -139,6 +392,8 @@ void init_cdfs(CdfState& cdfs) {
   copy_array(cdfs.coeff_br_uv, kCoeffBrUvCdf);
   copy_array(cdfs.dc_sign, kDcSignCdf);
   copy_array(cdfs.intra_tx_type_set1, kIntraTxTypeSet1Cdf);
+  copy_array(cdfs.intra_tx_type_long, kDefaultIntraTxTypeLongCdf);
+  copy_array(cdfs.is_long_side_dct, kDefaultIsLongSideDctCdf);
 }
 
 struct Plane {
@@ -185,11 +440,38 @@ int floor_log2(int value) {
   return result;
 }
 
-// §7.13.2.11 / §7.13.3.22.  All M0 denominators are powers of two (16, 32,
-// 64), for which resolve_divisor() yields f = 0, Div_Lut[0] = 512.
+// §7.13.2.10 DC prediction uses approx_divide(sum, w + h). §7.13.3.22
+// resolve_divisor() supplies a 9-bit reciprocal from Div_Lut; only den = 0
+// (no division) and powers of two (f = 0) collapsed to a constant in the
+// original M0 square-block paths. Rectangular coding blocks have
+// w + h = 24, 40, 48, ... and need the real table.
+constexpr int kDivLutBits = 7;
+constexpr int kDivLutPrecBits = 9;
+constexpr int kDivLutNum = 129;
+constexpr int kDivLut[kDivLutNum] = {
+    512, 508, 504, 500, 496, 493, 489, 485, 482, 478, 475, 471, 468, 465, 462,
+    458, 455, 452, 449, 446, 443, 440, 437, 434, 431, 428, 426, 423, 420, 417,
+    415, 412, 410, 407, 405, 402, 400, 397, 395, 392, 390, 388, 386, 383, 381,
+    379, 377, 374, 372, 370, 368, 366, 364, 362, 360, 358, 356, 354, 352, 350,
+    349, 347, 345, 343, 341, 340, 338, 336, 334, 333, 331, 329, 328, 326, 324,
+    323, 321, 320, 318, 317, 315, 314, 312, 311, 309, 308, 306, 305, 303, 302,
+    301, 299, 298, 297, 295, 294, 293, 291, 290, 289, 287, 286, 285, 284, 282,
+    281, 280, 279, 278, 277, 275, 274, 273, 272, 271, 270, 269, 267, 266, 265,
+    264, 263, 262, 261, 260, 259, 258, 257, 256};
+
+// §7.13.2.10 / §7.13.3.22.
 int approx_divide(int numerator, int denominator) {
-  const int shift = 9 + floor_log2(denominator);
-  return round2(numerator * 512, shift);
+  const int abs_denominator = std::abs(denominator);
+  const int n = floor_log2(abs_denominator);
+  const int e = abs_denominator - (1 << n);
+  const int f =
+      n > kDivLutBits ? round2(e, n - kDivLutBits)
+                      : e << (kDivLutBits - n);
+  int scale = kDivLut[f];
+  if (denominator < 0) {
+    scale = -scale;
+  }
+  return round2(numerator * scale, n + kDivLutPrecBits);
 }
 
 class TileEncoder {
@@ -243,11 +525,11 @@ class TileEncoder {
         bool ok = false;
         const bool edge_sb = (r + 16 > mi_rows_) || (c + 16 > mi_cols_);
         if (partition_mode_ == M0PartitionMode::k32x32 && edge_sb) {
-          // A partial superblock cannot use the 32x32 tree without hitting an
-          // implied partition at the edge.  PARTITION_NONE at 64x64 is legal
-          // (the decoder pads the partial block) and keeps the edge syntax
-          // trivial; the full superblocks still use 32x32 coding blocks.
-          ok = encode_partition_none_64(r, c);
+          // A partial superblock must follow the spec's implied-partition
+          // rules; PARTITION_NONE at 64x64 is only legal when both half-block
+          // bounds stay inside the frame. encode_edge_superblock() plans the
+          // exact §5.20.3.2 tree for this SB.
+          ok = encode_edge_superblock(r, c);
         } else {
         switch (partition_mode_) {
           case M0PartitionMode::k64x64Single:
@@ -612,6 +894,92 @@ class TileEncoder {
     return encode_block_64x64(r, c);
   }
 
+  int partition_do_split_context(int r, int c, int block) {
+    const int size_index = kSizeIndex(kM0BlockSize[block]);
+    const int bsh = kM0HLog2[block];
+    const int bsw = kM0WLog2[block];
+    return kSizeAdjust[size_index] * 4 + (left_mi(0, r) < bsh ? 2 : 0) +
+           (above_mi(0, c) < bsw ? 1 : 0);
+  }
+
+  int partition_rect_type_context(int r, int c, int block) {
+    const int size_index = kSizeIndex(kM0BlockSize[block]);
+    const int bsh = kM0HLog2[block];
+    const int bsw = kM0WLog2[block];
+    return kRectSizeAdjust[size_index] * 4 + (left_mi(0, r) < bsh ? 2 : 0) +
+           (above_mi(0, c) < bsw ? 1 : 0);
+  }
+
+  bool encode_block_by_edge_index(int block, int r, int c) {
+    switch (block) {
+      case kM0Block64x64:
+        return encode_block_64x64(r, c);
+      case kM0Block64x32:
+        return encode_block_64x32(r, c);
+      case kM0Block32x64:
+        return encode_block_32x64(r, c);
+      case kM0Block32x32:
+        return encode_block_32x32(r, c);
+      case kM0Block32x16:
+        return encode_block_32x16(r, c);
+      case kM0Block16x32:
+        return encode_block_16x32(r, c);
+      case kM0Block32x8:
+        return encode_block_32x8(r, c);
+      default:
+        error_ = "M0 internal error: unhandled edge block size";
+        return false;
+    }
+  }
+
+  // Writes the partition syntax (if any) for one planned edge node and recurses
+  // in decode order. This mirrors read_partition() §5.20.3.2:
+  //   * an implied partition, or a single allowed one, codes no bits;
+  //   * otherwise do_split is coded only when PARTITION_NONE is allowed;
+  //   * SPLIT is never legal below a 128x128 root, so do_square_split is
+  //     implied 0 and not coded;
+  //   * rect_type is coded when both HORZ and VERT are legal.
+  bool encode_edge_plan(const EdgePlanNode& node) {
+    if (!node.forced) {
+      if (node.none_allowed) {
+        const int do_split = node.partition < 0 ? 0 : 1;
+        const int ctx = partition_do_split_context(node.mi_row, node.mi_col,
+                                                   node.block);
+        if (!sym(&cdfs_.do_split[0][ctx][0], 2, do_split)) {
+          return false;
+        }
+      }
+      if (node.partition >= 0 && node.rect_coded) {
+        const int ctx = partition_rect_type_context(
+            node.mi_row, node.mi_col, node.block);
+        if (!sym(&cdfs_.rect_type[0][ctx][0], 2, node.partition)) {
+          return false;
+        }
+      }
+    }
+    if (node.partition < 0) {
+      return encode_block_by_edge_index(node.block, node.mi_row, node.mi_col);
+    }
+    for (const EdgePlanNode& child : node.children) {
+      if (!encode_edge_plan(child)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool encode_edge_superblock(int r, int c) {
+    EdgePlanner planner(mi_rows_, mi_cols_);
+    EdgePlanNode plan;
+    if (!planner.build_superblock(r, c, &plan)) {
+      error_ = "M0 cannot represent this edge superblock without uncoded "
+               "block size(s): " +
+               planner.missing_sizes();
+      return false;
+    }
+    return encode_edge_plan(plan);
+  }
+
   bool encode_mode_info_dc(int r, int c, int w4, int h4) {
     // mode_info() -> intra_frame_mode_info() (§5.20.5.3) for DC_PRED.
     if (!sym(&cdfs_.y_mode_set[0], 4, 0)) {
@@ -936,6 +1304,15 @@ class TileEncoder {
     }
   }
 
+  // §7.15.4.1 rectangular pre-scale. When the log2 width/height parity
+  // differs, the normative transform applies a 4096/2896 factor (inverse:
+  // Round2(x * 2896, 12)). M0's original 64x64/32x32 paths are both even and
+  // never exercised this; the edge recursion does for 32x16 / 16x32 and their
+  // chroma sizes.
+  static bool odd_rect_transform(int w, int h) {
+    return ((floor_log2(w) ^ floor_log2(h)) & 1) != 0;
+  }
+
   // Orthonormal 2D DCT-II, computed through the normative integer kernel:
   // Dct_Kernel{n}[j][i] = 64 * sqrt(n) * B[j][i].
   void forward_dct(const std::vector<int>& block, int w, int h,
@@ -966,6 +1343,12 @@ class TileEncoder {
         (*out)[static_cast<std::size_t>(u) * w + v] = sum * scale_h;
       }
     }
+    if (odd_rect_transform(w, h)) {
+      constexpr double kRectPrescale = 4096.0 / 2896.0;
+      for (double& value : *out) {
+        value *= kRectPrescale;
+      }
+    }
   }
 
   // Normative 2D inverse matrix transform (§7.15.4.1) for rectangular and
@@ -977,13 +1360,21 @@ class TileEncoder {
     transform_shifts(w, h, &row_shift, &col_shift);
     const std::int16_t* kw = dct_kernel(w);
     const std::int16_t* kh = dct_kernel(h);
+    const bool odd_rect = odd_rect_transform(w, h);
+    const auto prescale = [odd_rect](int value) {
+      return odd_rect
+                 ? round2(static_cast<int>(
+                              static_cast<std::int64_t>(value) * 2896),
+                          12)
+                 : value;
+    };
     std::vector<int> intermediate(static_cast<std::size_t>(w) * h, 0);
     for (int i = 0; i < h; ++i) {
       for (int oj = 0; oj < w; ++oj) {
         std::int64_t sum = 0;
         for (int j = 0; j < w; ++j) {
           sum += static_cast<std::int64_t>(kw[j * w + oj]) *
-                 dequant[static_cast<std::size_t>(i) * w + j];
+                 prescale(dequant[static_cast<std::size_t>(i) * w + j]);
         }
         intermediate[static_cast<std::size_t>(i) * w + oj] = clip3(
             -(1 << 15), (1 << 15) - 1,
@@ -1020,6 +1411,69 @@ class TileEncoder {
         y += s;
       }
     }
+  }
+
+  static int tx_sqr_index(int w, int h) {
+    const int m = std::min(w, h);
+    if (m >= 32) {
+      return 3;
+    }
+    if (m >= 16) {
+      return 2;
+    }
+    if (m >= 8) {
+      return 1;
+    }
+    return 0;
+  }
+
+  static int tx_sqr_up_index(int w, int h) {
+    const int m = std::max(w, h);
+    if (m >= 64) {
+      return 4;
+    }
+    if (m >= 32) {
+      return 3;
+    }
+    if (m >= 16) {
+      return 2;
+    }
+    if (m >= 8) {
+      return 1;
+    }
+    return 0;
+  }
+
+  // §5.20.8.2 transform_type() for intra luma, DC_PRED, DCT_DCT.
+  // TX_SET_DCTONLY (32x32 / 64x64) codes nothing, so the original M0 streams
+  // are unchanged; rectangular 32-wide/tall sizes select TX_SET_WIDE_32 or
+  // TX_SET_HIGH_32 and must code is_long_side_dct = 1 + intra_tx_type = 0
+  // (DCT_DCT). TX_SET_INTRA_1 codes intra_tx_type = 0 (DCT_DCT for DC_PRED).
+  bool write_luma_tx_type(int w, int h, int eob) {
+    if (eob <= 1) {
+      return true;  // transform_type() forces DCT_DCT without syntax
+    }
+    const int sqr = tx_sqr_index(w, h);
+    const int sqr_up = tx_sqr_up_index(w, h);
+    int set = 5;  // TX_SET_INTRA_1
+    if (sqr_up > 3) {
+      set = sqr >= 3 ? 0 : (w > h ? 1 : 2);  // DCTONLY / WIDE_64 / HIGH_64
+    } else if (sqr_up == 3) {
+      set = sqr == 3 ? 0 : (w > h ? 3 : 4);  // DCTONLY / WIDE_32 / HIGH_32
+    }
+    if (set == 0) {
+      return true;
+    }
+    if (set == 3 || set == 4) {
+      if (!sym(&cdfs_.is_long_side_dct[0][0], 2, 1)) {
+        return false;
+      }
+      return sym(&cdfs_.intra_tx_type_long[sqr][0], 4, 0);
+    }
+    if (set == 1 || set == 2) {
+      return sym(&cdfs_.intra_tx_type_long[sqr][0], 4, 0);
+    }
+    return sym(&cdfs_.intra_tx_type_set1[sqr][0], 7, 0);
   }
 
   bool write_eob(int eob, int plane, int w, int h) {
@@ -1342,6 +1796,9 @@ class TileEncoder {
     }
 
     if (!write_eob(eob, plane, tw, th)) {
+      return false;
+    }
+    if (plane == 0 && !write_luma_tx_type(tw, th, eob)) {
       return false;
     }
     // transform_type() is luma-only. For chroma, compute_tx_type() derives
@@ -1668,6 +2125,36 @@ bool encode_still_picture(const StillPicture& picture,
                         static_cast<int>((picture.height + 1U) / 2U));
   result.recon_v = crop(encoder.recon(2), static_cast<int>((picture.width + 1U) / 2U),
                         static_cast<int>((picture.height + 1U) / 2U));
+  return true;
+}
+
+bool geometry_supported(std::uint32_t width, std::uint32_t height,
+                        std::string& reason) {
+  reason.clear();
+  if (width == 0 || height == 0) {
+    reason = "empty picture";
+    return false;
+  }
+  if ((width & 1U) != 0U || (height & 1U) != 0U) {
+    reason = "M0 4:2:0 requires even dimensions";
+    return false;
+  }
+  const int mi_cols = static_cast<int>(2U * ((width + 7U) >> 3U));
+  const int mi_rows = static_cast<int>(2U * ((height + 7U) >> 3U));
+  for (int r = 0; r < mi_rows; r += 16) {
+    for (int c = 0; c < mi_cols; c += 16) {
+      if (r + 16 <= mi_rows && c + 16 <= mi_cols) {
+        continue;  // full superblock: fixed 32x32 tree
+      }
+      EdgePlanner planner(mi_rows, mi_cols);
+      EdgePlanNode plan;
+      if (!planner.build_superblock(r, c, &plan)) {
+        reason = "edge superblock needs uncoded block size(s): " +
+                 planner.missing_sizes();
+        return false;
+      }
+    }
+  }
   return true;
 }
 

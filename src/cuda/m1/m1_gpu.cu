@@ -1009,6 +1009,7 @@ bool compare_plane(std::span<const std::uint8_t> gpu,
   cpu.adaptive_cdf = options.adaptive_cdf;
   cpu.force_single_block = options.force_single_block;
   cpu.force_dc = options.force_dc;
+  cpu.uv_full = options.uv_full;
   return cpu;
 }
 
@@ -1037,6 +1038,13 @@ bool validate_options(const GpuOptions& options,
   }
   if (options.max_partition_depth < 0 || options.max_partition_depth > 32) {
     error = "M1 max_partition_depth must be in [0, 32]";
+    return false;
+  }
+  if (options.enable_cdef || options.rdoq || options.tx_type ||
+      options.rdo_intra) {
+    error =
+        "M1 GPU: --m1-cdef/--m1-rdoq/--m1-tx-type/--m1-rdo-intra are not "
+        "ported to the GPU pipeline yet; use --m1 (CPU) for those tools";
     return false;
   }
   const std::size_t luma = static_cast<std::size_t>(picture.width) *
@@ -1567,6 +1575,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::m1::StillPicture& picture,
        std::getenv("AV2ENC_M1_UV_DC") == nullptr)
           ? 1
           : 0;
+  chroma_options.enable_uv_full = options.uv_full ? 1 : 0;
 
   M1TxBuffers tx_buffers;
   tx_buffers.src = buffers.src.y;

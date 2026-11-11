@@ -21,6 +21,7 @@
 #include "encoder/m1/m1_still.h"
 #include "io/y4m.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -46,6 +47,17 @@ void usage(std::ostream& out) {
          "  --no-deblock            disable the deblocking filter\n"
          "  --full-intra            luma_dc_only = false (CLI --m1-full-intra)\n"
          "  --no-cfl                disable CfL\n"
+         "  --uv-full               enable the full chroma intra search\n"
+         "  --cdef                  enable CDEF (CLI --m1-cdef)\n"
+         "  --cdef-strengths N      CDEF strength sets 1..8 (default 4)\n"
+         "  --rdo-intra             rate-aware luma intra (CLI --m1-rdo-intra)\n"
+         "  --rdo-scale S           lambda sse_scale (default 0.125)\n"
+         "  --rdoq                  enable coefficient RDOQ (CLI --m1-rdoq)\n"
+         "  --rdoq-scale S          RDOQ lambda sse_scale (default 0.125)\n"
+         "  --tx-type               intra luma TX_TYPE search (CLI --m1-tx-type)\n"
+         "  --tx-type-scale S       lambda sse_scale (default 0.125)\n"
+         "  --ccso                  enable band-offset-only CCSO (CLI --m1-ccso)\n"
+         "  --ccso-bands N          CCSO max_band_log2 0..6 (default 6)\n"
          "  --m1-single             force one PARTITION_NONE superblock\n"
          "  --m1-dc                 force DC intra for luma\n"
          "  --min-block-size N      partition floor in pixels (default 8)\n"
@@ -138,6 +150,19 @@ bool parse_int(std::string_view text, int& value) {
   }
 }
 
+bool parse_double(std::string_view text, double& value) {
+  if (text.empty()) return false;
+  try {
+    std::size_t used = 0;
+    const double parsed = std::stod(std::string(text), &used);
+    if (used != text.size() || !std::isfinite(parsed)) return false;
+    value = parsed;
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
 struct Cli {
   std::filesystem::path input;
   std::filesystem::path output;
@@ -197,6 +222,58 @@ int parse_args(int argc, char** argv, Cli& cli) {
       cli.options.luma_dc_only = false;
     } else if (arg == "--no-cfl") {
       cli.options.enable_cfl = false;
+    } else if (arg == "--uv-full") {
+      cli.options.uv_full = true;
+    } else if (arg == "--cdef") {
+      cli.options.enable_cdef = true;
+    } else if (arg == "--rdo-intra") {
+      cli.options.rdo_intra = true;
+    } else if (arg == "--rdo-scale") {
+      if (!next_value("--rdo-scale", value)) return 2;
+      double scale = 0.0;
+      if (!parse_double(value, scale) || scale <= 0.0) {
+        std::cerr << "m1_dump: --rdo-scale must be positive\n";
+        return 2;
+      }
+      cli.options.rdo_sse_scale = scale;
+    } else if (arg == "--ccso") {
+      cli.options.enable_ccso = true;
+    } else if (arg == "--ccso-bands") {
+      if (!next_value("--ccso-bands", value)) return 2;
+      int bands = 0;
+      if (!parse_int(value, bands) || bands < 0 || bands > 6) {
+        std::cerr << "m1_dump: --ccso-bands must be in [0, 6]\n";
+        return 2;
+      }
+      cli.options.ccso_bands_log2 = bands;
+    } else if (arg == "--tx-type") {
+      cli.options.tx_type = true;
+    } else if (arg == "--tx-type-scale") {
+      if (!next_value("--tx-type-scale", value)) return 2;
+      double scale = 0.0;
+      if (!parse_double(value, scale) || scale <= 0.0) {
+        std::cerr << "m1_dump: --tx-type-scale must be positive\n";
+        return 2;
+      }
+      cli.options.tx_type_sse_scale = scale;
+    } else if (arg == "--rdoq") {
+      cli.options.rdoq = true;
+    } else if (arg == "--rdoq-scale") {
+      if (!next_value("--rdoq-scale", value)) return 2;
+      double scale = 0.0;
+      if (!parse_double(value, scale) || scale <= 0.0) {
+        std::cerr << "m1_dump: --rdoq-scale must be positive\n";
+        return 2;
+      }
+      cli.options.rdoq_sse_scale = scale;
+    } else if (arg == "--cdef-strengths") {
+      if (!next_value("--cdef-strengths", value)) return 2;
+      int strengths = 0;
+      if (!parse_int(value, strengths) || strengths < 1 || strengths > 8) {
+        std::cerr << "m1_dump: --cdef-strengths must be in [1, 8]\n";
+        return 2;
+      }
+      cli.options.cdef_num_strengths = strengths;
     } else if (arg == "--m1-single") {
       cli.options.force_single_block = true;
     } else if (arg == "--m1-dc") {
@@ -216,6 +293,9 @@ int parse_args(int argc, char** argv, Cli& cli) {
     }
   }
   if (cli.help) return 0;
+  if (cli.options.rdo_intra && !cli.options.force_dc) {
+    cli.options.luma_dc_only = false;
+  }
   if (cli.input.empty()) {
     std::cerr << "m1_dump: missing -i <input.y4m>\n";
     return 2;
@@ -257,6 +337,23 @@ std::string options_json(const Cli& cli, std::uint32_t width,
   j += o.force_dc ? "true" : "false";
   j += ",\"luma_dc_only\":";
   j += o.luma_dc_only ? "true" : "false";
+  j += ",\"uv_full\":";
+  j += o.uv_full ? "true" : "false";
+  j += ",\"rdo_intra\":";
+  j += o.rdo_intra ? "true" : "false";
+  j += ",\"rdo_sse_scale\":" + std::to_string(o.rdo_sse_scale);
+  j += ",\"rdoq\":";
+  j += o.rdoq ? "true" : "false";
+  j += ",\"rdoq_sse_scale\":" + std::to_string(o.rdoq_sse_scale);
+  j += ",\"tx_type\":";
+  j += o.tx_type ? "true" : "false";
+  j += ",\"tx_type_sse_scale\":" + std::to_string(o.tx_type_sse_scale);
+  j += ",\"enable_ccso\":";
+  j += o.enable_ccso ? "true" : "false";
+  j += ",\"ccso_bands_log2\":" + std::to_string(o.ccso_bands_log2);
+  j += ",\"enable_cdef\":";
+  j += o.enable_cdef ? "true" : "false";
+  j += ",\"cdef_num_strengths\":" + std::to_string(o.cdef_num_strengths);
   j += ",\"tile_bytes\":" + std::to_string(result.tile_bytes);
   j += ",\"frame_bytes\":" + std::to_string(result.frame_bytes);
   j += ",\"leaves\":" + std::to_string(result.leaves);
