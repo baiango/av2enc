@@ -35,10 +35,11 @@ binary="${build_dir}/rdo_test"
 echo "compiler: ${CXX}"
 "${CXX}" --version 2>/dev/null | head -n 1 || true
 echo "flags:    ${CXXFLAGS[*]}"
-echo "building: src/encoder/rdo/rdo.cpp src/encoder/rdo/rdo_test.cpp"
+echo "building: src/encoder/rdo/rdo.cpp src/encoder/rdo/intra_decision.cpp"
+echo "          src/encoder/rdo/rdo_test.cpp"
 echo
 
-"${CXX}" "${CXXFLAGS[@]}" -I. rdo.cpp rdo_test.cpp -o "${binary}"
+"${CXX}" "${CXXFLAGS[@]}" -I. rdo.cpp intra_decision.cpp rdo_test.cpp -o "${binary}"
 
 echo "running: ${binary}"
 echo

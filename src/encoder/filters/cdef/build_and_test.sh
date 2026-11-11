@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Build (and by default run) the AV2 CDEF CPU reference test.
+# Build (and by default run) the AV2 CDEF CPU reference tests.
 #
-#   ./build_and_test.sh                 # build + run
+#   ./build_and_test.sh                 # build + run both test binaries
 #   ./build_and_test.sh --no-run        # build only
 #   CXX=clang++ ./build_and_test.sh     # alternate compiler
 #   SANITIZE=1 ./build_and_test.sh      # ASan + UBSan
 #
 # Self-contained: does not touch the root CMake build, src/main.cpp, or any
 # other component.  CPU-only; the CUDA test lives in src/cuda/cdef/.
+#
+# Binaries:
+#   cdef_test         §7.18 filter/decision reference (242 checks)
+#   cdef_search_test  encoder-side strength search (cdef_search.h)
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -42,7 +46,7 @@ if [ "$SANITIZE" -eq 1 ]; then
 fi
 
 echo "CXX: $($CXX --version | head -1)"
-echo "build: $BUILD_DIR/cdef_test"
+echo "build: $BUILD_DIR/cdef_test, $BUILD_DIR/cdef_search_test"
 
 "$CXX" -std=c++20 -O2 -g \
   -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
@@ -51,6 +55,14 @@ echo "build: $BUILD_DIR/cdef_test"
   cdef.cpp cdef_test.cpp \
   -o "$BUILD_DIR/cdef_test"
 
+"$CXX" -std=c++20 -O2 -g \
+  -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
+  ${EXTRA[@]+"${EXTRA[@]}"} \
+  -I "$REPO_ROOT/src" \
+  cdef.cpp cdef_search_test.cpp \
+  -o "$BUILD_DIR/cdef_search_test"
+
 if [ "$RUN" -eq 1 ]; then
   "$BUILD_DIR/cdef_test" "$REPO_ROOT"
+  "$BUILD_DIR/cdef_search_test" "$REPO_ROOT/decoded.y4m"
 fi

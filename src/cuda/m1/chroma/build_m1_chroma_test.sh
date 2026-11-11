@@ -51,11 +51,18 @@ HOST_SOURCES=(
   "src/bitstream/obu.cpp"
   "src/encoder/partition/partition.cpp"
   "src/encoder/intra_modes/intra_modes.cpp"
+  "src/encoder/rdoq/rdoq.cpp"
+  "src/encoder/rdoq/rdoq_av2_model.cpp"
+  "src/encoder/tx_type/tx_type.cpp"
   "src/encoder/tx_variants/tx_variants.cpp"
   "src/encoder/tx_variants/tx_select.cpp"
   "src/encoder/cfl/cfl.cpp"
   "src/encoder/filters/deblock/deblock.cpp"
+  "src/encoder/filters/cdef/cdef.cpp"
+  "src/encoder/rdo/rdo.cpp"
+  "src/encoder/rdo/intra_decision.cpp"
   "src/encoder/m1/m1_headers.cpp"
+  "src/cuda/m1/cdef/m1_cdef.cpp"
   "src/entropy/av2/av2_entropy.cpp"
 )
 
@@ -69,6 +76,10 @@ fi
 
 HOST_OBJECTS=()
 for src in "${HOST_SOURCES[@]}"; do
+  if [ ! -f "$ROOT/$src" ]; then
+    echo "warning: optional host source missing: $src" >&2
+    continue
+  fi
   obj="$BUILD_DIR/$(echo "$src" | tr '/' '_').o"
   g++ -std=c++20 -O2 -ffp-contract=off -fno-fast-math \
     -I"$ROOT/src" -c "$ROOT/$src" -o "$obj"
@@ -92,7 +103,7 @@ if [ "$RUN" -eq 1 ]; then
   mkdir -p "$FRAME_DIR"
   Y4M_ARGS=()
   if command -v ffmpeg >/dev/null 2>&1; then
-    for size in 64x64 640x360; do
+    for size in 64x64 640x360 1920x1080; do
       out="$FRAME_DIR/testsrc2_${size}.y4m"
       if [ ! -s "$out" ]; then
         ffmpeg -v error -f lavfi -i "testsrc2=size=${size}:rate=1" \
@@ -103,7 +114,7 @@ if [ "$RUN" -eq 1 ]; then
     # Real-content frames when the (unsynced) test media is present.
     SHINE="$ROOT/testdata/shine_1280x720_60f.y4m"
     if [ -s "$SHINE" ]; then
-      for size in 64x64 640x360; do
+      for size in 64x64 640x360 1920x1080; do
         out="$FRAME_DIR/shine_${size}.y4m"
         if [ ! -s "$out" ]; then
           w="${size%x*}"

@@ -11,6 +11,7 @@ cd "$(dirname "$0")/.."
 
 tar czf - \
   --exclude './build' \
+  --exclude './build-*' \
   --exclude './.git' \
   --exclude './.venv-cvvdp' \
   --exclude './testdata' \
