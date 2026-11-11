@@ -1,5 +1,7 @@
 #include "rdo.h"
 
+#include "intra_decision.h"
+
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -564,6 +566,160 @@ void test_rdoq() {
   CHECK(near(result.cost, 0.0));
 }
 
+struct IntraRateTestContext {
+  double syntax = 0.0;
+  double coefficient = 0.0;
+};
+
+bool intra_rate_test_hook(void* context,
+                          const av2enc::rdo::IntraRateRequest& /*request*/,
+                          av2enc::rdo::IntraRateEstimate& out) {
+  const auto* rate = static_cast<const IntraRateTestContext*>(context);
+  out.syntax_rate_bits = rate->syntax;
+  out.coefficient_rate_bits = rate->coefficient;
+  return true;
+}
+
+bool intra_rate_reject_hook(void* /*context*/,
+                            const av2enc::rdo::IntraRateRequest& /*request*/,
+                            av2enc::rdo::IntraRateEstimate& /*out*/) {
+  return false;
+}
+
+void test_intra_decision() {
+  using namespace av2enc::rdo;
+
+  std::vector<IntraCandidateCost> candidates = {
+      {0, 0, 100.0, 2.0, 10.0},
+      {3, 0, 80.0, 4.0, 30.0},
+      {3, -2, 60.0, 6.0, 50.0},
+  };
+
+  IntraRdoConfig config;
+  config.lambda = 1.0;
+  config.rate_aware = false;
+  IntraModeChoice choice = select_intra_mode(candidates, config);
+  CHECK(choice.found);
+  CHECK(choice.mode == 3);
+  CHECK(choice.angle_delta == -2);
+  CHECK(near(choice.sse, 60.0));
+  CHECK(near(choice.rate_bits, 56.0));
+  CHECK(near(choice.cost, 60.0));
+  CHECK(choice.candidate_count == 3);
+
+  // Adding the rate term can flip the choice back to DC.
+  config.rate_aware = true;
+  choice = select_intra_mode(candidates, config);
+  CHECK(choice.mode == 0);
+  CHECK(choice.angle_delta == 0);
+  CHECK(near(choice.cost, 112.0));
+
+  // Zero lambda reduces to SSE-only.
+  config.lambda = 0.0;
+  choice = select_intra_mode(candidates, config);
+  CHECK(choice.mode == 3);
+  CHECK(choice.angle_delta == -2);
+
+  // Equal SSE: SSE-only uses the fixed AV2 candidate order; rate-aware prefers
+  // the lower rate.
+  std::vector<IntraCandidateCost> tied = {
+      {1, 0, 50.0, 2.0, 0.0},
+      {0, 0, 50.0, 10.0, 0.0},
+  };
+  config.lambda = 1.0;
+  config.rate_aware = false;
+  choice = select_intra_mode(tied, config);
+  CHECK(choice.mode == 0);  // mode order, not input order
+  config.rate_aware = true;
+  choice = select_intra_mode(tied, config);
+  CHECK(choice.mode == 1);  // lower rate
+  CHECK(near(choice.cost, 52.0));
+
+  // Reversing the list must not change either deterministic result.
+  std::vector<IntraCandidateCost> reversed = {tied[1], tied[0]};
+  config.rate_aware = false;
+  CHECK(select_intra_mode(reversed, config).mode == 0);
+  config.rate_aware = true;
+  CHECK(select_intra_mode(reversed, config).mode == 1);
+
+  // Invalid candidates are rejected and counted.
+  IntraModeSelector selector(config);
+  std::string error;
+  CHECK(!selector.add({13, 0, 10.0, 1.0, 1.0}, &error));
+  CHECK(!error.empty());
+  CHECK(!selector.add({1, 4, 10.0, 1.0, 1.0}, &error));
+  CHECK(!selector.add({0, 1, 10.0, 1.0, 1.0}, &error));  // DC cannot signal angle
+  CHECK(!selector.add({1, 0, -1.0, 1.0, 1.0}, &error));
+  CHECK(selector.choice().rejected_count == 4);
+  CHECK(!selector.choice().found);
+
+  // Lambda calibration uses the shared RDO framework.
+  const IntraRdoConfig calibrated = make_intra_rdo_config(528.0);
+  CHECK(near(calibrated.lambda,
+             lambda_sse_from_quant_step(528.0, kIntraDefaultSseScale)));
+  const IntraRdoConfig from_qp = make_intra_rdo_config_from_qp(90);
+  CHECK(near(from_qp.lambda,
+             lambda_sse_from_quant_step(quant_step_from_qp(90),
+                                        kIntraDefaultSseScale)));
+  CHECK(intra_rdo_config_valid(calibrated));
+  IntraRdoConfig bad_config = calibrated;
+  bad_config.lambda = -1.0;
+  CHECK(!intra_rdo_config_valid(bad_config));
+  CHECK(!validate_intra_rdo_config(bad_config, &error));
+
+  // Placeholder syntax rates: base mode cheaper than an angle delta.
+  CHECK(default_intra_syntax_rate_bits(0, 0) <
+        default_intra_syntax_rate_bits(3, 0));
+  CHECK(default_intra_syntax_rate_bits(3, 0) <
+        default_intra_syntax_rate_bits(3, -2));
+
+  // Level-based coefficient-rate placeholder.
+  std::vector<std::int32_t> zero_levels = {0, 0, 0, 0};
+  std::vector<std::int32_t> levels = {2, 0, -1, 3};
+  const double zero_rate =
+      intra_coefficient_rate_bits_from_levels(zero_levels, 0, 4);
+  const double level_rate =
+      intra_coefficient_rate_bits_from_levels(levels, 4, 4);
+  CHECK(zero_rate > 0.0);
+  CHECK(level_rate > zero_rate);
+
+  // Pluggable estimator and its failure path.
+  IntraRateTestContext rate_context{3.0, 7.0};
+  IntraRateRequest request;
+  request.mode = 3;
+  request.angle_delta = -1;
+  request.block_w = 16;
+  request.block_h = 16;
+  request.sse = 123.0;
+  IntraRateEstimate estimate;
+  CHECK(estimate_intra_rates(&intra_rate_test_hook, &rate_context, request,
+                             estimate, &error));
+  CHECK(near(estimate.syntax_rate_bits, 3.0));
+  CHECK(near(estimate.coefficient_rate_bits, 7.0));
+  CHECK(!estimate_intra_rates(&intra_rate_reject_hook, nullptr, request,
+                              estimate, &error));
+  CHECK(!error.empty());
+  CHECK(estimate_intra_rates(nullptr, nullptr, request, estimate, &error));
+  CHECK(estimate.syntax_rate_bits > 0.0);
+  CHECK(estimate.coefficient_rate_bits > 0.0);
+
+  CHECK(near(intra_candidate_rate_bits(IntraCandidateCost{0, 0, 1.0, 2.0, 3.0}),
+             5.0));
+
+  IntraCandidateCost low_cost{1, 0, 50.0, 2.0, 0.0};
+  IntraCandidateCost high_cost{0, 0, 60.0, 2.0, 0.0};
+  CHECK(intra_candidate_better(low_cost, high_cost, config));
+  CHECK(!intra_candidate_better(high_cost, low_cost, config));
+  CHECK(!intra_candidate_better(low_cost, low_cost, config));
+
+  // Candidate order is all base modes first, then directional angle deltas.
+  IntraCandidateCost base_h{2, 0, 50.0, 2.0, 0.0};
+  IntraCandidateCost directional{1, -3, 50.0, 2.0, 0.0};
+  config.rate_aware = false;
+  CHECK(intra_candidate_better(base_h, directional, config));
+  CHECK(!intra_candidate_better(directional, base_h, config));
+}
+
 }  // namespace
 
 int main() {
@@ -573,6 +729,7 @@ int main() {
   test_candidate_selection();
   test_rdoq_bruteforce();
   test_rdoq();
+  test_intra_decision();
 
   if (g_failures != 0) {
     std::cerr << "rdo_test: " << g_failures << " failure(s)\n";

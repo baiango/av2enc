@@ -11,6 +11,7 @@ Scope:
 - Distortion hooks for SSD, SAD and SATD, plus coefficient-domain SSE.
 - A deterministic candidate/mode selector for partition, intra, inter and
   transform decisions.
+- A concrete rate-aware intra mode decision for the M1 full-intra search.
 - Lambda selection from `base_q_idx` or a quantiser step.
 - A limited RDOQ trellis for coefficient levels with a pluggable rate model.
 
@@ -19,8 +20,10 @@ Files:
 | File | Purpose |
 |---|---|
 | `rdo.h` / `rdo.cpp` | Framework implementation |
+| `intra_decision.h` / `intra_decision.cpp` | Rate-aware M1 intra mode decision |
 | `rdo_test.cpp` | Standalone tests |
 | `build_and_test.sh` | Standalone build + test driver |
+| `experiment/` | Patch-neutral CPU experiment against the real M1 encoder |
 
 ## Build and test
 
@@ -165,6 +168,117 @@ RdoDecision d = select_best(choices, config);
 split signaling bits. The caller is responsible for including every syntax cost
 that differs between the two choices.
 
+## Intra mode decision (M1 full intra)
+
+`intra_decision.h` is the concrete rate-aware intra selector. It exists because
+the M1 full search is SSE-only: a mode that predicts better can still lose once
+its mode/angle and coefficient bits are counted.
+
+```cpp
+#include "encoder/rdo/intra_decision.h"
+
+struct IntraCandidateCost {
+  std::int32_t mode;                 // AV2 YMode 0..12
+  std::int32_t angle_delta;          // -3..3
+  double sse;
+  double syntax_rate_bits;           // mode + angle signalling
+  double coefficient_rate_bits;      // residual coefficient delta
+};
+
+IntraRdoConfig config = make_intra_rdo_config(
+    static_cast<double>(txv::kQuantStep),  // 528 in the current M1 path
+    0.125,                                 // placeholder sse_scale
+    true);                                 // rate_aware
+
+IntraModeChoice choice = select_intra_mode(candidates, config);
+```
+
+`select_intra_mode()` is O(1) memory and deterministic:
+
+1. lowest cost (`sse + lambda * (syntax + coefficient)` when rate-aware;
+   `sse` alone when `rate_aware = false`)
+2. lowest SSE
+3. lowest rate (when rate-aware and `prefer_lower_rate_on_tie`)
+4. fixed AV2 candidate order: all 13 base modes first, then the six non-zero
+   angle deltas `-3,-2,-1,1,2,3` for each directional mode
+5. insertion index (CPU only; `intra_candidate_better()` omits it for a stable
+   GPU reduction)
+
+The input is a plain POD array, so a GPU kernel can compute candidate SSE/rate
+values and reduce them with the same comparator. No pointers, allocation, or
+entropy state cross the API.
+
+### Rate inputs and calibration
+
+`estimate_intra_rates()` is the pluggable rate hook:
+
+```cpp
+IntraRateRequest request;
+request.mode = av2_mode;
+request.angle_delta = angle_delta;
+request.block_w = w;
+request.block_h = h;
+request.base_q_idx = base_q_idx;
+request.sse = candidate_sse;
+request.quant_step = static_cast<double>(txv::kQuantStep);
+
+IntraRateEstimate estimate;
+estimate_intra_rates(entropy_hook, entropy_context, request, estimate, &error);
+candidate.syntax_rate_bits = estimate.syntax_rate_bits;
+candidate.coefficient_rate_bits = estimate.coefficient_rate_bits;
+```
+
+The default helpers are documented placeholders:
+
+- `default_intra_syntax_rate_bits()` — rough mode/angle bits.
+- `default_intra_coefficient_rate_bits()` — SSE-based placeholder.
+- `intra_coefficient_rate_bits_from_levels()` — the experiment's proxy over the
+  candidate's real quantised levels; it reuses the RDOQ bring-up model.
+
+The entropy owner must replace these with exact AV2 symbol costs before the
+decision becomes a default policy. Lambda comes from
+`lambda_sse_from_quant_step(quant_step, sse_scale)`; `0.125` is a placeholder
+scale and the measured results are sensitive to it.
+
+### M1 integration sketch
+
+Inside `choose_luma_mode()`, after predicting each candidate:
+
+```cpp
+av2enc::rdo::IntraCandidateCost candidate;
+candidate.mode = av2_y_mode(params.mode);
+candidate.angle_delta = params.angle_delta;
+candidate.sse = static_cast<double>(sse);
+candidate.syntax_rate_bits = /* estimator or default */;
+candidate.coefficient_rate_bits = /* estimator or level-based proxy */;
+candidates.push_back(candidate);
+```
+
+Then replace M1's SSE-only winner:
+
+```cpp
+const auto config = av2enc::rdo::make_intra_rdo_config(
+    static_cast<double>(txv::kQuantStep));
+const auto choice = av2enc::rdo::select_intra_mode(candidates, config);
+if (choice.found) {
+  best.mode = static_cast<intra::Mode>(choice.mode);
+  best.angle_delta = choice.angle_delta;
+  best.av2_mode = choice.mode;
+  best.sse = static_cast<std::int64_t>(choice.sse);
+}
+```
+
+`rate_aware = false` reproduces the current SSE-only decision. The production
+denominator is still the same: full intra remains opt-in until the integration
+owner wires this and the decoder/quality gate passes.
+
+### Experiment
+
+`experiment/run_m1_intra_rdo.sh` builds an experiment-only patched M1 copy (the
+repository file is untouched), compares DC / SSE-only / rate-aware streams with
+`tools/quality.py`, and verifies the rate-aware reconstruction bit-exactly with
+`tools/m1_verify`. See `experiment/README.md` for measured QP-90 results.
+
 ## RDOQ trellis
 
 `rdoq_quantize()` optimises one transform block in scan order. Inputs are the
@@ -254,6 +368,12 @@ This is deliberately a limited path, not a full AV2 RDOQ:
 - An exhaustive 4-coefficient brute-force comparison that validates the trellis
   DP, EOB path and final cost recomputation together.
 - Invalid RDOQ configs and invalid rate hooks.
+- Intra selection: SSE-only vs rate-aware ordering, tie-breaks, invalid
+  candidate rejection, lambda calibration, default rate helpers and the
+  pluggable rate hook.
+- The experiment runner's patch-neutrality gate (DC/SSE streams byte-identical
+  to the unpatched CLI) and bit-exact `dav2d` reconstruction for rate-aware
+  streams.
 
 ## Integration checklist
 
@@ -264,10 +384,12 @@ This is deliberately a limited path, not a full AV2 RDOQ:
 4. For partition, include all child costs and split signaling bits.
 5. For RDOQ, replace the placeholder rate model with an entropy-derived one
    before measuring quality.
-6. Re-run the decoder gate after wiring: the output must still pass
+6. For intra, keep `rate_aware = false` until the entropy owner supplies the
+   rate hook and the target-corpus lambda scale is calibrated.
+7. Re-run the decoder gate after wiring: the output must still pass
    `tools/validate_dav2d.sh`; CPU/GPU decision parity is checked before any
    BD-rate claim.
-7. Keep CPU-only results labelled as reference results, not product speed.
+8. Keep CPU-only results labelled as reference results, not product speed.
 
 No bitstream, entropy, M0 encoder or root build file edits are made or required
 by this component.

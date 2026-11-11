@@ -837,6 +837,60 @@ FormatRequirements format_requirements(const Format& format) {
   return requirements;
 }
 
+BitDepthLimits bit_depth_limits(BitDepth depth) {
+  BitDepthLimits limits;
+  const int bits = bit_depth_value(depth);
+  if (bits <= 0) {
+    return limits;
+  }
+  limits.bit_depth = bits;
+  limits.sample_max = (1 << bits) - 1;
+  limits.dc_bias = 1 << (bits - 1);
+  limits.dequant_min = -(1 << (7 + bits));
+  limits.dequant_max = (1 << (7 + bits)) - 1;
+  limits.inverse_row_min = -(1 << (bits + 7));
+  limits.inverse_row_max = (1 << (bits + 7)) - 1;
+  limits.inverse_col_min = -(1 << bits);
+  limits.inverse_col_max = (1 << bits) - 1;
+  limits.residual_min = -(1 << bits);
+  limits.residual_max = (1 << bits) - 1;
+  return limits;
+}
+
+namespace {
+
+int clip_int64(std::int64_t value, std::int64_t low, std::int64_t high) {
+  if (value < low) {
+    return static_cast<int>(low);
+  }
+  if (value > high) {
+    return static_cast<int>(high);
+  }
+  return static_cast<int>(value);
+}
+
+}  // namespace
+
+int clip1_sample(std::int64_t value, BitDepth depth) {
+  const BitDepthLimits limits = bit_depth_limits(depth);
+  return clip_int64(value, 0, limits.sample_max);
+}
+
+int clip_dequant(std::int64_t value, BitDepth depth) {
+  const BitDepthLimits limits = bit_depth_limits(depth);
+  return clip_int64(value, limits.dequant_min, limits.dequant_max);
+}
+
+int clip_inverse_row(std::int64_t value, BitDepth depth) {
+  const BitDepthLimits limits = bit_depth_limits(depth);
+  return clip_int64(value, limits.inverse_row_min, limits.inverse_row_max);
+}
+
+int clip_inverse_col(std::int64_t value, BitDepth depth) {
+  const BitDepthLimits limits = bit_depth_limits(depth);
+  return clip_int64(value, limits.inverse_col_min, limits.inverse_col_max);
+}
+
 int cdf_q_context(int base_q_idx) {
   if (base_q_idx <= 90) {
     return 0;

@@ -430,6 +430,47 @@ struct FormatRequirements {
 
 FormatRequirements format_requirements(const Format& format);
 
+// ---------------------------------------------------------------------------
+// Bit-depth-dependent arithmetic helpers
+// ---------------------------------------------------------------------------
+//
+// These are the exact bounds a 10-bit reconstruction path must use.  They are
+// collected here (instead of being repeated as `1 << 15` / `256` literals in
+// the transform code) so the CPU reference, the CUDA kernels, and the
+// integration checklist cannot drift apart.
+//
+//   §4.8       Clip1(x) = Clip3(0, (1 << BitDepth) - 1, x)
+//   §7.14.3    Dequant = Clip3(-(1 << (7 + BitDepth)), (1 << (7 + BitDepth)) - 1, dq)
+//   §7.15.2.1  row pass:    Clip3(-(1 << (BitDepth + 7)), (1 << (BitDepth + 7)) - 1, v)
+//              column pass: Clip3(-(1 << BitDepth), (1 << BitDepth) - 1, v)
+//   §7.13.2.10 DC prediction neutral value = 1 << (BitDepth - 1)
+//
+// `Transform_Shift` itself is bit-depth independent (§7.15.4.1); do not scale
+// the shifts when moving from 8-bit to 10-bit.
+struct BitDepthLimits {
+  int bit_depth = 0;
+  int sample_max = 0;        // (1 << BitDepth) - 1
+  int dc_bias = 0;           // 1 << (BitDepth - 1)
+  int dequant_min = 0;       // -(1 << (7 + BitDepth))
+  int dequant_max = 0;       //  (1 << (7 + BitDepth)) - 1
+  int inverse_row_min = 0;   // -(1 << (BitDepth + 7))
+  int inverse_row_max = 0;   //  (1 << (BitDepth + 7)) - 1
+  int inverse_col_min = 0;   // -(1 << BitDepth)
+  int inverse_col_max = 0;   //  (1 << BitDepth) - 1
+  // §7.14.4: the residual is representable as a signed integer with
+  // 1 + BitDepth bits, i.e. -(1 << BitDepth) .. (1 << BitDepth) - 1.
+  int residual_min = 0;
+  int residual_max = 0;
+};
+
+// Zero/invalid depths return a zeroed struct with bit_depth == 0.
+BitDepthLimits bit_depth_limits(BitDepth depth);
+
+int clip1_sample(std::int64_t value, BitDepth depth);
+int clip_dequant(std::int64_t value, BitDepth depth);
+int clip_inverse_row(std::int64_t value, BitDepth depth);
+int clip_inverse_col(std::int64_t value, BitDepth depth);
+
 // §8.3.1 init_coeff_cdfs(): index 0 if base_q_idx <= 90, then 140, 190, else 3.
 // Deliberately uses the raw base_q_idx; it is not normalized by bit depth.
 int cdf_q_context(int base_q_idx);

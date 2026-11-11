@@ -791,6 +791,66 @@ void test_block_rects() {
 }
 
 // ---------------------------------------------------------------------------
+// Bit-depth arithmetic helpers
+// ---------------------------------------------------------------------------
+
+void test_bit_depth_limits() {
+  const f::BitDepthLimits ten = f::bit_depth_limits(f::BitDepth::k10);
+  CHECK_EQ_INT(ten.bit_depth, 10);
+  CHECK_EQ_INT(ten.sample_max, 1023);
+  CHECK_EQ_INT(ten.dc_bias, 512);
+  CHECK_EQ_INT(ten.dequant_min, -131072);
+  CHECK_EQ_INT(ten.dequant_max, 131071);
+  CHECK_EQ_INT(ten.inverse_row_min, -131072);
+  CHECK_EQ_INT(ten.inverse_row_max, 131071);
+  CHECK_EQ_INT(ten.inverse_col_min, -1024);
+  CHECK_EQ_INT(ten.inverse_col_max, 1023);
+  CHECK_EQ_INT(ten.residual_min, -1024);
+  CHECK_EQ_INT(ten.residual_max, 1023);
+
+  const f::BitDepthLimits eight = f::bit_depth_limits(f::BitDepth::k8);
+  CHECK_EQ_INT(eight.sample_max, 255);
+  CHECK_EQ_INT(eight.dc_bias, 128);
+  CHECK_EQ_INT(eight.dequant_min, -32768);
+  CHECK_EQ_INT(eight.dequant_max, 32767);
+  CHECK_EQ_INT(eight.inverse_col_min, -256);
+  CHECK_EQ_INT(eight.inverse_col_max, 255);
+
+  // Invalid depth stays zeroed rather than inventing a range.
+  const f::BitDepthLimits invalid =
+      f::bit_depth_limits(static_cast<f::BitDepth>(7));
+  CHECK_EQ_INT(invalid.bit_depth, 0);
+  CHECK_EQ_INT(invalid.sample_max, 0);
+
+  // Clip1 is [0, 1023] at 10-bit, not [0, 255].
+  CHECK_EQ_INT(f::clip1_sample(-1, f::BitDepth::k10), 0);
+  CHECK_EQ_INT(f::clip1_sample(1023, f::BitDepth::k10), 1023);
+  CHECK_EQ_INT(f::clip1_sample(1024, f::BitDepth::k10), 1023);
+  CHECK_EQ_INT(f::clip1_sample(255, f::BitDepth::k10), 255);
+  CHECK_EQ_INT(f::clip1_sample(256, f::BitDepth::k8), 255);
+
+  CHECK_EQ_INT(f::clip_dequant(-131073, f::BitDepth::k10), -131072);
+  CHECK_EQ_INT(f::clip_dequant(131072, f::BitDepth::k10), 131071);
+  CHECK_EQ_INT(f::clip_inverse_row(-131073, f::BitDepth::k10), -131072);
+  CHECK_EQ_INT(f::clip_inverse_row(131072, f::BitDepth::k10), 131071);
+  CHECK_EQ_INT(f::clip_inverse_col(-1025, f::BitDepth::k10), -1024);
+  CHECK_EQ_INT(f::clip_inverse_col(1024, f::BitDepth::k10), 1023);
+
+  // 10-bit 4:2:0: MaxQ 303, idc 0, f(9), DC bias 512.
+  const f::Format ten_420{128, 96, f::ChromaFormat::k420,
+                          f::BitDepth::k10};
+  const f::FormatRequirements req = f::format_requirements(ten_420);
+  CHECK_EQ_INT(req.chroma_format_idc, 0);
+  CHECK_EQ_INT(req.bit_depth_idc, 0);
+  CHECK_EQ_INT(req.profile_idc, 0);
+  CHECK_EQ_INT(req.max_q, 303);
+  CHECK_EQ_INT(req.base_q_idx_bits, 9);
+  CHECK_EQ_INT(req.dc_pred_bias, 512);
+  CHECK_EQ_INT(req.dequant_clip_bits, 17);
+  CHECK(req.signalable);
+}
+
+// ---------------------------------------------------------------------------
 // Requirements / checklist
 // ---------------------------------------------------------------------------
 
@@ -904,6 +964,7 @@ int main() {
   test_conversion_round_trips();
   test_conversion_errors();
   test_block_rects();
+  test_bit_depth_limits();
   test_requirements();
 
   if (g_failures != 0) {

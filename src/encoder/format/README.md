@@ -6,6 +6,13 @@ for the GPU sample path. It does **not** write a sequence header, frame header,
 tile payload, or bitstream, and nothing here is wired into
 `src/encoder/m0_still.cpp`. No 10-bit stream has been encoded or decoded.
 
+The 10-bit M1 transform/sample companion lives in `src/cuda/m1/hbd/`. It uses
+`BitDepthLimits` / `clip_*` from this header as the single source of truth for
+`MaxQ` 303, `bit_depth_idc = 0`, `base_q_idx` `f(9)`, `Clip1` 1023, dequant
+±(1<<17), inverse row ±(1<<17), inverse column ±1024, and DC bias 512. Its
+integration checklist and `dav2d` gate are documented in
+`src/cuda/m1/hbd/README.md`.
+
 The CUDA sibling (`src/cuda/format/`) contains the three per-sample kernels a
 high-bit-depth path needs (expand 8→10/12, reduce 10/12→8, replicate edge
 padding) and a test that compares every sample against the CPU component. The
@@ -136,6 +143,7 @@ at 255.
 | Area | Functions |
 |---|---|
 | Depth | `sample_max`, `bit_depth_idc`, `bit_depth_from_idc`, `max_quantizer`, `base_q_idx_bits`, `clip_sample` |
+| Depth arithmetic | `bit_depth_limits`, `clip1_sample`, `clip_dequant`, `clip_inverse_row`, `clip_inverse_col` |
 | Chroma | `chroma_format_idc`, `chroma_format_from_idc`, `subsampling_x/y`, `num_planes`, `has_chroma` |
 | Blocks | `block_width/height`, `find_block_size`, `chroma_residual_size` |
 | Geometry | `mi_cols/rows`, `make_frame_geometry`, `PlaneGeometry`, `FrameGeometry` |
@@ -151,13 +159,14 @@ it is the machine-readable form of the integration notes below.
 ## Test coverage
 
 `./build_and_test.sh` builds and runs `format_test`:
-**143,361 checks, PASS** (macOS CPU, no CUDA).
+**143,399 checks, PASS** (macOS CPU, no CUDA).
 
 Groups:
 
 | Group | What it pins |
 |---|---|
 | depth helpers | idc inversion, MaxQ, `f(8)/f(9)`, clip bounds, 8↔10↔12 round-trips |
+| depth arithmetic | `BitDepthLimits` for 8/10/12; `Clip1` 1023, dequant ±2^17, inverse row/col clips, DC bias 512 at 10-bit |
 | chroma mapping | non-monotonic idc values, subsampling, plane counts |
 | block tables | 29 block sizes, 4:2:2 invalid widths, 4:4:4 identity, 4:2:0 mapping |
 | geometry | MI alignment, odd dimensions, coded vs visible, plane offsets/bytes |
