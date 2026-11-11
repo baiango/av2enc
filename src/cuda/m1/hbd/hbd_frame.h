@@ -69,6 +69,11 @@ cudaError_t hbd_expand_plane_8_to_16(const std::uint8_t* src,
 
 // 8-bit 4:2:0 source -> 10-bit coded/padded `uint16_t` frame.  `frame` must
 // describe an arena buffer of at least `frame.total_samples` samples.
+//
+// IMPORTANT: `source.y/u/v.data` are DEVICE pointers; `stride` is in bytes.
+// The caller copies the input planes to device memory first (or already has
+// them there from a pinned/async upload).  There is no implicit host copy and
+// this function allocates nothing.
 cudaError_t hbd_upload_420_8(const av2enc::fmt::Source420_8& source,
                              const Hbd420Frame& frame, std::uint16_t* d_frame,
                              cudaStream_t stream = nullptr);

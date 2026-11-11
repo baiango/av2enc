@@ -108,6 +108,138 @@ AV2ENC_CDEF_HD constexpr int cdef_floor_log2(int value) {
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// §7.18.1 derived filter parameters
+//
+// These are the pieces of the block decision that the CPU reference, the CUDA
+// kernel and the encoder-side strength search must agree on bit-for-bit.  They
+// live here (rather than in cdef.cpp) so every caller shares one expression.
+// ---------------------------------------------------------------------------
+
+// The four parameters the §7.18.3 filter process consumes for one plane.
+struct CdefFilterParams {
+  int pri;
+  int sec;
+  int dir;
+  int damping;
+};
+
+// varStr = (var >> 6) ? Min(FloorLog2(var >> 6), 12) : 0
+AV2ENC_CDEF_HD constexpr int cdef_variance_strength(std::int64_t var) {
+  const std::int64_t shifted = var >> 6;
+  if (shifted <= 0) {
+    return 0;
+  }
+  const int strength = cdef_floor_log2(static_cast<int>(shifted));
+  return strength > 12 ? 12 : strength;
+}
+
+// Luma parameters: priStr is scaled by the block variance, dir falls back to 0
+// when the (unscaled) primary strength is zero, damping is CdefDamping.
+AV2ENC_CDEF_HD CdefFilterParams cdef_luma_params(int pri_raw, int sec_raw,
+                                                 int y_dir, std::int64_t var,
+                                                 int damping) {
+  CdefFilterParams p;
+  const int var_str = cdef_variance_strength(var);
+  p.pri = (var != 0) ? ((pri_raw * (4 + var_str) + 8) >> 4) : 0;
+  p.sec = sec_raw;
+  p.dir = (pri_raw == 0) ? 0 : y_dir;
+  p.damping = damping;
+  return p;
+}
+
+// Chroma parameters: no variance scaling, direction remapped by the
+// Cdef_Uv_Dir table, damping = CdefDamping - 1.
+AV2ENC_CDEF_HD CdefFilterParams cdef_chroma_params(int pri_raw, int sec_raw,
+                                                   int y_dir, int sub_x,
+                                                   int sub_y, int damping) {
+  CdefFilterParams p;
+  p.pri = pri_raw;
+  p.sec = sec_raw;
+  p.dir = (pri_raw == 0) ? 0 : kCdefUvDir[sub_x][sub_y][y_dir];
+  p.damping = damping - 1;
+  return p;
+}
+
+// §7.18.1 skip / skipChroma derivation for the 8x8 block at (r, c) in luma MI
+// units.  `skip` and `lossless` may be null (treated as all zero);
+// `lossless_chroma` is optional.
+AV2ENC_CDEF_HD void cdef_block_skip_flags(const std::uint8_t* skip,
+                                          const std::uint8_t* lossless,
+                                          const std::uint8_t* lossless_chroma,
+                                          int mi_cols, int r, int c,
+                                          bool on_skip_txfm, bool* out_skip,
+                                          bool* out_skip_chroma) {
+  bool block_skip = false;
+  if (!on_skip_txfm && skip != nullptr) {
+    const std::size_t o = static_cast<std::size_t>(r) *
+                              static_cast<std::size_t>(mi_cols) +
+                          static_cast<std::size_t>(c);
+    const std::size_t row = static_cast<std::size_t>(mi_cols);
+    block_skip = skip[o] != 0 && skip[o + 1] != 0 && skip[o + row] != 0 &&
+                 skip[o + row + 1] != 0;
+  }
+  bool chroma_skip = false;
+  for (int i = 0; i < 2; ++i) {
+    for (int j = 0; j < 2; ++j) {
+      const std::size_t o = static_cast<std::size_t>(r + i) *
+                                static_cast<std::size_t>(mi_cols) +
+                            static_cast<std::size_t>(c + j);
+      if (lossless != nullptr && lossless[o] != 0) {
+        block_skip = true;
+      }
+      if (lossless_chroma != nullptr && lossless_chroma[o] != 0) {
+        chroma_skip = true;
+      }
+    }
+  }
+  *out_skip = block_skip;
+  *out_skip_chroma = chroma_skip;
+}
+
+// §5.20.9.3 filter region for the block at (r, c) in luma MI units.  Tile
+// starts are in luma MI units; without tiles the region is the whole frame.
+AV2ENC_CDEF_HD CdefRegion cdef_filter_region(
+    int mi_cols, int mi_rows, const std::uint16_t* tile_col_starts,
+    int num_tile_cols, const std::uint16_t* tile_row_starts,
+    int num_tile_rows, bool disable_loopfilters_across_tiles, int r, int c) {
+  CdefRegion region;
+  if (!disable_loopfilters_across_tiles) {
+    region.col_start = 0;
+    region.row_start = 0;
+    region.col_end = mi_cols;
+    region.row_end = mi_rows;
+    return region;
+  }
+  int col_start = 0;
+  int col_end = mi_cols;
+  for (int i = 0; i < num_tile_cols; ++i) {
+    const int start = static_cast<int>(tile_col_starts[i]);
+    if (start <= c) {
+      col_start = start;
+    } else {
+      col_end = start;
+      break;
+    }
+  }
+  int row_start = 0;
+  int row_end = mi_rows;
+  for (int i = 0; i < num_tile_rows; ++i) {
+    const int start = static_cast<int>(tile_row_starts[i]);
+    if (start <= r) {
+      row_start = start;
+    } else {
+      row_end = start;
+      break;
+    }
+  }
+  region.col_start = col_start;
+  region.row_start = row_start;
+  region.col_end = col_end;
+  region.row_end = row_end;
+  return region;
+}
+
 // constrain(diff, threshold, damping) from §7.18.3.
 AV2ENC_CDEF_HD int cdef_constrain(int diff, int threshold,
                                          int damping) {

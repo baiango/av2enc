@@ -154,6 +154,20 @@ TxTypeSyntax luma_tx_type_syntax(int tx_size, int eob) {
   return TxTypeSyntax::kIntraSet1;
 }
 
+// Default_Eob_Pt_16_Cdf [3][6] and Default_Eob_Pt_32_Cdf [3][7] (§9.3),
+// COEFF_CDF_Q_CTXS slice 0.  The M1 syntax path previously had no 4x4/4x8
+// transform and only imported the 64+ tables, so these two live here.
+constexpr std::uint16_t kEobPt16Cdf[3][6] = {
+    {1946, 3059, 6834, 15123, 6, 0},
+    {558, 835, 2739, 6534, 25, 0},
+    {8000, 10366, 14466, 19569, 31, 0},
+};
+constexpr std::uint16_t kEobPt32Cdf[3][7] = {
+    {1203, 1920, 4502, 10281, 17078, 6, 0},
+    {1078, 1340, 2464, 5152, 11416, 5, 0},
+    {11670, 14271, 19287, 23919, 27084, 31, 0},
+};
+
 struct CdfState {
   std::uint16_t do_split[2][64][3];
   std::uint16_t rect_type[2][64][3];
@@ -172,6 +186,8 @@ struct CdfState {
   std::uint16_t eob_pt_256[3][9];
   std::uint16_t eob_pt_128[3][9];
   std::uint16_t eob_pt_64[3][8];
+  std::uint16_t eob_pt_32[3][7];
+  std::uint16_t eob_pt_16[3][6];
   std::uint16_t eob_extra[3];
   std::uint16_t coeff_base[5][20][2][5];
   std::uint16_t coeff_base_lf[5][33][2][7];
@@ -213,6 +229,8 @@ void init_cdfs(CdfState& c) {
   copy_array(c.eob_pt_256, av2enc::m0::kEobPt256Cdf);
   copy_array(c.eob_pt_128, av2enc::m0::kEobPt128Cdf);
   copy_array(c.eob_pt_64, av2enc::m0::kEobPt64Cdf);
+  copy_array(c.eob_pt_32, kEobPt32Cdf);
+  copy_array(c.eob_pt_16, kEobPt16Cdf);
   copy_array(c.eob_extra, av2enc::m0::kEobExtraCdf);
   copy_array(c.coeff_base, av2enc::m0::kCoeffBaseCdf);
   copy_array(c.coeff_base_lf, av2enc::m0::kCoeffBaseLfCdf);
@@ -787,12 +805,18 @@ class Writer {
     const int cdf_ctx = plane > 0 ? 2 : 0;
     switch (multisize) {
       case 0:
-        error_ = "EOB multisize 0 is not supported by M1 transform sizes";
-        return false;
-      case 1:
-        cdf = &cdfs_.eob_pt_64[cdf_ctx][0];
+        // §5.20.7.27 / §8.3.2: eobMultisize 0 (TX_4X4) codes eob_pt_16,
+        // whose default CDF has five symbols (eobPt 1..5) and no escape.
+        cdf = &cdfs_.eob_pt_16[cdf_ctx][0];
         escape_bits = 0;
-        cdf_n = 7;
+        cdf_n = 5;
+        break;
+      case 1:
+        // eobMultisize 1 (TX_4X8 / TX_8X4) codes eob_pt_32: six symbols
+        // (eobPt 1..6), no escape.
+        cdf = &cdfs_.eob_pt_32[cdf_ctx][0];
+        escape_bits = 0;
+        cdf_n = 6;
         break;
       case 2:
         cdf = &cdfs_.eob_pt_64[cdf_ctx][0];
@@ -817,14 +841,15 @@ class Writer {
     }
     int symbol = 0;
     int escape = 0;
-    if (eob_pt <= 8) {
+    if (eob_pt <= cdf_n) {
       symbol = eob_pt - 1;
     } else {
-      symbol = 7;
-      escape = eob_pt - 8;
+      // The last CDF symbol escapes to eobPt = cdf_n + escape.
+      symbol = cdf_n - 1;
+      escape = eob_pt - cdf_n;
     }
     if (!sym(cdf, cdf_n, symbol)) return false;
-    if (symbol == 7 && escape_bits > 0) {
+    if (symbol == cdf_n - 1 && escape_bits > 0) {
       if (!write_literal(escape_bits, static_cast<std::uint32_t>(escape))) {
         return false;
       }

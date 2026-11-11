@@ -163,10 +163,18 @@ Run:
 ./build_hbd_test.sh
 ```
 
-On this macOS host (no `nvcc`): `hbd_test: PASS (19312 checks)`. The CUDA half
-was not run here; run it on the `sm_86` box where `nvcc` is present. It compares
-every element (levels, EOB, dequant, inverse residual, every uploaded sample,
-every downloaded sample), not a checksum.
+CPU-only host: `hbd_test: PASS (19312 checks)`.
+
+`sm_86` (RTX 3060, Linux, `nvcc`): `hbd_cuda_test: PASS (1523424 checks)`,
+`compute-sanitizer --tool memcheck`: **0 errors**, `--tool initcheck`:
+**0 errors**, `--tool racecheck`: **0 hazards**. It compares every element
+(levels, EOB, dequant, inverse residual, every uploaded sample, every
+replicated padding sample, every downloaded sample), not a checksum.
+
+> Upload contract: `hbd_upload_420_8()` takes **device-resident** 8-bit
+> source planes (`source.y/u/v.data`), with byte strides. Copy the input
+> planes to device memory before calling it. Passing host vectors directly is
+> an illegal access (this was the initial test-harness bug).
 
 What the CPU test pins:
 

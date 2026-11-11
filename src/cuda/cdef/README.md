@@ -85,6 +85,12 @@ disjoint destination regions, so no inter-block synchronisation is needed; the
 single `__syncthreads()` only orders the per-block decision against its own
 workers.
 
+The decision arithmetic (tile region, skip/lossless, strength/direction
+derivation) comes from the shared `cdef_core.h` helpers
+(`cdef_filter_region`, `cdef_block_skip_flags`, `cdef_luma_params`,
+`cdef_chroma_params`), the same ones the CPU reference and the encoder-side
+strength search (`src/encoder/filters/cdef/cdef_search.h`) call.
+
 ptxas on `sm_86`: 184 registers, 64-byte stack frame (direction projections;
 held in local memory, not the register file), 0 spill stores/loads, 56 bytes
 shared memory, 648 bytes constant memory (the normative tables). Block-level

@@ -12,18 +12,22 @@
 // The CPU encoder keeps its decision loop in an anonymous namespace, so this
 // test includes the translation unit (the same approach as
 // src/cuda/m1/recon/recon_test.cu).  Everything is host-only; no CUDA needed.
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
+#include "encoder/m0_cdf_tables.h"
+#include "encoder/m1/m1_cdf_tables.h"
 #include "encoder/m1/m1_headers.h"
 #include "encoder/m1/m1_syntax.h"
 #include "encoder/m1/m1_tables.h"
 #include "encoder/m1/stream/m1_stream_bridge.h"
 #include "encoder/partition/partition.h"
 #include "encoder/tx_variants/tx_variants.h"
+#include "entropy/av2/av2_entropy.h"
 
 #include <cstdlib>
 #include <sstream>
@@ -1029,6 +1033,220 @@ void test_plan_frame_ordering(int width, int height) {
             "plan+bridge bytes differ from the CPU M1 frame");
 }
 
+// 5. EOB syntax at the minimum transform sizes.
+//
+// §5.20.7.27: eobMultisize = Min(Tx_Width_Log2,5)+Min(Tx_Height_Log2,5)-4
+// selects eob_pt_16 (TX_4X4, 5 symbols), eob_pt_32 (TX_4X8/TX_8X4, 6
+// symbols) or eob_pt_64 (TX_8X8, 7 symbols); none of these have an escape.
+// This test writes one forced leaf for every EOB in [0, area] and reads the
+// EOB back with an independent §5.20.7.27 parser, so a wrong CDF or symbol
+// count fails even when the encoder happens not to crash.
+struct EobTestCdfs {
+  std::uint16_t y_mode_set[5];
+  std::uint16_t y_mode_index[3][9];
+  std::uint16_t uv_mode[2][9];
+  std::uint16_t is_cfl[3][3];
+  std::uint16_t txb_skip[2][5][10][3];
+  std::uint16_t eob_pt_16[3][6];
+  std::uint16_t eob_pt_32[3][7];
+  std::uint16_t eob_pt_64[3][8];
+  std::uint16_t eob_extra[3];
+};
+
+void init_eob_test_cdfs(EobTestCdfs& cdfs) {
+  // Default_Eob_Pt_16/32_Cdf (§9.3, qctx slice 0): the reader side of the
+  // 4x4/4x8 EOB syntax is independent of the writer's table copy.
+  static constexpr std::uint16_t kEobPt16[3][6] = {
+      {1946, 3059, 6834, 15123, 6, 0},
+      {558, 835, 2739, 6534, 25, 0},
+      {8000, 10366, 14466, 19569, 31, 0},
+  };
+  static constexpr std::uint16_t kEobPt32[3][7] = {
+      {1203, 1920, 4502, 10281, 17078, 6, 0},
+      {1078, 1340, 2464, 5152, 11416, 5, 0},
+      {11670, 14271, 19287, 23919, 27084, 31, 0},
+  };
+  std::memcpy(cdfs.y_mode_set, av2enc::m1::kYModeSetCdf,
+              sizeof(cdfs.y_mode_set));
+  std::memcpy(cdfs.y_mode_index, av2enc::m1::kYModeIndexCdf,
+              sizeof(cdfs.y_mode_index));
+  std::memcpy(cdfs.uv_mode, av2enc::m1::kUvModeCflNotAllowedCdf,
+              sizeof(cdfs.uv_mode));
+  std::memcpy(cdfs.is_cfl, av2enc::m1::kIsCflCdf, sizeof(cdfs.is_cfl));
+  std::memcpy(cdfs.txb_skip, av2enc::m0::kTxbSkipCdf, sizeof(cdfs.txb_skip));
+  std::memcpy(cdfs.eob_pt_16, kEobPt16, sizeof(cdfs.eob_pt_16));
+  std::memcpy(cdfs.eob_pt_32, kEobPt32, sizeof(cdfs.eob_pt_32));
+  std::memcpy(cdfs.eob_pt_64, av2enc::m0::kEobPt64Cdf,
+              sizeof(cdfs.eob_pt_64));
+  std::memcpy(cdfs.eob_extra, av2enc::m0::kEobExtraCdf,
+              sizeof(cdfs.eob_extra));
+}
+
+bool decode_test_symbol(av2enc::av2::Decoder& decoder, std::uint16_t* cdf, int n,
+                        int* symbol, std::string& error) {
+  const av2enc::av2::Status status = decoder.decode_symbol(cdf, n, symbol);
+  if (status != av2enc::av2::Status::kOk) {
+    error = std::string("decode_symbol failed: ") + av2enc::av2::status_name(status);
+    return false;
+  }
+  return true;
+}
+
+void test_eob_min_transform_sizes() {
+  struct EobCase {
+    BlockSize bsize;
+    int w;
+    int h;
+  };
+  const EobCase cases[] = {
+      {BlockSize::k4x4, 4, 4},
+      {BlockSize::k4x8, 4, 8},
+      {BlockSize::k8x4, 8, 4},
+      {BlockSize::k8x8, 8, 8},  // control: eob_pt_64, 7 symbols
+  };
+
+  for (const EobCase& eob_case : cases) {
+    const int area = eob_case.w * eob_case.h;
+    const auto luma_tx =
+        av2enc::txv::make_tx_params(eob_case.w, eob_case.h);
+    const auto chroma_tx = av2enc::txv::make_tx_params(4, 4);
+    CHECK(luma_tx.has_value());
+    CHECK(chroma_tx.has_value());
+    if (!luma_tx.has_value() || !chroma_tx.has_value()) continue;
+    const int tsc =
+        (av2enc::m1::kTxSizeSqr[luma_tx->tx_size] +
+         av2enc::m1::kTxSizeSqrUp[luma_tx->tx_size] + 1) >>
+        1;
+
+    for (int eob = 0; eob <= area; ++eob) {
+      FramePlan plan;
+      plan.width = eob_case.w;
+      plan.height = eob_case.h;
+      plan.sb_size = 64;
+
+      std::vector<BlockSyntax> blocks(1);
+      BlockSyntax& leaf = blocks[0];
+      leaf.mi_row = 0;
+      leaf.mi_col = 0;
+      leaf.bsize = static_cast<std::uint8_t>(eob_case.bsize);
+      leaf.partition = static_cast<std::uint8_t>(PartitionType::kNone);
+      leaf.allowed_mask = 1U << static_cast<int>(PartitionType::kNone);
+      leaf.flags = av2enc::m1::syntax::kFlagSbRoot |
+                   av2enc::m1::syntax::kFlagForced;
+      leaf.subtree = 0;
+      leaf.y_mode = 0;  // DC
+      leaf.y_angle_delta = 0;
+      leaf.uv_mode = 0;  // DC
+      leaf.tx_size[0] = static_cast<std::uint8_t>(luma_tx->tx_size);
+      leaf.tx_size[1] = static_cast<std::uint8_t>(chroma_tx->tx_size);
+      leaf.tx_size[2] = static_cast<std::uint8_t>(chroma_tx->tx_size);
+      leaf.eob[0] = static_cast<std::uint32_t>(eob);
+      leaf.eob[1] = 0;
+      leaf.eob[2] = 0;
+      leaf.levels_offset = 0;
+
+      std::vector<std::int32_t> levels(static_cast<std::size_t>(eob), 1);
+      M1Config config;
+      config.max_frame_width = static_cast<std::uint16_t>(eob_case.w);
+      config.max_frame_height = static_cast<std::uint16_t>(eob_case.h);
+      std::vector<std::uint8_t> bytes;
+      std::size_t tile_bytes = 0;
+      std::string error;
+      CHECK_MSG(av2enc::m1::syntax::assemble_m1_frame(
+                    plan, blocks, levels, config, bytes, error, &tile_bytes),
+                error.c_str());
+      if (bytes.empty() || tile_bytes == 0 || tile_bytes > bytes.size()) {
+        CHECK_MSG(false, "missing tile payload");
+        continue;
+      }
+
+      EobTestCdfs cdfs{};
+      init_eob_test_cdfs(cdfs);
+      av2enc::av2::Decoder decoder;
+      const std::uint8_t* tile = bytes.data() + (bytes.size() - tile_bytes);
+      const av2enc::av2::Status init_status =
+          decoder.init_symbol(tile, tile_bytes, tile_bytes);
+      CHECK_MSG(init_status == av2enc::av2::Status::kOk,
+                av2enc::av2::status_name(init_status));
+      if (init_status != av2enc::av2::Status::kOk) continue;
+      decoder.disable_cdf_update = 1;
+
+      int symbol = 0;
+      std::string decode_error;
+      bool ok = decode_test_symbol(decoder, cdfs.y_mode_set, 4, &symbol,
+                                   decode_error);
+      CHECK_MSG(ok && symbol == 0, decode_error.c_str());
+      ok = ok && decode_test_symbol(decoder, &cdfs.y_mode_index[0][0], 8,
+                                    &symbol, decode_error);
+      CHECK_MSG(ok && symbol == 0, decode_error.c_str());
+      ok = ok && decode_test_symbol(decoder, &cdfs.is_cfl[0][0], 2, &symbol,
+                                    decode_error);
+      CHECK_MSG(ok && symbol == 0, decode_error.c_str());
+      ok = ok && decode_test_symbol(decoder, &cdfs.uv_mode[0][0], 8, &symbol,
+                                    decode_error);
+      CHECK_MSG(ok && symbol == 0, decode_error.c_str());
+      ok = ok && decode_test_symbol(decoder, &cdfs.txb_skip[0][tsc][0][0], 2,
+                                    &symbol, decode_error);
+      CHECK_MSG(ok && symbol == (eob == 0 ? 1 : 0), decode_error.c_str());
+      if (!ok) continue;
+      if (eob == 0) continue;
+
+      const int multisize =
+          std::min(5, static_cast<int>(luma_tx->log2_w)) +
+              std::min(5, static_cast<int>(luma_tx->log2_h)) - 4;
+      std::uint16_t* eob_cdf = nullptr;
+      int eob_n = 8;
+      int eob_escape_bits = 0;
+      switch (multisize) {
+        case 0:
+          eob_cdf = &cdfs.eob_pt_16[0][0];
+          eob_n = 5;
+          break;
+        case 1:
+          eob_cdf = &cdfs.eob_pt_32[0][0];
+          eob_n = 6;
+          break;
+        case 2:
+          eob_cdf = &cdfs.eob_pt_64[0][0];
+          eob_n = 7;
+          break;
+        default:
+          CHECK_MSG(false, "unexpected multisize for the min-size matrix");
+          continue;
+      }
+      ok = decode_test_symbol(decoder, eob_cdf, eob_n, &symbol, decode_error);
+      CHECK_MSG(ok, decode_error.c_str());
+      if (!ok) continue;
+      int eob_pt = symbol + 1;
+      if (symbol == eob_n - 1 && eob_escape_bits > 0) {
+        std::uint32_t escape = 0;
+        const av2enc::av2::Status status =
+            decoder.read_literal(eob_escape_bits, &escape);
+        CHECK_MSG(status == av2enc::av2::Status::kOk, av2enc::av2::status_name(status));
+        if (status != av2enc::av2::Status::kOk) continue;
+        eob_pt = eob_n + static_cast<int>(escape);
+      }
+      int decoded_eob =
+          eob_pt < 2 ? eob_pt : ((1 << (eob_pt - 2)) + 1);
+      if (eob_pt >= 3) {
+        ok = decode_test_symbol(decoder, cdfs.eob_extra, 2, &symbol,
+                                decode_error);
+        CHECK_MSG(ok && (symbol == 0 || symbol == 1), decode_error.c_str());
+        if (!ok) continue;
+        if (symbol != 0) decoded_eob += 1 << (eob_pt - 3);
+        for (int i = eob_pt - 4; i >= 0; --i) {
+          bool bit = false;
+          const av2enc::av2::Status status = decoder.read_bool(&bit);
+          CHECK_MSG(status == av2enc::av2::Status::kOk, av2enc::av2::status_name(status));
+          if (status != av2enc::av2::Status::kOk) break;
+          if (bit) decoded_eob += 1 << i;
+        }
+      }
+      CHECK_MSG(decoded_eob == eob, "decoded EOB differs from the written EOB");
+    }
+  }
+}
+
 void test_validation() {
   std::vector<std::uint8_t> y;
   std::vector<std::uint8_t> u;
@@ -1138,6 +1356,7 @@ int main() {
   test_coefficient_layout_conversion();
   test_plan_frame_ordering(64, 64);
   test_plan_frame_ordering(640, 360);
+  test_eob_min_transform_sizes();
   test_validation();
 
   if (g_failures != 0) {

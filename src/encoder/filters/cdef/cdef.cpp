@@ -35,39 +35,10 @@ int idx_grid_rows(const CdefFrame& frame) {
 // whole frame otherwise.
 void tile_region(const CdefFrame& frame, const CdefOptions& options, int r,
                  int c, CdefRegion* region) {
-  if (!options.disable_loopfilters_across_tiles) {
-    region->col_start = 0;
-    region->row_start = 0;
-    region->col_end = frame.mi_cols;
-    region->row_end = frame.mi_rows;
-    return;
-  }
-  int col_start = 0;
-  int col_end = frame.mi_cols;
-  for (int i = 0; i < frame.num_tile_cols; ++i) {
-    const int start = static_cast<int>(frame.tile_col_starts[i]);
-    if (start <= c) {
-      col_start = start;
-    } else {
-      col_end = start;
-      break;
-    }
-  }
-  int row_start = 0;
-  int row_end = frame.mi_rows;
-  for (int i = 0; i < frame.num_tile_rows; ++i) {
-    const int start = static_cast<int>(frame.tile_row_starts[i]);
-    if (start <= r) {
-      row_start = start;
-    } else {
-      row_end = start;
-      break;
-    }
-  }
-  region->col_start = col_start;
-  region->row_start = row_start;
-  region->col_end = col_end;
-  region->row_end = row_end;
+  *region = cdef_filter_region(
+      frame.mi_cols, frame.mi_rows, frame.tile_col_starts, frame.num_tile_cols,
+      frame.tile_row_starts, frame.num_tile_rows,
+      options.disable_loopfilters_across_tiles, r, c);
 }
 
 // §7.18.1 copy step: the block is always copied from CurrFrame to CdefFrame.
@@ -112,29 +83,10 @@ void analyze_block(const CdefFrame& frame, const CdefOptions& options, int r,
   tile_region(frame, options, r, c, &info->region);
 
   bool skip = false;
-  if (!options.on_skip_txfm) {
-    const std::size_t o = static_cast<std::size_t>(r) *
-                              static_cast<std::size_t>(frame.mi_cols) +
-                          static_cast<std::size_t>(c);
-    const std::size_t row = static_cast<std::size_t>(frame.mi_cols);
-    skip = frame.skip[o] != 0 && frame.skip[o + 1] != 0 &&
-           frame.skip[o + row] != 0 && frame.skip[o + row + 1] != 0;
-  }
   bool skip_chroma = false;
-  for (int i = 0; i < 2; ++i) {
-    for (int j = 0; j < 2; ++j) {
-      const std::size_t o = static_cast<std::size_t>(r + i) *
-                                static_cast<std::size_t>(frame.mi_cols) +
-                            static_cast<std::size_t>(c + j);
-      if (frame.lossless[o] != 0) {
-        skip = true;
-      }
-      if (frame.lossless_chroma != nullptr &&
-          frame.lossless_chroma[o] != 0) {
-        skip_chroma = true;
-      }
-    }
-  }
+  cdef_block_skip_flags(frame.skip, frame.lossless, frame.lossless_chroma,
+                        frame.mi_cols, r, c, options.on_skip_txfm, &skip,
+                        &skip_chroma);
   info->skip = skip;
   info->skip_chroma = skip_chroma;
 
@@ -152,36 +104,27 @@ void analyze_block(const CdefFrame& frame, const CdefOptions& options, int r,
                  static_cast<std::size_t>(frame.planes[0].stride),
                  c * kMiSize, r * kMiSize, options.bit_depth, &y_dir, &var);
 
-  int var_str = 0;
-  const std::int64_t shifted_var = var >> 6;
-  if (shifted_var > 0) {
-    var_str = cdef_floor_log2(static_cast<int>(shifted_var));
-    if (var_str > 12) {
-      var_str = 12;
-    }
-  }
-
-  const int dir = (y_pri_raw == 0) ? 0 : y_dir;
-  const int y_pri = (var != 0) ? (y_pri_raw * (4 + var_str) + 8) >> 4 : 0;
+  const CdefFilterParams luma = cdef_luma_params(
+      y_pri_raw, y_sec_raw, y_dir, var, options.damping + coeff_shift);
 
   info->filtered = true;
   info->y_dir = y_dir;
   info->var = var;
-  info->var_str = var_str;
-  info->y_pri = y_pri;
-  info->y_sec = y_sec_raw;
-  info->y_dir_used = dir;
-  info->y_damping = options.damping + coeff_shift;
+  info->var_str = cdef_variance_strength(var);
+  info->y_pri = luma.pri;
+  info->y_sec = luma.sec;
+  info->y_dir_used = luma.dir;
+  info->y_damping = luma.damping;
 
   const int uv_pri = options.strengths[info->idx].uv_pri << coeff_shift;
   const int uv_sec = options.strengths[info->idx].uv_sec << coeff_shift;
-  info->uv_pri = uv_pri;
-  info->uv_sec = uv_sec;
-  info->uv_dir = (uv_pri == 0)
-                     ? 0
-                     : kCdefUvDir[frame.subsampling_x][frame.subsampling_y]
-                                 [y_dir];
-  info->uv_damping = options.damping + coeff_shift - 1;
+  const CdefFilterParams chroma = cdef_chroma_params(
+      uv_pri, uv_sec, y_dir, frame.subsampling_x, frame.subsampling_y,
+      options.damping + coeff_shift);
+  info->uv_pri = chroma.pri;
+  info->uv_sec = chroma.sec;
+  info->uv_dir = chroma.dir;
+  info->uv_damping = chroma.damping;
 }
 
 void filter_plane(const CdefFrame& frame, int plane, int r, int c,

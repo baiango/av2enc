@@ -26,11 +26,19 @@ Normative reference: AV2 Bitstream & Decoding Process Specification v1.0.0
 
 ```text
 src/encoder/filters/cdef/
-  cdef_core.h         shared host/device arithmetic + normative tables
+  cdef_core.h         shared host/device arithmetic + normative tables, the
+                      §7.18.1 derivation helpers (cdef_luma_params,
+                      cdef_chroma_params, cdef_block_skip_flags,
+                      cdef_filter_region) and cdef_filter_sample
   cdef.h              CPU API (planes, metadata, options, inspection)
   cdef.cpp            validation, traversal, per-block decision/filter
+  cdef_search.h       encoder-side strength search (header-only, host+device):
+                      legal candidate ladder, per-64x64 SSE evaluation with the
+                      real filter, greedy header-list selection
   cdef_test_common.h  synthetic frames, metadata builders, Y4M loader
   cdef_test.cpp       CPU tests (242 checks) + timing report
+  cdef_search_test.cpp search tests (140 checks): objective == filter SSE,
+                      determinism, skip/lossless branches, real 640x360
   build_and_test.sh   standalone build/run (no root CMake changes)
   README.md           this file
 ```
@@ -123,6 +131,32 @@ the largest cost wins (ties keep the lower index). Variance is
 `(bestCost - cost[(yDir + 4) & 7]) >> 10`. All costs are 64-bit integers in
 both the CPU and CUDA paths; no floating point is used.
 
+## Strength search (encoder side)
+
+`cdef_search.h` answers "which strength set should this 64x64 block use?":
+
+```cpp
+CdefSearchFrame frame;      // src = unfiltered recon, ref = original picture
+CdefSearchOptions options;  // damping, num_strengths 1..8, candidate ladder
+CdefSearchResult plan;      // strengths, cdef_idx grid, per-block SSE
+cdef_search_plan(frame, options, &plan, &error);
+```
+
+It evaluates every candidate set with the same `cdef_filter_sample` the decoder
+path uses, so `plan.sse_total` is exactly the SSE of the samples `cdef_frame()`
+produces (checked by `cdef_search_test.cpp`). Selection is greedy over the
+candidate ladder with deterministic tie-breaks, and it never returns an
+unsignalable index: `cdef_idx` is always in `[0, num_strengths)`.
+
+Two rules that matter for bitstream integration:
+
+* with `CdefStrengths == 1` the decoder codes no index symbol, so every block is
+  forced to set 0 (`plan.forced_single_strength`);
+* with `CdefStrengths >= 2` there is no `-1` index, so "do not filter" needs an
+  all-zero strength set in the header (`CdefSearchOptions::include_off`).
+
+The M1 adapter lives in `src/cuda/m1/cdef/`.
+
 ## API
 
 ```cpp
@@ -190,7 +224,8 @@ is rejected.
 ## Tests
 
 `./build_and_test.sh [--no-run]` builds with
-`-Wall -Wextra -Wpedantic -Wconversion -Wshadow` and runs 242 checks:
+`-Wall -Wextra -Wpedantic -Wconversion -Wshadow` and runs two binaries:
+`cdef_test` (242 checks) and `cdef_search_test` (140 checks). The 242:
 
 1. `constrain` / `FloorLog2` boundaries.
 2. Direction search on constant, horizontal-line, vertical-line and

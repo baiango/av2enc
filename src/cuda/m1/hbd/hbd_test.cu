@@ -145,12 +145,44 @@ void test_frame_upload_download() {
     CHECK(frame.total_samples == picture.geometry.total_samples);
     CHECK(frame.frame_bytes == picture.geometry.frame_bytes);
 
+    // `hbd_upload_420_8()` consumes device-resident source planes.  Upload the
+    // three 8-bit planes first; passing the host vectors directly would make
+    // the kernel dereference host addresses (illegal access).
+    const int chroma_w = (width + 1) / 2;
+    std::uint8_t* src_dev_y = nullptr;
+    std::uint8_t* src_dev_u = nullptr;
+    std::uint8_t* src_dev_v = nullptr;
+    CUDA_TRY(cudaMalloc(reinterpret_cast<void**>(&src_dev_y),
+                        source.y.size()));
+    CUDA_TRY(cudaMalloc(reinterpret_cast<void**>(&src_dev_u),
+                        source.u.size()));
+    CUDA_TRY(cudaMalloc(reinterpret_cast<void**>(&src_dev_v),
+                        source.v.size()));
+    CUDA_TRY(cudaMemcpy(src_dev_y, source.y.data(), source.y.size(),
+                        cudaMemcpyHostToDevice));
+    CUDA_TRY(cudaMemcpy(src_dev_u, source.u.data(), source.u.size(),
+                        cudaMemcpyHostToDevice));
+    CUDA_TRY(cudaMemcpy(src_dev_v, source.v.data(), source.v.size(),
+                        cudaMemcpyHostToDevice));
+
+    fmt::Source420_8 dev_view = view;
+    dev_view.y.data = src_dev_y;
+    dev_view.u.data = src_dev_u;
+    dev_view.v.data = src_dev_v;
+    // Keep the compiler honest about the stride contract (bytes, not samples).
+    dev_view.y.stride = static_cast<std::uint32_t>(width);
+    dev_view.u.stride = static_cast<std::uint32_t>(chroma_w);
+    dev_view.v.stride = static_cast<std::uint32_t>(chroma_w);
+
     std::uint16_t* dev_frame = nullptr;
     CUDA_TRY(cudaMalloc(reinterpret_cast<void**>(&dev_frame),
                         frame.total_samples * sizeof(std::uint16_t)));
     CUDA_TRY(cudaMemset(dev_frame, 0, frame.frame_bytes));
-    CUDA_TRY(chbd::hbd_upload_420_8(view, frame, dev_frame));
+    CUDA_TRY(chbd::hbd_upload_420_8(dev_view, frame, dev_frame));
     CUDA_TRY(cudaDeviceSynchronize());
+    CUDA_TRY(cudaFree(src_dev_y));
+    CUDA_TRY(cudaFree(src_dev_u));
+    CUDA_TRY(cudaFree(src_dev_v));
 
     std::vector<std::uint16_t> actual(frame.total_samples, 0);
     CUDA_TRY(cudaMemcpy(actual.data(), dev_frame, frame.frame_bytes,
@@ -163,6 +195,44 @@ void test_frame_upload_download() {
       for (std::uint32_t y = 0; y < gp.coded_height; ++y) {
         for (std::uint32_t x = 0; x < gp.coded_width; ++x) {
           CHECK(actual[gp.offset + static_cast<std::size_t>(y) * gp.stride + x] ==
+                cp.at(x, y));
+        }
+      }
+    }
+
+    // Border replication on an unpadded device frame must match the CPU
+    // `fmt::replicate_borders()` result (the upload path already filled
+    // padding, so zero it first and re-run the standalone kernel).
+    fmt::Picture unpadded = picture;
+    for (int plane = 0; plane < 3; ++plane) {
+      const chbd::HbdPlane420& gp = frame.planes[plane];
+      for (std::uint32_t y = 0; y < gp.coded_height; ++y) {
+        for (std::uint32_t x = 0; x < gp.coded_width; ++x) {
+          if (x >= gp.visible_width || y >= gp.visible_height) {
+            unpadded.planes[plane].at(x, y) = 0;
+          }
+        }
+      }
+    }
+    for (int plane = 0; plane < 3; ++plane) {
+      const chbd::HbdPlane420& gp = frame.planes[plane];
+      CUDA_TRY(cudaMemcpy(dev_frame + gp.offset,
+                          unpadded.planes[plane].samples.data(),
+                          static_cast<std::size_t>(gp.coded_width) *
+                              gp.coded_height * sizeof(std::uint16_t),
+                          cudaMemcpyHostToDevice));
+    }
+    CUDA_TRY(chbd::hbd_replicate_420_borders(frame, dev_frame));
+    CUDA_TRY(cudaDeviceSynchronize());
+    CUDA_TRY(cudaMemcpy(actual.data(), dev_frame, frame.frame_bytes,
+                        cudaMemcpyDeviceToHost));
+    for (int plane = 0; plane < 3; ++plane) {
+      const chbd::HbdPlane420& gp = frame.planes[plane];
+      const fmt::PlaneBuffer& cp = picture.planes[plane];
+      for (std::uint32_t y = 0; y < gp.coded_height; ++y) {
+        for (std::uint32_t x = 0; x < gp.coded_width; ++x) {
+          CHECK(actual[gp.offset +
+                       static_cast<std::size_t>(y) * gp.stride + x] ==
                 cp.at(x, y));
         }
       }
@@ -182,31 +252,31 @@ void test_frame_upload_download() {
     std::vector<std::uint8_t> out_u(
         static_cast<std::size_t>((width + 1) / 2) * ((height + 1) / 2), 0);
     std::vector<std::uint8_t> out_v(out_u.size(), 0);
-    std::uint8_t* dev_y = nullptr;
-    std::uint8_t* dev_u = nullptr;
-    std::uint8_t* dev_v = nullptr;
-    CUDA_TRY(cudaMalloc(reinterpret_cast<void**>(&dev_y), out_y.size()));
-    CUDA_TRY(cudaMalloc(reinterpret_cast<void**>(&dev_u), out_u.size()));
-    CUDA_TRY(cudaMalloc(reinterpret_cast<void**>(&dev_v), out_v.size()));
+    std::uint8_t* out_dev_y = nullptr;
+    std::uint8_t* out_dev_u = nullptr;
+    std::uint8_t* out_dev_v = nullptr;
+    CUDA_TRY(cudaMalloc(reinterpret_cast<void**>(&out_dev_y), out_y.size()));
+    CUDA_TRY(cudaMalloc(reinterpret_cast<void**>(&out_dev_u), out_u.size()));
+    CUDA_TRY(cudaMalloc(reinterpret_cast<void**>(&out_dev_v), out_v.size()));
     chbd::HbdPlane8View views[3];
-    views[0] = {dev_y, width, width, height};
-    views[1] = {dev_u, (width + 1) / 2, (width + 1) / 2, (height + 1) / 2};
-    views[2] = {dev_v, (width + 1) / 2, (width + 1) / 2, (height + 1) / 2};
+    views[0] = {out_dev_y, width, width, height};
+    views[1] = {out_dev_u, (width + 1) / 2, (width + 1) / 2, (height + 1) / 2};
+    views[2] = {out_dev_v, (width + 1) / 2, (width + 1) / 2, (height + 1) / 2};
     CUDA_TRY(chbd::hbd_download_420_8(frame, dev_frame, views));
     CUDA_TRY(cudaDeviceSynchronize());
-    CUDA_TRY(cudaMemcpy(out_y.data(), dev_y, out_y.size(),
+    CUDA_TRY(cudaMemcpy(out_y.data(), out_dev_y, out_y.size(),
                         cudaMemcpyDeviceToHost));
-    CUDA_TRY(cudaMemcpy(out_u.data(), dev_u, out_u.size(),
+    CUDA_TRY(cudaMemcpy(out_u.data(), out_dev_u, out_u.size(),
                         cudaMemcpyDeviceToHost));
-    CUDA_TRY(cudaMemcpy(out_v.data(), dev_v, out_v.size(),
+    CUDA_TRY(cudaMemcpy(out_v.data(), out_dev_v, out_v.size(),
                         cudaMemcpyDeviceToHost));
     CHECK(out_y == expected.y.data);
     CHECK(out_u == expected.u.data);
     CHECK(out_v == expected.v.data);
 
-    CUDA_TRY(cudaFree(dev_y));
-    CUDA_TRY(cudaFree(dev_u));
-    CUDA_TRY(cudaFree(dev_v));
+    CUDA_TRY(cudaFree(out_dev_y));
+    CUDA_TRY(cudaFree(out_dev_u));
+    CUDA_TRY(cudaFree(out_dev_v));
     CUDA_TRY(cudaFree(dev_frame));
   }
 }
