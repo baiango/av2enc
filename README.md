@@ -12,6 +12,26 @@
 > fast. Documents, tables, and status notes can lag the code. When they
 > disagree, the **code and tests are authoritative** — read the implementation.
 
+## Build provenance
+
+Token usage recorded by OpenCode for the AV2 project tree — the main session
+plus all subagent sessions — as of **2026-11-11**:
+
+| Counter | Tokens |
+|---|---:|
+| Fresh input | 26,021,244 |
+| Output | 3,889,256 |
+| Reasoning | 5,230,799 |
+| **Input + output + reasoning** | **~35.1 M** |
+| Cached context reads | 2,103,170,304 |
+| **Including cache reads** | **~2.14 B** |
+| Recorded cost | $0.00 |
+
+58 sessions (main + subagents). Cache reads dominate because every subagent
+re-reads a long context; they are normally billed at a fraction of fresh input.
+The figures keep growing while work continues, so treat them as a snapshot, not
+a final total.
+
 ## Status (2026-11-11)
 
 **First frames decode with `dav2d`, on both CPU and CUDA.** The CUDA M0 path
