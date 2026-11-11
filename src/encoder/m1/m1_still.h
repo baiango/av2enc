@@ -31,6 +31,10 @@ struct M1Options {
   // opt-in because the mode search is SSE-only (no rate term yet), which does
   // not reliably beat DC at fixed QP.
   bool luma_dc_only = true;
+  // Enable the full chroma intra search (directional/smooth/Paeth) instead of
+  // DC/CfL only. Off by default until forced-UV decoder verification passes on
+  // the M1 still corpus. CLI: --m1-uv-full (to be wired by the orchestrator).
+  bool uv_full = false;
 };
 
 struct M1Result {

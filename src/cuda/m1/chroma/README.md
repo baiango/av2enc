@@ -17,12 +17,22 @@ synthetic states and for 64x64 / 640x360 frames. No commit.
 candidates = { DC, CfL(derived alpha) }
 ```
 
-Directional/smooth UV prediction is **not** bit-exact against the pinned
-decoder (`docs/negative-results.md`), so it is never selected. The candidate
-id enum, the scoring switch and the reserved availability fields keep the
-extension point visible: `M1ChromaOptions::enable_uv_directional` returns
-`cudaErrorNotSupported` rather than silently diverging, so enabling it later is
-a local change in `run_block()`.
+The **CPU** full-UV search is now verified end-to-end with `dav2d` at
+64x64 / 640x360 / native 1080p and forced D45/D203/D67/SMOOTH/SMOOTH_V,
+including the §6.19.5.6 derived `AngleDeltaUV = AngleDeltaY` case. It is
+enabled by `M1Options::uv_full` / `AV2ENC_M1_UV_FULL` / the planned
+`--m1-uv-full` flag (default off). Default stays off because the SSE-only,
+U+V score is roughly rate-neutral and U PSNR is 0.1..0.3 dB lower at QP 90
+(see `docs/m1-results.md`), and because this GPU candidate loop is not wired —
+not because of a correctness failure.
+
+This GPU module does **not** yet implement that candidate loop. Both
+`M1ChromaOptions::enable_uv_full` and the older
+`M1ChromaOptions::enable_uv_directional` return `cudaErrorNotSupported` instead
+of silently choosing a different UV mode. The reserved `M1ChromaJob` fields
+(`num4_above_right`, `num4_below_left`, `y_mode`, `y_angle_delta`,
+`filter_type_above/left`, `enable_edge_filter`) are the inputs a future GPU
+loop needs; `src/cuda/intra_modes/` already predicts every UV mode bit-exactly.
 
 Scoring and tie-break are transcribed from `choose_uv_mode()`:
 
@@ -72,10 +82,14 @@ The batch form assumes the caller only batches blocks whose inputs are frozen
 * `pred_u/v`, `pred_stride` — optional output planes (one row of `w` samples;
   `pred_stride = 0` means tightly packed). The winning prediction is written
   here, so the caller's recon planes are not mutated.
-* `num4_above_right`, `num4_below_left` — reserved for the directional
-  candidate. DC and CfL do not read them; DC availability is `x>0`/`y>0`,
-  CfL availability is the §5.20.4.1 chroma-mi rule `x>=4`/`y>=4`, both derived
-  inside the kernel exactly as the CPU does.
+* `num4_above_right`, `num4_below_left`, `y_mode`, `y_angle_delta`,
+  `filter_type_above`, `filter_type_left`, `enable_edge_filter` — reserved for
+  the full-UV candidate. DC and CfL do not read them. `y_mode`/`y_angle_delta`
+  are needed for the §6.19.5.6 derived `AngleDeltaUV` when `UVMode == YMode`;
+  `filter_type_*` are the smooth-neighbour flags from the chroma
+  `uv_smooth_` grid. DC availability is `x>0`/`y>0`; CfL availability is the
+  §5.20.4.1 chroma-mi rule `x>=4`/`y>=4`, both derived inside the kernel
+  exactly as the CPU does.
 
 `M1ChromaResult` returns `winner`, `uv_mode` (0 = DC for both DC and CfL),
 `angle_delta`, `is_cfl`, `alpha_u/v` (Q8), per-plane SSE
@@ -179,10 +193,12 @@ frame scale (see `docs/negative-results.md`).
 
 ## Limitations / next steps
 
-* Directional/smooth UV candidates are the only unimplemented policy; they need
-  the §7.13.2 edge arrays (above-right/below-left counts and edge filter), which
-  is why `num4_above_right`/`num4_below_left` are reserved in the job. They are
-  not bit-exact yet and must not be enabled in the default path.
+* Directional/smooth UV candidates are the only unimplemented GPU policy. The
+  CPU path is verified; the GPU candidate loop still needs to call the
+  `src/cuda/intra_modes/` predictor for all 13 modes, apply the §6.19.5.6
+  derived `AngleDeltaUV`, and score/keep the best candidate. The job carries
+  the §7.13.2 edge-extent and filter-type inputs for that work. Until then both
+  `enable_uv_full` and `enable_uv_directional` are rejected.
 * Explicit-alpha search is not implemented; the §7.13.5 derived alpha is the
   CPU default. The `alpha_q8_min/max` range is the hook for a future search.
 * The batch form trusts each descriptor (validating thousands of jobs on the

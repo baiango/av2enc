@@ -486,8 +486,9 @@ __global__ void decide_batch_kernel(const M1ChromaJob* jobs,
 
 cudaError_t validate_job(const M1ChromaJob& job,
                          const M1ChromaOptions& options) {
-  if (options.enable_uv_directional != 0) {
-    // Directional/smooth UV is not bit-exact; reject instead of diverging.
+  if (options.enable_uv_directional != 0 || options.enable_uv_full != 0) {
+    // Directional/smooth UV is verified on the CPU but the GPU candidate loop
+    // is not wired yet; reject instead of diverging.
     return cudaErrorNotSupported;
   }
   if (options.ds_filter < 0 || options.ds_filter > 3) {
@@ -562,7 +563,7 @@ cudaError_t chroma_decide_batch(const M1ChromaJob* d_jobs, int job_count,
   if (d_jobs == nullptr || d_results == nullptr) {
     return cudaErrorInvalidValue;
   }
-  if (options.enable_uv_directional != 0) {
+  if (options.enable_uv_directional != 0 || options.enable_uv_full != 0) {
     return cudaErrorNotSupported;
   }
   if (options.ds_filter < 0 || options.ds_filter > 3 ||

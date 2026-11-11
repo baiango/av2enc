@@ -987,6 +987,8 @@ class Encoder {
                       int y_angle_delta, UvChoice& best) {
     best.is_cfl = false;
     best.sse = std::numeric_limits<std::int64_t>::max();
+    const bool uv_full =
+        options_.uv_full || std::getenv("AV2ENC_M1_UV_FULL") != nullptr;
     if (std::getenv("AV2ENC_M1_UV_DC") != nullptr) {
       best.mode = intra::Mode::kDc;
       best.angle_delta = 0;
@@ -994,7 +996,33 @@ class Encoder {
       best.sse = 0;
       return true;
     }
-    if (options_.force_dc || !options_.enable_cfl) {
+    // Debug: force one chroma mode for decoder verification.
+    if (const char* forced = std::getenv("AV2ENC_M1_FORCE_UV")) {
+      int mode = 0;
+      int delta = 0;
+      if (std::sscanf(forced, "%d:%d", &mode, &delta) == 2 &&
+          mode >= 0 && mode <= 12 && delta >= -3 && delta <= 3) {
+        // Only UVMode == YMode can carry a non-zero AngleDeltaUV, and the
+        // decoder derives it from AngleDeltaY; the explicit delta here is
+        // accepted only for that case.
+        const int derived =
+            (y_mode_is_directional(y_mode) && mode == y_mode)
+                ? y_angle_delta
+                : 0;
+        if (delta != 0 && delta != derived) {
+          error_ = "AV2ENC_M1_FORCE_UV non-zero delta requires UVMode==YMode";
+          return false;
+        }
+        best.mode = static_cast<intra::Mode>(mode);
+        best.angle_delta = derived;
+        best.av2_mode = av2_y_mode(best.mode);
+        best.sse = 0;
+        return true;
+      }
+      error_ = "invalid AV2ENC_M1_FORCE_UV (expected mode:delta)";
+      return false;
+    }
+    if (options_.force_dc || (!options_.enable_cfl && !uv_full)) {
       best.mode = intra::Mode::kDc;
       best.angle_delta = 0;
       best.av2_mode = kDcPred;
@@ -1003,33 +1031,41 @@ class Encoder {
     }
     std::vector<std::uint8_t> pred;
 
-    // Try the 13 base modes with angle delta 0, plus the luma mode with the
-    // luma angle delta (so AngleDeltaUV can be inherited).
-    std::array<std::pair<intra::Mode, int>, 14> candidates{};
-    int count = 0;
+    // Try the 13 base modes. AngleDeltaUV is not signalled: §6.19.5.6
+    // derives it as AngleDeltaY only when UVMode == YMode and YMode is
+    // directional; every other combination uses 0. There is no separate UV
+    // angle-delta syntax to search over.
     static const intra::Mode kBase[13] = {
         intra::Mode::kDc,      intra::Mode::kV,       intra::Mode::kH,
         intra::Mode::kD45,     intra::Mode::kD135,    intra::Mode::kD113,
         intra::Mode::kD157,    intra::Mode::kD203,    intra::Mode::kD67,
         intra::Mode::kSmooth,  intra::Mode::kSmoothV, intra::Mode::kSmoothH,
         intra::Mode::kPaeth};
-    for (int i = 0; i < 13; ++i) {
-      candidates[static_cast<std::size_t>(count++)] = {kBase[i], 0};
-    }
-    if (y_mode_is_directional(y_mode) && y_angle_delta != 0) {
-      candidates[static_cast<std::size_t>(count++)] = {
-          static_cast<intra::Mode>(y_mode), y_angle_delta};
-    }
 
-    for (int i = 0; i < count; ++i) {
-      const intra::Mode mode = candidates[static_cast<std::size_t>(i)].first;
-      const int delta = candidates[static_cast<std::size_t>(i)].second;
-      // M1 default: chroma is DC or CfL. Directional chroma prediction is not
-      // bit-exact against the pinned decoder yet, so do not select it in the
-      // default path (see --m1-full-intra for the luma search).
-      if (options_.enable_cfl && mode != intra::Mode::kDc) continue;
+    for (int i = 0; i < 13; ++i) {
+      const intra::Mode mode = kBase[i];
+      // §6.19.5.6: if UVMode == YMode and YMode is directional, the decoder
+      // derives AngleDeltaUV = AngleDeltaY. AngleDeltaUV is not signalled, so
+      // evaluate and store that derived delta for this candidate. All other
+      // UV modes use AngleDeltaUV = 0.
+      const int delta =
+          (y_mode_is_directional(y_mode) &&
+           static_cast<int>(mode) == y_mode)
+              ? y_angle_delta
+              : 0;
+      // M1 default: chroma is DC or CfL. Directional chroma prediction is
+      // enabled only behind uv_full (--m1-uv-full) until forced-UV decoder
+      // verification passes.
+      if (!uv_full && mode != intra::Mode::kDc) continue;
       if (!predict_block(1, cx0, cy0, cw, ch, mode, delta, pred)) return false;
-      const std::int64_t sse = sse_against_source(1, cx0, cy0, cw, ch, pred);
+      std::int64_t sse = sse_against_source(1, cx0, cy0, cw, ch, pred);
+      if (uv_full) {
+        // Score both chroma planes for the full search so a U-only win cannot
+        // pick a mode that is worse for V. The default DC/CfL path keeps the
+        // historical U-only DC score for decision parity.
+        if (!predict_block(2, cx0, cy0, cw, ch, mode, delta, pred)) return false;
+        sse += sse_against_source(2, cx0, cy0, cw, ch, pred);
+      }
       if (sse < best.sse) {
         best.sse = sse;
         best.mode = mode;

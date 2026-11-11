@@ -53,6 +53,12 @@ struct M1ChromaOptions {
   // non-zero value makes the entry points return cudaErrorNotSupported instead
   // of silently producing a divergent decision.
   int enable_uv_directional = 0;
+  // GPU counterpart of the CPU M1Options::uv_full / --m1-uv-full flag. The
+  // full candidate loop is not implemented in this module yet; non-zero also
+  // returns cudaErrorNotSupported until the orchestrator wires the job fields
+  // below. The CPU path is verified; this keeps the GPU path from silently
+  // selecting a different UV mode when the flag is enabled.
+  int enable_uv_full = 0;
   // `cfl_ds_filter_index`. M1's make_cfl_block() hardcodes 0; 3 behaves as 0.
   int ds_filter = 0;
   // Clamp applied to the derived (implicit) alpha, in Q8 units. §7.13.5
@@ -112,6 +118,16 @@ struct M1ChromaJob {
   // §5.20.4.1 chroma-mi availability from x/4, y/4.
   int num4_above_right = 0;
   int num4_below_left = 0;
+  // Full-UV candidate inputs (CPU M1Options::uv_full). Unused by DC/CfL.
+  // y_mode/y_angle_delta drive the §6.19.5.6 derived AngleDeltaUV when the
+  // chosen UV mode equals a directional YMode. filter_type_* are the OR-ed
+  // §7.13.2.15/.16 smooth-neighbour flags for the chroma grid; enable_edge_filter
+  // mirrors the sequence flag.
+  int y_mode = 0;
+  int y_angle_delta = 0;
+  int filter_type_above = 0;
+  int filter_type_left = 0;
+  int enable_edge_filter = 1;
 };
 
 struct M1ChromaResult {

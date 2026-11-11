@@ -59,7 +59,8 @@ void usage(std::ostream& out) {
          "  AV2ENC_M1_FORCE_Y=<mode>:<delta>, AV2ENC_M1_FORCE_Y2, "
          "AV2ENC_M1_BASE_ONLY,\n"
          "  AV2ENC_M1_NO_DIR, AV2ENC_M1_NO_EDGE, AV2ENC_M1_UV_DC, "
-         "AV2ENC_M1_TRACE\n";
+         "AV2ENC_M1_TRACE,\n"
+         "  AV2ENC_M1_UV_FULL, AV2ENC_M1_FORCE_UV=<mode>:<delta>\n";
 }
 
 std::string json_escape(const std::string& in) {
@@ -105,6 +106,7 @@ std::string env_json() {
       "AV2ENC_M1_LUMA_DC",  "AV2ENC_M1_TRACE",    "AV2ENC_M1_SQUARE_ONLY",
       "AV2ENC_M1_LEAF32",   "AV2ENC_M1_ZERO_DC",  "AV2ENC_M1_YMODE_CTX0",
       "AV2ENC_M1_YMODE_CTX2", "AV2ENC_M1_DCSIGN_CTX", "AV2ENC_M1_NO_TXTYPE",
+      "AV2ENC_M1_UV_FULL",  "AV2ENC_M1_FORCE_UV",
   };
   std::string out = "{";
   bool first = true;

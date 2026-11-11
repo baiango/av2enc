@@ -108,8 +108,16 @@ enables the search.
 
 ## Known limits
 
-- Directional/smooth **chroma** modes are disabled in the default path; chroma
-  uses DC or CfL. Re-enabling the full UV search still mismatches.
+- Directional/smooth **chroma** is available behind `M1Options::uv_full`
+  (`AV2ENC_M1_UV_FULL`; planned CLI `--m1-uv-full`). CPU verify is bit-exact on
+  64x64 / 640x360 / native 1080p and on forced D45/D203/D67/SMOOTH/SMOOTH_V,
+  including derived `AngleDeltaUV`. Candidates are scored on U+V in this mode
+  (the default DC/CfL path keeps its historical U-only DC score). Default
+  remains DC/CfL: at QP 90 the SSE-only search measured 13,154 B vs 13,132 B
+  (640x360, U -0.31 dB / V +0.11 dB) and 61,690 B vs 61,762 B (1080p,
+  U -0.11 dB / V +0.03 dB), i.e. roughly neutral without a rate term. The GPU
+  chroma candidate loop is not wired; the GPU module rejects both uv-full flags
+  rather than diverging.
 - Explicit CfL alpha signalling is not wired; derived alpha is used
   (`cfl_index = 1`).
 - The 1080p row uses a Lanczos upscale of the 640×360 test frame; it is a proxy,

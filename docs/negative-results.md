@@ -34,11 +34,11 @@ Status legend:
 |---|---|---|---|
 | CONFIRMED | Code `y_mode_index` from the static `Default_Mode_List_Y` position | §5.20.5.5 `get_intra_y_mode_set` is neighbour-dependent: seeded by the below-left/above-right `IntraJointModes`, expanded for blocks >64 pels, then filled from the default list | Invert `get_intra_y_mode_set` when coding a directional mode; isolated blocks match by luck, dependent blocks decode the wrong direction |
 | CONFIRMED | Treat `MiColEnd`/`MiRowEnd` as the superblock end in `clear_block_decoded_flags` | They are the **tile** ends; `BlockDecoded`'s top/left border is 1 out to two superblocks (array bound) | Allow above-right/below-left up to `min(2*SB, tile_remainder)` on the top/left SB edges |
-| CONFIRMED | Cap the partition search at depth 3 for 64 SBs | Leaves cannot reach 8x8; 640x360 drops ~10 dB | Default depth 4 for 8x8 leaves |
+| CONFIRMED | Cap the partition search at depth 3 for 64 SBs | Too coarse; 640x360 drops ~10 dB | Default depth 4. AV2 has no SPLIT at 64, so depth 4 reaches 16x16 / 32x8 / 8x32, not 8x8; 8x8 needs depth 8 + min block 4 |
 | CONFIRMED | Use a mismatched depth in a recon-dump harness | Produces spatial ±1..3 that looks like a transform bug | Match `M1Options` exactly before comparing recon to a decoded stream |
 | CONFIRMED | Compare only luma and call M1 exact | CfL reads reconstructed luma below/right of the block; a 128-initialized recon plane shifted predictions by 1 LSB while Y still matched | Initialize the recon planes to the decoder's value (0) and verify **all three planes** per sample |
 | CONFIRMED | Let below-left availability cross into the next SB row | `clear_block_decoded_flags` presets the left border only within the current SB and clears the boundary row; crossing reads unreconstructed samples | Cap `count_bottom_left` at the current SB height; the top border may span two SBs |
-| CONFIRMED | Enable the full UV directional search in the default path | It still mismatches against `dav2d` | Default chroma to DC/CfL; keep UV directional as a separate open item |
+| CONFIRMED | Enable the full UV directional search by default | CPU forced-UV is now bit-exact, but the SSE-only/U+V score is roughly rate-neutral and U PSNR is 0.1..0.3 dB lower at QP 90; the GPU chroma candidate loop is not wired | Keep it behind `--m1-uv-full` (CPU) until a rate-aware decision and GPU parity land |
 | CONFIRMED | Expect full intra to beat DC at QP 90 | Measured slightly worse (SSE-only mode decision, no rate term) | Keep `--m1-full-intra` opt-in and add rate-aware RDO before enabling it |
 
 ## RDO / rate control

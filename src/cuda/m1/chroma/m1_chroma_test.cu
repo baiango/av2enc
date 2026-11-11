@@ -651,6 +651,13 @@ void run_synthetic(DeviceBuffers& dev, Stats& stats) {
       std::fprintf(stderr, "  MISMATCH directional policy was not rejected\n");
       stats.note_failure();
     }
+    M1ChromaOptions full_uv = last_options;
+    full_uv.enable_uv_full = 1;
+    if (av2enc::cuda::m1::chroma_decide(last_job, full_uv, dev.result) !=
+        cudaErrorNotSupported) {
+      std::fprintf(stderr, "  MISMATCH uv_full policy was not rejected\n");
+      stats.note_failure();
+    }
     M1ChromaJob bad = last_job;
     bad.w = 2;
     if (av2enc::cuda::m1::chroma_decide(bad, last_options, dev.result) !=
