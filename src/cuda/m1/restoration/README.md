@@ -246,23 +246,36 @@ not tolerance-based.  The stage test additionally checks:
 Run on a CUDA host:
 
 ```sh
-# 1. produce real QP90 reconstructions
-build-cuda/av2enc tests/data/m0_64x64_1f.y4m   -o /tmp/s64.ivf  --m1 --no-cfl
-build-cuda/av2enc tests/data/m0_640x360_1f.y4m -o /tmp/s360.ivf --m1 --no-cfl
+# 1. produce real QP90 reconstructions.  The pair (no CDEF, CDEF) is the real
+#    deblock -> CDEF -> CCSO -> Wiener chain: `pre` is post-deblock, `post` is
+#    post-CDEF.
+build-cuda/av2enc tests/data/m0_64x64_1f.y4m   -o /tmp/pre64.ivf  --m1
+build-cuda/av2enc tests/data/m0_64x64_1f.y4m   -o /tmp/post64.ivf --m1 --m1-cdef
+build-cuda/av2enc tests/data/m0_640x360_1f.y4m -o /tmp/pre360.ivf --m1
+build-cuda/av2enc tests/data/m0_640x360_1f.y4m -o /tmp/post360.ivf --m1 --m1-cdef
 
-# 2. CPU-vs-GPU parity (synthetic + real)
+# 2. CPU-vs-GPU parity (synthetic + single-frame + real CDEF chain)
 cd src/cuda/m1/restoration
-RUN_ARGS="--ivf /tmp/s64.ivf --ivf /tmp/s360.ivf" ./build_and_test.sh
+RUN_ARGS="--ivf /tmp/pre64.ivf --ivf-pair /tmp/pre360.ivf /tmp/post360.ivf" \
+  ./build_and_test.sh
+
+# Or run steps 1+2 together:
+BIN=build-cuda/av2enc DAV2D=tools/bin/dav2d ./run_real_chain_gate.sh
 ```
 
 The test decodes the IVF with `tools/bin/dav2d` (override with
-`--dav2d PATH`) and uses the decoded first frame as `curr = cdef` (CDEF off).
+`--dav2d PATH`).  `--ivf` uses the decoded frame as `curr = cdef` (CDEF off).
+`--ivf-pair PRE POST` fills `curr = PRE` (post-deblock) and `cdef = POST`
+(post-CDEF), so CCSO reads the real pre-CDEF luma and the whole normative chain
+is exercised.
 
 **Status on this host:** the development Mac has no CUDA toolchain (`nvcc` is
-absent), so the GPU binaries were **not executed here**.  Both CUDA translation
-units pass a host syntax check against a stubbed `cuda_runtime.h`; the shared
-CPU core passes its full suite.  Do not report the parity test as run until the
-command above has executed on the 3060 box.
+absent), so the GPU binaries were **not executed here**.  The changed CUDA
+translation units (`m1_restoration.cu`, `m1_restoration_test.cu`, `ccso.cu`,
+`wiener.cu`) pass a clang `--cuda-host-only` syntax check against a stubbed
+`cuda_runtime.h`; the shared CPU core and the real deblock+CDEF chain oracle
+pass.  Do not report the GPU parity test as run until the command above has
+executed on the 3060 box.
 
 CPU suite status (this host):
 
@@ -271,6 +284,8 @@ CCSO:   PASS: 5518 checks, 0 failures   (ASan+UBSan clean)
 Wiener: PASS:  114 checks, 0 failures   (ASan+UBSan clean)
 real recon (64x64, 640x360, 256x256, per-unit + frame filters):
         PASS: 36 checks, 0 failures
+real deblock+CDEF pair (64x64 + 640x360, per-unit + frame filters):
+        PASS: 24 checks, 0 failures
 ```
 
 The real-recon CPU/oracle check is `real_recon_oracle_test.cpp`; it compares the
@@ -282,79 +297,101 @@ c++ -std=c++20 -O2 -I src \
   src/cuda/m1/restoration/real_recon_oracle_test.cpp \
   src/encoder/filters/restoration/restoration.cpp \
   -o /tmp/real_recon_oracle_test
-/tmp/real_recon_oracle_test /tmp/recon64.y4m /tmp/recon360.y4m
+# single recon, or the real deblock+CDEF pair:
+/tmp/real_recon_oracle_test /tmp/post64.y4m /tmp/post360.y4m
+/tmp/real_recon_oracle_test --pair /tmp/pre64.y4m /tmp/post64.y4m \
+                            --pair /tmp/pre360.y4m /tmp/post360.y4m
 ```
+
+The pair mode was run on this host against 64×64 and 640×360 QP90:
+`PASS: 24 checks, 0 failures` (the production CPU path matches the independent
+naive oracle for both per-unit and two-class frame filters on the real
+post-CDEF frame).
 
 ## Quality delta at QP 90
 
 `restoration_quality_bench.cpp` is an encoder-side oracle experiment.  It reads
 a source Y4M plus the decoder's reconstruction of the same QP90 frame, trains
 CCSO offsets and frame-level Wiener coefficients on that pair, applies the
-filters in normative order, and measures PSNR/CVVDP.  **No stream is produced
-and no rate cost is included**, so this is filter potential, not BD-rate.
+filters in normative order, and measures PSNR.  With `--recon-pre` it uses the
+real pre-CDEF frame for CCSO/§7.20 sourcing, so the measured chain is
+deblock→CDEF→CCSO→Wiener.  The optional `--cost` report links the M2 adapters
+and prints exact header + symbol bits.
 
-Build:
+Build (the `--cost` report additionally links the M2 restoration adapters and
+the M1 syntax module):
 
 ```sh
 c++ -std=c++20 -O2 -I src \
   src/cuda/m1/restoration/restoration_quality_bench.cpp \
   src/encoder/filters/restoration/restoration.cpp \
+  src/encoder/m2/restoration/m2_restoration.cpp \
+  src/encoder/m1/filters_stream/filters_stream.cpp \
+  src/entropy/av2/av2_entropy.cpp \
+  src/bitstream/bitwriter.cpp \
   -o /tmp/restoration_quality
 ```
 
-Inputs (all QP90):
+Inputs (all QP90, current build):
 
 | Name | Source | Recon |
 |---|---|---|
-| 64×64 | `testdata/m0_64x64_1f.y4m` | `dav2d` of `s64_dc.ivf` |
-| 640×360 | `build-m1/baseline/src_640x360.y4m` | `dav2d` of `s360_dc.ivf` |
-| 256×256 | `testdata/shine_256x256_1f.y4m` | `dav2d` of a `--m1 --no-cfl` encode |
+| 64×64 | `tests/data/m0_64x64_1f.y4m` | `dav2d` of `--m1` and `--m1 --m1-cdef` |
+| 640×360 | `tests/data/m0_640x360_1f.y4m` | `dav2d` of `--m1` and `--m1 --m1-cdef` |
+| 256×256 | `testdata/shine_256x256_1f.y4m` | `dav2d` of `--m1` and `--m1 --m1-cdef` |
 
-`--max-band-log2 3` (8 bands × 3×3 classes = 72 offsets/plane; the cheapest
-configuration that captured nearly all the gain).  Plane-sample-weighted PSNR:
+`--max-band-log2 3` = 8 bands × 3×3 classes = 72 offsets/plane.
+
+Measured on the real deblock→CDEF chain (`--recon-pre` supplies the pre-CDEF
+frame for CCSO/§7.20 sourcing, `--recon` is the CDEF decode).  avg is
+sample-weighted over the 4:2:0 planes.
 
 | Case | none Y/U/V (avg) | CCSO Y/U/V (avg) | Wiener Y/U/V (avg) | CCSO+Wiener Y/U/V (avg) |
 |---|---|---|---|---|
-| 64×64 | 42.50 / 45.80 / 45.12 (43.49) | **42.84 / 46.26 / 45.37 (43.83)** | 42.80 / 45.93 / 46.59 (43.95) | **42.95 / 47.15 / 46.96 (44.32)** |
-| 640×360 | 43.15 / 48.59 / 47.38 (44.76) | **44.23 / 48.62 / 47.43 (45.50)** | 43.13 / 48.60 / 46.81 (44.65) | 44.23 / 48.60 / 47.14 (45.44) |
-| 256×256 | 46.93 / 47.92 / 49.29 (47.49) | **47.42 / 47.99 / 49.37 (47.84)** | 46.93 / 48.71 / 49.89 (47.72) | **47.22 / 48.77 / 50.08 (47.96)** |
+| 64×64 | 42.58 / 45.80 / 45.12 (43.54) | **42.78 / 46.26 / 45.37 (43.80)** | 42.89 / 46.09 / 46.52 (44.02) | **42.75 / 47.39 / 46.92 (44.22)** |
+| 640×360 | 45.24 / 52.47 / 50.68 (47.35) | **45.41 / 52.52 / 50.70 (47.47)** | 45.27 / 52.85 / 51.31 (47.54) | **45.41 / 52.81 / 51.32 (47.63)** |
+| 256×256 | 47.40 / 51.46 / 50.01 (48.51) | **47.58 / 51.59 / 50.08 (48.67)** | 47.32 / 51.83 / 50.90 (48.67) | **47.48 / 51.92 / 50.92 (48.79)** |
 
-With `--max-band-log2 2` (36 offsets/plane) the CCSO luma gains are still
-+0.31 dB (64×64), +0.97 dB (640×360), +0.47 dB (256×256).
+Bit cost, two independent measurements:
 
-CVVDP 0.5.7, `standard_fhd`, 1 frame (64×64 and 256×256 need
-`--temp-resample` because the probe writes F1; the 640×360 source is F1):
+1. Real integrated CCSO stream (M1 QP90).  Without CDEF: `--m1` → `--m1-ccso`
+   is 936 → 970 B (+34 B), 13,355 → 13,397 B (+42 B), 5,336 → 5,373 B
+   (+37 B).  Inside the CDEF chain: `--m1 --m1-cdef` → `+ --m1-ccso` is
+   938 → 972 B (+34 B), 13,375 → 13,415 B (+40 B), 5,349 → 5,384 B (+35 B).
+   This is the real cost of the sequence flag, `ccso_params()` and the per-unit
+   `read_ccso()` symbols.  M1's default is band-offset-only with 64 bands; the
+   fitted M2 row below is edge-classified with `max_band_log2 = 3`.
+2. M2 syntax cost from the fitted parameters (exact header bits + standalone
+   `read_ccso()` / `read_lr()` symbol bytes up to coder termination, via
+   `m2::restoration::measure_restoration_cost`):
 
-| Case | none | CCSO | CCSO+Wiener |
+| Case | CCSO | Wiener NS | both |
 |---|---:|---:|---:|
-| 64×64 | 9.9009 | 9.9001 | 9.9075 |
-| 640×360 | 9.9018 | 9.9107 | 9.9110 |
-| 256×256 | 9.9507 | 9.9515 | 9.9481 |
+| 64×64 | 51 B | 28 B | 79 B |
+| 640×360 | 55 B | 33 B | 88 B |
+| 256×256 | 53 B | 25 B | 78 B |
 
-Report string: `ColorVideoVDP v0.5.7, 37.84 [pix/deg], Lpeak=200,
-Lblack=0.2, Lrefl=0.3979 [cd/m^2], (standard_fhd)`.
+The header dominates; a 936-byte 64×64 stream cannot absorb a ~79-byte filter
+header.  This is still not a BD-rate number: the M2 core tile writer has no
+restoration hook (see `src/encoder/m2/restoration/README.md`), so CCSO's real
+cost above comes from the M1 stream gate and the Wiener cost is syntax-only.
 
 **Verdict.**
 
-- **CCSO is a PSNR win** at QP90 on all three inputs: +0.34/+0.74/+0.35 dB
-  average at band 3, and it is the only component that wins on every input.
-  The luma gain is largest on 640×360 (+1.08 dB).
-- **Frame-level Wiener NS is not a consistent win.**  It helps 64×64 and chroma
-  at 256×256, but is slightly negative on 640×360 luma and average.  A single
-  least-squares frame filter is too coarse; use per-unit coefficients (or
-  per-unit RDO) before claiming it.  The component is ready; the *selection*
-  is not.
-- **CCSO+Wiener** beats no-filter everywhere, but at 640×360 it is marginally
-  *below* CCSO-only.  Do not enable Wiener by default until per-unit selection
-  is measured.
-- **CVVDP is effectively flat** (±0.01 JOD) because QP90 on these sources is
-  already near the top of the scale.  Do not claim a perceptual win from these
-  numbers; a lower-QP/content matrix is needed.
+- **CCSO is a consistent PSNR win** at QP90 on the real post-CDEF frame:
+  +0.21 / +0.17 / +0.18 dB luma and +0.26 / +0.13 / +0.15 dB average at band 3.
+- **Frame-level Wiener NS is not a consistent luma win.**  It adds chroma
+  (+0.46 dB U at 64×64, +0.38 dB at 640×360) and is −0.08 dB luma at 256×256.
+  A single least-squares frame filter is too coarse; use per-unit coefficients
+  (or per-unit RDO) before enabling it by default.  The component is ready; the
+  *selection* is not.
+- **CCSO+Wiener** beats no-filter on the average metric, but its luma is flat
+  to slightly negative versus CCSO-only (−0.03 / +0.00 / −0.10 dB); the extra
+  average gain is chroma.  Do not enable Wiener for luma by default until
+  per-unit selection is measured.
 - **Rate cost matters.**  Band-3 CCSO signals ≤72 offsets per plane (nonzero
-  counts in this run: 64×64 35/24/20, 640×360 16/14/17, 256×256 41/22/15).
-  Even with entropy coding, the 64×64 stream is only 936 bytes, so the header is
-  a large fraction of it; 640×360 (17.4 KB) and 256×256 (6.0 KB) are the
-  plausible targets.  A real BD-rate number requires the stream gate.
+  counts: 64×64 35/21/18, 640×360 42/8/3, 256×256 41/18/13).  The 640×360 and
+  256×256 streams are the plausible targets; 64×64 is header-dominated.
 
 ## Blockers: PC-Wiener, GDF, film grain
 
@@ -383,8 +420,9 @@ src/cuda/m1/restoration/
   m1_restoration.cu            CCSO -> LR stage implementation
   m1_restoration_test.cu       CPU-vs-GPU parity (synthetic + real recon)
   real_recon_oracle_test.cpp   CPU reference vs independent oracle on real recon
-  restoration_quality_bench.cpp  offline QP90 CCSO/Wiener quality probe
+  restoration_quality_bench.cpp  offline QP90 CCSO/Wiener quality + cost probe
   build_and_test.sh            standalone nvcc build/run
+  run_real_chain_gate.sh       encode/decode real CDEF pair + run parity
   README.md                    this file
 ```
 

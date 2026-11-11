@@ -202,9 +202,7 @@ bool compare(const TestFrame& got, const TestFrame& want, const char* label) {
   return diff == 0;
 }
 
-void run(const Y4mFrame& src, bool frame_filters) {
-  TestFrame rec;
-  fill(src, &rec);
+void run_frame(TestFrame& rec, bool frame_filters, const char* label) {
   CcsoFrameParams ccso;
   LoopRestorationParams lr;
   std::vector<std::uint8_t> type[3], blks[3], filter_class, lookup;
@@ -236,8 +234,43 @@ void run(const Y4mFrame& src, bool frame_filters) {
   for (int p = 0; p < 3; ++p) {
     want.lr[p] = out[p];
   }
-  compare(got, want, frame_filters ? "real recon, frame filters"
-                                   : "real recon, per-unit");
+  compare(got, want, label);
+}
+
+void run(const Y4mFrame& src, bool frame_filters) {
+  TestFrame rec;
+  fill(src, &rec);
+  run_frame(rec, frame_filters, frame_filters ? "real recon, frame filters"
+                                              : "real recon, per-unit");
+}
+
+// Real deblock -> CDEF chain: `pre` is the no-CDEF decode (post-deblock) and
+// `post` the CDEF decode of the same M1 encode.  curr = pre, cdef = post.
+void run_pair(const Y4mFrame& pre, const Y4mFrame& post) {
+  if (pre.width != post.width || pre.height != post.height) {
+    std::fprintf(stderr, "pair dimensions differ\n");
+    return;
+  }
+  TestFrame rec;
+  rec.mi_cols = pre.width / 4;
+  rec.mi_rows = pre.height / 4;
+  rec.allocate();
+  for (int p = 0; p < 3; ++p) {
+    const std::vector<std::uint8_t>& a =
+        (p == 0) ? pre.y : (p == 1 ? pre.u : pre.v);
+    const std::vector<std::uint8_t>& b =
+        (p == 0) ? post.y : (p == 1 ? post.u : post.v);
+    for (int y = 0; y < rec.height[p]; ++y) {
+      for (int x = 0; x < rec.width[p]; ++x) {
+        rec.at(rec.curr[p], p, y, x) =
+            a[static_cast<std::size_t>(y * rec.width[p] + x)];
+        rec.at(rec.cdef[p], p, y, x) =
+            b[static_cast<std::size_t>(y * rec.width[p] + x)];
+      }
+    }
+  }
+  run_frame(rec, false, "real deblock+CDEF chain, per-unit");
+  run_frame(rec, true, "real deblock+CDEF chain, frame filters");
 }
 
 }  // namespace
@@ -250,6 +283,24 @@ int main(int argc, char** argv) {
     return 2;
   }
   for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]) == "--pair") {
+      if (i + 2 >= argc) {
+        std::fprintf(stderr, "--pair needs PRE.y4m POST.y4m\n");
+        return 2;
+      }
+      Y4mFrame pre;
+      Y4mFrame post;
+      if (!read_y4m(argv[i + 1], &pre) || !read_y4m(argv[i + 2], &post)) {
+        std::fprintf(stderr, "cannot read pair %s %s\n", argv[i + 1],
+                     argv[i + 2]);
+        return 2;
+      }
+      std::cout << "== pair " << argv[i + 1] << " + " << argv[i + 2] << " "
+                << pre.width << "x" << pre.height << "\n";
+      run_pair(pre, post);
+      i += 2;
+      continue;
+    }
     Y4mFrame src;
     if (!read_y4m(argv[i], &src)) {
       std::fprintf(stderr, "cannot read %s\n", argv[i]);

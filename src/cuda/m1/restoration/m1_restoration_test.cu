@@ -21,6 +21,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <cuda_runtime.h>
@@ -587,6 +588,71 @@ void fill_real_frame(const Y4mFrame& src, TestFrame* f) {
   }
 }
 
+// Real deblock -> CDEF -> CCSO -> Wiener chain.  `pre` is the decoder output
+// of a no-CDEF M1 stream (post-deblock); `post` is the decoder output of the
+// same M1 encode with `--m1-cdef` enabled (post-CDEF).  CCSO reads the
+// pre-CDEF luma for its band/edge classifier and writes the post-CDEF plane;
+// loop restoration reads curr=post-deblock outside the stripe and cdef=post-
+// CCSO inside it.
+void fill_real_chain(const Y4mFrame& pre, const Y4mFrame& post, TestFrame* f,
+                     std::string* err) {
+  if (pre.width != post.width || pre.height != post.height) {
+    *err = "pre/post recon dimensions differ";
+    return;
+  }
+  if (pre.width % 4 != 0 || pre.height % 4 != 0) {
+    *err = "recon is not MI-aligned";
+    return;
+  }
+  f->mi_cols = pre.width / 4;
+  f->mi_rows = pre.height / 4;
+  f->allocate();
+  for (int p = 0; p < 3; ++p) {
+    const std::vector<std::uint8_t>& a =
+        (p == 0) ? pre.y : (p == 1 ? pre.u : pre.v);
+    const std::vector<std::uint8_t>& b =
+        (p == 0) ? post.y : (p == 1 ? post.u : post.v);
+    const int w = f->width[p];
+    const int h = f->height[p];
+    for (int y = 0; y < h; ++y) {
+      for (int x = 0; x < w; ++x) {
+        f->at(f->curr[p], p, y, x) =
+            a[static_cast<std::size_t>(y * w + x)];
+        f->at(f->cdef[p], p, y, x) =
+            b[static_cast<std::size_t>(y * w + x)];
+      }
+    }
+  }
+}
+
+void test_real_chain(const Y4mFrame& pre, const Y4mFrame& post,
+                     const char* label) {
+  TestFrame f;
+  std::string err;
+  fill_real_chain(pre, post, &f, &err);
+  if (!err.empty()) {
+    std::fprintf(stderr, "  skip %s: %s\n", label, err.c_str());
+    return;
+  }
+
+  CcsoFrameParams ccso;
+  CcsoHost ch;
+  make_ccso(f, 6, false, true, &ccso, &ch);
+
+  LoopRestorationParams lr;
+  LrHost lh;
+  make_per_unit_lr(f, 64, 32, &lr, &lh);
+  char text[256];
+  std::snprintf(text, sizeof(text), "%s per-unit", label);
+  run_case(f, ccso, lr, lh, ch, false, text);
+
+  LoopRestorationParams lr2;
+  LrHost lh2;
+  make_frame_filters(f, 64, &lr2, &lh2);
+  std::snprintf(text, sizeof(text), "%s frame-filters", label);
+  run_case(f, ccso, lr2, lh2, ch, true, text);
+}
+
 void test_real_recon(const std::string& ivf, const std::string& dav2d) {
   namespace fs = std::filesystem;
   const fs::path tmp =
@@ -631,19 +697,61 @@ void test_real_recon(const std::string& ivf, const std::string& dav2d) {
   run_case(f, ccso, lr2, lh2, ch, true, label);
 }
 
+void test_real_chain_ivf(const std::string& pre_ivf,
+                          const std::string& post_ivf,
+                          const std::string& dav2d) {
+  namespace fs = std::filesystem;
+  const fs::path pre_y4m =
+      fs::temp_directory_path() /
+      ("av2enc_lr_pre_" + std::to_string(::getpid()) + ".y4m");
+  const fs::path post_y4m =
+      fs::temp_directory_path() /
+      ("av2enc_lr_post_" + std::to_string(::getpid()) + ".y4m");
+  std::string err;
+  if (!decode_ivf(pre_ivf, dav2d, pre_y4m.string(), &err) ||
+      !decode_ivf(post_ivf, dav2d, post_y4m.string(), &err)) {
+    CHECK(false, err.c_str());
+    return;
+  }
+  Y4mFrame pre;
+  Y4mFrame post;
+  if (!read_first_y4m(pre_y4m.string(), &pre, &err) ||
+      !read_first_y4m(post_y4m.string(), &post, &err)) {
+    CHECK(false, err.c_str());
+    fs::remove(pre_y4m);
+    fs::remove(post_y4m);
+    return;
+  }
+  fs::remove(pre_y4m);
+  fs::remove(post_y4m);
+  char label[256];
+  std::snprintf(label, sizeof(label), "%dx%d deblock+CDEF", pre.width,
+                pre.height);
+  test_real_chain(pre, post, label);
+}
+
 void usage() {
-  std::cout << "usage: m1_restoration_test [--ivf FILE]... [--dav2d PATH]\n";
+  std::cout << "usage: m1_restoration_test [--ivf FILE]... "
+            "[--ivf-pair PRE_IVF POST_IVF]... [--dav2d PATH]\n"
+            "  --ivf      decoded M1 recon (curr = cdef; CDEF off)\n"
+            "  --ivf-pair pre.ivf post.ivf  no-CDEF + CDEF recon of the same\n"
+            "             M1 encode; exercises deblock->CDEF->CCSO->Wiener\n";
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
   std::vector<std::string> ivfs;
+  std::vector<std::pair<std::string, std::string>> ivf_pairs;
   std::string dav2d = "tools/bin/dav2d";
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--ivf" && i + 1 < argc) {
       ivfs.push_back(argv[++i]);
+    } else if (a == "--ivf-pair" && i + 2 < argc) {
+      std::string first = argv[++i];
+      std::string second = argv[++i];
+      ivf_pairs.emplace_back(std::move(first), std::move(second));
     } else if (a == "--dav2d" && i + 1 < argc) {
       dav2d = argv[++i];
     } else if (a == "-h" || a == "--help") {
@@ -666,11 +774,14 @@ int main(int argc, char** argv) {
             << ")\n";
   test_validation();
   test_synthetic();
-  if (ivfs.empty()) {
-    std::cout << "  real recon: SKIP (no --ivf; pass decoded M1 streams)\n";
+  if (ivfs.empty() && ivf_pairs.empty()) {
+    std::cout << "  real recon: SKIP (pass --ivf / --ivf-pair)\n";
   } else {
     for (const std::string& ivf : ivfs) {
       test_real_recon(ivf, dav2d);
+    }
+    for (const auto& pair : ivf_pairs) {
+      test_real_chain_ivf(pair.first, pair.second, dav2d);
     }
   }
   std::cout << (g_failures == 0 ? "PASS" : "FAIL") << ": " << g_checks

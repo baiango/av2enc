@@ -33,6 +33,7 @@
 
 #include "encoder/filters/restoration/restoration.h"
 #include "encoder/filters/restoration/restoration_test_common.h"
+#include "encoder/m2/restoration/m2_restoration.h"
 
 namespace {
 
@@ -577,11 +578,121 @@ void apply_wiener(const TestFrame& base, const LrFit& fit, TestFrame* out) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Exact syntax cost of the fitted tools
+// ---------------------------------------------------------------------------
+
+void report_cost(const TestFrame& rec, const CcsoFit ccso_fit[3],
+                 const LrFit& lr_fit) {
+  namespace m2r = av2enc::m2::restoration;
+  namespace fs = av2enc::m1::filters_stream;
+  const int mi_cols = rec.mi_cols;
+  const int mi_rows = rec.mi_rows;
+  std::string error;
+
+  fs::CcsoParams ccso;
+  ccso.frame_flag = true;
+  ccso.ccso_luma_size_log2 = 6;
+  for (int p = 0; p < 3; ++p) {
+    fs::CcsoPlaneParams& q = ccso.plane[p];
+    q.enabled = ccso_fit[p].params.enabled;
+    q.bo_only = ccso_fit[p].params.bo_only;
+    q.scale_idx = ccso_fit[p].params.scale_idx;
+    q.quant_idx = ccso_fit[p].params.quant_idx;
+    q.ext_filter = ccso_fit[p].params.ext_filter;
+    q.edge_clf = ccso_fit[p].params.edge_clf;
+    q.max_band_log2 = ccso_fit[p].params.max_band_log2;
+    q.offset_idx = ccso_fit[p].idx;
+  }
+  fs::CcsoTileState ccso_state;
+  if (!m2r::init_ccso_tile(&ccso_state, ccso, mi_cols, mi_rows, 1, 1,
+                           &error)) {
+    std::printf("  cost: CCSO state init failed: %s\n", error.c_str());
+    return;
+  }
+
+  fs::LrParams lr;
+  for (int p = 0; p < 3; ++p) {
+    lr.frame_type[p] = av2enc::restoration::kRestoreWienerNs;
+    lr.frame_filters_on[p] = true;
+    lr.frame_filter[p][0].match_index = 0;
+    lr.frame_filter[p][0].merged = false;
+    lr.frame_filter[p][0].subset = (p == 0) ? 3 : 2;
+    const std::size_t n = lr_fit.coeffs[p].size();
+    for (std::size_t j = 0; j < n; ++j) {
+      lr.frame_filter[p][0].coeffs[j] = lr_fit.coeffs[p][j];
+    }
+    for (std::size_t j = n; j < av2enc::restoration::kWienerNsCoeffStride;
+         ++j) {
+      lr.frame_filter[p][0].coeffs[j] = 0;
+    }
+    if (p > 0 && lr.frame_filter[p][0].subset > 0) {
+      // §5.20.10.6 uv_sym pairs: make the chroma-from-luma pairs symmetric so
+      // the writer can code the shortest subset.  The fitted values are
+      // averaged, which is what an encoder-side fitter should do anyway.
+      for (std::size_t j = av2enc::restoration::kWienerNsShortCoeffs;
+           j + 1 < n; j += 2) {
+        const int v = (lr.frame_filter[p][0].coeffs[j] +
+                       lr.frame_filter[p][0].coeffs[j + 1]) /
+                      2;
+        lr.frame_filter[p][0].coeffs[j] = static_cast<std::int16_t>(v);
+        lr.frame_filter[p][0].coeffs[j + 1] = static_cast<std::int16_t>(v);
+      }
+      lr.frame_filter[p][0].uv_sym = true;
+    }
+  }
+  lr.num_filter_classes = 1;
+  lr.luma_shift = 3;
+  lr.chroma_shift = 3;
+  fs::LrState lr_state;
+  if (!m2r::init_lr_tile(&lr_state, lr, mi_cols, mi_rows, 1, 1, 64,
+                         &error)) {
+    std::printf("  cost: LR state init failed: %s\n", error.c_str());
+    return;
+  }
+
+  m2r::M2RestorationTools ccso_tools;
+  ccso_tools.ccso = true;
+  m2r::M2RestorationTools lr_tools;
+  lr_tools.wiener_ns = true;
+  lr_tools.frame_filters = true;
+  lr_tools.num_filter_classes = 1;
+  lr_tools.chroma_lr = true;
+
+  m2r::M2RestorationCost ccso_cost;
+  if (!m2r::measure_restoration_cost(
+          ccso_tools, mi_cols, mi_rows, 64, 90, true, 0, &ccso, &ccso_state,
+          nullptr, &ccso_cost, &error)) {
+    std::printf("  cost: CCSO measure failed: %s\n", error.c_str());
+    return;
+  }
+  m2r::M2RestorationCost lr_cost;
+  if (!m2r::measure_restoration_cost(lr_tools, mi_cols, mi_rows, 64, 90, true,
+                                     0, nullptr, nullptr, &lr_state, &lr_cost,
+                                     &error)) {
+    std::printf("  cost: LR measure failed: %s\n", error.c_str());
+    return;
+  }
+  const std::size_t ccso_b = (ccso_cost.total_bits() + 7) / 8;
+  const std::size_t lr_b = (lr_cost.total_bits() + 7) / 8;
+  std::printf(
+      "  cost CCSO: seq %zu b hdr %zu b sym %zu B total %zu B\n",
+      ccso_cost.sequence_bits, ccso_cost.ccso_header_bits,
+      ccso_cost.ccso_symbol_bytes, ccso_b);
+  std::printf(
+      "  cost LR  : seq %zu b hdr %zu b sym %zu B total %zu B\n",
+      lr_cost.sequence_bits, lr_cost.lr_header_bits,
+      lr_cost.lr_symbol_bytes, lr_b);
+  std::printf("  cost both: %zu B (sum of the two independent rows)\n",
+              ccso_b + lr_b);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   std::string ref_path;
   std::string recon_path;
+  std::string recon_pre_path;
   std::string prefix = "/tmp/lrq";
   int max_band_log2 = 6;
   for (int i = 1; i < argc; ++i) {
@@ -590,6 +701,8 @@ int main(int argc, char** argv) {
       ref_path = argv[++i];
     } else if (a == "--recon" && i + 1 < argc) {
       recon_path = argv[++i];
+    } else if (a == "--recon-pre" && i + 1 < argc) {
+      recon_pre_path = argv[++i];
     } else if (a == "--out-prefix" && i + 1 < argc) {
       prefix = argv[++i];
     } else if (a == "--max-band-log2" && i + 1 < argc) {
@@ -597,7 +710,8 @@ int main(int argc, char** argv) {
     } else {
       std::fprintf(stderr,
                    "usage: %s --ref src.y4m --recon recon.y4m "
-                   "[--out-prefix P] [--max-band-log2 N]\n",
+                   "[--recon-pre pre_cdef.y4m] [--out-prefix P] "
+                   "[--max-band-log2 N]\n",
                    argv[0]);
       return 2;
     }
@@ -626,6 +740,22 @@ int main(int argc, char** argv) {
   fill_test_frame(rec_y4m, &rec);
   rec.sub_x = 1;
   rec.sub_y = 1;
+  if (!recon_pre_path.empty()) {
+    Y4mFrame pre_y4m;
+    if (!read_first_y4m(recon_pre_path, &pre_y4m) ||
+        pre_y4m.width != rec_y4m.width ||
+        pre_y4m.height != rec_y4m.height) {
+      std::fprintf(stderr, "cannot read matching --recon-pre\n");
+      return 2;
+    }
+    TestFrame pre;
+    fill_test_frame(pre_y4m, &pre);
+    // CCSO and §7.20 source pre-CDEF samples from CurrFrame.  CDEF already
+    // ran, so curr = the no-CDEF decode and cdef = the CDEF decode.
+    for (int p = 0; p < 3; ++p) {
+      rec.curr[p] = pre.cdef[p];
+    }
+  }
   sync_lr_from_cdef(&rec);
 
   const Psnr base_psnr = measure(ref, rec);
@@ -697,5 +827,6 @@ int main(int argc, char** argv) {
     }
     std::cout << "\n";
   }
+  report_cost(rec, ccso_fit, both_fit);
   return 0;
 }

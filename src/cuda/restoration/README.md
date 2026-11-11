@@ -7,7 +7,10 @@ planes, unit grids and coefficients.
 
 Scope: 8-bit 4:2:0, `sm_86` primary.  No allocations, no hidden
 synchronisation, no global state.  No bitstream integration; nothing here has
-been gated with `dav2d`.
+been gated with `dav2d`.  The stage-level wrapper
+(`src/cuda/m1/restoration/m1_restoration.*`) owns the CCSO -> §7.20 ordering
+and the real-recon CPU-vs-GPU parity harness; these kernels are its building
+blocks.
 
 ## Files
 

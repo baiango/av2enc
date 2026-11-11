@@ -6,11 +6,13 @@
 #   ARCH=sm_120 ./build_and_test.sh
 #   RUN_ARGS="--ivf /tmp/s64.ivf --ivf /tmp/s360.ivf" ./build_and_test.sh
 #
-# Real reconstruction inputs: pass `--ivf` files that decode with dav2d.  On the
-# 3060 box:
-#   build-cuda/av2enc tests/data/m0_64x64_1f.y4m  -o /tmp/s64.ivf  --m1 --no-cfl
-#   build-cuda/av2enc tests/data/m0_640x360_1f.y4m -o /tmp/s360.ivf --m1 --no-cfl
-#   RUN_ARGS="--ivf /tmp/s64.ivf --ivf /tmp/s360.ivf" ./build_and_test.sh
+# Real reconstruction inputs: `--ivf` for a single decode (curr = cdef), or
+# `--ivf-pair PRE POST` for the real deblock -> CDEF -> CCSO -> Wiener chain.
+# On the 3060 box:
+#   build-cuda/av2enc tests/data/m0_64x64_1f.y4m  -o /tmp/pre64.ivf  --m1
+#   build-cuda/av2enc tests/data/m0_64x64_1f.y4m  -o /tmp/post64.ivf --m1 --m1-cdef
+#   RUN_ARGS="--ivf /tmp/pre64.ivf --ivf-pair /tmp/pre360.ivf /tmp/post360.ivf" \
+#     ./build_and_test.sh
 #
 # Self-contained: does not touch the root CMake build or another component.
 set -euo pipefail
