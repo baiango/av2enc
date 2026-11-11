@@ -37,7 +37,7 @@ src/cuda/m2/
   m2_gpu.h              public integration API + stats
   m2_pipeline.cpp       frame loop, partition/MV/mode decisions, OBU assembly
   m2_backend.h          backend contract (pixel/transform work only)
-  m2_backend_cuda.cu    CUDA backend + three M2-owned kernels
+  m2_backend_cuda.cu    CUDA backend + four M2-owned kernels
   m2_backend_cpu.cpp    host-emulation backend (no GPU/nvcc needed)
   m2_device.cuh         shared device arithmetic (variance, SSE, residual, recon)
   m2_selftest.cpp       inter residual TX/quant/inverse parity vs CPU
@@ -79,9 +79,31 @@ units) matches `av2enc::m2::encode_m2_sequence()`. `m2_backend_name()` returns
 
 `M2GpuStats` reports kernel launches by stage (`variance`, `me`, `mc`, `sse`,
 `intra`, `tx`, `residual`, `recon`), host/device transfer bytes, sync count,
-ME job and inter-candidate counts, and the per-frame device interval. The CUDA
-backend measures the interval with one `cudaEvent` pair per frame; the
-emulation backend reports the wall time of the emulated backend calls.
+ME job and inter-candidate counts, the total device interval, and
+`frame_ms` — one entry per frame. The CUDA backend fills `frame_ms` from one
+`cudaEvent` pair per frame; the emulation backend reports the wall time of the
+emulated backend calls.
+
+### Build-system wiring
+
+The root `CMakeLists.txt` is not edited by this tree. A product build needs
+these objects, with the CUDA component sources linked **once** (share them with
+`av2enc_m1_gpu` if it is already in the target):
+
+```cmake
+add_library(av2enc_m2_gpu OBJECT
+  src/cuda/m2/m2_pipeline.cpp
+  src/cuda/m2/m2_backend_cuda.cu
+  src/cuda/m2/m2_selftest.cpp)
+target_link_libraries(av2enc_m2_gpu PUBLIC av2enc_core CUDA::cudart)
+target_include_directories(av2enc_m2_gpu PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+# m2_backend_cuda.cu and the shared component .cu files: --fmad=false
+```
+
+`m2_pipeline.cpp` is plain host C++; only `m2_backend_cuda.cu` needs nvcc.
+`m2_selftest.cpp` is optional (gate/test builds). Do not link
+`m2_backend_cpu.cpp` in the same binary: it defines the same
+`detail::make_backend()` factory.
 
 ### Device memory
 
@@ -147,6 +169,7 @@ CUDA (nvcc + device; default `sm_86`):
 ./src/cuda/m2/build_gpu_gate.sh
 ARCH=89 ./src/cuda/m2/build_gpu_gate.sh
 ./src/cuda/m2/build_gpu_gate.sh --frames 8 --full-tree
+SANITIZE=1 ./src/cuda/m2/build_gpu_gate.sh   # memcheck selftest + smoke
 ```
 
 Both scripts build `m2_gate.cpp` and run, for each phase:
@@ -166,48 +189,89 @@ decoder discovery.
 If the working tree's `src/encoder/m2/` is mid-refactor, point
 `M2_CPU_REF=/path/to/checkout` (containing `src/encoder/m2/`) at a clean
 reference; the gate builds against that snapshot without touching the tree.
+The scripts link `src/encoder/m2/merge/merge.cpp` when it exists (the current
+CPU gate needs it); if the CPU reference grows another helper module, mirror
+the addition from `src/encoder/m2/build_and_test.sh` into both CORE lists.
 
 ## Gate results
 
-Measured on the development host (Apple M4, **CPU-emulation backend**, macOS).
-These are proxy numbers: they validate byte/recon parity and report the pipeline
-shape, not GPU speed. The CUDA build was not runnable here (no CUDA device); the
-dependency, `dav2d` and parity checks are the same, and the CUDA backend reuses
-components already gated on the RTX 3060.
+### RTX 3060 12 GB, CUDA 12.8, `sm_86` (real event times)
 
-Default (720p single-block, 8 frames):
+Default run (`build_gpu_gate.sh`, 720p single-block, `testdata/shine_1280x720_60f.y4m`):
 
 ```text
-== 64x64 short clip: 8 frame(s) ==
-  GPU backend=cpu-emulation launches=85 [var=8 me=7 mc=12 sse=11 intra=12 tx=24 recon=11]
+m2 inter-residual selftest: PASS (128 trials, backend=cuda, ...)
+== 64x64 two-frame ==
+  GPU backend=cuda launches=15 ... device=23.99ms
+  frame ms (cuda-event): 15.9429 8.0519
+  PASS: bitstream byte-identical, recon 0 diffs
+  PASS: dav2d decoded 2 frame(s), recon exact
+== 64x64 short clip: 8 frames ==
+  GPU backend=cuda launches=97 ... device=52.39ms
+  frame ms (cuda-event): 4.67184 7.27645 6.56291 6.50026 6.35373 6.20726 7.90659 6.90896
   PASS: bitstream byte-identical, recon 0 diffs
   PASS: dav2d decoded 8 frame(s), recon exact
-== 720p short clip: 8 frame(s) ==
-  GPU backend=cpu-emulation launches=11055 [var=8 me=7 mc=3351 sse=1680
-      intra=1920 tx=3840 recon=249] me_jobs=1680 cand=7614 device≈2.19 s
+== 720p two-frame ==
+  GPU backend=cuda launches=2883 ... device=195.89ms
+  frame ms (cuda-event): 65.0762 130.814
+  PASS: bitstream byte-identical, recon 0 diffs
+  PASS: dav2d decoded 2 frame(s), recon exact
+== 720p short clip: 8 frames ==
+  GPU backend=cuda launches=12975 ... device=911.675ms
+  frame ms (cuda-event): 58.6221 125.816 126.553 120.272 118.13 121.041 120.953 120.287
   PASS: bitstream byte-identical, recon 0 diffs
   PASS: dav2d decoded 8 frame(s), recon exact
 M2 GPU GATE PASS
 ```
 
-Per-frame launch shape (720p single-block, 8 frames): ≈1,382 launches/frame.
-Full-tree 720p 8 frames: 28,359 launches total ≈3,545/frame. Most launches are
-per-leaf intra candidates (the CPU evaluates the DC fallback on every leaf), MC
-candidate batches and one MC+download for the chosen inter block. The
-host-in-the-loop design synchronises at each decision download; batching the
+The same run on the 2016 Xeon CPU reference took 13.46 s for the 720p
+8-frame clip (≈1.68 s/frame), so the GPU path is ≈14.5× faster on this
+content. Frame 0 includes context/module warm-up.
+
+Additional real runs, byte-identical / recon 0 diffs / `dav2d` exact:
+
+| Run | GPU launches | event time per frame | total |
+|---|---:|---|---:|
+| 720p 8f `--full-tree` | 33,289 | 119,198,195,190,191,195,193,193 ms | 1,473 ms |
+| 720p 8f `--force-inter-residual` | 26,415 | 60,185,174,174,174,172,174,173 ms | 1,285 ms |
+| `compute-sanitizer --tool memcheck` (selftest 128 + 64x64 smoke) | — | — | **0 errors** |
+
+### CPU-emulation proxy (Apple M4, macOS)
+
+The same gate also runs with no GPU/nvcc; these numbers validate byte/recon
+parity and the pipeline shape, not device speed:
+
+| Phase | launches | proxy backend | CPU reference |
+|---|---:|---:|---:|
+| 64x64 2 frames | 13 | 2–3 ms | 3–5 ms |
+| 64x64 8 frames | 85 | 20–24 ms | 18–25 ms |
+| 720p 2 frames, single-block | 2,403 | 430–490 ms | 350–450 ms |
+| 720p 8 frames, single-block | 11,055 | 2.2–2.9 s | 2.25 s |
+| 720p 2 frames, full tree | 6,183 | 395–450 ms | 420 ms |
+| 720p 8 frames, full tree | 28,359 | 2.26 s | 2.25 s |
+
+Per-frame launch shape (720p single-block, 8 frames): ≈1,622 launches/frame
+(12,975/8). Full-tree 720p 8 frames: 33,289 launches ≈4,161/frame. Most launches
+are per-leaf intra candidates (the CPU evaluates the DC fallback on every leaf),
+MC candidate batches and the chosen inter block's MC + those per-block copies.
+The host-in-the-loop design synchronises at each decision download; batching the
 decision search on the device is the obvious next step and does not change the
-bitstream. 64x64 8 frames: 85 launches, ≈13 ms proxy.
+bitstream.
 
-Feature gates (all `PASS`, byte-identical, recon 0 diffs, `dav2d` exact):
+Feature gates (emulation host, all `PASS`, byte-identical, recon 0 diffs,
+`dav2d` exact): `--frames 8 --full-tree`, `--force-inter-residual`,
+`--inter-residual`, `--drl-reorder 1/2`, `--force-global`, `--no-newmv`,
+`--force-intra`, `--no-intra-fallback`, `--selftest 128`.
 
-| Run | Result |
-|---|---|
-| `--frames 8 --full-tree` | 720p 8f, 28,359 launches |
-| `--force-inter-residual --frames 2` | 720p frame 1: 2,230 → 12,570 bytes, still exact |
-| `--inter-residual --frames 2` | heuristic keeps skip on this content, still exact |
-| `--drl-reorder 1/2 --frames 2` | exact |
-| `--force-global`, `--no-newmv`, `--force-intra`, `--no-intra-fallback` | exact |
-| `--selftest 128` | inter residual levels + recon parity |
+### TX scratch allocation invariant
+
+`d_recon_out_` is a `std::uint8_t*`; its element count is the number of
+**samples** (`3 * 64 * 64`), not the number of planes. The first GPU run showed
+this as `tx download: invalid argument` because the buffer was reserved with a
+count of 3 bytes while the download copied 3×4096. All TX/recon scratch is now
+reserved in `ensure_intra_buffers()` before the first call, and
+`tx_and_recon_420()` checks every capacity before any copy. `download()` returns
+`cudaError_t` and each copy site names itself in the error path.
 
 ## Scope / limitations
 
@@ -221,6 +285,7 @@ Feature gates (all `PASS`, byte-identical, recon 0 diffs, `dav2d` exact):
   host; only pixels/transforms/reconstruction are device-resident.
 - Every decision that needs a score synchronises the stream. This is a
   correctness-first milestone, not a throughput claim.
-- No CUDA device was available on the development host, so the CUDA numbers are
-  not reported. Run `build_gpu_gate.sh` on the `sm_86` box to fill them in; the
-  emulation gate is the byte/recon reference.
+- The CUDA backend was validated on an RTX 3060 (sm_86, CUDA 12.8): selftest,
+  full gate, full-tree and forced inter-residual all byte-identical with recon
+  0 diffs, and compute-sanitizer memcheck reports 0 errors. The emulation gate
+  remains the no-GPU reference.
