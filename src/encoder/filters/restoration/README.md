@@ -125,13 +125,98 @@ Implemented details:
 classifier's LUT (`Pc_Wiener_Lut_To_Class`) is not in the spec text, so the
 caller supplies the class map explicitly:
 
-- preferred: `filter_class_grid` (luma MI grid, values 0–15) plus
-  `subclass_lookup[16]`; §7.20.3 computes
-  `subcls = SubclassLookup[FilterClass[y>>2][x>>2]]`;
+- preferred: `filter_class_grid` (luma MI grid) plus `subclass_lookup`;
+  §7.20.3 computes `subcls = SubclassLookup[FilterClass[y>>2][x>>2]]`.
+  `FilterClass` is `Pc_Wiener_Lut_To_Class` output, whose range is
+  `NUM_PC_WIENER_LUT_CLASSES == 256` (not 16), so set
+  `filter_class_count = 256` and supply 256 lookup entries.  The historical
+  16-entry grid/lookup remains the default and is what existing callers use;
 - legacy: `subclass_grid` already holds `subcls` per 4×4 cell.
 
 Without either grid the CPU path returns `kMissingSubclassGrid` and the CUDA
 launcher returns `cudaErrorInvalidValue`; nothing is silently approximated.
+
+## Encoder-side search (`classes/`)
+
+The encoder needs decisions, coefficient fits and exact syntax, not just the
+decoder filter core.  `classes/` adds that layer without changing the tested
+CPU reference:
+
+| File | Purpose |
+|---|---|
+| `wiener_tables.h` | spec constants, `Wiener_Ns_Taps_Present`, `Shuffled_Index`, `Mode_Weights/Offsets`, `get_q` (§7.14.2), `Encode/Decode_Num_Filter_Classes` |
+| `wiener_cdfs.h`, `wiener_qlookup.h` | generated from `spec/tables/default_cdf.json` / `quant.json` (`generate_classes_tables.py`); never hand-edited |
+| `wiener_class.*` | §7.20.4 `FilterClass` derivation and `SubclassLookup` mapping.  The algorithm is implemented; the `Pc_Wiener_Lut_To_Class` / `Pc_Wiener_Sub_Classify2` tables are **absent from the spec text** and are caller-supplied |
+| `wiener_fit.*` | stripe-aware least-squares fit of the 16 luma / 18 chroma coefficients, per-subset and `uv_sym` variants, deterministic quantisation and clipping |
+| `wiener_syntax.*` | exact §5.18.7.11 header order and §5.20.10.4–.6 tile order, including `search_frame_filters` group coding, `wiener_ns_length`, bank merges, CDF adaptation, temporal frame-filter prediction, and `wiener_write_tile` in `read_lr()` order |
+| `wiener_decision.*` | per-unit vs frame-level selection, `use_wiener_ns`/`LrType`, unit-size search, class merging, RD cost from exact syntax bits |
+
+### What is available without the missing tables
+
+- `NumFilterClasses == 1`: fully available, including frame-level luma/chroma
+  filters and per-unit filters.
+- `NumFilterClasses > 1`: the search refuses unless the caller supplies a
+  256-entry `Pc_Wiener_Lut_To_Class` and the
+  `Pc_Wiener_Sub_Classify2[4][8][256]` table.  `wiener_derive_filter_class_grid`
+  and `wiener_build_subclass_grid` return `kMissingNormativeTable` otherwise,
+  and `wiener_decide` records a note and falls back to one class.
+- PC-Wiener itself remains unimplemented (also needs `Pc_Wiener_Sub_Classify`
+  and `Pc_Wiener_Filters`).  The syntax writers reject a PC-Wiener selection
+  rather than emit a stream that cannot be reproduced.
+
+### Decisions and integration
+
+```cpp
+#include "encoder/filters/restoration/classes/wiener_decision.h"
+
+WienerDecisionInput in;
+in.core = lr_core;                       // curr/cdef/dst + MI geometry
+in.target[0] = source_y;                 // encoder source picture per plane
+in.target_stride[0] = source_y_stride;   // (same for U/V)
+in.base_q_idx = base_q_idx;
+in.tables = class_tables;                // nullptr -> one class only
+in.lr_tx_skip = lr_tx_skip_grid;         // only needed for multi-class
+in.refs = &reference_set;                // nullptr for intra
+
+WienerDecisionOptions options;
+options.lambda_bits = rd_lambda;         // 0 = pure distortion
+WienerDecision decision;
+wiener_decide(in, options, &decision);
+
+// Feed the restoration core:
+//   params.frame_type / unit_size / unit_rows/cols / unit_type / unit_coeffs
+//   params.frame_filters_on / frame_coeffs / class maps
+// then call loop_restoration_frame().
+```
+
+Exact call sites in the existing tree:
+
+1. **Sequence header** — `src/encoder/m2/restoration/m2_restoration.cpp`
+   `make_sequence_filter_config()` already disables luma PC-Wiener
+   (`lr_disable_luma_pc_wiener = true`), which is the precondition for
+   `wiener_write_lr_params`.
+2. **Frame header** — `src/encoder/m2/m2_headers.cpp`
+   `write_frame_header_syntax()`: after the deblocking/delta-q fields and
+   before `tx_mode_select` (the same slot as
+   `m2::restoration::write_lr_params`).  M1's
+   `src/encoder/m1/filters_stream/filters_stream.cpp`
+   `write_lr_params()` is the equivalent call site.  Use
+   `wiener_write_lr_params()` when temporal prediction or
+   `search_frame_filters` ref groups are needed; the M1 adapter only supports
+   intra.
+3. **Tile** — per superblock, before `read_partition()`:
+   `wiener_write_tile()/wiener_read_tile()` (or `wiener_write_unit()` per unit
+   in `read_lr()` order).  The M2 adapter's `write_read_lr()` /
+   `write_read_lr_unit()` are the existing wrappers; map `WienerUnitPlan` to
+   `filters_stream::LrUnitDecision` field-for-field (`type`, `merged`,
+   `use_bank_k`, `subset`, `uv_sym`, `coeffs`).
+4. **Apply** — after CCSO:
+   `loop_restoration_frame(frame, params_from_decision)` in
+   `src/encoder/m2/restoration/m2_restoration.cpp` `apply_lr_frame()`.
+
+The decision's `sse` is the exact §7.20 core SSE for the chosen plan; the tests
+assert that `loop_restoration_frame()` reproduces it and that a header+tile
+write→read round-trip produces the same recon.
 
 ## Blockers (why PC-Wiener / GDF / film grain are TODO)
 
@@ -167,6 +252,18 @@ src/encoder/filters/restoration/
   ccso_test.cpp              CCSO CPU tests (5,518 checks)
   wiener_test.cpp            Wiener CPU tests (114 checks)
   build_and_test.sh          standalone CPU build/test
+  classes/                   encoder-side search, decisions and syntax
+    wiener_tables.h          spec constants + generated helper declarations
+    wiener_cdfs.h            generated §9.3 CDFs
+    wiener_qlookup.h         generated §7.14.2 qlookup
+    wiener_class.h/.cpp      §7.20.4 classification (missing LUT gated)
+    wiener_fit.h/.cpp        least-squares Wiener-NS coefficient search
+    wiener_syntax.h/.cpp     lr_params/read_lr_unit/read_wienerns_filter
+    wiener_decision.h/.cpp   per-unit vs frame-level selection
+    wiener_classes_test.cpp  fit/class/decision/real-recon tests
+    wiener_syntax_test.cpp   pinned order + CDF round-trip tests
+    generate_classes_tables.py
+    build_and_test.sh        standalone CPU build/test
   README.md                  this file
 ```
 
@@ -174,6 +271,7 @@ src/encoder/filters/restoration/
 
 ```sh
 src/encoder/filters/restoration/build_and_test.sh
+src/encoder/filters/restoration/classes/build_and_test.sh
 ```
 
 Both suites cross-check the reference against a second, independent
@@ -197,6 +295,14 @@ Coverage highlights:
   all four `cfl_ds_filter_index` values, explicit stripe-boundary sourcing
   checks, two-class frame filters, mixed unit types, partial/odd frames, 2×2
   tile clipping, lossless/BRU, and 30 randomized frames (81,336 samples).
+- Encoder search (`classes/`): synthetic and real (Y4M) recon, luma/chroma
+  fits, `uv_sym` pairs, deterministic repeats, missing-table refusal,
+  256-class lookup extension, per-unit and frame-level decisions, mixed unit
+  sizes, decision-SSE vs `loop_restoration_frame()` equality, and header+tile
+  write→read→filter round-trips.  `wiener_syntax_test` pins the `ns(n)` and
+  `lr_params()` field order, checks `merged`-before-coefficients ordering, the
+  `search_frame_filters` ref groups, temporal frame-filter prediction, and
+  byte-level CDF-state round-trips.
 
 CPU mode is a correctness oracle; per `docs/architecture.md` it is not
 benchmarked or tuned.  GPU timings are printed by

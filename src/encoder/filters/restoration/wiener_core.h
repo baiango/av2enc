@@ -75,9 +75,12 @@ struct LrCoreFrame {
   // filters with num_filter_classes > 1:
   //   * if filter_class_grid != nullptr, subcls = subclass_lookup[cls];
   //   * else the legacy subclass_grid is used directly.
+  // `filter_class_count` is the number of distinct FilterClass values the grid
+  // can hold (256 for the §7.20.4 classifier; 16 is the historical default).
   const std::uint8_t* filter_class_grid = nullptr;
   const std::uint8_t* subclass_lookup = nullptr;
   const std::uint8_t* subclass_grid = nullptr;
+  int filter_class_count = kWienerNsClasses;
 
   const std::uint8_t* segment_ids = nullptr;
   const std::uint8_t* chroma_segment_ids = nullptr;
@@ -357,7 +360,10 @@ AV2ENC_LR_HD void wiener_ns_block(const LrCoreFrame& f, const LrBlock& b,
                          (sx >> kMiSizeLog2);
         if (f.filter_class_grid != nullptr) {
           int cls = f.filter_class_grid[cell];
-          if (cls < 0 || cls >= kWienerNsClasses) {
+          const int ncls =
+              f.filter_class_count > 0 ? f.filter_class_count
+                                       : kWienerNsClasses;
+          if (cls < 0 || cls >= ncls) {
             cls = 0;
           }
           subcls = f.subclass_lookup != nullptr ? f.subclass_lookup[cls] : cls;

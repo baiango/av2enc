@@ -333,6 +333,7 @@ LrCoreFrame loop_restoration_to_core(const RestorationFrame& frame,
   core.filter_class_grid = params.filter_class_grid;
   core.subclass_lookup = params.subclass_lookup;
   core.subclass_grid = params.subclass_grid;
+  core.filter_class_count = params.filter_class_count;
   core.segment_ids = frame.segment_ids;
   core.chroma_segment_ids = frame.chroma_segment_ids;
   core.lossless = frame.lossless;
@@ -433,6 +434,11 @@ RestorationStatus validate_lr(const RestorationFrame& frame,
   if (params.num_filter_classes < 1 ||
       params.num_filter_classes > kWienerNsClasses ||
       !num_filter_classes_valid(params.num_filter_classes)) {
+    return RestorationStatus::kInvalidArgument;
+  }
+  if (params.filter_class_count < 1 || params.filter_class_count > 256) {
+    // §7.20.4 FilterClass comes from Pc_Wiener_Lut_To_Class, whose range is
+    // NUM_PC_WIENER_LUT_CLASSES (256).  The legacy 16-entry form stays valid.
     return RestorationStatus::kInvalidArgument;
   }
   if (params.unit_size[1] != params.unit_size[2]) {

@@ -196,14 +196,22 @@ struct LoopRestorationParams {
   // then SubclassLookup[class] -> coefficient index.  Producing FilterClass
   // requires §7.20.4 pixel classification, whose Pc_Wiener_* tables are not in
   // the spec text, so an encoder must either (a) supply both
-  // `filter_class_grid` and a 16-entry `subclass_lookup`, or (b) use the legacy
+  // `filter_class_grid` and `subclass_lookup`, or (b) use the legacy
   // `subclass_grid`, which is already the looked-up coefficient index per 4x4
   // cell.  `subclass_grid` is kept so existing callers/tests remain valid; new
   // code should prefer the two-field form.
+  //
+  // `filter_class_grid` holds FilterClass on the luma MI grid.  §7.20.4's
+  // classifier indexes Pc_Wiener_Lut_To_Class, whose output range is
+  // NUM_PC_WIENER_LUT_CLASSES (256), so `filter_class_count` is 256 for a real
+  // stream; `subclass_lookup` then has that many entries.  The historical
+  // 16-entry form (values clamped to kWienerNsClasses) remains the default and
+  // is still what `subclass_grid` holds.
   int frame_filters_on[3] = {0, 0, 0};
   int num_filter_classes = 1;
+  int filter_class_count = kWienerNsClasses;  // entries in filter_class_grid
   const std::uint8_t* filter_class_grid = nullptr;  // mi_cols x mi_rows
-  const std::uint8_t* subclass_lookup = nullptr;    // kWienerNsClasses
+  const std::uint8_t* subclass_lookup = nullptr;    // filter_class_count
   const std::uint8_t* subclass_grid = nullptr;      // legacy, pre-looked-up
   const std::int16_t* frame_coeffs[3] = {nullptr, nullptr, nullptr};
 
