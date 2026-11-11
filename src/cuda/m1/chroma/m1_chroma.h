@@ -12,11 +12,10 @@
 //
 // Default policy (CPU default since ff254d0): the chroma candidate set is
 //   { DC, CfL }.
-// Directional/smooth UV prediction is NOT bit-exact against the pinned
-// decoder yet (docs/negative-results.md), so it is never selected. The
-// candidate plumbing (`M1ChromaCandidate`, the scoring switch, the reserved
-// availability fields) is kept so that re-enabling it later does not change
-// this ABI.
+// `M1ChromaOptions::enable_uv_full` (CPU M1Options::uv_full / the
+// AV2ENC_M1_UV_FULL gate) enables the CPU full-UV search: all 13 base modes
+// with U+V SSE, the §6.19.5.6 derived AngleDeltaUV, edge filtering, and CfL
+// last. It uses the same device intra predictor as src/cuda/intra_modes/.
 //
 // Inputs are device pointers. The caller owns all memory (arena), the stream,
 // and synchronization; these entry points never allocate or synchronize.
@@ -39,7 +38,7 @@ namespace av2enc::cuda::m1 {
 enum M1ChromaCandidate : int {
   kM1ChromaDc = 0,
   kM1ChromaCfl = 1,
-  // Reserved: not implemented, rejected by the entry points below.
+  // A non-DC directional/smooth/Paeth UV mode (only with enable_uv_full).
   kM1ChromaUvDirectional = 2,
 };
 
@@ -49,15 +48,14 @@ struct M1ChromaOptions {
   // caller as enable_cfl = 0). When 0 the CPU returns DC immediately and sets
   // UvChoice.sse = 0; this module reproduces that.
   int enable_cfl = 1;
-  // Must remain 0. Directional/smooth UV candidates are not bit-exact yet; a
-  // non-zero value makes the entry points return cudaErrorNotSupported instead
-  // of silently producing a divergent decision.
+  // Legacy alias for enable_uv_full: runs the same 13-mode full search
+  // (including DC and, when enable_cfl != 0, CfL). Directional/smooth UV is
+  // now bit-exact against the CPU path, so neither flag is rejected.
   int enable_uv_directional = 0;
-  // GPU counterpart of the CPU M1Options::uv_full / --m1-uv-full flag. The
-  // full candidate loop is not implemented in this module yet; non-zero also
-  // returns cudaErrorNotSupported until the orchestrator wires the job fields
-  // below. The CPU path is verified; this keeps the GPU path from silently
-  // selecting a different UV mode when the flag is enabled.
+  // GPU counterpart of the CPU M1Options::uv_full / AV2ENC_M1_UV_FULL gate.
+  // Non-zero runs the exact CPU choose_uv_mode() full candidate loop. The
+  // caller must fill y_mode, y_angle_delta, filter_type_above/left,
+  // enable_edge_filter, and num4_above_right/num4_below_left.
   int enable_uv_full = 0;
   // `cfl_ds_filter_index`. M1's make_cfl_block() hardcodes 0; 3 behaves as 0.
   int ds_filter = 0;
@@ -113,16 +111,16 @@ struct M1ChromaJob {
   int coded_width = 0;
   int coded_height = 0;
 
-  // Reserved for the directional/smooth candidates (§7.13.2 availability).
-  // DC and CfL do not read them; the CPU derives DC availability from x/y and
-  // §5.20.4.1 chroma-mi availability from x/4, y/4.
+  // §7.13.2.1 above-right / below-left availability in chroma 4x4 units.
+  // DC and CfL do not read them; they only feed directional/smooth candidates.
+  // The device predictor applies the chroma >32 rule itself.
   int num4_above_right = 0;
   int num4_below_left = 0;
-  // Full-UV candidate inputs (CPU M1Options::uv_full). Unused by DC/CfL.
+  // Full-UV candidate inputs (enable_uv_full / enable_uv_directional).
   // y_mode/y_angle_delta drive the §6.19.5.6 derived AngleDeltaUV when the
-  // chosen UV mode equals a directional YMode. filter_type_* are the OR-ed
-  // §7.13.2.15/.16 smooth-neighbour flags for the chroma grid; enable_edge_filter
-  // mirrors the sequence flag.
+  // chosen UV mode equals a directional YMode. filter_type_above/left are the
+  // §7.13.2.15/.16 smooth-neighbour booleans from the chroma UVSmooth grid
+  // (0/1); enable_edge_filter mirrors the sequence flag.
   int y_mode = 0;
   int y_angle_delta = 0;
   int filter_type_above = 0;

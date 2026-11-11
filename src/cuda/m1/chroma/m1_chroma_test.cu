@@ -643,19 +643,26 @@ void run_synthetic(DeviceBuffers& dev, Stats& stats) {
       stats.note_failure();
     }
 
-    // Policy/validation behaviour.
+    // Policy/validation behaviour: both full-UV switches are accepted now.
     M1ChromaOptions directional = last_options;
     directional.enable_uv_directional = 1;
     if (av2enc::cuda::m1::chroma_decide(last_job, directional, dev.result) !=
-        cudaErrorNotSupported) {
-      std::fprintf(stderr, "  MISMATCH directional policy was not rejected\n");
+        cudaSuccess) {
+      std::fprintf(stderr, "  MISMATCH directional policy was rejected\n");
       stats.note_failure();
     }
     M1ChromaOptions full_uv = last_options;
     full_uv.enable_uv_full = 1;
     if (av2enc::cuda::m1::chroma_decide(last_job, full_uv, dev.result) !=
-        cudaErrorNotSupported) {
-      std::fprintf(stderr, "  MISMATCH uv_full policy was not rejected\n");
+        cudaSuccess) {
+      std::fprintf(stderr, "  MISMATCH uv_full policy was rejected\n");
+      stats.note_failure();
+    }
+    M1ChromaJob bad_full = last_job;
+    bad_full.enable_edge_filter = 2;
+    if (av2enc::cuda::m1::chroma_decide(bad_full, full_uv, dev.result) !=
+        cudaErrorInvalidValue) {
+      std::fprintf(stderr, "  MISMATCH bad full-UV descriptor was accepted\n");
       stats.note_failure();
     }
     M1ChromaJob bad = last_job;
@@ -707,7 +714,8 @@ void upload_rect(std::uint8_t* dst, int dst_stride, const std::uint8_t* src,
 }
 
 M1ChromaJob make_job(const av2enc::m1::Encoder& enc, const GpuPlanes& gpu,
-                     int cx0, int cy0, int cw, int ch) {
+                     int cx0, int cy0, int cw, int ch,
+                     const av2enc::m1::ModeChoice& y) {
   M1ChromaJob job;
   job.luma = gpu.luma;
   job.luma_stride = gpu.luma_stride;
@@ -734,6 +742,15 @@ M1ChromaJob make_job(const av2enc::m1::Encoder& enc, const GpuPlanes& gpu,
   job.coded_height = enc.mi_rows_ * 2;
   job.num4_above_right = enc.count_top_right(1, cx0 >> 2, cy0 >> 2, cw >> 2);
   job.num4_below_left = enc.count_bottom_left(1, cx0 >> 2, cy0 >> 2, ch >> 2);
+  job.y_mode = y.av2_mode;
+  job.y_angle_delta = y.angle_delta;
+  bool above_smooth = false;
+  bool left_smooth = false;
+  enc.neighborhood_smooth(1, cy0 >> 2, cx0 >> 2, cw >> 2, ch >> 2,
+                          above_smooth, left_smooth);
+  job.filter_type_above = above_smooth ? 1 : 0;
+  job.filter_type_left = left_smooth ? 1 : 0;
+  job.enable_edge_filter = enc.edge_filter_enabled() ? 1 : 0;
   return job;
 }
 
@@ -800,7 +817,7 @@ bool replay_block(av2enc::m1::Encoder& enc,
   av2enc::cfl::compute_luma(vb, scratch);
   const int cpu_alpha_v = av2enc::cfl::derive_implicit_alpha(vb, scratch);
 
-  const M1ChromaJob job = make_job(enc, gpu, cx0, cy0, cw, ch);
+  const M1ChromaJob job = make_job(enc, gpu, cx0, cy0, cw, ch, y);
   {
     const cudaError_t status =
         av2enc::cuda::m1::chroma_decide(job, options, gpu.result);
@@ -885,6 +902,8 @@ bool replay_block(av2enc::m1::Encoder& enc,
   check_int("uv_mode", got.uv_mode, uv.av2_mode, stats, cx0, cy0, cw, ch);
   check_int("angle_delta", got.angle_delta, uv.angle_delta, stats, cx0, cy0, cw,
             ch);
+  const bool full_uv =
+      options.enable_uv_full != 0 || options.enable_uv_directional != 0;
   if (options.enable_cfl != 0) {
     if (got.alpha_u != cpu_alpha_u || got.alpha_v != cpu_alpha_v) {
       std::fprintf(stderr,
@@ -901,20 +920,19 @@ bool replay_block(av2enc::m1::Encoder& enc,
       ++stats.sse_mismatch;
       stats.note_failure();
     }
-    const long long want_win =
-        uv.is_cfl ? cpu_sse_cfl_u + cpu_sse_cfl_v : cpu_sse_dc_u;
-    const long long delta = got.sse > want_win ? got.sse - want_win
-                                               : want_win - got.sse;
-    stats.max_sse_delta = std::max(stats.max_sse_delta, delta);
-    if (delta != 0) {
-      std::fprintf(stderr, "  SSE x=%d y=%d %dx%d got %lld want %lld\n", cx0,
-                   cy0, cw, ch, got.sse, want_win);
-      ++stats.sse_mismatch;
-      stats.note_failure();
-    }
-  } else if (got.sse != 0) {
-    std::fprintf(stderr, "  SSE x=%d y=%d %dx%d got %lld want 0\n", cx0, cy0,
-                 cw, ch, got.sse);
+  }
+  long long want_win = 0;
+  if (full_uv) {
+    want_win = uv.sse;
+  } else if (options.enable_cfl != 0) {
+    want_win = uv.is_cfl ? cpu_sse_cfl_u + cpu_sse_cfl_v : cpu_sse_dc_u;
+  }
+  const long long sse_delta =
+      got.sse > want_win ? got.sse - want_win : want_win - got.sse;
+  stats.max_sse_delta = std::max(stats.max_sse_delta, sse_delta);
+  if (sse_delta != 0) {
+    std::fprintf(stderr, "  SSE x=%d y=%d %dx%d got %lld want %lld\n", cx0,
+                 cy0, cw, ch, got.sse, want_win);
     ++stats.sse_mismatch;
     stats.note_failure();
   }
@@ -927,8 +945,21 @@ bool replay_block(av2enc::m1::Encoder& enc,
     stats.note_failure();
   }
 
-  const std::vector<std::uint8_t>& want_u = uv.is_cfl ? cfl_pred_u : u_dc;
-  const std::vector<std::uint8_t>& want_v = uv.is_cfl ? cfl_pred_v : v_dc;
+  std::vector<std::uint8_t> winner_u;
+  std::vector<std::uint8_t> winner_v;
+  if (full_uv && !uv.is_cfl) {
+    if (!enc.predict_block(1, cx0, cy0, cw, ch, uv.mode, uv.angle_delta,
+                           winner_u) ||
+        !enc.predict_block(2, cx0, cy0, cw, ch, uv.mode, uv.angle_delta,
+                           winner_v)) {
+      error = enc.error_;
+      return false;
+    }
+  }
+  const std::vector<std::uint8_t>& want_u =
+      uv.is_cfl ? cfl_pred_u : (full_uv ? winner_u : u_dc);
+  const std::vector<std::uint8_t>& want_v =
+      uv.is_cfl ? cfl_pred_v : (full_uv ? winner_v : v_dc);
   if (!check_bytes("pred_u", got_u.data(), want_u.data(), cw * ch, cw, ch,
                    cx0, cy0, stats)) {
     ++stats.pred_mismatch;
@@ -1474,6 +1505,24 @@ int main(int argc, char** argv) {
                  (frame.label + " batch").c_str());
     }
 
+    // Full-UV GPU parity: CPU M1Options::uv_full vs the GPU candidate loop.
+    {
+      FrameCase uv_full = base;
+      uv_full.cpu_options.uv_full = true;
+      uv_full.gpu_options.enable_uv_full = 1;
+      Stats uv_stats;
+      std::vector<M1ChromaJob> uv_jobs;
+      run_frame_case(frame.storage.picture(), uv_full,
+                     frame.label + " uv-full", uv_stats, uv_jobs);
+      frame_stats.blocks += uv_stats.blocks;
+      frame_stats.cfl_blocks += uv_stats.cfl_blocks;
+      frame_stats.failures += uv_stats.failures;
+      frame_stats.decision_mismatch += uv_stats.decision_mismatch;
+      frame_stats.alpha_mismatch += uv_stats.alpha_mismatch;
+      frame_stats.sse_mismatch += uv_stats.sse_mismatch;
+      frame_stats.pred_mismatch += uv_stats.pred_mismatch;
+    }
+
     if (run_full_intra_64 && frame.storage.width <= 64 &&
         frame.storage.height <= 64) {
       FrameCase full = base;
@@ -1489,6 +1538,24 @@ int main(int argc, char** argv) {
       frame_stats.alpha_mismatch += full_stats.alpha_mismatch;
       frame_stats.sse_mismatch += full_stats.sse_mismatch;
       frame_stats.pred_mismatch += full_stats.pred_mismatch;
+
+      // Derived AngleDeltaUV: the luma search must actually pick a
+      // directional mode for UVMode == YMode to matter. Run full luma intra
+      // plus full UV on the small frame.
+      FrameCase both = full;
+      both.cpu_options.uv_full = true;
+      both.gpu_options.enable_uv_full = 1;
+      Stats both_stats;
+      std::vector<M1ChromaJob> both_jobs;
+      run_frame_case(frame.storage.picture(), both,
+                     frame.label + " full-intra+uv-full", both_stats, both_jobs);
+      frame_stats.blocks += both_stats.blocks;
+      frame_stats.cfl_blocks += both_stats.cfl_blocks;
+      frame_stats.failures += both_stats.failures;
+      frame_stats.decision_mismatch += both_stats.decision_mismatch;
+      frame_stats.alpha_mismatch += both_stats.alpha_mismatch;
+      frame_stats.sse_mismatch += both_stats.sse_mismatch;
+      frame_stats.pred_mismatch += both_stats.pred_mismatch;
     }
 
     if (frame.storage.width >= 320) {

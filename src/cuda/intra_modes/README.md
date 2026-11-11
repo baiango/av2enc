@@ -7,11 +7,27 @@ filter (corner filter, filter-type selection, 5-tap edge filtering, WAIP).
 Component-owned files (intra-modes CUDA agent):
 
 ```text
-src/cuda/intra_modes/intra_modes.h              API + normative tables + contract
-src/cuda/intra_modes/intra_modes.cu             kernels
-src/cuda/intra_modes/intra_modes_test.cu        independent CPU reference + tests
-src/cuda/intra_modes/build_intra_modes_test.sh  standalone build/run script
-src/cuda/intra_modes/README.md                  this file
+src/cuda/intra_modes/intra_modes.h                 API + normative tables + contract
+src/cuda/intra_modes/intra_predict_device.cuh      shared device prediction body
+src/cuda/intra_modes/intra_modes.cu                kernels (include the .cuh)
+src/cuda/intra_modes/intra_modes_test.cu           independent CPU reference + tests
+src/cuda/intra_modes/intra_device_emulation_test.cpp  host-emulation parity test
+src/cuda/intra_modes/build_intra_modes_test.sh     standalone build/run script
+src/cuda/intra_modes/build_emulation_test.sh       no-nvcc host emulation test
+src/cuda/intra_modes/README.md                     this file
+```
+
+`intra_predict_device.cuh` is the single device implementation. The standalone
+kernels and the M1 GPU chroma full-UV search
+(`src/cuda/m1/chroma/m1_chroma.cu`) both call
+`intra_run_block_device()`, so the two callers cannot drift. The header is
+also compiled by `intra_device_emulation_test.cpp` on machines without nvcc:
+CUDA keywords are stubbed, one emulated thread runs the exact integer code, and
+every prediction byte is checked against the CPU module.
+
+```sh
+./build_emulation_test.sh
+# intra_device_emulation_test: PASS (2782 checks)
 ```
 
 Not wired into `src/main.cpp` or the root `CMakeLists.txt`. Nothing outside
