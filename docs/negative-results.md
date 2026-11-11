@@ -50,6 +50,7 @@ Status legend:
 | CONFIRMED | Port RDO to GPU before it matches CPU decisions | The CPU framework is the reference | Bit-exact decision tests first |
 | OPEN | Claim RDO gains before integration | No bitstream is produced by the RDO component | Decode-gate and measure after wiring |
 | CONFIRMED | Select coefficient CDFs from a delta-Q or segment qindex | The coefficient CDF slice comes from `base_q_idx`, not the effective per-block qindex | Use `base_q_idx`; M0 tables only cover qctx 0 (`<=90`) until 1–3 are generated |
+| CONFIRMED | Pass a host `std::vector<Job>` to a `*_batch` device API | The kernel dereferences the host heap address (`Invalid __global__ read` at `cfl.cu:295`); the host-emulation test cannot catch it because there is one address space | `cudaMalloc` the descriptor array and `cudaMemcpy` it; make emulation reject host pointers |
 | CONFIRMED | Expect exact multi-tile recon with deblocking enabled | Per-tile CPU deblocking treats tile edges as frame edges, but pinned dav2d still filters across the shared edge even with `disable_loopfilters_across_tiles = 1` (diffs only within 16 luma samples of interior tile edges) | Encode exact multi-tile streams with deblocking off, or accept the tile-edge delta and document it |
 | CONFIRMED | Plan delta-Q once per frame | The decoder resets `CurrentQIndex` to `base_q_idx` at every tile | Plan delta-Q per tile |
 | CONFIRMED | Treat the VBR controller as a VBV/HRD model | It is an EMA virtual-buffer placeholder with no lookahead/two-pass | Add VBV/HRD/two-pass later; do not claim conformance |
