@@ -80,17 +80,27 @@ add_library(av2enc_core STATIC
   src/encoder/m0_still.cpp
   src/encoder/partition/partition.cpp
   src/encoder/intra_modes/intra_modes.cpp
+  src/encoder/rdoq/rdoq.cpp
+  src/encoder/rdoq/rdoq_av2_model.cpp
+  src/encoder/tx_type/tx_type.cpp
   src/encoder/tx_variants/tx_variants.cpp
   src/encoder/tx_variants/tx_select.cpp
   src/encoder/cfl/cfl.cpp
   src/encoder/filters/deblock/deblock.cpp
+  src/encoder/filters/cdef/cdef.cpp
+  src/encoder/filters/restoration/restoration.cpp
   src/encoder/rdo/rdo.cpp
+  src/encoder/rdo/intra_decision.cpp
   src/encoder/m1/m1_headers.cpp
   src/encoder/m1/m1_syntax.cpp
   src/encoder/m1/m1_still.cpp
   src/encoder/m1/stream/m1_stream_bridge.cpp
   src/entropy/av2/av2_entropy.cpp
-  src/profile/profiler.cpp)
+  src/profile/profiler.cpp
+  # M1 CDEF stage host half (header packing, MI grids, strength search).  It is
+  # CUDA-free and the CPU M1 path needs it; the M1 GPU OBJECT target excludes
+  # this file so the symbols resolve from this archive.
+  src/cuda/m1/cdef/m1_cdef.cpp)
 target_include_directories(av2enc_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(av2enc_core PUBLIC cxx_std_20)
 av2enc_apply_warnings(av2enc_core)
@@ -120,13 +130,14 @@ if(AV2ENC_HAVE_CUDA)
       "${AV2ENC_M1_GPU_DIR}/*.cpp")
     list(FILTER AV2ENC_M1_GPU_SOURCES EXCLUDE REGEX "/\\._[^/]*$")
     list(FILTER AV2ENC_M1_GPU_SOURCES EXCLUDE REGEX
-      "/(run_[^/]*|[^/]*_test|[^/]*_dump|[^/]*_bench)\\.(cu|cpp)$")
+      "/(run_[^/]*|[^/]*_test|[^/]*_dump|[^/]*_bench|[^/]*_shim)\\.(cu|cpp)$")
+    # m1_cdef.cpp is compiled into av2enc_core (the CPU M1 path needs it);
+    # linking it again from the OBJECT library would duplicate its symbols.
+    list(FILTER AV2ENC_M1_GPU_SOURCES EXCLUDE REGEX "/m1_cdef\\.cpp$")
     if(AV2ENC_M1_GPU_SOURCES)
       set(AV2ENC_HAVE_M1_GPU ON)
       # Host-side support for the M1 filter/format stages.
       foreach(host_support
-          src/encoder/filters/cdef/cdef.cpp
-          src/encoder/filters/restoration/restoration.cpp
           src/encoder/format/format.cpp)
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${host_support}")
           target_sources(av2enc_core PRIVATE "${host_support}")
@@ -202,4 +213,13 @@ av2enc_apply_warnings(av2enc)
 include(CTest)
 if(BUILD_TESTING)
   add_subdirectory(tests)
+
+  # Opt-in M1 tools: pinned IVF MD5s + dav2d --strict 1 decode.  The script
+  # exits 77 when no decoder is available, which CTest reports as a skip.
+  add_test(NAME m1_feature_gate
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tools/m1_verify/feature_gate.sh"
+            --bin $<TARGET_FILE:av2enc>)
+  set_tests_properties(m1_feature_gate PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300)
 endif()
