@@ -246,3 +246,26 @@ AV2ENC_PROFILE=/tmp/run.jsonl ./build-cuda/av2enc ...
 It logs per-frame CPU and CUDA stage times, JSONL plus a summary, and VRAM
 peak/capacity. `AV2ENC_PROFILE_NVTX=1` adds NVTX ranges for Nsight Systems.
 See `docs/profiling.md`.
+
+## License
+
+The encoder source is released under **The Unlicense**, a public-domain
+dedication. See [LICENSE](LICENSE). Anyone is free to copy, modify, publish,
+use, compile, sell, or distribute this software, in source or binary form, for
+any purpose, commercial or non-commercial.
+
+Third-party material keeps its own terms:
+
+- **AV2 specification material**: the generated tables and constants under
+  `spec/tables/` and `src/encoder/filters/spec_tables/` are derived from the
+  AV2 Bitstream & Decoding Process Specification v1.0.0, copyright Alliance for
+  Open Media. The specification states that its licensing information is at
+  <https://www.aomedia.org/license/>.
+- **Specification PDF and attachments**: not redistributed. The PDF must be
+  obtained separately, and the normative attachment headers are fetched on
+  demand and SHA-256 verified by the table generator.
+- **Reference decoders**: `dav2d` and `avmdec` are AOM reference software used
+  only as black-box validators. They are not redistributed; `tools/bin/` is
+  ignored by git.
+- **Test media**: fixtures under `tests/data/` are generated, and `testdata/`
+  is local-only and not required by the build.
