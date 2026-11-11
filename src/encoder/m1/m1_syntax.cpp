@@ -536,7 +536,7 @@ class Writer {
     }
     const bool forced = (node.flags & kFlagForced) != 0;
     const auto allowed = [&node](PartitionType p) {
-      return (node.allowed_mask >> static_cast<int>(p)) != 0;
+      return (node.allowed_mask & (1u << static_cast<unsigned>(p))) != 0;
     };
 
     if (trace_) {

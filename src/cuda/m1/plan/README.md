@@ -220,13 +220,14 @@ WERROR=1 ./src/cuda/m1/plan/build_and_test.sh
 SANITIZE=1 ./src/cuda/m1/plan/build_and_test.sh   # slower
 ```
 
-46,434 checks cover: 64x64 (constant and textured), 640x360, 1080p, a frame with
-both a partial right and bottom SB (300x300), `force_single_block`, square-only
-and leaf32 gates, min-size-4/depth-8 leaves, chroma residual-size rules,
-coefficient offset contiguity, tree preorder bookkeeping, tree/leaf agreement,
-availability invariants, decode-order invariants, TSV/JSON determinism, error
-paths, and the orchestrator POD/stream-tree bridges when their headers are
-present.
+402,197 checks cover: 64x64 (constant and textured), 640x360, 1080p, a frame
+with both a partial right and bottom SB (300x300), every GPU-matrix size
+(136x88, 1280x720, 416x208, 518x322, 532x368) at depths 0..8 plus
+`force_single_block`, square-only and leaf32 gates, min-size-4/depth-8 leaves,
+the min-size-8 depth-8 floor, chroma residual-size rules, coefficient offset
+contiguity, tree preorder bookkeeping, tree/leaf agreement, availability
+invariants, decode-order invariants, TSV/JSON determinism, error paths, and the
+orchestrator POD/stream-tree bridges when their headers are present.
 
 `tests/trace_order_m0_64x64_1f.txt` and
 `tests/trace_order_m0_640x360_1f.txt` are the CPU `AV2ENC_M1_TRACE` preorder +
@@ -301,12 +302,17 @@ the `std::vector<stream::TreeNode>` overload output) in `GpuResult`/the plan
 stage when the entropy path is wired. `src/encoder/m1/stream/build_and_test.sh`
 already proves this consumption path with real 64x64 and 640x360 plans.
 
-## Known reference limitation
+## Partial-superblock depth policy
 
-An input whose bottom SB strip is only 2 mi rows (8 pixels, e.g. 100x70 with
-MiRows = 18) can fail inside `partition::decide_frame` with
-`spec-forced partition conflicts with DecisionOptions`: a spec-forced boundary
-partition reaches a 4-pixel-high block while `min_block_size = 8`. The CPU M1
-path has the same behavior; this is a partition-reference limitation, not a
-plan-builder divergence. Use `min_block_size = 4` for such a frame, or avoid a
-2-mi bottom/right strip.
+`max_partition_depth` and `min_block_size` are search-policy limits for
+optional splits. A spec-forced boundary partition is always followed, and a
+node whose half-size leaves the frame (so `PARTITION_NONE` is forbidden) may be
+split past `max_partition_depth` or below the nominal block floor. Such a leaf
+is still structurally valid; `validate_frame_plan()` only enforces the depth
+cap inside fully coded superblocks. This fixes the former
+`spec-forced partition conflicts with DecisionOptions` / `no partition
+candidate has a finite cost` failures on 136x88, 1280x720, 416x208, 518x322,
+532x368 and `--m1-depth 0..3`/`--m1-single`.
+
+With `min_block_size = 8`, depth 8 still stops at 8x8 leaves; 4x4 requires an
+explicit `min_block_size = 4`.

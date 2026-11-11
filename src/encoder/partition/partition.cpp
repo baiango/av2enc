@@ -319,65 +319,76 @@ SolveResult solve_node(const FrameGeometry& geometry, int mi_row, int mi_col,
   bool saw_invalid_cost = false;
   std::string last_error;
 
-  for (int index = 0; index < kPartitionTypeCount; ++index) {
-    const PartitionType partition = static_cast<PartitionType>(index);
-    if (forced && partition != forced_partition) {
-      continue;
-    }
-    if (!info.allowed.is_allowed(partition)) {
-      continue;
-    }
-    if (!policy_allows(geometry, size, partition, depth, options)) {
-      if (forced) {
-        result.status = DecisionStatus::kNoValidPartition;
-        result.error = "spec-forced partition conflicts with DecisionOptions";
-        return result;
-      }
-      continue;
-    }
+  // Partial superblocks are a spec problem, not an encoder-policy problem: a
+  // block at the bottom/right edge can have no legal PARTITION_NONE, so the
+  // tree must keep subdividing even past max_depth or the min-block floor.
+  // Always honour a spec-forced partition (the decoder derives it without
+  // syntax).  For optional splits, try the policy-compliant candidates first;
+  // only if that yields nothing, retry with the policy relaxed at a boundary.
+  const bool at_boundary = !info.boundary.has_rows || !info.boundary.has_cols;
 
-    const double signal = forced ? 0.0 : partition_signal_cost(costs, partition);
-    if (!std::isfinite(signal)) {
-      continue;
+  for (int pass = 0; pass < 2 && !found; ++pass) {
+    const bool relax = pass == 1;
+    if (relax && (forced || !at_boundary)) {
+      break;
     }
-
-    if (partition == PartitionType::kNone) {
-      if (!std::isfinite(costs.leaf)) {
+    for (int index = 0; index < kPartitionTypeCount; ++index) {
+      const PartitionType partition = static_cast<PartitionType>(index);
+      if (forced && partition != forced_partition) {
         continue;
       }
-      const double total = costs.leaf + signal;
-      if (!std::isfinite(total)) {
+      if (!info.allowed.is_allowed(partition)) {
+        continue;
+      }
+      if (!policy_allows(geometry, size, partition, depth, options) &&
+          !forced && !relax) {
+        continue;
+      }
+
+      const double signal =
+          forced ? 0.0 : partition_signal_cost(costs, partition);
+      if (!std::isfinite(signal)) {
+        continue;
+      }
+
+      if (partition == PartitionType::kNone) {
+        if (!std::isfinite(costs.leaf)) {
+          continue;
+        }
+        const double total = costs.leaf + signal;
+        if (!std::isfinite(total)) {
+          continue;
+        }
+        if (!found || total < best_cost) {
+          found = true;
+          best_cost = total;
+          best_partition = partition;
+          best_children.clear();
+        }
+        continue;
+      }
+
+      std::vector<PartitionNode> children;
+      double total = 0.0;
+      SolveResult candidate =
+          solve_partition_candidate(geometry, mi_row, mi_col, size, depth,
+                                    has_chroma, chroma_offset, partition,
+                                    signal, cost_fn, options, children, total);
+      if (candidate.status != DecisionStatus::kOk) {
+        if (candidate.status == DecisionStatus::kInvalidCost) {
+          saw_invalid_cost = true;
+        }
+        if (!candidate.error.empty()) {
+          last_error = std::move(candidate.error);
+        }
         continue;
       }
       if (!found || total < best_cost) {
         found = true;
         best_cost = total;
         best_partition = partition;
-        best_children.clear();
+        best_children = std::move(children);
       }
-      continue;
-    }
-
-    std::vector<PartitionNode> children;
-    double total = 0.0;
-    SolveResult candidate =
-        solve_partition_candidate(geometry, mi_row, mi_col, size, depth,
-                                  has_chroma, chroma_offset, partition, signal,
-                                  cost_fn, options, children, total);
-    if (candidate.status != DecisionStatus::kOk) {
-      if (candidate.status == DecisionStatus::kInvalidCost) {
-        saw_invalid_cost = true;
-      }
-      if (!candidate.error.empty()) {
-        last_error = std::move(candidate.error);
-      }
-      continue;
-    }
-    if (!found || total < best_cost) {
-      found = true;
-      best_cost = total;
-      best_partition = partition;
-      best_children = std::move(children);
     }
   }
 

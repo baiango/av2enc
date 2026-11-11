@@ -146,14 +146,21 @@ Rules:
 - Only spec-allowed partitions are considered. Rectangular splits are skipped
   when `DecisionOptions::allow_rect == false`; `SPLIT` when
   `allow_split == false`; both when they would create a block below
-  `min_block_size_px` (default 4, never below 4).
+  `min_block_size_px` (default 4, never below 4). These are policy limits for
+  **optional** splits only.
+- A spec-forced partition is mandatory and therefore ignores the policy
+  limits. At a partial superblock where the half-size leaves the frame the
+  spec also forbids `PARTITION_NONE`, so the solver relaxes the depth/floor
+  limits as needed instead of failing with "no partition candidate". This is
+  what lets `--m1-depth 0`/`--m1-single` encode a right or bottom edge SB.
 - Ties are broken in the fixed order `NONE`, `SPLIT`, `HORZ`, `VERT`, so
   identical inputs always produce the identical tree.
 - A spec-implied partition wins even if the caller's costs would prefer
   another. If `forced` is true, **no partition syntax is coded** at that node
   (the decoder infers it); its signal cost is treated as zero.
 - `DecisionOptions::max_depth` counts partition recursion from the superblock
-  root (depth 0).
+  root (depth 0) for optional splits; boundary-forced/relaxed nodes may go
+  deeper.
 
 Tree representation:
 

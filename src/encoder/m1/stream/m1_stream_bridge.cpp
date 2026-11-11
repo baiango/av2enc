@@ -278,7 +278,7 @@ class Packer {
         entry.flags =
             static_cast<std::uint8_t>(entry.flags | syntax::kFlagSbRoot);
       }
-      if ((entry.allowed_mask >> static_cast<int>(partition)) == 0) {
+      if ((entry.allowed_mask & (1u << static_cast<unsigned>(partition))) == 0) {
         error = "partition is not in the node's allowed set";
         return false;
       }

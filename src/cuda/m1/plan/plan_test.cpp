@@ -460,9 +460,9 @@ void test_1080p() {
 
 void test_partial_right_and_bottom() {
   // 300x300: MiCols/MiRows = 76, so the last superblock row and column both
-  // cover only 12 of 16 mi cells.  (100x70 fails inside partition::decide_frame
-  // with the default depth/min floor; that is a reference limitation shared
-  // with the CPU M1 path, not a plan-builder bug.)
+  // cover only 12 of 16 mi cells.  A 2-mi bottom/right strip (e.g. 100x70)
+  // also works now: the partition solver relaxes the depth/floor policy only
+  // where the spec forbids PARTITION_NONE.
   const auto luma = mosaic_luma(300, 300, 4);
   m1p::FramePlan plan;
   CHECK(build(300, 300, luma, base_options(), plan));
@@ -489,6 +489,60 @@ void test_partial_right_and_bottom() {
   }
   CHECK(saw_right);
   CHECK(saw_bottom);
+}
+
+void test_partial_sb_option_matrix() {
+  // Every partial-SB shape the GPU matrix exercises must build a valid plan at
+  // depths 0..8 and with force_single_block.  The partition solver relaxes the
+  // depth/floor policy only where the spec forbids PARTITION_NONE, so a plan
+  // may contain leaves deeper than max_partition_depth at an edge superblock.
+  const int sizes[][2] = {
+      {136, 88},  {1280, 720}, {416, 208}, {518, 322}, {532, 368},
+      {64, 64},   {640, 360},  {1920, 1080}, {100, 70},
+  };
+  for (const auto& size : sizes) {
+    const int width = size[0];
+    const int height = size[1];
+    const auto luma = mosaic_luma(width, height, 4);
+    for (int depth = 0; depth <= 8; ++depth) {
+      m1p::PlanOptions options = base_options();
+      options.max_partition_depth = depth;
+      m1p::FramePlan plan;
+      if (!build(width, height, luma, options, plan)) {
+        ++g_failures;
+        std::cerr << "partial-SB plan " << width << 'x' << height
+                  << " depth " << depth << " failed\n";
+        continue;
+      }
+      std::string error;
+      CHECK(m1p::validate_frame_plan(plan, error));
+      CHECK(verify_decode_order(plan, error));
+      for (const m1p::BlockPlan& block : plan.blocks) {
+        // min_block_size = 8 must keep depth 8 out of 4x4 leaves.
+        CHECK(block.luma_w >= 8);
+        CHECK(block.luma_h >= 8);
+      }
+
+      // Deterministic plan bytes for identical input and options.
+      m1p::FramePlan again;
+      CHECK(build(width, height, luma, options, again));
+      CHECK(m1p::plan_to_tsv(plan) == m1p::plan_to_tsv(again));
+      CHECK(m1p::plan_tree_to_tsv(plan) == m1p::plan_tree_to_tsv(again));
+    }
+
+    m1p::PlanOptions single = base_options();
+    single.force_single_block = true;
+    m1p::FramePlan plan;
+    if (!build(width, height, luma, single, plan)) {
+      ++g_failures;
+      std::cerr << "partial-SB plan " << width << 'x' << height
+                << " single failed\n";
+      continue;
+    }
+    std::string error;
+    CHECK(m1p::validate_frame_plan(plan, error));
+    CHECK(verify_decode_order(plan, error));
+  }
 }
 
 void test_force_single_block() {
@@ -770,6 +824,7 @@ int main() {
   test_640x360();
   test_1080p();
   test_partial_right_and_bottom();
+  test_partial_sb_option_matrix();
   test_force_single_block();
   test_debug_gates();
   test_determinism_and_dump();

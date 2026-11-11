@@ -862,6 +862,130 @@ void test_geometry_sweep() {
   }
 }
 
+void test_partial_sb_depth_matrix() {
+  // Partial-superblock geometry must never conflict with the M1 policy hints
+  // (min_block_size = 8, allow_rect, no SPLIT).  A block whose half-size
+  // leaves the frame has no legal PARTITION_NONE, so the solver must keep
+  // subdividing even when max_depth or the block floor would normally stop it.
+  const int sizes[][2] = {
+      {136, 88},  {1280, 720}, {416, 208}, {518, 322}, {532, 368},
+      {64, 64},   {640, 360},  {1920, 1080}, {100, 70},
+  };
+  std::string error;
+  for (const auto& size : sizes) {
+    const int width = size[0];
+    const int height = size[1];
+    const p::FrameGeometry geometry = geometry_420(width, height, 64);
+    for (int depth = 0; depth <= 8; ++depth) {
+      p::DecisionOptions options;
+      options.min_block_size_px = 8;
+      options.max_depth = depth;
+      options.allow_rect = true;
+      options.allow_split = false;
+      const p::FrameDecision first =
+          p::decide_frame(geometry, area_squared_cost(), options);
+      if (first.status != p::DecisionStatus::kOk) {
+        ++g_failures;
+        std::cerr << "partial-SB " << width << 'x' << height << " depth "
+                  << depth << ": " << first.error << '\n';
+        continue;
+      }
+      if (!p::validate_frame(geometry, first, error)) {
+        ++g_failures;
+        std::cerr << "partial-SB " << width << 'x' << height << " depth "
+                  << depth << ": " << error << '\n';
+      }
+      int leaves = 0;
+      for (const p::PartitionNode& sb : first.superblocks) {
+        std::vector<p::LeafBlock> sb_leaves;
+        p::collect_leaves(sb, sb_leaves);
+        leaves += static_cast<int>(sb_leaves.size());
+        for (const p::LeafBlock& leaf : sb_leaves) {
+          // With min_block_size = 8 the interior tree must never reach 4x4.
+          CHECK(p::block_width(leaf.size) >= 8);
+          CHECK(p::block_height(leaf.size) >= 8);
+        }
+      }
+      CHECK_EQ_INT(leaves, first.leaves);
+
+      // Identical inputs must produce the identical tree.
+      const p::FrameDecision second =
+          p::decide_frame(geometry, area_squared_cost(), options);
+      CHECK(second.status == p::DecisionStatus::kOk);
+      CHECK_EQ_INT(second.nodes, first.nodes);
+      CHECK_EQ_INT(second.leaves, first.leaves);
+      if (second.superblocks.size() == first.superblocks.size()) {
+        for (std::size_t index = 0; index < first.superblocks.size(); ++index) {
+          CHECK(tree_signature(first.superblocks[index]) ==
+                tree_signature(second.superblocks[index]));
+        }
+      }
+    }
+
+    // force_single_block (--m1-single) also has to cope with a partial SB,
+    // where the spec makes a single root block impossible.
+    p::DecisionOptions single;
+    single.min_block_size_px = 64;
+    single.max_depth = 0;
+    single.allow_rect = true;
+    single.allow_split = false;
+    const p::FrameDecision single_frame =
+        p::decide_frame(geometry, area_squared_cost(), single);
+    if (single_frame.status != p::DecisionStatus::kOk) {
+      ++g_failures;
+      std::cerr << "partial-SB " << width << 'x' << height
+                << " single: " << single_frame.error << '\n';
+    } else {
+      CHECK(p::validate_frame(geometry, single_frame, error));
+    }
+  }
+}
+
+void test_min_block_floor_depth8() {
+  // Depth 8 is deep enough to reach 4x4, but the default M1 floor is 8.
+  const int sizes[][2] = {{64, 64}, {640, 360}, {1920, 1080}};
+  std::string error;
+  for (const auto& size : sizes) {
+    const p::FrameGeometry geometry = geometry_420(size[0], size[1], 64);
+    p::DecisionOptions options;
+    options.min_block_size_px = 8;
+    options.max_depth = 8;
+    options.allow_rect = true;
+    options.allow_split = false;
+    const p::FrameDecision frame =
+        p::decide_frame(geometry, area_squared_cost(), options);
+    CHECK(frame.status == p::DecisionStatus::kOk);
+    CHECK(p::validate_frame(geometry, frame, error));
+    bool saw_8x8 = false;
+    for (const p::PartitionNode& sb : frame.superblocks) {
+      std::vector<p::LeafBlock> leaves;
+      p::collect_leaves(sb, leaves);
+      for (const p::LeafBlock& leaf : leaves) {
+        CHECK(p::block_width(leaf.size) >= 8);
+        CHECK(p::block_height(leaf.size) >= 8);
+        if (leaf.size == p::BlockSize::k8x8) saw_8x8 = true;
+      }
+    }
+    CHECK(saw_8x8);
+  }
+
+  // Lowering the floor to 4 does allow the 4x4 leaves depth 8 can reach.
+  const p::FrameGeometry geometry = geometry_420(64, 64, 64);
+  p::DecisionOptions options;
+  options.min_block_size_px = 4;
+  options.max_depth = 8;
+  const p::FrameDecision frame =
+      p::decide_frame(geometry, area_squared_cost(), options);
+  CHECK(frame.status == p::DecisionStatus::kOk);
+  std::vector<p::LeafBlock> leaves;
+  p::collect_leaves(frame.superblocks[0], leaves);
+  bool saw_4x4 = false;
+  for (const p::LeafBlock& leaf : leaves) {
+    if (leaf.size == p::BlockSize::k4x4) saw_4x4 = true;
+  }
+  CHECK(saw_4x4);
+}
+
 void test_validation_rejects() {
   const p::FrameGeometry geometry = geometry_420(64, 64, 64);
   p::DecisionOptions options;
@@ -947,6 +1071,8 @@ int main() {
   test_edge_cases();
   test_tiny_frame();
   test_geometry_sweep();
+  test_partial_sb_depth_matrix();
+  test_min_block_floor_depth8();
   test_validation_rejects();
   test_decision_errors();
 

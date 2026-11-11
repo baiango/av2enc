@@ -318,11 +318,13 @@ struct PartitionNodeInfo {
 using CostFunction = std::function<NodeCosts(const PartitionNodeInfo&)>;
 
 struct DecisionOptions {
-  // Minimum luma width and height of a block created by a split.  A forced
-  // spec partition that would go below this floor makes the decision fail
-  // rather than emit an invalid tree.
+  // Minimum luma width and height of a block created by an *optional* split.
+  // These are search-policy limits, not geometry: a spec-forced partition is
+  // always honoured, and a node whose half-size leaves the frame may relax the
+  // limits because the spec forbids PARTITION_NONE there.
   int min_block_size_px = kMinBlockPixels;
-  // Maximum partition recursion depth.  Root superblock is depth 0.
+  // Maximum partition recursion depth for optional splits.  Root superblock
+  // is depth 0.  Boundary-forced partitions may exceed it.
   int max_depth = 32;
   bool allow_rect = true;   // HORZ / VERT
   bool allow_split = true;  // PARTITION_SPLIT (only legal for 128 SB roots)

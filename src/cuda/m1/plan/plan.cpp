@@ -624,7 +624,14 @@ bool validate_frame_plan(const FramePlan& plan, std::string& error) {
       error = "block does not belong to its stored superblock";
       return false;
     }
-    if (block.depth > plan.options.max_partition_depth) {
+    // max_partition_depth is a search cap, not a structural rule.  A partial
+    // superblock can force (or boundary-relax) the tree below the cap because
+    // the spec forbids PARTITION_NONE there; only enforce the cap inside fully
+    // coded superblocks.
+    const bool partial_sb =
+        block.sb_mi_row + sb_size_mi > plan.mi_rows ||
+        block.sb_mi_col + sb_size_mi > plan.mi_cols;
+    if (block.depth > plan.options.max_partition_depth && !partial_sb) {
       error = "block depth exceeds max_partition_depth";
       return false;
     }
