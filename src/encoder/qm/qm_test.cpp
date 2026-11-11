@@ -178,15 +178,43 @@ void parse_user_qm(BitReader& reader, UserQmLevel& user, int t, int plane,
   (void)num_planes;
 }
 
-// Independent §7.14.4 expectation, written with explicit int64 arithmetic.
-std::int32_t expected_dequant(std::int32_t level, std::int32_t q2, int denom) {
+// Independent §7.14.4 expectation.  This is written from the spec text, not
+// from qm_core.h: steps 3-8 of the dequantization process plus the §4.8
+// Clip3 bound.
+std::int64_t expected_clip(std::int64_t value, int bit_depth) {
+  const std::int64_t bound =
+      static_cast<std::int64_t>(1) << (7 + bit_depth);
+  if (value < -bound) return -bound;
+  if (value > bound - 1) return bound - 1;
+  return value;
+}
+
+std::int32_t expected_dequant(std::int32_t level, std::int32_t q2, int denom,
+                              int bit_depth = 8) {
   const std::int64_t magnitude =
       level < 0 ? -static_cast<std::int64_t>(level) : level;
   const std::int64_t high = magnitude * q2;
   const std::int64_t masked = high & 0xFFFFFFLL;
   const std::int64_t rounded = (masked + 4) >> 3;  // Round2(., 3)
   const std::int64_t value = rounded / denom;
-  return static_cast<std::int32_t>(level < 0 ? -value : value);
+  const std::int64_t signed_value = level < 0 ? -value : value;
+  return static_cast<std::int32_t>(expected_clip(signed_value, bit_depth));
+}
+
+// §7.14.4 uses get_tx_class(PlaneTxType) == TX_CLASS_2D.  Only the six
+// directional types are VERT/HORIZ; IDTX (9) and every 2-D type are 2D.
+bool expected_tx_class_2d(int tx_type) {
+  switch (tx_type) {
+    case 10:  // V_DCT
+    case 11:  // H_DCT
+    case 12:  // V_ADST
+    case 13:  // H_ADST
+    case 14:  // V_FLIPADST
+    case 15:  // H_FLIPADST
+      return false;
+    default:
+      return true;
+  }
 }
 
 int expected_denom(int tx_size, int plane, bool allow_tcq, bool lossless,
@@ -195,7 +223,10 @@ int expected_denom(int tx_size, int plane, bool allow_tcq, bool lossless,
   const int h = av2enc::qm::tx_height(tx_size);
   const int pels = w * h;
   int shift = (pels > 256 ? 1 : 0) + (pels > 1024 ? 1 : 0);
-  if (allow_tcq && plane == 0 && !lossless && tx_type < 9) ++shift;
+  if (allow_tcq && plane == 0 && !lossless &&
+      expected_tx_class_2d(tx_type)) {
+    ++shift;
+  }
   return 1 << shift;
 }
 
@@ -407,45 +438,103 @@ void test_allow_tcq_shift() {
   QmDequantParams params;
   params.state = &state;
   params.plane = 0;
-  params.tx_type = 0;
   params.dc_quant = 64;
   params.ac_quant = 132;
-  const std::int32_t levels[16] = {0, 1, 0, 0, 0, 0, 0, 0,
-                                   0, 0, 0, 0, 0, 0, 0, 0};
-  std::int32_t dequant[16] = {};
 
   for (int tx : {1, 2, 3, 4}) {  // 8x8, 16x16, 32x32, 64x64
     params.tx_size = tx;
     const int n = adjusted_width(tx) * adjusted_height(tx);
-    std::vector<std::int32_t> big_levels(static_cast<std::size_t>(n), 0);
+    std::vector<std::int32_t> levels(static_cast<std::size_t>(n), 0);
     std::vector<std::int32_t> out(static_cast<std::size_t>(n), 0);
-    big_levels[1] = 5;
+    levels[1] = 5;
+
+    params.tx_type = 0;  // DCT_DCT, TX_CLASS_2D
     params.allow_tcq = false;
-    CHECK(dequantize_block(big_levels.data(), params, out.data()));
+    CHECK(dequantize_block(levels.data(), params, out.data()));
     const int denom_no = expected_denom(tx, 0, false, false, 0);
-    const std::int32_t want_no = expected_dequant(5, 132, denom_no);
-    CHECK_EQ(out[1], want_no);
+    CHECK_EQ(out[1], expected_dequant(5, 132, denom_no));
 
     params.allow_tcq = true;
-    CHECK(dequantize_block(big_levels.data(), params, out.data()));
+    CHECK(dequantize_block(levels.data(), params, out.data()));
     const int denom_tcq = expected_denom(tx, 0, true, false, 0);
     CHECK_EQ(out[1], expected_dequant(5, 132, denom_tcq));
     CHECK(denom_tcq == denom_no * 2);
 
     // Chroma gets no TCQ shift.
     params.plane = 1;
-    CHECK(dequantize_block(big_levels.data(), params, out.data()));
+    CHECK(dequantize_block(levels.data(), params, out.data()));
     CHECK_EQ(out[1], expected_dequant(5, 132, denom_no));
     params.plane = 0;
 
-    // Nor does IDTX / a 1-D TX type.
+    // §7.14.4 says get_tx_class(PlaneTxType) == TX_CLASS_2D, and IDTX is 2D.
+    // QM itself does not apply to IDTX (PlaneTxType < IDTX fails), but the
+    // TCQ dqDenom shift does.
+    params.tx_type = 9;  // IDTX
+    CHECK(dequantize_block(levels.data(), params, out.data()));
+    CHECK_EQ(out[1], expected_dequant(5, 132, denom_tcq));
+
+    // The six V_*/H_* directional types are TX_CLASS_VERT/HORIZ: no shift.
+    for (int tx_type : {10, 11, 12, 13, 14, 15}) {
+      params.tx_type = tx_type;
+      CHECK(dequantize_block(levels.data(), params, out.data()));
+      CHECK_EQ(out[1], expected_dequant(5, 132, denom_no));
+    }
+
+    // Lossless also disables the TCQ shift.
     params.tx_type = 9;
-    CHECK(dequantize_block(big_levels.data(), params, out.data()));
+    params.lossless = true;
+    CHECK(dequantize_block(levels.data(), params, out.data()));
     CHECK_EQ(out[1], expected_dequant(5, 132, denom_no));
-    params.tx_type = 0;
+    params.lossless = false;
+
+    // FSC with IDTX also disables it.
+    params.use_fsc = true;
+    CHECK(dequantize_block(levels.data(), params, out.data()));
+    CHECK_EQ(out[1], expected_dequant(5, 132, denom_no));
+    params.use_fsc = false;
   }
-  (void)levels;
-  (void)dequant;
+}
+
+void test_dequant_clip_8_10bit() {
+  using namespace av2enc::qm;
+  // No QM, 4x4, dqDenom = 1, q = 528.  §7.14.4 step 6 rounds by 3 bits, so
+  // the unclipped value is level * 528 / 8 = level * 66.
+  const std::int32_t q = 528;
+  const std::int32_t levels[16] = {
+      496,  497,  -496, -497, 1985, 1986, -1985, -1986,
+      1000, -1000, 0,    1,    -1,   2,    -2,    3};
+  for (int bit_depth : {8, 10}) {
+    QmFrameState state;
+    QmDequantParams params;
+    params.state = &state;
+    params.tx_size = 0;
+    params.plane = 0;
+    params.tx_type = 0;
+    params.dc_quant = q;
+    params.ac_quant = q;
+    params.bit_depth = bit_depth;
+    std::int32_t dequant[16] = {};
+    CHECK(dequantize_block(levels, params, dequant));
+    for (int i = 0; i < 16; ++i) {
+      CHECK_EQ(dequant[i],
+               expected_dequant(levels[i], q, 1, bit_depth));
+    }
+    const std::int64_t bound =
+        static_cast<std::int64_t>(1) << (7 + bit_depth);
+    // Explicit bound checks, not just the shared reference.
+    if (bit_depth == 8) {
+      CHECK_EQ(dequant[0], 496 * 66);                               // 32736
+      CHECK_EQ(dequant[1], static_cast<std::int32_t>(bound - 1));   // +32767
+      CHECK_EQ(dequant[3], static_cast<std::int32_t>(-bound));      // -32768
+      CHECK_EQ(dequant[9], static_cast<std::int32_t>(-bound));      // -66000
+    } else {
+      CHECK_EQ(dequant[4], 1985 * 66);                              // 131010
+      CHECK_EQ(dequant[5], static_cast<std::int32_t>(bound - 1));   // +131071
+      CHECK_EQ(dequant[7], static_cast<std::int32_t>(-bound));      // -131072
+      CHECK_EQ(dequant[9], -1000 * 66);                             // no clip
+    }
+    CHECK(dequant[8] > 0);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -834,6 +923,7 @@ int main() {
   test_dequant_all_sizes_and_denoms();
   test_level_gating_and_planes();
   test_allow_tcq_shift();
+  test_dequant_clip_8_10bit();
   test_user_qm_selection();
   test_user_qm_serialization();
   test_qm_obu_writer();

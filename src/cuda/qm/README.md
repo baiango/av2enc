@@ -29,7 +29,8 @@ are rejected through `status` for an invalid TX size, plane, QM level, or a
 non-positive DC/AC quantizer.
 
 `Job` carries `seg_qm_level`, `qm_level` (the plane's `qm_y/u/v[0]`),
-`using_qmatrix`, `qm_data_present`, `allow_tcq`, `lossless`, `use_fsc`.
+`bit_depth` (the §7.14.4 Clip3 bound), `using_qmatrix`, `qm_data_present`,
+`allow_tcq`, `lossless`, `use_fsc`.
 `UserQmLevel` is exactly 576 bytes in the CPU header, so the flattened
 `[level][t][plane][i][j]` upload matches `core::user_qm_index()`.
 
@@ -42,7 +43,8 @@ dequantized coefficient of the CPU reference and the GPU kernel for:
 * levels 0..15 (15 = QM off);
 * planes 0/1/2 (8-bit 4:2:0);
 * TX types 0..15 (2-D vs IDTX/1-D gating);
-* QM on/off, user-QM data present/absent, TCQ luma shift, lossless;
+* QM on/off, user-QM data present/absent, TCQ luma shift (including IDTX as
+  TX_CLASS_2D), lossless, 8-bit and 10-bit clip bounds;
 * invalid jobs (bad TX size, plane, or quantizer) reported as `status = -1`.
 
 The test allocates with `cudaMalloc`; it is a component test, not a hot path.

@@ -46,7 +46,8 @@ For a coded `txSz`:
 tw = min(32, Tx_Width[txSz]);  th = min(32, Tx_Height[txSz])
 pels = Tx_Width[txSz] * Tx_Height[txSz]
 shift = (pels > 256) + (pels > 1024)
-shift += allow_tcq && plane == 0 && !lossless && tx_type < IDTX && !use_fsc
+shift += allow_tcq && plane == 0 && !lossless &&
+         get_tx_class(PlaneTxType) == TX_CLASS_2D && !use_fsc
 dqDenom = 1 << shift
 
 segLvl = (tw > 8 || th > 8) ? qm_y/qm_u/qm_v[0] : SegQMLevel[plane][segment]
@@ -59,8 +60,16 @@ m = useUserQm ? UserQm[segLvl][t][plane][...]
 q2 = useQm ? Round2(q * m, 5) : q
 dqHigh = abs(level) * q2
 dq = Round2(dqHigh & 0xFFFFFF, 3)
-dequant = sign(level) * (dq / dqDenom)
+dq2 = sign(level) * (dq / dqDenom)
+Dequant = Clip3(-(1 << (7 + BitDepth)), (1 << (7 + BitDepth)) - 1, dq2)
 ```
+
+`get_tx_class(PlaneTxType) == TX_CLASS_2D` is true for IDTX (9) and all
+non-directional types; only V_DCT/H_DCT/V_ADST/H_ADST/V_FLIPADST/H_FLIPADST
+(10..15) are VERT/HORIZ. That is a different predicate from `useQm`, which
+requires `PlaneTxType < IDTX`: IDTX gets the TCQ dqDenom shift but no QM.
+The final clip is §7.14.4 step 8; `bit_depth` is an explicit
+`QmDequantParams`/`Job` field (8, 10, and 12 accepted).
 
 User-QM selection inside `tw <= 8 && th <= 8`:
 
@@ -73,10 +82,10 @@ User-QM selection inside `tw <= 8 && th <= 8`:
 This is the exact §7.14.4 `useUserQm` branch. Larger transforms always use the
 default table, even when a user QM level is signalled.
 
-`dequantize_block()` returns the §7.14.4 `dq2` values before the int16 clip
-that `tx_variants::dequantize()` applies. Integration code that keeps that clip
-should apply it after the QM-aware dequant (it is the same clip already used by
-the M1/M2 recon paths).
+`dequantize_block()` applies the normative §7.14.4 `Clip3` to the
+BitDepth-dependent bound and then returns the stored `Dequant` values. This is
+the same bound the M1/M2 recon paths use (`1 << (7 + BitDepth)`); they should
+not apply an additional different clip.
 
 ## API
 
@@ -97,6 +106,7 @@ p.plane = 0;
 p.tx_type = 0;                        // DCT_DCT (< IDTX)
 p.dc_quant = 64;
 p.ac_quant = 132;
+p.bit_depth = 8;
 
 std::int32_t q2[1024];
 std::int32_t dequant[1024];
@@ -129,14 +139,17 @@ auto bytes = av2enc::qm::make_quantizer_matrix_obu(obu, &error);
 
 * generated-table shape, every `Qm_Offset`, golden luma/chroma entries;
 * all 25 TX sizes × 15 levels × luma/chroma, q2 and dequant;
-* `dqDenom` for 4x4…64x64, rectangular sizes, TCQ luma extra shift;
-* `using_qmatrix` off, level 15, IDTX/1-D TX types, lossless segment;
+* `dqDenom` for 4x4…64x64, rectangular sizes, TCQ luma extra shift
+  (including the IDTX-is-TX_CLASS_2D distinction);
+* `using_qmatrix` off, level 15, IDTX/1-D TX types, lossless/FSC;
+* the §7.14.4 `Clip3` bound at 8-bit and 10-bit, including values just below
+  and just above the bound;
 * user-QM selection for 4x4/8x8/8x4/4x8 and fallback for 8x16/32x32;
 * `user_defined_qm()` round-trip (symmetric 8x8, transposed 4x8, copies,
   random matrices) and `quantizer_matrix_obu()` round-trip;
 * `setup_qm_params()` bit layouts (`uv_same`, separate U/V, mono, off).
 
-Result on this host: **258,446 checks, 0 failures** (release and
+Result on this host: **258,554 checks, 0 failures** (release and
 ASan+UBSan).
 
 `./qm_gate.sh`:
@@ -232,8 +245,9 @@ Decoder-side (not implemented here):
 
 ## Limitations
 
-* 8-bit lossy path only. No high-bit-depth clip, no lossless DPCM/IDTX, no FSC,
-  no secondary transform (`sec_tx_type`) interaction.
+* Encoder scope is the 8-bit lossy path, but the dequant clip accepts
+  `bit_depth` 8..12 and is tested at 8 and 10. No lossless DPCM, no FSC
+  implementation, no secondary transform (`sec_tx_type`) interaction.
 * No QM OBU listener/parser and no QM OBU availability state machine.
 * No forward-quantizer QM weighting (documented above); this module is the
   normative dequant + syntax writer half.

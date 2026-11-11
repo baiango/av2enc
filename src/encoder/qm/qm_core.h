@@ -104,8 +104,31 @@ AV2ENC_QM_HD inline std::int32_t round2(std::int32_t value, int n) {
 }
 
 // §7.14.4 `PlaneTxType < IDTX`: only the 2-D transform types use a QM.  IDTX
-// (9) and the 1-D types above it do not.
+// (9) and the six directional 1-D types do not.
 AV2ENC_QM_HD inline bool tx_uses_qm(int tx_type) { return tx_type < 9; }
+
+// §7.14.4 get_tx_class(PlaneTxType) == TX_CLASS_2D.  This is *not* the same
+// predicate as tx_uses_qm(): get_tx_class() returns VERT/HORIZ only for the
+// six V_*/H_* types (10..15), so IDTX (9) is TX_CLASS_2D and gets the TCQ
+// dqDenom shift even though it does not use a quantizer matrix.
+AV2ENC_QM_HD inline bool tx_class_is_2d(int tx_type) {
+  switch (tx_type) {
+    case 10:  // V_DCT
+    case 11:  // H_DCT
+    case 12:  // V_ADST
+    case 13:  // H_ADST
+    case 14:  // V_FLIPADST
+    case 15:  // H_FLIPADST
+      return false;
+    default:
+      return true;
+  }
+}
+
+AV2ENC_QM_HD inline std::int32_t clip3(std::int32_t low, std::int32_t high,
+                                       std::int32_t value) {
+  return value < low ? low : (value > high ? high : value);
+}
 
 // Qm_Offset as a device-safe switch (a namespace-scope array indexed by a
 // runtime value is a host variable and cannot be read from device code without
@@ -147,11 +170,12 @@ AV2ENC_QM_HD inline int offset_value(int tx_size) {
 struct CoeffParams {
   int tx_size = 0;
   int plane = 0;        // 0 = Y, 1 = U, 2 = V
-  int tx_type = 0;      // AV2 TX_TYPE; < 9 is a 2-D transform
+  int tx_type = 0;      // AV2 TX_TYPE; < 9 uses a QM (IDTX is still 2-D)
   int seg_qm_level = kNoQmLevel;  // SegQMLevel[plane][segment_id]
   int qm_level = kNoQmLevel;      // qm_y[0] / qm_u[0] / qm_v[0] for >8x8
   int dc_quant = 0;     // get_dc_quant(plane)
   int ac_quant = 0;     // get_ac_quant(plane)
+  int bit_depth = 8;    // BitDepth for the §7.14.4 Clip3 bound
   bool using_qmatrix = false;
   bool qm_data_present = false;  // QmDataPresent[segLvl]
   bool allow_tcq = false;
@@ -231,16 +255,19 @@ AV2ENC_QM_HD inline std::int32_t quant_value(const CoeffParams& p,
 AV2ENC_QM_HD inline int dequant_denom(const CoeffParams& p) {
   const int pels = coded_width(p.tx_size) * coded_height(p.tx_size);
   int shift = (pels > 256 ? 1 : 0) + (pels > 1024 ? 1 : 0);
-  if (p.allow_tcq && p.plane == 0 && !p.lossless && tx_uses_qm(p.tx_type) &&
-      !p.use_fsc) {
+  if (p.allow_tcq && p.plane == 0 && !p.lossless &&
+      tx_class_is_2d(p.tx_type) && !p.use_fsc) {
     ++shift;
   }
   return 1 << shift;
 }
 
-// One dequantized coefficient from a signed level and its q2.
+// One dequantized coefficient from a signed level and its q2.  Step 8 of
+// §7.14.4 clips the result to [-(1 << (7 + BitDepth)),
+// (1 << (7 + BitDepth)) - 1] before it is stored in Dequant.
 AV2ENC_QM_HD inline std::int32_t dequant_coeff(std::int32_t level,
-                                               std::int32_t q2, int denom) {
+                                               std::int32_t q2, int denom,
+                                               int bit_depth) {
   const std::int32_t sign = level < 0 ? -1 : 1;
   const std::int64_t magnitude =
       level < 0 ? -static_cast<std::int64_t>(level)
@@ -249,7 +276,9 @@ AV2ENC_QM_HD inline std::int32_t dequant_coeff(std::int32_t level,
   const std::int32_t masked =
       static_cast<std::int32_t>(high & 0xFFFFFFLL);
   const std::int32_t dq = round2(masked, 3);  // QUANT_TABLE_BITS
-  return sign * (dq / denom);
+  const std::int32_t value = sign * (dq / denom);
+  const std::int32_t bound = 1 << (7 + bit_depth);
+  return clip3(-bound, bound - 1, value);
 }
 
 // Shared block drivers.  The CPU reference and the CUDA kernel both call
@@ -277,7 +306,8 @@ AV2ENC_QM_HD inline void dequantize_block(const CoeffParams& p,
     for (int j = 0; j < tw; ++j) {
       const int index = i * tw + j;
       const std::int32_t q2 = quant_value(p, seg_level, i, j);
-      dequant[index] = dequant_coeff(levels[index], q2, denom);
+      dequant[index] =
+          dequant_coeff(levels[index], q2, denom, p.bit_depth);
     }
   }
 }

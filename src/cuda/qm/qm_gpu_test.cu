@@ -84,7 +84,7 @@ struct Case {
 void add_job(Case* test, int tx_size, int plane, int tx_type, int seg_level,
              int qm_level, bool using_qmatrix, bool data_present,
              bool allow_tcq, bool lossless, int dc_quant, int ac_quant,
-             std::mt19937* rng) {
+             int bit_depth, std::mt19937* rng) {
   Job job;
   job.level_offset = static_cast<std::int32_t>(test->levels.size());
   job.dequant_offset = static_cast<std::int32_t>(test->dequant_cpu.size());
@@ -95,6 +95,7 @@ void add_job(Case* test, int tx_size, int plane, int tx_type, int seg_level,
   job.qm_level = qm_level;
   job.dc_quant = dc_quant;
   job.ac_quant = ac_quant;
+  job.bit_depth = bit_depth;
   job.using_qmatrix = using_qmatrix ? 1 : 0;
   job.qm_data_present = data_present ? 1 : 0;
   job.allow_tcq = allow_tcq ? 1 : 0;
@@ -138,6 +139,7 @@ void run_cpu_reference(Case* test) {
     params.segment_id = 0;
     params.dc_quant = job.dc_quant;
     params.ac_quant = job.ac_quant;
+    params.bit_depth = job.bit_depth;
     params.allow_tcq = job.allow_tcq != 0;
     params.lossless = job.lossless != 0;
     params.use_fsc = job.use_fsc != 0;
@@ -221,7 +223,7 @@ void test_parity() {
       const int q = quant_values[(tx + level) % 4];
       add_job(&test, tx, plane, tx_type, level, level % 16,
               (level % 3) != 0, (level % 2) == 0, (level % 5) == 0,
-              level == 15, q, q + 1, &rng);
+              level == 15, q, q + 1, (tx + level) % 2 == 0 ? 8 : 10, &rng);
     }
   }
   // Extra randomized jobs, including 8x8-and-smaller user-QM paths.
@@ -233,7 +235,7 @@ void test_parity() {
     const int q = quant_values[rng() % 4];
     add_job(&test, tx, plane, tx_type, level, level,
             (i % 4) != 0, (i % 3) != 0, (i % 2) == 0, false, q, q + 7,
-            &rng);
+            (i % 2) == 0 ? 8 : 10, &rng);
   }
 
   run_cpu_reference(&test);
@@ -261,9 +263,14 @@ void test_invalid_jobs() {
   std::mt19937 rng(7);
   Case test;
   fill_user_qms(&test.state, &rng);
-  add_job(&test, 25, 0, 0, 0, 0, true, true, false, false, 64, 132, &rng);
-  add_job(&test, 0, 3, 0, 0, 0, true, true, false, false, 64, 132, &rng);
-  add_job(&test, 0, 0, 0, 0, 0, true, true, false, false, 0, 132, &rng);
+  add_job(&test, 25, 0, 0, 0, 0, true, true, false, false, 64, 132, 8,
+          &rng);
+  add_job(&test, 0, 3, 0, 0, 0, true, true, false, false, 64, 132, 8,
+          &rng);
+  add_job(&test, 0, 0, 0, 0, 0, true, true, false, false, 0, 132, 8,
+          &rng);
+  add_job(&test, 0, 0, 0, 0, 0, true, true, false, false, 64, 132, 13,
+          &rng);
   run_cpu_reference(&test);
   run_gpu(&test);
   for (std::size_t i = 0; i < test.status.size(); ++i) {

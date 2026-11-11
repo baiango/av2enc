@@ -7,10 +7,11 @@
 //   * §5.18.6.2  setup_qm_params()
 //   * §7.14.4    dequantization with q2 = Round2(q * m, 5)
 //
-// Scope: lossy 8-bit 4:2:0.  Levels 0..14 index the normative matrices; level
-// 15 is the §7.14.4 sentinel that switches QM off (lossless segments set
-// SegQMLevel = 15).  User QM data is defined for the three fundamental
-// matrices (8x8, 8x4, 4x8) only, matching §5.4.11.
+// Scope: lossy 8-bit 4:2:0 encoder path.  The §7.14.4 dequant clip takes an
+// explicit BitDepth (8..12; tested at 8 and 10).  Levels 0..14 index the
+// normative matrices; level 15 is the §7.14.4 sentinel that switches QM off
+// (lossless segments set SegQMLevel = 15).  User QM data is defined for the
+// three fundamental matrices (8x8, 8x4, 4x8) only, matching §5.4.11.
 //
 // The CUDA half lives in src/cuda/qm/.  Both halves call the same
 // `qm_core.h` integer helpers, so the arithmetic is bit-exact.
@@ -69,6 +70,7 @@ struct QmDequantParams {
   int segment_id = 0;
   int dc_quant = 0;
   int ac_quant = 0;
+  int bit_depth = 8;  // BitDepth for the §7.14.4 Clip3 bound
   bool allow_tcq = false;
   bool lossless = false;
   bool use_fsc = false;

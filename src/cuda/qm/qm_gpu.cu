@@ -18,6 +18,7 @@ __device__ __forceinline__ bool valid_job(const Job& job) {
   if (job.seg_qm_level < 0 || job.seg_qm_level > 15) return false;
   if (job.qm_level < 0 || job.qm_level > 15) return false;
   if (job.dc_quant <= 0 || job.ac_quant <= 0) return false;
+  if (job.bit_depth < 8 || job.bit_depth > 12) return false;
   return true;
 }
 
@@ -37,6 +38,7 @@ __global__ void dequantize_kernel(Batch batch) {
   params.qm_level = job.qm_level;
   params.dc_quant = job.dc_quant;
   params.ac_quant = job.ac_quant;
+  params.bit_depth = job.bit_depth;
   params.using_qmatrix = job.using_qmatrix != 0;
   params.qm_data_present = job.qm_data_present != 0;
   params.allow_tcq = job.allow_tcq != 0;

@@ -33,6 +33,7 @@ struct Job {
   std::int32_t qm_level = 15;
   std::int32_t dc_quant = 0;
   std::int32_t ac_quant = 0;
+  std::int32_t bit_depth = 8;       // BitDepth for the §7.14.4 Clip3 bound
   std::int32_t using_qmatrix = 0;
   std::int32_t qm_data_present = 0;
   std::int32_t allow_tcq = 0;

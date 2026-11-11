@@ -245,6 +245,7 @@ bool make_core_params(const QmDequantParams& params, core::CoeffParams* out,
   if (params.plane < 0 || params.plane > 2) return false;
   if (params.segment_id < 0 || params.segment_id >= kMaxSegments) return false;
   if (params.dc_quant <= 0 || params.ac_quant <= 0) return false;
+  if (params.bit_depth < 8 || params.bit_depth > 12) return false;
 
   const QmFrameState& state = *params.state;
   const int seg_level =
@@ -264,6 +265,7 @@ bool make_core_params(const QmDequantParams& params, core::CoeffParams* out,
   }
   core_params.dc_quant = params.dc_quant;
   core_params.ac_quant = params.ac_quant;
+  core_params.bit_depth = params.bit_depth;
   core_params.using_qmatrix = state.using_qmatrix;
   core_params.qm_data_present =
       seg_level >= 0 && seg_level < kNumQmLevels
