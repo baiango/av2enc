@@ -9,6 +9,25 @@ refactor is finished.** Integration is a separate pass that starts only after
 Phase 7, so it is done once, against the final directory layout, instead of
 twice.
 
+## 0. Feature freeze policy
+
+Adding a feature after a freeze is more expensive than removing one, so the
+order is deliberate:
+
+1. **The freeze starts only when no spec-audit row is unclassified.** Every
+   `ABSENT`/`PARTIAL` row must be IMPLEMENTED, INTEGRATION, OUT-OF-SCOPE or
+   IMPOSSIBLE with evidence (`docs/spec-audit/README.md`).
+2. Until then, newly found gaps land **immediately** as leaf modules in their
+   target domain (`src/encoder/<domain>/<tool>/`), never in core, and never
+   with `CMakeLists.txt` edits.
+3. Late modules cost one row in `refactor/mapping.csv`; the mapping is data, so
+   they do not force a rebase of the move.
+4. **No `src/encoder/**` path is moved while a feature agent owns it.** The
+   refactor runs in lanes that cannot collide: build graph (`CMakeLists.txt`),
+   `tools/refactor/`, docs, tests, and removal of ignored build artifacts.
+5. Removal after the freeze is cheap and expected; duplication and dead
+   components are deleted then, not now.
+
 ## 1. Why this is now urgent
 
 The repository grew by ~20 independent components in one wave. Measured state:
