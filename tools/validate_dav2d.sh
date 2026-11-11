@@ -6,7 +6,7 @@
 #
 # Env:
 #   DAV2D=/path/to/dav2d     override decoder (else tools/bin/dav2d[-macos])
-#   THREADS=8                decoder threads (default 0 = auto)
+#   THREADS=8                decoder threads (default 1 = deterministic)
 #   KEEP=1                   keep decoded Y4M (prints path)
 #   EXPECTED_MD5=...         fail if decoded MD5 differs
 #   DAV2D_ARGS="..."         replace the default decode arguments entirely
@@ -70,7 +70,7 @@ if [ -n "${DAV2D_ARGS:-}" ]; then
     # shellcheck disable=SC2086
     "$DAV2D" $DAV2D_ARGS
 else
-    if ! "$DAV2D" -q -i "$IVF" -o "$OUT" --threads "${THREADS:-0}"; then
+    if ! "$DAV2D" -q -i "$IVF" -o "$OUT" --threads "${THREADS:-1}"; then
         echo "error: dav2d failed to decode $IVF; decoder help follows" >&2
         "$DAV2D" --help 2>&1 | head -40 >&2 || true
         exit 1

@@ -77,7 +77,7 @@ run_case() {
 
     if [ -n "$expected_md5" ]; then
         local got
-        got=$("$DECODER" -q -i "$ivf" --muxer md5 -o - 2>/dev/null | tail -1)
+        got=$("$DECODER" -q -i "$ivf" --muxer md5 -o - --threads 1 2>/dev/null | tail -1)
         [ "$got" = "$expected_md5" ] ||
             fail "$name: decoded MD5 $got != $expected_md5"
     fi
@@ -86,16 +86,16 @@ run_case() {
 
 # Five reported sizes. The first three are representable by M0 after the edge
 # recursion + transform fixes; the last two need sub-32 blocks and fall back.
-run_case 1280x720      1280  720 0 769dca5c691621f5899a1d63022e6412
+run_case 1280x720      1280  720 0 62a9bd644486622dea97a135452b41b3
 run_case 136x88         136   88 1 ""
-run_case 416x208        416  208 0 b62cacb0014e5d36355ed21683703d63
+run_case 416x208        416  208 0 8e08a5cc791e07da4b562c9295829075
 run_case 518x322        518  322 1 ""
-run_case 532x368        532  368 0 5d198fc4d7cae49dc305ad09a0f1702a
+run_case 532x368        532  368 0 e9cbf5aa78ebac6aa0f9e14b91559ea7
 
 # Regressions: pinned 64x64 / 640x360 sizes and the native 1080p frame.
 run_case 64x64           64   64 0 d4a98234aee1f8384af95b9aaed95d54
-run_case 640x360        640  360 0 e8cb8e74434433a0e5780e30abdef1a6
-run_case 1920x1080     1920 1080 0 2f24bdbb1c402e107f309cc2adec663f
+run_case 640x360        640  360 0 3df400935025df6e914830349d38a9a9
+run_case 1920x1080     1920 1080 0 fbbef81e45fcff162dde6c71a0b56a7d
 # 32x8 edge-leaf path (bottom remainder 2 pixels).
 run_case 128x66         128   66 0 90e1f9ee08e29e43cbe5051b54f5f475
 

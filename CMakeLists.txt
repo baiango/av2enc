@@ -104,6 +104,12 @@ add_library(av2enc_core STATIC
 target_include_directories(av2enc_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(av2enc_core PUBLIC cxx_std_20)
 av2enc_apply_warnings(av2enc_core)
+# The CPU reference must be bit-identical across compilers and platforms. The
+# M0/M1 forward transforms use binary64; FMA contraction changes coefficients
+# and therefore the bitstream.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(av2enc_core PRIVATE -ffp-contract=off)
+endif()
 
 if(AV2ENC_HAVE_CUDA)
   find_package(CUDAToolkit REQUIRED)
@@ -213,6 +219,16 @@ av2enc_apply_warnings(av2enc)
 include(CTest)
 if(BUILD_TESTING)
   add_subdirectory(tests)
+
+  # Host-only GpuOptions plumbing test (no CUDA toolkit or device needed):
+  # every M3 flag must be mapped into the CPU parity configuration and every
+  # unported tool must be rejected by name, never silently ignored.
+  add_executable(m1_gpu_options_test src/cuda/m1/m1_gpu_options_test.cpp)
+  target_include_directories(m1_gpu_options_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_compile_features(m1_gpu_options_test PRIVATE cxx_std_20)
+  av2enc_apply_warnings(m1_gpu_options_test)
+  add_test(NAME m1_gpu_options_test COMMAND m1_gpu_options_test)
 
   # Opt-in M1 tools: pinned IVF MD5s + dav2d --strict 1 decode.  The script
   # exits 77 when no decoder is available, which CTest reports as a skip.
