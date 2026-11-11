@@ -117,10 +117,11 @@ Design rules:
   GPU implementation, tests, and gate. No more `encoder/x` + `encoder/m1/x_stream`
   + `cuda/x` triples.
 - **Depth is capped at four** below `src/`.
-- **Front-ends are out of scope for now.** `src/encoder/m0_still.cpp`,
-  `src/encoder/m1/`, `src/encoder/m2/`, and `src/encoder/m10/` keep their
-  current paths; they will be re-pointed at the consolidated tools but not
-  reorganized into a separate layer in this pass.
+- **No profile layer in this pass.** The existing `m0`/`m1`/`m2`/`m10`
+  directories are dissolved: stream-writing logic moves to `pipeline/`,
+  tool selection moves to one temporary entry point, and the profile concept
+  is designed fresh afterwards. Carrying the current profile shape through the
+  refactor would bake the old layering into the new tree.
 - **GPU code is co-located** (`<tool>/gpu/`), because it is always parallel to
   the CPU path and drifts when separated. Targets stay split so CPU-only builds
   remain possible.
@@ -153,8 +154,8 @@ src/
   frame/                    # sequence header, frame header, syntax primitives
   pipeline/
     still/  video/  tiled/  svc/  grain/  dispatch/
-  encoder/                  # unchanged front-ends (m0/m1/m2/m10) for now
-    m0_still.cpp  m1/  m2/  m10/
+  app/                      # temporary composition root (see note below)
+    encode.cpp
   gpu/
     common/                 # arena, streams, events, staging
 tests/
@@ -177,7 +178,12 @@ Mapping of today's directories:
 | `src/encoder/tiles` + `m1/tiles_stream` + `m2/post/tiled_frame` | `pipeline/tiled/` |
 | `src/encoder/filters/restoration/{classes,spec_tables}` | `codec/filters/{lr,pc_wiener,gdf}` |
 | `src/encoder/{qm,tx_secondary,tcq}` | `codec/transform/…` |
-| `src/encoder/{m0_still,m1,m2,m10}` | unchanged (deferred) |
+| `src/encoder/m0_still.cpp` | `pipeline/still/` writer + `app/` defaults |
+| `src/encoder/m1/{m1_still,m1_syntax,m1_headers}` | `pipeline/still/` + `codec/*` hooks |
+| `src/encoder/m1/<tool>_stream` | `codec/<domain>/<tool>/stream` |
+| `src/encoder/m2/*` | `pipeline/video/` + `frame/` |
+| `src/encoder/m10/*` | `pipeline/still/` (high-bit-depth path) |
+| `src/encoder/pipeline`, `tiles`, `svc` | `pipeline/…` |
 | `src/encoder/rc/twopass` | `codec/rate/rc/twopass` |
 | `src/encoder/svc` | `pipeline/svc` |
 | `src/encoder/hdr` | `frame/metadata/hdr` |
@@ -218,7 +224,27 @@ the exact same entry points, and make the tool export a single header
 
 Exit per tool: its gate passes and the pinned streams are unchanged.
 
-### Phase 4 — de-duplicate shared math
+### Phase 4 — dissolve the profile directories
+
+There is no target `profiles/` in this plan, and no preservation of the current
+`m0/m1/m2/m10` shape. Work through the front-ends once, in this order:
+
+1. Move stream assembly (sequence header + frame header + tile payload + OBU
+   framing) out of `m0_still.cpp`, `m1_still.cpp`, `m2_frame.cpp`, and `m10`
+   into `pipeline/still/` and `pipeline/video/`. This code is format logic, not
+   profile logic, and is what most profiles will share.
+2. Move per-profile defaults (tool set, QP policy, search effort, enabled
+   features) into one flat `app/encode.cpp` with an explicit options struct.
+   It must be boring and temporary: one translation unit, no `app/m0/`,
+   `app/m1/` subdirectories.
+3. Delete `src/encoder/m0_still.cpp`, `src/encoder/m1/`, `src/encoder/m2/`,
+   `src/encoder/m10/` once nothing includes them.
+
+Exit: the same streams from the same CLI flags, with the profile shape gone.
+A new profile layer can then be designed against `pipeline/` + `codec/` without
+inheriting the current directory layout.
+
+### Phase 5 — de-duplicate shared math
 
 Introduce `codec/common/` (or extend `spec/`) with a single implementation of
 `Round2`, `Round2Signed`, `Clip1/3`, `qlookup`, `get_qindex`, coefficient-CDF
@@ -226,7 +252,7 @@ selection. Replace the 56/19/19 copies. **This is a behavior-bearing phase**:
 gate each replacement individually, because a "harmless" rounding difference
 changes the bitstream.
 
-### Phase 5 — split the mega-files
+### Phase 6 — split the mega-files
 
 Current hotspots and a target decomposition:
 
@@ -235,7 +261,7 @@ Current hotspots and a target decomposition:
 | `encoder/lossless/lossless.cpp` | 3,291 | dpcm / fsc / lossless-q |
 | `encoder/m1/filters_stream/filters_stream.cpp` | 2,340 | cdef / ccso / lr / deblock syntax |
 | `cuda/m1/m1_gpu.cu` | 2,245 | stage launchers per tool |
-| `encoder/m0_still.cpp` | 2,161 | deferred with the M0 front-end |
+| `encoder/m0_still.cpp` | 2,161 | still writer moved to `pipeline/still` in phase 4 |
 | `encoder/m2/m2_syntax.cpp` | 2,102 | frame syntax / block syntax / coefficient coding |
 | `encoder/m1/m1_still.cpp` | 1,881 | decision / quant / recon / entropy |
 | `encoder/rc/twopass/twopass.cpp` | 1,758 | allocation / VBV / planning |
@@ -244,7 +270,7 @@ Splitting these is the highest-risk part of the refactor. Do one file per
 commit, moving functions verbatim, with `nm` diffing of the object files before
 and after to prove the symbol set only reorganizes.
 
-### Phase 6 — namespaces and docs
+### Phase 7 — namespaces and docs
 
 - Make namespace mirror path: `av2enc::codec::intra::mrl`, etc. A namespace
   rename is a separate commit per top-level namespace, no logic edits.
@@ -279,10 +305,11 @@ and after to prove the symbol set only reorganizes.
 | 1 explicit build graph | 1–2 sessions | medium (FP flags) |
 | 2 leaf moves | 1 session | low |
 | 3 tool consolidation | 4–6 sessions | medium |
-| 4 shared math | 2–3 sessions | **high** (bitstream) |
-| 5 mega-file splits | 3–5 sessions | **high** |
-| 6 namespaces + docs | 2 sessions | low |
+| 4 dissolve profiles | 3–4 sessions | **high** (front-end wiring) |
+| 5 shared math | 2–3 sessions | **high** (bitstream) |
+| 6 mega-file splits | 3–5 sessions | **high** |
+| 7 namespaces + docs | 2 sessions | low |
 
-Total roughly two working weeks of focused sessions, dominated by phases 4
-and 5. Phase 0 is worth doing now even if the rest waits: the baseline manifest
+Total roughly two and a half working weeks of focused sessions, dominated by
+phases 4-6. Phase 0 is worth doing now even if the rest waits: the baseline manifest
 and inventory are useful immediately for wiring the 19 pending components.
