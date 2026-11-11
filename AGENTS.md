@@ -1,5 +1,9 @@
 # Agent instructions
 
+> **Docs go stale in hours.** This repo moves fast; when a document disagrees
+> with the code or tests, the **code and tests win**. Read the implementation
+> before trusting a status line or table.
+
 Read these before writing code:
 
 1. `README.md`

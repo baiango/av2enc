@@ -8,6 +8,10 @@
 > `docs/negative-results.md` before coding. Do not repeat listed failed
 > approaches.
 
+> **Docs go stale in hours.** This is an active research codebase that changes
+> fast. Documents, tables, and status notes can lag the code. When they
+> disagree, the **code and tests are authoritative** — read the implementation.
+
 ## Status (2026-11-11)
 
 **First frames decode with `dav2d`, on both CPU and CUDA.** The CUDA M0 path
