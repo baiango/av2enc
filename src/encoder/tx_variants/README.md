@@ -202,6 +202,61 @@ artifacts are written into the repo. If `nvcc` is present it also builds and
 runs the CUDA component test; otherwise it prints a note that the CUDA half
 must run on the `sm_86` Linux box.
 
+## End-to-end bit-exactness notes (dav2d)
+
+The transform arithmetic was checked against `dav2d` f9dafbc with forced-DC
+streams and a reconstruction harness using **matching encoder options**:
+
+| Stream | Luma samples | Differing samples |
+|---|---:|---:|
+| 512x64 crop, `--m1-depth 0`, DC | 32,768 | **0** |
+| 640x360, default depth, DC | 230,400 | **0** |
+
+The 640x360 DC stream exercises 13 TX sizes end-to-end, including odd-log2
+rectangles (32x64, 64x32, 64x8, 8x64) that use the §7.15.4.1 2896 pre-scale,
+plus 16x16/32x32/64x64 and the rectangular adjusted paths. All match.
+
+**Harness trap:** the `/tmp/dump_m1` helper defaults to
+`M1Options::max_partition_depth = 4`. If the bitstream was encoded with
+`--m1-depth 0`, the harness reconstructs a different partition tree and reports
+spurious differences (e.g. 24,828/230,400 samples on the 640x360 DC stream,
+first at a block boundary, range a few LSB). Set
+`options.max_partition_depth` to the same value as the encoder (and rebuild the
+harness against the current `libav2enc_core.a`) before comparing. With matching
+options the same stream is 0/230,400.
+
+### D45 is not a transform bug
+
+Forced D45 on 640x360 (`base_q_idx 90`, no deblock) decodes to 13.901 dB while
+the encoder reconstruction is 34.682 dB. The first mismatch is at **(318, 64)**,
+inside a **32x8 D45 block at (288, 64)** (trace: `r=16 c=72 size=32x8 eob=51`).
+Using the dumped levels/inverse residual for that block:
+
+- the inverse residual `R` is identical when added to both reconstructions;
+- encoder prediction and decoder prediction differ in **44/256 samples**, all at
+  the block's right edge (row 0 last four: encoder `28 28 28 28`, decoder
+  `28 28 27 26`).
+
+That is a directional-prediction / intra-edge-availability difference
+(`prepare_edges` / top-right or edge-filter behaviour), not
+`txv::inverse_transform` or dequantization. The same 32x8 size is bit-exact in
+the forced-DC stream, where the transform residual is the only variable.
+
+A throwaway (uncommitted, in `/tmp`) patch to `m1_still.cpp` that replaced only
+the current-superblock bounds in `count_top_right` / `count_bottom_left`
+(`x >= sb_w` / `y >= sb_h`) with frame bounds raised the same D45 stream from
+**13.901 dB to 30.410 dB** (diff samples 93,090 → 39,555; still not exact). That
+confirms the failure is in intra edge availability, not in this component, and
+points the remaining work at the M1/intra predictor.
+
+### Only normative change made here
+
+`dequantize()` now applies the missing §7.14.4 output clip
+`Clip3(-(1 << (7 + BitDepth)), ...)` for 8-bit (±32767). The M1 streams in the
+tests never exceed it, so all before/after sample counts above are unchanged;
+it removes a latent spec deviation for high coefficient levels.
+
+
 ## Integration notes (not done here)
 
 - The encode path still uses `src/cuda/transform.*`. Wiring these variants in is

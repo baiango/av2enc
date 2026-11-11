@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -172,11 +173,20 @@ int tx_sz_ctx(int tx_size) {
   return (kTxSizeSqr[tx_size] + kTxSizeSqrUp[tx_size] + 1) >> 1;
 }
 
-// Returns true when transform_type() codes an intra_tx_type symbol for this
-// luma TX block. Intra with sqrUp < 32x32 uses TX_SET_INTRA_1; larger sizes are
-// TX_SET_DCTONLY (no symbol).
-bool luma_tx_type_signalled(int tx_size, int eob) {
-  return kTxSizeSqrUp[tx_size] < 3 && eob != 1 && eob != 0;
+// Transform-type syntax class for an intra luma TX block. Mirrors
+// get_tx_set() for reduced_tx_set = 0 and enable_idtx_intra = 0.
+enum class TxTypeSyntax { kNone, kIntraSet1, kLong32, kLong64 };
+TxTypeSyntax luma_tx_type_syntax(int tx_size, int eob) {
+  if (eob == 0 || eob == 1) return TxTypeSyntax::kNone;
+  const int sqr = kTxSizeSqr[tx_size];
+  const int sqr_up = kTxSizeSqrUp[tx_size];
+  if (sqr_up > 3) {
+    return sqr >= 3 ? TxTypeSyntax::kNone : TxTypeSyntax::kLong64;
+  }
+  if (sqr_up == 3) {
+    return sqr == 3 ? TxTypeSyntax::kNone : TxTypeSyntax::kLong32;
+  }
+  return TxTypeSyntax::kIntraSet1;
 }
 
 struct CdfState {
@@ -211,6 +221,8 @@ struct CdfState {
   std::uint16_t coeff_br_uv[4][5];
   std::uint16_t dc_sign[2][2][3][3];
   std::uint16_t intra_tx_type_set1[3][8];
+  std::uint16_t intra_tx_type_long[4][5];
+  std::uint16_t is_long_side_dct[2][3];
 };
 
 template <typename T, std::size_t N>
@@ -250,6 +262,8 @@ void init_cdfs(CdfState& c) {
   copy_array(c.coeff_br_uv, av2enc::m0::kCoeffBrUvCdf);
   copy_array(c.dc_sign, av2enc::m0::kDcSignCdf);
   copy_array(c.intra_tx_type_set1, av2enc::m0::kIntraTxTypeSet1Cdf);
+  copy_array(c.intra_tx_type_long, kIntraTxTypeLongCdf);
+  copy_array(c.is_long_side_dct, kIsLongSideDctCdf);
 }
 
 struct Plane {
@@ -348,8 +362,14 @@ class Encoder {
 
     mi_cols_ = partition::mi_cols(geometry_);
     mi_rows_ = partition::mi_rows(geometry_);
-    luma_stride_ = mi_cols_ * 4;
-    luma_height_ = mi_rows_ * 4;
+    const int coded_luma_w = mi_cols_ * 4;
+    const int coded_luma_h = mi_rows_ * 4;
+    // The decoder reconstructs a whole coding/transform block even when it
+    // extends past the MiCols*4 x MiRows*4 coded plane. Allocate the usual
+    // 64-sample superblock padding so edge blocks stay in bounds; prediction
+    // still clamps to the coded plane (max_x/max_y below).
+    luma_stride_ = (coded_luma_w + 63) & ~63;
+    luma_height_ = (coded_luma_h + 63) & ~63;
     chroma_stride_ = luma_stride_ / 2;
     chroma_padded_height_ = luma_height_ / 2;
 
@@ -389,11 +409,15 @@ class Encoder {
     clear_above_context();
 
     if (options_.enable_deblock) {
+      deblock_cols_ = mi_cols_;
+      deblock_rows_ = mi_rows_;
+      deblock::DeblockMi neutral;
+      neutral.qindex = options_.base_q_idx;
       for (int plane = 0; plane < 3; ++plane) {
         deblock_mi_[plane].assign(
             static_cast<std::size_t>(mi_cols_) *
                 static_cast<std::size_t>(mi_rows_),
-            deblock::DeblockMi{});
+            neutral);
       }
     }
   }
@@ -417,6 +441,16 @@ class Encoder {
       partition::NodeCosts costs;
       costs.leaf = static_cast<double>(
           block_variance_cost_at(info.mi_row, info.mi_col, info.size));
+      if (std::getenv("AV2ENC_M1_SQUARE_ONLY") != nullptr &&
+          partition::block_width(info.size) !=
+              partition::block_height(info.size)) {
+        costs.leaf += 1.0e18;
+      }
+      if (std::getenv("AV2ENC_M1_LEAF32") != nullptr &&
+          (partition::block_width(info.size) > 32 ||
+           partition::block_height(info.size) > 32)) {
+        costs.leaf += 1.0e18;
+      }
       costs.none_signal = 0.0;
       costs.split_signal = signal_cost;
       costs.horz_signal = signal_cost;
@@ -483,6 +517,8 @@ class Encoder {
   Plane& recon_mut(int plane) { return recon_[plane]; }
   int mi_cols() const { return mi_cols_; }
   int mi_rows() const { return mi_rows_; }
+  int deblock_cols() const { return deblock_cols_; }
+  int deblock_rows() const { return deblock_rows_; }
   const deblock::DeblockMi* deblock_mi(int plane) const {
     return deblock_mi_[plane].data();
   }
@@ -690,23 +726,27 @@ class Encoder {
 
   int count_top_right(int plane, int abs_x4, int abs_y4, int w4) const {
     const int sub = plane == 0 ? 0 : 1;
-    const int sb4p = 16 >> sub;
     const int sb_c0 = sb_mi_col_ >> sub;
     const int sb_r0 = sb_mi_row_ >> sub;
     const int rel_x = abs_x4 - sb_c0;
     const int rel_y = abs_y4 - sb_r0;
     const int sb_w = sb_cols_plane_[plane];
+    // §6.19.2.3 clear_block_decoded_flags: the top border is 1 for
+    // x < (MiColEnd - c), and MiColEnd is the tile end, not the SB end. The
+    // BlockDecoded array extends to 2 * sbSize4, so availability along the
+    // top row covers up to two superblocks (or the tile remainder).
+    const int plane_cols = plane == 0 ? mi_cols_ : mi_cols_ / 2;
+    const int border_w = std::min(2 * (16 >> sub), plane_cols - sb_c0);
     int count = 0;
     for (int i = 0; i < w4; ++i) {
       const int x = rel_x + w4 + i;
-      if (x >= sb_w) break;
+      if (x >= (rel_y == 0 ? border_w : sb_w)) break;
       if (rel_y - 1 >= 0 &&
           !decoded_[plane].at(sb_c0 + x, sb_r0 + rel_y - 1)) {
         break;
       }
       ++count;
     }
-    (void)sb4p;
     return count;
   }
 
@@ -717,10 +757,13 @@ class Encoder {
     const int rel_x = abs_x4 - sb_c0;
     const int rel_y = abs_y4 - sb_r0;
     const int sb_h = sb_rows_plane_[plane];
+    // Same border rule on the left edge: MiRowEnd is the tile end.
+    const int plane_rows = plane == 0 ? mi_rows_ : mi_rows_ / 2;
+    const int border_h = std::min(2 * (16 >> sub), plane_rows - sb_r0);
     int count = 0;
     for (int i = 0; i < h4; ++i) {
       const int y = rel_y + h4 + i;
-      if (y >= sb_h) break;
+      if (y >= (rel_x == 0 ? border_h : sb_h)) break;
       if (rel_x - 1 >= 0 &&
           !decoded_[plane].at(sb_c0 + rel_x - 1, sb_r0 + y)) {
         break;
@@ -733,6 +776,11 @@ class Encoder {
   // ---------------------------------------------------------------------
   // Prediction
   // ---------------------------------------------------------------------
+  bool edge_filter_enabled() const {
+    return options_.enable_intra_edge_filter &&
+           std::getenv("AV2ENC_M1_NO_EDGE") == nullptr;
+  }
+
   bool prepare_edges(int plane, int x0, int y0, int w, int h,
                      intra::IntraEdges& edges) const {
     intra::NeighborRequest request;
@@ -742,8 +790,8 @@ class Encoder {
     request.y = y0;
     request.w = w;
     request.h = h;
-    request.max_x = recon_[plane].width - 1;
-    request.max_y = recon_[plane].height - 1;
+    request.max_x = (plane == 0 ? mi_cols_ * 4 : mi_cols_ * 2) - 1;
+    request.max_y = (plane == 0 ? mi_rows_ * 4 : mi_rows_ * 2) - 1;
     request.have_left = x0 > 0;
     request.have_above = y0 > 0;
     const int sub = plane == 0 ? 0 : 1;
@@ -761,14 +809,19 @@ class Encoder {
     above_smooth = false;
     left_smooth = false;
     if (plane == 0) {
+      // IntraJointMode stores the reordered non-directional index (DC=0,
+      // SMOOTH=1, SMOOTH_V=2, SMOOTH_H=3, PAETH=4) or 5+directional index.
+      const auto joint_is_smooth = [](int joint) {
+        return joint >= 1 && joint <= 3;
+      };
       if (r > 0 && c < mi_cols_) {
-        above_smooth = y_mode_is_smooth(
+        above_smooth = joint_is_smooth(
             intra_joint_[static_cast<std::size_t>(r - 1) *
                              static_cast<std::size_t>(mi_cols_) +
                          static_cast<std::size_t>(c)]);
       }
       if (c > 0 && r < mi_rows_) {
-        left_smooth = y_mode_is_smooth(
+        left_smooth = joint_is_smooth(
             intra_joint_[static_cast<std::size_t>(r) *
                              static_cast<std::size_t>(mi_cols_) +
                          static_cast<std::size_t>(c - 1)]);
@@ -810,7 +863,7 @@ class Encoder {
     intra::PredictParams params;
     params.mode = mode;
     params.angle_delta = angle_delta;
-    params.enable_edge_filter = options_.enable_intra_edge_filter;
+    params.enable_edge_filter = edge_filter_enabled();
     params.above_neighbor_is_smooth = above_smooth;
     params.left_neighbor_is_smooth = left_smooth;
     out.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
@@ -840,7 +893,25 @@ class Encoder {
   }
 
   bool choose_luma_mode(int x0, int y0, int w, int h, ModeChoice& best) {
-    if (options_.force_dc) {
+    const char* forced_mode = std::getenv("AV2ENC_M1_FORCE_Y");
+    if (x0 > 0) {
+      if (const char* second = std::getenv("AV2ENC_M1_FORCE_Y2")) {
+        forced_mode = second;
+      }
+    }
+    if (forced_mode != nullptr) {
+      int mode = 0;
+      int delta = 0;
+      if (std::sscanf(forced_mode, "%d:%d", &mode, &delta) == 2) {
+        best.mode = static_cast<intra::Mode>(mode);
+        best.angle_delta = delta;
+        best.av2_mode = mode;
+        best.sse = 0;
+        return true;
+      }
+    }
+    if (options_.luma_dc_only || options_.force_dc ||
+        std::getenv("AV2ENC_M1_LUMA_DC") != nullptr) {
       best.mode = intra::Mode::kDc;
       best.angle_delta = 0;
       best.av2_mode = kDcPred;
@@ -864,12 +935,16 @@ class Encoder {
     }
     std::vector<std::uint8_t> pred;
     pred.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    const bool base_only = std::getenv("AV2ENC_M1_BASE_ONLY") != nullptr;
+    const bool no_directional = std::getenv("AV2ENC_M1_NO_DIR") != nullptr;
     best.sse = std::numeric_limits<std::int64_t>::max();
     for (int i = 0; i < count; ++i) {
       intra::PredictParams params;
       params.mode = candidates[static_cast<std::size_t>(i)].mode;
       params.angle_delta = candidates[static_cast<std::size_t>(i)].angle_delta;
-      params.enable_edge_filter = options_.enable_intra_edge_filter;
+      if (base_only && params.angle_delta != 0) continue;
+      if (no_directional && intra::is_directional(params.mode)) continue;
+      params.enable_edge_filter = edge_filter_enabled();
       params.above_neighbor_is_smooth = above_smooth;
       params.left_neighbor_is_smooth = left_smooth;
       if (intra::predict_intra(edges, params, pred.data(),
@@ -961,6 +1036,9 @@ class Encoder {
                            plan.levels.data());
 
     const int area = params.w * params.h;
+    if (plane == 0 && std::getenv("AV2ENC_M1_ZERO_DC") != nullptr) {
+      plan.levels[0] = 0;
+    }
     std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
     build_scan(params.w, params.h, scan);
     plan.eob = 0;
@@ -1015,9 +1093,18 @@ class Encoder {
 
   void write_recon(int plane, int x0, int y0, int cw, int ch,
                    const TxPlan& plan) {
+    // A coding block at the right/bottom frame edge may be larger than the
+    // MiCols*4 / MiRows*4 coded plane: the decoder parses the full transform
+    // block but only stores the part inside the plane. Clamp identically.
+    const int max_x = recon_[plane].width;
+    const int max_y = recon_[plane].height;
     for (int y = 0; y < ch; ++y) {
+      const int py = y0 + y;
+      if (py < 0 || py >= max_y) continue;
       for (int x = 0; x < cw; ++x) {
-        recon_[plane].at(x0 + x, y0 + y) =
+        const int px = x0 + x;
+        if (px < 0 || px >= max_x) continue;
+        recon_[plane].at(px, py) =
             plan.recon[static_cast<std::size_t>(y) *
                            static_cast<std::size_t>(cw) +
                        static_cast<std::size_t>(x)];
@@ -1029,24 +1116,91 @@ class Encoder {
   // Mode info syntax
   // ---------------------------------------------------------------------
   int joint_context() const {
+    if (std::getenv("AV2ENC_M1_YMODE_CTX0") != nullptr) return 0;
+    if (std::getenv("AV2ENC_M1_YMODE_CTX2") != nullptr) return 2;
     // Uses the block-start MiRow/MiCol of the current node.
     return (get_joint_mode(cur_r_, cur_c_, cur_w4_, cur_h4_, 0) >= 5 ? 1 : 0) +
            (get_joint_mode(cur_r_, cur_c_, cur_w4_, cur_h4_, 1) >= 5 ? 1 : 0);
   }
 
+  // §5.20.5.5 get_intra_y_mode_set: the signalled mode index is resolved
+  // through a neighbour-dependent list. Directional candidates are seeded with
+  // the IntraJointModes of the below-left (dir=0) and above-right (dir=1)
+  // neighbours, then expanded around them for blocks larger than 8x8/64 pels,
+  // and finally filled from Default_Mode_List_Y. The encoder must invert that
+  // list; writing the static-list position makes dependent blocks decode a
+  // different direction.
+  int y_mode_index_for(int joint) const {
+    if (joint < 5) {
+      return joint;
+    }
+    const int target = joint - 5;  // directional index 0..55
+    int mode_index = 5;
+    bool selected[56] = {};
+    int dir_modes[2] = {0, 0};
+    int count = 0;
+    const int w = cur_w4_ * 4;
+    const int h = cur_h4_ * 4;
+    if (w >= 8 && h >= 8) {
+      for (int dir = 0; dir < 2; ++dir) {
+        int mode = get_joint_mode(cur_r_, cur_c_, cur_w4_, cur_h4_, dir);
+        if (mode >= 5) {
+          mode -= 5;
+          if (count == 0 || mode != dir_modes[0]) {
+            if (mode == target) return mode_index;
+            ++mode_index;
+            selected[mode] = true;
+            dir_modes[count++] = mode;
+          }
+        }
+      }
+      if (w * h > 64) {
+        for (int i = 1; i <= 4; ++i) {
+          for (int j = 0; j < count; ++j) {
+            for (int sgn = -1; sgn <= 1; sgn += 2) {
+              int mode = dir_modes[j] + i * sgn;
+              if (mode < 0) {
+                mode += 56;
+              } else if (mode >= 56) {
+                mode -= 56;
+              }
+              if (!selected[mode]) {
+                if (mode == target) return mode_index;
+                ++mode_index;
+                selected[mode] = true;
+              }
+            }
+          }
+        }
+      }
+    }
+    for (int i = 0; i < 56; ++i) {
+      const int mode = kDefaultModeListY[i];
+      if (!selected[mode]) {
+        if (mode == target) return mode_index;
+        ++mode_index;
+      }
+    }
+    return mode_index;
+  }
+
   bool code_y_mode(const ModeChoice& choice) {
     const YModeCode code = y_mode_code(choice.av2_mode, choice.angle_delta);
+    // Directional modes use the dynamic set; non-directional indices are the
+    // reordered mode itself and are unaffected by neighbours.
+    const int mode_index =
+        code.joint < 5 ? code.mode_index : y_mode_index_for(code.joint);
     const int ctx = joint_context();
-    if (code.mode_index < 13) {
+    if (mode_index < 13) {
       if (!sym(&cdfs_.y_mode_set[0], 4, 0)) return false;
-      if (code.mode_index <= 6) {
-        return sym(&cdfs_.y_mode_index[ctx][0], 8, code.mode_index);
+      if (mode_index <= 6) {
+        return sym(&cdfs_.y_mode_index[ctx][0], 8, mode_index);
       }
       if (!sym(&cdfs_.y_mode_index[ctx][0], 8, 7)) return false;
-      return sym(&cdfs_.y_mode_offset[ctx][0], 6, code.mode_index - 7);
+      return sym(&cdfs_.y_mode_offset[ctx][0], 6, mode_index - 7);
     }
-    const int set = 1 + (code.mode_index - 13) / 16;
-    const int second = (code.mode_index - 13) % 16;
+    const int set = 1 + (mode_index - 13) / 16;
+    const int second = (mode_index - 13) % 16;
     if (!sym(&cdfs_.y_mode_set[0], 4, set)) return false;
     return write_literal(4, static_cast<std::uint32_t>(second));
   }
@@ -1216,6 +1370,9 @@ class Encoder {
   }
 
   int dc_sign_context(int x4, int y4, int w4, int h4) const {
+    if (const char* forced = std::getenv("AV2ENC_M1_DCSIGN_CTX")) {
+      return std::atoi(forced);
+    }
     int dc_sign = 0;
     for (int k = 0; k < w4; ++k) {
       if (x4 + k < mi_cols_) {
@@ -1312,11 +1469,32 @@ class Encoder {
     }
 
     if (!write_eob(plan.eob, plane, plan.coded_w, plan.coded_h)) return false;
-    if (plane == 0 && luma_tx_type_signalled(plan.tx_size, plan.eob)) {
-      // DCT_DCT is symbol 0 in every TX_SET_INTRA_1 mode table.
-      if (!sym(&cdfs_.intra_tx_type_set1[kTxSizeSqr[plan.tx_size]][0], 7,
-               0)) {
-        return false;
+    if (plane == 0) {
+      switch (luma_tx_type_syntax(plan.tx_size, plan.eob)) {
+        case TxTypeSyntax::kNone:
+          break;
+        case TxTypeSyntax::kIntraSet1:
+          // DCT_DCT is symbol 0 in every TX_SET_INTRA_1 mode table.
+          if (!sym(&cdfs_.intra_tx_type_set1[kTxSizeSqr[plan.tx_size]][0], 7,
+                   0)) {
+            return false;
+          }
+          break;
+        case TxTypeSyntax::kLong32:
+          // A wide/high 32 TX set codes both the long-side flag and the type.
+          if (!sym(&cdfs_.is_long_side_dct[0][0], 2, 1)) return false;
+          if (!sym(&cdfs_.intra_tx_type_long[kTxSizeSqr[plan.tx_size]][0], 4,
+                   0)) {
+            return false;
+          }
+          break;
+        case TxTypeSyntax::kLong64:
+          // WIDE_64/HIGH_64 imply is_long_side_dct = 1; only the type is coded.
+          if (!sym(&cdfs_.intra_tx_type_long[kTxSizeSqr[plan.tx_size]][0], 4,
+                   0)) {
+            return false;
+          }
+          break;
       }
     }
 
@@ -1466,6 +1644,10 @@ class Encoder {
       if (pre_level != 0) {
         if (row == 0 && col == 0 && plane == 0) {
           const int sign_ctx = dc_sign_context(x4, y4, w4, h4);
+          if (trace_) {
+            std::cerr << "  dc_sign ctx=" << sign_ctx
+                      << " sign=" << (negative ? 1 : 0) << "\n";
+          }
           if (!sym(&cdfs_.dc_sign[0][0][sign_ctx][0], 2,
                    negative ? 1 : 0)) {
             return false;
@@ -1494,6 +1676,12 @@ class Encoder {
       left_dc(plane, y4 + i) = static_cast<std::uint8_t>(dc_category);
     }
     if (plane == 1) eob_u_ = 1;
+    if (trace_ && plane == 0) {
+      std::cerr << "  tx p0 eob=" << plan.eob << " cul=" << cul_level
+                << " dcCat=" << dc_category << " dcLevel="
+                << plan.levels[0] << " x4=" << x4 << " y4=" << y4
+                << " w4=" << w4 << " h4=" << h4 << "\n";
+    }
     return true;
   }
 
@@ -1625,19 +1813,29 @@ class Encoder {
     }
     const YModeCode ycode = y_mode_code(y.av2_mode, y.angle_delta);
     for (int yy = 0; yy < h4; ++yy) {
+      const int rr = r + yy;
+      if (rr >= mi_rows_) break;
       for (int xx = 0; xx < w4; ++xx) {
-        intra_joint(r + yy, c + xx) = ycode.joint;
+        const int cc = c + xx;
+        if (cc >= mi_cols_) break;
+        intra_joint(rr, cc) = ycode.joint;
       }
     }
     const int cr = r / 2;
-    const int cc = c / 2;
+    const int cc0 = c / 2;
     const int cw4 = cw / 4;
     const int ch4 = ch / 4;
+    const int chroma_mi_rows = mi_rows_ / 2;
+    const int chroma_mi_cols = mi_cols_ / 2;
     for (int yy = 0; yy < ch4; ++yy) {
+      const int rr = cr + yy;
+      if (rr >= chroma_mi_rows) break;
       for (int xx = 0; xx < cw4; ++xx) {
-        uv_smooth(cr + yy, cc + xx) =
+        const int cc = cc0 + xx;
+        if (cc >= chroma_mi_cols) break;
+        uv_smooth(rr, cc) =
             (!cfl && y_mode_is_smooth(uv.av2_mode)) ? 1 : 0;
-        uvcfl(cr + yy, cc + xx) = cfl ? 1 : 0;
+        uvcfl(rr, cc) = cfl ? 1 : 0;
       }
     }
 
@@ -1680,6 +1878,13 @@ class Encoder {
                       int y_angle_delta, UvChoice& best) {
     best.is_cfl = false;
     best.sse = std::numeric_limits<std::int64_t>::max();
+    if (std::getenv("AV2ENC_M1_UV_DC") != nullptr) {
+      best.mode = intra::Mode::kDc;
+      best.angle_delta = 0;
+      best.av2_mode = kDcPred;
+      best.sse = 0;
+      return true;
+    }
     if (options_.force_dc || !options_.enable_cfl) {
       best.mode = intra::Mode::kDc;
       best.angle_delta = 0;
@@ -1783,13 +1988,19 @@ class Encoder {
     (void)cw;
     (void)ch;
     for (int yy = 0; yy < h4; ++yy) {
+      const int rr = node.mi_row + yy;
+      if (rr >= mi_rows_) break;
       for (int xx = 0; xx < w4; ++xx) {
-        const int idx = (node.mi_row + yy) * mi_cols_ + (node.mi_col + xx);
+        const int cc = node.mi_col + xx;
+        if (cc >= mi_cols_) break;
+        const int idx = rr * deblock_cols_ + cc;
+        const int clamped_w4 = std::min(w4, mi_cols_ - node.mi_col);
+        const int clamped_h4 = std::min(h4, mi_rows_ - node.mi_row);
         deblock::DeblockMi mi;
         mi.block_col_base = static_cast<std::uint16_t>(node.mi_col);
         mi.block_row_base = static_cast<std::uint16_t>(node.mi_row);
-        mi.block_w4 = static_cast<std::uint8_t>(w4);
-        mi.block_h4 = static_cast<std::uint8_t>(h4);
+        mi.block_w4 = static_cast<std::uint8_t>(clamped_w4);
+        mi.block_h4 = static_cast<std::uint8_t>(clamped_h4);
         mi.sub_pu_size = luma;
         mi.tx_size = luma;
         mi.tx_col_base = static_cast<std::uint16_t>(node.mi_col);
@@ -1854,6 +2065,8 @@ class Encoder {
   bool trace_ = std::getenv("AV2ENC_M1_TRACE") != nullptr;
 
   std::array<std::vector<deblock::DeblockMi>, 3> deblock_mi_;
+  int deblock_cols_ = 0;
+  int deblock_rows_ = 0;
 
   using TxSize = deblock::TxSize;
 };
@@ -1898,7 +2111,9 @@ bool encode_m1_still_picture(const StillPicture& picture,
   config.max_frame_height = static_cast<std::uint16_t>(picture.height);
   config.base_q_idx = options.base_q_idx;
   config.disable_cdf_update = !options.adaptive_cdf;
-  config.enable_intra_edge_filter = options.enable_intra_edge_filter;
+  config.enable_intra_edge_filter =
+      options.enable_intra_edge_filter &&
+      std::getenv("AV2ENC_M1_NO_EDGE") == nullptr;
   config.enable_cfl_intra = options.enable_cfl;
   config.enable_chroma_dctonly = true;
   config.tx_mode_select = false;
@@ -1920,8 +2135,8 @@ bool encode_m1_still_picture(const StillPicture& picture,
       frame.planes[plane].stride = encoder.recon_mut(plane).width;
       frame.mi[plane] = encoder.deblock_mi(plane);
     }
-    frame.mi_cols = encoder.mi_cols();
-    frame.mi_rows = encoder.mi_rows();
+    frame.mi_cols = encoder.deblock_cols();
+    frame.mi_rows = encoder.deblock_rows();
     frame.subsampling_x = 1;
     frame.subsampling_y = 1;
     deblock::DeblockOptions dopts;

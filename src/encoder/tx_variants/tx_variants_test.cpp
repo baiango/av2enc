@@ -331,7 +331,12 @@ void test_quantize_dequantize_exact() {
       const std::int32_t aq = qc < 0 ? -qc : qc;
       const std::int32_t high = (aq * kQuantStep) & 0xFFFFFF;
       const std::int32_t dq = round2(high, kQuantTableBits) / p->dq_denom;
-      check(dequant[i] == (qc < 0 ? -dq : dq), "dequantize formula");
+      const std::int32_t signed_dq = qc < 0 ? -dq : dq;
+      const std::int32_t expected =
+          signed_dq < -(1 << 15)
+              ? -(1 << 15)
+              : (signed_dq > (1 << 15) - 1 ? (1 << 15) - 1 : signed_dq);
+      check(dequant[i] == expected, "dequantize formula");
     }
   }
 }

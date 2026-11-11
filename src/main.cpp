@@ -34,6 +34,7 @@ struct Options {
   bool m1_deblock = true;
   bool m1_single = false;
   bool m1_dc = false;
+  bool m1_full_intra = false;
   int m1_depth = -1;  // -1 = component default
   std::uint64_t vram_cap_mib = 0;  // 0 = largest reservation the device can serve
   bool help = false;
@@ -63,6 +64,8 @@ void print_usage(std::ostream& out) {
          "  --m1                 Enable the integrated M1 still-picture path\n"
          "  --no-cfl             M1: disable chroma-from-luma\n"
          "  --no-deblock         M1: disable the deblocking filter\n"
+         "  --m1-full-intra      Enable the directional/smooth intra search\n"
+         "                       (SSE-only mode decision; DC is the default)\n"
          "  --vram-cap <MiB>     Upper bound for the CUDA arena; default 0 takes\n"
          "                       the largest reservation the device can serve\n"
          "  -h, --help           Show this help\n";
@@ -186,6 +189,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--m1-dc") {
       options.m1_dc = true;
+      continue;
+    }
+
+    if (argument == "--m1-full-intra") {
+      options.m1_full_intra = true;
       continue;
     }
 
@@ -336,6 +344,7 @@ int main(int argc, char** argv) {
     m1_options.adaptive_cdf = options.adaptive_cdf;
     m1_options.force_single_block = options.m1_single;
     m1_options.force_dc = options.m1_dc;
+    m1_options.luma_dc_only = !options.m1_full_intra;
     if (options.m1_depth >= 0) {
       m1_options.max_partition_depth = options.m1_depth;
     }

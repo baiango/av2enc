@@ -57,7 +57,8 @@ __device__ __forceinline__ int dequant_dev(int qc, int denom) {
   const int abs_qc = qc < 0 ? -qc : qc;
   const int dq_high = (abs_qc * kQuantStep) & 0xFFFFFF;
   const int dq = round2_dev(dq_high, kQuantTableBits) / denom;
-  return qc < 0 ? -dq : dq;
+  // §7.14.4: Dequant = Clip3(-(1 << (7 + BitDepth)), ...).
+  return clip3_dev(-(1 << 15), (1 << 15) - 1, qc < 0 ? -dq : dq);
 }
 
 __device__ __forceinline__ int prescale_dev(int value, bool odd_rect) {

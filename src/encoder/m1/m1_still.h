@@ -23,10 +23,14 @@ struct M1Options {
   bool adaptive_cdf = false;
   // Partition search floor. 8 is the M1 target; 4 exercises the 4x4 path.
   int min_block_size = 8;
-  int max_partition_depth = 3;
+  int max_partition_depth = 4;
   // Debug/per-tool gates: one PARTITION_NONE superblock and DC intra only.
   bool force_single_block = false;
   bool force_dc = false;
+  // Full directional/smooth intra is bit-exact with the decoder. It stays
+  // opt-in because the mode search is SSE-only (no rate term yet), which does
+  // not reliably beat DC at fixed QP.
+  bool luma_dc_only = true;
 };
 
 struct M1Result {

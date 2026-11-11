@@ -86,6 +86,8 @@ namespace av2enc::m1 {
         "Default_Y_Mode_Set_Cdf",
         "Default_Y_Mode_Index_Cdf",
         "Default_Uv_Mode_Cfl_Not_Allowed_Cdf",
+        "Default_Intra_Tx_Type_Long_Cdf",
+        "Default_Is_Long_Side_Dct_Cdf",
     ]
     cdf_src = ""
     for full in wanted:

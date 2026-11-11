@@ -52,4 +52,15 @@ inline constexpr unsigned short kUvModeCflNotAllowedCdf[2][9] = {
     29311, 30348, 31158, 31491, 30, 0,
 };
 
+// Default_Intra_Tx_Type_Long_Cdf [4, 5]
+inline constexpr unsigned short kIntraTxTypeLongCdf[4][5] = {
+    10692, 26586, 29231, 31, 0, 26700, 32160, 32748, 6, 0, 26915, 32411,
+    32748, 6, 0, 8192, 16384, 24576, 0, 0,
+};
+
+// Default_Is_Long_Side_Dct_Cdf [2, 3]
+inline constexpr unsigned short kIsLongSideDctCdf[2][3] = {
+    36, 0, 0, 128, 31, 0,
+};
+
 }  // namespace av2enc::m1

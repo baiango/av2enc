@@ -28,6 +28,16 @@ Status legend:
 | CONFIRMED | Read edge samples outside the visible plane | Wrong prediction and out-of-bounds reads | Clamp to `max_x`/`max_y` and pass the padded stride |
 | OPEN | Claim intra-mode gains before integration | The component emits no bitstream | Wire it, pass `dav2d`, then measure |
 
+## Intra / M1 integration
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Code `y_mode_index` from the static `Default_Mode_List_Y` position | §5.20.5.5 `get_intra_y_mode_set` is neighbour-dependent: seeded by the below-left/above-right `IntraJointModes`, expanded for blocks >64 pels, then filled from the default list | Invert `get_intra_y_mode_set` when coding a directional mode; isolated blocks match by luck, dependent blocks decode the wrong direction |
+| CONFIRMED | Treat `MiColEnd`/`MiRowEnd` as the superblock end in `clear_block_decoded_flags` | They are the **tile** ends; `BlockDecoded`'s top/left border is 1 out to two superblocks (array bound) | Allow above-right/below-left up to `min(2*SB, tile_remainder)` on the top/left SB edges |
+| CONFIRMED | Cap the partition search at depth 3 for 64 SBs | Leaves cannot reach 8x8; 640x360 drops ~10 dB | Default depth 4 for 8x8 leaves |
+| CONFIRMED | Use a mismatched depth in a recon-dump harness | Produces spatial ±1..3 that looks like a transform bug | Match `M1Options` exactly before comparing recon to a decoded stream |
+| OPEN | Claim full directional intra is done | D45 still mismatches on later SB rows (above/edge-filter path); default stays DC-only | Finish the edge availability/filter audit, then enable by default and gate `dav2d` |
+
 ## RDO / rate control
 
 | Status | Do not do | Why | Do instead |

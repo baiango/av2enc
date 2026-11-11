@@ -264,7 +264,9 @@ void dequantize(const std::int32_t* levels, const TxParams& p,
     const std::int32_t dq_high = (abs_qc * kQuantStep) & 0xFFFFFF;
     const std::int32_t dq = round2(dq_high, kQuantTableBits);
     const std::int32_t value = dq / p.dq_denom;
-    dequant[i] = qc < 0 ? -value : value;
+    // §7.14.4: Dequant = Clip3(-(1 << (7 + BitDepth)), ...).
+    dequant[i] = clip3(-(1 << 15), (1 << 15) - 1,
+                       qc < 0 ? -value : value);
   }
 }
 
