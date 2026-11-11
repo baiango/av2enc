@@ -245,6 +245,33 @@ void test_mode_tables() {
   mapped = av2enc::intra::map_angle(Mode::kD203, 0, 8, 8);
   CHECK_EQ(static_cast<int>(mapped.mode), static_cast<int>(Mode::kD203));
   CHECK_EQ(mapped.p_angle, 203);
+
+  // Rectangular cases requested by the M1 audit. The same mapped pAngle is
+  // used for both edge filtering and prediction (predict_intra maps once).
+  mapped = av2enc::intra::map_angle(Mode::kD45, 0, 16, 64);
+  CHECK_EQ(static_cast<int>(mapped.mode), static_cast<int>(Mode::kD203));
+  CHECK_EQ(mapped.p_angle, 225);
+  mapped = av2enc::intra::map_angle(Mode::kD203, 0, 64, 16);
+  CHECK_EQ(static_cast<int>(mapped.mode), static_cast<int>(Mode::kD45));
+  CHECK_EQ(mapped.p_angle, 23);
+  mapped = av2enc::intra::map_angle(Mode::kD203, 0, 32, 8);
+  CHECK_EQ(static_cast<int>(mapped.mode), static_cast<int>(Mode::kD45));
+  CHECK_EQ(mapped.p_angle, 23);
+  mapped = av2enc::intra::map_angle(Mode::kD45, 0, 8, 32);
+  CHECK_EQ(static_cast<int>(mapped.mode), static_cast<int>(Mode::kD203));
+  CHECK_EQ(mapped.p_angle, 225);
+  mapped = av2enc::intra::map_angle(Mode::kD45, 0, 32, 64);
+  CHECK_EQ(static_cast<int>(mapped.mode), static_cast<int>(Mode::kD203));
+  CHECK_EQ(mapped.p_angle, 225);
+  mapped = av2enc::intra::map_angle(Mode::kD67, 0, 32, 64);
+  CHECK_EQ(static_cast<int>(mapped.mode), static_cast<int>(Mode::kD67));
+  CHECK_EQ(mapped.p_angle, 67);
+  mapped = av2enc::intra::map_angle(Mode::kD203, 0, 64, 32);
+  CHECK_EQ(static_cast<int>(mapped.mode), static_cast<int>(Mode::kD203));
+  CHECK_EQ(mapped.p_angle, 203);
+  mapped = av2enc::intra::map_angle(Mode::kD203, 3, 64, 32);
+  CHECK_EQ(static_cast<int>(mapped.mode), static_cast<int>(Mode::kD45));
+  CHECK_EQ(mapped.p_angle, 32);
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +500,184 @@ void test_prepare_edges_clamping() {
 // ---------------------------------------------------------------------------
 // Predictors
 // ---------------------------------------------------------------------------
+
+void test_extension_and_edge_filter_golden() {
+  // 8x8 D45 at (8,8) with above-right extension (num4AboveRight = 2).
+  // The above row is a step pattern; edge filtering is strength 1 for
+  // w+h=16 and |pAngle-90| = 45. Expected values below are the spec's
+  // sample-level outputs: filtered AboveRow first, then D45 projection with
+  // Dr_Intra_Derivative[45] = 64 (shift = 0, IDIF row 0).
+  Plane plane(32, 32);
+  fill_gradient(plane, 1, 1);
+  const int above_original[17] = {0, 0, 0, 0, 0, 255, 255, 255, 255,
+                                  16, 16, 16, 16, 128, 128, 128, 128};
+  // above_original[0] is AboveRow[-1] (the corner), [1..16] are AboveRow[0..15].
+  plane.at(7, 7) = static_cast<std::uint8_t>(above_original[0]);
+  for (int i = 1; i <= 16; ++i) {
+    plane.at(7 + i, 7) = static_cast<std::uint8_t>(above_original[i]);
+  }
+
+  const IntraEdges edges =
+      prepare_ok(make_request(plane, 8, 8, 8, 8, true, true, 2, 0));
+  for (int i = 1; i <= 16; ++i) {
+    CHECK_EQ(edges.above[i - 1], above_original[i]);
+  }
+
+  const int filtered_above[16] = {0,  0,  0,  64, 191, 255, 255, 195,
+                                  76, 16, 16, 44, 100, 128, 128, 128};
+  const std::vector<std::uint8_t> out =
+      predict_vec(edges, Mode::kD45, 0, true);
+  for (int i = 0; i < 8; ++i) {
+    for (int j = 0; j < 8; ++j) {
+      const int expected = filtered_above[i + 1 + j];
+      CHECK_EQ(out[static_cast<std::size_t>(i) * 8 +
+                   static_cast<std::size_t>(j)],
+               expected);
+    }
+  }
+
+  // Without edge filtering the projection uses the raw extension samples.
+  const std::vector<std::uint8_t> raw =
+      predict_vec(edges, Mode::kD45, 0, false);
+  CHECK_EQ(raw[0 * 8 + 3], edges.above[4]);
+  CHECK_EQ(raw[0 * 8 + 3], 255);
+  CHECK_EQ(out[0 * 8 + 3], 191);
+}
+
+void test_below_left_extension_golden() {
+  // 4x16 D45 at (8,8): wide-angle mapping turns 45 deg into 225 deg, so the
+  // predictor reads LeftCol. num4BelowLeft = 3 supplies real below-left
+  // samples at y = 24..27 with value 200; the first 16 left samples are 0.
+  // Edge filtering is strength 3 for w+h=20 and |pAngle-180| = 45.
+  Plane plane(64, 64);
+  fill_gradient(plane, 1, 1);
+  plane.at(7, 7) = 0;  // corner
+  for (int i = 0; i < 16; ++i) {
+    plane.at(7, 8 + i) = 0;
+  }
+  for (int i = 0; i < 4; ++i) {
+    plane.at(7, 24 + i) = 200;
+  }
+
+  const IntraEdges edges =
+      prepare_ok(make_request(plane, 8, 8, 4, 16, true, true, 0, 3));
+  for (int i = 0; i < 16; ++i) {
+    CHECK_EQ(edges.left[i], 0);
+  }
+  for (int i = 16; i < 20; ++i) {
+    CHECK_EQ(edges.left[i], 200);
+  }
+
+  // Snapshot-filtered LeftCol[0..19].
+  const int filtered_left[20] = {0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+                                 0,  0,  0,  0,  25, 75, 125, 175, 200, 200};
+  const std::vector<std::uint8_t> out =
+      predict_vec(edges, Mode::kD45, 0, true);
+  for (int i = 0; i < 16; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      // pAngle = 225, dy = Dr_Intra_Derivative[45] = 64, base = i + j + 1,
+      // shift = 0 and IDIF tap row 0: pred = filtered LeftCol[base].
+      const int expected = filtered_left[i + j + 1];
+      CHECK_EQ(out[static_cast<std::size_t>(i) * 4 +
+                   static_cast<std::size_t>(j)],
+               expected);
+    }
+  }
+
+  // Without the below-left extension, LeftCol[16..19] clamp to LeftCol[15]=0
+  // and the same samples become 0 instead of 125/175/200.
+  const IntraEdges clamped =
+      prepare_ok(make_request(plane, 8, 8, 4, 16, true, true, 0, 0));
+  const std::vector<std::uint8_t> clamped_out =
+      predict_vec(clamped, Mode::kD45, 0, true);
+  CHECK_EQ(clamped_out[15 * 4 + 0], 0);
+  CHECK_EQ(out[15 * 4 + 0], filtered_left[16]);
+  CHECK_EQ(out[15 * 4 + 0], 125);
+}
+
+void test_superblock_two_sb_border() {
+  // 64x8 D45 at the top-left of an SB (x=0, y=64) with above-right extension
+  // crossing into the next SB (num4AboveRight = 16). The above row is 0 for
+  // x=0..63 and 200 for x=64..127. Edge filtering is strength 3.
+  Plane plane(128, 128);
+  fill_gradient(plane, 3, 2);
+  for (int x = 0; x < 64; ++x) {
+    plane.at(x, 63) = 0;
+  }
+  for (int x = 64; x < 128; ++x) {
+    plane.at(x, 63) = 200;
+  }
+
+  const IntraEdges edges =
+      prepare_ok(make_request(plane, 0, 64, 64, 8, false, true, 16, 0));
+  // AboveRow[64..71] must come from the next superblock's above row.
+  CHECK_EQ(edges.above[63], 0);
+  CHECK_EQ(edges.above[64], 200);
+  CHECK_EQ(edges.above[71], 200);
+  CHECK_EQ(edges.above[-1], 0);  // above-only corner: AboveRow[0]
+
+  const std::vector<std::uint8_t> out =
+      predict_vec(edges, Mode::kD45, 0, true);
+  // filtered AboveRow[63] = 75, AboveRow[64] = 125 (hand-computed from the
+  // strength-3 kernel {2,4,4,4,2} with the snapshotted step).
+  CHECK_EQ(out[0 * 64 + 62], 75);   // base = 63
+  CHECK_EQ(out[0 * 64 + 63], 125);  // base = 64, next-SB sample
+
+  // Restricting the extension to the current SB (num4AboveRight = 0 for a
+  // 64-wide block) clamps AboveRow[64] to x=63 (value 0).
+  const IntraEdges sb_local =
+      prepare_ok(make_request(plane, 0, 64, 64, 8, false, true, 0, 0));
+  CHECK_EQ(sb_local.above[64], 0);
+  const std::vector<std::uint8_t> sb_local_out =
+      predict_vec(sb_local, Mode::kD45, 0, true);
+  CHECK_EQ(sb_local_out[0 * 64 + 63], 0);
+}
+
+void test_sb_32x8_above_right_golden() {
+  // 32x8 D45 at the top-left of an SB (x=192, y=64) with above-right
+  // extension into the other half of the same SB (num4AboveRight = 8).
+  // Above row: x=192..223 is 16, x=224..255 is 200. Edge filtering is
+  // strength 3 (w+h=40); hand-computed filtered values at the step.
+  Plane plane(256, 128);
+  fill(plane, 16);
+  for (int x = 192; x < 224; ++x) {
+    plane.at(x, 63) = 16;
+  }
+  for (int x = 224; x < 256; ++x) {
+    plane.at(x, 63) = 200;
+  }
+  const IntraEdges edges =
+      prepare_ok(make_request(plane, 192, 64, 32, 8, true, true, 8, 0));
+  CHECK_EQ(edges.above[31], 16);
+  CHECK_EQ(edges.above[32], 200);
+  CHECK_EQ(edges.above[39], 200);
+
+  const std::vector<std::uint8_t> out =
+      predict_vec(edges, Mode::kD45, 0, true);
+  CHECK_EQ(out[0 * 32 + 30], 85);   // base = 31
+  CHECK_EQ(out[0 * 32 + 31], 131);  // base = 32, above-right sample
+
+  const IntraEdges sb_local =
+      prepare_ok(make_request(plane, 192, 64, 32, 8, true, true, 0, 0));
+  CHECK_EQ(sb_local.above[32], 16);
+  const std::vector<std::uint8_t> sb_local_out =
+      predict_vec(sb_local, Mode::kD45, 0, true);
+  CHECK_EQ(sb_local_out[0 * 32 + 31], 16);
+}
+
+void test_sb_border_below_left_clamp() {
+  // A 64x64 block at the top of an SB cannot extend below-left into the next
+  // SB row: the spec's count_bottom_left_avail stops at BlockDecoded[16][-1]
+  // = 0, so the correct num4BelowLeft is 0. LeftCol[64..127] must clamp to
+  // the last available left sample (y + h - 1).
+  Plane plane(192, 256);
+  fill_gradient(plane, 5, 3);
+  const IntraEdges edges =
+      prepare_ok(make_request(plane, 64, 64, 64, 64, true, true, 0, 0));
+  for (int i = 64; i < 128; ++i) {
+    CHECK_EQ(edges.left[i], plane.at(63, 127));
+  }
+}
 
 void test_dc_prediction() {
   Plane flat(32, 32);
@@ -1196,6 +1401,11 @@ int main() {
   test_edge_filter_golden();
   test_prepare_edges_fillers();
   test_prepare_edges_clamping();
+  test_extension_and_edge_filter_golden();
+  test_below_left_extension_golden();
+  test_superblock_two_sb_border();
+  test_sb_32x8_above_right_golden();
+  test_sb_border_below_left_clamp();
   test_dc_prediction();
   test_flat_all_modes_and_sizes();
   test_v_and_h_exact();

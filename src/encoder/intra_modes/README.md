@@ -62,7 +62,7 @@ WERROR=1 ./build_test.sh        # warnings promoted to errors
 Expected output:
 
 ```text
-intra_modes_test: PASS (48058 checks)
+intra_modes_test: PASS (48339 checks)
 ```
 
 The build uses `-std=c++20 -Wall -Wextra -Wpedantic -Wconversion -Wshadow`.
@@ -192,6 +192,11 @@ No floating point is used anywhere in the prediction path.
 | V/H exactness | V copies the above row, H copies the left column; 90°/180° are unaffected by edge filtering |
 | 45°/135° golden | Projection indices derived by hand from `Dr_Intra_Derivative[45] = 64` and `shift = 0`; verifies above/left branch selection and the -1 corner |
 | wide-angle prediction | Tall 4×16 D45 maps to 225° and predicts `LeftCol[i+j+1]` exactly, exercising the mapping and p>180 path |
+| above-right + edge filter golden | 8×8 D45 with `num4AboveRight=2` on a step edge: hard-coded snapshot-filtered `AboveRow` and all 64 predicted samples |
+| below-left + edge filter golden | 4×16 D45 (mapped to 225°) with `num4BelowLeft=3`: hard-coded filtered `LeftCol`, all 64 samples, and the clamped-extension contrast |
+| 2-SB border | 64×8 D45 at an SB top-left with `num4AboveRight=16`: above row crosses into the next SB; hard-coded filtered values at the crossing; SB-local clamp contrast |
+| 32×8 SB case | 32×8 D45 at (192,64) with `num4AboveRight=8`: above-right comes from the other half of the same SB; hard-coded filtered/predicted values; SB-local clamp contrast |
+| SB bottom-left limit | 64×64 block at an SB top with `num4BelowLeft=0`: left extension clamps at `y+h-1`, matching `count_bottom_left_avail` |
 | IDIF vs chroma | Chroma linear 2-tap result on a step edge; luma 4-tap result with row-16 taps; the two differ |
 | smooth | Hand-computed 4×4 values (113/105/120) plus full-block formula check |
 | PAETH | Left/top/corner wins and the `pLeft` tie-break |
@@ -221,6 +226,15 @@ apply only after integration.
    tree in 4×4 units. For chroma, halve the plane coordinates first; the module
    applies the §7.13.2.1 rule that chroma blocks wider/taller than 32 samples
    disable the corresponding extension.
+   The two directions are **not symmetric**: §6.19.2.3 sets the
+   `BlockDecoded[-1][x]` top border across two superblocks (`x < MiColEnd - c`),
+   but the left border only within the current superblock and explicitly clears
+   `BlockDecoded[sbSize4][-1]`. So `count_top_right_avail()` may span into the
+   next SB's above row, while `count_bottom_left_avail()` is capped at
+   `sbSize4 - (rel_y + h4)` and is 0 for a block whose bottom touches the SB
+   bottom. Passing an oversized `num4_below_left` makes `prepare_edges()` read
+   not-yet-reconstructed samples in the next SB row (observed as directional /
+   smooth drift on later SB rows in early M1 integration).
 4. **Filter types come from neighbour modes.** Set
    `above_neighbor_is_smooth` / `left_neighbor_is_smooth` from
    `YModes`/`UVSmooth`: true when the neighbour uses SMOOTH, SMOOTH_V or

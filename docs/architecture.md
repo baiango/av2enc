@@ -117,8 +117,10 @@ baseline exists.
 The baseline is **8 GB Ampere (`sm_86`)**: RTX 3060 8 GB, RTX 3050 8 GB, RTX 3070
 8 GB. The dev box is an RTX 3060 12 GB; it sizes the arena from the device
 (`min(total, free) - 512 MiB`), so 8 GB behavior must be validated on an actual
-8192 MiB card, not emulated. The RTX 5070 (`sm_120`) is a secondary
-build/smoke target only.
+8192 MiB card, not emulated. The **RTX 4070 Super (12 GB, `sm_89`)** is the
+secondary target: its TFLOP/s per dollar-hour is usually the best on Vast.ai,
+so it is the cost-efficiency choice for longer runs. The RTX 5070 (`sm_120`) is
+a build/smoke target only.
 
 There are no fixed "compat" presets. Extra VRAM only changes how much precompute
 fits; it never changes the encoded tool set.
@@ -139,12 +141,12 @@ Do **not** require:
 - `wgmma`, `tcgen05`, `setmaxnreg`, `griddepcontrol`
 - Hopper/Blackwell-only PTX or architecture-specific fast paths
 
-Build fat binaries for both architectures:
+Build fat binaries for all three architectures:
 
 ```sh
 cmake -S . -B build-cuda -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DAV2ENC_ENABLE_CUDA=ON \
-  -DCMAKE_CUDA_ARCHITECTURES="86;120"
+  -DCMAKE_CUDA_ARCHITECTURES="86;89;120"
 ```
 
 The runtime selects native SASS; no JIT. Verify with:
@@ -154,8 +156,9 @@ cuobjdump -lelf build-cuda/av2enc
 ```
 
 Query SM count, shared memory, and compute capability at runtime. Never hardcode
-28 SMs or 3060-specific launch geometry. The 5070 has more SMs and bandwidth; the
-same kernels should scale, with launch-config tuning only if profiling shows it.
+28 SMs or 3060-specific launch geometry. The 4070 Super and 5070 have more SMs
+and bandwidth; the same kernels should scale, with launch-config tuning only if
+profiling shows it.
 
 ## VRAM budget: 8 GB target
 
@@ -212,7 +215,7 @@ remain only as precompute sizing examples):
 
 `auto` picks by capacity (4/6/8/12/16/24 GB) and memory bandwidth. A 4 GB
 GTX 1650 and a 4 GB RTX 3050 are not the same target: the former is Turing
-(`sm_75`), the latter Ampere (`sm_86`). The current fatbin is `sm_86;sm_120`.
+(`sm_75`), the latter Ampere (`sm_86`). The current fatbin is `sm_86;sm_89;sm_120`.
 Supporting Turing requires a separate `sm_75` build and a synchronous-load
 fallback for code that assumes `cp.async`; that is not enabled yet.
 

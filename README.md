@@ -51,6 +51,10 @@ output, compare pixels). Do not read or copy their encoder-side code.
 
 - Primary target: **8 GB Ampere (`sm_86`)** — RTX 3060 8 GB, RTX 3050 8 GB,
   RTX 3070 8 GB.
+- Secondary target: **RTX 4070 Super (12 GB, Ada `sm_89`)** — usually the best
+  **TFLOP/s per $/hr** on Vast.ai, so it is the cost-efficiency target for
+  longer runs. It is not an 8 GB card; 8 GB compatibility is still validated on
+  an enumerated 8192 MiB 3060.
 - Target validation host: **RTX 3060 enumerating 8192 MiB**. The 12 GB dev box
   is only a compatibility proxy, not a performance/QBS validation host.
 - RTX 5070 (`sm_120`) is a build/smoke target only. No Blackwell-only code.
@@ -62,8 +66,9 @@ output, compare pixels). Do not read or copy their encoder-side code.
   references), never into more fps.
 - Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja**. CPU is a reference/test
   path only, not the product.
-- Fat binary: `sm_86;sm_120`. No Blackwell-only accelerators (TMA, clusters,
-  tensor-core/FP4 paths) are required.
+- Fat binary: `sm_86;sm_89;sm_120`. The feature baseline stays `sm_86`; no
+  Ada- or Blackwell-only accelerators are required (no TMA, clusters, FP4,
+  tensor-core paths).
 - VRAM: **no fixed preset**. The arena reserves
   `min(device_total, device_free) - 512 MiB`, optionally bounded by
   `--vram-cap <MiB>`. Extra VRAM scales **precompute**, never compression-tool
