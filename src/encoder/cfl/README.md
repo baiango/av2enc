@@ -134,3 +134,66 @@ derivation in §5.20.5.6 so the mode search can skip CfL when it is illegal.
 * No RD cost with a rate term; `search_alpha` returns distortion (SSE) only.
   The RDO pass owns lambda and the entropy rate estimate.
 * CUDA kernel is component-tested, not wired into `m0_pipeline`.
+
+## M1 verification finding (m1_verify, default CfL)
+
+The default M1 chroma path was reported as desyncing while `AV2ENC_M1_UV_DC=1`
+was exact. Bisecting on the box showed the **CfL module was correct**; the
+fault was in M1's chroma mode selection/integration. It is resolved by M1
+commit `ff254d0` (default chroma restricted to DC/CfL until directional UV
+prediction is bit-exact, SB border availability fixed, frame initialization
+aligned with the decoder).
+
+Measured on `99b9394` (before) and `ff254d0` (after), `--m1`, default CfL:
+
+| Resolution | Before U/V diffs | After |
+|---|---|---|
+| 64x64 | U 125/1024, V 163/1024, max 7 | 0/0 |
+| 640x360 | U 28800/57600, V 28664/57600, max 114 | 0/0 |
+
+`tools/m1_verify/run_matrix.sh --sizes "64x64 640x360" --modes dc` now reports
+`2/2 cases bit-exact`, and 1920x1080 is also exact.
+
+Evidence that the CfL path itself is sound (measured on `99b9394` with a
+scratch M1 that forces the UV mode per run):
+
+| Forced UV mode | Result at 640x360 |
+|---|---|
+| CfL only (`is_cfl=1`, derived alpha) | bit-exact |
+| DC only, `is_cfl=0` still coded | bit-exact |
+| DC / V / H / D135 / D113 / D157 / SMOOTH_H / PAETH | bit-exact |
+| D45 / D203 / D67 / SMOOTH / SMOOTH_V | mismatch |
+
+Pure-CfL runs (every chroma block CfL) are `0/0/0` at 64x64, 640x360 and
+1920x1080, so the §7.13.5 math, derived alpha, edge handling and CfL syntax
+are correct. The first differing sample in the failing default stream was in a
+**cfl=0** block (640x360 luma 320,0 used UV mode 10; 64x64 luma 32,32 used UV
+mode 8), which is why the fix belongs to the chroma mode-selection path.
+
+### Non-CfL notes (for their owners)
+
+These do not affect the current default (`ff254d0` selects only DC/CfL), but
+they will resurface if directional chroma prediction is re-enabled:
+
+1. `src/encoder/m1/m1_still.cpp`, `neighborhood_smooth()` chroma branch: it
+   used to halve the coordinates a second time (`cr = r / 2; cc = c / 2;`).
+   **Fixed**: the caller already passes the chroma 4x4-grid index
+   (`y0 >> 2, x0 >> 2`), so the function now uses `cr = r; cc = c;`.
+2. `src/encoder/intra_modes/` directional/smooth prediction for kBase indices
+   3, 7, 8, 9, 10 (D45, D203, D67, SMOOTH, SMOOTH_V) diverges when forced; the
+   first difference is on the no-above top row. The intra agent has WIP tests
+   for the above-right / SB-border paths.
+3. `choose_uv_mode()` scores base candidates with U-only SSE
+   (`sse_against_source(1, ...)`) but scores CfL with U+V SSE, biasing the
+   choice against CfL. Score both planes for every candidate.
+
+### Luma-plane contract
+
+CfL reads reconstructed luma from the current block plus the above/left
+neighbour lines; the caller must make the whole plane consistent with the
+decoder's `CurrFrame`, including samples outside the visible picture. `luma_max`
+may be the coded (`MiCols*4-1`) or the padded-64 bound — both were tested
+bit-exact once M1 clamps chroma residual sizes at frame edges. Do not replace
+the plane's initialization/padding values with encoder-only defaults: the
+decoder's values are part of the prediction input wherever availability allows
+a read.

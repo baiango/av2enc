@@ -833,8 +833,10 @@ class Encoder {
                          static_cast<std::size_t>(c - 1)]);
       }
     } else {
-      const int cr = r / 2;
-      const int cc = c / 2;
+      // Callers pass the chroma 4x4-grid index (luma MI / 2), which is already
+      // the index used to write uv_smooth_. Do not halve it again.
+      const int cr = r;
+      const int cc = c;
       const int cmi_cols = mi_cols_ / 2;
       if (cr > 0 && cc < cmi_cols) {
         above_smooth =
