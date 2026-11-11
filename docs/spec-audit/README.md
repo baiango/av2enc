@@ -82,19 +82,24 @@ Table and constraint audits:
 
 | # | Bug | Where | Severity |
 |---|---|---|---|
-| B1 | `df_delta_q` not written when `df_delta_q_present = 1` | `m2/post/loop_filters.cpp` | **decoder desync** |
+| B1 | `df_delta_q` not written when `df_delta_q_present = 1` | `m2/post/loop_filters.cpp` | **fixed** |
 | B2 | MFH omitted `obu_extension_flag` | `frame/mfh/mfh.cpp` | **fixed** `bf2c63d` |
-| B3 | QM `dequant_denom` used `tx_type < 9` instead of `TX_CLASS_2D`; missing clip | `qm/` | fix in review |
-| B4 | `seq_tier` written unconditionally even when `seq_level_idx <= 3` | M2/leading/tlayers/longterm | latent |
-| B5 | Chroma writer can set `seq_tile_info_present_flag=1` without `allow_tile_info_change`/`tile_params` | `format/chroma` | latent |
-| B6 | Long-term writer omits mlayer dependency syntax when maxima > 0 | `inter/longterm` | latent |
-| B7 | SVC plans `seq_lcr_id = 1` but re-wraps sequence headers unchanged | `svc` | dangling LCR |
+| B3 | QM `dequant_denom` used `tx_type < 9` instead of `TX_CLASS_2D`; missing clip | `qm/` | **fixed** `e7bec71` |
+| B4 | `seq_tier` written unconditionally even when `seq_level_idx <= 3` | leading/tlayers/longterm | **fixed** (M2 still pending) |
+| B5 | Chroma writer can set `seq_tile_info_present_flag=1` without `allow_tile_info_change`/`tile_params` | `format/chroma` | **fixed** (rejected) |
+| B6 | Long-term writer omits mlayer dependency syntax when maxima > 0 | `inter/longterm` | **fixed** (rejected) |
+| B7 | SVC plans `seq_lcr_id = 1` but re-wraps sequence headers unchanged | `svc` | **fixed** (`seq_lcr_id` rewritten) |
 | B8 | RAS can write `refresh_frame_flags` where §5.18.2 derives it | `inter/random_access` | gate-only mode |
 | B9 | OLK long-term list can be omitted (pinned-decoder compat mode) | `inter/longterm` | gate-only mode |
-| B10 | `film_grain_params_present = 1` reachable with no grain config | `format/chroma` | **would desync** |
+| B10 | `film_grain_params_present = 1` reachable with no grain config | `format/chroma` | **fixed** (rejected) |
 
 B8/B9 are explicit, switchable compatibility modes with the normative path as
 default; they are acceptable for gates but must not ship enabled.
+
+The SVC decoder gate now skips (exit 77) when its layer sources are
+single-picture headers, because those force `seq_lcr_id = 0` and cannot carry
+an LCR association. Exercising it end-to-end needs a non-single-picture source;
+the unit suite covers both the rewrite and rejection paths.
 
 ## Audit coverage vs the 45-item feature list
 

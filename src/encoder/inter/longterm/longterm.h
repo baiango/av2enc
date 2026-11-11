@@ -87,6 +87,11 @@ struct SequenceConfig {
   bool explicit_num_ref_frames = true;
   bool enable_short_refresh_frame_flags = false;
   bool monotonic_output_order_flag = true;
+  // §5.4.1 layer maxima. The layer-dependency syntax required when either
+  // maximum is non-zero (seq_max_mlayer_cnt_minus_1, mlayer_dependency_map,
+  // tlayer_dependency_map) is not implemented by this writer, so
+  // validate_sequence_header_config() rejects non-zero values instead of
+  // emitting a header that omits mandatory bits.
   std::uint8_t max_tlayer_id = 0;
   std::uint8_t max_mlayer_id = 0;
 };
@@ -161,8 +166,15 @@ struct FrameHeader {
 // Header serialisation (§5.4.6, §5.18.2, §5.19)
 // ---------------------------------------------------------------------------
 // sequence_header_obu() payload bits for single_picture_header_flag = 0.
+// Returns 0 without writing when validate_sequence_header_config() rejects the
+// config.
 std::size_t write_sequence_header(BitWriter& writer,
                                   const SequenceConfig& config);
+// Rejects configs this writer cannot serialise exactly.  max_tlayer_id > 0 or
+// max_mlayer_id > 0 would require the §5.4.1 layer-dependency syntax, which is
+// not implemented here.
+bool validate_sequence_header_config(const SequenceConfig& config,
+                                     std::string* error);
 std::vector<std::uint8_t> make_sequence_header_obu(const SequenceConfig&);
 std::vector<std::uint8_t> make_temporal_delimiter_obu();
 

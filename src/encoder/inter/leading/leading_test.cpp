@@ -265,6 +265,37 @@ void test_sequence_round_trip() {
          "sequence round trip");
 }
 
+void test_sequence_level_gating() {
+  // §5.4.1: seq_tier is coded only for seq_level_idx > 3.  The level-3 header
+  // must round-trip without the tier bit; a level-5 header carries it.
+  for (const std::uint8_t level : {std::uint8_t{3}, std::uint8_t{5}}) {
+    SequenceConfig config = base_config();
+    config.seq_level_idx = level;
+    const std::vector<std::uint8_t> obu =
+        av2enc::inter::leading::make_sequence_header_obu(config);
+    std::vector<ParsedObu> obus;
+    std::string error;
+    expect(av2enc::inter::leading::parse_obu_sequence(obu, obus, error),
+           "level " + std::to_string(level) + ": parse_obu_sequence (" +
+               error + ")");
+    if (obus.size() != 1U || obus[0].type != ObuType::kSequenceHeader) {
+      expect(false, "level " + std::to_string(level) +
+                        ": one OBU_SEQUENCE_HEADER");
+      continue;
+    }
+    SequenceConfig parsed;
+    expect(av2enc::inter::leading::parse_sequence_header(obus[0].payload,
+                                                         parsed, error),
+           "level " + std::to_string(level) + ": parse_sequence_header (" +
+               error + ")");
+    expect(parsed.seq_level_idx == level,
+           "level " + std::to_string(level) + ": seq_level_idx");
+    expect(to_hex(av2enc::inter::leading::make_sequence_header_obu(parsed)) ==
+               to_hex(obu),
+           "level " + std::to_string(level) + ": round trip");
+  }
+}
+
 void test_output_suppression() {
   SequenceConfig config = base_config();
   expect(av2enc::inter::leading::output_flags(
@@ -408,6 +439,7 @@ int main() {
   test_bit_goldens();
   test_frame_round_trip();
   test_sequence_round_trip();
+  test_sequence_level_gating();
   test_output_suppression();
   test_plan_validation();
   test_assembled_units();

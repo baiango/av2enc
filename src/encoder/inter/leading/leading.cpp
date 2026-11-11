@@ -90,7 +90,11 @@ std::size_t write_sequence_header(BitWriter& writer,
   writer.put_bits(0U, 5U);                // seq_profile_idc
   writer.put_bit(false);                  // single_picture_header_flag = 0
   writer.put_bits(c.seq_level_idx, 5U);   // seq_level_idx
-  writer.put_bit(false);                  // seq_tier (level > 3)
+  // §5.4.1: seq_tier is coded only when seq_level_idx > 3 and the header is
+  // not a single-picture header (this writer always uses single_picture = 0).
+  if (c.seq_level_idx > 3U) {
+    writer.put_bit(false);                // seq_tier = 0 (Main tier)
+  }
   put_uvlc(writer, 0);                    // chroma_format_idc = 4:2:0
   put_uvlc(writer, 1);                    // bit_depth_idc = 1 => 8-bit
 

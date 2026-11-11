@@ -12,7 +12,10 @@
 //
 // This file does not write sequence headers or tile payloads; the pipeline
 // composes already-encoded single-layer units, which is exactly the boundary
-// the core encoder owns today.
+// the core encoder owns today.  It does rewrite the fixed-width f(3)
+// seq_lcr_id field of each composed sequence header so the plan's global LCR
+// association is not dangling; a single_picture_header_flag = 1 header has no
+// such field (the id is inferred 0) and is rejected when an LCR is requested.
 
 #pragma once
 

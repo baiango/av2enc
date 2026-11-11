@@ -378,6 +378,49 @@ void test_sequence_round_trip() {
   }
 }
 
+void test_sequence_level_and_layer_gating() {
+  // §5.4.1: seq_tier is present only for seq_level_idx > 3.
+  for (const std::uint8_t level : {std::uint8_t{3}, std::uint8_t{5}}) {
+    SequenceConfig config = golden_config();
+    config.seq_level_idx = level;
+    const std::vector<std::uint8_t> obu = make_sequence_header_obu(config);
+    check(!obu.empty(), "level gating: seq OBU");
+    ObuView view;
+    std::size_t consumed = 0;
+    std::string error;
+    check(parse_obu(obu, &view, &consumed, &error),
+          "level gating: parse_obu: " + error);
+    std::size_t bits_read = 0;
+    check(read_sequence_header(view.payload, config, &bits_read, &error),
+          "level gating: read_sequence_header: " + error);
+  }
+
+  // B6: non-zero layer maxima require §5.4.1 dependency syntax this writer
+  // does not implement. Reject instead of omitting mandatory fields.
+  for (const bool mlayer : {false, true}) {
+    SequenceConfig config = golden_config();
+    if (mlayer) {
+      config.max_mlayer_id = 2;
+    } else {
+      config.max_tlayer_id = 1;
+    }
+    std::string error;
+    check(!validate_sequence_header_config(config, &error),
+          "layer gating: validate rejects");
+    check(error.find("not implemented") != std::string::npos,
+          "layer gating: message names the missing syntax");
+    check(make_sequence_header_obu(config).empty(),
+          "layer gating: make_sequence_header_obu returns empty");
+    av2enc::BitWriter writer;
+    check(write_sequence_header(writer, config) == 0,
+          "layer gating: write_sequence_header writes nothing");
+    check(writer.bit_size() == 0, "layer gating: no partial header");
+    check(!read_sequence_header(std::span<const std::uint8_t>{}, config,
+                                nullptr, &error),
+          "layer gating: reader rejects the same config");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Pool / random access
 // ---------------------------------------------------------------------------
@@ -974,6 +1017,7 @@ int main() {
   test_m2_equivalence();
   test_round_trip();
   test_sequence_round_trip();
+  test_sequence_level_and_layer_gating();
   test_pool_basic();
   test_long_term_retention();
   test_invalidation_without_ltr();

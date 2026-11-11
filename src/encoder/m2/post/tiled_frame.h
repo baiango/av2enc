@@ -95,6 +95,10 @@ struct M2TiledFrameHeader {
 
   bool apply_deblocking_filter[4] = {false, false, false, false};
   bool df_delta_q_present[4] = {false, false, false, false};
+  // §5.18.7.9 DfDeltaQ[i]; coded only for a present plane.  The range is
+  // decided by sequence_filter_config().df_par_bits_minus_2 (written from
+  // M2PostSequenceOptions::filters).
+  int df_delta_q[4] = {0, 0, 0, 0};
 
   bool cdef_frame_enable = false;
   filters_stream::CdefParams cdef{};

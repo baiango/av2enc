@@ -534,6 +534,24 @@ void test_sequence_header_roundtrip() {
   }
 }
 
+void test_sequence_level_gating() {
+  // §5.4.1: seq_tier is present only when seq_level_idx > 3.
+  for (const int level : {3, 5}) {
+    SequenceConfig config = baseline_sequence_config(64, 64, 90, 2);
+    config.seq_level_idx = static_cast<std::uint8_t>(level);
+    const std::vector<std::uint8_t> obu =
+        make_sequence_header_obu(config);
+    CHECK(!obu.empty());
+    ParsedSequenceHeader parsed;
+    std::string error;
+    CHECK(parse_sequence_header_obu(obu, parsed, error));
+    CHECK(error.empty());
+    CHECK_EQ_INT(parsed.seq_level_idx, level);
+    CHECK_EQ_INT(parsed.max_frame_width, 64);
+    CHECK_EQ_INT(parsed.max_frame_height, 64);
+  }
+}
+
 void test_sequence_header_goldens() {
   // max_tlayer_id = 0 baseline (byte-identical to M2).
   {
@@ -785,6 +803,7 @@ int main() {
   test_config_errors();
   test_mutations();
   test_sequence_header_roundtrip();
+  test_sequence_level_gating();
   test_sequence_header_goldens();
   test_m2_equivalence();
   test_frame_header_plan();

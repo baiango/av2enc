@@ -259,6 +259,18 @@ bool validate_chroma_seq_config(const ChromaSeqConfig& config,
     error = "seq_seg_info_present_flag is not implemented by this writer";
     return false;
   }
+  if (config.seq_tile_info_present_flag) {
+    error =
+        "seq_tile_info_present_flag = 1 requires allow_tile_info_change and "
+        "tile_params() (§5.4.2), which this writer does not implement";
+    return false;
+  }
+  if (config.film_grain_params_present) {
+    error =
+        "film_grain_params_present = 1 requires film_grain_config() in every "
+        "frame header (§5.18.10.1), which this writer does not implement";
+    return false;
+  }
   if (config.enable_cdef) {
     error = "enable_cdef is not implemented by this writer (frame-level "
             "cdef_params would be required)";
@@ -328,6 +340,10 @@ bool validate_chroma_seq_config(const ChromaSeqConfig& config,
 
 std::size_t write_sequence_header_syntax(BitWriter& writer,
                                          const ChromaSeqConfig& config) {
+  std::string validation_error;
+  if (!validate_chroma_seq_config(config, validation_error)) {
+    return 0;
+  }
   const std::size_t start = writer.bit_size();
   const ChromaFormatInfo info = chroma_format_info(config.chroma);
   const bool monochrome = info.monochrome;
@@ -480,6 +496,8 @@ std::size_t write_sequence_header_syntax(BitWriter& writer,
 
 std::vector<std::uint8_t> make_sequence_header_obu(
     const ChromaSeqConfig& config) {
+  std::string validation_error;
+  if (!validate_chroma_seq_config(config, validation_error)) return {};
   BitWriter writer;
   write_sequence_header_syntax(writer, config);
   writer.put_bit(false);  // §5.2.1 obu_extension_flag

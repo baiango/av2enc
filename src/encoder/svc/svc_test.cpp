@@ -184,9 +184,36 @@ LayerId layer(std::uint8_t x, std::uint8_t m = 0, std::uint8_t t = 0) {
   return id;
 }
 
+// Minimal well-formed §5.4.1 prefix through seq_lcr_id (single_picture_flag =
+// 0, level 5.1, 8-bit 4:2:0).  The rest of the payload is zero padding; the
+// compose step only rewrites the 3-bit seq_lcr_id field.
+std::vector<std::uint8_t> sequence_payload_prefix(std::uint8_t lcr_id,
+                                                  bool single_picture = false) {
+  std::vector<std::uint8_t> bytes(3, 0);
+  std::size_t bit = 0;
+  const auto put = [&](std::uint32_t value, unsigned count) {
+    for (unsigned i = 0; i < count; ++i) {
+      const unsigned shift = count - 1U - i;
+      if (((value >> shift) & 1U) != 0U) {
+        bytes[(bit + i) / 8U] |= static_cast<std::uint8_t>(
+            1U << (7U - ((bit + i) % 8U)));
+      }
+    }
+    bit += count;
+  };
+  put(1U, 1U);                    // seq_header_id uvlc(0)
+  put(0U, 5U);                    // seq_profile_idc
+  put(single_picture ? 1U : 0U, 1U);  // single_picture_header_flag
+  put(7U, 5U);                    // seq_level_idx = 7 (> 3)
+  if (!single_picture) put(0U, 1U);   // seq_tier
+  put(1U, 1U);                    // chroma_format_idc uvlc(0)
+  put(2U, 3U);                    // bit_depth_idc uvlc(1)
+  if (!single_picture) put(lcr_id, 3U);  // seq_lcr_id
+  return bytes;
+}
+
 std::vector<std::uint8_t> single_layer_unit(
-    std::uint8_t marker, std::span<const std::uint8_t> sequence_payload) {
-  std::vector<std::uint8_t> out;
+    std::uint8_t marker, std::span<const std::uint8_t> sequence_payload) {  std::vector<std::uint8_t> out;
   std::string error;
   ObuHeader td;
   td.type = ObuType::kTemporalDelimiter;
@@ -1116,8 +1143,8 @@ void test_ops_payload() {
 
 void test_compose_and_extract() {
   LayerPlan plan = make_plan(2, 1, 1);
-  const std::uint8_t seq0[2] = {0xA0U, 0x01U};
-  const std::uint8_t seq1[2] = {0xB0U, 0x02U};
+  const std::vector<std::uint8_t> seq0 = sequence_payload_prefix(0);
+  const std::vector<std::uint8_t> seq1 = sequence_payload_prefix(0);
   std::vector<LayerInput> inputs;
   inputs.push_back(LayerInput{layer(0, 0, 0), single_layer_unit(0x10, seq0)});
   inputs.push_back(LayerInput{layer(1, 0, 0), single_layer_unit(0x20, seq1)});
@@ -1145,6 +1172,14 @@ void test_compose_and_extract() {
   CHECK(obus[6].header.xlayer_id == 1);
   CHECK(obus[4].payload[0] == 0x10U);
   CHECK(obus[6].payload[0] == 0x20U);
+
+  // B7: the composed sequence headers carry the plan's seq_lcr_id (1), so the
+  // global LCR association is not dangling.
+  const std::vector<std::uint8_t> expected_seq = sequence_payload_prefix(1);
+  CHECK(std::vector<std::uint8_t>(obus[3].payload.begin(),
+                                  obus[3].payload.end()) == expected_seq);
+  CHECK(std::vector<std::uint8_t>(obus[5].payload.begin(),
+                                  obus[5].payload.end()) == expected_seq);
 
   std::vector<std::uint8_t> repeat;
   CHECK(av2enc::svc::compose_layered_stream(plan, inputs, options, repeat,
@@ -1205,6 +1240,31 @@ void test_compose_and_extract() {
   CHECK(obus.size() == 5);
   CHECK(obus[0].header.type == ObuType::kTemporalDelimiter);
   CHECK(obus[1].header.type == ObuType::kSequenceHeader);
+  // emit_lcr = false: no association is claimed, so the sequence headers keep
+  // their encoded/inferred seq_lcr_id (0).
+  const std::vector<std::uint8_t> unassociated_seq = sequence_payload_prefix(0);
+  CHECK(std::vector<std::uint8_t>(obus[1].payload.begin(),
+                                  obus[1].payload.end()) ==
+        unassociated_seq);
+  CHECK(std::vector<std::uint8_t>(obus[3].payload.begin(),
+                                  obus[3].payload.end()) ==
+        unassociated_seq);
+
+  // A sequence header that already carries a different LCR id is rewritten to
+  // the plan's association rather than left dangling.
+  std::vector<LayerInput> remapped;
+  remapped.push_back(
+      LayerInput{layer(0), single_layer_unit(0x40, sequence_payload_prefix(3))});
+  remapped.push_back(
+      LayerInput{layer(1), single_layer_unit(0x50, sequence_payload_prefix(5))});
+  CHECK(av2enc::svc::compose_layered_stream(plan, remapped, options, stream,
+                                            error));
+  CHECK(av2enc::svc::parse_obus(stream, obus, error));
+  CHECK(obus.size() == 7);  // TD + LCR + OPS + 2x(SEQ + CLK)
+  CHECK(std::vector<std::uint8_t>(obus[3].payload.begin(),
+                                  obus[3].payload.end()) == expected_seq);
+  CHECK(std::vector<std::uint8_t>(obus[5].payload.begin(),
+                                  obus[5].payload.end()) == expected_seq);
 }
 
 void test_compose_rejections() {
@@ -1213,7 +1273,7 @@ void test_compose_rejections() {
   std::vector<std::uint8_t> stream;
   std::string error;
 
-  const std::uint8_t seq[1] = {0x00U};
+  const std::vector<std::uint8_t> seq = sequence_payload_prefix(0);
   std::vector<LayerInput> wrong_count;
   wrong_count.push_back(LayerInput{layer(0), single_layer_unit(1, seq)});
   EXPECT_FAILS(
@@ -1285,11 +1345,25 @@ void test_compose_rejections() {
                                                    stream, e);
       },
       "already carries global layer metadata");
+
+  // B7: a single-picture sequence header infers seq_lcr_id = 0 and cannot be
+  // associated with the plan's LCR. Reject instead of emitting it unchanged.
+  std::vector<LayerInput> single_picture;
+  single_picture.push_back(LayerInput{
+      layer(0), single_layer_unit(3, sequence_payload_prefix(0, true))});
+  single_picture.push_back(
+      LayerInput{layer(1), single_layer_unit(4, sequence_payload_prefix(0))});
+  EXPECT_FAILS(
+      [&](std::string& e) {
+        return av2enc::svc::compose_layered_stream(plan, single_picture,
+                                                   options, stream, e);
+      },
+      "forces seq_lcr_id = 0");
 }
 
 void test_three_layer_compose() {
   LayerPlan plan = make_plan(3, 1, 1);
-  const std::uint8_t seq[1] = {0x00U};
+  const std::vector<std::uint8_t> seq = sequence_payload_prefix(0);
   std::vector<LayerInput> inputs;
   inputs.push_back(LayerInput{layer(0), single_layer_unit(0x11, seq)});
   inputs.push_back(LayerInput{layer(1), single_layer_unit(0x22, seq)});
@@ -1302,6 +1376,13 @@ void test_three_layer_compose() {
   std::vector<av2enc::svc::ParsedObu> obus;
   CHECK(av2enc::svc::parse_obus(stream, obus, error));
   CHECK(obus.size() == 9);  // TD+LCR+OPS+3x(SEQ+CLK)
+  const std::vector<std::uint8_t> expected_seq = sequence_payload_prefix(1);
+  for (const auto& obu : obus) {
+    if (obu.header.type == ObuType::kSequenceHeader) {
+      CHECK(std::vector<std::uint8_t>(obu.payload.begin(),
+                                      obu.payload.end()) == expected_seq);
+    }
+  }
   int seen_x = -1;
   for (const auto& obu : obus) {
     if (obu.header.type == ObuType::kClosedLoopKey) {

@@ -188,11 +188,47 @@ int max_long_term_id_plus_1(const SequenceConfig& config) {
   return (1 << config.long_term_frame_id_bits) - 1;
 }
 
+bool validate_sequence_header_config(const SequenceConfig& c,
+                                     std::string* error) {
+  if (c.max_mlayer_id != 0U) {
+    return set_error(
+        error,
+        "max_mlayer_id > 0 needs seq_max_mlayer_cnt_minus_1 and "
+        "mlayer_dependency_present_flag/map (§5.4.1), not implemented");
+  }
+  if (c.max_tlayer_id != 0U) {
+    return set_error(
+        error,
+        "max_tlayer_id > 0 needs tlayer_dependency_present_flag/map "
+        "(§5.4.1), not implemented");
+  }
+  if (c.seq_level_idx > 31U) {
+    return set_error(error, "seq_level_idx is outside f(5)");
+  }
+  if (c.order_hint_bits < 1U || c.order_hint_bits > 16U) {
+    return set_error(error, "order_hint_bits is outside 1..16");
+  }
+  if (c.num_ref_frames < 1U || c.num_ref_frames > 16U) {
+    return set_error(error, "num_ref_frames is outside 1..16");
+  }
+  if (c.long_term_frame_id_bits >= 8U) {
+    return set_error(error, "long_term_frame_id_bits is outside f(3)");
+  }
+  if (c.max_drl_bits_minus_1 >= 5U) {
+    return set_error(error, "max_drl_bits_minus_1 is outside f(3)");
+  }
+  if (error != nullptr) error->clear();
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // sequence_header_obu() (§5.4.1..§5.4.10) for single_picture_header_flag = 0
 // ---------------------------------------------------------------------------
 std::size_t write_sequence_header(BitWriter& writer,
                                   const SequenceConfig& c) {
+  if (!validate_sequence_header_config(c, nullptr)) {
+    return 0;
+  }
   const std::size_t start = writer.bit_size();
   assert(c.order_hint_bits >= 1U && c.order_hint_bits <= 16U);
   assert(c.num_ref_frames >= 1U && c.num_ref_frames <= 16U);
@@ -203,7 +239,11 @@ std::size_t write_sequence_header(BitWriter& writer,
   writer.put_bits(0U, 5U);               // seq_profile_idc
   writer.put_bit(false);                 // single_picture_header_flag = 0
   writer.put_bits(c.seq_level_idx, 5U);  // seq_level_idx
-  writer.put_bit(false);                 // seq_tier (level > 3)
+  // §5.4.1: seq_tier is coded only when seq_level_idx > 3 and the header is
+  // not a single-picture header (this writer always uses single_picture = 0).
+  if (c.seq_level_idx > 3U) {
+    writer.put_bit(false);               // seq_tier = 0 (Main tier)
+  }
   put_uvlc(writer, 0);                   // chroma_format_idc = 4:2:0
   put_uvlc(writer, 1);                   // bit_depth_idc = 1 => 8-bit
 
@@ -327,6 +367,7 @@ std::size_t write_sequence_header(BitWriter& writer,
 
 std::vector<std::uint8_t> make_sequence_header_obu(
     const SequenceConfig& config) {
+  if (!validate_sequence_header_config(config, nullptr)) return {};
   BitWriter writer;
   write_sequence_header(writer, config);
   writer.put_bit(false);  // obu_extension_flag
@@ -753,6 +794,7 @@ bool read_tile_group_header(std::span<const std::uint8_t> payload,
 bool read_sequence_header(std::span<const std::uint8_t> payload,
                           const SequenceConfig& c, std::size_t* bits,
                           std::string* error) {
+  if (!validate_sequence_header_config(c, error)) return false;
   BitReader reader(payload);
   std::uint32_t uvlc = 0;
   if (!read_uvlc(reader, &uvlc, error) || uvlc != 0U) {
@@ -768,7 +810,10 @@ bool read_sequence_header(std::span<const std::uint8_t> payload,
   if (!read_bits(reader, 5U, &v) || v != c.seq_level_idx) {
     return set_error(error, "unexpected seq_level_idx");
   }
-  if (!expect_flag(reader, false, "seq_tier", error)) return false;
+  if (c.seq_level_idx > 3U &&
+      !expect_flag(reader, false, "seq_tier", error)) {
+    return false;
+  }
   if (!read_uvlc(reader, &uvlc, error) || uvlc != 0U) {
     return set_error(error, "unexpected chroma_format_idc");
   }

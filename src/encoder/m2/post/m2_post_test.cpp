@@ -11,6 +11,8 @@
 #include "encoder/m2/post/rc_adapter.h"
 #include "encoder/m2/post/tiled_frame.h"
 
+#include "encoder/m1/filters_stream/bit_io.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -90,14 +92,27 @@ void test_rate_control() {
   CHECK(rc.begin_frame(make_complexity(64, 64, 4.0, 16.0), qp, &error));
   CHECK(rc.end_frame(1000, &error));
 
-  // Above the shipped coefficient-CDF slice: clamped to 90, flagged.
+  // QP above 90 is a real qctx slice now: no clamp when the policy allows it.
+  cfg = M2RcConfig{};
+  cfg.rc.mode = RateControlMode::kCqp;
+  cfg.rc.cqp.base_q_idx = 141;
+  M2RateControl qctx_rc;
+  CHECK(qctx_rc.configure(cfg, &error));
+  CHECK(qctx_rc.begin_frame(make_complexity(64, 64, 4.0, 16.0), qp, &error));
+  CHECK_EQ(qp.base_q_idx, 141);
+  CHECK_EQ(qp.coeff_cdf_qctx, 2);
+  CHECK(!qp.clamped_for_m2);
+  CHECK(qctx_rc.end_frame(1000, &error));
+
+  // A policy bound still clamps and flags the decision.
   cfg = M2RcConfig{};
   cfg.rc.mode = RateControlMode::kCqp;
   cfg.rc.cqp.base_q_idx = 130;
+  cfg.policy.max_base_q_idx = 110;
   M2RateControl clamp_rc;
   CHECK(clamp_rc.configure(cfg, &error));
   CHECK(clamp_rc.begin_frame(make_complexity(64, 64, 4.0, 16.0), qp, &error));
-  CHECK_EQ(qp.base_q_idx, 90);
+  CHECK_EQ(qp.base_q_idx, 110);
   CHECK(qp.clamped_for_m2);
   CHECK(clamp_rc.end_frame(1000, &error));
 
@@ -170,7 +185,8 @@ void test_rate_control() {
   CHECK(run_vbr(100000.0, 6, &again));
   CHECK(low == again);
 
-  // Slice boundaries are the §8.3.1 thresholds; the M2 adapter only ships 0.
+  // Slice boundaries are the §8.3.1 thresholds; all four slices ship in the
+  // shared qctx tables.
   CHECK_EQ(m2_qp_slice(1), 0);
   CHECK_EQ(m2_qp_slice(90), 0);
   CHECK_EQ(m2_qp_slice(91), 1);
@@ -178,7 +194,11 @@ void test_rate_control() {
   CHECK_EQ(m2_qp_slice(141), 2);
   CHECK_EQ(m2_qp_slice(191), 3);
   CHECK(m2_coeff_cdf_slice_available(0));
-  CHECK(!m2_coeff_cdf_slice_available(1));
+  CHECK(m2_coeff_cdf_slice_available(1));
+  CHECK(m2_coeff_cdf_slice_available(2));
+  CHECK(m2_coeff_cdf_slice_available(3));
+  CHECK(!m2_coeff_cdf_slice_available(-1));
+  CHECK(!m2_coeff_cdf_slice_available(4));
 }
 
 av2enc::m2::syntax::BlockSyntax make_root(int mi_row, int mi_col,
@@ -461,6 +481,109 @@ void test_tiles_and_headers() {
   CHECK(error.find("adaptive CDF") != std::string::npos);
 }
 
+void test_deblock_delta_q_syntax() {
+  using namespace av2enc::m2::post;
+  using av2enc::m1::filters_stream::BitReader;
+
+  // §5.18.7.9: a present plane codes df_delta_q immediately after its
+  // df_delta_q_present bit.  2-bit domain (df_par_bits_minus_2 = 0): DfDeltaQ
+  // -1 is coded as -1 + 2 = 1.
+  {
+    const bool apply[4] = {true, false, false, false};
+    const bool present[4] = {true, false, false, false};
+    const int delta[4] = {-1, 0, 0, 0};
+    av2enc::BitWriter writer;
+    std::string error;
+    CHECK_EQ(write_m2_deblock_params(writer, apply, present, delta, 0, &error),
+             7U);
+    CHECK(error.empty());
+    const std::vector<std::uint8_t> bytes(writer.bytes().begin(),
+                                          writer.bytes().end());
+    // apply[0..3]=1,0,0,0 (chroma flags are coded because luma is enabled),
+    // present[0]=1, df_delta_q[0]=01.
+    CHECK_EQ(bytes[0] & 0xFEU, 0x8AU);
+
+    BitReader reader(std::span<const std::uint8_t>(bytes), 7U);
+    bool bit = false;
+    std::uint32_t value = 0;
+    CHECK(reader.read_bit(&bit));
+    CHECK(bit);  // apply[0]
+    CHECK(reader.read_bit(&bit));
+    CHECK(!bit);  // apply[1]
+    CHECK(reader.read_bit(&bit));
+    CHECK(!bit);  // apply[2]
+    CHECK(reader.read_bit(&bit));
+    CHECK(!bit);  // apply[3]
+    CHECK(reader.read_bit(&bit));
+    CHECK(bit);  // df_delta_q_present[0]
+    CHECK(reader.read_bits(2, &value));
+    CHECK_EQ(value, 1U);  // DfDeltaQ[0] = 1 - 2 = -1
+  }
+
+  // All four planes, present + delta on each, 3-bit domain.  Every present bit
+  // is followed by its own delta before the next plane.
+  {
+    const bool apply[4] = {true, true, true, true};
+    const bool present[4] = {true, true, true, true};
+    const int delta[4] = {-2, 1, 0, -1};
+    av2enc::BitWriter writer;
+    std::string error;
+    CHECK_EQ(write_m2_deblock_params(writer, apply, present, delta, 1, &error),
+             20U);
+    CHECK(error.empty());
+    const std::vector<std::uint8_t> bytes(writer.bytes().begin(),
+                                          writer.bytes().end());
+    // 1111 | 1 010 | 1 101 | 1 100 | 1 011
+    CHECK_EQ(bytes[0], 0xFAU);
+    CHECK_EQ(bytes[1], 0xDCU);
+    CHECK_EQ(bytes[2] & 0xF0U, 0xB0U);
+
+    BitReader reader(std::span<const std::uint8_t>(bytes), 20U);
+    bool bit = false;
+    std::uint32_t value = 0;
+    for (int plane = 0; plane < 4; ++plane) {
+      CHECK(reader.read_bit(&bit));
+      CHECK(bit);
+    }
+    static const int kBias = 1 << 2;  // dfParBits = 3
+    for (int plane = 0; plane < 4; ++plane) {
+      CHECK(reader.read_bit(&bit));
+      CHECK(bit);
+      CHECK(reader.read_bits(3, &value));
+      CHECK_EQ(static_cast<int>(value) - kBias, delta[plane]);
+    }
+    CHECK_EQ(reader.bits_left(), 0U);
+  }
+
+  // A present plane without its representable delta is rejected before any
+  // bit is written (this is the desync the old writer produced).
+  {
+    const bool apply[4] = {true, false, false, false};
+    const bool present[4] = {true, false, false, false};
+    const int delta[4] = {2, 0, 0, 0};  // 2-bit domain holds -2..1
+    av2enc::BitWriter writer;
+    std::string error;
+    CHECK_EQ(write_m2_deblock_params(writer, apply, present, delta, 0, &error),
+             0U);
+    CHECK(!error.empty());
+    CHECK_EQ(writer.bit_size(), 0U);
+  }
+
+  // The zero-delta convenience overload still codes the delta bits.
+  {
+    const bool apply[4] = {true, true, false, false};
+    const bool present[4] = {true, true, false, false};
+    av2enc::BitWriter writer;
+    std::string error;
+    CHECK_EQ(write_m2_deblock_params(writer, apply, present, &error), 10U);
+    CHECK(error.empty());
+    const std::vector<std::uint8_t> bytes(writer.bytes().begin(),
+                                          writer.bytes().end());
+    // 1 1 0 0 | 1 10 | 1 10
+    CHECK_EQ(bytes[0], 0xCDU);
+  }
+}
+
 void test_bit_depth_checklist() {
   using namespace av2enc::m2::post;
   using av2enc::fmt::BitDepth;
@@ -668,6 +791,7 @@ void test_filter_order() {
 int main() {
   test_rate_control();
   test_tiles_and_headers();
+  test_deblock_delta_q_syntax();
   test_bit_depth_checklist();
   test_filter_order();
 

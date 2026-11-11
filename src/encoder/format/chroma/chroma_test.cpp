@@ -362,6 +362,23 @@ void test_headers() {
   bad.chroma = ChromaFormat::k444;
   bad.use_128x128_superblock = true;
   CHECK(!av2enc::chroma::validate_chroma_seq_config(bad, error));
+
+  // B5/B10: unsupported follow-up syntax is rejected at the source, not
+  // written as a dangling flag.
+  for (const bool tile_info : {true, false}) {
+    bad = av2enc::chroma::ChromaSeqConfig{};
+    if (tile_info) {
+      bad.seq_tile_info_present_flag = true;
+    } else {
+      bad.film_grain_params_present = true;
+    }
+    CHECK(!av2enc::chroma::validate_chroma_seq_config(bad, error));
+    CHECK(!error.empty());
+    CHECK(av2enc::chroma::make_sequence_header_obu(bad).empty());
+    av2enc::BitWriter writer;
+    CHECK_EQ(av2enc::chroma::write_sequence_header_syntax(writer, bad), 0U);
+    CHECK_EQ(writer.bit_size(), 0U);
+  }
 }
 
 void test_tx_shapes() {

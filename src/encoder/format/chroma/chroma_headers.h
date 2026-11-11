@@ -84,6 +84,10 @@ struct ChromaSeqConfig {
   bool enable_ccso = false;
   std::uint8_t df_par_bits_minus_2 = 0;
 
+  // Both flags are syntax-only in this writer and are rejected when set:
+  // seq_tile_info_present_flag would require allow_tile_info_change +
+  // tile_params() and film_grain_params_present would require a
+  // film_grain_config() in every frame header.
   bool seq_tile_info_present_flag = false;
   bool film_grain_params_present = false;
 };

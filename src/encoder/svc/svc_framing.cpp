@@ -68,6 +68,136 @@ const layers::EmbeddedLayerConfig* find_embedded(
   return nullptr;
 }
 
+// --- §5.4.1 seq_lcr_id rewriting -------------------------------------------
+//
+// compose_layered_stream() wraps already-encoded single-layer sequence headers
+// byte-for-byte.  A layered plan associates every sequence header with the
+// global LCR through seq_lcr_id, so the composed header must carry the plan's
+// id instead of the single-layer encoder's 0.  The rewrite is bit-exact: the
+// field width is fixed at f(3), so no length change and no re-serialisation of
+// the rest of the header is needed.
+
+bool read_payload_bit(std::span<const std::uint8_t> bytes, std::size_t bit_pos,
+                      bool* bit) {
+  if (bit == nullptr || bit_pos >= bytes.size() * 8U) return false;
+  const std::size_t byte = bit_pos >> 3U;
+  const unsigned shift = 7U - static_cast<unsigned>(bit_pos & 7U);
+  *bit = ((bytes[byte] >> shift) & 1U) != 0U;
+  return true;
+}
+
+bool read_payload_bits(std::span<const std::uint8_t> bytes,
+                       std::size_t* bit_pos, unsigned count,
+                       std::uint32_t* value) {
+  if (bit_pos == nullptr || value == nullptr) return false;
+  std::uint32_t out = 0;
+  for (unsigned i = 0; i < count; ++i) {
+    bool bit = false;
+    if (!read_payload_bit(bytes, *bit_pos, &bit)) return false;
+    out = (out << 1U) | (bit ? 1U : 0U);
+    ++*bit_pos;
+  }
+  *value = out;
+  return true;
+}
+
+bool read_payload_uvlc(std::span<const std::uint8_t> bytes,
+                       std::size_t* bit_pos, std::uint32_t* value) {
+  if (bit_pos == nullptr || value == nullptr) return false;
+  unsigned leading_zeros = 0;
+  bool bit = false;
+  do {
+    if (!read_payload_bit(bytes, *bit_pos, &bit)) return false;
+    ++*bit_pos;
+    if (bit) break;
+    ++leading_zeros;
+  } while (leading_zeros <= 31U);
+  if (leading_zeros > 31U) return false;
+  if (leading_zeros == 0) {
+    *value = 0;
+    return true;
+  }
+  std::uint32_t payload = 0;
+  if (!read_payload_bits(bytes, bit_pos, leading_zeros, &payload)) {
+    return false;
+  }
+  *value = ((1U << leading_zeros) - 1U) + payload;
+  return true;
+}
+
+bool write_payload_bits(std::vector<std::uint8_t>& bytes, std::size_t bit_pos,
+                        unsigned count, std::uint32_t value) {
+  if (bit_pos + count > bytes.size() * 8U) return false;
+  for (unsigned i = 0; i < count; ++i) {
+    const unsigned shift = count - 1U - i;
+    const bool bit = ((value >> shift) & 1U) != 0U;
+    const std::size_t pos = bit_pos + i;
+    const std::size_t byte = pos >> 3U;
+    const unsigned out_shift = 7U - static_cast<unsigned>(pos & 7U);
+    if (bit) {
+      bytes[byte] = static_cast<std::uint8_t>(bytes[byte] |
+                                              (1U << out_shift));
+    } else {
+      bytes[byte] = static_cast<std::uint8_t>(bytes[byte] &
+                                              ~(1U << out_shift));
+    }
+  }
+  return true;
+}
+
+bool rewrite_sequence_lcr_id(std::span<const std::uint8_t> payload,
+                             std::uint8_t seq_lcr_id,
+                             std::vector<std::uint8_t>& out,
+                             std::string& error) {
+  out.assign(payload.begin(), payload.end());
+  std::size_t bit_pos = 0;
+  std::uint32_t value = 0;
+  if (!read_payload_uvlc(payload, &bit_pos, &value)) {
+    return fail(error, "sequence header: truncated seq_header_id");
+  }
+  if (!read_payload_bits(payload, &bit_pos, 5U, &value)) {
+    return fail(error, "sequence header: truncated seq_profile_idc");
+  }
+  bool single_picture = false;
+  if (!read_payload_bit(payload, bit_pos, &single_picture)) {
+    return fail(error, "sequence header: truncated single_picture_header_flag");
+  }
+  ++bit_pos;
+  if (!read_payload_bits(payload, &bit_pos, 5U, &value)) {
+    return fail(error, "sequence header: truncated seq_level_idx");
+  }
+  const std::uint32_t seq_level_idx = value;
+  if (seq_level_idx > 3U && !single_picture) {
+    bool seq_tier = false;
+    if (!read_payload_bit(payload, bit_pos, &seq_tier)) {
+      return fail(error, "sequence header: truncated seq_tier");
+    }
+    ++bit_pos;
+  }
+  if (!read_payload_uvlc(payload, &bit_pos, &value)) {
+    return fail(error, "sequence header: truncated chroma_format_idc");
+  }
+  if (!read_payload_uvlc(payload, &bit_pos, &value)) {
+    return fail(error, "sequence header: truncated bit_depth_idc");
+  }
+
+  if (single_picture) {
+    if (seq_lcr_id != 0U) {
+      return fail(error,
+                  "sequence header has single_picture_header_flag = 1, which "
+                  "forces seq_lcr_id = 0, but the plan associates an LCR");
+    }
+    return true;  // seq_lcr_id is inferred 0; nothing to rewrite.
+  }
+  if (seq_lcr_id > 7U) {
+    return fail(error, "seq_lcr_id is outside f(3)");
+  }
+  if (!write_payload_bits(out, bit_pos, 3U, seq_lcr_id)) {
+    return fail(error, "sequence header: truncated seq_lcr_id");
+  }
+  return true;
+}
+
 bool write_xlayer_info(BitWriter& writer, bool is_global,
                        const layers::ExtendedLayerConfig& layer,
                        const layers::LayerDependencyMaps& dependencies,
@@ -732,10 +862,23 @@ bool compose_layered_stream(const LayerPlan& plan,
       if (obu.header.type == ObuType::kSequenceHeader) {
         header.mlayer_id = 0;
         header.tlayer_id = 0;
-      } else {
-        header.mlayer_id = entry.input->layer.mlayer_id;
-        header.tlayer_id = entry.input->layer.tlayer_id;
+        // Associate the composed sequence header with the plan's global LCR.
+        // Without an emitted LCR the header must claim no association (0).
+        const std::uint8_t target_lcr_id =
+            options.emit_lcr ? plan.sequences[i].seq_lcr_id : 0U;
+        std::vector<std::uint8_t> sequence_payload;
+        if (!rewrite_sequence_lcr_id(obu.payload, target_lcr_id,
+                                     sequence_payload, error)) {
+          return fail(error, std::string("input ") + std::to_string(i) + ": " +
+                                    error);
+        }
+        if (!frame_obu(header, sequence_payload, out, error)) {
+          return false;
+        }
+        continue;
       }
+      header.mlayer_id = entry.input->layer.mlayer_id;
+      header.tlayer_id = entry.input->layer.tlayer_id;
       if (!frame_obu(header, obu.payload, out, error)) {
         return false;
       }

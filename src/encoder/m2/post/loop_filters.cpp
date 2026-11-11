@@ -434,21 +434,50 @@ bool run_m2_post_filters(M2PostFilterFrame& frame,
 
 std::size_t write_m2_deblock_params(
     BitWriter& writer, const bool apply_deblocking_filter[4],
-    const bool df_delta_q_present[4], std::string* error) {
+    const bool df_delta_q_present[4], const int df_delta_q[4],
+    int df_par_bits_minus_2, std::string* error) {
   if (apply_deblocking_filter == nullptr) {
     return 0;
   }
+  if (df_par_bits_minus_2 < 0 || df_par_bits_minus_2 > 3) {
+    fail(error, "m2 post: df_par_bits_minus_2 is f(2), so it must be 0..3");
+    return 0;
+  }
+  const int par_bits = df_par_bits_minus_2 + 2;
+  const int bias = 1 << (par_bits - 1);
+  const int min_delta = -bias;
+  const int max_delta = bias - 1;
   const bool have_chroma =
       apply_deblocking_filter[0] || apply_deblocking_filter[1];
-  if (df_delta_q_present != nullptr) {
-    for (int plane = 0; plane < 4; ++plane) {
-      if (!apply_deblocking_filter[plane] && df_delta_q_present[plane]) {
+  for (int plane = 0; plane < 4; ++plane) {
+    const bool enabled =
+        plane < 2 ? apply_deblocking_filter[plane]
+                  : (have_chroma && apply_deblocking_filter[plane]);
+    const bool present =
+        enabled && df_delta_q_present != nullptr &&
+        df_delta_q_present[plane];
+    if (!enabled && df_delta_q_present != nullptr &&
+        df_delta_q_present[plane]) {
+      fail(error,
+           "m2 post: df_delta_q_present is only coded for an enabled plane");
+      return 0;
+    }
+    if (present) {
+      if (df_delta_q == nullptr) {
+        fail(error, "m2 post: df_delta_q_present needs df_delta_q values");
+        return 0;
+      }
+      if (df_delta_q[plane] < min_delta || df_delta_q[plane] > max_delta) {
         fail(error,
-             "m2 post: df_delta_q_present is only coded for an enabled plane");
+             "m2 post: df_delta_q is outside the dfParBits range for this "
+             "sequence");
         return 0;
       }
     }
   }
+  // Validation is complete; now write the exact §5.18.7.9 row.  The spec
+  // interleaves present/delta per plane, so a present bit is always followed
+  // by its delta before the next plane.
   const std::size_t start = writer.bit_size();
   writer.put_bit(apply_deblocking_filter[0]);
   writer.put_bit(apply_deblocking_filter[1]);
@@ -460,13 +489,25 @@ std::size_t write_m2_deblock_params(
     const bool enabled =
         plane < 2 ? apply_deblocking_filter[plane]
                   : (have_chroma && apply_deblocking_filter[plane]);
-    if (enabled) {
-      writer.put_bit(df_delta_q_present != nullptr
-                         ? df_delta_q_present[plane]
-                         : false);
+    if (!enabled) continue;
+    const bool present =
+        df_delta_q_present != nullptr && df_delta_q_present[plane];
+    writer.put_bit(present);
+    if (present) {
+      const int coded = df_delta_q[plane] + bias;
+      writer.put_bits(static_cast<std::uint64_t>(coded),
+                      static_cast<unsigned>(par_bits));
     }
   }
   return writer.bit_size() - start;
+}
+
+std::size_t write_m2_deblock_params(
+    BitWriter& writer, const bool apply_deblocking_filter[4],
+    const bool df_delta_q_present[4], std::string* error) {
+  static const int kZeroDelta[4] = {0, 0, 0, 0};
+  return write_m2_deblock_params(writer, apply_deblocking_filter,
+                                 df_delta_q_present, kZeroDelta, 0, error);
 }
 
 }  // namespace av2enc::m2::post

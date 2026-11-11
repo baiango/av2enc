@@ -455,7 +455,9 @@ bool write_m2_frame_header_syntax(BitWriter& writer, const M2Config& config,
   }
   std::string deblock_error;
   write_m2_deblock_params(writer, header.apply_deblocking_filter,
-                          header.df_delta_q_present, &deblock_error);
+                          header.df_delta_q_present, header.df_delta_q,
+                          sequence.filters.df_par_bits_minus_2,
+                          &deblock_error);
   if (!deblock_error.empty()) {
     return fail(error, "m2 tiled: " + deblock_error);
   }

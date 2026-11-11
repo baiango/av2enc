@@ -215,8 +215,25 @@ bool run_m2_post_filters(M2PostFilterFrame& frame,
 // (read_cdef()/read_ccso()), which the current M2 core syntax writer does not
 // emit; see README.md.
 
-// Writes the deblocking_filter_params() row only (apply flags + df_delta_q
-// bits).  The frame header writer places it before cdef_params().
+// Writes the deblocking_filter_params() row only (apply flags +
+// df_delta_q_present/df_delta_q per enabled plane).  The frame header writer
+// places it before cdef_params().
+//
+// §5.18.7.9 codes, for every enabled plane:
+//   df_delta_q_present[i] f(1)
+//   if (df_delta_q_present[i]) df_delta_q[i] f(dfParBits)   // dfParBits =
+//                                       df_par_bits_minus_2 + 2
+// The coded value is DfDeltaQ[i] + (1 << (dfParBits - 1)).  A present bit
+// without the matching delta desynchronises every decoder, so a delta outside
+// the representable range is rejected and nothing is written.
+std::size_t write_m2_deblock_params(
+    BitWriter& writer, const bool apply_deblocking_filter[4],
+    const bool df_delta_q_present[4], const int df_delta_q[4],
+    int df_par_bits_minus_2, std::string* error);
+
+// Convenience overload for callers that only signal DfDeltaQ == 0.  It writes
+// the same syntax with a zero delta for every present plane (dfParBits = 2,
+// coded value 2).
 std::size_t write_m2_deblock_params(
     BitWriter& writer, const bool apply_deblocking_filter[4],
     const bool df_delta_q_present[4], std::string* error);
