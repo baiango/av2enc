@@ -15,18 +15,18 @@
 ## Build provenance
 
 Token usage recorded by OpenCode for the AV2 project tree — the main session
-plus all subagent sessions — as of **2026-11-12**:
+plus all subagent sessions — as of **2026-11-13**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 117,200,743 |
-| Output | 20,783,216 |
-| Reasoning | 22,934,771 |
-| **Input + output + reasoning** | **~160.9 M** |
-| Cached context reads | 12,267,064,256 |
-| **Including cache reads** | **~12.43 B** |
+| Fresh input | 121,516,652 |
+| Output | 21,625,536 |
+| Reasoning | 23,523,264 |
+| **Input + output + reasoning** | **~166.7 M** |
+| Cached context reads | 13,004,101,056 |
+| **Including cache reads** | **~13.17 B** |
 
-291 sessions (main + subagents). Cache reads dominate because every subagent
+302 sessions (main + subagents). Cache reads dominate because every subagent
 re-reads a long context; they are normally billed at a fraction of fresh input.
 The figures keep growing while work continues, so treat them as a snapshot, not
 a final total.
