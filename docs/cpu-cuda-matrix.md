@@ -13,13 +13,15 @@ Status vocabulary:
 - **N/A** — no CUDA work is meaningful for an encoder (syntax/entropy/headers,
   or decoder-side output such as grain synthesis).
 
-"Wired" is separate: almost every kernel is **not** reachable from the shipped
-M1/M2 GPU path yet (see `docs/gpu-coverage.md`). Implementation coverage and
-product wiring are different questions.
+Coverage rule: a feature is **covered** when it has a CPU reference, a CUDA
+implementation, and a functional parity test that passes. Wiring into the
+shipped M1/M2 GPU path is **not** part of coverage; the "In GPU path" column is
+informational only. `GPU-UNWIRED` in `docs/gpu-coverage.md` therefore means
+"covered, not called", not "missing".
 
 ## Intra prediction
 
-| Feature | CPU | CUDA | Evidence | Wired |
+| Feature | CPU | CUDA | Evidence | In GPU path |
 |---|---|---|---|---|
 | Edges, directional, smooth, Paeth | yes | `cuda/intra_modes` | M1 GPU 112-case matrix | yes |
 | MRL | yes | `cuda/mrl` | built parity suite | no |
@@ -38,7 +40,7 @@ product wiring are different questions.
 
 ## Inter prediction
 
-| Feature | CPU | CUDA | Evidence | Wired |
+| Feature | CPU | CUDA | Evidence | In GPU path |
 |---|---|---|---|---|
 | ME/MC, subpel, adaptive precision | yes | `cuda/inter`, `cuda/m1`, `cuda/m2` | M2 GPU 14.9×, byte-identical | yes |
 | Compound, CWP, masks, inter-intra | yes | `cuda/compound_full` | 17,263 checks | no |
@@ -53,7 +55,7 @@ product wiring are different questions.
 
 ## Transform, quantisation, entropy
 
-| Feature | CPU | CUDA | Evidence | Wired |
+| Feature | CPU | CUDA | Evidence | In GPU path |
 |---|---|---|---|---|
 | TX variants + TX types | yes | `cuda/tx_variants`, `cuda/tx_type` | built parity suites | yes |
 | TX partition (`TX_MODE_SELECT`) | yes | `cuda/tx_partition` | 13,456,988 checks | no |
@@ -67,7 +69,7 @@ product wiring are different questions.
 
 ## Filters
 
-| Feature | CPU | CUDA | Evidence | Wired |
+| Feature | CPU | CUDA | Evidence | In GPU path |
 |---|---|---|---|---|
 | Deblocking | yes | `cuda/deblock` | M1 GPU matrix | yes |
 | CDEF | yes | `cuda/cdef` | 129 checks | **no** |
@@ -82,7 +84,7 @@ product wiring are different questions.
 
 ## Formats, system
 
-| Feature | CPU | CUDA | Evidence | Wired |
+| Feature | CPU | CUDA | Evidence | In GPU path |
 |---|---|---|---|---|
 | 8-bit 4:2:0 | yes | yes | M0/M1/M2 GPU gates | yes |
 | 10-bit | yes (`m10`, `hbd`) | `cuda/m1/hbd`, `cuda/format` | M10 GPU test | standalone |
@@ -105,13 +107,13 @@ decoder-side and does not need a kernel.
    8-leaf only, so those CPU features cannot be dispatched to the current GPU
    path. This is planning, not a pixel kernel, but it is a real capability gap.
 
-## Wiring gap (separate from implementation)
+## Wiring is not a coverage gap
 
-The GPU matrix counts **35 kernel TUs as GPU-UNWIRED**: kernels exist and are
-parity-tested, but the M1/M2 GPU path never calls them. In particular CDEF,
-CCSO, RDOQ, TX type/partition, RDO and full-UV are all rejected or skipped on
-the GPU path today. Implementing a kernel and using it are different
-milestones; only the baseline M1/M2 stages are wired.
+The GPU matrix counts **35 kernel TUs as GPU-UNWIRED**. Under the rule above
+that is not a deficiency: CDEF, CCSO, RDOQ, TX type/partition, RDO and full-UV
+all have CPU references, CUDA kernels and passing functional parity tests. They
+are simply not called by the shipped path yet. Integration decides which of
+them become product defaults; it does not decide whether they are implemented.
 
 ## Bottom line
 
@@ -119,7 +121,10 @@ milestones; only the baseline M1/M2 stages are wired.
   the spec-audit matrix is missing a CPU implementation; remaining spec gaps are
   the ones classified ABSENT/INTEGRATION there.
 - **CUDA: 13 new modules verified on hardware in this sweep**, plus the earlier
-  M1/M2/DIP/IBP/CfL/QM/IST kernels. Three real pixel-tool gaps remain (TCQ,
-  chroma LR, GME), plus GPU planning for sub-8/SDP/128/256.
+  M1/M2/DIP/IBP/CfL/QM/IST kernels. Three real tool gaps remain: TCQ/parity/
+  CCTX, chroma loop restoration, and global motion estimation.
+- **Planning-only gaps are not coverage gaps.** Sub-8/SDP/128/256 support in the
+  GPU plan matters only when those tools are wired; their CPU functional tests
+  pass, and no pixel kernel is missing.
 - **Entropy, headers, metadata, policy and conformance are CPU by design** and
   should not be counted as CUDA gaps.
