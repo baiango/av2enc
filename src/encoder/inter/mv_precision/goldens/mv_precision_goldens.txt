@@ -1,0 +1,119 @@
+# Pinned MV-precision goldens.
+# Fields are '|'-separated; `hex` is the complete tile payload from
+# av2::Encoder with disable_cdf_update = 1 unless noted.
+#
+# seq_modes|seq_mask|present|six|hex
+# frame_modes|seq_mask|frame_mask|hex
+# frame_prec|force|flex|target|hex
+# amvd_cdf|index|ctx|value|hex
+# amvd_mv|joint|idx0|idx1|hex
+# jmvd|use_amvd|mode|hex
+# pbmap|frame_precision|target|use_most_probable|pb|MvPrecision
+# prec_sym|frame_precision|target|hex
+# interp|ctx|filter|hex
+# shell|precision|dy|dx|hex
+# ctx|name|num_npos|num_nbuf|amvd_ctx|most_ctx|interp_ctx
+# project|d0|d1|restrict0|restrict1|scale|use_amvd|dy|dx|outy|outx
+# sign|frame_precision|mv_precision|y_mode|compound|ref_mv_idx|derive|y0|x0|y1|x1|hex
+seq_modes|2|1|0|88
+frame_modes|2|0|00
+seq_modes|2|1|0|88
+frame_modes|2|2|80
+seq_modes|4|1|0|48
+frame_modes|4|0|00
+seq_modes|4|1|0|48
+frame_modes|4|4|80
+seq_modes|8|1|0|28
+frame_modes|8|0|00
+seq_modes|8|1|0|28
+frame_modes|8|8|80
+seq_modes|16|1|0|18
+frame_modes|16|0|00
+seq_modes|16|1|0|18
+frame_modes|16|16|80
+seq_modes|30|1|0|f8
+frame_modes|30|0|00
+seq_modes|30|1|0|f8
+frame_modes|30|2|80
+seq_modes|30|1|0|f8
+frame_modes|30|4|40
+seq_modes|30|1|0|f8
+frame_modes|30|8|20
+seq_modes|30|1|0|f8
+frame_modes|30|16|10
+seq_modes|30|1|0|f8
+frame_modes|30|30|f0
+seq_modes|30|1|0|f8
+frame_modes|30|24|30
+seq_modes|24|1|0|38
+frame_modes|24|0|00
+seq_modes|24|1|0|38
+frame_modes|24|8|80
+seq_modes|24|1|0|38
+frame_modes|24|16|40
+seq_modes|24|1|0|38
+frame_modes|24|24|c0
+seq_modes|8|1|1|2c
+frame_prec|0|0|4|00
+frame_prec|0|1|4|00
+frame_prec|0|0|5|80
+frame_prec|0|1|5|80
+frame_prec|0|0|6|40
+frame_prec|0|1|6|40
+amvd_cdf|0|0|1|4000
+amvd_cdf|0|1|1|4000
+amvd_cdf|0|2|1|4000
+amvd_cdf|1|0|1|4000
+amvd_cdf|1|1|1|4000
+amvd_cdf|1|2|1|4000
+amvd_cdf|2|0|1|4000
+amvd_cdf|2|1|1|4000
+amvd_cdf|2|2|1|4000
+amvd_cdf|3|0|1|4000
+amvd_cdf|3|1|1|4000
+amvd_cdf|3|2|1|4000
+amvd_cdf|4|0|1|c000
+amvd_cdf|4|1|1|c000
+amvd_cdf|4|2|1|c000
+amvd_cdf|5|0|1|c000
+amvd_cdf|5|1|1|c000
+amvd_cdf|5|2|1|c000
+amvd_cdf|6|0|1|4000
+amvd_cdf|6|1|1|4000
+amvd_cdf|6|2|1|4000
+amvd_cdf|7|0|1|c000
+amvd_cdf|7|1|1|c000
+amvd_cdf|7|2|1|c000
+amvd_cdf|8|0|1|c000
+amvd_cdf|8|1|1|4000
+amvd_cdf|8|2|1|4000
+amvd_mv|1|0|0|100000
+amvd_mv|2|0|0|900000
+amvd_mv|3|0|0|ffc20000
+jmvd|0|1|bc0000
+jmvd|1|1|b80000
+pbmap|4|0|0|2|0
+prec_sym|4|0|700000
+pbmap|4|1|0|1|1
+prec_sym|4|1|500000
+pbmap|4|3|0|0|3
+prec_sym|4|3|100000
+pbmap|5|0|0|2|0
+prec_sym|5|0|a08000
+pbmap|5|1|0|1|1
+prec_sym|5|1|9e0000
+pbmap|5|3|0|0|3
+prec_sym|5|3|4000
+pbmap|6|1|0|2|1
+prec_sym|6|1|9f0000
+pbmap|6|3|0|1|3
+prec_sym|6|3|880000
+pbmap|6|4|0|0|4
+prec_sym|6|4|4000
+interp|0|0|4000
+interp|0|1|f80000
+interp|0|2|ffe00000
+shell|6|12|0|c8200000
+ctx|amvd|2|2|2|0|2
+project|1|2|0|0|1|1|8|4|8|4
+sign|5|4|16|0|0|1|8|-4|0|0|4000
