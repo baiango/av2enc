@@ -19,14 +19,14 @@ plus all subagent sessions — as of **2026-11-12**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 108,398,342 |
-| Output | 19,645,381 |
-| Reasoning | 21,309,204 |
-| **Input + output + reasoning** | **~149.4 M** |
-| Cached context reads | 11,312,837,312 |
-| **Including cache reads** | **~11.46 B** |
+| Fresh input | 117,200,743 |
+| Output | 20,783,216 |
+| Reasoning | 22,934,771 |
+| **Input + output + reasoning** | **~160.9 M** |
+| Cached context reads | 12,267,064,256 |
+| **Including cache reads** | **~12.43 B** |
 
-260 sessions (main + subagents). Cache reads dominate because every subagent
+291 sessions (main + subagents). Cache reads dominate because every subagent
 re-reads a long context; they are normally billed at a fraction of fresh input.
 The figures keep growing while work continues, so treat them as a snapshot, not
 a final total.
@@ -86,13 +86,17 @@ comparison: `docs/m1-results.md`.
 
 ### Still GPU (opt-in, `--still-gpu`)
 
-`--still-gpu` selects the GPU-resident Still pipeline (`src/cuda/m1/`, see
-`docs/m1-gpu.md`) and implies `--still`; Basic remains the default. It takes the
-same `--no-cfl`, `--no-deblock`, `--still-full-intra`, `--still-depth`, and
-`--vram-cap` options as the CPU Still path. The target is byte-identical output
-to CPU Still. `--still` stays the CPU reference path. CPU-only builds parse the
-flag but reject it with a clear error, and a CUDA build without the orchestrator
-entry point (`src/cuda/m1/m1_gpu.cu`) reports the path as unavailable rather
+`--still-gpu` selects the GPU-resident Still pipeline
+(`src/cuda/pipeline/still/`, see `docs/m1-gpu.md`) and implies `--still`; Basic
+remains the default. It takes the same `--no-cfl`, `--no-deblock`,
+`--still-full-intra`, `--still-depth`, and `--vram-cap` options as the CPU Still
+path. CDEF, CCSO and film-grain signalling have device stages and are accepted;
+Wiener/chroma-LR/PC-Wiener/GDF, RDOQ, TX-type, RDO-intra, UV-full and the
+screen-content/QM tools have no GPU stage and are rejected by name. The target
+is byte-identical output to CPU Still. `--still` stays the CPU reference path.
+CPU-only builds parse the flag but reject it with a clear error, and a CUDA
+build without the orchestrator entry point
+(`src/cuda/pipeline/still/still_gpu.cu`) reports the path as unavailable rather
 than silently falling back. Still tools without a GPU stage are rejected by
 name (exit 2), never silently dropped.
 
@@ -122,15 +126,18 @@ encoding. Scores, the exact `--cpu-used` mapping and the host-specific
 calibration caveat are in `docs/effort.md`.
 
 Formats: Basic, Still and Video are 8-bit 4:2:0 by default. `--still` also
-selects `--bit-depth 10` (4:2:0, `--qp 1..90`) or an 8-bit
-4:2:2/4:4:4/4:0:0 `--chroma` input (pins `--qp 90`); the input must already have
-that format. Video requires dimensions divisible by 8.
+selects `--bit-depth 10` (`C420p10`/`C422p10`/`C444p10`/`Cmono10`,
+`--qp 1..303`) or an 8-bit 4:2:2/4:4:4/4:0:0 `--chroma` input (pins `--qp 90`);
+the input must already have that format. Video requires dimensions divisible by 8.
 
 Video options: `--p-frames`, `--video-refs`, `--video-mv-precision`,
 `--video-subpel-eighth`, `--video-inter-residual`, `--video-long-term`,
 `--video-olk`, `--video-leading`, `--video-sef`, `--video-switch`,
-`--video-ras`, and `--rc cqp|crf|vbr` with `--crf` / `--bitrate`. B frames and
-DRL reordering are rejected until they pass the pinned decoder gate.
+`--video-ras`, and `--rc cqp|crf|vbr` with `--crf` / `--bitrate`. `--rc crf`
+derives `base_q_idx` from `--crf` and rejects an explicit `--qp`; `--rc vbr`
+uses `--qp` as its statistics-pass anchor and codes the controller's per-frame
+`base_q_idx` plan. B frames and DRL reordering are rejected until they pass the
+pinned decoder gate.
 
 Usage and option-combination errors exit 2; encoder, decoder and I/O failures
 exit 1. `--gpu-plan N` is a host-only multi-GPU dry run: it prints the tile
