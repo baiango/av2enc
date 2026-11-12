@@ -112,30 +112,29 @@ This is the required behaviour: a CPU-only build must never produce a GPU PASS.
 
 ## 4. Expected GPU outcome (code-derived, not measured)
 
-From `src/main.cpp` and `src/cuda/m1/still_gpu.cu`:
+From `src/main.cpp` and `src/cuda/pipeline/still/still_gpu.cu`:
 
 | Feature | Expected class | Cause |
 |---|---|---|
-| CDEF | `SKIP-REJECTED` | `validate_options` rejects `enable_cdef` |
+| CDEF | `READY` or `BYTE-DIFF` | `enable_cdef` is plumbed and `still_cdef_filter` runs on device; parity unverified without a device |
+| CCSO | `READY` or `BYTE-DIFF` | `enable_ccso`/`ccso_bands_log2`/`ccso_edge` are plumbed and `ccso_frame` runs on device |
+| Film grain | not gated | `enable_grain` is plumbed (metadata only); the matrix has no `grain` mode |
 | RDOQ | `SKIP-REJECTED` | rejects `rdoq` |
 | TX type | `SKIP-REJECTED` | rejects `tx_type` |
 | Rate-aware intra | `SKIP-REJECTED` | rejects `rdo_intra` |
-| CCSO | `FAIL (IGNORED)` | flag accepted by CLI, no `GpuOptions` field, silently dropped |
-| Full UV | `READY` or `FAIL` | plumbed (`uv_full`) and implemented; parity unverified |
+| Full UV | `SKIP-REJECTED` | rejects `uv_full` (chroma job lacks the luma-mode inputs) |
 
 The matrix's `-- feature readiness` section is designed to print exactly this
-split. Until it is run on the 3060, full UV is **not** claimed GPU-ready.
+split. Until it is run on the 3060, CDEF/CCSO parity is **not** claimed.
 
 Latent issues to fix when porting (currently masked by the rejections):
 
 * `main.cpp:590` sets GPU `luma_dc_only = !still_full_intra`, but the CPU path
   (`main.cpp:633`) uses `!still_full_intra && !still_rdo_intra`. A future
   `--still-rdo-intra` port would silently start from DC-only luma.
-* `encode_still_gpu`'s internal CPU parity check (`to_cpu_options`,
-  `still_gpu.cu:1000-1013`) does not carry CDEF/CCSO/RDOQ/TX-type/RDO. For CCSO,
-  the GPU's own check therefore compares against a CPU encode *without* CCSO
-  and can pass while the CLI CPU stream differs. The external flag/no-flag
-  probe in `verify_m3_gpu.sh` is the check that catches this.
+* `encode_still_gpu`'s internal CPU parity check (`to_cpu_options`) now carries
+  CDEF/CCSO/RDOQ/TX-type/RDO through `gpu_options_to_m1()`; the external
+  flag/no-flag probe in `verify_m3_gpu.sh` remains the CLI-level check.
 
 ## 5. Harness self-tests (mock encoder)
 

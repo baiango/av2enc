@@ -84,6 +84,14 @@ expect_line "$F1080" "4 GPU set 3" \
 expect_line "$F360" "640x360 2 GPU / 8x2" "layout:  8x2 (16 tiles)" --gpu-plan 2
 expect_line "$F360" "explicit --tiles override" "layout:  2x2 (4 tiles)" \
     --gpu-plan 2 --tiles 2x2
+expect_line "$F360" "--vram-cap 0 means no cap" "layout:  4x2 (8 tiles)" \
+    --gpu-plan 1 --vram-cap 0
+expect_line "$F360" "explicit --tiles 1x1 is kept" "layout:  1x1 (1 tiles)" \
+    --gpu-plan 1 --tiles 1x1
+expect_line "$F360" "3 GPU falls back to 8x2" "layout:  8x2 (16 tiles)" \
+    --gpu-plan 3
+expect_line "$F360" "8 GPU falls back to 8x2" "layout:  8x2 (16 tiles)" \
+    --gpu-plan 8
 expect_line "$F1080" "no-measurement disclaimer" "measured=0" --gpu-plan 2
 expect_line "$F1080" "evidence flag" "evidence=estimated" --gpu-plan 2
 expect_line "$F1080" "per-tile dispatch (1 GPU)" \
@@ -118,7 +126,10 @@ expect_reject() {
     fi
     ok "$label (rejected by name)"
 }
-expect_reject "not representable" "640x360 3 GPU / 16x2" --gpu-plan 3
+expect_reject "only 1 tile(s)" "explicit 1x1 for 2 GPUs" \
+    --gpu-plan 2 --tiles 1x1
+expect_reject "not representable" "explicit 16x2 at 640x360" \
+    --gpu-plan 2 --tiles 16x2
 expect_reject "host-planning dry run" "gpu plan is not a stream mode" \
     --gpu-plan 2 --video
 expect_reject "--gpu-plan must be" "gpu count range" --gpu-plan 9

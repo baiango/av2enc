@@ -12,23 +12,23 @@ namespace {
 
 // Count cache entries reused by `colors`, using the same greedy scan as
 // palette::split_cache_and_run() (the analysis result may come from a caller
-// that did not pre-compute PaletteResult::cache_used).
+// that did not pre-compute PaletteResult::cache_used).  A palette colour can be
+// taken from the cache at most once: duplicate cache entries (§5.20.8.1
+// interleaves above/left, which may hold the same colour) must not both count.
 int count_cache_reuse(const std::uint8_t* colors, int size,
                       const std::uint8_t* cache, int cache_n) noexcept {
-  bool used[16] = {};
-  int idx = 0;
-  for (int i = 0; i < cache_n && idx < size; ++i) {
-    for (int c = idx; c < size; ++c) {
-      if (colors[c] == cache[i]) {
-        used[i] = true;
-        ++idx;
+  bool consumed[16] = {};
+  int used = 0;
+  for (int i = 0; i < cache_n && used < size; ++i) {
+    for (int c = 0; c < size; ++c) {
+      if (!consumed[c] && colors[c] == cache[i]) {
+        consumed[c] = true;
+        ++used;
         break;
       }
     }
   }
-  int count = 0;
-  for (int i = 0; i < cache_n; ++i) count += used[i] ? 1 : 0;
-  return count;
+  return used;
 }
 
 }  // namespace

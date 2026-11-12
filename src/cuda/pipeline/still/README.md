@@ -1,4 +1,4 @@
-# M1 GPU orchestrator (`src/cuda/m1/` root)
+# M1 GPU orchestrator (`src/cuda/pipeline/still/` root)
 
 Owner: workstream 1 in `docs/m1-gpu.md`. Root files only:
 `still_gpu.h` (contract), `still_gpu.cu` (orchestrator), `still_gpu_test.cc`
@@ -118,7 +118,7 @@ chroma LR, PC-Wiener, GDF) stays rejected: the component suite still reports
 `loop_restoration_frame launch (invalid argument)`, and PC-Wiener/GDF depend on
 restoration tables that are not yet re-verified in the integrated tree.
 
-`src/cuda/m1/still_gpu_options_test.cpp` (built by `build_options_test.sh`, host
+`src/cuda/pipeline/still/still_gpu_options_test.cpp` (built by `build_options_test.sh`, host
 only) pins the full mapping and the rejection set.
 
 ### Fallback
@@ -227,7 +227,7 @@ Integration fixes from this pass:
 
 No bitstream-integration bug was found: every encodable case has identical CPU
 and GPU IVF bytes. The decode failures and depth-8 rejections are in the shared
-CPU plan/syntax/header path (outside `src/cuda/m1/` root files) and are
+CPU plan/syntax/header path (outside `src/cuda/pipeline/still/` root files) and are
 reported, not worked around.
 
 ## Runtime ownership
@@ -243,9 +243,9 @@ reported, not worked around.
 ## Build and test
 
 ```sh
-BUILD_DIR=build-m1-orch/m1-gpu-test src/cuda/m1/build_still_gpu_test.sh
+BUILD_DIR=build-m1-orch/m1-gpu-test src/cuda/pipeline/still/build_still_gpu_test.sh
 BUILD_DIR=build-m1-orch/m1-gpu-test \
-  src/cuda/m1/build_still_gpu_test.sh -- --synthetic 1920x1080
+  src/cuda/pipeline/still/build_still_gpu_test.sh -- --synthetic 1920x1080
 ```
 
 The standalone script compiles the CPU reference, plan bridge, stream bridge,

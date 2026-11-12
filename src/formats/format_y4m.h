@@ -26,9 +26,12 @@ struct Y4mFormatInfo {
 };
 
 // Parses the header and reads exactly one frame. `picture` is allocated with
-// coded-size planes and edge-replicated padding.  Returns false with a precise
-// message for an unsupported coloursapce, a truncated/oversized frame, a
-// sample outside [0, (1<<depth)-1], or a malformed header.
+// coded-size planes and edge-replicated padding.  The file must contain that
+// one frame and nothing after its body, so a C tag that under-declares the real
+// body or a multi-frame input is an "oversized frame" error rather than a
+// silent prefix encode.  Returns false with a precise message for an
+// unsupported coloursapce, a truncated/oversized frame, a sample outside
+// [0, (1<<depth)-1], or a malformed header.
 bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
                       Y4mFormatInfo* info, std::string* error);
 

@@ -185,41 +185,31 @@ always `SKIP-CPU-STAGED`, even with identical bytes.
 
 ## Current GPU support (code-derived)
 
-Read from the tree on 2026-11-11; docs may lag, the code and the gate output
+Read from the tree on 2026-11-13; docs may lag, the code and the gate output
 win. This table is what the gate is expected to say, not a substitute for
 running it on the CUDA box.
 
 | Feature | CLI → `GpuOptions` | GPU implementation | Expected gate result |
 |---|---|---|---|
-| CDEF | `enable_cdef` plumbed in `src/main.cpp` | rejected in `validate_options` (`src/cuda/m1/still_gpu.cu:1049`) | `SKIP-REJECTED` |
-| CCSO | **not plumbed at all** — `GpuOptions` has no CCSO field, `src/main.cpp` never assigns one | none | `FAIL (IGNORED)` from the ignore probe, or `BYTE-DIFF` |
+| CDEF | `enable_cdef` plumbed in `src/main.cpp` | `still_cdef_filter` in `src/cuda/pipeline/still/still_gpu.cu` (§7.18) | `READY` or `BYTE-DIFF` (parity unverified without a device) |
+| CCSO | `enable_ccso` / `ccso_bands_log2` / `ccso_edge` plumbed | `ccso_frame` in `src/cuda/pipeline/still/still_gpu.cu` | `READY` or `BYTE-DIFF` (parity unverified without a device) |
+| Film grain | `enable_grain` plumbed; `--still-grain-adaptive` rejected by name | metadata-only (decoder-side synthesis), copied CPU `StillConfig` | not gated: the matrix has no `grain` mode |
 | RDOQ | `rdoq` plumbed in `src/main.cpp` | rejected in `validate_options` | `SKIP-REJECTED` |
 | TX type | `tx_type` plumbed in `src/main.cpp` | rejected in `validate_options` | `SKIP-REJECTED` |
 | Rate-aware intra | `rdo_intra` plumbed in `src/main.cpp` | rejected in `validate_options` | `SKIP-REJECTED` |
-| Full UV | `uv_full` plumbed in `src/main.cpp` | `chroma_uv_full_search` (`src/cuda/m1/chroma/still_chroma.cu:28-30`) | candidate for `READY`; unverified until the matrix runs |
+| Full UV | `uv_full` plumbed in `src/main.cpp` | rejected in `gpu_m3_options_supported()` (chroma job lacks luma-mode inputs) | `SKIP-REJECTED` |
 
-Non-default tuning flags are also not plumbed to the GPU: `--still-cdef-strengths`,
+Non-default tuning flags are also not forwarded to the GPU: `--still-cdef-strengths`,
 `--still-ccso-bands`, `--still-rdoq-scale`, `--still-tx-type-scale`, `--still-rdo-scale`.
 If a feature is ported without forwarding its scale, the ignore probe and the
 byte gate will catch the mismatch.
 
-Two latent plumbing inconsistencies are hidden by the current rejections and
-must be fixed before those features can pass:
+One latent plumbing inconsistency is hidden by the current rejections and must
+be fixed before those features can pass:
 
 * `main.cpp` sets GPU `luma_dc_only = !still_full_intra`, while the CPU path uses
   `!still_full_intra && !still_rdo_intra`. Once `--still-rdo-intra` is ported, the GPU
   would start from a DC-only luma search unless this is aligned.
-* `encode_still_gpu`'s internal `verify_against_cpu` uses `to_cpu_options()`,
-  which copies `uv_full` but **not** CDEF/CCSO/RDOQ/TX-type/RDO. For CCSO this
-  means the GPU's own parity check compares against a CPU encode that also
-  lacks CCSO, so it can pass while the CLI-level CPU stream differs. The
-  external flag-vs-no-flag probe in this gate is what closes that hole.
-
-The **CCSO case is the dangerous one**: `--still-gpu --still-ccso` exits 0 and
-writes an IVF, because the CLI accepts the flag and simply never passes it to
-`GpuOptions`. Bytes still differ from the CPU CCSO stream, so the byte gate
-catches it; the ignore probe additionally labels it `IGNORED` instead of
-leaving a misleading byte diff.
 
 ## Limitations
 

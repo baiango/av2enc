@@ -75,29 +75,32 @@ TX_MODE_LARGEST geometry and rejects anything else.
 
 `get_tx_set(txSz, 0)` for `is_inter = 1`, `reduced_tx_set = 0`:
 
-| TX size | set | codable types after filtering |
+| TX size | set | codable types in the search |
 |---|---|---|
-| 4x4, 4x8, 8x4, 8x8, 8x16, 16x8, 4x16, 16x4 | `TX_SET_INTER_1` | 7 |
-| 16x16 | `TX_SET_INTER_2` | 7 |
-| 32x32 | `TX_SET_DCT_IDTX` | 1 (DCT_DCT) |
-| 16x32, 8x32, 4x32, 32x16, 32x8, 32x4 | `TX_SET_WIDE_32` / `HIGH_32` | 3 (+ `is_long_side_dct`) |
+| 4x4, 4x8, 8x4, 8x8, 8x16, 16x8, 4x16, 16x4 | `TX_SET_INTER_1` | 10 (16 in set) |
+| 16x16 | `TX_SET_INTER_2` | 10 (12 in set) |
+| 32x32 | `TX_SET_DCT_IDTX` | 2 (DCT_DCT, IDTX) |
+| 16x32, 8x32, 4x32, 32x16, 32x8, 32x4 | `TX_SET_WIDE_32` / `HIGH_32` | 4 (+ `is_long_side_dct`) |
 | 16x64, 8x64, 4x64, 64x16, 64x8, 64x4 | `TX_SET_WIDE_64` / `HIGH_64` | 3 |
 | 32x64, 64x32, 64x64 | `TX_SET_DCTONLY` | 1, no symbol |
 
-Filters applied to the spec tables:
+The set membership is exactly §5.20.7.29 `Tx_Type_In_Set_Inter` (row
+`TX_SET_INTER_2` allows types 0..11; it was previously written 0..7).
+`inter_tx_symbol()` signals any type in the set.  Two **encoder capability**
+guards, not spec restrictions, narrow the search:
 
-* `enable_inter_ddt = 0` (M2's sequence header): every candidate with a 1D
-  identity component (IDTX, V/H_DCT, V/H_ADST, V/H_FLIPADST) is removed.  The
-  decoder *would* accept them, but §6.4.8 says DDT is not allowed.
-* `Tx_Type_In_Set_Inter` aliasing: a type outside the set is reconstructed as
-  DCT_DCT by `compute_tx_type()`, so `TX_SET_INTER_2`'s `ADST_FLIPADST` is not
-  codable even though `Tx_Type_Inter_Inv_Set2` lists it.
-* `FLIPADST_ADST` and `ADST_FLIPADST` are withheld because
-  `src/encoder/tx_variants/tx_variants.cpp` maps their 1D transforms to each
-  other (`kTransform1dType[7]`/`[8]`), which breaks decoder bit-exactness.
-  Verified per type with `dav2d`: types 0..6 decode exactly, type 7 does not.
-  Fixing that two-row swap in the shared component re-enables both (the unit
-  test asserts they are currently absent).
+* Types 10..15 are `TX_CLASS_HORIZ/VERT`: they need the class-specific
+  §5.20.7.30 scan and coefficient contexts, which this writer does not
+  implement yet, so they stay out of the candidate list.
+* `enable_inter_ddt = true` withholds ADST/FDST types because §7.15.4.1 would
+  swap their 1-D kernels for DDTX/FDDT at the decoder and this component has no
+  DDTX/FDDT inverse.  IDTX is not a DDT type and remains available.
+
+`Tx_Type_In_Set_Inter` aliasing is applied: a type outside the set is
+reconstructed as DCT_DCT by `compute_tx_type()`, so it is never signalled.
+The TX_TYPE 7/8 enum labels now match the spec (`7 = ADST_FLIPADST`,
+`8 = FLIPADST_ADST`); with the label swap fixed, both are 2-D types and are
+searched and signalled (`Tx_Type_Inter_Inv_Set1[14..15]` = types 7, 8).
 
 Contexts are spec-exact and deliberately **not** merged: `inter_tx_type` uses
 `min(w, 32) + min(h, 32) - 4` while `inter_tx_type_offset` uses `w + h - 4`
@@ -223,8 +226,8 @@ same clip).
 * The component keeps its own copy of the §9.3 coefficient CDFs (the M2 writer's
   `CdfState` is private).  This is exact because `disable_cdf_update = 1`;
   adaptive CDFs need the two states merged (see `docs/INTEGRATION.md`).
-* `src/encoder/tx_variants/` swaps FLIPADST_ADST/ADST_FLIPADST 1D types (see
-  above).  Not this directory's file; reported, not patched.
+* The TX_TYPE 7/8 label swap in `src/codec/transform/variants/tx_variants.*`
+  is fixed; both types are back in the candidate list.
 * 8-bit 4:2:0 only.
 * `AV2ENC_VIDEO_RESIDUAL_TX_TYPE=<n>` forces one luma TX type (diagnostic knob used
   to isolate a single transform against `dav2d`; not a decision input).

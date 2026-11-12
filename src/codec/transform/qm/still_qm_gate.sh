@@ -29,13 +29,20 @@ trap cleanup EXIT
 
 AV2ENC_BIN="${AV2ENC_BIN:-}"
 if [ -z "$AV2ENC_BIN" ]; then
-    for candidate in "$ROOT/build-int/av2enc" "$ROOT/build-m1/av2enc" \
-                     "$ROOT/build/av2enc"; do
+    for candidate in "$ROOT/build/av2enc" "$ROOT/build-int/av2enc" \
+                     "$ROOT/build-m1/av2enc"; do
         if [ -x "$candidate" ]; then AV2ENC_BIN="$candidate"; break; fi
     done
 fi
 if [ -z "$AV2ENC_BIN" ] || [ ! -x "$AV2ENC_BIN" ]; then
     echo "still_qm_gate: no av2enc binary; set AV2ENC_BIN=..." >&2
+    exit 127
+fi
+# A pre-rename build dir (--m1 instead of --still) must not silently invalidate
+# the gate just because it sorts first.
+if ! "$AV2ENC_BIN" --help 2>&1 | grep -q -- '--still'; then
+    echo "still_qm_gate: $AV2ENC_BIN has no --still (stale build dir);" \
+         "set AV2ENC_BIN=..." >&2
     exit 127
 fi
 
@@ -52,7 +59,8 @@ fi
 
 STILL_DUMP="${STILL_DUMP:-}"
 if [ -z "$STILL_DUMP" ]; then
-    for candidate in "$ROOT/build-int/still_dump" "$ROOT/build-m1/still_dump"; do
+    for candidate in "$ROOT/build/still_dump" "$ROOT/build-int/still_dump" \
+                     "$ROOT/build-m1/still_dump"; do
         if [ -x "$candidate" ]; then STILL_DUMP="$candidate"; break; fi
     done
 fi

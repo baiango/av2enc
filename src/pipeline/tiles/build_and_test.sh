@@ -36,8 +36,9 @@ echo "flags:    ${FLAGS[*]}"
 echo "building: tile_layout.cpp tile_group.cpp svc_layers.cpp tiles_test.cpp"
 echo
 
-"${CXX}" "${FLAGS[@]}" -I. \
+"${CXX}" "${FLAGS[@]}" -I. -I../.. \
   tile_layout.cpp tile_group.cpp svc_layers.cpp tiles_test.cpp \
+  ../../core/conformance/conformance_tables.cpp \
   -o "${binary}"
 
 echo "running: ${binary}"

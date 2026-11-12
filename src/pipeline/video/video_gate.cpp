@@ -17,11 +17,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <span>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -77,6 +79,40 @@ std::vector<OwnedFrame> make_synthetic_clip(int frames, int width, int height) {
             square_sample(x * 2, y * 2, f, 1);
         frame.v[static_cast<std::size_t>(y) * cw + x] =
             square_sample(x * 2, y * 2, f, 2);
+      }
+    }
+    out.push_back(std::move(frame));
+  }
+  return out;
+}
+
+std::vector<OwnedFrame> make_illumination_clip(int frames, int width,
+                                              int height) {
+  // Smooth source plus a constant per-frame brightness offset.  This is the
+  // fixture where the --inter-residual rate decision codes residual leaves;
+  // the generic square clip at QP 90 is skip-only, which made the old gate
+  // vacuous.
+  std::vector<OwnedFrame> out;
+  out.reserve(static_cast<std::size_t>(frames));
+  const int cw = width / 2;
+  const int ch = height / 2;
+  for (int f = 0; f < frames; ++f) {
+    OwnedFrame frame;
+    frame.width = static_cast<std::uint32_t>(width);
+    frame.height = static_cast<std::uint32_t>(height);
+    frame.y.resize(static_cast<std::size_t>(width) * height);
+    frame.u.assign(static_cast<std::size_t>(cw) * ch, 128);
+    frame.v.assign(static_cast<std::size_t>(cw) * ch, 128);
+    const int offset = 15 * f;
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < width; ++x) {
+        const double value = 100.0 + 30.0 * std::sin(x / 9.0) +
+                             20.0 * std::cos(y / 11.0) + offset;
+        int sample = static_cast<int>(value);
+        if (sample < 1) sample = 1;
+        if (sample > 255) sample = 255;
+        frame.y[static_cast<std::size_t>(y) * width + x] =
+            static_cast<std::uint8_t>(sample);
       }
     }
     out.push_back(std::move(frame));
@@ -270,6 +306,17 @@ bool write_ivf(const std::string& path,
   return writer.close(error);
 }
 
+std::size_t count_substring(const std::string& text,
+                            const std::string& needle) {
+  std::size_t count = 0;
+  std::size_t pos = text.find(needle);
+  while (pos != std::string::npos) {
+    ++count;
+    pos = text.find(needle, pos + needle.size());
+  }
+  return count;
+}
+
 bool run_phase(const char* name, const std::vector<OwnedFrame>& frames,
                const av2enc::video::VideoOptions& options, const std::string& out_path,
                bool require_decoder) {
@@ -290,9 +337,32 @@ bool run_phase(const char* name, const std::vector<OwnedFrame>& frames,
 
   av2enc::video::VideoSequenceResult sequence;
   std::string error;
-  if (!av2enc::video::encode_video_sequence(inputs, options, sequence, error)) {
+  av2enc::video::VideoOptions encode_options = options;
+  std::ostringstream trace;
+  std::streambuf* saved_cerr = nullptr;
+  if (options.enable_inter_residual) {
+    encode_options.trace = true;
+    saved_cerr = std::cerr.rdbuf(trace.rdbuf());
+  }
+  const bool encoded =
+      av2enc::video::encode_video_sequence(inputs, encode_options, sequence, error);
+  if (saved_cerr != nullptr) std::cerr.rdbuf(saved_cerr);
+  if (!encoded) {
     std::cerr << "ENCODE FAIL: " << error << "\n";
     return false;
+  }
+  if (options.enable_inter_residual) {
+    const std::size_t residual =
+        count_substring(trace.str(), "residual=1");
+    const std::size_t candidates =
+        count_substring(trace.str(), "cand inter final");
+    std::cout << "  inter residual leaves: " << residual << " of "
+              << candidates << " candidate(s)\n";
+    if (residual == 0) {
+      std::cerr << "INTER RESIDUAL FAIL: --inter-residual coded no residual "
+                   "leaf (the gate would only exercise skip syntax)\n";
+      return false;
+    }
   }
   if (!write_ivf(out_path, sequence, frames[0].width, frames[0].height,
                  error)) {
@@ -492,6 +562,10 @@ int main(int argc, char** argv) {
       std::cerr << "Y4M LOAD FAIL: " << error << "\n";
       return 2;
     }
+  } else if (options.enable_inter_residual) {
+    // Use a fixture that actually exercises the feature: the generic square
+    // clip stays skip-only, so the gate used to pass without coding residual.
+    frames_owned = make_illumination_clip(frames, 320, 192);
   } else {
     frames_owned = make_synthetic_clip(frames, 64, 64);
   }

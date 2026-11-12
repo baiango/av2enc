@@ -275,6 +275,7 @@ void test_tile_geometry() {
   {
     PipelineConfig config =
         base_config(1920, 1080, 4, TileLayoutPreset::k16x2);
+    config.seq_level_idx = 10;  // 16 columns need level 6.0 (MaxTileCols 16)
     PipelinePlanner planner;
     std::string error;
     CHECK(!planner.configure(config, &error));
@@ -293,6 +294,7 @@ void test_tile_geometry() {
   {
     PipelineConfig config = base_config(1920, 1080, 4, TileLayoutPreset::k4x2);
     config.layout.mode = LayoutPolicyMode::kAuto;
+    config.seq_level_idx = 10;  // let the 16x2 candidate reach the planner
     FrameStats stats = stats_for(16, 16.0);
     FramePipelinePlan plan;
     std::string error;
@@ -480,6 +482,8 @@ void test_segmentation_segment_limit() {
   PipelineConfig config =
       base_config(1920, 1080, 4, TileLayoutPreset::k16x2);
   config.layout.allow_unverified = true;
+  // 16 columns need level 6.0 (Table A.9 MaxTileCols = 16).
+  config.seq_level_idx = 10;
   config.tile_qp.mode = TileQpMode::kSegmentation;
   config.tile_qp.complexity_strength = 2.0;
   config.tile_qp.max_abs_delta = 24;
@@ -681,6 +685,8 @@ void test_vram_and_dispatch() {
   PipelineConfig config =
       base_config(3840, 2160, 4, TileLayoutPreset::k16x2);
   config.layout.allow_unverified = true;
+  // 16 columns need level 6.0 (Table A.9 MaxTileCols = 16).
+  config.seq_level_idx = 10;
   config.device.total_bytes = 8192ull * kMiB;
   config.device.free_bytes = 7800ull * kMiB;
   FrameStats stats = stats_for(32, 20.0);

@@ -25,8 +25,8 @@ constexpr TypePair kTransform1dType[16] = {
     {Tx1dType::kDct, Tx1dType::kFdst},   // FLIPADST_DCT
     {Tx1dType::kFdst, Tx1dType::kDct},   // DCT_FLIPADST
     {Tx1dType::kFdst, Tx1dType::kFdst},  // FLIPADST_FLIPADST
-    {Tx1dType::kFdst, Tx1dType::kAdst},  // FLIPADST_ADST
-    {Tx1dType::kAdst, Tx1dType::kFdst},  // ADST_FLIPADST
+    {Tx1dType::kFdst, Tx1dType::kAdst},  // ADST_FLIPADST (7)
+    {Tx1dType::kAdst, Tx1dType::kFdst},  // FLIPADST_ADST (8)
     {Tx1dType::kIdt, Tx1dType::kIdt},    // IDTX
     {Tx1dType::kIdt, Tx1dType::kDct},    // V_DCT
     {Tx1dType::kDct, Tx1dType::kIdt},    // H_DCT
@@ -39,7 +39,7 @@ constexpr TypePair kTransform1dType[16] = {
 constexpr const char* kTxTypeNames[16] = {
     "DCT_DCT",         "ADST_DCT",       "DCT_ADST",      "ADST_ADST",
     "FLIPADST_DCT",    "DCT_FLIPADST",   "FLIPADST_FLIPADST",
-    "FLIPADST_ADST",   "ADST_FLIPADST",  "IDTX",
+    "ADST_FLIPADST",   "FLIPADST_ADST",  "IDTX",
     "V_DCT",           "H_DCT",          "V_ADST",        "H_ADST",
     "V_FLIPADST",      "H_FLIPADST",
 };

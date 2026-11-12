@@ -170,6 +170,85 @@ PY
     pass=$((pass + 1))
 }
 
+# run_recon_case <fixture> <name> <encode flags...>
+# Uses the product CLI's own --recon dump instead of still_recon_dump, so it can
+# exercise the SDP/ext/sub-8/segmentation/cdef combinations that the hand-written
+# dump parser does not expose.
+run_recon_case() {
+    local fixture=$1 name=$2
+    shift 2
+    if [ -n "$ONLY" ] && [[ "$name" != *"$ONLY"* ]]; then
+        return 0
+    fi
+    local input="$ROOT/$fixture"
+    if [[ "$fixture" == /* ]]; then
+        input="$fixture"
+    fi
+    local out="$TMP/${name}.ivf"
+    local dec="$TMP/${name}.dec.y4m"
+    local recon="$TMP/${name}.recon.y4m"
+    if [ ! -f "$input" ]; then
+        echo "SKIP $name: missing $fixture" >&2
+        skipped=$((skipped + 1))
+        return 0
+    fi
+    if ! "$BIN" "$input" -o "$out" --frames 1 "$@" --recon "$recon" \
+            >"$TMP/${name}.enc.log" 2>&1; then
+        echo "FAIL $name: encode failed" >&2
+        cat "$TMP/${name}.enc.log" >&2
+        failures=$((failures + 1))
+        return 0
+    fi
+    if [ -n "${EXPECT_IBC:-}" ]; then
+        local got_ibc
+        got_ibc=$(sed -n 's/^  ibc:     \([0-9][0-9]*\) exact-copy.*/\1/p' \
+            "$TMP/${name}.enc.log" | tail -1)
+        if [ -z "$got_ibc" ] || [ "$got_ibc" -lt "$EXPECT_IBC" ]; then
+            echo "FAIL $name: expected >= $EXPECT_IBC IBC block(s), got ${got_ibc:-0}" >&2
+            failures=$((failures + 1))
+            return 0
+        fi
+    fi
+    if ! "$DAV2D" -q -i "$out" -o "$dec" --threads 1 --strict 1 \
+            >"$TMP/${name}.dec.log" 2>&1; then
+        echo "FAIL $name: dav2d --strict 1 rejected the stream" >&2
+        cat "$TMP/${name}.dec.log" >&2
+        failures=$((failures + 1))
+        return 0
+    fi
+    local cmp
+    cmp=$(python3 - "$dec" "$recon" <<'PY'
+import sys
+
+def read_y4m(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    pos = data.index(b"\n") + 1
+    while pos < len(data):
+        if data[pos:pos + 5] != b"FRAME":
+            raise SystemExit("bad frame marker in %s" % path)
+        pos = data.index(b"\n", pos) + 1
+        return data[pos:]
+    return b""
+
+a = read_y4m(sys.argv[1])
+b = read_y4m(sys.argv[2])
+if len(a) != len(b):
+    print("size %d != %d" % (len(a), len(b)))
+    raise SystemExit(0)
+diffs = [abs(x - y) for x, y in zip(a, b) if x != y]
+print("exact" if not diffs else "%d diffs, max %d" % (len(diffs), max(diffs)))
+PY
+)
+    if [ "$cmp" != "exact" ]; then
+        echo "FAIL $name: recon mismatch ($cmp)" >&2
+        failures=$((failures + 1))
+        return 0
+    fi
+    echo "PASS $name (recon exact)"
+    pass=$((pass + 1))
+}
+
 # run_reject <name> <expected stderr substring> <encode flags...>
 run_reject() {
     local name=$1 expected=$2
@@ -319,6 +398,9 @@ EXPECT_MD5=7db8078929a6043313700ea4ecf6261d \
 # Intra block copy (§5.20.5.3/.4): the 384x128 fixture repeats a 32x32 tile, so
 # the exact-copy-only decision selects NEARMV blocks.  The gate also checks that
 # at least one IBC block was selected (EXPECT_IBC).
+# The two narrow fixtures exercise the use_intrabc = 0 syntax only: below 129
+# luma samples wide there is no in-frame source at the §5.20.5.1 delay distance
+# (see docs/m1-features.md), so they intentionally run without EXPECT_IBC.
 run_case "$SCC128" ibc_scc128 "${BASELINE[@]}" --still-ibc
 run_case "$SCC64" ibc_scc64 "${BASELINE[@]}" --still-ibc
 EXPECT_IBC=1 EXPECT_MD5=dc5fca8c44f78e51850afe7bf1ac8983 \
@@ -349,6 +431,45 @@ run_case tests/data/basic_640x360_1f.y4m mhccp_360 "${BASELINE[@]}" --still-mhcc
 run_case tests/data/basic_64x64_1f.y4m mhccp_explicit_64 "${BASELINE[@]}" \
     --still-mhccp --still-cfl-explicit
 run_case "$SCC128" mhccp_scc128 "${BASELINE[@]}" --still-mhccp
+
+# --- shared-chroma ownership / context (BUG-CHROMA-001) --------------------
+# SDP CHROMA_PART reads YMode/AngleDeltaY from the co-located luma tree, so a
+# directional luma mode must stay decoder-exact.  4-wide ext/sub-8 leaves use
+# the dynamic y_mode list and the full UV index list; MHCCP's cfl_mh_dir CDF
+# context is Size_Group[MiSize]; ext/SDP must carry the per-SB segment id.
+run_recon_case tests/data/basic_64x64_1f.y4m sdp_full_intra_64 \
+    "${BASELINE[@]}" --still-sdp --still-full-intra
+run_recon_case tests/data/basic_640x360_1f.y4m sdp_full_intra_360 \
+    "${BASELINE[@]}" --still-sdp --still-full-intra
+run_recon_case tests/data/basic_64x64_1f.y4m sdp_mrl_64 \
+    "${BASELINE[@]}" --still-sdp --still-mrl
+run_recon_case tests/data/basic_64x64_1f.y4m sdp_mhccp_64 \
+    "${BASELINE[@]}" --still-sdp --still-mhccp
+run_recon_case tests/data/basic_64x64_1f.y4m ext_full_intra_64 \
+    "${BASELINE[@]}" --still-ext-partitions --still-full-intra
+run_recon_case tests/data/basic_640x360_1f.y4m ext_full_intra_360 \
+    "${BASELINE[@]}" --still-ext-partitions --still-full-intra
+run_recon_case tests/data/basic_64x64_1f.y4m ext_mhccp_64 \
+    "${BASELINE[@]}" --still-ext-partitions --still-mhccp
+run_recon_case tests/data/basic_640x360_1f.y4m ext_mhccp_360 \
+    "${BASELINE[@]}" --still-ext-partitions --still-mhccp
+run_recon_case tests/data/basic_64x64_1f.y4m sub8_full_intra_64 \
+    "${BASELINE[@]}" --still-sub8 --still-full-intra
+run_recon_case tests/data/basic_640x360_1f.y4m sub8_full_intra_360 \
+    "${BASELINE[@]}" --still-sub8 --still-full-intra
+run_recon_case tests/data/basic_64x64_1f.y4m sub8_mhccp_64 \
+    "${BASELINE[@]}" --still-sub8 --still-mhccp
+run_recon_case tests/data/basic_640x360_1f.y4m ext_segq_360 \
+    "${BASELINE[@]}" --still-ext-partitions --still-per-segment-q \
+    --still-seg-delta 40
+run_recon_case tests/data/basic_640x360_1f.y4m sdp_segq_360 \
+    "${BASELINE[@]}" --still-sdp --still-per-segment-q --still-seg-delta 40
+EXPECT_IBC=1 run_recon_case "$IBC384" ibc_cdef_384 "${BASELINE[@]}" \
+    --still-ibc --still-cdef
+EXPECT_IBC=1 run_recon_case "$IBC384" ibc_cdef_one_384 "${BASELINE[@]}" \
+    --still-ibc --still-cdef --still-cdef-strengths 1
+EXPECT_IBC=1 run_recon_case "$IBC384" ibc_cdef_onskip_384 "${BASELINE[@]}" \
+    --still-ibc --still-cdef --still-cdef-on-skip-txfm
 
 echo
 echo "intra_gate: $pass passed, $failures failed, $skipped skipped"

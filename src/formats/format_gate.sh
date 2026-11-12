@@ -202,6 +202,32 @@ run_case() {
     echo "$name $depth $chroma $ivf_md5 $decoded_md5" >> "$RESULT"
 }
 
+# expect_reject <name> <source> <needle> [encoder args...]
+#
+# The strict reader must reject a body that the C tag under-declares or any
+# bytes after the single frame.  Accepting them silently re-encodes a prefix as
+# the smaller format (SCOUT-FORMATS-HBD-02 / SCOUT-CHROMA-02).
+expect_reject() {
+    local name=$1 source=$2 needle=$3
+    shift 3
+    echo
+    echo "=== negative: $name ==="
+    local log="$TMP/neg_$name.log"
+    if "$BIN" "$source" -o "$TMP/neg_$name.ivf" "$@" >"$log" 2>&1; then
+        echo "FAIL $name: encoder accepted an invalid frame body" >&2
+        cat "$log" >&2
+        FAILED=1
+        return
+    fi
+    if ! grep -q "$needle" "$log"; then
+        echo "FAIL $name: rejection did not mention '$needle'" >&2
+        cat "$log" >&2
+        FAILED=1
+        return
+    fi
+    echo "PASS $name: $(grep -m1 "$needle" "$log")"
+}
+
 gen_10bit_source 64 64 "$TMP/src_10_64x64.y4m"
 gen_10bit_source 640 360 "$TMP/src_10_640x360.y4m"
 gen_10bit_source 64 64 "$TMP/src_10_422_64x64.y4m" 422
@@ -237,6 +263,53 @@ run_case 8bit_400_64x64      8 400 "$TMP/src_400_64x64.y4m"
 run_case 8bit_422_640x360    8 422 "$TMP/src_422_640x360.y4m"
 run_case 8bit_444_640x360    8 444 "$TMP/src_444_640x360.y4m"
 run_case 8bit_400_640x360    8 400 "$TMP/src_400_640x360.y4m"
+
+# Frame-body validation: a tag that under-declares the real body, and a valid
+# frame followed by extra bytes.
+python3 - "$TMP" <<'PY'
+import sys
+
+tmp = sys.argv[1]
+
+
+def retag(src, dst, old, new):
+    data = open(src, "rb").read()
+    if old not in data:
+        raise SystemExit(f"{src}: missing {old}")
+    open(dst, "wb").write(data.replace(old, new, 1))
+
+
+retag(f"{tmp}/src_444_64x64.y4m", f"{tmp}/bad_8bit_444_as422.y4m",
+      b"C444", b"C422")
+retag(f"{tmp}/src_10_444_64x64.y4m", f"{tmp}/bad_10bit_444_as420.y4m",
+      b"C444p10", b"C420p10")
+with open(f"{tmp}/src_10_64x64.y4m", "rb") as f:
+    body = f.read()
+with open(f"{tmp}/bad_trailing.y4m", "wb") as f:
+    f.write(body)
+    f.write(b"FRAME\n" + bytes(64))
+PY
+
+expect_reject 8bit_444_as422 "$TMP/bad_8bit_444_as422.y4m" \
+    "oversized Y4M frame" --still --chroma 422
+expect_reject 10bit_444_as420 "$TMP/bad_10bit_444_as420.y4m" \
+    "oversized Y4M frame" --still --bit-depth 10 --qp 90
+expect_reject trailing_bytes "$TMP/bad_trailing.y4m" \
+    "oversized Y4M frame" --still --bit-depth 10 --qp 90
+
+# Accepted-and-ignored Still tree flags: the format paths use their own minimal
+# writer, so a flag that they cannot apply must be a usage error, not a
+# byte-identical stream (SCOUT-FORMATS-HBD-01 / SCOUT-CHROMA-01).
+for flag in --still-sub8 --still-sdp; do
+    expect_reject "10bit${flag}" "$TMP/src_10_64x64.y4m" \
+        "format paths use their own minimal still writer" \
+        --still --bit-depth 10 --qp 90 "$flag"
+    expect_reject "8bit${flag}" "$TMP/src_444_64x64.y4m" \
+        "format paths use their own minimal still writer" \
+        --still --chroma 444 "$flag"
+done
+expect_reject tcq_scale_without_tcq "$TMP/src_444_64x64.y4m" \
+    "requires --still-tcq" --still --chroma 444 --still-tcq-scale 0.5
 
 if [ "$FAILED" -ne 0 ]; then
     echo "FAIL: one or more format gate cases failed" >&2

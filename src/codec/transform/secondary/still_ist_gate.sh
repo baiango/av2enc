@@ -104,6 +104,7 @@ run_case() {
         for arg in "$@"; do
             case "$arg" in
                 --still-ist) dump_args+=(--ist) ;;
+                --still-mrl) dump_args+=(--mrl) ;;
                 --still-qm) dump_args+=(--qm) ;;
                 --still-rdoq) dump_args+=(--rdoq) ;;
                 --still-tx-type) dump_args+=(--tx-type) ;;
@@ -151,6 +152,15 @@ run_case still_360_ist_txtype tests/data/basic_640x360_1f.y4m \
     1258fc6eb42a777d106b7b31cd4c1492 --still-ist --still-tx-type
 run_case still_360_ist_rdoq tests/data/basic_640x360_1f.y4m \
     952f6fd1c0e7502cfe890c7514334cb0 --still-ist --still-rdoq
+
+# SCOUT-TXADV-02: §7.15.3 folds Mrl_Index_To_Delta[MrlIndex] into pAngle before
+# selecting the IST kernel, so the IST decision, the inverse and the syntax must
+# all use the block's real mrl_index.  Forcing 0 made the decoder pick a
+# different kernel/transpose on MRL blocks (QP40/60 luma drift).
+run_case still_360_ist_mrl40 testdata/shine_640x360_1f.y4m \
+    4257f259036824e8c9e429a37b30fd9c --still-ist --still-mrl --qp 40
+run_case still_360_ist_mrl60 testdata/shine_640x360_1f.y4m \
+    612183f5dd0006b44a54f1c95d631eb9 --still-ist --still-mrl --qp 60
 
 if [ "$failures" -ne 0 ]; then
     echo "still_ist_gate: $failures failed, $pass passed" >&2

@@ -60,10 +60,6 @@ if [ -z "$AVMDEC" ]; then
         if [ -x "$candidate" ]; then AVMDEC=$candidate; break; fi
     done
 fi
-if [ -z "$AVMDEC" ] || [ ! -x "$AVMDEC" ]; then
-    echo "SKIP: no avmdec binary; set AVMDEC=/path/to/avmdec" >&2
-    exit 77
-fi
 if ! command -v python3 >/dev/null 2>&1; then
     echo "SKIP: python3 is required" >&2
     exit 77
@@ -89,8 +85,53 @@ ok() {
     pass=$((pass + 1))
 }
 
-AVM=( "$AVMDEC" --i420 -t 1 )
+# --- rejections (no decoder needed) --------------------------------------
+expect_reject() {
+    local label=$1
+    shift
+    if "$BIN" "$INPUT" -o "$TMP/rej.ivf" "$@" >"$TMP/rej.log" 2>&1; then
+        fail "$label: expected a rejection"
+        return
+    fi
+    if ! grep -q "av2enc:" "$TMP/rej.log"; then
+        cat "$TMP/rej.log" >&2
+        fail "$label: rejection did not print an av2enc diagnostic"
+        return
+    fi
+    ok "$label: rejected"
+}
+
 COMMON=(--video --frames 3 --video-max-depth 3)
+expect_reject "--svc-layers without --video" --svc-layers 0=640x360 --still
+expect_reject "--oppoint + --alllayers" "${COMMON[@]}" --svc-layers 0=640x360 \
+    --oppoint 0 --alllayers
+expect_reject "--svc-temporal 2" "${COMMON[@]}" --svc-layers 0=640x360 \
+    --svc-temporal 2
+expect_reject "--svc-layers + --tiles" "${COMMON[@]}" --svc-layers 0=640x360 \
+    --tiles 2x2
+expect_reject "--svc-layers + --rc vbr" "${COMMON[@]}" --svc-layers 0=640x360 \
+    --rc vbr --bitrate 500
+expect_reject "--svc-layers + --crf" "${COMMON[@]}" --svc-layers 0=640x360 \
+    --crf 20
+expect_reject "--svc-layers + --bitrate" "${COMMON[@]}" --svc-layers 0=640x360 \
+    --bitrate 9000
+expect_reject "--svc-layers + --video-refs" "${COMMON[@]}" \
+    --svc-layers 0=640x360 --video-refs 2
+expect_reject "--svc-layers + --video-tlayers" "${COMMON[@]}" \
+    --svc-layers 0=640x360 --video-tlayers 4
+expect_reject "--svc-layers + --video-tlayer-drop" "${COMMON[@]}" \
+    --svc-layers 0=640x360 --video-tlayers 4 --video-tlayer-drop 0
+
+if [ "$failures" -ne 0 ]; then
+    echo "gate_cli_svc: $failures failure(s) before the decode cases" >&2
+    exit 1
+fi
+if [ -z "$AVMDEC" ] || [ ! -x "$AVMDEC" ]; then
+    echo "SKIP: no avmdec binary; set AVMDEC=/path/to/avmdec" >&2
+    exit 77
+fi
+
+AVM=( "$AVMDEC" --i420 -t 1 )
 
 decode_avm() {
     local input=$1 output=$2
@@ -309,32 +350,6 @@ if [ -n "$DAV2D" ] && [ -x "$DAV2D" ]; then
 else
     echo "NOTE: dav2d not found; decoder-shape checks skipped"
 fi
-
-# --- rejections ----------------------------------------------------------
-expect_reject() {
-    local label=$1
-    shift
-    if "$BIN" "$INPUT" -o "$TMP/rej.ivf" "$@" >"$TMP/rej.log" 2>&1; then
-        fail "$label: expected a rejection"
-        return
-    fi
-    if ! grep -q "av2enc:" "$TMP/rej.log"; then
-        cat "$TMP/rej.log" >&2
-        fail "$label: rejection did not print an av2enc diagnostic"
-        return
-    fi
-    ok "$label: rejected"
-}
-
-expect_reject "--svc-layers without --video" --svc-layers 0=640x360 --still
-expect_reject "--oppoint + --alllayers" "${COMMON[@]}" --svc-layers 0=640x360 \
-    --oppoint 0 --alllayers
-expect_reject "--svc-temporal 2" "${COMMON[@]}" --svc-layers 0=640x360 \
-    --svc-temporal 2
-expect_reject "--svc-layers + --tiles" "${COMMON[@]}" --svc-layers 0=640x360 \
-    --tiles 2x2
-expect_reject "--svc-layers + --rc vbr" "${COMMON[@]}" --svc-layers 0=640x360 \
-    --rc vbr --bitrate 500
 
 echo
 if [ "$failures" -ne 0 ]; then

@@ -14,10 +14,12 @@
 //   * The `inter_tx_type` CDF context, which depends on the EOB diagonals, and
 //     the `inter_tx_type_offset` context, which uses the *unclamped* tx
 //     dimensions (the two differ in the spec; do not merge them).
-//   * The `enable_inter_ddt` filter: `Tx_Type_In_Set_Inter` lists DDT types
-//     (1D identity combinations) even though §6.4.8 says they are not allowed
-//     when `enable_inter_ddt = 0`.  M2 signals `enable_inter_ddt = 0`, so the
-//     candidates that contain a 1D identity are removed.
+//   * The `enable_inter_ddt` search-space guard: §5.4.8 allows DDT at the
+//     sequence level and §7.15.4.1 only substitutes ADST/FDST with DDTX/FDDT
+//     when useDdt.  The tables are independent of the flag.  This component
+//     reconstructs only the plain ADST/FDST 1-D kernels, so with
+//     `enable_inter_ddt = 1` it withholds the types whose kernels would change
+//     at the decoder.  Identity types (IDTX, V/H_DCT) are not DDT types.
 //
 // Nothing here touches the transforms themselves: candidates carry
 // `txv::TxParams` built by `txv::make_tx_params()`.
@@ -71,7 +73,7 @@ struct InterTxCandidate {
   txv::TxParams params;
 };
 
-inline constexpr int kMaxInterTxCandidates = 10;
+inline constexpr int kMaxInterTxCandidates = 16;
 
 struct InterTxSetInfo {
   InterTxSet set = InterTxSet::kDctOnly;
@@ -82,20 +84,26 @@ struct InterTxSetInfo {
 // Enumerates the codable (type, long-side) pairs for `tx_size`.
 //
 // Candidate order is the §5.20.8.2 symbol order, which is what the writer
-// needs; the decision path must not depend on it.  `enable_inter_ddt = false`
-// removes every candidate containing a 1D identity transform (IDTX, V/H_DCT,
-// V/H_ADST, V/H_FLIPADST), which is what M2 signals.  Returns false for an
-// unsupported TX size or a set that is not an inter set.
+// needs; the decision path must not depend on it.  The enumeration follows
+// `Tx_Type_In_Set_Inter` (§5.20.7.29) and additionally applies two
+// encoder-side capability guards (not spec restrictions): the 1-D scan
+// classes (V/H_DCT, V/H_ADST, V/H_FLIPADST) are out of scope until the
+// class-specific scans are implemented, and `enable_inter_ddt = true`
+// withholds ADST/FDST types because the decoder would use DDTX/FDDT kernels
+// this component does not model.  Returns false for an unsupported TX size or
+// a set that is not an inter set.
 bool inter_tx_candidates(TxSize tx_size, int reduced_tx_set,
                          bool enable_inter_ddt, InterTxSetInfo* out);
 
 // Inverse of the candidate table: the symbols needed to signal `type`.
-// Returns false when the type is not codable for this size/set (including a
-// DDT type with enable_inter_ddt = 0).
+// Returns false only when `type` is outside the decoder's set for this size
+// (§5.20.7.29 aliases it to DCT_DCT).  `enable_inter_ddt` does not change the
+// symbol mapping.
 bool inter_tx_symbol(TxSize tx_size, int reduced_tx_set, bool enable_inter_ddt,
                      TxType type, InterTxCandidate* out);
 
-// True when the transform type has a 1D identity component (DDT).
+// True when §7.15.4.1 would swap an ADST/FDST 1-D component for DDTX/FDDT
+// (enable_inter_ddt && is_inter && sz != 4).  Identity types are not DDT.
 bool inter_tx_type_is_ddt(TxType type);
 
 // §5.20.7.29 Tx_Type_In_Set_Inter, i.e. whether the decoder's

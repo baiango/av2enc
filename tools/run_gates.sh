@@ -142,7 +142,7 @@ PASSED=0
 SKIPPED=0
 FAILED=0
 INDEX=0
-TOTAL=7
+TOTAL=9
 [ "$QUICK" -eq 1 ] && TOTAL=5
 declare -a RESULTS=()
 
@@ -223,6 +223,10 @@ run_gate gate_host_plan src/pipeline/dispatch/gate_host_plan.sh
 if [ "$QUICK" -eq 0 ]; then
     run_gate gate_rc src/pipeline/video/post/gate_cli_rc.sh
     run_gate gate_video_cli src/pipeline/video/video_cli_gate.sh --frames 4
+    run_gate gate_wrapper_cdf src/pipeline/video/wrapper_cdf_gate.sh
+    run_gate gate_video_inter_residual src/pipeline/video/video_cli_gate.sh \
+        --frames 4 --illumination-shift --expect-inter-residual \
+        -- --video-inter-residual
 fi
 
 echo

@@ -324,8 +324,21 @@ bool build_layout(int width, int height, tiles::TileLayoutPreset preset, int sb_
                   int seq_level_idx, TileLayout* layout, std::string* error) {
   if (layout == nullptr || error == nullptr) return false;
   const tiles::TileLayoutDims dims = tiles::preset_dims(preset);
+  // `seq_level_idx` is treated as a floor: a grid above the level's Table A.9
+  // MaxTiles/MaxTileCols would otherwise be rejected by plan_tile_layout() (or
+  // emitted with a header the conformance validator rejects). Raise it to the
+  // lowest level that admits the grid; the caller must use the level stored in
+  // the returned layout for the sequence header.
+  int effective_level = seq_level_idx;
+  if (effective_level >= 0 && effective_level < 31) {
+    const int required = tiles::minimum_level_for_grid(dims.cols, dims.rows);
+    if (required > effective_level) {
+      effective_level = required;
+    }
+  }
   const tiles::LayoutResult planned =
-      tiles::plan_tile_layout(width, height, dims.cols, dims.rows, sb_size, seq_level_idx, 0);
+      tiles::plan_tile_layout(width, height, dims.cols, dims.rows, sb_size,
+                              effective_level, 0);
   if (!planned.ok()) {
     *error = "layout " + std::string(tiles::preset_name(preset)) + " rejected: " + planned.error;
     return false;
@@ -496,16 +509,21 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame, std:
     return false;
   }
 
-  // Unit check first: a core header change must fail loudly, not emit a stream
-  // the decoder disagrees with.
-  if (!core_header_parity(config, error)) {
-    *error = "tiled header self-check failed: " + *error;
-    return false;
-  }
-
+  // Plan first: build_layout() may raise config.seq_level_idx to the lowest
+  // level whose Table A.9 MaxTiles/MaxTileCols admit the tile grid. Every
+  // header below must signal that effective level.
   TileLayout layout;
   if (!build_layout(config.width, config.height, config.preset, config.sb_size,
                     config.seq_level_idx, &layout, error)) {
+    return false;
+  }
+  Config effective = config;
+  effective.seq_level_idx = static_cast<std::uint8_t>(layout.seq_level_idx);
+
+  // Unit check first: a core header change must fail loudly, not emit a stream
+  // the decoder disagrees with.
+  if (!core_header_parity(effective, error)) {
+    *error = "tiled header self-check failed: " + *error;
     return false;
   }
   if (layout.width != config.width || layout.height != config.height) {
@@ -712,7 +730,7 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame, std:
 
   std::vector<std::uint8_t> clk_payload;
   int tile_size_bytes = 0;
-  if (!make_tile_group_payload(layout, config, views, &clk_payload, &tile_size_bytes, error)) {
+  if (!make_tile_group_payload(layout, effective, views, &clk_payload, &tile_size_bytes, error)) {
     return false;
   }
 
@@ -720,7 +738,7 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame, std:
       av2enc::basic::make_obu(ObuHeader{ObuType::kClosedLoopKey}, clk_payload);
   const std::vector<std::uint8_t> td =
       av2enc::basic::make_obu(ObuHeader{ObuType::kTemporalDelimiter}, std::span<const std::uint8_t>{});
-  const std::vector<std::uint8_t> seq = make_sequence_header_obu(config);
+  const std::vector<std::uint8_t> seq = make_sequence_header_obu(effective);
 
   std::vector<std::uint8_t> obus;
   obus.reserve(td.size() + seq.size() + clk.size());

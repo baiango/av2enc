@@ -345,8 +345,8 @@ void test_candidate_sets() {
 
   const char* names[16] = {"DCT_DCT",         "ADST_DCT",   "DCT_ADST",
                            "ADST_ADST",       "FLIPADST_DCT", "DCT_FLIPADST",
-                           "FLIPADST_FLIPADST", "FLIPADST_ADST",
-                           "ADST_FLIPADST",   "IDTX",       "V_DCT",
+                           "FLIPADST_FLIPADST", "ADST_FLIPADST",
+                           "FLIPADST_ADST",   "IDTX",       "V_DCT",
                            "H_DCT",           "V_ADST",     "H_ADST",
                            "V_FLIPADST",      "H_FLIPADST"};
   for (int t = 0; t < 16; ++t) {

@@ -1,6 +1,6 @@
 // AV2 v1.0.0 10-bit sequence/frame/tile-group header writer.
 //
-// This is the 10-bit header half of `src/encoder/hbd/`.  It writes the same
+// This is the 10-bit header half of `src/formats/high_bitdepth/`.  It writes the same
 // OBU order as the verified M10 writer (TD -> SEQ -> CLK, §7.3.3) but makes the
 // bit-depth-dependent fields explicit and switches on the *raw* frame qindex:
 //
@@ -10,11 +10,9 @@
 //   §8.3.1.     the coefficient-CDF slice is NOT written; the decoder derives
 //               it from the raw base_q_idx (see depth::qctx_slice)
 //
-// The writer accepts any qindex in [1, 303].  The *tile payload* writer reused
-// from M10 only has the frozen slice-0 coefficient CDFs, so
-// `hbd::encode_hbd_still()` restricts encoding to q <= 90 even though this
-// header writer (and the reader) handle the full 10-bit MaxQ range.  See
-// README.md "qindex seam".
+// The writer accepts any qindex in [1, 303].  `hbd::encode_still()` installs
+// the §8.3.1 coefficient-CDF slice selected by the raw base_q_idx, so the tile
+// payload writer covers the same range.  See README.md "qindex seam".
 #pragma once
 
 #include <cstddef>

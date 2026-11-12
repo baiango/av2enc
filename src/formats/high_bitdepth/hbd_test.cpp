@@ -515,6 +515,20 @@ void test_chroma_formats() {
            std::string("deterministic bytes ") + entry.name);
     expect(first.frame_bytes > first.tile_bytes,
            std::string("headers precede payload ") + entry.name);
+    HbdParsedStream parsed;
+    expect(parse_stream(first.frame, &parsed, &error),
+           std::string("parse ") + entry.name + ": " + error);
+    expect(parsed.has_sequence && parsed.has_frame,
+           std::string("reader sees seq+frame ") + entry.name);
+    expect_int(parsed.sequence.chroma_format_idc, entry.idc,
+               std::string("reader chroma_format_idc ") + entry.name);
+    expect_int(parsed.sequence.bit_depth_idc, 0,
+               std::string("reader bit_depth_idc ") + entry.name);
+    expect_int(parsed.frame.base_q_idx, 90,
+               std::string("reader base_q_idx ") + entry.name);
+    expect_int(static_cast<long long>(parsed.tile_payload.size()),
+               static_cast<long long>(first.tile_bytes),
+               std::string("reader tile payload size ") + entry.name);
     const int planes = av2enc::fmt::num_planes(entry.chroma);
     for (int plane = 0; plane < planes; ++plane) {
       expect(!first.recon[plane].samples.empty() ||

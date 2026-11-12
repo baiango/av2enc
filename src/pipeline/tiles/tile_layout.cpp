@@ -1,6 +1,7 @@
 #include "tile_layout.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -11,6 +12,21 @@
 
 namespace av2enc::tiles {
 namespace {
+
+// Table A.9 MaxTiles / MaxTileCols, indexed by seq_level_idx 0..21. The
+// conformance component owns the authoritative copy; tiles_test.cpp compares
+// every row (and the §9.2 scaling factors below) against it.
+struct LevelTileRow {
+  int max_tiles;
+  int max_tile_cols;
+};
+
+constexpr std::array<LevelTileRow, 22> kLevelTileRows = {{
+    {8, 4},     {8, 4},     {16, 6},    {16, 6},    {32, 8},    {32, 8},
+    {64, 8},    {64, 8},    {64, 8},    {64, 8},    {128, 16},  {128, 16},
+    {128, 16},  {128, 16},  {256, 32},  {256, 32},  {256, 32},  {256, 32},
+    {512, 64},  {512, 64},  {512, 64},  {512, 64},
+}};
 
 std::uint64_t pixel_area(int x0, int y0, int x1, int y1) {
   if (x1 <= x0 || y1 <= y0) {
@@ -105,16 +121,22 @@ LevelTileLimits level_tile_limits(int seq_level_idx, int seq_tier) {
   }
   if (seq_level_idx == 31) {
     // §5.18.7.3 special case: maxTileWidthSb = sbCols, maxTileAreaSb = total.
+    // Table A.9 has no row for 31 ("maximum parameters").
     limits.width_scaling_factor = 1;
     limits.area_scaling_factor = 1;
+    limits.max_tiles = kMaxTileColumns * kMaxTileRows;
+    limits.max_tile_cols = kMaxTileColumns;
     return limits;
   }
   if (seq_level_idx >= 22) {
     limits.reserved = true;
     return limits;
   }
+  // §9.2 Table: tier-0 width scaling is 4 for levels 2.0-6.3 (idx 0-13) and 8
+  // for 7.0-8.3 (idx 14-21). The old (idx <= 17) ? 4 : 8 split gave levels
+  // 7.0-7.3 a factor of 4, raising minLog2TileCols by one.
   if (seq_tier == 0) {
-    limits.width_scaling_factor = (seq_level_idx <= 17) ? 4 : 8;
+    limits.width_scaling_factor = (seq_level_idx <= 13) ? 4 : 8;
     limits.area_scaling_factor =
         (seq_level_idx <= 13) ? 4 : ((seq_level_idx <= 17) ? 8 : 16);
   } else {
@@ -123,7 +145,29 @@ LevelTileLimits level_tile_limits(int seq_level_idx, int seq_tier) {
     limits.area_scaling_factor =
         (seq_level_idx <= 13) ? 4 : ((seq_level_idx <= 17) ? 16 : 32);
   }
+  const LevelTileRow& row =
+      kLevelTileRows[static_cast<std::size_t>(seq_level_idx)];
+  limits.max_tiles = row.max_tiles;
+  limits.max_tile_cols = row.max_tile_cols;
   return limits;
+}
+
+int minimum_level_for_grid(int cols, int rows) {
+  if (cols <= 0 || rows <= 0) {
+    return 31;
+  }
+  const std::int64_t tiles =
+      static_cast<std::int64_t>(cols) * static_cast<std::int64_t>(rows);
+  for (int level = 0; level <= 21; ++level) {
+    const LevelTileLimits limits = level_tile_limits(level, 0);
+    if (limits.reserved) {
+      continue;
+    }
+    if (limits.max_tile_cols >= cols && limits.max_tiles >= tiles) {
+      return level;
+    }
+  }
+  return 31;
 }
 
 int tile_log2(int blk_size, int target) {
@@ -260,6 +304,8 @@ LayoutResult plan_tile_layout(int width, int height, int cols, int rows,
   layout.rows = rows;
   layout.cols_log2 = log2_exact(cols);
   layout.rows_log2 = log2_exact(rows);
+  layout.seq_level_idx = seq_level_idx;
+  layout.seq_tier = seq_tier;
   if (layout.sb_cols <= 0 || layout.sb_rows <= 0) {
     return fail(LayoutStatus::kInvalidGeometry, "empty superblock grid");
   }
@@ -273,6 +319,8 @@ LayoutResult plan_tile_layout(int width, int height, int cols, int rows,
   if (seq_level_idx == 31) {
     layout.max_tile_width_sb = layout.sb_cols;
     layout.max_tile_area_sb = layout.sb_cols * layout.sb_rows;
+    layout.max_tiles = kMaxTileColumns * kMaxTileRows;
+    layout.max_tile_cols = kMaxTileColumns;
   } else {
     const LevelTileLimits limits = level_tile_limits(seq_level_idx, seq_tier);
     if (limits.reserved) {
@@ -284,14 +332,34 @@ LayoutResult plan_tile_layout(int width, int height, int cols, int rows,
     layout.max_tile_area_sb =
         (limits.area_scaling_factor * kMaxTileAreaPixels) >>
         (2 * (sb_shift + 2) + 2);
+    layout.max_tiles = limits.max_tiles;
+    layout.max_tile_cols = limits.max_tile_cols;
   }
-  if (layout.max_tile_width_sb <= 0 || layout.max_tile_area_sb <= 0) {
+  if (layout.max_tile_width_sb <= 0 || layout.max_tile_area_sb <= 0 ||
+      layout.max_tiles <= 0 || layout.max_tile_cols <= 0) {
     return fail(LayoutStatus::kLevelConstraint,
                 "level yields a non-positive tile bound");
+  }
+  // Annex A Table A.9. These are absolute counts, independent of the §9.2
+  // width/area scaling factors the existing planner already modelled.
+  if (cols > layout.max_tile_cols) {
+    std::ostringstream out;
+    out << "tile column count " << cols << " exceeds the level's MaxTileCols "
+        << layout.max_tile_cols;
+    return fail(LayoutStatus::kLevelConstraint, out.str());
+  }
+  if (cols * rows > layout.max_tiles) {
+    std::ostringstream out;
+    out << "tile count " << cols * rows << " exceeds the level's MaxTiles "
+        << layout.max_tiles;
+    return fail(LayoutStatus::kLevelConstraint, out.str());
   }
 
   layout.min_log2_tile_cols =
       tile_log2(layout.max_tile_width_sb, layout.sb_cols);
+  // maxLog2TileCols is §5.18.7.3's syntax bound (Min(sbCols, MAX_TILE_COLS)),
+  // not Table A.9 MaxTileCols: the decoder derives the increment-bit count from
+  // the same expression, so capping it would shift tile_info().
   layout.max_log2_tile_cols =
       tile_log2(1, std::min(layout.sb_cols, kMaxTileColumns));
   layout.max_log2_tile_rows =
@@ -457,6 +525,23 @@ bool validate_tile_layout(const TileLayout& layout, std::string& error) {
   if (layout.cols_log2 != log2_exact(layout.cols) ||
       layout.rows_log2 != log2_exact(layout.rows)) {
     return fail("layout tile grid is not a power of two");
+  }
+  if (layout.seq_level_idx < 0 || layout.seq_level_idx > 31 ||
+      layout.seq_tier < 0 || layout.seq_tier > 1) {
+    return fail("layout has an invalid sequence level or tier");
+  }
+  if (layout.seq_level_idx != 31) {
+    const LevelTileLimits limits =
+        level_tile_limits(layout.seq_level_idx, layout.seq_tier);
+    if (limits.reserved) {
+      return fail("layout signals a reserved sequence level / tier");
+    }
+    if (layout.cols > limits.max_tile_cols) {
+      return fail("layout tile column count exceeds the level MaxTileCols");
+    }
+    if (layout.tile_count() > limits.max_tiles) {
+      return fail("layout tile count exceeds the level MaxTiles");
+    }
   }
   if (layout.sb_cols != sb_cols(layout.width, layout.sb_size) ||
       layout.sb_rows != sb_rows(layout.height, layout.sb_size)) {

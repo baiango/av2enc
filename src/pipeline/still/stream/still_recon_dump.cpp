@@ -58,6 +58,11 @@ int main(int argc, char** argv) {
   std::filesystem::path input;
   std::filesystem::path output;
   int qp = 90;
+  bool rdo_scale_given = false;
+  bool rdoq_scale_given = false;
+  bool tx_type_scale_given = false;
+  bool ist_scale_given = false;
+  bool tcq_scale_given = false;
   av2enc::still::StillOptions options;
 
   for (int i = 1; i < argc; ++i) {
@@ -120,6 +125,7 @@ int main(int argc, char** argv) {
       if (i + 1 >= argc || !parse_double(argv[++i], options.rdo_sse_scale)) {
         return 2;
       }
+      rdo_scale_given = true;
       continue;
     }
     if (arg == "--still-rdoq") {
@@ -130,6 +136,7 @@ int main(int argc, char** argv) {
       if (i + 1 >= argc || !parse_double(argv[++i], options.rdoq_sse_scale)) {
         return 2;
       }
+      rdoq_scale_given = true;
       continue;
     }
     if (arg == "--still-tx-type") {
@@ -140,6 +147,7 @@ int main(int argc, char** argv) {
       if (i + 1 >= argc || !parse_double(argv[++i], options.tx_type_sse_scale)) {
         return 2;
       }
+      tx_type_scale_given = true;
       continue;
     }
     if (arg == "--still-cdef") {
@@ -211,6 +219,97 @@ int main(int argc, char** argv) {
       options.sb256 = true;
       continue;
     }
+    if (arg == "--still-ext-partitions") {
+      options.ext_partitions = true;
+      continue;
+    }
+    if (arg == "--still-sub8") {
+      options.sub8 = true;
+      continue;
+    }
+    if (arg == "--still-sdp") {
+      options.sdp = true;
+      continue;
+    }
+    if (arg == "--still-segmentation") {
+      options.enable_segmentation = true;
+      continue;
+    }
+    if (arg == "--still-delta-q") {
+      options.enable_delta_q = true;
+      continue;
+    }
+    if (arg == "--still-delta-q-res") {
+      if (i + 1 >= argc || !parse_int(argv[++i], options.delta_q_res) ||
+          options.delta_q_res < 0 || options.delta_q_res > 3) {
+        return 2;
+      }
+      continue;
+    }
+    if (arg == "--still-dc-ac-delta-q") {
+      options.delta_q = true;
+      continue;
+    }
+    if (arg == "--still-content-interpretation") {
+      options.content_interpretation = true;
+      continue;
+    }
+    if (arg == "--still-cdef-on-skip-txfm") {
+      options.cdef_on_skip_txfm = true;
+      continue;
+    }
+    if (arg == "--still-qm-level") {
+      if (i + 1 >= argc || !parse_int(argv[++i], options.qm_level) ||
+          options.qm_level < 0 || options.qm_level > 14) {
+        return 2;
+      }
+      continue;
+    }
+    if (arg == "--still-ist-scale") {
+      if (i + 1 >= argc || !parse_double(argv[++i], options.ist_sse_scale) ||
+          options.ist_sse_scale <= 0.0) {
+        return 2;
+      }
+      ist_scale_given = true;
+      continue;
+    }
+    if (arg == "--still-tcq-scale") {
+      if (i + 1 >= argc || !parse_double(argv[++i], options.tcq_sse_scale) ||
+          options.tcq_sse_scale <= 0.0) {
+        return 2;
+      }
+      tcq_scale_given = true;
+      continue;
+    }
+    if (arg == "--still-ccso-edge") {
+      options.enable_ccso = true;
+      options.ccso_edge = true;
+      continue;
+    }
+    if (arg == "--still-wiener") {
+      options.enable_wiener = true;
+      continue;
+    }
+    if (arg == "--still-chroma-lr") {
+      options.enable_chroma_lr = true;
+      continue;
+    }
+    if (arg == "--still-pc-wiener") {
+      options.enable_pc_wiener = true;
+      continue;
+    }
+    if (arg == "--still-gdf") {
+      options.enable_gdf = true;
+      continue;
+    }
+    if (arg == "--still-grain") {
+      options.enable_grain = true;
+      continue;
+    }
+    if (arg == "--still-grain-adaptive") {
+      options.grain_adaptive = true;
+      continue;
+    }
     if (arg == "--still-tcq") {
       options.tcq = true;
       continue;
@@ -246,6 +345,14 @@ int main(int argc, char** argv) {
       }
       continue;
     }
+    if (arg == "--still-sub8") {
+      options.sub8 = true;
+      continue;
+    }
+    if (arg == "--still-ext-partitions") {
+      options.ext_partitions = true;
+      continue;
+    }
     if (arg == "--still-per-segment-q") {
       options.per_segment_q = true;
       continue;
@@ -262,6 +369,39 @@ int main(int argc, char** argv) {
 
   if (input.empty() || output.empty()) {
     usage();
+    return 2;
+  }
+
+  // Mirror src/main.cpp: the 8-bit Still writer takes base_q_idx 1..255
+  // (256..303 is the 10-bit MaxQ range and Q=0 lossless is not implemented).
+  // A static_cast to uint8_t used to wrap 300 into 44 and -1 into 255, so the
+  // dump silently compared recon from a different quantizer.
+  if (qp < 1 || qp > 255) {
+    std::cerr << "still_recon_dump: --qp must be an integer in 1..255 at 8-bit "
+                 "(got "
+              << qp << ")\n";
+    return 2;
+  }
+  if (rdo_scale_given && !options.rdo_intra) {
+    std::cerr << "still_recon_dump: --still-rdo-scale requires "
+                 "--still-rdo-intra\n";
+    return 2;
+  }
+  if (rdoq_scale_given && !options.rdoq) {
+    std::cerr << "still_recon_dump: --still-rdoq-scale requires --still-rdoq\n";
+    return 2;
+  }
+  if (tx_type_scale_given && !options.tx_type) {
+    std::cerr << "still_recon_dump: --still-tx-type-scale requires "
+                 "--still-tx-type\n";
+    return 2;
+  }
+  if (ist_scale_given && !options.ist) {
+    std::cerr << "still_recon_dump: --still-ist-scale requires --still-ist\n";
+    return 2;
+  }
+  if (tcq_scale_given && !options.tcq) {
+    std::cerr << "still_recon_dump: --still-tcq-scale requires --still-tcq\n";
     return 2;
   }
 

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace av2enc::fmt {
@@ -282,6 +283,31 @@ bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
   if (static_cast<std::size_t>(file.gcount()) != raw.size()) {
     if (error != nullptr) {
       *error = "truncated Y4M frame";
+    }
+    return false;
+  }
+
+  // A frame body is exactly `total_samples * bytes_per_sample` bytes, so the
+  // file must end here.  Without this the reader silently accepted a body that
+  // the W/H/C tag under-declares (e.g. a 4:4:4 might be tagged C420) and
+  // encoded the prefix as the smaller format.  The format still paths read one
+  // frame; a multi-frame input or appended bytes are a frame-size error.
+  std::error_code size_error;
+  const std::uintmax_t file_bytes = std::filesystem::file_size(path, size_error);
+  const std::streampos body_end = file.tellg();
+  if (!size_error && body_end >= 0 &&
+      static_cast<std::uintmax_t>(body_end) != file_bytes) {
+    const std::uintmax_t trailing =
+        file_bytes > static_cast<std::uintmax_t>(body_end)
+            ? file_bytes - static_cast<std::uintmax_t>(body_end)
+            : 0;
+    if (error != nullptr) {
+      *error = "oversized Y4M frame: " + std::to_string(trailing) +
+               " trailing byte(s) after the " + std::to_string(width) + "x" +
+               std::to_string(height) + " " +
+               y4m_colorspace_tag(colorspace.chroma, colorspace.depth) +
+               " frame body (the format paths read exactly one frame; check "
+               "for a mismatched C tag or a multi-frame input)";
     }
     return false;
   }

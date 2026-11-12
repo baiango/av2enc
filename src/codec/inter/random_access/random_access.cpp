@@ -354,7 +354,10 @@ std::size_t write_sequence_header_bits(BitWriter& writer,
   writer.put_bit(false);  // enable_cctx
   writer.put_bit(false);  // enable_tcq
   writer.put_bit(false);  // enable_parity_hiding
-  writer.put_bit(false);  // enable_avg_cdf
+  writer.put_bit(c.enable_avg_cdf);  // enable_avg_cdf
+  if (c.enable_avg_cdf) {
+    writer.put_bit(c.avg_cdf_type);  // avg_cdf_type: 1 = average across tiles
+  }
   writer.put_bit(false);  // separate_uv_delta_q
   writer.put_bit(true);   // equal_ac_dc_q
   writer.put_bits(23U, 5U);  // base_uv_ac_delta_q => BaseUVAcDeltaQ = 0
@@ -609,9 +612,26 @@ bool read_sequence_header_bits(std::span<const std::uint8_t> payload,
       !expect_flag(reader, false, "reduced_tx_part_set", supported) ||
       !expect_flag(reader, false, "enable_cctx", supported) ||
       !expect_flag(reader, false, "enable_tcq", supported) ||
-      !expect_flag(reader, false, "enable_parity_hiding", supported) ||
-      !expect_flag(reader, false, "enable_avg_cdf", supported) ||
-      !expect_flag(reader, false, "separate_uv_delta_q", supported) ||
+      !expect_flag(reader, false, "enable_parity_hiding", supported)) {
+    error = reader.error();
+    return false;
+  }
+  // §5.4.8: enable_avg_cdf gates the avg_cdf_type bit.
+  bool avg_cdf = false;
+  if (!read_flag(reader, avg_cdf, "enable_avg_cdf")) {
+    error = reader.error();
+    return false;
+  }
+  out.enable_avg_cdf = avg_cdf;
+  if (avg_cdf) {
+    bool avg_cdf_type = false;
+    if (!read_flag(reader, avg_cdf_type, "avg_cdf_type")) {
+      error = reader.error();
+      return false;
+    }
+    out.avg_cdf_type = avg_cdf_type;
+  }
+  if (!expect_flag(reader, false, "separate_uv_delta_q", supported) ||
       !expect_flag(reader, true, "equal_ac_dc_q", supported)) {
     error = reader.error();
     return false;

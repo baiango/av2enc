@@ -421,7 +421,7 @@ av2enc clip.y4m --video --video-subpel-eighth --video-mv-precision quarter -o cl
 | `--video-mv-precision P` | eighth | `eighth`, `quarter` or `half` pel |
 | `--video-compound` | off | `reference_select` compound (needs `--video-refs 2`) |
 | `--video-inter-residual` | off | code a quantised inter residual |
-| `--video-max-depth D` / `--video-min-block N` / `--video-force-single` | 4 / 16 / off | partition controls |
+| `--video-max-depth D` / `--video-min-block N` / `--video-force-single` | 4 / 16 / off | partition controls; `N` must be 8..64 (sub-8 leaves would need shared-chroma prediction) |
 | `--video-recon FILE` | off | dump the encoder reconstruction Y4M (gate use) |
 | `--video-tlayers N` | off | one hierarchical-P GOP of N (4/8) frames with temporal layers |
 | `--video-tlayer-drop L` | off | emit only temporal layers `<= L` |
@@ -509,6 +509,11 @@ the default `--video` stream above is byte-identical.
 `--video-olk` implies `--video-long-term`. Both need `--video-refs 1` and
 eighth-pel precision because the long-term reference writer freezes those
 syntax fields.
+
+`--video-long-term` codes the frame index as `OrderHint` with
+`OrderHintBits = 4`, so it supports at most 16 coded frames. A larger
+`--frames` is rejected with a named error before any frame is encoded; the
+plain `--video` path masks the hint with `& 15` and is not capped.
 
 `--video-olk` decode order:
 

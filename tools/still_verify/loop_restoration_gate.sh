@@ -100,7 +100,9 @@ fixture_path() {
     esac
 }
 
-# run_case <fixture> <name> <expected_md5> <dump args...> -- <encode args...>
+# run_case <fixture> <name> <expected_md5|-> <dump args...> -- <encode args...>
+# An expected MD5 of "-" skips the pin and only requires decode + recon
+# exactness (used by the partial-unit geometry cases, whose streams are new).
 run_case() {
     local fixture=$1 name=$2 expected=$3
     shift 3
@@ -121,12 +123,15 @@ run_case() {
         failures=$((failures + 1))
         return 0
     fi
-    local got
-    got=$(md5 -q "$out" 2>/dev/null || md5sum "$out" | awk '{print $1}')
-    if [ "$got" != "$expected" ]; then
-        echo "FAIL $name: IVF md5 $got, expected $expected" >&2
-        failures=$((failures + 1))
-        return 0
+    local got=- pin=unpinned
+    if [ "$expected" != "-" ]; then
+        got=$(md5 -q "$out" 2>/dev/null || md5sum "$out" | awk '{print $1}')
+        pin=$expected
+        if [ "$got" != "$expected" ]; then
+            echo "FAIL $name: IVF md5 $got, expected $expected" >&2
+            failures=$((failures + 1))
+            return 0
+        fi
     fi
     if ! "$NOGRAIN" -q -i "$out" -o "$dec" --threads 1 --strict 1 \
             >"$TMP/${name}.dec.log" 2>&1; then
@@ -153,7 +158,7 @@ run_case() {
             return 0
         fi
     fi
-    echo "PASS $name ($(wc -c <"$out" | tr -d ' ') B, md5 $expected)"
+    echo "PASS $name ($(wc -c <"$out" | tr -d ' ') B, $pin)"
     pass=$((pass + 1))
 }
 
@@ -199,6 +204,35 @@ run_case tests/data/basic_640x360_1f.y4m still_360_gdf \
 run_case tests/data/basic_640x360_1f.y4m still_360_cdef_ccso_gdf \
     ebe9f970bd7a3a73e4b38ae8e3393354 --cdef --ccso --gdf -- \
     --still --still-cdef --still-ccso --still-gdf
+
+# --- partial restoration unit at the frame edge ---------------------------
+# §5.20.10.4 count_units_in_frame() rounds the unit count to nearest, so the
+# last frame band can fall outside every unit when its extent is below
+# unit_size/2 (720 = 11*64 + 16; 70 = 1*64 + 6; 70 = 2*32 + 6 for chroma).
+# read_lr() then codes nothing for a superblock at that origin and §7.20.1
+# clamps the band to the last unit.  The writer used to abort instead.
+run_case testdata/src_100x70.y4m still_70_wiener \
+    - --wiener -- --still --still-wiener
+run_case testdata/src_100x70.y4m still_70_chroma_lr \
+    - --chroma-lr -- --still --still-chroma-lr
+run_case testdata/src_100x70.y4m still_70_pc_wiener \
+    - --pc-wiener -- --still --still-pc-wiener
+run_case "$TESTDATA/shine_1280x720_60f.y4m" still_720_wiener \
+    - --wiener -- --still --still-wiener
+run_case "$TESTDATA/shine_1280x720_60f.y4m" still_720_chroma_lr \
+    - --chroma-lr -- --still --still-chroma-lr
+run_case "$TESTDATA/shine_1280x720_60f.y4m" still_720_pc_wiener \
+    - --pc-wiener -- --still --still-pc-wiener
+
+# --- per-plane chroma FrameRestorationType ---------------------------------
+# §5.18.7.11 codes one chroma tool list but a separate FrameRestorationType
+# per plane, so U can be RESTORE_NONE while V is RESTORE_WIENER_NONSEP.  This
+# qp1 depth-4 plan picks exactly that split; the header used to derive the
+# shared chroma flag from U alone and then write no V tool symbol, so the
+# decoder desynchronised at the tile.
+run_case tests/data/basic_640x360_1f.y4m still_360_qp1_chroma_lr_split \
+    - --qp 1 --depth 4 --chroma-lr -- \
+    --still --qp 1 --still-depth 4 --still-chroma-lr
 
 # --- §7.20 pre-GDF CdefFrame / LrFrame split ------------------------------
 # GDF runs after Wiener/PC-Wiener and samples CdefFrame, so the restoration

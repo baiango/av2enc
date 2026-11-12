@@ -327,10 +327,16 @@ void suite_geometry() {
         CHECK(covered[static_cast<std::size_t>(c)] == 1);
     }
   }
-  // Tiles with zero width/height must be rejected.
+  // §5.20.6.3: BLOCK_4X4 codes no partition syntax, so NONE is the whole
+  // block as one TX_4X4 part; any split shape has no signal.
   SplitGeometry geom;
   std::string error;
-  CHECK(!tx_partition_geometry(kBlock4x4, 0, 0, TxPartition::kNone, &geom,
+  CHECK(tx_partition_geometry(kBlock4x4, 0, 0, TxPartition::kNone, &geom,
+                              &error));
+  CHECK(geom.count == 1);
+  CHECK(geom.parts[0].tx_size == kTxSize4x4);
+  CHECK(geom.parts[0].mi_row == 0 && geom.parts[0].mi_col == 0);
+  CHECK(!tx_partition_geometry(kBlock4x4, 0, 0, TxPartition::kSplit, &geom,
                                &error));
   CHECK(!tx_partition_geometry(27, 0, 0, TxPartition::kHorz5, &geom, &error));
   suite_end();

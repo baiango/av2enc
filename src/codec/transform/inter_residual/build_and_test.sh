@@ -71,6 +71,9 @@ CORE=(
   "$ROOT/src/codec/inter/me/me.cpp"
   "$ROOT/src/codec/inter/mc/mc.cpp"
   "$ROOT/src/codec/inter/merge/merge.cpp"
+  "$ROOT/src/codec/inter/drl_reorder/drl_reorder.cpp"
+  "$ROOT/src/codec/inter/drl_reorder/video_stack_adapter.cpp"
+  "$ROOT/src/codec/inter/mv_precision/mv_precision.cpp"
 )
 
 COMPONENT=(

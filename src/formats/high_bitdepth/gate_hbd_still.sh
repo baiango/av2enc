@@ -209,5 +209,27 @@ for case in "${CASES[@]}"; do
   check_recon "${IVF}" "${DEC}" "${RECON}"
 done
 
+# CLI contract: --q is a raw base_q_idx and must be a full integer in 1..303.
+# The old std::atoi + uint16_t narrowing made 65537 and -1 mean q=1 and 90abc
+# mean q=90, so out-of-range input silently encoded at a different quantizer.
+for bad_q in 0 304 65537 -1 90abc; do
+  set +e
+  "${HBD_ENCODE}" --q "${bad_q}" "${SRC}" "${TMP}/reject.ivf" \
+      >"${TMP}/reject.log" 2>&1
+  rc=$?
+  set -e
+  if [ "${rc}" -ne 2 ]; then
+    echo "error: hbd_encode --q ${bad_q} exited ${rc}, expected 2" >&2
+    cat "${TMP}/reject.log" >&2
+    exit 1
+  fi
+  if ! grep -q 'must be an integer in 1..303' "${TMP}/reject.log"; then
+    echo "error: hbd_encode --q ${bad_q} did not report the --q range" >&2
+    cat "${TMP}/reject.log" >&2
+    exit 1
+  fi
+  echo "reject:  --q ${bad_q} (exit 2)"
+done
+
 echo
 echo "OK: 10-bit hbd stills passed dav2d --strict 1 with 0-LSB reconstruction"

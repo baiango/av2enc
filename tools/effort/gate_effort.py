@@ -276,6 +276,19 @@ def main() -> int:
         gate.check(table.get("prefix_validation") is not None,
                    "top-K prefix validation row is recorded")
 
+        # 2b. --effort-plan needs neither an input nor an output file.
+        for label, cmd in (
+            ("without input", [str(binary), "--effort", "100", "--effort-plan"]),
+            ("without output", [str(binary), str(fixture), "--effort", "100",
+                                "--effort-plan"]),
+            ("without either", [str(binary), "--cpu-used", "8",
+                                "--effort-plan"]),
+        ):
+            p = run(cmd)
+            text = (p.stdout or "") + (p.stderr or "")
+            gate.check(p.returncode == 0 and "av2enc: effort: budget" in text,
+                       f"--effort-plan works {label} (rc={p.returncode})", text)
+
         # 3. budget invariant
         costs = [effective(r)[0] for r in ranked]
         cutoffs = []

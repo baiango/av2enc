@@ -186,7 +186,10 @@ std::size_t write_sequence_header(BitWriter& writer,
   writer.put_bit(false);  // enable_cctx
   writer.put_bit(false);  // enable_tcq
   writer.put_bit(false);  // enable_parity_hiding
-  writer.put_bit(false);  // enable_avg_cdf
+  writer.put_bit(c.enable_avg_cdf);  // enable_avg_cdf
+  if (c.enable_avg_cdf) {
+    writer.put_bit(c.avg_cdf_type);  // avg_cdf_type: 1 = average across tiles
+  }
   writer.put_bit(false);  // separate_uv_delta_q
   writer.put_bit(true);   // equal_ac_dc_q
   writer.put_bits(23U, 5U);  // base_uv_ac_delta_q => BaseUVAcDeltaQ = 0

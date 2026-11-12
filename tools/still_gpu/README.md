@@ -171,12 +171,15 @@ bottom/right edge geometry. `bench.py` uses the same native generation.
 on the GPU. Without one it reports `SKIP`, because identical bytes from a CPU
 fallback are indistinguishable from a working GPU path.
 
-1. **Stats JSON.** The process writes a JSON file at `$AV2ENC_GPU_STATS`
-   (also exported as `$AV2ENC_STILL_GPU_STATS`) with either
+1. **Stats JSON (harness-only today).** The gate reads a JSON file at
+   `$AV2ENC_GPU_STATS` (also exported as `$AV2ENC_STILL_GPU_STATS`) with either
    `"backend": "gpu"` or a positive `kernels`/`launches` count, **and**
-   `"frame_bytes_from_cpu": false` (or the key absent). This is the preferred
-   channel; `bench.py` reads the same file for kernel time, launch count and
-   the VRAM high-water mark.
+   `"frame_bytes_from_cpu": false` (or the key absent). `bench.py` reads the
+   same file for kernel time, launch count and the VRAM high-water mark. The
+   **CLI does not write this file yet** (`still_gpu_probe --stats` is the only
+   producer), so on a CLI run this channel is usually absent and the gate falls
+   through to the log/nsys checks below. Treat it as the preferred format once
+   the product glue lands, not as a currently emitted artifact.
 2. **Log marker.** The GPU run prints a line matching `backend=gpu`,
    `backend: gpu`, `using the GPU`, `GPU path ran/active/enabled`, or a
    `stage ... gpu` list. The completion banner (`av2enc: M1 GPU still-picture

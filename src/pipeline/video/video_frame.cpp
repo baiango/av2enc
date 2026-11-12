@@ -1231,7 +1231,9 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   config.num_ref_frames = static_cast<std::uint8_t>(plan.num_slots);
   config.num_total_refs = 1;
   config.max_drl_bits_minus_1 = 4;
-  config.disable_cdf_update = true;
+  config.disable_cdf_update = !options.adaptive_cdf;
+  config.enable_avg_cdf = options.avg_cdf;
+  config.avg_cdf_type = true;
   config.enable_masked_compound = false;
   config.enable_cwp = false;
   config.enable_imp_msk_bld = false;
@@ -1431,7 +1433,9 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.num_ref_frames = static_cast<std::uint8_t>(plan.num_slots);
   config.num_total_refs = 1;
   config.max_drl_bits_minus_1 = 4;
-  config.disable_cdf_update = true;
+  config.disable_cdf_update = !options.adaptive_cdf;
+  config.enable_avg_cdf = options.avg_cdf;
+  config.avg_cdf_type = true;
   config.disable_drl_reorder = true;
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
@@ -1584,6 +1588,20 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // quantiser below uses qlookup(base_q_idx).  0 (lossless) is not implemented.
   if (options.base_q_idx == 0) {
     error = "M2 does not support lossless base_q_idx = 0";
+    return false;
+  }
+  // The video leaf coder derives 4:2:0 chroma as w/2, h/2 and the intra
+  // predictor requires both dimensions >= 4. A sub-8 luma leaf (4x4, 4x8,
+  // 32x4, ...) would need §5.20.3.1 shared-chroma ownership; until that is
+  // implemented, reject it instead of aborting inside the keyframe with
+  // "intra DC prediction failed".
+  if (options.min_block_size < 8) {
+    error = "min_block_size must be at least 8: the video path does not "
+            "implement shared-chroma prediction for sub-8 luma leaves";
+    return false;
+  }
+  if (options.max_partition_depth < 0 || options.max_partition_depth > 8) {
+    error = "max_partition_depth must be in [0, 8]";
     return false;
   }
   if (!options.frame_base_q_idx.empty() &&

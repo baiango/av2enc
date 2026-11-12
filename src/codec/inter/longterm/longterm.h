@@ -78,6 +78,10 @@ struct SequenceConfig {
   std::uint8_t max_drl_bits_minus_1 = 4;
 
   bool disable_cdf_update = true;
+  // §5.4.8 average-CDF.  Opt-in (--avg-cdf); avg_cdf_type = 1 averages the
+  // tile CDFs at frame end, which is the single-tile form for this writer.
+  bool enable_avg_cdf = false;
+  bool avg_cdf_type = true;
   bool enable_cfl_intra = true;
   // Layout of the OLK long-term list (§5.18.2). See LongTermListSyntax.
   LongTermListSyntax olk_long_term_list = LongTermListSyntax::kSpecV1;

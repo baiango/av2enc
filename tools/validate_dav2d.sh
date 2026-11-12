@@ -10,6 +10,8 @@
 #   KEEP=1                   keep decoded Y4M (prints path)
 #   EXPECTED_MD5=...         fail if decoded MD5 differs
 #   DAV2D_ARGS="..."         replace the default decode arguments entirely
+#   ALLOW_NONOUTPUT_FRAMES=1 decode fewer Y4M frames than the IVF header
+#                            declares (streams with hidden/leading pictures)
 #
 # Exit codes: 0 ok, 1 decode/quality failure, 2 usage, 127 no decoder.
 # See docs/validation.md for the decoder pin and the gate policy.
@@ -44,6 +46,7 @@ if [ -z "${DAV2D:-}" ] || [ ! -x "$DAV2D" ]; then
 fi
 
 # --- container sanity (does not decode) -------------------------------------
+IVF_FRAMES=""
 if command -v python3 >/dev/null 2>&1; then
     python3 - "$IVF" <<'PY'
 import struct, sys
@@ -57,6 +60,14 @@ if len(h) >= 32 and h[:4] == b"DKIF":
 else:
     print("ivf:     warning: not a DKIF header (raw OBU stream?)")
 PY
+    IVF_FRAMES=$(python3 - "$IVF" <<'PY'
+import struct, sys
+with open(sys.argv[1], "rb") as f:
+    h = f.read(32)
+print(struct.unpack_from("<I", h, 24)[0]
+      if len(h) >= 32 and h[:4] == b"DKIF" else "")
+PY
+)
 fi
 
 TMPDIR=$(mktemp -d)
@@ -92,7 +103,28 @@ if command -v ffprobe >/dev/null 2>&1; then
         -count_frames -show_entries stream=nb_read_frames \
         -of default=nw=1:nk=1)
 else
-    echo "warning: ffprobe not found; skipping stream properties" >&2
+    echo "warning: ffprobe not found; counting Y4M FRAME markers" >&2
+    FRAMES=$(grep -a -c '^FRAME' "$OUT" 2>/dev/null || echo 0)
+fi
+
+# The decoder exits 0 after dropping frames it cannot parse, so a truncated or
+# desynced multi-frame stream used to pass this validator with frame 0 only.
+# The IVF header is authoritative for the number of temporal units; every one
+# must be accounted for in the decoded output unless the stream intentionally
+# codes non-output (e.g. leading/OLK) pictures, which the caller can declare.
+if [ -n "$IVF_FRAMES" ] && [ -n "$FRAMES" ]; then
+    if [ "$FRAMES" -lt "$IVF_FRAMES" ] &&
+       [ "${ALLOW_NONOUTPUT_FRAMES:-0}" != "1" ]; then
+        echo "error: dav2d decoded $FRAMES frame(s) but the IVF header" \
+             "declares $IVF_FRAMES; later temporal units were dropped" \
+             "(set ALLOW_NONOUTPUT_FRAMES=1 for streams with hidden pictures)" >&2
+        exit 1
+    fi
+    if [ "$FRAMES" -gt "$IVF_FRAMES" ]; then
+        echo "error: dav2d decoded $FRAMES frame(s), more than the IVF header" \
+             "declares ($IVF_FRAMES)" >&2
+        exit 1
+    fi
 fi
 
 if [ -n "${EXPECTED_MD5:-}" ]; then

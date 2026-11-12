@@ -163,19 +163,6 @@ int uv_mode_index(int uv_mode, int y_mode) {
   return 0;
 }
 
-// Sub-8 leaves (MiSize < BLOCK_8X8) omit the neighbour-derived directional
-// candidate from the UV list, so the index is the plain Default_Mode_List_Uv
-// position (§5.20.5.6).
-int uv_mode_index_sub8(int uv_mode) {
-  int index = 0;
-  for (int i = 0; i < kIntraModesCount; ++i) {
-    const int mode = kDefaultModeListUv[i];
-    if (mode == uv_mode) return index;
-    ++index;
-  }
-  return 0;
-}
-
 int tx_sz_ctx(int tx_size) {
   return (kTxSizeSqr[tx_size] + kTxSizeSqrUp[tx_size] + 1) >> 1;
 }
@@ -608,18 +595,25 @@ class Writer {
       pc_ready_ = pcw::InitTileState(&pc_state_, pc_params, mi_cols_,
                                      mi_rows_, /*sub_x=*/1, /*sub_y=*/1,
                                      &error_);
-      if (config_.lr.plane[1].enabled) {
+      if (config_.lr.plane[1].enabled || config_.lr.plane[2].enabled) {
         restoration::classes::WienerLrHeaderParams params;
         params.frame_type[0] = restoration::kRestoreNone;
-        params.frame_type[1] = restoration::kRestoreWienerNs;
-        params.frame_type[2] = restoration::kRestoreWienerNs;
+        // U and V carry independent FrameRestorationType values.
+        params.frame_type[1] = config_.lr.plane[1].enabled
+                                   ? restoration::kRestoreWienerNs
+                                   : restoration::kRestoreNone;
+        params.frame_type[2] = config_.lr.plane[2].enabled
+                                   ? restoration::kRestoreWienerNs
+                                   : restoration::kRestoreNone;
         for (int plane = 0; plane < kPlaneCount; ++plane) {
           params.frame_filters_on[plane] = false;
         }
         params.num_filter_classes = 1;
         params.num_filter_classes_idx = 0;
         params.luma_shift = config_.lr.plane[0].shift;
-        params.chroma_shift = config_.lr.plane[1].shift;
+        params.chroma_shift = config_.lr.plane[1].enabled
+                                  ? config_.lr.plane[1].shift
+                                  : config_.lr.plane[2].shift;
         lr_ready_ = restoration::classes::wiener_tile_init(
             &lr_state_, params, mi_cols_, mi_rows_, /*sub_x=*/1, /*sub_y=*/1,
             &error_);
@@ -635,7 +629,9 @@ class Writer {
       params.num_filter_classes = 1;
       params.num_filter_classes_idx = 0;
       params.luma_shift = config_.lr.plane[0].shift;
-      params.chroma_shift = config_.lr.plane[1].shift;
+      params.chroma_shift = config_.lr.plane[1].enabled
+                                ? config_.lr.plane[1].shift
+                                : config_.lr.plane[2].shift;
       lr_ready_ = restoration::classes::wiener_tile_init(
           &lr_state_, params, mi_cols_, mi_rows_, /*sub_x=*/1, /*sub_y=*/1,
           &error_);
@@ -1276,7 +1272,7 @@ class Writer {
   // and finally filled from Default_Mode_List_Y.  The encoder must invert that
   // list; writing the static-list position makes dependent blocks decode a
   // different direction.
-  int y_mode_index_for(int joint) const {
+  int y_mode_index_for(int joint, bool sub8_leaf) const {
     if (joint < 5) {
       return joint;
     }
@@ -1287,7 +1283,10 @@ class Writer {
     int count = 0;
     const int w = cur_w4_ * 4;
     const int h = cur_h4_ * 4;
-    if (w >= 8 && h >= 8) {
+    // §5.20.5.5 gates the neighbour-derived list on `MiSize >= BLOCK_8X8`,
+    // not on the pixel dimensions: rectangular sizes such as 32x4/4x32 are
+    // >= BLOCK_8X8 in the size enum and therefore use the dynamic list.
+    if (!sub8_leaf) {
       for (int dir = 0; dir < 2; ++dir) {
         int mode = get_joint_mode(cur_r_, cur_c_, cur_w4_, cur_h4_, dir);
         if (mode >= 5) {
@@ -1335,8 +1334,11 @@ class Writer {
         y_mode_code(node.y_mode, node.y_angle_delta);
     // Directional modes use the dynamic set; non-directional indices are the
     // reordered mode itself and are unaffected by neighbours.
+    const bool sub8_leaf =
+        static_cast<BlockSize>(node.bsize) < BlockSize::k8x8;
     const int mode_index =
-        code.joint < 5 ? code.mode_index : y_mode_index_for(code.joint);
+        code.joint < 5 ? code.mode_index
+                       : y_mode_index_for(code.joint, sub8_leaf);
     const int ctx = joint_context();
     if (mode_index < kIntraModesCount) {
       if (!sym(&cdfs_.y_mode_set[0], 4, 0)) return false;
@@ -1398,11 +1400,19 @@ class Writer {
         syntax.cfl_alpha_u = node.cfl_alpha_u;
         syntax.cfl_alpha_v = node.cfl_alpha_v;
         std::string alpha_error;
+        // §8.3 cfl_mh_dir context: TileCflMhDirCdf[Size_Group[MiSize]] uses the
+        // *coding block* size, not the (possibly larger, shared) ChromaMi
+        // block.  Deriving the group from the chroma dimensions selects the
+        // wrong CDF for shared-chroma ext/sub-8 leaves and desyncs dav2d.
+        const int mh_size_group =
+            node.bsize < 29 ? cfl::mhccp::kSizeGroup[node.bsize] : -1;
+        if (mh_size_group < 0) {
+          error_ = "invalid block size for the cfl_mh_dir context";
+          return false;
+        }
         if (!cfl::mhccp::write_cfl_alphas(
                 enc_, cdfs_.mh_cdfs, syntax, config_.enable_cfl_intra,
-                mhccp_allowed,
-                cfl::mhccp::size_group_for_chroma_block(cw, ch),
-                &alpha_error)) {
+                mhccp_allowed, mh_size_group, &alpha_error)) {
           error_ = "read_cfl_alphas: " + alpha_error;
           return false;
         }
@@ -1453,9 +1463,10 @@ class Writer {
     if (config_.enable_cfl_intra) {
       if (!sym(&cdfs_.is_cfl[cfl_context()][0], 2, 0)) return false;
     }
-    const int idx = ((cur_w4_ * 4 < 8) || (cur_h4_ * 4 < 8))
-                        ? uv_mode_index_sub8(uv_mode)
-                        : uv_mode_index(uv_mode, y_mode);
+    // §5.20.5.6 get_intra_uv_mode_set has no sub-8 special case: whenever
+    // YMode is directional, index 0 selects YMode and the remaining entries
+    // skip it, for every block size (including 4x8/8x4/4x4).
+    const int idx = uv_mode_index(uv_mode, y_mode);
     if (idx <= 6) {
       return sym(&cdfs_.uv_mode[ctx][0], 8, idx);
     }
@@ -1838,7 +1849,7 @@ class Writer {
       stx.coded_h = coded_h;
       stx.y_mode = node.y_mode;
       stx.angle_delta = node.y_angle_delta;
-      stx.mrl_index = 0;  // MRL is not wired yet
+      stx.mrl_index = node.mrl_index;  // §7.15.3: the IST kernel follows MRL
       stx.most_probable_stx_set = view.stx_set;
       stx.sec_tx_type = view.sec_tx_type;
       stx.is_inter = false;
@@ -2220,8 +2231,13 @@ class Writer {
     const int unit_row = origin_y / unit_size;
     const int unit_col = origin_x / unit_size;
     if (unit_row >= cfg.unit_rows || unit_col >= cfg.unit_cols) {
-      error = "LR unit grid does not cover a coding block";
-      return false;
+      // §5.20.10.4 count_units_in_frame() rounds to the nearest unit, so the
+      // last frame band can be shorter than unit_size/2 and lie outside every
+      // restoration unit.  read_lr() then computes an empty
+      // [unitRowStart, unitRowEnd) range for a coding block at that origin:
+      // no symbol is coded and §7.20.1 clamps the block to the last unit, so
+      // the writer must skip it rather than reject the frame.
+      return true;
     }
     const std::size_t index =
         static_cast<std::size_t>(unit_row) *
@@ -2263,24 +2279,25 @@ class Writer {
             origin_y % unit_size == 0) {
           const int unit_row = origin_y / unit_size;
           const int unit_col = origin_x / unit_size;
-          if (unit_row >= cfg.unit_rows || unit_col >= cfg.unit_cols) {
-            error = "PC-Wiener unit grid does not cover a coding block";
-            return false;
-          }
-          const std::size_t index =
-              static_cast<std::size_t>(unit_row) *
-                  static_cast<std::size_t>(cfg.unit_cols) +
-              static_cast<std::size_t>(unit_col);
-          if (index >= cfg.unit_type.size()) {
-            error = "PC-Wiener unit decision vector is too small";
-            return false;
-          }
-          av2enc::filters::pc_wiener_stream::UnitDecision decision;
-          decision.type = cfg.unit_type[index];
-          if (!av2enc::filters::pc_wiener_stream::WriteUnit(
-                  enc_, pc_state_, 0, unit_row, unit_col, decision,
-                  &error)) {
-            return false;
+          // Same empty range as write_lr_plane_units(): the rounded unit
+          // count can leave the final partial band outside the grid, in which
+          // case read_lr() codes no symbol for this superblock.
+          if (unit_row < cfg.unit_rows && unit_col < cfg.unit_cols) {
+            const std::size_t index =
+                static_cast<std::size_t>(unit_row) *
+                    static_cast<std::size_t>(cfg.unit_cols) +
+                static_cast<std::size_t>(unit_col);
+            if (index >= cfg.unit_type.size()) {
+              error = "PC-Wiener unit decision vector is too small";
+              return false;
+            }
+            av2enc::filters::pc_wiener_stream::UnitDecision decision;
+            decision.type = cfg.unit_type[index];
+            if (!av2enc::filters::pc_wiener_stream::WriteUnit(
+                    enc_, pc_state_, 0, unit_row, unit_col, decision,
+                    &error)) {
+              return false;
+            }
           }
         }
       }
@@ -2553,7 +2570,12 @@ class Writer {
       }
       // §5.20.10.1 read_cdef(): after intra_segment_id(), before
       // read_intra_y_mode().  Repeats within one 64x64 block are no-ops.
-      if (config_.cdef.enable &&
+      // An IBC leaf codes skip_flag = 1, so the decoder returns from read_cdef
+      // without reading cdef_idx unless cdef_on_skip_txfm is enabled; the
+      // writer must skip the same symbol.
+      const bool cdef_skip_ibc =
+          is_ibc && node.ibc_skip != 0 && !config_.cdef.on_skip_txfm;
+      if (config_.cdef.enable && !cdef_skip_ibc &&
           !av2enc::cuda::still::cdef_encode_block_index(
               &cdef_grid_, config_.cdef.num_strengths,
               /*sb_width_log2=*/(plan_.sb_size == 128 ? 5 : 4),

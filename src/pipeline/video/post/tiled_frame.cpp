@@ -133,8 +133,19 @@ std::size_t write_sequence_header(const VideoConfig& c,
                   height_bits);
 
   writer.put_bit(false);  // seq_cropping_window_present_flag
-  writer.put_bit(false);  // seq_initial_display_delay_present_flag
-  writer.put_bit(false);  // decoder_model_info_present_flag
+  // §5.4.1/§5.4.12 timing block.  Mirror the non-tiled writer: the opt-in
+  // --video-timing form codes the initial display delay and the
+  // decoder_model_info block, but not the nested §5.4.13 block (pinned dav2d
+  // f9dafbc rejects it).
+  writer.put_bit(c.initial_display_delay_present);
+  if (c.initial_display_delay_present) {
+    writer.put_bits(c.initial_display_delay_minus_1, 4U);
+  }
+  writer.put_bit(c.decoder_model_info_present);
+  if (c.decoder_model_info_present) {
+    writer.put_bits(c.num_units_in_decoding_tick, 32U);
+    writer.put_bit(false);  // seq_decoder_model_info_present_flag
+  }
 
   // §5.4.3 sequence_partition_config().
   writer.put_bit(false);  // use_256x256_superblock
@@ -410,8 +421,10 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
   }
 
   const std::size_t start = writer.bit_size();
-  put_uvlc(writer, 0);  // cur_mfh_id
-  put_uvlc(writer, 0);  // seq_header_id_in_frame_header
+  put_uvlc(writer, config.cur_mfh_id);  // cur_mfh_id
+  if (config.cur_mfh_id == 0) {
+    put_uvlc(writer, 0);  // seq_header_id_in_frame_header
+  }
 
   const bool key = header.keyframe;
   if (!key) writer.put_bit(true);  // frame_is_inter = 1

@@ -116,6 +116,10 @@ struct SequenceConfig {
   // disable_cdf_update live in the frame header, not the sequence header).
   std::uint8_t base_q_idx = 90;
   bool disable_cdf_update = true;
+  // §5.4.8 average-CDF.  Opt-in (--avg-cdf); avg_cdf_type = 1 averages the
+  // tile CDFs at frame end, which is the single-tile form for this writer.
+  bool enable_avg_cdf = false;
+  bool avg_cdf_type = true;
   bool enable_cfl_intra = true;
   // Compatibility quirk: the pinned dav2d build (f9dafbc, 2026-11-10) does not
   // implement the §5.18.2 RAS refresh_frame_flags derivation. Its frame-header
@@ -153,6 +157,8 @@ struct SequenceHeaderView {
   bool enable_bawp = false;
   bool enable_global_motion = false;
   bool enable_short_refresh_frame_flags = false;
+  bool enable_avg_cdf = false;
+  bool avg_cdf_type = true;
   bool disable_cross_frame_cdf_init_supported = true;
   bool supported_profile = false;
 };

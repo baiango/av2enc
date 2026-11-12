@@ -1,7 +1,7 @@
 // M1 GPU -> syntax bridge.
 //
-// The GPU pipeline (src/cuda/m1/) produces plan/decision/coefficient PODs; the
-// CPU syntax writer (src/encoder/m1/still_syntax.cpp) turns a *block-result*
+// The GPU pipeline (src/cuda/pipeline/still/) produces plan/decision/coefficient PODs; the
+// CPU syntax writer (src/pipeline/still/still_syntax.cpp) turns a *block-result*
 // stream into the AV2 bitstream.  This bridge is the only place that knows the
 // mapping between the two representations, so both the CPU reference and the
 // GPU path emit the same bytes from the same decisions.
@@ -178,7 +178,7 @@ bool assemble_gpu_raster_frame(
     std::size_t* tile_bytes = nullptr);
 
 // ---------------------------------------------------------------------------
-// Host plan module (src/cuda/m1/plan/) -> syntax
+// Host plan module (src/cuda/pipeline/still/plan/) -> syntax
 // ---------------------------------------------------------------------------
 //
 // `av2enc::still::plan::FramePlan::tree` is already the preorder node list the writer

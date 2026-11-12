@@ -35,7 +35,7 @@
 // offset.  None of those values are valid at 10-bit.  In particular
 // `txv::dequantize` / `txv::inverse_block` clip at 8-bit bounds and must not be
 // used for a 10-bit stream; use `dequantize()` / `inverse_block()` here, which
-// delegate the arithmetic to `src/cuda/m1/hbd/hbd_cpu.h` (the verified 10-bit
+// delegate the arithmetic to `src/cuda/pipeline/still/hbd/hbd_cpu.h` (the verified 10-bit
 // oracle used by M10).
 #pragma once
 

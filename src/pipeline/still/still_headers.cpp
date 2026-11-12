@@ -70,14 +70,21 @@ std::uint32_t mi_rows(const StillConfig& c) {
   return 2U * ((static_cast<std::uint32_t>(c.max_frame_height) + 7U) >> 3U);
 }
 
-// §5.18.7.11 lr_luma_use_{half,max,quarter}_size / chroma equivalent for a
-// 64x64 superblock.  shift 0..3 selects size = 512 >> shift (luma).
-void write_lr_shift(BitWriter& writer, int shift) {
+// §5.18.7.11 lr_luma_use_{half,max,quarter}_size / chroma equivalent.  The
+// size flags depend on SbSize: at 128x128 the syntax stops after
+// lr_luma_use_max_size = 0 and shift = 2 is inferred; the quarter-size bit
+// only exists for a 64x64 SbSize.  shift 0..3 selects size = 512 >> shift.
+void write_lr_shift(BitWriter& writer, int shift, int sb_size) {
   assert(shift >= 0 && shift <= 3);
   writer.put_bit(shift == 1);  // half
   if (shift == 1) return;
   writer.put_bit(shift == 0);  // max
   if (shift == 0) return;
+  if (sb_size == 128) {
+    assert(shift == 2);
+    return;
+  }
+  assert(sb_size == 64);
   writer.put_bit(shift == 2);  // quarter (0 => eighth)
 }
 
@@ -195,7 +202,9 @@ std::size_t write_sequence_header(BitWriter& writer, const StillConfig& c) {
     writer.put_bit(!(!pc && c.lr.plane[0].enabled));  // [0][WIENER_NONSEP]
     writer.put_bit(c.lr.uv_present);                  // lr_tools_uv_present
     if (c.lr.uv_present) {
-      writer.put_bit(!c.lr.plane[1].enabled);  // [1][WIENER_NONSEP]
+      // One chroma tool flag covers both planes; keep Wiener NS available
+      // when either U or V uses it.
+      writer.put_bit(!(c.lr.plane[1].enabled || c.lr.plane[2].enabled));
     }
   }
   // §5.4.10 sequence_filter_config() CCSO row.
@@ -379,7 +388,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
     ctx.enable_restoration = true;
     ctx.single_picture_header_flag = true;
     ctx.frame_is_intra = true;
-    ctx.sb_size = 64;
+    ctx.sb_size = superblock_size_px(c);
     ctx.num_planes = 3;
     ctx.sub_x = 1;
     ctx.sub_y = 1;
@@ -389,17 +398,19 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
     ctx.lr_tools_disable[1][pcw::kRestorePcWiener] = true;
     // Plane 0 is RESTORE_PC_WIENER; chroma may independently be
     // RESTORE_WIENER_NONSEP, which composes because PC-Wiener is luma-only.
-    const bool chroma_lr = c.lr.plane[1].enabled;
-    assert(chroma_lr == c.lr.plane[2].enabled);
+    // FrameRestorationType is per plane, so U and V may differ; the tool list
+    // is shared, so it must stay enabled when either chroma plane uses it.
+    const bool chroma_lr = c.lr.plane[1].enabled || c.lr.plane[2].enabled;
     ctx.lr_tools_disable[1][pcw::kRestoreWienerNs] = !chroma_lr;
     pcw::LrParams params;
     params.frame_type[0] = pcw::kRestorePcWiener;
     params.frame_type[1] =
-        chroma_lr ? pcw::kRestoreWienerNs : pcw::kRestoreNone;
+        c.lr.plane[1].enabled ? pcw::kRestoreWienerNs : pcw::kRestoreNone;
     params.frame_type[2] =
-        chroma_lr ? pcw::kRestoreWienerNs : pcw::kRestoreNone;
+        c.lr.plane[2].enabled ? pcw::kRestoreWienerNs : pcw::kRestoreNone;
     params.luma_shift = c.lr.plane[0].shift;
-    params.chroma_shift = c.lr.plane[1].shift;
+    params.chroma_shift =
+        c.lr.plane[1].enabled ? c.lr.plane[1].shift : c.lr.plane[2].shift;
     std::string pc_error;
     const std::size_t bits =
         pcw::WriteLrParams(writer, &params, ctx, &pc_error);
@@ -408,19 +419,30 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
     (void)bits;
   } else if (c.lr.enable) {
     const bool luma_lr = c.lr.plane[0].enabled;
-    const bool chroma_lr = c.lr.plane[1].enabled;
-    assert(chroma_lr == c.lr.plane[2].enabled);
+    // §5.18.7.11 codes one chroma tool list for both planes but a separate
+    // FrameRestorationType per plane, so U and V may disagree.  The chroma
+    // tool list is disabled only when neither plane uses it.
+    const bool chroma_lr = c.lr.plane[1].enabled || c.lr.plane[2].enabled;
     assert(luma_lr || chroma_lr);
     for (int plane = 0; plane < 3; ++plane) {
       const StillLrPlane& p = c.lr.plane[plane];
-      // The tool list is {RESTORE_NONE} when this plane's Wiener NS is
+      // The tool list is {RESTORE_NONE} when the plane's class has Wiener NS
       // disabled, so ns(1) codes no bits and RESTORE_NONE is inferred.
-      if (!p.enabled) continue;
-      put_ns(writer, 2U, 1U);  // FrameRestorationType = RESTORE_WIENER_NONSEP
-      writer.put_bit(false);   // frame_filters_on = 0 (per-unit filters)
+      const bool tool_available = plane == 0 ? luma_lr : chroma_lr;
+      if (!tool_available) continue;
+      put_ns(writer, 2U, p.enabled ? 1U : 0U);  // FrameRestorationType
+      if (p.enabled) {
+        writer.put_bit(false);  // frame_filters_on = 0 (per-unit filters)
+      }
     }
-    if (luma_lr) write_lr_shift(writer, c.lr.plane[0].shift);
-    if (chroma_lr) write_lr_shift(writer, c.lr.plane[1].shift);
+    const int lr_sb_size = superblock_size_px(c);
+    if (luma_lr) write_lr_shift(writer, c.lr.plane[0].shift, lr_sb_size);
+    if (chroma_lr) {
+      write_lr_shift(writer,
+                     c.lr.plane[1].enabled ? c.lr.plane[1].shift
+                                           : c.lr.plane[2].shift,
+                     lr_sb_size);
+    }
   }
 
   // §5.18.7.12 ccso_params().  single_picture_header_flag implies

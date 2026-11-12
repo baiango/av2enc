@@ -261,18 +261,26 @@ void test_tx_type_sets() {
     InterTxSet set;
     int candidates;
   };
+  // Counts follow Tx_Type_In_Set_Inter (§5.20.7.29) minus the encoder's 1-D
+  // scan-class capability guard (V/H_DCT, V/H_ADST, V/H_FLIPADST), which is a
+  // component limitation, not a spec restriction:
+  //   INTER_1: 16 in set - 6 one-axis = 10
+  //   INTER_2: 12 in set - 2 (V/H_DCT) = 10
+  //   DCT_IDTX: {DCT_DCT, IDTX} = 2
+  //   WIDE/HIGH_64: 3 of the 4 long-side rows are 2-D (H_DCT/V_DCT is 1-D)
+  //   WIDE/HIGH_32: 3 two-D long types + IDTX from the non-long half = 4
   const Expect expects[] = {
-      {TxSize::k4x4, InterTxSet::kInter1, 7},
-      {TxSize::k8x8, InterTxSet::kInter1, 7},
-      {TxSize::k8x16, InterTxSet::kInter1, 7},
-      {TxSize::k16x8, InterTxSet::kInter1, 7},
-      {TxSize::k16x16, InterTxSet::kInter2, 7},
-      {TxSize::k32x32, InterTxSet::kDctIdtx, 1},
+      {TxSize::k4x4, InterTxSet::kInter1, 10},
+      {TxSize::k8x8, InterTxSet::kInter1, 10},
+      {TxSize::k8x16, InterTxSet::kInter1, 10},
+      {TxSize::k16x8, InterTxSet::kInter1, 10},
+      {TxSize::k16x16, InterTxSet::kInter2, 10},
+      {TxSize::k32x32, InterTxSet::kDctIdtx, 2},
       {TxSize::k64x64, InterTxSet::kDctOnly, 1},
       {TxSize::k64x16, InterTxSet::kWide64, 3},
       {TxSize::k16x64, InterTxSet::kHigh64, 3},
-      {TxSize::k32x16, InterTxSet::kWide32, 3},
-      {TxSize::k16x32, InterTxSet::kHigh32, 3},
+      {TxSize::k32x16, InterTxSet::kWide32, 4},
+      {TxSize::k16x32, InterTxSet::kHigh32, 4},
       {TxSize::k32x64, InterTxSet::kDctOnly, 1},
       {TxSize::k64x32, InterTxSet::kDctOnly, 1},
   };
@@ -294,8 +302,6 @@ void test_tx_type_sets() {
     for (int i = 0; i < info.count; ++i) {
       const InterTxCandidate& candidate =
           info.candidates[static_cast<std::size_t>(i)];
-      check(!inter_tx_type_is_ddt(candidate.type),
-            "DDT type filtered out when enable_inter_ddt = 0");
       check(inter_tx_type_in_set(info.set, candidate.type),
             "candidate type is in the decoder's set");
       check(candidate.params.coded_w ==
@@ -315,28 +321,66 @@ void test_tx_type_sets() {
   InterTxSetInfo info;
   check(inter_tx_candidates(TxSize::k64x64, 0, false, &info), "64x64 set");
   check(info.candidates[0].symbol == -1, "DCTONLY has no type symbol");
-  // DDT types must be rejected outright when the sequence disables DDT.
+  // §5.20.7.29 / §7.15.4.1 conformance probes: IDTX lives in INTER_1 and
+  // INTER_2 and enable_inter_ddt only changes 1-D kernels, not membership or
+  // symbol mapping.
   InterTxCandidate candidate;
-  check(!inter_tx_symbol(TxSize::k8x8, 0, false, av2enc::txv::TxType::kIdtx,
-                         &candidate),
-        "IDTX is not codable with enable_inter_ddt = 0");
+  check(inter_tx_symbol(TxSize::k8x8, 0, false, av2enc::txv::TxType::kIdtx,
+                        &candidate),
+        "IDTX is codable with enable_inter_ddt = 0");
   check(inter_tx_symbol(TxSize::k8x8, 0, true, av2enc::txv::TxType::kIdtx,
                         &candidate),
         "IDTX is codable with enable_inter_ddt = 1");
-  // tx_variants currently swaps the 1D types of FLIPADST_ADST and
-  // ADST_FLIPADST (kTransform1dType[7]/[8]); signalling them makes the decoder
-  // reconstruct with the transposed transform, so they must stay out of the
-  // candidate list.  When that component is fixed this check starts failing
-  // and the two types can be re-enabled.
+  check(!inter_tx_type_is_ddt(av2enc::txv::TxType::kIdtx),
+        "IDTX is not a DDT type");
+  check(!inter_tx_type_is_ddt(av2enc::txv::TxType::kVdct),
+        "V_DCT is not a DDT type");
+  check(inter_tx_type_is_ddt(av2enc::txv::TxType::kAdstAdst),
+        "ADST_ADST is a DDT type");
+  check(inter_tx_type_is_ddt(av2enc::txv::TxType::kAdstFlipadst),
+        "ADST_FLIPADST (7) is a DDT type");
+  // Types 7/8 are legal 2-D FLIPADST/ADST pairs and are now in both sets and
+  // in the candidate list.  They must round-trip through the symbols the
+  // decoder's Tx_Type_Inter_Inv_Set1/2 use.
+  check(inter_tx_type_in_set(InterTxSet::kInter1,
+                             static_cast<av2enc::txv::TxType>(7)),
+        "INTER_1 contains ADST_FLIPADST (7)");
+  check(inter_tx_type_in_set(InterTxSet::kInter1,
+                             static_cast<av2enc::txv::TxType>(8)),
+        "INTER_1 contains FLIPADST_ADST (8)");
+  for (int t = 7; t <= 11; ++t) {
+    check(inter_tx_type_in_set(InterTxSet::kInter2,
+                               static_cast<av2enc::txv::TxType>(t)),
+          "INTER_2 contains type " + std::to_string(t));
+  }
+  check(inter_tx_symbol(TxSize::k8x8, 0, false,
+                        av2enc::txv::TxType::kAdstFlipadst, &candidate) &&
+            candidate.symbol == 1 && candidate.offset_symbol == 6,
+        "type 7 maps to INTER_1 (1,6) per Tx_Type_Inter_Inv_Set1[14]");
+  check(inter_tx_symbol(TxSize::k8x8, 0, false,
+                        av2enc::txv::TxType::kFlipadstAdst, &candidate) &&
+            candidate.symbol == 1 && candidate.offset_symbol == 7,
+        "type 8 maps to INTER_1 (1,7) per Tx_Type_Inter_Inv_Set1[15]");
   {
     InterTxSetInfo inter1;
     check(inter_tx_candidates(TxSize::k8x8, 0, false, &inter1), "8x8 set");
+    bool saw7 = false;
+    bool saw8 = false;
     for (int i = 0; i < inter1.count; ++i) {
       const av2enc::txv::TxType type =
           inter1.candidates[static_cast<std::size_t>(i)].type;
-      check(type != av2enc::txv::TxType::kFlipadstAdst &&
-                type != av2enc::txv::TxType::kAdstFlipadst,
-            "swapped tx_variants 1D types are withheld");
+      saw7 = saw7 || type == av2enc::txv::TxType::kAdstFlipadst;
+      saw8 = saw8 || type == av2enc::txv::TxType::kFlipadstAdst;
+    }
+    check(saw7 && saw8, "INTER_1 candidates include types 7 and 8");
+    // DDT on: the component has no DDTX/FDDT inverse, so ADST/FDST types are
+    // withheld but IDTX remains.
+    InterTxSetInfo ddt;
+    check(inter_tx_candidates(TxSize::k8x8, 0, true, &ddt), "8x8 ddt set");
+    for (int i = 0; i < ddt.count; ++i) {
+      check(!inter_tx_type_is_ddt(
+                ddt.candidates[static_cast<std::size_t>(i)].type),
+            "enable_inter_ddt = 1 keeps only non-DDT types");
     }
   }
   // Context derivation, both variants.

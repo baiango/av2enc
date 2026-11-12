@@ -5,7 +5,7 @@ GPU port of the M1 chroma half of `src/encoder/m1/still_encoder.cpp`:
 the §7.13.5 derived alpha, the winning prediction, and the optional full-UV
 directional/smooth/Paeth search (`StillOptions::uv_full`).
 
-This directory is self-contained; it does not modify `src/cuda/m1/` root
+This directory is self-contained; it does not modify `src/cuda/pipeline/still/` root
 files, `src/main.cpp`, `CMakeLists.txt`, or `src/encoder/`.
 
 Status:
@@ -47,7 +47,7 @@ on U+V, and a tie keeps DC. Do not "fix" that here; it changes M1 decisions.
 ## API
 
 ```cpp
-#include "cuda/m1/chroma/still_chroma.h"
+#include "cuda/pipeline/still/chroma/still_chroma.h"
 using namespace av2enc::cuda::still;
 
 StillChromaJob job;        // device pointers + block geometry
@@ -114,9 +114,9 @@ are shared with the CPU reference. No FP contraction risk.
 On the Linux + CUDA box:
 
 ```sh
-./src/cuda/m1/chroma/build_still_chroma_test.sh        # sm_86, build + run
-./src/cuda/m1/chroma/build_still_chroma_test.sh --no-run
-ARCH=sm_120 ./src/cuda/m1/chroma/build_still_chroma_test.sh
+./src/cuda/pipeline/still/chroma/build_still_chroma_test.sh        # sm_86, build + run
+./src/cuda/pipeline/still/chroma/build_still_chroma_test.sh --no-run
+ARCH=sm_120 ./src/cuda/pipeline/still/chroma/build_still_chroma_test.sh
 ```
 
 The test script generates 64x64, 640x360 and 1920x1080 frames (`testsrc2`, and
@@ -129,10 +129,10 @@ Without CUDA, the exact device search can be checked against the CPU
 components:
 
 ```sh
-./src/cuda/m1/chroma/build_uv_full_emulation_test.sh
+./src/cuda/pipeline/still/chroma/build_uv_full_emulation_test.sh
 # chroma_uv_emulation_test: PASS (4000 checks)
 
-./src/cuda/m1/chroma/build_frame_emulation_test.sh \
+./src/cuda/pipeline/still/chroma/build_frame_emulation_test.sh \
     --y4m frame_64x64.y4m --y4m frame_640x360.y4m --y4m frame_1920x1080.y4m
 # total blocks=... failures=0 (decision=0 alpha=0 sse=0 pred=0)
 # RESULT: PASS

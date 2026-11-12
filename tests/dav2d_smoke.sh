@@ -36,3 +36,25 @@ fi
 echo "dav2d_smoke: decoder: $("$DECODER" --version 2>&1 | tail -1)"
 echo "dav2d_smoke: sample:  $SAMPLE"
 DAV2D="$DECODER" "$VALIDATOR" "$SAMPLE"
+
+# Negative control: a stream whose tail is cut must fail even though dav2d
+# itself exits 0 after dropping the unparsable frame(s).
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+SIZE=$(wc -c <"$SAMPLE" | tr -d ' ')
+head -c $((SIZE - 50)) "$SAMPLE" >"$TMP/truncated.ivf"
+set +e
+DAV2D="$DECODER" "$VALIDATOR" "$TMP/truncated.ivf" >"$TMP/truncated.log" 2>&1
+RC=$?
+set -e
+if [ "$RC" -eq 0 ]; then
+  echo "error: validator accepted a truncated multi-frame stream" >&2
+  cat "$TMP/truncated.log" >&2
+  exit 1
+fi
+if ! grep -q 'declares' "$TMP/truncated.log"; then
+  echo "error: truncated stream failed without the frame-count diagnostic" >&2
+  cat "$TMP/truncated.log" >&2
+  exit 1
+fi
+echo "dav2d_smoke: truncated stream rejected (decoded < IVF header count)"

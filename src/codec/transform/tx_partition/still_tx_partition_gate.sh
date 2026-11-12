@@ -212,8 +212,27 @@ run_case tests/data/basic_64x64_1f.y4m still_64_txp_cctx - split \
 run_case tests/data/basic_64x64_1f.y4m still_64_txp_rdointra - split \
     --still-tx-partition --still-full-intra --still-rdo-intra
 
+# SCOUT-PARTITION-08: a BLOCK_4X4 leaf codes no §5.20.6.3 partition syntax,
+# so --still-tx-partition must fall back to one TX_4X4 part instead of aborting
+# on "TX_PARTITION_NONE is not signallable for MiSize 0".
+run_case tests/data/basic_64x64_1f.y4m still_64_txp_sub8 \
+    5e604f8bb76b5e14abb4e5521f9e2113 - --qp 16 --still-tx-partition \
+    --still-sub8 --still-depth 8
+
+# SCOUT-TXADV-01: per-part prediction must read the §7.13.2.15/.16
+# smooth-neighbour flags at the coding-block origin, not the transform-part
+# origin.  The divergence needs a directional block next to a smooth block, so
+# the sensitive composition is full-intra (and its RDO variant) at QP20 on
+# 640x360; the 64x64 QP90 case above never hits a smooth neighbour.
+run_case tests/data/basic_640x360_1f.y4m still_360_txp_fullintra \
+    a56cad512a5329a0b1012ade09983b21 - --qp 20 --still-tx-partition \
+    --still-full-intra
+run_case tests/data/basic_640x360_1f.y4m still_360_txp_rdointra \
+    4ee9f3e9160e5faea7a092fe88bdfd42 - --qp 20 --still-tx-partition \
+    --still-rdo-intra
+
 reject_case reject_txp_qm \
-    "--still-tx-partition is not supported with --still-qm" \
+    "--still-qm is not supported with --still-tx-partition" \
     --still-tx-partition --still-qm
 reject_case reject_txp_deltaq \
     "--still-tx-partition is not supported with --still-dc-ac-delta-q" \

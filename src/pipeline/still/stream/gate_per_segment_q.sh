@@ -106,5 +106,37 @@ got=$(md5_of "$TMP/psq.ivf")
 [ "$got" = "$EXPECTED_MD5" ] || {
     echo "FAIL: per-segment MD5 $got, expected $EXPECTED_MD5" >&2; exit 1; }
 
+# still_recon_dump mirrors src/main.cpp: base_q_idx is 1..255 at 8-bit.  The
+# old static_cast<uint8_t> wrapped 300 to 44 and -1 to 255, so a bad --qp
+# reported recon from a different quantizer instead of failing.
+for bad_qp in 0 256 300 -1; do
+    set +e
+    "$DUMP" -i "$SRC" -o "$TMP/bad_qp.y4m" --still --qp "$bad_qp" \
+        >"$TMP/bad_qp.log" 2>&1
+    rc=$?
+    set -e
+    if [ "$rc" -ne 2 ]; then
+        echo "FAIL: still_recon_dump --qp $bad_qp exited $rc, expected 2" >&2
+        cat "$TMP/bad_qp.log" >&2
+        exit 1
+    fi
+    if ! grep -q 'must be an integer in 1..255' "$TMP/bad_qp.log"; then
+        echo "FAIL: still_recon_dump --qp $bad_qp lacks the range message" >&2
+        cat "$TMP/bad_qp.log" >&2
+        exit 1
+    fi
+done
+
+# The tool advertises that it mirrors src/main.cpp; a mapped Still option must
+# not fall through to "unknown option".
+for extra in --still-sub8 --still-ext-partitions --still-sdp; do
+    if ! "$DUMP" -i "$SRC" -o "$TMP/opt.rec.y4m" --still "$extra" \
+            >"$TMP/opt.log" 2>&1; then
+        echo "FAIL: still_recon_dump rejected $extra" >&2
+        cat "$TMP/opt.log" >&2
+        exit 1
+    fi
+done
+
 echo "PASS per-segment Q: base $(wc -c <"$TMP/base.ivf" | tr -d ' ') B," \
      "psq $(wc -c <"$TMP/psq.ivf" | tr -d ' ') B, md5 $got; recon exact"

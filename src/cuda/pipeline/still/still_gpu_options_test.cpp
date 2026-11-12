@@ -11,7 +11,7 @@
 //   * `gpu_m3_options_supported()` rejects every M3 tool by name until a GPU
 //     stage exists, and accepts the default (no M3 tool) configuration.
 //
-// Build/run: src/cuda/m1/build_options_test.sh
+// Build/run: src/cuda/pipeline/still/build_options_test.sh
 #include "cuda/pipeline/still/still_gpu.h"
 
 #include <cstdio>

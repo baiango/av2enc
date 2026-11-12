@@ -58,7 +58,7 @@ constexpr std::uint8_t kInSetInter[9][16] = {
     {1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0},
     {1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1},
     {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-    {1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0},
+    {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0},
     {1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0},
     {1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0},
 };
@@ -92,16 +92,22 @@ int eob_diagonal(int eob, TxSize tx_size) {
   return eobx + eoby;
 }
 
-// tx_variants maps FLIPADST_ADST and ADST_FLIPADST to each other's 1D types
-// (`kTransform1dType[7]` / `[8]` in src/encoder/tx_variants/tx_variants.cpp).
-// The decoder keys the 1D transforms off the signalled TX_TYPE name, so
-// signalling either of them reconstructs with the transposed transform and
-// breaks bit-exactness (verified with dav2d: every other inter type decodes
-// sample-exactly, these two do not).  They are withheld until the shared
-// component swaps the two rows; both are 2D ADST/FLIPADST combinations, so the
-// loss is two of the nine INTER_1/INTER_2 candidates.
-bool txv_1d_mapping_matches_spec(TxType type) {
-  return type != kFlipadstAdst && type != kAdstFlipadst;
+// The component's coefficient writer implements the §5.20.7.30 default
+// (TX_CLASS_2D) scan only.  Types 10..15 are TX_CLASS_HORIZ/VERT and need the
+// class-specific scan and coefficient contexts, so they stay out of the
+// encoder search space; the syntax tables and inter_tx_symbol() still accept
+// them (they are spec-legal and the tables list them).
+bool coeff_class_supported(TxType type) {
+  return static_cast<int>(type) < static_cast<int>(kIdtx) + 1;  // 2D class
+}
+
+// Search-space guard (not a spec table): the component reconstructs only the
+// plain ADST/FDST kernels, so it must not pick a type whose 1-D kernels become
+// DDTX/FDDT at the decoder when enable_inter_ddt = 1.
+bool candidate_usable(TxType type, bool enable_inter_ddt) {
+  if (!coeff_class_supported(type)) return false;
+  if (enable_inter_ddt && inter_tx_type_is_ddt(type)) return false;
+  return true;
 }
 
 bool codes_type(InterTxSet set) {
@@ -226,10 +232,19 @@ InterTxSet inter_tx_set(TxSize tx_size, int reduced_tx_set) {
 }
 
 bool inter_tx_type_is_ddt(TxType type) {
+  // §7.15.4.1 get_transform_1d_type(): only an ADST/FDST 1-D component is
+  // substituted by DDTX/FDDT when useDdt (enable_inter_ddt && is_inter) and
+  // sz != 4.  DCT_DCT, IDTX and V/H_DCT have no ADST/FDST component, so they
+  // are not DDT types (the old predicate wrongly removed the identity types).
   switch (type) {
-    case TxType::kIdtx:
-    case TxType::kVdct:
-    case TxType::kHdct:
+    case TxType::kAdstDct:
+    case TxType::kDctAdst:
+    case TxType::kAdstAdst:
+    case TxType::kFlipadstDct:
+    case TxType::kDctFlipadst:
+    case TxType::kFlipadstFlipadst:
+    case TxType::kAdstFlipadst:
+    case TxType::kFlipadstAdst:
     case TxType::kVadst:
     case TxType::kHadst:
     case TxType::kVflipadst:
@@ -279,10 +294,9 @@ bool inter_tx_candidates(TxSize tx_size, int reduced_tx_set,
         if (index >= table_len) break;
         const TxType type = table[index];
         // §5.20.7.29: the decoder aliases a type outside Tx_Type_In_Set_Inter
-        // to DCT_DCT (INTER_2 excludes ADST_FLIPADST), so it is not codable.
+        // to DCT_DCT, so it is not codable.
         if (!inter_tx_type_in_set(set, type)) continue;
-        if (!enable_inter_ddt && inter_tx_type_is_ddt(type)) continue;
-        if (!txv_1d_mapping_matches_spec(type)) continue;
+        if (!candidate_usable(type, enable_inter_ddt)) continue;
         if (out->count >= kMaxInterTxCandidates) break;
         const auto params = txv::make_tx_params(tx_size, type);
         if (!params.has_value()) continue;
@@ -306,8 +320,7 @@ bool inter_tx_candidates(TxSize tx_size, int reduced_tx_set,
     for (int i = 0; i < count; ++i) {
       const TxType type = table[i];
       if (!inter_tx_type_in_set(set, type)) continue;
-      if (!enable_inter_ddt && inter_tx_type_is_ddt(type)) continue;
-      if (!txv_1d_mapping_matches_spec(type)) continue;
+      if (!candidate_usable(type, enable_inter_ddt)) continue;
       InterTxCandidate candidate;
       if (!make_single_symbol_candidate(tx_size, set, type, &candidate)) {
         continue;
@@ -331,8 +344,7 @@ bool inter_tx_candidates(TxSize tx_size, int reduced_tx_set,
           (set == InterTxSet::kWide64 || set == InterTxSet::kWide32) ? 0 : 1;
       const TxType type = kInvLong[is_long ? 1 : 0][orientation][symbol];
       if (!inter_tx_type_in_set(set, type)) continue;
-      if (!enable_inter_ddt && inter_tx_type_is_ddt(type)) continue;
-      if (!txv_1d_mapping_matches_spec(type)) continue;
+      if (!candidate_usable(type, enable_inter_ddt)) continue;
       InterTxCandidate candidate;
       if (!make_long_candidate(tx_size, set, is_long, type, &candidate)) {
         continue;
@@ -347,9 +359,11 @@ bool inter_tx_symbol(TxSize tx_size, int reduced_tx_set, bool enable_inter_ddt,
                      TxType type, InterTxCandidate* out) {
   if (out == nullptr) return false;
   const InterTxSet set = inter_tx_set(tx_size, reduced_tx_set);
+  // The signalled type is spec-legal whenever it is in the decoder's set:
+  // enable_inter_ddt only changes the 1-D kernels, not the membership or the
+  // symbols.  Keeping the search space narrow is inter_tx_candidates()' job.
+  (void)enable_inter_ddt;
   if (!inter_tx_type_in_set(set, type)) return false;
-  if (!enable_inter_ddt && inter_tx_type_is_ddt(type)) return false;
-  if (!txv_1d_mapping_matches_spec(type)) return false;
   if (!codes_type(set)) {
     if (type != TxType::kDctDct) return false;
     const auto params = txv::make_tx_params(tx_size, type);

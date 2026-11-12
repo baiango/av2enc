@@ -1,5 +1,5 @@
 // Optional bridge from the plan component's host PODs to the orchestrator's
-// shared FramePlan / BlockPlan contract in src/cuda/m1/still_gpu.h.
+// shared FramePlan / BlockPlan contract in src/cuda/pipeline/still/still_gpu.h.
 //
 // The planner owns the real partition tree and leaf order; the orchestrator
 // owns the device PODs and buffer sizing.  This bridge performs the field

@@ -242,10 +242,13 @@ av2enc tests/data/basic_640x360_1f.y4m --gpu-plan 2 --tiles 2x2
 ```
 
 It reads the Y4M header for geometry/frame rate, picks the layout
-(`--tiles CxR` when given, otherwise `default_layout_for_gpus(N)`), prints the
-deterministic per-GPU tile sets, the host-transfer estimate and the per-GPU
-VRAM estimate, and exits without writing a stream. `--vram-cap <MiB>` overrides
-the planner's default compat8g emulation cap.
+(`--tiles CxR` when given and kept exactly, otherwise
+`default_layout_for_gpus(N)` with a fallback through the verified presets when
+the preferred grid is not representable at this frame size; the fallback is
+printed as a `note:` line), prints the deterministic per-GPU tile sets, the
+host-transfer estimate and the per-GPU VRAM estimate, and exits without writing
+a stream. `--vram-cap <MiB>` overrides the planner's default compat8g emulation
+cap; `--vram-cap 0` (the default) means no explicit cap.
 
 The dry run never creates a CUDA context, allocates device memory, queries a
 device or claims a multi-GPU result; `measured=0` is printed explicitly.

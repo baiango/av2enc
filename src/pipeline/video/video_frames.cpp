@@ -81,7 +81,9 @@ lt::SequenceConfig long_term_config(const VideoOptions& options,
   config.num_ref_frames = num_ref_frames;
   config.long_term_frame_id_bits = 1;
   config.max_drl_bits_minus_1 = 4;
-  config.disable_cdf_update = true;
+  config.disable_cdf_update = !options.adaptive_cdf;
+  config.enable_avg_cdf = options.avg_cdf;
+  config.avg_cdf_type = true;
   config.enable_cfl_intra = true;
   // Pinned dav2d f9dafbc does not parse the §5.18.2 OLK long-term list; the
   // retained slot still survives because §5.18.2 only invalidates slots whose
@@ -117,6 +119,16 @@ void fill_long_term_result(const lt::AssembledSequence& assembled,
 bool encode_long_term_closed(std::span<const VideoInputFrame> frames,
                              const VideoOptions& options,
                              VideoSequenceResult& result, std::string& error) {
+  // long_term_config() pins order_hint_bits = 4 and this path codes the frame
+  // index as OrderHint (unlike the plain path, which masks with & 15). Reject
+  // 17+ frames up front instead of failing on frame 17 after 16 were encoded.
+  constexpr std::size_t kMaxOrderHintFrames = std::size_t{1} << 4;
+  if (frames.size() > kMaxOrderHintFrames) {
+    error = "--video-long-term codes OrderHint with OrderHintBits = 4, so it "
+            "supports at most 16 coded frames (got " +
+            std::to_string(frames.size()) + ")";
+    return false;
+  }
   PlainEncode plain;
   if (!encode_plain(frames, options, plain, error)) return false;
   const lt::SequenceConfig config =
@@ -332,7 +344,9 @@ bool encode_leading_sequence(std::span<const VideoInputFrame> frames,
   config.num_ref_frames = 8;
   config.max_drl_bits_minus_1 = 4;
   config.monotonic_output_order_flag = false;
-  config.disable_cdf_update = true;
+  config.disable_cdf_update = !options.adaptive_cdf;
+  config.enable_avg_cdf = options.avg_cdf;
+  config.avg_cdf_type = true;
 
   ld::Plan plan;
   ld::FrameHeader header;
@@ -432,7 +446,9 @@ ra::SequenceConfig random_access_config(const VideoOptions& options,
   config.num_ref_frames = num_ref_frames;
   config.max_drl_bits_minus_1 = 4;
   config.long_term_frame_id_bits = long_term_id_bits;
-  config.disable_cdf_update = true;
+  config.disable_cdf_update = !options.adaptive_cdf;
+  config.enable_avg_cdf = options.avg_cdf;
+  config.avg_cdf_type = true;
   config.enable_cfl_intra = true;
   // Pinned dav2d f9dafbc reads explicit refresh bits for OBU_RAS_FRAME.
   config.ras_codes_refresh_frame_flags = ras_codes_refresh;

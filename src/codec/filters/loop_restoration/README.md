@@ -27,9 +27,12 @@ wired as signalling only (`--still-grain`, `--still-grain-adaptive`).
 | GDF (guided detail filter) | §5.18.7.9, §7.20.5 | yes | yes | yes | **integrated** (`--still-gdf`; tables recovered in `../tables/`) |
 | Film grain synthesis | §5.14, §7.21.7 | yes | N/A | yes | **integrated** (signalling via `src/pipeline/grain/`) |
 
-Nothing here has been decoded with `dav2d`; the filters have no syntax path yet.
-Per `docs/tool-roadmap.md` these are M3/M4 tools and each needs its own minimal
-stream before any quality claim.
+Nothing here is a stub: the CPU still path emits these filters and
+`tools/still_verify/loop_restoration_gate.sh` decodes every case with
+`dav2d --strict 1` and compares the encoder reconstruction sample for sample.
+The CUDA restoration kernel is still unwired on the product path (the still-GPU
+reject list names Wiener/chroma-LR/PC-Wiener/GDF).  Film grain is wired as
+signalling only (`--still-grain`, `--still-grain-adaptive`).
 
 ## Scope and data model
 
@@ -170,9 +173,11 @@ CPU reference:
   `Pc_Wiener_Sub_Classify2[4][8][256]` table.  `wiener_derive_filter_class_grid`
   and `wiener_build_subclass_grid` return `kMissingNormativeTable` otherwise,
   and `wiener_decide` records a note and falls back to one class.
-- PC-Wiener itself remains unimplemented (also needs `Pc_Wiener_Sub_Classify`
-  and `Pc_Wiener_Filters`).  The syntax writers reject a PC-Wiener selection
-  rather than emit a stream that cannot be reproduced.
+- PC-Wiener with `NumFilterClasses > 1` needs the caller-supplied class tables;
+  the recovered tables live in `../tables/`, and the `NumFilterClasses == 1`
+  path is integrated (`--still-pc-wiener`).  The syntax writers still reject a
+  PC-Wiener selection if the tables are absent rather than emit a stream that
+  cannot be reproduced.
 
 ### Decisions and integration
 
@@ -228,26 +233,24 @@ The decision's `sse` is the exact §7.20 core SSE for the chosen plan; the tests
 assert that `loop_restoration_frame()` reproduces it and that a header+tile
 write→read round-trip produces the same recon.
 
-## Blockers (why PC-Wiener / GDF / film grain are TODO)
+## Normative tables (recovered)
 
 §9.8 of the specification does not print these tables; it says they are
-"defined in the … header file", and those headers are not part of the text
-(PDF/HTML) or of `spec/tables/` in this repo.  Hand-typing them is exactly what
-`docs/negative-results.md` forbids, so the tools are left unimplemented:
+"defined in the … header file".  They were recovered from those headers,
+checked in under `src/codec/filters/tables/` (with SHA-256 provenance in
+`spec_tables_provenance.h`), and are therefore no longer a blocker for
+PC-Wiener, GDF or film grain:
 
-| Tool | Missing normative data |
+| Tool | Normative data (recovered) |
 |---|---|
-| PC-Wiener | `pc_wiener_filters.h` (`Pc_Wiener_Filters[64][?][13]`), `pc_wiener_sub_classify.h`, `pc_wiener_sub_classify2.h`, `pc_wiener_lut_to_class.h` (4096-entry LUT) |
-| GDF | `gdf_alpha.h` (`Gdf_Alpha[6][3][22][4]`), `gdf_weight.h`, `gdf_bias.h`, `gdf_intra_error.h`, `gdf_inter_error.h` |
-| Film grain | `gaussian_sequence.h` (`Gaussian_Sequence[2048]`) |
+| PC-Wiener | `pc_wiener_tables.h` (`Pc_Wiener_Filters`), `pc_wiener_sub_classify*`, `pc_wiener_lut_to_class` |
+| GDF | `gdf_tables.h` (`Gdf_Alpha`, weights, bias, error tables) |
+| Film grain | `film_grain_tables.h` (`Gaussian_Sequence[2048]`) |
 
-Everything else that film grain needs (`ScalingLut` interpolation, AR
-coefficient filter, noise-stripe blending) is plain text in §7.21.7 and can be
-implemented once the Gaussian table is available.  Film grain is output-only
-and must be measured perceptually, never with PSNR alone.
-
-`gdf_frame_enable` is rejected by both the CPU (`kUnsupportedGdf`) and the CUDA
-launcher (`cudaErrorNotSupported`), so an integration mistake fails loudly.
+The integrated status is the table above; the still-GPU path still rejects
+GDF/PC-Wiener because its device stages are unwired, not because the tables are
+missing.  Film grain is output-only and must be measured perceptually, never
+with PSNR alone.
 
 ## Files
 

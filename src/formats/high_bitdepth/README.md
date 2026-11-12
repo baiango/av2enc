@@ -61,9 +61,9 @@ hbd_headers ─ OBU framing helpers ──────────────�
 
 `av2enc::high_bitdepth::assemble_high_bitdepth_stream()` is called with `base_q_idx = 90` only to obtain the
 tile payload; its header is discarded and replaced by `hbd::assemble_still_picture()`
-with the real qindex.  The payload does not depend on the header qindex: the
-M10 entropy writer's coefficient CDFs are frozen at slice 0, and the encode path
-is restricted to `q <= 90`.
+with the real qindex.  The payload now installs the §8.3.1 coefficient-CDF slice
+selected by the real `base_q_idx`, so the encode path covers `1..303`; slice 0
+(`q <= 90`) is byte-identical to the old frozen M10 tables.
 
 ## 10-bit fields
 
@@ -111,7 +111,7 @@ tile group 640x360 q90  e6168000
 namespace av2enc::hbd {
 
 struct HbdOptions {
-  std::uint16_t base_q_idx = 90;   // encode: 1..90 (see qindex seam)
+  std::uint16_t base_q_idx = 90;   // encode: 1..303 (see qindex seam)
   bool disable_cdf_update = true;
 };
 

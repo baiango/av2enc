@@ -11,6 +11,7 @@
 #include "svc_layers.h"
 #include "tile_group.h"
 #include "tile_layout.h"
+#include "core/conformance/conformance_tables.h"
 
 namespace {
 
@@ -418,6 +419,87 @@ void test_svc_lcr_and_operating_points() {
   CHECK(!validate_operating_point_set(unclosed, sequence, &record, error));
 }
 
+// §9.2 tile scaling factors and Annex A Table A.9 MaxTiles / MaxTileCols.
+// level_tile_limits() keeps a standalone copy of the tables; this cross-check
+// fails if it ever drifts from core/conformance/conformance_tables.cpp.
+void test_level_tile_limits() {
+  namespace conf = av2enc::conformance;
+  using av2enc::tiles::level_tile_limits;
+  for (int tier = 0; tier <= 1; ++tier) {
+    for (int level = 0; level <= 21; ++level) {
+      const av2enc::tiles::LevelTileLimits limits =
+          level_tile_limits(level, tier);
+      const conf::TileScaleFactor factor = conf::tile_scale_factor(level, tier);
+      const conf::LevelInfo& info = conf::level_at(level);
+      CHECK(!limits.reserved && !factor.reserved);
+      CHECK(limits.width_scaling_factor == factor.width);
+      CHECK(limits.area_scaling_factor == factor.area);
+      CHECK(limits.max_tiles == info.max_tiles);
+      CHECK(limits.max_tile_cols == info.max_tile_cols);
+    }
+  }
+  // §9.2 regression: levels 7.0-7.3 tier 0 scale the width by 8, not 4.
+  const auto l70 = level_tile_limits(14, 0);
+  CHECK(l70.width_scaling_factor == 8 && l70.area_scaling_factor == 8);
+  const auto l63 = level_tile_limits(13, 0);
+  CHECK(l63.width_scaling_factor == 4 && l63.area_scaling_factor == 4);
+  CHECK(level_tile_limits(22, 0).reserved);
+  CHECK(level_tile_limits(14, 2).reserved);
+
+  // A tier-0 level-7.0 8192x512 frame fits one tile by the width bound: the
+  // old factor of 4 wrongly required two columns.
+  {
+    const auto one = av2enc::tiles::plan_tile_layout(8192, 512, 1, 1, 64, 14, 0);
+    CHECK(one.ok());
+    CHECK(one.layout.min_log2_tile_cols == 0);
+    const auto two = av2enc::tiles::plan_tile_layout(8192, 512, 2, 1, 64, 14, 0);
+    CHECK(two.ok());
+    CHECK(two.layout.min_log2_tile_cols == 0);
+  }
+}
+
+// Table A.9 MaxTiles / MaxTileCols must reject grids the validator rejects.
+void test_level_tile_count_limits() {
+  using av2enc::tiles::LayoutStatus;
+  using av2enc::tiles::minimum_level_for_grid;
+  using av2enc::tiles::plan_tile_layout;
+
+  // Level 5.1 (idx 7): MaxTileCols = 8.
+  {
+    const auto ok = plan_tile_layout(1024, 128, 8, 2, 64, 7, 0);
+    CHECK(ok.ok());
+    const auto bad = plan_tile_layout(1024, 128, 16, 2, 64, 7, 0);
+    CHECK(bad.status == LayoutStatus::kLevelConstraint);
+    CHECK(bad.error.find("MaxTileCols") != std::string::npos);
+    CHECK(plan_tile_layout(1024, 128, 16, 2, 64, 10, 0).ok());
+  }
+  // Level 3.1 (idx 3): MaxTiles = 16, MaxTileCols = 6.
+  {
+    const auto many = plan_tile_layout(1280, 720, 4, 8, 64, 3, 0);
+    CHECK(many.status == LayoutStatus::kLevelConstraint);
+    CHECK(many.error.find("MaxTiles") != std::string::npos);
+    const auto cols = plan_tile_layout(1280, 720, 8, 2, 64, 3, 0);
+    CHECK(cols.status == LayoutStatus::kLevelConstraint);
+    CHECK(cols.error.find("MaxTileCols") != std::string::npos);
+    CHECK(plan_tile_layout(1280, 720, 4, 2, 64, 3, 0).ok());
+  }
+  // validate_tile_layout() re-checks the level on an already-built layout.
+  {
+    const auto wide = plan_tile_layout(1024, 128, 16, 2, 64, 31, 0);
+    CHECK(wide.ok());
+    av2enc::tiles::TileLayout layout = wide.layout;
+    layout.seq_level_idx = 7;
+    std::string error;
+    CHECK(!av2enc::tiles::validate_tile_layout(layout, error));
+    CHECK(error.find("MaxTileCols") != std::string::npos);
+  }
+  // Writers can pick the lowest level that admits a grid.
+  CHECK(minimum_level_for_grid(2, 2) == 0);
+  CHECK(minimum_level_for_grid(8, 2) == 4);
+  CHECK(minimum_level_for_grid(16, 2) == 10);
+  CHECK(minimum_level_for_grid(1, 1) == 0);
+}
+
 void test_determinism() {
   const auto a = av2enc::tiles::plan_tile_layout(1920, 1080, 8, 2, 64, 13, 0);
   const auto b = av2enc::tiles::plan_tile_layout(1920, 1080, 8, 2, 64, 13, 0);
@@ -452,6 +534,8 @@ int main() {
   test_tile_group_plan();
   test_svc_sequence_and_dependencies();
   test_svc_lcr_and_operating_points();
+  test_level_tile_limits();
+  test_level_tile_count_limits();
   test_determinism();
 
   if (g_failures != 0) {

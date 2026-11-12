@@ -4,6 +4,7 @@
 //
 // This is a component tool, not the product CLI.  Build it with
 // `build_and_test.sh`.
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -22,8 +23,7 @@ void usage() {
                "usage: hbd_encode <input.y4m> <output.ivf> [recon.y4m] "
                "[--q N]\n"
                "  input: 8-bit C420 or 10-bit C420p10 Y4M (first frame)\n"
-               "  --q:   raw base_q_idx (1..90 for the reused slice-0 entropy "
-               "writer)\n");
+               "  --q:   raw base_q_idx (1..303; MaxQ at 10-bit)\n");
 }
 
 bool write_recon_y4m(const std::string& path, const av2enc::hbd::HbdResult& r,
@@ -44,7 +44,18 @@ int main(int argc, char** argv) {
   av2enc::hbd::HbdOptions options;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--q") == 0 && i + 1 < argc) {
-      options.base_q_idx = static_cast<std::uint16_t>(std::atoi(argv[++i]));
+      const char* text = argv[++i];
+      char* end = nullptr;
+      errno = 0;
+      const long parsed = std::strtol(text, &end, 10);
+      if (end == text || *end != '\0' || errno == ERANGE || parsed < 1 ||
+          parsed > 303) {
+        std::fprintf(stderr,
+                     "hbd_encode: --q must be an integer in 1..303 (got '%s')\n",
+                     text);
+        return 2;
+      }
+      options.base_q_idx = static_cast<std::uint16_t>(parsed);
     } else if (std::strcmp(argv[i], "--help") == 0 ||
                std::strcmp(argv[i], "-h") == 0) {
       usage();

@@ -83,7 +83,9 @@ struct Config {
   // 64 is the only superblock size the M1 core implements. 128 is accepted by
   // the geometry planner but rejected by encode().
   int sb_size = tiles::kSuperblockPixels64;
-  // §5.18.1 seq_level_idx. Also feeds the geometry planner's level bounds.
+  // §5.18.1 seq_level_idx (a floor; encode() raises it to the lowest level
+  // whose Table A.9 MaxTiles/MaxTileCols admit the grid). Feeds the geometry
+  // planner's level bounds.
   std::uint8_t seq_level_idx = 7;
   // Tool set pinned to the verified M1 reference. Changing these without a
   // matching core change makes the stream non-decodable.
@@ -148,8 +150,12 @@ struct Reconstruction {
 };
 
 // Plan a uniform-spacing layout for `preset` using the same level/tier bounds
-// as the header. Rejects non-representable grids (for example 16x2 at
-// 640x360, whose 10 superblock columns cannot be split into 16 tiles).
+// as the header. `seq_level_idx` is a floor: when the grid exceeds the level's
+// Annex A Table A.9 MaxTiles / MaxTileCols, the plan is made at the lowest
+// level that admits it, and that level is stored in layout.seq_level_idx. The
+// caller must signal that stored level (encode() does). Rejects
+// non-representable grids (for example 16x2 at 640x360, whose 10 superblock
+// columns cannot be split into 16 tiles).
 bool build_layout(int width, int height, tiles::TileLayoutPreset preset, int sb_size,
                   int seq_level_idx, tiles::TileLayout* layout, std::string* error);
 

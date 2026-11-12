@@ -75,6 +75,10 @@ struct SequenceConfig {
   // to output it without a second output frame in the same temporal unit.
   bool monotonic_output_order_flag = false;
   bool disable_cdf_update = true;
+  // §5.4.8 average-CDF.  Opt-in (--avg-cdf); avg_cdf_type = 1 averages the
+  // tile CDFs at frame end, which is the single-tile form for this writer.
+  bool enable_avg_cdf = false;
+  bool avg_cdf_type = true;
 };
 
 // §5.18.2 output flags actually written/derived for a frame.

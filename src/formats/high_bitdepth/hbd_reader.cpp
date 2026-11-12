@@ -1,7 +1,10 @@
 #include "formats/high_bitdepth/hbd_reader.h"
 
+#include "formats/format.h"
+
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -127,8 +130,15 @@ bool parse_sequence(std::span<const std::uint8_t> payload,
   out->single_picture_header_flag = bit;
   if (!reader.read_bits(5U, &value)) return fail("sequence: truncated level");
   out->seq_level_idx = static_cast<int>(value);
-  if (!reader.uvlc(&value)) return fail("sequence: truncated chroma_format_idc");
+  if (!reader.uvlc(&value)) return fail("sequence: chroma_format_idc");
   out->chroma_format_idc = static_cast<int>(value);
+  const std::optional<fmt::ChromaFormat> chroma =
+      fmt::chroma_format_from_idc(out->chroma_format_idc);
+  if (!chroma.has_value()) return fail("sequence: invalid chroma_format_idc");
+  // §5.4.3/§5.4.5/§5.4.8: the chroma-only sequence fields are present for
+  // every format except 4:0:0.  The writer mirrors these conditions, so a
+  // monochrome header has four bits fewer before df_par_bits.
+  const bool monochrome = !fmt::has_chroma(*chroma);
   if (!reader.uvlc(&value)) return fail("sequence: truncated bit_depth_idc");
   out->bit_depth_idc = static_cast<int>(value);
 
@@ -151,9 +161,13 @@ bool parse_sequence(std::span<const std::uint8_t> payload,
   if (!reader.read_bit(&bit)) return fail("sequence: cropping flag");
 
   // §5.4.3.
-  for (int i = 0; i < 5; ++i) {
-    if (!reader.read_bit(&bit)) return fail("sequence: partition config");
+  if (!reader.read_bit(&bit)) return fail("sequence: use_256x256");
+  if (!reader.read_bit(&bit)) return fail("sequence: use_128x128");
+  if (!monochrome) {
+    if (!reader.read_bit(&bit)) return fail("sequence: enable_sdp");
   }
+  if (!reader.read_bit(&bit)) return fail("sequence: ext partitions");
+  if (!reader.read_bit(&bit)) return fail("sequence: reduce pb aspect ratio");
   // §5.4.4.
   if (!reader.read_bit(&bit)) return fail("sequence: segment config 0");
   if (!reader.read_bit(&bit)) return fail("sequence: segment config 1");
@@ -165,8 +179,10 @@ bool parse_sequence(std::span<const std::uint8_t> payload,
   out->enable_mrls = bit;
   if (!reader.read_bit(&bit)) return fail("sequence: cfl");
   out->enable_cfl_intra = bit;
-  if (!reader.read_bits(2U, &value)) return fail("sequence: cfl_ds");
-  out->cfl_ds_filter_index = static_cast<int>(value);
+  if (!monochrome) {
+    if (!reader.read_bits(2U, &value)) return fail("sequence: cfl_ds");
+    out->cfl_ds_filter_index = static_cast<int>(value);
+  }
   if (!reader.read_bit(&bit)) return fail("sequence: mhccp");
   if (!reader.read_bit(&bit)) return fail("sequence: ibp");
   // §5.4.6.
@@ -180,16 +196,24 @@ bool parse_sequence(std::span<const std::uint8_t> payload,
   if (!reader.read_bit(&bit)) return fail("sequence: idtx");
   if (!reader.read_bit(&bit)) return fail("sequence: intra ist");
   if (!reader.read_bit(&bit)) return fail("sequence: inter ist");
-  if (!reader.read_bit(&bit)) return fail("sequence: chroma dctonly");
-  out->enable_chroma_dctonly = bit;
+  if (!monochrome) {
+    if (!reader.read_bit(&bit)) return fail("sequence: chroma dctonly");
+    out->enable_chroma_dctonly = bit;
+  }
   if (!reader.read_bit(&bit)) return fail("sequence: reduced tx part");
-  if (!reader.read_bit(&bit)) return fail("sequence: cctx");
+  if (!monochrome) {
+    if (!reader.read_bit(&bit)) return fail("sequence: cctx");
+  }
   if (!reader.read_bit(&bit)) return fail("sequence: tcq");
   if (!reader.read_bit(&bit)) return fail("sequence: parity hiding");
-  if (!reader.read_bit(&bit)) return fail("sequence: separate uv delta q");
+  if (!monochrome) {
+    if (!reader.read_bit(&bit)) return fail("sequence: separate uv delta q");
+  }
   if (!reader.read_bit(&bit)) return fail("sequence: equal ac dc q");
-  if (!reader.read_bits(5U, &value)) return fail("sequence: base uv ac delta");
-  if (!reader.read_bit(&bit)) return fail("sequence: uv ac delta enabled");
+  if (!monochrome) {
+    if (!reader.read_bits(5U, &value)) return fail("sequence: base uv ac delta");
+    if (!reader.read_bit(&bit)) return fail("sequence: uv ac delta enabled");
+  }
   // §5.4.10.
   if (!reader.read_bit(&bit)) return fail("sequence: loopfilters across tiles");
   if (!reader.read_bit(&bit)) return fail("sequence: cdef");
@@ -264,10 +288,6 @@ bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
       if (!parse_sequence(payload, &seq, error)) return false;
       if (seq.bit_depth_idc != 0) {
         if (error != nullptr) *error = "sequence is not 10-bit (idc != 0)";
-        return false;
-      }
-      if (seq.chroma_format_idc != 0) {
-        if (error != nullptr) *error = "sequence is not 4:2:0";
         return false;
       }
       if (out->has_sequence) {

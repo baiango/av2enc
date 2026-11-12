@@ -10,7 +10,7 @@
 // synchronizes, or touches CUDA error state directly.  The orchestrator does at
 // most one synchronize() per frame.
 //
-// Staging policy: while a component directory under `src/cuda/m1/<stage>/` has
+// Staging policy: while a component directory under `src/cuda/pipeline/still/<stage>/` has
 // not landed, `encode_still_gpu` runs the existing CPU M1 encoder and reports that
 // stage as `kCpuReference`.  Frame bytes stay exact because the CPU reference
 // produces them; the data-flow (plan -> host buffers -> frame bytes) is still

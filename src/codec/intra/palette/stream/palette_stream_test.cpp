@@ -685,6 +685,114 @@ void test_cache_hits() {
         "cache second map round-trips");
   check(writer.state().colors == reader.state().colors,
         "cache per-MI colours round-trip");
+
+  // Duplicate cache entries: an above and a left palette that are both
+  // [32,96] make get_palette_cache return [32,32,96,96].  A palette that
+  // reuses the 96 must report one cache colour, not two: PaletteCache
+  // interleaves the two neighbours and a palette colour is taken at most
+  // once (§5.20.8.1).
+  {
+    PaletteSyntaxWriter dup_writer(flags);
+    check(dup_writer.reset(16, 16, error), "duplicate cache writer reset");
+    PaletteResult neighbour;
+    neighbour.has_palette = true;
+    neighbour.size = 2;
+    neighbour.colors[0] = 32;
+    neighbour.colors[1] = 96;
+    av2enc::palette::store_palette_state(dup_writer.mutable_state(), 7, 2, 4, 4,
+                                         neighbour);
+    av2enc::palette::store_palette_state(dup_writer.mutable_state(), 8, 1, 4, 4,
+                                         neighbour);
+    std::uint8_t dup_cache[16] = {};
+    const int dup_n = dup_writer.cache(8, 2, true, dup_cache);
+    check(dup_n == 4, "duplicate neighbour cache has four entries");
+    check(dup_cache[0] == 32 && dup_cache[1] == 32 && dup_cache[2] == 96 &&
+              dup_cache[3] == 96,
+          "duplicate neighbour cache is [32,32,96,96]");
+    // 8x8 source: left half 64, right half 96.
+    std::vector<std::uint8_t> src(64, 0);
+    for (int r = 0; r < 8; ++r) {
+      for (int c = 0; c < 8; ++c) {
+        src[static_cast<std::size_t>(r) * 8 + static_cast<std::size_t>(c)] =
+            c < 4 ? 64 : 96;
+      }
+    }
+    PaletteResult dup_result;
+    check(av2enc::palette::analyze_palette(
+              src.data(), 8, 8, 8, 8, 8, dup_cache, dup_n, PaletteParams{},
+              dup_result, error),
+          "duplicate cache analyze");
+    check(dup_result.has_palette && dup_result.size == 2,
+          "duplicate cache palette has two colours");
+    check(dup_result.cache_used == 1,
+          "analysis counts the duplicated 96 once");
+    std::vector<std::uint8_t> dup_buffer(1U << 12);
+    av2::Encoder dup_enc;
+    dup_enc.init_symbol(dup_buffer.data(), dup_buffer.size());
+    dup_enc.disable_cdf_update = 1;
+    PaletteCdfState dup_cdfs;
+    av2enc::palette::init_palette_cdfs(dup_cdfs);
+    PaletteModeInfo dup_info;
+    check(dup_writer.write(dup_enc, dup_cdfs, 8, 2, 3, 8, 8, 8, 8,
+                           &dup_result, 0, &dup_info, error),
+          "duplicate cache write");
+    check(dup_info.cache_used == dup_result.cache_used,
+          "duplicate cache mode-info reuse matches the coded bits");
+  }
+}
+
+void test_duplicate_cache_count() {
+  // §5.20.8.2 interleaves the above and left palettes, so the same colour can
+  // appear twice in the cache.  A palette colour may be taken from the cache at
+  // most once; PaletteModeInfo::cache_used must match the coded reuse bits.
+  ScreenContentFlags flags;
+  flags.allow_screen_content_tools = true;
+  flags.allow_palette = true;
+  PaletteSyntaxWriter writer(flags);
+  std::string error;
+  check(writer.reset(16, 16, error), "duplicate cache reset");
+  PaletteResult neighbour;
+  neighbour.has_palette = true;
+  neighbour.size = 2;
+  neighbour.colors[0] = 32;
+  neighbour.colors[1] = 96;
+  av2enc::palette::store_palette_state(writer.mutable_state(), 1, 8, 8, 8,
+                                       neighbour);
+  av2enc::palette::store_palette_state(writer.mutable_state(), 2, 7, 8, 8,
+                                       neighbour);
+  std::uint8_t cache[16] = {};
+  const int cache_n = writer.cache(2, 8, true, cache);
+  check(cache_n == 4, "duplicate cache has four entries");
+  if (cache_n == 4) {
+    check(cache[0] == 32 && cache[1] == 32 && cache[2] == 96 && cache[3] == 96,
+          "duplicate cache is [32,32,96,96]");
+  }
+
+  std::vector<std::uint8_t> src(8 * 8, 0);
+  for (int y = 0; y < 8; ++y) {
+    for (int x = 4; x < 8; ++x) src[static_cast<std::size_t>(y) * 8 + x] = 96;
+  }
+  PaletteResult result;
+  check(av2enc::palette::analyze_palette(src.data(), 8, 8, 8, 8, 8, cache,
+                                         cache_n, PaletteParams{}, result,
+                                         error),
+        "duplicate cache analyze");
+  check(result.cache_used == 1,
+        "analysis reuses one distinct cache colour");
+
+  PaletteCdfState cdfs;
+  av2enc::palette::init_palette_cdfs(cdfs);
+  std::vector<std::uint8_t> buffer(1U << 14);
+  av2::Encoder enc;
+  enc.init_symbol(buffer.data(), buffer.size());
+  enc.disable_cdf_update = 1;
+  PaletteModeInfo info;
+  check(writer.write(enc, cdfs, 2, 8, 9, 8, 8, 8, 8, &result, 0, &info,
+                     error),
+        "duplicate cache write");
+  check(info.cache_used == result.cache_used,
+        "writer cache_used matches analysis");
+  check(info.cache_used == 1, "writer does not double-count a duplicate");
 }
 
 void test_reachability_and_luma_only() {
@@ -1032,6 +1140,7 @@ int main() {
   test_partial_blocks();
   test_direction_and_identity();
   test_cache_hits();
+  test_duplicate_cache_count();
   test_reachability_and_luma_only();
   test_no_palette_symbol();
   test_goldens();

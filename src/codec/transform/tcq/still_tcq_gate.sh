@@ -31,13 +31,20 @@ trap cleanup EXIT
 
 AV2ENC_BIN="${AV2ENC_BIN:-}"
 if [ -z "$AV2ENC_BIN" ]; then
-    for candidate in "$ROOT/build-int/av2enc" "$ROOT/build-m1/av2enc" \
-                     "$ROOT/build/av2enc"; do
+    for candidate in "$ROOT/build/av2enc" "$ROOT/build-int/av2enc" \
+                     "$ROOT/build-m1/av2enc"; do
         if [ -x "$candidate" ]; then AV2ENC_BIN="$candidate"; break; fi
     done
 fi
 if [ -z "$AV2ENC_BIN" ] || [ ! -x "$AV2ENC_BIN" ]; then
     echo "still_tcq_gate: no av2enc binary; set AV2ENC_BIN=..." >&2
+    exit 127
+fi
+# A pre-rename build dir (--m1 instead of --still) must not silently invalidate
+# the gate just because it sorts first.
+if ! "$AV2ENC_BIN" --help 2>&1 | grep -q -- '--still'; then
+    echo "still_tcq_gate: $AV2ENC_BIN has no --still (stale build dir);" \
+         "set AV2ENC_BIN=..." >&2
     exit 127
 fi
 
@@ -54,7 +61,8 @@ fi
 
 STILL_RECON="${STILL_RECON:-}"
 if [ -z "$STILL_RECON" ]; then
-    for candidate in "$ROOT/build-int/still_recon_dump" \
+    for candidate in "$ROOT/build/still_recon_dump" \
+                     "$ROOT/build-int/still_recon_dump" \
                      "$ROOT/build-m1/still_recon_dump"; do
         if [ -x "$candidate" ]; then STILL_RECON="$candidate"; break; fi
     done
@@ -197,7 +205,7 @@ run_case tests/data/basic_64x64_1f.y4m still_64_tcq_cdef - \
     --still-tcq --still-cdef
 
 # Incompatible quantiser/tool combinations are rejected by name.
-reject_case reject_tcq_qm "--still-tcq is not supported with --still-qm" \
+reject_case reject_tcq_qm "--still-qm is not supported with --still-tcq yet" \
     --still-tcq --still-qm
 reject_case reject_tcq_rdoq "--still-tcq is not supported with --still-rdoq" \
     --still-tcq --still-rdoq

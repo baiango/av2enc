@@ -322,6 +322,21 @@ bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
     if (error) *error = "invalid max transform size";
     return false;
   }
+  // §5.20.6.3: a BLOCK_4X4 coding block (and a >64 chunk) codes no partition
+  // syntax, so the only legal shape is the single max-rect transform.  Mirror
+  // write_tx_partition()/read_tx_partition() instead of rejecting NONE here.
+  if (!legal_splits(mi_size, /*reduced_tx_part_set=*/false).applicable) {
+    if (part != TxPartition::kNone) {
+      if (error) {
+        *error = std::string("tx partition ") + tx_partition_name(part) +
+                 " is not signallable for MiSize " + std::to_string(mi_size);
+      }
+      return false;
+    }
+    out->parts[0] = SplitPart{mi_row, mi_col, tx};
+    out->count = 1;
+    return true;
+  }
   if (!tx_partition_signallable(mi_size, part)) {
     if (error) {
       *error = std::string("tx partition ") + tx_partition_name(part) +

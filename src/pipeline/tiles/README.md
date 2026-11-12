@@ -73,18 +73,24 @@ Validation is explicit and never falls back to another layout:
 - the requested grid is within `maxLog2TileCols/Rows` and the level's
   `minLog2TileCols` / `minLog2TileRows`;
 - the tile count respects the level's `minLog2Tiles` from `MAX_TILE_AREA`;
+- the grid respects Annex A Table A.9 `MaxTiles` / `MaxTileCols`;
 - `uniform_spacing()` must produce exactly the requested tile count (a 64x64
   frame cannot be 2x1);
 - each tile is at least one superblock and within the level width/area bound;
 - tiles cover the visible frame exactly once and the superblock grid exactly
   once.
 
-Level checks model the video conformance bounds in §9.2 (`still_picture = 0`).
+Level checks model the video conformance bounds in §9.2 and Annex A
+(`still_picture = 0`), including Table A.9 `MaxTiles` / `MaxTileCols`.
 Pass `seq_level_idx = 31` for an unconstrained still-picture plan; the default
-does that.
+does that. Writers that must emit a decodable stream should treat their level
+as a floor and call `minimum_level_for_grid(cols, rows)`; the tiled writer and
+the `--gpu-plan` path do this, so a 1080p 16x2 still signals level 6.0 rather
+than an invalid level-5.1 grid.
 
 `validate_tile_layout()` rechecks a layout structurally, including raster order,
-start monotonicity, boundary flags, and coverage.
+start monotonicity, boundary flags, coverage, and the stored level's
+`MaxTiles` / `MaxTileCols`.
 
 ## Tile-group payload plan
 

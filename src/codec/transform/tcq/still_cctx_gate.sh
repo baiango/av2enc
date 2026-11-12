@@ -192,12 +192,16 @@ run_case tests/data/basic_64x64_1f.y4m still_64_cctx_ist - \
     --still-cctx --still-ist
 run_case tests/data/basic_64x64_1f.y4m still_64_cctx_txtype - \
     --still-cctx --still-tx-type
-run_case tests/data/basic_64x64_1f.y4m still_64_cctx_rdoq - \
-    --still-cctx --still-rdoq
+# SCOUT-TXADV-03: the RDOQ trellis must run on the chroma planes too.  The
+# pinned md5 differs from still_64_cctx; when the flag was ignored on CCTX
+# chroma the two streams were byte-identical, so this pin is the regression
+# check (and the recon compare above covers §7.14.6 exactness).
+run_case tests/data/basic_64x64_1f.y4m still_64_cctx_rdoq \
+    7499edbeb1f01643b4c444017f85b87b --still-cctx --still-rdoq
 run_case tests/data/basic_64x64_1f.y4m still_64_cctx_cdef - \
     --still-cctx --still-cdef
 
-reject_case reject_cctx_qm "--still-cctx is not supported with --still-qm" \
+reject_case reject_cctx_qm "--still-qm is not supported with --still-cctx" \
     --still-cctx --still-qm
 reject_case reject_cctx_deltaq \
     "--still-cctx is not supported with --still-dc-ac-delta-q" \

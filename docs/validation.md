@@ -142,6 +142,10 @@ are unchanged; the default inventory is now 17 tests. Every gate:
 | `gate_rc` | `src/pipeline/video/post/gate_cli_rc.sh` | `--rc cqp/crf/vbr`, default 720p pin, CRF monotonicity, VBR determinism | dav2d, python3, `testdata/` 720p |
 | `gate_host_plan` | `src/pipeline/dispatch/gate_host_plan.sh` | `--gpu-plan` assignments, dry-run writes nothing, rejections | 360p fixture and `testdata/` 1080p (no decoder) |
 | `gate_video_cli` | `src/pipeline/video/video_cli_gate.sh` | `--video` multi-frame decode and sample-exact reconstruction compare | dav2d, python3, `testdata/` 720p |
+| `gate_wrapper_cdf` | `src/pipeline/video/wrapper_cdf_gate.sh` | Frame-type wrappers + `--avg-cdf --adaptive-cdf` (B frames, t-layers, long-term, OLK, leading, SEF, SWITCH, RAS), `--avg-cdf` not dropped, tiled `--video-timing`/`--video-mfh` structure | dav2d, python3, `testdata/` 720p |
+
+`gate_wrapper_cdf` is wired into `tools/run_gates.sh`; it still needs the
+matching `add_test()` entry in `tests/gates/CMakeLists.txt` (shared root).
 
 The reconstruction harnesses are ordinary build targets, not CTest tests:
 `cmake --build <build> --target still_dump` produces `<build>/still_dump` for

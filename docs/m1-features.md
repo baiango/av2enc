@@ -640,9 +640,13 @@ Interactions and constraints:
   `--still-ibc-search` bounded local window (`NEWMV` when the vector is not a
   stack entry).  It signals `allow_intrabc` + global region (`allow_local = 0`),
   requires `force_integer_mv`, and rejects `--still-sb128`/`--still-sb256`
-  (the §5.20.5.1 delay/ring model is 64x64-only).  A skip block still resets the
-  coefficient contexts (§5.20.4.1 `reset_block_context`) or later blocks derive
-  different CDF contexts.  Palette and IBC combine: screen-content tools also
+  (the §5.20.5.1 delay/ring model is 64x64-only).  Because the candidate list
+  relies on the vertical `-64` default and the delay distance, a frame narrower
+  than 129 luma samples has no legal in-frame source and selects no IBC block;
+  that is a search-window limitation, not a syntax restriction.  A skip block
+  still resets the coefficient contexts (§5.20.4.1 `reset_block_context`) or
+  later blocks derive different CDF contexts.  Palette and IBC combine:
+  screen-content tools also
   make every eligible DC block code `palette_mode_info()` even in an
   IBC-only stream.
 * `--still-cfl-ds N` is the explicit sequence-level `cfl_ds_filter_index`

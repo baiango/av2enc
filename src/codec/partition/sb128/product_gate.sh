@@ -60,6 +60,7 @@ def crop(x0, y0, w, h, name):
         g.write(y); g.write(u); g.write(v)
 crop(0, 0, W, H, "src_edge.y4m")       # 640x360: bottom/right edges
 crop(0, 0, 256, 256, "src_256x256.y4m")  # 2x2 128-SB grid
+crop(0, 0, 100, 70, "src_100x70.y4m")   # partial 128-SB in both axes
 PY
 
 cat > "$TMP/cmp.py" <<'PY'
@@ -111,13 +112,31 @@ run() {
 }
 
 for sb in --still-sb128 --still-sb256; do
-  for src in "$TMP/src_edge.y4m" "$TMP/src_256x256.y4m"; do
+  for src in "$TMP/src_edge.y4m" "$TMP/src_256x256.y4m" "$TMP/src_100x70.y4m"; do
     base=$(basename "$src" .y4m)${sb#--still-}
     run "${base}_cdef" "$src" $sb --still-cdef
     run "${base}_ccso" "$src" $sb --still-ccso
     run "${base}_cdef_ccso" "$src" $sb --still-cdef --still-ccso
     run "${base}_cdef8" "$src" $sb --still-cdef --still-cdef-strengths 8
     run "${base}_ccso_edge" "$src" $sb --still-ccso --still-ccso-edge
+    # §7.13.2.1 MRL uses sbHeight = Block_Height[SbSize]; a hardcoded 64
+    # desynchronised every band below y=64 on a 128-SB frame.
+    run "${base}_mrl" "$src" $sb --still-mrl
+    run "${base}_mrl_cdef" "$src" $sb --still-mrl --still-cdef
+    # §5.18.7.9 GdfBlkSize follows the frame SbSize (128) and the sequence
+    # gdf_unit_matches_sb_size bit is inferred 0 outside a 64x64 sequence SB.
+    run "${base}_gdf" "$src" $sb --still-gdf
+    run "${base}_gdf_cdef" "$src" $sb --still-gdf --still-cdef
+    # §5.18.7.11 limits a 128x128 SbSize to luma shift 2 / chroma shift 2,
+    # i.e. one restoration unit per frame superblock.  The header size flags
+    # and the §7.20 SFU/unit grid must both follow that SbSize.
+    run "${base}_wiener" "$src" $sb --still-wiener
+    run "${base}_chroma_lr" "$src" $sb --still-chroma-lr
+    run "${base}_pc_wiener" "$src" $sb --still-pc-wiener
+    run "${base}_wiener_chroma" "$src" $sb --still-wiener --still-chroma-lr
+    run "${base}_cdef_wiener" "$src" $sb --still-cdef --still-wiener
+    run "${base}_cdef_chroma_lr" "$src" $sb --still-cdef --still-chroma-lr
+    run "${base}_gdf_wiener_chroma" "$src" $sb --still-gdf --still-wiener --still-chroma-lr
   done
 done
 

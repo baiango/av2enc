@@ -316,6 +316,9 @@ int parse_args(int argc, char** argv, Cli& cli) {
       cli.options.cdef_num_strengths = strengths;
     } else if (arg == "--ist") {
       cli.options.ist = true;
+    } else if (arg == "--mrl") {
+      cli.options.enable_mrl = true;
+      cli.options.luma_dc_only = false;  // CLI --still-mrl implies full search
     } else if (arg == "--tcq") {
       cli.options.tcq = true;
     } else if (arg == "--cctx") {

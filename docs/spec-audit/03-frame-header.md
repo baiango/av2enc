@@ -115,7 +115,7 @@ Field order was checked end-to-end against §5.18.2 for the enabled tool subsets
 
 | Field | §/page | Current | Status | Evidence file:line | Gap |
 |---|---|---|---|---|---|
-| `base_q_idx` | §5.18.6.1 / 118; §6.17.6.1 / 337 | `writer.put_bits(c.base_q_idx, 8U);  // base_q_idx` | WIRED | `src/encoder/m1/still_headers.cpp:175`; `high_bitdepth_headers.cpp:190` (f(9)) | M1 varies 1–255 via `--qp` (`still_encoder.cpp:1809`). M0/M10/HBD pin 90/90. 10-bit `f(9)` is implemented but not reachable from the CLI. |
+| `base_q_idx` | §5.18.6.1 / 118; §6.17.6.1 / 337 | `writer.put_bits(c.base_q_idx, 8U);  // base_q_idx` | WIRED | `src/encoder/m1/still_headers.cpp:175`; `high_bitdepth_headers.cpp:190` (f(9)) | M1 varies 1–255 via `--qp`; 10-bit varies 1–303 via `--still --bit-depth 10`. M0 pins 90; M10 pins 90; HBD used to pin 90 and is now reachable. The 10-bit `f(9)` writer is wired to the CLI. |
 | `DeltaQYDc` (`read_delta_q`) | §5.18.6.1 / 118; §6.17.6.1 / 337 | never coded | ABSENT | sequences write `equal_ac_dc_q = true` and `y_dc_delta_q_enabled = 0` (`still_headers.cpp:140-142`) | Y DC offset cannot be signalled. |
 | `diff_uv_delta` | §5.18.6.1 / 118; §6.17.6.1 / 337 | never coded | ABSENT | `separate_uv_delta_q = false` in every sequence (`still_headers.cpp:139`) | U and V always share deltas. |
 | `DeltaQUDc` / `DeltaQUAc` | §5.18.6.1 / 118; §6.17.6.1 / 337-338 | never coded | ABSENT | `uv_dc_delta_q_enabled = 0`, `uv_ac_delta_q_enabled = false` (`still_headers.cpp:141-142`) | Chroma quantizers are fixed relative to `base_q_idx`. |

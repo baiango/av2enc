@@ -55,15 +55,26 @@ struct TileLayoutDims {
 const char* preset_name(TileLayoutPreset preset);
 TileLayoutDims preset_dims(TileLayoutPreset preset);
 
-// §9.2 Tile_Width_Scaling_Factor / Tile_Area_Scaling_Factor. `seq_tier` is 0
-// or 1. A reserved level/tier combination sets `reserved`.
+// §9.2 Tile_Width_Scaling_Factor / Tile_Area_Scaling_Factor plus the Annex A
+// Table A.9 MaxTiles / MaxTileCols bounds for the level. `seq_tier` is 0 or 1.
+// A reserved level/tier combination sets `reserved`. The values are kept here
+// so this component stays standalone; tiles_test.cpp cross-checks every row
+// against core/conformance/conformance_tables.cpp so the two cannot drift.
 struct LevelTileLimits {
   int width_scaling_factor = 4;
   int area_scaling_factor = 4;
+  int max_tiles = 0;       // Table A.9 MaxTiles
+  int max_tile_cols = 0;   // Table A.9 MaxTileCols
   bool reserved = false;
 };
 
 LevelTileLimits level_tile_limits(int seq_level_idx, int seq_tier);
+
+// Lowest seq_level_idx in 0..21 whose Table A.9 MaxTiles / MaxTileCols admit a
+// cols x rows grid. Returns 31 (maximum parameters) when no level admits it.
+// Used by writers that must signal a high enough level instead of emitting a
+// stream the conformance validator rejects.
+int minimum_level_for_grid(int cols, int rows);
 
 // §5.18.7.7:
 //   tile_log2(blkSize, target) { for (k = 0; (blkSize << k) < target; k++) {} }
@@ -140,6 +151,12 @@ struct TileLayout {
   int cols_log2 = 0;
   int rows_log2 = 0;
 
+  // Sequence level the layout was planned for. `seq_level_idx == 31` means
+  // maximum parameters (no level limits). Exposed so validate_tile_layout()
+  // can re-check the Table A.8/A.9 bounds on a hand-built layout.
+  int seq_level_idx = 31;
+  int seq_tier = 0;
+
   // Size `cols` (starts) and `rows`; the end is the next start or sb_cols/rows.
   std::vector<int> col_starts_sb;
   std::vector<int> row_starts_sb;
@@ -151,6 +168,8 @@ struct TileLayout {
   // explain why a layout was rejected.
   int max_tile_width_sb = 0;
   int max_tile_area_sb = 0;
+  int max_tiles = 0;       // Table A.9 MaxTiles (0 = unconstrained)
+  int max_tile_cols = 0;   // Table A.9 MaxTileCols (0 = unconstrained)
   int min_log2_tile_cols = 0;
   int min_log2_tiles = 0;
   int max_log2_tile_cols = 0;
@@ -188,8 +207,11 @@ struct LayoutResult {
 //   seq_level_idx  0..31; 31 means "unconstrained" for planning only
 //   seq_tier       0 or 1 (main/high)
 //
-// Level checks model the video conformance bounds in §9.2 (still_picture = 0).
-// For an unconstrained still-picture plan, pass seq_level_idx = 31.
+// Level checks model the video conformance bounds in §9.2 and Annex A
+// (still_picture = 0): MAX_TILE_WIDTH / MAX_TILE_AREA scaling factors plus
+// MaxTiles / MaxTileCols. A grid above either Table A.9 bound is rejected with
+// kLevelConstraint; use minimum_level_for_grid() to pick a level that admits
+// the grid. For an unconstrained still-picture plan, pass seq_level_idx = 31.
 //
 // Failure is explicit: a 64x64 frame cannot be 2x1, non-uniform grids are not
 // representable with the uniform flag, and a level may force a minimum tile

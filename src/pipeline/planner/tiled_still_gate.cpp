@@ -527,7 +527,7 @@ bool assemble_tiled_stream(const TileLayout& layout,
   SequenceHeaderConfig sequence;
   sequence.width = static_cast<std::uint32_t>(source.width);
   sequence.height = static_cast<std::uint32_t>(source.height);
-  sequence.level = 7;
+  sequence.level = static_cast<std::uint8_t>(layout.seq_level_idx);
   sequence.disable_loopfilters_across_tiles = true;
   const std::vector<std::uint8_t> seq = make_sequence_header_obu(sequence);
 
@@ -721,8 +721,12 @@ int main(int argc, char** argv) {
 
   const TileLayoutPreset preset = parse_preset(layout_name);
   const auto dims = av2enc::tiles::preset_dims(preset);
+  // Level 5.1 is the M1 default, but a 16-column grid needs the Table A.9
+  // MaxTileCols of level 6.0. Signal the lowest level that admits the grid.
+  const int level = std::max(
+      7, av2enc::tiles::minimum_level_for_grid(dims.cols, dims.rows));
   const auto planned = av2enc::tiles::plan_tile_layout(
-      source.width, source.height, dims.cols, dims.rows, 64, 7, 0);
+      source.width, source.height, dims.cols, dims.rows, 64, level, 0);
   if (!planned.ok()) {
     std::fprintf(stderr, "layout %s rejected: %s\n", layout_name.c_str(),
                  planned.error.c_str());

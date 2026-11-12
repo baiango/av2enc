@@ -1,7 +1,7 @@
 # M1 GPU path — contract and workstreams
 
 Goal: move the M1 still-picture encoder from the CPU path in
-`src/encoder/m1/still_encoder.cpp` to a GPU-resident pipeline, while keeping the
+`src/pipeline/still/still_encoder.cpp` to a GPU-resident pipeline, while keeping the
 bitstream **byte-identical** to the CPU M1 reference for the same options.
 
 M1 GPU scope is unchanged: 8-bit 4:2:0, one tile, one keyframe, QP 90 (the
@@ -74,7 +74,7 @@ Y4M frame (host, 8-bit 4:2:0)
   -> IVF/OBU frame
 ```
 
-## Shared PODs (`src/cuda/m1/still_gpu.h` (namespace `av2enc::cuda::still_gpu`), owner: orchestrator)
+## Shared PODs (`src/cuda/pipeline/still/still_gpu.h` (namespace `av2enc::cuda::still_gpu`), owner: orchestrator)
 
 All stages exchange plain PODs; device pointers are explicit. No stage allocates
 or synchronizes; the orchestrator owns the arena and stream.
@@ -98,19 +98,19 @@ as `av2enc::still::encode_still_picture` when the CPU path is in the same mode.
 
 | # | Area | Directory | Deliverable |
 |---:|---|---|---|
-| 1 | Contract + orchestrator | `src/cuda/m1/` root files | `still_gpu.h`, `still_gpu.cu`, stage wiring |
-| 2 | Frame/block plan | `src/cuda/m1/plan/` | tree + leaf geometry + syntax order |
-| 3 | Luma candidate search | `src/cuda/m1/search/` | batched 61-candidate SSE, parity with CPU |
-| 4 | Transform/quant | `src/cuda/m1/tx/` | batched fwd/inv TX, levels, eob |
-| 5 | Reconstruction/deblock | `src/cuda/m1/recon/` | recon writes, availability, deblock |
-| 6 | CfL | `src/cuda/m1/cfl/` | GPU CfL + derived alpha, CPU parity |
-| 7 | Entropy bridge | `src/cuda/m1/entropy/`, `src/encoder/m1/stream/` | result stream -> CPU syntax |
-| 8 | Scheduler adapter | `src/cuda/m1/sched/` | dependency levels, graphs |
+| 1 | Contract + orchestrator | `src/cuda/pipeline/still/` root files | `still_gpu.h`, `still_gpu.cu`, stage wiring |
+| 2 | Frame/block plan | `src/cuda/pipeline/still/plan/` | tree + leaf geometry + syntax order |
+| 3 | Luma candidate search | `src/cuda/pipeline/still/search/` | batched 61-candidate SSE, parity with CPU |
+| 4 | Transform/quant | `src/cuda/pipeline/still/tx/` | batched fwd/inv TX, levels, eob |
+| 5 | Reconstruction/deblock | `src/cuda/pipeline/still/recon/` | recon writes, availability, deblock |
+| 6 | CfL | `src/cuda/pipeline/still/cfl/` | GPU CfL + derived alpha, CPU parity |
+| 7 | Entropy bridge | `src/pipeline/still/stream/` | result stream -> CPU syntax |
+| 8 | Scheduler adapter | `src/cuda/pipeline/still/sched/` | dependency levels, graphs |
 | 9 | CLI + build | `src/main.cpp`, `CMakeLists.txt` | `--still-gpu` (default off), link |
 | 10 | Verification/bench | `tools/still_gpu/` | CPU-vs-GPU bytes, `dav2d`, fps |
 
 Only agent 9 edits `src/main.cpp` or `CMakeLists.txt`. Only agent 1 edits
-`src/cuda/m1/` root files. Everyone else stays in their subdirectory.
+`src/cuda/pipeline/still/` root files. Everyone else stays in their subdirectory.
 
 ## Gates
 

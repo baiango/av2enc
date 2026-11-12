@@ -23,9 +23,9 @@ list is auto-added so no `.cu` can go uncounted.
 
 `GPU-REQUIRED` says the work is device-resident on at least one GPU path;
 the *wired* column names which one. The product build (`CMakeLists.txt`)
-only links the **M1** GPU target. `src/cuda/m2/` is gate-only: there is no
+only links the **M1** GPU target. `src/cuda/pipeline/video/` is gate-only: there is no
 `av2enc_video_gpu` target in `CMakeLists.txt`, so every M2 row is reachable
-only through `src/cuda/m2/build_gpu_gate.sh`.
+only through `src/cuda/pipeline/video/build_gpu_gate.sh`.
 
 Inventory under `src/`:
 

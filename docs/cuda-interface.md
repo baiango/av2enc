@@ -81,6 +81,15 @@ frame or per block.
   non-allocation and recognizes the independent multi-GPU pinned-staging
   provider; the script header documents those two narrow distinctions.
 
+- **Still-path clamp (documented exception).** `encode_still_gpu()`
+  (`src/cuda/pipeline/still/still_gpu.cu`) computes the same device budget
+  (`min(total, free) - 512 MiB`) and honours an explicit `vram_cap_mb`, but then
+  caps the reservation at `max(256 MiB, 1.5 * required_device_bytes + 16 MiB)`.
+  The still working set is a few MiB, so the arena is deliberately kept small
+  while other processes share the GPU; this is not a card-specific preset.
+  `Arena::capacity_cap_bytes()` (the global set by `apply_vram_cap`) is not
+  consulted on this path; the CLI passes `--vram-cap` explicitly instead.
+
 ## Transform API
 
 Match the CPU arithmetic order in `src/encoder/basic_encoder.cpp`:

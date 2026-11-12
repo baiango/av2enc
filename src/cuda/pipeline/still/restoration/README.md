@@ -1,7 +1,7 @@
 # M1 post-CDEF restoration stage — CCSO + Wiener NS
 
 Workstream: in-loop restoration for the M1 GPU path, owned by
-`src/cuda/m1/restoration/`.  It consumes the deblocked reconstruction, applies
+`src/cuda/pipeline/still/restoration/`.  It consumes the deblocked reconstruction, applies
 CCSO (§7.19) and loop restoration / non-separable Wiener (§7.20–§7.20.3), and
 produces the final reference/output planes.
 
@@ -18,7 +18,7 @@ below) and must be rejected.
 ## API
 
 ```cpp
-#include "cuda/m1/restoration/still_restoration.h"
+#include "cuda/pipeline/still/restoration/still_restoration.h"
 
 using namespace av2enc::cuda::still;
 
@@ -196,13 +196,13 @@ stage into the M1 GPU path.
    `read_wienerns_filter()` symbols and the LR/CCSO offset symbols with their
    §8.3 CDFs.  `read_lr()` is invoked from the block walk, not once per frame.
    Entropy stays CPU-resident, matching the current M1 design.
-4. **Orchestrator** — `src/cuda/m1/still_gpu.h`: add `Stage::kRestoration`
-   after `kDeblock`; `src/cuda/m1/still_gpu.cu`: allocate (from the arena) a
+4. **Orchestrator** — `src/cuda/pipeline/still/still_gpu.h`: add `Stage::kRestoration`
+   after `kDeblock`; `src/cuda/pipeline/still/still_gpu.cu`: allocate (from the arena) a
    `curr` copy of the deblocked planes, a `cdef` set (a copy of deblocked when
    CDEF is off), and an `lr` set; upload the CCSO offset table and all grids;
    call `restoration_stage_apply`; use `lr` as the final recon/reference
    output.  Do not alias `curr`/`cdef` while CCSO is on.
-5. **Build** — root `CMakeLists.txt` GLOBs `src/cuda/m1/**/*.cu`, so
+5. **Build** — root `CMakeLists.txt` GLOBs `src/cuda/pipeline/still/**/*.cu`, so
    `still_restoration.cu` is picked up automatically, but three dependencies are
    not:
    - `src/cuda/restoration/ccso.cu` and `src/cuda/restoration/wiener.cu` are
@@ -255,7 +255,7 @@ build-cuda/av2enc tests/data/basic_640x360_1f.y4m -o /tmp/pre360.ivf --still
 build-cuda/av2enc tests/data/basic_640x360_1f.y4m -o /tmp/post360.ivf --still --still-cdef
 
 # 2. CPU-vs-GPU parity (synthetic + single-frame + real CDEF chain)
-cd src/cuda/m1/restoration
+cd src/cuda/pipeline/still/restoration
 RUN_ARGS="--ivf /tmp/pre64.ivf --ivf-pair /tmp/pre360.ivf /tmp/post360.ivf" \
   ./build_and_test.sh
 
@@ -294,7 +294,7 @@ production CPU path against the independent spec-order oracle in
 
 ```sh
 c++ -std=c++20 -O2 -I src \
-  src/cuda/m1/restoration/real_recon_oracle_test.cpp \
+  src/cuda/pipeline/still/restoration/real_recon_oracle_test.cpp \
   src/encoder/filters/restoration/restoration.cpp \
   -o /tmp/real_recon_oracle_test
 # single recon, or the real deblock+CDEF pair:
@@ -323,7 +323,7 @@ the M1 syntax module):
 
 ```sh
 c++ -std=c++20 -O2 -I src \
-  src/cuda/m1/restoration/restoration_quality_bench.cpp \
+  src/cuda/pipeline/still/restoration/restoration_quality_bench.cpp \
   src/encoder/filters/restoration/restoration.cpp \
   src/encoder/m2/restoration/video_restoration.cpp \
   src/encoder/m1/filters_stream/filters_stream.cpp \
@@ -415,7 +415,7 @@ values are guessed or copied from another encoder.
 ## Files
 
 ```text
-src/cuda/m1/restoration/
+src/cuda/pipeline/still/restoration/
   still_restoration.h             stage PODs + API
   still_restoration.cu            CCSO -> LR stage implementation
   still_restoration_test.cu       CPU-vs-GPU parity (synthetic + real recon)
@@ -426,5 +426,5 @@ src/cuda/m1/restoration/
   README.md                    this file
 ```
 
-The stage intentionally does not include `src/cuda/m1/still_gpu.h`, so it can be
+The stage intentionally does not include `src/cuda/pipeline/still/still_gpu.h`, so it can be
 built and tested before the orchestrator hook lands.

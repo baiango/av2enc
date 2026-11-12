@@ -663,7 +663,20 @@ bool parse_sequence_header(std::span<const std::uint8_t> payload,
   if (!read_expect_bit(reader, false, "enable_parity_hiding", error)) {
     return false;
   }
-  if (!read_expect_bit(reader, false, "enable_avg_cdf", error)) return false;
+  bool avg_cdf = false;
+  if (!reader.read_bit(avg_cdf)) {
+    error = "truncated enable_avg_cdf";
+    return false;
+  }
+  config.enable_avg_cdf = avg_cdf;
+  if (avg_cdf) {
+    bool avg_cdf_type = false;
+    if (!reader.read_bit(avg_cdf_type)) {
+      error = "truncated avg_cdf_type";
+      return false;
+    }
+    config.avg_cdf_type = avg_cdf_type;
+  }
   if (!read_expect_bit(reader, false, "separate_uv_delta_q", error)) {
     return false;
   }

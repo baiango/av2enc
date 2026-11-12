@@ -172,6 +172,9 @@ run_rc crf50 --rc crf --crf 50
 run_rc vbr500 --rc vbr --bitrate 500
 run_rc vbr1000 --rc vbr --bitrate 1000
 run_rc vbr2000 --rc vbr --bitrate 2000
+# --video-sef codes a hidden last picture plus a show-existing-frame unit; the
+# achieved rate must still use the displayed-frame duration (no unit count).
+run_rc vbrsef --video-sef --rc vbr --bitrate 500
 
 # --- VBR closed-loop accuracy --------------------------------------------
 check_vbr() {
@@ -205,6 +208,7 @@ PY
 check_vbr vbr500 500
 check_vbr vbr1000 1000
 check_vbr vbr2000 2000
+check_vbr vbrsef 500
 
 # --- CRF monotonicity: lower crf => lower qindex --------------------------
 q_of() {
@@ -226,6 +230,38 @@ if ! cmp -s "$TMP/vbr500.ivf" "$TMP/vbr2.ivf"; then
     fail "VBR is not deterministic across runs"
 else
     ok "VBR is deterministic across runs"
+fi
+
+# --- VBR keeps a per-frame QP plan (not one uniform QP) -------------------
+# Flat/noise/flat/noise: complexity differs by ~300x, so a plan that survives
+# must produce more than one base_q_idx.
+python3 - "$TMP/varseq.y4m" <<'PY'
+import random
+import sys
+
+random.seed(7)
+w = h = 128
+flat = lambda v: bytes([v]) * (w * h) + bytes([v]) * (w // 2 * h // 2) * 2
+noise = (bytes(random.randrange(256) for _ in range(w * h)) +
+         bytes(random.randrange(256) for _ in range(w // 2 * h // 2)) * 2)
+with open(sys.argv[1], "wb") as f:
+    f.write(b"YUV4MPEG2 W128 H128 F30:1 Ip A1:1 C420\n")
+    for frame in (flat(128), noise, flat(80), noise):
+        f.write(b"FRAME\n" + frame)
+PY
+if "$BIN" "$TMP/varseq.y4m" -o "$TMP/var.ivf" --video --frames 4 \
+        --rc vbr --bitrate 300 >"$TMP/var.log" 2>&1; then
+    var_qps=$(sed -n 's/^  frame QP: *//p' "$TMP/var.log")
+    var_distinct=$(printf '%s\n' $var_qps | tr ' ' '\n' |
+        sed '/^$/d' | sort -u | wc -l | tr -d ' ')
+    if [ "${var_distinct:-0}" -lt 2 ]; then
+        fail "VBR collapsed to a uniform QP plan ($var_qps)"
+    else
+        ok "VBR keeps a per-frame QP plan ($var_qps)"
+    fi
+else
+    cat "$TMP/var.log" >&2
+    fail "VBR varying-complexity fixture failed to encode"
 fi
 
 # --- rejected combinations ------------------------------------------------
@@ -252,6 +288,8 @@ expect_reject "--crf requires --rc crf" "crf_needs_mode" \
     --video --rc cqp --crf 20
 expect_reject "--bitrate requires --rc vbr" "bitrate_needs_mode" \
     --video --rc crf --bitrate 500
+expect_reject "--rc crf owns the quantizer" "crf_owns_qp" \
+    --video --rc crf --crf 32 --qp 200
 
 echo
 if [ "$failures" -ne 0 ]; then
