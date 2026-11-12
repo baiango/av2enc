@@ -19,14 +19,14 @@ plus all subagent sessions — as of **2026-11-12**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 49,252,759 |
-| Output | 8,697,379 |
-| Reasoning | 9,944,999 |
-| **Input + output + reasoning** | **~67.9 M** |
-| Cached context reads | 4,507,183,232 |
-| **Including cache reads** | **~4.58 B** |
+| Fresh input | 75,046,101 |
+| Output | 14,137,103 |
+| Reasoning | 15,071,830 |
+| **Input + output + reasoning** | **~104.3 M** |
+| Cached context reads | 6,744,738,432 |
+| **Including cache reads** | **~6.85 B** |
 
-114 sessions (main + subagents). Cache reads dominate because every subagent
+194 sessions (main + subagents). Cache reads dominate because every subagent
 re-reads a long context; they are normally billed at a fraction of fresh input.
 The figures keep growing while work continues, so treat them as a snapshot, not
 a final total.
