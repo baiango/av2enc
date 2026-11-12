@@ -1,0 +1,610 @@
+{
+  "build": {
+    "cpu": {
+      "binary": "/Users/arin/work/av2enc/refactor/build/cpu/av2enc",
+      "build_seconds": 5.31,
+      "configure_seconds": 0.409,
+      "ok": true
+    },
+    "cuda": {
+      "available": false,
+      "build_seconds": 0,
+      "configure_seconds": 0,
+      "ok": false,
+      "reason": "nvcc/CMAKE_CUDA_COMPILER not available",
+      "skipped": true
+    }
+  },
+  "created": "2026-11-12T07:52:45+08:00",
+  "ctest": {
+    "failed": 0,
+    "passed": 10,
+    "returncode": 0,
+    "seconds": 2.7,
+    "skipped": 0,
+    "tests": [
+      {
+        "name": "bitwriter_test",
+        "status": "passed",
+        "time": "0.241913"
+      },
+      {
+        "name": "dav2d_smoke",
+        "status": "passed",
+        "time": "0.280452"
+      },
+      {
+        "name": "ivf_test",
+        "status": "passed",
+        "time": "0.36055"
+      },
+      {
+        "name": "m0_edge_smoke",
+        "status": "passed",
+        "time": "2.2807"
+      },
+      {
+        "name": "m0_encode_smoke",
+        "status": "passed",
+        "time": "1.4512"
+      },
+      {
+        "name": "m0_headers_test",
+        "status": "passed",
+        "time": "0.592731"
+      },
+      {
+        "name": "m1_feature_gate",
+        "status": "passed",
+        "time": "2.6976"
+      },
+      {
+        "name": "m1_gpu_options_test",
+        "status": "passed",
+        "time": "0.131254"
+      },
+      {
+        "name": "m1_headers_test",
+        "status": "passed",
+        "time": "0.700406"
+      },
+      {
+        "name": "y4m_test",
+        "status": "passed",
+        "time": "0.476676"
+      }
+    ],
+    "total": 10
+  },
+  "decoder": {
+    "path": "/Users/arin/work/av2enc/tools/bin/dav2d-macos",
+    "sha256": "d17e7cf7294093bdc410258b9abeba866f1c73ab295c91715deb88e9b725bbe0",
+    "version": "f9dafbc"
+  },
+  "feature_gate": {
+    "cases": [
+      {
+        "bytes": 13355,
+        "md5": "e61de628b0812b716b0efa7dcafcdd06",
+        "name": "m1_360_base",
+        "status": "passed"
+      },
+      {
+        "bytes": 13397,
+        "md5": "54e853e24b21bf1237b8b51a846b1c35",
+        "name": "m1_360_ccso",
+        "status": "passed"
+      },
+      {
+        "bytes": 13397,
+        "md5": "54e853e24b21bf1237b8b51a846b1c35",
+        "name": "m1_360_ccso6",
+        "status": "passed"
+      },
+      {
+        "bytes": 13415,
+        "md5": "a272550a72c387a8a4f8cc8d3186f8da",
+        "name": "m1_360_ccso_cdef",
+        "status": "passed"
+      },
+      {
+        "bytes": 11535,
+        "md5": "7fd7a2a0e078665614f8b6d2c5fe1b57",
+        "name": "m1_360_ccso_rdoq",
+        "status": "passed"
+      },
+      {
+        "bytes": 13358,
+        "md5": "dec10527a779e7664ea78e53def9dbf1",
+        "name": "m1_360_cdef1",
+        "status": "passed"
+      },
+      {
+        "bytes": 13375,
+        "md5": "b37bed7eb785d0c6b2e07219e888ff89",
+        "name": "m1_360_cdef4",
+        "status": "passed"
+      },
+      {
+        "bytes": 11611,
+        "md5": "84ab3934c08e6c90b876d067bcbb3606",
+        "name": "m1_360_combo",
+        "status": "passed"
+      },
+      {
+        "bytes": 3428,
+        "md5": "6db7ffba200e2b90075fcb826aaef3c1",
+        "name": "m1_360_qp141",
+        "status": "passed"
+      },
+      {
+        "bytes": 826,
+        "md5": "df6894744772f7107cad88381ae82e2e",
+        "name": "m1_360_qp191",
+        "status": "passed"
+      },
+      {
+        "bytes": 201,
+        "md5": "d0c61808ae8dd6e011046bbab34256af",
+        "name": "m1_360_qp255",
+        "status": "passed"
+      },
+      {
+        "bytes": 13775,
+        "md5": "f5762980cda6c08ec82e131bac487a77",
+        "name": "m1_360_qp91",
+        "status": "passed"
+      },
+      {
+        "bytes": 13152,
+        "md5": "211da270c5baf34f7bd40da019ffd84b",
+        "name": "m1_360_rdointra",
+        "status": "passed"
+      },
+      {
+        "bytes": 11487,
+        "md5": "ac668d497012333b6aeecb82c2e70337",
+        "name": "m1_360_rdoq",
+        "status": "passed"
+      },
+      {
+        "bytes": 13388,
+        "md5": "21c39aec98507dba7c24e5d320e1bb3c",
+        "name": "m1_360_txtype",
+        "status": "passed"
+      },
+      {
+        "bytes": 13368,
+        "md5": "400dd3ad02db9e0e3e366091a7e6962f",
+        "name": "m1_360_uvfull",
+        "status": "passed"
+      },
+      {
+        "bytes": 936,
+        "md5": "0ef9825062a25c4d950ee924113c6f89",
+        "name": "m1_64_base",
+        "status": "passed"
+      },
+      {
+        "bytes": 970,
+        "md5": "980e5c2194091faf2347e3b05dfdea69",
+        "name": "m1_64_ccso",
+        "status": "passed"
+      },
+      {
+        "bytes": 972,
+        "md5": "a90c525e480e8ff52db3f47f77fff887",
+        "name": "m1_64_ccso_cdef",
+        "status": "passed"
+      },
+      {
+        "bytes": 938,
+        "md5": "b795a6f998c7037c95b926d6afdfc89e",
+        "name": "m1_64_cdef1",
+        "status": "passed"
+      },
+      {
+        "bytes": 938,
+        "md5": "b795a6f998c7037c95b926d6afdfc89e",
+        "name": "m1_64_cdef4",
+        "status": "passed"
+      },
+      {
+        "bytes": 817,
+        "md5": "aa885652b8c57ecc25b14b87c97862d8",
+        "name": "m1_64_combo",
+        "status": "passed"
+      },
+      {
+        "bytes": 259,
+        "md5": "c47ea7a5e8f826addb8ef90c527c917a",
+        "name": "m1_64_qp141",
+        "status": "passed"
+      },
+      {
+        "bytes": 105,
+        "md5": "3768deaaad9a67f7bece568d743993e5",
+        "name": "m1_64_qp191",
+        "status": "passed"
+      },
+      {
+        "bytes": 73,
+        "md5": "d1e1ebebf2885e575c55508f8b7157d1",
+        "name": "m1_64_qp255",
+        "status": "passed"
+      },
+      {
+        "bytes": 982,
+        "md5": "f50e18c4e08eab3ca6437ed6283a9216",
+        "name": "m1_64_qp91",
+        "status": "passed"
+      },
+      {
+        "bytes": 965,
+        "md5": "45b4a209a8c3e889c91dfa201f26d2d4",
+        "name": "m1_64_rdointra",
+        "status": "passed"
+      },
+      {
+        "bytes": 794,
+        "md5": "a7ee3a0ac75781ce2a2c7390c3503019",
+        "name": "m1_64_rdoq",
+        "status": "passed"
+      },
+      {
+        "bytes": 944,
+        "md5": "15681508a144eeea88bb8223185d75e9",
+        "name": "m1_64_txtype",
+        "status": "passed"
+      },
+      {
+        "bytes": 939,
+        "md5": "2ed7f1ca8d146be8345ed95fee65f9bf",
+        "name": "m1_64_uvfull",
+        "status": "passed"
+      }
+    ],
+    "failed": 0,
+    "log_tail": "PASS m1_64_qp141 (259 B, md5 c47ea7a5e8f826addb8ef90c527c917a)\nPASS m1_64_qp191 (105 B, md5 3768deaaad9a67f7bece568d743993e5)\nPASS m1_64_qp255 (73 B, md5 d1e1ebebf2885e575c55508f8b7157d1)\nPASS m1_360_qp91 (13775 B, md5 f5762980cda6c08ec82e131bac487a77)\nPASS m1_360_qp141 (3428 B, md5 6db7ffba200e2b90075fcb826aaef3c1)\nPASS m1_360_qp191 (826 B, md5 df6894744772f7107cad88381ae82e2e)\nPASS m1_360_qp255 (201 B, md5 d0c61808ae8dd6e011046bbab34256af)\nfeature_gate: 30 passed, 0 failed",
+    "passed": 30,
+    "returncode": 0
+  },
+  "git": {
+    "branch": "main",
+    "commit": "453c74d833291ddeee8021ca1e7b7a11efbba917",
+    "describe": "453c74d-dirty",
+    "dirty": true,
+    "dirty_paths": 1
+  },
+  "host": {
+    "cpu": "Apple M4",
+    "machine": "arm64",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "processor": "arm",
+    "python": "3.13.3",
+    "uname": "Darwin Mac-mini.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:11:03 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T8132 arm64"
+  },
+  "mode": "record",
+  "schema": 1,
+  "streams": {
+    "m0_1080p": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "90"
+      ],
+      "decoded_md5": "fbbef81e45fcff162dde6c71a0b56a7d",
+      "encoder_md5": "8f0da52dddafc73370fdfaf3b3bdf227",
+      "fixture": "generated:1920x1080",
+      "ivf_bytes": 1994228,
+      "name": "m0_1080p",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m0_360": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "90"
+      ],
+      "decoded_md5": "56f11d4a63ff07f2356ef5064b84fe0e",
+      "encoder_md5": "460ff40bc2d0873b769f33bad1aa7166",
+      "fixture": "tests/data/m0_640x360_1f.y4m",
+      "ivf_bytes": 19751,
+      "name": "m0_360",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m0_360_adaptive": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "90",
+        "--adaptive-cdf"
+      ],
+      "decoded_md5": "56f11d4a63ff07f2356ef5064b84fe0e",
+      "encoder_md5": "a61cccdd2bfa43a9cf7a47b44f3bbfd3",
+      "fixture": "tests/data/m0_640x360_1f.y4m",
+      "ivf_bytes": 18807,
+      "name": "m0_360_adaptive",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m0_64": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "90"
+      ],
+      "decoded_md5": "7efc3162bc0a4785685eba291a8096fd",
+      "encoder_md5": "7707081a9beefb057a5823b93762a623",
+      "fixture": "tests/data/m0_64x64_1f.y4m",
+      "ivf_bytes": 1138,
+      "name": "m0_64",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m0_64_adaptive": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "90",
+        "--adaptive-cdf"
+      ],
+      "decoded_md5": "7efc3162bc0a4785685eba291a8096fd",
+      "encoder_md5": "480f831595a091f8332e91314a316922",
+      "fixture": "tests/data/m0_64x64_1f.y4m",
+      "ivf_bytes": 1094,
+      "name": "m0_64_adaptive",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_360_base": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "90",
+        "--m1"
+      ],
+      "decoded_md5": "3e6ee93321680be6ee97a8f1d3765ab2",
+      "encoder_md5": "e61de628b0812b716b0efa7dcafcdd06",
+      "fixture": "tests/data/m0_640x360_1f.y4m",
+      "ivf_bytes": 13355,
+      "name": "m1_360_base",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_360_cdef": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "90",
+        "--m1",
+        "--m1-cdef",
+        "--m1-cdef-strengths",
+        "1"
+      ],
+      "decoded_md5": "39ff4d350452720e0dda6af9d2db991b",
+      "encoder_md5": "dec10527a779e7664ea78e53def9dbf1",
+      "fixture": "tests/data/m0_640x360_1f.y4m",
+      "ivf_bytes": 13358,
+      "name": "m1_360_cdef",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_360_qp141": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "141",
+        "--m1"
+      ],
+      "decoded_md5": "3c3b138fce7ab1a012d4ffb55a409359",
+      "encoder_md5": "6db7ffba200e2b90075fcb826aaef3c1",
+      "fixture": "tests/data/m0_640x360_1f.y4m",
+      "ivf_bytes": 3428,
+      "name": "m1_360_qp141",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_360_qp191": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "191",
+        "--m1"
+      ],
+      "decoded_md5": "0d694d9160f6bdfb91639939f6f3f18a",
+      "encoder_md5": "df6894744772f7107cad88381ae82e2e",
+      "fixture": "tests/data/m0_640x360_1f.y4m",
+      "ivf_bytes": 826,
+      "name": "m1_360_qp191",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_360_qp255": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "255",
+        "--m1"
+      ],
+      "decoded_md5": "c93abf4fb2968c821ee246fffbeb352e",
+      "encoder_md5": "d0c61808ae8dd6e011046bbab34256af",
+      "fixture": "tests/data/m0_640x360_1f.y4m",
+      "ivf_bytes": 201,
+      "name": "m1_360_qp255",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_360_qp91": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "91",
+        "--m1"
+      ],
+      "decoded_md5": "1f8a68d69b63f277af4f3d83537f143e",
+      "encoder_md5": "f5762980cda6c08ec82e131bac487a77",
+      "fixture": "tests/data/m0_640x360_1f.y4m",
+      "ivf_bytes": 13775,
+      "name": "m1_360_qp91",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_360_rdoq": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "90",
+        "--m1",
+        "--m1-rdoq"
+      ],
+      "decoded_md5": "6bd45c28bb4c15da1c7e8f8bee43bfc3",
+      "encoder_md5": "ac668d497012333b6aeecb82c2e70337",
+      "fixture": "tests/data/m0_640x360_1f.y4m",
+      "ivf_bytes": 11487,
+      "name": "m1_360_rdoq",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_64_base": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "90",
+        "--m1"
+      ],
+      "decoded_md5": "41b30b8ff21d571a65fee34ebacdd6c4",
+      "encoder_md5": "0ef9825062a25c4d950ee924113c6f89",
+      "fixture": "tests/data/m0_64x64_1f.y4m",
+      "ivf_bytes": 936,
+      "name": "m1_64_base",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_64_cdef": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "90",
+        "--m1",
+        "--m1-cdef",
+        "--m1-cdef-strengths",
+        "1"
+      ],
+      "decoded_md5": "5db402680605e8fce3c7485e78bbf644",
+      "encoder_md5": "b795a6f998c7037c95b926d6afdfc89e",
+      "fixture": "tests/data/m0_64x64_1f.y4m",
+      "ivf_bytes": 938,
+      "name": "m1_64_cdef",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_64_qp141": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "141",
+        "--m1"
+      ],
+      "decoded_md5": "cf5131f23bb673fe04647e66536b9305",
+      "encoder_md5": "c47ea7a5e8f826addb8ef90c527c917a",
+      "fixture": "tests/data/m0_64x64_1f.y4m",
+      "ivf_bytes": 259,
+      "name": "m1_64_qp141",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_64_qp191": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "191",
+        "--m1"
+      ],
+      "decoded_md5": "71eb7a993e13a5b5fad2308480953a06",
+      "encoder_md5": "3768deaaad9a67f7bece568d743993e5",
+      "fixture": "tests/data/m0_64x64_1f.y4m",
+      "ivf_bytes": 105,
+      "name": "m1_64_qp191",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_64_qp255": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "255",
+        "--m1"
+      ],
+      "decoded_md5": "007fe42558e87b3bf162d2a77c465f08",
+      "encoder_md5": "d1e1ebebf2885e575c55508f8b7157d1",
+      "fixture": "tests/data/m0_64x64_1f.y4m",
+      "ivf_bytes": 73,
+      "name": "m1_64_qp255",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_64_qp91": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "91",
+        "--m1"
+      ],
+      "decoded_md5": "ae4fb2ce1f6aea5f68df3c6c6e1fff9f",
+      "encoder_md5": "f50e18c4e08eab3ca6437ed6283a9216",
+      "fixture": "tests/data/m0_64x64_1f.y4m",
+      "ivf_bytes": 982,
+      "name": "m1_64_qp91",
+      "status": "passed",
+      "validate_rc": 0
+    },
+    "m1_64_rdoq": {
+      "args": [
+        "--frames",
+        "1",
+        "--qp",
+        "90",
+        "--m1",
+        "--m1-rdoq"
+      ],
+      "decoded_md5": "4e2a0cf26d593d3c68263e486d4aafa3",
+      "encoder_md5": "a7ee3a0ac75781ce2a2c7390c3503019",
+      "fixture": "tests/data/m0_64x64_1f.y4m",
+      "ivf_bytes": 794,
+      "name": "m1_64_rdoq",
+      "status": "passed",
+      "validate_rc": 0
+    }
+  },
+  "tool": "tools/refactor/verify_baseline.sh",
+  "toolchain": {
+    "clang": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+    "cmake": "cmake version 4.3.2",
+    "cuda_arch": "",
+    "cxx": "",
+    "cxx_version": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+    "gcc": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+    "nvcc": ""
+  }
+}

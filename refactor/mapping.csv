@@ -1,0 +1,183 @@
+old_path,new_path,note
+src/bitstream,src/core/bitstream,Phase 2 leaf move; bitwriter/reader + OBU
+src/build-dcdeltaq,,"gitignored build artefact; delete in Phase 0 cleanup, never move"
+src/build-hdr,,"gitignored build artefact; delete in Phase 0 cleanup, never move"
+src/cpu,,"empty directory; delete in Phase 0 cleanup, no move"
+src/cuda,src/gpu + src/codec/*/gpu,split in Phase 3; child rows carry the target
+src/cuda/cdef,src/codec/filters/cdef/gpu,Phase 3 GPU co-location
+src/cuda/cfl,src/codec/intra/cfl/gpu,Phase 3 GPU co-location
+src/cuda/compound_full,src/codec/inter/compound/gpu,"in-flight feature; pre-mapped, do not move until owner releases"
+src/cuda/deblock,src/codec/filters/deblock/gpu,Phase 3 GPU co-location
+src/cuda/dip,src/codec/intra/dip/gpu,Phase 3 GPU co-location
+src/cuda/format,src/codec/format/gpu,Phase 3 GPU co-location
+src/cuda/gdf,src/codec/filters/gdf/gpu,"in-flight feature; pre-mapped, do not move until owner releases"
+src/cuda/ibc,src/codec/intra/ibc/gpu,Phase 3 GPU co-location
+src/cuda/ibp,src/codec/intra/ibp/gpu,Phase 3 GPU co-location
+src/cuda/inter,src/codec/inter/gpu,Phase 3 GPU co-location
+src/cuda/inter/advanced,src/codec/inter/advanced/gpu,Phase 3 GPU co-location
+src/cuda/inter/mc,src/codec/inter/mc/gpu,Phase 3 GPU co-location
+src/cuda/inter/me,src/codec/inter/me/gpu,Phase 3 GPU co-location
+src/cuda/intra_full,src/codec/intra/modes/gpu/full,"in-flight feature; pre-mapped, do not move until owner releases"
+src/cuda/intra_modes,src/codec/intra/modes/gpu,Phase 3 GPU co-location
+src/cuda/lossless_inter,src/codec/lossless/inter/gpu,"in-flight feature; pre-mapped, do not move until owner releases"
+src/cuda/m1,src/pipeline/still/gpu + src/codec/*/gpu,dissolved in Phase 4; child GPU rows carry the target
+src/cuda/m1/cdef,src/codec/filters/cdef/gpu,Phase 3 GPU co-location
+src/cuda/m1/cfl,src/codec/intra/cfl/gpu,Phase 3 GPU co-location
+src/cuda/m1/chroma,src/codec/format/chroma/gpu,Phase 3 GPU co-location
+src/cuda/m1/hbd,src/codec/format/hbd/gpu,Phase 3 GPU co-location
+src/cuda/m1/plan,src/pipeline/dispatch/gpu/plan,Phase 4 dispatch move
+src/cuda/m1/recon,src/pipeline/still/gpu/recon,Phase 4 pipeline move
+src/cuda/m1/restoration,src/codec/filters/restoration/gpu,Phase 3 GPU co-location
+src/cuda/m1/sched,src/pipeline/dispatch/gpu/sched,Phase 4 dispatch move
+src/cuda/m1/search,src/codec/inter/me/gpu,Phase 3 GPU co-location
+src/cuda/m1/tx,src/codec/transform/tx/gpu,Phase 3 GPU co-location
+src/cuda/m2,src/pipeline/video/gpu + src/frame/gpu,dissolved in Phase 4; child GPU rows carry the target
+src/cuda/morph,src/codec/inter/morph/gpu,"in-flight feature; pre-mapped, do not move until owner releases"
+src/cuda/mrl,src/codec/intra/mrl/gpu,Phase 3 GPU co-location
+src/cuda/palette,src/codec/intra/palette/gpu,Phase 3 GPU co-location
+src/cuda/pc_wiener,src/codec/filters/pc_wiener/gpu,"in-flight feature; pre-mapped, do not move until owner releases"
+src/cuda/pipeline,src/pipeline/dispatch/gpu,Phase 3 pipeline GPU move
+src/cuda/qm,src/codec/transform/qm/gpu,Phase 3 GPU co-location
+src/cuda/rdoq,src/codec/rate/rdoq/gpu,Phase 3 GPU co-location
+src/cuda/restoration,src/codec/filters/restoration/gpu,Phase 3 GPU co-location
+src/cuda/scheduler,src/pipeline/dispatch/scheduler,Phase 3 dispatch move
+src/cuda/tip,src/codec/inter/tip/gpu,"in-flight feature; pre-mapped, do not move until owner releases"
+src/cuda/tip_deblock,src/codec/filters/tip_deblock/gpu,"in-flight feature; pre-mapped, do not move until owner releases"
+src/cuda/tx_partition,src/codec/transform/tx/partition/gpu,"in-flight feature; pre-mapped, do not move until owner releases"
+src/cuda/tx_secondary,src/codec/transform/secondary/gpu,Phase 3 GPU co-location
+src/cuda/tx_type,src/codec/transform/tx_type/gpu,Phase 3 GPU co-location
+src/cuda/tx_variants,src/codec/transform/tx/gpu,Phase 3 GPU co-location
+src/cuda/warp_stack,src/codec/inter/warp/gpu,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder,src/codec + src/frame + src/pipeline + src/app,dissolved in Phases 3-4; child rows carry the target
+src/encoder/cfl,src/codec/intra/cfl/derived,Phase 3 tool consolidation
+src/encoder/cfl/alpha,src/codec/intra/cfl/alpha,Phase 3 tool consolidation
+src/encoder/cfl/alpha/cuda_stub,src/codec/intra/cfl/alpha,inherits target from src/encoder/cfl/alpha; review exact subpath
+src/encoder/cfl/ds_filters,src/codec/intra/cfl/ds_filters,Phase 3 tool consolidation
+src/encoder/cfl/ds_filters/quality,src/codec/intra/cfl/ds_filters,inherits target from src/encoder/cfl/ds_filters; review exact subpath
+src/encoder/cfl/mhccp,src/codec/intra/cfl/mhccp,Phase 3 tool consolidation
+src/encoder/conformance,src/frame/conformance,validator; may move to tests/ in Phase 7
+src/encoder/dip,src/codec/intra/dip,Phase 3 tool consolidation
+src/encoder/entropy,src/codec/entropy,Phase 3 entropy consolidation
+src/encoder/entropy/avg_cdf,src/codec/entropy/avg_cdf,Phase 3 entropy consolidation
+src/encoder/entropy/continuity,src/codec/entropy/cdf/continuity,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/filters,src/codec/filters,Phase 3 filter consolidation
+src/encoder/filters/ccso_reuse,src/codec/filters/ccso/reuse,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/filters/cdef,src/codec/filters/cdef,Phase 3 filter consolidation
+src/encoder/filters/deblock,src/codec/filters/deblock,Phase 3 filter consolidation
+src/encoder/filters/film_grain_stream,src/pipeline/grain/stream,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/filters/gdf_stream,src/codec/filters/gdf/stream,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/filters/lr_chroma,src/codec/filters/lr_chroma,Phase 3 filter consolidation
+src/encoder/filters/pc_wiener_stream,src/codec/filters/pc_wiener/stream,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/filters/restoration,src/codec/filters/restoration,Phase 3; classes/spec_tables split into lr/pc_wiener/gdf
+src/encoder/filters/restoration/classes,src/codec/filters/lr,split into lr/pc_wiener/gdf in Phase 3
+src/encoder/filters/spec_tables,src/codec/filters/spec_tables,shared spec math; Phase 5 moves Round2/Clip to spec/common
+src/encoder/filters/spec_tables/raw,src/spec/tables/raw,"gitignored generated input; regenerate, do not move"
+src/encoder/filters/tip_deblock,src/codec/filters/tip_deblock,Phase 3 filter consolidation
+src/encoder/format,src/codec/format,Phase 3 format move
+src/encoder/format/chroma,src/codec/format/chroma,Phase 3 format move
+src/encoder/frame,src/frame,Phase 3 header/syntax move
+src/encoder/frame/mfh,src/frame/mfh,Phase 3 header/syntax move
+src/encoder/frame/ref_fields,src/frame/ref_fields,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/hbd,src/codec/format/hbd,Phase 3 format move
+src/encoder/hdr,src/frame/metadata/hdr,Phase 3 metadata move
+src/encoder/ibc,src/codec/intra/ibc,Phase 3 tool consolidation
+src/encoder/ibp,src/codec/intra/ibp,Phase 3 tool consolidation
+src/encoder/inter,src/codec/inter,Phase 3 inter consolidation
+src/encoder/inter/advanced,src/codec/inter/advanced,Phase 3 inter consolidation
+src/encoder/inter/advanced/tables,src/codec/inter/advanced,inherits target from src/encoder/inter/advanced; review exact subpath
+src/encoder/inter/bframes,src/codec/inter/bframes,Phase 3 inter consolidation
+src/encoder/inter/bru,src/codec/inter/bru,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/inter/drl_reorder,src/codec/inter/drl_reorder,Phase 3 inter consolidation
+src/encoder/inter/gme,src/codec/inter/gme,Phase 3 inter consolidation
+src/encoder/inter/leading,src/codec/inter/leading,Phase 3 inter consolidation
+src/encoder/inter/longterm,src/codec/inter/longterm,Phase 3 inter consolidation
+src/encoder/inter/mc,src/codec/inter/mc,Phase 3 inter consolidation
+src/encoder/inter/me,src/codec/inter/me,Phase 3 inter consolidation
+src/encoder/inter/me2,src/codec/inter/me2,Phase 3 inter consolidation
+src/encoder/inter/mlayers,src/codec/inter/temporal/mlayers,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/inter/morph,src/codec/inter/morph,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/inter/mv_precision,src/codec/inter/subpel/mv_precision,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/inter/mv_stack_full,src/codec/inter/mv_stack_full,Phase 3 inter consolidation; in-flight (untracked) at baseline
+src/encoder/inter/random_access,src/codec/inter/random_access,Phase 3 inter consolidation
+src/encoder/inter/sef,src/codec/inter/sef,Phase 3 inter consolidation
+src/encoder/inter/temporal,src/codec/inter/temporal,Phase 3 inter consolidation
+src/encoder/inter/tip_stream,src/codec/inter/tip/stream,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/inter/tlayers,src/codec/inter/temporal/tlayers,Phase 3 inter consolidation
+src/encoder/inter/warp_stack,src/codec/inter/warp/stack,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/intra_modes,src/codec/intra/modes,Phase 3 tool consolidation
+src/encoder/lossless,src/codec/lossless,Phase 3 tool consolidation
+src/encoder/lossless/inter,src/codec/lossless/inter,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/m0_still.cpp,src/pipeline/still/still_writer.cpp,Phase 4 split out app defaults; file-level row from the plan
+src/encoder/m1,src/pipeline/still + src/codec/*,dissolved in Phase 4; child stream rows carry the target
+src/encoder/m1/deltaq,src/codec/entropy/deltaq,Phase 3 entropy stream adapter
+src/encoder/m1/filters_stream,src/codec/filters/stream,Phase 3 filter stream adapter
+src/encoder/m1/ibc_stream,src/codec/intra/ibc/stream,Phase 3 stream adapter
+src/encoder/m1/missing_bits,src/frame/missing_bits,Phase 3 header/syntax move
+src/encoder/m1/mrl_stream,src/codec/intra/mrl/stream,Phase 3 stream adapter
+src/encoder/m1/palette_stream,src/codec/intra/palette/stream,Phase 3 stream adapter
+src/encoder/m1/partition_stream,src/codec/partition/stream,Phase 3 stream adapter
+src/encoder/m1/qctx,src/codec/entropy/cdf/qctx,Phase 3 entropy context selection
+src/encoder/m1/rdo_decide,src/codec/rate/rdo/decide,Phase 3 RDO consolidation
+src/encoder/m1/rdo_loop,src/codec/rate/rdo/loop,Phase 3 RDO consolidation
+src/encoder/m1/scc_flags,src/pipeline/still/scc_flags,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/m1/stream,src/pipeline/still/stream,Phase 3 stream assembly move
+src/encoder/m1/sub8,src/codec/partition/sub8,Phase 3 geometry consolidation
+src/encoder/m1/tiles_stream,src/pipeline/tiled/stream,Phase 3 stream adapter
+src/encoder/m1/transform_stream,src/codec/transform/stream,Phase 3 stream adapter
+src/encoder/m10,src/pipeline/still/hbd,Phase 4 high-bit-depth still path
+src/encoder/m2,src/pipeline/video + src/frame,dissolved in Phase 4; child rows carry the target
+src/encoder/m2/advanced,src/codec/inter/advanced,Phase 3 inter consolidation
+src/encoder/m2/cdef,src/codec/filters/cdef/syntax,Phase 3 filter syntax move
+src/encoder/m2/compound_stream,src/codec/inter/compound/stream,Phase 3 stream adapter; in-flight (untracked) at baseline
+src/encoder/m2/ddt,src/codec/transform/ddt,Phase 3 transform consolidation
+src/encoder/m2/deltaq,src/codec/entropy/deltaq,Phase 3 entropy syntax move
+src/encoder/m2/merge,src/codec/inter/merge,Phase 3 inter consolidation
+src/encoder/m2/multiref,src/codec/inter/compound,Phase 3 inter consolidation
+src/encoder/m2/post,src/pipeline/video/post,Phase 4 pipeline move
+src/encoder/m2/rdo,src/codec/rate/rdo,Phase 3 RDO consolidation
+src/encoder/m2/residual,src/codec/transform/residual,Phase 3 transform consolidation
+src/encoder/m2/restoration,src/codec/filters/restoration,Phase 3 filter consolidation
+src/encoder/m2/tile_groups,src/pipeline/tiled/groups,Phase 3 pipeline move
+src/encoder/m2/tx_partition,src/codec/transform/tx/partition,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/metadata,src/frame/metadata,Phase 3 metadata move
+src/encoder/metadata/content_interpretation,src/frame/metadata/content_interpretation,Phase 3 metadata move
+src/encoder/metadata/gaps,src/frame/metadata/gaps,in-flight metadata work; pre-mapped
+src/encoder/metadata/types,src/frame/metadata/types,Phase 3 metadata move
+src/encoder/mrl,src/codec/intra/mrl/core,Phase 3 tool consolidation
+src/encoder/palette,src/codec/intra/palette/core,Phase 3 tool consolidation
+src/encoder/partition,src/codec/partition,Phase 3 geometry consolidation
+src/encoder/partition_ext,src/codec/partition/ext,Phase 3 geometry consolidation
+src/encoder/pipeline,src/pipeline,Phase 3 pipeline consolidation
+src/encoder/qm,src/codec/transform/qm,Phase 3 transform consolidation
+src/encoder/qm/obu,src/codec/transform/qm/obu,Phase 3; in-flight OBU state machine
+src/encoder/quant,src/codec/quant,Phase 3 quant consolidation
+src/encoder/quant/dcdeltaq,src/codec/quant/dcdeltaq,Phase 3 quant consolidation
+src/encoder/rc,src/codec/rate/rc,Phase 3 rate-control consolidation
+src/encoder/rc/hrd,src/codec/rate/hrd,Phase 3 rate-control consolidation
+src/encoder/rc/twopass,src/codec/rate/rc/twopass,Phase 3 rate-control consolidation
+src/encoder/rdo,src/codec/rate/rdo,Phase 3 RDO consolidation
+src/encoder/rdoq,src/codec/rate/rdoq,Phase 3 RDO consolidation
+src/encoder/sb128,src/codec/partition/sb128,Phase 3 geometry consolidation
+src/encoder/sb256,src/codec/partition/sb256,Phase 3 geometry consolidation
+src/encoder/sdp,src/codec/partition/sdp,Phase 3 geometry consolidation
+src/encoder/svc,src/pipeline/svc,Phase 3 pipeline consolidation
+src/encoder/svc/ops_full,src/pipeline/svc/ops_full,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/syntax,src/frame/syntax,Phase 3 header/syntax move
+src/encoder/syntax/small_header,src/frame/small_header,Phase 3 header/syntax move
+src/encoder/tables,src/spec/tables,Phase 2 spec-table move; not the generic encoder split
+src/encoder/tables/missing,src/spec/tables/missing,Phase 2 spec-table move
+src/encoder/tcq,src/codec/transform/tcq,Phase 3 transform consolidation
+src/encoder/tcq/parity,src/codec/transform/tcq/parity,Phase 3 transform consolidation
+src/encoder/tiles,src/pipeline/tiled,Phase 3 pipeline consolidation
+src/encoder/transform,src/codec/transform,Phase 3 transform consolidation; in-flight
+src/encoder/transform/idtx_intra,src/codec/transform/secondary/idtx_intra,"in-flight feature; pre-mapped, do not move until owner releases"
+src/encoder/tx_secondary,src/codec/transform/secondary,Phase 3 transform consolidation
+src/encoder/tx_type,src/codec/transform/tx_type,Phase 3 transform consolidation
+src/encoder/tx_variants,src/codec/transform/tx,Phase 3 transform consolidation
+src/entropy,src/codec/entropy,Phase 2 leaf move; av2 entropy syntax
+src/entropy/av2,src/codec/entropy/cdf,Phase 2 entropy move; av2 CDF tables/entropy
+src/io,src/core/io,Phase 2 leaf move; IVF/Y4M container IO
+src/multi_gpu,src/pipeline/dispatch/multi_gpu,Phase 3 pipeline move
+src/multi_gpu/runtime,src/pipeline/dispatch/multi_gpu,Phase 3 pipeline move
+src/profile,src/core/profile,"profiling utility, not the removed profile layer"
+src/profile/build,,"gitignored build artefact; delete in Phase 0 cleanup, never move"

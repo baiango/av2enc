@@ -34,16 +34,16 @@ The repository grew by ~20 independent components in one wave. Measured state:
 
 | Metric | Value |
 |---|---:|
-| Source files (`*.cpp`, `*.cu`, `*.h`, `*.cuh`) | 689 |
-| Compiled translation units | 375 |
-| Lines under `src/` | ~223,000 |
-| Standalone `build*.sh` scripts | 124 |
-| CMake libraries for all CPU code | 1 (`av2enc_core`) |
-| CUDA targets | 1 (`av2enc_m1_gpu` OBJECT) |
-| Root-level build directories | 25 |
-| Files defining `Round2` | 56 |
-| Files defining/using `qlookup` | 19 |
-| Files defining `Clip3` | 19 |
+| Source files (`*.cpp`, `*.cu`, `*.h`, `*.cuh`) | 1,064 |
+| Lines under `src/` | ~504,800 |
+| Translation units named in `CMakeLists.txt` | 74 |
+| `build*.sh` scripts | 184 |
+| Untracked / in-flight files | 144 |
+| Files with no test | 401 |
+| Files with no decoder gate | 59 |
+| Orphan files (no includer, not in CMake) | 81 |
+| Duplicate helper definitions | `qlookup` ×3, `coeff_cdf_slice` ×3 |
+| Ignored build directories | 39 |
 
 The build is not the problem yet; the *navigation and duplication* are. There
 are five separate RDO trees (`encoder/rdo`, `encoder/rdoq`,
