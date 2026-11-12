@@ -158,6 +158,7 @@ if [ "$DO_BUILD" -eq 1 ]; then
     t0=$(now)
     if ! cmake -S "$ROOT" -B "$CPU_BUILD" \
             -DAV2ENC_ENABLE_CUDA=OFF -DAV2ENC_ALLOW_CPU_ONLY=ON \
+            -DAV2ENC_PRODUCT_GATES=ON \
             -DCMAKE_BUILD_TYPE=Release >"$TMP/cpu-configure.log" 2>&1; then
         tail_log "$TMP/cpu-configure.log" >&2
         die "CPU configure failed"
@@ -194,7 +195,8 @@ if [ "$DO_BUILD" -eq 1 ]; then
         mkdir -p "$CUDA_BUILD"
         t0=$(now)
         if ! cmake -S "$ROOT" -B "$CUDA_BUILD" \
-                -DAV2ENC_ENABLE_CUDA=ON -DCMAKE_BUILD_TYPE=Release \
+                -DAV2ENC_ENABLE_CUDA=ON -DAV2ENC_PRODUCT_GATES=ON \
+                -DCMAKE_BUILD_TYPE=Release \
                 >"$TMP/cuda-configure.log" 2>&1; then
             tail_log "$TMP/cuda-configure.log" >&2
             if [ "$REQUIRE_CUDA" -eq 1 ]; then die "CUDA configure failed (--require-cuda)"; fi

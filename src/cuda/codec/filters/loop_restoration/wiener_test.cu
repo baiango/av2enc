@@ -209,7 +209,16 @@ bool run_case(TestFrame& f, const LoopRestorationParams& params,
   cpu_view.mi_row_end = meta.mre;
   cpu_view.cfl_ds_filter_index = meta.cfl_ds_filter_index;
   const RestorationStatus st = loop_restoration_frame(cpu_view, params);
-  CHECK(st == RestorationStatus::kOk, "CPU reference failed");
+  ++g_checks;
+  if (st != RestorationStatus::kOk) {
+    // The CPU oracle is the reference the device output is compared against.
+    // When it refuses the fixture there is nothing to compare, so report the
+    // fixture problem once instead of a launch error plus a bogus mismatch.
+    ++g_failures;
+    std::fprintf(stderr, "FAIL %s: CPU oracle rejected the fixture: %s\n", tag,
+                 restoration_status_string(st));
+    return false;
+  }
 
   DeviceFrame dev;
   if (!dev.upload(f, params, meta)) {
@@ -259,13 +268,19 @@ struct LrBuffers {
 };
 
 void setup(const TestFrame& f, int unit_size, RestorationType t,
-           LoopRestorationParams* p, LrBuffers* buf) {
+           LoopRestorationParams* p, LrBuffers* buf, int chroma_unit_size = -1) {
   for (int pl = 0; pl < 3; ++pl) {
+    // §6.17.7.7: the luma unit must be at least one 64-line stripe; the chroma
+    // unit may be half that (one chroma stripe).  Applying the luma size to
+    // every plane makes the fixture non-conforming and the CPU oracle refuses
+    // it before the device is ever launched (BUG-GPU-001).
+    const int us = (pl == 0 || chroma_unit_size <= 0) ? unit_size
+                                                      : chroma_unit_size;
     p->frame_type[pl] = t;
-    p->unit_size[pl] = unit_size;
+    p->unit_size[pl] = us;
     const int sub = (pl == 0) ? 0 : 1;
-    const int rows = restoration_count_units(unit_size, (f.mi_rows * 4) >> sub);
-    const int cols = restoration_count_units(unit_size, (f.mi_cols * 4) >> sub);
+    const int rows = restoration_count_units(us, (f.mi_rows * 4) >> sub);
+    const int cols = restoration_count_units(us, (f.mi_cols * 4) >> sub);
     p->unit_rows[pl] = rows;
     p->unit_cols[pl] = cols;
     buf->type[pl].assign(static_cast<std::size_t>(rows * cols),
@@ -389,7 +404,7 @@ void test_types_odd_geometry() {
     fill_random(f, rng);
     LoopRestorationParams params;
     LrBuffers buf;
-    setup(f, 32, kRestoreSwitchable, &params, &buf);
+    setup(f, 64, kRestoreSwitchable, &params, &buf, /*chroma=*/32);
     for (int pl = 0; pl < 3; ++pl) {
       for (std::size_t i = 0; i < buf.type[pl].size(); ++i) {
         buf.type[pl][i] = static_cast<std::uint8_t>(
@@ -403,12 +418,16 @@ void test_types_odd_geometry() {
 }
 
 void test_tiles_lossless_bru() {
-  TestFrame f = make_frame(32, 20);
+  // §6.17.7.7 check_ru_size(): the LR unit must not cross an internal tile
+  // boundary and the boundary spacing must be a multiple of maxPlaneRuSize.
+  // With luma 64 / chroma 32 that maximum is 64 samples, so 64x64 synthetic
+  // tiles (16 MI) are conforming and the CPU oracle accepts the fixture.
+  TestFrame f = make_frame(32, 32);
   Rng rng(66);
   fill_random(f, rng);
   LoopRestorationParams params;
   LrBuffers buf;
-  setup(f, 64, kRestoreWienerNs, &params, &buf);
+  setup(f, 64, kRestoreWienerNs, &params, &buf, /*chroma=*/32);
   fill_coeffs(&buf, &rng, 14);
   const int n = f.mi_cols * f.mi_rows;
   std::vector<std::uint16_t> mcs(static_cast<std::size_t>(n));
@@ -420,8 +439,8 @@ void test_tiles_lossless_bru() {
       const std::size_t i = static_cast<std::size_t>(y * f.mi_cols + x);
       mcs[i] = static_cast<std::uint16_t>(x < 16 ? 0 : 16);
       mce[i] = static_cast<std::uint16_t>(x < 16 ? 16 : 32);
-      mrs[i] = static_cast<std::uint16_t>(y < 10 ? 0 : 10);
-      mre[i] = static_cast<std::uint16_t>(y < 10 ? 10 : 20);
+      mrs[i] = static_cast<std::uint16_t>(y < 16 ? 0 : 16);
+      mre[i] = static_cast<std::uint16_t>(y < 16 ? 16 : 32);
     }
   }
   LrMeta meta;
@@ -472,8 +491,8 @@ void test_randomized() {
     fill_random(f, rng, rng.range(0, 40), rng.range(200, 255));
     LoopRestorationParams params;
     LrBuffers buf;
-    const int unit_size = rng.range(0, 1) ? 32 : 64;
-    setup(f, unit_size, kRestoreWienerNs, &params, &buf);
+    const int unit_size = rng.range(0, 1) ? 128 : 64;
+    setup(f, unit_size, kRestoreWienerNs, &params, &buf, unit_size / 2);
     fill_coeffs(&buf, &rng, 22);
     if (rng.range(0, 3) == 0) {
       params.frame_filters_on[0] = 1;
@@ -535,7 +554,19 @@ void test_validation() {
     ++g_failures;
     std::fprintf(stderr, "FAIL: aliasing not rejected\n");
   }
-  std::cout << "  validation: GDF/PC-Wiener not supported, aliasing invalid\n";
+  // §6.17.7.7: LoopRestorationSize[0] < 64 is non-conforming.  The launcher
+  // must refuse it instead of launching a kernel (BUG-GPU-001 regression pin:
+  // the old fixtures used luma 32 and consumed the refusal as a launch error).
+  LoopRestorationParams small = dev.params;
+  small.unit_size[0] = 32;
+  ++g_checks;
+  if (av2enc::cuda::loop_restoration_frame(dev.frame, small) !=
+      cudaErrorInvalidValue) {
+    ++g_failures;
+    std::fprintf(stderr, "FAIL: non-conforming luma unit size not rejected\n");
+  }
+  std::cout << "  validation: GDF/PC-Wiener not supported, aliasing and "
+               "luma unit < 64 invalid\n";
 }
 
 void test_timing() {

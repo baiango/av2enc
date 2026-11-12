@@ -121,10 +121,13 @@ rejects one that does). Each tile is an independent §8.2 entropy stream:
 
 The per-tile writer therefore starts from cleared arrays and the §9.3 defaults,
 which is exactly what the decoder does **when `disable_cdf_update = 1`**. With
-adaptive CDFs the decoder carries the CDF state from tile to tile and uses
-`context_update_tile_id`; that is not modelled, so
-`assemble_video_tiled_frame()` rejects `NumTiles > 1` with
-`disable_cdf_update = 0` rather than emitting a desynchronised stream.
+adaptive CDFs (`--avg-cdf --adaptive-cdf`) every tile still starts from a fresh
+copy of the frame CDFs (§8.2.2); the caller seeds each tile from the same frame
+image, calls `save_tile_cdfs()` at every `exit_symbol()`, and runs
+`average_at_frame_end()` once per frame (§8.2.4/§7.5). The sequence header then
+signals `enable_avg_cdf = 1, avg_cdf_type = 1`, so §5.18.7.2 infers
+`context_update_tile_id = 0` and codes no bits for it. With adaptation off the
+frozen path is unchanged and `context_update_tile_id = 0` is still coded.
 
 ## Exact frame-header fields
 
@@ -150,7 +153,8 @@ tile_info()
     increment_tile_cols_log2      unary: N ones then a zero, capped by
     increment_tile_rows_log2      maxLog2TileRows
     if NumTiles > 1:
-      context_update_tile_id      f(TileColsLog2 + TileRowsLog2)
+      if !(enable_avg_cdf && avg_cdf_type):
+        context_update_tile_id    f(TileColsLog2 + TileRowsLog2)
       tile_size_bytes_minus_1     f(2); TileSizeBytes = value + 1
 base_q_idx                            f(8) at 8-bit, f(9) at 10-bit
 segmentation_enabled
@@ -357,10 +361,10 @@ keep every loop-filter flag off.
   boundaries, `begin/end` ordering.
 - **Tile geometry**: 2×1 and 2×2 layouts, exact tile rectangles, rejection of
   too-small/non-power-of-two/non-multiple-of-8 layouts, superblock splitting
-  with coordinate shift, multi-tile header assembly, multi-tile + adaptive CDF
-  rejection, rejection of a layout whose level-derived limits differ from the
-  sequence level, and end-to-end adoption of a real `pipeline::PipelinePlanner`
-  2×2 plan.
+  with coordinate shift, multi-tile header assembly, multi-tile adaptive CDF
+  signalling (dropped context_update_tile_id tail), rejection of a layout whose
+  level-derived limits differ from the sequence level, and end-to-end adoption
+  of a real `pipeline::PipelinePlanner` 2×2 plan.
 - **Header parity**: byte-identical sequence header and frame OBU against the
   untouched M2 core for the one-tile, filters-off case.
 - **Filter ordering**: report order is deblock → CDEF → CCSO; a manual

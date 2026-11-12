@@ -92,6 +92,11 @@ cudaError_t loop_restoration_frame(
       av2enc::restoration::loop_restoration_to_core(frame, params);
   const int total = 3 * frame.mi_cols * frame.mi_rows;
   constexpr int kThreads = 256;
+  // Discard any error left in this thread by the caller: the value returned
+  // below must describe this launch only, never a stale unrelated error (a
+  // stale cudaErrorInvalidValue used to surface as "launch (invalid
+  // argument)", BUG-GPU-001).
+  (void)cudaGetLastError();
   wiener_kernel<<<ceil_div(total, kThreads), kThreads, 0, stream>>>(core);
   return cudaGetLastError();
 }

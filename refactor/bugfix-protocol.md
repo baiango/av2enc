@@ -128,13 +128,13 @@ the evidence. Do not guess a fix.
 cmake -S . -B build-fix -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DAV2ENC_ENABLE_CUDA=OFF -DAV2ENC_ALLOW_CPU_ONLY=ON
 cmake --build build-fix -j3
-ctest --test-dir build-fix                 # 17/17
+ctest --test-dir build-fix                 # 10/10 default; 17/17 with -DAV2ENC_PRODUCT_GATES=ON
 tools/refactor/verify_baseline.sh --check  # 19 streams, 30 features
 ```
 
-Then the lane gate(s) from §5/`docs/validation.md`. For pixel-affecting fixes,
+Then the lane gate(s) from §5/`docs/validation.md` (`tools/test.sh --gates`). For pixel-affecting fixes,
 also run `tools/validate_dav2d.sh` plus sample-exact recon (`still_recon_dump`,
-`gate_still_dump`, or `--video-recon`). Default streams must stay byte-identical
+`still_dump`, or `--video-recon`). Default streams must stay byte-identical
 unless the bug *is* a pinned-stream bug; in that case the coordinator and
 integrator approve the new pin explicitly.
 

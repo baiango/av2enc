@@ -327,6 +327,12 @@ void test_tiles_and_headers() {
     av2enc::BitWriter w2;
     CHECK(write_video_tile_info(w2, two.layout, 1, &error));
     CHECK_EQ(w2.bit_size(), 5U);
+    // BUG-INTER-001: with enable_avg_cdf && avg_cdf_type §5.18.7.2 infers
+    // context_update_tile_id = 0 and codes no bits for it.
+    av2enc::BitWriter w3;
+    CHECK(write_video_tile_info(w3, two.layout, 1, &error,
+                                /*context_update_present=*/false));
+    CHECK_EQ(w3.bit_size(), 4U);
   }
 
   // The payload escape hatch selects a wider TileSizeBytes from the largest
@@ -472,13 +478,25 @@ void test_tiles_and_headers() {
     CHECK(planner.end_frame(1000, &error));
   }
 
-  // Multi-tile + adaptive CDFs is rejected instead of desynchronising.
+  // BUG-INTER-001: multi-tile adaptive CDFs are signalled instead of being
+  // rejected after the keyframe payloads were already coded.
   av2enc::video::VideoConfig adaptive = two_config;
   adaptive.disable_cdf_update = false;
-  VideoTiledFrame rejected;
-  CHECK(!assemble_video_tiled_frame(adaptive, sequence, header, two.layout,
-                                 two_blocks, levels, &rejected, &error));
-  CHECK(error.find("adaptive CDF") != std::string::npos);
+  VideoTiledFrame adaptive_frame;
+  CHECK(assemble_video_tiled_frame(adaptive, sequence, header, two.layout,
+                                   two_blocks, levels, &adaptive_frame,
+                                   &error));
+  CHECK(!adaptive_frame.obu.empty());
+  // §5.18.7.2: enable_avg_cdf && avg_cdf_type infers context_update_tile_id
+  // and drops its bit; this 2x1 layout codes exactly one such bit.
+  VideoPostSequenceOptions avg_sequence = sequence;
+  avg_sequence.enable_avg_cdf = true;
+  avg_sequence.avg_cdf_type = true;
+  VideoTiledFrame avg_frame;
+  CHECK(assemble_video_tiled_frame(adaptive, avg_sequence, header, two.layout,
+                                   two_blocks, levels, &avg_frame, &error));
+  CHECK(!avg_frame.obu.empty());
+  CHECK_EQ(avg_frame.frame_header_bits + 1U, adaptive_frame.frame_header_bits);
 }
 
 void test_deblock_delta_q_syntax() {

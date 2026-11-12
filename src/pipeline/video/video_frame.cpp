@@ -1682,6 +1682,10 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   tiles::TileLayout tile_layout;
   post::VideoPostSequenceOptions tile_sequence;
   tile_sequence.filters.disable_loopfilters_across_tiles = true;
+  // §5.4.8: the tiled frame writer owns its own sequence header, so it must
+  // signal the average-CDF flags the per-tile bank below actually runs.
+  tile_sequence.enable_avg_cdf = options.avg_cdf;
+  tile_sequence.avg_cdf_type = true;
   if (options.tile_cols != 0 || options.tile_rows != 0) {
     if (options.tile_cols < 1 || options.tile_rows < 1) {
       error = "tile_cols/tile_rows must both be positive";
@@ -1836,7 +1840,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     entropy::avg_cdf::CdfBankConfig bank_config;
     bank_config.enable_avg_cdf = options.avg_cdf;
     bank_config.avg_cdf_type = true;
-    bank_config.context_update_tile_id = 0;  // single tile per frame
+    bank_config.context_update_tile_id = 0;  // §5.18.7.2 fallback when !avg
     if (!cdf_bank.init(cdf_bank_tables, bank_config, &error)) {
       error = "average-CDF bank: " + error;
       return false;

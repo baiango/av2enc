@@ -7,11 +7,20 @@
 # with tools/bin and testdata exercises the real product paths.
 
 # Encoder-reconstruction dump harness for tools/still_verify/loop_restoration_gate.sh.
-# Test-only: it links the same core library as av2enc and is not a CTest test.
-add_executable(gate_still_dump
-  "${PROJECT_SOURCE_DIR}/tools/still_verify/still_dump.cpp")
-target_link_libraries(gate_still_dump PRIVATE av2enc_core)
-av2enc_apply_warnings(gate_still_dump)
+# The executable is defined at the top level as `still_dump` so the documented
+# `cmake --build <build> --target still_dump` works whether or not CTest is
+# enabled.  Keep `gate_still_dump` as an alias: earlier gate wiring and the
+# build tree used that name.  Neither name is a CTest test.
+if(NOT TARGET gate_still_dump)
+  add_executable(gate_still_dump ALIAS still_dump)
+endif()
+
+# Guard against a future top-level target rename: the gate always points at the
+# documented binary name, not at the compatibility alias.
+if(NOT TARGET still_dump)
+  message(FATAL_ERROR
+    "av2enc: still_dump target is missing; gate_loop_restoration needs it")
+endif()
 
 # 10-bit 4:2:0 and 8-bit 4:2:2 / 4:4:4 / 4:0:0 still paths.
 add_test(NAME gate_format
@@ -36,7 +45,7 @@ set_tests_properties(gate_intra PROPERTIES
 add_test(NAME gate_loop_restoration
   COMMAND bash "${PROJECT_SOURCE_DIR}/tools/still_verify/loop_restoration_gate.sh"
           --bin $<TARGET_FILE:av2enc>
-          --dump $<TARGET_FILE:gate_still_dump>)
+          --dump $<TARGET_FILE:still_dump>)
 set_tests_properties(gate_loop_restoration PROPERTIES
   SKIP_RETURN_CODE 77
   TIMEOUT 900

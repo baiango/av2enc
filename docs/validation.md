@@ -103,6 +103,23 @@ product gates (`tests/basic_encode_smoke.sh`, `tests/basic_edge_smoke.sh`, the
 the CLI and require `dav2d --strict 1`. There is no opt-out or "skip validation"
 mode.
 
+## Fast local test loop
+
+The default build registers **10 unit tests**; the 7 product gates are opt-in
+because they encode real streams and dominate wall time:
+`-DAV2ENC_PRODUCT_GATES=ON`. They are not unit tests.
+
+| Command | What runs | Time (M4, local) |
+|---|---|---:|
+| `tools/test.sh` | 10 unit tests (`ctest -LE gate`) | ~4 s |
+| `tools/test.sh --gates` | fast gate subset (`run_gates --quick`) | ~20 s |
+| `tools/test.sh --gates-full` | 7 product gates | ~2 min |
+| `tools/test.sh --all` | everything, parallel | ~2.5 min |
+
+The slowest gates are `gate_loop_restoration` (1080p cases, ~130 s serial) and
+`gate_rc` (VBR two-pass, ~74 s serial). Run them before a merge, not on every
+edit. `ctest -j8` already overlaps the two.
+
 ## Product gates in CTest
 
 Wave 4 registers the product gates that were introduced during integration as
@@ -120,18 +137,26 @@ are unchanged; the default inventory is now 17 tests. Every gate:
 |---|---|---|---|
 | `gate_format` | `src/formats/format_gate.sh` | 10-bit 4:2:0 and 8-bit 4:2:2/4:4:4/4:0:0 stills; pinned IVF/decoded MD5s; recon exactness | dav2d, python3 |
 | `gate_intra` | `tools/still_verify/intra_gate.sh` | IBP, MRL, CfL variants, DIP, MHCCP, default-off baseline regressions | dav2d, `still_recon_dump`, python3 |
-| `gate_loop_restoration` | `tools/still_verify/loop_restoration_gate.sh` | Wiener, PC-Wiener, chroma LR, GDF, CCSO-edge, film grain; 1080p cases when `testdata/` exists | dav2d, `gate_still_dump`, python3; `testdata/` for HD |
+| `gate_loop_restoration` | `tools/still_verify/loop_restoration_gate.sh` | Wiener, PC-Wiener, chroma LR, GDF, CCSO-edge, film grain; 1080p cases when `testdata/` exists | dav2d, `still_dump` harness, python3; `testdata/` for HD |
 | `gate_tiles` | `src/pipeline/tiles/stream/gate_cli_tiles.sh` | `--tiles` layouts, 1x1 byte-identity, default-stream pin, rejections | dav2d, python3; `testdata/` for 1080p |
 | `gate_rc` | `src/pipeline/video/post/gate_cli_rc.sh` | `--rc cqp/crf/vbr`, default 720p pin, CRF monotonicity, VBR determinism | dav2d, python3, `testdata/` 720p |
 | `gate_host_plan` | `src/pipeline/dispatch/gate_host_plan.sh` | `--gpu-plan` assignments, dry-run writes nothing, rejections | 360p fixture and `testdata/` 1080p (no decoder) |
 | `gate_video_cli` | `src/pipeline/video/video_cli_gate.sh` | `--video` multi-frame decode and sample-exact reconstruction compare | dav2d, python3, `testdata/` 720p |
+
+The reconstruction harnesses are ordinary build targets, not CTest tests:
+`cmake --build <build> --target still_dump` produces `<build>/still_dump` for
+`gate_loop_restoration`, and `still_recon_dump` is built the same way for
+`gate_intra`. Both link `av2enc_core`; the gate scripts default to the harness
+next to the encoder binary, so an explicit `--dump` is only needed when the
+harness lives somewhere other than the build directory containing `--bin`.
 
 Skip behavior is deliberately granular:
 
 - no decoder or `python3` → the whole gate skips (77);
 - `gate_intra` without `still_recon_dump` → the runner reports a skip without
   invoking the gate; `gate_loop_restoration` still runs its pinned-MD5/decode
-  checks when `gate_still_dump` is absent (recon exactness is then not checked);
+  checks when the `still_dump` harness is absent (recon exactness is then not
+  checked);
 - missing `testdata/` → `gate_rc`, `gate_host_plan` and `gate_video_cli` skip
   (77); `gate_tiles` and `gate_loop_restoration` still run their committed-fixture
   cases and skip only the 1080p part.

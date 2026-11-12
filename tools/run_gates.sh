@@ -99,7 +99,7 @@ cleanup() {
 trap cleanup EXIT
 
 STILL_RECON_DUMP="$BUILD/still_recon_dump"
-GATE_STILL_DUMP="$BUILD/tests/gates/gate_still_dump"
+GATE_STILL_DUMP="$BUILD/still_dump"
 
 echo "== av2enc gate runner =="
 echo "  binary:  $BIN"

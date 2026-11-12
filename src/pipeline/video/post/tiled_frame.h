@@ -20,10 +20,12 @@
 //   * mi coordinates are shifted to the tile origin;
 //   * per-tile context arrays start cleared, exactly as the decoder's tile
 //     start does;
-//   * CDFs are initialised per tile.  This is only correct with
-//     disable_cdf_update = 1 (frozen defaults); with adaptive CDFs the decoder
-//     carries CDF state between tiles (and context_update_tile_id), which this
-//     layer does not model, so multi-tile + adaptive CDFs is rejected.
+//   * every tile starts from the frame CDFs (§8.2.2).  With adaptive CDFs the
+//     caller seeds each tile from the same frame CDFs and runs the §8.2.4
+//     save/§7.5 average bookkeeping once per frame; with enable_avg_cdf &&
+//     avg_cdf_type §5.18.7.2 infers context_update_tile_id = 0 and codes no
+//     bits for it.  With adaptation off the per-tile CDFs are frozen and the
+//     tail still codes context_update_tile_id = 0.
 //
 // Not implemented here: the per-block read_cdef()/read_ccso() symbols that must
 // be inserted into the tile payload when those tools are enabled.  The header
@@ -56,6 +58,12 @@ struct VideoPostSequenceOptions {
   // §5.4.10.  The default matches av2enc::video::make_sequence_header_obu(): all tools
   // off, cdef_on_skip_txfm_disabled = 1.
   filters_stream::SequenceFilterConfig filters{};
+  // §5.4.8 average-CDF config.  Off by default so every previously pinned
+  // stream keeps the same sequence header.  When enabled, avg_cdf_type = 1
+  // averages the first §8.2.4 tile set at frame end and §5.18.7.2 omits
+  // context_update_tile_id from tile_info().
+  bool enable_avg_cdf = false;
+  bool avg_cdf_type = true;
 
   VideoPostSequenceOptions() { filters.cdef_on_skip_txfm_disabled = true; }
 };
@@ -108,9 +116,12 @@ struct VideoTiledFrameHeader {
 };
 
 // tile_info() + the §5.18.7.2 tail.  Exposed for unit tests and for callers
-// that want the exact bit count.
+// that want the exact bit count.  `context_update_present` is false when
+// enable_avg_cdf && avg_cdf_type, in which case the spec infers
+// context_update_tile_id = 0 and codes no bits for it.
 bool write_video_tile_info(BitWriter& writer, const tiles::TileLayout& layout,
-                        int tile_size_bytes, std::string* error);
+                        int tile_size_bytes, std::string* error,
+                        bool context_update_present = true);
 
 // frame_header_info() syntax, without the leading is_first_tile_group bit and
 // without byte_alignment().  The caller must know TileSizeBytes first; for a

@@ -202,7 +202,10 @@ std::size_t write_sequence_header(const VideoConfig& c,
   writer.put_bit(false);  // enable_cctx
   writer.put_bit(false);  // enable_tcq
   writer.put_bit(false);  // enable_parity_hiding
-  writer.put_bit(false);  // enable_avg_cdf
+  writer.put_bit(sequence.enable_avg_cdf);  // enable_avg_cdf
+  if (sequence.enable_avg_cdf) {
+    writer.put_bit(sequence.avg_cdf_type);  // avg_cdf_type: 1 = average across tiles
+  }
   writer.put_bit(false);  // separate_uv_delta_q
   writer.put_bit(true);   // equal_ac_dc_q
   writer.put_bits(23U, 5U);  // base_uv_ac_delta_q
@@ -326,7 +329,8 @@ bool adopt_pipeline_frame_plan(const pipeline::FramePipelinePlan& plan,
 }
 
 bool write_video_tile_info(BitWriter& writer, const tiles::TileLayout& layout,
-                        int tile_size_bytes, std::string* error) {
+                        int tile_size_bytes, std::string* error,
+                        bool context_update_present) {
   if (layout.tile_count() <= 0) {
     return fail(error, "m2 tiled: empty layout");
   }
@@ -358,11 +362,16 @@ bool write_video_tile_info(BitWriter& writer, const tiles::TileLayout& layout,
     if (tile_size_bytes < 1 || tile_size_bytes > 4) {
       return fail(error, "m2 tiled: TileSizeBytes must be in 1..4");
     }
-    const unsigned n = static_cast<unsigned>(cols_log2 + rows_log2);
-    // context_update_tile_id.  With disable_cdf_update == 1 it is ignored by
-    // the decoder; 0 is the deterministic choice.  With adaptive CDFs a real
-    // encoder would pick the tile whose updated CDFs become the frame's.
-    writer.put_bits(0U, n);
+    if (context_update_present) {
+      const unsigned n = static_cast<unsigned>(cols_log2 + rows_log2);
+      // context_update_tile_id.  With disable_cdf_update == 1 it is ignored by
+      // the decoder; 0 is the deterministic choice.  With adaptive CDFs and
+      // !enable_avg_cdf the frame CDFs become tile 0's final CDFs, which
+      // matches this writer's context_update_tile_id = 0 choice.
+      writer.put_bits(0U, n);
+    }
+    // With enable_avg_cdf && avg_cdf_type §5.18.7.2 infers
+    // context_update_tile_id = 0 and codes no bits for it.
     writer.put_bits(static_cast<std::uint64_t>(tile_size_bytes - 1), 2U);
   }
   return true;
@@ -376,11 +385,6 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
                                   std::string* error) {
   if (!validate_sequence_options(sequence, error)) return false;
   if (!validate_layout(config, layout, error)) return false;
-  if (layout.tile_count() > 1 && !config.disable_cdf_update) {
-    return fail(error,
-                "m2 tiled: multi-tile adaptive CDFs need per-tile CDF carry and "
-                "context_update_tile_id; keep disable_cdf_update = 1");
-  }
   if (sequence.filters.enable_restoration) {
     return fail(error,
                 "m2 tiled: loop restoration (Wiener) tile syntax is not "
@@ -435,7 +439,12 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
 
   writer.put_bit(config.disable_cdf_update);  // disable_cdf_update
 
-  if (!write_video_tile_info(writer, layout, tile_size_bytes, error)) {
+  // §5.18.7.2: context_update_tile_id is coded only when
+  // (!enable_avg_cdf || !avg_cdf_type).
+  const bool context_update_present =
+      !(sequence.enable_avg_cdf && sequence.avg_cdf_type);
+  if (!write_video_tile_info(writer, layout, tile_size_bytes, error,
+                             context_update_present)) {
     return false;
   }
 
@@ -649,10 +658,12 @@ bool assemble_video_tile_group_from_payloads(
       tile_payloads.empty()) {
     return fail(error, "m2 tiled: expected one payload per tile");
   }
-  if (layout.tile_count() > 1 && !config.disable_cdf_update) {
-    return fail(error,
-                "m2 tiled: multi-tile adaptive CDFs are not modelled");
-  }
+  // With adaptive CDFs every tile is an independent §8.2 entropy stream seeded
+  // from the frame CDFs, and frame end either averages the first
+  // 1<<Min(3,FloorLog2(NumTiles)) tiles (§8.2.4) or copies
+  // context_update_tile_id (§5.18.7.2).  The caller owns that bookkeeping;
+  // the writer only signals it.  With enable_avg_cdf && avg_cdf_type the
+  // context_update_tile_id field is inferred to 0 and is not coded.
 
   VideoTiledFrame result;
   result.tile_payloads.reserve(tile_payloads.size());

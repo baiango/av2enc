@@ -415,6 +415,15 @@ add_executable(still_recon_dump src/pipeline/still/stream/still_recon_dump.cpp)
 target_link_libraries(still_recon_dump PRIVATE av2enc_core)
 av2enc_apply_warnings(still_recon_dump)
 
+# Encoder-reconstruction dump harness for the loop-restoration gate.  The
+# documented command is `cmake --build <build> --target still_dump`, so the
+# target and the produced binary share that name.  Test-only: it links the same
+# core library and is not registered with CTest (the gate is; see
+# tests/gates/CMakeLists.txt), so the pinned ctest inventory is unchanged.
+add_executable(still_dump tools/still_verify/still_dump.cpp)
+target_link_libraries(still_dump PRIVATE av2enc_core)
+av2enc_apply_warnings(still_dump)
+
 # Multi-frame P-frame correctness gate (encode -> dav2d -> recon compare).  Not
 # registered with CTest so the pinned test inventory is unchanged.
 add_executable(video_gate src/pipeline/video/video_gate.cpp)

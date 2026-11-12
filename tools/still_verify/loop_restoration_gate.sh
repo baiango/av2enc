@@ -8,10 +8,13 @@
 # streams cannot move.
 #
 # Usage:
-#   tools/still_verify/loop_restoration_gate.sh --bin build-int/av2enc \
-#       [--dump build-int/still_dump] [--quick]
+#   tools/still_verify/loop_restoration_gate.sh --bin build/av2enc \
+#       [--dump build/still_dump] [--quick]
 #
+#   --dump    still_dump harness; defaults to still_dump next to --bin
 #   --quick   skip the 1080p fixtures (testdata is gitignored)
+#
+# Build the harness with: cmake --build <build> --target still_dump
 #
 # Env: DAV2D overrides the decoder path; AV2ENC_TESTDATA overrides testdata/.
 set -euo pipefail
@@ -32,7 +35,7 @@ while [ $# -gt 0 ]; do
         --dav2d) DAV2D=$2; shift 2 ;;
         --quick) QUICK=1; shift ;;
         -h|--help)
-            sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "loop_restoration_gate: unknown argument $1" >&2; exit 2 ;;
     esac
@@ -41,6 +44,21 @@ done
 if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
     echo "loop_restoration_gate: --bin must point at an av2enc executable" >&2
     exit 2
+fi
+# The harness must be linked against the same core library as --bin, so the
+# implicit lookup only considers the build directory that holds the binary.
+if [ -z "$DUMP" ]; then
+    candidate="$(dirname "$BIN")/still_dump"
+    if [ -x "$candidate" ]; then DUMP=$candidate; fi
+fi
+if [ -n "$DUMP" ] && [ ! -x "$DUMP" ]; then
+    echo "loop_restoration_gate: --dump $DUMP is not executable" >&2
+    exit 2
+fi
+if [ -z "$DUMP" ]; then
+    echo "loop_restoration_gate: no still_dump harness in $(dirname "$BIN");" \
+         "recon exactness will not be checked" >&2
+    echo "  build one with: cmake --build <build> --target still_dump" >&2
 fi
 if [ -z "$DAV2D" ]; then
     for candidate in "$ROOT/tools/bin/dav2d" "$ROOT/tools/bin/dav2d-macos"; do

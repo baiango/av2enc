@@ -56,4 +56,10 @@ set_tests_properties(basic_edge_smoke PROPERTIES
   TIMEOUT 600)
 
 # Product gates (wave 4): additive test surface, see tests/gates/CMakeLists.txt.
-add_subdirectory(gates)
+# Product gates encode real streams (1080p loop restoration, VBR video) and
+# are not unit tests. Register them only when a build explicitly asks for the
+# full gate inventory; the default `ctest` stays fast.
+option(AV2ENC_PRODUCT_GATES "Register the product gates as CTest tests" OFF)
+if(AV2ENC_PRODUCT_GATES)
+  add_subdirectory(gates)
+endif()

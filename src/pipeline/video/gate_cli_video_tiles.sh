@@ -7,6 +7,9 @@
 #   * 720p 6 frames at 2x1/2x2/4x2/8x2 decodes with `dav2d --strict 1` and its
 #     decoded planes equal the encoder's --video-recon output sample for
 #     sample (the per-tile splitter resets entropy/context state per tile);
+#   * 2x2 with --avg-cdf --adaptive-cdf (§8.2.4 per-tile adaptation + §7.5
+#     frame-end average) encodes, differs from the frozen 2x2 stream, and
+#     strict-decodes sample-exact;
 #   * every stream passes tools/validate_dav2d.sh;
 #   * unsupported combinations are rejected by name (16x2, multi-ref,
 #     non-eighth-pel precision, frame-type modes).
@@ -178,6 +181,44 @@ for LAYOUT in 2x1 2x2 4x2 8x2; do
     fi
     ok "--tiles $LAYOUT: 6 frames strict-decoded, recon exact"
 done
+
+# --- multi-tile average-CDF (§8.2.4) -------------------------------------
+# Regression for BUG-INTER-001: the tiled writer used to reject the pair
+# after the keyframe payloads were already coded.
+AVG_COMMON=(--video --frames 3 --video-max-depth 3 --tiles 2x2)
+# BUG-INTER-001 pin: 2x2, 3 frames, frozen priming + §8.2.4/§7.5 adaptive.
+EXPECTED_AVG_TILES_MD5=6b395afc949bd7c45565629558fd38ff
+AVG_BASE="$TMP/avg_base.ivf"
+AVG_IVF="$TMP/avg.ivf"
+AVG_RECON="$TMP/avg.recon.y4m"
+AVG_DEC="$TMP/avg.decoded.y4m"
+AVG_LOG="$TMP/avg.log"
+if ! "$BIN" "$INPUT" -o "$AVG_BASE" "${AVG_COMMON[@]}" >"$TMP/avg_base.log" 2>&1; then
+    cat "$TMP/avg_base.log" >&2
+    fail "--tiles 2x2 avg-cdf: frozen encode failed"
+elif ! "$BIN" "$INPUT" -o "$AVG_IVF" "${AVG_COMMON[@]}" \
+        --avg-cdf --adaptive-cdf --video-recon "$AVG_RECON" >"$AVG_LOG" 2>&1; then
+    cat "$AVG_LOG" >&2
+    fail "--tiles 2x2 --avg-cdf --adaptive-cdf: encode failed"
+elif cmp -s "$AVG_BASE" "$AVG_IVF"; then
+    fail "--tiles 2x2 --avg-cdf stream is byte-identical to the frozen stream"
+elif ! "$ROOT/tools/validate_dav2d.sh" "$AVG_IVF" >"$TMP/avg.validate.log" 2>&1; then
+    cat "$TMP/avg.validate.log" >&2
+    fail "--tiles 2x2 --avg-cdf: validate_dav2d failed"
+elif ! "$DAV2D" -q -i "$AVG_IVF" -o "$AVG_DEC" --strict 1 --threads 1 2>"$AVG_LOG"; then
+    cat "$AVG_LOG" >&2
+    fail "--tiles 2x2 --avg-cdf: dav2d --strict 1 failed"
+elif ! compare_recon "$AVG_RECON" "$AVG_DEC" "2x2 avg-cdf"; then
+    fail "--tiles 2x2 --avg-cdf: decoded output differs from the encoder recon"
+else
+    avg_md5=$(md5_of "$AVG_IVF")
+    if [ "$avg_md5" != "$EXPECTED_AVG_TILES_MD5" ]; then
+        fail "--tiles 2x2 --avg-cdf MD5 moved: $avg_md5"
+    else
+        ok "--tiles 2x2 --avg-cdf: 3 frames strict-decoded, recon exact," \
+           "pin $avg_md5"
+    fi
+fi
 
 # --- rejections ----------------------------------------------------------
 expect_reject() {

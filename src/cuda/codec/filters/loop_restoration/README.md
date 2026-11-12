@@ -121,3 +121,11 @@ number is claimed here.
   `cfl_ds_filter_index` 0–3, stripe sourcing, two-class frame filters, mixed
   unit types on odd geometries, tile clipping, lossless/BRU, 16 randomized
   frames, validation and 720p timing.
+
+Fixtures must themselves be conforming, or the CPU oracle refuses them and
+there is nothing for the device output to match: `LoopRestorationSize[0]` is
+64/128/256 for luma (§5.18.7.11) and every internal tile boundary spacing must
+be a multiple of `maxPlaneRuSize = max(LoopRestorationSize[0],
+LoopRestorationSize[1] << max(SubsamplingX, SubsamplingY))` (§6.17.7.7
+`check_ru_size`). `run_case()` therefore reports a fixture rejection once
+instead of a launch error plus a bogus mismatch.
