@@ -236,8 +236,9 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     writer.put_bit(true);  // frame_is_inter = 1 -> INTER_FRAME
   }
   // long_term_id_plus_1 is absent (long_term_frame_id_bits == 0).
-  writer.put_bit(true);  // immediate_output_frame
-  // implicit_output_frame is absent because immediate_output_frame == 1.
+  // monotonic_output_order_flag == 1, so implicit_output_frame is always
+  // inferred 0; only immediate_output_frame is coded.
+  writer.put_bit(h.immediate_output_frame);  // immediate_output_frame
 
   if (key) {
     // OBU_CLOSED_LOOP_KEY + max_mlayer_id == 0 -> refresh_frame_flags =

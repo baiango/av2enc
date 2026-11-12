@@ -231,3 +231,28 @@ Other limitations: homogeneous 3060s assumed; content skew is synthetic;
 no thermal/clock model (a throttled GPU is a straggler on every frame); PCIe
 lane splitting is a configuration input, not probed; adaptive-CDF averaging
 with more than eight tiles is unvalidated.
+
+## CLI host contract (wave 3): `--gpu-plan <N>`
+
+The product CLI exposes the planning contract as a dry run:
+
+```sh
+av2enc testdata/shine_1920x1080_10f.y4m --gpu-plan 2
+av2enc tests/data/basic_640x360_1f.y4m --gpu-plan 2 --tiles 2x2
+```
+
+It reads the Y4M header for geometry/frame rate, picks the layout
+(`--tiles CxR` when given, otherwise `default_layout_for_gpus(N)`), prints the
+deterministic per-GPU tile sets, the host-transfer estimate and the per-GPU
+VRAM estimate, and exits without writing a stream. `--vram-cap <MiB>` overrides
+the planner's default compat8g emulation cap.
+
+The dry run never creates a CUDA context, allocates device memory, queries a
+device or claims a multi-GPU result; `measured=0` is printed explicitly.
+`--gpu-plan` is rejected when combined with `--video`, `--still`, `--still-gpu`
+or `--lossless`, and a grid the planner cannot represent is rejected by name.
+
+Gate: `src/pipeline/dispatch/gate_host_plan.sh --bin build-int/av2enc` checks
+the documented 1080p 1/2/4-GPU assignments, the 640x360 2-GPU default, an
+explicit `--tiles` override, the no-output/no-measurement properties and the
+rejection paths. Local result: 18/18 cases passed.

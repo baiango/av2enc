@@ -1,8 +1,9 @@
-# M1 tiled still writer (`src/encoder/m1/tiles_stream/`)
+# M1 tiled still writer (`src/pipeline/tiles/stream/`)
 
-Status: **reusable component + decoder gate**. It is not wired into
-`src/main.cpp`, the root `CMakeLists.txt`, the M1/M2 core, or the pipeline.
-Nothing outside this directory was modified.
+Status: **wired into the CLI as the opt-in `--tiles` path** (wave 3). It is
+called from `src/main.cpp` for `--tiles > 1x1` and linked into `av2enc_core`;
+the default 1x1 still uses the existing writer. The CLI gate is
+`gate_cli_tiles.sh` (below).
 
 This module turns the verified
 [`src/encoder/pipeline/tiled_still_gate.cpp`](../pipeline/tiled_still_gate.cpp)

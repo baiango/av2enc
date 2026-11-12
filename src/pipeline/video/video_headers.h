@@ -57,6 +57,10 @@ struct VideoFrameHeader {
   bool allow_high_precision_mv = true;
   // §5.18.2 refresh_frame_flags. The key frame refreshes all slots.
   std::uint32_t refresh_frame_flags = 1;
+  // §5.18.2 immediate_output_frame.  Clearing it codes a hidden picture, which
+  // a later show-existing-frame OBU can re-show (derive_sef_order_hint = 1).
+  // monotonic_output_order_flag = 1 means implicit_output_frame stays absent.
+  bool immediate_output_frame = true;
 };
 
 // sequence_header_obu() for single_picture_header_flag = 0, wrapped as an

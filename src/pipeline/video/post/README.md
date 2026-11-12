@@ -385,6 +385,41 @@ sequence level while disabling them per frame. That exercises the deblock
 needing per-block symbols. This is the tiled stream gate; the sample-exact M2
 core gate remains `src/encoder/m2/build_and_test.sh`.
 
+## CLI wiring (wave 3): `--rc cqp|crf|vbr`
+
+The product CLI now calls `VideoRateControl` from `src/main.cpp` for the
+`--video` path:
+
+```sh
+av2enc in.y4m -o out.ivf --video --frames 6 --rc crf --crf 32
+av2enc in.y4m -o out.ivf --video --frames 6 --rc vbr --bitrate 500
+```
+
+- Default `cqp` leaves `VideoOptions::frame_base_q_idx` empty, so the fixed
+  `--qp` stream is byte-identical (720p 6-frame pin
+  `c6d588647aacb2275dfaea41a00fb501`).
+- CRF maps the CRF value through the `rc::` linear calibration placeholder and
+  applies the resulting `base_q_idx` to every frame. `VideoOptions` gained an
+  optional per-frame `frame_base_q_idx` vector; the frame header and the
+  coefficient-CDF `qctx` slice both follow it.
+- VBR is two-pass: a statistics pass at `--qp` measures per-frame payload bits,
+  which calibrate the placeholder bitrate model (`estimate_frame_bits_model`
+  scaled by measured/modelled bits at `--qp`). The controller then bisects the
+  calibrated model per frame and the CLI reports the achieved `base_q_idx` and
+  payload bits for every frame.
+- The rate model remains a **placeholder**. On 6 frames of 720p `--rc vbr
+  --bitrate 500` the local gate measured 3.5 Mbps at QPs 123..140: the stream
+  decodes and the per-frame decisions are deterministic, but this is not a
+  bitrate-accuracy or quality result. CRF 50 / 32 / 10 measured 0.26 / 1.6 / 49.8
+  Mbps at qindex 203 / 130 / 41.
+- `--rc`, `--crf` and `--bitrate` require `--video`, and each value knob requires
+  its matching mode. Unsupported combinations are rejected by name.
+
+Gate: `src/pipeline/video/post/gate_cli_rc.sh --bin build-int/av2enc` checks the
+pinned default MD5, `--rc cqp` identity, strict decoding plus sample-exact
+reconstruction (`--video-recon`) for CRF/VBR, CRF monotonicity, VBR determinism
+and the rejection paths. Local result: 12/12 cases passed.
+
 ## Known limitations
 
 - CDEF/CCSO header flags are emitted and tested, but their tile symbols are not
@@ -398,3 +433,7 @@ core gate remains `src/encoder/m2/build_and_test.sh`.
   BD-rate or quality claim is made.
 - The tiled gate uses a constant synthetic source; it validates tile framing and
   the multi-tile header, not rate-distortion quality.
+- VBR is open-loop after calibration (no re-encode with measured pass-2 bits),
+  and the virtual buffer is fed the calibrated estimate rather than a later
+  measurement. A closed-loop second iteration is the next step if bitrate
+  accuracy becomes a requirement.

@@ -51,7 +51,7 @@ informational only. `GPU-UNWIRED` in `docs/gpu-coverage.md` therefore means
 | Global motion estimation | yes | `cuda/gme` | 81,300 checks incl. real 720p | no |
 | DRL reorder, MV stack build | yes | **CPU-ONLY** | per-block decision, not pixel work | no |
 | AMVD / JMVD / precision signalling | yes | **CPU-ONLY** | syntax/decision | no |
-| B-frames, SEF, leading, OLK/RAS, BRU | yes | **N/A** | container/ordering, no pixels | no |
+| B-frames, SEF, leading, OLK/RAS, BRU | yes | **N/A** | container/ordering, no pixels; OLK/LTR (`--video-long-term`, `--video-olk`), leading (`--video-leading`), SEF (`--video-sef`) and SWITCH/RAS (`--video-switch`, `--video-ras`) wired on the CPU path | no |
 
 ## Transform, quantisation, entropy
 

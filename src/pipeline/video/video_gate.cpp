@@ -299,12 +299,15 @@ bool run_phase(const char* name, const std::vector<OwnedFrame>& frames,
     std::cerr << "IVF WRITE FAIL: " << error << "\n";
     return false;
   }
-  for (std::size_t i = 0; i < sequence.units.size(); ++i) {
-    std::cout << "  frame " << i << ": bytes=" << sequence.frame_bytes[i]
+  for (std::size_t i = 0; i < sequence.frame_bytes.size(); ++i) {
+    std::cout << "  coded frame " << i << ": bytes=" << sequence.frame_bytes[i]
               << " tile=" << sequence.tile_bytes[i]
               << " inter=" << sequence.inter_blocks[i]
               << " intra=" << sequence.intra_blocks[i] << "\n";
   }
+  std::cout << "  units=" << sequence.units.size()
+            << " coded=" << sequence.frame_bytes.size()
+            << " output=" << sequence.recon.size() << "\n";
   {
     std::uint64_t total_bytes = 0;
     for (const std::uint32_t bytes : sequence.frame_bytes) {
@@ -331,7 +334,7 @@ bool run_phase(const char* name, const std::vector<OwnedFrame>& frames,
 
   const std::string decoded_path = out_path + ".decoded.y4m";
   const std::string command = dav2d + " -q -i " + out_path + " -o " +
-                              decoded_path + " --threads 0";
+                              decoded_path + " --strict 1 --threads 1";
   std::cout << "  decode: " << command << "\n";
   const int rc = std::system(command.c_str());
   if (rc != 0) {
@@ -353,8 +356,31 @@ bool run_phase(const char* name, const std::vector<OwnedFrame>& frames,
     std::cerr << "\n";
     return false;
   }
+  // Output/display order: every coded picture that the header marks as output
+  // must appear exactly once, in coded order; hidden pictures must be absent.
+  std::int32_t expected_output = 0;
+  for (std::size_t i = 0; i < sequence.frame_output_index.size(); ++i) {
+    const std::int32_t index = sequence.frame_output_index[i];
+    if (index < 0) continue;
+    if (index != expected_output) {
+      std::cerr << "OUTPUT ORDER FAIL: coded frame " << i << " maps to "
+                << index << ", expected " << expected_output << "\n";
+      return false;
+    }
+    ++expected_output;
+  }
+  if (expected_output != static_cast<std::int32_t>(sequence.recon.size()) ||
+      static_cast<std::uint32_t>(compare.frames) !=
+          static_cast<std::uint32_t>(sequence.recon.size())) {
+    std::cerr << "OUTPUT COUNT FAIL: coded="
+              << sequence.frame_output_index.size()
+              << " expected outputs=" << expected_output
+              << " recon=" << sequence.recon.size()
+              << " decoded=" << compare.frames << "\n";
+    return false;
+  }
   std::cout << "  PASS: " << compare.frames
-            << " frame(s) decoded, recon exact\n";
+            << " output frame(s) decoded, recon exact, display order exact\n";
   return true;
 }
 
@@ -422,6 +448,24 @@ int main(int argc, char** argv) {
       }
     } else if (arg == "--drl-reorder") {
       options.drl_reorder = true;
+    } else if (arg == "--long-term") {
+      options.long_term = true;
+    } else if (arg == "--olk") {
+      options.long_term = true;
+      options.olk = true;
+    } else if (arg == "--leading" && i + 1 < argc) {
+      const int value = std::atoi(argv[++i]);
+      if (value < 1 || value > 7) {
+        std::cerr << "--leading must be in [1, 7]\n";
+        return 2;
+      }
+      options.leading_frames = value;
+    } else if (arg == "--sef") {
+      options.sef = true;
+    } else if (arg == "--switch") {
+      options.ra_switch = true;
+    } else if (arg == "--ras") {
+      options.ras = true;
     } else if (arg == "--trace") {
       options.trace = true;
     } else if (arg == "--help") {
@@ -431,7 +475,8 @@ int main(int argc, char** argv) {
                    "[--inter-residual] [--force-inter-residual] "
                    "[--min-block N] [--max-depth N] [--qp N] [--refs N] "
                    "[--subpel-eighth] [--mv-precision eighth|quarter|half] "
-                   "[--drl-reorder] [--trace]\n";
+                   "[--drl-reorder] [--long-term] [--olk] [--leading N] "
+                   "[--sef] [--switch] [--ras] [--trace]\n";
       return 0;
     } else {
       std::cerr << "unknown argument: " << arg << "\n";
@@ -454,6 +499,56 @@ int main(int argc, char** argv) {
   if (frames_owned.empty()) {
     std::cerr << "no frames\n";
     return 2;
+  }
+
+  // Frame-type phases.  These change the stream shape, so they replace the
+  // historical default phases rather than being appended to them.
+  if (options.olk || options.long_term || options.leading_frames > 0 ||
+      options.ra_switch || options.ras) {
+    bool frames_ok = true;
+    if (options.ras) {
+      if (frames_owned.size() < 3) {
+        std::cerr << "--ras needs at least 3 input frames\n";
+        return 2;
+      }
+      std::vector<OwnedFrame> three(frames_owned.begin(),
+                                    frames_owned.begin() + 3);
+      frames_ok = run_phase("CLK + SWITCH + RAS", three, options,
+                            out_path + ".ras.ivf", true);
+    } else if (options.ra_switch) {
+      if (frames_owned.size() < 2) {
+        std::cerr << "--switch needs at least 2 input frames\n";
+        return 2;
+      }
+      std::vector<OwnedFrame> two_frames(frames_owned.begin(),
+                                         frames_owned.begin() + 2);
+      frames_ok = run_phase("CLK + SWITCH", two_frames, options,
+                            out_path + ".switch.ivf", true);
+    } else if (options.olk) {
+      if (frames_owned.size() < 4) {
+        std::cerr << "--olk needs at least 4 input frames\n";
+        return 2;
+      }
+      std::vector<OwnedFrame> four(frames_owned.begin(),
+                                   frames_owned.begin() + 4);
+      frames_ok = run_phase("open-loop key GOP", four, options,
+                            out_path + ".olk.ivf", true);
+    } else if (options.leading_frames > 0) {
+      if (frames_owned.size() <
+          static_cast<std::size_t>(options.leading_frames + 2)) {
+        std::cerr << "--leading " << options.leading_frames
+                  << " needs at least " << options.leading_frames + 2
+                  << " input frames\n";
+        return 2;
+      }
+      frames_ok = run_phase("leading pictures", frames_owned, options,
+                            out_path + ".leading.ivf", true);
+    } else {
+      frames_ok = run_phase("long-term references", frames_owned, options,
+                            out_path + ".longterm.ivf", true);
+    }
+    std::cout << (frames_ok ? "M2 GATE PASS" : "M2 GATE FAIL") << "\n";
+    return frames_ok ? 0 : 1;
   }
 
   // Phase 1: exactly two frames.

@@ -138,9 +138,25 @@ add_library(av2enc_core STATIC
   src/codec/inter/drl_reorder/drl_reorder.cpp
   src/codec/inter/drl_reorder/video_stack_adapter.cpp
   src/codec/inter/mv_precision/mv_precision.cpp
+  # Long-term references, open-loop keys and the reference pool (opt-in,
+  # --video-long-term / --video-olk).
+  src/codec/inter/longterm/longterm_headers.cpp
+  src/codec/inter/longterm/longterm_pool.cpp
+  src/codec/inter/longterm/longterm_stream.cpp
+  # Leading pictures, output suppression and the open-GOP plan (opt-in,
+  # --video-leading).
+  src/codec/inter/leading/leading.cpp
+  # Show-existing-frame syntax and output bookkeeping (opt-in, --video-sef).
+  src/codec/inter/sef/sef.cpp
+  # SWITCH / RAS frame syntax, planning and validation (opt-in,
+  # --video-switch / --video-ras).
+  src/codec/inter/random_access/random_access.cpp
   src/pipeline/video/video_headers.cpp
   src/pipeline/video/video_syntax.cpp
   src/pipeline/video/video_frame.cpp
+  # Wave-3 frame types (long-term/OLK, leading, SEF, SWITCH/RAS).  Guards the
+  # video_frame.cpp reference so standalone component gates stay linkable.
+  src/pipeline/video/video_frames.cpp
   src/codec/entropy/av2/av2_entropy.cpp
   # delta-Q / segmentation syntax (neutral, opt-in still integration).
   src/codec/entropy/deltaq/still/deltaq.cpp
@@ -156,6 +172,10 @@ add_library(av2enc_core STATIC
   src/cuda/pipeline/still/cdef/still_cdef.cpp)
 target_include_directories(av2enc_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(av2enc_core PUBLIC cxx_std_20)
+# Enable the wave-3 frame-type dispatch in video_frame.cpp.  Standalone tool
+# gate scripts compile video_frame.cpp without this define and keep the plain
+# path only, so they do not need the inter module sources.
+target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_FRAMES=1)
 av2enc_apply_warnings(av2enc_core)
 # The CPU reference must be bit-identical across compilers and platforms. The
 # M0/M1 forward transforms use binary64; FMA contraction changes coefficients
@@ -298,6 +318,24 @@ if(NOT AV2ENC_HAVE_STILL_GPU)
     src/formats/format.cpp
     src/cuda/pipeline/still/hbd/hbd_cpu.cpp)
 endif()
+
+# Multi-tile stills (--tiles): geometry planner, tile-group framing and the
+# tiled writer.  Opt-in; the 1x1 default still stream is unchanged.
+target_sources(av2enc_core PRIVATE
+  src/pipeline/tiles/tile_layout.cpp
+  src/pipeline/tiles/tile_group.cpp
+  src/pipeline/tiles/stream/tiles_stream.cpp)
+
+# Per-frame rate control for --video (--rc crf|vbr).  The default fixed-QP path
+# does not call into these; they are always linked so the CPU gate can build.
+target_sources(av2enc_core PRIVATE
+  src/codec/rate/rc/rc.cpp
+  src/pipeline/video/post/rc_adapter.cpp)
+
+# Host-only multi-GPU scheduling contract (--gpu-plan). Pure planning: no CUDA,
+# no allocations.
+target_sources(av2enc_core PRIVATE
+  src/pipeline/dispatch/planner.cpp)
 
 add_executable(av2enc src/main.cpp)
 target_link_libraries(av2enc PRIVATE av2enc_core)

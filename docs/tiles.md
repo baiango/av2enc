@@ -1,7 +1,11 @@
-# Multi-tile coding (next stage; M0 stays 1x1)
+# Multi-tile coding (opt-in CLI path; default stays 1x1)
 
-Status: **design notes for the stage after M0**. M0 ships a single tile
-(`TileCols = TileRows = 1`). Nothing in this document changes `docs/minimal-bitstream.md`.
+Status: **wired behind `--tiles`.** The default `--still`, `--still-gpu`,
+basic and `--video` streams are single-tile and byte-identical to before. The
+CLI accepts `--tiles <N|CxR>` (default 1x1) and routes multi-tile stills
+through `src/pipeline/tiles/stream/tiles_stream.cpp`. The geometry planner and
+tile-group writer below are the same components. Multi-tile requires
+`--no-deblock`; see §10 for the exact gate matrix.
 Everything below is read off the AV2 v1.0.0 specification (`spec/AV2_Spec_v1.0.0.pdf`,
 SHA-256 `e9916f09…b533f`); section numbers are given for every claim.
 
@@ -395,10 +399,9 @@ Differences, exhaustively:
 
 ## 9. Uncertainties / TODO
 
-- **dav2d CLI and multi-tile behaviour**: the project's pinned build (`f9dafbc`) is
-  reported to decode 1x1, 2x1, 2x2, 4x2 and 8x2 layouts, but this has not been
-  verified in this repo. TODO: run `tools/validate_dav2d.sh` on a 2x2 stream and
-  confirm the decoded YUV matches the 1x1 encode of the same frame.
+- **dav2d CLI and multi-tile behaviour**: verified with the pinned `f9dafbc`
+  build for 1x1, 2x1, 2x2, 4x2, 8x2 and (1080p) 16x2; decoded Y/U/V is
+  byte-identical to the encoder reconstruction in every case. See §10.
 - **8-row/8-column layouts at 720p**: `sbRows = 12` →
   `maxLog2TileRows = tile_log2(1, 12) = 4` (up to 16 rows), `sbCols = 20` →
   `maxLog2TileCols = tile_log2(1, 20) = 5` (up to 32 columns). 8x2 is within both
@@ -410,3 +413,36 @@ Differences, exhaustively:
 - **`numLog2` averaging with >8 tiles**: only the first 8 tiles contribute to
   `Saved*`. If we ever add a second frame, its CDFs depend on that subset. Unknown
   whether dav2d implements the `TileNum < 1<<numLog2` guard correctly — TODO test.
+- **Video tiles are not wired.** `--tiles` is rejected for `--video`: the wave-2
+  P-frame writer is whole-frame. Next step is the `post::assemble_video_tiled_frame`
+  splitter, which already exists in `src/pipeline/video/post/tiled_frame.cpp`.
+
+---
+
+## 10. CLI integration (wave 3)
+
+```sh
+av2enc in.y4m -o out.ivf --still --no-deblock --tiles 2x2 [--recon recon.y4m]
+```
+
+- `--tiles` accepts a total tile count (`2/4/8/16/32`) or an explicit grid
+  (`2x1/2x2/4x2/8x2/16x2`). `--tiles 1x1` is the default and keeps the
+  single-tile writer, byte-identically.
+- Multi-tile uses `tiles_stream`, which encodes each tile as a standalone M1
+  still picture: fresh CDF (`init_symbol`), tile-local superblock origin, clear
+  above/left contexts, tile-bounded prediction availability. Payloads are
+  interleaved with `le(TileSizeBytes) tile_size_minus_1` fields in raster order
+  and the last size is implied by the OBU length.
+- `--tiles` is rejected with a named error when combined with `--video`,
+  `--still-gpu`, `--lossless`, `--bit-depth 10`, `--chroma`, `--adaptive-cdf`,
+  any M1 tool flag, or `--no-deblock` missing. Deblocking is required to be off
+  because the pinned decoder filters across shared tile edges, so a deblocked
+  multi-tile reconstruction cannot be sample-exact (see the module README).
+- `--recon` writes the pasted per-tile reconstruction as a one-frame Y4M.
+
+Gate: `src/pipeline/tiles/stream/gate_cli_tiles.sh --bin build-int/av2enc`
+runs `dav2d --strict 1 --threads 1` on 640x360 (2x1, 2x2, 4x2, 8x2) and 1080p
+(2x1, 2x2, 4x2, 8x2, 16x2), requires the decoded planes to equal `--recon`
+byte-for-byte, and re-checks the default `--still` MD5, `--tiles 1x1` identity
+and the rejection paths. Local result: 17/17 cases passed.
+

@@ -43,7 +43,7 @@ if [ -z "$DAV2D" ]; then
   exit 127
 fi
 
-"$DAV2D" -q -i "${OUT}.ivf" -o "${OUT}.decoded.y4m" --threads 1
+"$DAV2D" -q -i "${OUT}.ivf" -o "${OUT}.decoded.y4m" --strict 1 --threads 1
 
 python3 - "${OUT}.recon.y4m" "${OUT}.decoded.y4m" <<'PY'
 import sys

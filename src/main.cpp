@@ -4,6 +4,9 @@
 #include "formats/format_y4m.h"
 #include "pipeline/still/basic_encoder.h"
 #include "pipeline/still/still_encoder.h"
+#include "pipeline/tiles/stream/tiles_stream.h"
+#include "pipeline/video/post/rc_adapter.h"
+#include "pipeline/dispatch/planner.h"
 #include "core/io/ivf.h"
 #include "core/io/y4m.h"
 #include "pipeline/video/video_frame.h"
@@ -21,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #if AV2ENC_HAVE_CUDA
@@ -150,16 +154,36 @@ struct Options {
   int video_mv_precision = 0;  // 0 = 1/8, 1 = 1/4, 2 = 1/2 pel
   bool video_drl_reorder = false;
   bool video_drl_reorder_always = false;
+  bool video_long_term = false;
+  bool video_olk = false;
+  int video_leading = 0;  // 0 = off
+  bool video_sef = false;
+  bool video_switch = false;
+  bool video_ras = false;
   bool video_force_single = false;
   int video_min_block = 16;
   int video_max_depth = 4;
   int video_me_range = 16;
   bool video_trace = false;
   std::filesystem::path video_recon;
+  // Per-frame rate control for --video. Default "cqp" keeps the fixed --qp
+  // stream byte-identical; crf/vbr plan a base_q_idx per frame.
+  std::string rc_mode = "cqp";
+  bool rc_given = false;
+  double rc_crf = 32.0;
+  bool rc_crf_given = false;
+  double rc_bitrate_kbps = 0.0;
+  bool rc_bitrate_given = false;
   std::uint64_t vram_cap_mib = 0;  // 0 = largest reservation the device can serve
   int bit_depth = 8;               // 8 (default) or 10; 12-bit is not signalable
   std::string chroma = "420";      // 420 (default), 422, 444, 400
   std::filesystem::path recon;     // optional encoder-reconstruction dump
+  // Multi-tile stills. "1x1" (default) keeps the single-tile writer; every
+  // other value selects the tiled writer and requires --no-deblock.
+  std::string tiles = "1x1";
+  // Host-only multi-GPU tile-plan dump. 0 = off (the default); never allocates
+  // device memory and never writes a stream.
+  int gpu_plan = 0;
   bool help = false;
 };
 
@@ -212,6 +236,10 @@ void print_usage(std::ostream& out) {
          "                       (intra frames still code 128x128; default off)\n"
          "  --still-ext-partitions  Still: HORZ_3/VERT_3 and uneven 4-way\n"
          "                       extended partitions (CPU-only; default off)\n"
+         "  --tiles <N|CxR>      Still: uniform tile grid, default 1x1. Accepts a\n"
+         "                       tile count (2/4/8/16/32) or an explicit grid\n"
+         "                       (2x1/2x2/4x2/8x2/16x2). Requires --still and\n"
+         "                       --no-deblock; 8-bit 4:2:0 only\n"
          "  --still-segmentation    M1: signal a neutral 8-segment table (opt-in)\n"
          "  --still-delta-q         M1: signal neutral per-superblock delta-Q (opt-in)\n"
          "  --still-content-interpretation  M1: emit a default content interpretation OBU\n"
@@ -246,9 +274,26 @@ void print_usage(std::ostream& out) {
          "  --video-subpel-eighth   Video: add the 1/8-pel ME refinement stage\n"
          "  --video-mv-precision P  Video: eighth|quarter|half frame MV precision\n"
          "  --video-inter-residual  Video: code a quantised inter residual\n"
+         "  --video-long-term       Video: signal long-term reference ids and tag\n"
+         "                       the key frame as LongTermId 0\n"
+         "  --video-olk             Video: open random access GOP (CLK, open-loop\n"
+         "                       key, P2, P3; needs exactly 4 input frames)\n"
+         "  --video-leading <N>     Video: N open-GOP leading pictures (needs at\n"
+         "                       least N+2 input frames)\n"
+         "  --video-sef             Video: re-show the last picture with a\n"
+         "                       show-existing-frame OBU (last picture coded hidden)\n"
+         "  --video-switch          Video: CLK + OBU_SWITCH (exactly 2 input frames)\n"
+         "  --video-ras             Video: CLK + OBU_SWITCH + OBU_RAS_FRAME with a\n"
+         "                       long-term reference (exactly 3 input frames)\n"
          "  --video-drl-reorder     Video: enable normative DRL reordering\n"
          "  --video-drl-reorder-always  Video: DRL_REORDER_ALWAYS (implies reorder)\n"
-         "  --vram-cap <MiB>     Upper bound for the CUDA arena; default 0 takes\n"
+         "  --rc <mode>          Video: per-frame rate control, cqp|crf|vbr\n"
+         "                       (default cqp = the fixed --qp stream)\n"
+         "  --crf <V>            Video --rc crf: CRF value 0..63 (default 32;\n"
+         "                       linear placeholder mapping to base_q_idx)\n"
+         "  --bitrate <kbps>     Video --rc vbr: target bitrate in kbps. VBR runs\n"
+         "                       a statistics pass at --qp, then plans one\n"
+         "                       base_q_idx per frame\n"         "  --vram-cap <MiB>     Upper bound for the CUDA arena; default 0 takes\n"
          "                       the largest reservation the device can serve\n"
          "  -h, --help           Show this help\n"
          "\n"
@@ -264,8 +309,12 @@ void print_usage(std::ostream& out) {
          "  --still-delta-q-res N   delta_q_res for --still-delta-q, 0..3 (default 0)\n"
          "  --still-qm-level L     QM default matrix level 0..14 (default 3)\n"
          "  --still-ist-scale S    lambda sse_scale for --still-ist (0.125)\n"
+         "  --gpu-plan <N>         Print the host-only multi-GPU tile plan for N\n"
+         "                       GPUs (1..8) and exit: assignment, transfer and\n"
+         "                       VRAM estimates; no device memory, no stream\n"
          "  --recon <file>         Dump the encoder reconstruction as Y4M (format\n"
-         "                       paths only; used by the format decoder gate)\n"
+         "                       paths and multi-tile --tiles stills; used by the\n"
+         "                       decoder gates)\n"
          "  --video-recon <file>   Video: write the encoder reconstruction Y4M\n"
          "  --video-force-single   Video: one 64x64 leaf per superblock\n"
          "  --video-min-block <N>  Video: minimum partition block size (default 16)\n"
@@ -316,6 +365,39 @@ bool parse_double(std::string_view text, double& value) {
   }
   value = parsed;
   return true;
+}
+
+// --tiles accepts a total tile count or an explicit cols x rows grid and
+// canonicalises it to "CxR". The tiled writer only implements the verified
+// uniform layouts; anything else is rejected instead of being rounded to a
+// different grid.
+bool canonical_tile_layout(std::string_view text, std::string& canonical) {
+  struct Alias {
+    std::string_view name;
+    std::string_view canonical;
+  };
+  static constexpr Alias kAliases[] = {
+      {"1", "1x1"},   {"1x1", "1x1"}, {"2", "2x1"},   {"2x1", "2x1"},
+      {"4", "2x2"},   {"2x2", "2x2"}, {"8", "4x2"},   {"4x2", "4x2"},
+      {"16", "8x2"},  {"8x2", "8x2"}, {"32", "16x2"}, {"16x2", "16x2"},
+  };
+  for (const Alias& alias : kAliases) {
+    if (text == alias.name) {
+      canonical = alias.canonical;
+      return true;
+    }
+  }
+  return false;
+}
+
+av2enc::tiles::TileLayoutPreset tile_preset_from_layout(std::string_view canonical) {
+  using av2enc::tiles::TileLayoutPreset;
+  if (canonical == "2x1") return TileLayoutPreset::k2x1;
+  if (canonical == "2x2") return TileLayoutPreset::k2x2;
+  if (canonical == "4x2") return TileLayoutPreset::k4x2;
+  if (canonical == "8x2") return TileLayoutPreset::k8x2;
+  if (canonical == "16x2") return TileLayoutPreset::k16x2;
+  return TileLayoutPreset::k1x1;
 }
 
 #if AV2ENC_HAVE_CUDA
@@ -391,6 +473,35 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--still-gpu") {
       options.still_gpu = true;
+      continue;
+    }
+
+    if (argument == "--tiles") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--tiles'";
+        return ParseStatus::kError;
+      }
+      std::string canonical;
+      if (!canonical_tile_layout(argv[++i], canonical)) {
+        error = "--tiles must be 2/4/8/16/32 or one of 1x1, 2x1, 2x2, 4x2, "
+                "8x2, 16x2";
+        return ParseStatus::kError;
+      }
+      options.tiles = canonical;
+      continue;
+    }
+
+    if (argument == "--gpu-plan") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--gpu-plan'";
+        return ParseStatus::kError;
+      }
+      int gpus = 0;
+      if (!parse_int(argv[++i], gpus) || gpus < 1 || gpus > 8) {
+        error = "--gpu-plan must be an integer in [1, 8]";
+        return ParseStatus::kError;
+      }
+      options.gpu_plan = gpus;
       continue;
     }
 
@@ -775,6 +886,46 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-long-term") {
+      options.video_long_term = true;
+      continue;
+    }
+
+    if (argument == "--video-olk") {
+      options.video_long_term = true;
+      options.video_olk = true;
+      continue;
+    }
+
+    if (argument == "--video-leading") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-leading'";
+        return ParseStatus::kError;
+      }
+      int value = 0;
+      if (!parse_int(argv[++i], value) || value < 1 || value > 7) {
+        error = "--video-leading must be an integer in [1, 7]";
+        return ParseStatus::kError;
+      }
+      options.video_leading = value;
+      continue;
+    }
+
+    if (argument == "--video-sef") {
+      options.video_sef = true;
+      continue;
+    }
+
+    if (argument == "--video-switch") {
+      options.video_switch = true;
+      continue;
+    }
+
+    if (argument == "--video-ras") {
+      options.video_ras = true;
+      continue;
+    }
+
     if (argument == "--video-recon") {
       if (i + 1 >= argc) {
         error = "missing value after '--video-recon'";
@@ -786,6 +937,51 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--video-force-single") {
       options.video_force_single = true;
+      continue;
+    }
+
+    if (argument == "--rc") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--rc'";
+        return ParseStatus::kError;
+      }
+      const std::string value = argv[++i];
+      if (value != "cqp" && value != "crf" && value != "vbr") {
+        error = "--rc must be cqp, crf or vbr";
+        return ParseStatus::kError;
+      }
+      options.rc_mode = value;
+      options.rc_given = true;
+      continue;
+    }
+
+    if (argument == "--crf") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--crf'";
+        return ParseStatus::kError;
+      }
+      double value = 0.0;
+      if (!parse_double(argv[++i], value) || value < 0.0 || value > 63.0) {
+        error = "--crf must be a number in [0, 63]";
+        return ParseStatus::kError;
+      }
+      options.rc_crf = value;
+      options.rc_crf_given = true;
+      continue;
+    }
+
+    if (argument == "--bitrate") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--bitrate'";
+        return ParseStatus::kError;
+      }
+      double value = 0.0;
+      if (!parse_double(argv[++i], value) || value <= 0.0) {
+        error = "--bitrate must be a positive number of kbps";
+        return ParseStatus::kError;
+      }
+      options.rc_bitrate_kbps = value;
+      options.rc_bitrate_given = true;
       continue;
     }
 
@@ -905,7 +1101,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     error = "no input file specified";
     return ParseStatus::kError;
   }
-  if (options.output.empty()) {
+  if (options.output.empty() && options.gpu_plan == 0) {
     error = "no output file specified (use -o <output.ivf>)";
     return ParseStatus::kError;
   }
@@ -934,10 +1130,56 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       error = "--b-frames is not wired into the video path yet";
       return ParseStatus::kError;
     }
+    if (options.video_olk && options.video_refs != 1) {
+      error = "--video-olk needs --video-refs 1";
+      return ParseStatus::kError;
+    }
+    if ((options.video_long_term || options.video_olk) &&
+        options.video_mv_precision != 0) {
+      error = "--video-long-term/--video-olk need eighth-pel MV precision";
+      return ParseStatus::kError;
+    }
+    if (options.video_leading != 0) {
+      if (options.video_long_term || options.video_olk) {
+        error = "--video-leading cannot be combined with --video-long-term or "
+                "--video-olk";
+        return ParseStatus::kError;
+      }
+      if (options.video_refs != 1 || options.video_mv_precision != 0) {
+        error = "--video-leading needs --video-refs 1 and eighth-pel MV "
+                "precision";
+        return ParseStatus::kError;
+      }
+    }
+    if (options.video_sef &&
+        (options.video_long_term || options.video_olk ||
+         options.video_leading != 0)) {
+      error = "--video-sef cannot be combined with the long-term or leading "
+              "frame-type modes";
+      return ParseStatus::kError;
+    }
+    const int frame_modes =
+        ((options.video_long_term || options.video_olk) ? 1 : 0) +
+        (options.video_leading != 0 ? 1 : 0) + (options.video_sef ? 1 : 0) +
+        (options.video_switch ? 1 : 0) + (options.video_ras ? 1 : 0);
+    if (frame_modes > 1) {
+      error = "select only one frame-type mode: --video-long-term/--video-olk, "
+              "--video-leading, --video-sef, --video-switch or --video-ras";
+      return ParseStatus::kError;
+    }
+    if ((options.video_switch || options.video_ras) &&
+        (options.video_refs != 1 || options.video_mv_precision != 0)) {
+      error = "--video-switch/--video-ras need --video-refs 1 and eighth-pel "
+              "MV precision";
+      return ParseStatus::kError;
+    }
   } else {
     if (options.p_frames != 0 || options.video_refs != 1 ||
         options.video_inter_residual || options.video_subpel_eighth ||
         options.video_mv_precision != 0 || options.video_drl_reorder ||
+        options.video_long_term || options.video_olk ||
+        options.video_leading != 0 || options.video_sef ||
+        options.video_switch || options.video_ras ||
         options.video_force_single || options.video_trace ||
         !options.video_recon.empty()) {
       error = "video options require --video";
@@ -1003,11 +1245,39 @@ struct OwnedVideoFrame {
   std::vector<std::uint8_t> v;
 };
 
+// One-frame Y4M dump for the tiled still path (8-bit 4:2:0). Comparing this
+// with the decoded frame is how the --tiles gate proves sample-exact
+// reconstruction; the CLI itself only writes the bitstream.
+bool write_still_recon_y4m(const std::filesystem::path& path,
+                           const av2enc::Y4mHeader& header, int width, int height,
+                           const std::vector<std::uint8_t>& y,
+                           const std::vector<std::uint8_t>& u,
+                           const std::vector<std::uint8_t>& v, std::string& error) {
+  std::ofstream out(path, std::ios::binary);
+  if (!out) {
+    error = "cannot open --recon output '" + path.string() + "'";
+    return false;
+  }
+  out << "YUV4MPEG2 W" << width << " H" << height << " F" << header.fps_num << ":"
+      << header.fps_den << " Ip A0:0 C420\nFRAME\n";
+  out.write(reinterpret_cast<const char*>(y.data()),
+            static_cast<std::streamsize>(y.size()));
+  out.write(reinterpret_cast<const char*>(u.data()),
+            static_cast<std::streamsize>(u.size()));
+  out.write(reinterpret_cast<const char*>(v.data()),
+            static_cast<std::streamsize>(v.size()));
+  if (!out) {
+    error = "failed while writing --recon output";
+    return false;
+  }
+  return true;
+}
+
+
 bool write_video_recon_y4m(const std::filesystem::path& path,
                            const av2enc::Y4mHeader& header,
                            const std::vector<av2enc::video::VideoReconFrame>& recon,
-                           std::string& error) {
-  std::ofstream out(path, std::ios::binary);
+                           std::string& error) {  std::ofstream out(path, std::ios::binary);
   if (!out) {
     error = "cannot open --video-recon output '" + path.string() + "'";
     return false;
@@ -1028,6 +1298,195 @@ bool write_video_recon_y4m(const std::filesystem::path& path,
     return false;
   }
   return true;
+}
+
+// Two-pass calibration hook for --rc vbr: scales the built-in placeholder
+// bitrate model so that its estimate at the pass-1 QP matches the measured
+// pass-1 payload bits. The controller then bisects the calibrated model. This
+// corrects the model's absolute scale, which is documented as a placeholder.
+struct ScaledBitrateModel {
+  double scale = 1.0;
+};
+
+double scaled_bitrate_estimate(void* context,
+                               const av2enc::rc::FrameComplexity& complexity,
+                               int base_q_idx) {
+  const auto* model = static_cast<const ScaledBitrateModel*>(context);
+  return av2enc::rc::estimate_frame_bits_model(complexity, base_q_idx) *
+         model->scale;
+}
+
+// Per-frame base_q_idx planning for --video. Empty output means the historical
+// fixed --qp stream (the default). CRF and VBR go through the shared rate
+// controller and the M2 adapter so the frame header and the coefficient-CDF
+// slice always agree. VBR runs a statistics pass at --qp first: those payload
+// bits calibrate the placeholder bitrate model, which is this encoder's
+// two-pass step.
+bool plan_video_rate_control(
+    const Options& options, const av2enc::Y4mHeader& y4m,
+    const std::vector<av2enc::video::VideoInputFrame>& inputs,
+    const std::vector<std::uint32_t>* pass1_payload_bits,
+    std::vector<std::uint8_t>* frame_qp, std::string& error) {
+  frame_qp->clear();
+  if (options.rc_mode == "cqp") {
+    return true;
+  }
+  if (options.rc_mode == "vbr" && (y4m.fps_num == 0 || y4m.fps_den == 0)) {
+    error = "--rc vbr needs a non-zero frame rate in the Y4M header";
+    return false;
+  }
+
+  const int width = static_cast<int>(inputs[0].width);
+  const int height = static_cast<int>(inputs[0].height);
+  const std::vector<std::uint8_t> zero_plane(
+      static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
+
+  std::vector<av2enc::rc::FrameComplexity> complexity(inputs.size());
+  for (std::size_t i = 0; i < inputs.size(); ++i) {
+    std::span<const std::uint8_t> predicted(zero_plane);
+    if (i > 0) {
+      predicted = inputs[i - 1].y;  // previous source = motion-free inter proxy
+    }
+    complexity[i] = av2enc::rc::complexity_from_u8_planes(
+        inputs[i].y, predicted, width, height, width);
+    complexity[i].intra_fraction = i == 0 ? 1.0 : 0.0;
+  }
+
+  av2enc::video::post::VideoRcConfig rc_config;
+  rc_config.depth = av2enc::fmt::BitDepth::k8;
+  rc_config.policy.min_base_q_idx = av2enc::rc::kMinQIndex;
+  rc_config.policy.max_base_q_idx = av2enc::rc::kMaxQIndex;
+  ScaledBitrateModel model_scale;
+  if (options.rc_mode == "crf") {
+    rc_config.rc.mode = av2enc::rc::RateControlMode::kCrf;
+    rc_config.rc.crf.crf = options.rc_crf;
+  } else {
+    rc_config.rc.mode = av2enc::rc::RateControlMode::kVbr;
+    rc_config.rc.vbr.target_bitrate_bps = options.rc_bitrate_kbps * 1000.0;
+    rc_config.rc.vbr.frame_rate_num = y4m.fps_num;
+    rc_config.rc.vbr.frame_rate_den = y4m.fps_den;
+    if (pass1_payload_bits != nullptr) {
+      // Calibrate against the pass-1 payload at the fixed --qp.
+      double measured = 0.0;
+      double modelled = 0.0;
+      for (std::size_t i = 0; i < complexity.size(); ++i) {
+        measured += static_cast<double>((*pass1_payload_bits)[i]);
+        modelled += av2enc::rc::estimate_frame_bits_model(
+            complexity[i], static_cast<int>(options.qp));
+      }
+      if (modelled > 0.0 && std::isfinite(measured)) {
+        model_scale.scale =
+            std::clamp(measured / modelled, 1.0e-3, 1.0e3);
+      }
+      rc_config.rc.estimator.context = &model_scale;
+      rc_config.rc.estimator.estimate = &scaled_bitrate_estimate;
+    }
+  }
+
+  av2enc::video::post::VideoRateControl rc;
+  if (!rc.configure(rc_config, &error)) {
+    return false;
+  }
+
+  frame_qp->resize(inputs.size());
+  for (std::size_t i = 0; i < inputs.size(); ++i) {
+    av2enc::video::post::VideoFrameQp qp;
+    if (!rc.begin_frame(complexity[i], qp, &error)) {
+      return false;
+    }
+    (*frame_qp)[i] = static_cast<std::uint8_t>(qp.base_q_idx);
+    // Feed the controller's own (calibrated) estimate back into the virtual
+    // buffer: the encoding pass is open-loop, so there is no later measurement.
+    const std::int64_t actual_bits =
+        static_cast<std::int64_t>(std::llround(qp.estimated_bits));
+    if (!rc.end_frame(actual_bits, &error)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Host-only multi-GPU planning dump (--gpu-plan). It reads the Y4M header for
+// geometry/frame rate, plans the tile layout and the deterministic per-GPU
+// assignment, prints the contract and exits. No CUDA context, allocation,
+// kernel, stream or device query happens here, and no IVF is written.
+int run_gpu_plan(const Options& options) {
+  std::string error;
+  av2enc::Y4mReader reader(options.input);
+  if (!reader.open(error)) {
+    std::cerr << "av2enc: " << error << "\n";
+    return 1;
+  }
+  const av2enc::Y4mHeader& y4m = reader.header();
+  if (y4m.width % 2U != 0U || y4m.height % 2U != 0U) {
+    std::cerr << "av2enc: error: --gpu-plan requires even dimensions, got "
+              << y4m.width << "x" << y4m.height << "\n";
+    return 1;
+  }
+
+  const av2enc::tiles::TileLayoutPreset preset =
+      options.tiles != "1x1"
+          ? tile_preset_from_layout(options.tiles)
+          : av2enc::multigpu::default_layout_for_gpus(options.gpu_plan);
+  const av2enc::tiles::TileLayoutDims dims = av2enc::tiles::preset_dims(preset);
+  const av2enc::tiles::LayoutResult planned = av2enc::tiles::plan_tile_layout(
+      static_cast<int>(y4m.width), static_cast<int>(y4m.height), dims.cols,
+      dims.rows, av2enc::tiles::kSuperblockPixels64, 7, 0);
+  if (!planned.ok()) {
+    std::cerr << "av2enc: error: --gpu-plan: layout "
+              << av2enc::tiles::preset_name(preset) << " rejected: "
+              << planned.error << "\n";
+    return 1;
+  }
+
+  av2enc::multigpu::PlannerConfig config;
+  config.gpu_count = options.gpu_plan;
+  config.bit_depth = 8;
+  // The plan has no device query (CPU-only host contract). Use --vram-cap when
+  // the caller has one; otherwise the planner's compat8g emulation cap applies.
+  // This is an estimate, never an allocation.
+  if (options.vram_cap_mib != 0) {
+    config.vram_cap_mb = static_cast<double>(options.vram_cap_mib);
+  }
+  config.target_fps = y4m.fps_den != 0
+                          ? static_cast<double>(y4m.fps_num) /
+                                static_cast<double>(y4m.fps_den)
+                          : 1.0;
+
+  av2enc::multigpu::MultiGpuPlan plan;
+  if (!av2enc::multigpu::plan_multi_gpu(planned.layout, config, plan, error)) {
+    std::cerr << "av2enc: error: --gpu-plan: " << error << "\n";
+    return 1;
+  }
+
+  std::cout << "av2enc: host-only multi-GPU tile plan (no device allocation, "
+               "no stream)\n"
+            << "  input:   " << options.input.string() << " (" << y4m.width
+            << "x" << y4m.height << ", " << y4m.fps_num << "/" << y4m.fps_den
+            << " fps)\n"
+            << "  layout:  " << av2enc::tiles::preset_name(preset) << " ("
+            << plan.tile_count << " tiles), sb 64x64\n"
+            << "  gpus:    " << config.gpu_count << ", "
+            << av2enc::multigpu::assignment_policy_name(config.assignment)
+            << "\n";
+  for (const av2enc::multigpu::GpuPlan& gpu : plan.gpus) {
+    std::cout << "  gpu " << gpu.gpu_index << ":  tiles";
+    for (const int tile : gpu.tile_indices) {
+      std::cout << " " << tile;
+    }
+    std::cout << " (" << gpu.tile_count << ", " << gpu.tile_area_pixels
+              << " px), vram " << gpu.vram.live_mb << " / " << gpu.vram.cap_mb
+              << " MB fits=" << (gpu.vram.fits ? "yes" : "no") << "\n";
+  }
+  std::cout << "  host:    transfer " << plan.transfer.total_mb << " MB, "
+            << plan.transfer.total_ms << " ms ("
+            << plan.transfer.pct_of_frame_budget << "% of the frame budget, "
+            << plan.transfer.phases << " phases)\n"
+            << "  scale:   model only (measured=" << (plan.measured ? 1 : 0)
+            << "), estimated speedup " << plan.scaling.speedup
+            << "x; not a measurement\n"
+            << "  note:    " << plan.disclaimer << "\n";
+  return 0;
 }
 
 int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
@@ -1082,11 +1541,49 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.mv_precision = options.video_mv_precision;
   video_options.drl_reorder = options.video_drl_reorder;
   video_options.drl_reorder_always = options.video_drl_reorder_always;
+  video_options.long_term = options.video_long_term;
+  video_options.olk = options.video_olk;
+  video_options.leading_frames = options.video_leading;
+  video_options.sef = options.video_sef;
+  video_options.ra_switch = options.video_switch;
+  video_options.ras = options.video_ras;
   video_options.force_single_block = options.video_force_single;
   video_options.min_block_size = options.video_min_block;
   video_options.max_partition_depth = options.video_max_depth;
   video_options.me_range = options.video_me_range;
   video_options.trace = options.video_trace;
+
+  // Opt-in per-frame rate control. CQP (default) leaves frame_base_q_idx empty,
+  // so encode_video_sequence runs the historical fixed-QP path unchanged.
+  std::vector<std::uint8_t> frame_qp;
+  if (options.rc_mode != "cqp") {
+    std::vector<std::uint32_t> pass1_payload_bits;
+    if (options.rc_mode == "vbr") {
+      // Statistics pass at the fixed --qp: payload bits feed the VBR virtual
+      // buffer, the same role as a first pass in a conventional encoder.
+      av2enc::video::VideoSequenceResult stats;
+      if (!av2enc::video::encode_video_sequence(inputs, video_options, stats,
+                                                error)) {
+        std::cerr << "av2enc: error: --rc vbr statistics pass: " << error
+                  << "\n";
+        return 1;
+      }
+      pass1_payload_bits.reserve(stats.tile_bytes.size());
+      for (const std::uint32_t bytes : stats.tile_bytes) {
+        pass1_payload_bits.push_back(bytes * 8U);
+      }
+    }
+    if (!plan_video_rate_control(
+            options, y4m, inputs,
+            options.rc_mode == "vbr" ? &pass1_payload_bits : nullptr, &frame_qp,
+            error)) {
+      std::cerr << "av2enc: error: --rc " << options.rc_mode << ": " << error
+                << "\n";
+      return 1;
+    }
+    video_options.frame_base_q_idx = frame_qp;
+    video_options.base_q_idx = frame_qp.front();
+  }
 
   av2enc::video::VideoSequenceResult result;
   if (!av2enc::video::encode_video_sequence(inputs, video_options, result,
@@ -1115,7 +1612,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   std::uint64_t total_tile = 0;
   std::uint64_t total_inter = 0;
   std::uint64_t total_intra = 0;
-  for (std::size_t i = 0; i < result.units.size(); ++i) {
+  for (std::size_t i = 0; i < result.tile_bytes.size(); ++i) {
     total_tile += result.tile_bytes[i];
     total_inter += result.inter_blocks[i];
     total_intra += result.intra_blocks[i];
@@ -1126,10 +1623,42 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
             << y4m.fps_num << "/" << y4m.fps_den << " fps)\n"
             << "  output:  " << options.output.string() << " ("
             << writer.bytes_written() << " bytes IVF)\n"
-            << "  frames:  " << result.units.size() << ", base_q_idx "
-            << static_cast<int>(video_options.base_q_idx) << ", tile "
-            << total_tile << " bytes, inter blocks " << total_inter
+            << "  frames:  " << result.units.size() << " temporal unit(s), "
+            << result.tile_bytes.size() << " coded frame(s), "
+            << result.recon.size() << " output frame(s), base_q_idx ";
+  if (frame_qp.empty()) {
+    std::cout << static_cast<int>(video_options.base_q_idx);
+  } else {
+    std::cout << "per-frame";
+  }
+  std::cout << ", tile " << total_tile << " bytes, inter blocks " << total_inter
             << ", intra blocks " << total_intra << "\n";
+  if (!frame_qp.empty()) {
+    const double duration =
+        static_cast<double>(result.units.size()) *
+        static_cast<double>(y4m.fps_den) / static_cast<double>(y4m.fps_num);
+    const double kbps = duration > 0.0
+                            ? static_cast<double>(total_tile) * 8.0 / duration /
+                                  1000.0
+                            : 0.0;
+    std::cout << "  rc:      " << options.rc_mode;
+    if (options.rc_mode == "crf") {
+      std::cout << " " << options.rc_crf;
+    } else if (options.rc_mode == "vbr") {
+      std::cout << " target " << options.rc_bitrate_kbps
+                << " kbps (two-pass)";
+    }
+    std::cout << ", achieved " << kbps << " kbps (payload)\n"
+              << "  frame QP:";
+    for (const std::uint8_t qp : frame_qp) {
+      std::cout << " " << static_cast<int>(qp);
+    }
+    std::cout << "\n  frame bits:";
+    for (const std::uint32_t bytes : result.tile_bytes) {
+      std::cout << " " << (static_cast<std::uint64_t>(bytes) * 8U);
+    }
+    std::cout << "\n";
+  }
   return 0;
 }
 
@@ -1159,6 +1688,16 @@ int main(int argc, char** argv) {
     std::cerr << "av2enc: note: --vram-cap has no effect in this "
                  "CPU-only build\n";
 #endif
+  }
+
+  if (options.gpu_plan != 0) {
+    if (options.video || options.m1 || options.still_gpu || options.lossless) {
+      std::cerr << "av2enc: error: --gpu-plan is a host-planning dry run; do "
+                   "not combine it with --video, --still, --still-gpu or "
+                   "--lossless\n";
+      return 2;
+    }
+    return run_gpu_plan(options);
   }
 
 #if !AV2ENC_STILL_GPU_CALLABLE
@@ -1222,6 +1761,92 @@ int main(int argc, char** argv) {
     }
     if (options.still_cfl_ds != 0) return reject_cpu_only("--still-cfl-ds");
     if (options.still_palette) return reject_cpu_only("--still-palette");
+  }
+
+  // Multi-tile stills (--tiles).  The tiled writer is a distinct composition
+  // root: it reuses the M1 reference per tile but pins the tool set to the
+  // verified form, so every option that would change the tile payload is
+  // rejected by name instead of being ignored.
+  const bool multi_tile = options.tiles != "1x1";
+  if (multi_tile) {
+    if (options.video) {
+      std::cerr << "av2enc: error: --tiles is not wired into --video yet; "
+                   "multi-tile video needs the per-frame tile splitter\n";
+      return 2;
+    }
+    if (options.still_gpu) {
+      std::cerr << "av2enc: error: --tiles is CPU-only (--still); the Still GPU "
+                   "pipeline has no tile loop\n";
+      return 2;
+    }
+    if (!options.m1) {
+      std::cerr << "av2enc: error: --tiles > 1 requires --still\n";
+      return 2;
+    }
+    if (options.lossless) {
+      std::cerr << "av2enc: error: --tiles is not available in the --lossless "
+                   "writer\n";
+      return 2;
+    }
+    if (options.bit_depth != 8 || options.chroma != "420") {
+      std::cerr << "av2enc: error: the tiled still writer is 8-bit 4:2:0 only; "
+                   "--tiles cannot be combined with --bit-depth 10 or --chroma\n";
+      return 2;
+    }
+    if (options.adaptive_cdf) {
+      std::cerr << "av2enc: error: --tiles resets frozen CDFs per tile and does "
+                   "not signal --adaptive-cdf\n";
+      return 2;
+    }
+    if (options.still_deblock) {
+      std::cerr << "av2enc: error: --tiles requires --no-deblock: the pinned "
+                   "dav2d filters across interior tile edges, so multi-tile "
+                   "reconstruction would not be sample-exact\n";
+      return 2;
+    }
+    const std::pair<bool, const char*> unsupported[] = {
+        {options.still_single, "--still-single"},
+        {options.still_dc, "--still-dc"},
+        {options.still_full_intra, "--still-full-intra"},
+        {options.still_uv_full, "--still-uv-full"},
+        {options.still_rdo_intra, "--still-rdo-intra"},
+        {options.still_rdoq, "--still-rdoq"},
+        {options.still_tx_type, "--still-tx-type"},
+        {options.still_cdef, "--still-cdef"},
+        {options.still_ccso, "--still-ccso"},
+        {options.still_sb128, "--still-sb128"},
+        {options.still_sb256, "--still-sb256"},
+        {options.still_ext_partitions, "--still-ext-partitions"},
+        {options.still_segmentation, "--still-segmentation"},
+        {options.still_delta_q, "--still-delta-q"},
+        {options.still_content_interpretation,
+         "--still-content-interpretation"},
+        {options.still_qm, "--still-qm"},
+        {options.still_ist, "--still-ist"},
+        {options.still_dc_ac_delta_q, "--still-dc-ac-delta-q"},
+        {options.still_ibp, "--still-ibp"},
+        {options.still_mrl, "--still-mrl"},
+        {options.still_cfl_ds != 0, "--still-cfl-ds"},
+        {options.still_cfl_explicit, "--still-cfl-explicit"},
+        {options.still_dip, "--still-dip"},
+        {options.still_palette, "--still-palette"},
+        {options.still_mhccp, "--still-mhccp"},
+        {options.still_ccso_edge, "--still-ccso-edge"},
+        {options.still_wiener, "--still-wiener"},
+        {options.still_chroma_lr, "--still-chroma-lr"},
+        {options.still_pc_wiener, "--still-pc-wiener"},
+        {options.still_gdf, "--still-gdf"},
+        {options.still_grain, "--still-grain"},
+        {options.still_depth >= 0, "--still-depth"},
+    };
+    for (const auto& [set, flag] : unsupported) {
+      if (!set) continue;
+      std::cerr << "av2enc: error: --tiles uses the tiled still writer, which "
+                   "does not implement "
+                << flag << "; drop the flag or use a single-tile --still "
+                         "encode\n";
+      return 2;
+    }
   }
 
   // Optical-format still paths (10-bit, 4:2:2/4:4:4/4:0:0).  Every flag
@@ -1317,9 +1942,9 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  if (!options.recon.empty()) {
-    std::cerr << "av2enc: error: --recon is only wired for the --bit-depth 10 "
-                 "and --chroma format paths\n";
+  if (!options.recon.empty() && !multi_tile) {
+    std::cerr << "av2enc: error: --recon is wired for the --bit-depth 10 and "
+                 "--chroma format paths and for multi-tile --tiles stills only\n";
     return 2;
   }
 
@@ -1386,7 +2011,25 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  if (options.rc_given && !options.video) {
+    std::cerr << "av2enc: error: --rc is wired for --video only; the still "
+                 "paths keep the fixed --qp stream\n";
+    return 2;
+  }
+
   if (options.video) {
+    if (options.rc_given && options.rc_mode == "vbr" && !options.rc_bitrate_given) {
+      std::cerr << "av2enc: error: --rc vbr requires --bitrate <kbps>\n";
+      return 2;
+    }
+    if (options.rc_crf_given && options.rc_mode != "crf") {
+      std::cerr << "av2enc: error: --crf requires --rc crf\n";
+      return 2;
+    }
+    if (options.rc_bitrate_given && options.rc_mode != "vbr") {
+      std::cerr << "av2enc: error: --bitrate requires --rc vbr\n";
+      return 2;
+    }
     if (y4m.width % 8U != 0U || y4m.height % 8U != 0U) {
       std::cerr << "av2enc: error: --video requires dimensions divisible by 8, "
                 << "got " << y4m.width << "x" << y4m.height << "\n";
@@ -1531,6 +2174,56 @@ int main(int argc, char** argv) {
 #else
       return fail_encode("--still-gpu is not available in this build");
 #endif
+    } else if (multi_tile) {
+      // One independent §8.2 entropy stream per tile; every tile is encoded
+      // from its own local origin through the M1 reference, so CDFs, above/left
+      // contexts and prediction availability reset at the tile boundary
+      // (§5.20.2.1, §5.20.9.1).  Deblocking is off (checked above): the pinned
+      // decoder filters shared tile edges and would break exactness.
+      av2enc::still::tiles_stream::Config tile_config;
+      tile_config.width = static_cast<int>(frame.width());
+      tile_config.height = static_cast<int>(frame.height());
+      tile_config.preset = tile_preset_from_layout(options.tiles);
+      tile_config.base_q_idx = static_cast<std::uint8_t>(options.qp);
+      tile_config.enable_deblock = false;
+      tile_config.disable_loopfilters_across_tiles = true;
+      tile_config.seq_level_idx = 7;
+      tile_config.enable_cfl_intra = options.still_cfl;
+      tile_config.enable_intra_edge_filter = true;
+      tile_config.enable_chroma_dctonly = true;
+
+      av2enc::still::tiles_stream::Frame tiled;
+      std::string tile_error;
+      if (!av2enc::still::tiles_stream::encode(picture, tile_config, &tiled,
+                                               &tile_error)) {
+        return fail_encode("--tiles " + options.tiles + ": " + tile_error);
+      }
+      if (!writer.write_frame(tiled.frame, 0, error)) {
+        return fail_encode(error);
+      }
+      std::uint32_t tile_payload_bytes = 0;
+      for (const auto& tile : tiled.tiles) {
+        tile_payload_bytes += static_cast<std::uint32_t>(tile.payload.size());
+      }
+      tile_bytes = tile_payload_bytes;
+      frame_bytes = static_cast<std::uint32_t>(tiled.frame.size());
+
+      if (!options.recon.empty()) {
+        av2enc::still::tiles_stream::Reconstruction recon;
+        std::string recon_error;
+        if (!av2enc::still::tiles_stream::assemble_reconstruction(
+                tiled, &recon, &recon_error)) {
+          return fail_encode(recon_error);
+        }
+        if (!write_still_recon_y4m(options.recon, y4m, recon.width,
+                                   recon.height, recon.y, recon.u, recon.v,
+                                   error)) {
+          return fail_encode(error);
+        }
+      }
+      std::cout << "  tiles:   " << tiled.tiles.size() << " (" << options.tiles
+                << "), tile group " << tiled.clk_payload.size() << " bytes ("
+                << tiled.tile_size_bytes << "-byte size fields)\n";
     } else {
       av2enc::still::StillOptions still_options;
       still_options.base_q_idx = static_cast<std::uint8_t>(options.qp);
@@ -1631,7 +2324,7 @@ int main(int argc, char** argv) {
           ? "Lossless"
           : (options.still_gpu
                  ? "Still GPU"
-                 : (options.m1 ? "M1"
+                 : (options.m1 ? (multi_tile ? "M1 tiled" : "M1")
                                : (basic_fallback_to_m1 ? "M1 (M0 fallback)"
                                                        : "M0")));
   std::cout << "av2enc: " << path_name

@@ -101,6 +101,9 @@ if [[ "$RUN_TEST" == "0" || "$RUN_GATE" == "1" ]]; then
     "$ROOT/src/codec/inter/me/me.cpp" \
     "$ROOT/src/codec/inter/mc/mc.cpp" \
     "$ROOT/src/codec/inter/merge/merge.cpp" \
+    "$ROOT/src/codec/inter/drl_reorder/drl_reorder.cpp" \
+    "$ROOT/src/codec/inter/drl_reorder/video_stack_adapter.cpp" \
+    "$ROOT/src/codec/inter/mv_precision/mv_precision.cpp" \
     "$ROOT/src/pipeline/video/video_headers.cpp" \
     "$ROOT/src/pipeline/video/video_syntax.cpp" \
     "$ROOT/src/pipeline/video/video_frame.cpp" \

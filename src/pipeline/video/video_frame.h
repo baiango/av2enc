@@ -43,6 +43,11 @@ struct VideoReconFrame {
 
 struct VideoOptions {
   std::uint8_t base_q_idx = 90;
+  // Optional per-frame base_q_idx (one entry per input frame). Empty keeps the
+  // fixed `base_q_idx` for every frame, which is the default byte-identical
+  // path. Used by the opt-in --rc crf/vbr path; the frame header and the
+  // coefficient-CDF qctx slice both follow the per-frame value.
+  std::vector<std::uint8_t> frame_base_q_idx;
   bool enable_intra_fallback = true;
   bool enable_newmv = true;
   bool enable_nearmv = true;
@@ -69,6 +74,28 @@ struct VideoOptions {
   // Normative DRL reordering (§7.12.2.19).  Off = DRL_REORDER_DISABLED.
   bool drl_reorder = false;
   bool drl_reorder_always = false;
+  // Long-term references (§5.4.6 long_term_frame_id_bits = 1, §5.18.2
+  // long_term_id_plus_1).  Off keeps the historical header (bits = 0).
+  bool long_term = false;
+  // Open random access: CLK + open-loop key + long-term reference retained
+  // across the RAP (§7.4.4).  Implies long_term; requires exactly 4 frames.
+  bool olk = false;
+  // Open-GOP leading pictures between the OLK and the first regular frame.
+  // 0 = off.  N needs at least N+2 input frames.
+  int leading_frames = 0;
+  // Re-show the last coded picture with a show-existing-frame OBU: the last
+  // picture is coded hidden (immediate_output_frame = 0) and the SEF unit that
+  // follows outputs it with derive_sef_order_hint = 1 (§5.18.2, §6.17.2).
+  bool sef = false;
+  // Random-access switch frame: frame 1 is OBU_SWITCH (§6.2.2 type 10).
+  // Requires exactly 2 input frames (CLK + SWITCH).
+  bool ra_switch = false;
+  // Random access with a long-term reference: CLK + SWITCH + OBU_RAS_FRAME
+  // (§6.2.2 type 21, §7.4.5).  Requires exactly 3 input frames.
+  bool ras = false;
+  // Internal: code the last picture hidden.  Only the SEF wrapper in
+  // video_frames.cpp sets this; it is not a CLI option.
+  bool hide_last_picture = false;
   // Debug trace to stderr.
   bool trace = false;
 };
@@ -76,7 +103,14 @@ struct VideoOptions {
 struct VideoSequenceResult {
   // One temporal unit per input frame (TD + [SEQ] + frame OBU).
   std::vector<std::vector<std::uint8_t>> units;
+  // Decoder output pictures, in display/output order.  Frame types that code
+  // non-output pictures (OLK, non-output leading) leave those pictures out, so
+  // this can be shorter than the coded frame count.
   std::vector<VideoReconFrame> recon;
+  // One entry per **coded** frame unit in decode order (an SEF unit counts as
+  // one): index into `recon` when the unit outputs a picture, -1 when it is
+  // decoded but never displayed.
+  std::vector<std::int32_t> frame_output_index;
   std::vector<std::uint32_t> frame_bytes;
   std::vector<std::uint32_t> tile_bytes;
   std::vector<std::uint32_t> inter_blocks;

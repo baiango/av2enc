@@ -1,7 +1,7 @@
 # Integration plan — one branch per workstream
 
-Status: waves 1 and 2 are merged to `main`. Wave 3 (`frames`, `pipelines`)
-is next and starts from the current main. Integration follows `docs/refactor-plan.md` §8
+Status: waves 1–3 are merged to `main`. Wave 4 (CLI consolidation and final
+re-baseline) is the remaining step, owned by the assistant. Integration follows `docs/refactor-plan.md` §8
 (dependency order, one tool per commit, opt-in only). This file is the contract
 agents work under.
 
@@ -118,7 +118,26 @@ Both branches were reset to `2665099` (wave 1 merged) before staffing.
 Both branches use the same hard rules in §2, the same gates in §4, and may not
 move directories or change default streams.
 
-## 7. Merge log
+## 7. Wave 3 notes (merged)
+
+Both branches were reset to the wave-2 main (`995a11b`) before staffing.
+
+- **`integration/frames`** — long-term references / OLK
+  (`src/codec/inter/longterm`), RAS/switch (`random_access`), SEF (`sef`) and
+  leading pictures (`leading`), wired into the `--video` sequence/ref model
+  from wave 2. Flags default off; the default `--video` streams and all still
+  pins stay byte-identical. Gate multi-frame sequences with `dav2d`.
+- **`integration/pipelines`** — tiles/tile groups (`src/pipeline/tiles`),
+  SVC layers (`src/pipeline/svc`, `avmdec` gate), two-pass/CQP/CRF/VBR rate
+  control (`src/codec/rate/rc`, `src/pipeline/video/post/rc_adapter`), and the
+  host side of multi-GPU scheduling. Default off; do not touch CUDA kernels or
+  raw allocations, and do not make multi-GPU assumptions that cannot be gated
+  on one device.
+
+Both branches use §2's hard rules and §4's gates and may not move directories
+or change default streams.
+
+## 8. Merge log
 
 Merged to `main` with `--no-ff` after local CPU gates and a CUDA build+ctest on
 the 3060. Each merge is re-verified on `main`:
@@ -133,6 +152,8 @@ the 3060. Each merge is re-verified on `main`:
 | `549cb1d` | `integration/filters` | `--still-wiener`, `--still-chroma-lr`, `--still-pc-wiener`, `--still-gdf`, `--still-ccso-edge`, `--still-grain` |
 | `d608587` | `integration/formats` | `--bit-depth 10` (4:2:0), `--chroma 422/444/400` (8-bit); GPU stays 8-bit 4:2:0 |
 | `f466d67` | `integration/inter` | `--video`, `--p-frames`, `--video-refs`, `--video-subpel-eighth`, `--video-mv-precision`; B-frames/DRL rejected |
+| `866e399` | `integration/pipelines` | `--tiles`, `--rc cqp/crf/vbr`, `--gpu-plan` (host only); SVC left on its standalone gate |
+| `13432d7` | `integration/frames` | `--video-long-term`, `--video-olk`, `--video-leading`, `--video-sef`, `--video-switch`, `--video-ras` |
 
 Post-merge fixes on `main`:
 
@@ -152,7 +173,7 @@ index, the real directories were restored (testdata from the Vast.ai tree,
 symlink cannot be committed again. All integration branches were checked; only
 `integration/transform` was affected.
 
-## 8. Agent report format
+## 9. Agent report format
 
 Final message must state: branch, commits (hash + title), tools wired and their
 default state, files touched, CPU gates (build/ctest/baseline) with results,

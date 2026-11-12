@@ -1,6 +1,7 @@
 #include "pipeline/video/video_frame.h"
 
 #include "codec/intra/modes/intra_modes.h"
+#include "pipeline/video/video_frames.h"
 #include "pipeline/video/video_headers.h"
 #include "pipeline/video/video_syntax.h"
 #include "codec/partition/tree/partition.h"
@@ -1041,6 +1042,23 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     error = "M2 does not support lossless base_q_idx = 0";
     return false;
   }
+  if (!options.frame_base_q_idx.empty() &&
+      options.frame_base_q_idx.size() != frames.size()) {
+    error = "frame_base_q_idx must be empty or have one entry per frame";
+    return false;
+  }
+  for (const std::uint8_t qp : options.frame_base_q_idx) {
+    if (qp == 0) {
+      error = "frame_base_q_idx entries must be in [1, 255]";
+      return false;
+    }
+  }
+  // Per-frame quantizer selection: an empty vector means the historical
+  // fixed-QP stream, so the default path does not construct any extra state.
+  const auto frame_qp = [&options](std::size_t index) -> std::uint8_t {
+    return options.frame_base_q_idx.empty() ? options.base_q_idx
+                                            : options.frame_base_q_idx[index];
+  };
   for (std::size_t i = 0; i < frames.size(); ++i) {
     const VideoInputFrame& f = frames[i];
     if (f.width != width || f.height != height) {
@@ -1077,9 +1095,29 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   const int num_ref_frames = num_total_refs > 1 ? kMaxRefSlots : 2;
   const int order_hint_bits = 4;
 
+  // Wave-3 frame-type modes are compiled only in the full build (see
+  // video_frames.h): the standalone component gates link this TU alone.
+  if (options.long_term || options.olk || options.leading_frames > 0 ||
+      options.sef || options.ra_switch || options.ras) {
+#if defined(AV2ENC_VIDEO_FRAMES)
+    return frames::encode_special_sequence(frames, options, result, error);
+#else
+    error = "frame-type modes (--video-long-term/--video-olk/--video-leading/"
+            "--video-sef/--video-switch/--video-ras) need the full build";
+    return false;
+#endif
+  }
+
   std::vector<inter::mc::RefFrame> no_refs;
   std::array<int, 7> no_distance{};
-  InterFrameEncoder key_encoder(frames[0], no_refs, no_distance, 1, options,
+  const auto options_for_frame = [&options, &frame_qp](std::size_t index) {
+    VideoOptions copy = options;
+    copy.base_q_idx = frame_qp(index);
+    copy.frame_base_q_idx.clear();
+    return copy;
+  };
+  const VideoOptions key_options = options_for_frame(0);
+  InterFrameEncoder key_encoder(frames[0], no_refs, no_distance, 1, key_options,
                                 options.trace, /*keyframe=*/true);
   std::vector<std::uint8_t> key_tile;
   std::vector<syntax::BlockSyntax> key_blocks;
@@ -1114,6 +1152,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
 
   std::vector<std::uint8_t> key_unit;
   {
+    config.base_q_idx = frame_qp(0);
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> seq = make_sequence_header_obu(config);
     const std::vector<std::uint8_t> obu =
@@ -1175,8 +1214,9 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
           relative_dist(order_hint, slots[slot].order_hint, order_hint_bits);
     }
 
+    const VideoOptions frame_options = options_for_frame(i);
     InterFrameEncoder encoder(frames[i], std::move(references), frame_distance,
-                              ref_count, options, options.trace,
+                              ref_count, frame_options, options.trace,
                               /*keyframe=*/false);
     std::vector<std::uint8_t> tile;
     std::vector<syntax::BlockSyntax> blocks;
@@ -1199,8 +1239,13 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     header.refresh_frame_flags = 1U << write_slot;
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
+    // SEF wrapper: code the last picture hidden so a following SEF unit can
+    // re-show it; the decoder output count is unchanged.
+    header.immediate_output_frame =
+        !(options.hide_last_picture && i + 1U == frames.size());
 
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
+    config.base_q_idx = frame_qp(i);
     const std::vector<std::uint8_t> obu = make_frame_obu(config, header, tile);
     std::vector<std::uint8_t> unit;
     unit.reserve(td.size() + obu.size());
@@ -1231,6 +1276,16 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     }
   }
 
+  // Default path: every coded picture is output in decode order.  A hidden
+  // last picture (SEF wrapper) maps to -1; the SEF unit that follows carries
+  // the display entry.
+  result.frame_output_index.resize(frames.size());
+  for (std::size_t i = 0; i < frames.size(); ++i) {
+    const bool hidden =
+        options.hide_last_picture && i + 1U == frames.size();
+    result.frame_output_index[i] =
+        hidden ? -1 : static_cast<std::int32_t>(i);
+  }
   return true;
 }
 

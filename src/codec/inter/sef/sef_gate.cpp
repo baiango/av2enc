@@ -307,6 +307,8 @@ sef::SlotMap model_slot_map(unsigned frame_count, bool hide_last_frame) {
   map.num_ref_frames = 2;
   for (unsigned i = 0; i < frame_count; ++i) {
     const bool hidden = hide_last_frame && i + 1 == frame_count;
+    // The wave-2 M2 path refreshes slot i % NumRefFrames, not always slot 0.
+    const unsigned slot = i == 0 ? 0U : (i % map.num_ref_frames);
     sef::RefreshFrame frame;
     frame.key_frame = i == 0;
     frame.order_hint = i;
@@ -314,9 +316,9 @@ sef::SlotMap model_slot_map(unsigned frame_count, bool hide_last_frame) {
     frame.immediate_output_frame = !hidden;
     frame.implicit_output_frame = false;
     frame.refresh_frame_flags =
-        i == 0 ? ((1U << map.num_ref_frames) - 1U) : 1U;
+        i == 0 ? ((1U << map.num_ref_frames) - 1U) : (1U << slot);
     sef::apply_refresh(map, frame);
-    if (!hidden) sef::mark_shown(map, 0);
+    if (!hidden) sef::mark_shown(map, static_cast<std::uint8_t>(slot));
   }
   return map;
 }
@@ -468,6 +470,8 @@ bool run_phases(const std::string& name,
 
   const sef::SefParams params;  // M2: 2 refs, 4 order-hint bits.
   const std::uint32_t last_hint = static_cast<std::uint32_t>(frame_count - 1);
+  const std::uint8_t last_slot =
+      static_cast<std::uint8_t>((frame_count - 1) % 2);
 
   // --- A: pure append, explicit hint -------------------------------------
   {
@@ -475,7 +479,8 @@ bool run_phases(const std::string& name,
                                       /*hide_last_frame=*/false);
     sef::SefHeader header;
     sef::SefError sef_error = sef::SefError::kOk;
-    if (!sef::make_show_header(map, params, 0, sef::SefKind::kRegular, header,
+    if (!sef::make_show_header(map, params, last_slot, sef::SefKind::kRegular,
+                               header,
                                &sef_error)) {
       std::cerr << "SEF HEADER FAIL: " << sef::sef_error_name(sef_error)
                 << "\n";
@@ -540,9 +545,11 @@ bool run_phases(const std::string& name,
     sef::SefHeader regular;
     sef::SefHeader leading;
     sef::SefError sef_error = sef::SefError::kOk;
-    if (!sef::make_show_header(map, params, 0, sef::SefKind::kRegular, regular,
+    if (!sef::make_show_header(map, params, last_slot, sef::SefKind::kRegular,
+                               regular,
                                &sef_error) ||
-        !sef::make_show_header(map, params, 0, sef::SefKind::kLeading, leading,
+        !sef::make_show_header(map, params, last_slot, sef::SefKind::kLeading,
+                               leading,
                                &sef_error)) {
       std::cerr << "B HEADER FAIL: " << sef::sef_error_name(sef_error) << "\n";
       return false;
@@ -580,7 +587,8 @@ bool run_phases(const std::string& name,
                                       /*hide_last_frame=*/true);
     sef::SefHeader header;
     sef::SefError sef_error = sef::SefError::kOk;
-    if (!sef::make_show_header(map, params, 0, sef::SefKind::kRegular, header,
+    if (!sef::make_show_header(map, params, last_slot, sef::SefKind::kRegular,
+                               header,
                                &sef_error)) {
       std::cerr << "C HEADER FAIL: " << sef::sef_error_name(sef_error) << "\n";
       return false;

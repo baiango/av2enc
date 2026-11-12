@@ -268,9 +268,14 @@ Decoder support notes, from the pinned builds:
 
 The composed stream reuses the existing still-picture sequence headers
 (`single_picture_header_flag = 1`, `seq_lcr_id = 0`), so those headers are not
-formally associated with the global LCR. `avmdec` accepts this and selects the
-OPs correctly; the real layered path sets `seq_lcr_id` and `max_mlayer_id` /
-`max_tlayer_id` from the plan (see `INTEGRATION.md`).
+formally associated with the global LCR. The real layered path sets
+`seq_lcr_id` and `max_mlayer_id` / `max_tlayer_id` from the plan (see
+`INTEGRATION.md`).
+
+**Wave-3 note:** with the current `svc_mux` LCR guard the gate skips (exit 77)
+at compose time, because the product encoder only emits single-picture headers.
+The table above records the earlier byte-exact composition; SVC is not wired
+into the CLI and the missing plumbing is listed in `INTEGRATION.md`.
 
 ## Blockers
 

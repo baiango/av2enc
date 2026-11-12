@@ -475,3 +475,178 @@ default single-block tree is also gated by `build-int/video_gate`):
 
 `build-int/video_gate --refs N --subpel-eighth --mv-precision P` runs the same
 comparison without the CLI (synthetic 64x64 and the real short clip).
+
+---
+
+# Wave 3 integration: frame types (opt-in)
+
+Long-term references, open-loop keys, leading pictures, show-existing-frame and
+SWITCH/RAS frames reuse the wave-2 picture encoder and replace only the
+sequence/frame headers and temporal-unit framing. Every flag is default off;
+the default `--video` stream above is byte-identical.
+
+## Long-term references and the open-loop key
+
+| flag | default | meaning |
+|---|---|---|
+| `--video-long-term` | off | `long_term_frame_id_bits = 1`; the CLK carries `LongTermId 0` |
+| `--video-olk` | off | open random access: CLK, OLK, P2, P3 (exactly 4 input frames) |
+
+`--video-olk` implies `--video-long-term`. Both need `--video-refs 1` and
+eighth-pel precision because the long-term reference writer freezes those
+syntax fields.
+
+`--video-olk` decode order:
+
+```
+TU0  CLK f0  LongTermId 0, refresh all slots
+TU1  OLK f1  slot 1 only, non-output;  P2 f2 predicts from the OLK
+TU2  P3  f3  predicts from slot 0 (the LTR), across the open RAP
+```
+
+Output is `f0, f2, f3`; `VideoSequenceResult::frame_output_index` marks the OLK
+as hidden (`-1`). The pinned `dav2d` build does not parse the §5.18.2 OLK
+long-term list, so the writer uses `LongTermListSyntax::kOmitPinnedDav2d`; slot
+0 still survives the first-Regular-frame invalidation because
+`RefLongTermId != -1` (§5.18.2). See `docs/negative-results.md`.
+
+Gate (CPU):
+
+```sh
+OUT=/tmp/lt src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 6 --video-max-depth 3 --video-long-term
+OUT=/tmp/olk src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 4 --video-max-depth 3 --video-olk
+build-int/video_gate --single-block --frames 5 --long-term
+build-int/video_gate --single-block --frames 4 --olk
+```
+
+Pinned streams (720p, `--video-max-depth 3`):
+
+| flags | IVF MD5 | bytes | output frames | recon |
+|---|---|---:|---:|---|
+| `--video-long-term` (6 frames) | `ac65dee95869ac196ce0537cfcabd1af` | 184,966 | 6 | exact |
+| `--video-olk` (4 frames) | `095b52002519b8f1dfd62f3e632df50a` | 141,822 | 3 | exact |
+
+## Leading pictures
+
+`--video-leading N` (1..7, default 0) turns the stream into an open GOP:
+
+```
+CLK f0            output
+OLK f(N+1)        output (implicit_output_frame = 1), RAP with a repeated SEQ
+LEAD f1..fN       coded non-output, reference the OLK
+REG  f(N+2)..     output, reference the OLK
+```
+
+The sequence header sets `monotonic_output_order_flag = 0`, which is what lets
+the OLK be output without a second output picture in its temporal unit. Leading
+pictures use the §7.3.4 coded **non-output** form, so a RAP-start decode from
+the OLK produces exactly the sequential output minus the pre-RAP CLK.
+`frame_output_index` marks the leading pictures `-1`; the decoded frame count is
+`2 + regular` for `N + 2 + regular` coded pictures.
+
+`N = S` and `regular = R` are limited so `S + R <= 7` (eight reference slots).
+`--video-leading` needs `--video-refs 1`, eighth-pel precision, and cannot be
+combined with the long-term/OLK modes.
+
+```sh
+OUT=/tmp/lead src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 8 --video-max-depth 3 --video-leading 3
+build-int/video_gate --single-block --frames 8 --leading 3
+```
+
+Pinned streams (720p, `--video-max-depth 3`):
+
+| flags | IVF MD5 | coded | output | recon |
+|---|---|---:|---:|---|
+| `--video-leading 3` (6 frames) | `f705edd017fb4eadce161aa364c5a305` | 6 | 3 | exact |
+| `--video-leading 3` (8 frames) | `b73552e37d45986ebce246caab07f1b7` | 8 | 5 | exact |
+
+## Show existing frame (SEF)
+
+`--video-sef` (default off) codes the **last** picture hidden
+(`immediate_output_frame = 0`) and appends one `TD + OBU_REGULAR_SEF` temporal
+unit. The SEF references the slot that holds the hidden picture with
+`derive_sef_order_hint = 1` (§6.17.2: valid, unshown, hidden), so the decoder
+output count and order stay `N` for `N` input pictures — no
+`--outputinvisible` is needed. This is phase C of the sef component gate applied
+to the product path.
+
+`frame_output_index` marks the hidden coded picture `-1` and the SEF unit `N-1`.
+`--video-sef` composes with `--video-refs` and the MV-precision flags; it
+cannot be combined with the long-term or leading modes.
+
+```sh
+OUT=/tmp/sef src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 6 --video-max-depth 3 --video-sef
+OUT=/tmp/sef2 src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 6 --video-max-depth 3 --video-refs 2 --video-sef
+build-int/video_gate --single-block --frames 5 --sef
+```
+
+Pinned streams (720p, `--video-max-depth 3`, 6 samples):
+
+| flags | IVF MD5 | bytes | output | recon |
+|---|---|---:|---:|---|
+| `--video-sef` | `00b97e6f8390e50e189f7a581a52447a` | 184,972 | 6 | exact |
+| `--video-refs 2 --video-sef` | `8e957b9dab290daba79640adfa7b3327` | 172,673 | 6 | exact |
+
+## Random-access SWITCH and RAS frames
+
+| flag | input frames | stream |
+|---|---|---|
+| `--video-switch` | exactly 2 | `OBU_CLOSED_LOOP_KEY`, `OBU_SWITCH` (`restricted_prediction_switch = 1`) |
+| `--video-ras` | exactly 3 | CLK (`LongTermId 0`), SWITCH, `OBU_RAS_FRAME` naming id 0 |
+
+Both use the random-access module's planner: the SWITCH reuses the P payload
+encoded against f0 (`plan_switch_frame` → `kReusePFrame`, refresh slot 1 so the
+long-term slot survives), and the RAS reuses the separate `[f0, f2]` P payload
+(`plan_ras_frame` → `kReusePFrame`) because it must predict from the long-term
+slot, not from the switch frame. Every header goes through `validate_header`.
+
+Pinned-dav2d quirk: `f9dafbc` reads `NumRefFrames` explicit refresh bits for
+`OBU_RAS_FRAME` instead of deriving them. The gate sets
+`SequenceConfig::ras_codes_refresh_frame_flags = true` and writes exactly the
+§5.18.2 derived mask, so the stream is normatively consistent apart from the
+redundant bits. See `docs/negative-results.md`.
+
+Both need `--video-refs 1` and eighth-pel precision, and are mutually exclusive
+with the other frame-type modes.
+
+```sh
+OUT=/tmp/sw src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 2 --video-max-depth 3 --video-switch
+OUT=/tmp/ras src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 3 --video-max-depth 3 --video-ras
+build-int/video_gate --single-block --frames 2 --switch
+build-int/video_gate --single-block --frames 3 --ras
+```
+
+Pinned streams (720p, `--video-max-depth 3`):
+
+| flags | IVF MD5 | bytes | output | recon |
+|---|---|---:|---:|---|
+| `--video-switch` (2 frames) | `2daa1cfae28664063e3f807e70b8e901` | 72,984 | 2 | exact |
+| `--video-ras` (3 frames) | `9e7201eb0ca704ddae167a0e0da3d37f` | 99,733 | 3 | exact |
+
+## Build guard for the frame-type modes
+
+The wave-3 modes live in `src/pipeline/video/video_frames.cpp` and
+`video_frame.cpp` only calls them when `AV2ENC_VIDEO_FRAMES` is defined (the
+CMake build sets it on `av2enc_core`). Without the define, the plain path
+compiles and links on its own, so the standalone per-component gate scripts
+that compile `video_frame.cpp` still build. Those scripts also gained the
+wave-2 `drl_reorder` and `mv_precision` sources they were missing; all four
+wave-3 component gates now build and pass:
+
+```sh
+src/codec/inter/longterm/build_and_test.sh        # 345 checks + 3 decode phases
+src/codec/inter/leading/build_and_test.sh         # 116 checks + full/RAP decode
+src/codec/inter/sef/build_and_test.sh             # 3810 checks + SEF phases
+src/codec/inter/random_access/build_and_test.sh   # 142 checks + 3-frame gate
+```
+
+The SEF gate's slot model now matches the wave-2 rotating refresh
+(`slot = i % NumRefFrames` instead of always slot 0), which is what the
+two-frame phase needed.

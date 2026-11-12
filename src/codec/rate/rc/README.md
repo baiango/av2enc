@@ -1,10 +1,11 @@
 # Rate control: CQP / CRF / VBR, QP slices, segmentation and delta-Q planning
 
-Status: **component only.** This directory is not wired into the root
-`CMakeLists.txt`, `src/main.cpp`, `src/encoder/basic_encoder.cpp`, the entropy coder,
-or the bitstream writer. It produces no bits and cannot change a reference
-stream. The integration pass owns wiring these decisions into the frame header
-and block syntax.
+Status: **component + wired for `--video --rc cqp|crf|vbr`.** The default
+fixed-QP path does not call the controller and stays byte-identical; the
+`--video` CLI uses `VideoRateControl` (`src/pipeline/video/post/rc_adapter`) to
+plan one `base_q_idx` per frame. Nothing here changes still streams. The
+component still produces no bits by itself; the integration pass owns the frame
+header and block syntax.
 
 Scope:
 
