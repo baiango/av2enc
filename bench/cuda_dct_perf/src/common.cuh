@@ -26,7 +26,7 @@ constexpr int kQshift = 60;
 
 // Everything the kernels need for one transform size.  The double fields are
 // computed with the exact expression order used by
-// src/encoder/m0_still.cpp:forward_dct()/encode_residual_plane().
+// src/pipeline/still/basic_encoder.cpp:forward_dct()/encode_residual_plane().
 struct BlockParams {
   int n = 0;
   double scale_w = 0.0;

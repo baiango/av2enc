@@ -3,11 +3,11 @@
 
 Decodes an IVF with the pinned ``dav2d --strict 1``, reads the first decoded
 4:2:0 8-bit frame, and compares every sample against the encoder-side
-reconstruction dumped by ``tools/m1_verify/m1_dump.cpp``.
+reconstruction dumped by ``tools/still_verify/still_dump.cpp``.
 
-The dump format is the documented m1_dump format::
+The dump format is the documented still_dump format::
 
-    "M1DUMP1\\n" + <one JSON header line> + Y + U + V
+    "StillDUMP1\\n" + <one JSON header line> + Y + U + V
 
 Exit codes:
     0  all planes bit-exact
@@ -27,7 +27,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-MAGIC = b"M1DUMP1\n"
+MAGIC = b"StillDUMP1\n"
 
 
 def die(message: str) -> None:
@@ -54,7 +54,7 @@ def find_decoder(explicit: str | None) -> Path:
 def read_dump(path: Path) -> tuple[dict, dict[str, bytes]]:
     data = path.read_bytes()
     if not data.startswith(MAGIC):
-        die(f"{path}: not an m1_dump file (bad magic)")
+        die(f"{path}: not an still_dump file (bad magic)")
     rest = data[len(MAGIC) :]
     newline = rest.find(b"\n")
     if newline < 0:
@@ -146,7 +146,7 @@ def md5_bytes(parts: list[bytes]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Compare m1_dump encoder reconstruction with a "
+        description="Compare still_dump encoder reconstruction with a "
         "dav2d --strict 1 decode, sample for sample."
     )
     parser.add_argument("--ivf", required=True)

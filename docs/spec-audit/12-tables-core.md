@@ -14,7 +14,7 @@ Artifacts audited:
 | `spec/tables/block_tables.json` | generated §9.2 conversion / block / partition / TX tables |
 | `spec/tables/scan.json` | generated `get_scan()` (TX_CLASS_2D) scans |
 | `spec/tables/default_cdf.json` | all 180 §9.3 default CDF arrays |
-| `spec/tables/m0_cdf.json`, `spec/tables/m0_cdf.h` | 19-array M0 CDF subset |
+| `spec/tables/basic_cdf.json`, `spec/tables/basic_cdf.h` | 19-array M0 CDF subset |
 | `src/entropy/av2/av2_entropy_tables.h` | generated `Prob_Inc`, `Para_Adjustment_List` |
 | generated C++ headers under `src/encoder/**` | the actual encoder bindings |
 
@@ -39,13 +39,13 @@ elsewhere in `src/`, three are inlined as literals/assumptions, and one
 
 | Table | §/page | Present? | Dimensions | Used by | Status/Gap |
 |---|---|---:|---|---|---|
-| `Mi_Width_Log2` | §9.2 p.609 | Yes | `[29]` | `m1/m1_tables.h` `kMiWidthLog2`; `m1/partition_stream`; `sb128`/`sb256`; partition geometry | OK |
-| `Mi_Height_Log2` | §9.2 p.609 | Yes | `[29]` | `m1/m1_tables.h` `kMiHeightLog2`; partition/TX geometry | OK |
+| `Mi_Width_Log2` | §9.2 p.609 | Yes | `[29]` | `m1/still_tables.h` `kMiWidthLog2`; `m1/partition_stream`; `sb128`/`sb256`; partition geometry | OK |
+| `Mi_Height_Log2` | §9.2 p.609 | Yes | `[29]` | `m1/still_tables.h` `kMiHeightLog2`; partition/TX geometry | OK |
 | `Num_4x4_Blocks_Wide` | §9.2 p.609 | Yes | `[29]` | indirect: `format/format_tables.h` `kBlockWidth = 4 ×` | OK, indirect binding (no standalone C++ table) |
 | `Num_4x4_Blocks_High` | §9.2 p.609 | Yes | `[29]` | indirect: `format/format_tables.h` `kBlockHeight = 4 ×` | OK, indirect binding |
 | `Size_Group` | §9.2 p.610 | Yes | `[29]` | `m2/advanced/advanced_cdf_tables.h` `kSizeGroup`; `cfl/mhccp` | OK |
-| `Max_Tx_Size_Rect` | §9.2 p.610 | Yes | `[29]` | `m1/m1_tables.h` `kMaxTxSizeRect`; `m1/sub8`; `format` | OK |
-| `Partition_Subsize` | §9.2 p.610 | Yes | `[10][29]` | `partition_ext/ext_tables_generated.h` `kPartitionSubsize`; `sb128`/`sb256`; `m1_syntax` | OK |
+| `Max_Tx_Size_Rect` | §9.2 p.610 | Yes | `[29]` | `m1/still_tables.h` `kMaxTxSizeRect`; `m1/sub8`; `format` | OK |
+| `Partition_Subsize` | §9.2 p.610 | Yes | `[10][29]` | `partition_ext/ext_tables_generated.h` `kPartitionSubsize`; `sb128`/`sb256`; `still_syntax` | OK |
 | `H_Partition_Midsize` | §9.2 p.612 | Yes | `[29]` | `partition_ext/ext_tables_generated.h` `kHPartitionMidsize` | OK |
 | `Mode_To_Txfm` | §9.2 p.612 | **No** | `[14]` | none found | **Absent; no consumer in the tree** |
 | `Palette_Color_Context` | §9.2 p.612 | **No** | `[9]` | hand copy `palette/palette_core.h` `kPaletteColorContext` | Absent from generated set; local copy is used |
@@ -53,11 +53,11 @@ elsewhere in `src/`, three are inlined as literals/assumptions, and one
 | `Mode_To_Angle` | §9.2 p.613 | Yes | `[13]` | `tx_secondary/tx_secondary_tables.h`; `cuda/intra_modes` | OK |
 | `Dr_Intra_Derivative` | §9.2 p.613 | **No** | `[90]` | hand copy `cuda/intra_modes/intra_modes.h` macro | Absent from generated set; local copy is used |
 | `Side_Thresholds` | §9.2 p.613 | **No** | `[296]` | hand copy `filters/deblock/deblock_core.h` `kSideThresholds` | Absent from generated set; local copy is used |
-| `Tx_Size_Sqr` | §9.2 p.614 | Yes | `[25]` | `m1/m1_tables.h`; `tx_type`; `tcq/parity` | OK |
+| `Tx_Size_Sqr` | §9.2 p.614 | Yes | `[25]` | `m1/still_tables.h`; `tx_type`; `tcq/parity` | OK |
 | `Q_First` | §9.2 p.614 | **No** | `[9]` | hand copy `filters/deblock/deblock_core.h` `kQFirst` | Absent from generated set; local copy is used |
 | `W_Mult` | §9.2 p.614 | **No** | `[8]` | hand copy `filters/deblock/deblock_core.h` `kWMult` | Absent from generated set; local copy is used |
 | `Q_Thresh_Mults` | §9.2 p.614 | **No** | `[8]` | hand copy `filters/deblock/deblock_core.h` `kQThreshMults` | Absent from generated set; local copy is used |
-| `Tx_Size_Sqr_Up` | §9.2 p.614 | Yes | `[25]` | `m1/m1_tables.h`; `tx_type` | OK |
+| `Tx_Size_Sqr_Up` | §9.2 p.614 | Yes | `[25]` | `m1/still_tables.h`; `tx_type` | OK |
 | `Tx_Width` | §9.2 p.615 | Yes | `[25]` | `tx_secondary`; `tx_variants`; `deblock`; `tcq/parity` | OK |
 | `Tx_Height` | §9.2 p.615 | Yes | `[25]` | same consumers as `Tx_Width` | OK |
 | `Tx_Width_Log2` | §9.2 p.615 | Yes | `[25]` | `tx_secondary`; `tx_variants`; eob multisize | OK |
@@ -68,13 +68,13 @@ elsewhere in `src/`, three are inlined as literals/assumptions, and one
 | `Size_To_Tx_Part_Group_Lookup` | §9.2 p.616 | Yes | `[29]` | none found | **Present; unused** |
 | `Size_To_Tx_Type_Group_Vert_And_Horz` | §9.2 p.616 | Yes | `[29]` | none found | **Present; unused** |
 | `Size_To_Tx_Type_Group_Vert_Or_Horz` | §9.2 p.617 | Yes | `[29]` | none found | **Present; unused** |
-| `Size_Class` | §9.2 p.617 | Yes | `[25]` | `tx_type/tx_type_tables.h`; `m1/m1_tables.h` | OK |
+| `Size_Class` | §9.2 p.617 | Yes | `[25]` | `tx_type/tx_type_tables.h`; `m1/still_tables.h` | OK |
 | `Md_Idx_To_Type` | §9.2 p.617 | Yes | `[4][13][7]` | `tx_type/tx_type_tables.h` | OK |
 | `Gaussian_Sequence` | §9.2 p.618 | **No** | `[2048]` | hand copy `filters/spec_tables/film_grain_tables.h`; film-grain component only, not wired into M0/M1/M2 | Absent from generated set; local copy is used |
 | `Para_Adjustment_List` | §9.2 p.621 | Yes | `[125][3]` | `src/entropy/av2/av2_entropy_tables.h`; consumed by `av2_entropy.h` | OK (also generated independently from the PDF) |
 | `Prob_Inc` | §9.2 p.622 | Yes | `[7][8]` | `src/entropy/av2/av2_entropy_tables.h`; consumed by `av2_entropy.h` | OK (also generated independently from the PDF) |
-| `Tile_Width_Scaling_Factor` | §9.2 p.622 | **No** | `[2][31]` | only a comment in `bitstream/m0_headers.cpp`; value 4 assumed | **Absent; not generated, not a real consumer** |
-| `Tile_Area_Scaling_Factor` | §9.2 p.622 | **No** | `[2][31]` | only a comment in `bitstream/m0_headers.cpp`; value 4 assumed | **Absent; not generated, not a real consumer** |
+| `Tile_Width_Scaling_Factor` | §9.2 p.622 | **No** | `[2][31]` | only a comment in `bitstream/basic_headers.cpp`; value 4 assumed | **Absent; not generated, not a real consumer** |
+| `Tile_Area_Scaling_Factor` | §9.2 p.622 | **No** | `[2][31]` | only a comment in `bitstream/basic_headers.cpp`; value 4 assumed | **Absent; not generated, not a real consumer** |
 
 ### Absent §9.2 tables — disposition
 
@@ -90,8 +90,8 @@ elsewhere in `src/`, three are inlined as literals/assumptions, and one
 | `Q_Thresh_Mults` | `kQThreshMults` in `deblock_core.h` | deblocking | Hand copy, not regenerated |
 | `Wedge_Bits` | `kWedgeBits` in `wedge_tables.h` | inter wedge gating | Hand copy, not regenerated |
 | `Gaussian_Sequence` | `kGaussianSequence` in `film_grain_tables.h` | film grain | Hand copy, not regenerated |
-| `Tile_Width_Scaling_Factor` | literal 4 | `m0_headers.cpp` comment | Not a table in code |
-| `Tile_Area_Scaling_Factor` | literal 4 | `m0_headers.cpp` comment | Not a table in code |
+| `Tile_Width_Scaling_Factor` | literal 4 | `basic_headers.cpp` comment | Not a table in code |
+| `Tile_Area_Scaling_Factor` | literal 4 | `basic_headers.cpp` comment | Not a table in code |
 
 Note: the hand-copied values that were checked (`Side_Thresholds`, `Q_First`,
 `W_Mult`, `Q_Thresh_Mults`, `Wedge_Bits`, `Gaussian_Sequence`,
@@ -107,8 +107,8 @@ as §9.2.
 | Table | §/page | Present? | Dimensions | Used by | Status/Gap |
 |---|---|---:|---|---|---|
 | `Subsampled_Size` | §5.20.7.26 | Yes | `[29][2][2]` | `format/format_tables.h` `kSubsampledSize`; chroma residual | OK; `clause` field incorrectly says `9.2` |
-| `Partition_Size_Adjust` | §8.3.2 | Yes | `[29]` | `m1/m1_tables.h`; `partition_ext` | OK; `clause` field says `9.2`; `generate_m1_tables.py` hardcodes the values instead of reading the JSON |
-| `Partition_Size_Adjust_Rect_Type` | §8.3.2 | Yes | `[29]` | `m1/m1_tables.h`; `partition_ext` | Same as above |
+| `Partition_Size_Adjust` | §8.3.2 | Yes | `[29]` | `m1/still_tables.h`; `partition_ext` | OK; `clause` field says `9.2`; `generate_still_tables.py` hardcodes the values instead of reading the JSON |
+| `Partition_Size_Adjust_Rect_Type` | §8.3.2 | Yes | `[29]` | `m1/still_tables.h`; `partition_ext` | Same as above |
 | `Transform_Shift` | §7.15.4.1 | Yes | `[25][2]` | hardcoded branch logic in `format/chroma/chroma_residual.cpp` | **Present but table is unused**; `clause` field says `9.2` |
 | `Reordered_Y_Mode` | §5.20.5 | Yes | `[13]` | `m1` / `mrl` | OK (out of §9.1–§9.3) |
 | `Default_Mode_List_Y` | §5.20.5 | Yes | `[56]` | `m1` / `mrl` | OK (out of §9.1–§9.3) |
@@ -127,8 +127,8 @@ four TX_CLASS_2D square scans and all four are used.
 |---|---|---:|---|---|---|
 | `scan.4` (diagonal 4×4) | §5.20.7.30 | Yes | `[16]` | `tx_type/tx_type_tables.h` `kScan4`; lossless also has a matching hand copy | OK |
 | `scan.8` (diagonal 8×8) | §5.20.7.30 | Yes | `[64]` | `tx_type/tx_type_tables.h` `kScan8`; lossless hand copy | OK |
-| `scan.16` (diagonal 16×16) | §5.20.7.30 | Yes | `[256]` | `m0_tables.h` `kScan16`; `tx_type` `kScan16` | OK |
-| `scan.32` (diagonal 32×32) | §5.20.7.30 | Yes | `[1024]` | `m0_tables.h` `kScan32`; `tx_type` `kScan32` | OK |
+| `scan.16` (diagonal 16×16) | §5.20.7.30 | Yes | `[256]` | `basic_tables.h` `kScan16`; `tx_type` `kScan16` | OK |
+| `scan.32` (diagonal 32×32) | §5.20.7.30 | Yes | `[1024]` | `basic_tables.h` `kScan32`; `tx_type` `kScan32` | OK |
 
 All four are permutations of `0..N-1` and match a literal implementation of
 `get_scan()`. **Gap:** the generated set covers only square TX_CLASS_2D scans.
@@ -163,13 +163,13 @@ has a non-decreasing cumulative part, a base-rate entry, and adaptation count
 | Table group | §/page | Present? | Dimensions | Used by | Status/Gap |
 |---|---|---:|---|---|---|
 | Motion / BAWP / TIP / warp / JMVD / CWP / FSC | §9.3 pp.623–626 | Yes (39) | per-array, rows 3–9 | `m2/advanced/advanced_cdf_tables.h`, `m2/multiref/gate`, `m1/ibc_stream`, `tcq`, `lossless`, `tx_secondary` | 33 used, 6 unbound (below) |
-| Intra mode / CFL / MRL / CCSO / IBC | §9.3 pp.627–628 | Yes (11) | per-array, rows 3–9 | `m0_cdf_tables.h`, `m1_cdf_tables.h`, `m1/mrl_stream`, `m1/ibc_stream`, `m1_syntax.cpp` | all used |
-| Partition / TX partition / segment / skip / DRL | §9.3 pp.630–637 | Yes (11) | per-array, rows 3–9 | `m0_cdf_tables.h`, `partition_ext`, `m1/deltaq`, `inter/drl_reorder` | 7 used, 4 unbound |
-| Inter compound / refs / precision / interp filter | §9.3 pp.638–641 | Yes (17) | per-array, rows 3–9 | `m2_cdf_tables.h`, `m2/multiref/gate`, `inter/drl_reorder`, `m1/ibc_stream` | 13 used, 4 unbound |
+| Intra mode / CFL / MRL / CCSO / IBC | §9.3 pp.627–628 | Yes (11) | per-array, rows 3–9 | `basic_cdf_tables.h`, `still_cdf_tables.h`, `m1/mrl_stream`, `m1/ibc_stream`, `still_syntax.cpp` | all used |
+| Partition / TX partition / segment / skip / DRL | §9.3 pp.630–637 | Yes (11) | per-array, rows 3–9 | `basic_cdf_tables.h`, `partition_ext`, `m1/deltaq`, `inter/drl_reorder` | 7 used, 4 unbound |
+| Inter compound / refs / precision / interp filter | §9.3 pp.638–641 | Yes (17) | per-array, rows 3–9 | `video_cdf_tables.h`, `m2/multiref/gate`, `inter/drl_reorder`, `m1/ibc_stream` | 13 used, 4 unbound |
 | Palette / delta-Q / TX type / wedge / warp / CFL / restoration | §9.3 pp.642–648 | Yes (49) | per-array, rows 3–9 | `palette/scc_cdf.h`, `m1/deltaq`, `tx_type`, `tx_secondary`, `m2/advanced`, `m2/residual`, `cfl/mhccp`, `wiener_cdfs.h` | all used |
-| Coefficient base / EOB / IDTX / PH / LF; CFL MH; DIP | §9.3 pp.655–670 | Yes (20) | per-array, rows 3–9 | `m0_cdf_tables.h`, `m1/qctx/qctx_cdf_tables.h`, `cfl/mhccp`, `dip` | all used |
-| Coefficient LF luma/chroma | §9.3 p.708 | Yes (2) | per-array, rows 7 | `m0_cdf_tables.h`, `m1/qctx` | all used |
-| Coeff UV / DPCM / morph / SDP / TIP / long TX / CDEF / AMVD / MRL / lossless / GDF / BRU | §9.3 pp.732–742 | Yes (31) | per-array, rows 3–9 | `cuda/m1/cdef`, `lossless`, `m0_cdf_tables.h`, `m1_cdf_tables.h`, `m1/mrl_stream`, `m2_cdf_tables.h` | 24 used, 7 unbound |
+| Coefficient base / EOB / IDTX / PH / LF; CFL MH; DIP | §9.3 pp.655–670 | Yes (20) | per-array, rows 3–9 | `basic_cdf_tables.h`, `m1/qctx/qctx_cdf_tables.h`, `cfl/mhccp`, `dip` | all used |
+| Coefficient LF luma/chroma | §9.3 p.708 | Yes (2) | per-array, rows 7 | `basic_cdf_tables.h`, `m1/qctx` | all used |
+| Coeff UV / DPCM / morph / SDP / TIP / long TX / CDEF / AMVD / MRL / lossless / GDF / BRU | §9.3 pp.732–742 | Yes (31) | per-array, rows 3–9 | `cuda/m1/cdef`, `lossless`, `basic_cdf_tables.h`, `still_cdf_tables.h`, `m1/mrl_stream`, `video_cdf_tables.h` | 24 used, 7 unbound |
 
 “Rows 3–9” means the last dimension (`N+1`) is between 3 and 9; the exact
 per-array shapes are in `default_cdf.json`.
@@ -204,14 +204,14 @@ are listed with their exact spec page and declared shape.
 | `Default_Use_Gdf_Cdf` | §9.3 p.742 | Yes | `[3]` | none | **Unused** |
 | `Default_Bru_Mode_Cdf` | §9.3 p.742 | Yes | `[4]` | none found | **Unused** |
 
-### `m0_cdf.json` / `m0_cdf.h` subset is stale, truncated, and unused
+### `basic_cdf.json` / `basic_cdf.h` subset is stale, truncated, and unused
 
-`spec/tables/m0_cdf.json` and `m0_cdf.h` contain **19** arrays and are described
+`spec/tables/basic_cdf.json` and `basic_cdf.h` contain **19** arrays and are described
 in `spec/tables/README.md` as “the 19 arrays the M0 syntax path reads”. The
-actual M0 generator, `src/encoder/generate_m0_cdf.py`, binds **27** arrays from
+actual M0 generator, `src/encoder/generate_basic_cdf.py`, binds **27** arrays from
 `default_cdf.json`:
 
-- nine arrays used by M0 but missing from `m0_cdf.json`/`m0_cdf.h`:
+- nine arrays used by M0 but missing from `basic_cdf.json`/`basic_cdf.h`:
   `Default_Rect_Type_Cdf`, `Default_Eob_Pt_64_Cdf`, `Default_Eob_Pt_128_Cdf`,
   `Default_Eob_Pt_512_Cdf`, `Default_Coeff_Base_Lf_Cdf`,
   `Default_Coeff_Base_Lf_Eob_Cdf`, `Default_Coeff_Base_Lf_Uv_Cdf`,
@@ -219,7 +219,7 @@ actual M0 generator, `src/encoder/generate_m0_cdf.py`, binds **27** arrays from
 - one array in the subset not used by that M0 binding:
   `Default_Y_Mode_Offset_Cdf` (it is used by M1).
 
-Neither `m0_cdf.json` nor `m0_cdf.h` is included by any build target or C++
+Neither `basic_cdf.json` nor `basic_cdf.h` is included by any build target or C++
 source. They are stale duplicate artifacts and should not be used to judge M0
 coverage.
 
@@ -235,7 +235,7 @@ coverage.
   `block_tables.json`;
 - the four `scan.json` arrays match a literal `get_scan()` implementation and
   are permutations;
-- C++ copies inspected in `m0_cdf_tables.h`, `m1_tables.h`,
+- C++ copies inspected in `basic_cdf_tables.h`, `still_tables.h`,
   `tx_type_tables.h`, `format_tables.h`, `ext_tables_generated.h`,
   `tx_secondary_tables.h`, `qctx_cdf_tables.h`, `deblock_core.h`,
   `film_grain_tables.h`, and `wedge_tables.h` have no value differences.
@@ -250,12 +250,12 @@ The only parser warnings were prose lines interleaved into numeric arrays
 
 - `Transform_Shift` is present in `block_tables.json` but unused (behavior is
   hardcoded in `chroma_residual.cpp`); it is a §7.15.4.1 table, not §9.2.
-- `m0_cdf.json`/`m0_cdf.h` are stale 19-array subsets; the real M0 binding uses
+- `basic_cdf.json`/`basic_cdf.h` are stale 19-array subsets; the real M0 binding uses
   27 arrays. Both files are unused by the build.
 - `block_tables.json` labels `Subsampled_Size` (§5.20.7.26),
   `Partition_Size_Adjust` (§8.3.2), `Partition_Size_Adjust_Rect_Type`
   (§8.3.2), and `Transform_Shift` (§7.15.4.1) as clause `9.2`.
-- `src/encoder/m1/generate_m1_tables.py` claims all inputs come from
+- `src/encoder/m1/generate_still_tables.py` claims all inputs come from
   `spec/tables/*.json` but hardcodes `Partition_Size_Adjust` and
   `Partition_Size_Adjust_Rect_Type` rather than reading
   `block_tables.json`. Values currently match; regeneration provenance does
@@ -304,4 +304,4 @@ rewritten.
 | Absent from generated artifacts | **12** (all §9.2) |
 | Present but unused / only partially used by any encoder path | **26** (5 §9.2 + 21 CDFs) |
 | Value mismatches against spec | **0** |
-| Truncated generated artifacts | **1 set** (`m0_cdf.json`/`m0_cdf.h`: 19 of the 27 arrays used by M0) |
+| Truncated generated artifacts | **1 set** (`basic_cdf.json`/`basic_cdf.h`: 19 of the 27 arrays used by M0) |

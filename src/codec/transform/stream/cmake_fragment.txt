@@ -1,0 +1,24 @@
+# CMake fragment for the M1 transform-stream adapter.
+#
+# The root CMakeLists.txt is owned by the integration agent; this file records
+# the exact lines to add.  Do not add it as a subdirectory unless the root build
+# opts in.
+
+# CPU reference (part of av2enc_core).
+target_sources(av2enc_core PRIVATE
+  src/encoder/m1/transform_stream/transform_stream.cpp)
+# Bit-exact CPU/GPU decisions require this on the adapter translation unit.
+set_source_files_properties(
+  src/encoder/m1/transform_stream/transform_stream.cpp
+  PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+
+# GPU batch path (part of the object library that already receives
+# --fmad=false for every .cu source).
+if(TARGET av2enc_still_gpu)
+  target_sources(av2enc_still_gpu PRIVATE
+    src/encoder/m1/transform_stream/transform_stream_gpu.cu)
+endif()
+
+# The CPU reference and GPU parity test are standalone component builds; they
+# are not part of the product target.  See build_and_test.sh and
+# build_gpu_test.sh.

@@ -1,0 +1,117 @@
+--- a/src/encoder/m2/m2_syntax.cpp
++++ b/src/encoder/m2/m2_syntax.cpp
+@@ -17,6 +17,39 @@
+ #include "encoder/inter/mc/mc.h"
+ #include "encoder/m2/merge/merge.h"
+ 
++// ---------------------------------------------------------------------------
++// Gate patch (src/encoder/m2/residual): inter transform-type signalling.
++// Not part of the M2 core.  An integration would either replace the
++// DCT_DCT-only writer below with residual::write_inter_tx_type() or pass the
++// per-leaf TX type through BlockSyntax.
++// ---------------------------------------------------------------------------
++#include "encoder/m2/residual/inter_coeff_syntax.h"
++
++namespace av2enc::video::syntax {
++namespace {
++
++std::vector<std::uint8_t> g_gate_inter_tx_types;
++
++bool gate_encode_symbol(void* context, std::uint16_t* cdf, int n, int symbol) {
++  auto* encoder = static_cast<av2::Encoder*>(context);
++  return encoder->encode_symbol(cdf, n, symbol) == av2::Status::kOk;
++}
++
++bool gate_encode_bool(void* context, bool bit) {
++  auto* encoder = static_cast<av2::Encoder*>(context);
++  return encoder->encode_bool(bit) == av2::Status::kOk;
++}
++
++}  // namespace
++
++// Coding-order TX_TYPE list for the gate (one entry per non-skip inter leaf).
++void m2_residual_gate_set_inter_tx_types(const std::uint8_t* types,
++                                         int count) {
++  g_gate_inter_tx_types.assign(types, types + (count > 0 ? count : 0));
++}
++
++}  // namespace av2enc::video::syntax
++
+ #include <algorithm>
+ #include <array>
+ #include <cstddef>
+@@ -417,6 +450,7 @@
+     mi_rows_ = partition::mi_rows(geometry_);
+ 
+     init_cdfs(cdfs_);
++    av2enc::video::residual::init_inter_residual_cdfs(residual_cdfs_);
+     tile_buffer_.resize(kTileCapacityBytes);
+     enc_.init_symbol(tile_buffer_.data(), tile_buffer_.size());
+     enc_.disable_cdf_update = config_.disable_cdf_update ? 1 : 0;
+@@ -1062,40 +1096,23 @@
+   //   DCT_IDTX: symbol 1                -> Inv_Set3[1]          = DCT_DCT
+   //   long sets: is_long_side_dct = 1, type 0 -> Inv_Long[1][*][0]
+   bool write_inter_tx_type(int tx_size, int eob, int coded_w, int coded_h) {
+-    const InterTxSet set = inter_tx_set(tx_size);
+-    if (set == InterTxSet::kDctOnly) return true;
+-    const int ctx = inter_tx_type_context(eob, coded_w, coded_h, true);
+-    const int sqr = kTxSizeSqr[tx_size];
+-    switch (set) {
+-      case InterTxSet::kWide64:
+-      case InterTxSet::kHigh64:
+-        // WIDE_64/HIGH_64 imply is_long_side_dct = 1; only the type is coded.
+-        return sym(&cdfs_.inter_tx_type_long[ctx][sqr][0], 4, 0);
+-      case InterTxSet::kWide32:
+-      case InterTxSet::kHigh32:
+-        if (!sym(&cdfs_.is_long_side_dct[1][0], 2, 1)) return false;
+-        return sym(&cdfs_.inter_tx_type_long[ctx][sqr][0], 4, 0);
+-      case InterTxSet::kInter1: {
+-        if (!sym(&cdfs_.inter_tx_type_set1[ctx][sqr][0], 2, 0)) return false;
+-        const int off_ctx =
+-            inter_tx_type_context(eob, coded_w, coded_h, false);
+-        return sym(&cdfs_.inter_tx_type_index_set1[off_ctx][0], 8, 7);
+-      }
+-      case InterTxSet::kInter2: {
+-        if (!sym(&cdfs_.inter_tx_type_set2[ctx][0], 2, 0)) return false;
+-        const int off_ctx =
+-            inter_tx_type_context(eob, coded_w, coded_h, false);
+-        return sym(&cdfs_.inter_tx_type_index_set2[off_ctx][0], 8, 3);
+-      }
+-      case InterTxSet::kDctIdtx:
+-        return sym(&cdfs_.inter_tx_type_set3[ctx][sqr][0], 2, 1);
+-      case InterTxSet::kDctOnly:
+-        return true;
++    (void)coded_w;
++    (void)coded_h;
++    // Gate patch: take the decided type from the coding-order list instead of
++    // always signalling DCT_DCT.  residual_cdfs_ is initialised next to
++    // init_cdfs(cdfs_) in the constructor.
++    int type = 0;  // txv::TxType::kDctDct
++    if (gate_tx_cursor_ < g_gate_inter_tx_types.size()) {
++      type = g_gate_inter_tx_types[gate_tx_cursor_];
+     }
+-    return false;
++    ++gate_tx_cursor_;
++    av2enc::video::residual::SymbolSink sink;
++    sink.context = &enc_;
++    sink.encode_symbol = &gate_encode_symbol;
++    sink.encode_bool = &gate_encode_bool;
++    return av2enc::video::residual::write_inter_tx_type(
++        sink, residual_cdfs_, tx_size, type, eob, error_);
+   }
+-
+-  // `level_base` is the index of this plane's first scan-order level.
+   bool code_tx(const BlockSyntax& node, int plane, std::size_t level_base,
+                int bsize_w, int bsize_h, std::size_t levels_end,
+                bool is_inter, std::string& error) {
+@@ -1998,6 +2015,10 @@
+   int mi_rows_ = 0;
+ 
+   CdfState cdfs_{};
++  // Gate patch: inter TX-type CDF state for residual::write_inter_tx_type().
++  av2enc::video::residual::InterResidualCdfs residual_cdfs_{};
++  // Gate patch: coding-order cursor into the TX_TYPE list above.
++  std::size_t gate_tx_cursor_ = 0;
+   av2::Encoder enc_{};
+   std::vector<std::uint8_t> tile_buffer_;
+   std::vector<std::uint8_t> payload_;

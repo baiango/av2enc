@@ -1,0 +1,106 @@
+== M3 GPU feature matrix ==
+encoder:  build-m1/av2enc
+decoder:  /Users/arin/work/av2enc/tools/bin/dav2d-macos
+cpu-only: 1
+attest:   nsys
+sizes:    64x64 640x360 1280x720 1920x1080
+modes:    baseline cdef cdef1 ccso ccso4 rdoq tx-type rdo-intra uv-full cdef+ccso cdef+rdoq cdef+tx-type rdoq+tx-type cdef+ccso+rdoq cdef+rdoq+tx-type rdo-intra+uv-full cdef+rdoq+tx-type+uv-full all
+cases:    72 (18 modes x 4 sizes)
+logs:     /tmp/m3_cpu_matrix5/matrix/logs
+[  1/ 72] 64x64      baseline                     PASS
+[  2/ 72] 64x64      cdef                         PASS
+[  3/ 72] 64x64      cdef1                        SKIP  SKIP (tuning variant 'cdef1' does not differ from 'cdef' here; cannot verify the parameter)
+[  4/ 72] 64x64      ccso                         PASS
+[  5/ 72] 64x64      ccso4                        PASS
+[  6/ 72] 64x64      rdoq                         PASS
+[  7/ 72] 64x64      tx-type                      PASS
+[  8/ 72] 64x64      rdo-intra                    PASS
+[  9/ 72] 64x64      uv-full                      PASS
+[ 10/ 72] 64x64      cdef+ccso                    PASS
+[ 11/ 72] 64x64      cdef+rdoq                    PASS
+[ 12/ 72] 64x64      cdef+tx-type                 PASS
+[ 13/ 72] 64x64      rdoq+tx-type                 PASS
+[ 14/ 72] 64x64      cdef+ccso+rdoq               PASS
+[ 15/ 72] 64x64      cdef+rdoq+tx-type            PASS
+[ 16/ 72] 64x64      rdo-intra+uv-full            PASS
+[ 17/ 72] 64x64      cdef+rdoq+tx-type+uv-full    PASS
+[ 18/ 72] 64x64      all                          PASS
+[ 19/ 72] 640x360    baseline                     PASS
+[ 20/ 72] 640x360    cdef                         PASS
+[ 21/ 72] 640x360    cdef1                        PASS
+[ 22/ 72] 640x360    ccso                         PASS
+[ 23/ 72] 640x360    ccso4                        PASS
+[ 24/ 72] 640x360    rdoq                         PASS
+[ 25/ 72] 640x360    tx-type                      PASS
+[ 26/ 72] 640x360    rdo-intra                    PASS
+[ 27/ 72] 640x360    uv-full                      PASS
+[ 28/ 72] 640x360    cdef+ccso                    PASS
+[ 29/ 72] 640x360    cdef+rdoq                    PASS
+[ 30/ 72] 640x360    cdef+tx-type                 PASS
+[ 31/ 72] 640x360    rdoq+tx-type                 PASS
+[ 32/ 72] 640x360    cdef+ccso+rdoq               PASS
+[ 33/ 72] 640x360    cdef+rdoq+tx-type            PASS
+[ 34/ 72] 640x360    rdo-intra+uv-full            PASS
+[ 35/ 72] 640x360    cdef+rdoq+tx-type+uv-full    PASS
+[ 36/ 72] 640x360    all                          PASS
+[ 37/ 72] 1280x720   baseline                     PASS
+[ 38/ 72] 1280x720   cdef                         PASS
+[ 39/ 72] 1280x720   cdef1                        PASS
+[ 40/ 72] 1280x720   ccso                         PASS
+[ 41/ 72] 1280x720   ccso4                        PASS
+[ 42/ 72] 1280x720   rdoq                         PASS
+[ 43/ 72] 1280x720   tx-type                      PASS
+[ 44/ 72] 1280x720   rdo-intra                    PASS
+[ 45/ 72] 1280x720   uv-full                      PASS
+[ 46/ 72] 1280x720   cdef+ccso                    PASS
+[ 47/ 72] 1280x720   cdef+rdoq                    PASS
+[ 48/ 72] 1280x720   cdef+tx-type                 PASS
+[ 49/ 72] 1280x720   rdoq+tx-type                 PASS
+[ 50/ 72] 1280x720   cdef+ccso+rdoq               PASS
+[ 51/ 72] 1280x720   cdef+rdoq+tx-type            PASS
+[ 52/ 72] 1280x720   rdo-intra+uv-full            PASS
+[ 53/ 72] 1280x720   cdef+rdoq+tx-type+uv-full    PASS
+[ 54/ 72] 1280x720   all                          PASS
+[ 55/ 72] 1920x1080  baseline                     PASS
+[ 56/ 72] 1920x1080  cdef                         PASS
+[ 57/ 72] 1920x1080  cdef1                        PASS
+[ 58/ 72] 1920x1080  ccso                         PASS
+[ 59/ 72] 1920x1080  ccso4                        PASS
+[ 60/ 72] 1920x1080  rdoq                         PASS
+[ 61/ 72] 1920x1080  tx-type                      PASS
+[ 62/ 72] 1920x1080  rdo-intra                    PASS
+[ 63/ 72] 1920x1080  uv-full                      PASS
+[ 64/ 72] 1920x1080  cdef+ccso                    PASS
+[ 65/ 72] 1920x1080  cdef+rdoq                    PASS
+[ 66/ 72] 1920x1080  cdef+tx-type                 PASS
+[ 67/ 72] 1920x1080  rdoq+tx-type                 PASS
+[ 68/ 72] 1920x1080  cdef+ccso+rdoq               PASS
+[ 69/ 72] 1920x1080  cdef+rdoq+tx-type            PASS
+[ 70/ 72] 1920x1080  rdo-intra+uv-full            PASS
+[ 71/ 72] 1920x1080  cdef+rdoq+tx-type+uv-full    PASS
+[ 72/ 72] 1920x1080  all                          PASS
+
+-- matrix summary --
+cases:    72 (18 modes x 4 sizes)
+result:   71 CPU-ONLY-PASS, 0 FAIL, 1 SKIP (GPU NOT tested)
+elapsed:  82s (budget 0s)
+logs:     /tmp/m3_cpu_matrix5/matrix/logs
+classes:  /tmp/m3_cpu_matrix5/matrix/classes.tsv
+
+-- CPU feature effect (GPU NOT tested) --
+  cdef         CHANGES-BITSTREAM  pass=4 fail=0 skip=0  [CPU-ONLY-PASS]
+  cdef1        PARTIAL  pass=3 fail=0 skip=1  [CPU-ONLY-PASS,SKIP-NO-EFFECT]
+  ccso         CHANGES-BITSTREAM  pass=4 fail=0 skip=0  [CPU-ONLY-PASS]
+  ccso4        CHANGES-BITSTREAM  pass=4 fail=0 skip=0  [CPU-ONLY-PASS]
+  rdoq         CHANGES-BITSTREAM  pass=4 fail=0 skip=0  [CPU-ONLY-PASS]
+  tx-type      CHANGES-BITSTREAM  pass=4 fail=0 skip=0  [CPU-ONLY-PASS]
+  rdo-intra    CHANGES-BITSTREAM  pass=4 fail=0 skip=0  [CPU-ONLY-PASS]
+  uv-full      CHANGES-BITSTREAM  pass=4 fail=0 skip=0  [CPU-ONLY-PASS]
+
+CPU FEATURES CHANGING THE BITSTREAM: cdef ccso ccso4 rdoq tx-type rdo-intra uv-full
+CPU FEATURES PARTIAL/NOT-READY:     cdef1 (CPU-ONLY-PASS,SKIP-NO-EFFECT)
+
+SKIPPED (grouped by reason)
+     1 SKIP (tuning variant 'cdef1' does not differ from 'cdef' here; cannot verify the parameter)
+
+RESULT: SKIP (1 case(s) not verified)

@@ -41,7 +41,7 @@ FLAGS+=("-Xcompiler=${JOINED_HOST_FLAGS}")
   -I"${ROOT}/src" \
   "${HERE}/entropy.cu" \
   "${HERE}/entropy_test.cu" \
-  "${ROOT}/src/entropy/av2/av2_entropy.cpp" \
+  "${ROOT}/src/codec/entropy/av2/av2_entropy.cpp" \
   -o "${OUT}"
 
 "${OUT}" "$@"

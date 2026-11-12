@@ -512,10 +512,10 @@ Build this once, use it for every stage. Harness details are in
 
 | Feature / stage | Minimal stream | Decoder result | Recon match | dav2d commit | Date | Notes |
 |---|---|---|---|---|---|---|
-| M0 baseline | `out_m0_64.ivf` | pending | pending | `f9dafbc` | — | first gate |
-| M1 partition | `out_m1_part.ivf` | pending | pending | `f9dafbc` | — | — |
-| M1 CfL | `out_m1_cfl.ivf` | pending | pending | `f9dafbc` | — | — |
-| M2 NEWMV | `out_m2_newmv.ivf` | pending | pending | `f9dafbc` | — | — |
+| M0 baseline | `out_basic_64.ivf` | pending | pending | `f9dafbc` | — | first gate |
+| M1 partition | `out_still_part.ivf` | pending | pending | `f9dafbc` | — | — |
+| M1 CfL | `out_still_cfl.ivf` | pending | pending | `f9dafbc` | — | — |
+| M2 NEWMV | `out_video_newmv.ivf` | pending | pending | `f9dafbc` | — | — |
 | M3 CDEF | `out_m3_cdef.ivf` | pending | pending | `f9dafbc` | — | — |
 | M4 compound | `out_m4_comp.ivf` | pending | pending | `f9dafbc` | — | — |
 

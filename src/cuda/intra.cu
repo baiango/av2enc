@@ -1,7 +1,7 @@
 // M0 DC intra prediction / residual / reconstruction kernels.
 //
 // Integer only, so the CUDA path is bit-exact with the scalar CPU reference in
-// src/encoder/m0_still.cpp. See intra.h for the arithmetic contract.
+// src/encoder/basic_encoder.cpp. See intra.h for the arithmetic contract.
 
 #include "intra.h"
 

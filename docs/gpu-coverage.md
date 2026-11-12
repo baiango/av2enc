@@ -24,7 +24,7 @@ list is auto-added so no `.cu` can go uncounted.
 `GPU-REQUIRED` says the work is device-resident on at least one GPU path;
 the *wired* column names which one. The product build (`CMakeLists.txt`)
 only links the **M1** GPU target. `src/cuda/m2/` is gate-only: there is no
-`av2enc_m2_gpu` target in `CMakeLists.txt`, so every M2 row is reachable
+`av2enc_video_gpu` target in `CMakeLists.txt`, so every M2 row is reachable
 only through `src/cuda/m2/build_gpu_gate.sh`.
 
 Inventory under `src/`:
@@ -89,41 +89,41 @@ that live beside their CPU component under `src/encoder/`.
 
 | tool | spec § | CPU reference dir | CUDA kernel dir | parity test | host emulation | real-GPU evidence | wired into M1/M2 | verdict |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| cdef/cdef.cu | §7.18 | src/encoder/filters/cdef/ | its own directory | src/cuda/cdef/cdef_test.cu | — | RTX 3060: 51,047 checks | no (M1 rejects --m1-cdef) | GPU-UNWIRED |
+| cdef/cdef.cu | §7.18 | src/encoder/filters/cdef/ | its own directory | src/cuda/cdef/cdef_test.cu | — | RTX 3060: 51,047 checks | no (M1 rejects --still-cdef) | GPU-UNWIRED |
 | cfl/cfl.cu | §7.13.5 | src/encoder/cfl/ | its own directory | src/cuda/cfl/cfl_test.cu | — | RTX 3060 (README status) | linked, never called | GPU-UNWIRED |
 | deblock/deblock.cu | §7.17 | src/encoder/filters/deblock/ | its own directory | src/cuda/deblock/deblock_test.cu | — | RTX 3060 (README) | M1 (recon_deblock_frame) | GPU-REQUIRED |
 | dip/dip.cu | §7.13.2.1, §7.13.2.3–.6 | src/encoder/dip/ | its own directory | src/cuda/dip/dip_test.cu | src/cuda/dip/dip_emulation_test.cpp | not run (README) | no | GPU-UNWIRED |
 | entropy.cu | §8.2 | src/entropy/av2/ | its own directory | src/cuda/entropy_test.cu | — | RTX 3060: byte-exact | no (M1/M2 use CPU writer) | GPU-SERIAL |
 | format/high_bitdepth.cu | §6.4.1 Table 6.3, §7.15 | src/encoder/hbd/ | its own directory | src/cuda/format/high_bitdepth_test.cu | — | not executed (README) | no | GPU-UNWIRED |
-| format/m10_gpu.cu | §6.4.1, §7.15 | src/encoder/m10/ | its own directory | src/cuda/format/m10_gpu_test.cu | — | not executed (README) | no (M10 standalone) | GPU-UNWIRED |
+| format/high_bitdepth_gpu.cu | §6.4.1, §7.15 | src/encoder/m10/ | its own directory | src/cuda/format/high_bitdepth_gpu_test.cu | — | not executed (README) | no (M10 standalone) | GPU-UNWIRED |
 | ibc/ibc.cu | §5.20.5.4, §6.19.7.12 | src/encoder/ibc/ | its own directory | src/cuda/ibc/ibc_test.cu | — | not documented | no | GPU-UNWIRED |
 | ibp/ibp.cu | §7.13.2.7–.9, .12, .14, .17–.18 | src/encoder/ibp/ | its own directory | src/cuda/ibp/ibp_test.cu | src/cuda/ibp/ibp_device_emulation_test.cpp (273,958,171 checks) | not executed (README) | no | GPU-UNWIRED |
 | inter/advanced/advanced.cu | §7.13.3.14, §7.13.3.27, §7.13.3.30 | src/encoder/inter/advanced/ | its own directory | src/cuda/inter/advanced/advanced_test.cu | — | not run (no CUDA device) | no | GPU-UNWIRED |
 | inter/mc/mc.cu | §7.13.3.17–.18 | src/encoder/inter/mc/ | its own directory | src/cuda/inter/mc/mc_test.cu | — | RTX 3060: 1,069 checks | M2 gate (not in CMake) | GPU-REQUIRED |
 | inter/me/me.cu | §7.13.3.14, §7.13.3.16 | src/encoder/inter/me/ | its own directory | src/cuda/inter/me/me_test.cu | — | RTX 3060: 510 checks | M2 gate (not in CMake) | GPU-REQUIRED |
-| intra.cu | §7.13.2 | src/encoder/m0_still.cpp | its own directory | src/cuda/intra_test.cu | — | RTX 3060 (README-intra) | M0 only | GPU-REQUIRED |
+| intra.cu | §7.13.2 | src/encoder/basic_encoder.cpp | its own directory | src/cuda/intra_test.cu | — | RTX 3060 (README-intra) | M0 only | GPU-REQUIRED |
 | intra_modes/intra_modes.cu | §7.13.2 | src/encoder/intra_modes/ | its own directory | src/cuda/intra_modes/intra_modes_test.cu | src/cuda/intra_modes/intra_device_emulation_test.cpp (2,782 checks) | RTX 3060 | M1 + M2 | GPU-REQUIRED |
-| m0_pipeline.cu | orchestration | src/encoder/m0_still.cpp | its own directory | src/cuda/m0_pipeline_test.cpp | — | RTX 3060 PASS | M0 only | GPU-REQUIRED |
-| m1/cdef/m1_cdef.cu | §7.18 | src/encoder/m1/filters_stream/ + src/encoder/filters/cdef/ | its own directory | src/cuda/m1/cdef/m1_cdef_gpu_test.cu | src/cuda/m1/cdef/m1_cdef_test.cpp | not run (README) | no (rejected by GpuOptions) | GPU-UNWIRED |
-| m1/cfl/m1_cfl.cu | §7.13.5 | src/encoder/cfl/ | its own directory | src/cuda/m1/cfl/m1_cfl_test.cu | — | RTX 3060 (README) | no (wrapper never called) | GPU-UNWIRED |
-| m1/chroma/m1_chroma.cu | §7.13.2, §7.13.5 | src/encoder/m1/m1_still.cpp (chroma decide) | its own directory | src/cuda/m1/chroma/m1_chroma_test.cu | src/cuda/m1/chroma/uv_full_emulation_test.cpp, frame_emulation_shim.cpp | RTX 3060 PASS | M1 | GPU-REQUIRED |
+| basic_pipeline.cu | orchestration | src/encoder/basic_encoder.cpp | its own directory | src/cuda/basic_pipeline_test.cpp | — | RTX 3060 PASS | M0 only | GPU-REQUIRED |
+| m1/cdef/still_cdef.cu | §7.18 | src/encoder/m1/filters_stream/ + src/encoder/filters/cdef/ | its own directory | src/cuda/m1/cdef/still_cdef_gpu_test.cu | src/cuda/m1/cdef/still_cdef_test.cpp | not run (README) | no (rejected by GpuOptions) | GPU-UNWIRED |
+| m1/cfl/still_cfl.cu | §7.13.5 | src/encoder/cfl/ | its own directory | src/cuda/m1/cfl/still_cfl_test.cu | — | RTX 3060 (README) | no (wrapper never called) | GPU-UNWIRED |
+| m1/chroma/still_chroma.cu | §7.13.2, §7.13.5 | src/encoder/m1/still_encoder.cpp (chroma decide) | its own directory | src/cuda/m1/chroma/still_chroma_test.cu | src/cuda/m1/chroma/uv_full_emulation_test.cpp, frame_emulation_shim.cpp | RTX 3060 PASS | M1 | GPU-REQUIRED |
 | m1/hbd/hbd_frame.cu | §6.4.1 Table 6.3, §7.15 | src/encoder/hbd/ | its own directory | src/cuda/m1/hbd/hbd_test.cu | src/cuda/m1/hbd/hbd_test.cpp (19,312 checks) | RTX 3060: 1,523,424 checks | no | GPU-UNWIRED |
 | m1/hbd/hbd_tx.cu | §7.15, §7.14.4 | src/encoder/hbd/ | its own directory | src/cuda/m1/hbd/hbd_test.cu | src/cuda/m1/hbd/hbd_test.cpp | RTX 3060: 1,523,424 checks | no | GPU-UNWIRED |
-| m1/m1_gpu.cu | orchestration | src/encoder/m1/m1_still.cpp | its own directory | src/cuda/m1/m1_gpu_test.cc | — | RTX 3060: 105-case matrix | M1 product (--m1-gpu) | GPU-REQUIRED |
-| m1/recon/recon.cu | §7.14.3, §7.17 metadata | src/encoder/m1/m1_still.cpp (fill_deblock_mi) | its own directory | src/cuda/m1/recon/recon_test.cu | — | RTX 3060: 2,652 checks | M1 | GPU-REQUIRED |
-| m1/restoration/m1_restoration.cu | §7.19, §7.20–§7.20.3 | src/encoder/filters/restoration/ | its own directory | src/cuda/m1/restoration/m1_restoration_test.cu | src/cuda/m1/restoration/real_recon_oracle_test.cpp | not executed (README) | no | GPU-UNWIRED |
+| m1/still_gpu.cu | orchestration | src/encoder/m1/still_encoder.cpp | its own directory | src/cuda/m1/still_gpu_test.cc | — | RTX 3060: 105-case matrix | M1 product (--still-gpu) | GPU-REQUIRED |
+| m1/recon/recon.cu | §7.14.3, §7.17 metadata | src/encoder/m1/still_encoder.cpp (fill_deblock_mi) | its own directory | src/cuda/m1/recon/recon_test.cu | — | RTX 3060: 2,652 checks | M1 | GPU-REQUIRED |
+| m1/restoration/still_restoration.cu | §7.19, §7.20–§7.20.3 | src/encoder/filters/restoration/ | its own directory | src/cuda/m1/restoration/still_restoration_test.cu | src/cuda/m1/restoration/real_recon_oracle_test.cpp | not executed (README) | no | GPU-UNWIRED |
 | m1/sched/sched_exec.cu | scheduler | src/cuda/m1/plan/ + src/cuda/m1/sched/sched.cpp | its own directory | src/cuda/m1/sched/sched_plan_test.cpp | — | not run here (host-only plan tests) | no (host availability only) | GPU-UNWIRED |
-| m1/search/luma_search.cu | §7.13.2 | src/encoder/m1/m1_still.cpp (choose_luma_mode) | its own directory | src/cuda/m1/search/luma_search_test.cu | — | RTX 3060 | M1 | GPU-REQUIRED |
-| m1/tx/m1_tx.cu | §7.15.2–§7.15.4, §7.14.4 | src/encoder/tx_variants/ | its own directory | src/cuda/m1/tx/m1_tx_test.cu | — | RTX 3060 timings; parity expected-result wording | M1 | GPU-REQUIRED |
-| m2/m2_backend_cuda.cu | §7.12, §7.13.3, §7.15, §7.14.3 | src/encoder/m2/ | its own directory | src/cuda/m2/m2_gate.cpp, src/cuda/m2/m2_selftest.cpp | src/cuda/m2/m2_backend_cpu.cpp | README claim (pre-refactor): RTX 3060 byte-identical | M2 gate (not in CMake) | GPU-REQUIRED |
+| m1/search/luma_search.cu | §7.13.2 | src/encoder/m1/still_encoder.cpp (choose_luma_mode) | its own directory | src/cuda/m1/search/luma_search_test.cu | — | RTX 3060 | M1 | GPU-REQUIRED |
+| m1/tx/still_tx.cu | §7.15.2–§7.15.4, §7.14.4 | src/encoder/tx_variants/ | its own directory | src/cuda/m1/tx/still_tx_test.cu | — | RTX 3060 timings; parity expected-result wording | M1 | GPU-REQUIRED |
+| m2/video_backend_cuda.cu | §7.12, §7.13.3, §7.15, §7.14.3 | src/encoder/m2/ | its own directory | src/cuda/m2/video_gate.cpp, src/cuda/m2/video_selftest.cpp | src/cuda/m2/video_backend_cpu.cpp | README claim (pre-refactor): RTX 3060 byte-identical | M2 gate (not in CMake) | GPU-REQUIRED |
 | mrl/mrl.cu | §7.13.2.7–.8 | src/encoder/mrl/ | its own directory | src/cuda/mrl/mrl_test.cu | src/cuda/mrl/mrl_emulation_test.cpp (16,904 checks) | not documented | no | GPU-UNWIRED |
 | palette/palette.cu | §5.20.8, §7.13.4 | src/encoder/palette/ | its own directory | src/cuda/palette/palette_test.cu | — | not documented | no | GPU-UNWIRED |
 | qm/qm_gpu.cu | §7.14.4, §5.13 | src/encoder/qm/ | its own directory | src/cuda/qm/qm_gpu_test.cu | — | not run (README) | no | GPU-UNWIRED |
 | rdoq/rdoq_batch.cu | §7.14.4, §5.20.7 | src/encoder/rdoq/ | its own directory | src/cuda/rdoq/rdoq_batch_test.cu | — | not run (README) | no | GPU-UNWIRED |
 | restoration/ccso.cu | §7.19/§7.19.1 | src/encoder/filters/restoration/ccso_core.h | its own directory | src/cuda/restoration/ccso_test.cu | — | not measured (README) | no | GPU-UNWIRED |
 | restoration/wiener.cu | §7.20, §7.20.3 | src/encoder/filters/restoration/wiener_core.h | its own directory | src/cuda/restoration/wiener_test.cu | — | not measured (README) | no | GPU-UNWIRED |
-| scheduler/scheduler.cu | scheduler / §5.20 dependency order | src/encoder/m0_still.cpp + src/cuda/scheduler/scheduler.cpp | its own directory | src/cuda/scheduler/scheduler_plan_test.cpp | — | RTX 3060 (README) | M0 only | GPU-REQUIRED |
-| transform.cu | §7.15.2, §7.15.4 | src/encoder/m0_still.cpp | its own directory | src/cuda/transform_test.cu | — | RTX 3060 PASS | M0 only | GPU-REQUIRED |
+| scheduler/scheduler.cu | scheduler / §5.20 dependency order | src/encoder/basic_encoder.cpp + src/cuda/scheduler/scheduler.cpp | its own directory | src/cuda/scheduler/scheduler_plan_test.cpp | — | RTX 3060 (README) | M0 only | GPU-REQUIRED |
+| transform.cu | §7.15.2, §7.15.4 | src/encoder/basic_encoder.cpp | its own directory | src/cuda/transform_test.cu | — | RTX 3060 PASS | M0 only | GPU-REQUIRED |
 | tx_secondary/tx_secondary_gpu.cu | §7.15.3 | src/encoder/tx_secondary/ | its own directory | src/cuda/tx_secondary/tx_secondary_test.cu | src/cuda/tx_secondary/tx_secondary_emulation_test.cpp (11,504,810 checks) | not run (README) | no | GPU-UNWIRED |
 | tx_type/tx_type.cu | §7.15.4, §9.6 | src/encoder/tx_type/ | its own directory | src/cuda/tx_type/tx_type_test.cu | — | RTX 3060: 328,694 checks | no | GPU-UNWIRED |
 | tx_variants/tx_variants.cu | §7.15.2, §7.14.4 | src/encoder/tx_variants/ | its own directory | src/cuda/tx_variants/tx_variants_test.cu | — | RTX 3060: 7,203 checks | M2 (also M1 support link) | GPU-REQUIRED |
@@ -152,7 +152,7 @@ that live beside their CPU component under `src/encoder/`.
 `ibp`, `mrl`, `palette`, `ibc`, `qm`, `rdoq`, `tx_type`, `tx_secondary`,
 `hbd`, `mhccp` and `me2` are landed components waiting for a caller. It
 becomes a shipping defect when the option is exposed and silently falls
-back. `src/cuda/m1/m1_gpu.h:gpu_m3_options_supported()` rejects every
+back. `src/cuda/m1/still_gpu.h:gpu_m3_options_supported()` rejects every
 unported tool by name, so the M1 path is honest about the gap.
 
 ## Matrix 3 — modules that landed during this audit
@@ -215,7 +215,7 @@ and the pinned-host staging in `context.cpp` (`cudaMallocHost`).
 - Production (non-test) sites: **3** in **1** files.
 - Test/bench/gate sites: **553** in **36** files.
 - Files exposing `required_device_bytes`: **39**.
-- Files using `mark()`/`rewind()`: **25** (`src/cuda/chroma_formats/chroma_formats.cu`, `src/cuda/chroma_formats/chroma_formats.h`, `src/cuda/compound_full/compound_full.h`, `src/cuda/ddt/ddt_gpu.cu`, `src/cuda/format/m10_gpu.cu`, `src/cuda/gdf/gdf.cu`, `src/cuda/gme/gme_plan.cpp`, `src/cuda/ibc/ibc.cu`, `src/cuda/intra_full/intra_full.cu`, `src/cuda/intra_full/intra_full.h`, `src/cuda/lossless_inter/lossless_inter_host.cpp`, `src/cuda/lr_chroma/lr_chroma.cu`, `src/cuda/lr_chroma/lr_chroma.h`, `src/cuda/m1/m1_gpu.cu`, `src/cuda/m2/m2_backend_cuda.cu`, `src/cuda/morph/morph.h`, `src/cuda/morph/morph_workspace.cpp`, `src/cuda/motion_field/motion_field.cu`, `src/cuda/pc_wiener/pc_wiener.cu`, `src/cuda/subpu/subpu_plan.cpp`, `src/cuda/tcq/tcq.h`, `src/cuda/tip/tip.h`, `src/cuda/tip_deblock/tip_deblock.cu`, `src/cuda/tx_partition/tx_partition_plan.cpp`, `src/cuda/tx_partition/tx_partition_plan.h`).
+- Files using `mark()`/`rewind()`: **25** (`src/cuda/chroma_formats/chroma_formats.cu`, `src/cuda/chroma_formats/chroma_formats.h`, `src/cuda/compound_full/compound_full.h`, `src/cuda/ddt/ddt_gpu.cu`, `src/cuda/format/high_bitdepth_gpu.cu`, `src/cuda/gdf/gdf.cu`, `src/cuda/gme/gme_plan.cpp`, `src/cuda/ibc/ibc.cu`, `src/cuda/intra_full/intra_full.cu`, `src/cuda/intra_full/intra_full.h`, `src/cuda/lossless_inter/lossless_inter_host.cpp`, `src/cuda/lr_chroma/lr_chroma.cu`, `src/cuda/lr_chroma/lr_chroma.h`, `src/cuda/m1/still_gpu.cu`, `src/cuda/m2/video_backend_cuda.cu`, `src/cuda/morph/morph.h`, `src/cuda/morph/morph_workspace.cpp`, `src/cuda/motion_field/motion_field.cu`, `src/cuda/pc_wiener/pc_wiener.cu`, `src/cuda/subpu/subpu_plan.cpp`, `src/cuda/tcq/tcq.h`, `src/cuda/tip/tip.h`, `src/cuda/tip_deblock/tip_deblock.cu`, `src/cuda/tx_partition/tx_partition_plan.cpp`, `src/cuda/tx_partition/tx_partition_plan.h`).
 
 ### Per-directory result
 
@@ -289,7 +289,7 @@ and the pinned-host staging in `context.cpp` (`cudaMallocHost`).
 | `src/multi_gpu/runtime/cuda_backend.cpp:408` | cudaMallocHost | `const Status status = from_cuda(cudaMallocHost(out, bytes));` | separate multi-GPU runtime: `ArenaState` is arena-backed but `pinned_alloc()` uses `cudaMallocHost` outside `context.cpp` |
 | `src/multi_gpu/runtime/cuda_backend.cpp:410` | cudaMallocHost | `set_error(error, "cudaMallocHost failed");` | separate multi-GPU runtime: `ArenaState` is arena-backed but `pinned_alloc()` uses `cudaMallocHost` outside `context.cpp` |
 
-The M1 product hot path is clean. `m2_backend_cuda.cu` is the one that
+The M1 product hot path is clean. `video_backend_cuda.cu` is the one that
 will matter when M2 is added to the build; its own README already says
 the buffers should be carved from the arena. `cuda_backend.cpp` is a
 separate runtime with its own `ArenaState`; the pinned staging API is the
@@ -327,13 +327,13 @@ so they are listed for completeness.
 | `src/cuda/inter/me/me_test.cu` | 18 |
 | `src/cuda/intra_modes/intra_modes_test.cu` | 28 |
 | `src/cuda/intra_test.cu` | 2 |
-| `src/cuda/m1/cdef/m1_cdef_gpu_test.cu` | 18 |
-| `src/cuda/m1/cfl/m1_cfl_test.cu` | 30 |
-| `src/cuda/m1/chroma/m1_chroma_test.cu` | 46 |
+| `src/cuda/m1/cdef/still_cdef_gpu_test.cu` | 18 |
+| `src/cuda/m1/cfl/still_cfl_test.cu` | 30 |
+| `src/cuda/m1/chroma/still_chroma_test.cu` | 46 |
 | `src/cuda/m1/hbd/hbd_test.cu` | 34 |
 | `src/cuda/m1/recon/recon_test.cu` | 39 |
 | `src/cuda/m1/search/luma_search_test.cu` | 38 |
-| `src/cuda/m1/tx/m1_tx_test.cu` | 17 |
+| `src/cuda/m1/tx/still_tx_test.cu` | 17 |
 | `src/cuda/mrl/mrl_test.cu` | 11 |
 | `src/cuda/palette/palette_test.cu` | 14 |
 | `src/cuda/qm/qm_gpu_test.cu` | 12 |
@@ -368,7 +368,7 @@ Matrix 3 above.
 | src/cuda/tx_secondary/ | tx_secondary_gpu.cu | tx_secondary_test.cu | tx_secondary_emulation_test.cpp | not run | compliant | GPU-UNWIRED |
 | src/cuda/tx_type/ | tx_type.cu | tx_type_test.cu | — | RTX 3060 328,694 checks | compliant | GPU-UNWIRED |
 | src/cuda/m1/hbd/ | hbd_frame.cu, hbd_tx.cu | hbd_test.cu | hbd_test.cpp | RTX 3060 1,523,424 checks | compliant | GPU-UNWIRED |
-| src/cuda/m1/restoration/ | m1_restoration.cu | m1_restoration_test.cu | real_recon_oracle_test.cpp | not executed | compliant | GPU-UNWIRED |
+| src/cuda/m1/restoration/ | still_restoration.cu | still_restoration_test.cu | real_recon_oracle_test.cpp | not executed | compliant | GPU-UNWIRED |
 | src/encoder/cfl/mhccp/ | mhccp_gpu.cu | mhccp_gpu_test.cu | mhccp_emulation_test.cpp | not run | compliant | GPU-UNWIRED |
 
 ## What this means
@@ -381,7 +381,7 @@ Matrix 3 above.
 3. The **M1 filter surface is the largest unwired block**: CDEF, CCSO,
    loop restoration, DIP, IBP, MRL, palette, IBC, QM, HBD, MHCCP and the
    ten newly landed modules all have kernels and none is reachable through
-   `--m1-gpu`. The options are rejected by name, so this is a capability
+   `--still-gpu`. The options are rejected by name, so this is a capability
    gap, not a silent fallback.
 4. The **M2 pixel path is complete for its baseline** and byte-identical,
    but it is not in `CMakeLists.txt`; M2 is a gate, not a product.
@@ -392,7 +392,7 @@ Matrix 3 above.
    Wiring plus tests, not new algorithms, is the remaining GPU work.
 6. **Arena compliance is good in the hot paths and broken at the edges**:
    M0, M1, scheduler and the shared kernels are arena-owned. `ibc` and
-   `m10_gpu` were fixed during the audit. The M2 backend and the
+   `high_bitdepth_gpu` were fixed during the audit. The M2 backend and the
    transform-stream adapter still allocate directly; the newer modules
    all implement `required_device_bytes()` and `mark()`/`rewind()`.
 
@@ -447,7 +447,7 @@ row set.
 - Production direct-allocator files: **1**.
 - `required_device_bytes` implementations: **39** files.
   The M0/M1/shared core still has no module-level reservation API (only
-  local `need_device` math in `m1_gpu.cu:790-860` and
+  local `need_device` math in `still_gpu.cu:790-860` and
   `luma_search_scratch_bytes()`); every module landed during this audit
   exports one, so the newer edge is better than the core.
 

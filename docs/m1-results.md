@@ -1,7 +1,7 @@
 # M1 results — partition tree, full intra, transforms, CfL, deblock
 
 Status: **bit-exact against `dav2d` f9dafbc**, verified per sample on all three
-planes. M1 is opt-in (`--m1`); M0 remains the default until M1 is measured more
+planes. M1 is opt-in (`--still`); M0 remains the default until M1 is measured more
 broadly.
 
 ## Benchmark clip
@@ -68,10 +68,10 @@ The video reference remains AVM's 2-second 1080p point: **9.77 JOD at
 
 ## Verification method
 
-`tools/m1_verify/`:
+`tools/still_verify/`:
 
 1. encode with the CLI,
-2. dump `M1Result.recon_y/u/v` with the *same* `M1Options`,
+2. dump `StillResult.recon_y/u/v` with the *same* `StillOptions`,
 3. decode the IVF with `dav2d`,
 4. compare every sample in all three planes.
 
@@ -103,7 +103,7 @@ corpus:
 | 1080p | 37,856 B / 51.41 dB | 38,559 B / 51.28 dB |
 
 The mode search is SSE-only; it needs a rate term (RDO) before it can pay for
-the mode signalling. Until then `--m1` stays DC-safe and `--m1-full-intra`
+the mode signalling. Until then `--still` stays DC-safe and `--still-full-intra`
 enables the search.
 
 ## Unified RDO loop
@@ -111,7 +111,7 @@ enables the search.
 `src/encoder/m1/rdo_loop/` replaces the SSE-only partition/mode decisions with a
 joint `SSE + lambda * coded-bits` search over real coefficient bits
 (`lambda = sse_scale * 66^2`, QP 90 step 66). Measured at QP 90, one frame,
-`--m1` plus the loop (`AV2ENC_RDO_LOOP=1`, scale 0.0005):
+`--still` plus the loop (`AV2ENC_RDO_LOOP=1`, scale 0.0005):
 
 | Still | Heuristic | Unified loop | Delta |
 |---|---|---|---|
@@ -126,8 +126,8 @@ patched binary is byte-identical to the reference when the hook is unset.
 
 ## Known limits
 
-- Directional/smooth **chroma** is available behind `M1Options::uv_full`
-  (`AV2ENC_M1_UV_FULL`; planned CLI `--m1-uv-full`). CPU verify is bit-exact on
+- Directional/smooth **chroma** is available behind `StillOptions::uv_full`
+  (`AV2ENC_STILL_UV_FULL`; planned CLI `--still-uv-full`). CPU verify is bit-exact on
   64x64 / 640x360 / native 1080p and on forced D45/D203/D67/SMOOTH/SMOOTH_V,
   including derived `AngleDeltaUV`. Candidates are scored on U+V in this mode
   (the default DC/CfL path keeps its historical U-only DC score). Default
@@ -147,6 +147,6 @@ patched binary is byte-identical to the reference when the hook is unset.
 
 CDEF, coefficient RDOQ, intra luma TX-type selection, rate-aware intra, full
 chroma UV and band-offset CCSO are now wired as opt-in M1 flags, each with a
-`dav2d --strict 1` gate and pinned MD5s.  The default `--m1` baseline is
+`dav2d --strict 1` gate and pinned MD5s.  The default `--still` baseline is
 unchanged.  Status, flags, and what is still off (Wiener NS, extended
 partitions, 10-bit, GPU ports): `docs/m1-features.md`.

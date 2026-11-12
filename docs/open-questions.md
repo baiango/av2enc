@@ -20,7 +20,7 @@ The PDF prints all 180 arrays in full.
 
 Resolution: `tools/spec_extract/extract_tables.py` parses them from the PDF.
 Generated: `spec/tables/default_cdf.json` (all 180) and
-`spec/tables/m0_cdf.json` + `m0_cdf.h` (the 19 used by M0).
+`spec/tables/basic_cdf.json` + `basic_cdf.h` (the 19 used by M0).
 Verified structurally: every array's element count equals the product of its
 declared dimensions, cumulative values are non-decreasing, adaptation counts are 0.
 

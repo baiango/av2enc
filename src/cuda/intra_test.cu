@@ -1,7 +1,7 @@
 // M0 intra component test: DC prediction, residual, reconstruction.
 //
 // CPU reference is a line-for-line mirror of encode_residual_plane() in
-// src/encoder/m0_still.cpp (read-only): same clipping, same Round2 /
+// src/encoder/basic_encoder.cpp (read-only): same clipping, same Round2 /
 // approximate-divide arithmetic, same edge clamping.
 //
 // Build/run with build_intra_test.sh on the sm_86 box.
@@ -122,7 +122,7 @@ void compare_int(Stage& stage, const int* expected, const int* actual,
 }
 
 // ---------------------------------------------------------------------------
-// CPU reference (mirror of src/encoder/m0_still.cpp)
+// CPU reference (mirror of src/encoder/basic_encoder.cpp)
 // ---------------------------------------------------------------------------
 
 int cpu_clip3(int low, int high, int value) {

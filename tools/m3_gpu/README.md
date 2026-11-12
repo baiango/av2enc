@@ -4,9 +4,9 @@ CPU-vs-GPU gate for the M3 tools on the M1 still-picture path: **CDEF, CCSO
 (band offset), RDOQ, intra TX type, rate-aware intra, full UV intra**.
 
 ```
-Y4M ──av2enc --m1      [features]──> cpu.ivf ──┐
+Y4M ──av2enc --still      [features]──> cpu.ivf ──┐
                                                 ├─ IVF frame-payload byte compare -> FAIL on any byte
-Y4M ──av2enc --m1-gpu  [features]──> gpu.ivf ──┤
+Y4M ──av2enc --still-gpu  [features]──> gpu.ivf ──┤
         │                                       ├─ dav2d --strict 1 (both) -> Y/U/V plane compare -> FAIL on any sample
         │                                       └─ feature-effect probes (CPU + GPU)
         └─ Nsight Systems kernel count + stats/log staging check
@@ -17,7 +17,7 @@ same flags**, the stream decodes (`dav2d --strict 1`) to **zero differing Y/U/V
 samples**, and Nsight Systems observed real CUDA kernels. It does **not** mean
 the feature gives a rate win; this is a correctness gate.
 
-A CPU fallback under `--m1-gpu` would produce identical bytes and prove
+A CPU fallback under `--still-gpu` would produce identical bytes and prove
 nothing, so byte equality alone is never a pass. Rejected flags, CPU staging,
 an ignored flag, or missing GPU evidence are **SKIP/FAIL, never PASS**.
 
@@ -27,7 +27,7 @@ an ignored flag, or missing GPU evidence are **SKIP/FAIL, never PASS**.
 |---|---|
 | `verify_m3_gpu.sh` | Single-case gate and `--matrix` mode. Feature mapping, CPU/GPU encodes, strict decode, byte/plane compare, feature-effect probes, determinism, memcheck/racecheck, Nsight attestation, PASS/FAIL/SKIP. |
 | `ivf_compare.py` | IVF frame-payload byte comparison (no PSNR). |
-| `plane_compare.py` | Bit-exact Y/U/V comparison of decoded Y4M (or `M1DUMP1`). |
+| `plane_compare.py` | Bit-exact Y/U/V comparison of decoded Y4M (or `StillDUMP1`). |
 | `remote.sh` | Syncs only `tools/m3_gpu` to the 3060 box and runs a case or the matrix. |
 | `selftest.sh` | Mock-encoder self-test of the verdict logic (reject/staged/ignore/no-effect/unattested/pass/nondet/sanitizer). No CUDA needed. |
 | `results/` | Local CPU-reference matrix output and pinned per-mode MD5s. |
@@ -91,14 +91,14 @@ AV2ENC_HOST='<user>@<host>' AV2ENC_PORT='<port>' \
 
 | `--features` name | Encoder flags | Notes |
 |---|---|---|
-| `cdef` | `--m1-cdef` | 4 strength sets (default) |
-| `cdef1` | `--m1-cdef --m1-cdef-strengths 1` | search-pruned single set |
-| `ccso` | `--m1-ccso` | band offset, default 64 bands |
-| `ccso4` | `--m1-ccso --m1-ccso-bands 4` | 16 bands |
-| `rdoq` | `--m1-rdoq` | default sse_scale |
-| `tx-type` | `--m1-tx-type` | luma only |
-| `rdo-intra` | `--m1-rdo-intra` | implies full intra |
-| `uv-full` | `--m1-uv-full` | chroma directional search |
+| `cdef` | `--still-cdef` | 4 strength sets (default) |
+| `cdef1` | `--still-cdef --still-cdef-strengths 1` | search-pruned single set |
+| `ccso` | `--still-ccso` | band offset, default 64 bands |
+| `ccso4` | `--still-ccso --still-ccso-bands 4` | 16 bands |
+| `rdoq` | `--still-rdoq` | default sse_scale |
+| `tx-type` | `--still-tx-type` | luma only |
+| `rdo-intra` | `--still-rdo-intra` | implies full intra |
+| `uv-full` | `--still-uv-full` | chroma directional search |
 | `all` | all six | |
 
 `--list-modes` prints every matrix mode (`baseline`, alone modes,
@@ -191,31 +191,31 @@ running it on the CUDA box.
 
 | Feature | CLI → `GpuOptions` | GPU implementation | Expected gate result |
 |---|---|---|---|
-| CDEF | `enable_cdef` plumbed in `src/main.cpp` | rejected in `validate_options` (`src/cuda/m1/m1_gpu.cu:1049`) | `SKIP-REJECTED` |
+| CDEF | `enable_cdef` plumbed in `src/main.cpp` | rejected in `validate_options` (`src/cuda/m1/still_gpu.cu:1049`) | `SKIP-REJECTED` |
 | CCSO | **not plumbed at all** — `GpuOptions` has no CCSO field, `src/main.cpp` never assigns one | none | `FAIL (IGNORED)` from the ignore probe, or `BYTE-DIFF` |
 | RDOQ | `rdoq` plumbed in `src/main.cpp` | rejected in `validate_options` | `SKIP-REJECTED` |
 | TX type | `tx_type` plumbed in `src/main.cpp` | rejected in `validate_options` | `SKIP-REJECTED` |
 | Rate-aware intra | `rdo_intra` plumbed in `src/main.cpp` | rejected in `validate_options` | `SKIP-REJECTED` |
-| Full UV | `uv_full` plumbed in `src/main.cpp` | `chroma_uv_full_search` (`src/cuda/m1/chroma/m1_chroma.cu:28-30`) | candidate for `READY`; unverified until the matrix runs |
+| Full UV | `uv_full` plumbed in `src/main.cpp` | `chroma_uv_full_search` (`src/cuda/m1/chroma/still_chroma.cu:28-30`) | candidate for `READY`; unverified until the matrix runs |
 
-Non-default tuning flags are also not plumbed to the GPU: `--m1-cdef-strengths`,
-`--m1-ccso-bands`, `--m1-rdoq-scale`, `--m1-tx-type-scale`, `--m1-rdo-scale`.
+Non-default tuning flags are also not plumbed to the GPU: `--still-cdef-strengths`,
+`--still-ccso-bands`, `--still-rdoq-scale`, `--still-tx-type-scale`, `--still-rdo-scale`.
 If a feature is ported without forwarding its scale, the ignore probe and the
 byte gate will catch the mismatch.
 
 Two latent plumbing inconsistencies are hidden by the current rejections and
 must be fixed before those features can pass:
 
-* `main.cpp` sets GPU `luma_dc_only = !m1_full_intra`, while the CPU path uses
-  `!m1_full_intra && !m1_rdo_intra`. Once `--m1-rdo-intra` is ported, the GPU
+* `main.cpp` sets GPU `luma_dc_only = !still_full_intra`, while the CPU path uses
+  `!still_full_intra && !still_rdo_intra`. Once `--still-rdo-intra` is ported, the GPU
   would start from a DC-only luma search unless this is aligned.
-* `encode_m1_gpu`'s internal `verify_against_cpu` uses `to_cpu_options()`,
+* `encode_still_gpu`'s internal `verify_against_cpu` uses `to_cpu_options()`,
   which copies `uv_full` but **not** CDEF/CCSO/RDOQ/TX-type/RDO. For CCSO this
   means the GPU's own parity check compares against a CPU encode that also
   lacks CCSO, so it can pass while the CLI-level CPU stream differs. The
   external flag-vs-no-flag probe in this gate is what closes that hole.
 
-The **CCSO case is the dangerous one**: `--m1-gpu --m1-ccso` exits 0 and
+The **CCSO case is the dangerous one**: `--still-gpu --still-ccso` exits 0 and
 writes an IVF, because the CLI accepts the flag and simply never passes it to
 `GpuOptions`. Bytes still differ from the CPU CCSO stream, so the byte gate
 catches it; the ignore probe additionally labels it `IGNORED` instead of

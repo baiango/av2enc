@@ -2,7 +2,7 @@
 //
 // This target lives entirely under bench/cuda_dct_perf/ and is not wired into
 // the root CMake project.  It compares three GPU arithmetic paths against a
-// line-for-line CPU transcription of src/encoder/m0_still.cpp:
+// line-for-line CPU transcription of src/pipeline/still/basic_encoder.cpp:
 //
 //   double : full FP64 separable DCT, -fmad=false + explicit __fadd_rn/__fmul_rn
 //   float  : full FP32 separable DCT
@@ -15,7 +15,7 @@
 #include "common.cuh"
 #include "cpu_reference.h"
 
-#include "src/encoder/m0_tables.h"
+#include "src/pipeline/still/basic_tables.h"
 
 #include <algorithm>
 #include <chrono>
@@ -533,7 +533,7 @@ int run(int argc, char** argv) {
   std::printf("- loaded kernel SASS binaryVersion: %d\n",
               loaded_binary_version());
 
-  init_device_tables(&av2enc::m0::kDct32[0][0], &av2enc::m0::kDct16[0][0]);
+  init_device_tables(&av2enc::basic::kDct32[0][0], &av2enc::basic::kDct16[0][0]);
   const BlockParams p32 = ref::make_block_params(32);
   const BlockParams p16 = ref::make_block_params(16);
   std::printf(

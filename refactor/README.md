@@ -91,7 +91,7 @@ artefacts; safe to delete).
 - CUDA configure/build times when `nvcc` is available (otherwise an explicit
   `cuda.skipped=true` with a reason — never a silent pass);
 - `ctest` names, statuses, counts and wall time;
-- `tools/m1_verify/feature_gate.sh` counts and every case;
+- `tools/still_verify/feature_gate.sh` counts and every case;
 - encoder IVF MD5s for the M0 and M1 pinned fixtures, including the
   `--adaptive-cdf` M0 variants, the QP 91/141/191/255 qctx set, and the
   generated 1920×1080 M0 still;
@@ -100,7 +100,7 @@ artefacts; safe to delete).
   decoder version plus SHA-256.
 
 `--record` **refuses to re-pin a changed stream**. The known constants already
-published in `tools/m1_verify/feature_gate.sh` and `tests/m0_encode_smoke.sh`
+published in `tools/still_verify/feature_gate.sh` and `tests/basic_encode_smoke.sh`
 are embedded in the script as `known_md5`; if the current build disagrees,
 recording stops. A baseline is a contract, not a snapshot of whatever the
 encoder happened to output.
@@ -180,7 +180,7 @@ review it before writing any move script.
 - **No automatic mapping decision.** Unmatched directories are marked
   `UNMAPPED` for review rather than guessed.
 - **No full gate matrix.** Phase 0 runs `ctest` (10 tests) and
-  `tools/m1_verify/feature_gate.sh` (30 cases). It does not run every
+  `tools/still_verify/feature_gate.sh` (30 cases). It does not run every
   component `build_and_test.sh`, the 112-case M1 GPU matrix, `m3_streams`,
   `m3_gpu`, or hundreds of thousands of per-module checks (for example
   `qm_test: 258446`). Those still run per component owner.

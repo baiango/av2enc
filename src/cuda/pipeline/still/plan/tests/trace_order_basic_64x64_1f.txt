@@ -1,0 +1,38 @@
+# CPU AV2ENC_STILL_TRACE preorder+leaf signature (first decision pass).
+# input: tests/data/basic_64x64_1f.y4m
+# command: AV2ENC_STILL_TRACE=1 ./build-plan-m1/av2enc tests/data/basic_64x64_1f.y4m -o /tmp/out.ivf --still --frames 1
+# N <mi_row> <mi_col> <size> <partition> <forced> <allowed4>
+# B <mi_row> <mi_col> <size>   (immediately after its leaf N)
+# generated 2026-11-11 on the 3060 host; nodes=21 leaves=11
+N 0 0 64x64 VERT 0 1011
+N 0 0 32x64 VERT 0 1011
+N 0 0 16x64 NONE 0 1011
+B 0 0 16x64
+N 0 4 16x64 HORZ 0 1011
+N 0 4 16x32 VERT 0 1011
+N 0 4 8x32 NONE 0 1011
+B 0 4 8x32
+N 0 6 8x32 NONE 0 1011
+B 0 6 8x32
+N 8 4 16x32 VERT 0 1011
+N 8 4 8x32 NONE 0 1011
+B 8 4 8x32
+N 8 6 8x32 NONE 0 1011
+B 8 6 8x32
+N 0 8 32x64 HORZ 0 1011
+N 0 8 32x32 HORZ 0 1011
+N 0 8 32x16 HORZ 0 1011
+N 0 8 32x8 NONE 0 1011
+B 0 8 32x8
+N 2 8 32x8 NONE 0 1011
+B 2 8 32x8
+N 4 8 32x16 NONE 0 1011
+B 4 8 32x16
+N 8 8 32x32 VERT 0 1011
+N 8 8 16x32 NONE 0 1011
+B 8 8 16x32
+N 8 12 16x32 HORZ 0 1011
+N 8 12 16x16 NONE 0 1011
+B 8 12 16x16
+N 12 12 16x16 NONE 0 1011
+B 12 12 16x16

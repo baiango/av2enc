@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "fixture": "tests/data/m0_64x64_1f.y4m",
+  "fixture": "tests/data/basic_64x64_1f.y4m",
   "fixture_format": {
     "width": 64,
     "height": 64,
@@ -19,8 +19,8 @@
     {
       "id": "baseline",
       "tool": "M1 baseline (control)",
-      "description": "Default --m1 still picture. No M3 tool.",
-      "encode_args": ["--m1"],
+      "description": "Default --still still picture. No M3 tool.",
+      "encode_args": ["--still"],
       "dump_args": [],
       "expected_bytes": 936,
       "expected_md5": "0ef9825062a25c4d950ee924113c6f89",
@@ -39,7 +39,7 @@
       "id": "cdef",
       "tool": "CDEF",
       "description": "CDEF only. One strength set is the smallest cdef_params() form (no cdef_idx symbols). The strength search prunes to one set at 64x64, so strengths 1..8 produce identical bytes.",
-      "encode_args": ["--m1", "--m1-cdef", "--m1-cdef-strengths", "1"],
+      "encode_args": ["--still", "--still-cdef", "--still-cdef-strengths", "1"],
       "dump_args": ["--cdef", "--cdef-strengths", "1"],
       "expected_bytes": 938,
       "expected_md5": "b795a6f998c7037c95b926d6afdfc89e",
@@ -59,7 +59,7 @@
       "id": "ccso",
       "tool": "CCSO (band-offset)",
       "description": "Band-offset CCSO only. max_band_log2=2 is the smallest setting that changes reconstruction on this fixture; 0 and 1 are syntactically valid but select zero offsets and decode identically to baseline.",
-      "encode_args": ["--m1", "--m1-ccso", "--m1-ccso-bands", "2"],
+      "encode_args": ["--still", "--still-ccso", "--still-ccso-bands", "2"],
       "dump_args": ["--ccso", "--ccso-bands", "2"],
       "expected_bytes": 941,
       "expected_md5": "e6ce83aa4a7dc3afe300c0bf49e0c186",
@@ -79,7 +79,7 @@
       "id": "rdoq",
       "tool": "RDOQ",
       "description": "Full-trellis coefficient RDOQ only. No syntax change; only quantized levels and therefore the coded coefficients differ.",
-      "encode_args": ["--m1", "--m1-rdoq"],
+      "encode_args": ["--still", "--still-rdoq"],
       "dump_args": ["--rdoq"],
       "expected_bytes": 794,
       "expected_md5": "a7ee3a0ac75781ce2a2c7390c3503019",
@@ -98,7 +98,7 @@
       "id": "txtype",
       "tool": "Intra luma TX type",
       "description": "Intra luma TX_TYPE search only. Chroma stays DCT_DCT via enable_chroma_dctonly=1; identity types stay excluded because enable_idtx_intra=0.",
-      "encode_args": ["--m1", "--m1-tx-type"],
+      "encode_args": ["--still", "--still-tx-type"],
       "dump_args": ["--tx-type"],
       "expected_bytes": 944,
       "expected_md5": "15681508a144eeea88bb8223185d75e9",
@@ -127,7 +127,7 @@
       "reason": "The pixel core (§7.20.3 non-separable Wiener, 32/12-tap plus chroma-from-luma) exists, and filters_stream::lr_write_params()/lr_write_block() implement the syntax, but neither is wired into the M1 sequence/frame/tile writers. There is no encoder decision path for a single-class frame filter and no call site, so no valid IVF can be emitted without editing encoder code.",
       "evidence": [
         {
-          "file": "src/encoder/m1/m1_headers.cpp",
+          "file": "src/encoder/m1/still_headers.cpp",
           "pattern": "put_bit\\(false\\);\\s*//\\s*enable_restoration",
           "expect": "present",
           "note": "Sequence restoration flag is hardcoded off."
@@ -139,14 +139,14 @@
           "note": "The only tiled writer rejects enable_restoration outright."
         },
         {
-          "file": "src/encoder/m1/m1_syntax.cpp",
+          "file": "src/encoder/m1/still_syntax.cpp",
           "pattern": "read_lr\\s*\\(",
           "expect": "absent",
           "strip_comments": true,
           "note": "No §5.20.10.4 read_lr() call site in the M1 tile writer."
         },
         {
-          "file": "src/encoder/m1/m1_syntax.cpp",
+          "file": "src/encoder/m1/still_syntax.cpp",
           "pattern": "lr_write_params\\s*\\(",
           "expect": "absent",
           "strip_comments": true,
@@ -154,7 +154,7 @@
         },
         {
           "file": "src/main.cpp",
-          "pattern": "--m1-wiener",
+          "pattern": "--still-wiener",
           "expect": "absent",
           "strip_comments": true,
           "note": "No CLI switch can request Wiener NS."
@@ -172,13 +172,13 @@
       "reason": "The M1 frame header hardcodes delta_q_present=0 and the tile writer never codes read_delta_qindex(). A per-superblock qindex changes dequantization and reconstruction, so a stream cannot be faked by reusing the baseline coefficient path.",
       "evidence": [
         {
-          "file": "src/encoder/m1/m1_headers.cpp",
+          "file": "src/encoder/m1/still_headers.cpp",
           "pattern": "put_bit\\(false\\);\\s*//\\s*delta_q_present",
           "expect": "present",
           "note": "delta_q_present is hardcoded 0."
         },
         {
-          "file": "src/encoder/m1/m1_syntax.cpp",
+          "file": "src/encoder/m1/still_syntax.cpp",
           "pattern": "read_delta_qindex",
           "expect": "absent",
           "strip_comments": true,
@@ -186,7 +186,7 @@
         },
         {
           "file": "src/main.cpp",
-          "pattern": "--m1-delta-q",
+          "pattern": "--still-delta-q",
           "expect": "absent",
           "strip_comments": true,
           "note": "No CLI switch can request delta-Q."
@@ -204,13 +204,13 @@
       "reason": "The M1 frame header hardcodes using_qmatrix=0. There is no QM level table, no per-segment QM level selection, and the coefficient dequantizer does not apply a matrix. Merely flipping the header bit would desynchronise or decode wrong pixels.",
       "evidence": [
         {
-          "file": "src/encoder/m1/m1_headers.cpp",
+          "file": "src/encoder/m1/still_headers.cpp",
           "pattern": "put_bit\\(false\\);\\s*//\\s*using_qmatrix",
           "expect": "present",
           "note": "using_qmatrix is hardcoded 0."
         },
         {
-          "file": "src/encoder/m1/m1_headers.cpp",
+          "file": "src/encoder/m1/still_headers.cpp",
           "pattern": "setup_qm_params|pic_qm_num_minus_1|\\bqm_y\\b",
           "expect": "absent",
           "strip_comments": true,
@@ -218,7 +218,7 @@
         },
         {
           "file": "src/main.cpp",
-          "pattern": "--m1-qm",
+          "pattern": "--still-qm",
           "expect": "absent",
           "strip_comments": true,
           "note": "No CLI switch can request QM."
@@ -236,13 +236,13 @@
       "reason": "The M1 frame header hardcodes segmentation_enabled=0 and the tile writer has no segment-id symbol or segment feature state. Segmentation changes qindex/filter features per block, so it needs its own decision and syntax path.",
       "evidence": [
         {
-          "file": "src/encoder/m1/m1_headers.cpp",
+          "file": "src/encoder/m1/still_headers.cpp",
           "pattern": "put_bit\\(false\\);\\s*//\\s*segmentation_enabled",
           "expect": "present",
           "note": "segmentation_enabled is hardcoded 0."
         },
         {
-          "file": "src/encoder/m1/m1_syntax.cpp",
+          "file": "src/encoder/m1/still_syntax.cpp",
           "pattern": "intra_segment_id|read_segment_id",
           "expect": "absent",
           "strip_comments": true,
@@ -250,7 +250,7 @@
         },
         {
           "file": "src/main.cpp",
-          "pattern": "--m1-seg",
+          "pattern": "--still-seg",
           "expect": "absent",
           "strip_comments": true,
           "note": "No CLI switch can request segmentation."

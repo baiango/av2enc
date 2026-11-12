@@ -1,13 +1,13 @@
 // CUDA transform test: bit-exact comparison against the CPU reference.
 //
-// The `cpu` namespace below is copied from src/encoder/m0_still.cpp
+// The `cpu` namespace below is copied from src/encoder/basic_encoder.cpp
 // (TileEncoder::forward_dct, TileEncoder::inverse_dct, transform_shifts,
 // Round2/clip3 helpers, and the transform/quantization block of
 // encode_residual_plane).  It is the reference; do not "optimize" it.
 //
 // Build/run:  ./build_transform_test.sh && ./transform_test
 #include "cuda/transform.h"
-#include "encoder/m0_tables.h"
+#include "pipeline/still/basic_tables.h"
 
 #include <cuda_runtime.h>
 
@@ -20,7 +20,7 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// CPU reference (verbatim from src/encoder/m0_still.cpp)
+// CPU reference (verbatim from src/encoder/basic_encoder.cpp)
 // ---------------------------------------------------------------------------
 namespace cpu {
 
@@ -41,13 +41,13 @@ int round2(int value, int n) {
 const std::int16_t* dct_kernel(int n) {
   switch (n) {
     case 4:
-      return &av2enc::m0::kDct4[0][0];
+      return &av2enc::basic::kDct4[0][0];
     case 8:
-      return &av2enc::m0::kDct8[0][0];
+      return &av2enc::basic::kDct8[0][0];
     case 16:
-      return &av2enc::m0::kDct16[0][0];
+      return &av2enc::basic::kDct16[0][0];
     default:
-      return &av2enc::m0::kDct32[0][0];
+      return &av2enc::basic::kDct32[0][0];
   }
 }
 

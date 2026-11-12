@@ -24,11 +24,11 @@ difference and a PSNR comparison; do not silently change the test.
 | `src/cuda/transform.*`, `transform_test.cu` | transform agent |
 | `src/cuda/intra.*`, `intra_test.cu` | intra agent |
 | `src/cuda/entropy.*`, `entropy_test.cu` | entropy agent |
-| `src/cuda/m0_pipeline.*` | integration agent |
+| `src/cuda/basic_pipeline.*` | integration agent |
 | `bench/cuda_dct_perf/` | DCT performance agent |
 | `bench/avm_1080p/` | 1080p baseline agent |
 
-Do not edit `src/encoder/m0_still.cpp`, `src/entropy/av2/`, `src/bitstream/`,
+Do not edit `src/encoder/basic_encoder.cpp`, `src/entropy/av2/`, `src/bitstream/`,
 `src/main.cpp`, or the root `CMakeLists.txt`.
 
 ## Data model
@@ -50,9 +50,40 @@ Provide a small `av2enc::cuda` layer:
 - no hidden `cudaDeviceSynchronize()` in kernels; one sync per frame at most
 - no `cudaMalloc` after init
 
+## Single device arena
+
+Every device buffer comes from one `av2enc::cuda::Arena` (`src/cuda/arena.h`).
+Only `arena.cpp` calls `cudaMalloc`/`cudaFree`; `context.cpp` pinned host
+staging (`cudaMallocHost`) is the only other permitted allocation. Modules,
+backends and launchers must not allocate, and no launcher may allocate per
+frame or per block.
+
+- **One arena.** Pass an `Arena&` (or an already-allocated device buffer) into
+  a module entry point. Do not create a second arena for a sub-stage of the
+  same pipeline.
+- **`required_device_bytes(config)`.** Each module reports the capacity its
+  persistent buffers need, including the 256-byte alignment padding
+  (`ibc_required_device_bytes()` for IBC). Size the arena once from the device
+  budget and this value.
+- **`allocate_checked`.** Persistent buffers are bump-allocated once with
+  `allocate_checked()`. An undersized arena returns the module's distinct
+  `kArenaTooSmall` status carrying the required byte count; do not retry in a
+  block loop.
+- **Mark / rewind.** Transient scratch takes `mark()` before allocation and
+  `rewind(mark)` before returning. Bump allocation never frees by itself.
+- **Growth is a frame-boundary operation.** Growing means the caller releases
+  and re-initialises the arena (or rewinds past an older mark). That invalidates
+  every pointer handed out before it. Never grow with outstanding kernels or
+  inside a block loop.
+- **Enforcement.** `tools/check_arena.sh` fails on `cudaMalloc`, `cudaFree`,
+  `cudaMallocHost` (and the async variants) outside `arena.cpp`,
+  `context.cpp`, and test/build-stub trees. It treats `cudaFree(nullptr)` as a
+  non-allocation and recognizes the independent multi-GPU pinned-staging
+  provider; the script header documents those two narrow distinctions.
+
 ## Transform API
 
-Match the CPU arithmetic order in `src/encoder/m0_still.cpp`:
+Match the CPU arithmetic order in `src/encoder/basic_encoder.cpp`:
 
 - forward 2D DCT (`double`, same loop order)
 - quantization with the same `quant_factor` and `std::lround` behavior

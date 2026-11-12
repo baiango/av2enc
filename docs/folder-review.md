@@ -94,7 +94,7 @@ every build script. Defer until after A, if at all.
 
 - 212 build scripts hard-code relative paths (`ROOT=$(cd ../../..)`); several
   will need path fixes, and the ones with pinned SHA paths need review.
-- `AV2ENC_M1_GPU_SOURCES` uses `GLOB_RECURSE ... CONFIGURE_DEPENDS`, so every
+- `AV2ENC_STILL_GPU_SOURCES` uses `GLOB_RECURSE ... CONFIGURE_DEPENDS`, so every
   new directory triggers a configure; make source lists explicit first
   (refactor Phase 1).
 - Three duplicate helper definitions and hand-copied tables must be consolidated

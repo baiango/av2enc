@@ -1,10 +1,12 @@
 # M1 GPU path — contract and workstreams
 
 Goal: move the M1 still-picture encoder from the CPU path in
-`src/encoder/m1/m1_still.cpp` to a GPU-resident pipeline, while keeping the
+`src/encoder/m1/still_encoder.cpp` to a GPU-resident pipeline, while keeping the
 bitstream **byte-identical** to the CPU M1 reference for the same options.
 
-M1 scope is unchanged: 8-bit 4:2:0, one tile, one keyframe, QP 90, partition
+M1 GPU scope is unchanged: 8-bit 4:2:0, one tile, one keyframe, QP 90 (the
+CPU M1 path supports QP 1..255 with the §8.3.1 qctx slice; the GPU TX batch
+still bakes qlookup(90)), partition
 tree + intra + variable TX + CfL + deblock. Entropy stays on the CPU until the
 GPU coder is proven at these tile counts.
 
@@ -27,7 +29,7 @@ signed off.
 
 ## Correctness matrix (verified 2026-11-11)
 
-`tools/m1_gpu/verify_gpu.sh --matrix` → **112/112 PASS** (14 modes x 8 sizes):
+`tools/still_gpu/verify_gpu.sh --matrix` → **112/112 PASS** (14 modes x 8 sizes):
 
 - sizes: 64x64, 136x88, 640x360, 1280x720, native 1920x1080, 416x208, 518x322, 532x368
 - modes: default, full-intra, no-cfl, no-deblock, depth 0/1/2/3/4/8, single, dc, adaptive-cdf, vram-cap
@@ -72,7 +74,7 @@ Y4M frame (host, 8-bit 4:2:0)
   -> IVF/OBU frame
 ```
 
-## Shared PODs (`src/cuda/m1/m1_gpu.h` (namespace `av2enc::cuda::m1gpu`), owner: orchestrator)
+## Shared PODs (`src/cuda/m1/still_gpu.h` (namespace `av2enc::cuda::still_gpu`), owner: orchestrator)
 
 All stages exchange plain PODs; device pointers are explicit. No stage allocates
 or synchronizes; the orchestrator owns the arena and stream.
@@ -88,15 +90,15 @@ or synchronizes; the orchestrator owns the arena and stream.
 - `GpuOptions`: `base_q_idx`, `enable_cfl`, `enable_deblock`,
   `enable_edge_filter`, `luma_dc_only`, `min_block_size`, `max_partition_depth`.
 
-`bool encode_m1_gpu(const StillPicture&, const GpuOptions&, GpuResult&,
+`bool encode_still_gpu(const StillPicture&, const GpuOptions&, GpuResult&,
 std::string&)` is the public entry point. It must produce the same frame bytes
-as `m1::encode_m1_still_picture` when the CPU path is in the same mode.
+as `av2enc::still::encode_still_picture` when the CPU path is in the same mode.
 
 ## Ownership (do not edit outside your directory)
 
 | # | Area | Directory | Deliverable |
 |---:|---|---|---|
-| 1 | Contract + orchestrator | `src/cuda/m1/` root files | `m1_gpu.h`, `m1_gpu.cu`, stage wiring |
+| 1 | Contract + orchestrator | `src/cuda/m1/` root files | `still_gpu.h`, `still_gpu.cu`, stage wiring |
 | 2 | Frame/block plan | `src/cuda/m1/plan/` | tree + leaf geometry + syntax order |
 | 3 | Luma candidate search | `src/cuda/m1/search/` | batched 61-candidate SSE, parity with CPU |
 | 4 | Transform/quant | `src/cuda/m1/tx/` | batched fwd/inv TX, levels, eob |
@@ -104,8 +106,8 @@ as `m1::encode_m1_still_picture` when the CPU path is in the same mode.
 | 6 | CfL | `src/cuda/m1/cfl/` | GPU CfL + derived alpha, CPU parity |
 | 7 | Entropy bridge | `src/cuda/m1/entropy/`, `src/encoder/m1/stream/` | result stream -> CPU syntax |
 | 8 | Scheduler adapter | `src/cuda/m1/sched/` | dependency levels, graphs |
-| 9 | CLI + build | `src/main.cpp`, `CMakeLists.txt` | `--m1-gpu` (default off), link |
-| 10 | Verification/bench | `tools/m1_gpu/` | CPU-vs-GPU bytes, `dav2d`, fps |
+| 9 | CLI + build | `src/main.cpp`, `CMakeLists.txt` | `--still-gpu` (default off), link |
+| 10 | Verification/bench | `tools/still_gpu/` | CPU-vs-GPU bytes, `dav2d`, fps |
 
 Only agent 9 edits `src/main.cpp` or `CMakeLists.txt`. Only agent 1 edits
 `src/cuda/m1/` root files. Everyone else stays in their subdirectory.
@@ -114,8 +116,8 @@ Only agent 9 edits `src/main.cpp` or `CMakeLists.txt`. Only agent 1 edits
 
 - Per component: CPU-vs-GPU bit-exact tests on synthetic blocks, then real
   64x64 and 640x360 frames.
-- Stage 1: `--m1-gpu` frame bytes == CPU `--m1` frame bytes for the same input;
-  `dav2d` decodes; recon planes match `M1Result.recon_*` byte-for-byte.
+- Stage 1: `--still-gpu` frame bytes == CPU `--still` frame bytes for the same input;
+  `dav2d` decodes; recon planes match `StillResult.recon_*` byte-for-byte.
 - Stage 2: same bitstream after replacing CPU mode search with GPU search.
 - Performance: report 1080p still wall/kernel time and VRAM; do not claim the
   1 fps video target until video is wired and measured on an 8192 MiB 3060.

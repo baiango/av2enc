@@ -1,6 +1,6 @@
 # CUDA transform / quantization (`src/cuda/transform.*`)
 
-Bit-exact CUDA port of the M0 transform arithmetic in `src/encoder/m0_still.cpp`
+Bit-exact CUDA port of the M0 transform arithmetic in `src/encoder/basic_encoder.cpp`
 (`TileEncoder::forward_dct`, `TileEncoder::inverse_dct`, and the
 transform/quantization block of `encode_residual_plane`).  The CPU path is the
 reference and was not modified.
@@ -25,7 +25,7 @@ launch so per-block launch latency is amortized.  All launches go to the caller'
 stream; the kernels never call `cudaDeviceSynchronize()`.
 
 The only module-level data are the four `Dct_Kernel{n}` tables, duplicated as
-`__device__ const` literals from `src/encoder/m0_tables.h` so the kernels are
+`__device__ const` literals from `src/encoder/basic_tables.h` so the kernels are
 self-contained.  They are immutable; the test verifies them implicitly (impulse
 residuals exercise every table entry against the CPU reference).
 
@@ -238,7 +238,7 @@ Kernel resources (ptxas, 32x32): forward 42 registers / 4096 B static shared +
    `width == 64 && height == 64`; for 64x32/32x64 it calls `dct_kernel(64)`,
    which falls through to the 32-point table while the loops still run to 64,
    i.e. out-of-bounds reads.  Those sizes occur only in the diagnostic partition
-   modes `M0PartitionMode::k64x64VertNone` / `k64x64HorzNone`, not in the default
+   modes `BasicPartitionMode::k64x64VertNone` / `k64x64HorzNone`, not in the default
    `k32x32` mode or its edge path (which uses a full 64x64 block).  Fix the CPU
    reference first if those modes must be bit-exact.
 2. **Chroma of a 64x64 block is 32x32** and must be passed as `(32, 32, false)`;

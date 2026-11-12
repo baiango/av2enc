@@ -660,10 +660,10 @@ OBU 3: CLK                                 <size> 10 <tile-group header> <tile d
 
 `n` = 1 (OBU header) + 3 (tile-group bit + frame header + alignment) + tile bytes.
 
-### 10.1 Locked header bytes (`tests/m0_headers_test.cpp`)
+### 10.1 Locked header bytes (`tests/basic_headers_test.cpp`)
 
 The exact TD+SEQ+CLK header bytes for the 64x64 M0 still picture are locked by
-`tests/m0_headers_test.cpp` and must not drift. Byte-for-byte:
+`tests/basic_headers_test.cpp` and must not drift. Byte-for-byte:
 
 ```
 01 08 0c 04 82 7a 55 ff f0 00 04 00 1b 80 08 05 10 e2 b4 00 00

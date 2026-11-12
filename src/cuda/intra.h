@@ -4,7 +4,7 @@
 // M0 DC intra prediction / residual / reconstruction kernels.
 //
 // Bit-exactness contract: the arithmetic mirrors the CPU reference in
-// src/encoder/m0_still.cpp (encode_residual_plane):
+// src/encoder/basic_encoder.cpp (encode_residual_plane):
 //
 //   pred = 128;
 //   if (have_left && have_above)

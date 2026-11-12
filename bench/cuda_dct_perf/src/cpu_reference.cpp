@@ -1,6 +1,6 @@
 #include "cpu_reference.h"
 
-#include "src/encoder/m0_tables.h"
+#include "src/pipeline/still/basic_tables.h"
 
 #include <cmath>
 #include <cstddef>
@@ -8,7 +8,7 @@
 namespace ref {
 namespace {
 
-// Same rounding helpers as src/encoder/m0_still.cpp.
+// Same rounding helpers as src/pipeline/still/basic_encoder.cpp.
 int clip3(int low, int high, int value) {
   return value < low ? low : (value > high ? high : value);
 }
@@ -39,7 +39,7 @@ void transform_shifts(int w, int h, int* row_shift, int* col_shift) {
 }
 
 const std::int16_t* dct_kernel(int n) {
-  return n == 16 ? &av2enc::m0::kDct16[0][0] : &av2enc::m0::kDct32[0][0];
+  return n == 16 ? &av2enc::basic::kDct16[0][0] : &av2enc::basic::kDct32[0][0];
 }
 
 }  // namespace
@@ -63,7 +63,7 @@ BlockParams make_block_params(int n) {
   const int dq_denom = 1 << ((tx_pels > 256) + (tx_pels > 1024));
   p.dq_denom = dq_denom;
 
-  // Exact expression order from m0_still.cpp lines 1270-1277.
+  // Exact expression order from basic_encoder.cpp lines 1270-1277.
   const double inv_scale =
       (64.0 * std::sqrt(static_cast<double>(n)) /
        static_cast<double>(1 << row_shift)) *

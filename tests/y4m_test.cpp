@@ -1,4 +1,4 @@
-#include "io/y4m.h"
+#include "core/io/y4m.h"
 
 #include "test_common.h"
 

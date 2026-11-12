@@ -27,7 +27,7 @@ Useful options:
 |---|---|
 | `--qps 60,90,110,135,160,185,210,235` | QP probe list (default) |
 | `--bd-qps 90,110,135,160,185,210` | primary BD-rate subset (default: core set) |
-| `--tools m1_baseline,cdef,ccso,rdoq,tx_type,rdo_intra` | run a subset |
+| `--tools still_baseline,cdef,ccso,rdoq,tx_type,rdo_intra` | run a subset |
 | `--frame-index N` | extract frame N from each source (default 0) |
 | `--source-360p PATH` / `--source-1080p PATH` | override benchmark clips |
 | `--bd-method pchip\|cubic` | BD-rate interpolation (default `pchip`) |
@@ -50,13 +50,13 @@ frame, not merely similarly named files.
 
 | Tool | CLI | Status in this run |
 |---|---|---|
-| M1 baseline | `--m1` | measured |
-| M1 full intra (control) | `--m1 --m1-full-intra` | measured; anchors the RDO incremental view |
-| CDEF | `--m1 --m1-cdef` | measured |
-| CCSO (band-offset) | `--m1 --m1-ccso` | measured |
-| RDOQ | `--m1 --m1-rdoq` | measured |
-| Intra TX type | `--m1 --m1-tx-type` | measured |
-| RDO (intra) | `--m1 --m1-rdo-intra` | measured |
+| M1 baseline | `--still` | measured |
+| M1 full intra (control) | `--still --still-full-intra` | measured; anchors the RDO incremental view |
+| CDEF | `--still --still-cdef` | measured |
+| CCSO (band-offset) | `--still --still-ccso` | measured |
+| RDOQ | `--still --still-rdoq` | measured |
+| Intra TX type | `--still --still-tx-type` | measured |
+| RDO (intra) | `--still --still-rdo-intra` | measured |
 | Wiener NS | — | **unmeasured**: no M1 bitstream path / coefficient fit |
 | Delta-Q | — | **unmeasured**: M1 header codes `delta_q_present = 0` |
 | QM | — | **unmeasured**: no QM OBU/setup path in the still CLI |

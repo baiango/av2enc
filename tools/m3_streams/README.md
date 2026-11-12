@@ -9,17 +9,17 @@ or `CMakeLists.txt`, and nothing here is committed.
 
 ## Result matrix
 
-Fixture: `tests/data/m0_64x64_1f.y4m` — 64x64, 8-bit 4:2:0, one frame, 30/1 fps,
-`base_q_idx = 90`. Every row enables exactly one tool on top of the `--m1`
+Fixture: `tests/data/basic_64x64_1f.y4m` — 64x64, 8-bit 4:2:0, one frame, 30/1 fps,
+`base_q_idx = 90`. Every row enables exactly one tool on top of the `--still`
 baseline, except the baseline control.
 
-| Tool | Status | Flags added to `--m1` | IVF bytes | IVF MD5 | Decoded YUV MD5 | Encoder recon |
+| Tool | Status | Flags added to `--still` | IVF bytes | IVF MD5 | Decoded YUV MD5 | Encoder recon |
 |---|---|---|---:|---|---|---|
 | M1 baseline (control) | **PASS** | *(none)* | 936 | `0ef9825062a25c4d950ee924113c6f89` | `41b30b8ff21d571a65fee34ebacdd6c4` | BIT-EXACT |
-| CDEF | **PASS** | `--m1-cdef --m1-cdef-strengths 1` | 938 | `b795a6f998c7037c95b926d6afdfc89e` | `5db402680605e8fce3c7485e78bbf644` | BIT-EXACT |
-| CCSO (band-offset) | **PASS** | `--m1-ccso --m1-ccso-bands 2` | 941 | `e6ce83aa4a7dc3afe300c0bf49e0c186` | `bdb839ee27860b1b6062875b0dcc4de0` | BIT-EXACT |
-| RDOQ | **PASS** | `--m1-rdoq` | 794 | `a7ee3a0ac75781ce2a2c7390c3503019` | `4e2a0cf26d593d3c68263e486d4aafa3` | BIT-EXACT |
-| Intra luma TX type | **PASS** | `--m1-tx-type` | 944 | `15681508a144eeea88bb8223185d75e9` | `6e75f8f91c4b7ffd86b737751ae1bfbb` | BIT-EXACT |
+| CDEF | **PASS** | `--still-cdef --still-cdef-strengths 1` | 938 | `b795a6f998c7037c95b926d6afdfc89e` | `5db402680605e8fce3c7485e78bbf644` | BIT-EXACT |
+| CCSO (band-offset) | **PASS** | `--still-ccso --still-ccso-bands 2` | 941 | `e6ce83aa4a7dc3afe300c0bf49e0c186` | `bdb839ee27860b1b6062875b0dcc4de0` | BIT-EXACT |
+| RDOQ | **PASS** | `--still-rdoq` | 794 | `a7ee3a0ac75781ce2a2c7390c3503019` | `4e2a0cf26d593d3c68263e486d4aafa3` | BIT-EXACT |
+| Intra luma TX type | **PASS** | `--still-tx-type` | 944 | `15681508a144eeea88bb8223185d75e9` | `6e75f8f91c4b7ffd86b737751ae1bfbb` | BIT-EXACT |
 | Wiener NS (single class, `frame_filters_on=1`) | **BLOCKED** | — | — | — | — | no syntax path |
 | Delta-Q (per-superblock qindex) | **BLOCKED** | — | — | — | — | no syntax path |
 | Quantization matrices (QM) | **BLOCKED** | — | — | — | — | no syntax path |
@@ -29,7 +29,7 @@ baseline, except the baseline control.
 
 1. the IVF byte count and MD5 match the pin;
 2. `dav2d --strict 1` decodes it without a compliance error;
-3. every Y/U/V sample equals `M1Result.recon_y/u/v` from the same encode
+3. every Y/U/V sample equals `StillResult.recon_y/u/v` from the same encode
    options — zero differing samples, not a PSNR threshold;
 4. the IVF MD5 **and** the decoded pixel MD5 differ from the baseline, so the
    tool is actually coded and has an effect.
@@ -55,9 +55,9 @@ cmake --build build-m1 -j
 All rows use:
 
 ```text
-input       tests/data/m0_64x64_1f.y4m   (64x64, 8-bit 4:2:0, first frame)
+input       tests/data/basic_64x64_1f.y4m   (64x64, 8-bit 4:2:0, first frame)
 output      <case>.ivf
-arguments   --frames 1 --m1 <one tool flag from the matrix>
+arguments   --frames 1 --still <one tool flag from the matrix>
 QP          base_q_idx = 90 (M1 pins it)
 partition   M1 defaults: depth 4, min block 8, DC-safe luma search
 filters     deblock on, CfL on, adaptive CDF off
@@ -76,9 +76,9 @@ checks this too, so a CLI/dump option mismatch cannot silently "pass".
 One case by hand (CDEF):
 
 ```sh
-build-m1/av2enc tests/data/m0_64x64_1f.y4m -o /tmp/cdef.ivf --frames 1 \
-  --m1 --m1-cdef --m1-cdef-strengths 1
-tools/m3_streams/build/m1_dump -i tests/data/m0_64x64_1f.y4m \
+build-m1/av2enc tests/data/basic_64x64_1f.y4m -o /tmp/cdef.ivf --frames 1 \
+  --still --still-cdef --still-cdef-strengths 1
+tools/m3_streams/build/still_dump -i tests/data/basic_64x64_1f.y4m \
   -o /tmp/cdef.dump --cdef --cdef-strengths 1
 tools/m3_streams/compare_recon.py --ivf /tmp/cdef.ivf --dump /tmp/cdef.dump
 ```
@@ -87,14 +87,14 @@ tools/m3_streams/compare_recon.py --ivf /tmp/cdef.ivf --dump /tmp/cdef.dump
 
 * **CDEF** — `CdefStrengths = 1` is the smallest `cdef_params()` form: no
   `cdef_idx` symbols. On this fixture the strength search prunes to one set, so
-  `--m1-cdef-strengths 1..8` all produce the same 938-byte stream.
+  `--still-cdef-strengths 1..8` all produce the same 938-byte stream.
 * **CCSO** — `max_band_log2 = 2` (4 bands) is the smallest setting that changes
   reconstruction here. `0` and `1` are valid 938-byte streams, but select zero
   offsets and decode identically to the baseline; they would not verify the
   filter, so the gate uses the smallest *active* form.
 * **RDOQ** — same syntax as the baseline; only the trellis-quantized levels
-  change. Default `--m1-rdoq-scale 0.125`.
-* **TX type** — default `--m1-tx-type-scale 0.125`; luma only. Chroma stays
+  change. Default `--still-rdoq-scale 0.125`.
+* **TX type** — default `--still-tx-type-scale 0.125`; luma only. Chroma stays
   `DCT_DCT` (`enable_chroma_dctonly = 1`), and identity types stay excluded
   because `enable_idtx_intra = 0`.
 
@@ -121,8 +121,8 @@ needed; the filter coefficients are still frame-level (`frame_filters_on = 1`).
 The §7.20.3 pixel core exists (`src/encoder/filters/restoration/`), and
 `src/encoder/m1/filters_stream/` contains `lr_write_params()` /
 `lr_write_block()` syntax helpers. But neither is wired into the M1 writers:
-`m1_headers.cpp` hardcodes `enable_restoration = 0` and has no `lr_params()`,
-and `m1_syntax.cpp` has no `read_lr()` call. The existing M2 tiled writer,
+`still_headers.cpp` hardcodes `enable_restoration = 0` and has no `lr_params()`,
+and `still_syntax.cpp` has no `read_lr()` call. The existing M2 tiled writer,
 `src/encoder/m2/post/tiled_frame.cpp`, rejects `enable_restoration` outright.
 There is also no encoder decision path for a single-class frame filter. A
 single-class stream therefore needs encoder integration, not a different CLI
@@ -134,7 +134,7 @@ flag.
 and `§5.20.5.11 read_delta_qindex()` with per-superblock `CurrentQIndex`
 bookkeeping.
 
-`m1_headers.cpp` hardcodes `delta_q_present = 0`; `m1_syntax.cpp` never calls
+`still_headers.cpp` hardcodes `delta_q_present = 0`; `still_syntax.cpp` never calls
 `read_delta_qindex()`. Per-superblock qindex changes dequantization and
 reconstruction, so reusing the baseline coefficients would produce wrong
 pixels.
@@ -145,7 +145,7 @@ pixels.
 `pic_qm_num_minus_1`, `qm_y`, `qm_u`, `qm_v`), `§6.17.6.2` QM level selection,
 and the dequantization-matrix path.
 
-`m1_headers.cpp` hardcodes `using_qmatrix = 0`. There is no QM level table, no
+`still_headers.cpp` hardcodes `using_qmatrix = 0`. There is no QM level table, no
 per-segment QM selection, and the dequantizer does not apply a matrix. Flipping
 the header bit alone would desynchronise or decode wrong pixels.
 
@@ -154,7 +154,7 @@ the header bit alone would desynchronise or decode wrong pixels.
 **Missing:** `§5.18.7.1 segmentation_params()` and
 `§5.20.5.7 intra_segment_id()` / `§5.20.5.8 read_segment_id()`.
 
-`m1_headers.cpp` hardcodes `segmentation_enabled = 0`; the tile writer has no
+`still_headers.cpp` hardcodes `segmentation_enabled = 0`; the tile writer has no
 segment-id symbol and no segment feature state. Segmentation changes
 qindex/filter features per block, so it needs its own decision and syntax path.
 
@@ -163,11 +163,11 @@ qindex/filter features per block, so it needs its own decision and syntax path.
 ```text
 tools/m3_streams/
   gate.py            main runner: encode -> pin -> strict decode -> recon compare
-  compare_recon.py   m1_dump vs decoded Y4M, exact per-sample comparison
+  compare_recon.py   still_dump vs decoded Y4M, exact per-sample comparison
   m3_cases.json      pinned manifest: flags, expected bytes/MD5s, blockers
   README.md          this report
   .gitignore         keeps build/ and out/ out of git
-  build/             local m1_dump build (gitignored)
+  build/             local still_dump build (gitignored)
   out/               generated IVFs, decoded Y4Ms, results.tsv/json, matrix.md
 ```
 
@@ -180,7 +180,7 @@ tools/m3_streams/gate.py --dav2d tools/bin/dav2d-macos
 # or on the Linux box with the x64 dav2d
 tools/m3_streams/gate.py --bin build-m1/av2enc --dav2d tools/bin/dav2d
 
-# reuse an existing build/m1_dump
+# reuse an existing build/still_dump
 tools/m3_streams/gate.py --no-build --out-dir /tmp/m3_streams
 ```
 
@@ -198,7 +198,7 @@ the CUDA path, and does not claim that a passing tool improves compression.
 
 These are deliberately minimal streams: CDEF uses one strength set (no
 `cdef_idx` symbols) and CCSO has one 64x64 unit (no left-unit context). The
-larger multi-superblock variants live in `tools/m1_verify/feature_gate.sh`
+larger multi-superblock variants live in `tools/still_verify/feature_gate.sh`
 (640x360, CDEF with 1 and 4 sets, CCSO, and combinations). This gate answers a
 different question: does each tool, alone on top of the M1 baseline, produce a
 stream that decodes and reconstructs exactly?

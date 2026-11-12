@@ -18,7 +18,7 @@ target itself. The integration agent owns the root `CMakeLists.txt` change.
 | `build_runtime_test.sh` | Standalone `nvcc` build and run for the test (no CMake). |
 | `README-runtime.md` | This file. |
 
-Not owned by this layer: `transform.*`, `intra.*`, `entropy.*`, `m0_pipeline.*`,
+Not owned by this layer: `transform.*`, `intra.*`, `entropy.*`, `basic_pipeline.*`,
 the root `CMakeLists.txt`, `src/main.cpp`, `src/encoder/`, `src/entropy/`,
 `src/bitstream/`, `tests/`.
 

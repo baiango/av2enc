@@ -6,7 +6,7 @@ Pinned decoder: `dav2d` f9dafbc. Gate: `tools/validate_dav2d.sh`.
 
 | | |
 |---|---|
-| Input | `tests/data/m0_64x64_1f.y4m` |
+| Input | `tests/data/basic_64x64_1f.y4m` |
 | IVF | 1,138 bytes, FourCC AV02 |
 | Decoded | 64x64 yuv420p, 1 frame |
 | MD5 | `7efc3162bc0a4785685eba291a8096fd` |
@@ -16,7 +16,7 @@ Pinned decoder: `dav2d` f9dafbc. Gate: `tools/validate_dav2d.sh`.
 
 | | |
 |---|---|
-| Input | `tests/data/m0_640x360_1f.y4m` (no padding) |
+| Input | `tests/data/basic_640x360_1f.y4m` (no padding) |
 | IVF | 19,751 bytes, FourCC AV02 |
 | Decoded | 640x360 yuv420p, 1 frame |
 | MD5 | `56f11d4a63ff07f2356ef5064b84fe0e` |
@@ -25,7 +25,7 @@ Pinned decoder: `dav2d` f9dafbc. Gate: `tools/validate_dav2d.sh`.
 The bottom partial superblock (360 = 5×64 + 40) uses `PARTITION_NONE` at the
 64×64 SB level. The 32×16 / 32×8 implied-partition paths and rectangular edge
 transforms are implemented for narrower edge cases. Both 64x64 and 640x360 are
-locked by `tests/m0_encode_smoke.sh`.
+locked by `tests/basic_encode_smoke.sh`.
 
 ## Adaptive CDFs (opt-in)
 

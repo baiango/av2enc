@@ -81,9 +81,9 @@ Tue Nov 10 21:17:04 2026
 ## What is compared
 
 The CPU reference is a direct transcription of
-`src/encoder/m0_still.cpp:941-969` (`forward_dct`) and `:1304-1310`
+`src/pipeline/still/basic_encoder.cpp:941-969` (`forward_dct`) and `:1304-1310`
 (quantization), using the normative `kDct32`/`kDct16` integer tables from
-`src/encoder/m0_tables.h`. The M0 forward DCT is **not** a floating cosine
+`src/pipeline/still/basic_tables.h`. The M0 forward DCT is **not** a floating cosine
 basis: it is an integer kernel scaled by `1/(64*sqrt(n))`, accumulated in
 double, then quantized with `lround(coeff * quant_factor)`.
 

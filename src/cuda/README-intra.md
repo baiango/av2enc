@@ -15,7 +15,7 @@ separate step. Nothing outside `src/cuda/` is modified.
 
 ## Arithmetic contract (bit-exact with the CPU M0 path)
 
-Mirrors `encode_residual_plane()` in `src/encoder/m0_still.cpp` (read-only),
+Mirrors `encode_residual_plane()` in `src/encoder/basic_encoder.cpp` (read-only),
 including the CPU's `approx_divide` behavior for non-power-of-two block areas:
 
 ```text

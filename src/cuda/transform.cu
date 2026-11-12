@@ -2,7 +2,7 @@
 //
 // Bit-exact port of TileEncoder::forward_dct(), TileEncoder::inverse_dct() and
 // the transform part of TileEncoder::encode_residual_plane() in
-// src/encoder/m0_still.cpp.  See transform.h for the API contract.
+// src/encoder/basic_encoder.cpp.  See transform.h for the API contract.
 //
 // Floating point: the CPU reference accumulates in binary64 with a scalar
 // multiply then add per term.  The kernels use the same order and force
@@ -25,7 +25,7 @@ constexpr int kQuantStep = 528;
 constexpr int kQuantTableBits = 3;  // QUANT_TABLE_BITS
 
 // Dct_Kernel{n}[j][i] = 64 * sqrt(n) * B[j][i], copied verbatim from
-// src/encoder/m0_tables.h.  transform_test.cu checks every entry against the
+// src/encoder/basic_tables.h.  transform_test.cu checks every entry against the
 // CPU reference: impulse residuals at each position exercise the whole table.
 __device__ const std::int16_t kDct4Dev[4][4] = {
     {64, 64, 64, 64},

@@ -29,7 +29,7 @@
 #include <cuda_runtime.h>
 #include <type_traits>
 
-#include "../entropy/av2/av2_entropy.h"
+#include "../codec/entropy/av2/av2_entropy.h"
 
 // `AV2_CUDA_UNROLL_1` is a device directive; the host pass of nvcc (and a
 // host-only compiler) would warn about it.  Keep it device-only.

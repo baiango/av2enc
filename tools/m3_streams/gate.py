@@ -7,7 +7,7 @@ ONLY that tool plus the M1 baseline, then:
   1. check the pinned IVF byte count and MD5;
   2. decode with the pinned ``dav2d --strict 1``;
   3. compare every reconstructed sample against the encoder dump
-     (``tools/m1_verify/m1_dump.cpp``);
+     (``tools/still_verify/still_dump.cpp``);
   4. prove the tool is active: the stream and the decoded pixels must differ
      from the M1 baseline.
 
@@ -38,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 MANIFEST = HERE / "m3_cases.json"
 COMPARE = HERE / "compare_recon.py"
-DUMP_SRC = ROOT / "tools" / "m1_verify" / "m1_dump.cpp"
+DUMP_SRC = ROOT / "tools" / "still_verify" / "still_dump.cpp"
 IVF_OVERHEAD = 32 + 12  # IVF file header + one IVF frame header
 
 
@@ -106,19 +106,19 @@ def build_dump(out: Path, lib: Path | None, no_build: bool) -> Path:
     proc = run(cmd)
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
-        raise GateError(f"failed to build m1_dump with {cxx}")
+        raise GateError(f"failed to build still_dump with {cxx}")
     return out
 
 
 def parse_dump_header(path: Path) -> dict:
     with path.open("rb") as f:
-        if f.readline() != b"M1DUMP1\n":
-            raise GateError(f"{path}: bad m1_dump magic")
+        if f.readline() != b"StillDUMP1\n":
+            raise GateError(f"{path}: bad still_dump magic")
         line = f.readline()
     try:
         return json.loads(line)
     except json.JSONDecodeError as exc:
-        raise GateError(f"{path}: bad m1_dump JSON header: {exc}") from exc
+        raise GateError(f"{path}: bad still_dump JSON header: {exc}") from exc
 
 
 def parse_compare_tsv(text: str) -> dict:
@@ -216,7 +216,7 @@ def run_case(
     ]
     proc = run(dump_cmd)
     if proc.returncode != 0 or not dump.is_file():
-        errors.append("m1_dump failed")
+        errors.append("still_dump failed")
         row["errors"] = errors
         return row
 
@@ -394,7 +394,7 @@ def write_outputs(
         "",
         "## Verified streams",
         "",
-        "| Tool | Status | Flags added to `--m1` | IVF bytes | IVF MD5 | Decoded YUV MD5 | Encoder recon |",
+        "| Tool | Status | Flags added to `--still` | IVF bytes | IVF MD5 | Decoded YUV MD5 | Encoder recon |",
         "|---|---|---|---:|---|---|---|",
     ]
     for row in verified:
@@ -467,7 +467,7 @@ def main() -> int:
 
     out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    dump_bin = args.dump_bin or (HERE / "build" / "m1_dump")
+    dump_bin = args.dump_bin or (HERE / "build" / "still_dump")
     try:
         dump_bin = build_dump(Path(dump_bin), args.lib, args.no_build)
     except GateError as exc:

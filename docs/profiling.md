@@ -5,7 +5,7 @@ RTX 3060 box; macOS is not an encoder target.
 
 This document covers two things:
 
-1. The **built-in profiler** in `src/profile/`: low-overhead stage timers, CUDA
+1. The **built-in profiler** in `src/core/telemetry/`: low-overhead stage timers, CUDA
    event timings, optional NVTX ranges, JSONL events, a JSON summary, and VRAM
    accounting. It is the regression tool because it always works, even when
    hardware counters are blocked.
@@ -230,12 +230,12 @@ code.
 
 ## Integration API
 
-Add `src/profile/profiler.cpp` to the encoder target and include
-`"profile/profiler.h"`. The header has no CUDA dependency; `CudaScope` takes the
+Add `src/core/telemetry/profiler.cpp` to the encoder target and include
+`"core/telemetry/profiler.h"`. The header has no CUDA dependency; `CudaScope` takes the
 stream as `void*` so CPU-only translation units can include it.
 
 ```cpp
-#include "profile/profiler.h"
+#include "core/telemetry/profiler.h"
 
 using namespace av2enc::profile;
 
@@ -320,14 +320,14 @@ Lifecycle rules:
 ### CMake wiring (not yet done in the root CMakeLists)
 
 The root `CMakeLists.txt` is owned by the scaffold work and does not currently
-build `src/profile/`. When wiring it in, add `src/profile/profiler.cpp` to
+build `src/core/telemetry/`. When wiring it in, add `src/core/telemetry/profiler.cpp` to
 `av2enc_core` (or a small `av2enc_profile` library), and when the CUDA backend is
 enabled:
 
 ```cmake
 # C++ source; CUDA headers are needed only because AV2ENC_HAVE_CUDA=1.
 find_package(CUDAToolkit REQUIRED)
-target_sources(av2enc_core PRIVATE src/profile/profiler.cpp)
+target_sources(av2enc_core PRIVATE src/core/telemetry/profiler.cpp)
 target_include_directories(av2enc_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 target_compile_definitions(av2enc_core PUBLIC AV2ENC_HAVE_CUDA=1)
 target_link_libraries(av2enc_core PUBLIC CUDA::cudart)
@@ -346,10 +346,10 @@ or libraries are required.
 The demo has no CMake dependency:
 
 ```sh
-src/profile/build_demo.sh
-./src/profile/build/profile_demo              # CPU scopes + JSONL verification
-./src/profile/build/profile_demo_cuda         # adds a trivial CUDA kernel
-./src/profile/build/profile_demo --benchmark  # overhead measurement
+src/core/telemetry/build_demo.sh
+./src/core/telemetry/build/profile_demo              # CPU scopes + JSONL verification
+./src/core/telemetry/build/profile_demo_cuda         # adds a trivial CUDA kernel
+./src/core/telemetry/build/profile_demo --benchmark  # overhead measurement
 ```
 
 `build_demo.sh` builds with `g++ -std=c++20`, strict warnings, and optionally
@@ -663,8 +663,8 @@ Workflow:
 
 | File | Purpose |
 |---|---|
-| `src/profile/profiler.h` | Public API: `Profiler`, `CpuScope`, `CudaScope`, stage ids, env-driven open. |
-| `src/profile/profiler.cpp` | Implementation: fixed stage table, JSONL/summary, CUDA event pool, NVTX, VRAM. |
-| `src/profile/profile_demo.cpp` | Standalone nested-scope and optional CUDA-kernel demo with output verification. |
-| `src/profile/build_demo.sh` | g++/nvcc demo build without CMake. |
+| `src/core/telemetry/profiler.h` | Public API: `Profiler`, `CpuScope`, `CudaScope`, stage ids, env-driven open. |
+| `src/core/telemetry/profiler.cpp` | Implementation: fixed stage table, JSONL/summary, CUDA event pool, NVTX, VRAM. |
+| `src/core/telemetry/profile_demo.cpp` | Standalone nested-scope and optional CUDA-kernel demo with output verification. |
+| `src/core/telemetry/build_demo.sh` | g++/nvcc demo build without CMake. |
 | `docs/profiling.md` | This document. |

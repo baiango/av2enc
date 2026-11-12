@@ -1,4 +1,4 @@
-#include "bitstream/bitwriter.h"
+#include "core/bitstream/bitwriter.h"
 
 #include "test_common.h"
 

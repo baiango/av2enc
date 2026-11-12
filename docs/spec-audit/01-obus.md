@@ -25,15 +25,15 @@ Status legend:
 Production-path fact used throughout: `av2enc` encodes **one still picture**
 with M0 (`TD + SEQ + CLK`) or the M1 still path
 (`src/main.cpp:121-160`, `src/main.cpp:573-691`). The M2 IPPP writer
-(`src/encoder/m2/m2_headers.cpp`) and every gate-specific writer are not
+(`src/encoder/m2/video_headers.cpp`) and every gate-specific writer are not
 reachable from the CLI. `src/bitstream/obu.{h,cpp}` is a stub
 (`src/bitstream/obu.cpp:18-36`); the real OBU writer is
-`src/bitstream/m0_headers.cpp`.
+`src/bitstream/basic_headers.cpp`.
 
 Evidence abbreviations:
-`m0` = `src/bitstream/m0_headers.cpp`;
-`m1` = `src/encoder/m1/m1_headers.cpp`;
-`m2` = `src/encoder/m2/m2_headers.cpp`;
+`m0` = `src/bitstream/basic_headers.cpp`;
+`m1` = `src/encoder/m1/still_headers.cpp`;
+`m2` = `src/encoder/m2/video_headers.cpp`;
 `small` = `src/encoder/syntax/small_header/small_header.cpp`;
 `filters` = `src/encoder/m1/filters_stream/filters_stream.cpp`;
 `dq` = `src/encoder/quant/dcdeltaq/syntax.cpp`;
@@ -59,13 +59,13 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 
 | Item | §/page | Status | Evidence | Gap |
 |---|---|---|---|---|
-| `obu_header()` bit layout (`obu_header_extension_flag f(1)`, `obu_type f(5)`, `obu_tlayer_id f(2)`) | §5.2.2 p54; §6.2.2 p255-257 | **WIRED** | `m0:106-123`; test `tests/m0_headers_test.cpp:208-231` | Only `obu_header_extension_flag = 0` is emitted by M0/M1. `src/bitstream/obu.cpp` is a non-functional stub, so there is no shared OBU header parser/writer outside `m0_headers`. |
+| `obu_header()` bit layout (`obu_header_extension_flag f(1)`, `obu_type f(5)`, `obu_tlayer_id f(2)`) | §5.2.2 p54; §6.2.2 p255-257 | **WIRED** | `m0:106-123`; test `tests/basic_headers_test.cpp:208-231` | Only `obu_header_extension_flag = 0` is emitted by M0/M1. `src/bitstream/obu.cpp` is a non-functional stub, so there is no shared OBU header parser/writer outside `basic_headers`. |
 | `obu_header_extension_flag = 1` path: `obu_mlayer_id f(3)`, `obu_xlayer_id f(5)` | §5.2.2 p54; §6.2.2 p257-258 | **COMPONENT** | `src/encoder/svc/svc_framing.cpp:247-303` (encode/decode); `src/encoder/svc/svc_test.cpp` round-trips | No CLI path; M0/M1 never set the flag. `GLOBAL_XLAYER_ID` inference for TD/MSDO is implemented (`svc_framing.cpp:196-205,296-300`). |
 | `obu_extension_data(sz)` for extensible OBUs | §5.2.1 p53-54; §6.2.1 p255 | **DECODER-ONLY** | No writer sets `obu_extension_flag = 1`; the CI payload reader explicitly rejects extension data (`ci.cpp:903-910`) | §6.2.1 requires `obu_extension_flag == 0` in conforming bitstreams, so the encoder must *not* emit extension data. The encoder cannot produce a stream exercising it; correct. |
 | `obu_type` value space and `reserved_obu()` | §5.2.2 p54; §6.2.2 Table 6.1 p256; §6.3 p258 | **WIRED** (only 1/2/4 reachable) | `m0:26-31`; `m0:106-123` | Reserved OBU types 0 and 26–31 have no writer (correct: reserved for AOMedia). Other types are component-only; see §2. |
 | `obu_tlayer_id` | §5.2.2 p54; §6.2.2 p257 | **WIRED** (fixed 0) | `m0:114`; `m1:80-159` never sets a non-zero tlayer | Multi-temporal-layer OBU headers exist only in components (`tlayers` gate writes `obu_tlayer_id` 0..3: `src/encoder/inter/tlayers/tlayers_syntax.cpp:117`, gate PASS). Conformance checks (`tlayer <= max_tlayer_id`, key/RAS/SWITCH forced 0) exist only in component validators (`random_access.cpp:1020-1035`, `leading.cpp:343-358`). |
-| Annex B.2 length prefix `leb128(size)` / `obuPayloadSize` | §5.2.1 p52; Annex B.2 | **WIRED** | `m0:125-165`; `tests/m0_headers_test.cpp` bit goldens | No `obu_has_size_field` bit (correct for AV2). `leb128` writer caps at 32 bits. |
-| `trailing_bits()` (single 1 then zeros, byte alignment) | §5.2.3 p54; §6.2.3 p258 | **WIRED** | `m0:54-57,283`; `m1:52-55,279`; tests `m0_headers_test.cpp:289-310` | Tile-group OBUs correctly have no OBU trailing bits (`usedArith`, `m0:341-349`). |
+| Annex B.2 length prefix `leb128(size)` / `obuPayloadSize` | §5.2.1 p52; Annex B.2 | **WIRED** | `m0:125-165`; `tests/basic_headers_test.cpp` bit goldens | No `obu_has_size_field` bit (correct for AV2). `leb128` writer caps at 32 bits. |
+| `trailing_bits()` (single 1 then zeros, byte alignment) | §5.2.3 p54; §6.2.3 p258 | **WIRED** | `m0:54-57,283`; `m1:52-55,279`; tests `basic_headers_test.cpp:289-310` | Tile-group OBUs correctly have no OBU trailing bits (`usedArith`, `m0:341-349`). |
 | `byte_alignment()` (zero bits to the next byte) | §5.2.4 p55; §6.2.4 p258 | **WIRED** | `src/bitstream/bitwriter.cpp:30-34`; `m0:335` | — |
 | `usedArith = is_tile_group()` payload boundary | §5.2.1 p53 | **WIRED** | `m0:148-153,341-349`; `m2:328-338` | Tile payloads are out of this audit's scope. |
 | Extensible-OBU tail selection (`is_extensible_obu()` ⇒ `obu_extension_flag` before `trailing_bits`) | §5.2.1 p53-54 | **PARTIAL** | SEQ/CI/LCR/OPS write `obu_extension_flag = 0`: `m0:282`, `ci.cpp:669-672`, `lcr/ops:508`, `lcr/ops:601` | **MFH omits the bit**: `mfh:427-443` writes MFH syntax then `trailing_one_bit`, although p54 lists `OBU_MULTI_FRAME_HEADER` in `is_extensible_obu()`. A conforming decoder reads the trailing `1` as `obu_extension_flag = 1`; §6.2.1 requires it to be 0. The pinned dav2d tolerates this (gate PASS), so the gate cannot catch it. |
@@ -115,7 +115,7 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 | `seq_level_idx f(5)` | p55; p258 | **WIRED** | `m0:179` (config, default 7 = level 5.1); `m1:83` | Levels other than 7 not exposed by CLI. |
 | `seq_tier f(1)` (only when `seq_level_idx > 3 && !single_picture`) | p55; p258 | **PARTIAL** | `m2:100`, `tlayers_syntax.cpp:110`, `random_access.cpp:270` all write `0` | High tier (1) is never emitted; only main-tier streams exist although tile-limit code accepts tier 1 (`tiles/tile_layout.cpp:100-120`). |
 | `chroma_format_idc uvlc()` | p55; p259 Table 6.2 | **COMPONENT** | CLI 0 (`m0:181`); 0/1/2/3 writer + decoder gate `chroma_headers.cpp:329-376`, `chroma_format.cpp:35-65`, `chroma/gate.sh` | CLI cannot encode 4:0:0/4:2:2/4:4:4. |
-| `bit_depth_idc uvlc()` | p55; p259-260 Table 6.3 | **COMPONENT** | CLI 1 = 8-bit (`m0:182`); 0 = 10-bit in `hbd_headers.cpp:99`, `m10_headers.cpp:98`, gates `build-hdr`/`build-m10` | Spec allows only 0/1 (10/8-bit); 12-bit is not representable by the syntax and is not emitted. |
+| `bit_depth_idc uvlc()` | p55; p259-260 Table 6.3 | **COMPONENT** | CLI 1 = 8-bit (`m0:182`); 0 = 10-bit in `hbd_headers.cpp:99`, `high_bitdepth_headers.cpp:98`, gates `build-hdr`/`build-m10` | Spec allows only 0/1 (10/8-bit); 12-bit is not representable by the syntax and is not emitted. |
 | `set_chroma_format_and_bit_depth()` (SubsamplingX/Y, Monochrome, NumPlanes, BitDepth, MaxQ) | §6.4.1 p259-260 | **DECODER-ONLY** | Encoder mirror: `chroma_format.cpp:35-65`, `format/format.cpp:330-350` | Encoder can produce all four chroma idcs and both bit depths (components), so the inference is exercisable. |
 | `seq_lcr_id f(3)` | p56; p260-261 | **PARTIAL** | `m2:105` writes 0; `svc_mux.cpp:225` sets plan id 1 but never rewrites the sequence header | No stream association: composed SVC streams keep `seq_lcr_id = 0`, so the emitted LCR is not referenced by any sequence header. §6.4.1's LCR-association rules cannot be satisfied by an emitted stream. |
 | `still_picture f(1)` | p56; p260 | **WIRED** | M0/M1 single-picture infers 1; `m2:106` writes 0 | — |
@@ -125,7 +125,7 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 | `monotonic_output_order_flag f(1)` | p56; p258-259 | **COMPONENT** | `m2:110` (1); `tlayers_syntax.cpp:120`; `leading.cpp:102` can write 0 | CLI single-picture infers 1; no CLI path to reordering. |
 | `frame_width_bits_minus_1 f(4)`, `max_frame_width_minus_1 f(n)` | p56; p261 | **WIRED** | `m0:186-199`; all writers compute minimal width bits | Width up to 65535 (16-bit field cap, `m0:194`). |
 | `frame_height_bits_minus_1 f(4)`, `max_frame_height_minus_1 f(n)` | p56; p261 | **WIRED** | `m0:190-199` | same. |
-| `seq_cropping_window_present_flag f(1)` + four `uvlc()` offsets | p56; p261 | **COMPONENT** | `small:402-470`, `chroma_headers.cpp:366-373`; `small_header` gate `m1_360s/crop` decoded 0 diffs | CLI always writes 0 (`m0:202`); no cropping/display-size CLI option. Range checks exist (`small_header.cpp` validation; `chroma_headers.cpp:292-300`). |
+| `seq_cropping_window_present_flag f(1)` + four `uvlc()` offsets | p56; p261 | **COMPONENT** | `small:402-470`, `chroma_headers.cpp:366-373`; `small_header` gate `still_360s/crop` decoded 0 diffs | CLI always writes 0 (`m0:202`); no cropping/display-size CLI option. Range checks exist (`small_header.cpp` validation; `chroma_headers.cpp:292-300`). |
 | `seq_initial_display_delay_present_flag f(1)`, `seq_initial_display_delay_minus_1 f(4)` | p56; p262 | **COMPONENT** | `brt:198-205` writer, `307-310` splice; `hrd_test`; `hrd_stream_gate` | CLI infers/omits the block. Pinned dav2d accepts the delay fields (gate PASS) but not the nested decoder-model block. |
 | `decoder_model_info_present_flag f(1)`, `num_units_in_decoding_tick f(32)` | p56-57; p262 | **COMPONENT** | `brt:203-208`, `307-316`; `hrd_stream_gate` decodes the "decoder-compatible" stream | CLI always 0 (`m0:203`). |
 | `seq_decoder_model_info_present_flag f(1)` + `seq_decoder_model_info()` | §5.4.13 p69; p262 | **COMPONENT** | `brt:198-202`, `316`; `hrd_test` | Pinned dav2d does **not** parse the spec `seq_decoder_model_info()` block; `hrd_stream_gate` reports this and gates the full form by self-parse only. |
@@ -139,9 +139,9 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 
 | Item | §/page | Status | Evidence | Gap |
 |---|---|---|---|---|
-| `seq_tile_info_present_flag f(1)` | p59; p264 | **COMPONENT** | `small:1359-1395`; gate `m1_360s/tile` 0 diffs. M0/M1/M2 write 0 (`m0:265`, `m1:157`, `m2:217`) | CLI always 0, so tiles are always frame-level. |
+| `seq_tile_info_present_flag f(1)` | p59; p264 | **COMPONENT** | `small:1359-1395`; gate `still_360s/tile` 0 diffs. M0/M1/M2 write 0 (`m0:265`, `m1:157`, `m2:217`) | CLI always 0, so tiles are always frame-level. |
 | `allow_tile_info_change f(1)` | p59; p264 | **COMPONENT** | `small:1359-1380`; gate `allow_change = true` (`small_header/gate.cpp:656`) | Not reachable from CLI. |
-| `tile_params()` / `get_seq_sb_size()` at sequence level (`SeqSbRowStarts`, `SeqTileRowsLog2`, etc.) | p59; p264 | **COMPONENT** | `small:1014-1370`; gate tile stream decodes 0 diffs; frame-level multi-tile writer `m1/tiles_stream/tiles_stream.cpp:356-361` | Sequence-level form is exercised by the `m1_360s/tile` gate (0 diffs). CLI emits one tile only. |
+| `tile_params()` / `get_seq_sb_size()` at sequence level (`SeqSbRowStarts`, `SeqTileRowsLog2`, etc.) | p59; p264 | **COMPONENT** | `small:1014-1370`; gate tile stream decodes 0 diffs; frame-level multi-tile writer `m1/tiles_stream/tiles_stream.cpp:356-361` | Sequence-level form is exercised by the `still_360s/tile` gate (0 diffs). CLI emits one tile only. |
 
 ### 3.3 §5.4.3 sequence partition config (p59–60; §6.4.3 p264–265)
 
@@ -153,7 +153,7 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 | `enable_extended_sdp f(1)` | p59; p265 | **ABSENT** | `sdp.h:76-85` validates the flag but no writer emits it | Only meaningful for inter frames; production path is single-picture. |
 | `enable_ext_partitions f(1)` | p59; p265 | **PARTIAL** | Syntax/decision model + gate: `partition_ext/partition_ext.cpp`, `ext_syntax.cpp`; `gate_dav2d.py:13-14` rewrites the header bit to 1 | Production writers force 0 (`m1:106`); only the Python gate writes the bit. |
 | `enable_uneven_4way_partitions f(1)` | p59; p265 | **PARTIAL** | Same gate rewrites bit to 1; `partition_ext.cpp:706-709` validates dependency | Same: no C++ header writer sets it. |
-| `reduce_pb_aspect_ratio f(1)` | p59; p265 | **COMPONENT** | `small:514-580`; gate `m1_360s/aspect` 0 diffs + negative control | CLI always 0. |
+| `reduce_pb_aspect_ratio f(1)` | p59; p265 | **COMPONENT** | `small:514-580`; gate `still_360s/aspect` 0 diffs + negative control | CLI always 0. |
 | `max_pb_aspect_ratio_log2_minus_1 f(1)` | p59; p265 | **COMPONENT** | `small:514-540`; gate negative control proves the cap parses | same. |
 
 ### 3.4 §5.4.4 sequence segment config (p60; §6.4.4 p265–266)
@@ -169,7 +169,7 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 | Item | §/page | Status | Evidence | Gap |
 |---|---|---|---|---|
 | `enable_dip f(1)` | p60; p266 | **PARTIAL** | DIP prediction + block syntax: `encoder/dip/dip.cpp`, `dip_syntax.cpp`, `dip_test`; every sequence writer hardcodes 0 (`m0:218`, `m1:114`, `m2:141`) | No header writer sets it and no decoder-gated DIP stream exists. |
-| `enable_intra_edge_filter f(1)` | p60; p266 | **WIRED** | `m1:115` writes config, M1 default true (`m1_headers.h:64`); enabled by `src/encoder/m1/m1_still.cpp:1813` unless `AV2ENC_M1_NO_EDGE`; M2 writes 1 (`m2:142`) | Fixed-on in M1; only the env var can disable it. |
+| `enable_intra_edge_filter f(1)` | p60; p266 | **WIRED** | `m1:115` writes config, M1 default true (`still_headers.h:64`); enabled by `src/encoder/m1/still_encoder.cpp:1813` unless `AV2ENC_STILL_NO_EDGE`; M2 writes 1 (`m2:142`) | Fixed-on in M1; only the env var can disable it. |
 | `enable_mrls f(1)` | p60; p266 | **COMPONENT** | `m1/mrl_stream/mrl_stream.cpp:539-573,863` writes 1; `mrl_gate` | CLI emits 0 (`m1:116`). |
 | `enable_cfl_intra f(1)` | p60; p266 | **WIRED** | `m1:117`; CLI `--no-cfl` (`main.cpp:283-286,634`) | — |
 | `cfl_ds_filter_index f(2)` | p60; p266 | **PARTIAL** | CLI writes 0 (`m1:118`); all header writers 0; `cfl/ds_filters/ds_filters.cpp` implements filters 0..2 with gate | No header writer can emit 1/2/3; spec value 3 behaves as 0. |
@@ -230,8 +230,8 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 | `enable_idtx_intra f(1)` | p64; p270 | **PARTIAL** | `m1:131` writes config (default false); lossless writes 0 when FSC off | IDTX transform implemented (`tx_variants`) but the sequence bit can only be 0 in reachable paths; no IDTX stream gate. |
 | `enable_intra_ist f(1)` | p64; p270 | **COMPONENT** | `tx_secondary.cpp:458`; `dq:288`; `tx_secondary_test` | No stream sets 1. |
 | `enable_inter_ist f(1)` | p64; p270 | **COMPONENT** | `tx_secondary.cpp:459`; `dq:289` | No inter stream sets 1. |
-| `enable_chroma_dctonly f(1)` | p64; p270 | **WIRED** | `m1:134`, M1 default true (`m1_headers.h:68`) | Fixed-on in M1. |
-| `enable_inter_ddt f(1)` | p64; p270 | **COMPONENT** | `m2/ddt/ddt_syntax.cpp:5-20`; header patched to 1 by `ddt/gate/patch_m2_headers.py`; DDT gate | CLI single-picture omits the bit. |
+| `enable_chroma_dctonly f(1)` | p64; p270 | **WIRED** | `m1:134`, M1 default true (`still_headers.h:68`) | Fixed-on in M1. |
+| `enable_inter_ddt f(1)` | p64; p270 | **COMPONENT** | `m2/ddt/ddt_syntax.cpp:5-20`; header patched to 1 by `ddt/gate/patch_video_headers.py`; DDT gate | CLI single-picture omits the bit. |
 | `reduced_tx_part_set f(1)` | p64; p270 | **COMPONENT** | `dq:294`; tx-part tooling `tx_variants` | No stream sets 1. |
 | `enable_cctx f(1)` | p64; p270 | **PARTIAL** | `tcq/cctx.cpp`, `tcq_flags.cpp:12`; header writers force 0 (`m2:197`) | `tcq/README.md` status "component only"; no CCTX stream or decoder gate. |
 | `enable_tcq f(1)` | p64; p271 | **PARTIAL** | `tcq/tcq.cpp`, `tcq_flags.cpp:13`; writers force 0 | No TCQ stream; `tcq/build_and_test.sh:104` says a real dav2d TCQ gate is blocked. |
@@ -249,14 +249,14 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 
 | Item | §/page | Status | Evidence | Gap |
 |---|---|---|---|---|
-| `seg_info(numSegments)` loop, `feature_enabled f(1)`, `feature_value su/f` | p66; p271 | **COMPONENT** | `small:678-755`; 8/16 segments, 3 feature levels (`small:661-700`); gate `m1_360s/segment` 0 diffs; duplicate implementation `mfh:205-240` + `mfh_test` | No CLI path (all production headers write `segmentation_enabled = 0`, e.g. `m0:309`). |
+| `seg_info(numSegments)` loop, `feature_enabled f(1)`, `feature_value su/f` | p66; p271 | **COMPONENT** | `small:678-755`; 8/16 segments, 3 feature levels (`small:661-700`); gate `still_360s/segment` 0 diffs; duplicate implementation `mfh:205-240` + `mfh_test` | No CLI path (all production headers write `segmentation_enabled = 0`, e.g. `m0:309`). |
 
 ### 3.10 §5.4.10 sequence filter config (p66–67; §6.4.10 p271–272)
 
 | Item | §/page | Status | Evidence | Gap |
 |---|---|---|---|---|
 | `disable_loopfilters_across_tiles f(1)` | p66; p271 | **COMPONENT** | `filters:321`; `restoration.cpp:218-219,344-346` model the tile clipping; `ccso_test.cpp:416-434` | Only 0 emitted in streams; no gate sets 1. |
-| `enable_cdef f(1)` | p67; p272 | **WIRED** | `m1:146`; CLI `--m1-cdef` (`main.cpp:358-361,647`); CDEF search + decoder-verified M1 gate | Fixed off unless flag. |
+| `enable_cdef f(1)` | p67; p272 | **WIRED** | `m1:146`; CLI `--still-cdef` (`main.cpp:358-361,647`); CDEF search + decoder-verified M1 gate | Fixed off unless flag. |
 | `enable_gdf f(1)` | p66; p272 | **PARTIAL** | GDF filter + weights implemented (`filters/spec_tables/gdf.cpp`, `gdf_tables.h`, `gdf_test`); `filters:317-320` refuses `enable_gdf = 1` | No writer emits 1 and no GDF stream exists. |
 | `gdf_unit_matches_sb_size f(1)` | p66; p272 | **ABSENT** | no writer | Only reachable with GDF, which is unwritable. |
 | `enable_restoration f(1)` | p66; p272 | **COMPONENT** | `filters:313-347` full group writer; `wiener` + `lr_chroma` gates; `restoration.cpp` | CLI emits 0. |
@@ -264,10 +264,10 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 | `lr_tools_disable[0][RESTORE_WIENER_NONSEP] f(1)` | p67; p272 | **COMPONENT** | `filters:326`; `wiener_syntax.cpp` NS coefficients | same. |
 | `lr_tools_disable[1][RESTORE_PC_WIENER] = 1` (inferred) | p67; p272 | **COMPONENT** | `filters:327-329` (no bit, as spec requires) | same. |
 | `lr_tools_uv_present f(1)` + `lr_tools_disable[1][RESTORE_WIENER_NONSEP]` | p67; p272 | **COMPONENT** | `filters:328-334`; `lr_chroma` gate exercises U/V present | same. |
-| `enable_ccso f(1)` | p67; p272 | **WIRED** | `m1:150-153`; CLI `--m1-ccso` (`main.cpp:363-366,649`); CCSO params writer `m1:229-256` | Fixed off unless flag. |
+| `enable_ccso f(1)` | p67; p272 | **WIRED** | `m1:150-153`; CLI `--still-ccso` (`main.cpp:363-366,649`); CCSO params writer `m1:229-256` | Fixed off unless flag. |
 | `ccso_unit_matches_sb_size f(1)` | p67; p272 | **WIRED** | `m1:151-153` writes 1 when CCSO on | Only 64x64 units. |
 | `cdef_on_skip_txfm_always_on f(1)` / `cdef_on_skip_txfm_disabled f(1)` | p67; p272 | **COMPONENT** | `m2:212-213`; `filters:336-342`; avg_cdf gate uses `disabled = 1` and decodes | CLI single-picture infers ADAPTIVE, so no bits. |
-| `df_par_bits_minus_2 f(2)` | p67; p272 | **COMPONENT** | `filters:343`; `small:582-620`; gate `m1_360s/dfpar` 0 diffs | CLI writes 0 (`m0:261`). |
+| `df_par_bits_minus_2 f(2)` | p67; p272 | **COMPONENT** | `filters:343`; `small:582-620`; gate `still_360s/dfpar` 0 diffs | CLI writes 0 (`m0:261`). |
 
 ### 3.11 §5.4.11 user_defined_qm (p67–69; §6.4.11 p273)
 

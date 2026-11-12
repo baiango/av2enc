@@ -15,8 +15,8 @@ spec. See `tools/spec_extract/README.md`.
 | `dct32.h` | `av2spec::kDctKernel32[32][32]` as int16 | §9.6 |
 | `scan.json` | diagonal (TX_CLASS_2D) scan for 4/8/16/32, generated from the §5.20.7.30 algorithm | §5.20.7.30 |
 | `default_cdf.json` | all 180 default CDF arrays (flat data + declared dims) | §9.3 |
-| `m0_cdf.json` | the 19 CDF arrays the M0 path reads | §9.3 |
-| `m0_cdf.h` | the same 19 as typed `constexpr` C++ arrays | §9.3 |
+| `basic_cdf.json` | the 19 CDF arrays the M0 path reads | §9.3 |
+| `basic_cdf.h` | the same 19 as typed `constexpr` C++ arrays | §9.3 |
 | `spec_sections.json` | heading id → title (navigation only) | — |
 
 ## CDF encoding reminder

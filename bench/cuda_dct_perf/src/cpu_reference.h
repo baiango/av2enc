@@ -1,5 +1,5 @@
 // CPU transcription of the M0 forward DCT + quantization and the normative
-// inverse transform.  Copied line-for-line from src/encoder/m0_still.cpp
+// inverse transform.  Copied line-for-line from src/pipeline/still/basic_encoder.cpp
 // (read-only reference); do not change the arithmetic order here.
 #pragma once
 
@@ -9,7 +9,7 @@
 
 namespace ref {
 
-// Same constants as src/encoder/m0_still.cpp.
+// Same constants as src/pipeline/still/basic_encoder.cpp.
 constexpr int kQuantStep = 528;
 constexpr int kQuantTableBits = 3;
 

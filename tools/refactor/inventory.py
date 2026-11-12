@@ -217,7 +217,7 @@ def cmake_for(path: Path, root: Path, info: CMakeInfo) -> tuple[bool, list[str],
             excluded = any(p.search(str(path)) for p in info.glob_exclusions)
             if not excluded:
                 globbed = True
-                targets = targets + ["av2enc_m1_gpu"]
+                targets = targets + ["av2enc_still_gpu"]
     return bool(cmake_lists or globbed), cmake_lists, sorted(set(targets)), globbed
 
 

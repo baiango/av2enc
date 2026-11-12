@@ -4,8 +4,8 @@
 Compares the first frame of two sources, where each source is either:
 
 * a Y4M file (8-bit 4:2:0), e.g. the output of the pinned ``dav2d``; or
-* an ``M1DUMP1`` reconstruction dump (``tools/m1_verify/m1_dump.cpp`` and the
-  GPU recon-dump contract documented in ``tools/m1_gpu/README.md``).
+* an ``StillDUMP1`` reconstruction dump (``tools/still_verify/still_dump.cpp`` and the
+  GPU recon-dump contract documented in ``tools/still_gpu/README.md``).
 
 The format is detected per file, so a decoded Y4M can be compared directly
 against an encoder-side reconstruction dump. No tolerance is applied: any
@@ -24,7 +24,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DUMP_MAGIC = b"M1DUMP1\n"
+DUMP_MAGIC = b"StillDUMP1\n"
 
 
 def die(message: str) -> "NoReturn":  # noqa: F821 - string annotation
@@ -89,7 +89,7 @@ def parse_y4m(path: Path) -> Frame:
 def parse_dump(path: Path) -> Frame:
     data = path.read_bytes()
     if not data.startswith(DUMP_MAGIC):
-        die(f"{path}: not an M1DUMP1 file")
+        die(f"{path}: not an StillDUMP1 file")
     rest = data[len(DUMP_MAGIC):]
     newline = rest.find(b"\n")
     if newline < 0:
@@ -132,7 +132,7 @@ def load_frame(path: Path) -> Frame:
         return parse_dump(path)
     if head.startswith(b"YUV4MPEG2"):
         return parse_y4m(path)
-    die(f"{path}: unknown format (not Y4M or M1DUMP1)")
+    die(f"{path}: unknown format (not Y4M or StillDUMP1)")
 
 
 @dataclass
@@ -171,7 +171,7 @@ def compare_plane(name: str, a: bytes, b: bytes, width: int, height: int) -> Pla
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Bit-exact Y/U/V comparison of two Y4M or M1DUMP1 files.")
+        description="Bit-exact Y/U/V comparison of two Y4M or StillDUMP1 files.")
     parser.add_argument("cpu", type=Path, help="reference (CPU M1)")
     parser.add_argument("gpu", type=Path, help="under test (GPU M1)")
     parser.add_argument("--json", action="store_true",

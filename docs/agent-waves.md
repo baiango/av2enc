@@ -9,7 +9,7 @@ disjoint and prevents eight agents from editing the same bitstream path.
   `docs/negative-results.md`, and `docs/tool-roadmap.md`.
 - Spec-only. No AVM/SVT/clave/av2-turbo encoder code.
 - **Component only:** no root `CMakeLists.txt`, `src/main.cpp`,
-  `src/encoder/m0_still.cpp`, `src/entropy/av2/`, or `src/bitstream/` edits.
+  `src/encoder/basic_encoder.cpp`, `src/entropy/av2/`, or `src/bitstream/` edits.
 - CPU reference first, then CUDA. Every CUDA kernel gets a CPU-vs-GPU
   bit-exact test.
 - Standalone build/test script; no claiming end-to-end integration.

@@ -15,7 +15,7 @@ through the shared component layer.
 | 640x360 | 19,707 B (tile 19,683) | `1bbe4c632eb9ac2e05cd34f856ab7524` | `56f11d4a63ff07f2356ef5064b84fe0e` | 46.619 / 47.204 dB |
 
 The GPU frame payloads are **byte-identical** to
-`av2enc::m0::encode_still_picture()`, and the reconstructed planes are
+`av2enc::basic::encode_still_picture()`, and the reconstructed planes are
 **bit-exact** (GPU-vs-CPU PSNR is infinite on every plane). The decoded MD5s
 come from the pinned `dav2d` f9dafbc build through
 `tools/validate_dav2d.sh` with `EXPECTED_MD5` set.
@@ -40,10 +40,10 @@ per-frame after that.
 
 | File | Role |
 |---|---|
-| `m0_pipeline.h` | Public encode entry point, POD block/job descriptors, timing structs |
-| `m0_pipeline.cpp` | M0 partition planner, host §5.20 syntax writer, OBU assembly, PSNR-side cropping |
-| `m0_pipeline.cu` | Runtime/transform/intra orchestration, pinned staging, CUDA events, 64x64 recon adapter |
-| `m0_pipeline_test.cpp` | CPU-vs-GPU harness: MD5, PSNR, timing, IVF output |
+| `basic_pipeline.h` | Public encode entry point, POD block/job descriptors, timing structs |
+| `basic_pipeline.cpp` | M0 partition planner, host §5.20 syntax writer, OBU assembly, PSNR-side cropping |
+| `basic_pipeline.cu` | Runtime/transform/intra orchestration, pinned staging, CUDA events, 64x64 recon adapter |
+| `basic_pipeline_test.cpp` | CPU-vs-GPU harness: MD5, PSNR, timing, IVF output |
 | `build_pipeline_test.sh` | Build + run + `dav2d` MD5 gate |
 
 ## Architecture
@@ -51,11 +51,11 @@ per-frame after that.
 ```
 StillPicture
    │
-   ├─ PartitionPlanner (host)  ── mirrors m0_still.cpp §5.20.3 tree
+   ├─ PartitionPlanner (host)  ── mirrors basic_encoder.cpp §5.20.3 tree
    │     ops: clear / do_split / rect_type / block, in coding order
    │     blocks: mi position, luma/chroma sizes, tx_sz_ctx, coeff offsets
    │
-   ├─ run_gpu_job (m0_pipeline.cu)
+   ├─ run_gpu_job (basic_pipeline.cu)
    │     Context + Arena + pinned StagingBuffer        (runtime component)
    │     for each real block, raster order:
    │        dc_pred_value / dc_predict_residual        (intra component)
@@ -66,10 +66,10 @@ StillPicture
    │     one cudaStreamSynchronize per frame
    │
    ├─ HostEntropyWriter (host)
-   │     av2::Encoder + the same CDFs/contexts/scan order as m0_still.cpp
+   │     av2::Encoder + the same CDFs/contexts/scan order as basic_encoder.cpp
    │     coefficients and predictions came from the GPU
    │
-   └─ m0::assemble_m0_still_picture()  (existing OBU writer)
+   └─ av2enc::basic::assemble_basic_encoder_picture()  (existing OBU writer)
 ```
 
 Important properties:
@@ -83,7 +83,7 @@ Important properties:
   predictor as a host scalar, while this pipeline keeps the predictor
   device-resident.
 - **Exact M0 syntax.** The host writer ports the serial §5.20 syntax from
-  `m0_still.cpp` (partition contexts, `txb_skip`, EOB, coefficient base/BR,
+  `basic_encoder.cpp` (partition contexts, `txb_skip`, EOB, coefficient base/BR,
   `read_quant` escapes, DC sign) and keeps the same CDF tables and order. The
   entropy component (`src/cuda/entropy.*`) is a device tape executor; entropy
   remains on the CPU here, as planned for the first CUDA path.
@@ -131,9 +131,9 @@ Useful environment variables:
 Manual harness use (writes `gpu_<name>.ivf` and `cpu_<name>.ivf`):
 
 ```sh
-m0_pipeline_test --y4m tests/data/m0_640x360_1f.y4m --out-dir /tmp/out --name 640x360
-m0_pipeline_test --width 128 --height 96 --out-dir /tmp/out --name synth
-m0_pipeline_test --y4m tests/data/m0_64x64_1f.y4m --partition 64x64-single
+basic_pipeline_test --y4m tests/data/basic_640x360_1f.y4m --out-dir /tmp/out --name 640x360
+basic_pipeline_test --width 128 --height 96 --out-dir /tmp/out --name synth
+basic_pipeline_test --y4m tests/data/basic_64x64_1f.y4m --partition 64x64-single
 ```
 
 The harness prints:
@@ -187,7 +187,7 @@ All matched the CPU frame bytes and reconstructed planes exactly.
    only ~1.1x faster than the CPU reference. The planned fix is a wavefront
    scheduler that batches transforms/reconstruction across independent blocks
    (and eventually a CUDA graph); the M0 bitstream does not change.
-2. **Entropy on CPU.** The host syntax writer is a port of `m0_still.cpp`'s
+2. **Entropy on CPU.** The host syntax writer is a port of `basic_encoder.cpp`'s
    serial writer. Moving it to the device tape coder in `src/cuda/entropy.*`
    is the next entropy step; it must preserve CDF order exactly.
 3. **Cold start.** The first encode in a process includes context/arena setup

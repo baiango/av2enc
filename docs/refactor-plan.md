@@ -111,7 +111,7 @@ tools/refactor/verify_baseline.sh --check    # exits non-zero on any drift
 
 1. configure + build CPU and CUDA;
 2. `ctest`;
-3. `tools/m1_verify/feature_gate.sh`;
+3. `tools/still_verify/feature_gate.sh`;
 4. the encoder MD5 table (rebuild every pinned stream, compare bytes);
 5. the decoder MD5 table (`dav2d --strict 1 --threads 1`);
 6. module gates whose paths moved in the current phase.
@@ -203,8 +203,8 @@ Mapping of today's directories:
 | `src/encoder/tiles` + `m1/tiles_stream` + `m2/post/tiled_frame` | `pipeline/tiled/` |
 | `src/encoder/filters/restoration/{classes,spec_tables}` | `codec/filters/{lr,pc_wiener,gdf}` |
 | `src/encoder/{qm,tx_secondary,tcq}` | `codec/transform/…` |
-| `src/encoder/m0_still.cpp` | `pipeline/still/` writer + `app/` defaults |
-| `src/encoder/m1/{m1_still,m1_syntax,m1_headers}` | `pipeline/still/` + `codec/*` hooks |
+| `src/encoder/basic_encoder.cpp` | `pipeline/still/` writer + `app/` defaults |
+| `src/encoder/m1/{still_encoder,still_syntax,still_headers}` | `pipeline/still/` + `codec/*` hooks |
 | `src/encoder/m1/<tool>_stream` | `codec/<domain>/<tool>/stream` |
 | `src/encoder/m2/*` | `pipeline/video/` + `frame/` |
 | `src/encoder/m10/*` | `pipeline/still/` (high-bit-depth path) |
@@ -221,7 +221,7 @@ Mapping of today's directories:
 | `src/encoder/entropy/avg_cdf` | `codec/entropy/avg_cdf` |
 | `src/encoder/tcq/parity` | `codec/transform/tcq/parity` |
 | `src/encoder/quant/dcdeltaq` | `codec/quant/dcdeltaq` |
-| `src/encoder/filters/lr_chroma` | `codec/filters/lr_chroma` |
+| `src/encoder/filters/lr_chroma` | `codec/filters/loop_restoration_chroma` |
 | `src/encoder/cfl/ds_filters` | `codec/intra/cfl/ds_filters` |
 | `src/multi_gpu/runtime` | `pipeline/dispatch/multi_gpu` |
 | `src/multi_gpu/runtime` | `pipeline/dispatch/multi_gpu` |
@@ -257,7 +257,7 @@ only quote-includes; fix CMake source lists manually.
 For each tool: bring `core`, `syntax`, `stream`, `gpu`, `tests` together, keep
 the exact same entry points, and make the tool export a single header
 (`<tool>/<tool>.h`) that the M1/M2 encoder includes. Extract the stream adapter out of
-`m1_syntax.cpp` only when its call sites are already behind one function.
+`still_syntax.cpp` only when its call sites are already behind one function.
 
 Exit per tool: its gate passes and the pinned streams are unchanged.
 
@@ -267,14 +267,14 @@ There is no target `profiles/` in this plan, and no preservation of the current
 `m0/m1/m2/m10` shape. Work through the front-ends once, in this order:
 
 1. Move stream assembly (sequence header + frame header + tile payload + OBU
-   framing) out of `m0_still.cpp`, `m1_still.cpp`, `m2_frame.cpp`, and `m10`
+   framing) out of `basic_encoder.cpp`, `still_encoder.cpp`, `video_frame.cpp`, and `m10`
    into `pipeline/still/` and `pipeline/video/`. This code is format logic, not
    profile logic, and is what most profiles will share.
 2. Move per-profile defaults (tool set, QP policy, search effort, enabled
    features) into one flat `app/encode.cpp` with an explicit options struct.
    It must be boring and temporary: one translation unit, no `app/m0/`,
    `app/m1/` subdirectories.
-3. Delete `src/encoder/m0_still.cpp`, `src/encoder/m1/`, `src/encoder/m2/`,
+3. Delete `src/encoder/basic_encoder.cpp`, `src/encoder/m1/`, `src/encoder/m2/`,
    `src/encoder/m10/` once nothing includes them.
 
 Exit: the same streams from the same CLI flags, with the profile shape gone.
@@ -297,10 +297,10 @@ Current hotspots and a target decomposition:
 |---|---:|---|
 | `encoder/lossless/lossless.cpp` | 3,291 | dpcm / fsc / lossless-q |
 | `encoder/m1/filters_stream/filters_stream.cpp` | 2,340 | cdef / ccso / lr / deblock syntax |
-| `cuda/m1/m1_gpu.cu` | 2,245 | stage launchers per tool |
-| `encoder/m0_still.cpp` | 2,161 | still writer moved to `pipeline/still` in phase 4 |
-| `encoder/m2/m2_syntax.cpp` | 2,102 | frame syntax / block syntax / coefficient coding |
-| `encoder/m1/m1_still.cpp` | 1,881 | decision / quant / recon / entropy |
+| `cuda/m1/still_gpu.cu` | 2,245 | stage launchers per tool |
+| `encoder/basic_encoder.cpp` | 2,161 | still writer moved to `pipeline/still` in phase 4 |
+| `encoder/m2/video_syntax.cpp` | 2,102 | frame syntax / block syntax / coefficient coding |
+| `encoder/m1/still_encoder.cpp` | 1,881 | decision / quant / recon / entropy |
 | `encoder/rc/twopass/twopass.cpp` | 1,758 | allocation / VBV / planning |
 
 Splitting these is the highest-risk part of the refactor. Do one file per

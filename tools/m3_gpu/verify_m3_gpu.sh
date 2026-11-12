@@ -4,8 +4,8 @@
 # M3 tools covered: CDEF, CCSO (band offset), RDOQ, intra TX type, rate-aware
 # intra (RDO), full UV intra.  Each case encodes the same Y4M twice:
 #
-#   CPU:  av2enc <in.y4m> -o cpu.ivf --m1      [feature flags]
-#   GPU:  av2enc <in.y4m> -o gpu.ivf --m1-gpu  [feature flags]
+#   CPU:  av2enc <in.y4m> -o cpu.ivf --still      [feature flags]
+#   GPU:  av2enc <in.y4m> -o gpu.ivf --still-gpu  [feature flags]
 #
 # PASS requires ALL of:
 #   1. the GPU run was attested by Nsight Systems (>=1 CUDA kernel instance)
@@ -56,7 +56,7 @@
 #   --m3-args "..."       extra encoder flags applied to BOTH sides
 #   --cpu-args "..."      extra args for the CPU run only
 #   --gpu-args "..."      extra args for the GPU run only
-#   --qp N                base_q_idx (default 90; --m1-gpu pins 90, so other
+#   --qp N                base_q_idx (default 90; --still-gpu pins 90, so other
 #                         values are a setup error unless --cpu-only)
 #   --cpu-only            validate the CPU reference only; never claims GPU
 #   --determinism         encode twice with the GPU CLI; bytes must match
@@ -81,7 +81,7 @@
 #   --list-modes          print mode names + flags and exit
 #
 # Environment:
-#   AV2ENC_GPU_STATS / AV2ENC_M1_GPU_STATS  stats JSON path
+#   AV2ENC_GPU_STATS / AV2ENC_STILL_GPU_STATS  stats JSON path
 #   NSYS                                    nsys binary
 #   COMPUTE_SANITIZER                       compute-sanitizer binary
 #   DAV2D_THREADS                           decoder threads (default 1)
@@ -203,17 +203,17 @@ build_feature_args() {
         [ -z "$name" ] && continue
         case "$name" in
             baseline) ;;
-            cdef) FEATURE_ARGS+=(--m1-cdef) ;;
-            cdef1) FEATURE_ARGS+=(--m1-cdef --m1-cdef-strengths 1) ;;
-            ccso) FEATURE_ARGS+=(--m1-ccso) ;;
-            ccso4) FEATURE_ARGS+=(--m1-ccso --m1-ccso-bands 4) ;;
-            rdoq) FEATURE_ARGS+=(--m1-rdoq) ;;
-            tx-type) FEATURE_ARGS+=(--m1-tx-type) ;;
-            rdo-intra) FEATURE_ARGS+=(--m1-rdo-intra) ;;
-            uv-full) FEATURE_ARGS+=(--m1-uv-full) ;;
+            cdef) FEATURE_ARGS+=(--still-cdef) ;;
+            cdef1) FEATURE_ARGS+=(--still-cdef --still-cdef-strengths 1) ;;
+            ccso) FEATURE_ARGS+=(--still-ccso) ;;
+            ccso4) FEATURE_ARGS+=(--still-ccso --still-ccso-bands 4) ;;
+            rdoq) FEATURE_ARGS+=(--still-rdoq) ;;
+            tx-type) FEATURE_ARGS+=(--still-tx-type) ;;
+            rdo-intra) FEATURE_ARGS+=(--still-rdo-intra) ;;
+            uv-full) FEATURE_ARGS+=(--still-uv-full) ;;
             all)
-                FEATURE_ARGS+=(--m1-cdef --m1-ccso --m1-rdoq --m1-tx-type
-                               --m1-rdo-intra --m1-uv-full) ;;
+                FEATURE_ARGS+=(--still-cdef --still-ccso --still-rdoq --still-tx-type
+                               --still-rdo-intra --still-uv-full) ;;
             *) setup_error "unknown feature '$name' (try --list-modes)" ;;
         esac
     done
@@ -397,7 +397,7 @@ PY
 
 # Does a GPU log look like a rejected/unavailable flag or a CPU staging path?
 gpu_rejection_detail() {
-    grep -Eoi -- '--m1-[a-z-]+' "$1" 2>/dev/null | sort -u | tr '\n' ' '
+    grep -Eoi -- '--still-[a-z-]+' "$1" 2>/dev/null | sort -u | tr '\n' ' '
 }
 
 gpu_unavailable() {
@@ -406,7 +406,7 @@ gpu_unavailable() {
 
 gpu_rejected() {
     grep -Eqi '(not[ _-]+ported|not[ _-]+implemented|not[ _-]+supported)' "$1" &&
-        grep -q -- '--m1-' "$1"
+        grep -q -- '--still-' "$1"
 }
 
 gpu_cpu_staged() {
@@ -420,7 +420,7 @@ run_matrix() {
     command -v ffmpeg >/dev/null 2>&1 || setup_error "ffmpeg not found (needed for matrix inputs)"
     command -v "$PY" >/dev/null 2>&1 || setup_error "python3 not found"
     if [ "$CPU_ONLY" = "0" ] && [ "$QP" != "90" ]; then
-        setup_error "--m1-gpu pins --qp 90; use --cpu-only to test another QP"
+        setup_error "--still-gpu pins --qp 90; use --cpu-only to test another QP"
     fi
 
     say "== M3 GPU feature matrix =="
@@ -431,7 +431,7 @@ run_matrix() {
 
     local help
     help=$("$ENCODER" --help 2>&1 || true)
-    if [ "$CPU_ONLY" = "0" ] && ! grep -q -- '--m1-gpu' <<< "$help"; then
+    if [ "$CPU_ONLY" = "0" ] && ! grep -q -- '--still-gpu' <<< "$help"; then
         skip "UNAVAILABLE" "GPU path not present in this encoder build"
     fi
 
@@ -722,17 +722,17 @@ command -v ffmpeg >/dev/null 2>&1 || [ -n "$INPUT" ] || \
     setup_error "ffmpeg not found; pass an input Y4M or install ffmpeg"
 
 if [ "$CPU_ONLY" = "0" ] && [ "$QP" != "90" ]; then
-    setup_error "--m1-gpu pins --qp 90; use --cpu-only to test another QP"
+    setup_error "--still-gpu pins --qp 90; use --cpu-only to test another QP"
 fi
 
 HELP=$("$ENCODER" --help 2>&1 || true)
-if [ "$CPU_ONLY" = "0" ] && ! grep -q -- '--m1-gpu' <<< "$HELP"; then
+if [ "$CPU_ONLY" = "0" ] && ! grep -q -- '--still-gpu' <<< "$HELP"; then
     say "== M3 GPU feature gate =="
     say "encoder:  $ENCODER"
-    say "gate:     this build has no --m1-gpu option"
+    say "gate:     this build has no --still-gpu option"
     skip "UNAVAILABLE" "GPU path not present in this encoder build"
 fi
-for needed in --m1-cdef --m1-ccso --m1-rdoq --m1-tx-type --m1-rdo-intra --m1-uv-full; do
+for needed in --still-cdef --still-ccso --still-rdoq --still-tx-type --still-rdo-intra --still-uv-full; do
     if ! grep -q -- "$needed" <<< "$HELP"; then
         say "gate:     this build has no $needed option"
         skip "UNAVAILABLE" "encoder build lacks M3 flag $needed"
@@ -782,7 +782,7 @@ GPU_IVF="$WORKDIR/gpu.ivf"
 GPU_LOG="$WORKDIR/gpu.log"
 GPU_STATS="$WORKDIR/gpu-stats.json"
 
-CPU_CMD=("$ENCODER" "$INPUT" -o "$CPU_IVF" --m1 --qp "$QP")
+CPU_CMD=("$ENCODER" "$INPUT" -o "$CPU_IVF" --still --qp "$QP")
 CPU_CMD+=(${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"})
 if [ -n "$M3_ARGS" ]; then
     # shellcheck disable=SC2206
@@ -823,7 +823,7 @@ say "cpu decode: ok (dav2d --strict 1)"
 # Does the feature set actually change the CPU bitstream?  If not, a byte match
 # proves nothing about the feature.
 if [ "$NOOP_CHECK" = "1" ] && [ ${#FEATURE_ARGS[@]} -gt 0 ]; then
-    BASE_CMD=("$ENCODER" "$INPUT" -o "$WORKDIR/cpu-base.ivf" --m1 --qp "$QP")
+    BASE_CMD=("$ENCODER" "$INPUT" -o "$WORKDIR/cpu-base.ivf" --still --qp "$QP")
     if [ -n "$M3_ARGS" ]; then
         # shellcheck disable=SC2206
         BASE_CMD+=($M3_ARGS)
@@ -858,7 +858,7 @@ if [ "$NOOP_CHECK" = "1" ] && [ ${#FEATURE_ARGS[@]} -gt 0 ]; then
     esac
     if [ -n "$variant" ]; then
         build_feature_args "$variant"
-        VAR_CMD=("$ENCODER" "$INPUT" -o "$WORKDIR/cpu-variant.ivf" --m1 --qp "$QP")
+        VAR_CMD=("$ENCODER" "$INPUT" -o "$WORKDIR/cpu-variant.ivf" --still --qp "$QP")
         VAR_CMD+=(${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"})
         if [ -n "$M3_ARGS" ]; then
             # shellcheck disable=SC2206
@@ -898,8 +898,8 @@ fi
 # GPU encode.  Same feature flags as the CPU side.
 # ---------------------------------------------------------------------------
 GPU_ENV=(env "AV2ENC_GPU_STATS=$GPU_STATS" \
-          "AV2ENC_M1_GPU_STATS=$GPU_STATS")
-GPU_CMD=("$ENCODER" "$INPUT" -o "$GPU_IVF" --m1-gpu --qp "$QP")
+          "AV2ENC_STILL_GPU_STATS=$GPU_STATS")
+GPU_CMD=("$ENCODER" "$INPUT" -o "$GPU_IVF" --still-gpu --qp "$QP")
 GPU_CMD+=(${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"})
 if [ -n "$M3_ARGS" ]; then
     # shellcheck disable=SC2206
@@ -1000,7 +1000,7 @@ fi
 if [ "$IGNORE_PROBE" = "1" ] && [ ${#FEATURE_ARGS[@]} -gt 0 ]; then
     say ""
     say "-- GPU no-feature probe --"
-    BASE_GPU=("$ENCODER" "$INPUT" -o "$WORKDIR/gpu-base.ivf" --m1-gpu --qp "$QP")
+    BASE_GPU=("$ENCODER" "$INPUT" -o "$WORKDIR/gpu-base.ivf" --still-gpu --qp "$QP")
     if [ -n "$M3_ARGS" ]; then
         # shellcheck disable=SC2206
         BASE_GPU+=($M3_ARGS)
@@ -1042,7 +1042,7 @@ if [ "$RACECHECK" = "1" ]; then
         say "-- compute-sanitizer (racecheck) --"
         rewrite_output "$WORKDIR/race.ivf"
         RACE_ENV=(env "AV2ENC_GPU_STATS=$WORKDIR/race-stats.json" \
-                  "AV2ENC_M1_GPU_STATS=$WORKDIR/race-stats.json")
+                  "AV2ENC_STILL_GPU_STATS=$WORKDIR/race-stats.json")
         RACE_LOG="$WORKDIR/sanitize-racecheck.log"
         run_timed "$CS_TOOL" --tool racecheck --error-exitcode 99 \
             --target-processes all "${RACE_ENV[@]}" "${RET_CMD[@]}" >"$RACE_LOG" 2>&1
@@ -1104,7 +1104,7 @@ if [ "$ATTEST_MODE" = "nsys" ] || [ "$ATTEST_MODE" = "auto" ]; then
             rm -f "$NSYS_PREFIX.nsys-rep" "$NSYS_PREFIX.sqlite"
             rewrite_output "$WORKDIR/attest.ivf"
             ATTEST_ENV=(env "AV2ENC_GPU_STATS=$WORKDIR/attest-stats.json" \
-                        "AV2ENC_M1_GPU_STATS=$WORKDIR/attest-stats.json")
+                        "AV2ENC_STILL_GPU_STATS=$WORKDIR/attest-stats.json")
             if run_timed "$NSYS" profile --trace=cuda --sample=none --cpuctxsw=none \
                     --force-overwrite true -o "$NSYS_PREFIX" \
                     "${ATTEST_ENV[@]}" "${RET_CMD[@]}" >"$WORKDIR/attest.log" 2>&1; then
@@ -1136,7 +1136,7 @@ if [ "$DETERMINISM" = "1" ]; then
     RUN2_IVF="$WORKDIR/gpu-run2.ivf"
     rewrite_output "$RUN2_IVF"
     RUN2_ENV=(env "AV2ENC_GPU_STATS=$WORKDIR/gpu2-stats.json" \
-              "AV2ENC_M1_GPU_STATS=$WORKDIR/gpu2-stats.json")
+              "AV2ENC_STILL_GPU_STATS=$WORKDIR/gpu2-stats.json")
     run_timed "${RUN2_ENV[@]}" "${RET_CMD[@]}" >"$WORKDIR/gpu-run2.log" 2>&1
     RUN2_RC=$?
     if [ $RUN2_RC -ne 0 ] || [ ! -s "$RUN2_IVF" ]; then

@@ -57,16 +57,16 @@ mkdir -p "$BUILD_DIR/obj" "$OUT_DIR"
 
 HOST_FLAGS=(-std=c++20 -O3 -I"$ROOT/src")
 CORE_SOURCES=(
-    "$ROOT/src/encoder/m0_still.cpp"
-    "$ROOT/src/entropy/av2/av2_entropy.cpp"
-    "$ROOT/src/bitstream/m0_headers.cpp"
-    "$ROOT/src/bitstream/bitwriter.cpp"
-    "$ROOT/src/io/y4m.cpp"
-    "$ROOT/src/io/ivf.cpp"
+    "$ROOT/src/pipeline/still/basic_encoder.cpp"
+    "$ROOT/src/codec/entropy/av2/av2_entropy.cpp"
+    "$ROOT/src/core/bitstream/basic_headers.cpp"
+    "$ROOT/src/core/bitstream/bitwriter.cpp"
+    "$ROOT/src/core/io/y4m.cpp"
+    "$ROOT/src/core/io/ivf.cpp"
 )
 HOST_SOURCES=(
-    "$ROOT/src/cuda/m0_pipeline.cpp"
-    "$ROOT/src/cuda/m0_pipeline_test.cpp"
+    "$ROOT/src/cuda/basic_pipeline.cpp"
+    "$ROOT/src/cuda/basic_pipeline_test.cpp"
 )
 # Shared component layer (docs/cuda-interface.md ownership):
 # runtime -> context.*/arena.*, transform -> transform.*, intra -> intra.*.
@@ -90,9 +90,9 @@ for source in "${CORE_SOURCES[@]}" "${HOST_SOURCES[@]}"; do
     OBJS+=("$obj")
 done
 
-CUDA_OBJ="$BUILD_DIR/obj/m0_pipeline_cuda.o"
+CUDA_OBJ="$BUILD_DIR/obj/basic_pipeline_cuda.o"
 "$NVCC" -std=c++20 -O3 -lineinfo --fmad=false -arch="$CUDA_ARCH" \
-    -I"$ROOT/src" -c "$ROOT/src/cuda/m0_pipeline.cu" -o "$CUDA_OBJ"
+    -I"$ROOT/src" -c "$ROOT/src/cuda/basic_pipeline.cu" -o "$CUDA_OBJ"
 OBJS+=("$CUDA_OBJ")
 
 for source in "${CUDA_COMPONENT_SOURCES[@]}"; do
@@ -102,7 +102,7 @@ for source in "${CUDA_COMPONENT_SOURCES[@]}"; do
     OBJS+=("$obj")
 done
 
-BIN="$BUILD_DIR/m0_pipeline_test"
+BIN="$BUILD_DIR/basic_pipeline_test"
 "$NVCC" -std=c++20 -arch="$CUDA_ARCH" "${OBJS[@]}" -o "$BIN" -lcudart
 echo "  binary: $BIN"
 
@@ -139,10 +139,10 @@ run_case() {
 }
 
 set +e
-run_case 64x64 "$ROOT/tests/data/m0_64x64_1f.y4m" \
+run_case 64x64 "$ROOT/tests/data/basic_64x64_1f.y4m" \
     7efc3162bc0a4785685eba291a8096fd
 RC64=$?
-run_case 640x360 "$ROOT/tests/data/m0_640x360_1f.y4m" \
+run_case 640x360 "$ROOT/tests/data/basic_640x360_1f.y4m" \
     56f11d4a63ff07f2356ef5064b84fe0e
 RC360=$?
 set -e

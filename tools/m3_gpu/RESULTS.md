@@ -49,7 +49,7 @@ The single SKIP is `cdef1` at 64x64: strengths 1 and 4 select the same CDEF
 parameters on that content, so the two CPU bitstreams are identical
 (`d6bb95f0…`). The gate refuses to call that a verified strength-parameter
 pass (`SKIP-NO-EFFECT`); the `cdef1` mode is `PARTIAL`. This is intentional —
-a GPU that dropped `--m1-cdef-strengths` would otherwise look correct there.
+a GPU that dropped `--still-cdef-strengths` would otherwise look correct there.
 At 640x360/720p/1080p the variants differ and `cdef1` proceeds normally.
 
 Artifacts:
@@ -112,7 +112,7 @@ This is the required behaviour: a CPU-only build must never produce a GPU PASS.
 
 ## 4. Expected GPU outcome (code-derived, not measured)
 
-From `src/main.cpp` and `src/cuda/m1/m1_gpu.cu`:
+From `src/main.cpp` and `src/cuda/m1/still_gpu.cu`:
 
 | Feature | Expected class | Cause |
 |---|---|---|
@@ -128,11 +128,11 @@ split. Until it is run on the 3060, full UV is **not** claimed GPU-ready.
 
 Latent issues to fix when porting (currently masked by the rejections):
 
-* `main.cpp:590` sets GPU `luma_dc_only = !m1_full_intra`, but the CPU path
-  (`main.cpp:633`) uses `!m1_full_intra && !m1_rdo_intra`. A future
-  `--m1-rdo-intra` port would silently start from DC-only luma.
-* `encode_m1_gpu`'s internal CPU parity check (`to_cpu_options`,
-  `m1_gpu.cu:1000-1013`) does not carry CDEF/CCSO/RDOQ/TX-type/RDO. For CCSO,
+* `main.cpp:590` sets GPU `luma_dc_only = !still_full_intra`, but the CPU path
+  (`main.cpp:633`) uses `!still_full_intra && !still_rdo_intra`. A future
+  `--still-rdo-intra` port would silently start from DC-only luma.
+* `encode_still_gpu`'s internal CPU parity check (`to_cpu_options`,
+  `still_gpu.cu:1000-1013`) does not carry CDEF/CCSO/RDOQ/TX-type/RDO. For CCSO,
   the GPU's own check therefore compares against a CPU encode *without* CCSO
   and can pass while the CLI CPU stream differs. The external flag/no-flag
   probe in `verify_m3_gpu.sh` is the check that catches this.
@@ -150,9 +150,9 @@ tools/m3_gpu/selftest.sh --encoder build-m1/av2enc
 
 | Scenario | Observed exit | Class |
 |---|---:|---|
-| GPU rejects `--m1-cdef` ("not ported") | 3 | `SKIP-REJECTED` |
+| GPU rejects `--still-cdef` ("not ported") | 3 | `SKIP-REJECTED` |
 | GPU writes CPU-reference bytes (`frame_bytes_from_cpu=1`) | 3 | `SKIP-CPU-STAGED` |
-| GPU ignores `--m1-ccso` (same bytes with/without flag) | 1 | `IGNORED` |
+| GPU ignores `--still-ccso` (same bytes with/without flag) | 1 | `IGNORED` |
 | Feature does not change CPU bytes | 3 | `SKIP-NO-EFFECT` |
 | Identical bytes, nsys missing | 3 | `SKIP-UNATTESTED` |
 | Identical bytes, nsys reports 7 kernels | 0 | `PASS` |

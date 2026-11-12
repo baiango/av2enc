@@ -55,8 +55,8 @@ scenario=${MOCK_SCENARIO:-ok}
 args=("$@")
 gpu=0; feats=(); out=""; prev=0
 for a in "${args[@]}"; do
-  [ "$a" = "--m1-gpu" ] && gpu=1
-  case "$a" in --m1-cdef|--m1-ccso|--m1-rdoq|--m1-tx-type|--m1-rdo-intra|--m1-uv-full) feats+=("$a") ;; esac
+  [ "$a" = "--still-gpu" ] && gpu=1
+  case "$a" in --still-cdef|--still-ccso|--still-rdoq|--still-tx-type|--still-rdo-intra|--still-uv-full) feats+=("$a") ;; esac
   if [ "$prev" = 1 ]; then out=$a; prev=0; fi
   [ "$a" = "-o" ] && prev=1
 done
@@ -64,7 +64,7 @@ has() { local f; for f in ${feats[@]+"${feats[@]}"}; do [ "$f" = "$1" ] && retur
 strip_features() {
   local a keep=()
   for a in "${args[@]}"; do
-    case "$a" in --m1-cdef|--m1-ccso|--m1-rdoq|--m1-tx-type|--m1-rdo-intra|--m1-uv-full|--m1-cdef-strengths|--m1-ccso-bands) continue ;; esac
+    case "$a" in --still-cdef|--still-ccso|--still-rdoq|--still-tx-type|--still-rdo-intra|--still-uv-full|--still-cdef-strengths|--still-ccso-bands) continue ;; esac
     keep+=("$a")
   done
   args=(${keep[@]+"${keep[@]}"})
@@ -73,14 +73,14 @@ if [ "$gpu" = 0 ]; then
   [ "$scenario" = noeffect ] && strip_features
   exec "$REAL" ${args[@]+"${args[@]}"}
 fi
-[ "$scenario" = reject ] && has --m1-cdef && {
-  echo "av2enc: error: M1 GPU: --m1-cdef/--m1-rdoq/--m1-tx-type/--m1-rdo-intra are not ported to the GPU pipeline yet" >&2
+[ "$scenario" = reject ] && has --still-cdef && {
+  echo "av2enc: error: M1 GPU: --still-cdef/--still-rdoq/--still-tx-type/--still-rdo-intra are not ported to the GPU pipeline yet" >&2
   exit 2
 }
-[ "$scenario" = ignore ] && has --m1-ccso && strip_features
+[ "$scenario" = ignore ] && has --still-ccso && strip_features
 cpuargs=()
 for a in "${args[@]}"; do
-  [ "$a" = "--m1-gpu" ] && { cpuargs+=(--m1); continue; }
+  [ "$a" = "--still-gpu" ] && { cpuargs+=(--still); continue; }
   cpuargs+=("$a")
 done
 [ "$scenario" = nondet ] && case "$out" in *gpu-run2*) cpuargs+=(--adaptive-cdf) ;; esac
@@ -93,7 +93,7 @@ if [ -n "${AV2ENC_GPU_STATS:-}" ] && [ "${MOCK_NO_STATS:-0}" = 0 ]; then
     printf '{"backend":"gpu","frame_bytes_from_cpu":false,"kernels":42}\n' >"$AV2ENC_GPU_STATS"
   fi
 fi
-echo "m1gpu: backend=gpu stages: plan:gpu search:gpu tx:gpu" >&2
+echo "still_gpu: backend=gpu stages: plan:gpu search:gpu tx:gpu" >&2
 exit 0
 MOCK
 
@@ -103,7 +103,7 @@ set -uo pipefail
 cmd=$1; shift
 if [ "$cmd" = stats ]; then
   echo "Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name"
-  echo "100.0,1000,7,100,100,100,100,0.0,m1_kernel"
+  echo "100.0,1000,7,100,100,100,100,0.0,still_kernel"
   exit 0
 fi
 if [ "$cmd" = profile ]; then

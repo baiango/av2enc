@@ -98,7 +98,7 @@ class ToolSpec:
     @property
     def required_flag(self) -> str | None:
         if self.kind in ("baseline", "control"):
-            return self.candidate_flags[0] if self.candidate_flags else "--m1"
+            return self.candidate_flags[0] if self.candidate_flags else "--still"
         return self.candidate_flags[0] if len(self.candidate_flags) == 1 else None
 
 
@@ -123,19 +123,19 @@ RESOLUTIONS = {
 
 TOOL_SPECS = (
     ToolSpec(
-        "m1_baseline",
+        "still_baseline",
         "M1 baseline",
         "baseline",
-        ("--m1",),
+        ("--still",),
         scope="M1 still picture: partition tree, full intra search off (DC/CfL), "
         "variable transforms, deblock; no M3 filter/RDO tool",
     ),
     ToolSpec(
-        "m1_full_intra",
+        "still_full_intra",
         "M1 full intra (control)",
         "control",
-        ("--m1", "--m1-full-intra"),
-        ("--m1-full-intra",),
+        ("--still", "--still-full-intra"),
+        ("--still-full-intra",),
         scope="Control for RDO: full directional/smooth intra search without the "
         "rate term. Not an M3 tool; it is the anchor that isolates RDO.",
     ),
@@ -143,8 +143,8 @@ TOOL_SPECS = (
         "cdef",
         "CDEF",
         "m3",
-        ("--m1", "--m1-cdef", "--m1-cdef-strengths", "4"),
-        ("--m1-cdef",),
+        ("--still", "--still-cdef", "--still-cdef-strengths", "4"),
+        ("--still-cdef",),
         scope="Constrained directional enhancement filter, post-deblock, 4 strength "
         "sets; filtered planes replace the reconstruction.",
     ),
@@ -152,8 +152,8 @@ TOOL_SPECS = (
         "ccso",
         "CCSO",
         "m3",
-        ("--m1", "--m1-ccso", "--m1-ccso-bands", "6"),
-        ("--m1-ccso",),
+        ("--still", "--still-ccso", "--still-ccso-bands", "6"),
+        ("--still-ccso",),
         scope="Band-offset-only cross-component sample offset, post-CDEF, 64 bands. "
         "Edge-classified CCSO and per-unit ccso_blk=0 are not implemented.",
     ),
@@ -161,8 +161,8 @@ TOOL_SPECS = (
         "rdoq",
         "RDOQ",
         "m3",
-        ("--m1", "--m1-rdoq"),
-        ("--m1-rdoq",),
+        ("--still", "--still-rdoq"),
+        ("--still-rdoq",),
         scope="Full-trellis coefficient RDOQ at SSE-scale lambda 0.125; syntax is "
         "unchanged, only quantised levels change.",
     ),
@@ -170,8 +170,8 @@ TOOL_SPECS = (
         "tx_type",
         "TX type",
         "m3",
-        ("--m1", "--m1-tx-type"),
-        ("--m1-tx-type",),
+        ("--still", "--still-tx-type"),
+        ("--still-tx-type",),
         scope="Intra luma transform-type search at SSE-scale lambda 0.125; chroma "
         "stays DCT_DCT and identity transforms remain disabled.",
     ),
@@ -179,8 +179,8 @@ TOOL_SPECS = (
         "rdo_intra",
         "RDO (intra)",
         "m3",
-        ("--m1", "--m1-full-intra", "--m1-rdo-intra"),
-        ("--m1-rdo-intra",),
+        ("--still", "--still-full-intra", "--still-rdo-intra"),
+        ("--still-rdo-intra",),
         scope="Rate-aware luma intra-mode decision over the existing candidate "
         "search. This is intra RDO, not partition/inter Lagrangian RDO.",
     ),
@@ -189,7 +189,7 @@ TOOL_SPECS = (
         "Wiener NS",
         "m3",
         (),
-        ("--m1-wiener", "--m1-wiener-ns", "--wiener"),
+        ("--still-wiener", "--still-wiener-ns", "--wiener"),
         scope="Loop restoration / non-separable Wiener. Component and syntax exist "
         "but there is no M1 bitstream path or encoder-side coefficient fit.",
         not_wired_reason=(
@@ -203,12 +203,12 @@ TOOL_SPECS = (
         "Delta-Q",
         "m3",
         (),
-        ("--m1-delta-q", "--m1-delta-q-res", "--delta-q"),
+        ("--still-delta-q", "--still-delta-q-res", "--delta-q"),
         scope="Frame/tile/per-block quantizer delta. Planning code exists, but the "
         "M1 writer emits delta_q_present = 0 and the CLI does not expose it.",
         not_wired_reason=(
-            "No M1 stream. src/encoder/m1/m1_headers.cpp writes "
-            "delta_q_present = 0; src/encoder/pipeline/README.md states the M1 "
+            "No M1 stream. src/encoder/m1/still_headers.cpp writes "
+            "delta_q_present = 0; src/pipeline/planner/README.md states the M1 "
             "writer emits one tile with delta_q_present = 0."
         ),
     ),
@@ -217,11 +217,11 @@ TOOL_SPECS = (
         "QM",
         "m3",
         (),
-        ("--m1-qm", "--qm", "--quant-matrix"),
+        ("--still-qm", "--qm", "--quant-matrix"),
         scope="Quantization matrices (QM OBU + setup). No encoder-side QM selection "
         "or OBU path is wired into the still-picture CLI.",
         not_wired_reason=(
-            "No M1 stream. src/encoder/m2/post/tiled_frame.cpp writes "
+            "No M1 stream. src/pipeline/video/post/tiled_frame.cpp writes "
             "using_qmatrix = 0, and no QM OBU/setup path exists for the still path."
         ),
     ),
@@ -476,10 +476,10 @@ def detect_tools(help_text: str, selected: set[str] | None) -> list[dict]:
         if selected and spec.id not in selected:
             continue
         if spec.kind in ("baseline", "control"):
-            wired = flag_in_help(help_text, "--m1")
+            wired = flag_in_help(help_text, "--still")
             if spec.kind == "control" and spec.candidate_flags:
                 wired = wired and flag_in_help(help_text, spec.candidate_flags[0])
-            used_flag = spec.candidate_flags[0] if spec.candidate_flags else "--m1"
+            used_flag = spec.candidate_flags[0] if spec.candidate_flags else "--still"
             reason = "" if wired else "this build does not advertise the required flag"
         elif not spec.candidate_flags:
             wired = True
@@ -535,7 +535,7 @@ def probe_qps(
             p.unlink(missing_ok=True)
         t0 = time.perf_counter()
         p = run(
-            [encoder, source, "-o", ivf, "--frames", "1", "--qp", str(qp), "--m1"],
+            [encoder, source, "-o", ivf, "--frames", "1", "--qp", str(qp), "--still"],
             timeout=timeout,
         )
         elapsed = time.perf_counter() - t0
@@ -1071,7 +1071,7 @@ def build_bd_rate(
     if len(primary_qps) < 3:
         primary_qps = supported
     result = {
-        "anchor": "m1_baseline",
+        "anchor": "still_baseline",
         "method": method,
         "status": "ok",
         "note": (
@@ -1105,9 +1105,9 @@ def build_bd_rate(
 
     for tool in tools:
         tid = tool["id"]
-        if tid == "m1_baseline":
+        if tid == "still_baseline":
             continue
-        anchor_id = "m1_full_intra" if tid == "rdo_intra" else "m1_baseline"
+        anchor_id = "still_full_intra" if tid == "rdo_intra" else "still_baseline"
         result["tools"][tid] = {
             "display": tool["display"],
             "wired": tool["wired"],
@@ -1210,8 +1210,8 @@ def plot_rd(points: list[dict], resolution: str, outpath: Path) -> dict:
         ys_c = [p["metrics"]["cvvdp_jod"] for p in pts]
         ys_p = [p["metrics"]["psnr_y"] for p in pts]
         label = pts[0]["display"]
-        marker = "*" if tool_id == "m1_baseline" else "o"
-        size = 160 if tool_id == "m1_baseline" else 55
+        marker = "*" if tool_id == "still_baseline" else "o"
+        size = 160 if tool_id == "still_baseline" else 55
         for ax, ys in zip(axes, (ys_c, ys_p)):
             ax.plot(xs, ys, marker=marker, markersize=math.sqrt(size), linewidth=1.3, label=label)
             if len(pts) == 1:
@@ -1451,7 +1451,7 @@ def write_markdown(
     add("## BD-rate vs M1 baseline")
     add("")
     add(f"Method: `{bd['method']}` interpolation, decoded output, anchor "
-        f"`m1_baseline` (RDO rows use the full-intra control).")
+        f"`still_baseline` (RDO rows use the full-intra control).")
     add("")
     if bd["status"] != "ok":
         add(f"**Not computable.** {bd['blocking_reason']}")
@@ -1585,7 +1585,7 @@ def main() -> int:
                     help="frame to extract from each source (default: 0)")
     ap.add_argument("--tools", help="comma-separated tool ids (default: all)")
     ap.add_argument("--no-controls", action="store_true",
-                    help="skip the m1_full_intra control (also disables the RDO incremental view)")
+                    help="skip the still_full_intra control (also disables the RDO incremental view)")
     ap.add_argument("--skip-cross-res-check", action="store_true")
     ap.add_argument("--allow-mixed-hardware", action="store_true",
                     help="write the report but mark mixed-host comparisons invalid")
@@ -1630,7 +1630,7 @@ def main() -> int:
     if args.tools:
         selected = {x.strip() for x in args.tools.split(",") if x.strip()}
     if args.no_controls:
-        selected = (selected or {s.id for s in TOOL_SPECS}) - {"m1_full_intra"}
+        selected = (selected or {s.id for s in TOOL_SPECS}) - {"still_full_intra"}
 
     # Encoder help / availability.
     help_p = run([encoder, "--help"])
@@ -1638,8 +1638,8 @@ def main() -> int:
     (out / "logs").mkdir(parents=True, exist_ok=True)
     (out / "logs" / "encoder_help.txt").write_text(help_text)
     tools = detect_tools(help_text, selected)
-    if not any(t["id"] == "m1_baseline" for t in tools):
-        raise SystemExit("the tool selection must include m1_baseline")
+    if not any(t["id"] == "still_baseline" for t in tools):
+        raise SystemExit("the tool selection must include still_baseline")
 
     encoder_info = {
         "path": str(encoder),
@@ -1807,10 +1807,10 @@ def main() -> int:
     for p in points:
         if p["status"] != "ok":
             continue
-        anchor_id = "m1_full_intra" if p["tool"] == "rdo_intra" else "m1_baseline"
+        anchor_id = "still_full_intra" if p["tool"] == "rdo_intra" else "still_baseline"
         base = by_key.get((p["resolution"], anchor_id, p["qp"]))
-        if p["tool"] == "m1_baseline":
-            p["anchor_tool"] = "m1_baseline"
+        if p["tool"] == "still_baseline":
+            p["anchor_tool"] = "still_baseline"
             p["delta_vs_anchor"] = {
                 "d_rate_pct": 0.0,
                 "d_bytes_pct": 0.0,
@@ -1826,18 +1826,18 @@ def main() -> int:
                 "reasons": ["anchor"],
                 "confidence": "n/a",
             }
-            p["anchor_tool"] = "m1_baseline"
+            p["anchor_tool"] = "still_baseline"
             continue
         p["anchor_tool"] = anchor_id
         d = delta(base, p) if base else None
         p["delta_vs_anchor"] = d
         p["verdict"] = classify(d)
         # Also record the baseline-relative delta for transparency.
-        baseline = by_key.get((p["resolution"], "m1_baseline", p["qp"]))
-        if baseline and p["tool"] != "m1_full_intra":
+        baseline = by_key.get((p["resolution"], "still_baseline", p["qp"]))
+        if baseline and p["tool"] != "still_full_intra":
             p["delta_vs_baseline"] = delta(baseline, p)
         else:
-            p["delta_vs_baseline"] = d if p["tool"] == "m1_full_intra" else None
+            p["delta_vs_baseline"] = d if p["tool"] == "still_full_intra" else None
 
     # Host / source / decoder / CVVDP consistency.
     ok_points = [p for p in points if p["status"] == "ok"]
@@ -2060,7 +2060,7 @@ def main() -> int:
         "easy-content numbers; do not generalize to hard footage.",
         "CVVDP is fixed to `standard_fhd` on the device shown in the report. "
         "JOD is not comparable across display models or viewing conditions.",
-        "RDO here is rate-aware intra-mode decision (`--m1-rdo-intra`), not "
+        "RDO here is rate-aware intra-mode decision (`--still-rdo-intra`), not "
         "partition/inter Lagrangian RDO. Its anchor is the full-intra control, "
         "so the table's `delta_vs_anchor` isolates the rate term; the "
         "baseline-relative delta includes the full-intra search.",
@@ -2201,7 +2201,7 @@ def main() -> int:
         "",
         f"Generated: `{manifest['generated_utc']}`  ",
         f"Method: `{bd['method']}`  ",
-        f"Anchor: `m1_baseline` (RDO rows use the full-intra control)  ",
+        f"Anchor: `still_baseline` (RDO rows use the full-intra control)  ",
         f"Primary QPs: `{bd.get('primary_qps')}`  ",
         f"All supported QPs: `{supported}`  ",
         "",

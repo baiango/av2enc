@@ -1,7 +1,7 @@
 // CUDA forward/inverse transform and quantization for the av2enc M0 path.
 //
 // The arithmetic is a bit-exact port of the CPU reference in
-// src/encoder/m0_still.cpp (TileEncoder::forward_dct, TileEncoder::inverse_dct
+// src/encoder/basic_encoder.cpp (TileEncoder::forward_dct, TileEncoder::inverse_dct
 // and the transform/quantization block of encode_residual_plane):
 //
 //   * forward DCT: binary64 accumulation, same loop order, no FMA contraction
@@ -26,7 +26,7 @@
 namespace av2enc::cuda {
 
 // Parameters of one transform block type, mirroring the host arithmetic in
-// encode_residual_plane() lines 1251-1277 of src/encoder/m0_still.cpp.
+// encode_residual_plane() lines 1251-1277 of src/encoder/basic_encoder.cpp.
 struct TxParams {
   int w = 0;              // adjusted transform width  (32 for 64x64 luma)
   int h = 0;              // adjusted transform height (32 for 64x64 luma)
