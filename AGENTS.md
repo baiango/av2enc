@@ -11,6 +11,11 @@ Read these before writing code:
 3. `docs/cuda-interface.md`
 4. `docs/negative-results.md` — **do not repeat listed failed approaches**
 
+Bug fixing: read `refactor/bugfix-protocol.md` first. Claim a bug with
+`tools/agents/claim.sh`, use `tools/agents/new_fix.sh` for the worktree, and
+leave the shared roots (`src/main.cpp`, `CMakeLists.txt`, `still_*`, `video_*`,
+`baseline.json`) to an integrator.
+
 ## Non-negotiables
 
 - Encoder target: Linux + CUDA, 8 GB Ampere `sm_86` primary. macOS is not an
