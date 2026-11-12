@@ -131,6 +131,16 @@ add_library(av2enc_core STATIC
   src/pipeline/still/still_syntax.cpp
   src/pipeline/still/still_encoder.cpp
   src/pipeline/still/stream/still_stream_bridge.cpp
+  # Multi-frame inter (P-frame) path, opt-in via --video.
+  src/codec/inter/me/me.cpp
+  src/codec/inter/mc/mc.cpp
+  src/codec/inter/merge/merge.cpp
+  src/codec/inter/drl_reorder/drl_reorder.cpp
+  src/codec/inter/drl_reorder/video_stack_adapter.cpp
+  src/codec/inter/mv_precision/mv_precision.cpp
+  src/pipeline/video/video_headers.cpp
+  src/pipeline/video/video_syntax.cpp
+  src/pipeline/video/video_frame.cpp
   src/codec/entropy/av2/av2_entropy.cpp
   # delta-Q / segmentation syntax (neutral, opt-in still integration).
   src/codec/entropy/deltaq/still/deltaq.cpp
@@ -261,6 +271,34 @@ else()
     AV2ENC_HAVE_STILL_GPU=0)
 endif()
 
+# Optical formats: 10-bit 4:2:0 (M10-derived) and 8-bit 4:2:2/4:4:4/4:0:0.
+# Both are opt-in product paths (--bit-depth 10 / --chroma ...), default off;
+# see src/formats/README.md.  The components are CPU reference code and are
+# always linked so the CPU-only build can gate them.
+target_sources(av2enc_core PRIVATE
+  src/formats/format_y4m.cpp
+  src/formats/format_encode.cpp
+  src/formats/high_bitdepth/hbd_depth.cpp
+  src/formats/high_bitdepth/hbd_headers.cpp
+  src/formats/high_bitdepth/hbd_reader.cpp
+  src/formats/high_bitdepth/hbd_still.cpp
+  src/pipeline/still/high_bitdepth/high_bitdepth_still.cpp
+  src/pipeline/still/high_bitdepth/high_bitdepth_entropy.cpp
+  src/pipeline/still/high_bitdepth/high_bitdepth_headers.cpp
+  src/formats/chroma/chroma_format.cpp
+  src/formats/chroma/chroma_residual.cpp
+  src/formats/chroma/chroma_headers.cpp
+  src/formats/chroma/chroma_still.cpp)
+if(NOT AV2ENC_HAVE_STILL_GPU)
+  # In a CUDA build with the M1 GPU pipeline, `format.cpp` is already added by
+  # the still-GPU block above and `hbd_cpu.cpp` is part of the
+  # av2enc_still_gpu OBJECT target; adding either here would duplicate.  The
+  # CPU-only reference build needs both.
+  target_sources(av2enc_core PRIVATE
+    src/formats/format.cpp
+    src/cuda/pipeline/still/hbd/hbd_cpu.cpp)
+endif()
+
 add_executable(av2enc src/main.cpp)
 target_link_libraries(av2enc PRIVATE av2enc_core)
 if(TARGET av2enc_still_gpu)
@@ -276,6 +314,12 @@ av2enc_apply_warnings(av2enc)
 add_executable(still_recon_dump src/pipeline/still/stream/still_recon_dump.cpp)
 target_link_libraries(still_recon_dump PRIVATE av2enc_core)
 av2enc_apply_warnings(still_recon_dump)
+
+# Multi-frame P-frame correctness gate (encode -> dav2d -> recon compare).  Not
+# registered with CTest so the pinned test inventory is unchanged.
+add_executable(video_gate src/pipeline/video/video_gate.cpp)
+target_link_libraries(video_gate PRIVATE av2enc_core)
+av2enc_apply_warnings(video_gate)
 
 include(CTest)
 if(BUILD_TESTING)

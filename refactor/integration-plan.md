@@ -1,8 +1,9 @@
 # Integration plan — one branch per workstream
 
-Status: active from 2026-11-12. Base commit is tagged `integration-base`.
-Integration follows `docs/refactor-plan.md` §8 (dependency order, one tool per
-commit, opt-in only). This file is the contract agents work under.
+Status: waves 1 and 2 are merged to `main`. Wave 3 (`frames`, `pipelines`)
+is next and starts from the current main. Integration follows `docs/refactor-plan.md` §8
+(dependency order, one tool per commit, opt-in only). This file is the contract
+agents work under.
 
 ## 1. Why branches
 
@@ -95,7 +96,29 @@ tools/refactor/verify_baseline.sh --check
 - `src/pipeline/video/video_*.{h,cpp}` — frame/block syntax.
 - `docs/*.md` — status tables; prefer appending a short row.
 
-## 5. Merge log
+## 6. Wave 2 notes (active)
+
+Both branches were reset to `2665099` (wave 1 merged) before staffing.
+
+- **`integration/formats`** — 10-bit (`src/pipeline/still/high_bitdepth`,
+  `src/cuda/formats`, `src/codec/.../high_bitdepth`) and chroma formats
+  4:2:2 / 4:4:4 / 4:0:0 (`src/codec/formats/chroma`?). Header, entropy,
+  quantisation and reconstruction must agree; gate each format with `dav2d`.
+  Flags default off; `--still` 8-bit 4:2:0 pins unchanged.
+- **`integration/inter`** — build the real P-frame path in
+  `src/pipeline/video` behind an opt-in flag. Priority order:
+  1. reference frames, ME/MC, subpel, merge/DRL, NEWMV/NEARMV;
+  2. multi-reference, temporal MV prediction, B-frames/temporal layers;
+  3. compound/CWP, warp/affine, GME, inter-intra, BAWP;
+  4. TIP, OPFL/refine-MV.
+  Do not signal syntax the decoder cannot consume; gate every step. If the
+  full scope does not fit, land the core path (1–2) first and report the rest
+  with a concrete plan.
+
+Both branches use the same hard rules in §2, the same gates in §4, and may not
+move directories or change default streams.
+
+## 7. Merge log
 
 Merged to `main` with `--no-ff` after local CPU gates and a CUDA build+ctest on
 the 3060. Each merge is re-verified on `main`:
@@ -108,6 +131,8 @@ the 3060. Each merge is re-verified on `main`:
 | `783c814` | `integration/transform` | `--still-qm`, `--still-ist`, `--still-dc-ac-delta-q` (renamed to avoid the entropy flag) |
 | `f52d6bb` | `integration/intra` | `--still-ibp`, `--still-mrl`, `--still-cfl-ds`, `--still-cfl-explicit`, `--still-dip`, `--still-mhccp`; palette disabled |
 | `549cb1d` | `integration/filters` | `--still-wiener`, `--still-chroma-lr`, `--still-pc-wiener`, `--still-gdf`, `--still-ccso-edge`, `--still-grain` |
+| `d608587` | `integration/formats` | `--bit-depth 10` (4:2:0), `--chroma 422/444/400` (8-bit); GPU stays 8-bit 4:2:0 |
+| `f466d67` | `integration/inter` | `--video`, `--p-frames`, `--video-refs`, `--video-subpel-eighth`, `--video-mv-precision`; B-frames/DRL rejected |
 
 Post-merge fixes on `main`:
 
@@ -127,9 +152,7 @@ index, the real directories were restored (testdata from the Vast.ai tree,
 symlink cannot be committed again. All integration branches were checked; only
 `integration/transform` was affected.
 
-## 6. Agent report format
-
-## 6. Agent report format
+## 8. Agent report format
 
 Final message must state: branch, commits (hash + title), tools wired and their
 default state, files touched, CPU gates (build/ctest/baseline) with results,

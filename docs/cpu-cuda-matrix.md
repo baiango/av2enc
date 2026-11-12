@@ -87,8 +87,8 @@ informational only. `GPU-UNWIRED` in `docs/gpu-coverage.md` therefore means
 | Feature | CPU | CUDA | Evidence | In GPU path |
 |---|---|---|---|---|
 | 8-bit 4:2:0 | yes | yes | M0/M1/M2 GPU gates | yes |
-| 10-bit | yes (`m10`, `hbd`) | `cuda/m1/hbd`, `cuda/format` | M10 GPU test | standalone |
-| 4:2:2 / 4:4:4 / 4:0:0 | yes | `cuda/chroma_formats` | 1,742,235 checks | no |
+| 10-bit | yes (`m10`, `hbd`) | `cuda/m1/hbd`, `cuda/format` | M10 GPU test | product CPU path `--bit-depth 10`; GPU not wired |
+| 4:2:2 / 4:4:4 / 4:0:0 | yes | `cuda/chroma_formats` | 1,742,235 checks | product CPU path `--chroma`; GPU not wired |
 | Tiles, SVC, OBU metadata, HDR | yes | **N/A** | framing/syntax | no |
 | Conformance, RC, two-pass | yes | **N/A** | CPU policy | no |
 | Multi-GPU dispatch | yes | runtime + planner | mock + single-GPU gate | no |

@@ -1,9 +1,12 @@
 #include "core/bitstream/basic_headers.h"
 #include "codec/entropy/lossless/lossless.h"
+#include "formats/format_encode.h"
+#include "formats/format_y4m.h"
 #include "pipeline/still/basic_encoder.h"
 #include "pipeline/still/still_encoder.h"
 #include "core/io/ivf.h"
 #include "core/io/y4m.h"
+#include "pipeline/video/video_frame.h"
 
 #include <charconv>
 #include <algorithm>
@@ -12,6 +15,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -135,7 +139,27 @@ struct Options {
   bool still_gdf = false;
   bool still_grain = false;
   int still_depth = -1;  // -1 = component default
+  // Multi-frame inter (video) path.  Opt-in; every default still/basic stream
+  // is untouched.
+  bool video = false;
+  std::uint64_t p_frames = 0;  // 0 = every frame after the keyframe
+  std::uint64_t b_frames = 0;  // reserved; non-zero is rejected until wired
+  int video_refs = 1;          // NumTotalRefs (1..3)
+  bool video_inter_residual = false;
+  bool video_subpel_eighth = false;
+  int video_mv_precision = 0;  // 0 = 1/8, 1 = 1/4, 2 = 1/2 pel
+  bool video_drl_reorder = false;
+  bool video_drl_reorder_always = false;
+  bool video_force_single = false;
+  int video_min_block = 16;
+  int video_max_depth = 4;
+  int video_me_range = 16;
+  bool video_trace = false;
+  std::filesystem::path video_recon;
   std::uint64_t vram_cap_mib = 0;  // 0 = largest reservation the device can serve
+  int bit_depth = 8;               // 8 (default) or 10; 12-bit is not signalable
+  std::string chroma = "420";      // 420 (default), 422, 444, 400
+  std::filesystem::path recon;     // optional encoder-reconstruction dump
   bool help = false;
 };
 
@@ -167,6 +191,12 @@ void print_usage(std::ostream& out) {
          "  --still                 Enable the integrated CPU still-picture path\n"
          "  --still-gpu             Enable the CUDA still path (default off; implies\n"
          "                       --still; CPU-only builds reject the flag)\n"
+         "  --bit-depth <8|10>    Sample depth (default 8). 10 requires --still,\n"
+         "                       a C420p10 input and base_q_idx 1..90; 12-bit is\n"
+         "                       not signalable in AV2 v1.0.0\n"
+         "  --chroma <fmt>        Chroma format: 420 (default), 422, 444, 400.\n"
+         "                       422/444/400 require --still, an 8-bit input of\n"
+         "                       that exact format and --qp 90\n"
          "  --no-cfl             Still/Still GPU: disable chroma-from-luma\n"
          "  --no-deblock         Still/Still GPU: disable the deblocking filter\n"
          "  --still-full-intra      Enable the directional/smooth intra search\n"
@@ -207,6 +237,17 @@ void print_usage(std::ostream& out) {
          "  --still-pc-wiener       M1: luma PC-Wiener loop restoration\n"
          "  --still-gdf             M1: guided detail filter (pre-Wiener)\n"
          "  --still-grain           M1: signal film grain (decoder synthesis)\n"
+         "  --video                 Encode a multi-frame P-frame sequence\n"
+         "                       (opt-in; default remains one still picture)\n"
+         "  --p-frames <N>          Video: number of P frames (default: all\n"
+         "                       frames after the keyframe)\n"
+         "  --b-frames <N>          Video: B frames (not wired yet; must be 0)\n"
+         "  --video-refs <N>        Video: references per P frame, 1..3 (default 1)\n"
+         "  --video-subpel-eighth   Video: add the 1/8-pel ME refinement stage\n"
+         "  --video-mv-precision P  Video: eighth|quarter|half frame MV precision\n"
+         "  --video-inter-residual  Video: code a quantised inter residual\n"
+         "  --video-drl-reorder     Video: enable normative DRL reordering\n"
+         "  --video-drl-reorder-always  Video: DRL_REORDER_ALWAYS (implies reorder)\n"
          "  --vram-cap <MiB>     Upper bound for the CUDA arena; default 0 takes\n"
          "                       the largest reservation the device can serve\n"
          "  -h, --help           Show this help\n"
@@ -222,7 +263,15 @@ void print_usage(std::ostream& out) {
          "  --still-ccso-bands N    CCSO max_band_log2 0..6 (default 6 = 64 bands)\n"
          "  --still-delta-q-res N   delta_q_res for --still-delta-q, 0..3 (default 0)\n"
          "  --still-qm-level L     QM default matrix level 0..14 (default 3)\n"
-         "  --still-ist-scale S    lambda sse_scale for --still-ist (0.125)\n";
+         "  --still-ist-scale S    lambda sse_scale for --still-ist (0.125)\n"
+         "  --recon <file>         Dump the encoder reconstruction as Y4M (format\n"
+         "                       paths only; used by the format decoder gate)\n"
+         "  --video-recon <file>   Video: write the encoder reconstruction Y4M\n"
+         "  --video-force-single   Video: one 64x64 leaf per superblock\n"
+         "  --video-min-block <N>  Video: minimum partition block size (default 16)\n"
+         "  --video-max-depth <D>  Video: partition depth cap [0, 8] (default 4)\n"
+         "  --video-me-range <R>   Video: integer ME search radius (default 16)\n"
+         "  --video-trace          Video: trace block decisions to stderr\n";
 }
 
 bool parse_uint64(std::string_view text, std::uint64_t& value) {
@@ -342,6 +391,51 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--still-gpu") {
       options.still_gpu = true;
+      continue;
+    }
+
+    if (argument == "--bit-depth") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--bit-depth'";
+        return ParseStatus::kError;
+      }
+      int depth = 0;
+      if (!parse_int(argv[++i], depth) || (depth != 8 && depth != 10)) {
+        error = "--bit-depth must be 8 or 10 (12-bit is not signalable in AV2 "
+                "v1.0.0)";
+        return ParseStatus::kError;
+      }
+      options.bit_depth = depth;
+      continue;
+    }
+
+    if (argument == "--chroma") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--chroma'";
+        return ParseStatus::kError;
+      }
+      const std::string value = argv[++i];
+      if (value == "420" || value == "4:2:0") {
+        options.chroma = "420";
+      } else if (value == "422" || value == "4:2:2") {
+        options.chroma = "422";
+      } else if (value == "444" || value == "4:4:4") {
+        options.chroma = "444";
+      } else if (value == "400" || value == "4:0:0" || value == "mono") {
+        options.chroma = "400";
+      } else {
+        error = "--chroma must be 420, 422, 444 or 400";
+        return ParseStatus::kError;
+      }
+      continue;
+    }
+
+    if (argument == "--recon") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--recon'";
+        return ParseStatus::kError;
+      }
+      options.recon = argv[++i];
       continue;
     }
 
@@ -598,6 +692,150 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video") {
+      options.video = true;
+      continue;
+    }
+
+    if (argument == "--p-frames") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--p-frames'";
+        return ParseStatus::kError;
+      }
+      if (!parse_uint64(argv[++i], options.p_frames)) {
+        error = "--p-frames must be a non-negative integer";
+        return ParseStatus::kError;
+      }
+      continue;
+    }
+
+    if (argument == "--b-frames") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--b-frames'";
+        return ParseStatus::kError;
+      }
+      if (!parse_uint64(argv[++i], options.b_frames)) {
+        error = "--b-frames must be a non-negative integer";
+        return ParseStatus::kError;
+      }
+      continue;
+    }
+
+    if (argument == "--video-refs") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-refs'";
+        return ParseStatus::kError;
+      }
+      int refs = 0;
+      if (!parse_int(argv[++i], refs) || refs < 1 || refs > 3) {
+        error = "--video-refs must be an integer in [1, 3]";
+        return ParseStatus::kError;
+      }
+      options.video_refs = refs;
+      continue;
+    }
+
+    if (argument == "--video-subpel-eighth") {
+      options.video_subpel_eighth = true;
+      continue;
+    }
+
+    if (argument == "--video-mv-precision") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-mv-precision'";
+        return ParseStatus::kError;
+      }
+      const std::string_view value = argv[++i];
+      if (value == "eighth") {
+        options.video_mv_precision = 0;
+      } else if (value == "quarter") {
+        options.video_mv_precision = 1;
+      } else if (value == "half") {
+        options.video_mv_precision = 2;
+      } else {
+        error = "--video-mv-precision must be eighth, quarter or half";
+        return ParseStatus::kError;
+      }
+      continue;
+    }
+
+    if (argument == "--video-inter-residual") {
+      options.video_inter_residual = true;
+      continue;
+    }
+
+    if (argument == "--video-drl-reorder") {
+      options.video_drl_reorder = true;
+      continue;
+    }
+
+    if (argument == "--video-drl-reorder-always") {
+      options.video_drl_reorder = true;
+      options.video_drl_reorder_always = true;
+      continue;
+    }
+
+    if (argument == "--video-recon") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-recon'";
+        return ParseStatus::kError;
+      }
+      options.video_recon = argv[++i];
+      continue;
+    }
+
+    if (argument == "--video-force-single") {
+      options.video_force_single = true;
+      continue;
+    }
+
+    if (argument == "--video-min-block") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-min-block'";
+        return ParseStatus::kError;
+      }
+      int value = 0;
+      if (!parse_int(argv[++i], value) || value < 4 || value > 64) {
+        error = "--video-min-block must be an integer in [4, 64]";
+        return ParseStatus::kError;
+      }
+      options.video_min_block = value;
+      continue;
+    }
+
+    if (argument == "--video-max-depth") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-max-depth'";
+        return ParseStatus::kError;
+      }
+      int value = 0;
+      if (!parse_int(argv[++i], value) || value < 0 || value > 8) {
+        error = "--video-max-depth must be an integer in [0, 8]";
+        return ParseStatus::kError;
+      }
+      options.video_max_depth = value;
+      continue;
+    }
+
+    if (argument == "--video-me-range") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-me-range'";
+        return ParseStatus::kError;
+      }
+      int value = 0;
+      if (!parse_int(argv[++i], value) || value < 1 || value > 256) {
+        error = "--video-me-range must be an integer in [1, 256]";
+        return ParseStatus::kError;
+      }
+      options.video_me_range = value;
+      continue;
+    }
+
+    if (argument == "--video-trace") {
+      options.video_trace = true;
+      continue;
+    }
+
     if (argument == "--still-ccso-bands") {
       if (i + 1 >= argc) {
         error = "missing value after '--still-ccso-bands'";
@@ -671,6 +909,41 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     error = "no output file specified (use -o <output.ivf>)";
     return ParseStatus::kError;
   }
+  if (options.b_frames != 0) {
+    error = "--b-frames is not wired yet: the video path currently writes "
+            "key + P frames only";
+    return ParseStatus::kError;
+  }
+  if (options.video) {
+    if (options.m1 || options.still_gpu || options.lossless) {
+      error = "--video cannot be combined with --still, --still-gpu or "
+              "--lossless";
+      return ParseStatus::kError;
+    }
+    if (options.adaptive_cdf) {
+      error = "--adaptive-cdf is not wired into the video path yet";
+      return ParseStatus::kError;
+    }
+    if (options.video_drl_reorder) {
+      error = "--video-drl-reorder is not decoder-gated yet: the pinned "
+              "decoder disagrees with the encoder MV-stack order on some "
+              "sub-64x64 blocks (docs/negative-results.md)";
+      return ParseStatus::kError;
+    }
+    if (options.b_frames != 0) {
+      error = "--b-frames is not wired into the video path yet";
+      return ParseStatus::kError;
+    }
+  } else {
+    if (options.p_frames != 0 || options.video_refs != 1 ||
+        options.video_inter_residual || options.video_subpel_eighth ||
+        options.video_mv_precision != 0 || options.video_drl_reorder ||
+        options.video_force_single || options.video_trace ||
+        !options.video_recon.empty()) {
+      error = "video options require --video";
+      return ParseStatus::kError;
+    }
+  }
   if (options.still_ext_partitions) {
     if (!options.m1 && !options.still_gpu) {
       error = "--still-ext-partitions requires --still";
@@ -720,6 +993,144 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     }
   }
   return ParseStatus::kOk;
+}
+
+struct OwnedVideoFrame {
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::vector<std::uint8_t> y;
+  std::vector<std::uint8_t> u;
+  std::vector<std::uint8_t> v;
+};
+
+bool write_video_recon_y4m(const std::filesystem::path& path,
+                           const av2enc::Y4mHeader& header,
+                           const std::vector<av2enc::video::VideoReconFrame>& recon,
+                           std::string& error) {
+  std::ofstream out(path, std::ios::binary);
+  if (!out) {
+    error = "cannot open --video-recon output '" + path.string() + "'";
+    return false;
+  }
+  out << "YUV4MPEG2 W" << header.width << " H" << header.height << " F"
+      << header.fps_num << ":" << header.fps_den << " Ip A1:1 C420\n";
+  for (const auto& frame : recon) {
+    out << "FRAME\n";
+    out.write(reinterpret_cast<const char*>(frame.y.data()),
+              static_cast<std::streamsize>(frame.y.size()));
+    out.write(reinterpret_cast<const char*>(frame.u.data()),
+              static_cast<std::streamsize>(frame.u.size()));
+    out.write(reinterpret_cast<const char*>(frame.v.data()),
+              static_cast<std::streamsize>(frame.v.size()));
+  }
+  if (!out) {
+    error = "failed while writing --video-recon output";
+    return false;
+  }
+  return true;
+}
+
+int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
+                     av2enc::IvfWriter& writer,
+                     const av2enc::Y4mHeader& y4m) {
+  std::vector<OwnedVideoFrame> owned;
+  std::string error;
+  std::size_t limit = 0;
+  if (options.max_frames != 0) {
+    limit = static_cast<std::size_t>(options.max_frames);
+  } else if (options.p_frames != 0) {
+    limit = static_cast<std::size_t>(options.p_frames) + 1U;
+  }
+  av2enc::Y4mFrame frame;
+  while (limit == 0 || owned.size() < limit) {
+    const av2enc::Y4mReadResult status = reader.read_frame(frame, error);
+    if (status == av2enc::Y4mReadResult::kEof) break;
+    if (status == av2enc::Y4mReadResult::kError) {
+      std::cerr << "av2enc: " << error << "\n";
+      return 1;
+    }
+    OwnedVideoFrame copy;
+    copy.width = frame.width();
+    copy.height = frame.height();
+    copy.y.assign(frame.y().begin(), frame.y().end());
+    copy.u.assign(frame.u().begin(), frame.u().end());
+    copy.v.assign(frame.v().begin(), frame.v().end());
+    owned.push_back(std::move(copy));
+  }
+  if (owned.empty()) {
+    std::cerr << "av2enc: error: input has no frames\n";
+    return 1;
+  }
+
+  std::vector<av2enc::video::VideoInputFrame> inputs;
+  inputs.reserve(owned.size());
+  for (const OwnedVideoFrame& f : owned) {
+    av2enc::video::VideoInputFrame input;
+    input.width = f.width;
+    input.height = f.height;
+    input.y = std::span<const std::uint8_t>(f.y.data(), f.y.size());
+    input.u = std::span<const std::uint8_t>(f.u.data(), f.u.size());
+    input.v = std::span<const std::uint8_t>(f.v.data(), f.v.size());
+    inputs.push_back(input);
+  }
+
+  av2enc::video::VideoOptions video_options;
+  video_options.base_q_idx = static_cast<std::uint8_t>(options.qp);
+  video_options.num_total_refs = options.video_refs;
+  video_options.enable_inter_residual = options.video_inter_residual;
+  video_options.me_subpel_eighth = options.video_subpel_eighth;
+  video_options.mv_precision = options.video_mv_precision;
+  video_options.drl_reorder = options.video_drl_reorder;
+  video_options.drl_reorder_always = options.video_drl_reorder_always;
+  video_options.force_single_block = options.video_force_single;
+  video_options.min_block_size = options.video_min_block;
+  video_options.max_partition_depth = options.video_max_depth;
+  video_options.me_range = options.video_me_range;
+  video_options.trace = options.video_trace;
+
+  av2enc::video::VideoSequenceResult result;
+  if (!av2enc::video::encode_video_sequence(inputs, video_options, result,
+                                            error)) {
+    std::cerr << "av2enc: error: " << error << "\n";
+    return 1;
+  }
+  for (std::size_t i = 0; i < result.units.size(); ++i) {
+    if (!writer.write_frame(result.units[i],
+                            static_cast<std::uint64_t>(i), error)) {
+      std::cerr << "av2enc: error: " << error << "\n";
+      return 1;
+    }
+  }
+  if (!options.video_recon.empty()) {
+    if (!write_video_recon_y4m(options.video_recon, y4m, result.recon, error)) {
+      std::cerr << "av2enc: error: " << error << "\n";
+      return 1;
+    }
+  }
+  if (!writer.close(error)) {
+    std::cerr << "av2enc: error: " << error << "\n";
+    return 1;
+  }
+
+  std::uint64_t total_tile = 0;
+  std::uint64_t total_inter = 0;
+  std::uint64_t total_intra = 0;
+  for (std::size_t i = 0; i < result.units.size(); ++i) {
+    total_tile += result.tile_bytes[i];
+    total_inter += result.inter_blocks[i];
+    total_intra += result.intra_blocks[i];
+  }
+  std::cout << "av2enc: Video P-frame encode complete\n"
+            << "  input:   " << options.input.string() << " (" << y4m.width
+            << "x" << y4m.height << ", " << y4m.colorspace << ", "
+            << y4m.fps_num << "/" << y4m.fps_den << " fps)\n"
+            << "  output:  " << options.output.string() << " ("
+            << writer.bytes_written() << " bytes IVF)\n"
+            << "  frames:  " << result.units.size() << ", base_q_idx "
+            << static_cast<int>(video_options.base_q_idx) << ", tile "
+            << total_tile << " bytes, inter blocks " << total_inter
+            << ", intra blocks " << total_intra << "\n";
+  return 0;
 }
 
 }  // namespace
@@ -813,6 +1224,105 @@ int main(int argc, char** argv) {
     if (options.still_palette) return reject_cpu_only("--still-palette");
   }
 
+  // Optical-format still paths (10-bit, 4:2:2/4:4:4/4:0:0).  Every flag
+  // defaults to today's 8-bit 4:2:0 stream, which never enters this branch.
+  const bool format_10bit = options.bit_depth == 10;
+  const bool format_chroma = options.chroma != "420";
+  if (format_10bit || format_chroma) {
+    if (options.still_gpu) {
+      std::cerr << "av2enc: error: --bit-depth/--chroma are CPU-only: the "
+                   "Still GPU pipeline is 8-bit 4:2:0\n";
+      return 2;
+    }
+    if (!options.m1) {
+      std::cerr << "av2enc: error: --bit-depth/--chroma require --still\n";
+      return 2;
+    }
+    if (options.lossless) {
+      std::cerr << "av2enc: error: --lossless has its own 8-bit 4:2:0 writer "
+                   "and cannot be combined with --bit-depth/--chroma\n";
+      return 2;
+    }
+    if (options.adaptive_cdf) {
+      std::cerr << "av2enc: error: --adaptive-cdf is not signalled by the "
+                   "format still writers (frozen CDFs)\n";
+      return 2;
+    }
+    if (options.still_single || options.still_dc || options.still_full_intra ||
+        options.still_uv_full || options.still_rdo_intra || options.still_rdoq ||
+        options.still_tx_type || options.still_cdef || options.still_ccso ||
+        options.still_sb128 || options.still_sb256 ||
+        options.still_ext_partitions || options.still_segmentation ||
+        options.still_delta_q || options.still_content_interpretation ||
+        options.still_qm || options.still_ist || options.still_dc_ac_delta_q ||
+        options.still_ibp || options.still_mrl || options.still_cfl_ds != 0 ||
+        options.still_cfl_explicit || options.still_dip || options.still_palette ||
+        options.still_mhccp || options.still_ccso_edge || options.still_wiener ||
+        options.still_chroma_lr || options.still_pc_wiener || options.still_gdf ||
+        options.still_grain || options.still_depth >= 0) {
+      std::cerr << "av2enc: error: the --bit-depth/--chroma format paths use "
+                   "their own minimal still writer; M1 tool flags are not "
+                   "applied there\n";
+      return 2;
+    }
+    if (format_10bit && (options.qp < 1 || options.qp > 90)) {
+      std::cerr << "av2enc: error: 10-bit encoding supports base_q_idx 1..90 "
+                   "(coefficient-CDF slice 0); got --qp "
+                << options.qp << "\n";
+      return 2;
+    }
+    if (!format_10bit && options.qp != 90) {
+      std::cerr << "av2enc: error: 8-bit 4:2:2/4:4:4/4:0:0 pins --qp 90; got "
+                << options.qp << "\n";
+      return 2;
+    }
+
+    av2enc::formats::StillFormatOptions format_options;
+    format_options.depth = format_10bit ? av2enc::fmt::BitDepth::k10
+                                        : av2enc::fmt::BitDepth::k8;
+    if (options.chroma == "422") {
+      format_options.chroma = av2enc::fmt::ChromaFormat::k422;
+    } else if (options.chroma == "444") {
+      format_options.chroma = av2enc::fmt::ChromaFormat::k444;
+    } else if (options.chroma == "400") {
+      format_options.chroma = av2enc::fmt::ChromaFormat::k400;
+    } else {
+      format_options.chroma = av2enc::fmt::ChromaFormat::k420;
+    }
+    format_options.base_q_idx = static_cast<std::uint16_t>(options.qp);
+    format_options.recon_out = options.recon;
+
+    av2enc::formats::StillFormatStats stats;
+    if (!av2enc::formats::encode_still_format(options.input, options.output,
+                                              format_options, &stats, &error)) {
+      std::cerr << "av2enc: error: " << error << "\n";
+      return 1;
+    }
+    std::cout << "av2enc: Format still-picture encode complete\n"
+              << "  input:   " << options.input.string() << " (" << stats.width
+              << "x" << stats.height << ", "
+              << av2enc::fmt::y4m_colorspace_tag(stats.chroma, stats.depth)
+              << ", " << stats.fps_num << "/" << stats.fps_den << " fps)\n"
+              << "  output:  " << options.output.string() << " ("
+              << stats.ivf_bytes << " bytes IVF)\n"
+              << "  format:  " << stats.width << "x" << stats.height << " "
+              << av2enc::fmt::bit_depth_name(stats.depth) << ", "
+              << av2enc::fmt::chroma_format_name(stats.chroma) << "\n"
+              << "  frames:  1, base_q_idx " << options.qp << ", tile "
+              << stats.tile_bytes << " bytes, temporal unit "
+              << stats.frame_bytes << " bytes\n";
+    if (!options.recon.empty()) {
+      std::cout << "  recon:   " << options.recon.string() << "\n";
+    }
+    return 0;
+  }
+
+  if (!options.recon.empty()) {
+    std::cerr << "av2enc: error: --recon is only wired for the --bit-depth 10 "
+                 "and --chroma format paths\n";
+    return 2;
+  }
+
   av2enc::Y4mReader reader(options.input);
   if (!reader.open(error)) {
     std::cerr << "av2enc: " << error << "\n";
@@ -864,11 +1374,25 @@ int main(int argc, char** argv) {
       return 1;
     }
   }
-  if (!options.lossless && !still_cpu_qp && options.qp != 90) {
+  if (options.video && options.qp == 0) {
+    std::cerr << "av2enc: error: --video does not support lossless QP 0\n";
+    return 1;
+  }
+  if (!options.lossless && !still_cpu_qp && !options.video &&
+      options.qp != 90) {
     std::cerr << "av2enc: error: "
               << (options.still_gpu ? "Still GPU" : "M0")
               << " pins --qp 90; use --still for QP 1..255\n";
     return 1;
+  }
+
+  if (options.video) {
+    if (y4m.width % 8U != 0U || y4m.height % 8U != 0U) {
+      std::cerr << "av2enc: error: --video requires dimensions divisible by 8, "
+                << "got " << y4m.width << "x" << y4m.height << "\n";
+      return 1;
+    }
+    return run_video_encode(options, reader, writer, y4m);
   }
 
   av2enc::Y4mFrame frame;

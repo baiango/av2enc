@@ -395,3 +395,83 @@ superblock, with the bottom edge forced to 64x16). The full tree is also gated:
   frame 7: bytes=29750 tile=29738 inter=334 intra=284
   PASS: 8 frame(s) decoded, recon exact
 ```
+
+---
+
+# Wave-2 integration: opt-in `--video` path
+
+The M2 reference above is now exposed as a product CLI path. It stays opt-in:
+every default `--still`, `--still-gpu`, basic and pinned still stream is
+untouched (`tools/refactor/verify_baseline.sh --check` passes).
+
+## CLI
+
+```sh
+av2enc clip.y4m --video --frames 8 -o clip.ivf
+av2enc clip.y4m --video --p-frames 5 --video-refs 2 -o clip.ivf
+av2enc clip.y4m --video --video-subpel-eighth --video-mv-precision quarter -o clip.ivf
+```
+
+| flag | default | meaning |
+|---|---|---|
+| `--video` | off | encode a key frame plus P frames |
+| `--p-frames N` | all | number of P frames after the keyframe |
+| `--video-refs N` | 1 | `NumTotalRefs` per P frame, 1..3 |
+| `--video-subpel-eighth` | off | add the 1/8-pel ME refinement stage |
+| `--video-mv-precision P` | eighth | `eighth`, `quarter` or `half` pel |
+| `--video-inter-residual` | off | code a quantised inter residual |
+| `--video-max-depth D` / `--video-min-block N` / `--video-force-single` | 4 / 16 / off | partition controls |
+| `--video-recon FILE` | off | dump the encoder reconstruction Y4M (gate use) |
+| `--b-frames N` | 0 | rejected: B frames are not wired yet |
+| `--video-drl-reorder` | off | rejected until the decoder disagreement below is fixed |
+
+`--frames N` caps the total number of coded frames in the video path (the
+single-picture paths still clamp it to one frame). `--qp` accepts 1..255.
+
+The Y4M reader already yields a sequence; every frame becomes one temporal unit
+in the IVF (TD + SEQ for the key frame, TD + tile group afterwards).
+
+## Reference management
+
+* Frame 0 is an intra keyframe and refreshes all slots.
+* The new single-reference path keeps the historical two-slot layout.
+* `--video-refs N` selects `NumRefFrames = 8`, rotates one refresh slot per
+  frame, and lists the N most recent valid slots newest-first in the explicit
+  reference map. Each inter block codes `read_single_ref()` and picks the
+  reference with the lowest predictor SSE (GLOBALMV / NEARMV / NEWMV).
+* The MV stack is built per chosen reference with the §7.12.2.20 gate and
+  `FrameDistance[]`, so derived candidates match the decoder.
+
+## Frame MV precision
+
+`--video-mv-precision quarter|half` writes `use_qtr_precision_mv` /
+`allow_high_precision_mv` and codes the NEWMV MVD with the precision-aware
+`§5.20.7.20` shell syntax (`inter/mv_precision`). ME output and the MVD are
+quantised to the signalled precision. Note §5.20.7.13 only lowers the
+*predictor* for precisions **coarser than 1/2 pel**; for quarter/half the
+predictor is used unchanged and only the MVD is in precision units.
+
+## Gate
+
+`src/pipeline/video/video_cli_gate.sh` drives the product CLI, decodes with the
+pinned `dav2d` through `tools/validate_dav2d.sh`, and compares the decoded Y4M
+against `--video-recon` sample by sample for the full frame count.
+
+```sh
+src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 8 --video-refs 2 --video-subpel-eighth
+```
+
+Measured on 6 frames of `shine_1280x720_60f.y4m` (`--video-max-depth 3`, the
+default single-block tree is also gated by `build-int/video_gate`):
+
+| flags | IVF MD5 | bytes | recon |
+|---|---|---:|---|
+| default | `c6d588647aacb2275dfaea41a00fb501` | 184,966 | exact |
+| `--video-refs 2` | `961eb2010df40f638bb5afb8e45b1db2` | 172,667 | exact |
+| `--video-subpel-eighth` | `a1499683f8ab24177950dd61a8db4c65` | 167,863 | exact |
+| `--video-mv-precision quarter` | `bdceb54a66d6051165710e37e0d4733d` | 184,866 | exact |
+| `--video-refs 2 --video-subpel-eighth --video-mv-precision quarter` | `252e8a1a95a131e88556da40349de3b2` | 175,477 | exact |
+
+`build-int/video_gate --refs N --subpel-eighth --mv-precision P` runs the same
+comparison without the CLI (synthetic 64x64 and the real short clip).

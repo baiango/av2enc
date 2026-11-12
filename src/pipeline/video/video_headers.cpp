@@ -156,7 +156,10 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   // reduced_ref_frame_mvs_mode = 0.
   writer.put_bits(static_cast<std::uint64_t>(c.order_hint_bits) - 1U, 4U);
   writer.put_bit(false);  // enable_refmvbank
-  writer.put_bit(true);   // disable_drl_reorder -> DRL_REORDER_DISABLED
+  writer.put_bit(c.disable_drl_reorder);  // disable_drl_reorder
+  if (!c.disable_drl_reorder) {
+    writer.put_bit(c.constrain_drl_reorder);  // constrain_drl_reorder
+  }
   writer.put_bit(true);   // explicit_ref_frame_map
   writer.put_bit(true);   // explicit_num_ref_frames
   writer.put_bits(static_cast<std::uint64_t>(c.num_ref_frames) - 1U, 4U);
@@ -258,9 +261,18 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     writer.put_bits(h.refresh_frame_flags, c.num_ref_frames);
     // explicit_ref_frame_map == 1 (sequence header).
     writer.put_bit(true);   // frame_explicit_ref_frame_map
-    writer.put_bits(c.num_total_refs, 3U);  // num_total_refs
-    writer.put_bits(h.ref_slot,
-                    static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
+    const unsigned num_refs =
+        h.num_total_refs == 0 ? c.num_total_refs : h.num_total_refs;
+    writer.put_bits(num_refs, 3U);  // num_total_refs
+    if (num_refs <= 1U) {
+      writer.put_bits(h.ref_slot,
+                      static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
+    } else {
+      for (unsigned i = 0; i < num_refs; ++i) {
+        writer.put_bits(h.ref_frame_idx[i],
+                        static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
+      }
+    }
     // frame_size_override_flag == 0 -> frame_size() codes no bits.
     // get_ref_frames(1) is skipped because the map is explicit.
     // use_ref_frame_mvs = 0, TipFrameMode = TIP_FRAME_DISABLED.
@@ -268,9 +280,10 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     // screen_content_params(): seq_force_screen_content_tools == 0, no bit.
     writer.put_bit(false);  // allow_intrabc
     // max_drl_bits_minus_1 = seq_max_drl_bits_minus_1, no bits.
-    writer.put_bit(false);  // use_qtr_precision_mv
-    writer.put_bit(true);   // allow_high_precision_mv -> 1/8 pel
-    writer.put_bit(false);  // is_filter_switchable
+    writer.put_bit(h.use_qtr_precision_mv);  // use_qtr_precision_mv
+    if (!h.use_qtr_precision_mv) {
+      writer.put_bit(h.allow_high_precision_mv);  // allow_high_precision_mv
+    }    writer.put_bit(false);  // is_filter_switchable
     writer.put_bits(0U, 2U);  // interpolation_filter = EIGHTTAP
     // frame_enabled_motion_modes[] all zero -> no bits.
   }

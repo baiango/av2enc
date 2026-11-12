@@ -25,8 +25,10 @@ INVALID = 255
 
 
 def repo_root() -> pathlib.Path:
-    # .../src/formats/generate_format_tables.py -> repo root
-    return pathlib.Path(__file__).resolve().parents[3]
+    # .../src/formats/generate_format_tables.py -> repo root (parents[2]).
+    # This was parents[3] before the format component moved from
+    # src/encoder/format/ to src/formats/ in the refactor.
+    return pathlib.Path(__file__).resolve().parents[2]
 
 
 def load_tables(path: pathlib.Path) -> tuple[list[str], list[int], list[int], list[list[list[int]]]]:

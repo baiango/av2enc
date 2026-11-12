@@ -49,6 +49,14 @@ Status legend:
 | FAILED | Claim `--still-palette` integration from the component gate alone | The component's own 64x64/64x32/32x64 gate streams decode, but the M1 stream desyncs on tall `palette_direction = 0` leaves. Minimal reproducer: a 128x96 frame with 8x32 leaves, `--still --still-depth 4 --still-palette`, density blocks where a constant row is preceded by a different row. Encoder recon and `dav2d` decode differ by exactly the rows where `identity_row_y` is signalled: encoder `ColorMapY` says index(64), the decoder reconstructs index(96) for every column of those rows, while the top half of the same block matches. `encode_palette_y()`'s own map self-check passes, so the divergence is between that self-check/`predict_palette_block()` and the spec's `ColorMapY` traversal (`palette_direction = 0`, `identity_row_y == 1`, `j == 0`). The flag is rejected at the CLI until the palette owner fixes it. Also fixed while integrating: `analyze_palette()` could return a duplicate palette colour from `median_cut()` (delta coding needs a strictly increasing list), and the palette/DIP decision must compare against the real DC SSE, not 0 |
 | CONFIRMED | Assume a palette leaf is reachable in the default DC-only search | The DC-only fast path sets `best.sse = 0`; an SSE-compared candidate (palette, or DIP without the DC probe) can then never win, so an "enabled" tool silently emits no symbol | Compute the ordinary DC prediction SSE before comparing any SSE-based alternative |
 
+## Inter integration (wave 2)
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Ship `--video-drl-reorder` (`DRL_REORDER_CONSTRAINT`/`ALWAYS`) from the component gate alone | The component gate (8x8 leaves, 128x128) passes, but the product path desyncs on sub-64x64 leaves: `--video-drl-reorder --video-force-single` (64x64 leaves) is exact for 4 frames, while `--video-drl-reorder --video-max-depth 3` differs from frame 2 (21,515 samples at 720p). `ALWAYS` also fails at 64x64. The remaining suspect is the shared merge stack's `num_nearest`/scan for rectangular leaves, which changes whether §7.12.2.19 sorts. Reproducer: `OUT=/tmp/drl src/pipeline/video/video_cli_gate.sh build-int/av2enc testdata/shine_1280x720_60f.y4m 6 --video-drl-reorder --video-max-depth 3`. The CLI rejects the flag and the sequence header keeps `disable_drl_reorder = 1` | Keep DRL reordering off; fix `merge`'s `num_nearest` for rectangular leaves first, then re-gate. The `drl_reorder` unit/gate suite remains the reference |
+| CONFIRMED | Lower the NEWMV predictor for quarter- or half-pel MV precision | §5.20.7.13 lowers `PredMvs` only when `MvPrecision < MV_PRECISION_HALF_PEL` (i.e. coarser than 1/2 pel). Lowering at quarter pel made multi-reference streams differ from frame 2 even though every block parsed; single-reference streams happened to pass because the predictors were aligned | Use the predictor unchanged for quarter/half and quantise only the MVD to the signalled precision. `--video-refs 2 --video-mv-precision quarter` then decodes exactly |
+| CONFIRMED | Treat a passing single-reference quarter/half stream as proof for multi-reference | Mixed-reference blocks add derived §7.12.2.16 candidates whose MVs can be unaligned; the quantisation/lowering interaction only shows up there | Gate multi-reference and coarser precision together (`--video-refs 2 --video-mv-precision quarter`) |
+
 ## RDO / rate control
 
 | Status | Do not do | Why | Do instead |
@@ -71,7 +79,8 @@ Status legend:
 | CONFIRMED | Try to signal 12-bit in AV2 v1.0.0 | `bit_depth_idc` is one bit: 0 = 10-bit, 1 = 8-bit; 12-bit is reserved | Keep 12-bit internal-only; 8/10-bit are the signalable depths |
 | CONFIRMED | Derive coefficient CDF sets from the effective/delta qindex | §8.3.1 selects from raw `base_q_idx` (90/140/190 thresholds) | Use `base_q_idx` |
 | CONFIRMED | Assume `MaxQ` is 255 at high bit depth | `MaxQ` is 255/303/351 at 8/10/12-bit | Validate `base_q_idx` against the format's `MaxQ` |
-| OPEN | Claim 10-bit/4:2:2/4:4:4 encoding | No header/entropy/recon path is wired and nothing decodes | Integrate format by format, gate each with `dav2d` |
+| CONFIRMED | Claim 10-bit 4:2:2 / 4:4:4 or 4:0:0 10-bit encoding | Only 10-bit 4:2:0 (`--bit-depth 10`, M10-derived) and 8-bit 4:2:2/4:4:4/4:0:0 (`--chroma`) have header/entropy/recon paths and a `dav2d` gate; mixing them is unimplemented | Keep `--chroma` and `--bit-depth 10` mutually exclusive for non-4:2:0; the CLI rejects the combination |
+| CONFIRMED | Resample or depth-convert the input implicitly in the format paths | A 4:2:0 input encoded as `--chroma 444` would silently change what the gate measured | `src/formats/format_y4m.*` requires the input coloursapce to match; the gate builds real C422/C444/Cmono/C420p10 sources |
 
 ## Filters
 

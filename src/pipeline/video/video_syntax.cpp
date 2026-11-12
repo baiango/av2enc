@@ -6,6 +6,9 @@
 // §8.3.2 contexts re-derived from the coded stream.
 #include "pipeline/video/video_syntax.h"
 
+#include "codec/inter/mv_precision/mv_precision.h"
+#include "codec/inter/drl_reorder/video_stack_adapter.h"
+
 #include "pipeline/still/basic_cdf_tables.h"
 #include "pipeline/still/basic_tables.h"
 #include "pipeline/still/still_cdf_tables.h"
@@ -32,6 +35,8 @@
 namespace av2enc::video::syntax {
 namespace {
 
+namespace drl = inter::drl;
+
 using partition::BlockSize;
 using partition::FrameGeometry;
 using partition::PartitionType;
@@ -42,7 +47,6 @@ using namespace av2enc::still;
 
 // AV2 RefFrame labels (§6.19.7.9): LAST_FRAME = 0, INTRA_FRAME = 8.  The
 // merge layer's MI grid uses these, not the MC-internal labels.
-constexpr std::int8_t kRefLastAv2 = 0;
 constexpr std::int8_t kRefIntraAv2 = 8;
 
 // YMode numeric values (§6.19.5.5).
@@ -275,6 +279,9 @@ struct CdfState {
   std::uint16_t inter_tx_type_offset_set1[3][9];
   std::uint16_t inter_tx_type_index_set2[3][9];
   std::uint16_t inter_tx_type_offset_set2[3][5];
+
+  // Precision-aware shell MVD tables (1/4 and 1/2 pel frame precision).
+  inter::mvprec::MvPrecisionCdfState mv_precision;
 };
 
 template <typename T, std::size_t N>
@@ -345,6 +352,7 @@ void init_cdfs(CdfState& c, int qctx_slice) {
   copy_array(c.inter_tx_type_offset_set1, kInterTxTypeOffsetSet1Cdf);
   copy_array(c.inter_tx_type_index_set2, kInterTxTypeIndexSet2Cdf);
   copy_array(c.inter_tx_type_offset_set2, kInterTxTypeOffsetSet2Cdf);
+  inter::mvprec::init_default_mv_precision_cdfs(&c.mv_precision);
 }
 
 // One in-frame child slot of a partition (§9.2 Partition_Subsize).
@@ -1519,6 +1527,47 @@ class Writer {
     return sym(&cdfs_.single_mode[ctx][0], 3, single_mode);
   }
 
+  int count_refs(int ref) const {
+    int pos[2][2] = {};
+    const int n = neighbor_positions(pos);
+    int count = 0;
+    for (int i = 0; i < n; ++i) {
+      const inter::mc::MiInfo& mi =
+          mv_grid_[cell_index(pos[i][0], pos[i][1])];
+      if (mi.ref[0] == ref) ++count;
+      if (mi.ref[1] == ref) ++count;
+    }
+    return count;
+  }
+
+  // §5.20.7.10 read_single_ref(): NumTotalRefs - 1 single_ref bits, decoded in
+  // reference order; the first set bit wins and the last reference is implied.
+  bool code_single_ref(int want) {
+    const int num_refs = plan_.num_total_refs;
+    if (num_refs <= 1) return true;
+    if (want < 0 || want >= num_refs) return false;
+    for (int ref = 0; ref < num_refs - 1; ++ref) {
+      const int this_count = count_refs(ref);
+      int next_count = 0;
+      for (int i = ref + 1; i < num_refs; ++i) {
+        next_count += count_refs(i);
+      }
+      const int ctx = this_count == next_count ? 1
+                      : (this_count < next_count ? 0 : 2);
+      const int bit = ref == want ? 1 : 0;
+      if (trace_) {
+        std::cerr << "  single_ref r=" << cur_r_ << " c=" << cur_c_
+                  << " " << cur_w4_ * 4 << "x" << cur_h4_ * 4
+                  << " want=" << want << " ref=" << ref << " bit=" << bit
+                  << " ctx=" << ctx << " this=" << this_count
+                  << " next=" << next_count << "\n";
+      }
+      if (!sym(&cdfs_.single_ref[ctx][ref][0], 2, bit)) return false;
+      if (bit) return true;
+    }
+    return want == num_refs - 1;
+  }
+
   bool code_drl_index(int ctx, int index) {
     const int m = static_cast<int>(config_.max_drl_bits_minus_1) + 1;
     if (index < 0 || index > m) return false;
@@ -1635,6 +1684,10 @@ class Writer {
       error = "invalid inter mode";
       return false;
     }
+    if (node.ref_index >= plan_.num_total_refs) {
+      error = "block reference index outside the frame reference map";
+      return false;
+    }
 
     // Validate the decision against the spec-exact merge/MV-stack layer.  This
     // catches producer bugs before they desynchronise the decoder.
@@ -1647,7 +1700,7 @@ class Writer {
     params.mi_cols = mi_cols_;
     params.mi_rows = mi_rows_;
     params.mi = mv_grid_.data();
-    params.ref_frame[0] = kRefLastAv2;
+    params.ref_frame[0] = static_cast<std::int8_t>(node.ref_index);
     params.ref_frame[1] = merge::kRefNone;
     params.is_compound = false;
     params.global_mv[0] = inter::mc::Mv{0, 0};
@@ -1656,8 +1709,22 @@ class Writer {
     params.reorder = merge::DrlReorder::kDisabled;
     params.max_drl_bits_minus_1 =
         static_cast<int>(config_.max_drl_bits_minus_1);
+    if (plan_.num_total_refs > 1) {
+      params.num_refs = plan_.num_total_refs;
+      params.frame_distance = plan_.frame_distance.data();
+    }
     merge::MvStack stack;
-    if (merge::build_stack_checked(params, &stack) != merge::Status::kOk) {
+    const drl::Mode reorder_mode =
+        plan_.drl_reorder == 2
+            ? drl::Mode::kAlways
+            : (plan_.drl_reorder == 1 ? drl::Mode::kConstraint
+                                      : drl::Mode::kDisabled);
+    const merge::Status stack_status =
+        reorder_mode == drl::Mode::kDisabled
+            ? merge::build_stack_checked(params, &stack)
+            : drl::build_reordered_stack(params, reorder_mode,
+                                         /*use_temporal_first=*/false, &stack);
+    if (stack_status != merge::Status::kOk) {
       error = "build_mv_stack failed";
       return false;
     }
@@ -1676,17 +1743,28 @@ class Writer {
       const merge::SingleMode mode = node.inter_mode == kInterNearMv
                                          ? merge::SingleMode::kNearMv
                                          : merge::SingleMode::kNewMv;
-      merge::ResolvedMode resolved;
-      if (merge::resolve_single_mode(
-              stack, params, mode, drl,
-              inter::mc::Mv{node.mvd_y, node.mvd_x}, &resolved) !=
-          merge::Status::kOk) {
-        error = "resolve_mode failed";
-        return false;
-      }
-      if (resolved.mv[0].y != node.mv_y || resolved.mv[0].x != node.mv_x) {
-        error = "block MV does not match the signalled inter mode";
-        return false;
+      if (plan_.mv_precision != 0 && node.inter_mode == kInterNewMv) {
+        // The MVD is coded in precision units but the predictor is used
+        // unchanged (only precisions coarser than 1/2 pel lower it).
+        const inter::mc::Mv pred = stack.cand[drl].mv[0];
+        const inter::mc::Mv expected{pred.y + node.mvd_y, pred.x + node.mvd_x};
+        if (expected.y != node.mv_y || expected.x != node.mv_x) {
+          error = "block MV does not match the signalled inter mode";
+          return false;
+        }
+      } else {
+        merge::ResolvedMode resolved;
+        if (merge::resolve_single_mode(
+                stack, params, mode, drl,
+                inter::mc::Mv{node.mvd_y, node.mvd_x}, &resolved) !=
+            merge::Status::kOk) {
+          error = "resolve_mode failed";
+          return false;
+        }
+        if (resolved.mv[0].y != node.mv_y || resolved.mv[0].x != node.mv_x) {
+          error = "block MV does not match the signalled inter mode";
+          return false;
+        }
       }
       if (node.inter_mode == kInterNearMv &&
           node.drl_index >= stack.count) {
@@ -1695,7 +1773,34 @@ class Writer {
       }
     }
 
-    const int ctx = new_mv_context();
+    if (plan_.num_total_refs > 1) {
+      if (!code_single_ref(node.ref_index)) {
+        error = "write single_ref failed";
+        return false;
+      }
+    }
+
+    int ctx = 0;
+    if (plan_.num_total_refs > 1) {
+      merge::NewMvContextParams nparams;
+      nparams.mi_row = node.mi_row;
+      nparams.mi_col = node.mi_col;
+      nparams.bw4 = cur_w4_;
+      nparams.bh4 = cur_h4_;
+      nparams.sb_h4 = 16;
+      nparams.mi_cols = mi_cols_;
+      nparams.mi_rows = mi_rows_;
+      nparams.mi = mv_grid_.data();
+      nparams.y_mode = ymode_grid_.data();
+      nparams.is_compound = false;
+      nparams.ref_frame[0] = static_cast<std::int8_t>(node.ref_index);
+      if (merge::derive_new_mv_context(nparams, &ctx) != merge::Status::kOk) {
+        error = "derive_new_mv_context failed";
+        return false;
+      }
+    } else {
+      ctx = new_mv_context();
+    }
     // YMode = NEARMV + single_mode. YMode 14 = NEARMV, 15 = GLOBALMV,
     // 16 = NEWMV, so single_mode is 0 / 1 / 2 in that order.
     const int single_mode =
@@ -1716,9 +1821,30 @@ class Writer {
       }
     }
     if (node.inter_mode == kInterNewMv) {
-      if (!write_mv(node.mvd_y, node.mvd_x)) {
-        error = error_;
-        return false;
+      if (plan_.mv_precision == 0) {
+        if (!write_mv(node.mvd_y, node.mvd_x)) {
+          error = error_;
+          return false;
+        }
+      } else {
+        const int precision = plan_.mv_precision == 1
+                                  ? av2enc::me2::kMvPrecisionQuarterPel
+                                  : av2enc::me2::kMvPrecisionHalfPel;
+        std::string shell_error;
+        if (!inter::mvprec::write_shell_mv(enc_, cdfs_.mv_precision,
+                                           node.mvd_y, node.mvd_x, precision,
+                                           &shell_error)) {
+          error = "write_shell_mv failed: " + shell_error;
+          return false;
+        }
+        if (node.mvd_y != 0 && !raw_bit(node.mvd_y < 0)) {
+          error = error_;
+          return false;
+        }
+        if (node.mvd_x != 0 && !raw_bit(node.mvd_x < 0)) {
+          error = error_;
+          return false;
+        }
       }
     }
     return true;
@@ -1743,7 +1869,9 @@ class Writer {
                 : node.y_mode;
         inter::mc::MiInfo& mi = mv_grid_[idx];
         mi = inter::mc::MiInfo{};
-        mi.ref[0] = node.is_inter ? kRefLastAv2 : kRefIntraAv2;
+        mi.ref[0] = node.is_inter
+                        ? static_cast<std::int8_t>(node.ref_index)
+                        : kRefIntraAv2;
         mi.ref[1] = merge::kRefNone;
         mi.mv[0][0] = node.mv_y;
         mi.mv[0][1] = node.mv_x;

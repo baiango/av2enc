@@ -3,9 +3,12 @@
 Status: **standalone component; now consumed by the M10 10-bit stream.**
 `src/encoder/m10/` uses this format layer plus `src/cuda/m1/hbd/` to write a
 10-bit 4:2:0 still that `dav2d` decodes with a 0-LSB reconstruction match.
-Nothing here is wired into `src/encoder/basic_encoder.cpp` or the M1 core yet; `--still`
-remains 8-bit.  See `src/encoder/m10/README.md` for the stream, gate and the
-exact M1 integration checklist.
+Nothing here is wired into `src/encoder/basic_encoder.cpp` or the M1 core yet; the
+default `--still` stream remains 8-bit 4:2:0.  The opt-in product paths are
+`--still --bit-depth 10` (10-bit 4:2:0, `src/formats/high_bitdepth/`) and
+`--still --chroma 422|444|400` (8-bit, `src/formats/chroma/`).  See
+`src/encoder/m10/README.md` for the stream, gate and the exact M1 integration
+checklist.
 
 The 10-bit M1 transform/sample companion lives in `src/cuda/m1/hbd/`. It uses
 `BitDepthLimits` / `clip_*` from this header as the single source of truth for

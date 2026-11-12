@@ -25,6 +25,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <span>
 #include <string>
 #include <vector>
@@ -62,6 +63,8 @@ struct BlockSyntax {
   std::uint8_t skip_flag = 0;   // inter only; 1 means no residual
   std::uint8_t inter_mode = kInterGlobalMv;
   std::uint8_t drl_index = 0;
+  // §5.18.2/§5.20.7.10 RefFrame[0] index into ref_frame_idx[] (0..6).
+  std::uint8_t ref_index = 0;
   std::int32_t mv_y = 0;   // resolved MV, 1/8 luma samples
   std::int32_t mv_x = 0;
   std::int32_t mvd_y = 0;  // signalled MVD for NEWMV, 1/8 luma samples
@@ -84,6 +87,14 @@ struct FramePlan {
   // false for the intra keyframe (intra_frame_mode_info), true for P frames
   // (inter_frame_mode_info, which codes is_inter/skip).
   bool inter_frame = true;
+  // §5.18.2 per-frame reference map (single prediction, explicit map).
+  int num_total_refs = 1;
+  // Frame MV precision: 0 = 1/8, 1 = 1/4, 2 = 1/2 pel.
+  int mv_precision = 0;
+  // FrameDistance[ref] for the MV stack's derived candidates.
+  std::array<int, 7> frame_distance{0, 0, 0, 0, 0, 0, 0};
+  // 0 = DRL_REORDER_DISABLED, 1 = CONSTRAINT, 2 = ALWAYS.
+  int drl_reorder = 0;
 
   int sb_cols() const;
   int sb_rows() const;

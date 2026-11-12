@@ -9,6 +9,17 @@ untouched. The three extra formats are encoded, decoded by `dav2d
 Normative reference: AV2 Bitstream & Decoding Process Specification v1.0.0
 (commit `38f28e7`). `dav2d` pin: `f9dafbc` (`tools/bin/dav2d*`).
 
+## Product wiring (2026-11-12)
+
+`av2enc --still --chroma 422|444|400` routes to
+`chroma::encode_chroma_still_picture` through `src/formats/format_encode.*`
+and the strict Y4M reader `src/formats/format_y4m.*`. The input must be an
+8-bit Y4M in the requested format (`C422`, `C444` or `Cmono`); the product path
+does not resample. `--qp` pins 90 (the writer's qlookup(90) step) and
+`--recon <file>` dumps the reconstruction. `src/formats/format_gate.sh` pins
+both 64x64 and 640x360 IVF/decoded MD5s and requires a 0-diff recon match.
+`--chroma 420` remains the default 8-bit 4:2:0 M1 stream.
+
 Related existing components that were reused, not modified:
 
 | Component | Reuse |

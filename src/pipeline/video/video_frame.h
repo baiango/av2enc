@@ -59,6 +59,16 @@ struct VideoOptions {
   int max_partition_depth = 4;
   // ME integer search radius in luma samples.
   int me_range = 16;
+  // Opt-in ME refinement: add the normative 1/8-pel subpel stage.
+  bool me_subpel_eighth = false;
+  // References per P frame (NumTotalRefs).  1 keeps the historical M2 stream;
+  // 2..3 enables per-block single_ref selection over the most recent slots.
+  int num_total_refs = 1;
+  // Frame MV precision: 0 = 1/8 pel, 1 = 1/4 pel, 2 = 1/2 pel.
+  int mv_precision = 0;
+  // Normative DRL reordering (§7.12.2.19).  Off = DRL_REORDER_DISABLED.
+  bool drl_reorder = false;
+  bool drl_reorder_always = false;
   // Debug trace to stderr.
   bool trace = false;
 };

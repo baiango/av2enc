@@ -34,6 +34,9 @@ struct VideoConfig {
   // read_drl_idx() exhaustion value).
   std::uint8_t max_drl_bits_minus_1 = 4;
   bool disable_cdf_update = true;
+  // §5.4.6 DRL reordering.  Default is DRL_REORDER_DISABLED.
+  bool disable_drl_reorder = true;
+  bool constrain_drl_reorder = true;
   // Sequence-level intra tool used by the M1 keyframe tile payload and by the
   // M2 intra fallback blocks.
   bool enable_cfl_intra = true;
@@ -45,6 +48,13 @@ struct VideoFrameHeader {
   std::uint32_t order_hint = 0;
   // Reference slot used by every block in this frame (single reference).
   std::uint8_t ref_slot = 0;
+  // §5.18.2 explicit reference map.  For num_total_refs > 1 the slots are
+  // listed newest first; every block then selects one with single_ref syntax.
+  std::uint8_t num_total_refs = 1;
+  std::uint8_t ref_frame_idx[7] = {0, 0, 0, 0, 0, 0, 0};
+  // §5.18.2 frame MV precision.  Defaults are the M2 1/8-pel pair.
+  bool use_qtr_precision_mv = false;
+  bool allow_high_precision_mv = true;
   // §5.18.2 refresh_frame_flags. The key frame refreshes all slots.
   std::uint32_t refresh_frame_flags = 1;
 };

@@ -399,6 +399,29 @@ int main(int argc, char** argv) {
         return 2;
       }
       options.base_q_idx = static_cast<std::uint8_t>(qp);
+    } else if (arg == "--refs" && i + 1 < argc) {
+      const int refs = std::atoi(argv[++i]);
+      if (refs < 1 || refs > 3) {
+        std::cerr << "--refs must be in [1, 3]\n";
+        return 2;
+      }
+      options.num_total_refs = refs;
+    } else if (arg == "--subpel-eighth") {
+      options.me_subpel_eighth = true;
+    } else if (arg == "--mv-precision" && i + 1 < argc) {
+      const std::string value = argv[++i];
+      if (value == "eighth") {
+        options.mv_precision = 0;
+      } else if (value == "quarter") {
+        options.mv_precision = 1;
+      } else if (value == "half") {
+        options.mv_precision = 2;
+      } else {
+        std::cerr << "--mv-precision must be eighth, quarter or half\n";
+        return 2;
+      }
+    } else if (arg == "--drl-reorder") {
+      options.drl_reorder = true;
     } else if (arg == "--trace") {
       options.trace = true;
     } else if (arg == "--help") {
@@ -406,7 +429,9 @@ int main(int argc, char** argv) {
                    "[--out out.ivf] [--force-intra] [--no-newmv] "
                    "[--no-intra-fallback] [--force-global] [--single-block] "
                    "[--inter-residual] [--force-inter-residual] "
-                   "[--min-block N] [--max-depth N] [--qp N] [--trace]\n";
+                   "[--min-block N] [--max-depth N] [--qp N] [--refs N] "
+                   "[--subpel-eighth] [--mv-precision eighth|quarter|half] "
+                   "[--drl-reorder] [--trace]\n";
       return 0;
     } else {
       std::cerr << "unknown argument: " << arg << "\n";

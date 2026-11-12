@@ -11,6 +11,16 @@ AV2 v1.0.0 signals exactly two depths: `bit_depth_idc = 0` is 10-bit and
 so this component never emits 12-bit.  12-bit remains internal-only in
 `src/encoder/format/`.
 
+## Product wiring (2026-11-12)
+
+`av2enc --still --bit-depth 10` routes to `hbd::encode_still` through
+`src/formats/format_encode.*` and the strict Y4M reader
+`src/formats/format_y4m.*`. The input must be `C420p10` (no implicit depth
+conversion), `--qp` is limited to 1..90 (coefficient-CDF slice 0), and
+`--recon <file>` dumps the C420p10 reconstruction. `src/formats/format_gate.sh`
+pins the 64x64/640x360 IVF and decoded MD5s and requires a 0-LSB recon match.
+The default `--still` path stays byte-identical 8-bit 4:2:0.
+
 ## What this owns
 
 | File | Purpose |
