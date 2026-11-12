@@ -269,10 +269,11 @@ def check(source_bytes: bytes, arrays: dict) -> int:
     # intra/filter CDFs), but scanning it keeps the check honest if that
     # changes.
     shipping_headers = [
-        (ROOT / "src" / "encoder" / "basic_cdf_tables.h", "basic_cdf_tables.h"),
-        (ROOT / "src" / "encoder" / "m1" / "still_cdf_tables.h",
+        (ROOT / "src" / "pipeline" / "still" / "basic_cdf_tables.h",
+         "basic_cdf_tables.h"),
+        (ROOT / "src" / "pipeline" / "still" / "still_cdf_tables.h",
          "still_cdf_tables.h"),
-        (ROOT / "src" / "encoder" / "rdoq" / "rdoq_cdf_tables.h",
+        (ROOT / "src" / "codec" / "rate" / "rdoq" / "rdoq_cdf_tables.h",
          "rdoq_cdf_tables.h"),
     ]
     report: list[str] = []
@@ -298,8 +299,8 @@ def check(source_bytes: bytes, arrays: dict) -> int:
     # require at least one match.  If neither has them, the rdoq header above
     # still pins their slice-0 values.
     syntax_candidates = [
-        ROOT / "src" / "encoder" / "m1" / "still_syntax.cpp",
-        ROOT / "src" / "encoder" / "m2" / "video_syntax.cpp",
+        ROOT / "src" / "pipeline" / "still" / "still_syntax.cpp",
+        ROOT / "src" / "pipeline" / "video" / "video_syntax.cpp",
     ]
     syntax_compared = 0
     for json_name in ("Default_Eob_Pt_16_Cdf", "Default_Eob_Pt_32_Cdf"):

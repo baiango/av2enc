@@ -4,6 +4,15 @@ This module owns the four `COEFF_CDF_Q_CTXS` slices of the AV2 v1.0.0 §9.3
 default coefficient CDFs.  It exists so the M1/M2 writers can stop pinning
 `base_q_idx = 90` (slice 0) without hand-editing CDF values.
 
+Integration status (2026-11-12): the M1 writer
+(`src/pipeline/still/still_syntax.cpp`) and the M2 writer
+(`src/pipeline/video/video_syntax.cpp`) already select the slice from the raw
+frame `base_q_idx`, and both composition roots derive the quantizer from
+`qlookup(base_q_idx)`.  No separate CLI flag is needed: `--still --qp 1..255`
+covers slices 0–3 and is decoder-gated.  The generator's `--check` compares
+slice 0 against the post-refactor header paths under `src/pipeline/` and
+`src/codec/`.
+
 Everything is generated from `spec/tables/default_cdf.json`; nothing here is
 hand-typed.
 

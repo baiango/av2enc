@@ -342,6 +342,26 @@ bool analyze_palette(const std::uint8_t* src, int stride, int block_w,
   }
   std::sort(colors.begin(), colors.begin() + size);
 
+  // §5.20.8.1 delta codes palette_colors_y as a strictly increasing run, and
+  // median_cut can return the same cluster value twice (two boxes with equal
+  // means).  Collapse duplicates before the representability check; the cache
+  // split below is value-based and would otherwise hide the duplicate.
+  {
+    int unique = 0;
+    for (int i = 0; i < size; ++i) {
+      if (unique == 0 || colors[static_cast<std::size_t>(unique - 1)] !=
+                             colors[static_cast<std::size_t>(i)]) {
+        colors[static_cast<std::size_t>(unique++)] =
+            colors[static_cast<std::size_t>(i)];
+      }
+    }
+    size = unique;
+    if (size < 2) {
+      fill_palette(colors, size, 2);
+      std::sort(colors.begin(), colors.begin() + size);
+    }
+  }
+
   // The luma palette must be delta-representable.  If the chosen set is not,
   // merge the nearest colours until it is (screen content is normally exact).
   for (;;) {

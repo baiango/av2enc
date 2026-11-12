@@ -3,6 +3,7 @@
 #include "ext_syntax.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <sstream>

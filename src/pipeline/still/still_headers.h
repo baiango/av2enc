@@ -1,10 +1,18 @@
 #pragma once
 
 #include "core/bitstream/bitwriter.h"
+#include "codec/transform/delta_q/dcdeltaq.h"
+#include "codec/transform/qm/qm.h"
 
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
+
+namespace av2enc::rc {
+struct SegmentationParams;
+struct DeltaQParams;
+}  // namespace av2enc::rc
 
 // AV2 v1.0.0 OBU/header writer for the integrated M1 still picture.
 //
@@ -43,9 +51,13 @@ struct StillCcsoPlane {
   bool enabled = false;
   bool bo_only = true;
   int scale_idx = 0;        // f(2)
+  int quant_idx = 0;        // f(2), edge-classified form only
+  int ext_filter = 0;       // f(3), edge-classified form only
+  int edge_clf = 0;         // f(1), edge-classified form only
   int max_band_log2 = 3;    // f(2 + bo_only)
-  // ccso_offset_idx values in syntax order (band 0..(1<<max_band_log2)-1 for
-  // bo_only).  The value is Ccso_Offset[idx] * (scale_idx + 1).
+  // ccso_offset_idx values in syntax order: for bo_only the band-major table;
+  // otherwise (d0, d1, band) with d0/d1 in [0, 3 - edge_clf).  The value is
+  // Ccso_Offset[idx] * (scale_idx + 1).
   std::uint8_t offset_idx[128] = {};
 };
 
@@ -53,6 +65,78 @@ struct StillCcsoConfig {
   bool enable = false;
   // ccso_unit_matches_sb_size = 1 -> CcsoLumaSizeLog2 = 6 for 64x64 SBs.
   StillCcsoPlane plane[3];
+};
+
+// Opt-in delta-Q / segmentation syntax (§5.18.7.1, §5.18.7.8).  The reference
+// still path keeps one quantizer for the whole frame, so the signalled form is
+// the neutral one: segment ids are all 0 (an all-disabled 8-segment table) and
+// every superblock codes a zero reduced delta.  That exercises the syntax and
+// the decoder state machine without changing the reconstruction.  Per-segment
+// quantizer planning is a separate integration (it needs a per-SB decision and
+// dequant path).
+struct StillDeltaQConfig {
+  bool segmentation_enabled = false;
+  bool delta_q_present = false;
+  int delta_q_res = 0;  // 0..3; must be 0 when delta_q_present is false
+};
+
+// Builds the module parameter blocks that match `config`.  Returns false and
+// sets `error` when the values cannot be represented.  Defined in
+// still_headers.cpp so this header stays independent of the rc implementation.
+bool make_delta_q_params(const StillDeltaQConfig& config,
+                         ::av2enc::rc::SegmentationParams& segmentation,
+                         ::av2enc::rc::DeltaQParams& delta_q,
+                         std::string* error = nullptr);
+// One plane of the §5.18.7.11 / §5.20.10.4-.6 Wiener-NS decision.  M1 has no
+// inter frames, so temporal frame-filter prediction and bank reuse across
+// frames are not represented.  The per-unit syntax that this stage writes is
+// exactly what `wiener_write_unit()` (classes/wiener_syntax) emits: the
+// decision vector is replayed through that writer in tile order.
+struct StillLrPlane {
+  bool enabled = false;
+  // LoopRestorationSize shifts: size_luma = 512 >> shift,
+  // size_chroma = (512 >> max(subX,subY)) >> shift.  M1 fixes both to 3.
+  int shift = 3;
+  int unit_rows = 0;
+  int unit_cols = 0;
+  // LrType[unit_rows][unit_cols]: 0 = RESTORE_NONE, 2 = WIENER_NONSEP.
+  std::vector<std::uint8_t> unit_type;
+  // LrWienerNs, stride 18 per unit.
+  std::vector<std::int16_t> unit_coeffs;
+  // Per-unit §5.20.10.6 syntax, one entry per unit.
+  std::vector<std::uint8_t> unit_subset;
+  std::vector<std::uint8_t> unit_uv_sym;
+  std::vector<std::uint8_t> unit_merged;
+  std::vector<std::int8_t> unit_bank_k;
+};
+
+// §5.4.10 enable_gdf / gdf_unit_matches_sb_size, §5.18.7.9 gdf_params().
+// M1 signals no `use_gdf` symbols: gdf_per_block = 0, so every unit is
+// filtered.  `cols`/`rows` describe the GdfBlks grid for diagnostics.
+struct StillGdfConfig {
+  bool enable = false;
+  bool unit_matches_sb_size = true;
+  bool per_block = false;
+  int sb_size = 64;
+  int pic_qc_idx = 0;
+  int pic_scale_idx = 0;
+  int blk_size = 64;
+  int cols = 1;
+  int rows = 1;
+  int pix_scale = 1;
+};
+
+struct StillLrConfig {
+  bool enable = false;
+  // §5.4.10 lr_tools_uv_present.  Luma/chroma are controlled independently so
+  // --still-chroma-lr can be tested without luma; the chroma planes share a
+  // size and are enabled together.
+  bool uv_present = false;
+  // Luma uses RESTORE_PC_WIENER (§7.20.4) instead of non-separable Wiener NS.
+  // plane[0] then carries LrType (RESTORE_PC_WIENER / RESTORE_NONE) and no
+  // coefficients; chroma stays off.
+  bool pc_wiener = false;
+  StillLrPlane plane[3];
 };
 
 struct StillConfig {
@@ -63,17 +147,53 @@ struct StillConfig {
   bool disable_cdf_update = true;
   bool enable_intra_edge_filter = true;
   bool enable_cfl_intra = true;
+  // §5.4.5 sequence_intra_config() enable_ibp f(1).  IBP has no per-block
+  // syntax; enabling it changes every DC and directional prediction of a
+  // non-4x4 block in both the search and the reconstruction.
+  bool enable_ibp = false;
+  // §5.4.5 sequence_intra_config() enable_mrls f(1).
+  bool enable_mrls = false;
+  // §5.4.5 sequence_intra_config() enable_dip f(1).
+  bool enable_dip = false;
+  // §5.4.5 sequence_intra_config() enable_mhccp f(1).
+  bool enable_mhccp = false;
+  // §5.18.3.3 screen_content_params().  single_picture_header_flag infers
+  // seq_force_screen_content_tools = SELECT_SCREEN_CONTENT_TOOLS, so the frame
+  // codes allow_screen_content_tools and (when set) force_integer_mv.
+  bool allow_screen_content_tools = false;
+  bool force_integer_mv = true;
+  // §5.20.8 palette_mode_info()/palette_tokens().  Requires screen tools.
+  bool enable_palette = false;
+  // §5.4.5 cfl_ds_filter_index f(2).  0 keeps the historical CfL filter.
+  int cfl_ds_filter_index = 0;
   // Keeps chroma on DCT_DCT, so the DCT-only coefficient scan/context path is
   // used for every chroma block.
   bool enable_chroma_dctonly = true;
   // §5.4.8 enable_idtx_intra.  Required for intra TX types that use an identity
   // 1D transform (IDTX/V_DCT/H_DCT), which the long-side sets always list.
   bool enable_idtx_intra = false;
+  // §5.4.8 enable_intra_ist / enable_inter_ist.  M1 only codes intra IST
+  // (`sec_tx_type` on luma blocks); inter IST stays off.
+  bool enable_intra_ist = false;
+  bool enable_inter_ist = false;
   // M1 starts with TX_MODE_LARGEST (one transform per coding block). Set true
   // for TX_MODE_SELECT once TX partition syntax is wired.
   bool tx_mode_select = false;
   // §5.20.2 reduced_tx_set (2 bits).  0 keeps the full intra TX-type sets.
   int reduced_tx_set = 0;
+  // §5.4.3 sequence_partition_config() superblock selection.  Opt-in and
+  // mutually exclusive: use_256x256_superblock is present only when the frame
+  // is 256-ruled, and then the use_128x128_superblock bit is absent.  An intra
+  // frame is always coded with SbSize = 128x128 (§5.18.1), so both flags select
+  // a 128x128 frame-superblock grid; use_256 only changes the sequence-level
+  // size.  The M1 writer does not emit 256x256 coding blocks.
+  bool use_128x128_superblock = false;
+  bool use_256x256_superblock = false;
+  // §5.4.3 extended-partition tools.  enable_uneven_4way_partitions is present
+  // (and only read) when enable_ext_partitions is 1.  Default off keeps the
+  // historical two zero bits.
+  bool enable_ext_partitions = false;
+  bool enable_uneven_4way_partitions = false;
   // apply_deblocking_filter[0..3].
   bool apply_deblock_y_vert = true;
   bool apply_deblock_y_horz = true;
@@ -83,7 +203,43 @@ struct StillConfig {
   StillCdefConfig cdef;
   // Opt-in CCSO (§5.4.10 enable_ccso + §5.18.7.12 ccso_params + read_ccso).
   StillCcsoConfig ccso;
+  // Opt-in delta-Q / segmentation (neutral form; see StillDeltaQConfig).
+  // Distinct from the DC/AC delta-Q fields below: this one signals the
+  // per-superblock qindex / segmentation syntax.
+  StillDeltaQConfig per_sb_delta_q;
+  // Opt-in content interpretation OBU (§5.15) between the sequence header and
+  // the frame.  The default parameters have every presence flag clear.
+  bool content_interpretation = false;
+  // Opt-in quantizer matrices (§5.18.6.2 setup_qm_params + §7.14.4).  The
+  // default-off state writes the historical `using_qmatrix = 0` bit.  The
+  // encoder only signals spec-defined default matrices (levels 0..14); no
+  // quantizer_matrix_obu() is emitted, so no user QM data is present.
+  qm::QmFrameState qm;
+  // Opt-in DC/AC delta-Q (§5.4.8 sequence fields + §5.18.6.1
+  // quantization_params).  Defaults write exactly the historical bits:
+  // equal_ac_dc_q=1, no separate UV deltas, all enables 0, all frame deltas 0.
+  dcdeltaq::SequenceDeltaQ dc_ac_delta_q;
+  dcdeltaq::FrameDeltaQ frame_delta_q;
+  // Opt-in GDF (§7.20.5, applied in the loop-restoration stage after CCSO).
+  StillGdfConfig gdf;
+  // Opt-in film grain signalling.  The model OBU is prebuilt by the encoder
+  // and inserted before the coded-frame OBU; the frame header codes
+  // film_grain_config() (apply_grain is inferred 1 for a still picture).
+  bool film_grain_present = false;
+  int film_grain_id = 0;
+  std::uint16_t grain_seed = 0;
+  std::vector<std::uint8_t> film_grain_obu;
+  // Opt-in non-separable Wiener loop restoration (§5.4.10 enable_restoration +
+  // §5.18.7.11 lr_params + §5.20.10.4-.6 read_lr).  Applied after CCSO.
+  StillLrConfig lr;
 };
+
+// Frame-level superblock size in pixels.  §5.18.1 clamps an intra frame to
+// 128x128 even when the sequence header signals 256x256 superblocks.
+inline int superblock_size_px(const StillConfig& config) {
+  return (config.use_128x128_superblock || config.use_256x256_superblock) ? 128
+                                                                          : 64;
+}
 
 std::vector<std::uint8_t> make_sequence_header_obu(const StillConfig& config);
 

@@ -13,7 +13,7 @@
 //   lr_chroma_quality --source src.y4m --recon recon.y4m
 //                     [--out-prefix /tmp/lrq] [--shift N] [--lambda L]
 
-#include "codec/filters/loop_restoration_chroma/chroma_lr.h"
+#include "codec/filters/loop_restoration/chroma/chroma_lr.h"
 
 #include "core/io/y4m.h"
 

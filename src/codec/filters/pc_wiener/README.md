@@ -231,9 +231,15 @@ Public header: `pc_wiener_stream.h`.
 | `ApplyPerUnitPcWiener` / `ApplyFrameClassWiener` | expected reconstruction for tests/gates |
 | `TranslatedPcWiener`, `TranslatedPcWienerSet`, `PcWienerSubclassLookup`, `FilterSetIndex` | §5.20.10.6 translation and class map |
 
-There are **no production call sites** yet: `still_headers.cpp` and
-`video_headers.cpp` still write `enable_restoration = 0`, and the production
-restoration core still rejects `RESTORE_PC_WIENER`.  The intended integration is:
+**Integration status (2026-11-12).**  Per-unit luma PC-Wiener is wired into the
+opt-in CPU still path as `--still-pc-wiener` (per-unit mode only).  It is gated
+by `tools/still_verify/loop_restoration_gate.sh` with `dav2d --strict 1` and a
+sample-for-sample recon compare at 64x64 and 640x360, alone and after
+CDEF+CCSO.  The raw bits are written by `WriteLrParams`; `still_headers.cpp` /
+`still_syntax.cpp` are the production call sites.  The frame-class mode and the
+CUDA path remain unwired, and the production restoration core still rejects
+`RESTORE_PC_WIENER` (the still path uses this module's own apply).  The
+remaining intended integration steps are:
 
 1. replace the sequence filter row with `WriteSequenceFilterConfig`;
 2. replace the frame `lr_params()` bytes with `WriteLrParams`;

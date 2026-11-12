@@ -12,8 +12,15 @@ unreachable: `enable_gdf = 0`, `gdf_unit_matches_sb_size`, `gdf_frame_enable`,
 writer.  This directory supplies all of them, plus an encoder decision and a
 real `dav2d` gate.
 
-Nothing outside this directory is edited.  Call sites for the integration pass
-are listed at the end.
+**Integration status (2026-11-12).**  GDF is wired into the opt-in CPU still
+path as `--still-gdf`: sequence `enable_gdf`/`gdf_unit_matches_sb_size`, the
+`gdf_params()` row between deblock and CDEF, and the recovered filter applied
+in the loop-restoration stage after CDEF/CCSO.  M1 signals `gdf_per_block = 0`,
+so no `use_gdf` tile symbols are written (the unit tests still pin that syntax).
+Gated by `tools/still_verify/loop_restoration_gate.sh` with `dav2d --strict 1`
+and an exact recon compare at 64x64 and 640x360.  GDF overwrites `LrFrame` for
+every filtered luma block, so combining it with luma/chroma loop restoration is
+rejected until the §7.20.1 pre-GDF `CdefFrame` split is modelled.
 
 ## Files
 

@@ -33,6 +33,7 @@
 #pragma once
 
 #include "codec/entropy/avg_cdf/avg_cdf_bank.h"
+#include "codec/entropy/qctx/qctx.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -44,19 +45,18 @@ namespace av2enc::entropy::continuity {
 // §3: NUM_REF_FRAMES.  One `save_cdfs` context per reference buffer slot.
 inline constexpr std::uint32_t kNumRefFrames = 16;
 
-// §6.17.2 init_coeff_cdfs(): four COEFF_CDF_Q_CTXS slices.
-inline constexpr int kCoeffCdfSliceCount = 4;
-inline constexpr int kSlice0MaxBaseQIdx = 90;
-inline constexpr int kSlice1MaxBaseQIdx = 140;
-inline constexpr int kSlice2MaxBaseQIdx = 190;
+// §6.17.2 init_coeff_cdfs(): four COEFF_CDF_Q_CTXS slices.  The registry and
+// its selection rule live in `src/codec/entropy/qctx/`; alias them here so the
+// 90/140/190 thresholds exist in exactly one place.
+inline constexpr int kCoeffCdfSliceCount = still::qctx::kSliceCount;
+inline constexpr int kSlice0MaxBaseQIdx = still::qctx::kSlice0MaxBaseQIdx;
+inline constexpr int kSlice1MaxBaseQIdx = still::qctx::kSlice1MaxBaseQIdx;
+inline constexpr int kSlice2MaxBaseQIdx = still::qctx::kSlice2MaxBaseQIdx;
 
 // §6.17.2: the coefficient-CDF slice is selected from the *raw frame*
 // `base_q_idx`, never from a tile/segment/delta-Q index.
 constexpr int qctx_slice_for_base_q_idx(int raw_base_q_idx) noexcept {
-  if (raw_base_q_idx <= kSlice0MaxBaseQIdx) return 0;
-  if (raw_base_q_idx <= kSlice1MaxBaseQIdx) return 1;
-  if (raw_base_q_idx <= kSlice2MaxBaseQIdx) return 2;
-  return 3;
+  return still::qctx::slice_for_base_q_idx(raw_base_q_idx);
 }
 
 // §5.18.7.2 tile_info() tail.  `context_update_tile_id` is coded only when

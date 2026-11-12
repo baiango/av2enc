@@ -58,25 +58,12 @@ Status average_cdf(uint16_t* cdf, const uint16_t* tile_cdf, int n,
   if (cdf == nullptr || tile_cdf == nullptr || n < 2 || n > kMaxSymbols) {
     return Status::kInvalidArgument;
   }
-  if (num_log2 > 3u) {
+  if (num_log2 > spec::kMaxAverageLog2) {
     return Status::kInvalidArgument;
   }
 
-  // avg_cdf(cdf, tilecdf, sz) with sz = n + 1.
-  if (tile_num == 0u) {
-    for (int i = 0; i < n - 1; ++i) {
-      cdf[i] = static_cast<uint16_t>(kCdfScale);
-    }
-    cdf[n - 1] = tile_cdf[n - 1];
-    cdf[n] = 0;
-  }
-  for (int i = 0; i < n - 1; ++i) {
-    const uint32_t value = cdf[i];
-    const uint32_t tile_value = tile_cdf[i];
-    cdf[i] = static_cast<uint16_t>(
-        value - ((kCdfScale - tile_value) >> num_log2));
-  }
-  cdf[n] = static_cast<uint16_t>(cdf[n] + (tile_cdf[n] >> num_log2));
+  // avg_cdf(cdf, tilecdf, sz) with sz = n + 1; shared §8.2.4 arithmetic.
+  spec::average_cdf_step(cdf, tile_cdf, n, num_log2, tile_num == 0u);
   return Status::kOk;
 }
 

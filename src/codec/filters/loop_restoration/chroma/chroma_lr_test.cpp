@@ -2,7 +2,7 @@
 // goldens, syntax round-trips against the shared luma implementation, the
 // encoder decision on real reconstruction, and lr_tools_uv_present semantics.
 
-#include "codec/filters/loop_restoration_chroma/chroma_lr.h"
+#include "codec/filters/loop_restoration/chroma/chroma_lr.h"
 
 #include <algorithm>
 #include <cmath>

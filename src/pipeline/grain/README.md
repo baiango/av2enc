@@ -1,9 +1,17 @@
 # Film grain stream (encoder-side bitstream half)
 
 AV2 v1.0.0 film grain **signalling**, model estimation and slot selection.
-This directory is self-contained: it adds the missing encoder side of
-`OBU_FILM_GRAIN` and `film_grain_config()` without touching
-`src/main.cpp`, the root `CMakeLists.txt`, or any M1/M2 core file.
+This directory adds the encoder side of `OBU_FILM_GRAIN` and
+`film_grain_config()`.
+
+**Integration status (2026-11-12).**  The still composition root wires this
+module behind `--still-grain`: `film_grain_params_present = 1`, one
+`film_grain_obu()` before the coded-frame OBU, and `film_grain_config()` as the
+last frame-header field.  A fixed two-point 4:2:0 model is used; grain output is
+decoder-side, so the encoder recon stays unfiltered.  Gated by
+`tools/still_verify/loop_restoration_gate.sh` (`--filmgrain 0` recon exactness
+plus a `--filmgrain 1` synthesis check) at 64x64 and 640x360.  The stale
+`pipeline/grain/stream/` include paths were corrected while wiring.
 
 Normative sources: `spec/AV2_Spec_v1.0.0.pdf` (commit `38f28e7`).
 

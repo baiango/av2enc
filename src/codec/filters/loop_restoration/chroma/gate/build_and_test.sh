@@ -34,7 +34,7 @@ mkdir -p "$BUILD"
 python3 "$HERE/vendor_video_syntax.py" --out "$BUILD"
 
 SOURCES=(
-  "$ROOT/src/codec/filters/loop_restoration_chroma/chroma_lr.cpp"
+  "$ROOT/src/codec/filters/loop_restoration/chroma/chroma_lr.cpp"
   "$ROOT/src/codec/filters/loop_restoration/restoration.cpp"
   "$ROOT/src/codec/filters/loop_restoration/classes/wiener_fit.cpp"
   "$ROOT/src/codec/filters/loop_restoration/classes/wiener_syntax.cpp"

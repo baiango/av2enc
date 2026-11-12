@@ -1,4 +1,4 @@
-#include "pipeline/grain/stream/grain_stream.h"
+#include "pipeline/grain/grain_stream.h"
 
 #include <algorithm>
 #include <cmath>

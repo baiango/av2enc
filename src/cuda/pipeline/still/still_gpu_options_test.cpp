@@ -65,6 +65,12 @@ void test_mapping_matches_cli() {
   gpu.cdef_on_skip_txfm = true;
   gpu.enable_ccso = true;
   gpu.ccso_bands_log2 = 3;
+  gpu.ccso_edge = true;
+  gpu.enable_wiener = true;
+  gpu.enable_chroma_lr = true;
+  gpu.enable_pc_wiener = true;
+  gpu.enable_gdf = true;
+  gpu.enable_grain = true;
   gpu.rdoq = true;
   gpu.rdoq_sse_scale = 0.25;
   gpu.tx_type = true;
@@ -90,6 +96,12 @@ void test_mapping_matches_cli() {
   check(cpu.cdef_on_skip_txfm == true, "cdef_on_skip_txfm");
   check(cpu.enable_ccso == true, "enable_ccso");
   check_equal(cpu.ccso_bands_log2, 3, "ccso_bands_log2");
+  check(cpu.ccso_edge == true, "ccso_edge");
+  check(cpu.enable_wiener == true, "enable_wiener");
+  check(cpu.enable_chroma_lr == true, "enable_chroma_lr");
+  check(cpu.enable_pc_wiener == true, "enable_pc_wiener");
+  check(cpu.enable_gdf == true, "enable_gdf");
+  check(cpu.enable_grain == true, "enable_grain");
   check(cpu.rdoq == true, "rdoq");
   check_close(cpu.rdoq_sse_scale, 0.25, "rdoq_sse_scale");
   check(cpu.tx_type == true, "tx_type");
@@ -155,6 +167,30 @@ void test_every_m3_flag_rejected_by_name() {
   gpu = GpuOptions{};
   gpu.uv_full = true;
   expect_rejected(gpu, "--still-uv-full", "--still-uv-full");
+
+  gpu = GpuOptions{};
+  gpu.ccso_edge = true;
+  expect_rejected(gpu, "--still-ccso-edge", "--still-ccso-edge");
+
+  gpu = GpuOptions{};
+  gpu.enable_wiener = true;
+  expect_rejected(gpu, "--still-wiener", "--still-wiener");
+
+  gpu = GpuOptions{};
+  gpu.enable_chroma_lr = true;
+  expect_rejected(gpu, "--still-chroma-lr", "--still-chroma-lr");
+
+  gpu = GpuOptions{};
+  gpu.enable_pc_wiener = true;
+  expect_rejected(gpu, "--still-pc-wiener", "--still-pc-wiener");
+
+  gpu = GpuOptions{};
+  gpu.enable_gdf = true;
+  expect_rejected(gpu, "--still-gdf", "--still-gdf");
+
+  gpu = GpuOptions{};
+  gpu.enable_grain = true;
+  expect_rejected(gpu, "--still-grain", "--still-grain");
 }
 
 }  // namespace

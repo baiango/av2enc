@@ -1,4 +1,5 @@
 #include "core/bitstream/basic_headers.h"
+#include "codec/entropy/lossless/lossless.h"
 #include "pipeline/still/basic_encoder.h"
 #include "pipeline/still/still_encoder.h"
 #include "core/io/ivf.h"
@@ -22,11 +23,11 @@
 #include "cuda/arena.h"
 #include "cuda/context.h"
 
-// Still GPU pipeline (owner: orchestrator, src/cuda/m1/).  Include the contract
-// header when it is visible.  The call itself is only linked when CMake also
-// found the orchestrator entry point (src/cuda/m1/still_gpu.{cu,cpp}); until then
-// --still-gpu reports itself as unavailable at runtime.
-#if __has_include("cuda/m1/still_gpu.h")
+// Still GPU pipeline (owner: orchestrator, src/cuda/pipeline/still/).  Include
+// the contract header when it is visible.  The call itself is only linked when
+// CMake also found the orchestrator entry point; until then --still-gpu reports
+// itself as unavailable at runtime.
+#if __has_include("cuda/pipeline/still/still_gpu.h")
 #include "cuda/pipeline/still/still_gpu.h"
 #define AV2ENC_STILL_GPU_HEADER 1
 #else
@@ -106,6 +107,33 @@ struct Options {
   int still_cdef_strengths = 4;
   bool still_ccso = false;
   int still_ccso_bands = 6;
+  bool still_sb128 = false;
+  bool still_sb256 = false;
+  bool still_ext_partitions = false;
+  bool still_segmentation = false;
+  bool still_delta_q = false;
+  int still_delta_q_res = 0;
+  bool lossless = false;
+  bool lossless_force_fsc = false;
+  bool still_content_interpretation = false;
+  bool still_qm = false;
+  int still_qm_level = 3;
+  bool still_ist = false;
+  double still_ist_scale = 0.125;
+  bool still_dc_ac_delta_q = false;
+  bool still_ibp = false;
+  bool still_mrl = false;
+  int still_cfl_ds = 0;
+  bool still_cfl_explicit = false;
+  bool still_dip = false;
+  bool still_palette = false;
+  bool still_mhccp = false;
+  bool still_ccso_edge = false;
+  bool still_wiener = false;
+  bool still_chroma_lr = false;
+  bool still_pc_wiener = false;
+  bool still_gdf = false;
+  bool still_grain = false;
   int still_depth = -1;  // -1 = component default
   std::uint64_t vram_cap_mib = 0;  // 0 = largest reservation the device can serve
   bool help = false;
@@ -149,6 +177,36 @@ void print_usage(std::ostream& out) {
          "  --still-tx-type         M1: intra luma TX_TYPE search\n"
          "  --still-cdef            M1: enable CDEF (post-deblock, opt-in)\n"
          "  --still-ccso            M1: enable band-offset-only CCSO (post-CDEF)\n"
+         "  --still-sb128           Still: 128x128 superblocks (default 64x64)\n"
+         "  --still-sb256           Still: signal 256x256 sequence superblocks\n"
+         "                       (intra frames still code 128x128; default off)\n"
+         "  --still-ext-partitions  Still: HORZ_3/VERT_3 and uneven 4-way\n"
+         "                       extended partitions (CPU-only; default off)\n"
+         "  --still-segmentation    M1: signal a neutral 8-segment table (opt-in)\n"
+         "  --still-delta-q         M1: signal neutral per-superblock delta-Q (opt-in)\n"
+         "  --still-content-interpretation  M1: emit a default content interpretation OBU\n"
+         "  --lossless              Q=0 lossless still picture (DPCM intra, 8x8 blocks)\n"
+         "  --lossless-fsc          Lossless: force forward-skip-coding coefficient path\n"
+         "  --still-qm              M1: signal a spec-defined quantizer matrix\n"
+         "                       (default matrices, level 3; opt-in)\n"
+         "  --still-ist             M1: intra secondary transform (luma, opt-in)\n"
+         "  --still-dc-ac-delta-q   M1: DC/AC delta-Q frame search (opt-in)\n"
+         "  --still-ibp             M1: enable intra bi-prediction (§5.4.5)\n"
+         "  --still-mrl             M1: enable multiple reference lines for\n"
+         "                       directional luma (implies the directional search)\n"
+         "  --still-cfl-ds <N>      M1: cfl_ds_filter_index 0..3 (default 0;\n"
+         "                       3 behaves like 0)\n"
+         "  --still-cfl-explicit    M1: allow explicit CfL alpha (CFL_EXPLICIT)\n"
+         "  --still-dip             M1: enable DIP as a luma DC alternative\n"
+         "  --still-palette         M1: enable luma palette intra (screen content;\n"
+         "                       sets allow_screen_content_tools)\n"
+         "  --still-mhccp           M1: enable MHCCP (CFL_MULTI) chroma prediction\n"
+         "  --still-ccso-edge       M1: edge-classified CCSO + per-unit skip\n"
+         "  --still-wiener          M1: luma Wiener NS loop restoration (post-CCSO)\n"
+         "  --still-chroma-lr       M1: chroma Wiener NS loop restoration\n"
+         "  --still-pc-wiener       M1: luma PC-Wiener loop restoration\n"
+         "  --still-gdf             M1: guided detail filter (pre-Wiener)\n"
+         "  --still-grain           M1: signal film grain (decoder synthesis)\n"
          "  --vram-cap <MiB>     Upper bound for the CUDA arena; default 0 takes\n"
          "                       the largest reservation the device can serve\n"
          "  -h, --help           Show this help\n"
@@ -161,7 +219,10 @@ void print_usage(std::ostream& out) {
          "  --still-rdoq-scale S    lambda sse_scale for --still-rdoq (0.125)\n"
          "  --still-tx-type-scale S lambda sse_scale for --still-tx-type (0.125)\n"
          "  --still-cdef-strengths N  CDEF strength sets 1..8 (default 4)\n"
-         "  --still-ccso-bands N    CCSO max_band_log2 0..6 (default 6 = 64 bands)\n";
+         "  --still-ccso-bands N    CCSO max_band_log2 0..6 (default 6 = 64 bands)\n"
+         "  --still-delta-q-res N   delta_q_res for --still-delta-q, 0..3 (default 0)\n"
+         "  --still-qm-level L     QM default matrix level 0..14 (default 3)\n"
+         "  --still-ist-scale S    lambda sse_scale for --still-ist (0.125)\n";
 }
 
 bool parse_uint64(std::string_view text, std::uint64_t& value) {
@@ -369,6 +430,174 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--still-sb128") {
+      options.still_sb128 = true;
+      continue;
+    }
+
+    if (argument == "--still-sb256") {
+      options.still_sb256 = true;
+      continue;
+    }
+
+    if (argument == "--still-ext-partitions") {
+      options.still_ext_partitions = true;
+      continue;
+    }
+
+    if (argument == "--still-segmentation") {
+      options.still_segmentation = true;
+      continue;
+    }
+
+    if (argument == "--still-delta-q") {
+      options.still_delta_q = true;
+      continue;
+    }
+
+    if (argument == "--still-qm") {
+      options.still_qm = true;
+      continue;
+    }
+
+    if (argument == "--still-dc-ac-delta-q") {
+      options.still_dc_ac_delta_q = true;
+      continue;
+    }
+
+    if (argument == "--still-content-interpretation") {
+      options.still_content_interpretation = true;
+      continue;
+    }
+
+    if (argument == "--lossless") {
+      options.lossless = true;
+      continue;
+    }
+
+    if (argument == "--lossless-fsc") {
+      options.lossless_force_fsc = true;
+      continue;
+    }
+
+    if (argument == "--still-delta-q-res") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--still-delta-q-res'";
+        return ParseStatus::kError;
+      }
+      int res = 0;
+      if (!parse_int(argv[++i], res) || res < 0 || res > 3) {
+        error = "--still-delta-q-res must be an integer in [0, 3]";
+        return ParseStatus::kError;
+      }
+      options.still_delta_q_res = res;
+      continue;
+    }
+
+    if (argument == "--still-ist") {
+      options.still_ist = true;
+      continue;
+    }
+
+    if (argument == "--still-ist-scale") {
+      if (i + 1 >= argc ||
+          !parse_double(argv[++i], options.still_ist_scale) ||
+          options.still_ist_scale <= 0.0) {
+        error = "--still-ist-scale requires a positive number";
+        return ParseStatus::kError;
+      }
+      continue;
+    }
+
+    if (argument == "--still-qm-level") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--still-qm-level'";
+        return ParseStatus::kError;
+      }
+      int level = 0;
+      if (!parse_int(argv[++i], level) || level < 0 || level > 14) {
+        error = "--still-qm-level must be an integer in [0, 14]";
+        return ParseStatus::kError;
+      }
+      options.still_qm_level = level;
+      continue;
+    }
+
+    if (argument == "--still-ibp") {
+      options.still_ibp = true;
+      continue;
+    }
+
+    if (argument == "--still-mrl") {
+      options.still_mrl = true;
+      continue;
+    }
+
+    if (argument == "--still-cfl-ds") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--still-cfl-ds'";
+        return ParseStatus::kError;
+      }
+      int ds = 0;
+      if (!parse_int(argv[++i], ds) || ds < 0 || ds > 3) {
+        error = "--still-cfl-ds must be an integer in [0, 3]";
+        return ParseStatus::kError;
+      }
+      options.still_cfl_ds = ds;
+      continue;
+    }
+
+    if (argument == "--still-cfl-explicit") {
+      options.still_cfl_explicit = true;
+      continue;
+    }
+
+    if (argument == "--still-dip") {
+      options.still_dip = true;
+      continue;
+    }
+
+    if (argument == "--still-palette") {
+      options.still_palette = true;
+      continue;
+    }
+
+    if (argument == "--still-mhccp") {
+      options.still_mhccp = true;
+      continue;
+    }
+
+    if (argument == "--still-ccso-edge") {
+      options.still_ccso = true;
+      options.still_ccso_edge = true;
+      continue;
+    }
+
+    if (argument == "--still-wiener") {
+      options.still_wiener = true;
+      continue;
+    }
+
+    if (argument == "--still-chroma-lr") {
+      options.still_chroma_lr = true;
+      continue;
+    }
+
+    if (argument == "--still-pc-wiener") {
+      options.still_pc_wiener = true;
+      continue;
+    }
+
+    if (argument == "--still-gdf") {
+      options.still_gdf = true;
+      continue;
+    }
+
+    if (argument == "--still-grain") {
+      options.still_grain = true;
+      continue;
+    }
+
     if (argument == "--still-ccso-bands") {
       if (i + 1 >= argc) {
         error = "missing value after '--still-ccso-bands'";
@@ -442,6 +671,54 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     error = "no output file specified (use -o <output.ivf>)";
     return ParseStatus::kError;
   }
+  if (options.still_ext_partitions) {
+    if (!options.m1 && !options.still_gpu) {
+      error = "--still-ext-partitions requires --still";
+      return ParseStatus::kError;
+    }
+    if (options.still_gpu) {
+      error = "--still-ext-partitions is CPU-only: the CUDA planner has no "
+              "extended partition tree";
+      return ParseStatus::kError;
+    }
+    if (options.still_single) {
+      error = "--still-ext-partitions cannot be combined with --still-single";
+      return ParseStatus::kError;
+    }
+  }
+  if (options.still_sb128 || options.still_sb256) {
+    if (options.still_sb128 && options.still_sb256) {
+      error = "--still-sb128 and --still-sb256 are mutually exclusive";
+      return ParseStatus::kError;
+    }
+    if (!options.m1 && !options.still_gpu) {
+      error = "--still-sb128/--still-sb256 require --still";
+      return ParseStatus::kError;
+    }
+    if (options.still_gpu) {
+      error =
+          "--still-sb128/--still-sb256 are CPU-only: the CUDA planner accepts "
+          "64x64 superblocks only";
+      return ParseStatus::kError;
+    }
+    if (options.still_single) {
+      error = "--still-single cannot be combined with a 128x128 superblock";
+      return ParseStatus::kError;
+    }
+    if (options.still_depth == 0) {
+      error = "--still-depth 0 cannot be combined with a 128x128 superblock "
+              "(the 128 root must split)";
+      return ParseStatus::kError;
+    }
+    if (options.still_cdef) {
+      error = "--still-cdef is not wired for 128x128 superblocks";
+      return ParseStatus::kError;
+    }
+    if (options.still_ccso) {
+      error = "--still-ccso is not wired for 128x128 superblocks";
+      return ParseStatus::kError;
+    }
+  }
   return ParseStatus::kOk;
 }
 
@@ -490,6 +767,52 @@ int main(int argc, char** argv) {
   }
 #endif
 
+  if (options.still_gpu &&
+      (options.still_segmentation || options.still_delta_q)) {
+    std::cerr << "av2enc: error: --still-segmentation and --still-delta-q are "
+                 "CPU-only (--still); the Still GPU path does not signal "
+                 "delta-Q/segmentation\n";
+    return 2;
+  }
+
+  if (options.lossless && options.still_gpu) {
+    std::cerr << "av2enc: error: --lossless is implemented by the CPU "
+                 "lossless module; it cannot be combined with --still-gpu\n";
+    return 2;
+  }
+
+  if (options.lossless &&
+      (options.still_content_interpretation || options.still_segmentation ||
+       options.still_delta_q)) {
+    std::cerr << "av2enc: error: --lossless uses its own header writer; "
+                 "--still-content-interpretation and the delta-Q/segmentation "
+                 "flags are not applied there\n";
+    return 2;
+  }
+
+  if (options.still_gpu && options.still_content_interpretation) {
+    std::cerr << "av2enc: error: --still-content-interpretation is CPU-only "
+                 "(--still); the Still GPU path does not emit it\n";
+    return 2;
+  }
+
+  if (options.still_gpu) {
+    const auto reject_cpu_only = [](const char* flag) {
+      std::cerr << "av2enc: error: --still-gpu: " << flag
+                << " is not ported to the GPU pipeline yet; use --still (CPU)\n";
+      return 2;
+    };
+    if (options.still_ibp) return reject_cpu_only("--still-ibp");
+    if (options.still_mrl) return reject_cpu_only("--still-mrl");
+    if (options.still_dip) return reject_cpu_only("--still-dip");
+    if (options.still_mhccp) return reject_cpu_only("--still-mhccp");
+    if (options.still_cfl_explicit) {
+      return reject_cpu_only("--still-cfl-explicit");
+    }
+    if (options.still_cfl_ds != 0) return reject_cpu_only("--still-cfl-ds");
+    if (options.still_palette) return reject_cpu_only("--still-palette");
+  }
+
   av2enc::Y4mReader reader(options.input);
   if (!reader.open(error)) {
     std::cerr << "av2enc: " << error << "\n";
@@ -536,10 +859,12 @@ int main(int argc, char** argv) {
   // 1..255 is supported there.  M0 and the Still GPU path still pin 90.
   const bool still_cpu_qp = options.m1 && !options.still_gpu;
   if (options.qp == 0) {
-    std::cerr << "av2enc: error: --qp 0 (lossless) is not supported\n";
-    return 1;
+    if (!options.lossless) {
+      std::cerr << "av2enc: error: --qp 0 requires --lossless\n";
+      return 1;
+    }
   }
-  if (!still_cpu_qp && options.qp != 90) {
+  if (!options.lossless && !still_cpu_qp && options.qp != 90) {
     std::cerr << "av2enc: error: "
               << (options.still_gpu ? "Still GPU" : "M0")
               << " pins --qp 90; use --still for QP 1..255\n";
@@ -563,7 +888,7 @@ int main(int argc, char** argv) {
   // desynchronised stream, use the M1 still path for those geometries and say
   // so on stderr. Explicit --still / --still-gpu are unaffected.
   bool basic_fallback_to_m1 = false;
-  if (!options.m1 && !options.still_gpu) {
+  if (!options.m1 && !options.still_gpu && !options.lossless) {
     std::string reason;
     if (!av2enc::basic::geometry_supported(frame.width(), frame.height(),
                                         reason)) {
@@ -574,7 +899,36 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (options.m1 || options.still_gpu || basic_fallback_to_m1) {
+  if (options.lossless) {
+    av2enc::lossless::StillPicture picture;
+    picture.width = frame.width();
+    picture.height = frame.height();
+    picture.y = frame.y();
+    picture.u = frame.u();
+    picture.v = frame.v();
+
+    av2enc::lossless::Options lossless_options;
+    lossless_options.adaptive_cdf = options.adaptive_cdf;
+    lossless_options.fsc = options.lossless_force_fsc
+                               ? av2enc::lossless::FscMode::kForce
+                               : av2enc::lossless::FscMode::kOff;
+
+    av2enc::lossless::EncodeResult encoded;
+    if (!av2enc::lossless::encode_still(picture, lossless_options, encoded,
+                                        error)) {
+      return fail_encode(error);
+    }
+    if (!encoded.stats.exact) {
+      return fail_encode("lossless reconstruction is not exact (max |err| " +
+                         std::to_string(encoded.stats.max_abs_recon_error) +
+                         ")");
+    }
+    if (!writer.write_frame(encoded.temporal_unit, 0, error)) {
+      return fail_encode(error);
+    }
+    tile_bytes = encoded.stats.tile_bytes;
+    frame_bytes = encoded.stats.frame_bytes;
+  } else if (options.m1 || options.still_gpu || basic_fallback_to_m1) {
     av2enc::still::StillPicture picture;
     picture.width = frame.width();
     picture.height = frame.height();
@@ -583,6 +937,21 @@ int main(int argc, char** argv) {
     picture.v = frame.v();
 
     if (options.still_gpu) {
+      if (options.still_qm) {
+        return fail_encode(
+            "--still-gpu: --still-qm is not ported to the GPU pipeline yet; "
+            "use --still for the CPU QM path");
+      }
+      if (options.still_ist) {
+        return fail_encode(
+            "--still-gpu: --still-ist is not ported to the GPU pipeline yet; "
+            "use --still for the CPU IST path");
+      }
+      if (options.still_dc_ac_delta_q) {
+        return fail_encode(
+            "--still-gpu: --still-dc-ac-delta-q is not ported to the GPU pipeline "
+            "yet; use --still for the CPU delta-Q path");
+      }
 #if AV2ENC_STILL_GPU_CALLABLE
       // GpuOptions mirrors StillOptions and adds orchestrator controls; see
       // src/cuda/m1/still_gpu.h and docs/m1-gpu.md.
@@ -604,6 +973,12 @@ int main(int argc, char** argv) {
       gpu_options.cdef_num_strengths = options.still_cdef_strengths;
       gpu_options.enable_ccso = options.still_ccso;
       gpu_options.ccso_bands_log2 = options.still_ccso_bands;
+      gpu_options.ccso_edge = options.still_ccso_edge;
+      gpu_options.enable_wiener = options.still_wiener;
+      gpu_options.enable_chroma_lr = options.still_chroma_lr;
+      gpu_options.enable_pc_wiener = options.still_pc_wiener;
+      gpu_options.enable_gdf = options.still_gdf;
+      gpu_options.enable_grain = options.still_grain;
       gpu_options.rdoq = options.still_rdoq;
       gpu_options.rdoq_sse_scale = options.still_rdoq_scale;
       gpu_options.tx_type = options.still_tx_type;
@@ -640,8 +1015,16 @@ int main(int argc, char** argv) {
       still_options.adaptive_cdf = options.adaptive_cdf;
       still_options.force_single_block = options.still_single;
       still_options.force_dc = options.still_dc;
-      still_options.luma_dc_only = !options.still_full_intra && !options.still_rdo_intra;
+      still_options.luma_dc_only =
+          !options.still_full_intra && !options.still_rdo_intra &&
+          !options.still_mrl;
       still_options.uv_full = options.still_uv_full;
+      still_options.enable_mrl = options.still_mrl;
+      still_options.cfl_ds_filter = options.still_cfl_ds;
+      still_options.cfl_explicit = options.still_cfl_explicit;
+      still_options.enable_dip = options.still_dip;
+      still_options.palette = options.still_palette;
+      still_options.mhccp = options.still_mhccp;
       still_options.rdo_intra = options.still_rdo_intra;
       still_options.rdo_sse_scale = options.still_rdo_scale;
       still_options.rdoq = options.still_rdoq;
@@ -652,6 +1035,26 @@ int main(int argc, char** argv) {
       still_options.cdef_num_strengths = options.still_cdef_strengths;
       still_options.enable_ccso = options.still_ccso;
       still_options.ccso_bands_log2 = options.still_ccso_bands;
+      still_options.sb128 = options.still_sb128;
+      still_options.sb256 = options.still_sb256;
+      still_options.ext_partitions = options.still_ext_partitions;
+      still_options.enable_segmentation = options.still_segmentation;
+      still_options.enable_delta_q = options.still_delta_q;
+      still_options.delta_q_res = options.still_delta_q_res;
+      still_options.content_interpretation =
+          options.still_content_interpretation;
+      still_options.qm = options.still_qm;
+      still_options.qm_level = options.still_qm_level;
+      still_options.ist = options.still_ist;
+      still_options.ist_sse_scale = options.still_ist_scale;
+      still_options.delta_q = options.still_dc_ac_delta_q;
+      still_options.enable_ibp = options.still_ibp;
+      still_options.ccso_edge = options.still_ccso_edge;
+      still_options.enable_wiener = options.still_wiener;
+      still_options.enable_chroma_lr = options.still_chroma_lr;
+      still_options.enable_pc_wiener = options.still_pc_wiener;
+      still_options.enable_gdf = options.still_gdf;
+      still_options.enable_grain = options.still_grain;
       if (options.still_depth >= 0) {
         still_options.max_partition_depth = options.still_depth;
       }
@@ -700,10 +1103,13 @@ int main(int argc, char** argv) {
   }
 
   const char* path_name =
-      options.still_gpu
-          ? "Still GPU"
-          : (options.m1 ? "M1"
-                        : (basic_fallback_to_m1 ? "M1 (M0 fallback)" : "M0"));
+      options.lossless
+          ? "Lossless"
+          : (options.still_gpu
+                 ? "Still GPU"
+                 : (options.m1 ? "M1"
+                               : (basic_fallback_to_m1 ? "M1 (M0 fallback)"
+                                                       : "M0")));
   std::cout << "av2enc: " << path_name
             << " still-picture encode complete\n"
             << "  input:   " << options.input.string() << " (" << y4m.width
@@ -711,7 +1117,8 @@ int main(int argc, char** argv) {
             << y4m.fps_num << "/" << y4m.fps_den << " fps)\n"
             << "  output:  " << options.output.string() << " ("
             << writer.bytes_written() << " bytes IVF)\n"
-            << "  frames:  1, base_q_idx " << options.qp << ", tile "
+            << "  frames:  1, base_q_idx "
+            << (options.lossless ? 0 : options.qp) << ", tile "
             << tile_bytes << " bytes, temporal unit " << frame_bytes
             << " bytes\n";
   return 0;

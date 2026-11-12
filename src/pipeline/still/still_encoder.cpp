@@ -12,20 +12,35 @@
 #include "pipeline/still/still_encoder.h"
 
 #include "codec/intra/cfl/cfl.h"
+#include "codec/intra/cfl/mhccp/mhccp.h"
 #include "codec/filters/cdef/cdef.h"
 #include "codec/filters/deblock/deblock.h"
+#include "codec/filters/loop_restoration/classes/wiener_decision.h"
 #include "codec/filters/loop_restoration/restoration.h"
+#include "codec/intra/dip/dip.h"
+#include "codec/intra/ibp/ibp.h"
+#include "codec/filters/gdf/gdf_decision.h"
+#include "codec/filters/pc_wiener/pc_wiener_stream.h"
+#include "pipeline/grain/film_grain_syntax.h"
 #include "codec/intra/modes/intra_modes.h"
+#include "codec/intra/mrl/core/mrl.h"
+#include "codec/intra/mrl/stream/mrl_interaction.h"
+#include "codec/intra/palette/core/palette.h"
 #include "pipeline/still/still_headers.h"
 #include "pipeline/still/still_syntax.h"
 #include "pipeline/still/still_tables.h"
 #include "codec/entropy/qctx/qctx.h"
 #include "codec/partition/tree/partition.h"
+#include "codec/partition/ext/partition_ext.h"
 #include "codec/rate/rc/rc_tables.h"
 #include "codec/rate/rdo/intra_decision.h"
 #include "codec/rate/rdo/rdo.h"
 #include "codec/rate/rdoq/rdoq.h"
 #include "codec/rate/rdoq/rdoq_av2_model.h"
+#include "codec/transform/delta_q/dcdeltaq.h"
+#include "codec/transform/qm/qm.h"
+#include "codec/transform/secondary/tx_secondary.h"
+#include "codec/transform/secondary/tx_secondary_tables.h"
 #include "codec/transform/tx_type/tx_type.h"
 #include "codec/transform/variants/tx_variants.h"
 
@@ -41,6 +56,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -51,6 +67,7 @@ namespace {
 using partition::BlockSize;
 using partition::FrameGeometry;
 using partition::PartitionType;
+namespace pe = partition_ext;
 
 // YMode numeric values (§6.19.5.5).
 constexpr int kDcPred = 0;
@@ -96,6 +113,84 @@ bool y_mode_is_smooth(int mode) {
   return mode == kSmooth || mode == kSmoothV || mode == kSmoothH;
 }
 
+// Encoder-side analysis projection for the secondary transform.  The
+// component's forward_secondary_coeffs_kernel() only covers the 4x4/8x8 case
+// (it zeroes the whole block); for larger transforms the normative inverse
+// touches only the top-left sub-block that the §9.7 scan map addresses, so
+// project there and leave every other primary coefficient untouched.
+bool project_ist_levels(const txv::TxParams& params,
+                        txv::TxType plane_tx_type, int kernel,
+                        int sec_tx_type, bool transpose,
+                        std::vector<std::int32_t>& levels) {
+  txsec::SecondarySizeInfo info;
+  if (!txsec::secondary_size_info(params, plane_tx_type, &info)) return false;
+  if (sec_tx_type < 1 || sec_tx_type >= txsec::kStxTypes) return false;
+  if (kernel < 0 || kernel >= info.kernel_count) return false;
+  const int w = info.w;
+  const int h = info.h;
+  const std::size_t elems =
+      static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+  if (levels.size() < elems) return false;
+  const int kernel_width =
+      info.large ? txsec::kIst8x8Width : txsec::kIst4x4Width;
+  const std::int8_t* matrix =
+      info.large ? &txsec::kIst8x8Kernel[kernel][sec_tx_type - 1][0][0]
+                 : &txsec::kIst4x4Kernel[kernel][sec_tx_type - 1][0][0];
+  const int scan_bwl = info.large ? 3 : 2;
+  const int scan_mask = (1 << scan_bwl) - 1;
+
+  std::vector<std::uint16_t> scan(elems);
+  syntax::build_scan(w, h, scan);
+
+  std::vector<int> out_pos(static_cast<std::size_t>(info.n2));
+  std::vector<std::int32_t> x(static_cast<std::size_t>(info.n2));
+  for (int i = 0; i < info.n2; ++i) {
+    const int pos = info.large
+                        ? txsec::kStxScanOrder8x8[txsec::kStxScanMap
+                              [kernel][sec_tx_type - 1][i]]
+                        : txsec::kStxScanOrder4x4[i];
+    const int sx = pos & scan_mask;
+    const int sy = pos >> scan_bwl;
+    const int index = transpose ? sx * w + sy : sy * w + sx;
+    if (index < 0 || static_cast<std::size_t>(index) >= elems) return false;
+    out_pos[static_cast<std::size_t>(i)] = index;
+    x[static_cast<std::size_t>(i)] = levels[static_cast<std::size_t>(index)];
+  }
+
+  std::vector<std::int32_t> sec(static_cast<std::size_t>(info.n));
+  for (int j = 0; j < info.n; ++j) {
+    std::int64_t sum = 0;
+    for (int i = 0; i < info.n2; ++i) {
+      sum += static_cast<std::int64_t>(x[static_cast<std::size_t>(i)]) *
+             static_cast<std::int64_t>(matrix[j * kernel_width + i]);
+    }
+    const std::int64_t magnitude = sum < 0 ? -sum : sum;
+    const std::int64_t rounded =
+        (magnitude + (std::int64_t{1} << 6)) >> 7;
+    sec[static_cast<std::size_t>(j)] =
+        static_cast<std::int32_t>(sum < 0 ? -rounded : rounded);
+  }
+
+  // The decoder reads the first n scan positions, zeroes them, and writes the
+  // n2 output positions.  Positions it overwrites must not be coded again.
+  auto in_first_n = [&](int index) {
+    for (int j = 0; j < info.n; ++j) {
+      if (static_cast<int>(scan[static_cast<std::size_t>(j)]) == index) {
+        return true;
+      }
+    }
+    return false;
+  };
+  for (int i = 0; i < info.n2; ++i) {
+    const int index = out_pos[static_cast<std::size_t>(i)];
+    if (!in_first_n(index)) levels[static_cast<std::size_t>(index)] = 0;
+  }
+  for (int j = 0; j < info.n; ++j) {
+    levels[scan[static_cast<std::size_t>(j)]] = sec[static_cast<std::size_t>(j)];
+  }
+  return true;
+}
+
 struct Plane {
   int width = 0;
   int height = 0;
@@ -126,6 +221,9 @@ struct TxPlan {
   int adj_w = 0;
   int adj_h = 0;
   int eob = 0;
+  // §5.20.8.2 secondary transform (IST), luma only; 0 = off.
+  int sec_tx_type = 0;
+  int most_probable_stx_set = 0;
   std::vector<std::int32_t> levels;
   std::vector<std::uint8_t> pred;
   std::vector<std::uint8_t> recon;
@@ -144,6 +242,13 @@ struct ModeChoice {
   int angle_delta = 0;
   int av2_mode = kDcPred;
   std::int64_t sse = 0;
+  // §5.20.5.5 MRL syntax carried with the chosen luma mode.
+  int mrl_index = 0;
+  bool mrl_sec_index = false;
+  // §5.20.7.9 DIP alternative to ordinary DC prediction (luma only).
+  bool use_dip = false;
+  int dip_mode = 0;
+  bool dip_transpose = false;
 };
 
 struct UvChoice {
@@ -152,6 +257,17 @@ struct UvChoice {
   int angle_delta = 0;
   int av2_mode = kDcPred;
   std::int64_t sse = 0;
+  // §5.20.7.32 CfL signalling and the Q8 alphas the reconstruction applies.
+  int cfl_index = 1;         // 0 explicit, 1 derived
+  int cfl_alpha_signs = 0;
+  int cfl_alpha_u = 0;       // signalled symbols (magnitude - 1)
+  int cfl_alpha_v = 0;
+  int cfl_alpha_q8_u = 0;
+  int cfl_alpha_q8_v = 0;
+  // MHCCP (cfl_index == 2): cfl_mh_dir and the §7.13.7 derived Q16 params.
+  int cfl_mh_dir = 0;
+  av2enc::cfl::mhccp::MultiParams mh_params_u{};
+  av2enc::cfl::mhccp::MultiParams mh_params_v{};
 };
 
 // Per-4x4 decoded flags for count_top_right_avail / count_bottom_left_avail.
@@ -185,8 +301,9 @@ struct DecodedMap {
 
 class Encoder {
  public:
-  Encoder(const StillPicture& picture, const StillOptions& options)
-      : picture_(picture), options_(options) {
+  Encoder(const StillPicture& picture, const StillOptions& options,
+          const dcdeltaq::QuantFrameState* delta_quant = nullptr)
+      : picture_(picture), options_(options), delta_quant_(delta_quant) {
     width_ = static_cast<int>(picture.width);
     height_ = static_cast<int>(picture.height);
     chroma_width_ = (width_ + 1) / 2;
@@ -198,9 +315,27 @@ class Encoder {
     // writer selects the same slice from the same raw base_q_idx.
     qctx_slice_ = qctx::slice_for_base_q_idx(options.base_q_idx);
 
+    // §5.18.6.2: one picture-level QM set (pic_qm_num_minus_1 = 0) with the
+    // same spec-defined default matrix level for all planes and the single
+    // segment.  >8x8 blocks read qm_y/u/v[0]; <=8x8 blocks read
+    // SegQMLevel[plane][0].  No quantizer_matrix_obu() is emitted, so
+    // QmDataPresent[] stays 0 and only the normative default tables apply.
+    if (options_.qm) {
+      qm_state_.using_qmatrix = true;
+      qm_state_.pic_qm_num_minus_1 = 0;
+      const auto level = static_cast<std::uint8_t>(options_.qm_level);
+      qm_state_.qm_y[0] = level;
+      qm_state_.qm_u[0] = level;
+      qm_state_.qm_v[0] = level;
+      for (int plane = 0; plane < 3; ++plane) {
+        qm_state_.seg_qm_level[plane][0] = level;
+      }
+    }
+
     geometry_.width = width_;
     geometry_.height = height_;
-    geometry_.sb_size = 64;
+    geometry_.sb_size = (options.sb128 || options.sb256) ? 128 : 64;
+    sb_mi_ = partition::sb_size_mi(geometry_);
     geometry_.has_chroma = true;
     geometry_.chroma_subsampling_x = true;
     geometry_.chroma_subsampling_y = true;
@@ -239,6 +374,10 @@ class Encoder {
                             plane == 0 ? mi_rows_ : mi_rows_ / 2);
     }
 
+    if (options_.palette) {
+      palette_state_.reset(mi_cols_, mi_rows_);
+    }
+
     if (options_.enable_deblock) {
       deblock_cols_ = mi_cols_;
       deblock_rows_ = mi_rows_;
@@ -259,33 +398,114 @@ class Encoder {
   // owns decisions and reconstruction only.
   bool encode(SyntaxStream* stream, std::string& error) {
     FrameGeometry geometry = geometry_;
+    const double lambda = 0.85 * std::pow(2.0, (options_.base_q_idx - 12) / 6.0);
+    const double signal_cost = lambda * 2.0;
+
+    // Shared leaf-cost policy: SSE block variance plus the writer's 64x64 leaf
+    // limit (one TX_MODE_LARGEST transform block per plane).  Both solvers use
+    // it so rect-only choices do not drift.
+    const auto leaf_cost = [&](int mi_row, int mi_col, BlockSize size) {
+      double cost = static_cast<double>(
+          block_variance_cost_at(mi_row, mi_col, size));
+      if (partition::block_width(size) > 64 ||
+          partition::block_height(size) > 64) {
+        cost += 1.0e18;
+      }
+      if (std::getenv("AV2ENC_STILL_SQUARE_ONLY") != nullptr &&
+          partition::block_width(size) != partition::block_height(size)) {
+        cost += 1.0e18;
+      }
+      if (std::getenv("AV2ENC_STILL_LEAF32") != nullptr &&
+          (partition::block_width(size) > 32 ||
+           partition::block_height(size) > 32)) {
+        cost += 1.0e18;
+      }
+      return cost;
+    };
+
+    if (options_.ext_partitions) {
+      pe::Tools tools;
+      tools.enable_ext_partitions = true;
+      tools.enable_uneven_4way_partitions = true;
+      pe::DecisionOptions eopt;
+      eopt.min_block_size_px = options_.min_block_size;
+      eopt.max_depth = options_.max_partition_depth;
+      eopt.allow_rect = true;
+      eopt.allow_split = geometry_.sb_size == 128;
+      eopt.allow_3way = true;
+      eopt.allow_uneven4 = true;
+      // With the extended families unavailable this order reproduces
+      // partition::decide_frame's tie-breaks exactly.
+      eopt.tie_break = pe::TieBreakOrder::kRectCompatOrder;
+      if (options_.force_single_block) {
+        eopt.max_depth = 0;
+        eopt.min_block_size_px = 64;
+      }
+      const auto cost_fn = [&](const pe::NodeInfo& info) {
+        pe::NodeCosts costs;
+        costs.leaf = leaf_cost(info.mi_row, info.mi_col, info.size);
+        costs.none_signal = 0.0;
+        costs.split_signal = signal_cost;
+        costs.horz_signal = signal_cost;
+        costs.vert_signal = signal_cost;
+        const int w = partition::block_width(info.size);
+        const int h = partition::block_height(info.size);
+        // Chroma ownership: the subsize and the middle pair of a 3-way split
+        // must both stay >= 8x8 luma, and a 4-way family needs h/8 >= 8 (or
+        // w/8 >= 8).  Trees that still hit a shared chroma block are rejected
+        // in collect_node_ext.
+        costs.horz3_signal =
+            (h >= 32 && w >= 16) ? signal_cost : pe::kInfiniteCost;
+        costs.vert3_signal =
+            (w >= 32 && h >= 16) ? signal_cost : pe::kInfiniteCost;
+        const double h4 = (h >= 64 && w >= 8) ? signal_cost : pe::kInfiniteCost;
+        const double v4 = (w >= 64 && h >= 8) ? signal_cost : pe::kInfiniteCost;
+        costs.horz4a_signal = h4;
+        costs.horz4b_signal = h4;
+        costs.vert4a_signal = v4;
+        costs.vert4b_signal = v4;
+        return costs;
+      };
+      const pe::FrameDecision frame =
+          pe::decide_frame(geometry, cost_fn, tools, eopt);
+      if (frame.status != pe::DecisionStatus::kOk) {
+        error = "extended partition decision failed: " + frame.error;
+        return false;
+      }
+      if (!pe::validate_frame(geometry, tools, frame, error)) {
+        error = "extended partition tree invalid: " + error;
+        return false;
+      }
+      leaves_ = frame.leaves;
+      blocks_.clear();
+      levels_.clear();
+      for (const pe::PartitionNode& sb : frame.superblocks) {
+        begin_superblock(sb);
+        if (!collect_node_ext(sb)) {
+          error = error_;
+          return false;
+        }
+      }
+      stream->blocks = std::move(blocks_);
+      stream->levels = std::move(levels_);
+      return true;
+    }
+
     partition::DecisionOptions poptions;
     poptions.min_block_size_px = options_.min_block_size;
     poptions.max_depth = options_.max_partition_depth;
     poptions.allow_rect = true;
-    poptions.allow_split = false;
+    // PARTITION_SPLIT exists only at a 128x128 (or 256x256) node.  The 64x64
+    // superblock keeps the historical rect-only search.
+    poptions.allow_split = geometry_.sb_size == 128;
     if (options_.force_single_block) {
       poptions.max_depth = 0;
       poptions.min_block_size_px = 64;
     }
 
-    const double lambda = 0.85 * std::pow(2.0, (options_.base_q_idx - 12) / 6.0);
-    const double signal_cost = lambda * 2.0;
-
     const auto cost_fn = [&](const partition::PartitionNodeInfo& info) {
       partition::NodeCosts costs;
-      costs.leaf = static_cast<double>(
-          block_variance_cost_at(info.mi_row, info.mi_col, info.size));
-      if (std::getenv("AV2ENC_STILL_SQUARE_ONLY") != nullptr &&
-          partition::block_width(info.size) !=
-              partition::block_height(info.size)) {
-        costs.leaf += 1.0e18;
-      }
-      if (std::getenv("AV2ENC_STILL_LEAF32") != nullptr &&
-          (partition::block_width(info.size) > 32 ||
-           partition::block_height(info.size) > 32)) {
-        costs.leaf += 1.0e18;
-      }
+      costs.leaf = leaf_cost(info.mi_row, info.mi_col, info.size);
       costs.none_signal = 0.0;
       costs.split_signal = signal_cost;
       costs.horz_signal = signal_cost;
@@ -307,22 +527,8 @@ class Encoder {
 
     blocks_.clear();
     levels_.clear();
-    for (int sbi = 0; sbi < static_cast<int>(frame.superblocks.size()); ++sbi) {
-      const partition::PartitionNode& sb = frame.superblocks[sbi];
-      // Reset SB-local decoded flags exactly like clear_block_decoded_flags().
-      for (int plane = 0; plane < 3; ++plane) {
-        decoded_[plane].reset(plane == 0 ? mi_cols_ : mi_cols_ / 2,
-                              plane == 0 ? mi_rows_ : mi_rows_ / 2);
-      }
-      sb_mi_row_ = sb.mi_row;
-      sb_mi_col_ = sb.mi_col;
-      sb_cols_plane_[0] = std::min(16, mi_cols_ - sb.mi_col);
-      sb_rows_plane_[0] = std::min(16, mi_rows_ - sb.mi_row);
-      sb_cols_plane_[1] = std::min(8, mi_cols_ / 2 - sb.mi_col / 2);
-      sb_rows_plane_[1] = std::min(8, mi_rows_ / 2 - sb.mi_row / 2);
-      sb_cols_plane_[2] = sb_cols_plane_[1];
-      sb_rows_plane_[2] = sb_rows_plane_[1];
-
+    for (const partition::PartitionNode& sb : frame.superblocks) {
+      begin_superblock(sb);
       if (!collect_node(sb)) {
         error = error_;
         return false;
@@ -336,7 +542,11 @@ class Encoder {
 
   const Plane& recon(int plane) const { return recon_[plane]; }
   Plane& recon_mut(int plane) { return recon_[plane]; }
+  const qm::QmFrameState& qm_state() const { return qm_state_; }
   int leaves() const { return leaves_; }
+  const std::vector<palette::PaletteResult>& palette_results() const {
+    return palette_results_;
+  }
   int mi_cols() const { return mi_cols_; }
   int mi_rows() const { return mi_rows_; }
   int deblock_cols() const { return deblock_cols_; }
@@ -360,6 +570,25 @@ class Encoder {
                       static_cast<std::size_t>(c)];
   }
 
+  // Reset the per-superblock availability state exactly like
+  // clear_block_decoded_flags() and record the SB extents used by the
+  // top-right/below-left counters.
+  template <typename Node>
+  void begin_superblock(const Node& sb) {
+    for (int plane = 0; plane < 3; ++plane) {
+      decoded_[plane].reset(plane == 0 ? mi_cols_ : mi_cols_ / 2,
+                            plane == 0 ? mi_rows_ : mi_rows_ / 2);
+    }
+    sb_mi_row_ = sb.mi_row;
+    sb_mi_col_ = sb.mi_col;
+    sb_cols_plane_[0] = std::min(sb_mi_, mi_cols_ - sb.mi_col);
+    sb_rows_plane_[0] = std::min(sb_mi_, mi_rows_ - sb.mi_row);
+    sb_cols_plane_[1] = std::min(sb_mi_ / 2, mi_cols_ / 2 - sb.mi_col / 2);
+    sb_rows_plane_[1] = std::min(sb_mi_ / 2, mi_rows_ / 2 - sb.mi_row / 2);
+    sb_cols_plane_[2] = sb_cols_plane_[1];
+    sb_rows_plane_[2] = sb_rows_plane_[1];
+  }
+
   // Append this node (and its whole subtree) to the preorder syntax stream.
   // No syntax is written here: the stream is handed to
   // syntax::assemble_still_frame() once the frame is fully decided.
@@ -371,9 +600,9 @@ class Encoder {
     entry.mi_col = static_cast<std::uint16_t>(node.mi_col);
     entry.bsize = static_cast<std::uint8_t>(node.size);
     entry.partition = static_cast<std::uint8_t>(node.partition);
-    std::uint8_t mask = 0;
+    std::uint16_t mask = 0;
     for (int p = 0; p < partition::kPartitionTypeCount; ++p) {
-      if (node.allowed.allowed[p]) mask = static_cast<std::uint8_t>(mask | (1U << p));
+      if (node.allowed.allowed[p]) mask = static_cast<std::uint16_t>(mask | (1U << p));
     }
     entry.allowed_mask = mask;
     if (node.forced) entry.flags |= syntax::kFlagForced;
@@ -389,10 +618,67 @@ class Encoder {
     }
 
     if (node.partition == PartitionType::kNone) {
-      if (!encode_block(node, index)) return false;
+      if (!encode_block(node.mi_row, node.mi_col, node.size, index)) {
+        return false;
+      }
     } else {
       for (const partition::PartitionNode& child : node.children) {
         if (!collect_node(child)) return false;
+      }
+    }
+    const std::size_t subtree = blocks_.size() - index - 1;
+    if (subtree > 0xFFFFU) {
+      error_ = "partition subtree too large for the syntax stream";
+      return false;
+    }
+    blocks_[index].subtree = static_cast<std::uint16_t>(subtree);
+    return true;
+  }
+
+  // Extended-partition variant of collect_node().  Only trees whose leaves own
+  // their own chroma block are accepted: with min_block_size 8 and the cost
+  // policy in encode(), no optional split creates a 4-pixel dimension, but a
+  // forced frame-edge split can.  Reject it explicitly instead of writing UV
+  // for the wrong leaf.
+  bool collect_node_ext(const pe::PartitionNode& node) {
+    if (!node.has_chroma || node.chroma_offset) {
+      error_ = "extended partition chroma ownership at mi (" +
+               std::to_string(node.mi_row) + "," +
+               std::to_string(node.mi_col) + ", " +
+               partition::block_size_name(node.size) +
+               ") is not supported (sub-8 chroma block); use a geometry or "
+               "floor that keeps every leaf >= 8x8";
+      return false;
+    }
+    const std::size_t index = blocks_.size();
+    blocks_.emplace_back();
+    syntax::BlockSyntax& entry = blocks_.back();
+    entry.mi_row = static_cast<std::uint16_t>(node.mi_row);
+    entry.mi_col = static_cast<std::uint16_t>(node.mi_col);
+    entry.bsize = static_cast<std::uint8_t>(node.size);
+    entry.partition = static_cast<std::uint8_t>(node.partition);
+    std::uint16_t mask = 0;
+    for (int p = 0; p < pe::kPartitionCount; ++p) {
+      if (node.allowed.allowed[p]) mask = static_cast<std::uint16_t>(mask | (1U << p));
+    }
+    entry.allowed_mask = mask;
+    if (node.forced) entry.flags |= syntax::kFlagForced;
+    if (node.depth == 0) entry.flags |= syntax::kFlagSbRoot;
+
+    if (trace_) {
+      std::cerr << "m1 ext node r=" << node.mi_row << " c=" << node.mi_col
+                << " size=" << partition::block_size_name(node.size)
+                << " part=" << static_cast<int>(node.partition)
+                << " forced=" << (node.forced ? 1 : 0) << "\n";
+    }
+
+    if (node.partition == pe::PartitionType::kNone) {
+      if (!encode_block(node.mi_row, node.mi_col, node.size, index)) {
+        return false;
+      }
+    } else {
+      for (const pe::PartitionNode& child : node.children) {
+        if (!collect_node_ext(child)) return false;
       }
     }
     const std::size_t subtree = blocks_.size() - index - 1;
@@ -443,7 +729,7 @@ class Encoder {
     // BlockDecoded array extends to 2 * sbSize4, so availability along the
     // top row covers up to two superblocks (or the tile remainder).
     const int plane_cols = plane == 0 ? mi_cols_ : mi_cols_ / 2;
-    const int border_w = std::min(2 * (16 >> sub), plane_cols - sb_c0);
+    const int border_w = std::min(2 * (sb_mi_ >> sub), plane_cols - sb_c0);
     int count = 0;
     for (int i = 0; i < w4; ++i) {
       const int x = rel_x + w4 + i;
@@ -559,7 +845,26 @@ class Encoder {
 
   bool predict_block(int plane, int x0, int y0, int w, int h,
                      intra::Mode mode, int angle_delta,
-                     std::vector<std::uint8_t>& out) {
+                     std::vector<std::uint8_t>& out,
+                     bool uv_is_cfl = false, int mrl_index = 0,
+                     bool mrl_sec_index = false, bool use_dip = false,
+                     int dip_mode = 0, bool dip_transpose = false) {
+    if (mrl_index > 0) {
+      // MRL is luma-only (§7.13.2.1); chroma always predicts line 0.
+      if (plane != 0) {
+        error_ = "MRL is not signalable for chroma";
+        return false;
+      }
+      return predict_luma_mrl(x0, y0, w, h, mode, angle_delta, mrl_index,
+                              mrl_sec_index, out);
+    }
+    if (use_dip) {
+      if (plane != 0 || mode != intra::Mode::kDc) {
+        error_ = "DIP is luma DC only";
+        return false;
+      }
+      return predict_luma_dip(x0, y0, w, h, dip_mode, dip_transpose, out);
+    }
     intra::IntraEdges edges;
     if (!prepare_edges(plane, x0, y0, w, h, edges)) {
       error_ = "prepare_edges failed";
@@ -569,17 +874,161 @@ class Encoder {
     bool left_smooth = false;
     neighborhood_smooth(plane, y0 >> 2, x0 >> 2, w >> 2, h >> 2,
                         above_smooth, left_smooth);
+    out.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    if (options_.enable_ibp) {
+      // §7.13.2.7-.12: IBP changes DC (post-filter), directional edge
+      // filtering and the two-angle blend.  ibp::predict is the drop-in
+      // replacement for intra::predict_intra and never mutates the edges.
+      ibp::PredictParams params;
+      params.mode = mode;
+      params.angle_delta = angle_delta;
+      params.enable_ibp = true;
+      params.enable_edge_filter = edge_filter_enabled();
+      params.above_neighbor_is_smooth = above_smooth;
+      params.left_neighbor_is_smooth = left_smooth;
+      params.use_dip = false;
+      params.uv_is_cfl = uv_is_cfl;
+      if (ibp::predict(edges, params, out.data(),
+                       static_cast<std::size_t>(w)) !=
+          intra::IntraStatus::kOk) {
+        error_ = "ibp::predict failed";
+        return false;
+      }
+      return true;
+    }
     intra::PredictParams params;
     params.mode = mode;
     params.angle_delta = angle_delta;
     params.enable_edge_filter = edge_filter_enabled();
     params.above_neighbor_is_smooth = above_smooth;
     params.left_neighbor_is_smooth = left_smooth;
-    out.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
     if (intra::predict_intra(edges, params, out.data(),
                              static_cast<std::size_t>(w)) !=
         intra::IntraStatus::kOk) {
       error_ = "predict_intra failed";
+      return false;
+    }
+    return true;
+  }
+
+  // §5.20.7.9: DIP is an alternative to ordinary DC at the same YMode, not a
+  // new mode.  Evaluates the normative candidate set and keeps it only when it
+  // beats the incumbent prediction by SSE.
+  bool evaluate_luma_dip(int x0, int y0, int w, int h, ModeChoice& best) {
+    if (!options_.enable_dip || !dip::dip_block_available(w, h)) return true;
+    const dip::Block block = make_dip_block(x0, y0, w, h);
+    dip::Edges dip_edges;
+    if (dip::prepare_edges(block, 8, dip_edges) != dip::Status::kOk) {
+      error_ = "dip::prepare_edges failed";
+      return false;
+    }
+    std::vector<std::uint8_t> dip_src(
+        static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    for (int yy = 0; yy < h; ++yy) {
+      for (int xx = 0; xx < w; ++xx) {
+        dip_src[static_cast<std::size_t>(yy) * static_cast<std::size_t>(w) +
+                static_cast<std::size_t>(xx)] =
+            source_sample(0, x0 + xx, y0 + yy);
+      }
+    }
+    dip::DecisionParams dip_params;
+    dip_params.enable_dip = true;
+    dip_params.y_mode = kDcPred;
+    dip_params.palette_size_y = 0;
+    dip_params.tree_is_chroma_part = false;
+    dip_params.metric = dip::CostMetric::kSse;
+    dip::Decision dip_decision;
+    if (dip::decide(dip_edges, dip_src.data(), static_cast<std::size_t>(w),
+                    dip_params, dip_decision) != dip::Status::kOk ||
+        !dip_decision.available) {
+      error_ = "dip::decide failed";
+      return false;
+    }
+    if (static_cast<std::int64_t>(dip_decision.cost.sse) < best.sse) {
+      best.sse = static_cast<std::int64_t>(dip_decision.cost.sse);
+      best.mode = intra::Mode::kDc;
+      best.angle_delta = 0;
+      best.av2_mode = kDcPred;
+      best.mrl_index = 0;
+      best.mrl_sec_index = false;
+      best.use_dip = true;
+      best.dip_mode = dip_decision.mode;
+      best.dip_transpose = dip_decision.transpose;
+    }
+    return true;
+  }
+
+  // §5.20.7.9 DIP prediction for a luma DC block.
+  dip::Block make_dip_block(int x0, int y0, int w, int h) {
+    dip::Block block;
+    block.recon =
+        dip::PlaneView::from_u8(recon_[0].samples.data(), recon_[0].width);
+    block.x = x0;
+    block.y = y0;
+    block.w = w;
+    block.h = h;
+    block.max_x = mi_cols_ * 4 - 1;
+    block.max_y = mi_rows_ * 4 - 1;
+    block.have_left = x0 > 0;
+    block.have_above = y0 > 0;
+    block.num4_above_right = count_top_right(0, x0 >> 2, y0 >> 2, w >> 2);
+    block.num4_below_left = count_bottom_left(0, x0 >> 2, y0 >> 2, h >> 2);
+    return block;
+  }
+
+  bool predict_luma_dip(int x0, int y0, int w, int h, int dip_mode,
+                        bool dip_transpose, std::vector<std::uint8_t>& out) {
+    const dip::Block block = make_dip_block(x0, y0, w, h);
+    dip::Params params;
+    params.mode = dip_mode;
+    params.transpose = dip_transpose;
+    out.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    if (dip::predict_block8(block, 8, params, out.data(),
+                            static_cast<std::size_t>(w)) !=
+        dip::Status::kOk) {
+      error_ = "dip::predict_block8 failed";
+      return false;
+    }
+    return true;
+  }
+
+  // §7.13.2.1/.7/.8 MRL prediction for a directional luma candidate.
+  // mrl::prepare_edges needs the extra reference lines, so it cannot reuse the
+  // w+h-sample IntraEdges prepared for MrlIndex = 0.
+  bool predict_luma_mrl(int x0, int y0, int w, int h, intra::Mode mode,
+                        int angle_delta, int mrl_index, bool mrl_sec_index,
+                        std::vector<std::uint8_t>& out) {
+    bool above_smooth = false;
+    bool left_smooth = false;
+    neighborhood_smooth(0, y0 >> 2, x0 >> 2, w >> 2, h >> 2, above_smooth,
+                        left_smooth);
+    mrl::Params params;
+    if (!mrl_stream::make_predict_params(
+            av2_y_mode(mode), angle_delta, mrl_index, mrl_sec_index,
+            edge_filter_enabled(), above_smooth, left_smooth, &params, w, h)) {
+      error_ = "MRL prediction parameters rejected";
+      return false;
+    }
+    mrl::Block block;
+    block.recon =
+        intra::PlaneView{recon_[0].samples.data(), recon_[0].width};
+    block.x = x0;
+    block.y = y0;
+    block.w = w;
+    block.h = h;
+    block.max_x = mi_cols_ * 4 - 1;
+    block.max_y = mi_rows_ * 4 - 1;
+    block.have_left = x0 > 0;
+    block.have_above = y0 > 0;
+    block.num4_above_right = count_top_right(0, x0 >> 2, y0 >> 2, w >> 2);
+    block.num4_below_left = count_bottom_left(0, x0 >> 2, y0 >> 2, h >> 2);
+    block.plane = 0;
+    block.sb_height = 64;
+    out.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    if (mrl::predict_block(block, 8, params, out.data(),
+                           static_cast<std::size_t>(w)) !=
+        mrl::MrlStatus::kOk) {
+      error_ = "mrl::predict_block failed";
       return false;
     }
     return true;
@@ -625,6 +1074,17 @@ class Encoder {
       best.angle_delta = 0;
       best.av2_mode = kDcPred;
       best.sse = 0;
+      if (options_.enable_dip || options_.palette) {
+        // Both the DIP and the palette candidates are scored against the
+        // ordinary DC prediction the encoder would otherwise code, so its SSE
+        // must be real here (the value is unused otherwise).
+        std::vector<std::uint8_t> dc_pred;
+        if (!predict_block(0, x0, y0, w, h, intra::Mode::kDc, 0, dc_pred)) {
+          return false;
+        }
+        best.sse = sse_against_source(0, x0, y0, w, h, dc_pred);
+        if (!evaluate_luma_dip(x0, y0, w, h, best)) return false;
+      }
       return true;
     }
     intra::IntraEdges edges;
@@ -646,6 +1106,7 @@ class Encoder {
     pred.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
     const bool base_only = std::getenv("AV2ENC_STILL_BASE_ONLY") != nullptr;
     const bool no_directional = std::getenv("AV2ENC_STILL_NO_DIR") != nullptr;
+    const bool mrl_search = options_.enable_mrl;
     std::vector<av2enc::rdo::IntraCandidateCost> rdo_candidates;
     const av2enc::rdo::IntraRdoConfig rdo_config =
         av2enc::rdo::make_intra_rdo_config(
@@ -663,9 +1124,23 @@ class Encoder {
       params.enable_edge_filter = edge_filter_enabled();
       params.above_neighbor_is_smooth = above_smooth;
       params.left_neighbor_is_smooth = left_smooth;
-      if (intra::predict_intra(edges, params, pred.data(),
-                               static_cast<std::size_t>(w)) !=
-          intra::IntraStatus::kOk) {
+      if (options_.enable_ibp) {
+        ibp::PredictParams ibp_params;
+        ibp_params.mode = params.mode;
+        ibp_params.angle_delta = params.angle_delta;
+        ibp_params.enable_ibp = true;
+        ibp_params.enable_edge_filter = params.enable_edge_filter;
+        ibp_params.above_neighbor_is_smooth = above_smooth;
+        ibp_params.left_neighbor_is_smooth = left_smooth;
+        if (ibp::predict(edges, ibp_params, pred.data(),
+                         static_cast<std::size_t>(w)) !=
+            intra::IntraStatus::kOk) {
+          error_ = "luma ibp::predict failed";
+          return false;
+        }
+      } else if (intra::predict_intra(edges, params, pred.data(),
+                                      static_cast<std::size_t>(w)) !=
+                 intra::IntraStatus::kOk) {
         error_ = "luma predict_intra failed";
         return false;
       }
@@ -675,6 +1150,34 @@ class Encoder {
         best.mode = params.mode;
         best.angle_delta = params.angle_delta;
         best.av2_mode = av2_y_mode(params.mode);
+        best.mrl_index = 0;
+        best.mrl_sec_index = false;
+      }
+      // §5.20.5.5 MRL: only a directional luma mode can signal mrl_index, so
+      // the extra search runs on those candidates only.  mrl_index == 0 is the
+      // candidate just evaluated above.
+      if (mrl_search && intra::is_directional(params.mode)) {
+        const bool sec_allowed = !(w == 4 && h == 4);
+        for (int mrl_index = 1; mrl_index <= mrl::kMaxMrlIndex; ++mrl_index) {
+          for (int sec = 0; sec <= (sec_allowed ? 1 : 0); ++sec) {
+            std::vector<std::uint8_t> mrl_pred;
+            if (!predict_luma_mrl(x0, y0, w, h, params.mode,
+                                  params.angle_delta, mrl_index, sec != 0,
+                                  mrl_pred)) {
+              return false;
+            }
+            const std::int64_t mrl_sse =
+                sse_against_source(0, x0, y0, w, h, mrl_pred);
+            if (mrl_sse < best.sse) {
+              best.sse = mrl_sse;
+              best.mode = params.mode;
+              best.angle_delta = params.angle_delta;
+              best.av2_mode = av2_y_mode(params.mode);
+              best.mrl_index = mrl_index;
+              best.mrl_sec_index = sec != 0;
+            }
+          }
+        }
       }
       if (options_.rdo_intra) {
         // Probe the real quantised levels for this candidate.  compute_tx()
@@ -717,6 +1220,9 @@ class Encoder {
         best.sse = static_cast<std::int64_t>(choice.sse);
       }
     }
+    // §5.20.7.9: DIP alternative to DC, compared against the best ordinary
+    // prediction by SSE.
+    if (!base_only && !evaluate_luma_dip(x0, y0, w, h, best)) return false;
     return true;
   }
 
@@ -761,33 +1267,99 @@ class Encoder {
         static_cast<double>(txv::kQuantStep) / static_cast<double>(quant_step_);
   }
 
-  // §7.14.4 dequant + inverse transform with the frame's qlookup step.
-  void dequant_inverse_qindex(const std::int32_t* levels,
-                              const txv::TxParams& params,
-                              std::int32_t* dequant,
-                              std::int16_t* residual) const {
-    if (quant_step_ == txv::kQuantStep) {
-      txv::inverse_transform(levels, params, dequant, residual);
-      return;
-    }
+  // §7.14.2/§7.14.4 quantizer for one adjusted-raster coefficient: the DC
+  // quantizer at (0,0) and the AC quantizer elsewhere.  Without delta-Q both
+  // are the frame qlookup step.
+  int coefficient_q(int plane, int index) const {
+    if (delta_quant_ == nullptr) return quant_step_;
+    const dcdeltaq::PlaneQuant& q = delta_quant_->plane[plane];
+    return index == 0 ? q.dc : q.ac;
+  }
+
+  // §7.14.4 dequant + optional IST inverse + inverse transform with the
+  // frame's qlookup step.  With QM enabled the per-coefficient
+  // q2 = Round2(q * m, 5) replaces the scalar 528 so the encoder
+  // reconstruction matches what the decoder derives.
+  bool dequant_inverse_qindex(const std::int32_t* levels,
+                              const txv::TxParams& params, int plane, int eob,
+                              int y_mode, int y_angle_delta, int sec_tx_type,
+                              int stx_set, std::int32_t* dequant,
+                              std::int16_t* residual) {
     const int n = params.w * params.h;
-    for (int i = 0; i < n; ++i) {
-      const std::int32_t qc = levels[i];
-      const std::int64_t aq = qc < 0 ? -static_cast<std::int64_t>(qc) : qc;
-      const std::int64_t high = (aq * quant_step_) & 0xFFFFFF;
-      const std::int32_t dq = txv::round2(static_cast<std::int32_t>(high),
-                                          txv::kQuantTableBits) /
-                              params.dq_denom;
-      const std::int32_t value = qc < 0 ? -dq : dq;
-      dequant[i] = std::max(-(1 << 15), std::min((1 << 15) - 1, value));
+    if (options_.delta_q) {
+      for (int i = 0; i < n; ++i) {
+        const std::int32_t qc = levels[i];
+        const std::int64_t aq = qc < 0 ? -static_cast<std::int64_t>(qc) : qc;
+        const std::int64_t high =
+            (aq * coefficient_q(plane, i)) & 0xFFFFFF;
+        const std::int32_t dq = txv::round2(static_cast<std::int32_t>(high),
+                                            txv::kQuantTableBits) /
+                                params.dq_denom;
+        const std::int32_t value = qc < 0 ? -dq : dq;
+        dequant[i] = std::max(-(1 << 15), std::min((1 << 15) - 1, value));
+      }
+    } else if (options_.qm) {
+      qm::QmDequantParams qp;
+      qp.state = &qm_state_;
+      qp.tx_size = params.tx_size;
+      qp.plane = plane;
+      qp.tx_type = params.tx_type;
+      qp.dc_quant = quant_step_;
+      qp.ac_quant = quant_step_;
+      qp.bit_depth = 8;
+      if (!qm::dequantize_block(levels, qp, dequant)) {
+        error_ = "qm dequantize failed";
+        return false;
+      }
+    } else if (quant_step_ == txv::kQuantStep) {
+      txv::dequantize(levels, params, dequant);
+    } else {
+      for (int i = 0; i < n; ++i) {
+        const std::int32_t qc = levels[i];
+        const std::int64_t aq = qc < 0 ? -static_cast<std::int64_t>(qc) : qc;
+        const std::int64_t high = (aq * quant_step_) & 0xFFFFFF;
+        const std::int32_t dq = txv::round2(static_cast<std::int32_t>(high),
+                                            txv::kQuantTableBits) /
+                                params.dq_denom;
+        const std::int32_t value = qc < 0 ? -dq : dq;
+        dequant[i] = std::max(-(1 << 15), std::min((1 << 15) - 1, value));
+      }
     }
+
+    // §7.15.3: the decoder applies the secondary inverse to the dequantized
+    // luma coefficients before the primary 2-D inverse.
+    if (plane == 0 && sec_tx_type != 0) {
+      txsec::SecondaryTransformConfig cfg;
+      cfg.enable_intra_ist = true;
+      txsec::SecondarySyntax stx;
+      stx.plane_tx_type = static_cast<txv::TxType>(params.tx_type);
+      stx.coded_w = params.coded_w;
+      stx.coded_h = params.coded_h;
+      stx.y_mode = y_mode;
+      stx.angle_delta = y_angle_delta;
+      stx.mrl_index = 0;
+      stx.most_probable_stx_set = stx_set;
+      stx.sec_tx_type = sec_tx_type;
+      stx.is_inter = false;
+      stx.lossless = false;
+      stx.bit_depth = 8;
+      const txsec::SecondaryStatus status = txsec::apply_inverse_secondary(
+          params, plane, eob, stx, cfg, dequant,
+          static_cast<std::size_t>(n));
+      if (status != txsec::SecondaryStatus::kApplied) {
+        error_ = "secondary transform inverse failed";
+        return false;
+      }
+    }
+
     txv::inverse_block(dequant, params, residual);
+    return true;
   }
 
   bool compute_tx(int plane, int x0, int y0, int cw, int ch,
                   const std::vector<std::uint8_t>& pred, TxPlan& plan,
                   bool choose_tx_type = false, int y_mode = 0,
-                  int y_angle_delta = 0) {
+                  int y_angle_delta = 0, int mrl_index = 0) {
     std::optional<txv::TxParams> params_opt =
         txv::make_tx_params(cw, ch, txv::TxType::kDctDct);
     if (!params_opt.has_value()) {
@@ -816,7 +1388,8 @@ class Encoder {
     // (SSE + lambda * rate); we then re-run the chosen type through the common
     // quantise/RDOQ/inverse path below so both features compose.
     if (choose_tx_type) {
-      int mapped_mode = txtype::map_intra_mode(y_mode, y_angle_delta, cw, ch);
+      int mapped_mode = mrl_stream::mapped_intra_mode_for_mrl(
+          y_mode, y_angle_delta, mrl_index, cw, ch);
       if (mapped_mode < 0) mapped_mode = 0;
       txtype::TxTypeQuery query;
       query.coded_w = cw;
@@ -886,8 +1459,48 @@ class Encoder {
       std::vector<double> coeff(
           static_cast<std::size_t>(p.w) * static_cast<std::size_t>(p.h));
       plan.levels.assign(coeff.size(), 0);
-      txv::forward_transform(residual_adj.data(), p, coeff.data(),
-                             plan.levels.data());
+      if (options_.delta_q) {
+        // DC/AC delta-Q: scale the scalar qf by qindex_step / q_coefficient.
+        txv::forward_block(residual_adj.data(), p, coeff.data());
+        for (std::size_t i = 0; i < coeff.size(); ++i) {
+          const double factor =
+              static_cast<double>(p.quant_factor) *
+              static_cast<double>(quant_step_) /
+              static_cast<double>(coefficient_q(
+                  plane, static_cast<int>(i)));
+          plan.levels[i] = static_cast<std::int32_t>(
+              std::lround(coeff[i] * factor));
+        }
+      } else if (options_.qm) {
+        // QM changes the per-coefficient quantizer to q2 = Round2(q * m, 5).
+        // The forward target scales the scalar qf by q / q2 so the returned
+        // levels reconstruct to the same residual under QM dequant.
+        txv::forward_block(residual_adj.data(), p, coeff.data());
+        qm::QmDequantParams qp;
+        qp.state = &qm_state_;
+        qp.tx_size = p.tx_size;
+        qp.plane = plane;
+        qp.tx_type = p.tx_type;
+        qp.dc_quant = quant_step_;
+        qp.ac_quant = quant_step_;
+        qp.bit_depth = 8;
+        std::vector<std::int32_t> q2(coeff.size());
+        if (!qm::build_q2_matrix(qp, q2.data())) {
+          error_ = "qm q2 matrix build failed";
+          return false;
+        }
+        for (std::size_t i = 0; i < coeff.size(); ++i) {
+          const double factor =
+              static_cast<double>(p.quant_factor) *
+              static_cast<double>(quant_step_) /
+              static_cast<double>(q2[i]);
+          plan.levels[i] = static_cast<std::int32_t>(
+              std::lround(coeff[i] * factor));
+        }
+      } else {
+        txv::forward_transform(residual_adj.data(), p, coeff.data(),
+                               plan.levels.data());
+      }
 
       const int area = p.w * p.h;
       std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
@@ -971,12 +1584,130 @@ class Encoder {
     plan.tx_type = static_cast<int>(tx_type);
     plan.adj_w = params.w;
     plan.adj_h = params.h;
+
+    // §5.20.8.2 / §7.15.3 intra IST.  The spec defines only the decoder
+    // inverse; the encoder uses the component's analysis projection on the
+    // quantised primary coefficients (documented as non-normative) and picks
+    // the candidate that minimises reconstructed SSE + lambda * symbol bits.
+    if (options_.ist && plane == 0) {
+      txsec::SecondaryTransformConfig ist_cfg;
+      ist_cfg.enable_intra_ist = true;
+      txsec::SecondarySyntax stx;
+      stx.plane_tx_type = tx_type;
+      stx.coded_w = params.coded_w;
+      stx.coded_h = params.coded_h;
+      stx.y_mode = y_mode;
+      stx.angle_delta = y_angle_delta;
+      stx.mrl_index = 0;  // MRL is not wired yet
+      stx.is_inter = false;
+      stx.lossless = false;
+      stx.bit_depth = 8;
+      if (plan.eob >= 2 &&
+          txsec::secondary_syntax_applicable(0, plan.eob, stx, ist_cfg)) {
+        txsec::SecondaryCandidate candidates[32];
+        const int count = txsec::enumerate_secondary_candidates(
+            stx, ist_cfg, plan.eob, candidates, 32);
+        if (count > 0) {
+          const int area = params.w * params.h;
+          std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
+          syntax::build_scan(params.w, params.h, scan);
+          const auto eob_of = [&](const std::vector<std::int32_t>& lv) {
+            for (int c = area - 1; c >= 0; --c) {
+              if (lv[scan[static_cast<std::size_t>(c)]] != 0) return c + 1;
+            }
+            return 0;
+          };
+          const auto distortion =
+              [&](const std::vector<std::int32_t>& lv, int ev, int sec,
+                  int set, bool* ok) -> double {
+            std::vector<std::int32_t> dq(static_cast<std::size_t>(area));
+            std::vector<std::int16_t> rr(static_cast<std::size_t>(coded_pels));
+            if (!dequant_inverse_qindex(lv.data(), params, 0, ev, y_mode,
+                                        y_angle_delta, sec, set, dq.data(),
+                                        rr.data())) {
+              *ok = false;
+              return 0.0;
+            }
+            double sse = 0.0;
+            for (int y = 0; y < ch; ++y) {
+              for (int x = 0; x < cw; ++x) {
+                const int p = pred[static_cast<std::size_t>(y) *
+                                       static_cast<std::size_t>(cw) +
+                                   static_cast<std::size_t>(x)];
+                const int r = rr[static_cast<std::size_t>(y) *
+                                     static_cast<std::size_t>(cw) +
+                                 static_cast<std::size_t>(x)];
+                const int v = clip1(p + r);
+                const double d =
+                    static_cast<double>(source_sample(plane, x0 + x, y0 + y)) -
+                    static_cast<double>(v);
+                sse += d * d;
+              }
+            }
+            return sse;
+          };
+          bool ok = true;
+          double best_cost = distortion(plan.levels, plan.eob, 0, 0, &ok);
+          if (!ok) return false;
+          double lambda = av2enc::rdo::lambda_sse_from_quant_step(
+              1.0 / params.quant_factor, options_.ist_sse_scale);
+          std::vector<std::int32_t> best_levels;
+          int best_eob = plan.eob;
+          int best_sec = 0;
+          int best_set = 0;
+          for (int i = 0; i < count; ++i) {
+            const txsec::SecondaryCandidate& candidate = candidates[i];
+            std::vector<std::int32_t> lv = plan.levels;
+            if (!project_ist_levels(params, tx_type, candidate.kernel,
+                                    candidate.sec_tx_type,
+                                    candidate.transpose, lv)) {
+              continue;
+            }
+            const int ev = eob_of(lv);
+            if (ev < 2) continue;
+            txsec::SecondarySyntax cs = stx;
+            cs.sec_tx_type = candidate.sec_tx_type;
+            cs.most_probable_stx_set = candidate.most_probable_stx_set;
+            if (!txsec::secondary_syntax_valid(0, ev, cs, ist_cfg)) continue;
+            ok = true;
+            const double sse =
+                distortion(lv, ev, candidate.sec_tx_type,
+                           candidate.most_probable_stx_set, &ok);
+            if (!ok) continue;
+            const double bits =
+                txsec::sec_tx_type_bits(candidate.sec_tx_type, params.tx_size,
+                                        false) +
+                txsec::most_probable_stx_set_bits(
+                    candidate.most_probable_stx_set, tx_type, cw, ch);
+            const double cost = sse + lambda * bits;
+            if (cost < best_cost) {
+              best_cost = cost;
+              best_levels = std::move(lv);
+              best_eob = ev;
+              best_sec = candidate.sec_tx_type;
+              best_set = candidate.most_probable_stx_set;
+            }
+          }
+          if (best_sec != 0) {
+            plan.levels = std::move(best_levels);
+            plan.eob = best_eob;
+            plan.sec_tx_type = best_sec;
+            plan.most_probable_stx_set = best_set;
+          }
+        }
+      }
+    }
+
     std::vector<std::int32_t> dequant(
         static_cast<std::size_t>(params.w) * static_cast<std::size_t>(params.h));
     std::vector<std::int16_t> recon_residual(
         static_cast<std::size_t>(coded_pels));
-    dequant_inverse_qindex(plan.levels.data(), params, dequant.data(),
-                           recon_residual.data());
+    if (!dequant_inverse_qindex(plan.levels.data(), params, plane, plan.eob,
+                                y_mode, y_angle_delta, plan.sec_tx_type,
+                                plan.most_probable_stx_set, dequant.data(),
+                                recon_residual.data())) {
+      return false;
+    }
     plan.recon.resize(static_cast<std::size_t>(coded_pels));
     for (int y = 0; y < ch; ++y) {
       for (int x = 0; x < cw; ++x) {
@@ -1030,11 +1761,10 @@ class Encoder {
   // ---------------------------------------------------------------------
   // Coding a block
   // ---------------------------------------------------------------------
-  bool encode_block(const partition::PartitionNode& node, std::size_t index) {
-    const int r = node.mi_row;
-    const int c = node.mi_col;
-    const int w = partition::block_width(node.size);
-    const int h = partition::block_height(node.size);
+  bool encode_block(int r, int c, partition::BlockSize size,
+                    std::size_t index) {
+    const int w = partition::block_width(size);
+    const int h = partition::block_height(size);
     const int w4 = w >> 2;
     const int h4 = h >> 2;
     const int x0 = c * 4;
@@ -1043,19 +1773,103 @@ class Encoder {
     ModeChoice y;
     if (!choose_luma_mode(x0, y0, w, h, y)) return false;
 
-    std::vector<std::uint8_t> luma_pred;
-    if (!predict_block(0, x0, y0, w, h, y.mode, y.angle_delta, luma_pred)) {
-      return false;
+    // §5.20.8 palette candidate: luma-only and only when the luma mode is DC
+    // (palette_mode_info is conditioned on YMode == DC_PRED).  A palette-only
+    // block codes eob = 0 on all planes, so compare its prediction SSE with the
+    // chosen intra prediction and keep it only when it is better.
+    palette::PaletteResult palette_result;
+    bool use_palette = false;
+    if (options_.palette && w >= 8 && h >= 8 && w <= 64 && h <= 64) {
+      std::uint8_t cache[16] = {};
+      const int cache_n = palette::get_palette_cache(palette_state_, r, c,
+                                                     c > 0, cache);
+      std::vector<std::uint8_t> pal_src(
+          static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+      for (int yy = 0; yy < h; ++yy) {
+        for (int xx = 0; xx < w; ++xx) {
+          pal_src[static_cast<std::size_t>(yy) * static_cast<std::size_t>(w) +
+                  static_cast<std::size_t>(xx)] =
+              source_sample(0, x0 + xx, y0 + yy);
+        }
+      }
+      const int visible_w = std::min(w, mi_cols_ * 4 - x0);
+      const int visible_h = std::min(h, mi_rows_ * 4 - y0);
+      palette::PaletteParams palette_params;
+      palette_params.max_colors = 8;
+      palette_params.exact_when_possible = true;
+      palette_params.choose_direction = true;
+      std::string palette_error;
+      if (!palette::analyze_palette(
+              pal_src.data(), w, w, h, visible_w, visible_h, cache, cache_n,
+              palette_params, palette_result, palette_error)) {
+        error_ = "analyze_palette failed: " + palette_error;
+        return false;
+      }
+      // Defensive: §5.20.8.1 codes a strictly increasing palette; a duplicate
+      // would make the delta syntax illegal.  Fall back to intra prediction
+      // instead of emitting a stream the decoder rejects.
+      bool representable = palette_result.has_palette;
+      for (int i = 1; i < palette_result.size && representable; ++i) {
+        if (palette_result.colors[static_cast<std::size_t>(i)] <=
+            palette_result.colors[static_cast<std::size_t>(i - 1)]) {
+          representable = false;
+        }
+      }
+      if (palette_result.has_palette && !representable) {
+        palette_result.has_palette = false;
+      }
+      if (palette_result.has_palette && palette_result.sse < y.sse) {
+        use_palette = true;
+        y.mode = intra::Mode::kDc;
+        y.angle_delta = 0;
+        y.av2_mode = kDcPred;
+        y.mrl_index = 0;
+        y.mrl_sec_index = false;
+        y.use_dip = false;
+        y.dip_mode = 0;
+        y.dip_transpose = false;
+        y.sse = palette_result.sse;
+      }
     }
+
+    std::vector<std::uint8_t> luma_pred;
     TxPlan luma_plan;
-    if (!compute_tx(0, x0, y0, w, h, luma_pred, luma_plan,
-                    options_.tx_type, y.av2_mode, y.angle_delta)) {
-      return false;
+    if (use_palette) {
+      luma_pred.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+      palette::predict_palette_block(palette_result, w, h, luma_pred.data(), w);
+      // Transform-skip: a palette-only block codes eob = 0 on every plane.
+      const std::optional<txv::TxParams> params_opt =
+          txv::make_tx_params(w, h, txv::TxType::kDctDct);
+      if (!params_opt.has_value()) {
+        error_ = "unsupported palette block transform size";
+        return false;
+      }
+      luma_plan.plane = 0;
+      luma_plan.tx_size = params_opt->tx_size;
+      luma_plan.tx_type = static_cast<int>(txv::TxType::kDctDct);
+      luma_plan.coded_w = w;
+      luma_plan.coded_h = h;
+      luma_plan.adj_w = params_opt->w;
+      luma_plan.adj_h = params_opt->h;
+      luma_plan.eob = 0;
+      luma_plan.pred = luma_pred;
+      luma_plan.recon = luma_pred;
+    } else {
+      if (!predict_block(0, x0, y0, w, h, y.mode, y.angle_delta, luma_pred,
+                         /*uv_is_cfl=*/false, y.mrl_index, y.mrl_sec_index,
+                         y.use_dip, y.dip_mode, y.dip_transpose)) {
+        return false;
+      }
+      if (!compute_tx(0, x0, y0, w, h, luma_pred, luma_plan,
+                      options_.tx_type, y.av2_mode, y.angle_delta,
+                      y.mrl_index)) {
+        return false;
+      }
     }
     write_recon(0, x0, y0, w, h, luma_plan);
 
     const BlockSize chroma_size =
-        partition::chroma_plane_residual_size(geometry_, node.size);
+        partition::chroma_plane_residual_size(geometry_, size);
     if (!partition::is_valid_block_size(chroma_size)) {
       error_ = "invalid chroma residual size";
       return false;
@@ -1077,10 +1891,12 @@ class Encoder {
       // The CfL component expects the DC prediction in the chroma plane and
       // reconstructed above/left neighbours. Derive the implicit alpha and
       // write the CfL prediction into the planes.
-      if (!predict_block(1, cx0, cy0, cw, ch, intra::Mode::kDc, 0, u_pred)) {
+      if (!predict_block(1, cx0, cy0, cw, ch, intra::Mode::kDc, 0, u_pred,
+                         /*uv_is_cfl=*/true)) {
         return false;
       }
-      if (!predict_block(2, cx0, cy0, cw, ch, intra::Mode::kDc, 0, v_pred)) {
+      if (!predict_block(2, cx0, cy0, cw, ch, intra::Mode::kDc, 0, v_pred,
+                         /*uv_is_cfl=*/true)) {
         return false;
       }
       for (int yy = 0; yy < ch; ++yy) {
@@ -1096,12 +1912,27 @@ class Encoder {
       cfl::Block vb;
       make_cfl_block(1, cx0, cy0, cw, ch, ub);
       make_cfl_block(2, cx0, cy0, cw, ch, vb);
+      // The mode decision already chose between derived, explicit and MHCCP
+      // hypotheses by SSE; apply exactly the chosen prediction so the
+      // reconstruction matches the signalled syntax.
       cfl::compute_luma(ub, scratch);
-      const int alpha_u = cfl::derive_implicit_alpha(ub, scratch);
-      cfl::compute_luma(vb, scratch);
-      const int alpha_v = cfl::derive_implicit_alpha(vb, scratch);
-      cfl::apply_prediction(ub, alpha_u, scratch);
-      cfl::apply_prediction(vb, alpha_v, scratch);
+      if (uv.cfl_index == 2) {
+        const int num4_above_right =
+            count_top_right(1, cx0 >> 2, cy0 >> 2, cw >> 2);
+        const int num4_below_left =
+            count_bottom_left(1, cx0 >> 2, cy0 >> 2, ch >> 2);
+        av2enc::cfl::mhccp::Block mh_u = av2enc::cfl::mhccp::make_block(
+            ub, num4_above_right, num4_below_left, mi_cols_ * 4,
+            mi_rows_ * 4);
+        av2enc::cfl::mhccp::Block mh_v = av2enc::cfl::mhccp::make_block(
+            vb, num4_above_right, num4_below_left, mi_cols_ * 4,
+            mi_rows_ * 4);
+        av2enc::cfl::mhccp::apply_mhccp_pair(mh_u, mh_v, uv.cfl_mh_dir,
+                                             uv.mh_params_u, uv.mh_params_v);
+      } else {
+        cfl::apply_prediction(ub, uv.cfl_alpha_q8_u, scratch);
+        cfl::apply_prediction(vb, uv.cfl_alpha_q8_v, scratch);
+      }
       for (int yy = 0; yy < ch; ++yy) {
         for (int xx = 0; xx < cw; ++xx) {
           u_pred[static_cast<std::size_t>(yy) * cw + xx] =
@@ -1130,12 +1961,14 @@ class Encoder {
 
     if (trace_) {
       std::cerr << "m1 block r=" << r << " c=" << c
-                << " size=" << partition::block_size_name(node.size)
+                << " size=" << partition::block_size_name(size)
                 << " y=" << y.av2_mode << "/" << y.angle_delta
                 << " uv=" << (cfl ? -1 : uv.av2_mode) << "/"
                 << uv.angle_delta << " cfl=" << (cfl ? 1 : 0)
                 << " tx=" << luma_plan.coded_w << "x" << luma_plan.coded_h
-                << " eob=" << luma_plan.eob << "\n";
+                << " eob=" << luma_plan.eob
+                << " ist=" << luma_plan.sec_tx_type << "/"
+                << luma_plan.most_probable_stx_set << "\n";
     }
 
     // Fill this leaf's syntax entry: modes, transform sizes, EOBs, and its
@@ -1144,10 +1977,29 @@ class Encoder {
     syntax::BlockSyntax& leaf = blocks_[index];
     leaf.y_mode = static_cast<std::uint8_t>(y.av2_mode);
     leaf.y_angle_delta = static_cast<std::int8_t>(y.angle_delta);
+    leaf.mrl_index = static_cast<std::int8_t>(y.mrl_index);
+    leaf.mrl_sec_index = static_cast<std::uint8_t>(y.mrl_sec_index ? 1 : 0);
     leaf.uv_mode = static_cast<std::uint8_t>(uv.av2_mode);
     if (cfl) leaf.flags |= syntax::kFlagIsCfl;
+    leaf.cfl_index = static_cast<std::uint8_t>(uv.cfl_index);
+    leaf.cfl_alpha_signs = static_cast<std::uint8_t>(uv.cfl_alpha_signs);
+    leaf.cfl_alpha_u = static_cast<std::uint8_t>(uv.cfl_alpha_u);
+    leaf.cfl_alpha_v = static_cast<std::uint8_t>(uv.cfl_alpha_v);
+    leaf.cfl_mh_dir = static_cast<std::uint8_t>(uv.cfl_mh_dir);
+    leaf.use_dip = static_cast<std::uint8_t>(y.use_dip ? 1 : 0);
+    leaf.dip_transpose = static_cast<std::uint8_t>(y.dip_transpose ? 1 : 0);
+    leaf.dip_mode = static_cast<std::uint8_t>(y.dip_mode);
+    if (use_palette) {
+      leaf.flags |= syntax::kFlagIsPalette;
+      leaf.palette_index = static_cast<std::uint32_t>(palette_results_.size());
+      palette::store_palette_state(palette_state_, r, c, w, h, palette_result);
+      palette_results_.push_back(std::move(palette_result));
+    }
     const TxPlan* plans[3] = {&luma_plan, &u_plan, &v_plan};
     leaf.levels_offset = static_cast<std::uint32_t>(levels_.size());
+    leaf.sec_tx_type = static_cast<std::uint8_t>(luma_plan.sec_tx_type);
+    leaf.most_probable_stx_set =
+        static_cast<std::uint8_t>(luma_plan.most_probable_stx_set);
     for (int plane = 0; plane < 3; ++plane) {
       const TxPlan& plan = *plans[plane];
       leaf.tx_size[plane] = static_cast<std::uint8_t>(plan.tx_size);
@@ -1191,7 +2043,8 @@ class Encoder {
     }
 
     if (options_.enable_deblock) {
-      fill_deblock_mi(node, cw, ch, luma_plan.tx_size, u_plan.tx_size);
+      fill_deblock_mi(r, c, size, cw, ch, luma_plan.tx_size,
+                      u_plan.tx_size);
     }
     return true;
   }
@@ -1202,7 +2055,7 @@ class Encoder {
     block.luma_stride = recon_[0].width;
     block.luma_max_x = mi_cols_ * 4 - 1;
     block.luma_max_y = mi_rows_ * 4 - 1;
-    block.sb_top_y = (cy0 * 2 / 64) * 64;
+    block.sb_top_y = (cy0 * 2 / geometry_.sb_size) * geometry_.sb_size;
     block.chroma = recon_[plane].samples.data();
     block.chroma_stride = recon_[plane].width;
     block.x = cx0;
@@ -1214,7 +2067,7 @@ class Encoder {
     block.have_above = cfl::cfl_avail_above(cy0, 1) ? 1 : 0;
     block.have_left = cfl::cfl_avail_left(cx0, 1) ? 1 : 0;
     block.bit_depth = 8;
-    block.ds_filter = 0;
+    block.ds_filter = options_.cfl_ds_filter;
     block.sub_x = 1;
     block.sub_y = 1;
   }
@@ -1313,10 +2166,14 @@ class Encoder {
     if (options_.enable_cfl) {
       std::vector<std::uint8_t> u_dc;
       std::vector<std::uint8_t> v_dc;
-      if (!predict_block(1, cx0, cy0, cw, ch, intra::Mode::kDc, 0, u_dc)) {
+      // The CfL base prediction must not receive the IBP DC post-filter
+      // (§7.13.2.12 excludes uv_is_cfl blocks).
+      if (!predict_block(1, cx0, cy0, cw, ch, intra::Mode::kDc, 0, u_dc,
+                         /*uv_is_cfl=*/true)) {
         return false;
       }
-      if (!predict_block(2, cx0, cy0, cw, ch, intra::Mode::kDc, 0, v_dc)) {
+      if (!predict_block(2, cx0, cy0, cw, ch, intra::Mode::kDc, 0, v_dc,
+                         /*uv_is_cfl=*/true)) {
         return false;
       }
       for (int yy = 0; yy < ch; ++yy) {
@@ -1333,9 +2190,9 @@ class Encoder {
       make_cfl_block(1, cx0, cy0, cw, ch, ub);
       make_cfl_block(2, cx0, cy0, cw, ch, vb);
       cfl::compute_luma(ub, scratch);
-      const int alpha_u = cfl::derive_implicit_alpha(ub, scratch);
+      int alpha_u = cfl::derive_implicit_alpha(ub, scratch);
       cfl::compute_luma(vb, scratch);
-      const int alpha_v = cfl::derive_implicit_alpha(vb, scratch);
+      int alpha_v = cfl::derive_implicit_alpha(vb, scratch);
       cfl::apply_prediction(ub, alpha_u, scratch);
       cfl::apply_prediction(vb, alpha_v, scratch);
       std::int64_t sse = 0;
@@ -1351,21 +2208,140 @@ class Encoder {
           sse += static_cast<std::int64_t>(dv) * dv;
         }
       }
+      int cfl_index = 1;
+      av2enc::cfl::Signalling explicit_syntax{};
+      if (options_.cfl_explicit) {
+        // §5.20.7.32 CFL_EXPLICIT: exhaustive sign/magnitude search on the
+        // source planes.  The derived prediction above is the incumbent, so a
+        // tie keeps cfl_index = 1 and the historical stream.
+        cfl::SourcePlane su;
+        su.plane = picture_.u.data();
+        su.stride = chroma_width_;
+        su.max_x = chroma_width_ - 1;
+        su.max_y = chroma_height_ - 1;
+        cfl::SourcePlane sv;
+        sv.plane = picture_.v.data();
+        sv.stride = chroma_width_;
+        sv.max_x = chroma_width_ - 1;
+        sv.max_y = chroma_height_ - 1;
+        const std::optional<cfl::SearchResult> explicit_choice =
+            cfl::search_alpha(ub, vb, su, sv,
+                              cfl::SearchMode::kExhaustiveSse, scratch);
+        if (explicit_choice.has_value()) {
+          cfl::apply_prediction_pair(ub, vb, explicit_choice->alpha, scratch);
+          std::int64_t explicit_sse = 0;
+          for (int yy = 0; yy < ch; ++yy) {
+            for (int xx = 0; xx < cw; ++xx) {
+              const int du = source_sample(1, cx0 + xx, cy0 + yy) -
+                             recon_[1].at(cx0 + xx, cy0 + yy);
+              explicit_sse += static_cast<std::int64_t>(du) * du;
+              const int dv = source_sample(2, cx0 + xx, cy0 + yy) -
+                             recon_[2].at(cx0 + xx, cy0 + yy);
+              explicit_sse += static_cast<std::int64_t>(dv) * dv;
+            }
+          }
+          if (explicit_sse < sse) {
+            sse = explicit_sse;
+            cfl_index = 0;
+            explicit_syntax = explicit_choice->syntax;
+            alpha_u = cfl::alpha_q8(explicit_choice->alpha.u);
+            alpha_v = cfl::alpha_q8(explicit_choice->alpha.v);
+          } else {
+            // Restore the derived prediction that won the comparison.
+            cfl::compute_luma(ub, scratch);
+            cfl::apply_prediction(ub, cfl::derive_implicit_alpha(ub, scratch),
+                                  scratch);
+            cfl::apply_prediction(vb, cfl::derive_implicit_alpha(vb, scratch),
+                                  scratch);
+          }
+        }
+      }
+      int cfl_mh_dir = 0;
+      av2enc::cfl::mhccp::MultiParams mh_params_u{};
+      av2enc::cfl::mhccp::MultiParams mh_params_v{};
+      if (options_.mhccp &&
+          av2enc::cfl::mhccp::allowed(cw, ch, /*enable_mhccp=*/true,
+                                      /*is_chroma_part=*/false,
+                                      /*frame_is_intra=*/true,
+                                      /*cfl_allowed_in_sdp=*/false,
+                                      /*lossless=*/false)) {
+        // §7.13.6-.8: a third hypothesis with derived Q16 weights.  Only
+        // cfl_mh_dir is signalled.  Compared against the incumbent by SSE.
+        const int num4_above_right =
+            count_top_right(1, cx0 >> 2, cy0 >> 2, cw >> 2);
+        const int num4_below_left =
+            count_bottom_left(1, cx0 >> 2, cy0 >> 2, ch >> 2);
+        av2enc::cfl::mhccp::Block mh_u = av2enc::cfl::mhccp::make_block(
+            ub, num4_above_right, num4_below_left, mi_cols_ * 4,
+            mi_rows_ * 4);
+        av2enc::cfl::mhccp::Block mh_v = av2enc::cfl::mhccp::make_block(
+            vb, num4_above_right, num4_below_left, mi_cols_ * 4,
+            mi_rows_ * 4);
+        av2enc::cfl::mhccp::SourcePlane mh_su;
+        mh_su.plane = picture_.u.data();
+        mh_su.stride = chroma_width_;
+        mh_su.max_x = chroma_width_ - 1;
+        mh_su.max_y = chroma_height_ - 1;
+        av2enc::cfl::mhccp::SourcePlane mh_sv;
+        mh_sv.plane = picture_.v.data();
+        mh_sv.stride = chroma_width_;
+        mh_sv.max_x = chroma_width_ - 1;
+        mh_sv.max_y = chroma_height_ - 1;
+        const std::optional<av2enc::cfl::mhccp::Candidate> multi =
+            av2enc::cfl::mhccp::search_mhccp(mh_u, mh_v, mh_su, mh_sv);
+        if (multi.has_value()) {
+          av2enc::cfl::mhccp::apply_mhccp_pair(mh_u, mh_v, multi->mh_dir,
+                                               multi->params_u,
+                                               multi->params_v);
+          if (multi->total_sse() < sse) {
+            sse = multi->total_sse();
+            cfl_index = 2;
+            cfl_mh_dir = multi->mh_dir;
+            mh_params_u = multi->params_u;
+            mh_params_v = multi->params_v;
+            alpha_u = 0;
+            alpha_v = 0;
+            explicit_syntax = av2enc::cfl::Signalling{};
+          } else {
+            // Restore the incumbent prediction.
+            cfl::compute_luma(ub, scratch);
+            if (cfl_index == 0) {
+              cfl::apply_prediction(ub, alpha_u, scratch);
+              cfl::apply_prediction(vb, alpha_v, scratch);
+            } else {
+              cfl::apply_prediction(ub, cfl::derive_implicit_alpha(ub, scratch),
+                                    scratch);
+              cfl::apply_prediction(vb, cfl::derive_implicit_alpha(vb, scratch),
+                                    scratch);
+            }
+          }
+        }
+      }
       if (sse < best.sse) {
         best.sse = sse;
         best.is_cfl = true;
         best.mode = intra::Mode::kDc;
         best.angle_delta = 0;
         best.av2_mode = kDcPred;
+        best.cfl_index = cfl_index;
+        best.cfl_alpha_signs = explicit_syntax.alpha_signs;
+        best.cfl_alpha_u = explicit_syntax.alpha_u;
+        best.cfl_alpha_v = explicit_syntax.alpha_v;
+        best.cfl_alpha_q8_u = alpha_u;
+        best.cfl_alpha_q8_v = alpha_v;
+        best.cfl_mh_dir = cfl_mh_dir;
+        best.mh_params_u = mh_params_u;
+        best.mh_params_v = mh_params_v;
       }
     }
     return true;
   }
 
-  void fill_deblock_mi(const partition::PartitionNode& node, int cw, int ch,
-                       int luma_tx_size, int chroma_tx_size) {
-    const int w = partition::block_width(node.size);
-    const int h = partition::block_height(node.size);
+  void fill_deblock_mi(int mi_row, int mi_col, partition::BlockSize size,
+                       int cw, int ch, int luma_tx_size,
+                       int chroma_tx_size) {
+    const int w = partition::block_width(size);
+    const int h = partition::block_height(size);
     const int w4 = w / 4;
     const int h4 = h / 4;
     const TxSize luma = static_cast<TxSize>(luma_tx_size);
@@ -1373,25 +2349,25 @@ class Encoder {
     (void)cw;
     (void)ch;
     for (int yy = 0; yy < h4; ++yy) {
-      const int rr = node.mi_row + yy;
+      const int rr = mi_row + yy;
       if (rr >= mi_rows_) break;
       for (int xx = 0; xx < w4; ++xx) {
-        const int cc = node.mi_col + xx;
+        const int cc = mi_col + xx;
         if (cc >= mi_cols_) break;
         const int idx = rr * deblock_cols_ + cc;
-        const int clamped_w4 = std::min(w4, mi_cols_ - node.mi_col);
-        const int clamped_h4 = std::min(h4, mi_rows_ - node.mi_row);
+        const int clamped_w4 = std::min(w4, mi_cols_ - mi_col);
+        const int clamped_h4 = std::min(h4, mi_rows_ - mi_row);
         deblock::DeblockMi mi;
-        mi.block_col_base = static_cast<std::uint16_t>(node.mi_col);
-        mi.block_row_base = static_cast<std::uint16_t>(node.mi_row);
+        mi.block_col_base = static_cast<std::uint16_t>(mi_col);
+        mi.block_row_base = static_cast<std::uint16_t>(mi_row);
         mi.block_w4 = static_cast<std::uint8_t>(clamped_w4);
         mi.block_h4 = static_cast<std::uint8_t>(clamped_h4);
         mi.sub_pu_size = luma;
         mi.tx_size = luma;
-        mi.tx_col_base = static_cast<std::uint16_t>(node.mi_col);
-        mi.tx_row_base = static_cast<std::uint16_t>(node.mi_row);
-        mi.sub_pu_col_base = static_cast<std::uint16_t>(node.mi_col);
-        mi.sub_pu_row_base = static_cast<std::uint16_t>(node.mi_row);
+        mi.tx_col_base = static_cast<std::uint16_t>(mi_col);
+        mi.tx_row_base = static_cast<std::uint16_t>(mi_row);
+        mi.sub_pu_col_base = static_cast<std::uint16_t>(mi_col);
+        mi.sub_pu_row_base = static_cast<std::uint16_t>(mi_row);
         mi.skip = 0;
         mi.region_intra = 1;
         mi.lossless = 0;
@@ -1419,6 +2395,10 @@ class Encoder {
   int quant_step_ = txv::kQuantStep;
   // §8.3.1 COEFF_CDF_Q_CTXS slice for the RDOQ rate model.
   int qctx_slice_ = 0;
+  // Frame-level QM state shared by the header writer and §7.14.4 dequant.
+  qm::QmFrameState qm_state_;
+  // Optional per-plane DC/AC quantizers from the delta-Q search.
+  const dcdeltaq::QuantFrameState* delta_quant_ = nullptr;
   int luma_stride_ = 0;
   int luma_height_ = 0;
   int chroma_stride_ = 0;
@@ -1435,7 +2415,12 @@ class Encoder {
   std::vector<int> intra_joint_;
   std::vector<std::uint8_t> uv_smooth_;
   std::array<DecodedMap, 3> decoded_;
+  // §5.20.8 per-MI palette sizes/colours (get_palette_cache source) and the
+  // per-leaf palette decisions handed to the syntax writer.
+  palette::PaletteState palette_state_;
+  std::vector<palette::PaletteResult> palette_results_;
 
+  int sb_mi_ = 16;
   int sb_mi_row_ = 0;
   int sb_mi_col_ = 0;
   int sb_cols_plane_[3] = {0, 0, 0};
@@ -1472,6 +2457,81 @@ bool encode_still_picture(const StillPicture& picture,
     error = "M1 does not support lossless base_q_idx = 0";
     return false;
   }
+  // CDEF's block-index context and CCSO's unit size are still derived from a
+  // 64x64 superblock.  Reject them by name instead of emitting a desynchronised
+  // stream.
+  if (options.sb128 && options.sb256) {
+    error = "sb128 and sb256 are mutually exclusive";
+    return false;
+  }
+  if ((options.sb128 || options.sb256) && options.enable_cdef) {
+    error = "CDEF is not wired for 128x128 superblocks";
+    return false;
+  }
+  if ((options.sb128 || options.sb256) && options.enable_ccso) {
+    error = "CCSO is not wired for 128x128 superblocks";
+    return false;
+  }
+  if (options.ext_partitions && options.force_single_block) {
+    error = "--still-ext-partitions cannot be combined with --still-single";
+    return false;
+  }
+  if (options.delta_q_res < 0 || options.delta_q_res > 3) {
+    error = "delta_q_res must be in [0, 3]";
+    return false;
+  }
+  if (options.qm) {
+    if (options.qm_level < 0 || options.qm_level > 14) {
+      error = "--still-qm-level must be in 0..14 (15 is the no-QM sentinel)";
+      return false;
+    }
+    if (options.rdoq) {
+      error = "--still-qm is not supported with --still-rdoq yet";
+      return false;
+    }
+  }
+  if (options.delta_q) {
+    if (options.qm) {
+      error = "--still-dc-ac-delta-q is not supported with --still-qm yet";
+      return false;
+    }
+    if (options.rdoq) {
+      error = "--still-dc-ac-delta-q is not supported with --still-rdoq yet";
+      return false;
+    }
+    if ((picture.width % 8U) != 0U || (picture.height % 8U) != 0U) {
+      error = "--still-dc-ac-delta-q requires width and height multiples of 8";
+      return false;
+    }
+  }
+  // IBP's MrlIndex scope is 0 (src/codec/intra/ibp) and MRL changes the edge
+  // filter rules, so the two cannot be combined in one sequence.
+  if (options.enable_mrl && options.enable_ibp) {
+    error = "--still-mrl and --still-ibp cannot be combined";
+    return false;
+  }
+  if (options.enable_mrl && options.rdo_intra) {
+    error = "--still-mrl and --still-rdo-intra cannot be combined";
+    return false;
+  }
+  if (options.cfl_ds_filter < 0 || options.cfl_ds_filter > 3) {
+    error = "cfl_ds_filter_index must be in 0..3";
+    return false;
+  }
+  if (options.mhccp && !options.enable_cfl) {
+    error = "--still-mhccp requires CfL (do not combine with --no-cfl)";
+    return false;
+  }
+  // Palette syntax is wired but does not pass the pinned dav2d gate yet: the
+  // §5.20.8.4 colour-map reconstruction desyncs on tall direction=0 blocks
+  // (minimal reproducer in docs/negative-results.md).  Keep it unreachable
+  // rather than emit a stream that only decodes sometimes.
+  if (options.palette) {
+    error =
+        "--still-palette is not integrated: the §5.20.8.4 palette colour map "
+        "does not reproduce with dav2d; see docs/negative-results.md";
+    return false;
+  }
   const std::size_t luma_size = static_cast<std::size_t>(picture.width) *
                                 static_cast<std::size_t>(picture.height);
   const std::size_t chroma_size =
@@ -1483,7 +2543,54 @@ bool encode_still_picture(const StillPicture& picture,
     return false;
   }
 
-  Encoder encoder(picture, options);
+  // Optional frame-level DC/AC delta-Q decision.  The component's search fixes
+  // the sequence base deltas at 0 and returns the legal frame deltas plus the
+  // derived per-plane quantizers used by forward quantisation and dequant.
+  dcdeltaq::SequenceDeltaQ seq_delta_q;
+  dcdeltaq::FrameDeltaQ frame_delta_q;
+  dcdeltaq::QuantFrameState delta_quant;
+  const dcdeltaq::QuantFrameState* delta_quant_ptr = nullptr;
+  if (options.delta_q) {
+    dcdeltaq::FramePlanesView view;
+    view.width = static_cast<int>(picture.width);
+    view.height = static_cast<int>(picture.height);
+    view.y = picture.y;
+    view.u = picture.u;
+    view.v = picture.v;
+    dcdeltaq::DeltaQSearchConfig search_config;
+    search_config.base_q_idx = options.base_q_idx;
+    search_config.equal_ac_dc_q = false;
+    search_config.separate_uv_delta_q = false;
+    search_config.max_delta_magnitude = 24;
+    search_config.max_passes = 3;
+    search_config.max_luma_blocks = 2048;
+    dcdeltaq::DeltaQSearchResult search_result;
+    std::string search_error;
+    if (!dcdeltaq::search_frame_delta_q(view, search_config, &search_result,
+                                        &search_error)) {
+      error = "delta-q search failed: " + search_error;
+      return false;
+    }
+    seq_delta_q = search_result.seq;
+    frame_delta_q = search_result.frame;
+    delta_quant = search_result.quant;
+    delta_quant_ptr = &delta_quant;
+    if (std::getenv("AV2ENC_STILL_TRACE") != nullptr) {
+      std::cerr << "delta-q: frame ydc=" << frame_delta_q.delta_q_y_dc
+                << " udc=" << frame_delta_q.delta_q_u_dc
+                << " vdc=" << frame_delta_q.delta_q_v_dc
+                << " uac=" << frame_delta_q.delta_q_u_ac
+                << " vac=" << frame_delta_q.delta_q_v_ac
+                << " yq=" << delta_quant.plane[0].dc << "/"
+                << delta_quant.plane[0].ac
+                << " uq=" << delta_quant.plane[1].dc << "/"
+                << delta_quant.plane[1].ac
+                << " vq=" << delta_quant.plane[2].dc << "/"
+                << delta_quant.plane[2].ac << "\n";
+    }
+  }
+
+  Encoder encoder(picture, options, delta_quant_ptr);
   SyntaxStream stream;
   if (!encoder.encode(&stream, error)) {
     return false;
@@ -1506,6 +2613,12 @@ bool encode_still_picture(const StillPicture& picture,
     for (int i = 0; i < 4; ++i) dopts.apply_deblocking_filter[i] = true;
     dopts.frame_is_intra = true;
     dopts.enable_sdp = false;
+    // §7.17.6: chroma filter strength uses the effective UV AC delta.  Without
+    // this the decoder and encoder deblock with different thresholds whenever
+    // a UV AC delta is signalled.
+    dopts.delta_q_u_ac = frame_delta_q.delta_q_u_ac;
+    dopts.delta_q_v_ac = frame_delta_q.delta_q_v_ac;
+    dopts.base_uv_ac_delta_q = seq_delta_q.base_uv_ac_delta_q;
     const deblock::DeblockStatus status =
         deblock::deblock_frame(frame, dopts);
     if (status != deblock::DeblockStatus::kOk) {
@@ -1618,10 +2731,30 @@ bool encode_still_picture(const StillPicture& picture,
     cdef_ready = true;
   }
 
-  // CCSO reads the *pre-CDEF* luma for its band classifier, so keep a copy of
-  // the deblocked planes before CDEF overwrites the reconstruction.
+  // CCSO reads the *pre-CDEF* luma for its band classifier and loop
+  // restoration uses it as CurrFrame, so keep a copy of the deblocked planes
+  // before CDEF overwrites the reconstruction.
+  if (options.enable_pc_wiener &&
+      (options.enable_wiener || options.enable_chroma_lr)) {
+    error = "PC-Wiener cannot be combined with Wiener NS/chroma LR";
+    return false;
+  }
+  // §7.20.1 applies GDF after the restoration filter and overwrites LrFrame
+  // for every filtered luma block, while Wiener/PC-Wiener read the pre-GDF
+  // CdefFrame.  Modelling that split is a separate change, so M1 keeps GDF
+  // exclusive with luma/chroma loop restoration.
+  if (options.enable_gdf &&
+      (options.enable_wiener || options.enable_pc_wiener ||
+       options.enable_chroma_lr)) {
+    error = "GDF cannot be combined with Wiener NS/chroma LR/PC-Wiener";
+    return false;
+  }
+  const bool use_loop_restoration = options.enable_wiener ||
+                                    options.enable_chroma_lr ||
+                                    options.enable_pc_wiener ||
+                                    options.enable_gdf;
   Plane pre_cdef_planes[3];
-  if (options.enable_ccso) {
+  if (options.enable_ccso || use_loop_restoration) {
     for (int plane = 0; plane < 3; ++plane) {
       pre_cdef_planes[plane] = encoder.recon(plane);
     }
@@ -1661,12 +2794,17 @@ bool encode_still_picture(const StillPicture& picture,
 
   StillConfig config;
 
-  // CCSO (§7.19).  Band-offset-only, one offset per band and plane; the fit
-  // minimises SSE against the original picture on visible samples.
+  // CCSO (§7.19).  The default is band-offset-only with one offset per band
+  // and plane; the fit minimises SSE against the original picture.  The
+  // opt-in --still-ccso-edge form additionally searches
+  // (scale, quant, ext_filter, edge_clf), fits a (band, cls0, cls1) offset
+  // table and prunes units whose filter does not reduce SSE (ccso_blk = 0).
   restoration::CcsoFrameParams ccso_params;
   std::vector<std::uint8_t> ccso_blk_grid;
-  int ccso_blk_cols = 0;
-  int ccso_blk_rows = 0;
+  std::vector<std::uint8_t> ccso_edge_grids[3];
+  const std::uint8_t* ccso_grid_ptr[3] = {nullptr, nullptr, nullptr};
+  int ccso_blk_cols[3] = {0, 0, 0};
+  int ccso_blk_rows[3] = {0, 0, 0};
   bool ccso_ready = false;
   if (options.enable_ccso) {
     const int bands_log2 = options.ccso_bands_log2;
@@ -1674,7 +2812,6 @@ bool encode_still_picture(const StillPicture& picture,
       error = "ccso_bands_log2 outside 0..6";
       return false;
     }
-    const int bands = 1 << bands_log2;
     const int vis_w[3] = {static_cast<int>(picture.width),
                           static_cast<int>((picture.width + 1U) / 2U),
                           static_cast<int>((picture.width + 1U) / 2U)};
@@ -1684,89 +2821,313 @@ bool encode_still_picture(const StillPicture& picture,
     const std::span<const std::uint8_t> src_planes[3] = {
         picture.y, picture.u, picture.v};
     const Plane& curr_luma = pre_cdef_planes[0];
-    const int band_shift = 8 - bands_log2;
-    for (int plane = 0; plane < 3; ++plane) {
-      const int sub = plane == 0 ? 0 : 1;
-      const Plane& rec = encoder.recon(plane);
-      std::vector<double> sum_e(static_cast<std::size_t>(bands), 0.0);
-      std::vector<double> sum_e2(static_cast<std::size_t>(bands), 0.0);
-      std::vector<double> count(static_cast<std::size_t>(bands), 0.0);
-      for (int y = 0; y < vis_h[plane]; ++y) {
-        for (int x = 0; x < vis_w[plane]; ++x) {
-          const int lx = x << sub;
-          const int ly = y << sub;
-          const int band = curr_luma.at(lx, ly) >> band_shift;
-          const int src = src_planes[plane][static_cast<std::size_t>(y) *
-                                                static_cast<std::size_t>(
-                                                    vis_w[plane]) +
-                                            static_cast<std::size_t>(x)];
-          const int d = src - rec.at(x, y);
-          sum_e[static_cast<std::size_t>(band)] += d;
-          sum_e2[static_cast<std::size_t>(band)] +=
-              static_cast<double>(d) * d;
-          count[static_cast<std::size_t>(band)] += 1.0;
-        }
-      }
-      StillCcsoPlane& plane_config = config.ccso.plane[plane];
-      plane_config.enabled = true;
-      plane_config.bo_only = true;
-      plane_config.scale_idx = 0;
-      plane_config.max_band_log2 = bands_log2;
-      int nonzero = 0;
-      for (int band = 0; band < bands; ++band) {
-        int best_idx = 0;
-        double best_sse = sum_e2[static_cast<std::size_t>(band)];
-        for (int i = 0; i < 8; ++i) {
-          const double off = static_cast<double>(restoration::kCcsoOffset[i]);
-          const double sse = sum_e2[static_cast<std::size_t>(band)] -
-                             2.0 * off * sum_e[static_cast<std::size_t>(band)] +
-                             off * off * count[static_cast<std::size_t>(band)];
-          if (sse < best_sse - 1e-9) {
-            best_sse = sse;
-            best_idx = i;
+    ccso_params.ccso_luma_size_log2 = 6;
+
+    if (!options.ccso_edge) {
+      const int bands = 1 << bands_log2;
+      const int band_shift = 8 - bands_log2;
+      for (int plane = 0; plane < 3; ++plane) {
+        const int sub = plane == 0 ? 0 : 1;
+        const Plane& rec = encoder.recon(plane);
+        std::vector<double> sum_e(static_cast<std::size_t>(bands), 0.0);
+        std::vector<double> sum_e2(static_cast<std::size_t>(bands), 0.0);
+        std::vector<double> count(static_cast<std::size_t>(bands), 0.0);
+        for (int y = 0; y < vis_h[plane]; ++y) {
+          for (int x = 0; x < vis_w[plane]; ++x) {
+            const int lx = x << sub;
+            const int ly = y << sub;
+            const int band = curr_luma.at(lx, ly) >> band_shift;
+            const int src = src_planes[plane][static_cast<std::size_t>(y) *
+                                                  static_cast<std::size_t>(
+                                                      vis_w[plane]) +
+                                              static_cast<std::size_t>(x)];
+            const int d = src - rec.at(x, y);
+            sum_e[static_cast<std::size_t>(band)] += d;
+            sum_e2[static_cast<std::size_t>(band)] +=
+                static_cast<double>(d) * d;
+            count[static_cast<std::size_t>(band)] += 1.0;
           }
         }
-        plane_config.offset_idx[band] =
-            static_cast<std::uint8_t>(best_idx);        if (best_idx != 0) ++nonzero;
+        StillCcsoPlane& plane_config = config.ccso.plane[plane];
+        plane_config.enabled = true;
+        plane_config.bo_only = true;
+        plane_config.scale_idx = 0;
+        plane_config.max_band_log2 = bands_log2;
+        int nonzero = 0;
+        for (int band = 0; band < bands; ++band) {
+          int best_idx = 0;
+          double best_sse = sum_e2[static_cast<std::size_t>(band)];
+          for (int i = 0; i < 8; ++i) {
+            const double off =
+                static_cast<double>(restoration::kCcsoOffset[i]);
+            const double sse =
+                sum_e2[static_cast<std::size_t>(band)] -
+                2.0 * off * sum_e[static_cast<std::size_t>(band)] +
+                off * off * count[static_cast<std::size_t>(band)];
+            if (sse < best_sse - 1e-9) {
+              best_sse = sse;
+              best_idx = i;
+            }
+          }
+          plane_config.offset_idx[band] =
+              static_cast<std::uint8_t>(best_idx);
+          if (best_idx != 0) ++nonzero;
+        }
+        if (nonzero == 0 && plane == 0) {
+          plane_config.enabled = false;
+        }
+        restoration::CcsoParams& params = ccso_params.plane[plane];
+        params.enabled = plane_config.enabled;
+        params.bo_only = true;
+        params.scale_idx = plane_config.scale_idx;
+        params.quant_idx = 0;
+        params.ext_filter = 0;
+        params.edge_clf = 0;
+        params.max_band_log2 = bands_log2;
+        if (params.enabled &&
+            !restoration::ccso_set_offsets(params, plane_config.offset_idx,
+                                           static_cast<std::size_t>(bands))) {
+          error = "ccso_set_offsets failed";
+          return false;
+        }
       }
-      if (nonzero == 0 && plane == 0) {
-        plane_config.enabled = false;
-      }
-      restoration::CcsoParams& params = ccso_params.plane[plane];
-      params.enabled = plane_config.enabled;
-      params.bo_only = true;
-      params.scale_idx = plane_config.scale_idx;
-      params.quant_idx = 0;
-      params.ext_filter = 0;
-      params.edge_clf = 0;
-      params.max_band_log2 = bands_log2;
-      if (params.enabled &&
-          !restoration::ccso_set_offsets(params, plane_config.offset_idx,
-                                         static_cast<std::size_t>(bands))) {
-        error = "ccso_set_offsets failed";
-        return false;
-      }
-    }
-    ccso_params.ccso_luma_size_log2 = 6;
-    for (int plane = 0; plane < 3; ++plane) {
-      const int sub = plane == 0 ? 0 : 1;
-      const int plane_w = (encoder.mi_cols() * 4) >> sub;
-      const int plane_h = (encoder.mi_rows() * 4) >> sub;
+      // One shared all-ones grid keeps the published --still-ccso bytes.
       int cols = 0;
       int rows = 0;
-      restoration::ccso_blk_grid_size(plane_w, plane_h, 6, sub, sub, &cols,
+      restoration::ccso_blk_grid_size(encoder.mi_cols() * 4,
+                                      encoder.mi_rows() * 4, 6, 0, 0, &cols,
                                       &rows);
-      ccso_blk_cols = cols;
-      ccso_blk_rows = rows;
-      break;
-    }
-    ccso_blk_grid.assign(static_cast<std::size_t>(ccso_blk_cols) *
-                             static_cast<std::size_t>(ccso_blk_rows),
-                         1);
-    for (int plane = 0; plane < 3; ++plane) {
-      ccso_params.blks[plane] = ccso_blk_grid.data();
-      ccso_params.blk_cols[plane] = ccso_blk_cols;
-      ccso_params.blk_rows[plane] = ccso_blk_rows;
+      ccso_blk_grid.assign(static_cast<std::size_t>(cols) *
+                               static_cast<std::size_t>(rows),
+                           1);
+      for (int plane = 0; plane < 3; ++plane) {
+        ccso_grid_ptr[plane] = ccso_blk_grid.data();
+        ccso_blk_cols[plane] = cols;
+        ccso_blk_rows[plane] = rows;
+        ccso_params.blks[plane] = ccso_grid_ptr[plane];
+        ccso_params.blk_cols[plane] = cols;
+        ccso_params.blk_rows[plane] = rows;
+      }
+    } else {
+      // Edge-classified form.  §5.18.7.12 limits max_band_log2 to 3 here.
+      const int edge_bands_log2 =
+          std::min(bands_log2, restoration::kCcsoMaxBandLog2Normal);
+      const int bands = 1 << edge_bands_log2;
+      const int band_shift = 8 - edge_bands_log2;
+      const int mi_luma_w = encoder.mi_cols() * 4;
+      const int mi_luma_h = encoder.mi_rows() * 4;
+      const int luma_stride = curr_luma.width;
+      for (int plane = 0; plane < 3; ++plane) {
+        const int sub = plane == 0 ? 0 : 1;
+        const Plane& rec = encoder.recon(plane);
+        const int shift = 6 - sub;  // CCSO unit size in plane samples
+        int cols = 0;
+        int rows = 0;
+        restoration::ccso_blk_grid_size((mi_luma_w) >> sub,
+                                        (mi_luma_h) >> sub, 6, sub, sub, &cols,
+                                        &rows);
+
+        struct EdgeFit {
+          double sse = std::numeric_limits<double>::infinity();
+          int scale_idx = 0;
+          int quant_idx = 0;
+          int ext_filter = 0;
+          int edge_clf = 0;
+          std::vector<std::uint8_t> idx;
+        } best_fit;
+        for (int scale_idx = 0; scale_idx < 4; ++scale_idx) {
+          for (int quant_idx = 0; quant_idx < 4; ++quant_idx) {
+            const int quant =
+                restoration::kCcsoQuantSz[scale_idx][quant_idx];
+            if (quant == 0) continue;
+            for (int ext_filter = 0; ext_filter < 7; ++ext_filter) {
+              for (int edge_clf = 0; edge_clf < 2; ++edge_clf) {
+                const int interval = 3 - edge_clf;
+                const int cells = bands * interval * interval;
+                std::vector<double> sum_e(
+                    static_cast<std::size_t>(cells), 0.0);
+                std::vector<double> sum_e2(
+                    static_cast<std::size_t>(cells), 0.0);
+                std::vector<double> count(
+                    static_cast<std::size_t>(cells), 0.0);
+                const int dy = restoration::kCcsoPos[ext_filter][0];
+                const int dx = restoration::kCcsoPos[ext_filter][1];
+                for (int y = 0; y < vis_h[plane]; ++y) {
+                  for (int x = 0; x < vis_w[plane]; ++x) {
+                    const int lx = x << sub;
+                    const int ly = y << sub;
+                    const int c = curr_luma.at(lx, ly);
+                    const int px = std::clamp(lx + dx, 0, mi_luma_w - 1);
+                    const int py = std::clamp(ly + dy, 0, mi_luma_h - 1);
+                    const int mx = std::clamp(lx - dx, 0, mi_luma_w - 1);
+                    const int my = std::clamp(ly - dy, 0, mi_luma_h - 1);
+                    const int plus =
+                        curr_luma.samples[static_cast<std::size_t>(py) *
+                                              static_cast<std::size_t>(
+                                                  luma_stride) +
+                                          static_cast<std::size_t>(px)];
+                    const int minus =
+                        curr_luma.samples[static_cast<std::size_t>(my) *
+                                              static_cast<std::size_t>(
+                                                  luma_stride) +
+                                          static_cast<std::size_t>(mx)];
+                    const int cls0 =
+                        restoration::ccso_score(plus - c, quant, edge_clf);
+                    const int cls1 =
+                        restoration::ccso_score(minus - c, quant, edge_clf);
+                    const int band = c >> band_shift;
+                    const std::size_t cell =
+                        static_cast<std::size_t>(
+                            (cls0 * interval + cls1) * bands + band);
+                    const int src =
+                        src_planes[plane][static_cast<std::size_t>(y) *
+                                              static_cast<std::size_t>(
+                                                  vis_w[plane]) +
+                                          static_cast<std::size_t>(x)];
+                    const int d = src - rec.at(x, y);
+                    sum_e[cell] += d;
+                    sum_e2[cell] += static_cast<double>(d) * d;
+                    count[cell] += 1.0;
+                  }
+                }
+                const int scale = scale_idx + 1;
+                EdgeFit fit;
+                fit.scale_idx = scale_idx;
+                fit.quant_idx = quant_idx;
+                fit.ext_filter = ext_filter;
+                fit.edge_clf = edge_clf;
+                fit.idx.assign(static_cast<std::size_t>(cells), 0);
+                double total = 0.0;
+                for (int cell = 0; cell < cells; ++cell) {
+                  int best_idx = 0;
+                  double best_sse = sum_e2[static_cast<std::size_t>(cell)];
+                  for (int i = 0; i < 8; ++i) {
+                    const double off =
+                        static_cast<double>(restoration::kCcsoOffset[i]) *
+                        scale;
+                    const double sse =
+                        sum_e2[static_cast<std::size_t>(cell)] -
+                        2.0 * off * sum_e[static_cast<std::size_t>(cell)] +
+                        off * off * count[static_cast<std::size_t>(cell)];
+                    if (sse < best_sse - 1e-9) {
+                      best_sse = sse;
+                      best_idx = i;
+                    }
+                  }
+                  fit.idx[static_cast<std::size_t>(cell)] =
+                      static_cast<std::uint8_t>(best_idx);
+                  total += best_sse;
+                }
+                fit.sse = total;
+                if (fit.sse < best_fit.sse) best_fit = std::move(fit);
+              }
+            }
+          }
+        }
+
+        StillCcsoPlane& plane_config = config.ccso.plane[plane];
+        plane_config.enabled = true;
+        plane_config.bo_only = false;
+        plane_config.scale_idx = best_fit.scale_idx;
+        plane_config.quant_idx = best_fit.quant_idx;
+        plane_config.ext_filter = best_fit.ext_filter;
+        plane_config.edge_clf = best_fit.edge_clf;
+        plane_config.max_band_log2 = edge_bands_log2;
+        const int cells = static_cast<int>(best_fit.idx.size());
+        for (int k = 0; k < cells && k < 128; ++k) {
+          plane_config.offset_idx[k] = best_fit.idx[static_cast<std::size_t>(k)];
+        }
+        restoration::CcsoParams& params = ccso_params.plane[plane];
+        params.enabled = true;
+        params.bo_only = false;
+        params.scale_idx = plane_config.scale_idx;
+        params.quant_idx = plane_config.quant_idx;
+        params.ext_filter = plane_config.ext_filter;
+        params.edge_clf = plane_config.edge_clf;
+        params.max_band_log2 = edge_bands_log2;
+        if (!restoration::ccso_set_offsets(
+                params, plane_config.offset_idx,
+                static_cast<std::size_t>(cells))) {
+          error = "ccso_set_offsets failed";
+          return false;
+        }
+
+        // Per-unit ccso_blk decision: keep a unit only when the fitted filter
+        // lowers SSE on the visible samples of that unit.
+        std::vector<double> unit_on(
+            static_cast<std::size_t>(cols) * static_cast<std::size_t>(rows),
+            0.0);
+        std::vector<double> unit_off(unit_on.size(), 0.0);
+        const int interval = 3 - plane_config.edge_clf;
+        const int quant = restoration::kCcsoQuantSz[plane_config.scale_idx]
+                                                   [plane_config.quant_idx];
+        const int dy = restoration::kCcsoPos[plane_config.ext_filter][0];
+        const int dx = restoration::kCcsoPos[plane_config.ext_filter][1];
+        for (int y = 0; y < vis_h[plane]; ++y) {
+          for (int x = 0; x < vis_w[plane]; ++x) {
+            const int lx = x << sub;
+            const int ly = y << sub;
+            const int c = curr_luma.at(lx, ly);
+            const int px = std::clamp(lx + dx, 0, mi_luma_w - 1);
+            const int py = std::clamp(ly + dy, 0, mi_luma_h - 1);
+            const int mx = std::clamp(lx - dx, 0, mi_luma_w - 1);
+            const int my = std::clamp(ly - dy, 0, mi_luma_h - 1);
+            const int plus =
+                curr_luma.samples[static_cast<std::size_t>(py) *
+                                      static_cast<std::size_t>(luma_stride) +
+                                  static_cast<std::size_t>(px)];
+            const int minus =
+                curr_luma.samples[static_cast<std::size_t>(my) *
+                                      static_cast<std::size_t>(luma_stride) +
+                                  static_cast<std::size_t>(mx)];
+            const int cls0 =
+                restoration::ccso_score(plus - c, quant, plane_config.edge_clf);
+            const int cls1 =
+                restoration::ccso_score(minus - c, quant, plane_config.edge_clf);
+            if (cls0 >= interval || cls1 >= interval) continue;
+            const int band = c >> band_shift;
+            const int off =
+                params.offsets[restoration::ccso_offset_index(band, cls0,
+                                                              cls1)];
+            const int src =
+                src_planes[plane][static_cast<std::size_t>(y) *
+                                      static_cast<std::size_t>(vis_w[plane]) +
+                                  static_cast<std::size_t>(x)];
+            const int base = rec.at(x, y);
+            const int filtered =
+                std::clamp(base + off, 0, 255);
+            const int unit_col = x >> shift;
+            const int unit_row = y >> shift;
+            const std::size_t unit =
+                static_cast<std::size_t>(unit_row) *
+                    static_cast<std::size_t>(cols) +
+                static_cast<std::size_t>(unit_col);
+            if (unit >= unit_on.size()) continue;
+            const double d_off = src - base;
+            const double d_on = src - filtered;
+            unit_off[unit] += d_off * d_off;
+            unit_on[unit] += d_on * d_on;
+          }
+        }
+        ccso_edge_grids[plane].assign(unit_on.size(), 1);
+        int enabled_units = 0;
+        for (std::size_t u = 0; u < unit_on.size(); ++u) {
+          if (unit_on[u] + 1e-9 < unit_off[u]) {
+            ccso_edge_grids[plane][u] = 1;
+            ++enabled_units;
+          } else {
+            ccso_edge_grids[plane][u] = 0;
+          }
+        }
+        plane_config.enabled = enabled_units > 0;
+        params.enabled = plane_config.enabled;
+        ccso_grid_ptr[plane] = ccso_edge_grids[plane].data();
+        ccso_blk_cols[plane] = cols;
+        ccso_blk_rows[plane] = rows;
+        ccso_params.blks[plane] = ccso_grid_ptr[plane];
+        ccso_params.blk_cols[plane] = cols;
+        ccso_params.blk_rows[plane] = rows;
+      }
     }
     restoration::RestorationFrame filter_frame{};
     for (int plane = 0; plane < 3; ++plane) {
@@ -1804,6 +3165,428 @@ bool encode_still_picture(const StillPicture& picture,
     }
   }
 
+  // §7.20.5 GDF: first stage of loop restoration, after CDEF/CCSO and before
+  // Wiener/PC-Wiener.  It reads CurrFrame (pre-CDEF) and CdefFrame (post-CCSO)
+  // and writes the filtered luma back as the new CdefFrame for later stages.
+  if (options.enable_gdf) {
+    namespace gdf = av2enc::filters::gdf;
+    const int gdf_w = encoder.mi_cols() * 4;
+    const int gdf_h = encoder.mi_rows() * 4;
+    const int vis_w = static_cast<int>(picture.width);
+    const int vis_h = static_cast<int>(picture.height);
+    std::vector<std::uint16_t> curr16(
+        static_cast<std::size_t>(gdf_w) * static_cast<std::size_t>(gdf_h));
+    std::vector<std::uint16_t> cdef16(curr16.size());
+    std::vector<std::uint16_t> original16(curr16.size());
+    for (int y = 0; y < gdf_h; ++y) {
+      const std::uint8_t* curr_row =
+          pre_cdef_planes[0].samples.data() +
+          static_cast<std::ptrdiff_t>(y) * pre_cdef_planes[0].width;
+      const std::uint8_t* cdef_row =
+          encoder.recon(0).samples.data() +
+          static_cast<std::ptrdiff_t>(y) * encoder.recon(0).width;
+      const std::uint8_t* src_row = nullptr;
+      std::uint8_t edge = 0;
+      if (y < vis_h) {
+        src_row = picture.y.data() + static_cast<std::ptrdiff_t>(y) * vis_w;
+        edge = vis_w > 0 ? src_row[vis_w - 1] : 0;
+      } else {
+        const int last = vis_h > 0 ? vis_h - 1 : 0;
+        src_row = picture.y.data() + static_cast<std::ptrdiff_t>(last) * vis_w;
+        edge = vis_w > 0 ? src_row[vis_w - 1] : 0;
+      }
+      for (int x = 0; x < gdf_w; ++x) {
+        const std::size_t i =
+            static_cast<std::size_t>(y) * static_cast<std::size_t>(gdf_w) +
+            static_cast<std::size_t>(x);
+        curr16[i] = curr_row[x];
+        cdef16[i] = cdef_row[x];
+        original16[i] = x < vis_w ? src_row[x] : edge;
+      }
+    }
+
+    gdf::GdfSourceFrame source;
+    source.curr = curr16.data();
+    source.cdef = cdef16.data();
+    source.stride = gdf_w;
+    gdf::GdfPlane original;
+    original.data = original16.data();
+    original.width = gdf_w;
+    original.height = gdf_h;
+    original.stride = gdf_w;
+    gdf::FrameGdfContext gdf_context;
+    gdf_context.enable_gdf = true;
+    gdf_context.gdf_unit_matches_sb_size = true;
+    gdf_context.coded_lossless = false;
+    gdf_context.single_picture_header_flag = true;
+    gdf_context.sb_size = 64;
+    gdf_context.width = gdf_w;
+    gdf_context.height = gdf_h;
+    gdf_context.mi_cols = encoder.mi_cols();
+    gdf_context.mi_rows = encoder.mi_rows();
+    gdf_context.disable_loopfilters_across_tiles = false;
+    gdf_context.tile_cols = 1;
+    gdf_context.tile_rows = 1;
+
+    gdf::GdfDecisionOptions gdf_options;
+    gdf_options.filter.base_q_idx = options.base_q_idx;
+    gdf_options.filter.frame_is_intra = true;
+    gdf_options.filter.bit_depth = 8;
+    gdf_options.disable_cdf_update = !options.adaptive_cdf;
+    gdf_options.lambda_bits = 0.0;
+    gdf::GdfDecision gdf_decision;
+    if (!gdf::DecideGdf(source, original, gdf_context, gdf_options,
+                        &gdf_decision, &error)) {
+      error = "GDF decision failed: " + error;
+      return false;
+    }
+    if (gdf_decision.params.frame_enable) {
+      gdf::FrameGdfParams params = gdf_decision.params;
+      params.per_block = false;  // M1 codes no use_gdf symbols
+      std::vector<std::uint16_t> out16(cdef16);
+      if (!gdf::ApplyGdfToFrame(source, gdf_options.filter, gdf_context, params,
+                                {}, out16.data(), gdf_w, &error)) {
+        error = "GDF apply failed: " + error;
+        return false;
+      }
+      Plane& rec = encoder.recon_mut(0);
+      for (int y = 0; y < gdf_h; ++y) {
+        for (int x = 0; x < gdf_w; ++x) {
+          rec.samples[static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(rec.width) +
+                      static_cast<std::size_t>(x)] =
+              static_cast<std::uint8_t>(
+                  out16[static_cast<std::size_t>(y) *
+                            static_cast<std::size_t>(gdf_w) +
+                        static_cast<std::size_t>(x)]);
+        }
+      }
+      config.gdf.enable = true;
+      config.gdf.unit_matches_sb_size = true;
+      config.gdf.per_block = false;
+      config.gdf.sb_size = 64;
+      config.gdf.pic_qc_idx = params.pic_qc_idx;
+      config.gdf.pic_scale_idx = params.pic_scale_idx;
+      config.gdf.blk_size = params.blk_size;
+      config.gdf.cols = params.cols;
+      config.gdf.rows = params.rows;
+      config.gdf.pix_scale = params.pix_scale;
+    }
+  }
+
+  // §7.20 loop restoration (non-separable Wiener NS), after CDEF and CCSO.
+  // The search minimises SSE against the source; per-unit filters at
+  // LoopRestorationSize 64 (luma) / 32 (chroma) keep the tile syntax simple.
+  restoration::classes::WienerDecision lr_decision;
+  if (use_loop_restoration) {
+    const int mi_luma_w = encoder.mi_cols() * 4;
+    const int mi_luma_h = encoder.mi_rows() * 4;
+    const int mi_chroma_w = mi_luma_w / 2;
+    const int mi_chroma_h = mi_luma_h / 2;
+    const int target_w[3] = {mi_luma_w, mi_chroma_w, mi_chroma_w};
+    const int target_h[3] = {mi_luma_h, mi_chroma_h, mi_chroma_h};
+    const int vis_w[3] = {static_cast<int>(picture.width),
+                          static_cast<int>((picture.width + 1U) / 2U),
+                          static_cast<int>((picture.width + 1U) / 2U)};
+    const int vis_h[3] = {static_cast<int>(picture.height),
+                          static_cast<int>((picture.height + 1U) / 2U),
+                          static_cast<int>((picture.height + 1U) / 2U)};
+    std::vector<std::uint8_t> target_storage[3];
+    const std::uint8_t* target[3] = {nullptr, nullptr, nullptr};
+    for (int plane = 0; plane < 3; ++plane) {
+      const std::span<const std::uint8_t> src =
+          plane == 0 ? picture.y : (plane == 1 ? picture.u : picture.v);
+      target_storage[plane].assign(
+          static_cast<std::size_t>(target_w[plane]) *
+              static_cast<std::size_t>(target_h[plane]),
+          0);
+      for (int y = 0; y < vis_h[plane]; ++y) {
+        std::copy_n(src.begin() +
+                        static_cast<std::ptrdiff_t>(y) * vis_w[plane],
+                    vis_w[plane],
+                    target_storage[plane].begin() +
+                        static_cast<std::ptrdiff_t>(y) * target_w[plane]);
+      }
+      target[plane] = target_storage[plane].data();
+    }
+
+    restoration::classes::WienerDecisionInput lr_input;
+    for (int plane = 0; plane < 3; ++plane) {
+      lr_input.core.plane[plane].curr =
+          pre_cdef_planes[plane].samples.data();
+      lr_input.core.plane[plane].curr_stride = pre_cdef_planes[plane].width;
+      lr_input.core.plane[plane].cdef = encoder.recon(plane).samples.data();
+      lr_input.core.plane[plane].cdef_stride = encoder.recon(plane).width;
+      lr_input.target[plane] = target[plane];
+      lr_input.target_stride[plane] = target_w[plane];
+    }
+    lr_input.core.mi_cols = encoder.mi_cols();
+    lr_input.core.mi_rows = encoder.mi_rows();
+    lr_input.core.sub_x = 1;
+    lr_input.core.sub_y = 1;
+    lr_input.core.bit_depth = 8;
+    lr_input.core.sb_shift = 4;  // 64x64 superblocks
+    lr_input.base_q_idx = options.base_q_idx;
+
+    restoration::classes::WienerDecisionOptions lr_options;
+    lr_options.allow_luma = options.enable_wiener;
+    lr_options.allow_chroma = options.enable_chroma_lr;
+    lr_options.allow_per_unit = true;
+    lr_options.allow_frame_filters = false;
+    lr_options.max_num_filter_classes = 1;
+    lr_options.lambda_bits = 0.0;  // distortion-only integration gate
+    lr_options.forced_luma_shift = 3;    // luma unit 64
+    lr_options.forced_chroma_shift = 3;  // chroma unit 32 (4:2:0)
+    const restoration::classes::WienerDecisionStatus lr_status =
+        restoration::classes::wiener_decide(lr_input, lr_options, &lr_decision);
+    if (lr_status != restoration::classes::WienerDecisionStatus::kOk) {
+      error = std::string("wiener decision failed: ") +
+              restoration::classes::wiener_decision_status_string(lr_status);
+      return false;
+    }
+
+    bool lr_any = false;
+    for (int plane = 0; plane < 3; ++plane) {
+      lr_any = lr_any ||
+               lr_decision.params.frame_type[plane] ==
+                   restoration::kRestoreWienerNs;
+    }
+    if (lr_any) {
+      restoration::LoopRestorationParams lr_params;
+      restoration::classes::wiener_decision_to_loop_params(lr_decision,
+                                                           &lr_params);
+      Plane lr_planes[3];
+      restoration::RestorationFrame lr_frame{};
+      for (int plane = 0; plane < 3; ++plane) {
+        const Plane& rec = encoder.recon(plane);
+        lr_planes[plane].resize(rec.width, rec.height, 0);
+        lr_frame.curr[plane].data =
+            const_cast<std::uint8_t*>(pre_cdef_planes[plane].samples.data());
+        lr_frame.curr[plane].stride = pre_cdef_planes[plane].width;
+        lr_frame.cdef[plane].data = encoder.recon_mut(plane).samples.data();
+        lr_frame.cdef[plane].stride = rec.width;
+        lr_frame.lr[plane].data = lr_planes[plane].samples.data();
+        lr_frame.lr[plane].stride = lr_planes[plane].width;
+      }
+      lr_frame.mi_cols = encoder.mi_cols();
+      lr_frame.mi_rows = encoder.mi_rows();
+      lr_frame.subsampling_x = 1;
+      lr_frame.subsampling_y = 1;
+      lr_frame.bit_depth = 8;
+      lr_frame.sb_width = 64;
+      lr_frame.sb_height = 64;
+      lr_frame.sb_shift = 4;
+      const restoration::RestorationStatus lr_filter_status =
+          restoration::loop_restoration_frame(lr_frame, lr_params);
+      if (lr_filter_status != restoration::RestorationStatus::kOk) {
+        error = std::string("loop restoration failed: ") +
+                restoration::restoration_status_string(lr_filter_status);
+        return false;
+      }
+      for (int plane = 0; plane < 3; ++plane) {
+        encoder.recon_mut(plane).samples.swap(lr_planes[plane].samples);
+      }
+
+      config.lr.enable = true;
+      config.lr.uv_present = true;
+      for (int plane = 0; plane < 3; ++plane) {
+        StillLrPlane& dst = config.lr.plane[plane];
+        dst.enabled = lr_decision.params.frame_type[plane] ==
+                      restoration::kRestoreWienerNs;
+        dst.shift = plane == 0 ? lr_decision.params.luma_shift
+                               : lr_decision.params.chroma_shift;
+        dst.unit_rows = lr_decision.unit_rows[plane];
+        dst.unit_cols = lr_decision.unit_cols[plane];
+        dst.unit_type = lr_decision.unit_type[plane];
+        dst.unit_coeffs = lr_decision.unit_coeffs[plane];
+        const std::size_t units = dst.unit_type.size();
+        dst.unit_subset.assign(units, 0);
+        dst.unit_uv_sym.assign(units, 0);
+        dst.unit_merged.assign(units, 0);
+        dst.unit_bank_k.assign(units, -1);
+        if (lr_decision.plane[plane].units.size() != units) {
+          error = "loop restoration unit plan size mismatch";
+          return false;
+        }
+        for (std::size_t i = 0; i < units; ++i) {
+          const restoration::classes::WienerUnitPlan& plan =
+              lr_decision.plane[plane].units[i];
+          dst.unit_subset[i] = static_cast<std::uint8_t>(plan.subset);
+          dst.unit_uv_sym[i] = plan.uv_sym ? 1 : 0;
+          dst.unit_merged[i] = plan.merged ? 1 : 0;
+          dst.unit_bank_k[i] = static_cast<std::int8_t>(plan.use_bank_k);
+        }
+      }
+    }
+  }
+
+  // §7.20.4 PC-Wiener (luma only), also after CDEF/CCSO.  The decision uses
+  // the recovered classifier/filter bank and emits per-unit on/off symbols.
+  if (options.enable_pc_wiener) {
+    namespace pcw = av2enc::filters::pc_wiener_stream;
+    const int mi_luma_w = encoder.mi_cols() * 4;
+    const int mi_luma_h = encoder.mi_rows() * 4;
+    const int vis_w = static_cast<int>(picture.width);
+    const int vis_h = static_cast<int>(picture.height);
+    std::vector<std::uint8_t> target(
+        static_cast<std::size_t>(mi_luma_w) *
+            static_cast<std::size_t>(mi_luma_h),
+        0);
+    for (int y = 0; y < vis_h; ++y) {
+      const std::uint8_t* row =
+          picture.y.data() + static_cast<std::ptrdiff_t>(y) * vis_w;
+      std::copy_n(row, vis_w,
+                  target.begin() + static_cast<std::ptrdiff_t>(y) * mi_luma_w);
+      // Edge-replicate the MI padding so the per-unit SSE decision is not
+      // biased by zeros outside the visible picture.
+      std::fill(target.begin() + static_cast<std::ptrdiff_t>(y) * mi_luma_w +
+                    vis_w,
+                target.begin() + static_cast<std::ptrdiff_t>(y + 1) *
+                                    mi_luma_w,
+                vis_w > 0 ? row[vis_w - 1] : 0);
+    }
+    for (int y = vis_h; y < mi_luma_h; ++y) {
+      const std::uint8_t* prev =
+          target.data() + static_cast<std::ptrdiff_t>(y - 1) * mi_luma_w;
+      std::copy_n(prev, mi_luma_w,
+                  target.begin() + static_cast<std::ptrdiff_t>(y) * mi_luma_w);
+    }
+
+    pcw::DecisionPlanes planes;
+    planes.width = mi_luma_w;
+    planes.height = mi_luma_h;
+    planes.bit_depth = 8;
+    planes.base_q_idx = options.base_q_idx;
+    planes.sub_x = 1;
+    planes.sub_y = 1;
+    planes.luma_shift = 3;
+    planes.chroma_shift = 3;
+    for (int plane = 0; plane < 3; ++plane) {
+      planes.curr[plane] = pre_cdef_planes[plane].samples.data();
+      planes.curr_stride[plane] = pre_cdef_planes[plane].width;
+      planes.cdef[plane] = encoder.recon(plane).samples.data();
+      planes.cdef_stride[plane] = encoder.recon(plane).width;
+    }
+    planes.target[0] = target.data();
+    planes.target_stride[0] = mi_luma_w;
+
+    // §7.20.1 LrTxSkip[row][col] = skip_flag || (eob == 0) for luma.  M1 has
+    // no block-skip syntax, so it is exactly the per-4x4 eob==0 map.
+    std::vector<std::uint8_t> lr_tx_skip(
+        static_cast<std::size_t>(encoder.mi_cols()) *
+            static_cast<std::size_t>(encoder.mi_rows()),
+        0);
+    for (const syntax::BlockSyntax& leaf : stream.blocks) {
+      if (leaf.partition != static_cast<std::uint8_t>(PartitionType::kNone)) {
+        continue;
+      }
+      const int w4 =
+          partition::block_width(static_cast<BlockSize>(leaf.bsize)) / 4;
+      const int h4 =
+          partition::block_height(static_cast<BlockSize>(leaf.bsize)) / 4;
+      const std::uint8_t value = leaf.eob[0] == 0 ? 1 : 0;
+      for (int r = 0; r < h4; ++r) {
+        const int row = leaf.mi_row + r;
+        if (row >= encoder.mi_rows()) break;
+        for (int c = 0; c < w4; ++c) {
+          const int col = leaf.mi_col + c;
+          if (col >= encoder.mi_cols()) break;
+          lr_tx_skip[static_cast<std::size_t>(row) *
+                         static_cast<std::size_t>(encoder.mi_cols()) +
+                     static_cast<std::size_t>(col)] = value;
+        }
+      }
+    }
+    planes.lr_tx_skip = lr_tx_skip.data();
+    planes.lr_tx_skip_stride = encoder.mi_cols();
+
+    pcw::DecisionResult pc_result;
+    if (!pcw::DecidePerUnitPcWiener(planes, 0.0, &pc_result, &error)) {
+      error = "PC-Wiener decision failed: " + error;
+      return false;
+    }
+    if (pc_result.active_units > 0) {
+      const int unit_size =
+          pcw::kRestorationTileSizeMax >> pc_result.params.luma_shift;
+      Plane lr_luma;
+      const Plane& rec = encoder.recon(0);
+      lr_luma.resize(rec.width, rec.height, 0);
+      const int filtered = pcw::ApplyPerUnitPcWiener(
+          planes, pc_result.unit_type[0], unit_size,
+          lr_luma.samples.data(), lr_luma.width);
+      if (filtered <= 0) {
+        error = "PC-Wiener application failed";
+        return false;
+      }
+      encoder.recon_mut(0).samples.swap(lr_luma.samples);
+
+      config.lr.enable = true;
+      config.lr.uv_present = true;
+      config.lr.pc_wiener = true;
+      StillLrPlane& dst = config.lr.plane[0];
+      dst.enabled = true;
+      dst.shift = pc_result.params.luma_shift;
+      dst.unit_rows = pcw::CountUnits(unit_size, mi_luma_h);
+      dst.unit_cols = pcw::CountUnits(unit_size, mi_luma_w);
+      dst.unit_type = pc_result.unit_type[0];
+      for (int plane = 1; plane < 3; ++plane) {
+        config.lr.plane[plane].enabled = false;
+      }
+    }
+  }
+
+  // Film grain (§5.14/§5.18.10).  A fixed two-point 4:2:0 model is signalled;
+  // synthesis is decoder-side, so the encoder recon remains unfiltered.
+  if (options.enable_grain) {
+    namespace grain = av2enc::filters::grain;
+    grain::GrainModel model;
+    model.chroma_scaling_from_luma = true;
+    model.num_y_points = 2;
+    model.point_y_value[0] = 0;
+    model.point_y_value[1] = 128;
+    model.point_y_scaling[0] = 64;
+    model.point_y_scaling[1] = 88;
+    model.point_y_increment_bits_minus_1 = 7;
+    model.point_y_scaling_bits_minus_5 = 3;
+    model.grain_scaling_minus_8 = 0;
+    model.ar_coeff_lag = 2;
+    model.bits_per_ar_coeff_y_minus_5 = 3;
+    model.bits_per_ar_coeff_cb_minus_5 = 3;
+    model.bits_per_ar_coeff_cr_minus_5 = 3;
+    const int positions = 2 * model.ar_coeff_lag * (model.ar_coeff_lag + 1);
+    for (int i = 0; i < positions; ++i) {
+      const int tap = ((i % 3) - 1) * 8;
+      model.ar_coeffs_y[i] = tap;
+      model.ar_coeffs_cb[i] = tap / 2;
+      model.ar_coeffs_cr[i] = tap / 2;
+    }
+    model.ar_coeffs_cb[positions] = 0;
+    model.ar_coeffs_cr[positions] = 0;
+    model.ar_coeff_shift_minus_6 = 1;
+    model.overlap_flag = true;
+    model.clip_to_restricted_range = false;
+    model = grain::NormalizeModel(model, grain::GrainChromaIdc::k420);
+    std::string grain_why;
+    if (!grain::ValidateModel(model, grain::GrainChromaIdc::k420,
+                              &grain_why)) {
+      error = "film grain model is invalid: " + grain_why;
+      return false;
+    }
+    grain::FilmGrainObu obu;
+    obu.update_flags = 1;  // slot 0
+    obu.chroma_idc = grain::GrainChromaIdc::k420;
+    obu.models[0] = model;
+    std::string grain_error;
+    config.film_grain_obu = grain::MakeFilmGrainObu(obu, &grain_error);
+    if (config.film_grain_obu.empty()) {
+      error = "film grain OBU failed: " + grain_error;
+      return false;
+    }
+    config.film_grain_present = true;
+    config.film_grain_id = 0;
+    config.grain_seed = 0;
+  }
+
   config.max_frame_width = static_cast<std::uint16_t>(picture.width);
   config.max_frame_height = static_cast<std::uint16_t>(picture.height);
   config.base_q_idx = options.base_q_idx;
@@ -1814,12 +3597,33 @@ bool encode_still_picture(const StillPicture& picture,
   config.enable_cfl_intra = options.enable_cfl;
   config.enable_chroma_dctonly = true;
   config.enable_idtx_intra = false;
+  config.enable_intra_ist = options.ist;
+  config.enable_inter_ist = false;
+  config.cfl_ds_filter_index = options.cfl_ds_filter;
+  config.enable_dip = options.enable_dip;
+  config.enable_palette = options.palette;
+  config.enable_mhccp = options.mhccp;
+  config.allow_screen_content_tools = options.palette;
+  config.force_integer_mv = true;
+  config.enable_ibp = options.enable_ibp;
+  config.enable_mrls = options.enable_mrl;
   config.tx_mode_select = false;
   config.reduced_tx_set = 0;
+  config.use_128x128_superblock = options.sb128;
+  config.use_256x256_superblock = options.sb256;
+  config.enable_ext_partitions = options.ext_partitions;
+  config.enable_uneven_4way_partitions = options.ext_partitions;
+  config.qm = encoder.qm_state();
+  config.dc_ac_delta_q = seq_delta_q;
+  config.frame_delta_q = frame_delta_q;
   config.apply_deblock_y_vert = options.enable_deblock;
   config.apply_deblock_y_horz = options.enable_deblock;
   config.apply_deblock_u = options.enable_deblock;
   config.apply_deblock_v = options.enable_deblock;
+  config.per_sb_delta_q.segmentation_enabled = options.enable_segmentation;
+  config.per_sb_delta_q.delta_q_present = options.enable_delta_q;
+  config.per_sb_delta_q.delta_q_res = options.enable_delta_q ? options.delta_q_res : 0;
+  config.content_interpretation = options.content_interpretation;
   if (cdef_ready) {
     const cuda::still::CdefHeaderParams& header = cdef_plan.header;
     config.cdef.enable = header.frame_enable;
@@ -1839,17 +3643,21 @@ bool encode_still_picture(const StillPicture& picture,
   syntax::FramePlan plan;
   plan.width = static_cast<int>(picture.width);
   plan.height = static_cast<int>(picture.height);
-  plan.sb_size = 64;
+  plan.sb_size = config.use_128x128_superblock ||
+                         config.use_256x256_superblock
+                     ? 128
+                     : 64;
   if (ccso_ready) {
     for (int plane = 0; plane < 3; ++plane) {
-      plan.ccso_blks[plane] = ccso_blk_grid.data();
-      plan.ccso_blk_cols[plane] = ccso_blk_cols;
-      plan.ccso_blk_rows[plane] = ccso_blk_rows;
+      plan.ccso_blks[plane] = ccso_grid_ptr[plane];
+      plan.ccso_blk_cols[plane] = ccso_blk_cols[plane];
+      plan.ccso_blk_rows[plane] = ccso_blk_rows[plane];
     }
   }
   std::size_t tile_bytes = 0;
   if (!syntax::assemble_still_frame(plan, stream.blocks, stream.levels, config,
-                                 result.frame, error, &tile_bytes)) {
+                                 result.frame, error, &tile_bytes,
+                                 encoder.palette_results())) {
     return false;
   }
   result.tile_bytes = static_cast<std::uint32_t>(tile_bytes);

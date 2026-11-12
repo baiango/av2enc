@@ -13,8 +13,8 @@
 #include <vector>
 
 #include "core/bitstream/basic_headers.h"
-#include "pipeline/grain/stream/film_grain_syntax.h"
-#include "pipeline/grain/stream/grain_stream.h"
+#include "pipeline/grain/film_grain_syntax.h"
+#include "pipeline/grain/grain_stream.h"
 #include "codec/filters/tables/film_grain.h"
 
 namespace {

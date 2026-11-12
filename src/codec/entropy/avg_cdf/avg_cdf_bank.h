@@ -65,12 +65,16 @@
 #include <string>
 #include <vector>
 
+#include "spec_tables/spec_math.h"
+
 namespace av2enc::entropy::avg_cdf {
 
 // §8.2 inverse-CDF probability scale and the maximum CDF alphabet (§9.3).
-inline constexpr std::uint32_t kCdfScale = 1u << 15;
-inline constexpr std::uint32_t kMaxAverageLog2 = 3;
-inline constexpr std::uint16_t kMaxSymbols = 8;
+// Shared with the symbol coder via src/spec_tables/spec_math.h.
+inline constexpr std::uint32_t kCdfScale = spec::kCdfScale;
+inline constexpr std::uint32_t kMaxAverageLog2 = spec::kMaxAverageLog2;
+inline constexpr std::uint16_t kMaxSymbols =
+    static_cast<std::uint16_t>(spec::kMaxCdfSymbols);
 
 // One CDF array to allocate in an owning bank.
 struct CdfSpec {

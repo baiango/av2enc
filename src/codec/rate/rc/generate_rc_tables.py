@@ -19,7 +19,7 @@ import json
 import pathlib
 
 HERE = pathlib.Path(__file__).resolve().parent
-ROOT = HERE.parents[2]
+ROOT = HERE.parents[3]
 QUANT = ROOT / "spec" / "tables" / "quant.json"
 OUT = HERE / "rc_tables.h"
 

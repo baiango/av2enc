@@ -46,6 +46,7 @@
 #include <cstdint>
 
 #include "av2_entropy_tables.h"
+#include "spec_tables/spec_math.h"
 
 #if !defined(__CUDACC__)
 #include <span>
@@ -60,13 +61,15 @@
 namespace av2enc::av2 {
 
 // §8.2: the coder's probability scale and initial range/value width.
-inline constexpr uint32_t kCdfScale = 1u << 15;          // 32768
+// The shared §8.2 constants live in src/spec_tables/spec_math.h; these aliases
+// keep the coder's existing names and values.
+inline constexpr uint32_t kCdfScale = spec::kCdfScale;          // 32768
 inline constexpr uint32_t kSymbolRangeInit = 1u << 15;   // 1 << 15
 inline constexpr uint32_t kSymbolValueMask = (1u << 15) - 1u;
 inline constexpr uint32_t kTrailingFirstBit = 1u << 14;  // 15-bit 100...0
 inline constexpr int kProbShift = 7;                     // EC_PROB_SHIFT
-inline constexpr int kMaxSymbols = 8;                    // Prob_Inc rows: N-2 <= 6
-inline constexpr uint32_t kCdfCountCap = 32;             // cdf[N] cap
+inline constexpr int kMaxSymbols = spec::kMaxCdfSymbols; // Prob_Inc rows: N-2 <= 6
+inline constexpr uint32_t kCdfCountCap = spec::kCdfCountCap;  // cdf[N] cap
 inline constexpr int64_t kMinSymbolMaxBits = -14;        // §8.2.4 requirement
 
 // The normative default CDF tables live in spec/tables/default_cdf.json.  This

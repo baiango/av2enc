@@ -35,7 +35,7 @@ import json
 import pathlib
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parents[4]
+ROOT = pathlib.Path(__file__).resolve().parents[5]
 JSON_PATH = ROOT / "spec" / "tables" / "default_cdf.json"
 OUT_PATH = pathlib.Path(__file__).resolve().parent / "deltaq_cdf_tables.h"
 

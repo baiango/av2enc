@@ -46,23 +46,9 @@ void average_cdf(std::uint16_t* cdf, const std::uint16_t* tile_cdf,
       num_log2 > kMaxAverageLog2) {
     return;
   }
-  const int n = static_cast<int>(symbols);
-  if (first_tile) {
-    // §8.2.4: cdf[i] = 1 << 15 for i < sz-2; rate from tile 0; count = 0.
-    for (int i = 0; i < n - 1; ++i) {
-      cdf[i] = static_cast<std::uint16_t>(kCdfScale);
-    }
-    cdf[n - 1] = tile_cdf[n - 1];
-    cdf[n] = 0;
-  }
-  for (int i = 0; i < n - 1; ++i) {
-    const std::uint32_t value = cdf[i];
-    const std::uint32_t tile_value = tile_cdf[i];
-    cdf[i] = static_cast<std::uint16_t>(
-        value - ((kCdfScale - tile_value) >> num_log2));
-  }
-  cdf[n] = static_cast<std::uint16_t>(
-      cdf[n] + static_cast<std::uint16_t>(tile_cdf[n] >> num_log2));
+  // §8.2.4 arithmetic is shared with av2::average_cdf().
+  spec::average_cdf_step(cdf, tile_cdf, static_cast<int>(symbols), num_log2,
+                         first_tile);
 }
 
 void blend_cdf(std::uint16_t* cdf, const std::uint16_t* saved_cdf,

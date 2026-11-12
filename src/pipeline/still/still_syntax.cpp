@@ -12,8 +12,21 @@
 #include "pipeline/still/still_cdf_tables.h"
 #include "pipeline/still/still_tables.h"
 #include "codec/entropy/qctx/qctx.h"
+#include "codec/entropy/deltaq/still/deltaq.h"
+#include "codec/intra/cfl/mhccp/mhccp.h"
+#include "codec/intra/cfl/mhccp/mhccp_syntax.h"
+#include "codec/intra/dip/dip_syntax.h"
+#include "codec/intra/mrl/stream/mrl_interaction.h"
+#include "codec/intra/mrl/stream/mrl_syntax.h"
+#include "codec/intra/palette/core/palette.h"
+#include "codec/intra/palette/stream/palette_stream.h"
+#include "codec/filters/loop_restoration/classes/wiener_syntax.h"
+#include "codec/filters/pc_wiener/pc_wiener_stream.h"
 #include "codec/partition/tree/partition.h"
+#include "codec/partition/stream/partition_stream.h"
 #include "codec/transform/tx_type/tx_type.h"
+#include "codec/transform/secondary/tx_secondary.h"
+#include "codec/transform/secondary/tx_secondary_tables.h"
 #include "codec/transform/variants/tx_variants.h"
 #include "codec/entropy/av2/av2_entropy.h"
 
@@ -27,6 +40,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -36,6 +50,8 @@ namespace {
 using partition::BlockSize;
 using partition::FrameGeometry;
 using partition::PartitionType;
+namespace ps = still::partition_stream;
+namespace pe = partition_ext;
 
 // YMode numeric values (§6.19.5.5).
 constexpr int kDcPred = 0;
@@ -168,6 +184,7 @@ constexpr std::uint16_t kCcsoBlkCdf[3][4][3] = {
 
 struct CdfState {
   std::uint16_t do_split[2][64][3];
+  std::uint16_t do_square_split[2][8][3];
   std::uint16_t rect_type[2][64][3];
   std::uint16_t y_mode_set[5];
   std::uint16_t y_mode_index[3][9];
@@ -203,6 +220,14 @@ struct CdfState {
   std::uint16_t intra_tx_type_long[4][5];
   std::uint16_t is_long_side_dct[2][3];
   std::uint16_t ccso_blk[3][4][3];
+  std::uint16_t sec_tx_type[2][5][5];
+  std::uint16_t most_probable_stx_set[8];
+  std::uint16_t most_probable_stx_set_adst[5];
+  mrl_stream::MrlCdfs mrl;
+  mrl_stream::MrlContext mrl_context;
+  dip::DipCdfState dip_cdfs;
+  // §5.20.7.32 read_cfl_alphas() including cfl_mhccp/cfl_mh_dir (MHCCP).
+  cfl::mhccp::CflCdfs mh_cdfs;
 };
 
 template <typename T, std::size_t N>
@@ -216,6 +241,7 @@ void copy_array(T (&dst)[N], const T (&src)[N]) {
 void init_cdfs(CdfState& c, int qctx_slice) {
   const qctx::CoeffCdfSlice& q = qctx::tables_for_slice(qctx_slice);
   copy_array(c.do_split, av2enc::basic::kDoSplitCdf);
+  copy_array(c.do_square_split, av2enc::basic::kDoSquareSplitCdf);
   copy_array(c.rect_type, av2enc::basic::kRectTypeCdf);
   copy_array(c.y_mode_set, kYModeSetCdf);
   copy_array(c.y_mode_index, kYModeIndexCdf);
@@ -251,6 +277,18 @@ void init_cdfs(CdfState& c, int qctx_slice) {
   copy_array(c.intra_tx_type_long, kIntraTxTypeLongCdf);
   copy_array(c.is_long_side_dct, kIsLongSideDctCdf);
   copy_array(c.ccso_blk, kCcsoBlkCdf);
+  for (int is_inter = 0; is_inter < 2; ++is_inter) {
+    for (int sqr = 0; sqr < 5; ++sqr) {
+      copy_array(c.sec_tx_type[is_inter][sqr],
+                 av2enc::txsec::kSecTxTypeCdf[is_inter][sqr]);
+    }
+  }
+  copy_array(c.most_probable_stx_set,
+             av2enc::txsec::kMostProbableStxSetCdf);
+  copy_array(c.most_probable_stx_set_adst,
+             av2enc::txsec::kMostProbableStxSetAdstCdf);
+  mrl_stream::init_mrl_cdfs(c.mrl);
+  c.mh_cdfs.init();
 }
 
 // One in-frame child slot of a partition (§9.2 Partition_Subsize).
@@ -302,8 +340,10 @@ int enumerate_slots(int mi_row, int mi_col, BlockSize size,
 class Writer {
  public:
   Writer(const FramePlan& plan, std::span<const BlockSyntax> blocks,
-         std::span<const std::int32_t> levels, const StillConfig& config)
-      : plan_(plan), blocks_(blocks), levels_(levels), config_(config) {
+         std::span<const std::int32_t> levels, const StillConfig& config,
+         std::span<const palette::PaletteResult> palette_results)
+      : plan_(plan), blocks_(blocks), levels_(levels), config_(config),
+        palette_results_(palette_results) {
     geometry_.width = plan.width;
     geometry_.height = plan.height;
     geometry_.sb_size = plan.sb_size;
@@ -315,6 +355,12 @@ class Writer {
 
     init_cdfs(cdfs_,
               qctx::slice_for_base_q_idx(static_cast<int>(config_.base_q_idx)));
+    ps::init_tile_partition_cdfs(ext_cdfs_);
+    tools_.enable_ext_partitions = config_.enable_ext_partitions;
+    tools_.enable_uneven_4way_partitions =
+        config_.enable_uneven_4way_partitions;
+    cdfs_.mrl_context.reset(mi_rows_, mi_cols_,
+                            partition::sb_size_mi(geometry_));
     tile_buffer_.resize(kTileCapacityBytes);
     enc_.init_symbol(tile_buffer_.data(), tile_buffer_.size());
     enc_.disable_cdf_update = config_.disable_cdf_update ? 1 : 0;
@@ -327,6 +373,23 @@ class Writer {
     uvcfl_.assign(static_cast<std::size_t>(mi_rows_ / 2) *
                       static_cast<std::size_t>(mi_cols_ / 2),
                   0);
+    usedip_.assign(static_cast<std::size_t>(mi_rows_) *
+                       static_cast<std::size_t>(mi_cols_),
+                   0);
+    if (config_.enable_palette) {
+      palette_stream::ScreenContentFlags flags;
+      flags.single_picture_header = true;
+      flags.allow_screen_content_tools = config_.allow_screen_content_tools;
+      flags.allow_palette = true;
+      flags.force_integer_mv = config_.force_integer_mv;
+      flags.allow_intrabc = false;
+      palette_writer_.emplace(flags);
+      std::string palette_error;
+      if (!palette_writer_->reset(mi_cols_, mi_rows_, palette_error)) {
+        palette_reset_error_ = palette_error;
+      }
+      palette::init_palette_cdfs(palette_cdfs_);
+    }
     for (int plane = 0; plane < kPlaneCount; ++plane) {
       const int n = (plane == 0 ? mi_cols_ : mi_cols_ / 2) + 16;
       const int m = (plane == 0 ? mi_rows_ : mi_rows_ / 2) + 16;
@@ -336,6 +399,7 @@ class Writer {
       left_dc_[plane].assign(static_cast<std::size_t>(m), 0);
     }
     clear_above_context();
+    init_delta_q();
     trace_ = std::getenv("AV2ENC_STILL_TRACE") != nullptr;
 
     // §5.20.9.6 clear_cdef() at frame start: one tile, so a whole-grid reset
@@ -352,11 +416,49 @@ class Writer {
                   sizeof(std::uint16_t) *
                       static_cast<std::size_t>(config_.cdef.num_strengths));
     }
+
+    // §5.20.10.4/.5/.6 loop-restoration tile state.  M1 is intra with one
+    // tile; luma is either per-unit Wiener NS or per-unit PC-Wiener.
+    if (config_.lr.enable && config_.lr.pc_wiener) {
+      namespace pcw = av2enc::filters::pc_wiener_stream;
+      pcw::LrParams pc_params;
+      pc_params.frame_type[0] = pcw::kRestorePcWiener;
+      pc_params.frame_type[1] = pcw::kRestoreNone;
+      pc_params.frame_type[2] = pcw::kRestoreNone;
+      pc_params.luma_shift = config_.lr.plane[0].shift;
+      pc_params.chroma_shift = config_.lr.plane[1].shift;
+      pc_ready_ = pcw::InitTileState(&pc_state_, pc_params, mi_cols_,
+                                     mi_rows_, /*sub_x=*/1, /*sub_y=*/1,
+                                     &error_);
+    } else if (config_.lr.enable) {
+      restoration::classes::WienerLrHeaderParams params;
+      for (int plane = 0; plane < kPlaneCount; ++plane) {
+        params.frame_type[plane] = config_.lr.plane[plane].enabled
+                                       ? restoration::kRestoreWienerNs
+                                       : restoration::kRestoreNone;
+        params.frame_filters_on[plane] = false;
+      }
+      params.num_filter_classes = 1;
+      params.num_filter_classes_idx = 0;
+      params.luma_shift = config_.lr.plane[0].shift;
+      params.chroma_shift = config_.lr.plane[1].shift;
+      lr_ready_ = restoration::classes::wiener_tile_init(
+          &lr_state_, params, mi_cols_, mi_rows_, /*sub_x=*/1, /*sub_y=*/1,
+          &error_);
+    }
   }
 
   bool run(std::size_t* tile_bytes, std::string& error) {
+    if (!deltaq_init_error_.empty()) {
+      error = deltaq_init_error_;
+      return false;
+    }
     if (blocks_.empty()) {
       error = "syntax stream is empty";
+      return false;
+    }
+    if (!error_.empty()) {
+      error = error_;
       return false;
     }
     const int sb_cols = plan_.sb_cols();
@@ -390,6 +492,10 @@ class Writer {
         // `if (sb.mi_col == 0) clear_left_context()` in still_encoder.
         clear_left_context();
       }
+      // §5.20.2.1: ReadDeltas = delta_q_present at every superblock start.
+      deltaq::begin_superblock(tile_qp_);
+      if (node.mi_col == 0) deltaq::clear_left_context(seg_grid_);
+      if (!write_lr_superblock(node, error)) return false;
       std::size_t next = 0;
       if (!write_node(index, &next, error)) return false;
       index = next;
@@ -420,6 +526,28 @@ class Writer {
   // ---------------------------------------------------------------------
   // Entropy helpers
   // ---------------------------------------------------------------------
+  void init_delta_q() {
+    rc::SegmentationParams seg_params;
+    rc::DeltaQParams dq_params;
+    deltaq::FrameQpHeader qp_header;
+    qp_header.primary_ref_is_none = true;
+    std::string err;
+    const int base_q_idx = static_cast<int>(config_.base_q_idx);
+    if (!make_delta_q_params(config_.per_sb_delta_q, seg_params, dq_params, &err) ||
+        !deltaq::derive_frame_segmentation(seg_params, dq_params, base_q_idx,
+                                           qp_header, seg_, &err) ||
+        !deltaq::begin_tile(tile_qp_, base_q_idx, dq_params, &err) ||
+        !deltaq::init_segment_grid(
+            seg_grid_, mi_cols_, mi_rows_, 0, mi_cols_, 0, mi_rows_,
+            /*enable_ext_seg=*/false, deltaq::max_segments(false), {}, &err)) {
+      deltaq_init_error_ = "delta-Q setup: " + err;
+      return;
+    }
+    deltaq_cdfs_.init();
+    deltaq::clear_above_context(seg_grid_);
+    deltaq::clear_left_context(seg_grid_);
+  }
+
   bool sym(std::uint16_t* cdf, int n, int symbol) {
     const av2::Status status = enc_.encode_symbol(cdf, n, symbol);
     if (status != av2::Status::kOk) {
@@ -523,6 +651,18 @@ class Writer {
                partition == PartitionType::kNone ? 0 : 1);
   }
 
+  // §5.20.3.2 do_square_split.  Only legal at a 128x128 (or 256x256) node, so
+  // a 64x64-superblock stream never codes it and its bytes are unchanged.
+  bool code_do_square_split(PartitionType partition, int r, int c,
+                            BlockSize size) {
+    const int bsw = kMiWidthLog2[static_cast<int>(size)];
+    const int bsh = kMiHeightLog2[static_cast<int>(size)];
+    int ctx = (left_mi(r) < bsh ? 2 : 0) + (above_mi(c) < bsw ? 1 : 0);
+    if (size == BlockSize::k256x256) ctx += 4;
+    return sym(&cdfs_.do_square_split[0][ctx][0], 2,
+               partition == PartitionType::kSplit ? 1 : 0);
+  }
+
   bool code_rect_type(PartitionType partition, int r, int c, BlockSize size) {
     const int bsw = std::max(kMiWidthLog2[static_cast<int>(size)], 1);
     const int bsh = std::max(kMiHeightLog2[static_cast<int>(size)], 1);
@@ -536,6 +676,9 @@ class Writer {
   // Emit the syntax for the node at `index` (and, for non-leaves, its whole
   // subtree); `next` receives the index one past the subtree.
   bool write_node(std::size_t index, std::size_t* next, std::string& error) {
+    if (config_.enable_ext_partitions) {
+      return write_node_ext(index, next, error);
+    }
     const BlockSyntax& node = blocks_[index];
     const auto size = static_cast<BlockSize>(node.bsize);
     const auto partition = static_cast<PartitionType>(node.partition);
@@ -598,18 +741,29 @@ class Writer {
         *next = index + 1;
         return true;
       }
-      const partition::RectTypeImplied implied =
-          partition::rect_type_implied_by_bsize(size);
-      bool need_rect = !implied.implied;
-      if (need_rect) {
-        const bool allow_h = allowed(PartitionType::kHorz);
-        const bool allow_v = allowed(PartitionType::kVert);
-        if (!allow_h || !allow_v) need_rect = false;
-      }
-      if (need_rect) {
-        if (!code_rect_type(partition, r, c, size)) {
+      // §5.20.3.2: do_square_split follows do_split and precedes rect_type.
+      // It is present only when PARTITION_SPLIT is allowed, which can happen
+      // only at a 128x128 (or 256x256) node; the 64x64 path never reaches it.
+      if (allowed(PartitionType::kSplit)) {
+        if (!code_do_square_split(partition, r, c, size)) {
           error = error_;
           return false;
+        }
+      }
+      if (partition != PartitionType::kSplit) {
+        const partition::RectTypeImplied implied =
+            partition::rect_type_implied_by_bsize(size);
+        bool need_rect = !implied.implied;
+        if (need_rect) {
+          const bool allow_h = allowed(PartitionType::kHorz);
+          const bool allow_v = allowed(PartitionType::kVert);
+          if (!allow_h || !allow_v) need_rect = false;
+        }
+        if (need_rect) {
+          if (!code_rect_type(partition, r, c, size)) {
+            error = error_;
+            return false;
+          }
         }
       }
     }
@@ -656,6 +810,128 @@ class Writer {
       ++slot_cursor;
       std::size_t after = 0;
       if (!write_node(cursor, &after, error)) return false;
+      if (after > subtree_end) {
+        error = "node " + std::to_string(index) +
+                " has an inconsistent subtree count";
+        return false;
+      }
+      cursor = after;
+    }
+    if (cursor != subtree_end) {
+      error = "node " + std::to_string(index) +
+              " has an inconsistent subtree count";
+      return false;
+    }
+    *next = subtree_end;
+    return true;
+  }
+
+  // Extended-partition writer (--still-ext-partitions).  The symbol sequence
+  // comes from partition_stream/partition_ext, so the implication rules for
+  // do_ext_partition / do_uneven_4way_partition and the raw L(1) type bit are
+  // the reference module's, not re-derived here.
+  //
+  // Choma ownership: the search policy only produces nodes whose every child is
+  // >= 8x8, so `chromaOffset` is 0 throughout and each leaf owns its own chroma
+  // block.  A tree that violates that is rejected below instead of coding a
+  // desynchronised stream.
+  bool write_node_ext(std::size_t index, std::size_t* next,
+                      std::string& error) {
+    const BlockSyntax& node = blocks_[index];
+    const auto size = static_cast<BlockSize>(node.bsize);
+    const auto partition = static_cast<pe::PartitionType>(node.partition);
+    const std::size_t subtree_end = index + 1 + node.subtree;
+    if (subtree_end > blocks_.size()) {
+      error = "node " + std::to_string(index) + " has a subtree past the end";
+      return false;
+    }
+    if (!partition::is_valid_block_size(size)) {
+      error = "node " + std::to_string(index) + " has an invalid block size";
+      return false;
+    }
+    const int r = node.mi_row;
+    const int c = node.mi_col;
+    if (!inside_mi(r, c)) {
+      error = "node " + std::to_string(index) + " is outside the frame";
+      return false;
+    }
+    if (static_cast<pe::PartitionType>(node.partition) != pe::PartitionType::kNone &&
+        node.subtree == 0) {
+      error = "node " + std::to_string(index) + " has no children for a split";
+      return false;
+    }
+
+    ps::StillNode sn;
+    sn.mi_row = node.mi_row;
+    sn.mi_col = node.mi_col;
+    sn.bsize = node.bsize;
+    sn.partition = node.partition;
+    sn.flags = node.flags;
+    sn.subtree = node.subtree;
+    sn.allowed_mask = node.allowed_mask;
+    sn.has_chroma = true;
+    sn.chroma_offset = false;
+    sn.chroma = pe::ChromaBlock{r, c, size};
+
+    const ps::NeighbourContext nc = ps::neighbours_from_arrays(
+        std::span<const int>(left_mi_), std::span<const int>(above_mi_), r, c,
+        size, inside_mi(r, c - 1), inside_mi(r - 1, c));
+    const ps::NodePlan plan = ps::plan_node(geometry_, tools_, sn, nc);
+    if (!plan.ok) {
+      error = "node " + std::to_string(index) + ": " + plan.error;
+      return false;
+    }
+    if (!ps::emit_symbols(plan.symbols, ext_cdfs_, enc_, nullptr, error)) {
+      return false;
+    }
+
+    if (partition == pe::PartitionType::kNone) {
+      if (node.subtree != 0) {
+        error = "leaf node " + std::to_string(index) +
+                " has a non-zero subtree";
+        return false;
+      }
+      if (!write_block(node, error)) return false;
+      *next = index + 1;
+      return true;
+    }
+
+    pe::ChildSlot raw[4];
+    const int raw_count = pe::enumerate_children(
+        geometry_, r, c, size, partition, /*has_chroma=*/true,
+        /*chroma_offset=*/false, pe::ChromaBlock{r, c, size}, raw);
+    pe::ChildSlot slots[4];
+    int slot_count = 0;
+    for (int i = 0; i < raw_count; ++i) {
+      if (pe::child_is_coded(geometry_, raw[i])) slots[slot_count++] = raw[i];
+    }
+    if (slot_count == 0) {
+      error = "node " + std::to_string(index) + " has no in-frame children";
+      return false;
+    }
+    std::size_t cursor = index + 1;
+    int slot_cursor = 0;
+    while (cursor < subtree_end) {
+      const BlockSyntax& child = blocks_[cursor];
+      while (slot_cursor < slot_count &&
+             (slots[slot_cursor].mi_row != static_cast<int>(child.mi_row) ||
+              slots[slot_cursor].mi_col != static_cast<int>(child.mi_col))) {
+        ++slot_cursor;
+      }
+      if (slot_cursor >= slot_count) {
+        error = "node " + std::to_string(cursor) +
+                " does not match a partition child slot of node " +
+                std::to_string(index);
+        return false;
+      }
+      if (child.bsize != static_cast<std::uint8_t>(slots[slot_cursor].size)) {
+        error = "node " + std::to_string(cursor) +
+                " has the wrong block size for its partition";
+        return false;
+      }
+      ++slot_cursor;
+      std::size_t after = 0;
+      if (!write_node_ext(cursor, &after, error)) return false;
       if (after > subtree_end) {
         error = "node " + std::to_string(index) +
                 " has an inconsistent subtree count";
@@ -787,13 +1063,80 @@ class Writer {
     return ctx;
   }
 
-  bool code_uv_mode(bool is_cfl, int uv_mode, int y_mode) {
+  bool code_uv_mode(const BlockSyntax& node, int cw, int ch) {
+    const bool is_cfl = (node.flags & kFlagIsCfl) != 0;
     if (is_cfl) {
       // is_cfl derives its context from neighbouring chroma CfL flags.
       if (!sym(&cdfs_.is_cfl[cfl_context()][0], 2, 1)) return false;
-      // CFL_DERIVED_ALPHA = 1.
-      return sym(&cdfs_.cfl_index[0], 2, 1);
+      if (config_.enable_mhccp) {
+        // §5.20.7.32 with MHCCP: cfl_mhccp, cfl_index, cfl_mh_dir and the
+        // explicit alpha symbols all live in the gated mhccp adapter.
+        const bool mhccp_allowed = cfl::mhccp::allowed(
+            cw, ch, config_.enable_mhccp, /*is_chroma_part=*/false,
+            /*frame_is_intra=*/true, /*cfl_allowed_in_sdp=*/false,
+            /*lossless=*/false);
+        if (node.cfl_index == 2 && !mhccp_allowed) {
+          error_ = "CFL_MULTI signalled for a block where MHCCP is not allowed";
+          return false;
+        }
+        cfl::mhccp::CflSyntax syntax;
+        syntax.cfl_mhccp = node.cfl_index == 2 ? 1 : 0;
+        syntax.cfl_index = node.cfl_index;
+        syntax.cfl_mh_dir = node.cfl_mh_dir;
+        syntax.cfl_alpha_signs = node.cfl_alpha_signs;
+        syntax.cfl_alpha_u = node.cfl_alpha_u;
+        syntax.cfl_alpha_v = node.cfl_alpha_v;
+        std::string alpha_error;
+        if (!cfl::mhccp::write_cfl_alphas(
+                enc_, cdfs_.mh_cdfs, syntax, config_.enable_cfl_intra,
+                mhccp_allowed,
+                cfl::mhccp::size_group_for_chroma_block(cw, ch),
+                &alpha_error)) {
+          error_ = "read_cfl_alphas: " + alpha_error;
+          return false;
+        }
+        return true;
+      }
+      // §5.20.7.32: cfl_index 0 = CFL_EXPLICIT, 1 = CFL_DERIVED_ALPHA
+      // (2 = CFL_MULTI/MHCCP, wired separately).
+      if (node.cfl_index > 1) {
+        error_ = "cfl_index 2 (MHCCP) is not wired";
+        return false;
+      }
+      if (!sym(&cdfs_.cfl_index[0], 2, node.cfl_index)) return false;
+      if (node.cfl_index == 0) {
+        const int signs = node.cfl_alpha_signs;
+        if (signs < 0 || signs > 7) {
+          error_ = "cfl_alpha_signs outside 0..7";
+          return false;
+        }
+        const int sign_u = (signs + 1) / 3;
+        const int sign_v = (signs + 1) % 3;
+        if (!sym(&cdfs_.cfl_sign[0], 8, signs)) return false;
+        // §8.3 Tables 8.4/8.5 alpha CDF contexts.
+        static constexpr int kAlphaCtxU[8] = {-1, -1, 0, 1, 2, 3, 4, 5};
+        static constexpr int kAlphaCtxV[8] = {0, 3, -1, 1, 4, -1, 2, 5};
+        if (sign_u != 0) {
+          const int ctx = kAlphaCtxU[signs];
+          if (ctx < 0 || node.cfl_alpha_u > 7) {
+            error_ = "invalid cfl_alpha_u";
+            return false;
+          }
+          if (!sym(&cdfs_.cfl_alpha[ctx][0], 8, node.cfl_alpha_u)) return false;
+        }
+        if (sign_v != 0) {
+          const int ctx = kAlphaCtxV[signs];
+          if (ctx < 0 || node.cfl_alpha_v > 7) {
+            error_ = "invalid cfl_alpha_v";
+            return false;
+          }
+          if (!sym(&cdfs_.cfl_alpha[ctx][0], 8, node.cfl_alpha_v)) return false;
+        }
+      }
+      return true;
     }
+    const int y_mode = node.y_mode;
+    const int uv_mode = node.uv_mode;
     const int ctx = y_mode_is_directional(y_mode) ? 1 : 0;
     // is_cfl = 0 is only coded when CfL is allowed.
     if (config_.enable_cfl_intra) {
@@ -1063,8 +1406,10 @@ class Writer {
     if (plane == 0) {
       const TxTypeSyntax type_syntax = luma_tx_type_syntax(tx_size, eob);
       if (type_syntax != TxTypeSyntax::kNone) {
-        int mapped_mode = txtype::map_intra_mode(
-            node.y_mode, node.y_angle_delta, bsize_w, bsize_h);
+        // §5.20.7.29: the mapped mode adds Mrl_Index_To_Delta before the
+        // wide-angle map.  At mrl_index 0 this equals txtype::map_intra_mode().
+        int mapped_mode = mrl_stream::mapped_intra_mode_for_mrl(
+            node.y_mode, node.y_angle_delta, node.mrl_index, bsize_w, bsize_h);
         if (mapped_mode < 0) mapped_mode = 0;
         txtype::TxTypeQuery query;
         query.coded_w = bsize_w;
@@ -1109,6 +1454,50 @@ class Writer {
             }
             break;
         }
+      }
+    }
+
+    if (plane == 0 && config_.enable_intra_ist) {
+      // §5.20.8.2: sec_tx_type follows transform_type() and precedes the
+      // coefficients.  Luma only; chroma never codes it.
+      txsec::SecondaryTransformConfig stx_config;
+      stx_config.enable_intra_ist = true;
+      txsec::SecondarySyntax stx;
+      stx.plane_tx_type = static_cast<txv::TxType>(node.tx_type[0]);
+      stx.coded_w = bsize_w;
+      stx.coded_h = bsize_h;
+      stx.y_mode = node.y_mode;
+      stx.angle_delta = node.y_angle_delta;
+      stx.mrl_index = 0;  // MRL is not wired yet
+      stx.most_probable_stx_set = node.most_probable_stx_set;
+      stx.sec_tx_type = node.sec_tx_type;
+      stx.is_inter = false;
+      stx.lossless = false;
+      stx.bit_depth = 8;
+      if (txsec::secondary_syntax_applicable(0, eob, stx, stx_config)) {
+        // sec_tx_type is coded for every applicable block, including the
+        // "no IST" symbol 0.
+        if (!sym(&cdfs_.sec_tx_type[0][kTxSizeSqr[tx_size]][0], 4,
+                 node.sec_tx_type)) {
+          return false;
+        }
+        if (node.sec_tx_type != 0) {
+          if (!txsec::secondary_syntax_valid(0, eob, stx, stx_config)) {
+            error = "sec_tx_type is not valid for this block";
+            return false;
+          }
+          const int set_count = txsec::most_probable_stx_set_count(
+              stx.plane_tx_type, bsize_w, bsize_h);
+          std::uint16_t* set_cdf = set_count == 4
+                                       ? cdfs_.most_probable_stx_set_adst
+                                       : cdfs_.most_probable_stx_set;
+          if (!sym(set_cdf, set_count, node.most_probable_stx_set)) {
+            return false;
+          }
+        }
+      } else if (node.sec_tx_type != 0) {
+        error = "sec_tx_type set on a block where IST is not applicable";
+        return false;
       }
     }
 
@@ -1366,6 +1755,202 @@ class Writer {
     return true;
   }
 
+  // §5.20.8 palette_mode_info() + palette_tokens().  Called for every leaf when
+  // the frame enables palette (the adapter writes has_palette_y = 0 itself when
+  // the position is reachable and no palette was chosen).
+  bool write_palette(const BlockSyntax& node, int w, int h,
+                     std::string& error) {
+    const bool is_palette = (node.flags & kFlagIsPalette) != 0;
+    if (!config_.enable_palette) {
+      if (is_palette) {
+        error = "palette leaf supplied but the frame does not enable palette";
+        return false;
+      }
+      return true;
+    }
+    if (!palette_writer_.has_value()) {
+      error = "palette writer is not initialised: " + palette_reset_error_;
+      return false;
+    }
+    const palette::PaletteResult* result = nullptr;
+    if (is_palette) {
+      if (node.palette_index >= palette_results_.size()) {
+        error = "palette side-array index out of range";
+        return false;
+      }
+      result = &palette_results_[node.palette_index];
+      if (!result->has_palette) {
+        error = "palette leaf references a result without a palette";
+        return false;
+      }
+    }
+    // §5.20.8.4 onscreen dimensions use MiCols/MiRows, not the picture size.
+    const int onscreen_w = std::min(w, mi_cols_ * 4 - node.mi_col * 4);
+    const int onscreen_h = std::min(h, mi_rows_ * 4 - node.mi_row * 4);
+    palette_stream::PaletteModeInfo info;
+    std::string palette_error;
+    if (!palette_writer_->write(enc_, palette_cdfs_, node.mi_row, node.mi_col,
+                                node.bsize, w, h, onscreen_w, onscreen_h,
+                                result, node.y_mode, &info, palette_error)) {
+      error = "palette syntax: " + palette_error;
+      return false;
+    }
+    if ((info.has_palette_y ? true : false) != is_palette) {
+      error = "palette writer disagrees with the planned palette decision";
+      return false;
+    }
+    return true;
+  }
+
+  // §5.20.10.4 read_lr(): called once per coding block, before
+  // read_partition().  M1's LoopRestorationSize is at least one superblock, so
+  // only a superblock origin can start a unit; child blocks are no-ops.
+  bool write_lr_superblock(const BlockSyntax& node, std::string& error) {
+    if (config_.lr.enable && config_.lr.pc_wiener) {
+      if (!pc_ready_) return error.empty() ? true : false;
+      const StillLrPlane& cfg = config_.lr.plane[0];
+      if (!cfg.enabled) return true;
+      const int unit_size = pc_state_.unit_size[0];
+      const int origin_x = node.mi_col * 4;
+      const int origin_y = node.mi_row * 4;
+      if (unit_size <= 0 || origin_x % unit_size != 0 ||
+          origin_y % unit_size != 0) {
+        return true;
+      }
+      const int unit_row = origin_y / unit_size;
+      const int unit_col = origin_x / unit_size;
+      if (unit_row >= cfg.unit_rows || unit_col >= cfg.unit_cols) {
+        error = "PC-Wiener unit grid does not cover a coding block";
+        return false;
+      }
+      const std::size_t index =
+          static_cast<std::size_t>(unit_row) *
+              static_cast<std::size_t>(cfg.unit_cols) +
+          static_cast<std::size_t>(unit_col);
+      if (index >= cfg.unit_type.size()) {
+        error = "PC-Wiener unit decision vector is too small";
+        return false;
+      }
+      av2enc::filters::pc_wiener_stream::UnitDecision decision;
+      decision.type = cfg.unit_type[index];
+      return av2enc::filters::pc_wiener_stream::WriteUnit(
+          enc_, pc_state_, 0, unit_row, unit_col, decision, &error);
+    }
+    if (!lr_ready_) return true;
+    for (int plane = 0; plane < kPlaneCount; ++plane) {
+      const StillLrPlane& cfg = config_.lr.plane[plane];
+      if (!cfg.enabled) continue;
+      const int sub = plane == 0 ? 0 : 1;
+      const int unit_size = lr_state_.unit_size[plane];
+      const int origin_x = (node.mi_col * 4) >> sub;
+      const int origin_y = (node.mi_row * 4) >> sub;
+      if (unit_size <= 0 || origin_x % unit_size != 0 ||
+          origin_y % unit_size != 0) {
+        continue;
+      }
+      const int unit_row = origin_y / unit_size;
+      const int unit_col = origin_x / unit_size;
+      if (unit_row >= cfg.unit_rows || unit_col >= cfg.unit_cols) {
+        error = "LR unit grid does not cover a coding block";
+        return false;
+      }
+      const std::size_t index =
+          static_cast<std::size_t>(unit_row) *
+              static_cast<std::size_t>(cfg.unit_cols) +
+          static_cast<std::size_t>(unit_col);
+      if (index >= cfg.unit_type.size() ||
+          index * restoration::kWienerNsCoeffStride >=
+              cfg.unit_coeffs.size()) {
+        error = "LR unit decision vector is too small";
+        return false;
+      }
+      restoration::classes::WienerUnitSyntax unit;
+      unit.type = cfg.unit_type[index];
+      unit.merged = cfg.unit_merged[index] != 0;
+      unit.use_bank_k = cfg.unit_bank_k[index];
+      unit.subset = cfg.unit_subset[index];
+      unit.uv_sym = cfg.unit_uv_sym[index] != 0;
+      for (int j = 0; j < restoration::kWienerNsCoeffStride; ++j) {
+        unit.coeffs[j] =
+            cfg.unit_coeffs[index * restoration::kWienerNsCoeffStride +
+                           static_cast<std::size_t>(j)];
+      }
+      if (!restoration::classes::wiener_write_unit(
+              enc_, lr_state_, plane, unit_row, unit_col, unit, &error)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // §5.20.7.9 dip_mode_info(): after the intra Y/UV mode and palette syntax,
+  // before the residual.  Only luma DC blocks with the size predicate can
+  // signal it.
+  bool write_dip(const BlockSyntax& node, int w, int h, std::string& error) {
+    const bool present = config_.enable_dip && node.y_mode == kDcPred && w > 4 &&
+                         h > 4 && w * h >= 128 &&
+                         (node.flags & kFlagIsPalette) == 0;
+    if (!present) {
+      if (node.use_dip != 0) {
+        error = "use_dip is not signalable for this block";
+        return false;
+      }
+      return true;
+    }
+    const int r = node.mi_row;
+    const int c = node.mi_col;
+    // §8.3.1 use_dip context: the sum of UseDip over the §5.20.4.1 NPos set
+    // (below-left, above-right, left, above — first two valid), not just the
+    // immediate above/left neighbours.
+    const mrl_stream::MrlBlockSyntax mrl_block{r, c, w >> 2, h >> 2};
+    mrl_stream::NeighborPos npos[2];
+    const int nnum = mrl_stream::collect_npos(
+        mrl_block, mi_rows_, mi_cols_, partition::sb_size_mi(geometry_), npos);
+    int use_dip_ctx = 0;
+    for (int i = 0; i < nnum; ++i) {
+      if (usedip_[static_cast<std::size_t>(npos[i].row) *
+                      static_cast<std::size_t>(mi_cols_) +
+                  static_cast<std::size_t>(npos[i].col)] != 0) {
+        ++use_dip_ctx;
+      }
+    }
+    dip::SyntaxContext context;
+    context.enable_dip = true;
+    context.y_mode = node.y_mode;
+    context.palette_size_y = 0;
+    context.tree_is_chroma_part = false;
+    context.w = w;
+    context.h = h;
+    context.use_dip_ctx = use_dip_ctx;
+    dip::DipModeInfo info;
+    info.use_dip = node.use_dip != 0;
+    info.dip_transpose = node.dip_transpose != 0;
+    info.dip_mode = node.dip_mode;
+    std::string dip_error;
+    if (!dip::write_dip_mode_info(context, info, enc_, cdfs_.dip_cdfs,
+                                  &dip_error)) {
+      error = "dip_mode_info: " + dip_error;
+      return false;
+    }
+    return true;
+  }
+
+  void update_usedip(const BlockSyntax& node, int w4, int h4) {
+    if (!config_.enable_dip) return;
+    const std::uint8_t value = node.use_dip != 0 ? 1 : 0;
+    for (int yy = 0; yy < h4; ++yy) {
+      const int rr = node.mi_row + yy;
+      if (rr >= mi_rows_) break;
+      for (int xx = 0; xx < w4; ++xx) {
+        const int cc = node.mi_col + xx;
+        if (cc >= mi_cols_) break;
+        usedip_[static_cast<std::size_t>(rr) *
+                    static_cast<std::size_t>(mi_cols_) +
+                static_cast<std::size_t>(cc)] = value;
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------
   // Coding a leaf block
   // ---------------------------------------------------------------------
@@ -1408,9 +1993,23 @@ class Writer {
     }
 
     const std::size_t levels_end = levels_.size();
+    // §5.20.5.7 intra_segment_id(): first symbol of the leaf when segmentation
+    // is enabled.  With the neutral table every block uses segment 0.
+    deltaq::SegmentBlock segment_block;
+    segment_block.mi_row = r;
+    segment_block.mi_col = c;
+    segment_block.bw4 = w4;
+    segment_block.bh4 = h4;
+    constexpr int kSegmentId = 0;
+    std::string dq_error;
+    if (!deltaq::write_intra_segment_id(enc_, deltaq_cdfs_, seg_, seg_grid_,
+                                        segment_block, kSegmentId,
+                                        /*skip_flag=*/false, &dq_error)) {
+      error = "intra_segment_id: " + dq_error;
+      return false;
+    }
     // §5.20.10.1 read_cdef(): after intra_segment_id(), before
-    // read_intra_y_mode().  M1 has no segment/skip syntax here, so this is the
-    // first symbol of the leaf.  Repeats within one 64x64 block are no-ops.
+    // read_intra_y_mode().  Repeats within one 64x64 block are no-ops.
     if (config_.cdef.enable &&
         !av2enc::cuda::still::cdef_encode_block_index(
             &cdef_grid_, config_.cdef.num_strengths, /*sb_width_log2=*/4,
@@ -1425,15 +2024,48 @@ class Writer {
       return false;
     }
     if (!write_ccso(node, error)) return false;
+    // §5.20.5.11 read_delta_qindex(): after read_cdef/read_ccso, before the
+    // mode info.  Only the first leaf of a superblock actually codes it; the
+    // module clears ReadDeltas and later calls are no-ops.  The neutral plan
+    // always codes a zero reduced delta, so qindex does not move.
+    if (!deltaq::write_delta_qindex(
+            enc_, deltaq_cdfs_.delta_q, tile_qp_,
+            w == plan_.sb_size && h == plan_.sb_size, /*skip_flag=*/false,
+            /*reduced_delta=*/0, &dq_error)) {
+      error = "delta_qindex: " + dq_error;
+      return false;
+    }
     if (!code_y_mode(node)) {
       error = error_;
       return false;
     }
-    if (!code_uv_mode((node.flags & kFlagIsCfl) != 0, node.uv_mode,
-                      node.y_mode)) {
+    // §5.20.5.5: mrl_index (and mrl_sec_index when > 0) follow the Y-mode
+    // symbols and precede read_intra_uv_mode().  The adapter also updates the
+    // UsesMrls grid for non-directional blocks, exactly like decode_block().
+    if (config_.enable_mrls) {
+      const mrl_stream::MrlBlockSyntax mrl_block{r, c, w4, h4};
+      const mrl_stream::MrlDecision mrl_decision{
+          static_cast<int>(node.mrl_index), node.mrl_sec_index != 0};
+      const mrl_stream::MrlSyntaxStatus status =
+          mrl_stream::write_mrl_syntax(enc_, cdfs_.mrl, cdfs_.mrl_context,
+                                       mrl_block, node.y_mode, mrl_decision,
+                                       &error_);
+      if (status != mrl_stream::MrlSyntaxStatus::kOk) {
+        error = "mrl syntax: " + std::string(
+                                    mrl_stream::mrl_syntax_status_name(status));
+        if (!error_.empty()) error += ": " + error_;
+        return false;
+      }
+    } else if (node.mrl_index != 0 || node.mrl_sec_index != 0) {
+      error = "MRL decisions supplied but the sequence header disables MRL";
+      return false;
+    }
+    if (!code_uv_mode(node, cw, ch)) {
       error = error_;
       return false;
     }
+    if (!write_palette(node, w, h, error)) return false;
+    if (!write_dip(node, w, h, error)) return false;
     std::size_t level_base = node.levels_offset;
     if (!code_tx(node, 0, level_base, w, h, levels_end, error)) return false;
     level_base += node.eob[0];
@@ -1442,7 +2074,15 @@ class Writer {
     if (!code_tx(node, 2, level_base, cw, ch, levels_end, error)) return false;
     if (error.empty() && !error_.empty()) error = error_;
 
+    // Record the segment id for the neighbours' prediction contexts (§5.20.5.7).
+    if (!deltaq::commit_segment_block(seg_grid_, segment_block, kSegmentId,
+                                      &dq_error)) {
+      error = "commit_segment_block: " + dq_error;
+      return false;
+    }
+
     // Update partition/mode state after the block.
+    update_usedip(node, w4, h4);
     for (int yy = 0; yy < h4; ++yy) {
       left_mi(r + yy) = kMiHeightLog2[static_cast<int>(size)];
     }
@@ -1490,6 +2130,17 @@ class Writer {
   int mi_rows_ = 0;
 
   CdfState cdfs_{};
+  // Extended-partition CDF copies (five §9.3 arrays) and the sequence-header
+  // tool flags.  Used only when config_.enable_ext_partitions is set.
+  ps::TilePartitionCdfs ext_cdfs_{};
+  pe::Tools tools_{};
+  // §5.18.7.1 / §5.20.5.7/.11: neutral delta-Q / segmentation state.  Everything
+  // is inert when both tools are disabled.
+  deltaq::BlockCdfs deltaq_cdfs_{};
+  deltaq::TileQp tile_qp_{};
+  deltaq::SegmentGrid seg_grid_{};
+  deltaq::FrameSegmentation seg_{};
+  std::string deltaq_init_error_;
   av2::Encoder enc_{};
   std::vector<std::uint8_t> tile_buffer_;
   std::vector<std::uint8_t> payload_;
@@ -1503,12 +2154,27 @@ class Writer {
   std::vector<int> left_mi_;
   std::vector<int> intra_joint_;
   std::vector<std::uint8_t> uvcfl_;
+  // §5.20.7.9 UseDip flag grid (luma MI) for the TileUseDipCdf context.
+  std::vector<std::uint8_t> usedip_;
+  // §5.20.8 palette state: side array, per-frame writer (owns the per-MI
+  // palette sizes/colours for get_palette_cache) and its CDF copies.
+  std::span<const palette::PaletteResult> palette_results_;
+  std::optional<palette_stream::PaletteSyntaxWriter> palette_writer_;
+  palette::PaletteCdfState palette_cdfs_{};
+  std::string palette_reset_error_;
 
   // §5.20.10.1 CDEF index state (fresh CDF copies so adaptive mode can update).
   av2enc::cuda::still::CdefIndexGrid cdef_grid_;
   av2enc::cuda::still::CdefIndexCdfs cdef_cdfs_{};
   std::uint16_t cdef_index0_[4][3] = {};
   std::uint16_t cdef_minus1_[8] = {};
+
+  // §5.20.10.4 read_lr() state (one tile, intra, per-unit Wiener NS).
+  restoration::classes::WienerTileState lr_state_;
+  bool lr_ready_ = false;
+  // §7.20.4 PC-Wiener uses the self-contained stream module instead.
+  av2enc::filters::pc_wiener_stream::TileState pc_state_;
+  bool pc_ready_ = false;
 
   int cur_r_ = 0;
   int cur_c_ = 0;
@@ -1544,7 +2210,8 @@ bool assemble_still_frame(const FramePlan& plan,
                        std::span<const BlockSyntax> blocks,
                        std::span<const std::int32_t> levels,
                        const StillConfig& config, std::vector<std::uint8_t>& out,
-                       std::string& error, std::size_t* tile_bytes) {
+                       std::string& error, std::size_t* tile_bytes,
+                       std::span<const palette::PaletteResult> palette_results) {
   error.clear();
   out.clear();
   if (plan.width <= 0 || plan.height <= 0) {
@@ -1566,10 +2233,18 @@ bool assemble_still_frame(const FramePlan& plan,
     error = "frame plan size does not match the sequence/frame header config";
     return false;
   }
+  if (plan.sb_size != superblock_size_px(config)) {
+    error = "frame plan superblock size does not match the sequence header";
+    return false;
+  }
 
-  Writer writer(plan, blocks, levels, config);
+  Writer writer(plan, blocks, levels, config, palette_results);
   if (!writer.run(tile_bytes, error)) return false;
   out = assemble_still_picture(config, writer.payload());
+  if (out.empty()) {
+    error = "temporal-unit assembly failed";
+    return false;
+  }
   return true;
 }
 

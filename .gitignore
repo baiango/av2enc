@@ -8,8 +8,8 @@ build*/
 !tests/data/*.y4m
 *.yuv
 *.raw
-testdata/
-tools/bin/
+testdata
+tools/bin
 bench/hello_cuda/build/
 .DS_Store
 .venv-cvvdp/

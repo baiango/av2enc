@@ -11,7 +11,12 @@ Integrator workstream: shared M1 core (`src/encoder/m1/still_headers.*`,
 |---:|---|---|---|---|---|
 | 1 | CDEF (§7.18) | `--still-cdef` (off) | exact | not ported | PASS |
 | 2a | CCSO band-offset (§7.19) | `--still-ccso` (off) | exact | not ported | PASS |
-| 2b | Wiener NS (§7.20) | — | not integrated | — | — |
+| 2a2 | CCSO edge-classified + per-unit skip | `--still-ccso-edge` (off) | exact | not ported | PASS |
+| 2b | Wiener NS, luma (§7.20.3) | `--still-wiener` (off) | exact | not ported | PASS |
+| 2c | Wiener NS, chroma (§7.20.3) | `--still-chroma-lr` (off) | exact | not ported | PASS |
+| 2d | PC-Wiener, luma (§7.20.4) | `--still-pc-wiener` (off) | exact | not ported | PASS |
+| 2e | GDF (§7.20.5) | `--still-gdf` (off) | exact | not ported | PASS |
+| 2f | Film grain signalling (§5.14/§5.18.10) | `--still-grain` (off) | recon exact, grain output | N/A (decoder) | PASS |
 | 3 | RDOQ (§7.16/§8.3) | `--still-rdoq` (off) | exact | not ported | PASS |
 | 4 | Intra TX type | `--still-tx-type` (off) | exact | not ported | PASS |
 | 5 | Rate-aware intra | `--still-rdo-intra` (off) | exact | not ported | PASS |
@@ -19,6 +24,9 @@ Integrator workstream: shared M1 core (`src/encoder/m1/still_headers.*`,
 | 7 | Extended partitions | — | not integrated | — | — |
 | 8 | 10-bit | — | not started | — | — |
 | 9 | Coeff-CDF qctx 1–3 (§8.3.1) | `--qp 1..255` (default 90) | exact | pinned 90 | PASS |
+| 10 | Quantizer matrices (§5.18.6.2/§7.14.4) | `--still-qm` (off) | exact | not ported | PASS (module gate) |
+| 11 | Intra secondary transform (§5.20.8.2/§7.15.3) | `--still-ist` (off) | exact | not ported | PASS (module gate) |
+| 12 | DC/AC delta-Q (§5.4.8/§5.18.6.1) | `--still-dc-ac-delta-q` (off) | exact | not ported | PASS (module gate) |
 
 "exact" means: the encoder reconstruction matches the pinned `dav2d`
 (f9dafbc) decode sample-for-sample on every gated case, and the IVF decodes
@@ -76,6 +84,70 @@ Quality (640x360, `dav2d` decode, PSNR from ffmpeg):
 
 ## Per-feature notes
 
+### DC/AC delta-Q
+
+* Sequence header writes the §5.4.8 delta group (`equal_ac_dc_q=0`, all three
+  enables, base deltas 0) and the frame header writes §5.18.6.1
+  `quantization_params()` from `dcdeltaq::search_frame_delta_q()`.  The
+  default-off state writes exactly the historical 8 sequence bits and the
+  `base_q_idx` byte, so pinned streams do not move.
+* Forward quantisation and §7.14.4 dequant use `get_q(qindex, delta)` per
+  coefficient: the DC quantizer at adjusted raster index 0, AC elsewhere.  The
+  coefficient-CDF slice still comes from the raw `base_q_idx` (§8.3.1).
+* **Deblocking interaction:** §7.17.6 chroma filter strength adds the effective
+  UV AC delta (`DeltaQUAc/DeltaQVAc + BaseUVAcDeltaQ`).  The encoder must pass
+  the same values to `DeblockOptions`; omitting them desyncs only the reported
+  chroma reconstruction (the tile bytes are unchanged).  Fixed here; recorded
+  in `docs/negative-results.md`.
+* Measured at 640x360 QP 90: 13,200 B vs 13,355 B baseline (−1.2%) at
+  PSNR-Y 45.084 vs 45.089 and avg 46.318 vs 46.368.  That is a measured RD
+  trade-off from the component's proxy search, not a claim of a rate win.
+* Gate: `src/codec/transform/delta_q/still_delta_q_gate.sh` (pinned MD5s,
+  `dav2d --strict 1`, recon exactness at QP 90/141, IST interaction, and the
+  `--still-qm` / `--still-rdoq` rejections).
+
+### Intra secondary transform (IST)
+
+* Sequence header `enable_intra_ist=1`, `enable_inter_ist=0`; `sec_tx_type`
+  is coded for every IST-applicable luma block (including symbol 0), followed
+  by `most_probable_stx_set` only when nonzero.  Chroma never enters the path.
+* Applicability is the §5.20.8.2 predicate: luma, `TxType` DCT_DCT/ADST_ADST,
+  `YMode != PAETH`, `eob != 1`, `eob <= eobLim` (8 / 20 / 32).  The encoder
+  decides per block with the component's candidate enumeration and an
+  analysis projection of the quantised coefficients (the spec defines only the
+  decoder inverse).  The projection is applied to the sub-block the §9.7 scan
+  map addresses; `forward_secondary_coeffs_kernel()` alone zeroes the whole
+  block and is only valid for 4x4/8x8, so the still path does its own partial
+  projection.
+* Reconstruction runs dequant → §7.15.3 inverse → primary 2-D inverse.  The
+  encoder recon is decoder-exact at 64x64/640x360, including `--still-qm`,
+  `--still-tx-type` and `--still-rdoq` combinations.
+* Rate: at 640x360 QP 90 the gate stream is 13,371 B vs 13,355 B baseline at
+  the same PSNR — the analysis projection + static symbol costs do not find a
+  gain on this fixture.  The gate is about *valid signalling and exact
+  reconstruction*, not a BD-rate claim.  `--still-ist-scale` is the SSE-domain
+  lambda (default 0.125).
+* Gate: `src/codec/transform/secondary/still_ist_gate.sh` (pinned MD5s,
+  `dav2d --strict 1`, recon compare, and the documented interactions).
+
+### Quantizer matrices (QM)
+
+* Sequence header is unchanged: the encoder signals only spec-defined default
+  matrices (`using_qmatrix = 1`, `qm_y/u/v[0] = qm_level`, one segment), so no
+  `quantizer_matrix_obu()` is emitted and `QmDataPresent[]` stays 0.  The
+  pinned `dav2d` accepts default matrices but rejects QM OBUs.
+* `--still-qm-level` (default 3, range 0..14) selects the §9.4.3 matrix; 15 is
+  the "no QM" sentinel and is not selectable.  Forward quantisation scales the
+  scalar `quant_factor` by `q / q2` with `q2 = Round2(q * m, 5)`; the §7.14.4
+  dequant in reconstruction uses the same `q2`, so encoder recon stays
+  decoder-exact (0 differing samples at 64x64/640x360, QP 90/91/141).
+* `--still-qm --still-rdoq` is rejected by name: the RDOQ rate model assumes
+  the scalar quantiser.  TX_TYPE search is compatible (the selector runs on
+  its own candidate metric; the chosen type is re-quantised under QM).
+* Gate: `src/codec/transform/qm/still_qm_gate.sh` (pinned IVF MD5s for
+  `--still-qm` at 64x64/640x360 and QP 141, `dav2d --strict 1`, recon compare,
+  and the RDOQ rejection).
+
 ### CDEF
 
 * Sequence `enable_cdef=1`; frame `cdef_params()` after the four
@@ -97,13 +169,99 @@ Quality (640x360, `dav2d` decode, PSNR from ffmpeg):
   that minimises SSE against the source over visible samples.  The band uses
   the **pre-CDEF** luma (`CurrFrame`), and the filter runs post-CDEF, in
   normative order.  `--still-ccso-bands N` (0..6, default 6 = 64 bands).
-* The edge-classified CCSO form and per-unit `ccso_blk=0` decisions are **not**
-  implemented yet; only the band-offset form is signalled.
-* Wiener NS is **not integrated**: its tile syntax
-  (`read_wienerns_filter()` incl. `search_frame_filters()` group coding) has no
-  reference implementation in `src/cuda/m1/restoration/`, and the component's
-  README states no bitstream path exists.  Implementing it needs its own
-  coefficient-fit and group-symbol writer before it can be gated.
+* `--still-ccso-edge` (implies `--still-ccso`) signals the edge-classified
+  form: `ccso_bo_only = 0`, a searched `(scale_idx, quant_idx, ext_filter,
+  edge_clf)` tuple, `ccso_max_band_log2 <= 3`, and a `(band, cls0, cls1)` offset
+  table fitted by SSE.  It also writes a per-64x64-unit `ccso_blk` grid and
+  clears units whose fitted offset does not reduce SSE (per-unit `ccso_blk=0`).
+  The default band-offset path is unchanged, including its all-ones grid.
+  §5.18.7.12 caps `max_band_log2` at 3 in the edge-classified form, so
+  `--still-ccso-bands` is clamped to 3 there.
+  Pinned edge streams: 64x64 `b83169960ce4e75c6ee5c1d933901923` (982 B);
+  640x360 `f0f3fb9693d9cb5bf2f86cef305004bb` (13,414 B);
+  640x360 CDEF+edge CCSO `a06c1765e37827cbb840ed018b154037` (13,433 B).
+* Wiener NS and chroma LR are CPU-integrated (see the section below).  The CUDA
+  restoration kernel is still not called: `--still-gpu` rejects the flags by
+  name, and frame-level/multi-class `search_frame_filters()` coding remains
+  unused (M1 signals per-unit single-class filters only).
+
+### Wiener NS / chroma LR (§7.20.3)
+
+* `--still-wiener` enables luma loop restoration; `--still-chroma-lr` enables
+  the shared U/V planes.  Both are per-unit `RESTORE_WIENER_NONSEP` with
+  `frame_filters_on = 0`, `LoopRestorationSize` 64 luma / 32 chroma (4:2:0).
+  The search (`restoration::classes::wiener_decide`) fits coefficients against
+  the source, distortion-only (`lambda_bits = 0`), and runs after CDEF/CCSO in
+  normative order.
+* The sequence header sets `enable_restoration = 1` and disables PC-Wiener;
+  `lr_params()` is written between `cdef_params()` and `ccso_params()`.  Every
+  superblock origin writes `read_lr()` for each enabled plane before
+  `read_partition()`.  Disabled planes code no tool symbol when the only
+  available tool is `RESTORE_NONE`.
+* Reconstruction/output is `LrFrame`, i.e. the decoder's post-LR picture.
+* New pinned streams (`tools/still_verify/loop_restoration_gate.sh`):
+
+| Case | IVF bytes | IVF MD5 |
+|---|---:|---|
+| 64x64 luma Wiener | 941 | `f2c005d7873c9c493e1b41473c8f3a54` |
+| 64x64 chroma LR | 952 | `0e291675117f627783606d4bf0b3ca43` |
+| 640x360 luma Wiener | 13,552 | `4bbede8ad74b6552a2404e5c23431adb` |
+| 640x360 chroma LR | 13,739 | `e6a83f2fec7bc4537b868cbbdc389504` |
+| 640x360 luma+chroma | 13,936 | `a7a4c06967bd4704dbb72f4de8e79f91` |
+| 640x360 CDEF+CCSO+LR | 14,001 | `2f4ffb0c0dc62d713f5a6a9f5e236240` |
+
+The separate gate script leaves `feature_gate.sh`'s published 30-case list
+untouched, so `tools/refactor/verify_baseline.sh --check` still passes.
+
+### PC-Wiener (§7.20.4)
+
+* `--still-pc-wiener` signals `FrameRestorationType[0] = RESTORE_PC_WIENER` and
+  writes one `use_pc_wiener` symbol per 64x64 luma unit.  The recovered
+  classifier/filter bank in `src/codec/filters/tables/pc_wiener.*` supplies the
+  pixel filter; no coefficients or `frame_filters_on` bit are coded.
+* The decision is distortion-only (`lambda = 0`) against the source and uses
+  the §7.20.1 `LrTxSkip` map derived from the block stream
+  (`skip_flag || eob == 0`; M1 has no block skip, so `eob == 0` per 4x4 luma
+  cell).  Omitting it desynchronises the classifier for skipped residuals and
+  was observed as 45 luma samples differing at 640x360.
+* Applied after CDEF/CCSO; chroma is untouched.  Mutually exclusive with
+  `--still-wiener`/`--still-chroma-lr`.
+* Pinned streams: 64x64 `508ab8ec82f6b5fc0a1b6a1980eb0c50` (938 B);
+  640x360 `5236b0dd917d7cd62832b9d79b88f007` (13,365 B);
+  640x360 CDEF+CCSO+PC-Wiener `cffddedb6fac60b29d38e2caf5f9b6f4` (13,426 B).
+
+### GDF (§7.20.5)
+
+* `--still-gdf` writes `enable_gdf = 1` and
+  `gdf_unit_matches_sb_size = 1` in the sequence header, and the
+  `gdf_params()` row between `deblocking_filter_params()` and `cdef_params()`.
+  M1 signals `gdf_per_block = 0`, so every 64x64 unit is filtered and **no**
+  `use_gdf` tile symbols are coded; the recovered `spec_tables/gdf.*` filter is
+  applied in the loop-restoration stage against the source.
+* The filter is applied after CDEF/CCSO and before luma Wiener, but GDF
+  overwrites `LrFrame` for every filtered luma block.  Combining it with
+  luma/chroma loop restoration needs the §7.20.1 pre-GDF `CdefFrame` split and
+  is therefore rejected by name for now.
+* Pinned streams: 64x64 `1714218f7dab3dbaaa334885a38c2a88` (937 B);
+  640x360 `b07c1327de42ec038e25dc7c74561984` (13,356 B);
+  640x360 CDEF+CCSO+GDF `ebe9f970bd7a3a73e4b38ae8e3393354` (13,416 B).
+
+### Film grain (§5.14 / §5.18.10)
+
+* `--still-grain` sets `film_grain_params_present = 1`, inserts a
+  `film_grain_obu()` (slot 0, a fixed two-point 4:2:0 model) before the coded
+  frame OBU, and appends `film_grain_config()` to the frame header.  For a
+  single-picture header `apply_grain` is inferred to 1, so only `fgm_id` (0)
+  and `grain_seed` (0) are coded.
+* Grain is a decoder-side output process: the encoder reconstruction and
+  reference stay grain-free.  The gate checks recon exactness with
+  `dav2d --filmgrain 0` and separately that `--filmgrain 1` produces a
+  different (synthesized) output.
+* Pinned streams: 64x64 `2c487ae7f9abb1f51d33c335dc07feac` (987 B);
+  640x360 `b23601e81d0600debc5b6d84f91be11a` (13,407 B).
+* The grain module's old `pipeline/grain/stream/` include paths were stale after
+  the folder refactor; this commit fixes them so the sources build in the root
+  target.
 
 ### RDOQ
 
@@ -182,11 +340,14 @@ Quality (640x360, `dav2d` decode, PSNR from ffmpeg):
 
 ## Not integrated
 
-* **GPUs for features 1, 3, 4, 5, 6.**  `GpuOptions` now carries every M3 flag
-  and its decision knobs, `gpu_options_to_m1()` mirrors them into the internal
-  CPU parity encode, and `gpu_m3_options_supported()` rejects each unported
-  tool **by name** (`--still-cdef`, `--still-ccso`, `--still-rdoq`, `--still-tx-type`,
-  `--still-rdo-intra`, `--still-uv-full`) with a "not ported" message.  No flag is
+* **GPUs for features 1, 3, 4, 5, 6 and the new filter flags.**
+  `GpuOptions` carries every M3 flag and its decision knobs,
+  `gpu_options_to_m1()` mirrors them into the internal CPU parity encode, and
+  `gpu_m3_options_supported()` rejects each unported tool **by name**
+  (`--still-cdef`, `--still-ccso`, `--still-ccso-edge`, `--still-wiener`,
+  `--still-chroma-lr`, `--still-pc-wiener`, `--still-gdf`, `--still-grain`,
+  `--still-rdoq`, `--still-tx-type`, `--still-rdo-intra`, `--still-uv-full`)
+  with a "not ported" message.  No flag is
   accepted-and-ignored, and the gate classifies these as `SKIP-REJECTED`, not
   `FAIL`.  `src/cuda/m1/still_gpu_options_test.cpp` pins the mapping and the
   rejection set on the host (no CUDA needed).  The GPU kernels/adapters for the
@@ -243,3 +404,152 @@ ctest --test-dir build-m1 --output-on-failure
 The baseline `--still` MD5s are unchanged from `AGENTS.md`:
 64x64 `0ef9825062a25c4d950ee924113c6f89`,
 640x360 `e61de628b0812b716b0efa7dcafcdd06`.
+
+## Partition / superblock tools (branch `integration/partition`)
+
+All rows are **opt-in, default off**; the default `--still` / `--still-gpu`
+streams stay byte-identical.  The CUDA planner accepts 64x64 superblocks only,
+so the new modes are CPU-only and `--still-gpu` rejects them by name.
+
+| Tool | Flag (default) | CPU | GPU | Gate |
+|---|---|---|---|---|
+| 128x128 superblocks | `--still-sb128` (off) | exact | rejected by name | PASS |
+| 256x256 sequence SBs | `--still-sb256` (off) | exact | rejected by name | PASS |
+| Extended partitions | `--still-ext-partitions` (off) | exact | rejected by name | PASS |
+
+* §5.4.3 now writes the superblock flag pair: `use_256x256_superblock`, then
+  `use_128x128_superblock` only when the first is 0.  Default (both 0) is
+  byte-identical.
+* `write_tile_info()` derives the tile grid from the selected SB size
+  (`sb_mi = 32` for 128), and `still_syntax` emits `do_square_split` between
+  `do_split` and `rect_type`.  `PARTITION_SPLIT` exists only at 128x128, so the
+  64x64 path never codes the new symbol.
+* The tree solver enables `allow_split` at 128 SB and makes >64x64 leaves
+  unattractive, because the writer codes at most one 64x64 leaf per plane
+  (TX_MODE_LARGEST).  Only 128x128 roots are split four ways; the 256x256
+  recursion is inter-only (`sb256` module).
+* CfL: `still_encoder` now passes `geometry_.sb_size` into `Block::sb_top_y`
+  instead of the hardcoded 64.  With a 128 SB the §7.13.5 above-window is
+  clamped to the 128-row superblock; the old constant produced exact luma but
+  wrong chroma (`U`/`V` mismatched).
+* Rejected combinations: `--still-gpu`, `--still-single`, `--still-depth 0`,
+  `--still-cdef` and `--still-ccso` (CDEF index context and CCSO unit sizing are
+  still 64-SB only).
+* Gate: `dav2d --strict 1` on 256x256, 640x360 and 1920x1080, plus
+  `still_dump`/`verify.py` recon equality on all three.  IVF MD5s:
+  256x256 `bd9987821168eccf6bf135a930992cd3`,
+  640x360 `eef3856c7d549dfd7a4f63f52714d2e8`,
+  1080p `f3e8f3ea5182b72f8a50cbc6108cbf09`.
+
+* `--still-sb256` writes `use_256x256_superblock = 1` and **no**
+  `use_128x128_superblock` bit.  §5.18.1 clamps an intra frame to
+  `SbSize = 128x128`, so the tile uses the sb128 tree/grid and CDEF/CCSO stay
+  rejected exactly like `--still-sb128`.  The 256x256 *coding* recursion is
+  inter-only and not exercised by a still picture.
+* Gate: `dav2d --strict 1` plus `still_dump` equality at 256x256 and 640x360.
+  IVF MD5s: 256x256 `59a76b8d915bfd8959d5b167c02d8ea0`,
+  640x360 `6936545a38c647297e2f0a85407ab040`.  Negative control: clearing the
+  flag with `src/codec/partition/sb256/patch_use256_flag.py` makes `dav2d`
+  reject the stream ("Error parsing sequence header"), proving it is parsed.
+
+* `--still-ext-partitions` writes `enable_ext_partitions = 1` plus the dependent
+  `enable_uneven_4way_partitions = 1` bit and routes the partition tree through
+  `src/codec/partition/ext/` (`partition_ext::decide_frame`) and
+  `src/codec/partition/stream/` (`plan_node` / `emit_symbols` in
+  `still_syntax`).  `BlockSyntax::allowed_mask` is now 16-bit so the 10-value
+  spec enum fits.
+* Search policy: the extended rows are enabled only where every child keeps its
+  own chroma block.  `HORZ_3`/`VERT_3` require the split dimension >= 32 and the
+  perpendicular dimension >= 16; `HORZ_4*`/`VERT_4*` require the split dimension
+  >= 64.  The HORZ_3@8x32 / VERT_3@32x8 shared-chroma cases and HORZ_4@32x32
+  chroma offsets are therefore not reachable; `collect_node_ext()` rejects any
+  tree that still reports `chroma_offset` (e.g. a forced frame-edge split below
+  8x8) with an explicit error instead of coding UV on the wrong leaf.  This is
+  the remaining work for full ext coverage.
+* Rejected combinations: `--still-gpu` (no CUDA extended tree) and
+  `--still-single` (a depth-0 search would have to select a 3-way row).
+* Gate: `dav2d --strict 1` plus `still_dump` equality at 256x256, 640x360 and
+  1920x1080, with HORZ_3, VERT_3, HORZ_4A, HORZ_4B and VERT_4A all selected.
+  IVF MD5s: 256x256 `687c63fe7f387a5101b17f80e73ef1c1`,
+  640x360 `1a4f3e0201e2c4537d00e5531803ac46`,
+  1080p `67ada3d9353124f25422fa46826993bc`.  `--still-ext-partitions
+  --still-sb128` also gates bit-exact at 256x256
+  (`56468f79caf8036256f609c2780cfea6`).
+## Intra integration pass (`integration/intra`)
+
+Second integration wave for the standalone `src/codec/intra/*` components.
+Every flag is off by default; the pinned `--still` / `--still-gpu` streams and
+the `refactor/baseline.json` pins are unchanged.  CPU only — no CUDA stage was
+wired here.
+
+| Tool | Flag (default) | CPU | Gate |
+|---|---|---|---|
+| IBP (§5.4.5, §7.13.2.7-.12) | `--still-ibp` (off) | exact | PASS |
+| MRL (§5.20.5.5, §7.13.2.1/.7/.8) | `--still-mrl` (off) | exact | PASS |
+| CfL explicit alpha (§5.20.7.32) | `--still-cfl-explicit` (off) | exact | PASS |
+| CfL DS filters (§5.4.5) | `--still-cfl-ds N` (0) | exact | PASS |
+| DIP (§5.20.7.9, §7.13.2.3-.6) | `--still-dip` (off) | exact | PASS |
+| MHCCP (CFL_MULTI, §7.13.6-.8) | `--still-mhccp` (off) | exact | PASS |
+| Palette (§5.20.8) | `--still-palette` (off) | **gate fails** | REJECTED |
+
+"exact": `dav2d` (`f9dafbc`) `--strict 1 --threads 1` decodes the stream and the
+decoded planes equal the encoder reconstruction sample for sample.  The gate is
+`tools/still_verify/intra_gate.sh --bin <av2enc> --dump <still_recon_dump>`;
+`still_recon_dump` is the test-only harness built from
+`src/pipeline/still/stream/still_recon_dump.cpp`.
+
+Interactions and constraints:
+
+* `--still-mrl` implies the directional luma search (only directional modes can
+  signal `mrl_index`).  It rejects `--still-ibp` (IBP is specified for
+  MrlIndex = 0) and `--still-rdo-intra` (no MRL rate model).
+* `--still-dip` is a luma DC alternative; the DC-only default path scores plain
+  DC first and keeps DIP only when the §7.13.2.4 decision wins by SSE.
+* `--still-palette` is wired but **rejected at the CLI**: the §5.20.8.4 colour
+  map does not reproduce with `dav2d` on tall direction=0 blocks.  See the
+  palette row in `docs/negative-results.md` for the minimal reproducer.
+* `--still-mhccp` requires CfL (`--no-cfl` is rejected) and codes
+  `read_cfl_alphas()` through the gated MHCCP adapter, which owns the
+  `cfl_mhccp` / `cfl_mh_dir` CDFs.
+* `--still-cfl-ds N` is the explicit sequence-level `cfl_ds_filter_index`
+  (0..3, 3 aliases 0).  Index 0 remains the default because it won on all
+  measured content.
+
+Pinned gate MD5s (CPU, 2026-11-12, `tools/still_verify/intra_gate.sh --pin`):
+
+| Case | IVF MD5 |
+|---|---|
+| `ibp_64` | `b57b3e4b687d1cf23dfd43ce5699a753` |
+| `ibp_360` | `36e07364bad2d3d5e93093a1d6354c92` |
+| `ibp_fullintra_360` | `b2d97369af6afb937536647d8dbe46b9` |
+| `mrl_64` | `ecde69a68a87af141a2b72a709106206` |
+| `mrl_360` | `ed9b4eb8df2f83712791309889d60291` |
+| `mrl_txtype_64` | `9f8115d473bd73bb453a3a4597575ee0` |
+| `cfl_ds1_360` | `7dbfbba32cc8fa120e8a4c86878069d7` |
+| `cfl_ds2_360` | `3ef10468f121ea24a02de583ab7c8d99` |
+| `cfl_explicit_64` | `d75429a0f29c2bcba5aba7482c1fe37d` |
+| `cfl_explicit_360` | `c967038d187224c528e6c93a03c1c0cd` |
+| `dip_64` | `ae4a44295f63ba32415c04d6d3875aa8` |
+| `dip_360` | `0b187ba0b25eaff077e922d0642dab45` |
+| `mhccp_64` | `40e72a1843f87481179661ad4ff2025f` |
+| `mhccp_360` | `29051001bfb04557b204c5eaba692019` |
+
+Not wired in this pass:
+
+* **Palette** — the header bits (`allow_screen_content_tools`,
+  `force_integer_mv`), the palette syntax position and the luma decision are
+  wired behind `--still-palette`, but the CLI **rejects** the flag: the
+  §5.20.8.4 palette colour map does not reproduce with the pinned decoder on
+  tall direction=0 blocks.  Minimal reproducer and analysis in
+  `docs/negative-results.md`.
+* **IntraBC** — the palette commit now emits the screen-content frame bits, but
+  `use_intrabc` / `skip_flag` / `intrabc_info`, the §7.12.2 BV stack and the
+  block copy are not in the CPU still path yet.  The gated tile coder is
+  `src/codec/intra/ibc/stream/`.
+* **DC-subsampled intra (§7.13.2.11)** — unreachable: it needs a prediction
+  extent > 32, and M1's largest coded block inside a 64x64 superblock is 32,
+  while the 64x64 single-block case has no neighbours (DC = mid-value), so the
+  sampled and subsampled forms coincide.
+* **`dc_sign_horz_vert` (§5.20.7.27)** — only reachable for 1D transform
+  classes, and `enable_idtx_intra = 0` filters every identity 1-D transform out
+  of the intra TX-type sets.

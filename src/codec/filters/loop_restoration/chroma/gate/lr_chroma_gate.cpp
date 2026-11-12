@@ -24,7 +24,7 @@
 //
 // Exit: 0 pass, 1 fail, 77 decoder unavailable.
 
-#include "codec/filters/loop_restoration_chroma/chroma_lr.h"
+#include "codec/filters/loop_restoration/chroma/chroma_lr.h"
 #include "codec/filters/stream/filters_stream.h"
 #include "pipeline/video/video_headers.h"
 #include "pipeline/video/video_syntax.h"

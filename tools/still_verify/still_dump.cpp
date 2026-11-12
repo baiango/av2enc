@@ -57,7 +57,20 @@ void usage(std::ostream& out) {
          "  --tx-type               intra luma TX_TYPE search (CLI --still-tx-type)\n"
          "  --tx-type-scale S       lambda sse_scale (default 0.125)\n"
          "  --ccso                  enable band-offset-only CCSO (CLI --still-ccso)\n"
+         "  --ccso-edge             edge-classified CCSO (CLI --still-ccso-edge)\n"
          "  --ccso-bands N          CCSO max_band_log2 0..6 (default 6)\n"
+         "  --sb128                 use 128x128 superblocks (CLI --still-sb128)\n"
+         "  --sb256                 signal 256x256 sequence SBs (CLI --still-sb256)\n"
+         "  --ext-partitions        extended HORZ_3/VERT_3/4-way (--still-ext-partitions)\n"
+         "  --qm                    signal a spec-defined QM set (CLI --still-qm)\n"
+         "  --qm-level L            QM default matrix level 0..14 (default 3)\n"
+         "  --ist                   enable intra secondary transform (CLI --still-ist)\n"
+         "  --delta-q               enable DC/AC delta-Q search (CLI --still-dc-ac-delta-q)\n"
+         "  --wiener                luma Wiener NS loop restoration\n"
+         "  --chroma-lr             chroma Wiener NS loop restoration\n"
+         "  --pc-wiener             luma PC-Wiener loop restoration\n"
+         "  --gdf                   luma guided detail filter\n"
+         "  --grain                 signal film grain (decoder synthesis)\n"
          "  --still-single             force one PARTITION_NONE superblock\n"
          "  --still-dc                 force DC intra for luma\n"
          "  --min-block-size N      partition floor in pixels (default 8)\n"
@@ -238,6 +251,25 @@ int parse_args(int argc, char** argv, Cli& cli) {
       cli.options.rdo_sse_scale = scale;
     } else if (arg == "--ccso") {
       cli.options.enable_ccso = true;
+    } else if (arg == "--sb128") {
+      cli.options.sb128 = true;
+    } else if (arg == "--sb256") {
+      cli.options.sb256 = true;
+    } else if (arg == "--ext-partitions") {
+      cli.options.ext_partitions = true;
+    } else if (arg == "--ccso-edge") {
+      cli.options.enable_ccso = true;
+      cli.options.ccso_edge = true;
+    } else if (arg == "--wiener") {
+      cli.options.enable_wiener = true;
+    } else if (arg == "--chroma-lr") {
+      cli.options.enable_chroma_lr = true;
+    } else if (arg == "--pc-wiener") {
+      cli.options.enable_pc_wiener = true;
+    } else if (arg == "--gdf") {
+      cli.options.enable_gdf = true;
+    } else if (arg == "--grain") {
+      cli.options.enable_grain = true;
     } else if (arg == "--ccso-bands") {
       if (!next_value("--ccso-bands", value)) return 2;
       int bands = 0;
@@ -274,6 +306,20 @@ int parse_args(int argc, char** argv, Cli& cli) {
         return 2;
       }
       cli.options.cdef_num_strengths = strengths;
+    } else if (arg == "--ist") {
+      cli.options.ist = true;
+    } else if (arg == "--delta-q") {
+      cli.options.delta_q = true;
+    } else if (arg == "--qm") {
+      cli.options.qm = true;
+    } else if (arg == "--qm-level") {
+      if (!next_value("--qm-level", value)) return 2;
+      int level = 0;
+      if (!parse_int(value, level) || level < 0 || level > 14) {
+        std::cerr << "still_dump: --qm-level must be in [0, 14]\n";
+        return 2;
+      }
+      cli.options.qm_level = level;
     } else if (arg == "--still-single") {
       cli.options.force_single_block = true;
     } else if (arg == "--still-dc") {
@@ -351,6 +397,31 @@ std::string options_json(const Cli& cli, std::uint32_t width,
   j += ",\"enable_ccso\":";
   j += o.enable_ccso ? "true" : "false";
   j += ",\"ccso_bands_log2\":" + std::to_string(o.ccso_bands_log2);
+  j += ",\"sb128\":";
+  j += o.sb128 ? "true" : "false";
+  j += ",\"sb256\":";
+  j += o.sb256 ? "true" : "false";
+  j += ",\"ext_partitions\":";
+  j += o.ext_partitions ? "true" : "false";
+  j += ",\"qm\":";
+  j += o.qm ? "true" : "false";
+  j += ",\"qm_level\":" + std::to_string(o.qm_level);
+  j += ",\"ist\":";
+  j += o.ist ? "true" : "false";
+  j += ",\"delta_q\":";
+  j += o.delta_q ? "true" : "false";
+  j += ",\"ccso_edge\":";
+  j += o.ccso_edge ? "true" : "false";
+  j += ",\"enable_wiener\":";
+  j += o.enable_wiener ? "true" : "false";
+  j += ",\"enable_chroma_lr\":";
+  j += o.enable_chroma_lr ? "true" : "false";
+  j += ",\"enable_pc_wiener\":";
+  j += o.enable_pc_wiener ? "true" : "false";
+  j += ",\"enable_gdf\":";
+  j += o.enable_gdf ? "true" : "false";
+  j += ",\"enable_grain\":";
+  j += o.enable_grain ? "true" : "false";
   j += ",\"enable_cdef\":";
   j += o.enable_cdef ? "true" : "false";
   j += ",\"cdef_num_strengths\":" + std::to_string(o.cdef_num_strengths);

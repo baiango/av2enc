@@ -37,6 +37,7 @@
 #pragma once
 
 #include "pipeline/still/still_headers.h"
+#include "codec/intra/palette/core/palette.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -61,6 +62,10 @@ enum BlockFlags : std::uint8_t {
   // can clear the left partition context at the start of every superblock row,
   // exactly like still_encoder's `if (sb.mi_col == 0) clear_left_context()`.
   kFlagSbRoot = 1u << 2,
+  // This leaf is coded with a luma palette (§5.20.8).  The extra syntax lives
+  // at the palette position (after UV mode, before DIP) and is driven by the
+  // side-array entry at BlockSyntax::palette_index.
+  kFlagIsPalette = 1u << 3,
 };
 
 // One node of the partition tree, plus the leaf payload when it is a leaf.
@@ -75,14 +80,33 @@ struct BlockSyntax {
   std::uint16_t mi_row = 0;
   std::uint16_t mi_col = 0;
   std::uint8_t bsize = 0;         // partition::BlockSize
-  std::uint8_t partition = 0;     // partition::PartitionType
-  std::uint8_t allowed_mask = 0;  // bit p = allowed[PartitionType p]
+  std::uint8_t partition = 0;     // spec PartitionType value 0..9
+  // bit p = allowed[PartitionType p] (10-bit spec enum).  The rect-only path
+  // only sets bits 0..3; extended partitions use bits 3..8 and 9 (SPLIT).
+  std::uint16_t allowed_mask = 0;
   std::uint8_t flags = 0;         // BlockFlags
   std::uint16_t subtree = 0;      // entries in the child subtrees
 
   // --- leaf mode info ---
   std::uint8_t y_mode = 0;        // AV2 YMode 0..12 (§6.19.5.5)
   std::int8_t y_angle_delta = 0;  // AngleDeltaY -3..3
+  // §5.20.5.5 mrl_index / mrl_sec_index.  Signals only for directional luma
+  // modes when the sequence header enables MRL; ignored/zero otherwise.
+  std::int8_t mrl_index = 0;      // 0..3
+  std::uint8_t mrl_sec_index = 0; // 0/1; requires mrl_index > 0 and not 4x4
+  // §5.20.7.32 read_cfl_alphas() when the block is CfL: cfl_index 0 explicit /
+  // 1 derived, and the explicit sign/magnitude symbols.
+  std::uint8_t cfl_index = 1;
+  std::uint8_t cfl_alpha_signs = 0;
+  std::uint8_t cfl_alpha_u = 0;
+  std::uint8_t cfl_alpha_v = 0;
+  // §5.20.7.32 cfl_mh_dir for cfl_index == CFL_MULTI (MHCCP).
+  std::uint8_t cfl_mh_dir = 0;
+  // §5.20.7.9 dip_mode_info().  Signalled only for luma DC blocks when the
+  // sequence enables DIP and the size/palette predicate holds.
+  std::uint8_t use_dip = 0;
+  std::uint8_t dip_transpose = 0;
+  std::uint8_t dip_mode = 0;      // 0..5
   std::uint8_t uv_mode = 0;       // AV2 UV mode (kDcPred when is_cfl)
 
   // --- leaf residual ---
@@ -92,10 +116,18 @@ struct BlockSyntax {
   std::uint8_t tx_type[kPlaneCount] = {0, 0, 0};
   std::uint32_t eob[kPlaneCount] = {0, 0, 0};     // scan-position EOB per plane
   std::uint32_t levels_offset = 0;  // first level index for this leaf
+  // §5.20.8 palette side-array index (ignored unless kFlagIsPalette).  The
+  // PaletteResult is too large to inline in this POD used by the GPU bridge.
+  std::uint32_t palette_index = 0;
   // §5.20.10.1 cdef_idx for the 64x64 block containing this leaf's origin.
   // Only the first coding block of each 64x64 origin codes the symbol; the
   // writer ignores repeats.  Ignored when CDEF is disabled.
   std::int8_t cdef_idx = 0;
+  // §5.20.8.2 secondary transform (IST), luma only.  sec_tx_type 0 means no
+  // IST; the set is 0..6 (0..3 for a large ADST_ADST block).  Both fields are
+  // ignored when enable_intra_ist is 0 or the block is not IST-applicable.
+  std::uint8_t sec_tx_type = 0;
+  std::uint8_t most_probable_stx_set = 0;
 };
 
 // Frame geometry and ordering metadata.  `blocks` (passed to
@@ -124,6 +156,9 @@ struct FramePlan {
 // `out`               receives the frame bytes.
 // `error`             set on failure.
 // `tile_bytes`        optional: receives the §8.2 tile payload size.
+// `palette_results`   optional side array indexed by BlockSyntax::palette_index
+//                     for leaves with kFlagIsPalette; required when the config
+//                     enables palette and a leaf sets that flag.
 //
 // Returns false and sets `error` on any stream/plan inconsistency (bad
 // subtree, out-of-range mode, EOB outside the transform, level array overflow,
@@ -133,7 +168,9 @@ bool assemble_still_frame(const FramePlan& plan,
                        std::span<const std::int32_t> levels,
                        const StillConfig& config, std::vector<std::uint8_t>& out,
                        std::string& error,
-                       std::size_t* tile_bytes = nullptr);
+                       std::size_t* tile_bytes = nullptr,
+                       std::span<const palette::PaletteResult> palette_results =
+                           {});
 
 // IntraJointMode for a (YMode, AngleDeltaY) pair: the reordered non-directional
 // index 0..4, or 5 + directional index for directional modes (§5.20.5.5).  The

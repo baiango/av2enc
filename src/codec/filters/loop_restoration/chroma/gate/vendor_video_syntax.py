@@ -38,7 +38,7 @@ HEADER = """\
 #include <string>
 #include <vector>
 
-#include "codec/filters/loop_restoration_chroma/chroma_lr.h"
+#include "codec/filters/loop_restoration/chroma/chroma_lr.h"
 #include "pipeline/video/video_syntax.h"
 
 namespace av2enc::lr_chroma::gate {
@@ -89,7 +89,7 @@ def main() -> int:
         text,
         '#include "pipeline/video/video_syntax.h"\n',
         '#include "pipeline/video/video_syntax.h"\n\n'
-        '#include "codec/filters/loop_restoration_chroma/chroma_lr.h"\n',
+        '#include "codec/filters/loop_restoration/chroma/chroma_lr.h"\n',
         "include",
     )
     text = replace_once(

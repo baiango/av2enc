@@ -33,7 +33,7 @@ if [[ "${WERROR}" == "1" ]]; then
   FLAGS+=(-Werror)
 fi
 
-"${CXX}" "${FLAGS[@]}" -I"${HERE}" \
+"${CXX}" "${FLAGS[@]}" -I"${HERE}" -I"${HERE}/../../.." \
   "${HERE}/av2_entropy.cpp" \
   "${HERE}/av2_entropy_test.cpp" \
   -o "${OUT}"

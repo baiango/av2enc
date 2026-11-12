@@ -29,7 +29,7 @@ mkdir -p "$BUILD" "$OUT"
 FLAGS=(-std=c++20 -O2 -w -I"$ROOT/src")
 
 SOURCES=(
-  "$ROOT/src/codec/filters/loop_restoration_chroma/chroma_lr.cpp"
+  "$ROOT/src/codec/filters/loop_restoration/chroma/chroma_lr.cpp"
   "$ROOT/src/codec/filters/loop_restoration/restoration.cpp"
   "$ROOT/src/codec/filters/loop_restoration/classes/wiener_fit.cpp"
   "$ROOT/src/codec/filters/loop_restoration/classes/wiener_syntax.cpp"

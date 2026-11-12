@@ -26,7 +26,7 @@
 // Usage:
 //   film_grain_stream_gate [--input clip.y4m] [--frames N] [--work DIR]
 //                          [--dav2d PATH] [--qp Q]
-#include "pipeline/grain/stream/grain_stream.h"
+#include "pipeline/grain/grain_stream.h"
 
 #include "core/bitstream/basic_headers.h"
 #include "codec/filters/tables/film_grain.h"

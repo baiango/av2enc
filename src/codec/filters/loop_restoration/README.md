@@ -2,8 +2,15 @@
 
 AV2 v1.0.0 (commit `38f28e7`) §7.19 CCSO and §7.20 loop restoration, written
 from the spec text.  Scalar CPU reference plus a CUDA port that shares the
-same arithmetic.  **No bitstream integration and no `dav2d` claim** — this
-component is not wired into the M0/M1 encode path.
+same arithmetic.
+
+**Integration status (2026-11-12).**  Per-unit non-separable Wiener NS is now
+wired into the opt-in CPU still path: `--still-wiener` (luma) and
+`--still-chroma-lr` (U/V), applied after CDEF/CCSO.  Both are gated by
+`tools/still_verify/loop_restoration_gate.sh` with `dav2d --strict 1` and a
+sample-for-sample encoder-recon compare at 64x64 and 640x360.  The CUDA
+restoration kernel is still unwired, and PC-Wiener/GDF/film grain remain
+unintegrated (see blockers below).
 
 ## Status
 

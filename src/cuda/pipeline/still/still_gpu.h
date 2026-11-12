@@ -223,6 +223,12 @@ struct GpuOptions {
   bool cdef_on_skip_txfm = false;
   bool enable_ccso = false;
   int ccso_bands_log2 = 6;         // 0..6 (CPU --still-ccso-bands)
+  bool ccso_edge = false;          // CPU --still-ccso-edge
+  bool enable_wiener = false;      // CPU --still-wiener
+  bool enable_chroma_lr = false;   // CPU --still-chroma-lr
+  bool enable_pc_wiener = false;   // CPU --still-pc-wiener
+  bool enable_gdf = false;         // CPU --still-gdf
+  bool enable_grain = false;       // CPU --still-grain
   bool rdoq = false;
   double rdoq_sse_scale = 0.125;
   bool tx_type = false;
@@ -271,6 +277,12 @@ inline ::av2enc::still::StillOptions gpu_options_to_m1(const GpuOptions& options
   cpu.cdef_on_skip_txfm = options.cdef_on_skip_txfm;
   cpu.enable_ccso = options.enable_ccso;
   cpu.ccso_bands_log2 = options.ccso_bands_log2;
+  cpu.ccso_edge = options.ccso_edge;
+  cpu.enable_wiener = options.enable_wiener;
+  cpu.enable_chroma_lr = options.enable_chroma_lr;
+  cpu.enable_pc_wiener = options.enable_pc_wiener;
+  cpu.enable_gdf = options.enable_gdf;
+  cpu.enable_grain = options.enable_grain;
   return cpu;
 }
 
@@ -294,6 +306,54 @@ inline bool gpu_m3_options_supported(const GpuOptions& options,
       *error =
           "M1 GPU: --still-ccso is not ported to the GPU pipeline yet; use --still "
           "(CPU)";
+    }
+    return false;
+  }
+  if (options.ccso_edge) {
+    if (error != nullptr) {
+      *error =
+          "M1 GPU: --still-ccso-edge is not ported to the GPU pipeline yet; use "
+          "--still (CPU)";
+    }
+    return false;
+  }
+  if (options.enable_wiener) {
+    if (error != nullptr) {
+      *error =
+          "M1 GPU: --still-wiener is not ported to the GPU pipeline yet; use "
+          "--still (CPU)";
+    }
+    return false;
+  }
+  if (options.enable_chroma_lr) {
+    if (error != nullptr) {
+      *error =
+          "M1 GPU: --still-chroma-lr is not ported to the GPU pipeline yet; use "
+          "--still (CPU)";
+    }
+    return false;
+  }
+  if (options.enable_pc_wiener) {
+    if (error != nullptr) {
+      *error =
+          "M1 GPU: --still-pc-wiener is not ported to the GPU pipeline yet; use "
+          "--still (CPU)";
+    }
+    return false;
+  }
+  if (options.enable_gdf) {
+    if (error != nullptr) {
+      *error =
+          "M1 GPU: --still-gdf is not ported to the GPU pipeline yet; use "
+          "--still (CPU)";
+    }
+    return false;
+  }
+  if (options.enable_grain) {
+    if (error != nullptr) {
+      *error =
+          "M1 GPU: --still-grain is not ported to the GPU pipeline yet; use "
+          "--still (CPU)";
     }
     return false;
   }

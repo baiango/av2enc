@@ -1,4 +1,4 @@
-#include "codec/filters/loop_restoration_chroma/chroma_lr.h"
+#include "codec/filters/loop_restoration/chroma/chroma_lr.h"
 
 #include <algorithm>
 #include <cmath>

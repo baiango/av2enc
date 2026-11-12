@@ -79,16 +79,52 @@ add_library(av2enc_core STATIC
   src/core/bitstream/basic_headers.cpp
   src/pipeline/still/basic_encoder.cpp
   src/codec/partition/tree/partition.cpp
+  src/codec/partition/ext/partition_ext.cpp
+  src/codec/partition/ext/ext_syntax.cpp
+  src/codec/partition/stream/partition_stream.cpp
   src/codec/intra/modes/intra_modes.cpp
   src/codec/rate/rdoq/rdoq.cpp
   src/codec/rate/rdoq/rdoq_av2_model.cpp
+  src/codec/transform/delta_q/quant.cpp
+  src/codec/transform/delta_q/search.cpp
+  src/codec/transform/delta_q/syntax.cpp
+  src/codec/transform/qm/qm.cpp
+  src/codec/transform/secondary/tx_secondary.cpp
   src/codec/transform/tx_type/tx_type.cpp
   src/codec/transform/variants/tx_variants.cpp
   src/codec/transform/variants/tx_select.cpp
   src/codec/intra/cfl/cfl.cpp
+  src/codec/intra/cfl/mhccp/mhccp.cpp
+  src/codec/intra/cfl/mhccp/mhccp_syntax.cpp
+  src/codec/intra/dip/dip.cpp
+  src/codec/intra/dip/dip_syntax.cpp
+  src/codec/intra/ibp/ibp.cpp
+  src/codec/intra/palette/core/palette.cpp
+  src/codec/intra/palette/core/scc_stream.cpp
+  src/codec/intra/palette/stream/palette_stream.cpp
+  src/codec/intra/mrl/core/mrl.cpp
+  src/codec/intra/mrl/stream/mrl_syntax.cpp
+  src/codec/intra/mrl/stream/mrl_interaction.cpp
   src/codec/filters/deblock/deblock.cpp
   src/codec/filters/cdef/cdef.cpp
   src/codec/filters/loop_restoration/restoration.cpp
+  # Encoder-side Wiener-NS search/syntax (§5.18.7.11, §5.20.10.4-.6, §7.20.3).
+  src/codec/filters/loop_restoration/classes/wiener_class.cpp
+  src/codec/filters/loop_restoration/classes/wiener_fit.cpp
+  src/codec/filters/loop_restoration/classes/wiener_syntax.cpp
+  src/codec/filters/loop_restoration/classes/wiener_decision.cpp
+  # PC-Wiener (§7.20.4) stream syntax + decision, with the recovered tables.
+  src/codec/filters/pc_wiener/pc_wiener_stream.cpp
+  src/codec/filters/tables/pc_wiener.cpp
+  src/codec/filters/tables/luma_source.cpp
+  # GDF (§5.18.7.9, §5.20.10.3, §7.20.5) syntax + decision.
+  src/codec/filters/gdf/gdf_syntax.cpp
+  src/codec/filters/gdf/gdf_decision.cpp
+  src/codec/filters/tables/gdf.cpp
+  # Film grain signalling (§5.14, §5.18.10) + OBU placement/slot state.
+  src/codec/filters/tables/film_grain.cpp
+  src/pipeline/grain/film_grain_syntax.cpp
+  src/pipeline/grain/grain_stream.cpp
   src/codec/rate/rdo/rdo.cpp
   src/codec/rate/rdo/intra_decision.cpp
   src/pipeline/still/still_headers.cpp
@@ -96,6 +132,13 @@ add_library(av2enc_core STATIC
   src/pipeline/still/still_encoder.cpp
   src/pipeline/still/stream/still_stream_bridge.cpp
   src/codec/entropy/av2/av2_entropy.cpp
+  # delta-Q / segmentation syntax (neutral, opt-in still integration).
+  src/codec/entropy/deltaq/still/deltaq.cpp
+  src/codec/rate/rc/rc.cpp
+  # Lossless (Q=0, DPCM, FSC) still-picture path; opt-in via --lossless.
+  src/codec/entropy/lossless/lossless.cpp
+  # Content interpretation OBU (§5.15); opt-in, default parameters.
+  src/frame/metadata/content_interpretation/content_interpretation.cpp
   src/core/telemetry/profiler.cpp
   # M1 CDEF stage host half (header packing, MI grids, strength search).  It is
   # CUDA-free and the CPU M1 path needs it; the M1 GPU OBJECT target excludes
@@ -226,6 +269,13 @@ if(TARGET av2enc_still_gpu)
   target_link_libraries(av2enc PRIVATE av2enc_still_gpu)
 endif()
 av2enc_apply_warnings(av2enc)
+
+# Encoder-reconstruction dump harness for the intra gates.  Test-only: it links
+# the same core library and is not registered with CTest, so the pinned ctest
+# inventory is unchanged.
+add_executable(still_recon_dump src/pipeline/still/stream/still_recon_dump.cpp)
+target_link_libraries(still_recon_dump PRIVATE av2enc_core)
+av2enc_apply_warnings(still_recon_dump)
 
 include(CTest)
 if(BUILD_TESTING)

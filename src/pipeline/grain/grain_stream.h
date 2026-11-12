@@ -25,7 +25,7 @@
 #include <string>
 #include <vector>
 
-#include "pipeline/grain/stream/film_grain_syntax.h"
+#include "pipeline/grain/film_grain_syntax.h"
 
 namespace av2enc::filters::grain {
 

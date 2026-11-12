@@ -24,6 +24,34 @@ struct StillOptions {
   bool enable_deblock = true;
   bool enable_intra_edge_filter = true;
   bool adaptive_cdf = false;
+  // Opt-in IBP (§5.4.5 enable_ibp, §7.13.2.7-.12).  No per-block syntax: the
+  // decoder derives applyIbp/useIBP from the mode and angle delta, so the whole
+  // prediction path (DC post-filter, directional edge rules, two-angle blend)
+  // must use ibp::predict().  Default off keeps the pinned streams unchanged.
+  bool enable_ibp = false;
+  // Opt-in MRL (§5.4.5 enable_mrls, §5.20.5.5 mrl_index/mrl_sec_index).
+  // Directional luma only; implies the directional luma search because
+  // non-directional modes cannot signal mrl_index.  Default off.
+  bool enable_mrl = false;
+  // §5.4.5 cfl_ds_filter_index f(2): sequence-level CfL luma down-sampling
+  // filter (§7.13.5).  0 is the historical filter; 3 aliases 0.
+  int cfl_ds_filter = 0;
+  // Opt-in explicit CfL alpha (§5.20.7.32 CFL_EXPLICIT).  The per-block
+  // decision compares the derived and explicit predictions by SSE and keeps
+  // derived on a tie, so cfl_index = 1 stays the stable default.
+  bool cfl_explicit = false;
+  // Opt-in DIP (§5.4.5 enable_dip, §5.20.7.9 dip_mode_info, §7.13.2.3-.6).
+  // Luma DC alternative: the search compares the DIP candidate with ordinary
+  // DC by SSE.  Default off.
+  bool enable_dip = false;
+  // Opt-in palette intra (§5.20.8) for screen content.  Requires the frame
+  // allow_screen_content_tools bit.  Luma only; the block codes eob=0
+  // (transform-skip) on every plane, so the reconstruction is the palette
+  // prediction plus the normal chroma residual.  The decision is SSE-only.
+  bool palette = false;
+  // Opt-in MHCCP (CFL_MULTI, §7.13.6-.8).  Requires CfL.  The decision compares
+  // the derived/explicit hypotheses with the MHCCP direction search by SSE.
+  bool mhccp = false;
   // Partition search floor. 8 is the M1 target; 4 exercises the 4x4 path.
   int min_block_size = 8;
   int max_partition_depth = 4;
@@ -64,6 +92,58 @@ struct StillOptions {
   // ccso_max_band_log2 (0..6; 3 = 8 bands).
   bool enable_ccso = false;
   int ccso_bands_log2 = 6;
+  // §5.4.3 superblock selection.  Both are opt-in and mutually exclusive; an
+  // intra frame uses a 128x128 frame-superblock grid for either flag (§5.18.1),
+  // while sb256 signals the 256x256 sequence flag.  Leaves stay <= 64x64.
+  bool sb128 = false;
+  bool sb256 = false;
+  // §5.4.3 extended partitions (HORZ_3/VERT_3 and uneven 4-way).  Opt-in; the
+  // search policy only enables families whose children keep their own chroma
+  // block.  CPU-only: the CUDA planner has no extended tree.
+  bool ext_partitions = false;
+  // Opt-in neutral delta-Q / segmentation syntax (§5.18.7.1/.8).  The signalled
+  // segment table has no enabled features and every superblock sends a zero
+  // reduced delta, so the reconstruction is unchanged.
+  bool enable_segmentation = false;
+  bool enable_delta_q = false;
+  int delta_q_res = 0;
+  // Opt-in content interpretation OBU (§5.15); default parameters.
+  bool content_interpretation = false;
+  // Opt-in quantizer matrices (§5.18.6.2 + §7.14.4).  Signals a spec-defined
+  // default matrix level (0..14) in the frame header and applies the matching
+  // q2 = Round2(q * m, 5) in forward quantisation and reconstruction.  Off by
+  // default so the pinned `--still` MD5s do not change.  Level 15 is the
+  // "no QM" sentinel and is not a selectable set.
+  bool qm = false;
+  int qm_level = 3;
+  // Opt-in intra secondary transform (§5.20.8.2, §7.15.3).  Luma-only: the
+  // encoder projects the quantised primary coefficients, signals
+  // sec_tx_type/most_probable_stx_set, and reconstruction applies the
+  // normative inverse before the primary 2-D inverse.  Off by default.
+  bool ist = false;
+  double ist_sse_scale = 0.125;
+  // Opt-in DC/AC delta-Q (§5.18.6.1).  The encoder runs the component's frame
+  // delta search and signals the result; forward quantisation and §7.14.4
+  // dequant use the per-plane DC/AC quantizers.  Off by default.
+  bool delta_q = false;
+  // Opt-in edge-classified CCSO (§7.19.1) with per-unit ccso_blk decisions.
+  // The default --still-ccso path stays band-offset-only and all-units-on.
+  bool ccso_edge = false;
+  // Opt-in non-separable Wiener loop restoration (§7.20.3), applied after
+  // CDEF/CCSO.  `enable_wiener` covers luma, `enable_chroma_lr` the shared
+  // chroma planes; both use per-unit filters at LoopRestorationSize 64 luma /
+  // 32 chroma.  Off by default.
+  bool enable_wiener = false;
+  bool enable_chroma_lr = false;
+  // Opt-in luma PC-Wiener (§7.20.4).  Mutually exclusive with
+  // `enable_wiener` (both signal luma loop restoration).
+  bool enable_pc_wiener = false;
+  // Opt-in GDF (§7.20.5), applied in the loop-restoration stage after CCSO.
+  // M1 signals gdf_per_block = 0 (every unit filtered), so no tile symbols.
+  bool enable_gdf = false;
+  // Opt-in film grain signalling (§5.14/§5.18.10).  Grain is decoder-side
+  // output only; the encoder reconstruction and reference stay grain-free.
+  bool enable_grain = false;
 };
 
 struct StillResult {

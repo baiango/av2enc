@@ -1,4 +1,4 @@
-#include "pipeline/grain/stream/film_grain_syntax.h"
+#include "pipeline/grain/film_grain_syntax.h"
 
 #include "core/bitstream/basic_headers.h"
 
