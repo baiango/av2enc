@@ -48,7 +48,7 @@ informational only. `GPU-UNWIRED` in `docs/gpu-coverage.md` therefore means
 | Warp / affine | yes | `cuda/warp_stack` | 210 checks | no |
 | TIP | yes | `cuda/tip` | 5,759 checks | no |
 | Temporal MV projection, motion field | yes | `cuda/motion_field` | **in fix** (storage/merge parity) | no |
-| Global motion estimation | yes | **CPU-ONLY** | frame-level least squares | no |
+| Global motion estimation | yes | `cuda/gme` | 81,300 checks incl. real 720p | no |
 | DRL reorder, MV stack build | yes | **CPU-ONLY** | per-block decision, not pixel work | no |
 | AMVD / JMVD / precision signalling | yes | **CPU-ONLY** | syntax/decision | no |
 | B-frames, SEF, leading, OLK/RAS, BRU | yes | **N/A** | container/ordering, no pixels | no |
@@ -63,7 +63,7 @@ informational only. `GPU-UNWIRED` in `docs/gpu-coverage.md` therefore means
 | DDT / DDTX / FDDT | yes | `cuda/ddt` | 1,956,864 elements | no |
 | QM dequant | yes | `cuda/qm` | 268,685 checks | no |
 | RDOQ | yes | `cuda/rdoq` | batch kernel, built suite | no |
-| TCQ / parity hiding / CCTX | yes | **CPU-ONLY** | no CUDA quantiser exists | no |
+| TCQ / parity hiding / CCTX | yes | `cuda/tcq` | 933,016 checks | no |
 | DC/AC delta-Q | yes | **N/A** | parameter, applied by quant kernels | no |
 | Entropy coding, CDFs, avg-CDF | yes | **N/A** | serial range coder, CPU by design | yes |
 
@@ -78,7 +78,7 @@ informational only. `GPU-UNWIRED` in `docs/gpu-coverage.md` therefore means
 | PC-Wiener | yes | `cuda/pc_wiener` | 716 checks | no |
 | GDF | yes | `cuda/gdf` | 8,970,859 checks | no |
 | TIP deblocking | yes | `cuda/tip_deblock` | 17,303 checks / 13.1 M samples | no |
-| Chroma loop restoration | yes | **CPU-ONLY** | no chroma LR kernel | no |
+| Chroma loop restoration | yes | `cuda/lr_chroma` | 57,009 checks / 95.2M samples | no |
 | Film grain | yes (synthesis) | **N/A** | decoder-side output process | no |
 | Loop restoration on reference | CPU yes | — | M2 filter chain is off today | — |
 
@@ -95,17 +95,16 @@ informational only. `GPU-UNWIRED` in `docs/gpu-coverage.md` therefore means
 
 ## GPU-required gaps
 
-These are pixel/coefficient tools with a CPU reference and **no** CUDA
-implementation. Everything else missing is syntax, entropy, policy or
-decoder-side and does not need a kernel.
+**None.** Every pixel/coefficient tool with a CPU reference now has a CUDA
+implementation and a functional parity test that passes on `sm_86`:
 
-1. **TCQ / parity hiding / CCTX** — coefficient-domain quantiser, per block.
-2. **Chroma loop restoration** — the only filter family without a kernel.
-3. **Global motion estimation** — frame-level fit; could stay CPU, but it is
-   pixel work and currently sits in the encode loop.
-4. **Sub-8 / SDP / 128 / 256 SB planning** — the GPU planner accepts 64-SB and
-   8-leaf only, so those CPU features cannot be dispatched to the current GPU
-   path. This is planning, not a pixel kernel, but it is a real capability gap.
+| Tool | Kernel | Real-GPU evidence |
+|---|---|---:|
+| TCQ / parity / CCTX | `cuda/tcq` | 933,016 checks |
+| Chroma loop restoration | `cuda/lr_chroma` | 57,009 checks / 95.2M samples |
+| Global motion estimation | `cuda/gme` | 81,300 checks incl. real 720p |
+
+Film-grain synthesis is decoder-side output, not an encoder kernel.
 
 ## Wiring is not a coverage gap
 
@@ -120,9 +119,9 @@ them become product defaults; it does not decide whether they are implemented.
 - **CPU: every implemented encoder feature has a CPU reference.** No feature in
   the spec-audit matrix is missing a CPU implementation; remaining spec gaps are
   the ones classified ABSENT/INTEGRATION there.
-- **CUDA: 13 new modules verified on hardware in this sweep**, plus the earlier
-  M1/M2/DIP/IBP/CfL/QM/IST kernels. Three real tool gaps remain: TCQ/parity/
-  CCTX, chroma loop restoration, and global motion estimation.
+- **CUDA: every feature with a CPU reference has a CUDA implementation and a
+  passing functional test on hardware.** 17 new modules were verified on
+  `sm_86` in this sweep, plus the earlier M1/M2/DIP/IBP/CfL/QM/IST kernels.
 - **Planning-only gaps are not coverage gaps.** Sub-8/SDP/128/256 support in the
   GPU plan matters only when those tools are wired; their CPU functional tests
   pass, and no pixel kernel is missing.

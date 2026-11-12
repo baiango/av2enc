@@ -6,7 +6,7 @@ lines in component READMEs are used only for the *real-GPU evidence*
 column, and are labelled as documentation rather than as a measurement
 performed here.
 
-**Snapshot:** audit start at `debb00e`; document generated at git `c7c21b9` with 98 `.cu` / 21 `.cuh`, 51 kernel TUs.
+**Snapshot:** audit start at `debb00e`; document generated at git `477f712` with 114 `.cu` / 28 `.cuh`, 58 kernel TUs.
 Ten GPU modules landed while the audit was running; the snapshot is the
 contract. `--check` fails if
 a curated path disappears, and any kernel TU that is not in the curated
@@ -29,13 +29,13 @@ only through `src/cuda/m2/build_gpu_gate.sh`.
 
 Inventory under `src/`:
 
-- **98** `.cu` files, **21** `.cuh` files.
+- **114** `.cu` files, **28** `.cuh` files.
   The audit brief said "the earlier 80 `.cu` files": at audit start the
   tree had exactly 80 (72 under `src/cuda/`, 8 beside CPU components under
   `src/encoder/`). The extra TUs are the modules that landed mid-audit;
   see Matrix 3.
-- **51** kernel translation units, **47** test/bench/gate translation units.
-- Of the kernel TUs, **48** are under `src/cuda/` and **3** under `src/encoder/`.
+- **58** kernel translation units, **56** test/bench/gate translation units.
+- Of the kernel TUs, **55** are under `src/cuda/` and **3** under `src/encoder/`.
 - The 26 newest feature directories are the `src/encoder/` component dirs
   added after commit `19c5dd9` (inherited audit baseline) up to `debb00e`.
   They are marked with `†` in the matrix.
@@ -47,25 +47,26 @@ Inventory under `src/`:
 | filters/ccso_reuse † | §5.18.7.12, §6.17.7.8, §7.19/§7.19.1, §7.23 | src/encoder/filters/ccso_reuse/ | — (apply is src/cuda/restoration/ccso.cu, unwired) | src/encoder/filters/ccso_reuse/ccso_reuse_test.cpp | — | — (no kernel) | no | GPU-SERIAL |
 | m2/tx_partition (TX_MODE_SELECT) † | §5.18.8.1, §5.20.6.1–.3, §5.20.7.30 | src/encoder/m2/tx_partition/ | — (TX kernels exist: src/cuda/m1/tx/, src/cuda/tx_variants/) | src/encoder/m2/tx_partition/tx_partition_test.cpp | src/encoder/m2/tx_partition/gate/ | — (geometry/scan is host-side) | no | GPU-SERIAL |
 | filters/film_grain_stream (signalling) † | §5.14, §5.18.10.1–.2, §7.3.8.8, §7.3.3/.4 | src/encoder/filters/film_grain_stream/ | — | src/encoder/filters/film_grain_stream/film_grain_stream_test.cpp | — | — | no | GPU-SERIAL |
-| filters/film_grain_stream (synthesis) † | §7.21.7.3–.5 | src/encoder/filters/spec_tables/film_grain.cpp | — none | src/encoder/filters/spec_tables/film_grain_test.cpp | — | — | no | GPU-MISSING |
+| filters/film_grain_stream (synthesis) † | §7.21.7.3–.5 | src/encoder/filters/spec_tables/film_grain.cpp | — none (decoder/output side) | src/encoder/filters/spec_tables/film_grain_test.cpp | 611 checks (CPU oracle) | N/A | no | GPU-SERIAL |
 | svc/ops_full † | §5.8, §5.10, §5.11, §6.8, §6.10, §6.11 | src/encoder/svc/ops_full/ | — | src/encoder/svc/ops_full/lcr_ops_full_test.cpp | — | — | no | GPU-SERIAL |
 | inter/mlayers † | §5.2.2, §5.4.1, §6.2.2, §6.4.1, §7.3.6–.8 | src/encoder/inter/mlayers/ | — | src/encoder/inter/mlayers/mlayers_test.cpp | — | — | no | GPU-SERIAL |
 | filters/tip_deblock † | §7.16, §7.17.3, §7.17.7 | src/encoder/filters/tip_deblock/tip_deblock.cpp | src/cuda/tip_deblock/tip_deblock.cu | src/cuda/tip_deblock/tip_deblock_emulation_test.cpp (host emulation) | — | — (not run) | no | GPU-UNWIRED |
 | m1/missing_bits — DC intra subsampled † | §7.13.2.11 | src/encoder/m1/missing_bits/dc_intra_subsampled.cpp | src/cuda/intra_full/intra_full.cu | src/cuda/intra_full/intra_full_emulation_test.cpp (host emulation) | — | — (not run) | no | GPU-UNWIRED |
 | m1/missing_bits — intra filter corner † | §7.13.2.14 | src/encoder/m1/missing_bits/intra_filter_corner.cpp | src/cuda/intra_modes/intra_predict_device.cuh | src/cuda/intra_modes/intra_modes_test.cu | src/cuda/intra_modes/intra_device_emulation_test.cpp | RTX 3060 (README §“Test result”) | M1 + M2 | GPU-REQUIRED |
 | m1/missing_bits — dc_sign_horz_vert † | §5.20.7.27 | src/encoder/m1/missing_bits/dc_sign_horz_vert.cpp | — | src/encoder/m1/missing_bits/missing_bits_test.cpp | — | — | no | GPU-SERIAL |
-| m1/missing_bits — save_subpu † | §7.13.3.15 | src/encoder/m1/missing_bits/save_subpu.cpp | — none (deblock MI grid in src/cuda/m1/recon/recon.cu) | src/encoder/m1/missing_bits/missing_bits_test.cpp | — | — | no | GPU-MISSING |
+| m1/missing_bits — save_subpu † | §7.13.3.15 | src/encoder/m1/missing_bits/save_subpu.cpp | src/cuda/subpu/ | src/cuda/subpu/subpu_test.cu | subpu_emulation_test: 31,474 checks | subpu_test: 77,986 checks (sm_86) | no | GPU-UNWIRED |
+| inter/gme † | §7.13.3.21, §5.18.9, §7.12.2.2 | src/encoder/inter/gme/ | src/cuda/gme/ | src/cuda/gme/gme_test.cu | 1,354,622 checks | 81,300 checks incl. real 720p (sm_86) | no | GPU-UNWIRED |
 | tables/missing † | §9.2, §9.3 | src/encoder/tables/missing/ | — | src/encoder/tables/missing/missing_tables_test.cpp | — | — | no | GPU-SERIAL |
 | metadata/gaps † | §5.17.2/.3, §7.23 | src/encoder/metadata/gaps/ | — | src/encoder/metadata/gaps/metadata_gaps_test.cpp | — | — | no | GPU-SERIAL |
 | conformance † | Annex A.2–A.5, §6.4.1 | src/encoder/conformance/ | — | src/encoder/conformance/conformance_test.cpp | — | — | no | GPU-SERIAL |
 | m2/tile_groups † | §5.19, §5.20.2.1, §5.18.1, §6.18 | src/encoder/m2/tile_groups/ | — | src/encoder/m2/tile_groups/tile_groups_test.cpp | — | — | no | GPU-SERIAL |
 | qm/obu † | §5.13, §5.18.6.2, §6.12, §6.4.11, §6.2.2 | src/encoder/qm/obu/ | — (dequant kernel src/cuda/qm/qm_gpu.cu exists, unwired) | src/encoder/qm/obu/qm_obu_test.cpp | — | — | no | GPU-SERIAL |
 | filters/lr_chroma (syntax/decision) † | §5.18.7.11, §5.20.10.5–.6 | src/encoder/filters/lr_chroma/chroma_lr.cpp | — | src/encoder/filters/lr_chroma/chroma_lr_test.cpp | src/encoder/filters/lr_chroma/gate/ | — | no | GPU-SERIAL |
-| filters/lr_chroma (apply §7.20.3) † | §7.20.3 | src/encoder/filters/lr_chroma/chroma_lr.cpp (chroma_apply) | src/cuda/restoration/wiener.cu | src/cuda/restoration/wiener_test.cu | — | not executed (README: no nvcc on this host) | no | GPU-UNWIRED |
+| filters/lr_chroma (apply §7.20.3) † | §7.20.3 | src/encoder/filters/lr_chroma/chroma_lr.cpp (chroma_apply) | src/cuda/lr_chroma/ | src/cuda/lr_chroma/lr_chroma_test.cu | 33,270 checks / 95.2M samples | 57,009 checks / 95.2M samples (sm_86) | no | GPU-UNWIRED |
 | inter/drl_reorder † | §5.4.6, §7.12.2, §7.12.2.19 | src/encoder/inter/drl_reorder/ | — | src/encoder/inter/drl_reorder/drl_reorder_test.cpp | — | — | no | GPU-SERIAL |
-| tcq/parity † | §5.20.7.27, §5.20.7.28, §5.4.8, §6.17.2 | src/encoder/tcq/parity/ | — | src/encoder/tcq/parity/parity_test.cpp | — | — | no | GPU-SERIAL |
-| m2/ddt † | §7.15.2.1, §7.15.4.1, §9.6, Table 7.1 | src/encoder/m2/ddt/ddt_transform.cpp | — none (tx_variants handles types 0–3 only) | src/encoder/m2/ddt/ddt_test.cpp | — | — | no | GPU-MISSING |
-| format/chroma (4:2:2 / 4:4:4 / 4:0:0) † | §6.4.1 Table 6.2, §5.4.3/.5/.8, §7.13 | src/encoder/format/chroma/chroma_residual.cpp | — none (M1/M2 kernels are 4:2:0-only) | src/encoder/format/chroma/chroma_test.cpp | — | — | no | GPU-MISSING |
+| tcq/parity † | §5.20.7.27, §5.20.7.28, §5.4.8, §6.17.2 | src/encoder/tcq/parity/ | src/cuda/tcq/ | src/cuda/tcq/tcq_test.cu | 1,491,655 checks | 933,016 checks (sm_86) | no | GPU-UNWIRED |
+| m2/ddt † | §7.15.2.1, §7.15.4.1, §9.6, Table 7.1 | src/encoder/m2/ddt/ddt_transform.cpp | src/cuda/ddt/ | src/cuda/ddt/ddt_gpu_test.cu | 828,114 checks | 685,590 checks / 1,956,864 elements (sm_86) | no | GPU-UNWIRED |
+| format/chroma (4:2:2 / 4:4:4 / 4:0:0) † | §6.4.1 Table 6.2, §5.4.3/.5/.8, §7.13 | src/encoder/format/chroma/chroma_residual.cpp | src/cuda/chroma_formats/ | src/cuda/chroma_formats/chroma_formats_test.cu | 1,514,866 checks | 1,742,235 checks (sm_86) | no | GPU-UNWIRED |
 | rc/hrd † | §5.4.12/.13, §5.12, §5.15, Annex E.5.4/E.7 | src/encoder/rc/hrd/ | — | src/encoder/rc/hrd/hrd_test.cpp | — | — | no | GPU-SERIAL |
 | inter/longterm † | §5.4.1/.6, §5.18.2, §7.4.2–.4, §7.23 | src/encoder/inter/longterm/ | — | src/encoder/inter/longterm/longterm_test.cpp | — | — | no | GPU-SERIAL |
 | inter/tlayers † | §5.2.2, §5.4.1, §5.18.2, §7.3.7, §7.7, §7.23 | src/encoder/inter/tlayers/ | — | src/encoder/inter/tlayers/tlayers_test.cpp | — | — | no | GPU-SERIAL |
@@ -83,7 +84,7 @@ split into syntax (serial) and §7.20.3 apply (unwired kernel).
 
 ## Matrix 2 — all CUDA kernel units
 
-One row per non-test `.cu` in the tree (51), including the three kernel TUs
+One row per non-test `.cu` in the tree (58), including the three kernel TUs
 that live beside their CPU component under `src/encoder/`.
 
 | tool | spec § | CPU reference dir | CUDA kernel dir | parity test | host emulation | real-GPU evidence | wired into M1/M2 | verdict |
@@ -139,6 +140,13 @@ that live beside their CPU component under `src/encoder/`.
 | compound_full/compound_full.cu | §7.13.3.3–.14, .29–.30 | src/encoder/m2/compound_stream/, src/encoder/inter/advanced/ | its own directory | none | — | not run | no | GPU-UNWIRED |
 | gdf/gdf.cu | §7.20.5, §5.20.10.3, §7.20.1 | src/encoder/filters/spec_tables/gdf.cpp | its own directory | none | — | not run | no | GPU-UNWIRED |
 | tx_partition/tx_partition_gpu.cu | §5.20.6.1–.3, §5.18.8.1 | src/encoder/m2/tx_partition/ | its own directory | none | — | not run | no | GPU-UNWIRED |
+| cuda/chroma_formats/chroma_formats.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/ddt/ddt_gpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/gme/gme.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/lr_chroma/lr_chroma.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/motion_field/motion_field.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/subpu/subpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/tcq/tcq.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
 
 `GPU-UNWIRED` here is not a defect by itself: `cdef`, `restoration`, `dip`,
 `ibp`, `mrl`, `palette`, `ibc`, `qm`, `rdoq`, `tx_type`, `tx_secondary`,
@@ -181,12 +189,8 @@ Estimates are order-of-magnitude, not measurements.
 
 | # | tool | spec § | CPU reference | parity / gate | samples/frame | basis |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | filters/film_grain_stream (synthesis) | §7.21.7.3–.5 | src/encoder/filters/spec_tables/film_grain.cpp | src/encoder/filters/spec_tables/film_grain_test.cpp | 3,110,400 | full YUV output frame |
-| 2 | format/chroma (4:2:2 / 4:4:4 / 4:0:0) | §6.4.1 Table 6.2, §5.4.3/.5/.8, §7.13 | src/encoder/format/chroma/chroma_residual.cpp | src/encoder/format/chroma/chroma_test.cpp | 3,110,400 | full YUV frame when a non-4:2:0 format is selected |
-| 3 | m2/ddt | §7.15.2.1, §7.15.4.1, §9.6, Table 7.1 | src/encoder/m2/ddt/ddt_transform.cpp | src/encoder/m2/ddt/ddt_test.cpp | 518,400 | ADST/FDST blocks at sz 8/16, ~25% of inter luma |
-| 4 | m1/missing_bits — save_subpu | §7.13.3.15 | src/encoder/m1/missing_bits/save_subpu.cpp | src/encoder/m1/missing_bits/missing_bits_test.cpp | 129,600 | deblock boundary samples only |
-| 5 | Motion-field storage (§7.22) | §7.22 | src/encoder/inter/temporal/motion_field.cpp | src/encoder/inter/temporal/ (gate) | 129,600 | per-4x4 grid entries, not pixels |
-| 6 | Temporal MV projection / ref-MV bank update | §7.12.2, §7.12.2.19 | src/encoder/inter/temporal/ + src/encoder/inter/mv_stack_full/ | src/encoder/inter/mv_stack_full/mv_stack_full_test.cpp | 129,600 | per-4x4 MV entries; metadata, not pixels |
+| 1 | Motion-field storage (§7.22) | §7.22 | src/encoder/inter/temporal/motion_field.cpp | src/encoder/inter/temporal/ (gate) | 129,600 | per-4x4 grid entries, not pixels |
+| 2 | Temporal MV projection / ref-MV bank update | §7.12.2, §7.12.2.19 | src/encoder/inter/temporal/ + src/encoder/inter/mv_stack_full/ | src/encoder/inter/mv_stack_full/mv_stack_full_test.cpp | 129,600 | per-4x4 MV entries; metadata, not pixels |
 
 **Closed while this audit was running.** At the start of the audit the
 same method found twelve missing pixel families. Six gained kernels
@@ -207,11 +211,11 @@ Rule: all device memory comes from the single persistent
 allocators are `arena.cpp` (the single `cudaMalloc` that backs the arena)
 and the pinned-host staging in `context.cpp` (`cudaMallocHost`).
 
-- Direct-allocator sites outside the two allowed files: **564**.
-- Production (non-test) sites: **11** in **4** files.
+- Direct-allocator sites outside the two allowed files: **556**.
+- Production (non-test) sites: **3** in **1** files.
 - Test/bench/gate sites: **553** in **36** files.
-- Files exposing `required_device_bytes`: **27**.
-- Files using `mark()`/`rewind()`: **15** (`src/cuda/compound_full/compound_full.cu`, `src/cuda/format/m10_gpu.cu`, `src/cuda/gdf/gdf.cu`, `src/cuda/ibc/ibc.cu`, `src/cuda/intra_full/intra_full.cu`, `src/cuda/intra_full/intra_full.h`, `src/cuda/m1/m1_gpu.cu`, `src/cuda/m2/m2_backend_cuda.cu`, `src/cuda/morph/morph.h`, `src/cuda/morph/morph_workspace.cpp`, `src/cuda/pc_wiener/pc_wiener.cu`, `src/cuda/tip/tip.h`, `src/cuda/tip_deblock/tip_deblock.cu`, `src/cuda/tx_partition/tx_partition_plan.cpp`, `src/cuda/tx_partition/tx_partition_plan.h`).
+- Files exposing `required_device_bytes`: **39**.
+- Files using `mark()`/`rewind()`: **25** (`src/cuda/chroma_formats/chroma_formats.cu`, `src/cuda/chroma_formats/chroma_formats.h`, `src/cuda/compound_full/compound_full.h`, `src/cuda/ddt/ddt_gpu.cu`, `src/cuda/format/m10_gpu.cu`, `src/cuda/gdf/gdf.cu`, `src/cuda/gme/gme_plan.cpp`, `src/cuda/ibc/ibc.cu`, `src/cuda/intra_full/intra_full.cu`, `src/cuda/intra_full/intra_full.h`, `src/cuda/lossless_inter/lossless_inter_host.cpp`, `src/cuda/lr_chroma/lr_chroma.cu`, `src/cuda/lr_chroma/lr_chroma.h`, `src/cuda/m1/m1_gpu.cu`, `src/cuda/m2/m2_backend_cuda.cu`, `src/cuda/morph/morph.h`, `src/cuda/morph/morph_workspace.cpp`, `src/cuda/motion_field/motion_field.cu`, `src/cuda/pc_wiener/pc_wiener.cu`, `src/cuda/subpu/subpu_plan.cpp`, `src/cuda/tcq/tcq.h`, `src/cuda/tip/tip.h`, `src/cuda/tip_deblock/tip_deblock.cu`, `src/cuda/tx_partition/tx_partition_plan.cpp`, `src/cuda/tx_partition/tx_partition_plan.h`).
 
 ### Per-directory result
 
@@ -220,11 +224,14 @@ and the pinned-host staging in `context.cpp` (`cudaMallocHost`).
 | src/cuda | owner (allocator) | `src/cuda/arena.cpp:98` cudaMalloc<br>`src/cuda/arena.cpp:102` cudaMalloc<br>`src/cuda/arena.cpp:111` cudaFree<br>`src/cuda/arena.cpp:122` cudaFree<br>`src/cuda/arena.cpp:160` cudaFree<br>`src/cuda/context.cpp:142` cudaFree<br>`src/cuda/context.cpp:145` cudaFree<br>`src/cuda/context.cpp:257` cudaMallocHost<br>`src/cuda/context.cpp:260` cudaMallocHost | no | no |
 | src/cuda/cdef | compliant in production; test harness allocates | — | no | no |
 | src/cuda/cfl | compliant in production; test harness allocates | — | no | no |
+| src/cuda/chroma_formats | compliant — arena-only allocation | — | yes | yes |
 | src/cuda/compound_full | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/ddt | compliant — arena-only allocation | — | yes | yes |
 | src/cuda/deblock | compliant in production; test harness allocates | — | no | no |
 | src/cuda/dip | compliant in production; test harness allocates | — | no | no |
 | src/cuda/format | compliant in production; test harness allocates | — | yes | yes |
 | src/cuda/gdf | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/gme | compliant — arena-only allocation | — | yes | yes |
 | src/cuda/ibc | compliant in production; test harness allocates | — | yes | yes |
 | src/cuda/ibp | compliant in production; test harness allocates | — | no | no |
 | src/cuda/inter/advanced | compliant in production; test harness allocates | — | no | no |
@@ -232,7 +239,8 @@ and the pinned-host staging in `context.cpp` (`cudaMallocHost`).
 | src/cuda/inter/me | compliant in production; test harness allocates | — | no | no |
 | src/cuda/intra_full | compliant — arena-only allocation | — | yes | yes |
 | src/cuda/intra_modes | compliant in production; test harness allocates | — | no | no |
-| src/cuda/lossless_inter | compliant — arena-only allocation | — | yes | no |
+| src/cuda/lossless_inter | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/lr_chroma | compliant — arena-only allocation | — | yes | yes |
 | src/cuda/m1 | compliant — arena-only allocation | — | no | yes |
 | src/cuda/m1/cdef | compliant in production; test harness allocates | — | no | no |
 | src/cuda/m1/cfl | compliant in production; test harness allocates | — | no | no |
@@ -243,8 +251,9 @@ and the pinned-host staging in `context.cpp` (`cudaMallocHost`).
 | src/cuda/m1/sched | compliant — no device allocation | — | no | no |
 | src/cuda/m1/search | compliant in production; test harness allocates | — | no | no |
 | src/cuda/m1/tx | compliant in production; test harness allocates | — | no | no |
-| src/cuda/m2 | **NON-COMPLIANT** — direct cudaMalloc/cudaFree | `src/cuda/m2/m2_backend_cuda.cu:1075` cudaFree<br>`src/cuda/m2/m2_backend_cuda.cu:1076` cudaFree<br>`src/cuda/m2/m2_backend_cuda.cu:1077` cudaFree<br>`src/cuda/m2/m2_backend_cuda.cu:1081` cudaFree | yes | yes |
+| src/cuda/m2 | compliant — arena-only allocation | — | yes | yes |
 | src/cuda/morph | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/motion_field | compliant — arena-only allocation | — | yes | yes |
 | src/cuda/mrl | compliant in production; test harness allocates | — | no | no |
 | src/cuda/palette | compliant in production; test harness allocates | — | no | no |
 | src/cuda/pc_wiener | compliant — arena-only allocation | — | yes | yes |
@@ -252,6 +261,8 @@ and the pinned-host staging in `context.cpp` (`cudaMallocHost`).
 | src/cuda/rdoq | compliant in production; test harness allocates | — | no | no |
 | src/cuda/restoration | compliant in production; test harness allocates | — | no | no |
 | src/cuda/scheduler | compliant — no device allocation | — | no | no |
+| src/cuda/subpu | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/tcq | compliant — arena-only allocation | — | yes | yes |
 | src/cuda/tip | compliant — arena-only allocation | — | yes | yes |
 | src/cuda/tip_deblock | compliant — arena-only allocation | — | yes | yes |
 | src/cuda/tx_partition | compliant — arena-only allocation | — | yes | yes |
@@ -263,28 +274,20 @@ and the pinned-host staging in `context.cpp` (`cudaMallocHost`).
 | src/encoder/cfl/ds_filters | compliant in production; test harness allocates | — | no | no |
 | src/encoder/cfl/mhccp | compliant in production; test harness allocates | — | no | no |
 | src/encoder/inter/me2 | compliant in production; test harness allocates | — | no | no |
-| src/encoder/m1/transform_stream | **NON-COMPLIANT** — direct cudaMalloc/cudaFree | `src/encoder/m1/transform_stream/transform_stream_gpu.cu:64` cudaFree<br>`src/encoder/m1/transform_stream/transform_stream_gpu.cu:82` cudaMalloc | no | no |
+| src/encoder/m1/transform_stream | compliant — no device allocation | — | no | no |
 | src/encoder/m2/residual | compliant — no device allocation | — | no | no |
 | src/encoder/tx_secondary | compliant — no device allocation | — | no | no |
 | src/encoder/tx_variants | compliant — no device allocation | — | no | no |
 | src/multi_gpu/runtime | **NON-COMPLIANT** — direct cudaMalloc/cudaFree | `src/multi_gpu/runtime/cuda_backend.cpp:183` cudaFree<br>`src/multi_gpu/runtime/cuda_backend.cpp:408` cudaMallocHost<br>`src/multi_gpu/runtime/cuda_backend.cpp:410` cudaMallocHost | no | no |
-| src/profile | **NON-COMPLIANT** — direct cudaMalloc/cudaFree | `src/profile/profile_demo.cpp:236` cudaMalloc<br>`src/profile/profile_demo.cpp:265` cudaFree | no | no |
+| src/profile | compliant — no device allocation | — | no | no |
 
 ### Non-compliant files (production code)
 
 | file:line | call | code | impact |
 | --- | --- | --- | --- |
-| `src/cuda/m2/m2_backend_cuda.cu:1075` | cudaFree | `if (src_planes_[plane] != nullptr) cudaFree(src_planes_[plane]);` | `ensure_device`/plane uploads allocate per frame-size growth. `m2_gpu.h` now exposes `required_device_bytes()`, but this backend still calls `cudaMalloc` instead of carving that block from the arena (gate-only today; a product defect when M2 joins CMake) |
-| `src/cuda/m2/m2_backend_cuda.cu:1076` | cudaFree | `if (ref_planes_[plane] != nullptr) cudaFree(ref_planes_[plane]);` | `ensure_device`/plane uploads allocate per frame-size growth. `m2_gpu.h` now exposes `required_device_bytes()`, but this backend still calls `cudaMalloc` instead of carving that block from the arena (gate-only today; a product defect when M2 joins CMake) |
-| `src/cuda/m2/m2_backend_cuda.cu:1077` | cudaFree | `if (recon_planes_[plane] != nullptr) cudaFree(recon_planes_[plane]);` | `ensure_device`/plane uploads allocate per frame-size growth. `m2_gpu.h` now exposes `required_device_bytes()`, but this backend still calls `cudaMalloc` instead of carving that block from the arena (gate-only today; a product defect when M2 joins CMake) |
-| `src/cuda/m2/m2_backend_cuda.cu:1081` | cudaFree | `cudaFree(static_cast<void*>(ptr));` | `ensure_device`/plane uploads allocate per frame-size growth. `m2_gpu.h` now exposes `required_device_bytes()`, but this backend still calls `cudaMalloc` instead of carving that block from the arena (gate-only today; a product defect when M2 joins CMake) |
-| `src/encoder/m1/transform_stream/transform_stream_gpu.cu:64` | cudaFree | `cudaFree(pointer);` | default allocator falls back to `cudaMalloc`/`cudaFree` when the caller passes none; the arena allocator is opt-in |
-| `src/encoder/m1/transform_stream/transform_stream_gpu.cu:82` | cudaMalloc | `if (!cuda_ok(cudaMalloc(&pointer, bytes), what, error)) return nullptr;` | default allocator falls back to `cudaMalloc`/`cudaFree` when the caller passes none; the arena allocator is opt-in |
 | `src/multi_gpu/runtime/cuda_backend.cpp:183` | cudaFree | `const Status init_status = from_cuda(cudaFree(nullptr));` | separate multi-GPU runtime: `ArenaState` is arena-backed but `pinned_alloc()` uses `cudaMallocHost` outside `context.cpp` |
 | `src/multi_gpu/runtime/cuda_backend.cpp:408` | cudaMallocHost | `const Status status = from_cuda(cudaMallocHost(out, bytes));` | separate multi-GPU runtime: `ArenaState` is arena-backed but `pinned_alloc()` uses `cudaMallocHost` outside `context.cpp` |
 | `src/multi_gpu/runtime/cuda_backend.cpp:410` | cudaMallocHost | `set_error(error, "cudaMallocHost failed");` | separate multi-GPU runtime: `ArenaState` is arena-backed but `pinned_alloc()` uses `cudaMallocHost` outside `context.cpp` |
-| `src/profile/profile_demo.cpp:236` | cudaMalloc | `result = cudaMalloc(&raw, sizeof(int));` | profiler demo, not encoder code; one `cudaMalloc`/`cudaFree` pair |
-| `src/profile/profile_demo.cpp:265` | cudaFree | `(void)cudaFree(device_);` | profiler demo, not encoder code; one `cudaMalloc`/`cudaFree` pair |
 
 The M1 product hot path is clean. `m2_backend_cuda.cu` is the one that
 will matter when M2 is added to the build; its own README already says
@@ -297,13 +300,7 @@ only rule violation there. `profile_demo.cpp` is a demo binary.
 This file is the one in the tree whose allocation policy is
 internally inconsistent in this snapshot:
 
-- header comment: arena policy; `cudaMalloc` sites: **0**, `cudaFree` sites: **4**.
-- **12 call sites invoke `ensure_device(...)` and no
-  definition exists in the file** (arrays are otherwise
-  allocated through `arena_alloc_array`).
-- `free_all()` still calls `cudaFree` on plane and scratch
-  pointers; if those come from the arena, those are invalid
-  frees of interior pointers.
+- header comment: arena policy; `cudaMalloc` sites: **0**, `cudaFree` sites: **0**.
 
 The backend cannot compile in this shape. The byte-identical
 gate results in `src/cuda/m2/README.md` predate the refactor and
@@ -405,21 +402,21 @@ Matrix 3 above.
 
 | verdict | rows |
 | --- | ---: |
-| GPU-MISSING | 4 |
-| GPU-UNWIRED | 3 |
+| GPU-MISSING | 0 |
+| GPU-UNWIRED | 8 |
 | GPU-REQUIRED | 1 |
 | GPU-SERIAL | 23 |
-| **total** | **31** |
+| **total** | **32** |
 
-### Matrix 2 — 51 CUDA kernel TUs
+### Matrix 2 — 58 CUDA kernel TUs
 
 | verdict | TUs |
 | --- | ---: |
 | GPU-MISSING | 0 |
-| GPU-UNWIRED | 35 |
+| GPU-UNWIRED | 42 |
 | GPU-REQUIRED | 15 |
 | GPU-SERIAL | 1 |
-| **total** | **51** |
+| **total** | **58** |
 
 ### Matrix 3 — 10 module directories (overlaps Matrix 2)
 
@@ -439,31 +436,27 @@ row set.
 
 | verdict | rows |
 | --- | ---: |
-| GPU-MISSING | 4 |
-| GPU-UNWIRED | 38 |
+| GPU-MISSING | 0 |
+| GPU-UNWIRED | 50 |
 | GPU-REQUIRED | 16 |
 | GPU-SERIAL | 24 |
-| **total** | **82** |
+| **total** | **90** |
 
-- GPU-MISSING rows in the two matrices: **4**; additional missing pixel tools outside the matrices: **2**; total after de-duplication: **6**.
-- GPU-UNWIRED: **38** kernel rows.
-- Production direct-allocator files: **4**.
-- `required_device_bytes` implementations: **27** files.
+- GPU-MISSING rows in the two matrices: **0**; additional missing pixel tools outside the matrices: **2**; total after de-duplication: **2**.
+- GPU-UNWIRED: **50** kernel rows.
+- Production direct-allocator files: **1**.
+- `required_device_bytes` implementations: **39** files.
   The M0/M1/shared core still has no module-level reservation API (only
   local `need_device` math in `m1_gpu.cu:790-860` and
   `luma_search_scratch_bytes()`); every module landed during this audit
   exports one, so the newer edge is better than the core.
 
-### Top GPU-MISSING by pixel volume — all 6
+### Top GPU-MISSING by pixel volume — all 2
 
 | rank | tool | CPU reference | samples/frame | basis |
 | --- | --- | --- | --- | --- |
-| 1 | filters/film_grain_stream (synthesis) | src/encoder/filters/spec_tables/film_grain.cpp | 3,110,400 | full YUV output frame |
-| 2 | format/chroma (4:2:2 / 4:4:4 / 4:0:0) | src/encoder/format/chroma/chroma_residual.cpp | 3,110,400 | full YUV frame when a non-4:2:0 format is selected |
-| 3 | m2/ddt | src/encoder/m2/ddt/ddt_transform.cpp | 518,400 | ADST/FDST blocks at sz 8/16, ~25% of inter luma |
-| 4 | m1/missing_bits — save_subpu | src/encoder/m1/missing_bits/save_subpu.cpp | 129,600 | deblock boundary samples only |
-| 5 | Motion-field storage (§7.22) | src/encoder/inter/temporal/motion_field.cpp | 129,600 | per-4x4 grid entries, not pixels |
-| 6 | Temporal MV projection / ref-MV bank update | src/encoder/inter/temporal/ + src/encoder/inter/mv_stack_full/ | 129,600 | per-4x4 MV entries; metadata, not pixels |
+| 1 | Motion-field storage (§7.22) | src/encoder/inter/temporal/motion_field.cpp | 129,600 | per-4x4 grid entries, not pixels |
+| 2 | Temporal MV projection / ref-MV bank update | src/encoder/inter/temporal/ + src/encoder/inter/mv_stack_full/ | 129,600 | per-4x4 MV entries; metadata, not pixels |
 
 ## Reproduce
 
