@@ -21,13 +21,14 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "${HERE}/../../../.." && pwd)"
 BIN=""
 DAV2D="${DAV2D:-}"
+TESTDATA="${AV2ENC_TESTDATA:-$ROOT/testdata}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --bin) BIN=$2; shift 2 ;;
         --dav2d) DAV2D=$2; shift 2 ;;
         -h|--help)
-            sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "gate_cli_rc: unknown argument $1" >&2; exit 2 ;;
     esac
@@ -46,8 +47,12 @@ if [ -z "$DAV2D" ] || [ ! -x "$DAV2D" ]; then
     echo "gate_cli_rc: no dav2d binary (set DAV2D=...)" >&2
     exit 77
 fi
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "gate_cli_rc: python3 is required for the recon comparison" >&2
+    exit 77
+fi
 
-INPUT="$ROOT/testdata/shine_1280x720_60f.y4m"
+INPUT="$TESTDATA/shine_1280x720_60f.y4m"
 if [ ! -f "$INPUT" ]; then
     echo "SKIP: missing $INPUT" >&2
     exit 77
@@ -165,6 +170,41 @@ run_rc crf32 --rc crf --crf 32
 run_rc crf10 --rc crf --crf 10
 run_rc crf50 --rc crf --crf 50
 run_rc vbr500 --rc vbr --bitrate 500
+run_rc vbr1000 --rc vbr --bitrate 1000
+run_rc vbr2000 --rc vbr --bitrate 2000
+
+# --- VBR closed-loop accuracy --------------------------------------------
+check_vbr() {
+    local name=$1 target=$2
+    local log="$TMP/${name}.log"
+    if ! grep -q "closed-loop" "$log"; then
+        fail "$name: report does not say closed-loop"
+        return
+    fi
+    local achieved
+    achieved=$(grep -o 'achieved [0-9.]* kbps' "$log" | head -1 |
+        awk '{print $2}')
+    if [ -z "$achieved" ]; then
+        fail "$name: no achieved-kbps report"
+        return
+    fi
+    if ! python3 - "$achieved" "$target" <<'PY'
+import sys
+achieved = float(sys.argv[1])
+target = float(sys.argv[2])
+error = abs(achieved - target) / target
+raise SystemExit(0 if error <= 0.10 else 1)
+PY
+    then
+        fail "$name: achieved $achieved kbps is more than 10% off $target kbps"
+        return
+    fi
+    ok "$name: closed-loop achieved $achieved kbps for $target kbps"
+}
+
+check_vbr vbr500 500
+check_vbr vbr1000 1000
+check_vbr vbr2000 2000
 
 # --- CRF monotonicity: lower crf => lower qindex --------------------------
 q_of() {

@@ -252,7 +252,20 @@ device or claims a multi-GPU result; `measured=0` is printed explicitly.
 `--gpu-plan` is rejected when combined with `--video`, `--still`, `--still-gpu`
 or `--lossless`, and a grid the planner cannot represent is rejected by name.
 
+The host contract also exposes a per-tile dispatch vector
+(`MultiGpuPlan::dispatch`, `TileDispatchEntry`): one entry per tile in raster
+order with `raster_slot`, `tile_index`, `gpu_index` and the superblock/pixel
+rect. `raster_slot` is the tile-group merge position — workers write into that
+slot and the coordinator merges in raster order, never completion order. The
+dry run prints it as `dispatch: <slot>:<gpu> ...`.
+
+Every scaling/transfer number carries an `Evidence` flag (`estimated`,
+`claimed`, `measured`). The planner only produces `estimated` today; the flag
+exists so a caller cannot promote a model number to a result without recording
+a matching run.
+
 Gate: `src/pipeline/dispatch/gate_host_plan.sh --bin build-int/av2enc` checks
-the documented 1080p 1/2/4-GPU assignments, the 640x360 2-GPU default, an
-explicit `--tiles` override, the no-output/no-measurement properties and the
-rejection paths. Local result: 18/18 cases passed.
+the documented 1080p 1/2/4-GPU assignments, the per-tile dispatch map, the
+640x360 2-GPU default, an explicit `--tiles` override, the
+no-output/no-measurement/evidence properties and the rejection paths. Local
+result: 21/21 cases passed.

@@ -1,5 +1,19 @@
 # AV2 quantizer matrices (QM) — CPU reference
 
+Status: **component + integrated still paths.** `--still-qm` signals the
+spec-defined default matrices (level 0..14) and decodes sample-exactly with
+`dav2d`. `--still-user-qm` emits a real Annex B.2
+`OBU_QUANTIZATION_MATRIX` (type 22) with an identity all-32 user matrix for
+level 3 and sets `QmDataPresent`/`UserQm` in the encoder state. The pinned
+`dav2d` f9dafbc **rejects every QM OBU** ("QM OBUs with user-defined QMs are
+currently unsupported"), so the product path keeps the default matrices and
+the gate records that rejection
+(`src/codec/transform/qm/still_user_qm_gate.sh`). With `--still-single` every
+transform is >8x8, where §7.14.4 never consults `UserQm`; the sequence header
+and CLK OBU are then byte-identical to `--still-qm` and the user stream is
+exactly the default stream plus the type-22 OBU. Use `avmdec` (when available)
+for the user-QM decode; the component's `qm_gate.sh` covers it.
+
 Normative source: `spec/AV2_Spec_v1.0.0.pdf`.
 
 | Spec | Item |

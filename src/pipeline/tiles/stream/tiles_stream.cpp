@@ -12,7 +12,9 @@
 #include <vector>
 
 #include "core/bitstream/basic_headers.h"
+#include "codec/entropy/avg_cdf/avg_cdf_bank.h"
 #include "pipeline/still/still_headers.h"
+#include "pipeline/still/still_syntax.h"
 #include "pipeline/tiles/tile_group.h"
 
 namespace av2enc::still::tiles_stream {
@@ -84,7 +86,7 @@ StillConfig to_still_config(const Config& config) {
   m1.max_frame_height = static_cast<std::uint16_t>(config.height);
   m1.seq_level_idx = config.seq_level_idx;
   m1.base_q_idx = config.base_q_idx;
-  m1.disable_cdf_update = true;
+  m1.disable_cdf_update = !config.adaptive_cdf;
   m1.enable_intra_edge_filter = config.enable_intra_edge_filter;
   m1.enable_cfl_intra = config.enable_cfl_intra;
   m1.enable_chroma_dctonly = config.enable_chroma_dctonly;
@@ -185,7 +187,9 @@ void write_frame_header_syntax(BitWriter& writer, const Config& config, const Ti
   put_uvlc(writer, 0);    // seq_header_id_in_frame_header
   writer.put_bit(false);  // allow_screen_content_tools
   writer.put_bit(false);  // allow_intrabc
-  writer.put_bit(true);   // disable_cdf_update: frozen per-tile CDFs
+  // §5.18.2 disable_cdf_update.  Frozen per-tile CDFs by default; the
+  // --avg-cdf path adapts each tile under the average-CDF bookkeeping.
+  writer.put_bit(!config.adaptive_cdf);
   write_tile_info(writer, layout, tile_size_bytes);
 
   writer.put_bits(config.base_q_idx, 8U);  // base_q_idx
@@ -524,7 +528,7 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame, std:
   options.enable_cfl = config.enable_cfl_intra;
   options.enable_deblock = config.enable_deblock;
   options.enable_intra_edge_filter = config.enable_intra_edge_filter;
-  options.adaptive_cdf = false;  // frozen per-tile CDF reset
+  options.adaptive_cdf = config.adaptive_cdf;  // frozen per-tile CDF reset by default
   options.min_block_size = 8;
   options.max_partition_depth = 4;
   options.force_single_block = false;
@@ -537,8 +541,43 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame, std:
   options.enable_cdef = false;
   options.enable_ccso = false;
 
+  // §8.2.2 / §8.2.4 / §7.5 average-CDF bookkeeping.  A single-picture header
+  // infers enable_avg_cdf = 1 and avg_cdf_type = 1, so every tile starts from
+  // the frame CDFs (defaults on this first frame) and the frame CDFs are the
+  // element-wise average of the first 1<<numLog2 tiles at frame end.
+  entropy::avg_cdf::CdfBank bank;
+  std::vector<std::uint16_t> frame_image;
+  std::vector<std::uint16_t> tile_image;
+  std::vector<std::uint16_t> saved_image;
+  std::vector<std::uint16_t> default_image;
+  std::vector<entropy::avg_cdf::CdfTable> bank_tables;
+  if (config.adaptive_cdf) {
+    const std::size_t words = syntax::cdf_image_words();
+    frame_image.assign(words, 0);
+    tile_image.assign(words, 0);
+    saved_image.assign(words, 0);
+    default_image.assign(words, 0);
+    if (!syntax::cdf_image_defaults_for_base_q_idx(
+            static_cast<int>(config.base_q_idx), default_image, error)) {
+      return false;
+    }
+    if (!syntax::cdf_image_tables(frame_image, tile_image, saved_image,
+                                  default_image, bank_tables, error)) {
+      return false;
+    }
+    entropy::avg_cdf::CdfBankConfig bank_config;
+    bank_config.enable_avg_cdf = true;
+    bank_config.avg_cdf_type = true;
+    if (!bank.init(bank_tables, bank_config, error)) {
+      *error = "average-CDF bank: " + *error;
+      return false;
+    }
+    bank.begin_frame(/*reset_to_defaults=*/true);
+  }
+
   std::vector<Tile> tiles;
   tiles.reserve(static_cast<std::size_t>(layout.tile_count()));
+  int tile_num = 0;
   for (const TileRect& rect : layout.tiles) {
     Tile tile;
     tile.index = rect.index;
@@ -596,10 +635,33 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame, std:
     picture.u = u;
     picture.v = v;
 
+    // §8.2.2: at init_symbol() the frame CDFs are copied to the tile CDFs.
+    if (config.adaptive_cdf) {
+      bank.load_tile_cdfs();
+      options.cdf_seed = tile_image;
+    }
+
     StillResult result;
     if (!av2enc::still::encode_still_picture(picture, options, result, *error)) {
       *error = "tile " + std::to_string(rect.index) + " encode failed: " + *error;
       return false;
+    }
+
+    // §8.2.4: at exit_symbol() the tile CDFs feed the Saved* average.
+    if (config.adaptive_cdf) {
+      if (result.cdf_final.size() != tile_image.size()) {
+        *error = "tile " + std::to_string(rect.index) +
+                 " did not export its final CDFs";
+        return false;
+      }
+      // Copy, not move: the bank's table pointers reference tile_image's
+      // storage, so reallocating it would dangle them.
+      tile_image.assign(result.cdf_final.begin(), result.cdf_final.end());
+      if (!bank.save_tile_cdfs(static_cast<std::uint32_t>(tile_num),
+                               static_cast<std::uint32_t>(layout.tile_count()))) {
+        *error = "average-CDF save_tile_cdfs rejected the tile index";
+        return false;
+      }
     }
     if (result.tile_bytes == 0) {
       *error = "tile " + std::to_string(rect.index) + " produced no payload";
@@ -632,6 +694,14 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame, std:
     tile.recon_u = std::move(result.recon_u);
     tile.recon_v = std::move(result.recon_v);
     tiles.push_back(std::move(tile));
+    ++tile_num;
+  }
+  if (config.adaptive_cdf) {
+    // §7.5 frame_end_update_cdf(): install the averaged Saved* CDFs.  A
+    // single-picture stream has no next frame, but running the step keeps the
+    // bookkeeping identical to a decoder and makes the frame state available
+    // to a future multi-frame tiled writer.
+    bank.average_at_frame_end();
   }
 
   std::vector<TilePayloadView> views;

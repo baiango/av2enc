@@ -1,0 +1,768 @@
+{
+  "schema": 2,
+  "created": "2026-11-12T19:50:01+0800",
+  "tool": "tools/effort/effort_calibrate.py",
+  "mode": "still",
+  "score_anchor_kbps": 1000.0,
+  "anchors_kbps": [
+    300,
+    1000,
+    1500,
+    2500
+  ],
+  "qp_grid": [
+    110,
+    130,
+    150,
+    170,
+    190,
+    210,
+    230
+  ],
+  "repeats": 7,
+  "frames_per_encode": 1,
+  "marginal_k": 5,
+  "score_scale": 0.0010384549819158141,
+  "score_scale_note": "score = round(score_raw * score_scale, 1). score_raw is the literal 1000*d_time_pct/max(0.25, quality_gain_pct) formula with quality_gain_pct = -d_rate_pct (equal-CVVDP bitrate gain). The literal d_cvvdp_pct denominator gives 1e5..1e6 on this corpus, outside every legal budget, so the scale maps the most efficient measured feature to the minimum budget (10) without changing the order or the ratios.",
+  "metric": {
+    "name": "cvvdp",
+    "version": "0.5.7",
+    "display": "standard_fhd",
+    "device": "mps",
+    "psnr_fallback": false
+  },
+  "host": {
+    "platform": "darwin",
+    "machine": "arm64",
+    "cpu_model": "Apple M4",
+    "cpu_physical_cores": 10,
+    "cpu_logical_cores": 10,
+    "ram_gib": 16.0,
+    "gpu": "Apple M4",
+    "cuda": false
+  },
+  "decoder": {
+    "path": "/Users/arin/work/av2enc-wt/effort/tools/bin/dav2d-macos",
+    "name": "dav2d-macos"
+  },
+  "encoder": {
+    "path": "/Users/arin/work/av2enc-wt/effort/build-int/av2enc",
+    "sha256": "0931631b952c01cff9debcb822f9834199b9c368a02ac15de74a55ac4c0c5aa0",
+    "git_commit": "ce67ea9007d3b3eaa70bae8711cf2cbad27bef1f"
+  },
+  "fixture": {
+    "path": "testdata/shine_640x360_1f.y4m",
+    "md5": "dce2a9b1fb650fef1aec38470d189609",
+    "width": 640,
+    "height": 360,
+    "fps_num": 60,
+    "fps_den": 1,
+    "chroma": "420jpeg",
+    "frames": 1,
+    "resolution_class": "360p"
+  },
+  "features_file": "tools/effort/features.json",
+  "ranking": [
+    "--still-dip",
+    "--still-mhccp"
+  ],
+  "features": [
+    {
+      "flag": "--still-dip",
+      "mode": "still",
+      "score_raw": 9629.690428709104,
+      "score": 10.0,
+      "eligible": true,
+      "exclude_reason": null,
+      "d_cvvdp_pct": 0.266050381103895,
+      "d_time_pct": 18.30111557559708,
+      "d_rate_pct": -1.9004884644095887,
+      "quality_gain_pct": 1.9004884644095887,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "medium",
+      "time_spread_pct": 20.67712202316662,
+      "paired_time_p75_pct": 18.30111557559708,
+      "paired_time_median_pct": 14.3204938700634,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": 1.1525307201296722,
+          "d_time_pct": 19.336730705151954,
+          "d_rate_pct": -7.151911252385579
+        },
+        "1000": {
+          "d_cvvdp_pct": 0.266050381103895,
+          "d_time_pct": 28.430610168387542,
+          "d_rate_pct": -1.9004884644095887
+        },
+        "1500": {
+          "d_cvvdp_pct": 0.11866150207304328,
+          "d_time_pct": 23.4260601701614,
+          "d_rate_pct": -0.8816072723523916
+        },
+        "2500": {
+          "d_cvvdp_pct": 0.05794669471506609,
+          "d_time_pct": 22.326337900027585,
+          "d_rate_pct": -0.40800299996737177
+        }
+      },
+      "marginal_score_raw": 9629.690428709104,
+      "marginal_score": 10.0,
+      "marginal_eligible": true,
+      "marginal_exclude_reason": null,
+      "marginal_d_time_pct": 18.30111557559708,
+      "marginal_d_rate_pct": -1.9004884644095887,
+      "marginal_d_cvvdp_pct": 0.266050381103895,
+      "marginal_paired_time_p75_pct": 18.30111557559708
+    },
+    {
+      "flag": "--still-mhccp",
+      "mode": "still",
+      "score_raw": 42709.21854007093,
+      "score": 44.4,
+      "eligible": true,
+      "exclude_reason": null,
+      "d_cvvdp_pct": 0.21950173828784025,
+      "d_time_pct": 66.46443333783975,
+      "d_rate_pct": -1.5562081351472412,
+      "quality_gain_pct": 1.5562081351472412,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "low",
+      "time_spread_pct": 32.91415499579819,
+      "paired_time_p75_pct": 66.46443333783975,
+      "paired_time_median_pct": 60.123254178547846,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [],
+      "requires_cfl": true,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": 0.6443592782209318,
+          "d_time_pct": 73.75434965892606,
+          "d_rate_pct": -3.8841025420856323
+        },
+        "1000": {
+          "d_cvvdp_pct": 0.21950173828784025,
+          "d_time_pct": 90.25039163700288,
+          "d_rate_pct": -1.5562081351472412
+        },
+        "1500": {
+          "d_cvvdp_pct": 0.23345546466849906,
+          "d_time_pct": 66.32273826976817,
+          "d_rate_pct": -1.6739415637998523
+        },
+        "2500": {
+          "d_cvvdp_pct": 0.24725990160952455,
+          "d_time_pct": 50.011894968596,
+          "d_rate_pct": -1.7733381362019074
+        }
+      },
+      "marginal_paired_time_p75_pct": 60.255932029895874,
+      "marginal_score_raw": 71824.53252470568,
+      "marginal_score": 74.6,
+      "marginal_eligible": true,
+      "marginal_exclude_reason": null,
+      "marginal_d_time_pct": 60.255932029895874,
+      "marginal_d_rate_pct": -0.8389324637674389,
+      "marginal_d_cvvdp_pct": 0.11642798535538104
+    },
+    {
+      "flag": "--still-pc-wiener",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at equal bitrate and the feature costs time",
+      "d_cvvdp_pct": -0.02977592595479725,
+      "d_time_pct": 249.62495923912843,
+      "d_rate_pct": 0.2087029424954645,
+      "quality_gain_pct": -0.2087029424954645,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "medium",
+      "time_spread_pct": 20.65816708184558,
+      "paired_time_p75_pct": 249.62495923912843,
+      "paired_time_median_pct": 225.95169873168967,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [
+        "--still-wiener",
+        "--still-chroma-lr",
+        "--still-gdf"
+      ],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": -0.17350737500903243,
+          "d_time_pct": 235.40906035246502,
+          "d_rate_pct": 1.0355888946062874
+        },
+        "1000": {
+          "d_cvvdp_pct": -0.02977592595479725,
+          "d_time_pct": 270.7272347307761,
+          "d_rate_pct": 0.2087029424954645
+        },
+        "1500": {
+          "d_cvvdp_pct": -0.0025839781653785557,
+          "d_time_pct": 248.7835476084772,
+          "d_rate_pct": 0.018728579920046506
+        },
+        "2500": {
+          "d_cvvdp_pct": 0.03420637152597979,
+          "d_time_pct": 237.29929306394175,
+          "d_rate_pct": -0.2438455810649609
+        }
+      }
+    },
+    {
+      "flag": "--still-rdo-intra",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at equal bitrate and the feature costs time",
+      "d_cvvdp_pct": -0.07990708946514533,
+      "d_time_pct": 819.31746002998,
+      "d_rate_pct": 0.5481924193880827,
+      "quality_gain_pct": -0.5481924193880827,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "low",
+      "time_spread_pct": 27.02961958935457,
+      "paired_time_p75_pct": 819.31746002998,
+      "paired_time_median_pct": 801.927536668343,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [
+        "--still-mrl"
+      ],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": 0.24905136805501546,
+          "d_time_pct": 1200.9942967970906,
+          "d_rate_pct": -1.6218376341372687
+        },
+        "1000": {
+          "d_cvvdp_pct": -0.07990708946514533,
+          "d_time_pct": 1529.4059153275293,
+          "d_rate_pct": 0.5481924193880827
+        },
+        "1500": {
+          "d_cvvdp_pct": -0.22847395090371814,
+          "d_time_pct": 1420.849280093301,
+          "d_rate_pct": 1.744587092738814
+        },
+        "2500": {
+          "d_cvvdp_pct": -0.2917933157924299,
+          "d_time_pct": 1386.3327753280794,
+          "d_rate_pct": 2.026356472896662
+        }
+      }
+    },
+    {
+      "flag": "--still-full-intra",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at equal bitrate and the feature costs time",
+      "d_cvvdp_pct": -0.5767044975603832,
+      "d_time_pct": 108.01796923254061,
+      "d_rate_pct": 4.026037833986584,
+      "quality_gain_pct": -4.026037833986584,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "medium",
+      "time_spread_pct": 12.664545932508576,
+      "paired_time_p75_pct": 108.01796923254061,
+      "paired_time_median_pct": 105.08429141570446,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": 0.34742780757523256,
+          "d_time_pct": 142.0728566037738,
+          "d_rate_pct": -2.3922821076175715
+        },
+        "1000": {
+          "d_cvvdp_pct": -0.5767044975603832,
+          "d_time_pct": 172.1564807815581,
+          "d_rate_pct": 4.026037833986584
+        },
+        "1500": {
+          "d_cvvdp_pct": -0.5492665805058821,
+          "d_time_pct": 133.50362470824723,
+          "d_rate_pct": 4.118079641485672
+        },
+        "2500": {
+          "d_cvvdp_pct": -0.5404939517079815,
+          "d_time_pct": 92.51766638517732,
+          "d_rate_pct": 3.8622808225443173
+        }
+      }
+    },
+    {
+      "flag": "--still-mrl",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at equal bitrate and the feature costs time",
+      "d_cvvdp_pct": -0.7533993634486521,
+      "d_time_pct": 828.5033406624793,
+      "d_rate_pct": 5.3047013363285656,
+      "quality_gain_pct": -5.3047013363285656,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "medium",
+      "time_spread_pct": 21.484808525619744,
+      "paired_time_p75_pct": 828.5033406624793,
+      "paired_time_median_pct": 817.7065705231175,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [
+        "--still-rdo-intra",
+        "--still-ibp"
+      ],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": -0.28418110741925334,
+          "d_time_pct": 1127.502862069728,
+          "d_rate_pct": 1.9013450924066033
+        },
+        "1000": {
+          "d_cvvdp_pct": -0.7533993634486521,
+          "d_time_pct": 1028.784800066021,
+          "d_rate_pct": 5.3047013363285656
+        },
+        "1500": {
+          "d_cvvdp_pct": -0.6407718524072603,
+          "d_time_pct": 922.0576037285911,
+          "d_rate_pct": 4.721007320668047
+        },
+        "2500": {
+          "d_cvvdp_pct": -0.5979727014202436,
+          "d_time_pct": 877.423617542741,
+          "d_rate_pct": 4.4547704828858725
+        }
+      }
+    },
+    {
+      "flag": "--still-tx-type",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at the fixed bitrate anchor",
+      "d_cvvdp_pct": 0.0,
+      "d_time_pct": 10.438587402721522,
+      "d_rate_pct": -2.220446049250313e-14,
+      "quality_gain_pct": 2.220446049250313e-14,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "medium",
+      "time_spread_pct": 23.238560696796203,
+      "paired_time_p75_pct": 10.438587402721522,
+      "paired_time_median_pct": 9.096278794904912,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": 0.0,
+          "d_time_pct": 58.044783374564155,
+          "d_rate_pct": -2.220446049250313e-14
+        },
+        "1000": {
+          "d_cvvdp_pct": 0.0,
+          "d_time_pct": 14.353906926923976,
+          "d_rate_pct": -2.220446049250313e-14
+        },
+        "1500": {
+          "d_cvvdp_pct": 0.0,
+          "d_time_pct": 42.071972009655454,
+          "d_rate_pct": 0.0
+        },
+        "2500": {
+          "d_cvvdp_pct": 0.0,
+          "d_time_pct": 69.71969005645643,
+          "d_rate_pct": 6.661338147750939e-14
+        }
+      }
+    },
+    {
+      "flag": "--still-ist",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at equal bitrate and the feature costs time",
+      "d_cvvdp_pct": -0.009472808026715303,
+      "d_time_pct": 8.544524696533085,
+      "d_rate_pct": 0.06666594779747292,
+      "quality_gain_pct": -0.06666594779747292,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "medium",
+      "time_spread_pct": 19.781427252799343,
+      "paired_time_p75_pct": 8.544524696533085,
+      "paired_time_median_pct": 5.9854962660518485,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": 0.09058758641302524,
+          "d_time_pct": 32.989189656489565,
+          "d_rate_pct": -0.548366318944371
+        },
+        "1000": {
+          "d_cvvdp_pct": -0.009472808026715303,
+          "d_time_pct": 19.326246504099938,
+          "d_rate_pct": 0.06666594779747292
+        },
+        "1500": {
+          "d_cvvdp_pct": -0.0718772889950198,
+          "d_time_pct": 14.704012838692911,
+          "d_rate_pct": 0.5321033038737211
+        },
+        "2500": {
+          "d_cvvdp_pct": -0.1017693776479406,
+          "d_time_pct": 20.203644986920235,
+          "d_rate_pct": 0.7239836682512379
+        }
+      }
+    },
+    {
+      "flag": "--still-rdoq",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at equal bitrate and the feature costs time",
+      "d_cvvdp_pct": -2.239013009840533,
+      "d_time_pct": 177.64548954962072,
+      "d_rate_pct": 14.966790547819064,
+      "quality_gain_pct": -14.966790547819064,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "medium",
+      "time_spread_pct": 11.905433048018116,
+      "paired_time_p75_pct": 177.64548954962072,
+      "paired_time_median_pct": 173.13033294285427,
+      "anchor_qp": 150,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [
+        "--still-qm",
+        "--still-dc-ac-delta-q"
+      ],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": -4.125142672163359,
+          "d_time_pct": 160.93221747951802,
+          "d_rate_pct": 26.75076132557548
+        },
+        "1000": {
+          "d_cvvdp_pct": -2.239013009840533,
+          "d_time_pct": 207.2237338226446,
+          "d_rate_pct": 14.966790547819064
+        },
+        "1500": {
+          "d_cvvdp_pct": -1.4159318790747883,
+          "d_time_pct": 198.2944136328099,
+          "d_rate_pct": 9.07492100518461
+        },
+        "2500": {
+          "d_cvvdp_pct": -0.2696341947933094,
+          "d_time_pct": 203.1718686270363,
+          "d_rate_pct": 1.7890671229131572
+        }
+      }
+    },
+    {
+      "flag": "--still-uv-full",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at equal bitrate and the feature costs time",
+      "d_cvvdp_pct": -0.03780936753262613,
+      "d_time_pct": 10.252849754782911,
+      "d_rate_pct": 0.277364582331896,
+      "quality_gain_pct": -0.277364582331896,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "medium",
+      "time_spread_pct": 14.855120372416044,
+      "paired_time_p75_pct": 10.252849754782911,
+      "paired_time_median_pct": 7.125324863008187,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": 0.3992539186211437,
+          "d_time_pct": 0.7085389111882239,
+          "d_rate_pct": -2.3570906539427505
+        },
+        "1000": {
+          "d_cvvdp_pct": -0.03780936753262613,
+          "d_time_pct": 6.749776404015033,
+          "d_rate_pct": 0.277364582331896
+        },
+        "1500": {
+          "d_cvvdp_pct": -0.05491681747656858,
+          "d_time_pct": 5.341128048632168,
+          "d_rate_pct": 0.3989581241894635
+        },
+        "2500": {
+          "d_cvvdp_pct": -0.03150963867786238,
+          "d_time_pct": 3.1828184139789912,
+          "d_rate_pct": 0.2266557593139984
+        }
+      }
+    },
+    {
+      "flag": "--still-cdef",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at equal bitrate and the feature costs time",
+      "d_cvvdp_pct": -0.2685517830711014,
+      "d_time_pct": 386.72874513003484,
+      "d_rate_pct": 1.8756854279358581,
+      "quality_gain_pct": -1.8756854279358581,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "medium",
+      "time_spread_pct": 21.401613860742618,
+      "paired_time_p75_pct": 386.72874513003484,
+      "paired_time_median_pct": 369.73205425048656,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [
+        "--still-sb128",
+        "--still-sb256"
+      ],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": -0.8001167402955932,
+          "d_time_pct": 369.3800732801991,
+          "d_rate_pct": 4.752410510598293
+        },
+        "1000": {
+          "d_cvvdp_pct": -0.2685517830711014,
+          "d_time_pct": 393.733669475924,
+          "d_rate_pct": 1.8756854279358581
+        },
+        "1500": {
+          "d_cvvdp_pct": -0.1666073836903553,
+          "d_time_pct": 377.3816028910135,
+          "d_rate_pct": 1.2012206328923192
+        },
+        "2500": {
+          "d_cvvdp_pct": -0.12258984276558862,
+          "d_time_pct": 377.0935311741829,
+          "d_rate_pct": 0.900781357720315
+        }
+      }
+    },
+    {
+      "flag": "--still-ccso",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at equal bitrate and the feature costs time",
+      "d_cvvdp_pct": -0.6628909191967767,
+      "d_time_pct": 11.646964073726584,
+      "d_rate_pct": 4.3798769165633855,
+      "quality_gain_pct": -4.3798769165633855,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "medium",
+      "time_spread_pct": 10.232227994992659,
+      "paired_time_p75_pct": 11.646964073726584,
+      "paired_time_median_pct": 7.065596010466302,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [
+        "--still-sb128",
+        "--still-sb256"
+      ],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": -2.9376599158312615,
+          "d_time_pct": 18.84593877984032,
+          "d_rate_pct": 16.911262662242454
+        },
+        "1000": {
+          "d_cvvdp_pct": -0.6628909191967767,
+          "d_time_pct": 63.86288899549758,
+          "d_rate_pct": 4.3798769165633855
+        },
+        "1500": {
+          "d_cvvdp_pct": -0.40806635748826703,
+          "d_time_pct": 55.34693860644177,
+          "d_rate_pct": 2.9416927004112026
+        },
+        "2500": {
+          "d_cvvdp_pct": -0.2602866038318081,
+          "d_time_pct": 47.328342573965514,
+          "d_rate_pct": 1.868838621524871
+        }
+      }
+    },
+    {
+      "flag": "--still-ext-partitions",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at the fixed bitrate anchor",
+      "d_cvvdp_pct": 0.0,
+      "d_time_pct": 685.1491660126219,
+      "d_rate_pct": -2.220446049250313e-14,
+      "quality_gain_pct": 2.220446049250313e-14,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "medium",
+      "time_spread_pct": 19.48416603167414,
+      "paired_time_p75_pct": 685.1491660126219,
+      "paired_time_median_pct": 662.0344657064674,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [
+        "--still-single"
+      ],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": 0.0,
+          "d_time_pct": 977.2718297398555,
+          "d_rate_pct": -2.220446049250313e-14
+        },
+        "1000": {
+          "d_cvvdp_pct": 0.0,
+          "d_time_pct": 1009.6586288480071,
+          "d_rate_pct": -2.220446049250313e-14
+        },
+        "1500": {
+          "d_cvvdp_pct": 0.0,
+          "d_time_pct": 891.3064219923377,
+          "d_rate_pct": 0.0
+        },
+        "2500": {
+          "d_cvvdp_pct": -0.018141309972352797,
+          "d_time_pct": 848.1932260238608,
+          "d_rate_pct": 0.1316737320160799
+        }
+      }
+    },
+    {
+      "flag": "--still-ibp",
+      "mode": "still",
+      "score_raw": null,
+      "score": 0.0,
+      "eligible": false,
+      "exclude_reason": "CVVDP does not improve at equal bitrate and the feature costs time",
+      "d_cvvdp_pct": -0.18138659104027366,
+      "d_time_pct": 0.9932650441085933,
+      "d_rate_pct": 1.3366209582325705,
+      "quality_gain_pct": -1.3366209582325705,
+      "bitrate_anchor_kbps": 1000.0,
+      "resolution_class": "360p",
+      "repeats": 7,
+      "confidence": "high",
+      "time_spread_pct": 5.027787546854786,
+      "paired_time_p75_pct": 0.9932650441085933,
+      "paired_time_median_pct": 0.11481481473551991,
+      "anchor_qp": 170,
+      "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+      "conflicts": [
+        "--still-mrl"
+      ],
+      "requires_cfl": false,
+      "anchors": {
+        "300": {
+          "d_cvvdp_pct": 0.4889750332939452,
+          "d_time_pct": 35.8374155604324,
+          "d_rate_pct": -2.97441609875142
+        },
+        "1000": {
+          "d_cvvdp_pct": -0.18138659104027366,
+          "d_time_pct": 54.190255110262264,
+          "d_rate_pct": 1.3366209582325705
+        },
+        "1500": {
+          "d_cvvdp_pct": -0.12811729520302892,
+          "d_time_pct": 53.05822880195424,
+          "d_rate_pct": 0.919419756309714
+        },
+        "2500": {
+          "d_cvvdp_pct": -0.02500922898334461,
+          "d_time_pct": 49.201141547188,
+          "d_rate_pct": 0.17931599187210878
+        }
+      }
+    }
+  ],
+  "prefix_validation": {
+    "flags": [
+      "--still-dip",
+      "--still-mhccp"
+    ],
+    "additive_score": 84.6,
+    "measured_d_time_pct": 75.55516858952234,
+    "measured_d_rate_pct": -2.7246918995461944,
+    "source": "tools/effort/effort_calibrate.py; metric=cvvdp 0.5.7 (standard_fhd); fixture md5 dce2a9b1fb650fef1aec38470d189609; 7 paired repeats (p75 A/B CPU-time ratio); host Apple M4",
+    "score": 28.8
+  },
+  "uncalibrated": [
+    "--still-wiener",
+    "--still-chroma-lr",
+    "--still-gdf",
+    "--still-grain",
+    "--still-cfl-ds",
+    "--still-cfl-explicit",
+    "--still-segmentation",
+    "--still-delta-q",
+    "--still-sb128",
+    "--still-sb256",
+    "--still-qm",
+    "--still-dc-ac-delta-q",
+    "--still-content-interpretation",
+    "--still-palette",
+    "--video (all --video/--p-frames/--video-* flags)",
+    "--still-gpu (no GPU-calibrated rows)"
+  ]
+}

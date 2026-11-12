@@ -18,9 +18,12 @@ path as `--still-gdf`: sequence `enable_gdf`/`gdf_unit_matches_sb_size`, the
 in the loop-restoration stage after CDEF/CCSO.  M1 signals `gdf_per_block = 0`,
 so no `use_gdf` tile symbols are written (the unit tests still pin that syntax).
 Gated by `tools/still_verify/loop_restoration_gate.sh` with `dav2d --strict 1`
-and an exact recon compare at 64x64 and 640x360.  GDF overwrites `LrFrame` for
-every filtered luma block, so combining it with luma/chroma loop restoration is
-rejected until the §7.20.1 pre-GDF `CdefFrame` split is modelled.
+and an exact recon compare at 64x64 and 640x360.  §7.20.1 runs the restoration
+filter first and GDF last, both sampling `CdefFrame`; the encoder therefore
+keeps the post-CCSO `CdefFrame` (`cdef_frame_planes`) separate from `LrFrame`,
+so GDF composes with luma Wiener, PC-Wiener and chroma LR.  The gate pins
+`GDF+Wiener`, `GDF+chroma LR`, `GDF+Wiener+chroma LR`, `GDF+PC-Wiener` and the
+full CDEF+CCSO+GDF+LR chain at 64x64/640x360 plus a 1080p combined case.
 
 ## Files
 

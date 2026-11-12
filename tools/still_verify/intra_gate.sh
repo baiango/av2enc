@@ -32,7 +32,7 @@ while [ $# -gt 0 ]; do
         --only) ONLY=$2; shift 2 ;;
         --dav2d) DAV2D=$2; shift 2 ;;
         -h|--help)
-            sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "intra_gate: unknown argument $1" >&2; exit 2 ;;
     esac
@@ -54,6 +54,19 @@ fi
 if [ -z "$DUMP" ] || [ ! -x "$DUMP" ]; then
     echo "intra_gate: --dump must point at still_recon_dump" >&2
     exit 2
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "SKIP: python3 is required for the recon comparison" >&2
+    exit 77
+fi
+have_fixture=0
+for fixture in "$ROOT/tests/data/basic_64x64_1f.y4m" \
+               "$ROOT/tests/data/basic_640x360_1f.y4m"; do
+    [ -f "$fixture" ] && have_fixture=1
+done
+if [ "$have_fixture" -eq 0 ]; then
+    echo "SKIP: tests/data fixtures are missing" >&2
+    exit 77
 fi
 
 failures=0
@@ -84,6 +97,16 @@ run_case() {
         cat "$TMP/${name}.enc.log" >&2
         failures=$((failures + 1))
         return 0
+    fi
+    if [ -n "${EXPECT_IBC:-}" ]; then
+        local got_ibc
+        got_ibc=$(sed -n 's/^  ibc:     \([0-9][0-9]*\) exact-copy.*/\1/p' \
+            "$TMP/${name}.enc.log" | tail -1)
+        if [ -z "$got_ibc" ] || [ "$got_ibc" -lt "$EXPECT_IBC" ]; then
+            echo "FAIL $name: expected >= $EXPECT_IBC IBC block(s), got ${got_ibc:-0}" >&2
+            failures=$((failures + 1))
+            return 0
+        fi
     fi
     if ! "$DAV2D" -q -i "$out" -o "$dec" --threads 1 --strict 1 \
             >"$TMP/${name}.dec.log" 2>&1; then
@@ -131,6 +154,11 @@ PY
     md5=$(md5 -q "$out" 2>/dev/null || md5sum "$out" | awk '{print $1}')
     if [ "$cmp" != "exact" ]; then
         echo "FAIL $name: recon mismatch ($cmp)" >&2
+        failures=$((failures + 1))
+        return 0
+    fi
+    if [ -n "${EXPECT_MD5:-}" ] && [ "$md5" != "$EXPECT_MD5" ]; then
+        echo "FAIL $name: IVF md5 $md5, expected $EXPECT_MD5" >&2
         failures=$((failures + 1))
         return 0
     fi
@@ -200,9 +228,35 @@ def write_y4m(path, w, h):
 
 write_y4m(out / "scc_64x64.y4m", 64, 64)
 write_y4m(out / "scc_128x96.y4m", 128, 96)
+
+# IBC fixture: a 32x32 tile repeated horizontally/vertically with a flat 8x8
+# icon and a 224 corner.  Blocks at the same modulo repeat exactly, so the
+# exact-copy-only encoder selects intra block copy.
+def write_ibc_y4m(path, w, h):
+    y = bytearray(w * h)
+    palette = [64, 96, 160, 200, 32, 240]
+    for yy in range(h):
+        for xx in range(w):
+            tx, ty = (xx // 32) % 3, (yy // 32) % 2
+            v = palette[(tx + ty * 3) % 6]
+            if (xx % 32) < 8 and (yy % 32) < 8:
+                v = 16
+            if (xx % 32) >= 24 and (yy % 32) >= 24:
+                v = 224
+            y[yy * w + xx] = v
+    cw, ch = (w + 1) // 2, (h + 1) // 2
+    with open(path, "wb") as f:
+        f.write(b"YUV4MPEG2 W%d H%d F25:1 Ip A0:0 C420\n" % (w, h))
+        f.write(b"FRAME\n")
+        f.write(bytes(y))
+        f.write(bytes([100]) * (cw * ch))
+        f.write(bytes([150]) * (cw * ch))
+
+write_ibc_y4m(out / "ibc_384x128.y4m", 384, 128)
 PY
 SCC64="$TMP/scc_64x64.y4m"
 SCC128="$TMP/scc_128x96.y4m"
+IBC384="$TMP/ibc_384x128.y4m"
 
 # --- default-off regressions (must stay byte-identical everywhere) ----------
 run_case tests/data/basic_64x64_1f.y4m baseline_64 "${BASELINE[@]}"
@@ -245,7 +299,51 @@ run_case tests/data/basic_64x64_1f.y4m dip_cdef_64 "${BASELINE[@]}" \
     --still-dip --still-cdef
 run_case tests/data/basic_640x360_1f.y4m dip_ibp_360 "${BASELINE[@]}" \
     --still-dip --still-ibp
-run_reject palette_disabled "not integrated" --still --still-palette
+# Palette (§5.20.8): the 128x96 synthetic fixture drives 8x32 direction-0
+# leaves whose identity_row_y == 1 rows exercise the §5.20.8.1 cache split and
+# the §5.20.8.4 line copy (docs/negative-results.md reproducer).
+run_case tests/data/basic_64x64_1f.y4m palette_64 "${BASELINE[@]}" \
+    --still-palette
+run_case tests/data/basic_640x360_1f.y4m palette_360 "${BASELINE[@]}" \
+    --still-palette
+EXPECT_MD5=47bfd8db98aaa08df240e0fe674fe0e5 \
+    run_case "$SCC64" palette_scc64 "${BASELINE[@]}" --still-palette
+EXPECT_MD5=daf0532f15fc4d37f5ead6938943c074 \
+    run_case "$SCC128" palette_scc128 "${BASELINE[@]}" --still-palette
+EXPECT_MD5=ec81d5d3b4dd69e656d9e40b3912c712 \
+    run_case "$SCC128" palette_scc128_dip "${BASELINE[@]}" --still-palette \
+    --still-dip
+EXPECT_MD5=7db8078929a6043313700ea4ecf6261d \
+    run_case "$SCC128" palette_scc128_depth5 "${BASELINE[@]}" --still-palette \
+    --still-depth 5
+# Intra block copy (§5.20.5.3/.4): the 384x128 fixture repeats a 32x32 tile, so
+# the exact-copy-only decision selects NEARMV blocks.  The gate also checks that
+# at least one IBC block was selected (EXPECT_IBC).
+run_case "$SCC128" ibc_scc128 "${BASELINE[@]}" --still-ibc
+run_case "$SCC64" ibc_scc64 "${BASELINE[@]}" --still-ibc
+EXPECT_IBC=1 EXPECT_MD5=dc5fca8c44f78e51850afe7bf1ac8983 \
+    run_case "$IBC384" ibc_384x128 "${BASELINE[@]}" --still-ibc
+EXPECT_IBC=1 EXPECT_MD5=de0e3a238163e751a6ae6c6b5ef5b4f5 \
+    run_case "$IBC384" ibc_384x128_palette "${BASELINE[@]}" --still-ibc \
+    --still-palette
+EXPECT_IBC=1 EXPECT_MD5=3ba3788644e5b6456c34a060da970752 \
+    run_case "$IBC384" ibc_384x128_depth5 "${BASELINE[@]}" --still-ibc \
+    --still-depth 5
+run_case tests/data/basic_640x360_1f.y4m ibc_360 "${BASELINE[@]}" --still-ibc
+run_reject ibc_no_still "requires --still" --still-ibc
+run_reject palette_no_still "requires --still" --still-palette
+run_reject ibc_sb128 "requires 64x64 superblocks" --still --still-ibc \
+    --still-sb128
+run_reject ibc_search_without_ibc "requires --still-ibc" --still \
+    --still-ibc-search 16
+
+# 128x128 superblock grid: the roots still split to 64x64 coding blocks, so
+# this exercises the assembled 128-SB path with a real reconstruction compare.
+run_case tests/data/basic_640x360_1f.y4m sb128_360 "${BASELINE[@]}" \
+    --still-sb128
+run_case "$SCC128" sb128_scc128 "${BASELINE[@]}" --still-sb128
+run_case "$SCC128" sb128_palette "${BASELINE[@]}" --still-sb128 \
+    --still-palette
 run_case tests/data/basic_64x64_1f.y4m mhccp_64 "${BASELINE[@]}" --still-mhccp
 run_case tests/data/basic_640x360_1f.y4m mhccp_360 "${BASELINE[@]}" --still-mhccp
 run_case tests/data/basic_64x64_1f.y4m mhccp_explicit_64 "${BASELINE[@]}" \

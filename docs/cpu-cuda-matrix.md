@@ -72,14 +72,14 @@ informational only. `GPU-UNWIRED` in `docs/gpu-coverage.md` therefore means
 | Feature | CPU | CUDA | Evidence | In GPU path |
 |---|---|---|---|---|
 | Deblocking | yes | `cuda/deblock` | M1 GPU matrix | yes |
-| CDEF | yes | `cuda/cdef` | 129 checks | **no** |
-| CCSO | yes | `cuda/restoration/ccso` | built parity suite | **no** |
+| CDEF | yes | `cuda/pipeline/still/cdef` | 129 checks + sm_86 stream parity | **yes** (`--still-cdef`) |
+| CCSO | yes | `cuda/codec/filters/loop_restoration/ccso.cu` | 406 checks + sm_86 stream parity | **yes** (`--still-ccso`, `--still-ccso-edge`) |
 | Wiener NS (luma) | yes | `cuda/m1/restoration` | built parity suite | no |
 | PC-Wiener | yes | `cuda/pc_wiener` | 716 checks | no |
 | GDF | yes | `cuda/gdf` | 8,970,859 checks | no |
 | TIP deblocking | yes | `cuda/tip_deblock` | 17,303 checks / 13.1 M samples | no |
 | Chroma loop restoration | yes | `cuda/lr_chroma` | 57,009 checks / 95.2M samples | no |
-| Film grain | yes (synthesis) | **N/A** | decoder-side output process | no |
+| Film grain | yes (synthesis) | **N/A** | decoder-side output process | metadata yes (`--still-grain`) |
 | Loop restoration on reference | CPU yes | — | M2 filter chain is off today | — |
 
 ## Formats, system
@@ -87,8 +87,10 @@ informational only. `GPU-UNWIRED` in `docs/gpu-coverage.md` therefore means
 | Feature | CPU | CUDA | Evidence | In GPU path |
 |---|---|---|---|---|
 | 8-bit 4:2:0 | yes | yes | M0/M1/M2 GPU gates | yes |
-| 10-bit | yes (`m10`, `hbd`) | `cuda/m1/hbd`, `cuda/format` | M10 GPU test | product CPU path `--bit-depth 10`; GPU not wired |
-| 4:2:2 / 4:4:4 / 4:0:0 | yes | `cuda/chroma_formats` | 1,742,235 checks | product CPU path `--chroma`; GPU not wired |
+| 10-bit 4:2:0 | yes (`hbd`) | `cuda/m1/hbd`, `cuda/format` | M10 GPU test | product CPU path `--bit-depth 10`; GPU not wired |
+| 10-bit 4:2:2 / 4:4:4 / 4:0:0 | yes (`hbd`) | `cuda/format` (expand/reduce only) | `src/formats/format_gate.sh` (dav2d, 0-LSB) | product CPU path `--bit-depth 10 --chroma`; GPU not wired |
+| 10-bit qindex 91..303 | yes (`hbd` + qctx) | — | `format_gate.sh` q=91/141/191/303 | product CPU path |
+| 4:2:2 / 4:4:4 / 4:0:0 (8-bit) | yes | `cuda/chroma_formats` | 1,742,235 checks | product CPU path `--chroma`; GPU not wired |
 | Tiles, SVC, OBU metadata, HDR | yes | **N/A** | framing/syntax | no |
 | Conformance, RC, two-pass | yes | **N/A** | CPU policy | no |
 | Multi-GPU dispatch | yes | runtime + planner | mock + single-GPU gate | no |

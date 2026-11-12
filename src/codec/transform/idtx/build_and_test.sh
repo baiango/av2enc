@@ -47,6 +47,28 @@ else
   REF_FLAGS+=(-O2)
 fi
 
+EXTRA_REFS=(
+  "$ROOT/src/codec/partition/tree/partition.cpp"
+  "$ROOT/src/codec/entropy/deltaq/still/deltaq.cpp"
+  "$ROOT/src/codec/transform/delta_q/syntax.cpp"
+  "$ROOT/src/codec/filters/pc_wiener/pc_wiener_stream.cpp"
+  "$ROOT/src/codec/filters/tables/pc_wiener.cpp"
+  "$ROOT/src/codec/filters/tables/luma_source.cpp"
+  "$ROOT/src/codec/filters/gdf/gdf_syntax.cpp"
+  "$ROOT/src/pipeline/grain/grain_stream.cpp"
+  "$ROOT/src/pipeline/grain/film_grain_syntax.cpp"
+  "$ROOT/src/codec/rate/rc/rc.cpp"
+  "$ROOT/src/codec/transform/qm/qm.cpp"
+  "$ROOT/src/codec/transform/secondary/tx_secondary.cpp"
+  "$ROOT/src/frame/metadata/content_interpretation/content_interpretation.cpp"
+  "$ROOT/src/codec/filters/loop_restoration/classes/wiener_syntax.cpp"
+  "$ROOT/src/codec/partition/ext/partition_ext.cpp"
+  "$ROOT/src/codec/partition/ext/ext_syntax.cpp"
+  "$ROOT/src/codec/intra/cfl/cfl.cpp"
+  "$ROOT/src/codec/intra/cfl/mhccp/mhccp.cpp"
+  "$ROOT/src/codec/intra/cfl/mhccp/mhccp_syntax.cpp"
+)
+
 REFS=(
   "$ROOT/src/codec/transform/idtx/idtx_intra.cpp"
   "$ROOT/src/codec/transform/idtx/type_syntax.cpp"
@@ -58,6 +80,7 @@ REFS=(
   "$ROOT/src/core/bitstream/basic_headers.cpp"
   "$ROOT/src/core/bitstream/bitwriter.cpp"
   "$ROOT/src/codec/entropy/av2/av2_entropy.cpp"
+  "${EXTRA_REFS[@]}"
 )
 echo "patcher: §5.20.5.5 fsc_mode -> build-dir copy of still_syntax.cpp"
 python3 "$(pwd)/patch_still_syntax.py" \
@@ -67,9 +90,9 @@ python3 "$(pwd)/patch_still_syntax.py" \
 GATE_REFS=(
   "$ROOT/src/cuda/pipeline/still/plan/plan.cpp"
   "$BUILD_DIR/still_syntax_idtx.cpp"
-  "$ROOT/src/codec/partition/tree/partition.cpp"
   "$ROOT/src/core/io/ivf.cpp"
   "$ROOT/src/core/io/y4m.cpp"
+  "${EXTRA_REFS[@]}"
 )
 
 echo "compiler: $($CXX --version | head -1)"
@@ -98,18 +121,44 @@ fi
 
 echo
 echo "== idtx_intra_gate =="
-GATE_OBJECTS=()
-index=0
-for source in "${GATE_REFS[@]}"; do
-  object="${BUILD_DIR}/gate_${index}.o"
-  "$CXX" "${REF_FLAGS[@]}" -I"$ROOT/src" -c "$source" -o "$object"
-  GATE_OBJECTS+=("$object")
-  index=$((index + 1))
-done
+# The completion wave integrated fsc_mode (and the rest of the still syntax)
+# into the product source, so the build-directory patch is a no-op and the
+# gate can link the existing core library.  This avoids a stale hand-picked
+# source list as the still composition root grows.
+CORE_LIB="${CORE_LIB:-}"
+if [ -z "$CORE_LIB" ]; then
+  for candidate in "$ROOT/build-int/libav2enc_core.a" \
+                   "$ROOT/build/libav2enc_core.a" \
+                   "$ROOT/build-m1/libav2enc_core.a"; do
+    if [ -f "$candidate" ]; then CORE_LIB="$candidate"; break; fi
+  done
+fi
 "$CXX" "${OWN_FLAGS[@]}" -I"$ROOT/src" -I. -c idtx_intra_gate.cpp \
   -o "$BUILD_DIR/idtx_intra_gate.o"
-"$CXX" "${OWN_FLAGS[@]}" "$BUILD_DIR/idtx_intra_gate.o" "${OBJECTS[@]}" \
-  "${GATE_OBJECTS[@]}" -o "$BUILD_DIR/idtx_intra_gate"
+if [ -n "$CORE_LIB" ]; then
+  echo "gate link: $CORE_LIB"
+  "$CXX" "${REF_FLAGS[@]}" -I"$ROOT/src" \
+    -c "$ROOT/src/cuda/pipeline/still/plan/plan.cpp" \
+    -o "$BUILD_DIR/gate_plan.o"
+  "$CXX" "${OWN_FLAGS[@]}" -I"$ROOT/src" "$BUILD_DIR/idtx_intra_gate.o" \
+    "$BUILD_DIR/gate_plan.o" \
+    "$ROOT/src/codec/transform/idtx/idtx_intra.cpp" \
+    "$ROOT/src/codec/transform/idtx/type_syntax.cpp" \
+    "$ROOT/src/codec/transform/idtx/seq_bits.cpp" \
+    "$CORE_LIB" -o "$BUILD_DIR/idtx_intra_gate"
+else
+  echo "gate link: standalone source list (no core library found)"
+  GATE_OBJECTS=()
+  index=0
+  for source in "${GATE_REFS[@]}"; do
+    object="${BUILD_DIR}/gate_${index}.o"
+    "$CXX" "${REF_FLAGS[@]}" -I"$ROOT/src" -c "$source" -o "$object"
+    GATE_OBJECTS+=("$object")
+    index=$((index + 1))
+  done
+  "$CXX" "${OWN_FLAGS[@]}" "$BUILD_DIR/idtx_intra_gate.o" "${OBJECTS[@]}" \
+    "${GATE_OBJECTS[@]}" -o "$BUILD_DIR/idtx_intra_gate"
+fi
 
 if [ "$RUN" -ne 1 ]; then exit 0; fi
 

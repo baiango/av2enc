@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Decode gate for the M0 edge-partition work.
+# Decode gate for the Basic edge-partition work.
 #
 #   basic_edge_smoke.sh <av2enc-binary> <gen_y4m-binary> <project-root>
 #
@@ -7,9 +7,10 @@
 # pinned regressions, encodes through the normal CLI (no --still), and requires
 # the pinned dav2d build to decode each stream with --strict 1.
 #
-# Where M0 can represent the geometry it must produce the pinned MD5 and must
-# NOT fall back. 136x88 / 518x322 need sub-32-pixel edge blocks that M0 does
-# not code; the CLI must print the fallback note and M1 must decode them.
+# Where Basic can represent the geometry it must produce the pinned MD5 and
+# must NOT fall back. 136x88 / 518x322 need sub-32-pixel edge blocks that Basic
+# does not code; the CLI must print the fallback note and Still must decode
+# them.
 #
 # Exit 77 = no dav2d binary (CTest skip).
 set -euo pipefail
@@ -64,11 +65,11 @@ run_case() {
     [ "$rc" -eq 0 ] || fail "$name: encode failed (exit $rc): $(cat "$err")"
 
     if [ "$expect_fallback" = "1" ]; then
-        grep -q "falling back to the M1 still-picture path" "$err" ||
-            fail "$name: expected the M1 fallback note, got: $(cat "$err")"
+        grep -q "falling back to the Still path" "$err" ||
+            fail "$name: expected the Still fallback note, got: $(cat "$err")"
     else
-        if grep -q "falling back to the M1 still-picture path" "$err"; then
-            fail "$name: unexpected M1 fallback: $(cat "$err")"
+        if grep -q "falling back to the Still path" "$err"; then
+            fail "$name: unexpected Still fallback: $(cat "$err")"
         fi
     fi
 
@@ -84,7 +85,7 @@ run_case() {
     echo "PASS: $name"
 }
 
-# Five reported sizes. The first three are representable by M0 after the edge
+# Five reported sizes. The first three are representable by Basic after the edge
 # recursion + transform fixes; the last two need sub-32 blocks and fall back.
 run_case 1280x720      1280  720 0 62a9bd644486622dea97a135452b41b3
 run_case 136x88         136   88 1 ""

@@ -1,6 +1,21 @@
-# Intra identity / non-DCT transform-type coverage (`src/encoder/transform/idtx_intra/`)
+# Intra identity / non-DCT transform-type coverage (`src/codec/transform/idtx/`)
 
-Status: **component + gate.** Owned and self-contained; not wired into
+Status: **component + integrated still path (IDTX-only).** The CPU
+`--still-idtx` path (`src/pipeline/still/still_encoder.cpp` +
+`still_syntax.cpp` + `still_headers.cpp`) writes `enable_idtx_intra = 1`,
+codes the §5.20.5.5 `fsc_mode = 0` symbol for every luma coding block <=
+32x32, and adds `IDTX` to the intra luma TX-type candidates. IDTX is
+`TX_CLASS_2D`, so the existing diagonal scan and 2-D reference contexts are
+correct; the one-axis identity types (`V/H_DCT`, `V/H_ADST`,
+`V/H_FLIPADST`) stay disabled because they need the class-specific scans.
+The decoder gate is `still_idtx_gate.sh`: default-off, pinned base streams
+unchanged, IDTX selected on long-side transforms at 640x360 (5 blocks), and
+every stream sample-exact with `dav2d --strict 1`. IDTX composes with TX
+partitioning, TCQ, IST, CCTX, RDOQ, QM and the TX_TYPE search.
+
+The rest of this document describes the standalone component.
+
+Owning and self-contained; the component itself is not wired into
 `CMakeLists.txt` or `src/main.cpp`, and it does not commit. It implements the
 transform-type coverage that the audit marks ABSENT in
 `docs/spec-audit/08-transform.md` (X4, X7, X6) and the `enable_idtx_intra`

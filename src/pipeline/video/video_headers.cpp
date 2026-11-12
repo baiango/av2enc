@@ -92,6 +92,11 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   assert(c.order_hint_bits >= 1U && c.order_hint_bits <= 16U);
   assert(c.num_ref_frames >= 1U && c.num_ref_frames <= 16U);
   assert(c.max_drl_bits_minus_1 < 5U);  // MAX_REF_MV_STACK_SIZE - 1 == 5
+  assert(c.seq_lcr_id < 8U);
+  assert(c.max_tlayer_id < 4U);
+  assert(c.max_mlayer_id < 8U);
+  assert(c.seq_max_mlayer_cnt >= 1U &&
+         c.seq_max_mlayer_cnt <= c.max_mlayer_id + 1U);
 
   put_uvlc(writer, 0);                 // seq_header_id
   writer.put_bits(0U, 5U);             // seq_profile_idc
@@ -102,12 +107,17 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   put_uvlc(writer, 1);                 // bit_depth_idc = 1 => 8-bit
 
   // §5.4.1 non-single-picture header.
-  writer.put_bits(0U, 3U);  // seq_lcr_id
-  writer.put_bit(false);    // still_picture
-  writer.put_bits(0U, 2U);  // max_tlayer_id
-  writer.put_bits(0U, 3U);  // max_mlayer_id
-  // SeqMaxMlayerCnt = 1 (max_mlayer_id == 0).
-  writer.put_bit(true);     // monotonic_output_order_flag
+  writer.put_bits(c.seq_lcr_id, 3U);  // seq_lcr_id
+  writer.put_bit(false);              // still_picture
+  writer.put_bits(c.max_tlayer_id, 2U);
+  writer.put_bits(c.max_mlayer_id, 3U);
+  if (c.max_mlayer_id > 0U) {
+    const unsigned n = ceil_log2(static_cast<std::uint32_t>(c.max_mlayer_id) +
+                                 1U);
+    writer.put_bits(
+        static_cast<std::uint64_t>(c.seq_max_mlayer_cnt) - 1U, n);
+  }
+  writer.put_bit(c.monotonic_output_order_flag);
 
   unsigned width_bits =
       bit_width(static_cast<std::uint32_t>(c.max_frame_width) - 1U);
@@ -123,8 +133,46 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
                   height_bits);
 
   writer.put_bit(false);  // seq_cropping_window_present_flag
-  writer.put_bit(false);  // seq_initial_display_delay_present_flag
-  writer.put_bit(false);  // decoder_model_info_present_flag
+  // §5.4.1 timing block (non-single-picture path).
+  writer.put_bit(c.initial_display_delay_present);
+  if (c.initial_display_delay_present) {
+    writer.put_bits(c.initial_display_delay_minus_1, 4U);
+  }
+  writer.put_bit(c.decoder_model_info_present);
+  if (c.decoder_model_info_present) {
+    writer.put_bits(c.num_units_in_decoding_tick, 32U);
+    // §5.4.13 nested block: pinned dav2d f9dafbc rejects it; keep it off.
+    writer.put_bit(false);  // seq_decoder_model_info_present_flag
+  }
+
+  // §5.4.1 dependency maps.  MLayerDependencyMap defaults to ref <= curr and
+  // is only coded for a multi-layer plan.  TLayerDependencyMap is coded when
+  // max_tlayer_id > 0; the multi-layer form carries an extra presence bit.
+  if (c.max_mlayer_id > 0U) {
+    writer.put_bit(c.mlayer_dependency_present);
+    if (c.mlayer_dependency_present) {
+      for (unsigned curr = 1U; curr <= c.max_mlayer_id; ++curr) {
+        for (int ref = static_cast<int>(curr); ref >= 0; --ref) {
+          writer.put_bit(true);  // MLayerDependencyMap[curr][ref] = ref<=curr
+        }
+      }
+    }
+  }
+  if (c.max_tlayer_id > 0U) {
+    writer.put_bit(c.tlayer_dependency_present_flag);
+    if (c.tlayer_dependency_present_flag) {
+      if (c.max_mlayer_id > 0U) {
+        writer.put_bit(false);  // multi_tlayer_dependency_map_present_flag
+      }
+      for (unsigned mlayer = 0U; mlayer <= c.max_mlayer_id; ++mlayer) {
+        for (int curr = 1; curr <= c.max_tlayer_id; ++curr) {
+          for (int ref = curr; ref >= 0; --ref) {
+            writer.put_bit(c.tlayer_dependency[curr][ref]);
+          }
+        }
+      }
+    }
+  }
 
   // §5.4.3 sequence_partition_config(): 64x64 superblocks, no SDP.
   writer.put_bit(false);  // use_256x256_superblock
@@ -151,7 +199,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
     writer.put_bit(false);                // seq_enabled_motion_modes[mode]
   }
   // motionModeEnabled == 0 -> seq_frame_motion_modes_present_flag = 0.
-  writer.put_bit(false);  // enable_masked_compound
+  writer.put_bit(c.enable_masked_compound);
   writer.put_bit(false);  // enable_ref_frame_mvs
   // reduced_ref_frame_mvs_mode = 0.
   writer.put_bits(static_cast<std::uint64_t>(c.order_hint_bits) - 1U, 4U);
@@ -168,12 +216,12 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(false);   // allow_frame_max_drl_bits
   put_ns(writer, 3U, 0U);  // seq_max_bvp_drl_bits_minus_1 (MAX_REF_BV_STACK_SIZE - 1)
   writer.put_bit(false);   // allow_frame_max_bvp_drl_bits
-  writer.put_bits(0U, 2U); // num_same_ref_compound
+  writer.put_bits(c.num_same_ref_compound, 2U);  // num_same_ref_compound
   writer.put_bit(false);   // enable_tip
   writer.put_bit(false);   // enable_mv_traj
   writer.put_bit(false);   // enable_bawp
-  writer.put_bit(false);   // enable_cwp
-  writer.put_bit(false);   // enable_imp_msk_bld
+  writer.put_bit(c.enable_cwp);
+  writer.put_bit(c.enable_imp_msk_bld);
   writer.put_bit(false);   // enable_df_sub_pu
   writer.put_bits(0U, 2U); // enable_opfl_refine = REFINE_NONE
   writer.put_bit(false);   // enable_refinemv
@@ -200,7 +248,10 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(false);  // enable_cctx
   writer.put_bit(false);  // enable_tcq
   writer.put_bit(false);  // enable_parity_hiding
-  writer.put_bit(false);  // enable_avg_cdf (no cross-frame blending)
+  writer.put_bit(c.enable_avg_cdf);  // enable_avg_cdf
+  if (c.enable_avg_cdf) {
+    writer.put_bit(c.avg_cdf_type);  // avg_cdf_type: 1 = average across tiles
+  }
   writer.put_bit(false);  // separate_uv_delta_q
   writer.put_bit(true);   // equal_ac_dc_q
   writer.put_bits(23U, 5U);  // base_uv_ac_delta_q => BaseUVAcDeltaQ = 0
@@ -228,17 +279,20 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
                                       const VideoFrameHeader& h) {
   const std::size_t start = writer.bit_size();
   assert(c.base_q_idx >= 1U);
-  put_uvlc(writer, 0);  // cur_mfh_id
-  put_uvlc(writer, 0);  // seq_header_id_in_frame_header
+  put_uvlc(writer, c.cur_mfh_id);  // cur_mfh_id
+  if (c.cur_mfh_id == 0U) {
+    put_uvlc(writer, 0);  // seq_header_id_in_frame_header
+  }
 
   const bool key = h.keyframe;
   if (!key) {
     writer.put_bit(true);  // frame_is_inter = 1 -> INTER_FRAME
   }
   // long_term_id_plus_1 is absent (long_term_frame_id_bits == 0).
-  // monotonic_output_order_flag == 1, so implicit_output_frame is always
-  // inferred 0; only immediate_output_frame is coded.
   writer.put_bit(h.immediate_output_frame);  // immediate_output_frame
+  if (!h.immediate_output_frame && !c.monotonic_output_order_flag) {
+    writer.put_bit(h.implicit_output_frame);  // implicit_output_frame
+  }
 
   if (key) {
     // OBU_CLOSED_LOOP_KEY + max_mlayer_id == 0 -> refresh_frame_flags =
@@ -255,8 +309,11 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     // allow_screen_content_tools is inferred 0 and no bit is coded.
     writer.put_bit(false);  // allow_intrabc
   } else {
-    writer.put_bit(false);  // signal_primary_ref_frame
-    writer.put_bit(true);   // disable_cross_frame_cdf_init
+    writer.put_bit(h.signal_primary_ref_frame);
+    writer.put_bit(h.disable_cross_frame_cdf_init);
+    if (h.signal_primary_ref_frame) {
+      writer.put_bits(h.primary_ref_frame, 3U);  // primary_ref_frame
+    }
     // refresh_frame_flags is coded after the primary-ref block
     // (§5.18.2). enable_short_refresh_frame_flags == 0.
     writer.put_bits(h.refresh_frame_flags, c.num_ref_frames);
@@ -302,7 +359,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
   // apply_deblocking_filter[2..3] and every df_delta_q_present are absent.
   writer.put_bit(false);   // tx_mode_select = 0 -> TX_MODE_LARGEST
   if (!key) {
-    writer.put_bit(false);  // reference_select
+    writer.put_bit(h.reference_select);
     writer.put_bit(false);  // skip_mode_present
   }
   // allow_bawp / allow_warpmv_mode are disabled at sequence level.
@@ -341,14 +398,17 @@ std::size_t write_tile_group_header(BitWriter& writer, const VideoConfig& config
 
 std::vector<std::uint8_t> make_frame_obu(const VideoConfig& config,
                                          const VideoFrameHeader& header,
-                                         std::span<const std::uint8_t> tile_payload) {
+                                         std::span<const std::uint8_t> tile_payload,
+                                         std::uint8_t obu_tlayer_id) {
   BitWriter writer;
   write_tile_group_header(writer, config, header);
   std::vector<std::uint8_t> payload = writer.take_bytes();
   payload.insert(payload.end(), tile_payload.begin(), tile_payload.end());
   const ObuType type =
       header.keyframe ? ObuType::kClosedLoopKey : ObuType::kRegularTileGroup;
-  return av2enc::basic::make_obu(ObuHeader{type}, payload);
+  ObuHeader obu{type};
+  obu.tlayer_id = obu_tlayer_id;
+  return av2enc::basic::make_obu(obu, payload);
 }
 
 std::vector<std::uint8_t> make_temporal_delimiter_obu() {

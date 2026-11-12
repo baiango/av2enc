@@ -56,7 +56,7 @@ regular host transfer is the finished tile payloads / bitstream.
 
 AV2's range coder is serial **within a tile**, but tiles are independent. So:
 
-- **M0:** one tile, CPU entropy coder as a correctness reference, run on the
+- **Basic:** one tile, CPU entropy coder as a correctness reference, run on the
   Mac/dev host. This is allowed only while bringing up the bitstream.
 - **Target:** multiple tiles (2×2, 4×2, …), one CUDA workgroup per tile, each
   workgroup running the normative AV2 §8.2 coder. This keeps the entropy stage
@@ -74,9 +74,9 @@ Implementation status:
 - CUDA tile coder: `src/cuda/entropy.*`, byte-identical to CPU, 986k checks,
   zero-width/adaptive CDFs included.
 - **Measured:** one 2048-symbol GPU tile is ~4.57 ms vs ~100–135 µs on the CPU,
-  so the GPU coder is **34–46× slower per tile** at M0 tile counts. 4×2 = 8 and
+  so the GPU coder is **34–46× slower per tile** at Basic tile counts. 4×2 = 8 and
   8×2 = 16 blocks are below one warp per SM.
-- Therefore **M0 keeps CPU entropy**. GPU entropy is only for 256+ tiles,
+- Therefore **Basic keeps CPU entropy**. GPU entropy is only for 256+ tiles,
   batched independent frames, or overlapped next-frame work — not a default.
 - The 4 KiB shared staging window is smaller than the full ~46.7 KiB CDF set;
   larger sets fall back to global memory. Reset per-tile CDFs before each
@@ -345,7 +345,7 @@ The initial 720p60 QBS budget:
 
 AVM's measured QBS is **9.3623 JOD at 368.6 kbps** under the 400 kbps ceiling.
 Our encoder must match or beat that before speed tuning matters. The encoder
-must add the M1 tools before performance tuning:
+must add the Still tools before performance tuning:
 
 1. recursive partitioning (square + rectangular)
 2. full intra prediction (directional/smooth/paeth + edge filtering)
@@ -368,7 +368,7 @@ All five decoded with `dav2d`. The byte overhead is not the full BD-rate cost;
 measure real video clips before choosing a layout. 4×2 or 8×2 gives the GPU
 enough entropy workgroups while keeping the penalty small.
 
-## First milestone (M0)
+## First milestone (Basic)
 
 Still-picture encoder, 8-bit 4:2:0, one tile:
 
@@ -380,7 +380,7 @@ Still-picture encoder, 8-bit 4:2:0, one tile:
 - no loop filters, film grain, SVC, palette, CfL
 - output: IVF containing one frame
 
-M0 status: **achieved 2026-11-11** with the CPU reference path. A 64×64
+Basic status: **achieved 2026-11-11** with the CPU reference path. A 64×64
 DC-intra stream (1,138 bytes) decodes with `dav2d` f9dafbc; MD5
 `7efc3162bc0a4785685eba291a8096fd`, PSNR 42.13 dB. The CUDA kernels are not
 wired into the encode path yet. Adaptive CDFs are disabled for this frame.

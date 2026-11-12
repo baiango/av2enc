@@ -141,17 +141,49 @@ void expect_rejected(const av2enc::cuda::still_gpu::GpuOptions& gpu,
   }
 }
 
+// Filters that have a wired GPU stage must be accepted (the CDEF stage applies
+// the §7.18 kernel on device; the CPU reference only supplies the planned
+// per-64x64 index grid).
+void test_wired_filters_accepted() {
+  using av2enc::cuda::still_gpu::GpuOptions;
+  GpuOptions gpu;
+  gpu.enable_cdef = true;
+  std::string error;
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-cdef is wired into the GPU pipeline");
+  check(error.empty(), "--still-cdef reports no rejection");
+
+  // Film grain is decoder-side synthesis; the encoder only emits the model
+  // OBU and the frame-header config, so it is wired on the GPU path.
+  gpu = GpuOptions{};
+  gpu.enable_grain = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-grain is supported on the GPU path (metadata only)");
+  check(error.empty(), "--still-grain reports no rejection");
+
+  // CCSO (both the band-offset-only and the edge-classified form) applies the
+  // §7.19 kernel on device.
+  gpu = GpuOptions{};
+  gpu.enable_ccso = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-ccso is wired into the GPU pipeline");
+  check(error.empty(), "--still-ccso reports no rejection");
+
+  gpu = GpuOptions{};
+  gpu.enable_ccso = true;
+  gpu.ccso_edge = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-ccso-edge is wired into the GPU pipeline");
+  check(error.empty(), "--still-ccso-edge reports no rejection");
+}
+
 void test_every_m3_flag_rejected_by_name() {
   using av2enc::cuda::still_gpu::GpuOptions;
 
   GpuOptions gpu;
-  gpu.enable_cdef = true;
-  expect_rejected(gpu, "--still-cdef", "--still-cdef");
-
-  gpu = GpuOptions{};
-  gpu.enable_ccso = true;
-  expect_rejected(gpu, "--still-ccso", "--still-ccso");
-
   gpu = GpuOptions{};
   gpu.rdoq = true;
   expect_rejected(gpu, "--still-rdoq", "--still-rdoq");
@@ -169,10 +201,6 @@ void test_every_m3_flag_rejected_by_name() {
   expect_rejected(gpu, "--still-uv-full", "--still-uv-full");
 
   gpu = GpuOptions{};
-  gpu.ccso_edge = true;
-  expect_rejected(gpu, "--still-ccso-edge", "--still-ccso-edge");
-
-  gpu = GpuOptions{};
   gpu.enable_wiener = true;
   expect_rejected(gpu, "--still-wiener", "--still-wiener");
 
@@ -188,9 +216,6 @@ void test_every_m3_flag_rejected_by_name() {
   gpu.enable_gdf = true;
   expect_rejected(gpu, "--still-gdf", "--still-gdf");
 
-  gpu = GpuOptions{};
-  gpu.enable_grain = true;
-  expect_rejected(gpu, "--still-grain", "--still-grain");
 }
 
 }  // namespace
@@ -198,6 +223,7 @@ void test_every_m3_flag_rejected_by_name() {
 int main() {
   test_mapping_matches_cli();
   test_default_supported();
+  test_wired_filters_accepted();
   test_every_m3_flag_rejected_by_name();
   if (failures != 0) {
     std::fprintf(stderr, "still_gpu_options_test: %d failure(s)\n", failures);

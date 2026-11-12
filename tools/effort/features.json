@@ -1,0 +1,82 @@
+{
+  "schema": 2,
+  "mode": "still",
+  "note": "One row per optional encoder flag. Rank by measured score ascending; the runtime takes a prefix while the cumulative (marginal, when measured) score fits the budget. Conflicts are the CLI's existing rejection rules: a feature is skipped when a higher-ranked or explicitly requested flag conflicts with it.",
+  "features": [
+    {
+      "flag": "--still-dip",
+      "conflicts": []
+    },
+    {
+      "flag": "--still-mhccp",
+      "conflicts": [],
+      "requires_cfl": true
+    },
+    {
+      "flag": "--still-pc-wiener",
+      "conflicts": ["--still-wiener", "--still-chroma-lr", "--still-gdf"]
+    },
+    {
+      "flag": "--still-rdo-intra",
+      "conflicts": ["--still-mrl"]
+    },
+    {
+      "flag": "--still-full-intra",
+      "conflicts": []
+    },
+    {
+      "flag": "--still-mrl",
+      "conflicts": ["--still-rdo-intra", "--still-ibp"]
+    },
+    {
+      "flag": "--still-tx-type",
+      "conflicts": []
+    },
+    {
+      "flag": "--still-ist",
+      "conflicts": []
+    },
+    {
+      "flag": "--still-rdoq",
+      "conflicts": ["--still-qm", "--still-dc-ac-delta-q"]
+    },
+    {
+      "flag": "--still-uv-full",
+      "conflicts": []
+    },
+    {
+      "flag": "--still-cdef",
+      "conflicts": ["--still-sb128", "--still-sb256"]
+    },
+    {
+      "flag": "--still-ccso",
+      "conflicts": ["--still-sb128", "--still-sb256"]
+    },
+    {
+      "flag": "--still-ext-partitions",
+      "conflicts": ["--still-single"]
+    },
+    {
+      "flag": "--still-ibp",
+      "conflicts": ["--still-mrl"]
+    }
+  ],
+  "uncalibrated": [
+    "--still-wiener",
+    "--still-chroma-lr",
+    "--still-gdf",
+    "--still-grain",
+    "--still-cfl-ds",
+    "--still-cfl-explicit",
+    "--still-segmentation",
+    "--still-delta-q",
+    "--still-sb128",
+    "--still-sb256",
+    "--still-qm",
+    "--still-dc-ac-delta-q",
+    "--still-content-interpretation",
+    "--still-palette",
+    "--video (all --video/--p-frames/--video-* flags)",
+    "--still-gpu (no GPU-calibrated rows)"
+  ]
+}

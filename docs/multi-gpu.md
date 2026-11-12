@@ -667,6 +667,19 @@ Semantics and validation:
 - `--gpus` order is the assignment order for ties. It does not affect the
   bitstream, only which physical GPU gets which tile set.
 
+### 7.1 Host dispatch contract (`--gpu-plan`)
+
+The host-only dry run also prints `dispatch: <raster_slot>:<gpu> ...`.
+`MultiGpuPlan::dispatch` has one `TileDispatchEntry` per tile in raster order:
+the merge slot (always raster `TileNum`), the deterministic LPT owner, and the
+superblock/pixel rect. A worker writes its payload into that slot; the
+coordinator merges slots in ascending order and never in completion order.
+
+Every timing/transfer/scaling number carries an `Evidence` flag
+(`estimated` / `claimed` / `measured`). The planner only emits `estimated`;
+promoting a number to `claimed` or `measured` requires recording a matching
+run (same clip, QP/quality index, layout and GPU set).
+
 ---
 
 ## 8. Profiler contract

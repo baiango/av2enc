@@ -36,6 +36,10 @@ struct HbdConfig {
   // 10-bit only.  Kept as the format enum so MaxQ/f(9) have one source.
   fmt::BitDepth depth = fmt::BitDepth::k10;
 
+  // §6.4.1 Table 6.2 chroma_format_idc source (idc is not the enum order).
+  // The default 4:2:0 keeps the M10 header bytes unchanged.
+  fmt::ChromaFormat chroma = fmt::ChromaFormat::k420;
+
   // Raw frame qindex.  Must satisfy 1 <= base_q_idx <= MaxQ (303 at 10-bit).
   std::uint16_t base_q_idx = 90;
 

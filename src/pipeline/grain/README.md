@@ -7,11 +7,15 @@ This directory adds the encoder side of `OBU_FILM_GRAIN` and
 **Integration status (2026-11-12).**  The still composition root wires this
 module behind `--still-grain`: `film_grain_params_present = 1`, one
 `film_grain_obu()` before the coded-frame OBU, and `film_grain_config()` as the
-last frame-header field.  A fixed two-point 4:2:0 model is used; grain output is
-decoder-side, so the encoder recon stays unfiltered.  Gated by
+last frame-header field.  `--still-grain` keeps the fixed two-point 4:2:0 model;
+`--still-grain-adaptive` additionally runs `GrainStreamPlanner::PlanFrame()` on
+the reconstruction (single frame, seed `GrainSeedForFrame(0)`) and signals the
+estimated model/slot instead.  Grain output is decoder-side, so the encoder
+recon stays unfiltered.  Gated by
 `tools/still_verify/loop_restoration_gate.sh` (`--filmgrain 0` recon exactness
-plus a `--filmgrain 1` synthesis check) at 64x64 and 640x360.  The stale
-`pipeline/grain/stream/` include paths were corrected while wiring.
+plus a `--filmgrain 1` synthesis check) at 64x64, 640x360 and 1080p for both
+models.  The stale `pipeline/grain/stream/` include paths were corrected while
+wiring.
 
 Normative sources: `spec/AV2_Spec_v1.0.0.pdf` (commit `38f28e7`).
 

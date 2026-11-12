@@ -64,6 +64,9 @@ CORE=(
   "$ROOT/src/codec/inter/me/me.cpp"
   "$ROOT/src/codec/inter/mc/mc.cpp"
   "$ROOT/src/codec/inter/merge/merge.cpp"
+  "$ROOT/src/codec/inter/drl_reorder/video_stack_adapter.cpp"
+  "$ROOT/src/codec/inter/drl_reorder/drl_reorder.cpp"
+  "$ROOT/src/codec/inter/mv_precision/mv_precision.cpp"
   "$ROOT/src/pipeline/video/video_frame.cpp"
   "$ROOT/src/codec/transform/inter_residual/inter_tx_type.cpp"
   "$ROOT/src/codec/transform/inter_residual/inter_coeff_syntax.cpp"
@@ -82,9 +85,18 @@ python3 "$HERE/patch_inter_residual.py" \
   "$ROOT/src/codec/transform/inter_residual/inter_residual.cpp" "$INTER"
 
 echo "== build ddt_gate =="
+# video_frame.cpp is one TU that also references the multi-tile post writer and
+# the video rate-control adapter.  Those sources are not patched by this gate,
+# so the product archive can supply them; the patched TUs above stay explicit
+# and the archive members for them are never pulled in.
+EXTRA_LINK=()
+if [[ -n "${AV2ENC_CORE_LIB:-}" ]]; then
+  EXTRA_LINK+=("$AV2ENC_CORE_LIB")
+fi
 "${CXX}" "${FLAGS[@]}" -DGATE_USE_PATCHED=1 \
   "$ROOT/src/codec/transform/inter_residual/gate/video_residual_gate.cpp" \
-  "$SYNTAX" "$HEADERS" "$INTER" "${CORE[@]}" -o "$OUT/ddt_gate"
+  "$SYNTAX" "$HEADERS" "$INTER" "${CORE[@]}" \
+  "${EXTRA_LINK[@]+"${EXTRA_LINK[@]}"}" -o "$OUT/ddt_gate"
 "${CXX}" "${FLAGS[@]}" "$HERE/ddt_splice.cpp" \
   "$ROOT/src/codec/transform/ddt/ddt_syntax.cpp" \
   "$ROOT/src/core/bitstream/bitwriter.cpp" -o "$OUT/ddt_splice"

@@ -2,7 +2,7 @@
 //
 // This file owns the persistent CUDA runtime (one Context, one Arena, pinned
 // staging) and the data-flow between the staged components under
-// `src/cuda/m1/<stage>/`.  It never allocates in the block loop and performs at
+// `src/cuda/pipeline/still/<stage>/`.  It never allocates in the block loop and performs at
 // most one stream synchronisation per frame.
 //
 // Until a component exists, the corresponding work is produced by the CPU M1
@@ -19,44 +19,58 @@
 // Stage component headers, included as their workstreams land.  Everything is
 // guarded so this file keeps building before a component exists; the plan
 // bridge is the only component with an orchestrator-facing adapter today.
-#if __has_include("cuda/m1/plan/plan_gpu_bridge.h")
+#if __has_include("cuda/pipeline/still/plan/plan_gpu_bridge.h")
 #include "cuda/pipeline/still/plan/plan_gpu_bridge.h"
 #define AV2ENC_STILL_GPU_HAVE_PLAN_BRIDGE 1
 #else
 #define AV2ENC_STILL_GPU_HAVE_PLAN_BRIDGE 0
 #endif
-#if __has_include("cuda/m1/search/luma_search.h")
+#if __has_include("cuda/pipeline/still/search/luma_search.h")
 #include "cuda/pipeline/still/search/luma_search.h"
 #endif
-#if __has_include("cuda/m1/tx/still_tx.h")
+#if __has_include("cuda/pipeline/still/tx/still_tx.h")
 #include "cuda/pipeline/still/tx/still_tx.h"
 #endif
-#if __has_include("cuda/m1/recon/recon.h")
+#if __has_include("cuda/pipeline/still/recon/recon.h")
 #include "cuda/pipeline/still/recon/recon.h"
 #endif
-#if __has_include("cuda/m1/chroma/still_chroma.h")
+#if __has_include("cuda/pipeline/still/chroma/still_chroma.h")
 #include "cuda/pipeline/still/chroma/still_chroma.h"
 #endif
-#if __has_include("cuda/m1/cfl/still_cfl.h")
+#if __has_include("cuda/pipeline/still/cfl/still_cfl.h")
 #include "cuda/pipeline/still/cfl/still_cfl.h"
 #endif
-#if __has_include("cuda/m1/sched/sched_bridge.h")
+#if __has_include("cuda/pipeline/still/sched/sched_bridge.h")
 #include "cuda/pipeline/still/sched/sched_bridge.h"
 #define AV2ENC_STILL_GPU_HAVE_SCHED_BRIDGE 1
 #else
 #define AV2ENC_STILL_GPU_HAVE_SCHED_BRIDGE 0
 #endif
-#if __has_include("encoder/m1/stream/still_stream_bridge.h")
+#if __has_include("pipeline/still/stream/still_stream_bridge.h")
 #include "pipeline/still/stream/still_stream_bridge.h"
 #define AV2ENC_STILL_GPU_HAVE_STREAM_BRIDGE 1
 #else
 #define AV2ENC_STILL_GPU_HAVE_STREAM_BRIDGE 0
 #endif
-#if __has_include("cuda/intra_modes/intra_modes.h")
+#if __has_include("cuda/codec/intra/modes/intra_modes.h")
 #include "cuda/codec/intra/modes/intra_modes.h"
 #define AV2ENC_STILL_GPU_HAVE_INTRA_MODES 1
 #else
 #define AV2ENC_STILL_GPU_HAVE_INTRA_MODES 0
+#endif
+#if __has_include("cuda/pipeline/still/cdef/still_cdef_cuda.h")
+#include "cuda/pipeline/still/cdef/still_cdef.h"
+#include "cuda/pipeline/still/cdef/still_cdef_cuda.h"
+#define AV2ENC_STILL_GPU_HAVE_CDEF 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_CDEF 0
+#endif
+#if __has_include("cuda/codec/filters/loop_restoration/ccso.h")
+#include "codec/filters/loop_restoration/restoration.h"
+#include "cuda/codec/filters/loop_restoration/ccso.h"
+#define AV2ENC_STILL_GPU_HAVE_CCSO 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_CCSO 0
 #endif
 
 // Full GPU frame pipeline: real plan tree + luma search + chroma/CfL + TX +
@@ -64,10 +78,10 @@
 // present; otherwise the frame falls back to the CPU reference.
 #if AV2ENC_STILL_GPU_HAVE_PLAN_BRIDGE && AV2ENC_STILL_GPU_HAVE_INTRA_MODES && \
     AV2ENC_STILL_GPU_HAVE_SCHED_BRIDGE && AV2ENC_STILL_GPU_HAVE_STREAM_BRIDGE && \
-    __has_include("cuda/m1/search/luma_search.h") && \
-    __has_include("cuda/m1/chroma/still_chroma.h") && \
-    __has_include("cuda/m1/tx/still_tx.h") && \
-    __has_include("cuda/m1/recon/recon.h")
+    __has_include("cuda/pipeline/still/search/luma_search.h") && \
+    __has_include("cuda/pipeline/still/chroma/still_chroma.h") && \
+    __has_include("cuda/pipeline/still/tx/still_tx.h") && \
+    __has_include("cuda/pipeline/still/recon/recon.h")
 #define AV2ENC_STILL_GPU_HAVE_FULL 1
 #else
 #define AV2ENC_STILL_GPU_HAVE_FULL 0
@@ -436,16 +450,16 @@ struct DeviceBuffers {
   std::size_t luma_results_bytes = 0;
   im::IntraJob* luma_jobs = nullptr;
   std::size_t luma_jobs_bytes = 0;
-  cav2enc::still::StillChromaResult* chroma_results = nullptr;
+  cm1::StillChromaResult* chroma_results = nullptr;
   std::size_t chroma_results_bytes = 0;
   std::int32_t* eob = nullptr;  // 3 * block_count (Y, U, V per block)
   std::size_t eob_bytes = 0;
   StillTxJob* tx_jobs = nullptr;  // 3 * block_count
   std::size_t tx_jobs_bytes = 0;
   int* tx_errors = nullptr;
-  cav2enc::still::ReconWriteJob* recon_jobs = nullptr;  // 3 * block_count
+  cm1::ReconWriteJob* recon_jobs = nullptr;  // 3 * block_count
   std::size_t recon_jobs_bytes = 0;
-  cav2enc::still::ReconBlockInfo* recon_infos = nullptr;  // block_count
+  cm1::ReconBlockInfo* recon_infos = nullptr;  // block_count
   std::size_t recon_infos_bytes = 0;
   void* search_scratch = nullptr;
   std::size_t search_scratch_bytes = 0;
@@ -457,6 +471,22 @@ struct DeviceBuffers {
   std::size_t intra_joint_bytes = 0;
   std::uint8_t* uv_smooth = nullptr;
   std::size_t uv_smooth_bytes = 0;
+  // Post-deblock in-loop filters (§7.18 CDEF).  CDEF needs a destination
+  // distinct from the unfiltered reconstruction, so it writes its own plane
+  // set; the orchestrator downloads whichever set is current.
+  U8Planes filter;
+  std::uint8_t* cdef_skip = nullptr;             // luma MI grid, all zero
+  std::uint8_t* cdef_lossless = nullptr;         // luma MI grid, all zero
+  std::uint8_t* cdef_lossless_chroma = nullptr;  // chroma MI grid, all zero
+  std::size_t cdef_mi_bytes = 0;
+  std::size_t cdef_chroma_mi_bytes = 0;
+  std::int8_t* cdef_idx = nullptr;               // per-64x64 grid
+  std::size_t cdef_idx_bytes = 0;
+  // §7.19 CCSO: per-plane unit-enable grids and decoded offset tables.
+  std::uint8_t* ccso_blks[3] = {nullptr, nullptr, nullptr};
+  std::size_t ccso_blk_bytes[3] = {0, 0, 0};
+  std::int16_t* ccso_offsets[3] = {nullptr, nullptr, nullptr};
+  std::size_t ccso_offset_bytes[3] = {0, 0, 0};
 #endif
 };
 
@@ -523,10 +553,10 @@ std::size_t full_device_bytes(const FramePlan& plan) {
   total += n * sizeof(srch::LumaSearchBlock);
   total += n * sizeof(srch::LumaSearchResult);
   total += n * sizeof(im::IntraJob);
-  total += n * sizeof(cav2enc::still::StillChromaResult);
-  total += n * sizeof(cav2enc::still::ReconBlockInfo);
+  total += n * sizeof(cm1::StillChromaResult);
+  total += n * sizeof(cm1::ReconBlockInfo);
   total += 3u * n * sizeof(StillTxJob);
-  total += 3u * n * sizeof(cav2enc::still::ReconWriteJob);
+  total += 3u * n * sizeof(cm1::ReconWriteJob);
   total += 3u * n * sizeof(std::int32_t);
   total += sizeof(int);  // tx_errors
   total += srch::luma_search_scratch_bytes(
@@ -535,6 +565,21 @@ std::size_t full_device_bytes(const FramePlan& plan) {
   total += mi_cells + chroma_mi * 2u;  // decoded[3]
   total += mi_cells * sizeof(int);     // intra_joint
   total += chroma_mi;                  // uv_smooth
+  // In-loop filter (§7.18) destination planes and metadata grids.
+  const std::size_t plane_y =
+      static_cast<std::size_t>(plan.y_stride) * plan.padded_height;
+  const std::size_t plane_c =
+      static_cast<std::size_t>(plan.u_stride) * (plan.padded_height / 2u);
+  total += plane_y + plane_c * 2u;     // filter planes
+  // skip/lossless/lossless_chroma all live on the luma MI grid.
+  total += mi_cells * 3u;
+  const std::size_t n64_cols = (plan.mi_cols + 15u) / 16u;
+  const std::size_t n64_rows = (plan.mi_rows + 15u) / 16u;
+  total += n64_cols * n64_rows;        // cdef_idx (int8)
+  // §7.19 CCSO: three unit-enable grids (worst case luma grid) and three
+  // decoded offset tables (576 int16 per plane).
+  total += 3u * n64_cols * n64_rows;
+  total += 3u * 576u * sizeof(std::int16_t);
   return total;
 }
 #endif
@@ -581,14 +626,28 @@ bool buffers_fit(const FramePlan& plan, const DeviceBuffers& buffers,
       return false;
     }
   }
-  return buffers.luma_blocks_bytes >= n * sizeof(srch::LumaSearchBlock) &&
+  const std::size_t n64_cols = (plan.mi_cols + 15u) / 16u;
+  const std::size_t n64_rows = (plan.mi_rows + 15u) / 16u;
+  return buffers.filter.y_bytes >= luma_bytes &&
+         buffers.filter.u_bytes >= chroma_bytes &&
+         buffers.filter.v_bytes >= chroma_bytes &&
+         buffers.cdef_mi_bytes >= mi_cells &&
+         buffers.cdef_chroma_mi_bytes >= mi_cells &&
+         buffers.cdef_idx_bytes >= n64_cols * n64_rows &&
+         buffers.ccso_blk_bytes[0] >= n64_cols * n64_rows &&
+         buffers.ccso_blk_bytes[1] >= n64_cols * n64_rows &&
+         buffers.ccso_blk_bytes[2] >= n64_cols * n64_rows &&
+         buffers.ccso_offset_bytes[0] >= 576u * sizeof(std::int16_t) &&
+         buffers.ccso_offset_bytes[1] >= 576u * sizeof(std::int16_t) &&
+         buffers.ccso_offset_bytes[2] >= 576u * sizeof(std::int16_t) &&
+         buffers.luma_blocks_bytes >= n * sizeof(srch::LumaSearchBlock) &&
          buffers.luma_results_bytes >= n * sizeof(srch::LumaSearchResult) &&
          buffers.luma_jobs_bytes >= n * sizeof(im::IntraJob) &&
-         buffers.chroma_results_bytes >= n * sizeof(cav2enc::still::StillChromaResult) &&
+         buffers.chroma_results_bytes >= n * sizeof(cm1::StillChromaResult) &&
          buffers.eob_bytes >= 3u * n * sizeof(std::int32_t) &&
          buffers.tx_jobs_bytes >= 3u * n * sizeof(StillTxJob) &&
-         buffers.recon_jobs_bytes >= 3u * n * sizeof(cav2enc::still::ReconWriteJob) &&
-         buffers.recon_infos_bytes >= n * sizeof(cav2enc::still::ReconBlockInfo) &&
+         buffers.recon_jobs_bytes >= 3u * n * sizeof(cm1::ReconWriteJob) &&
+         buffers.recon_infos_bytes >= n * sizeof(cm1::ReconBlockInfo) &&
          buffers.search_scratch_bytes >=
              srch::luma_search_scratch_bytes(kSearchMaxBlocks,
                                              kSearchMaxBlockArea,
@@ -702,11 +761,11 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
     out.luma_blocks_bytes = n * sizeof(srch::LumaSearchBlock);
     out.luma_results_bytes = n * sizeof(srch::LumaSearchResult);
     out.luma_jobs_bytes = n * sizeof(im::IntraJob);
-    out.chroma_results_bytes = n * sizeof(cav2enc::still::StillChromaResult);
+    out.chroma_results_bytes = n * sizeof(cm1::StillChromaResult);
     out.eob_bytes = 3u * n * sizeof(std::int32_t);
     out.tx_jobs_bytes = 3u * n * sizeof(StillTxJob);
-    out.recon_jobs_bytes = 3u * n * sizeof(cav2enc::still::ReconWriteJob);
-    out.recon_infos_bytes = n * sizeof(cav2enc::still::ReconBlockInfo);
+    out.recon_jobs_bytes = 3u * n * sizeof(cm1::ReconWriteJob);
+    out.recon_infos_bytes = n * sizeof(cm1::ReconBlockInfo);
     out.search_scratch_bytes = srch::luma_search_scratch_bytes(
         kSearchMaxBlocks, kSearchMaxBlockArea, kSearchCandidatesPerChunk);
     out.decoded_bytes[0] = mi_cells;
@@ -724,13 +783,13 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
         bump(out.luma_results_bytes, 256));
     out.luma_jobs =
         static_cast<im::IntraJob*>(bump(out.luma_jobs_bytes, 256));
-    out.chroma_results = static_cast<cav2enc::still::StillChromaResult*>(
+    out.chroma_results = static_cast<cm1::StillChromaResult*>(
         bump(out.chroma_results_bytes, 256));
     out.eob = static_cast<std::int32_t*>(bump(out.eob_bytes, 256));
     out.tx_jobs = static_cast<StillTxJob*>(bump(out.tx_jobs_bytes, 256));
-    out.recon_jobs = static_cast<cav2enc::still::ReconWriteJob*>(
+    out.recon_jobs = static_cast<cm1::ReconWriteJob*>(
         bump(out.recon_jobs_bytes, 256));
-    out.recon_infos = static_cast<cav2enc::still::ReconBlockInfo*>(
+    out.recon_infos = static_cast<cm1::ReconBlockInfo*>(
         bump(out.recon_infos_bytes, 256));
     out.search_scratch = bump(out.search_scratch_bytes, 256);
     out.tx_errors = static_cast<int*>(bump(sizeof(int), 256));
@@ -742,6 +801,40 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
     }
     out.intra_joint = static_cast<int*>(bump(out.intra_joint_bytes, 256));
     out.uv_smooth = static_cast<std::uint8_t*>(bump(out.uv_smooth_bytes, 256));
+    // In-loop filter destination planes + metadata grids (§7.18).
+    out.filter.y_bytes = luma_bytes;
+    out.filter.u_bytes = chroma_bytes;
+    out.filter.v_bytes = chroma_bytes;
+    ok = ok && bump_u8(out.filter.y_bytes, &out.filter.y);
+    ok = ok && bump_u8(out.filter.u_bytes, &out.filter.u);
+    ok = ok && bump_u8(out.filter.v_bytes, &out.filter.v);
+    out.cdef_mi_bytes = mi_cells;
+    // §7.18.1 indexes LosslessArray[ChromaSegmentIds] on the luma MI grid.
+    out.cdef_chroma_mi_bytes = mi_cells;
+    out.cdef_skip = static_cast<std::uint8_t*>(
+        bump(out.cdef_mi_bytes, 256));
+    out.cdef_lossless = static_cast<std::uint8_t*>(
+        bump(out.cdef_mi_bytes, 256));
+    out.cdef_lossless_chroma = static_cast<std::uint8_t*>(
+        bump(out.cdef_chroma_mi_bytes, 256));
+    const std::size_t n64_cols = (plan.mi_cols + 15u) / 16u;
+    const std::size_t n64_rows = (plan.mi_rows + 15u) / 16u;
+    out.cdef_idx_bytes = n64_cols * n64_rows;
+    out.cdef_idx = static_cast<std::int8_t*>(bump(out.cdef_idx_bytes, 256));
+    for (int plane = 0; plane < 3; ++plane) {
+      out.ccso_blk_bytes[plane] = n64_cols * n64_rows;
+      out.ccso_blks[plane] = static_cast<std::uint8_t*>(
+          bump(out.ccso_blk_bytes[plane], 256));
+      out.ccso_offset_bytes[plane] = 576u * sizeof(std::int16_t);
+      out.ccso_offsets[plane] = static_cast<std::int16_t*>(
+          bump(out.ccso_offset_bytes[plane], 256));
+      ok = ok && out.ccso_blks[plane] != nullptr &&
+           out.ccso_offsets[plane] != nullptr;
+    }
+    ok = ok && out.filter.y != nullptr && out.filter.u != nullptr &&
+         out.filter.v != nullptr && out.cdef_skip != nullptr &&
+         out.cdef_lossless != nullptr &&
+         out.cdef_lossless_chroma != nullptr && out.cdef_idx != nullptr;
     ok = ok && out.pred_packed[0] != nullptr &&
          out.pred_packed[1] != nullptr && out.pred_packed[2] != nullptr &&
          out.residual_packed[0] != nullptr &&
@@ -975,6 +1068,8 @@ bool compare_plane(std::span<const std::uint8_t> gpu,
     error = std::string(plane) + " plane is too small";
     return false;
   }
+  std::uint64_t mismatches = 0;
+  std::string first;
   for (std::uint32_t y = 0; y < height; ++y) {
     for (std::uint32_t x = 0; x < width; ++x) {
       const std::uint8_t got =
@@ -982,13 +1077,21 @@ bool compare_plane(std::span<const std::uint8_t> gpu,
       const std::uint8_t want =
           cpu[static_cast<std::size_t>(y) * width + x];
       if (got != want) {
-        error = std::string(plane) + " mismatch at (" +
-                std::to_string(x) + ", " + std::to_string(y) + "): got " +
-                std::to_string(static_cast<int>(got)) + ", want " +
-                std::to_string(static_cast<int>(want));
-        return false;
+        if (first.empty()) {
+          first = std::string(plane) + " mismatch at (" +
+                  std::to_string(x) + ", " + std::to_string(y) + "): got " +
+                  std::to_string(static_cast<int>(got)) + ", want " +
+                  std::to_string(static_cast<int>(want));
+        }
+        ++mismatches;
       }
     }
+  }
+  if (mismatches != 0) {
+    error = first + " (" + std::to_string(mismatches) + " of " +
+            std::to_string(static_cast<std::uint64_t>(width) * height) +
+            " samples)";
+    return false;
   }
   return true;
 }
@@ -1152,7 +1255,7 @@ __global__ void prepare_prediction_kernel(
 // Writes the IntraJointMode the reconstruction state needs.  Mirrors
 // syntax::y_mode_code(): reordered index 0..4 for non-directional modes,
 // 5 + dir_index for directional ones.
-__global__ void prepare_commit_kernel(cav2enc::still::ReconBlockInfo* infos,
+__global__ void prepare_commit_kernel(cm1::ReconBlockInfo* infos,
                                       const srch::LumaSearchResult* results,
                                       int index) {
   if (blockIdx.x != 0 || threadIdx.x != 0) {
@@ -1207,6 +1310,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
                            HostBuffers& host,
                            std::vector<BlockDecision>& decisions,
                            GpuResult& result,
+                           const ::av2enc::still::StillResult* cpu_plan,
                            bool& synced, std::string& error) {
   synced = false;
   GpuRuntime& gpu = runtime();
@@ -1221,6 +1325,24 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   const int chroma_coded_h = mi_rows * 2;
   const int chroma_vis_w = static_cast<int>((picture.width + 1u) / 2u);
   const int chroma_vis_h = static_cast<int>((picture.height + 1u) / 2u);
+  // In-loop filters: the CPU reference plans the decisions/parameters (index
+  // grids, offsets, unit grids), the GPU applies the normative pixel kernels to
+  // the deblocked reconstruction in §7.18/§7.19 order.
+  const ::av2enc::still::StillConfig* filter_config =
+      cpu_plan != nullptr ? &cpu_plan->config : nullptr;
+  const bool cdef_active =
+#if AV2ENC_STILL_GPU_HAVE_CDEF
+      filter_config != nullptr && filter_config->cdef.enable &&
+      cpu_plan != nullptr && !cpu_plan->cdef_idx.empty();
+#else
+      false;
+#endif
+  const bool ccso_active =
+#if AV2ENC_STILL_GPU_HAVE_CCSO
+      filter_config != nullptr && filter_config->ccso.enable;
+#else
+      false;
+#endif
   if (blocks <= 0 || buffers.tx_jobs == nullptr) {
     error = "gpu: device buffers are not prepared";
     return GpuRunStatus::kError;
@@ -1256,9 +1378,9 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::vector<srch::LumaSearchBlock> luma_blocks(static_cast<std::size_t>(blocks));
   std::vector<im::IntraJob> luma_jobs(static_cast<std::size_t>(blocks));
   std::vector<StillTxJob> tx_jobs(static_cast<std::size_t>(blocks) * 3u);
-  std::vector<cav2enc::still::ReconWriteJob> recon_jobs(static_cast<std::size_t>(blocks) * 3u);
-  std::vector<cav2enc::still::ReconBlockInfo> recon_infos(static_cast<std::size_t>(blocks));
-  std::vector<cav2enc::still::StillChromaJob> chroma_jobs(static_cast<std::size_t>(blocks));
+  std::vector<cm1::ReconWriteJob> recon_jobs(static_cast<std::size_t>(blocks) * 3u);
+  std::vector<cm1::ReconBlockInfo> recon_infos(static_cast<std::size_t>(blocks));
+  std::vector<cm1::StillChromaJob> chroma_jobs(static_cast<std::size_t>(blocks));
 
   for (int i = 0; i < blocks; ++i) {
     const BlockPlan& block = plan.blocks[static_cast<std::size_t>(i)];
@@ -1359,7 +1481,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       return GpuRunStatus::kUnsupported;
     }
 
-    cav2enc::still::ReconWriteJob& write_y = recon_jobs[static_cast<std::size_t>(i) * 3u];
+    cm1::ReconWriteJob& write_y = recon_jobs[static_cast<std::size_t>(i) * 3u];
     write_y.pred = buffers.pred_packed[0] + block.pred_offset_y;
     write_y.residual = buffers.residual_packed[0] + block.residual_offset_y;
     write_y.plane = buffers.recon.y;
@@ -1370,7 +1492,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     write_y.w = block.luma_w;
     write_y.h = block.luma_h;
 
-    cav2enc::still::ReconWriteJob& write_u =
+    cm1::ReconWriteJob& write_u =
         recon_jobs[static_cast<std::size_t>(i) * 3u + 1u];
     write_u.pred = buffers.pred_packed[1] + block.pred_offset_u;
     write_u.residual = buffers.residual_packed[1] + block.residual_offset_u;
@@ -1381,14 +1503,14 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     write_u.y0 = cy;
     write_u.w = block.chroma_w;
     write_u.h = block.chroma_h;
-    cav2enc::still::ReconWriteJob& write_v =
+    cm1::ReconWriteJob& write_v =
         recon_jobs[static_cast<std::size_t>(i) * 3u + 2u];
     write_v = write_u;
     write_v.pred = buffers.pred_packed[2] + block.pred_offset_v;
     write_v.residual = buffers.residual_packed[2] + block.residual_offset_v;
     write_v.plane = buffers.recon.v;
 
-    cav2enc::still::ReconBlockInfo& info = recon_infos[static_cast<std::size_t>(i)];
+    cm1::ReconBlockInfo& info = recon_infos[static_cast<std::size_t>(i)];
     info.mi_row = block.mi_row;
     info.mi_col = block.mi_col;
     info.w4 = block.luma_w / 4;
@@ -1415,7 +1537,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     info.region_intra = 1;
     info.lossless = 0;
 
-    cav2enc::still::StillChromaJob& chroma = chroma_jobs[static_cast<std::size_t>(i)];
+    cm1::StillChromaJob& chroma = chroma_jobs[static_cast<std::size_t>(i)];
     chroma.luma = buffers.recon.y;
     chroma.luma_stride = static_cast<int>(plan.y_stride);
     chroma.luma_max_x = coded_w - 1;
@@ -1451,13 +1573,57 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   const std::size_t luma_jobs_bytes = luma_jobs.size() * sizeof(im::IntraJob);
   const std::size_t tx_jobs_bytes = tx_jobs.size() * sizeof(StillTxJob);
   const std::size_t recon_jobs_bytes =
-      recon_jobs.size() * sizeof(cav2enc::still::ReconWriteJob);
+      recon_jobs.size() * sizeof(cm1::ReconWriteJob);
   const std::size_t recon_infos_bytes =
-      recon_infos.size() * sizeof(cav2enc::still::ReconBlockInfo);
+      recon_infos.size() * sizeof(cm1::ReconBlockInfo);
+  // §7.19 CCSO metadata: per-plane unit-enable grid + decoded offset table.
+  // The decoded tables come from the CPU reference's parameters so the GPU
+  // kernel sees exactly the values the bitstream signals.
+  std::size_t ccso_blk_bytes[3] = {0, 0, 0};
+  std::size_t ccso_off_bytes[3] = {0, 0, 0};
+  std::int16_t ccso_offset_tables[3][576] = {};
+  const std::size_t cdef_idx_bytes =
+      cdef_active ? cpu_plan->cdef_idx.size() : 0;
+#if AV2ENC_STILL_GPU_HAVE_CCSO
+  if (ccso_active) {
+    for (int plane = 0; plane < 3; ++plane) {
+      const ::av2enc::still::StillCcsoPlane& cfg = filter_config->ccso.plane[plane];
+      if (!cfg.enabled) {
+        continue;
+      }
+      ::av2enc::restoration::CcsoParams params;
+      params.enabled = true;
+      params.bo_only = cfg.bo_only;
+      params.scale_idx = cfg.scale_idx;
+      params.quant_idx = cfg.quant_idx;
+      params.ext_filter = cfg.ext_filter;
+      params.edge_clf = cfg.edge_clf;
+      params.max_band_log2 = cfg.max_band_log2;
+      const int count = ::av2enc::restoration::ccso_offset_count(params);
+      if (count <= 0 || count > 576 ||
+          !::av2enc::restoration::ccso_set_offsets(params, cfg.offset_idx,
+                                                   static_cast<std::size_t>(
+                                                       count))) {
+        error = "gpu: CCSO offset table is not signallable";
+        return GpuRunStatus::kError;
+      }
+      std::memcpy(ccso_offset_tables[plane], params.offsets,
+                  sizeof(ccso_offset_tables[plane]));
+      ccso_off_bytes[plane] = sizeof(ccso_offset_tables[plane]);
+      ccso_blk_bytes[plane] =
+          cpu_plan->ccso_blks[plane].empty()
+              ? 0
+              : cpu_plan->ccso_blks[plane].size() * sizeof(std::uint8_t);
+    }
+  }
+#endif
   const std::size_t upload_total = src_y_bytes + src_c_bytes * 2u +
                                    luma_blocks_bytes + luma_jobs_bytes +
                                    tx_jobs_bytes + recon_jobs_bytes +
-                                   recon_infos_bytes;
+                                   recon_infos_bytes + ccso_blk_bytes[0] +
+                                   ccso_blk_bytes[1] + ccso_blk_bytes[2] +
+                                   ccso_off_bytes[0] + ccso_off_bytes[1] +
+                                   ccso_off_bytes[2] + cdef_idx_bytes;
   auto* upload = static_cast<std::uint8_t*>(gpu.upload.data());
   if (upload == nullptr || gpu.upload.capacity() < upload_total) {
     error = "gpu: pinned upload staging is too small";
@@ -1485,6 +1651,29 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::memcpy(upload + up, recon_infos.data(), recon_infos_bytes);
   const std::uint8_t* host_recon_infos = upload + up;
   up += recon_infos_bytes;
+  const std::uint8_t* host_ccso_blks[3] = {nullptr, nullptr, nullptr};
+  const std::int16_t* host_ccso_offsets[3] = {nullptr, nullptr, nullptr};
+  const std::int8_t* host_cdef_idx = nullptr;
+  if (cdef_idx_bytes != 0) {
+    std::memcpy(upload + up, cpu_plan->cdef_idx.data(), cdef_idx_bytes);
+    host_cdef_idx = reinterpret_cast<const std::int8_t*>(upload + up);
+    up += cdef_idx_bytes;
+  }
+  for (int plane = 0; plane < 3; ++plane) {
+    if (ccso_blk_bytes[plane] != 0) {
+      std::memcpy(upload + up, cpu_plan->ccso_blks[plane].data(),
+                  ccso_blk_bytes[plane]);
+      host_ccso_blks[plane] = upload + up;
+      up += ccso_blk_bytes[plane];
+    }
+    if (ccso_off_bytes[plane] != 0) {
+      std::memcpy(upload + up, ccso_offset_tables[plane],
+                  ccso_off_bytes[plane]);
+      host_ccso_offsets[plane] = reinterpret_cast<const std::int16_t*>(
+          upload + up);
+      up += ccso_off_bytes[plane];
+    }
+  }
 
   const auto enqueue_upload = [&](void* dst, const void* src,
                                   std::size_t bytes) -> bool {
@@ -1506,17 +1695,46 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     error = "gpu: upload failed";
     return GpuRunStatus::kError;
   }
+  for (int plane = 0; plane < 3; ++plane) {
+    if (host_ccso_blks[plane] != nullptr &&
+        !enqueue_upload(buffers.ccso_blks[plane], host_ccso_blks[plane],
+                        ccso_blk_bytes[plane])) {
+      error = "gpu: CCSO grid upload failed";
+      return GpuRunStatus::kError;
+    }
+    if (host_ccso_offsets[plane] != nullptr &&
+        !enqueue_upload(buffers.ccso_offsets[plane], host_ccso_offsets[plane],
+                        ccso_off_bytes[plane])) {
+      error = "gpu: CCSO offset upload failed";
+      return GpuRunStatus::kError;
+    }
+  }
+  if (cdef_active) {
+    // M1 is intra/QP90: no skipped and no lossless MI cells, so the metadata
+    // grids are all zero.  The index grid is uploaded from the CPU plan.
+    if (!enqueue_upload(buffers.cdef_idx, host_cdef_idx,
+                        cdef_idx_bytes) ||
+        cudaMemsetAsync(buffers.cdef_skip, 0, buffers.cdef_mi_bytes, stream) !=
+            cudaSuccess ||
+        cudaMemsetAsync(buffers.cdef_lossless, 0, buffers.cdef_mi_bytes,
+                        stream) != cudaSuccess ||
+        cudaMemsetAsync(buffers.cdef_lossless_chroma, 0,
+                        buffers.cdef_chroma_mi_bytes, stream) != cudaSuccess) {
+      error = "gpu: CDEF metadata upload failed";
+      return GpuRunStatus::kError;
+    }
+  }
 
   // ---- reconstruction state ---------------------------------------------
   const int chroma_height = static_cast<int>(plan.padded_height / 2u);
-  cav2enc::still::ReconFrame recon_frame;
-  recon_frame.plane[0] = cav2enc::still::ReconPlane{buffers.recon.y,
+  cm1::ReconFrame recon_frame;
+  recon_frame.plane[0] = cm1::ReconPlane{buffers.recon.y,
                                          static_cast<int>(plan.y_stride),
                                          static_cast<int>(plan.padded_height)};
-  recon_frame.plane[1] = cav2enc::still::ReconPlane{buffers.recon.u,
+  recon_frame.plane[1] = cm1::ReconPlane{buffers.recon.u,
                                          static_cast<int>(plan.u_stride),
                                          chroma_height};
-  recon_frame.plane[2] = cav2enc::still::ReconPlane{buffers.recon.v,
+  recon_frame.plane[2] = cm1::ReconPlane{buffers.recon.v,
                                          static_cast<int>(plan.v_stride),
                                          chroma_height};
   recon_frame.mi_cols = mi_cols;
@@ -1526,7 +1744,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   }
   recon_frame.base_q_idx = options.base_q_idx;
 
-  cav2enc::still::ReconPredState state;
+  cm1::ReconPredState state;
   state.mi_cols = mi_cols;
   state.mi_rows = mi_rows;
   state.decoded[0] = buffers.decoded[0];
@@ -1541,8 +1759,8 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   state.intra_joint = buffers.intra_joint;
   state.uv_smooth = buffers.uv_smooth;
 
-  if (cav2enc::still::recon_init_frame(recon_frame, stream) != cudaSuccess ||
-      cav2enc::still::recon_init_state(state, stream) != cudaSuccess) {
+  if (cm1::recon_init_frame(recon_frame, stream) != cudaSuccess ||
+      cm1::recon_init_state(state, stream) != cudaSuccess) {
     error = "gpu: reconstruction state init failed";
     return GpuRunStatus::kError;
   }
@@ -1570,7 +1788,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   const srch::LumaSearchScratch search_scratch =
       srch::luma_search_make_scratch(buffers.search_scratch, search_layout);
 
-  cav2enc::still::StillChromaOptions chroma_options;
+  cm1::StillChromaOptions chroma_options;
   chroma_options.enable_cfl =
       (options.enable_cfl && !options.force_dc &&
        std::getenv("AV2ENC_STILL_UV_DC") == nullptr)
@@ -1594,7 +1812,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     const int sb_row = (block.mi_row / 16) * 16;
     const int sb_col = (block.mi_col / 16) * 16;
     if (sb_row != last_sb_row || sb_col != last_sb_col) {
-      if (cav2enc::still::recon_begin_sb(state, sb_row, sb_col, stream) != cudaSuccess) {
+      if (cm1::recon_begin_sb(state, sb_row, sb_col, stream) != cudaSuccess) {
         error = "gpu: recon_begin_sb failed";
         return GpuRunStatus::kError;
       }
@@ -1628,14 +1846,14 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       error = "gpu: luma TX failed";
       return GpuRunStatus::kError;
     }
-    if (cav2enc::still::recon_write_blocks(
+    if (cm1::recon_write_blocks(
             buffers.recon_jobs + static_cast<std::size_t>(i) * 3u, 1,
             stream) != cudaSuccess) {
       error = "gpu: luma reconstruction failed";
       return GpuRunStatus::kError;
     }
 
-    if (cav2enc::still::chroma_decide(chroma_jobs[static_cast<std::size_t>(i)],
+    if (cm1::chroma_decide(chroma_jobs[static_cast<std::size_t>(i)],
                            chroma_options, buffers.chroma_results + i,
                            stream) != cudaSuccess) {
       error = "gpu: chroma decision failed";
@@ -1655,7 +1873,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
         return GpuRunStatus::kError;
       }
     }
-    if (cav2enc::still::recon_write_blocks(
+    if (cm1::recon_write_blocks(
             buffers.recon_jobs + static_cast<std::size_t>(i) * 3u + 1u, 2,
             stream) != cudaSuccess) {
       error = "gpu: chroma reconstruction failed";
@@ -1664,7 +1882,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
 
     prepare_commit_kernel<<<1, 1, 0, stream>>>(
         buffers.recon_infos, buffers.luma_results, i);
-    if (cav2enc::still::recon_commit_blocks(buffers.recon_infos + i, 1, state,
+    if (cm1::recon_commit_blocks(buffers.recon_infos + i, 1, state,
                                  recon_frame, stream) != cudaSuccess) {
       error = "gpu: reconstruction commit failed";
       return GpuRunStatus::kError;
@@ -1679,12 +1897,126 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     }
     deblock_options.frame_is_intra = true;
     deblock_options.enable_sdp = false;
-    if (cav2enc::still::recon_deblock_frame(recon_frame, deblock_options, stream) !=
+    if (cm1::recon_deblock_frame(recon_frame, deblock_options, stream) !=
         cudaSuccess) {
       error = "gpu: deblock failed";
       return GpuRunStatus::kError;
     }
   }
+
+  // ---- in-loop filters (§7.18 CDEF) -------------------------------------
+  bool filtered = false;
+#if AV2ENC_STILL_GPU_HAVE_CDEF
+  if (cdef_active) {
+    ::av2enc::cdef::CdefOptions cdef_options;
+    const ::av2enc::still::StillCdefConfig& cfg = filter_config->cdef;
+    cdef_options.damping = cfg.damping;
+    cdef_options.num_strengths = cfg.num_strengths;
+    cdef_options.on_skip_txfm = cfg.on_skip_txfm;
+    cdef_options.disable_loopfilters_across_tiles = false;
+    cdef_options.bit_depth = 8;
+    for (int i = 0; i < cfg.num_strengths && i < ::av2enc::cdef::kMaxStrengths;
+         ++i) {
+      cdef_options.strengths[i].y_pri = cfg.strengths[i].y_pri;
+      cdef_options.strengths[i].y_sec = cfg.strengths[i].y_sec;
+      cdef_options.strengths[i].uv_pri = cfg.strengths[i].uv_pri;
+      cdef_options.strengths[i].uv_sec = cfg.strengths[i].uv_sec;
+    }
+    cm1::CdefDeviceFrame df;
+    df.src[0] = buffers.recon.y;
+    df.src[1] = buffers.recon.u;
+    df.src[2] = buffers.recon.v;
+    df.dst[0] = buffers.filter.y;
+    df.dst[1] = buffers.filter.u;
+    df.dst[2] = buffers.filter.v;
+    df.stride[0] = static_cast<int>(plan.y_stride);
+    df.stride[1] = static_cast<int>(plan.u_stride);
+    df.stride[2] = static_cast<int>(plan.u_stride);
+    df.width = static_cast<int>(picture.width);
+    df.height = static_cast<int>(picture.height);
+    df.mi_cols = mi_cols;
+    df.mi_rows = mi_rows;
+    df.skip = buffers.cdef_skip;
+    df.lossless = buffers.cdef_lossless;
+    df.lossless_chroma = buffers.cdef_lossless_chroma;
+    df.cdef_idx = buffers.cdef_idx;
+    df.n64_cols = (mi_cols + 15) / 16;
+    df.n64_rows = (mi_rows + 15) / 16;
+    std::string cdef_error;
+    if (!cm1::still_cdef_validate_device_frame(df, cdef_options,
+                                               &cdef_error)) {
+      error = "gpu: CDEF frame rejected: " + cdef_error;
+      return GpuRunStatus::kUnsupported;
+    }
+    if (cm1::still_cdef_filter(df, cdef_options, stream) != cudaSuccess) {
+      error = "gpu: CDEF filter failed";
+      return GpuRunStatus::kError;
+    }
+    filtered = true;
+  }
+#endif
+
+  // ---- in-loop filters (§7.19 CCSO) -------------------------------------
+#if AV2ENC_STILL_GPU_HAVE_CCSO
+  if (ccso_active) {
+    // CCSO modifies CdefFrame in place.  Without CDEF the CDEF frame is the
+    // deblocked reconstruction, so seed the destination from it first.
+    if (!filtered) {
+      const std::size_t plane_y =
+          static_cast<std::size_t>(plan.y_stride) * plan.padded_height;
+      const std::size_t plane_c =
+          static_cast<std::size_t>(plan.u_stride) * (plan.padded_height / 2u);
+      if (cudaMemcpyAsync(buffers.filter.y, buffers.recon.y, plane_y,
+                          cudaMemcpyDeviceToDevice, stream) != cudaSuccess ||
+          cudaMemcpyAsync(buffers.filter.u, buffers.recon.u, plane_c,
+                          cudaMemcpyDeviceToDevice, stream) != cudaSuccess ||
+          cudaMemcpyAsync(buffers.filter.v, buffers.recon.v, plane_c,
+                          cudaMemcpyDeviceToDevice, stream) != cudaSuccess) {
+        error = "gpu: CCSO input copy failed";
+        return GpuRunStatus::kError;
+      }
+    }
+    ::av2enc::restoration::CcsoCoreFrame core;
+    core.mi_cols = mi_cols;
+    core.mi_rows = mi_rows;
+    core.sub_x = 1;
+    core.sub_y = 1;
+    core.bit_depth = 8;
+    core.ccso_luma_size_log2 = 6;
+    core.sb_width = 64;
+    core.sb_height = 64;
+    std::uint8_t* dst_planes[3] = {buffers.filter.y, buffers.filter.u,
+                                   buffers.filter.v};
+    const int dst_strides[3] = {static_cast<int>(plan.y_stride),
+                                static_cast<int>(plan.u_stride),
+                                static_cast<int>(plan.u_stride)};
+    for (int plane = 0; plane < 3; ++plane) {
+      const ::av2enc::still::StillCcsoPlane& cfg =
+          filter_config->ccso.plane[plane];
+      ::av2enc::restoration::CcsoCorePlane& out = core.plane[plane];
+      out.enabled = cfg.enabled;
+      out.curr_luma = buffers.recon.y;
+      out.curr_luma_stride = static_cast<int>(plan.y_stride);
+      out.dst = dst_planes[plane];
+      out.dst_stride = dst_strides[plane];
+      out.blks = buffers.ccso_blks[plane];
+      out.blk_cols = cpu_plan->ccso_blk_cols[plane];
+      out.blk_rows = cpu_plan->ccso_blk_rows[plane];
+      out.scale_idx = cfg.scale_idx;
+      out.quant_idx = cfg.quant_idx;
+      out.ext_filter = cfg.ext_filter;
+      out.edge_clf = cfg.edge_clf;
+      out.max_band_log2 = cfg.max_band_log2;
+      out.bo_only = cfg.bo_only;
+      out.offsets = buffers.ccso_offsets[plane];
+    }
+    if (av2enc::cuda::ccso_frame(core, stream) != cudaSuccess) {
+      error = "gpu: CCSO filter failed";
+      return GpuRunStatus::kError;
+    }
+    filtered = true;
+  }
+#endif
 
   // ---- download + the one synchronisation ------------------------------
   const std::size_t recon_y_bytes =
@@ -1699,7 +2031,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   const std::size_t luma_result_bytes =
       static_cast<std::size_t>(blocks) * sizeof(srch::LumaSearchResult);
   const std::size_t chroma_result_bytes =
-      static_cast<std::size_t>(blocks) * sizeof(cav2enc::still::StillChromaResult);
+      static_cast<std::size_t>(blocks) * sizeof(cm1::StillChromaResult);
   const std::size_t download_total =
       recon_y_bytes + recon_c_bytes * 2u + coeff_y_bytes + coeff_u_bytes +
       coeff_v_bytes + eob_bytes + luma_result_bytes + chroma_result_bytes +
@@ -1717,9 +2049,10 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     down += bytes;
     return true;
   };
-  if (!enqueue_download(buffers.recon.y, recon_y_bytes) ||
-      !enqueue_download(buffers.recon.u, recon_c_bytes) ||
-      !enqueue_download(buffers.recon.v, recon_c_bytes) ||
+  const U8Planes& out_planes = filtered ? buffers.filter : buffers.recon;
+  if (!enqueue_download(out_planes.y, recon_y_bytes) ||
+      !enqueue_download(out_planes.u, recon_c_bytes) ||
+      !enqueue_download(out_planes.v, recon_c_bytes) ||
       !enqueue_download(buffers.coeff.y, coeff_y_bytes) ||
       !enqueue_download(buffers.coeff.u, coeff_u_bytes) ||
       !enqueue_download(buffers.coeff.v, coeff_v_bytes) ||
@@ -1767,7 +2100,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       static_cast<std::size_t>(blocks));
   std::memcpy(luma_results.data(), download + read, luma_result_bytes);
   read += luma_result_bytes;
-  std::vector<cav2enc::still::StillChromaResult> chroma_results(
+  std::vector<cm1::StillChromaResult> chroma_results(
       static_cast<std::size_t>(blocks));
   std::memcpy(chroma_results.data(), download + read, chroma_result_bytes);
 
@@ -1776,7 +2109,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     BlockDecision& decision = decisions[static_cast<std::size_t>(i)];
     const srch::LumaSearchResult& luma =
         luma_results[static_cast<std::size_t>(i)];
-    const cav2enc::still::StillChromaResult& chroma =
+    const cm1::StillChromaResult& chroma =
         chroma_results[static_cast<std::size_t>(i)];
     decision.luma_mode = static_cast<std::uint8_t>(luma.mode);
     decision.luma_angle_delta = static_cast<std::int8_t>(luma.angle_delta);
@@ -1804,12 +2137,32 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
 
   // ---- GPU entropy assembly --------------------------------------------
   still_stream::GpuCoefficients coeffs{host.coeff_y, host.coeff_u, host.coeff_v};
-  const ::av2enc::still::StillConfig config = make_still_config(options, picture);
+  // With an in-loop filter the CPU reference's exact header configuration is
+  // reused: the filter parameters are a planning output, so the GPU cannot
+  // re-derive them independently without risking a header mismatch.
+  const ::av2enc::still::StillConfig config =
+      (filter_config != nullptr) ? *filter_config
+                                 : make_still_config(options, picture);
+  still_stream::FilterGrids grids;
+  if (cdef_active) {
+    grids.cdef_idx = cpu_plan->cdef_idx.data();
+    grids.cdef_n64_cols = (mi_cols + 15) / 16;
+    grids.cdef_n64_rows = (mi_rows + 15) / 16;
+  }
+  if (ccso_active) {
+    for (int plane = 0; plane < 3; ++plane) {
+      grids.ccso_blks[plane] = cpu_plan->ccso_blks[plane].empty()
+                                   ? nullptr
+                                   : cpu_plan->ccso_blks[plane].data();
+      grids.ccso_blk_cols[plane] = cpu_plan->ccso_blk_cols[plane];
+      grids.ccso_blk_rows[plane] = cpu_plan->ccso_blk_rows[plane];
+    }
+  }
   std::vector<std::uint8_t> frame;
   std::size_t tile_bytes = 0;
   if (!still_stream::assemble_gpu_frame(result.plan, tree, result.blocks, decisions,
                                     coeffs, config, frame, error,
-                                    &tile_bytes)) {
+                                    &tile_bytes, grids)) {
     error = "gpu: entropy assembly failed: " + error;
     return GpuRunStatus::kError;
   }
@@ -1881,6 +2234,8 @@ StageState GpuStageStatus::get(Stage stage) const noexcept {
       return cfl;
     case Stage::kDeblock:
       return deblock;
+    case Stage::kFilters:
+      return filters;
     case Stage::kSched:
       return sched;
     case Stage::kCount:
@@ -1993,6 +2348,26 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
   }
   result.decisions.assign(result.plan.block_count, BlockDecision{});
 
+  // In-loop filter tools need the CPU reference's planning output (header
+  // parameters + cdef_idx grid) before the GPU frame runs; the CPU encode is
+  // also the parity oracle, so this does not add a second encode later.
+  // In-loop filters change the reconstruction and header; film grain changes
+  // only the §5.14/§5.18.10 metadata.  All reuse the CPU reference's exact
+  // config and planned decision grids.
+  const bool filter_tools = options.enable_cdef || options.enable_ccso ||
+                            options.ccso_edge || options.enable_grain;
+  ::av2enc::still::StillResult cpu;
+  bool cpu_ready = false;
+  if (filter_tools) {
+    std::string cpu_error;
+    if (!::av2enc::still::encode_still_picture(
+            picture, to_cpu_options(options), cpu, cpu_error)) {
+      error = "M1 CPU reference: " + cpu_error;
+      return false;
+    }
+    cpu_ready = true;
+  }
+
   // ---- GPU execution ----------------------------------------------------
   bool gpu_ok = false;
 #if AV2ENC_STILL_GPU_HAVE_FULL
@@ -2020,6 +2395,17 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
       src_bytes + recon_total + coeff_total + decision_bytes + block_bytes;
   std::uint64_t need_upload = src_bytes;
   std::uint64_t need_download = recon_total + coeff_total + decision_bytes;
+  if (filter_tools) {
+    // CDEF index grid + CCSO unit grids/offset tables are staged through the
+    // same pinned upload buffer.
+    const std::uint64_t n64_cols =
+        (static_cast<std::uint64_t>(result.plan.mi_cols) + 15u) / 16u;
+    const std::uint64_t n64_rows =
+        (static_cast<std::uint64_t>(result.plan.mi_rows) + 15u) / 16u;
+    need_upload += n64_cols * n64_rows;                       // cdef_idx
+    need_upload += 3u * n64_cols * n64_rows;                  // ccso_blks
+    need_upload += 3u * 576u * sizeof(std::int16_t);          // ccso offsets
+  }
 
 #if AV2ENC_STILL_GPU_HAVE_FULL
   if (gpu_requested) {
@@ -2027,11 +2413,11 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
     need_device += static_cast<std::uint64_t>(full_device_bytes(result.plan));
     need_upload +=
         n * (sizeof(srch::LumaSearchBlock) + sizeof(im::IntraJob) +
-             3u * sizeof(StillTxJob) + 3u * sizeof(cav2enc::still::ReconWriteJob) +
-             sizeof(cav2enc::still::ReconBlockInfo));
+             3u * sizeof(StillTxJob) + 3u * sizeof(cm1::ReconWriteJob) +
+             sizeof(cm1::ReconBlockInfo));
     need_download +=
         3u * n * sizeof(std::int32_t) +
-        n * (sizeof(srch::LumaSearchResult) + sizeof(cav2enc::still::StillChromaResult)) +
+        n * (sizeof(srch::LumaSearchResult) + sizeof(cm1::StillChromaResult)) +
         sizeof(int);
   }
 #endif
@@ -2055,9 +2441,11 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
     } else {
 #if AV2ENC_STILL_GPU_HAVE_FULL
       bool synced = false;
+      const ::av2enc::still::StillResult* cpu_plan =
+          filter_tools && cpu_ready ? &cpu : nullptr;
       const GpuRunStatus status = run_gpu_frame(
           picture, options, result.plan, tree, host, result.decisions, result,
-          synced, error);
+          cpu_plan, synced, error);
       if (status == GpuRunStatus::kError) {
         return false;
       }
@@ -2067,7 +2455,9 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
         result.stats.tx_jobs =
             static_cast<int>(result.plan.block_count) * 3;
         result.stats.kernel_launches =
-            7 * static_cast<int>(result.plan.block_count) + 2;
+            7 * static_cast<int>(result.plan.block_count) + 2 +
+            (options.enable_cdef ? 1 : 0) +    // §7.18 CDEF filter
+            (options.enable_ccso || options.ccso_edge ? 1 : 0);  // §7.19
         result.stats.host_upload_bytes = need_upload;
         result.stats.host_download_bytes = need_download;
       } else {
@@ -2101,10 +2491,14 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
                                            : StageState::kCpuReference;
     result.stages.deblock = options.enable_deblock ? StageState::kGpu
                                                    : StageState::kStub;
+    result.stages.filters =
+        (options.enable_cdef || options.enable_ccso || options.ccso_edge)
+            ? StageState::kGpu
+            : StageState::kStub;
     result.stages.sched = StageState::kGpu;
     for (Stage stage_id : {Stage::kPlan, Stage::kSearch, Stage::kTx,
                            Stage::kRecon, Stage::kChroma, Stage::kCfl,
-                           Stage::kDeblock, Stage::kSched}) {
+                           Stage::kDeblock, Stage::kFilters, Stage::kSched}) {
       log_stage(options, stage_id, result.stages.get(stage_id));
     }
   } else if (gpu_requested && !tree_ready) {
@@ -2115,6 +2509,10 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
     result.stages.chroma = StageState::kCpuReference;
     result.stages.cfl = StageState::kCpuReference;
     result.stages.deblock = StageState::kCpuReference;
+    result.stages.filters =
+        (options.enable_cdef || options.enable_ccso || options.ccso_edge)
+            ? StageState::kCpuReference
+            : StageState::kStub;
     result.stages.sched = StageState::kStub;
   } else {
     result.stages.plan = StageState::kCpuReference;
@@ -2124,10 +2522,14 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
     result.stages.chroma = StageState::kCpuReference;
     result.stages.cfl = StageState::kCpuReference;
     result.stages.deblock = StageState::kCpuReference;
+    result.stages.filters =
+        (options.enable_cdef || options.enable_ccso || options.ccso_edge)
+            ? StageState::kCpuReference
+            : StageState::kStub;
     result.stages.sched = StageState::kStub;
     for (Stage stage_id : {Stage::kPlan, Stage::kSearch, Stage::kTx,
                            Stage::kRecon, Stage::kChroma, Stage::kCfl,
-                           Stage::kDeblock, Stage::kSched}) {
+                           Stage::kDeblock, Stage::kFilters, Stage::kSched}) {
       log_stage(options, stage_id, result.stages.get(stage_id));
     }
   }
@@ -2135,12 +2537,14 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
   // ---- CPU reference: fallback bytes and the parity oracle --------------
   const bool need_cpu = !gpu_ok || options.verify_against_cpu;
   if (need_cpu) {
-    ::av2enc::still::StillResult cpu;
-    std::string cpu_error;
-    if (!::av2enc::still::encode_still_picture(
-            picture, to_cpu_options(options), cpu, cpu_error)) {
-      error = "M1 CPU reference: " + cpu_error;
-      return false;
+    if (!cpu_ready) {
+      std::string cpu_error;
+      if (!::av2enc::still::encode_still_picture(
+              picture, to_cpu_options(options), cpu, cpu_error)) {
+        error = "M1 CPU reference: " + cpu_error;
+        return false;
+      }
+      cpu_ready = true;
     }
     if (gpu_ok) {
       if (options.verify_against_cpu) {

@@ -37,6 +37,14 @@ def main() -> int:
     src, dst = sys.argv[1], sys.argv[2]
     text = open(src, encoding="utf-8").read()
 
+    # The completion wave integrated the real symbol into still_syntax.cpp
+    # (`--still-idtx`).  In that case this patch is a no-op: a copy of the
+    # source already codes fsc_mode = 0 with the §9.3 CDF.
+    if "cdfs_.fsc_mode" in text:
+        open(dst, "w", encoding="utf-8").write(text)
+        print(f"{src} already codes fsc_mode; copied unchanged -> {dst}")
+        return 0
+
     def sub(old: str, new: str) -> None:
         nonlocal text
         if old not in text:

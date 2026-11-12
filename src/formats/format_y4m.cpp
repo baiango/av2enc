@@ -123,7 +123,8 @@ std::string y4m_colorspace_tag(ChromaFormat chroma, BitDepth depth) {
   }
   std::string tag = base;
   if (depth == BitDepth::k10) {
-    tag += "p10";
+    // Y4M spells monochrome 10-bit "mono10"; other formats use "p10".
+    tag += chroma == ChromaFormat::k400 ? "10" : "p10";
   }
   return "C" + tag;
 }

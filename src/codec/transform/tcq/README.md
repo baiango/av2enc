@@ -1,9 +1,37 @@
-# AV2 TCQ / CCTX (`src/encoder/tcq/`)
+# AV2 TCQ / CCTX (`src/codec/transform/tcq/`)
 
-Status: **component only.** It is not wired into `CMakeLists.txt`, `src/main.cpp`,
-the M1/M2 core, the entropy writer or the bitstream writer, and it writes no
-bytes by itself. It implements the AV2 quantizer tools that sit beyond scalar
-and RDOQ quantisation:
+Status: **component + integrated still path.** The CPU `--still-tcq` path
+(`src/pipeline/still/still_encoder.cpp` + `still_syntax.cpp` +
+`still_headers.cpp`) now writes `enable_tcq = 1`, omits the
+`enable_parity_hiding` bit (single-picture inference), selects
+`coeff_base`/`coeff_base_lf` with `(tcqState >> 1) & 1`, uses the
+`read_quant` escape for the syntax level, and doubles `dqDenom` for luma
+2-D blocks. The rest of this document describes the standalone component,
+which remains the CPU oracle.
+
+Integration status (`src/codec/transform/tcq/still_tcq_gate.sh`):
+
+* `--still-tcq` is default-off; the pinned 64x64 and 640x360 `--still`
+  streams are byte-identical. TCQ is enabled per sequence and applies to
+  luma `TX_CLASS_2D` blocks only, exactly as §5.20.7.27 defines `useTcq`.
+* The decoder gate decodes `--still-tcq` at QP 60/90/120 with
+  `dav2d --strict 1` and compares every plane against the encoder
+  reconstruction (0 differing samples). The pinned IVF MD5s are in the gate.
+* Parity hiding cannot be signalled in a single-picture stream:
+  `choose_tcq_per_frame` is absent and inferred 0, so `enable_tcq = 1`
+  infers `enable_parity_hiding = 0`. The encoder writes no parity bit in
+  that case and never codes the PH coefficient symbols.
+* `--still-tcq` composes with TX_TYPE, RDO-intra and CDEF. It is rejected by
+  name with RDOQ, QM, DC/AC delta-Q and IST (each changes the quantiser or
+  needs the Quant domain the TCQ trellis is not run in).
+* CCTX (`enable_cctx`, `cctx_type`, §7.14.6) is integrated separately in
+  `--still-cctx`; see the `still_cctx_gate.sh` note below.
+
+Component status (below): **component only** for the standalone build.
+It is not wired into `CMakeLists.txt`'s standalone harness, `src/main.cpp`'s
+default path, the entropy writer or the bitstream writer by itself.
+The component implements the AV2 quantizer tools that sit beyond scalar and
+RDOQ quantisation:
 
 * **TCQ** — `Tcq_Next_State`, the two-pass state sequence, the
   `Quant = 2 * Quant - q0` level mapping, and the `shift += 1` dequant

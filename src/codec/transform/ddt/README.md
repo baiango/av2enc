@@ -1,5 +1,17 @@
 # M2 inter DDT (Data Dependent Transform)
 
+Status: **component + inter gate; rejected in the still CLI.** DDT/DDTX/FDDT
+is inter-only: §5.4.8 omits `enable_inter_ddt` for a single-picture header and
+§7.15.4.1 substitutes the kernel only when `is_inter = 1`. There is no frame or
+block DDT syntax. The completion-wave still path therefore rejects
+`--still-ddt` by name (`src/codec/transform/ddt/still_ddt_gate.sh` checks the
+diagnostic and the pinned still streams). The real proof is
+`gate/build_gate.sh`: a 3-frame M2 inter stream with `enable_inter_ddt = 1`,
+decoded by the pinned `dav2d`, with DDTX and FDDT reconstruction
+sample-for-sample exact. The completion wave also updated the gate's source
+list for the wave-2/3 inter modules (`drl_reorder`, `mv_precision`) so it still
+links on the current tree.
+
 Standalone, spec-only implementation of AV2 `enable_inter_ddt` (DDTX / FDDT)
 for the M2 inter path.  Nothing outside this directory is modified, wired into
 CMake, or committed.

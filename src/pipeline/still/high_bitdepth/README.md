@@ -45,6 +45,12 @@ generalize.
 | `chroma_format_idc` | 0 (4:2:0) | §6.4.1 Table 6.2 |
 | `seq_profile_idc` | 0 | Annex A.2 |
 | coefficient CDF slice | chosen from **raw** `base_q_idx` (<=90 -> 0) | §8.3.1 |
+
+The entropy writer's `init_cdfs()` takes the §8.3.1 slice and can install any
+of the four `still::qctx` table sets; the M10 product stream still pins
+`base_q_idx = 90` (slice 0), so its bytes are unchanged. The integrated
+`--still --bit-depth 10` path passes `HighBitDepthOptions::qctx` and uses
+slices 1..3 for q = 91..303.
 | `Clip1` | 0..1023 | §4.8 |
 | DC bias | 512 | §7.13.2.10 |
 | dequant clip | `+/-(1 << 17)` | §7.14.3 |

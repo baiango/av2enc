@@ -189,12 +189,69 @@ int main(int argc, char** argv) {
       options.palette = true;
       continue;
     }
+    if (arg == "--still-ibc") {
+      options.ibc = true;
+      continue;
+    }
+    if (arg == "--still-ibc-search") {
+      if (i + 1 >= argc || !parse_int(argv[++i], options.ibc_search_step)) {
+        return 2;
+      }
+      continue;
+    }
     if (arg == "--still-mhccp") {
       options.mhccp = true;
       continue;
     }
+    if (arg == "--still-sb128") {
+      options.sb128 = true;
+      continue;
+    }
+    if (arg == "--still-sb256") {
+      options.sb256 = true;
+      continue;
+    }
+    if (arg == "--still-tcq") {
+      options.tcq = true;
+      continue;
+    }
+    if (arg == "--still-ist") {
+      options.ist = true;
+      continue;
+    }
+    if (arg == "--still-cctx") {
+      options.cctx = true;
+      continue;
+    }
+    if (arg == "--still-tx-partition") {
+      options.tx_partition = true;
+      continue;
+    }
+    if (arg == "--still-idtx") {
+      options.idtx = true;
+      continue;
+    }
+    if (arg == "--still-qm") {
+      options.qm = true;
+      continue;
+    }
+    if (arg == "--still-user-qm") {
+      options.qm = true;
+      options.user_qm = true;
+      continue;
+    }
     if (arg == "--still-depth") {
       if (i + 1 >= argc || !parse_int(argv[++i], options.max_partition_depth)) {
+        return 2;
+      }
+      continue;
+    }
+    if (arg == "--still-per-segment-q") {
+      options.per_segment_q = true;
+      continue;
+    }
+    if (arg == "--still-seg-delta") {
+      if (i + 1 >= argc || !parse_int(argv[++i], options.per_segment_q_delta)) {
         return 2;
       }
       continue;

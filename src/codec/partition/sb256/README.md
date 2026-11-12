@@ -345,12 +345,12 @@ change:
 
 | Tool / path | Status at 256 SB | Exact call sites |
 |---|---|---|
-| CDEF (M1 symbol writer) | 64x64 unit only; `sb_width_log2` hardcoded 4 | `src/encoder/m1/still_syntax.cpp:1416` (`/*sb_width_log2=*/4`) |
+| CDEF (M1 symbol writer) | **wired:** `sb_width_log2 = 5` for 128 SB (`--still-cdef`); still a 64x64 filter unit | `src/pipeline/still/still_syntax.cpp` (`cdef_encode_block_index`) |
 | CDEF (M2 index writer) | `TileIndexWriter::init` accepts 5/6, but the writer hardcodes 4 | `src/encoder/m2/cdef/video_cdef.cpp:373`, `:380` (“M2's superblock is 64x64”), `:418`; `src/encoder/m2/cdef/video_cdef.h:180` |
 | CDEF (stream/`filters_stream`) | `cdef_tile_init` accepts 5/6; `cdef_clear_superblock` still clears one 16-mi 64x64 origin | `src/encoder/m1/filters_stream/filters_stream.cpp:560`, `:581-586`; `filters_stream.h:140` |
 | CDEF (CUDA) | index-context helper takes `sb_width_log2`, integration does not | `src/cuda/m1/cdef/still_cdef_index_syntax.h:97-118`; `src/cuda/m1/cdef/run_stream_gate.cpp:136-137` writes both flags 0 |
 | CCSO header/filter | `CcsoLumaSizeLog2` 6/7/8 supported in the generic filter and header core, but no 256-SB stream gate | `src/encoder/m1/filters_stream/filters_stream.cpp:702-717`; `src/encoder/m2/restoration/video_restoration.cpp:534-596`; `src/cuda/restoration/ccso.cu:48` |
-| CCSO (M1 writer) | fixed 64x64 unit | `src/encoder/m1/still_syntax.cpp:1324-1333` (`kCcsoShift = 4`); `src/encoder/m1/still_headers.cpp:152` (`ccso_unit_matches_sb_size`, comment says 64x64 units) |
+| CCSO (M1 writer) | **wired:** `CcsoLumaSizeLog2 = 7` (128x128 unit) with `ccso_unit_matches_sb_size = 1` (`--still-ccso`) | `src/pipeline/still/still_syntax.cpp` (`write_ccso`) and `still_encoder.cpp` (unit grid) |
 | CCSO (M2 post) | grid built with `CcsoLumaSizeLog2 = 6` | `src/encoder/m2/post/loop_filters.cpp:130` |
 | Residual / coefficient syntax | tests and gates pin `sb_size = 64`; no 256-root tile is coded | `src/encoder/m2/residual/inter_residual_test.cpp:43`; `src/encoder/m2/residual/gate/video_residual_gate.cpp:204`, `:523`; `src/encoder/m2/video_frame.cpp:290`, `:393` |
 | Inter frames (the only place a 256 root is legal) | every inter header writer forces `use_256 = 0` | `src/encoder/m2/video_headers.cpp:130-131`; `src/encoder/inter/leading/leading.cpp:118-119`; `src/encoder/inter/random_access/random_access.cpp:304-305`; `src/encoder/inter/longterm/longterm_headers.cpp:235-236`; `src/encoder/inter/tlayers/tlayers_syntax.cpp:157-158`; `src/encoder/inter/gme/gme_gate.cpp:208-209` |
@@ -367,6 +367,24 @@ In short: the **SB-syntax layer** is gated at 256; CDEF/CCSO symbol emission,
 residual coding and inter frames are not. The generic CDEF/CCSO header/filter
 cores have partial 5/6-aware code, but their M1/M2 integrations still assume a
 64x64 superblock.
+
+## Integrated product path (`--still-sb256`)
+
+`--still-sb256` signals the 256x256 sequence flag, and an intra frame codes a
+128x128 `SbSize` grid (§5.18.1).  The M1 writer now supports `--still-cdef` and
+`--still-ccso` on that grid: CDEF uses `sb_width_log2 = 5` and CCSO uses
+`CcsoLumaSizeLog2 = 7` (`ccso_unit_matches_sb_size = 1`).  The product gate is
+shared with the 128-SB module:
+
+```sh
+src/codec/partition/sb128/product_gate.sh build-int
+```
+
+It covers `--still-sb256` at 640x360 (edges) and 256x256 with CDEF, CCSO, both,
+8 CDEF strengths and edge CCSO; all decode with the pinned `dav2d` and match the
+encoder reconstruction exactly.  A 256x256 *coding* block is still not emitted
+(an intra frame cannot use one); the flag only changes the sequence-level size
+plus the tile grid.
 
 ## Notes / non-goals
 

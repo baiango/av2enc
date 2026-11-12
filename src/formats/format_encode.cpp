@@ -19,10 +19,10 @@ using av2enc::fmt::ChromaFormat;
 using av2enc::fmt::Format;
 using av2enc::fmt::Picture;
 
-bool encode_10bit_420(const Picture& picture,
-                      const StillFormatOptions& options,
-                      std::vector<std::uint8_t>* frame,
-                      std::uint32_t* tile_bytes, std::string* error) {
+bool encode_10bit(const Picture& picture,
+                  const StillFormatOptions& options,
+                  std::vector<std::uint8_t>* frame,
+                  std::uint32_t* tile_bytes, std::string* error) {
   av2enc::hbd::HbdOptions hbd_options;
   hbd_options.base_q_idx = options.base_q_idx;
   av2enc::hbd::HbdResult result;
@@ -37,12 +37,13 @@ bool encode_10bit_420(const Picture& picture,
     Format format;
     format.width = picture.format.width;
     format.height = picture.format.height;
-    format.chroma = ChromaFormat::k420;
+    format.chroma = picture.format.chroma;
     format.depth = BitDepth::k10;
     if (!av2enc::fmt::allocate_picture(format, recon, *error)) {
       return false;
     }
-    for (int plane = 0; plane < 3; ++plane) {
+    const int planes = av2enc::fmt::num_planes(format.chroma);
+    for (int plane = 0; plane < planes; ++plane) {
       const av2enc::high_bitdepth::HighBitDepthPlane& src = result.recon[plane];
       av2enc::fmt::PlaneBuffer& dst = recon.planes[plane];
       for (int y = 0; y < src.visible_height; ++y) {
@@ -121,16 +122,12 @@ bool encode_8bit_chroma(const Picture& picture,
 
 bool format_still_supported(ChromaFormat chroma, BitDepth depth,
                             std::string* reason) {
+  if (fmt::chroma_format_idc(chroma) < 0) {
+    if (reason != nullptr) *reason = "invalid chroma format";
+    return false;
+  }
   if (depth == BitDepth::k10) {
-    if (chroma != ChromaFormat::k420) {
-      if (reason != nullptr) {
-        *reason =
-            "10-bit is wired for 4:2:0 only; 10-bit 4:2:2/4:4:4/4:0:0 is not "
-            "implemented yet";
-      }
-      return false;
-    }
-    return true;
+    return true;  // 4:2:0 / 4:2:2 / 4:4:4 / 4:0:0, one still writer
   }
   if (depth == BitDepth::k8) {
     if (chroma == ChromaFormat::k420) {
@@ -172,7 +169,7 @@ bool encode_still_format(const std::filesystem::path& input,
   std::uint32_t tile_bytes = 0;
   bool ok = false;
   if (options.depth == BitDepth::k10) {
-    ok = encode_10bit_420(picture, options, &frame, &tile_bytes, error);
+    ok = encode_10bit(picture, options, &frame, &tile_bytes, error);
   } else {
     ok = encode_8bit_chroma(picture, options, &frame, &tile_bytes, error);
   }

@@ -14,7 +14,7 @@
 #      exists, and rewrites it with FORMAT_UPDATE_GOLDENS=1.
 #
 # Usage:
-#   src/formats/format_gate.sh [--bin build-int/av2enc]
+#   src/formats/format_gate.sh [--bin build-int/av2enc] [--dav2d /path/to/dav2d]
 #
 # Env: AV2ENC_BIN, DAV2D, FORMAT_UPDATE_GOLDENS=1, KEEP=1
 # Exit codes: 0 pass, 1 failure, 2 usage, 77 decoder/test media missing.
@@ -23,11 +23,13 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd -- "${HERE}/../.." && pwd)"
 BIN="${AV2ENC_BIN:-}"
+DAV2D="${DAV2D:-}"
 GOLDENS="${ROOT}/src/formats/format_goldens.txt"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --bin) BIN=$2; shift 2 ;;
+        --dav2d) DAV2D=$2; shift 2 ;;
         -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "format_gate: unknown argument $1" >&2; exit 2 ;;
     esac
@@ -48,9 +50,23 @@ if [ -z "${DAV2D:-}" ]; then
     done
 fi
 if [ -z "${DAV2D:-}" ] || [ ! -x "$DAV2D" ]; then
-    echo "SKIP: dav2d not found (set DAV2D)" >&2
+    echo "SKIP: dav2d not found (set DAV2D or install tools/bin/dav2d[-macos])" >&2
     exit 77
 fi
+# The gate scripts share the pinned decoder with tools/validate_dav2d.sh.
+export DAV2D
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "SKIP: python3 is required for source generation and recon compare" >&2
+    exit 77
+fi
+for fixture in "${ROOT}/tests/data/basic_64x64_1f.y4m" \
+               "${ROOT}/tests/data/basic_640x360_1f.y4m" \
+               "${ROOT}/src/pipeline/still/high_bitdepth/gen_y4m_10bit.py"; do
+    if [ ! -f "$fixture" ]; then
+        echo "SKIP: missing prerequisite $fixture" >&2
+        exit 77
+    fi
+done
 
 TMP="$(mktemp -d)"
 cleanup() {
@@ -124,31 +140,34 @@ with open(out, "wb") as f:
 PY
 }
 
-# gen_10bit_source <w> <h> <out>
+# gen_10bit_source <w> <h> <out> [chroma]
 gen_10bit_source() {
-    "${ROOT}/src/pipeline/still/high_bitdepth/gen_y4m_10bit.py" "$1" "$2" "$3" >/dev/null
+    "${ROOT}/src/pipeline/still/high_bitdepth/gen_y4m_10bit.py" "$@" >/dev/null
 }
 
 RESULT="$TMP/results.txt"
 : > "$RESULT"
 FAILED=0
 
-# run_case <name> <depth> <chroma> <source>
+# run_case <name> <depth> <chroma> <source> [qp]
 run_case() {
-    local name=$1 depth=$2 chroma=$3 source=$4
+    local name=$1 depth=$2 chroma=$3 source=$4 qp=${5:-90}
     local ivf="$TMP/$name.ivf"
     local recon="$TMP/$name.recon.y4m"
     local decoded="$TMP/$name.decoded.y4m"
     local extra=()
     if [ "$depth" = "10" ]; then
         extra=(--bit-depth 10)
+        if [ "$chroma" != "420" ]; then
+            extra+=(--chroma "$chroma")
+        fi
     else
         extra=(--chroma "$chroma")
     fi
 
     echo
-    echo "=== $name (${depth}-bit $chroma) ==="
-    if ! "$BIN" "$source" -o "$ivf" --still "${extra[@]}" --qp 90 \
+    echo "=== $name (${depth}-bit $chroma, qp $qp) ==="
+    if ! "$BIN" "$source" -o "$ivf" --still "${extra[@]}" --qp "$qp" \
             --recon "$recon" >"$TMP/$name.encode.log" 2>&1; then
         echo "FAIL $name: encode failed" >&2
         cat "$TMP/$name.encode.log" >&2
@@ -185,6 +204,12 @@ run_case() {
 
 gen_10bit_source 64 64 "$TMP/src_10_64x64.y4m"
 gen_10bit_source 640 360 "$TMP/src_10_640x360.y4m"
+gen_10bit_source 64 64 "$TMP/src_10_422_64x64.y4m" 422
+gen_10bit_source 64 64 "$TMP/src_10_444_64x64.y4m" 444
+gen_10bit_source 64 64 "$TMP/src_10_400_64x64.y4m" 400
+gen_10bit_source 640 360 "$TMP/src_10_422_640x360.y4m" 422
+gen_10bit_source 640 360 "$TMP/src_10_444_640x360.y4m" 444
+gen_10bit_source 640 360 "$TMP/src_10_400_640x360.y4m" 400
 gen_8bit_source "${ROOT}/tests/data/basic_64x64_1f.y4m" 422 "$TMP/src_422_64x64.y4m"
 gen_8bit_source "${ROOT}/tests/data/basic_64x64_1f.y4m" 444 "$TMP/src_444_64x64.y4m"
 gen_8bit_source "${ROOT}/tests/data/basic_64x64_1f.y4m" 400 "$TMP/src_400_64x64.y4m"
@@ -194,6 +219,18 @@ gen_8bit_source "${ROOT}/tests/data/basic_640x360_1f.y4m" 400 "$TMP/src_400_640x
 
 run_case 10bit_420_64x64    10 420 "$TMP/src_10_64x64.y4m"
 run_case 10bit_420_640x360  10 420 "$TMP/src_10_640x360.y4m"
+run_case 10bit_422_64x64    10 422 "$TMP/src_10_422_64x64.y4m"
+run_case 10bit_444_64x64    10 444 "$TMP/src_10_444_64x64.y4m"
+run_case 10bit_400_64x64    10 400 "$TMP/src_10_400_64x64.y4m"
+run_case 10bit_422_640x360  10 422 "$TMP/src_10_422_640x360.y4m"
+run_case 10bit_444_640x360  10 444 "$TMP/src_10_444_640x360.y4m"
+run_case 10bit_400_640x360  10 400 "$TMP/src_10_400_640x360.y4m"
+# High-QP 10-bit: qctx slices 1..3 (§8.3.1) plus a chroma-format combination.
+run_case 10bit_420_q91_64x64   10 420 "$TMP/src_10_64x64.y4m" 91
+run_case 10bit_420_q141_64x64  10 420 "$TMP/src_10_64x64.y4m" 141
+run_case 10bit_420_q191_64x64  10 420 "$TMP/src_10_64x64.y4m" 191
+run_case 10bit_420_q303_64x64  10 420 "$TMP/src_10_64x64.y4m" 303
+run_case 10bit_422_q191_64x64  10 422 "$TMP/src_10_422_64x64.y4m" 191
 run_case 8bit_422_64x64      8 422 "$TMP/src_422_64x64.y4m"
 run_case 8bit_444_64x64      8 444 "$TMP/src_444_64x64.y4m"
 run_case 8bit_400_64x64      8 400 "$TMP/src_400_64x64.y4m"
@@ -231,4 +268,4 @@ if [ "$FAILED" -ne 0 ]; then
     exit 1
 fi
 echo
-echo "PASS: optical-format product gate (10-bit 4:2:0; 8-bit 4:2:2/4:4:4/4:0:0)"
+echo "PASS: optical-format product gate (10-bit 4:2:0/4:2:2/4:4:4/4:0:0 + qctx 91..303; 8-bit 4:2:2/4:4:4/4:0:0)"

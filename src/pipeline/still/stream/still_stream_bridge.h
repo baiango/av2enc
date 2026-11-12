@@ -125,13 +125,29 @@ struct GpuCoefficients {
   std::span<const std::int32_t> v;
 };
 
+// Optional per-frame filter decision grids.  Empty (all-null) when the tool is
+// off.  The GPU orchestrator now runs the filter pixel kernels; the decisions
+// themselves still come from the CPU reference plan (the same split the mode
+// search/entropy already use) so the syntax can never disagree with the
+// reference stream.
+struct FilterGrids {
+  // §5.20.10.1 cdef_idx, one entry per 64x64 luma block, row-major.
+  const std::int8_t* cdef_idx = nullptr;
+  int cdef_n64_cols = 0;
+  int cdef_n64_rows = 0;
+  // §5.20.10.2 CcsoBlks[plane]: one byte per CCSO unit, row-major.
+  const std::uint8_t* ccso_blks[3] = {nullptr, nullptr, nullptr};
+  int ccso_blk_cols[3] = {0, 0, 0};
+  int ccso_blk_rows[3] = {0, 0, 0};
+};
+
 // Pack a GPU frame with an explicit partition tree.
 bool pack_gpu_frame(const cuda::still_gpu::FramePlan& plan,
                     std::span<const TreeNode> tree,
                     std::span<const cuda::still_gpu::BlockPlan> blocks,
                     std::span<const cuda::still_gpu::BlockDecision> decisions,
                     const GpuCoefficients& coeffs, PackedFrame& out,
-                    std::string& error);
+                    std::string& error, const FilterGrids& grids = {});
 
 // Pack a GPU frame whose plan is the fallback raster (one PARTITION_NONE block
 // per superblock).  The spec's allowed/forced partition flags are derived here
@@ -150,7 +166,8 @@ bool assemble_gpu_frame(const cuda::still_gpu::FramePlan& plan,
                         std::span<const cuda::still_gpu::BlockDecision> decisions,
                         const GpuCoefficients& coeffs,
                         const StillConfig& config, std::vector<std::uint8_t>& out,
-                        std::string& error, std::size_t* tile_bytes = nullptr);
+                        std::string& error, std::size_t* tile_bytes = nullptr,
+                        const FilterGrids& grids = {});
 
 bool assemble_gpu_raster_frame(
     const cuda::still_gpu::FramePlan& plan,

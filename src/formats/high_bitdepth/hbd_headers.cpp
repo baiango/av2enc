@@ -87,14 +87,21 @@ std::size_t write_sequence_header_syntax(BitWriter& writer,
   const std::size_t start = writer.bit_size();
   const int idc = fmt::bit_depth_idc(c.depth);
   assert(idc == 0);  // 10-bit only; 12-bit cannot be signalled
-  assert(fmt::chroma_format_idc(fmt::ChromaFormat::k420) == 0);
+
+  const fmt::Format format{c.max_frame_width, c.max_frame_height, c.chroma,
+                           c.depth};
+  const int chroma_idc = fmt::chroma_format_idc(c.chroma);
+  const int profile = fmt::profile_idc(format);
+  const bool monochrome = !fmt::has_chroma(c.chroma);
+  assert(chroma_idc >= 0);
+  assert(profile >= 0);
 
   // §5.4.1 sequence_header_obu().
   put_uvlc(writer, 0);                        // seq_header_id
-  writer.put_bits(0U, 5U);                    // seq_profile_idc = 0 (4:2:0)
+  writer.put_bits(static_cast<std::uint64_t>(profile), 5U);  // seq_profile_idc
   writer.put_bit(true);                       // single_picture_header_flag
   writer.put_bits(c.seq_level_idx, 5U);       // seq_level_idx
-  put_uvlc(writer, 0);                        // chroma_format_idc = 0 (4:2:0)
+  put_uvlc(writer, static_cast<std::uint32_t>(chroma_idc));
   // §6.4.1 Table 6.3: bit_depth_idc is one bit, 0 = 10-bit, 1 = 8-bit.
   put_uvlc(writer, static_cast<std::uint32_t>(idc));
 
@@ -117,7 +124,9 @@ std::size_t write_sequence_header_syntax(BitWriter& writer,
   // §5.4.3 sequence_partition_config(): 64x64 SB, no SDP / extended parts.
   writer.put_bit(false);  // use_256x256_superblock
   writer.put_bit(false);  // use_128x128_superblock
-  writer.put_bit(false);  // enable_sdp
+  if (!monochrome) {
+    writer.put_bit(false);  // enable_sdp
+  }
   writer.put_bit(false);  // enable_ext_partitions
   writer.put_bit(false);  // reduce_pb_aspect_ratio
 
@@ -130,7 +139,9 @@ std::size_t write_sequence_header_syntax(BitWriter& writer,
   writer.put_bit(c.enable_intra_edge_filter);
   writer.put_bit(false);  // enable_mrls
   writer.put_bit(c.enable_cfl_intra);
-  writer.put_bits(0U, 2U);  // cfl_ds_filter_index
+  if (!monochrome) {
+    writer.put_bits(0U, 2U);  // cfl_ds_filter_index
+  }
   writer.put_bit(false);    // enable_mhccp
   writer.put_bit(false);    // enable_ibp
 
@@ -147,15 +158,23 @@ std::size_t write_sequence_header_syntax(BitWriter& writer,
   writer.put_bit(false);  // enable_idtx_intra
   writer.put_bit(false);  // enable_intra_ist
   writer.put_bit(false);  // enable_inter_ist
-  writer.put_bit(c.enable_chroma_dctonly);
+  if (!monochrome) {
+    writer.put_bit(c.enable_chroma_dctonly);
+  }
   writer.put_bit(false);  // reduced_tx_part_set
-  writer.put_bit(false);  // enable_cctx
+  if (!monochrome) {
+    writer.put_bit(false);  // enable_cctx
+  }
   writer.put_bit(false);  // enable_tcq
   writer.put_bit(false);  // enable_parity_hiding
-  writer.put_bit(false);  // separate_uv_delta_q
+  if (!monochrome) {
+    writer.put_bit(false);  // separate_uv_delta_q
+  }
   writer.put_bit(true);   // equal_ac_dc_q
-  writer.put_bits(23U, 5U);  // base_uv_ac_delta_q -> BaseUVAcDeltaQ = 0
-  writer.put_bit(false);     // uv_ac_delta_q_enabled
+  if (!monochrome) {
+    writer.put_bits(23U, 5U);  // base_uv_ac_delta_q -> BaseUVAcDeltaQ = 0
+    writer.put_bit(false);     // uv_ac_delta_q_enabled
+  }
 
   // §5.4.10 sequence_filter_config().
   writer.put_bit(false);  // disable_loopfilters_across_tiles
@@ -196,8 +215,10 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const HbdConfig& c) {
   // deblocking_filter_params() (§5.18.5.2).
   writer.put_bit(c.apply_deblock_y_vert);
   writer.put_bit(c.apply_deblock_y_horz);
+  // §5.18.5.2 codes apply_deblocking_filter[2..3] only for non-monochrome.
   const bool have_chroma_deblock =
-      c.apply_deblock_y_vert || c.apply_deblock_y_horz;
+      fmt::has_chroma(c.chroma) &&
+      (c.apply_deblock_y_vert || c.apply_deblock_y_horz);
   if (have_chroma_deblock) {
     writer.put_bit(c.apply_deblock_u);
     writer.put_bit(c.apply_deblock_v);
@@ -226,6 +247,14 @@ bool validate_config(const HbdConfig& config, std::string* error) {
   if (fmt::bit_depth_idc(config.depth) != 0) {
     return fail("10-bit must serialize bit_depth_idc = 0");
   }
+  if (fmt::chroma_format_idc(config.chroma) < 0) {
+    return fail("invalid chroma format");
+  }
+  if (fmt::profile_idc(fmt::Format{config.max_frame_width,
+                                   config.max_frame_height, config.chroma,
+                                   config.depth}) < 0) {
+    return fail("no Annex A.2 profile for this chroma format");
+  }
   if (config.max_frame_width == 0 || config.max_frame_height == 0) {
     return fail("hbd frame dimensions must be non-zero");
   }
@@ -249,6 +278,10 @@ bool validate_config(const HbdConfig& config, std::string* error) {
       config.apply_deblock_y_vert || config.apply_deblock_y_horz;
   if (!luma_deblock && (config.apply_deblock_u || config.apply_deblock_v)) {
     return fail("chroma deblock requires a luma deblock direction");
+  }
+  if (!fmt::has_chroma(config.chroma) &&
+      (config.apply_deblock_u || config.apply_deblock_v)) {
+    return fail("monochrome has no chroma deblock planes");
   }
   return true;
 }

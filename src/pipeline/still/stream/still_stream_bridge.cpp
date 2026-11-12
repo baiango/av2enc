@@ -27,6 +27,13 @@ struct FrameInfo {
   int height = 0;
   int sb_size = 64;
   std::uint32_t coeff_count[3] = {0, 0, 0};
+  // Optional filter decision grids (see FilterGrids).
+  const std::int8_t* cdef_idx = nullptr;
+  int cdef_n64_cols = 0;
+  int cdef_n64_rows = 0;
+  const std::uint8_t* ccso_blks[3] = {nullptr, nullptr, nullptr};
+  int ccso_blk_cols[3] = {0, 0, 0};
+  int ccso_blk_rows[3] = {0, 0, 0};
 };
 
 // What the packer needs per leaf, independent of which POD set described it.
@@ -208,6 +215,11 @@ class Packer {
     out_.plan.width = info_.width;
     out_.plan.height = info_.height;
     out_.plan.sb_size = geometry_.sb_size;
+    for (int plane = 0; plane < 3; ++plane) {
+      out_.plan.ccso_blks[plane] = info_.ccso_blks[plane];
+      out_.plan.ccso_blk_cols[plane] = info_.ccso_blk_cols[plane];
+      out_.plan.ccso_blk_rows[plane] = info_.ccso_blk_rows[plane];
+    }
 
     const int sb_mi = partition::sb_size_mi(geometry_);
     const int mi_cols = partition::mi_cols(geometry_);
@@ -391,6 +403,23 @@ class Packer {
     entry.y_angle_delta = static_cast<std::int8_t>(leaf.y_angle_delta);
     entry.uv_mode = static_cast<std::uint8_t>(leaf.uv_mode);
     if (leaf.is_cfl != 0) entry.flags |= syntax::kFlagIsCfl;
+    // §5.20.10.1 cdef_idx for the 64x64 block containing this leaf's origin.
+    // The writer ignores repeats, so every leaf carries its block's value.
+    if (info_.cdef_idx != nullptr) {
+      // §7.18: one CDEF block is 64x64 luma = 16 MI cells.
+      constexpr int kCdefSizeMi = 16;
+      const int n64_row = leaf.mi_row / kCdefSizeMi;
+      const int n64_col = leaf.mi_col / kCdefSizeMi;
+      if (n64_col >= info_.cdef_n64_cols || n64_row >= info_.cdef_n64_rows ||
+          n64_col < 0 || n64_row < 0) {
+        error = "cdef_idx grid does not cover a coding block";
+        return false;
+      }
+      entry.cdef_idx =
+          info_.cdef_idx[static_cast<std::size_t>(n64_row) *
+                             static_cast<std::size_t>(info_.cdef_n64_cols) +
+                         static_cast<std::size_t>(n64_col)];
+    }
 
     const txv::TxParams* params[3] = {&*luma_tx, &*chroma_tx, &*chroma_tx};
     const std::span<const std::int32_t> planes[3] = {coeffs_.y, coeffs_.u,
@@ -683,7 +712,7 @@ bool pack_gpu_frame(const cuda::still_gpu::FramePlan& plan,
                     std::span<const cuda::still_gpu::BlockPlan> blocks,
                     std::span<const cuda::still_gpu::BlockDecision> decisions,
                     const GpuCoefficients& coeffs, PackedFrame& out,
-                    std::string& error) {
+                    std::string& error, const FilterGrids& grids) {
   error.clear();
   if (blocks.size() != decisions.size()) {
     error = "GPU block and decision arrays have different lengths";
@@ -696,6 +725,14 @@ bool pack_gpu_frame(const cuda::still_gpu::FramePlan& plan,
   info.coeff_count[0] = plan.coeff_count_y;
   info.coeff_count[1] = plan.coeff_count_u;
   info.coeff_count[2] = plan.coeff_count_v;
+  info.cdef_idx = grids.cdef_idx;
+  info.cdef_n64_cols = grids.cdef_n64_cols;
+  info.cdef_n64_rows = grids.cdef_n64_rows;
+  for (int plane = 0; plane < 3; ++plane) {
+    info.ccso_blks[plane] = grids.ccso_blks[plane];
+    info.ccso_blk_cols[plane] = grids.ccso_blk_cols[plane];
+    info.ccso_blk_rows[plane] = grids.ccso_blk_rows[plane];
+  }
   std::vector<LeafView> leaves(blocks.size());
   for (std::size_t i = 0; i < blocks.size(); ++i) {
     adapt_gpu_leaf(blocks[i], decisions[i], leaves[i]);
@@ -822,9 +859,11 @@ bool assemble_gpu_frame(const cuda::still_gpu::FramePlan& plan,
                         std::span<const cuda::still_gpu::BlockDecision> decisions,
                         const GpuCoefficients& coeffs,
                         const StillConfig& config, std::vector<std::uint8_t>& out,
-                        std::string& error, std::size_t* tile_bytes) {
+                        std::string& error, std::size_t* tile_bytes,
+                        const FilterGrids& grids) {
   PackedFrame packed;
-  if (!pack_gpu_frame(plan, tree, blocks, decisions, coeffs, packed, error)) {
+  if (!pack_gpu_frame(plan, tree, blocks, decisions, coeffs, packed, error,
+                      grids)) {
     return false;
   }
   return assemble_packed(packed, config, out, error, tile_bytes);

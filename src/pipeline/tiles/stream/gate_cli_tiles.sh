@@ -11,8 +11,11 @@
 #   * the tiled writer rejects unsupported combinations by name.
 #
 # Usage:
-#   src/pipeline/tiles/stream/gate_cli_tiles.sh --bin build-int/av2enc
+#   src/pipeline/tiles/stream/gate_cli_tiles.sh --bin build-int/av2enc [--quick]
 #   DAV2D=/path/to/dav2d src/pipeline/tiles/stream/gate_cli_tiles.sh --bin ...
+#
+#   --quick   skip the 1080p layouts (testdata is gitignored); the 640x360
+#             layouts, default-stream check and rejections still run.
 #
 # Exit codes: 0 pass, 1 failure, 2 usage, 77 missing fixture/decoder.
 set -euo pipefail
@@ -21,13 +24,16 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "${HERE}/../../../.." && pwd)"
 BIN=""
 DAV2D="${DAV2D:-}"
+TESTDATA="${AV2ENC_TESTDATA:-$ROOT/testdata}"
+QUICK=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --bin) BIN=$2; shift 2 ;;
         --dav2d) DAV2D=$2; shift 2 ;;
+        --quick) QUICK=1; shift ;;
         -h|--help)
-            sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "gate_cli_tiles: unknown argument $1" >&2; exit 2 ;;
     esac
@@ -46,6 +52,7 @@ if [ -z "$DAV2D" ] || [ ! -x "$DAV2D" ]; then
     echo "gate_cli_tiles: no dav2d binary (set DAV2D=...)" >&2
     exit 77
 fi
+export DAV2D
 if ! command -v python3 >/dev/null 2>&1; then
     echo "gate_cli_tiles: python3 is required for the recon comparison" >&2
     exit 77
@@ -55,7 +62,11 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 F360="$ROOT/tests/data/basic_640x360_1f.y4m"
-F1080="$ROOT/testdata/shine_1920x1080_10f.y4m"
+F1080="$TESTDATA/shine_1920x1080_10f.y4m"
+if [ ! -f "$F360" ]; then
+    echo "SKIP: missing $F360" >&2
+    exit 77
+fi
 
 md5_of() {
     if command -v md5 >/dev/null 2>&1; then
@@ -185,9 +196,13 @@ set +e
 for layout in 2x1 2x2 4x2 8x2; do
     run_case tests/data/basic_640x360_1f.y4m "$layout" "360_${layout}"
 done
-for layout in 2x1 2x2 4x2 8x2 16x2; do
-    run_case testdata/shine_1920x1080_10f.y4m "$layout" "1080_${layout}"
-done
+if [ "$QUICK" -eq 0 ]; then
+    for layout in 2x1 2x2 4x2 8x2 16x2; do
+        run_case "$F1080" "$layout" "1080_${layout}"
+    done
+else
+    echo "gate_cli_tiles: --quick, skipping 1080p layouts"
+fi
 set -e
 
 # --- rejected combinations stay rejected by name --------------------------

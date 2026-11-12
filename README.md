@@ -19,80 +19,122 @@ plus all subagent sessions — as of **2026-11-12**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 102,264,073 |
-| Output | 18,448,212 |
-| Reasoning | 20,356,911 |
-| **Input + output + reasoning** | **~141.1 M** |
-| Cached context reads | 10,258,205,888 |
-| **Including cache reads** | **~10.40 B** |
+| Fresh input | 108,398,342 |
+| Output | 19,645,381 |
+| Reasoning | 21,309,204 |
+| **Input + output + reasoning** | **~149.4 M** |
+| Cached context reads | 11,312,837,312 |
+| **Including cache reads** | **~11.46 B** |
 
-245 sessions (main + subagents). Cache reads dominate because every subagent
+260 sessions (main + subagents). Cache reads dominate because every subagent
 re-reads a long context; they are normally billed at a fraction of fresh input.
 The figures keep growing while work continues, so treat them as a snapshot, not
 a final total.
 
 ## Status (2026-11-11)
 
-**First frames decode with `dav2d`, on both CPU and CUDA.** The CUDA M0 path
-uses the runtime/transform/intra components and produces a bitstream identical
-to the CPU reference.
+**First frames decode with `dav2d`, on both CPU and CUDA.** The CUDA Basic
+path uses the runtime/transform/intra components and produces a bitstream
+identical to the CPU reference.
 
 | Case | IVF | MD5 | PSNR avg | CUDA time |
 |---|---:|---|---:|---:|
 | 64x64 | 1,138 B | `7efc3162bc0a4785685eba291a8096fd` | 42.13 dB | 1.34 ms |
 | 640x360 | 19,751 B | `56f11d4a63ff07f2356ef5064b84fe0e` | 47.20 dB | ~34 ms |
 
-Both are gated by `tests/m0_encode_smoke.sh`; the CUDA build passes 6/6 tests.
-The 640x360 CUDA path is launch-bound (2,740 launches) and keeps entropy on the
-CPU. A byte-exact GPU tile entropy coder exists, but it is 34–46× slower per tile
-at M0 tile counts, so CPU entropy remains the default.
+Both are gated by `tests/basic_encode_smoke.sh`; the CUDA build passes 6/6
+tests. The 640x360 CUDA path is launch-bound (2,740 launches) and keeps entropy
+on the CPU. A byte-exact GPU tile entropy coder exists, but it is 34–46× slower
+per tile at Basic tile counts, so CPU entropy remains the default.
 Adaptive CDFs are opt-in (`--adaptive-cdf`); defaults stay bit-identical.
 The wavefront/CUDA-graph scheduler component reaches ~4.4 ms at 640×360 and
 ~21 ms at 1080p, but is not wired into the CLI/entropy writer yet.
 
 Partial edge superblocks follow the §5.20.3.2 implied-partition recursion, not
-a blanket 64×64 `PARTITION_NONE`. M0 leaf coders cover 64×64, 32×32, 32×16 and
-32×8 (64×32/32×64 are partition nodes only), with the normative rectangular DC
-predictor (`Div_Lut`), rectangular pre-scale, and luma transform-type syntax.
+a blanket 64×64 `PARTITION_NONE`. Basic leaf coders cover 64×64, 32×32, 32×16
+and 32×8 (64×32/32×64 are partition nodes only), with the normative rectangular
+DC predictor (`Div_Lut`), rectangular pre-scale, and luma transform-type syntax.
 If the boundary recursion needs a smaller block (for example 136×88 or 518×322,
-which reach 16×16/8×32, or right-edge 16×32 cases), `m0::geometry_supported()`
-refuses the geometry and the CLI prints a note and uses the M1 still path
-rather than emitting a desynchronised stream. `tests/m0_edge_smoke.sh` gates
-the five reported sizes plus 64×64, 640×360 and 1080p.
+which reach 16×16/8×32, or right-edge 16×32 cases),
+`m0::geometry_supported()` refuses the geometry and the CLI prints a note and
+uses the Still path rather than emitting a desynchronised stream.
+`tests/basic_edge_smoke.sh` gates the five reported sizes plus 64×64, 640×360
+and 1080p.
 
-### M1 (opt-in, `--m1`)
+### Still (opt-in, `--still`)
 
 Partition tree + full intra + variable transforms + CfL + deblock. It is
 **bit-exact against `dav2d` on all planes** (verified per sample, not by PSNR):
 
-| Still | M1 IVF | Avg PSNR | M0 IVF | M0 avg |
+| Still | Still IVF | Avg PSNR | Basic IVF | Basic avg |
 |---|---:|---:|---:|---:|
 | 64×64 | 936 B | 43.28 dB | 1,138 B | 42.13 dB |
 | 640×360 | 13,355 B | 46.37 dB | 19,751 B | 47.20 dB |
 | 1080p, native | 61,574 B | 47.73 dB | 83,228 B | 49.79 dB |
 
-CPU M1 accepts `--qp 1..255` (default 90). `base_q_idx` selects the §8.3.1
+CPU Still accepts `--qp 1..255` (default 90). `base_q_idx` selects the §8.3.1
 coefficient-CDF qctx slice (`<=90`, `<=140`, `<=190`, else) and the §7.14.2
 `qlookup` quantiser step; all four slices are gated against `dav2d --strict 1`
-with zero reconstruction differences. `--m1-gpu`, M0 and the M1 GPU TX stage
-still pin 90.
+with zero reconstruction differences. `--still-gpu`, Basic and the Still GPU TX
+stage still pin 90.
 
-Full directional intra (`--m1-full-intra`) is also bit-exact but not a
-rate/quality win at QP 90 yet, so it stays opt-in. On the native 1080p frame M1
-is 26% smaller than M0 but 3.0 dB lower PSNR-Y; AVM is still 2.45× smaller than
-M1 at comparable CVVDP. Details, source clip, and the AVM comparison:
-`docs/m1-results.md`.
+Full directional intra (`--still-full-intra`) is also bit-exact but not a
+rate/quality win at QP 90 yet, so it stays opt-in. On the native 1080p frame
+Still is 26% smaller than Basic but 3.0 dB lower PSNR-Y; AVM is still 2.45×
+smaller than Still at comparable CVVDP. Details, source clip, and the AVM
+comparison: `docs/m1-results.md`.
 
-### M1 GPU (opt-in, `--m1-gpu`)
+### Still GPU (opt-in, `--still-gpu`)
 
-`--m1-gpu` selects the GPU-resident M1 pipeline (`src/cuda/m1/`, see
-`docs/m1-gpu.md`) and implies `--m1`; M0 remains the default. It takes the same
-`--no-cfl`, `--no-deblock`, `--m1-full-intra`, `--m1-depth`, and `--vram-cap`
-options as the CPU M1 path. The target is byte-identical output to CPU M1.
-`--m1` stays the CPU reference path. CPU-only builds parse the flag but reject
-it with a clear error, and a CUDA build without the orchestrator entry point
-(`src/cuda/m1/m1_gpu.cu`) reports the path as unavailable rather than silently
-falling back.
+`--still-gpu` selects the GPU-resident Still pipeline (`src/cuda/m1/`, see
+`docs/m1-gpu.md`) and implies `--still`; Basic remains the default. It takes the
+same `--no-cfl`, `--no-deblock`, `--still-full-intra`, `--still-depth`, and
+`--vram-cap` options as the CPU Still path. The target is byte-identical output
+to CPU Still. `--still` stays the CPU reference path. CPU-only builds parse the
+flag but reject it with a clear error, and a CUDA build without the orchestrator
+entry point (`src/cuda/m1/m1_gpu.cu`) reports the path as unavailable rather
+than silently falling back. Still tools without a GPU stage are rejected by
+name (exit 2), never silently dropped.
+
+## CLI
+
+`av2enc --help` is the contract; this is the summary. Every mode is opt-in
+except Basic, and every mode writes an AV2 IVF (fourcc `AV02`).
+
+| Mode | Flag | What it encodes |
+|---|---|---|
+| Basic | *(default)* | One key frame: 8-bit 4:2:0, 64x64 superblocks, 32x32 DCT, DC intra only, no filters |
+| Still | `--still` | One frame with the partition tree, full intra modes, variable transform sizes, CfL and deblock |
+| Still GPU | `--still-gpu` | The same still syntax with the block pipeline on the GPU; needs a CUDA build and implies `--still` |
+| Video | `--video` | A key frame plus P frames, `--frames N` |
+| Lossless | `--lossless` | Q=0 lossless still picture (DPCM intra, 8x8 blocks); its own writer |
+
+Product flags are grouped in `--help` as Basic, Still and Video; test-only
+knobs (depth caps, lambda scales, reconstruction dumps, `--gpu-plan`) live in
+the Debug section. Still tools default off, and a tool the selected mode does
+not implement is rejected by name instead of being ignored.
+
+Effort presets: `--effort N` (10..10000, log scale) and `--cpu-used 0..8` add
+measured Still features in score order, taking a prefix that never exceeds the
+budget. The ranking is opt-in, implies `--still`, and is the only path that
+changes a stream by design; `--effort-plan` prints the selection without
+encoding. Scores, the exact `--cpu-used` mapping and the host-specific
+calibration caveat are in `docs/effort.md`.
+
+Formats: Basic, Still and Video are 8-bit 4:2:0 by default. `--still` also
+selects `--bit-depth 10` (4:2:0, `--qp 1..90`) or an 8-bit
+4:2:2/4:4:4/4:0:0 `--chroma` input (pins `--qp 90`); the input must already have
+that format. Video requires dimensions divisible by 8.
+
+Video options: `--p-frames`, `--video-refs`, `--video-mv-precision`,
+`--video-subpel-eighth`, `--video-inter-residual`, `--video-long-term`,
+`--video-olk`, `--video-leading`, `--video-sef`, `--video-switch`,
+`--video-ras`, and `--rc cqp|crf|vbr` with `--crf` / `--bitrate`. B frames and
+DRL reordering are rejected until they pass the pinned decoder gate.
+
+Usage and option-combination errors exit 2; encoder, decoder and I/O failures
+exit 1. `--gpu-plan N` is a host-only multi-GPU dry run: it prints the tile
+assignment and exits without writing a stream.
 
 ## Performance expectations
 

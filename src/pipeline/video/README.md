@@ -419,10 +419,13 @@ av2enc clip.y4m --video --video-subpel-eighth --video-mv-precision quarter -o cl
 | `--video-refs N` | 1 | `NumTotalRefs` per P frame, 1..3 |
 | `--video-subpel-eighth` | off | add the 1/8-pel ME refinement stage |
 | `--video-mv-precision P` | eighth | `eighth`, `quarter` or `half` pel |
+| `--video-compound` | off | `reference_select` compound (needs `--video-refs 2`) |
 | `--video-inter-residual` | off | code a quantised inter residual |
 | `--video-max-depth D` / `--video-min-block N` / `--video-force-single` | 4 / 16 / off | partition controls |
 | `--video-recon FILE` | off | dump the encoder reconstruction Y4M (gate use) |
-| `--b-frames N` | 0 | rejected: B frames are not wired yet |
+| `--video-tlayers N` | off | one hierarchical-P GOP of N (4/8) frames with temporal layers |
+| `--video-tlayer-drop L` | off | emit only temporal layers `<= L` |
+| `--b-frames N` | 0 | N B frames per GOP (one closed GOP of N+2 frames) |
 | `--video-drl-reorder` | off | rejected until the decoder disagreement below is fixed |
 
 `--frames N` caps the total number of coded frames in the video path (the
@@ -475,6 +478,17 @@ default single-block tree is also gated by `build-int/video_gate`):
 
 `build-int/video_gate --refs N --subpel-eighth --mv-precision P` runs the same
 comparison without the CLI (synthetic 64x64 and the real short clip).
+
+Multi-tile video is opt-in via `--video --tiles CxR`. Each tile is encoded as
+an independent tile-local picture per frame (fresh CDF/context state and
+tile-local origins) while ME/MC read the global reference frame, then
+`post::assemble_video_tile_group_from_payloads()` writes `tile_info()` and the
+interleaved size fields. `--tiles 1x1` is the default and stays byte-identical.
+`src/pipeline/video/gate_cli_video_tiles.sh --bin build-int/av2enc` gates 720p
+6-frame 2x1/2x2/4x2/8x2 with `dav2d --strict 1` and sample-exact
+`--video-recon` (9/9 local cases). `--tiles 16x2`, `--video-refs > 1`,
+non-eighth-pel precision and the frame-type modes are rejected for the tiled
+path.
 
 ---
 
@@ -650,3 +664,161 @@ src/codec/inter/random_access/build_and_test.sh   # 142 checks + 3-frame gate
 The SEF gate's slot model now matches the wave-2 rotating refresh
 (`slot = i % NumRefFrames` instead of always slot 0), which is what the
 two-frame phase needed.
+
+---
+
+# Completion wave: temporal layers (opt-in)
+
+`--video-tlayers N` (N = 4 or 8) replaces the flat key + P chain with one
+closed **hierarchical-P GOP** planned by `src/codec/inter/tlayers`. The plan
+fixes the coding order, each frame's temporal layer, its single reference and
+the slot it refreshes; `validate_plan()` replays §7.23 / §5.18 before any bit
+is written.
+
+| field | value |
+|---|---|
+| `max_tlayer_id` | `plan.max_tlayer_id` (1 for N=4, 2 for N=8; `f(2)`) |
+| `monotonic_output_order_flag` | **0** (reordered stream) |
+| `tlayer_dependency_present_flag` | 0 (the default `ref <= curr` map; the pinned `dav2d` parses a later explicit-map syntax) |
+| `num_ref_frames` | `plan.num_slots` = N |
+| `obu_tlayer_id` | per frame OBU; TD/SEQ/CLK are 0 (§5.2.2) |
+| `immediate_output_frame` / `implicit_output_frame` | first coded frame 1 / 0; every later frame 0 / 1 |
+
+Units are written in **coding order**; the decoder emits **display order**.
+`VideoSequenceResult::recon` is filled in display order and
+`frame_output_index[coding_index]` holds that display position.
+
+N=8 coding order is `0 4 2 6 1 3 5 7` with layers `0 1 1 2 2 2 2`; the
+per-OBU ids are audited by the gate.
+
+## Dropped-layer sub-stream
+
+`--video-tlayer-drop L` encodes only the units with `obu_tlayer_id <= L`
+(`plan.coding_order_up_to_layer`), after `validate_layer_drop()` proves that
+no retained frame references a dropped one. The sequence header keeps the full
+`max_tlayer_id`.
+
+```sh
+OUT=/tmp/tl src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 8 --video-max-depth 3 --video-tlayers 8
+OUT=/tmp/tl0 src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 8 --video-max-depth 3 --video-tlayers 8 \
+  --video-tlayer-drop 0
+```
+
+Pinned streams (720p, `--video-max-depth 3`):
+
+| flags | IVF MD5 | units | decoded frames | recon |
+|---|---|---:|---:|---|
+| `--video-tlayers 8` | `d1b887d47ed595ad3ebc1cdd01b46cc0` | 8 | 8 | exact |
+| `--video-tlayers 4` | `44307f54d20e1d6c7b3c1c21e71d5378` | 4 | 4 | exact |
+| `--video-tlayers 8 --video-tlayer-drop 0` | `959896691a4bac1c669f3d0ff21d3231` | 2 | 2 | exact |
+| `--video-tlayers 8 --video-tlayer-drop 1` | `7828abe69cb64858d6e927e0080fb635` | 4 | 4 | exact |
+
+`--video-tlayers` needs one whole GOP (`frames == N`), `--video-refs 1`,
+eighth-pel MV precision, `--rc cqp`, and cannot be combined with the wave-3
+frame-type modes. It composes with the partition/ME flags and the inter
+residual. Only one closed GOP is supported (the tlayers planner's scope); 16
+frames would need `OrderHintBits = 5`.
+
+---
+
+# Completion wave: compound prediction (opt-in)
+
+`--video-compound` (needs `--video-refs 2`) turns on §5.18.2
+`reference_select = 1` and lets the mode decision pick a compound leaf. The
+gated subset is deliberately narrow and fully normative:
+
+| element | value |
+|---|---|
+| `reference_select` | 1 |
+| `comp_mode` | 1 for a compound leaf, 0 for every single-prediction leaf |
+| `comp_ref` | no bits: `NumTotalRefs == 2`, `num_same_ref_compound == 0` implies `(0, 1)` |
+| `is_joint` | 0 |
+| `compound_mode_non_joint` | 3 (`GLOBAL_GLOBALMV`) |
+| `comp_group_idx` / `compound_type` | absent (`enable_masked_compound = 0` → `COMPOUND_AVERAGE`) |
+| `cwp_idx` | absent (`enable_cwp = 0` → `CWP_EQUAL`) |
+| residual | compound leaves are `skip_flag = 1`; no residual is wired yet |
+
+Prediction uses the shared 1/16-sample compound path
+(`multiref::build_compound_prediction` → `apply_compound_prediction`,
+§7.13.3.18 `InterRound1 = 7`), so the encoder and decoder agree on the AVERAGE
+blend. `enable_masked_compound`, `enable_cwp` and `enable_imp_msk_bld` stay 0 in
+the sequence header: CWP, wedge/diffwtd masks and the implicit mask are not
+exercised yet.
+
+The compound candidate competes against GLOBALMV / NEARMV / NEWMV on luma SSE;
+`--video-refs 2 --video-compound` on `shine` 720p picks compound on ~22 of 512
+leaves in three frames.
+
+```sh
+OUT=/tmp/cmp src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 6 --video-max-depth 3 --video-refs 2 \
+  --video-compound
+OUT=/tmp/cmp2 src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 6 --video-max-depth 4 --video-refs 2 \
+  --video-compound --video-inter-residual --qp 60
+```
+
+Pinned streams (720p, `--video-max-depth 3`, 8 frames):
+
+| flags | IVF MD5 | bytes | recon |
+|---|---|---:|---|
+| `--video-refs 2 --video-compound` (8 frames) | `7f91d2498266696cbda2dfb8c60b2467` | 220,810 | exact |
+
+`--video-compound` cannot be combined with the frame-type modes, DRL reorder or
+`--video-tlayers`.
+
+---
+
+# Completion wave: B frames (opt-in)
+
+`--b-frames N` (N = 1..6) codes **one closed GOP** with N consecutive B frames:
+`gop_size = N + 2` display frames, coding order `I P B B ...`, display order
+`I B B ... P`. The schedule comes from `src/codec/inter/bframes`
+(`GopPattern::kIpbb`); `build_sequence()` + `validate_plan()` assign the coding
+order, per-frame reference lists, slots, order-hint LSBs and output flags
+before any bit is written.
+
+| field | value |
+|---|---|
+| `monotonic_output_order_flag` | 0 |
+| `immediate_output_frame` / `implicit_output_frame` | plan (`FrameHeaderFields`) |
+| `order_hint` | `frame.order_hint_lsbs` (the decoder replays the absolute hint) |
+| `num_total_refs` | 1 for the P anchor, 2 for every B frame |
+| `reference_select` | 1 on the B frames only when `--video-compound` is also on |
+| `refresh_frame_flags` | plan (one bit per non-key frame; allFrames for a key) |
+
+Units are written in coding order and the decoder emits display order;
+`VideoSequenceResult::recon` is display order and `frame_output_index` maps each
+coded unit to its display position.
+
+The B frame's two references are the past anchor and the future P anchor. Each
+block selects one with `single_ref`; with `--video-compound` the two-reference
+B frame also codes `comp_mode` and can pick the AVERAGE GLOBAL_GLOBALMV
+compound block (see the compound section).
+
+```sh
+OUT=/tmp/bf src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 4 --video-max-depth 3 --b-frames 2
+OUT=/tmp/bfc src/pipeline/video/video_cli_gate.sh build-int/av2enc \
+  testdata/shine_1280x720_60f.y4m 5 --video-max-depth 4 --b-frames 3 \
+  --video-compound
+```
+
+Pinned streams (720p):
+
+| flags | IVF MD5 | bytes | coded | output | recon |
+|---|---|---:|---:|---:|---|
+| `--b-frames 1` (3 frames, depth 3) | `c7aec62bad44b2717c42f0abd9fd3bbe` | 76,374 | 3 | 3 | exact |
+| `--b-frames 2` (4 frames, depth 3) | `1f5b8d13d31a869b3d3f3d923996806a` | 117,792 | 4 | 4 | exact |
+| `--b-frames 2 --video-compound` (4 frames, depth 3) | `e4b5b56c01b3b00f69d00bbc4dc8f4c9` | 94,990 | 4 | 4 | exact |
+| `--b-frames 3` (5 frames, depth 3) | `1e75b100872a0258ba58ff931163c9fe` | 143,530 | 5 | 5 | exact |
+| `--b-frames 3 --video-compound` (5 frames, depth 4) | `cd5f20c6cf850867e83e0c739ce38ae6` | 94,671 | 5 | 5 | exact |
+
+Limits: exactly one GOP per invocation (`frames == N + 2`), `--video-refs 1`
+(the plan owns the reference lists), `--rc cqp`, and no temporal-layer or
+frame-type modes. Two or more GOPs need an end-of-stream flush rule for the
+pending implicit-output pictures; the pinned decoder emits only the frames whose
+display gap is closed, so multi-GOP streams are rejected rather than emitted
+short.

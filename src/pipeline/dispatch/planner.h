@@ -44,6 +44,17 @@ enum class ScaleMode : std::uint8_t {
 const char* assignment_policy_name(AssignmentPolicy policy);
 const char* scale_mode_name(ScaleMode mode);
 
+// Evidence attached to every timing/scaling number this module produces.
+// kEstimated: analytic prior (the only value reachable today).
+// kClaimed: a number a caller explicitly asserts without a measurement.
+// kMeasured: backed by a recorded run with the same clip/QP/layout.
+enum class Evidence : std::uint8_t {
+  kEstimated = 0,
+  kClaimed = 1,
+  kMeasured = 2,
+};
+const char* evidence_name(Evidence evidence);
+
 // docs/multi-gpu.md default: 1 GPU -> 4x2, 2 GPUs -> 8x2, 3+ GPUs -> 16x2.
 // 16x2 is not decoder-verified yet; callers must gate it with dav2d first.
 tiles::TileLayoutPreset default_layout_for_gpus(int gpu_count);
@@ -131,6 +142,24 @@ struct GpuPlan {
   VramBreakdown vram;
 };
 
+// One unit of host-side dispatch work.  `raster_slot` is the merge position
+// in the tile-group OBU (always raster TileNum, never completion order);
+// `gpu_index` is the deterministic owner.  A worker must write its payload
+// into `raster_slot`, and the coordinator merges slots in that order.
+struct TileDispatchEntry {
+  int raster_slot = 0;
+  int tile_index = 0;
+  int gpu_index = 0;
+  int sb_col_start = 0;
+  int sb_row_start = 0;
+  int sb_cols = 0;
+  int sb_rows = 0;
+  int x0 = 0;  // visible luma rect
+  int y0 = 0;
+  int x1 = 0;
+  int y1 = 0;
+};
+
 // Analytic only. `measured` is always false and there is no speedup claim
 // until the validation sequence in docs/multi-gpu.md §10 runs.
 struct ScalingModel {
@@ -141,6 +170,7 @@ struct ScalingModel {
   double efficiency = 0.0;
   double throughput_fps = 0.0;
   bool measured = false;
+  Evidence evidence = Evidence::kEstimated;
 };
 
 struct MultiGpuPlan {
@@ -153,10 +183,12 @@ struct MultiGpuPlan {
   FrameMemory memory;
   HostTransferPlan transfer;
   std::vector<GpuPlan> gpus;
+  std::vector<TileDispatchEntry> dispatch;  // raster order, one per tile
   ScalingModel scaling;
   double vram_live_max_mb = 0.0;
   bool vram_fits = false;
   bool measured = false;
+  Evidence evidence = Evidence::kEstimated;
   std::string disclaimer;
 };
 

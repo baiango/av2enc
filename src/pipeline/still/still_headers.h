@@ -63,7 +63,8 @@ struct StillCcsoPlane {
 
 struct StillCcsoConfig {
   bool enable = false;
-  // ccso_unit_matches_sb_size = 1 -> CcsoLumaSizeLog2 = 6 for 64x64 SBs.
+  // ccso_unit_matches_sb_size = 1 -> CcsoLumaSizeLog2 = 6 for 64x64 SBs and 7
+  // for a 128x128 frame superblock.
   StillCcsoPlane plane[3];
 };
 
@@ -78,6 +79,10 @@ struct StillDeltaQConfig {
   bool segmentation_enabled = false;
   bool delta_q_present = false;
   int delta_q_res = 0;  // 0..3; must be 0 when delta_q_present is false
+  // Optional non-neutral segmentation table (§5.4.9 seg_info): the per-segment
+  // Q planner supplies SEG_LVL_ALT_Q values.  Null keeps the neutral table.
+  // The pointed-to object must outlive the header/assembly call.
+  const ::av2enc::rc::SegmentationParams* segmentation = nullptr;
 };
 
 // Builds the module parameter blocks that match `config`.  Returns false and
@@ -164,6 +169,14 @@ struct StillConfig {
   bool force_integer_mv = true;
   // §5.20.8 palette_mode_info()/palette_tokens().  Requires screen tools.
   bool enable_palette = false;
+  // §5.18.3.4 intrabc_params() + §5.20.5.3 use_intrabc.  `allow_intrabc`
+  // requires screen tools; the M1 path signals the global reference region
+  // (allow_global_intrabc = 1, allow_local_intrabc = 0), which needs no
+  // four-buffer ring.  seq_max_bvp_drl_bits_minus_1 stays 0 and
+  // allow_frame_max_bvp_drl_bits is 0, so no change_bvp_drl bits are coded.
+  bool allow_intrabc = false;
+  bool allow_global_intrabc = true;
+  bool allow_local_intrabc = false;
   // §5.4.5 cfl_ds_filter_index f(2).  0 keeps the historical CfL filter.
   int cfl_ds_filter_index = 0;
   // Keeps chroma on DCT_DCT, so the DCT-only coefficient scan/context path is
@@ -176,11 +189,19 @@ struct StillConfig {
   // (`sec_tx_type` on luma blocks); inter IST stays off.
   bool enable_intra_ist = false;
   bool enable_inter_ist = false;
+  // §5.4.8 enable_cctx / enable_tcq / enable_parity_hiding.  For a
+  // single-picture header choose_tcq_per_frame is inferred 0, so
+  // enable_tcq=1 also forces enable_parity_hiding=0 and removes that bit from
+  // the sequence header.  Both tools are off by default.
+  bool enable_cctx = false;
+  bool enable_tcq = false;
   // M1 starts with TX_MODE_LARGEST (one transform per coding block). Set true
   // for TX_MODE_SELECT once TX partition syntax is wired.
   bool tx_mode_select = false;
   // §5.20.2 reduced_tx_set (2 bits).  0 keeps the full intra TX-type sets.
   int reduced_tx_set = 0;
+  // §5.4.8 reduced_tx_part_set f(1).  0 keeps the full TX-partition type set.
+  bool reduced_tx_part_set = false;
   // §5.4.3 sequence_partition_config() superblock selection.  Opt-in and
   // mutually exclusive: use_256x256_superblock is present only when the frame
   // is 256-ruled, and then the use_128x128_superblock bit is absent.  An intra
@@ -194,6 +215,9 @@ struct StillConfig {
   // historical two zero bits.
   bool enable_ext_partitions = false;
   bool enable_uneven_4way_partitions = false;
+  // §5.4.3 enable_sdp.  Present when !Monochrome; enable_extended_sdp is
+  // inferred 0 because single_picture_header_flag = 1.  Opt-in; adds one bit.
+  bool enable_sdp = false;
   // apply_deblocking_filter[0..3].
   bool apply_deblock_y_vert = true;
   bool apply_deblock_y_horz = true;
@@ -215,6 +239,10 @@ struct StillConfig {
   // encoder only signals spec-defined default matrices (levels 0..14); no
   // quantizer_matrix_obu() is emitted, so no user QM data is present.
   qm::QmFrameState qm;
+  // Complete OBU_QUANTIZATION_MATRIX carried before the coded frame when
+  // user-defined QM data is present (§5.13, §7.3.8.9).  Empty keeps the
+  // historical stream.
+  std::vector<std::uint8_t> qm_obu;
   // Opt-in DC/AC delta-Q (§5.4.8 sequence fields + §5.18.6.1
   // quantization_params).  Defaults write exactly the historical bits:
   // equal_ac_dc_q=1, no separate UV deltas, all enables 0, all frame deltas 0.

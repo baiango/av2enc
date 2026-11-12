@@ -677,17 +677,47 @@ def cmp(path, want, got):
 
 # ctest
 b, c = baseline.get("ctest", {}), current.get("ctest", {})
-for key in ("returncode", "total", "failed", "skipped", "passed"):
-    cmp(f"ctest.{key}", b.get(key), c.get(key))
 bt = {t["name"]: t["status"] for t in b.get("tests", [])}
 ct = {t["name"]: t["status"] for t in c.get("tests", [])}
-for name in sorted(set(bt) | set(ct)):
+
+# Wave-4 product gates are additive: a gate_* test that is absent from the
+# pinned baseline is tolerated (the assistant re-records after the wave), but a
+# new gate that fails is still drift. Existing tests, including gate tests once
+# they are in the baseline, are compared exactly.
+new_gates = sorted(n for n in ct if n not in bt and n.startswith("gate_"))
+for name in new_gates:
+    if ct[name] == "failed":
+        drift.append(f"ctest.tests[{name}]: new product gate failed")
+ct_core = {n: s for n, s in ct.items() if n not in new_gates}
+
+
+def counts(statuses):
+    total = len(statuses)
+    failed = sum(1 for s in statuses.values() if s == "failed")
+    skipped = sum(1 for s in statuses.values() if s == "skipped")
+    return {
+        "total": total,
+        "failed": failed,
+        "skipped": skipped,
+        "passed": total - failed - skipped,
+    }
+
+
+for key in ("returncode",):
+    cmp(f"ctest.{key}", b.get(key), c.get(key))
+bc, cc = counts(bt), counts(ct_core)
+for key in ("total", "failed", "skipped", "passed"):
+    cmp(f"ctest.{key}", bc[key], cc[key])
+for name in sorted(set(bt) | set(ct_core)):
     if name not in bt:
-        drift.append(f"ctest.tests: new test {name!r} ({ct[name]})")
-    elif name not in ct:
+        drift.append(f"ctest.tests: new test {name!r} ({ct_core[name]})")
+    elif name not in ct_core:
         drift.append(f"ctest.tests: missing test {name!r}")
-    elif bt[name] != ct[name]:
-        drift.append(f"ctest.tests[{name}]: expected {bt[name]!r}, got {ct[name]!r}")
+    elif bt[name] != ct_core[name]:
+        drift.append(f"ctest.tests[{name}]: expected {bt[name]!r}, got {ct_core[name]!r}")
+if new_gates:
+    print("NOTE: additive product gate(s) not in the pinned baseline: "
+          + ", ".join(new_gates))
 
 # feature gate
 b, c = baseline.get("feature_gate", {}), current.get("feature_gate", {})

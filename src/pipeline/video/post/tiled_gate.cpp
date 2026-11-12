@@ -134,8 +134,13 @@ bool check_decoded(const std::string& path, int width, int height,
 }
 
 // One 2-frame stream with the requested geometry and uniform tile grid.
+// `cdef_on_skip_txfm` -1 leaves CDEF off at the sequence level (the pinned
+// default); 0 selects CDEF_ON_SKIP_TXFM_DISABLED, 1 ALWAYS_ON, 2 ADAPTIVE.
+// The enabled cases use CdefStrengths == 1 with an all-zero strength set, so
+// no cdef_idx tile symbols are coded and the constant picture is unchanged.
 bool run_case(int width, int height, int cols, int rows,
-              const std::string& dav2d, const std::string& out_path) {
+              const std::string& dav2d, const std::string& out_path,
+              int cdef_on_skip_txfm = -1) {
   std::string error;
   av2enc::video::VideoConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
@@ -158,6 +163,14 @@ bool run_case(int width, int height, int cols, int rows,
   sequence.filters.enable_cdef = true;
   sequence.filters.enable_ccso = true;
   sequence.filters.ccso_unit_matches_sb_size = true;
+  if (cdef_on_skip_txfm >= 0) {
+    // Select one of the §5.4.10 CdefOnSkipTxfm modes explicitly.  The default
+    // is DISABLED, so mode 0 keeps the historical row.
+    sequence.filters.cdef_on_skip_txfm_disabled =
+        cdef_on_skip_txfm == 0;
+    sequence.filters.cdef_on_skip_txfm_always_on =
+        cdef_on_skip_txfm == 1;
+  }
   const auto seq_obu =
       av2enc::video::post::make_video_sequence_header_obu(config, sequence, &error);
   if (seq_obu.empty()) {
@@ -189,6 +202,22 @@ bool run_case(int width, int height, int cols, int rows,
   for (int plane = 0; plane < 4; ++plane) {
     key_header.apply_deblocking_filter[plane] = true;
     inter_header.apply_deblocking_filter[plane] = true;
+  }
+
+  if (cdef_on_skip_txfm >= 0) {
+    // §5.18.7.10: the frame-enable bit is present (single_picture_header_flag
+    // is 0).  One strength set with all-zero values; the ADAPTIVE row codes the
+    // per-frame on_skip bit, ALWAYS_ON infers 1 and DISABLED infers 0.
+    for (av2enc::video::post::VideoTiledFrameHeader* header :
+         {&key_header, &inter_header}) {
+      header->cdef_frame_enable = true;
+      header->cdef.frame_enable = true;
+      header->cdef.damping_minus_3 = 0;
+      header->cdef.num_strengths = 1;
+      header->cdef.strengths_minus_1 = 0;
+      header->cdef.set[0] = av2enc::still::filters_stream::CdefStrength{};
+      header->cdef.on_skip_txfm_frame_enable = cdef_on_skip_txfm == 1;
+    }
   }
 
   av2enc::video::post::VideoTiledFrame key_frame;
@@ -285,12 +314,20 @@ int main(int argc, char** argv) {
       run_case(256, 64, 2, 1, dav2d, out_path + ".4sb.ivf");
   const bool four_tiles =
       run_case(256, 128, 2, 2, dav2d, out_path + ".2x2.ivf");
+  const bool cdef_skip_disabled =
+      run_case(128, 64, 2, 1, dav2d, out_path + ".cdef_disabled.ivf", 0);
+  const bool cdef_skip_always_on =
+      run_case(128, 64, 2, 1, dav2d, out_path + ".cdef_always_on.ivf", 1);
+  const bool cdef_skip_adaptive =
+      run_case(128, 64, 2, 1, dav2d, out_path + ".cdef_adaptive.ivf", 2);
 
-  if (!one_sb_per_tile || !two_sb_per_tile || !four_tiles) {
+  if (!one_sb_per_tile || !two_sb_per_tile || !four_tiles ||
+      !cdef_skip_disabled || !cdef_skip_always_on || !cdef_skip_adaptive) {
     std::cout << "M2 TILED POST GATE FAIL\n";
     return 1;
   }
-  std::cout << "PASS: 3 tiled 2-frame streams decoded, all samples are the "
-               "expected DC/GLOBALMV constant\n";
+  std::cout << "PASS: 6 tiled 2-frame streams decoded, all samples are the "
+               "expected DC/GLOBALMV constant (3 geometry cases + the three "
+               "CdefOnSkipTxfm sequence modes with CDEF enabled)\n";
   return 0;
 }

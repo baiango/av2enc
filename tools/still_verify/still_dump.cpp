@@ -50,6 +50,7 @@ void usage(std::ostream& out) {
          "  --uv-full               enable the full chroma intra search\n"
          "  --cdef                  enable CDEF (CLI --still-cdef)\n"
          "  --cdef-strengths N      CDEF strength sets 1..8 (default 4)\n"
+         "  --cdef-on-skip-txfm     code the ADAPTIVE CDEF on-skip bit\n"
          "  --rdo-intra             rate-aware luma intra (CLI --still-rdo-intra)\n"
          "  --rdo-scale S           lambda sse_scale (default 0.125)\n"
          "  --rdoq                  enable coefficient RDOQ (CLI --still-rdoq)\n"
@@ -64,7 +65,12 @@ void usage(std::ostream& out) {
          "  --ext-partitions        extended HORZ_3/VERT_3/4-way (--still-ext-partitions)\n"
          "  --qm                    signal a spec-defined QM set (CLI --still-qm)\n"
          "  --qm-level L            QM default matrix level 0..14 (default 3)\n"
+         "  --user-qm               carry a user QM OBU (CLI --still-user-qm)\n"
          "  --ist                   enable intra secondary transform (CLI --still-ist)\n"
+         "  --tcq                   enable TCQ, luma 2-D (CLI --still-tcq)\n"
+         "  --cctx                  enable CCTX chroma rotation (CLI --still-cctx)\n"
+         "  --tx-partition          enable TX_MODE_SELECT luma partitions\n"
+         "  --idtx                  enable identity intra TX (CLI --still-idtx)\n"
          "  --delta-q               enable DC/AC delta-Q search (CLI --still-dc-ac-delta-q)\n"
          "  --wiener                luma Wiener NS loop restoration\n"
          "  --chroma-lr             chroma Wiener NS loop restoration\n"
@@ -239,6 +245,8 @@ int parse_args(int argc, char** argv, Cli& cli) {
       cli.options.uv_full = true;
     } else if (arg == "--cdef") {
       cli.options.enable_cdef = true;
+    } else if (arg == "--cdef-on-skip-txfm") {
+      cli.options.cdef_on_skip_txfm = true;
     } else if (arg == "--rdo-intra") {
       cli.options.rdo_intra = true;
     } else if (arg == "--rdo-scale") {
@@ -308,10 +316,23 @@ int parse_args(int argc, char** argv, Cli& cli) {
       cli.options.cdef_num_strengths = strengths;
     } else if (arg == "--ist") {
       cli.options.ist = true;
+    } else if (arg == "--tcq") {
+      cli.options.tcq = true;
+    } else if (arg == "--cctx") {
+      cli.options.cctx = true;
+    } else if (arg == "--tx-partition") {
+      cli.options.tx_partition = true;
+    } else if (arg == "--idtx") {
+      cli.options.idtx = true;
+    } else if (arg == "--ddt") {
+      cli.options.ddt = true;
     } else if (arg == "--delta-q") {
       cli.options.delta_q = true;
     } else if (arg == "--qm") {
       cli.options.qm = true;
+    } else if (arg == "--user-qm") {
+      cli.options.qm = true;
+      cli.options.user_qm = true;
     } else if (arg == "--qm-level") {
       if (!next_value("--qm-level", value)) return 2;
       int level = 0;
@@ -405,9 +426,21 @@ std::string options_json(const Cli& cli, std::uint32_t width,
   j += o.ext_partitions ? "true" : "false";
   j += ",\"qm\":";
   j += o.qm ? "true" : "false";
+  j += ",\"user_qm\":";
+  j += o.user_qm ? "true" : "false";
   j += ",\"qm_level\":" + std::to_string(o.qm_level);
   j += ",\"ist\":";
   j += o.ist ? "true" : "false";
+  j += ",\"tcq\":";
+  j += o.tcq ? "true" : "false";
+  j += ",\"cctx\":";
+  j += o.cctx ? "true" : "false";
+  j += ",\"tx_partition\":";
+  j += o.tx_partition ? "true" : "false";
+  j += ",\"idtx\":";
+  j += o.idtx ? "true" : "false";
+  j += ",\"ddt\":";
+  j += o.ddt ? "true" : "false";
   j += ",\"delta_q\":";
   j += o.delta_q ? "true" : "false";
   j += ",\"ccso_edge\":";
@@ -425,6 +458,8 @@ std::string options_json(const Cli& cli, std::uint32_t width,
   j += ",\"enable_cdef\":";
   j += o.enable_cdef ? "true" : "false";
   j += ",\"cdef_num_strengths\":" + std::to_string(o.cdef_num_strengths);
+  j += ",\"cdef_on_skip_txfm\":";
+  j += o.cdef_on_skip_txfm ? "true" : "false";
   j += ",\"tile_bytes\":" + std::to_string(result.tile_bytes);
   j += ",\"frame_bytes\":" + std::to_string(result.frame_bytes);
   j += ",\"leaves\":" + std::to_string(result.leaves);

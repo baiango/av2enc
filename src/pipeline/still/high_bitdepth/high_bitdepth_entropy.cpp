@@ -27,6 +27,7 @@
 #include "pipeline/still/high_bitdepth/high_bitdepth_headers.h"
 #include "codec/transform/variants/tx_variants.h"
 #include "codec/entropy/av2/av2_entropy.h"
+#include "codec/entropy/qctx/qctx.h"
 
 namespace av2enc::high_bitdepth {
 namespace {
@@ -48,10 +49,8 @@ SizeInfo size_info(int luma_size) {
   return SizeInfo{3, 4, 3, 4};                        // 32x64 / 64x32
 }
 
-// TX_SIZE indices used by M10 (txv::TxSize values).
-constexpr int kTx16x16 = 2;
-constexpr int kTx32x32 = 3;
-constexpr int kTx64x64 = 4;
+// TX_SIZE indices used by the M10 tree are derived per plane from the coded
+// transform dimensions, so extra chroma formats do not need their own list.
 
 int floor_log2(int value) {
   int result = 0;
@@ -60,6 +59,15 @@ int floor_log2(int value) {
     ++result;
   }
   return result;
+}
+
+// §5.20.7.27 txSzCtx from the nominal transform dimensions.
+int tx_size_context_from_dims(int w, int h) {
+  const int sqr = std::max(0, floor_log2(w) - 2);
+  const int sqr_up = std::max(0, floor_log2(h) - 2);
+  const int lo = std::min(sqr, sqr_up);
+  const int hi = std::max(sqr, sqr_up);
+  return (lo + hi + 1) >> 1;
 }
 
 int clip3(int low, int high, int value) {
@@ -99,33 +107,39 @@ void copy_array(T (&dst)[N], const T (&src)[N]) {
   std::memcpy(dst, src, sizeof(dst));
 }
 
-void init_cdfs(CdfState& c) {
+// qctx is the §8.3.1 coefficient-CDF slice (0..3), selected from the *raw*
+// frame base_q_idx by the caller.  Slice 0 is byte-identical to the qctx-0
+// tables the M10 still path has always used, so q <= 90 streams do not move.
+void init_cdfs(CdfState& c, int qctx) {
   using namespace av2enc::basic;
   copy_array(c.do_split, kDoSplitCdf);
   copy_array(c.rect_type, kRectTypeCdf);
   copy_array(c.y_mode_set, kYModeSetCdf);
   copy_array(c.y_mode_index, kYModeIndexCdf);
   copy_array(c.uv_mode, kUvModeCflNotAllowedCdf);
-  copy_array(c.txb_skip, kTxbSkipCdf);
-  copy_array(c.v_txb_skip, kVTxbSkipCdf);
-  copy_array(c.eob_pt_1024, kEobPt1024Cdf);
-  copy_array(c.eob_pt_512, kEobPt512Cdf);
-  copy_array(c.eob_pt_256, kEobPt256Cdf);
-  copy_array(c.eob_pt_128, kEobPt128Cdf);
-  copy_array(c.eob_pt_64, kEobPt64Cdf);
-  copy_array(c.eob_extra, kEobExtraCdf);
-  copy_array(c.coeff_base, kCoeffBaseCdf);
-  copy_array(c.coeff_base_lf, kCoeffBaseLfCdf);
-  copy_array(c.coeff_base_eob, kCoeffBaseEobCdf);
-  copy_array(c.coeff_base_lf_eob, kCoeffBaseLfEobCdf);
-  copy_array(c.coeff_br, kCoeffBrCdf);
-  copy_array(c.coeff_br_lf, kCoeffBrLfCdf);
-  copy_array(c.coeff_base_uv, kCoeffBaseUvCdf);
-  copy_array(c.coeff_base_lf_uv, kCoeffBaseLfUvCdf);
-  copy_array(c.coeff_base_eob_uv, kCoeffBaseEobUvCdf);
-  copy_array(c.coeff_base_lf_eob_uv, kCoeffBaseLfEobUvCdf);
-  copy_array(c.coeff_br_uv, kCoeffBrUvCdf);
-  copy_array(c.dc_sign, kDcSignCdf);
+
+  const av2enc::still::qctx::CoeffCdfSlice& q =
+      av2enc::still::qctx::tables_for_slice(qctx);
+  copy_array(c.txb_skip, *q.txb_skip);
+  copy_array(c.v_txb_skip, *q.v_txb_skip);
+  copy_array(c.eob_pt_1024, *q.eob_pt_1024);
+  copy_array(c.eob_pt_512, *q.eob_pt_512);
+  copy_array(c.eob_pt_256, *q.eob_pt_256);
+  copy_array(c.eob_pt_128, *q.eob_pt_128);
+  copy_array(c.eob_pt_64, *q.eob_pt_64);
+  copy_array(c.eob_extra, *q.eob_extra);
+  copy_array(c.coeff_base, *q.coeff_base);
+  copy_array(c.coeff_base_lf, *q.coeff_base_lf);
+  copy_array(c.coeff_base_eob, *q.coeff_base_eob);
+  copy_array(c.coeff_base_lf_eob, *q.coeff_base_lf_eob);
+  copy_array(c.coeff_br, *q.coeff_br);
+  copy_array(c.coeff_br_lf, *q.coeff_br_lf);
+  copy_array(c.coeff_base_uv, *q.coeff_base_uv);
+  copy_array(c.coeff_base_lf_uv, *q.coeff_base_lf_uv);
+  copy_array(c.coeff_base_eob_uv, *q.coeff_base_eob_uv);
+  copy_array(c.coeff_base_lf_eob_uv, *q.coeff_base_lf_eob_uv);
+  copy_array(c.coeff_br_uv, *q.coeff_br_uv);
+  copy_array(c.dc_sign, *q.dc_sign);
 }
 
 class Writer {
@@ -140,7 +154,13 @@ class Writer {
         options_(options) {
     mi_cols_ = static_cast<int>(geometry.mi_cols);
     mi_rows_ = static_cast<int>(geometry.mi_rows);
-    init_cdfs(cdfs_);
+    sub_x_ = geometry.sub_x;
+    sub_y_ = geometry.sub_y;
+    monochrome_ = !fmt::has_chroma(geometry.format.chroma);
+    const int qctx = options_.qctx >= 0
+                         ? options_.qctx
+                         : fmt::cdf_q_context(options_.base_q_idx);
+    init_cdfs(cdfs_, qctx);
     tile_buffer_.resize(kTileCapacityBytes);
     enc_.init_symbol(tile_buffer_.data(), tile_buffer_.size());
     enc_.disable_cdf_update = options_.disable_cdf_update ? 1 : 0;
@@ -148,8 +168,10 @@ class Writer {
     above_mi_.assign(static_cast<std::size_t>(mi_cols_) + 16U, 6);
     left_mi_.assign(static_cast<std::size_t>(mi_rows_) + 16U, 6);
     for (int plane = 0; plane < 3; ++plane) {
-      const int n = (plane == 0 ? mi_cols_ : mi_cols_ / 2) + 16;
-      const int m = (plane == 0 ? mi_rows_ : mi_rows_ / 2) + 16;
+      const int shift_x = plane == 0 ? 0 : sub_x_;
+      const int shift_y = plane == 0 ? 0 : sub_y_;
+      const int n = (mi_cols_ >> shift_x) + 16;
+      const int m = (mi_rows_ >> shift_y) + 16;
       above_level_[plane].assign(static_cast<std::size_t>(n), 0);
       left_level_[plane].assign(static_cast<std::size_t>(m), 0);
       above_dc_[plane].assign(static_cast<std::size_t>(n), 0);
@@ -333,6 +355,7 @@ class Writer {
     if (!sym(&cdfs_.y_mode_set[0], 4, 0)) return false;
     // Every block is DC, so both neighbour joint modes are 0 -> context 0.
     if (!sym(&cdfs_.y_mode_index[0][0], 8, 0)) return false;
+    if (monochrome_) return true;  // §5.20.5.3: no intra_uv_mode symbol
     return sym(&cdfs_.uv_mode[0][0], 8, 0);
   }
 
@@ -464,11 +487,12 @@ class Writer {
                              std::string* error) {
     const int w4 = coded_w >> 2;
     const int h4 = coded_h >> 2;
-    const int sub = plane > 0 ? 1 : 0;
-    const int x4 = (block.mi_col >> sub);
-    const int y4 = (block.mi_row >> sub);
-    const int max_x4 = plane == 0 ? mi_cols_ : mi_cols_ / 2;
-    const int max_y4 = plane == 0 ? mi_rows_ : mi_rows_ / 2;
+    const int sx = plane > 0 ? sub_x_ : 0;
+    const int sy = plane > 0 ? sub_y_ : 0;
+    const int x4 = (block.mi_col >> sx);
+    const int y4 = (block.mi_row >> sy);
+    const int max_x4 = mi_cols_ >> sx;
+    const int max_y4 = mi_rows_ >> sy;
 
     int ctx = 0;
     if (plane == 0) {
@@ -757,25 +781,28 @@ class Writer {
     const int w4 = w >> 2;
     const int h4 = h >> 2;
 
-    // TX_MODE_LARGEST: luma TX == coding block; 4:2:0 chroma is half.
-    const int cw = luma / 2;
-    const int ch = luma / 2;
-    const int expected[3] = {luma == 64 ? kTx64x64 : kTx32x32,
-                             luma == 64 ? kTx32x32 : kTx16x16,
-                             luma == 64 ? kTx32x32 : kTx16x16};
-    if (block.tx_size[0] != expected[0] || block.tx_size[1] != expected[1] ||
-        block.tx_size[2] != expected[2]) {
-      return fail(error, "TX_MODE_LARGEST block size mismatch");
+    // TX_MODE_LARGEST: luma TX == coding block; chroma is subsampled by the
+    // picture's chroma format (4:2:0 halves both, 4:2:2 half width, 4:4:4
+    // identity, 4:0:0 has no plane).
+    const int coded_w[3] = {w, w >> sub_x_, w >> sub_x_};
+    const int coded_h[3] = {h, h >> sub_y_, h >> sub_y_};
+    for (int plane = 0; plane < 3; ++plane) {
+      if (plane > 0 && monochrome_) break;
+      const int expected = txv::tx_size_index(coded_w[plane], coded_h[plane]);
+      if (expected < 0 || block.tx_size[plane] != expected) {
+        return fail(error, "TX_MODE_LARGEST block size mismatch");
+      }
     }
-    const int tx_ctx[3] = {luma == 64 ? 4 : 3, luma == 64 ? 3 : 2,
-                           luma == 64 ? 3 : 2};
-    const int coded_w[3] = {w, cw, cw};
-    const int coded_h[3] = {h, ch, ch};
+    const int tx_ctx[3] = {
+        tx_size_context_from_dims(coded_w[0], coded_h[0]),
+        tx_size_context_from_dims(coded_w[1], coded_h[1]),
+        tx_size_context_from_dims(coded_w[2], coded_h[2])};
 
     if (!code_mode_info_dc()) return fail(error, error_);
 
     std::size_t level_base = block.levels_offset;
-    for (int plane = 0; plane < 3; ++plane) {
+    const int planes = monochrome_ ? 1 : 3;
+    for (int plane = 0; plane < planes; ++plane) {
       if (!encode_residual_plane(block, plane, coded_w[plane],
                                  coded_h[plane], tx_ctx[plane],
                                  coded_w[plane], coded_h[plane], level_base,
@@ -798,6 +825,9 @@ class Writer {
   const HighBitDepthOptions& options_;
   int mi_cols_ = 0;
   int mi_rows_ = 0;
+  int sub_x_ = 1;
+  int sub_y_ = 1;
+  bool monochrome_ = false;
 
   CdfState cdfs_{};
   av2::Encoder enc_{};
@@ -817,29 +847,58 @@ class Writer {
 
 }  // namespace
 
-bool assemble_high_bitdepth_stream(const fmt::Picture& picture, const HighBitDepthOptions& options,
-                         const HighBitDepthBlock* blocks, std::size_t block_count,
-                         const std::int32_t* levels, std::size_t level_count,
-                         std::vector<std::uint8_t>* out,
-                         std::uint32_t* tile_bytes, std::string* error) {
+bool assemble_high_bitdepth_tile_payload(
+    const fmt::Picture& picture, const HighBitDepthOptions& options,
+    const HighBitDepthBlock* blocks, std::size_t block_count,
+    const std::int32_t* levels, std::size_t level_count,
+    std::vector<std::uint8_t>* payload, std::uint32_t* tile_bytes,
+    std::string* error) {
   if (error != nullptr) error->clear();
-  if (out == nullptr || blocks == nullptr ||
+  if (payload == nullptr || blocks == nullptr ||
       (levels == nullptr && level_count != 0)) {
     if (error != nullptr) *error = "null stream argument";
     return false;
   }
-  out->clear();
-  if (picture.format.depth != fmt::BitDepth::k10 ||
-      picture.format.chroma != fmt::ChromaFormat::k420) {
-    if (error != nullptr) *error = "M10 requires 10-bit 4:2:0";
+  payload->clear();
+  if (picture.format.depth != fmt::BitDepth::k10) {
+    if (error != nullptr) *error = "high bit depth requires 10-bit samples";
+    return false;
+  }
+  if (fmt::chroma_format_idc(picture.format.chroma) < 0) {
+    if (error != nullptr) *error = "invalid chroma format";
     return false;
   }
   if (picture.geometry.mi_cols == 0 || picture.geometry.mi_rows == 0) {
     if (error != nullptr) *error = "empty picture geometry";
     return false;
   }
-  if (!high_bitdepth_geometry_supported(picture.format.width, picture.format.height,
-                              error)) {
+  if (!high_bitdepth_geometry_supported(picture.format.width,
+                                        picture.format.height, error)) {
+    return false;
+  }
+
+  Writer writer(picture.geometry, blocks, block_count, levels, level_count,
+                options);
+  std::uint32_t payload_bytes = 0;
+  if (!writer.run(&payload_bytes, error)) return false;
+  *payload = writer.payload();
+  if (tile_bytes != nullptr) *tile_bytes = payload_bytes;
+  return true;
+}
+
+bool assemble_high_bitdepth_stream(const fmt::Picture& picture, const HighBitDepthOptions& options,
+                         const HighBitDepthBlock* blocks, std::size_t block_count,
+                         const std::int32_t* levels, std::size_t level_count,
+                         std::vector<std::uint8_t>* out,
+                         std::uint32_t* tile_bytes, std::string* error) {
+  if (error != nullptr) error->clear();
+  if (out == nullptr) {
+    if (error != nullptr) *error = "null stream argument";
+    return false;
+  }
+  out->clear();
+  if (picture.format.chroma != fmt::ChromaFormat::k420) {
+    if (error != nullptr) *error = "M10 header is 4:2:0 only; use hbd_headers";
     return false;
   }
 
@@ -855,11 +914,14 @@ bool assemble_high_bitdepth_stream(const fmt::Picture& picture, const HighBitDep
     return false;
   }
 
-  Writer writer(picture.geometry, blocks, block_count, levels, level_count,
-                options);
+  std::vector<std::uint8_t> payload;
   std::uint32_t payload_bytes = 0;
-  if (!writer.run(&payload_bytes, error)) return false;
-  *out = assemble_high_bitdepth_still_picture(config, writer.payload());
+  if (!assemble_high_bitdepth_tile_payload(picture, options, blocks, block_count,
+                                           levels, level_count, &payload,
+                                           &payload_bytes, error)) {
+    return false;
+  }
+  *out = assemble_high_bitdepth_still_picture(config, payload);
   if (tile_bytes != nullptr) *tile_bytes = payload_bytes;
   return true;
 }

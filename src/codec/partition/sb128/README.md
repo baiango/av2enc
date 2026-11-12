@@ -178,9 +178,40 @@ Decoding the four streams, then checking every luma/chroma byte equals 128:
 6. Determinism: the gate builds each stream twice and compares bytes; the
    decoded output is identical across runs.
 
-Not exercised by the stream (unit-tested only, or out of scope): CDEF/CCSO
-symbol rows at 128 SB, residual coefficient contexts, SDP, extended partitions,
-256x256 superblocks, inter frames, multi-tile layouts.
+Not exercised by the *minimal reference* stream (unit-tested only, or out of
+scope): CDEF/CCSO symbol rows at 128 SB, residual coefficient contexts, SDP,
+extended partitions, 256x256 coding blocks, inter frames, multi-tile layouts.
+The product path now gates CDEF/CCSO at 128 SB — see below.
+
+## Integrated product path (`--still-sb128` / `--still-sb256` with filters)
+
+The M1 writer now derives the two superblock-size-dependent filter fields from
+`FramePlan::sb_size`:
+
+- CDEF: `cdef_encode_block_index()` is called with
+  `sb_width_log2 = 5` for a 128x128 frame superblock (4 for 64), so the
+  `cdef_index0` above-superblock-row context is normative.
+- CCSO: `write_ccso()` uses `ccso_shift = 5` (a 128x128 luma unit) and the
+  encoder builds the per-unit grid with `CcsoLumaSizeLog2 = 7`.  The sequence
+  header keeps `ccso_unit_matches_sb_size = 1`; the decoder derives the same
+  size from `SbSize` (§5.18.7.12).
+
+Both are CPU-only; `--still-gpu` still rejects the 128/256 SB flags by name.
+An intra frame codes an `SbSize = 128x128` frame grid for both `--still-sb128`
+and `--still-sb256` (§5.18.1), so the CDEF/CCSO sizing is identical for the two
+flags.
+
+Gate (640x360 edge and 256x256, both SB flags, CDEF / CCSO / both / 8 strengths
+/ edge CCSO; decode with the pinned `dav2d`, sample-exact Y/U/V):
+
+```sh
+src/codec/partition/sb128/product_gate.sh build-int
+```
+
+Local result: PASS for all 20 cases (`dav2d` f9dafbc, `--strict 1`).  Negative
+controls confirm the sizing is required: hard-coding `sb_width_log2 = 4` for
+CDEF, or `CcsoLumaSizeLog2 = 6`, makes the pinned decoder reject the 640x360
+`--still-sb128` stream.  Default `--still` streams are unchanged.
 
 ## Integration call sites (no core edits made)
 

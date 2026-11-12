@@ -22,6 +22,7 @@
 #pragma once
 
 #include "pipeline/video/video_headers.h"
+#include "codec/entropy/avg_cdf/avg_cdf_bank.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -65,6 +66,13 @@ struct BlockSyntax {
   std::uint8_t drl_index = 0;
   // §5.18.2/§5.20.7.10 RefFrame[0] index into ref_frame_idx[] (0..6).
   std::uint8_t ref_index = 0;
+  // Compound block (§5.20.7.10 comp_mode / §5.20.7.6).  `ref_index1` is
+  // RefFrame[1]; `compound_joint` selects is_joint; `compound_mode` is the
+  // compound_mode_non_joint symbol (YMode = NEAR_NEARMV + compound_mode).
+  std::uint8_t compound = 0;
+  std::uint8_t ref_index1 = 0;
+  std::uint8_t compound_joint = 0;
+  std::uint8_t compound_mode = 3;  // 3 = GLOBAL_GLOBALMV
   std::int32_t mv_y = 0;   // resolved MV, 1/8 luma samples
   std::int32_t mv_x = 0;
   std::int32_t mvd_y = 0;  // signalled MVD for NEWMV, 1/8 luma samples
@@ -87,8 +95,10 @@ struct FramePlan {
   // false for the intra keyframe (intra_frame_mode_info), true for P frames
   // (inter_frame_mode_info, which codes is_inter/skip).
   bool inter_frame = true;
-  // §5.18.2 per-frame reference map (single prediction, explicit map).
+  // §5.18.2 per-frame reference map.  num_total_refs > 1 lists the explicit
+  // map; reference_select enables per-block comp_mode (compound).
   int num_total_refs = 1;
+  bool reference_select = false;
   // Frame MV precision: 0 = 1/8, 1 = 1/4, 2 = 1/2 pel.
   int mv_precision = 0;
   // FrameDistance[ref] for the MV stack's derived candidates.
@@ -108,7 +118,24 @@ bool assemble_video_frame(const FramePlan& plan,
                        std::span<const std::int32_t> levels,
                        const VideoConfig& config,
                        std::vector<std::uint8_t>& tile_payload,
-                       std::string& error, std::size_t* tile_bytes = nullptr);
+                       std::string& error, std::size_t* tile_bytes = nullptr,
+                       std::span<const std::uint16_t> cdf_seed = {},
+                       std::vector<std::uint16_t>* cdf_final = nullptr);
+
+// Opaque packed §8.2 CDF image (no neighbour/context state).  Used by the
+// cross-frame continuity wiring in video_frame.cpp: the encoder seeds a frame
+// from the primary reference's saved CDFs and exports the adapted tile CDFs so
+// the average-CDF bank can run §8.2.4 / §7.5.
+std::size_t cdf_image_words();
+bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
+                                       std::vector<std::uint16_t>& out,
+                                       std::string* error = nullptr);
+bool cdf_image_tables(std::vector<std::uint16_t>& frame,
+                      std::vector<std::uint16_t>& tile,
+                      std::vector<std::uint16_t>& saved,
+                      std::vector<std::uint16_t>& defaults,
+                      std::vector<entropy::avg_cdf::CdfTable>& tables,
+                      std::string* error = nullptr);
 
 int y_mode_joint(int av2_mode, int angle_delta);
 void build_scan(int w, int h, std::span<std::uint16_t> scan);

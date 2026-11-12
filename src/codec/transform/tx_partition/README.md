@@ -1,4 +1,19 @@
-# Transform partition / `TX_MODE_SELECT` (`src/encoder/m2/tx_partition/`)
+# Transform partition / `TX_MODE_SELECT` (`src/codec/transform/tx_partition/`)
+
+Status: **component + integrated still path.** The CPU `--still-tx-partition`
+path (`src/pipeline/still/still_encoder.cpp` + `still_syntax.cpp`) now selects
+NONE/SPLIT/HORZ/VERT per luma coding block, writes §5.20.6.3
+`tx_do_partition` / `tx_partition_type` before the coefficients, and runs
+prediction, transform, quantisation and reconstruction per transform part in
+decode order. `BlockSyntax` carries a per-part luma TX list
+(`tx_part_count`/`tx_partition`/`tx_parts[]`); chroma keeps one transform per
+plane. The decoder gate is `still_tx_partition_gate.sh`: `--still-tx-partition`
+is default-off, the pinned 64x64/640x360 `--still` streams are byte-identical,
+and the natural plus forced NONE/SPLIT/HORZ/VERT streams decode sample-exactly
+with `dav2d --strict 1`. TX partitioning composes with RDOQ, TX_TYPE, IST, TCQ,
+CCTX and RDO-intra; QM, DC/AC delta-Q, DIP, MRL and IBP are rejected by name.
+
+The rest of this document describes the standalone component.
 
 Implements the AV2 v1.0.0 transform-mode and transform-partition signalled by
 §5.18.8.1, §5.20.6.1, §5.20.6.2 and §5.20.6.3 — the syntax family the

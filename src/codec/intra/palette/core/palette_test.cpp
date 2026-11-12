@@ -314,6 +314,28 @@ void test_cache_round_trip() {
   round_trip(block, 64, 64, 64, 64, cache, n, true, &cdfs, "cache round trip");
 }
 
+void test_duplicate_cache_round_trip() {
+  // §5.20.8.2 interleaves the above and left palettes, so the same colour can
+  // appear twice in PaletteCache (e.g. [32,32,96,96]).  Each cache entry fills
+  // one palette slot, so a duplicated value must not consume two slots and drop
+  // a distinct colour: that desync produced the minimal dav2d reproducer in
+  // docs/negative-results.md (8x32 leaf, direction 0, identity_row_y == 1).
+  PaletteCdfState cdfs;
+  av2enc::palette::init_palette_cdfs(cdfs);
+  const int w = 8;
+  const int h = 32;
+  std::vector<std::uint8_t> src(static_cast<std::size_t>(w) * h);
+  for (int r = 0; r < h; ++r) {
+    for (int c = 0; c < w; ++c) {
+      src[static_cast<std::size_t>(r) * static_cast<std::size_t>(w) +
+          static_cast<std::size_t>(c)] = r < h / 2 ? 96 : 64;
+    }
+  }
+  const std::uint8_t cache[4] = {32, 32, 96, 96};
+  round_trip(src, w, h, w, h, cache, 4, true, &cdfs,
+             "duplicate cache round trip");
+}
+
 }  // namespace
 
 int main() {
@@ -324,6 +346,7 @@ int main() {
   test_delta_limit();
   test_chroma_rule();
   test_cache_round_trip();
+  test_duplicate_cache_round_trip();
   std::printf("palette_test: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;
 }

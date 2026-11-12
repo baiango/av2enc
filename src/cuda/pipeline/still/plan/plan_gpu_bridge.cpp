@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <limits>
 
-#if __has_include("cuda/m1/still_gpu.h")
+#if __has_include("cuda/pipeline/still/still_gpu.h")
 
 namespace av2enc::still::plan {
 namespace {
@@ -128,7 +128,7 @@ bool map_gpu_frame(const FramePlan& plan, std::vector<GpuBlock>& blocks,
   return true;
 }
 
-#if __has_include("encoder/m1/stream/still_stream_bridge.h")
+#if __has_include("pipeline/still/stream/still_stream_bridge.h")
 bool map_stream_tree(const FramePlan& plan,
                      std::vector<stream::TreeNode>& tree,
                      std::string& error) {
@@ -171,7 +171,7 @@ bool build_gpu_frame_plan(int width, int height,
   return map_gpu_frame(plan, blocks, frame, error);
 }
 
-#if __has_include("encoder/m1/stream/still_stream_bridge.h")
+#if __has_include("pipeline/still/stream/still_stream_bridge.h")
 bool build_gpu_frame_plan(int width, int height,
                           std::span<const std::uint8_t> luma,
                           const PlanOptions& options,
@@ -192,4 +192,4 @@ bool build_gpu_frame_plan(int width, int height,
 
 }  // namespace av2enc::still::plan
 
-#endif  // __has_include("cuda/m1/still_gpu.h")
+#endif  // __has_include("cuda/pipeline/still/still_gpu.h")

@@ -90,6 +90,12 @@ struct Config {
   bool enable_intra_edge_filter = true;
   bool enable_cfl_intra = true;
   bool enable_chroma_dctonly = true;
+  // Opt-in §8.2.6 per-tile CDF adaptation under the average-CDF bookkeeping
+  // (§8.2.2 frame->tile seed, §8.2.4 Saved* average, §7.5 frame end).  A
+  // single-picture header infers enable_avg_cdf = 1 / avg_cdf_type = 1, so no
+  // extra header bits are needed; the only header change is
+  // disable_cdf_update = 0.  Default false keeps the frozen pinned tiles.
+  bool adaptive_cdf = false;
 };
 
 // One encoded tile. `payload` is the §8.2 entropy payload only (no OBU framing

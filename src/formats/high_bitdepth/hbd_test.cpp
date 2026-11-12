@@ -67,11 +67,13 @@ std::string hex(const std::vector<std::uint8_t>& bytes) {
   return out;
 }
 
-av2enc::fmt::Picture make_picture(std::uint32_t width, std::uint32_t height) {
+av2enc::fmt::Picture make_picture(
+    std::uint32_t width, std::uint32_t height,
+    av2enc::fmt::ChromaFormat chroma = av2enc::fmt::ChromaFormat::k420) {
   av2enc::fmt::Format format;
   format.width = width;
   format.height = height;
-  format.chroma = av2enc::fmt::ChromaFormat::k420;
+  format.chroma = chroma;
   format.depth = av2enc::fmt::BitDepth::k10;
   av2enc::fmt::Picture picture;
   std::string error;
@@ -86,8 +88,10 @@ av2enc::fmt::Picture make_picture(std::uint32_t width, std::uint32_t height) {
     state ^= state << 5U;
     return state;
   };
-  const std::uint32_t cw = (width + 1U) / 2U;
-  const std::uint32_t ch = (height + 1U) / 2U;
+  const int sx = av2enc::fmt::subsampling_x(chroma);
+  const int sy = av2enc::fmt::subsampling_y(chroma);
+  const std::uint32_t cw = (width + (1U << sx) - 1U) >> sx;
+  const std::uint32_t ch = (height + (1U << sy) - 1U) >> sy;
   for (std::uint32_t y = 0; y < height; ++y) {
     for (std::uint32_t x = 0; x < width; ++x) {
       const std::uint32_t v =
@@ -95,19 +99,22 @@ av2enc::fmt::Picture make_picture(std::uint32_t width, std::uint32_t height) {
       picture.planes[0].at(x, y) = static_cast<std::uint16_t>(v);
     }
   }
-  for (std::uint32_t y = 0; y < ch; ++y) {
-    for (std::uint32_t x = 0; x < cw; ++x) {
-      picture.planes[1].at(x, y) =
-          static_cast<std::uint16_t>((x * 11U + y * 7U + (next() & 31U)) &
-                                     1023U);
-      picture.planes[2].at(x, y) =
-          static_cast<std::uint16_t>((x * 3U + y * 13U + (next() & 31U)) &
-                                     1023U);
+  const int planes = av2enc::fmt::num_planes(chroma);
+  if (planes > 1) {
+    for (std::uint32_t y = 0; y < ch; ++y) {
+      for (std::uint32_t x = 0; x < cw; ++x) {
+        picture.planes[1].at(x, y) =
+            static_cast<std::uint16_t>((x * 11U + y * 7U + (next() & 31U)) &
+                                       1023U);
+        picture.planes[2].at(x, y) =
+            static_cast<std::uint16_t>((x * 3U + y * 13U + (next() & 31U)) &
+                                       1023U);
+      }
     }
   }
-  av2enc::fmt::replicate_borders(picture.planes[0]);
-  av2enc::fmt::replicate_borders(picture.planes[1]);
-  av2enc::fmt::replicate_borders(picture.planes[2]);
+  for (int plane = 0; plane < planes; ++plane) {
+    av2enc::fmt::replicate_borders(picture.planes[plane]);
+  }
   return picture;
 }
 
@@ -342,11 +349,14 @@ void test_still_encode() {
   using namespace av2enc::hbd;
   const av2enc::fmt::Picture picture = make_picture(64, 64);
 
-  // Encoding seam: 1..90 only (slice-0 entropy), header handles 1..303.
+  // Encoding seam (closed): the tile writer installs the §8.3.1 coefficient
+  // CDF slice, so every 10-bit qindex 1..303 is encodable.
   std::string reason;
   expect(qindex_encodable(90, &reason), "q=90 encodable");
   expect(qindex_encodable(1, &reason), "q=1 encodable");
-  expect(!qindex_encodable(91, &reason), "q=91 seam rejected");
+  expect(qindex_encodable(91, &reason), "q=91 encodable (slice 1)");
+  expect(qindex_encodable(191, &reason), "q=191 encodable (slice 3)");
+  expect(qindex_encodable(303, &reason), "q=303 encodable (slice 3)");
   expect(!qindex_encodable(0, &reason), "q=0 rejected");
   expect(!qindex_encodable(304, &reason), "q=304 rejected");
 
@@ -429,6 +439,136 @@ void test_still_encode() {
          "129x100 geometry rejected");
 }
 
+void test_chroma_formats() {
+  using namespace av2enc::hbd;
+  using av2enc::fmt::ChromaFormat;
+
+  struct Case {
+    ChromaFormat chroma;
+    const char* name;
+    int idc;
+    int profile;
+    long long seq_bits_64;
+    long long seq_bits_360;
+    const char* seq_hex_64;
+  };
+  const Case cases[] = {
+      {ChromaFormat::k420, "420", 0, 0, 81, 88,
+       "0c04827d57ffc00010006e0020"},
+      {ChromaFormat::k422, "422", 3, 3, 85, 92,
+       "0c048e72557ffc00010006e002"},
+      {ChromaFormat::k444, "444", 2, 4, 83, 90,
+       "0c04927755fff00004001b8008"},
+      {ChromaFormat::k400, "400", 1, 0, 71, 78,
+       "0b04827555fff00020040080"},
+  };
+  std::string error;
+  for (const Case& entry : cases) {
+    HbdConfig config = config_for(64, 64, 90);
+    config.chroma = entry.chroma;
+    expect(validate_config(config, &error),
+           std::string("config ") + entry.name + ": " + error);
+    expect_int(av2enc::fmt::chroma_format_idc(entry.chroma), entry.idc,
+               std::string("chroma_format_idc ") + entry.name);
+    const av2enc::fmt::Format probe{64, 64, entry.chroma,
+                                    av2enc::fmt::BitDepth::k10};
+    expect_int(av2enc::fmt::profile_idc(probe), entry.profile,
+               std::string("profile_idc ") + entry.name);
+    const HeaderBitCounts h = header_bit_counts(config);
+    expect_int(static_cast<long long>(h.sequence_syntax_bits),
+               entry.seq_bits_64,
+               std::string("sequence bits ") + entry.name);
+    expect_int(static_cast<long long>(header_bit_counts(config_for(64, 64, 90)).frame_syntax_bits), 23,
+               std::string("frame bits ") + entry.name);
+    expect(hex(make_sequence_header_obu(config)) == entry.seq_hex_64,
+           std::string("golden seq OBU ") + entry.name);
+
+    HbdConfig wide = config_for(640, 360, 90);
+    wide.chroma = entry.chroma;
+    expect_int(static_cast<long long>(header_bit_counts(wide).sequence_syntax_bits),
+               entry.seq_bits_360,
+               std::string("sequence bits 640x360 ") + entry.name);
+
+    // 4:0:0 drops the chroma-only syntax (§5.4.3/§5.4.5/§5.4.8).
+    if (entry.chroma == ChromaFormat::k400) {
+      expect(!av2enc::fmt::has_chroma(entry.chroma), "400 has no chroma plane");
+      HbdConfig bad = config;
+      bad.apply_deblock_y_vert = true;
+      bad.apply_deblock_u = true;
+      expect(!validate_config(bad, &error), "400 rejects chroma deblock");
+    }
+  }
+
+  // Encode every format.  The bytes must be deterministic, the reconstruction
+  // must stay inside Clip1, and mono must carry exactly one plane.
+  for (const Case& entry : cases) {
+    const av2enc::fmt::Picture picture = make_picture(64, 64, entry.chroma);
+    HbdOptions options;
+    options.base_q_idx = 90;
+    HbdResult first;
+    HbdResult second;
+    expect(encode_still(picture, options, first, error),
+           std::string("encode 64x64 ") + entry.name + ": " + error);
+    expect(encode_still(picture, options, second, error),
+           std::string("re-encode 64x64 ") + entry.name + ": " + error);
+    expect(first.frame == second.frame,
+           std::string("deterministic bytes ") + entry.name);
+    expect(first.frame_bytes > first.tile_bytes,
+           std::string("headers precede payload ") + entry.name);
+    const int planes = av2enc::fmt::num_planes(entry.chroma);
+    for (int plane = 0; plane < planes; ++plane) {
+      expect(!first.recon[plane].samples.empty() ||
+                 (plane > 0 && !av2enc::fmt::has_chroma(entry.chroma)),
+             std::string("recon plane ") + std::to_string(plane) + " " +
+                 entry.name);
+      for (std::uint16_t sample : first.recon[plane].samples) {
+        if (sample > 1023) {
+          expect(false, std::string("recon range ") + entry.name);
+          break;
+        }
+      }
+    }
+    if (!av2enc::fmt::has_chroma(entry.chroma)) {
+      expect(first.recon[1].samples.empty() && first.recon[2].samples.empty(),
+             "mono recon has no chroma planes");
+    }
+  }
+}
+
+
+void test_high_qindex_encode() {
+  using namespace av2enc::hbd;
+  const av2enc::fmt::Picture picture = make_picture(64, 64);
+  std::string error;
+  for (int qv : {91, 141, 191, 303}) {
+    const std::uint16_t q = static_cast<std::uint16_t>(qv);
+    HbdOptions options;
+    options.base_q_idx = q;
+    HbdResult result;
+    expect(encode_still(picture, options, result, error),
+           "encode q=" + std::to_string(q) + ": " + error);
+    expect_int(depth::qlookup(q), result.quant_step,
+               "quant_step q=" + std::to_string(q));
+    expect(result.tile_bytes > 0, "tile bytes q=" + std::to_string(q));
+    HbdParsedStream parsed;
+    expect(parse_stream(result.frame, &parsed, &error),
+           "parse q=" + std::to_string(q) + ": " + error);
+    expect_int(parsed.frame.base_q_idx, q,
+               "header q=" + std::to_string(q));
+  }
+  // q=91 (slice 1) must differ from q=90 (slice 0): both the CDF slice and
+  // the quantizer change.
+  HbdOptions q90;
+  q90.base_q_idx = 90;
+  HbdOptions q91;
+  q91.base_q_idx = 91;
+  HbdResult r90;
+  HbdResult r91;
+  expect(encode_still(picture, q90, r90, error), "encode q=90");
+  expect(encode_still(picture, q91, r91, error), "encode q=91");
+  expect(r90.frame != r91.frame, "q=90 and q=91 streams differ");
+}
+
 }  // namespace
 
 int main() {
@@ -438,6 +578,8 @@ int main() {
   test_cfl_ranges();
   test_header_bits();
   test_still_encode();
+  test_chroma_formats();
+  test_high_qindex_encode();
 
   if (failures == 0) {
     std::printf("hbd_test: PASS (%d checks)\n", checks);

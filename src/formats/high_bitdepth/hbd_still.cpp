@@ -30,12 +30,33 @@ int floor_log2(int value) {
   return result;
 }
 
-// §7.13.2.11 approx_divide().  The DC block sizes used here have a power-of-two
-// denominator (w+h is 32/64/128), for which resolve_divisor() gives f = 0 and
-// Div_Lut[0] = 512.  This mirrors the verified M10 predictor exactly.
+// §7.13.2.11 approx_divide() with the normative §7.13.3.22 Div_Lut.  The M10
+// DC block sizes (w+h 32/64/128) all resolve to Div_Lut[0] = 512, but 4:2:2
+// chroma blocks (16x32 -> 48) and any non-power-of-two sum need the full table.
+constexpr int kDivLutBits = 7;
+constexpr int kDivLutPrecBits = 9;
+constexpr int kDivLut[129] = {
+    512, 508, 504, 500, 496, 493, 489, 485, 482, 478, 475, 471, 468, 465, 462,
+    458, 455, 452, 449, 446, 443, 440, 437, 434, 431, 428, 426, 423, 420, 417,
+    415, 412, 410, 407, 405, 402, 400, 397, 395, 392, 390, 388, 386, 383, 381,
+    379, 377, 374, 372, 370, 368, 366, 364, 362, 360, 358, 356, 354, 352, 350,
+    349, 347, 345, 343, 341, 340, 338, 336, 334, 333, 331, 329, 328, 326, 324,
+    323, 321, 320, 318, 317, 315, 314, 312, 311, 309, 308, 306, 305, 303, 302,
+    301, 299, 298, 297, 295, 294, 293, 291, 290, 289, 287, 286, 285, 284, 282,
+    281, 280, 279, 278, 277, 275, 274, 273, 272, 271, 270, 269, 267, 266, 265,
+    264, 263, 262, 261, 260, 259, 258, 257, 256};
+
 int approx_divide(int numerator, int denominator) {
-  const int shift = 9 + floor_log2(denominator);
-  return round2(numerator * 512, shift);
+  const int abs_denominator = denominator < 0 ? -denominator : denominator;
+  if (abs_denominator == 0) return 0;
+  const int n = floor_log2(abs_denominator);
+  const int e = abs_denominator - (1 << n);
+  const int f =
+      n > kDivLutBits ? round2(e, n - kDivLutBits)
+                      : e << (kDivLutBits - n);
+  const int scale = kDivLut[f < 128 ? f : 128];
+  return round2(numerator * (denominator < 0 ? -scale : scale),
+                n + kDivLutPrecBits);
 }
 
 int clip3(int low, int high, int value) {
@@ -127,12 +148,6 @@ bool qindex_encodable(std::uint16_t base_q_idx, std::string* reason) {
   if (base_q_idx > static_cast<unsigned>(maxq)) {
     return fail("base_q_idx exceeds MaxQ = 303 at 10-bit");
   }
-  if (depth::qctx_slice(base_q_idx) != 0) {
-    return fail("encode seam: the reused M10 entropy writer only has the "
-                "frozen coefficient-CDF slice 0 (base_q_idx <= 90).  "
-                "base_q_idx 91..303 needs a qctx-aware entropy writer; the "
-                "header writer and depth helpers already support it.");
-  }
   return true;
 }
 
@@ -140,9 +155,12 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
                   HbdResult& result, std::string& error) {
   error.clear();
   result = HbdResult{};
-  if (picture.format.depth != fmt::BitDepth::k10 ||
-      picture.format.chroma != fmt::ChromaFormat::k420) {
-    error = "hbd requires a 10-bit 4:2:0 picture";
+  if (picture.format.depth != fmt::BitDepth::k10) {
+    error = "hbd requires 10-bit samples";
+    return false;
+  }
+  if (fmt::chroma_format_idc(picture.format.chroma) < 0) {
+    error = "hbd requires a valid chroma format";
     return false;
   }
   if (!av2enc::high_bitdepth::high_bitdepth_geometry_supported(picture.format.width, picture.format.height,
@@ -156,23 +174,27 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
   if (!qindex_encodable(options.base_q_idx, &error)) return false;
 
   const int quant_step = depth::qlookup(options.base_q_idx);
+  const int num_planes = fmt::num_planes(picture.format.chroma);
+  const int sub_x = fmt::subsampling_x(picture.format.chroma);
+  const int sub_y = fmt::subsampling_y(picture.format.chroma);
 
   const int mi_cols = static_cast<int>(picture.geometry.mi_cols);
   const int mi_rows = static_cast<int>(picture.geometry.mi_rows);
   const int coded_luma_w = mi_cols * 4;
   const int coded_luma_h = mi_rows * 4;
-  const int coded_chroma_w = coded_luma_w / 2;
-  const int coded_chroma_h = coded_luma_h / 2;
 
   av2enc::high_bitdepth::HighBitDepthPlane recon[3];
-  recon[0].width = padded_extent(coded_luma_w);
-  recon[0].height = padded_extent(coded_luma_h);
-  recon[1].width = recon[2].width = recon[0].width / 2;
-  recon[1].height = recon[2].height = recon[0].height / 2;
+  const int padded_luma_w = padded_extent(coded_luma_w);
+  const int padded_luma_h = padded_extent(coded_luma_h);
   for (int plane = 0; plane < 3; ++plane) {
-    recon[plane].coded_width = plane == 0 ? coded_luma_w : coded_chroma_w;
-    recon[plane].coded_height = plane == 0 ? coded_luma_h : coded_chroma_h;
+    if (plane >= num_planes) continue;
     const fmt::PlaneGeometry& pg = picture.geometry.planes[plane];
+    const int shift_x = plane == 0 ? 0 : sub_x;
+    const int shift_y = plane == 0 ? 0 : sub_y;
+    recon[plane].coded_width = coded_luma_w >> shift_x;
+    recon[plane].coded_height = coded_luma_h >> shift_y;
+    recon[plane].width = padded_luma_w >> shift_x;
+    recon[plane].height = padded_luma_h >> shift_y;
     recon[plane].visible_width = static_cast<int>(pg.visible_width);
     recon[plane].visible_height = static_cast<int>(pg.visible_height);
     recon[plane].samples.assign(
@@ -199,17 +221,18 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
     const int x0 = static_cast<int>(desc.mi_col) * 4;
     const int y0 = static_cast<int>(desc.mi_row) * 4;
     const int luma = desc.luma_size;
-    const int chroma = luma / 2;
-    const int coded_w[3] = {luma, chroma, chroma};
-    const int coded_h[3] = {luma, chroma, chroma};
+    const int coded_w[3] = {luma, luma >> sub_x, luma >> sub_x};
+    const int coded_h[3] = {luma, luma >> sub_y, luma >> sub_y};
 
     av2enc::high_bitdepth::HighBitDepthBlock block;
     block.mi_row = desc.mi_row;
     block.mi_col = desc.mi_col;
     block.luma_size = desc.luma_size;
     block.levels_offset = static_cast<std::uint32_t>(levels.size());
+    block.tx_size[0] = block.tx_size[1] = block.tx_size[2] = 0;
+    block.eob[0] = block.eob[1] = block.eob[2] = 0;
 
-    for (int plane = 0; plane < 3; ++plane) {
+    for (int plane = 0; plane < num_planes; ++plane) {
       auto params_opt = txv::make_tx_params(coded_w[plane], coded_h[plane],
                                             txv::TxType::kDctDct);
       if (!params_opt.has_value()) {
@@ -227,8 +250,8 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
             static_cast<double>(quant_step);
       }
 
-      const int px0 = plane == 0 ? x0 : x0 / 2;
-      const int py0 = plane == 0 ? y0 : y0 / 2;
+      const int px0 = plane == 0 ? x0 : (x0 >> sub_x);
+      const int py0 = plane == 0 ? y0 : (y0 >> sub_y);
       const bool have_left = px0 > 0;
       const bool have_above = py0 > 0;
       PlaneView view{recon[plane].samples.data(), recon[plane].width,
@@ -306,25 +329,19 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
     blocks.push_back(block);
   }
 
-  // Reuse the verified M10 entropy/OBU assembly for the tile payload.  M10
-  // validates its own config with base_q_idx = 90, but the payload does not
-  // depend on the header qindex (the CDF slice is frozen at slice 0 and we
-  // only encode q <= 90 here), so the payload bytes are exactly what the
-  // decoder needs.  We then re-frame them with the real qindex header.
+  // Reuse the verified M10 entropy writer for the tile payload.  The payload
+  // depends on the coefficient-CDF slice, not on the header, so pass the slice
+  // for the real qindex while keeping the M10 header config pinned at q=90
+  // (its bytes are discarded).  The hbd header below carries the real qindex.
   av2enc::high_bitdepth::HighBitDepthOptions payload_options;
   payload_options.base_q_idx = 90;
   payload_options.disable_cdf_update = options.disable_cdf_update;
-  std::vector<std::uint8_t> high_bitdepth_frame;
-  std::uint32_t high_bitdepth_tile_bytes = 0;
-  if (!av2enc::high_bitdepth::assemble_high_bitdepth_stream(picture, payload_options, blocks.data(),
-                                blocks.size(), levels.data(), levels.size(),
-                                &high_bitdepth_frame, &high_bitdepth_tile_bytes, &error)) {
-    return false;
-  }
-
-  HbdParsedStream parsed;
-  if (!parse_stream(high_bitdepth_frame, &parsed, &error)) {
-    error = "internal: cannot parse the reused M10 payload: " + error;
+  payload_options.qctx = depth::qctx_slice(options.base_q_idx);
+  std::vector<std::uint8_t> payload;
+  std::uint32_t tile_bytes = 0;
+  if (!av2enc::high_bitdepth::assemble_high_bitdepth_tile_payload(
+          picture, payload_options, blocks.data(), blocks.size(),
+          levels.data(), levels.size(), &payload, &tile_bytes, &error)) {
     return false;
   }
 
@@ -332,20 +349,20 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
   config.max_frame_width = static_cast<std::uint16_t>(picture.format.width);
   config.max_frame_height = static_cast<std::uint16_t>(picture.format.height);
   config.depth = fmt::BitDepth::k10;
+  config.chroma = picture.format.chroma;
   config.base_q_idx = options.base_q_idx;
   config.disable_cdf_update = options.disable_cdf_update;
   if (!validate_config(config, &error)) return false;
 
-  result.frame = assemble_still_picture(config, parsed.tile_payload);
-  result.tile_bytes = static_cast<std::uint32_t>(parsed.tile_payload.size());
+  result.frame = assemble_still_picture(config, payload);
+  result.tile_bytes = tile_bytes;
   result.frame_bytes = static_cast<std::uint32_t>(result.frame.size());
   result.quant_step = quant_step;
   result.blocks = std::move(blocks);
   result.levels = std::move(levels);
-  for (int plane = 0; plane < 3; ++plane) {
+  for (int plane = 0; plane < num_planes; ++plane) {
     result.recon[plane] = std::move(recon[plane]);
   }
-  (void)high_bitdepth_tile_bytes;
   return true;
 }
 

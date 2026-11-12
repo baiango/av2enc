@@ -203,44 +203,42 @@ Consequences:
 
 ---
 
-## Wave-3 status (pipelines integration): not wired
+## Wave-4 status (pipelines integration): wired end-to-end
 
-SVC is **not** wired into the product CLI. The module is complete and the
-standalone gate is kept, but an opt-in CLI path would have to ship `svc_mux`,
-which is explicitly a one-frame-per-layer gate bridge, not an encoder. The
-composed stream cannot yet be produced end-to-end from the product encoder.
+All five steps are implemented and gate-verified:
 
-Current standalone-gate state (`AV2ENC=build-int/av2enc
-src/pipeline/svc/gate_dav2d.sh`):
+1. **Non-single-picture sequence header.** `VideoConfig` gained
+   `seq_lcr_id`, `max_tlayer_id`, `max_mlayer_id`, `seq_max_mlayer_cnt` and the
+   dependency-present rows; `video_headers.cpp` writes the §5.4.1 form
+   (including `seq_max_mlayer_cnt_minus_1 f(CeilLog2(M+1))` and the §5.4.1
+   dependency maps). Defaults (0/0/1) keep every existing single-layer stream
+   byte-identical.
+2. **LCR/OPS OBU wrappers.** `svc::make_layer_config_record_obu()` and
+   `svc::make_operating_point_set_obu()` (in `svc_stream.h/.cpp`) wrap the
+   payload writers with `frame_obu()` (types 16/18) in the first temporal unit.
+3. **Per-layer encode + order.** `svc_stream.cpp` box-scales the source to each
+   spatial layer, runs the video encoder per layer with that layer's sequence
+   header, and emits TUs through `plan_emission_order()`.
+4. **Selection/extraction.** `resolve_selection()` + `extract_substream()` back
+   `--oppoint`, `--spatial-layers` and `--alllayers`; output TUs are IVF frames
+   with the base-layer container size.
+5. **Gate.** `src/pipeline/svc/gate_cli_svc.sh` (avmdec) proves all-layers ==
+   interleaved independent per-layer decodes, `--select-ops=0,N` == the
+   cumulative prefix, CLI extraction == the same layers, and the base layer ==
+   an independent plain `--video` encode of the scaled source. Local result
+   15/15 with the macOS AVM build.
 
-- the gate exits **77 (skip)** at the first `svc_mux` compose step:
-  `svc_mux` must associate the global LCR, which needs a sequence header with
-  `single_picture_header_flag = 0` and `seq_lcr_id != 0`; the only layer sources
-  the encoder can produce today are `--still` single-picture headers;
-- composing with `--no-lcr` avoids that error, but `avmdec` rejects a
-  multi-xlayer stream without LCR/MSDO (and `dav2d` ignores LCR/OPS), so that is
-  not a pass either.
+### Remaining blockers
 
-Missing plumbing, in dependency order:
-
-1. **Non-single-picture sequence header.** `pipeline/video/video_headers.cpp`
-   hardcodes `seq_lcr_id = 0`, `max_mlayer_id = 0`, `max_tlayer_id = 0` and
-   `seq_max_mlayer_cnt_minus_1 = 0`. Parameterize those from
-   `svc::LayerPlan::sequences[x]` and add `still_picture = 0`,
-   `single_picture_header_flag = 0`.
-2. **LCR/OPS OBU wrappers.** Call `svc::write_layer_config_record_payload()` /
-   `svc::write_operating_point_set_payload()` and wrap them with
-   `svc::frame_obu()` (types 16/18) once per stream, in the first temporal unit
-   after the TD. `dav2d f9dafbc` ignores both; `avmdec` requires them.
-3. **Per-layer encode.** Scale the source to each spatial layer, run the video
-   encoder per layer with the layer's own sequence header and OBU
-   `xlayer_id`/`mlayer_id`/`tlayer_id`, and emit temporal units through
-   `plan_emission_order()` (one TD per TU, xlayer ascending, mlayer ascending).
-4. **Selection/extraction.** `resolve_selection()` + `extract_substream()` for
-   `--oppoint`/`--alllayers`; `dav2d --oppoint` is a no-op on this build, so the
-   OPS gate must use `avmdec --select-ops=ops_id,op`.
-5. **Gate.** Re-run `gate_dav2d.sh` with the real per-layer sources and require
-   byte-exact equality with the concatenation of independent decodes, plus
-   `avmdec --select-ops` per operating point. Until then, do not claim SVC in
-   the CLI or a compression gain (layers are delivery packaging, not a BD-rate
-   tool).
+- **temporal/embedded layers > 1.** `plan_emission_order()` emits every
+  configured layer every TU; the CLI rejects `--svc-temporal > 1` /
+  `--svc-embedded > 1` instead of emitting an empty layer. A hierarchical GOP
+  must use `order_frames()` with a real per-tlayer schedule.
+- **Pinned `dav2d` and multi-xlayer inter streams.** Single-layer SVC streams
+  pass `dav2d --strict 1`. A multi-xlayer stream with P frames emits fewer
+  pictures than layers×TUs under `dav2d f9dafbc` (it still exits 0) for both
+  same- and mixed-resolution layers. `avmdec` is the gate for those; do not
+  report a `dav2d` result for them.
+- **No inter-layer prediction / no compression claim.** Layers are delivery
+  packaging (`docs/bitrate-features.md` §7).
+- **No OP list > 7.** More than 7 spatial layers is rejected by the plan.

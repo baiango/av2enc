@@ -12,10 +12,14 @@ set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "${HERE}/../../.." && pwd)"
 BIN=""
+DAV2D="${DAV2D:-}"
+TESTDATA="${AV2ENC_TESTDATA:-$ROOT/testdata}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --bin) BIN=$2; shift 2 ;;
+        # Accepted for uniform gate invocation; the planner never decodes.
+        --dav2d) DAV2D=$2; shift 2 ;;
         -h|--help)
             sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
@@ -27,7 +31,7 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
     exit 2
 fi
 
-F1080="$ROOT/testdata/shine_1920x1080_10f.y4m"
+F1080="$TESTDATA/shine_1920x1080_10f.y4m"
 F360="$ROOT/tests/data/basic_640x360_1f.y4m"
 for f in "$F1080" "$F360"; do
     if [ ! -f "$f" ]; then
@@ -81,6 +85,13 @@ expect_line "$F360" "640x360 2 GPU / 8x2" "layout:  8x2 (16 tiles)" --gpu-plan 2
 expect_line "$F360" "explicit --tiles override" "layout:  2x2 (4 tiles)" \
     --gpu-plan 2 --tiles 2x2
 expect_line "$F1080" "no-measurement disclaimer" "measured=0" --gpu-plan 2
+expect_line "$F1080" "evidence flag" "evidence=estimated" --gpu-plan 2
+expect_line "$F1080" "per-tile dispatch (1 GPU)" \
+    "dispatch: 0:0 1:0 2:0 3:0 4:0 5:0 6:0 7:0 (raster merge order" \
+    --gpu-plan 1
+expect_line "$F1080" "per-tile dispatch (2 GPU)" \
+    "dispatch: 0:0 1:1 2:0 3:1 4:0 5:1 6:0 7:1 8:0 9:1 10:0 11:1 12:0 13:1 14:0 15:1 (raster merge order" \
+    --gpu-plan 2
 expect_line "$F1080" "no device allocation note" "no device allocation, no stream" \
     --gpu-plan 2
 

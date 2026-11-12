@@ -26,6 +26,10 @@ struct HighBitDepthOptions {
   // the encoder accepts only 90; other values would desynchronize dequant.
   std::uint16_t base_q_idx = 90;
   bool disable_cdf_update = true;
+  // Coefficient-CDF slice (§8.3.1).  -1 derives it from base_q_idx.  The
+  // product hbd path passes the slice for a qindex whose header it writes
+  // itself, so the reused M10 header can stay pinned at q=90.
+  int qctx = -1;
 };
 
 // One leaf coding block.  `luma_size` is 32 or 64 (square).  Coefficient
@@ -91,6 +95,16 @@ bool assemble_high_bitdepth_stream(const fmt::Picture& picture, const HighBitDep
                          const std::int32_t* levels, std::size_t level_count,
                          std::vector<std::uint8_t>* out, std::uint32_t* tile_bytes,
                          std::string* error);
+
+// Tile payload only (no headers), for a caller that writes its own sequence /
+// frame header.  Accepts 10-bit 4:2:0/4:2:2/4:4:4/4:0:0 pictures; `options.qctx`
+// selects the coefficient-CDF slice (§8.3.1) when it is non-negative.
+bool assemble_high_bitdepth_tile_payload(
+    const fmt::Picture& picture, const HighBitDepthOptions& options,
+    const HighBitDepthBlock* blocks, std::size_t block_count,
+    const std::int32_t* levels, std::size_t level_count,
+    std::vector<std::uint8_t>* payload, std::uint32_t* tile_bytes,
+    std::string* error);
 
 // 10-bit samples -> the same planes shifted left by 2.  The format component
 // owns the conversion; this helper is for the Y4M tool's 8-bit input path.

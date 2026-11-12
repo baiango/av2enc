@@ -69,6 +69,12 @@ struct VideoOptions {
   // References per P frame (NumTotalRefs).  1 keeps the historical M2 stream;
   // 2..3 enables per-block single_ref selection over the most recent slots.
   int num_total_refs = 1;
+  // B frames: N consecutive B frames per GOP (0 = the flat key + P chain).
+  // Requires num_total_refs == 1 (the bframes plan owns the per-frame refs).
+  int b_frames = 0;
+  // Compound prediction (reference_select = 1).  Requires num_total_refs == 2;
+  // the gated subset is non-joint GLOBAL_GLOBALMV with the AVERAGE blend.
+  bool compound = false;
   // Frame MV precision: 0 = 1/8 pel, 1 = 1/4 pel, 2 = 1/2 pel.
   int mv_precision = 0;
   // Normative DRL reordering (§7.12.2.19).  Off = DRL_REORDER_DISABLED.
@@ -93,9 +99,50 @@ struct VideoOptions {
   // Random access with a long-term reference: CLK + SWITCH + OBU_RAS_FRAME
   // (§6.2.2 type 21, §7.4.5).  Requires exactly 3 input frames.
   bool ras = false;
+  // Hierarchical-P temporal layers (§5.4.1 max_tlayer_id, §5.2.2
+  // obu_tlayer_id).  0 = off.  N = one closed GOP of N frames (4 or 8).
+  int temporal_layers = 0;
+  // Emit only the temporal layers <= this id (a decodable substream).  -1
+  // keeps every layer.
+  int tlayer_drop = -1;
   // Internal: code the last picture hidden.  Only the SEF wrapper in
   // video_frames.cpp sets this; it is not a CLI option.
   bool hide_last_picture = false;
+  // Opt-in uniform tile grid (--video --tiles). 0/0 (the default) keeps the
+  // single-tile writer and the byte-identical stream.  Every frame is split on
+  // superblock boundaries and re-emitted through
+  // post::assemble_video_tile_group_from_payloads(); intra prediction is
+  // clamped to the containing tile so the reconstruction stays decoder-exact.
+  int tile_cols = 0;
+  int tile_rows = 0;
+  // SVC sequence-header layer limits (§5.4.1).  Defaults reproduce the
+  // single-layer header (seq_lcr_id = 0, M = T = 1).
+  std::uint8_t seq_lcr_id = 0;
+  std::uint8_t max_tlayer_id = 0;
+  std::uint8_t max_mlayer_id = 0;
+  std::uint8_t seq_max_mlayer_cnt = 1;
+  // Opt-in §8.2.4 average-CDF / §7.5 frame-end bookkeeping (--avg-cdf).
+  // enable_avg_cdf/avg_cdf_type are then signalled in the sequence header.
+  bool avg_cdf = false;
+  // Opt-in §8.2.6 adaptation in the video tile writer (--adaptive-cdf with
+  // --avg-cdf).  Off keeps disable_cdf_update = 1.
+  bool adaptive_cdf = false;
+  // Opt-in §5.18.2 cross-frame CDF carry (--cdf-continuity): each P frame
+  // installs the primary reference's saved CDFs, signals primary_ref_frame = 0
+  // and clears disable_cross_frame_cdf_init, so the decoder loads the same
+  // context.
+  bool cdf_continuity = false;
+  // Opt-in §5.4.1/§5.4.12/§5.4.13 timing: decoder_model_info_present_flag with
+  // num_units_in_decoding_tick plus a content-interpretation OBU carrying
+  // timing_info().  Pinned dav2d accepts this form (the nested
+  // seq_decoder_model_info block and BRT are rejected).
+  bool video_timing = false;
+  std::uint32_t timing_num_units_in_display_tick = 0;
+  std::uint32_t timing_time_scale = 0;
+  // Opt-in §5.7 multi-frame header on the non-single-picture path
+  // (--video-mfh).  One MFH (id 1) in the key temporal unit; every frame
+  // header then sets cur_mfh_id = 1 and omits seq_header_id_in_frame_header.
+  bool mfh = false;
   // Debug trace to stderr.
   bool trace = false;
 };

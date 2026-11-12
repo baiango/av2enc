@@ -19,9 +19,9 @@
 #include <string>
 #include <vector>
 
-#if __has_include("cuda/m1/still_gpu.h")
+#if __has_include("cuda/pipeline/still/still_gpu.h")
 #include "cuda/pipeline/still/still_gpu.h"
-#if __has_include("encoder/m1/stream/still_stream_bridge.h")
+#if __has_include("pipeline/still/stream/still_stream_bridge.h")
 #include "pipeline/still/stream/still_stream_bridge.h"
 #endif
 
@@ -35,7 +35,7 @@ bool build_gpu_frame_plan(int width, int height,
                           std::vector<cuda::still_gpu::BlockPlan>& blocks,
                           cuda::still_gpu::FramePlan& frame, std::string& error);
 
-#if __has_include("encoder/m1/stream/still_stream_bridge.h")
+#if __has_include("pipeline/still/stream/still_stream_bridge.h")
 // Same, plus the preorder tree in the exact shape `stream::pack_gpu_frame()`
 // consumes.  `tree` is resized to the node count and left in preorder.
 bool build_gpu_frame_plan(int width, int height,
@@ -49,4 +49,4 @@ bool build_gpu_frame_plan(int width, int height,
 
 }  // namespace av2enc::still::plan
 
-#endif  // __has_include("cuda/m1/still_gpu.h")
+#endif  // __has_include("cuda/pipeline/still/still_gpu.h")

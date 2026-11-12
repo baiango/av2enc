@@ -6,24 +6,89 @@
 # decoded sample against the encoder reconstruction dumped by --video-recon.
 #
 # Usage:
+#   src/pipeline/video/video_cli_gate.sh --bin build-int/av2enc \
+#       [--input testdata/shine_1280x720_60f.y4m] [--frames 4] [--dav2d PATH]
+#       [-- extra encoder args...]
+#
+# The legacy positional form is still accepted:
 #   src/pipeline/video/video_cli_gate.sh [BIN] [INPUT] [FRAMES] [extra args...]
 #
 # Defaults: BIN=build-int/av2enc, INPUT=testdata/shine_1280x720_60f.y4m,
 # FRAMES=4.  Set OUT=/tmp/prefix to keep the streams.
+#
+# Exit codes: 0 pass, 1 failure, 2 usage, 77 missing fixture/decoder.
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
-BIN=${1:-"$ROOT/build-int/av2enc"}
-INPUT=${2:-"$ROOT/testdata/shine_1280x720_60f.y4m"}
-FRAMES=${3:-4}
-if [ "$#" -gt 0 ]; then shift; fi
-if [ "$#" -gt 0 ]; then shift; fi
-if [ "$#" -gt 0 ]; then shift; fi
-EXTRA=("$@")
+BIN=""
+INPUT=""
+FRAMES=""
+DAV2D="${DAV2D:-}"
+TESTDATA="${AV2ENC_TESTDATA:-$ROOT/testdata}"
+EXTRA=()
+POSITIONAL=()
 
-OUT=${OUT:-"${TMPDIR:-/tmp}/video_cli_gate"}
-OUT="${OUT%*/}/video_cli"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bin) BIN=$2; shift 2 ;;
+    --input) INPUT=$2; shift 2 ;;
+    --frames) FRAMES=$2; shift 2 ;;
+    --dav2d) DAV2D=$2; shift 2 ;;
+    --) shift; EXTRA+=("$@"); break ;;
+    -h|--help)
+      sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    -*) echo "video_cli_gate: unknown argument $1" >&2; exit 2 ;;
+    *) POSITIONAL+=("$1"); shift ;;
+  esac
+done
 
+# Legacy positional form: BIN [INPUT] [FRAMES] [extra...].
+if [ "${#POSITIONAL[@]}" -gt 0 ]; then
+  [ -n "$BIN" ] || BIN=${POSITIONAL[0]}
+  if [ "${#POSITIONAL[@]}" -gt 1 ] && [ -z "$INPUT" ]; then
+    INPUT=${POSITIONAL[1]}
+  fi
+  if [ "${#POSITIONAL[@]}" -gt 2 ] && [ -z "$FRAMES" ]; then
+    FRAMES=${POSITIONAL[2]}
+  fi
+  if [ "${#POSITIONAL[@]}" -gt 3 ]; then
+    EXTRA+=("${POSITIONAL[@]:3}")
+  fi
+fi
+
+BIN=${BIN:-"$ROOT/build-int/av2enc"}
+INPUT=${INPUT:-"$TESTDATA/shine_1280x720_60f.y4m"}
+FRAMES=${FRAMES:-4}
+
+if [ ! -x "$BIN" ]; then
+  echo "video_cli_gate: --bin must point at an av2enc executable" >&2
+  exit 2
+fi
+if [ ! -f "$INPUT" ]; then
+  echo "SKIP: missing input $INPUT" >&2
+  exit 77
+fi
+if [ -z "$DAV2D" ]; then
+  for candidate in "$ROOT/tools/bin/dav2d" "$ROOT/tools/bin/dav2d-macos"; do
+    if [ -x "$candidate" ]; then DAV2D=$candidate; break; fi
+  done
+fi
+if [ -z "$DAV2D" ] || [ ! -x "$DAV2D" ]; then
+  echo "video_cli_gate: no dav2d binary (set DAV2D=...)" >&2
+  exit 77
+fi
+export DAV2D
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "video_cli_gate: python3 is required for the recon comparison" >&2
+  exit 77
+fi
+
+if [ -n "${OUT:-}" ]; then
+  OUT="${OUT%*/}/video_cli"
+else
+  OUT="$(mktemp -d "${TMPDIR:-/tmp}/av2enc-video-gate.XXXXXX")/video_cli"
+fi
 mkdir -p "$(dirname -- "$OUT")"
 
 echo "== video CLI gate: $INPUT ($FRAMES frame(s)) =="
@@ -31,17 +96,6 @@ echo "== video CLI gate: $INPUT ($FRAMES frame(s)) =="
   --video-recon "${OUT}.recon.y4m" -o "${OUT}.ivf" "${EXTRA[@]+"${EXTRA[@]}"}"
 
 "$ROOT/tools/validate_dav2d.sh" "${OUT}.ivf"
-
-DAV2D=${DAV2D:-}
-if [ -z "$DAV2D" ]; then
-  for candidate in "$ROOT/tools/bin/dav2d" "$ROOT/tools/bin/dav2d-macos"; do
-    if [ -x "$candidate" ]; then DAV2D=$candidate; break; fi
-  done
-fi
-if [ -z "$DAV2D" ]; then
-  echo "error: dav2d not found" >&2
-  exit 127
-fi
 
 "$DAV2D" -q -i "${OUT}.ivf" -o "${OUT}.decoded.y4m" --strict 1 --threads 1
 

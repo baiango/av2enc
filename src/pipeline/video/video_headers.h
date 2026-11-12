@@ -33,13 +33,57 @@ struct VideoConfig {
   // 4 -> m = 5, enough for the six-entry spatial stack (index 5 is the
   // read_drl_idx() exhaustion value).
   std::uint8_t max_drl_bits_minus_1 = 4;
+  // §5.4.1 temporal layers.  The hierarchical-P mode (--video-tlayers) raises
+  // max_tlayer_id and turns monotonic_output_order_flag off so frame OBUs can
+  // carry obu_tlayer_id and code implicit_output_frame.  Defaults keep the
+  // single-layer byte-identical stream.
+  std::uint8_t max_tlayer_id = 0;
+  bool monotonic_output_order_flag = true;
+  bool tlayer_dependency_present_flag = false;
+  // tlayer_dependency[curr][ref] for curr = 1..max_tlayer_id.
+  bool tlayer_dependency[4][4] = {{false, false, false, false},
+                                  {false, false, false, false},
+                                  {false, false, false, false},
+                                  {false, false, false, false}};
+  // §5.4.6 compound tools.  --video-compound enables reference_select per
+  // frame; the encoder only signals the AVERAGE (comp_group_idx == 0) blend, so
+  // masked compound and CWP stay off in the sequence header.
+  bool enable_masked_compound = false;
+  bool enable_cwp = false;
+  bool enable_imp_msk_bld = false;
+  std::uint8_t num_same_ref_compound = 0;
   bool disable_cdf_update = true;
+  // §5.4.8 average-CDF config.  Opt-in (--avg-cdf); both bits are written only
+  // in the non-single-picture header, so the pinned --video stream is
+  // unchanged while the flags stay off.
+  bool enable_avg_cdf = false;
+  bool avg_cdf_type = true;
+  // §5.4.1 timing block, non-single-picture only (--video-timing).  This is
+  // the pinned-decoder-compatible form: decoder_model_info_present_flag = 1
+  // with num_units_in_decoding_tick, and seq_decoder_model_info_present_flag
+  // = 0 (pinned dav2d f9dafbc does not parse the nested §5.4.13 block).
+  bool initial_display_delay_present = false;
+  std::uint8_t initial_display_delay_minus_1 = 0;
+  bool decoder_model_info_present = false;
+  std::uint32_t num_units_in_decoding_tick = 0;
+  // §5.7 multi-frame header: 0 = no MFH (seq_header_id_in_frame_header is
+  // coded); >0 makes every frame header reference that MFH and omit the
+  // sequence-header id.  Opt-in via --video-mfh.
+  std::uint32_t cur_mfh_id = 0;
   // §5.4.6 DRL reordering.  Default is DRL_REORDER_DISABLED.
   bool disable_drl_reorder = true;
   bool constrain_drl_reorder = true;
   // Sequence-level intra tool used by the M1 keyframe tile payload and by the
   // M2 intra fallback blocks.
   bool enable_cfl_intra = true;
+  // §5.4.1 layer limits for the SVC path.  The defaults reproduce the
+  // single-layer header byte-for-byte (seq_lcr_id = 0, M = T = 1).
+  std::uint8_t seq_lcr_id = 0;          // f(3), 1..7 with a global LCR
+  std::uint8_t max_mlayer_id = 0;       // f(3)
+  std::uint8_t seq_max_mlayer_cnt = 1;  // seq_max_mlayer_cnt_minus_1 + 1
+  // Dependency-present flags.  The maps written are the spec defaults
+  // (ref <= curr), so the bits are explicit but semantically inert.
+  bool mlayer_dependency_present = true;
 };
 
 struct VideoFrameHeader {
@@ -61,6 +105,15 @@ struct VideoFrameHeader {
   // a later show-existing-frame OBU can re-show (derive_sef_order_hint = 1).
   // monotonic_output_order_flag = 1 means implicit_output_frame stays absent.
   bool immediate_output_frame = true;
+  bool implicit_output_frame = false;
+  // §5.18.2 reference_select: 1 lets a block code comp_mode and two refs.
+  bool reference_select = false;
+  // §5.18.2 cross-frame CDF initialisation.  The defaults reproduce the
+  // historical inter header (signal off, reset on).  The continuity path
+  // signals primary_ref_frame = 0 (ref_frame_idx[0]) and clears the reset bit.
+  bool signal_primary_ref_frame = false;
+  bool disable_cross_frame_cdf_init = true;
+  std::uint8_t primary_ref_frame = 0;
 };
 
 // sequence_header_obu() for single_picture_header_flag = 0, wrapped as an
@@ -84,10 +137,12 @@ std::size_t write_tile_group_header(BitWriter& writer, const VideoConfig& config
 
 // Complete OBU_CLOSED_LOOP_KEY / OBU_REGULAR_TILE_GROUP payload, including
 // the tile payload. The tile payload must already contain the §8.2.4
-// exit_symbol() trailing bits.
+// exit_symbol() trailing bits.  `obu_tlayer_id` is the §5.2.2 layer id of the
+// frame OBU (0 for a single-layer stream and always 0 for key/switch/RAS).
 std::vector<std::uint8_t> make_frame_obu(const VideoConfig& config,
                                          const VideoFrameHeader& header,
-                                         std::span<const std::uint8_t> tile_payload);
+                                         std::span<const std::uint8_t> tile_payload,
+                                         std::uint8_t obu_tlayer_id = 0);
 
 // Empty temporal delimiter OBU.
 std::vector<std::uint8_t> make_temporal_delimiter_obu();

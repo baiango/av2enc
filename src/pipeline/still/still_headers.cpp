@@ -1,6 +1,7 @@
 #include "pipeline/still/still_headers.h"
 
 #include "codec/entropy/deltaq/still/deltaq.h"
+#include "codec/intra/screen_content/scc_flags.h"
 #include "core/bitstream/basic_headers.h"
 #include "frame/metadata/content_interpretation/content_interpretation.h"
 
@@ -128,7 +129,7 @@ std::size_t write_sequence_header(BitWriter& writer, const StillConfig& c) {
   if (!c.use_256x256_superblock) {
     writer.put_bit(c.use_128x128_superblock);
   }
-  writer.put_bit(false);  // enable_sdp
+  writer.put_bit(c.enable_sdp);  // enable_sdp
   writer.put_bit(c.enable_ext_partitions);
   if (c.enable_ext_partitions) {
     writer.put_bit(c.enable_uneven_4way_partitions);
@@ -161,10 +162,16 @@ std::size_t write_sequence_header(BitWriter& writer, const StillConfig& c) {
   writer.put_bit(c.enable_intra_ist);   // enable_intra_ist
   writer.put_bit(c.enable_inter_ist);   // enable_inter_ist
   writer.put_bit(c.enable_chroma_dctonly);
-  writer.put_bit(false);  // reduced_tx_part_set
-  writer.put_bit(false);  // enable_cctx
-  writer.put_bit(false);  // enable_tcq
-  writer.put_bit(false);  // enable_parity_hiding
+  writer.put_bit(c.reduced_tx_part_set);  // reduced_tx_part_set
+  writer.put_bit(c.enable_cctx);  // enable_cctx
+  writer.put_bit(c.enable_tcq);   // enable_tcq
+  // §5.4.8: choose_tcq_per_frame is absent for a single-picture header, so
+  // enable_tcq = 1 infers choose_tcq_per_frame = 0.  In that case
+  // enable_parity_hiding is inferred 0 and its bit is absent; otherwise the
+  // historical zero bit is written.
+  if (!c.enable_tcq) {
+    writer.put_bit(false);  // enable_parity_hiding
+  }
   // §5.4.8 delta-Q fields.  The default SequenceDeltaQ writes exactly the
   // historical 8 bits (separate_uv_delta_q=0, equal_ac_dc_q=1,
   // base_uv_ac_delta_q=0, uv_ac_delta_q_enabled=0).
@@ -194,7 +201,7 @@ std::size_t write_sequence_header(BitWriter& writer, const StillConfig& c) {
   // §5.4.10 sequence_filter_config() CCSO row.
   writer.put_bit(c.ccso.enable);  // enable_ccso
   if (c.ccso.enable) {
-    writer.put_bit(true);  // ccso_unit_matches_sb_size (64x64 units)
+    writer.put_bit(true);  // ccso_unit_matches_sb_size (6/7 from SbSize)
   }
   writer.put_bits(0U, 2U);  // df_par_bits_minus_2
 
@@ -212,11 +219,40 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
 
   put_uvlc(writer, 0);  // cur_mfh_id
   put_uvlc(writer, 0);  // seq_header_id_in_frame_header
-  writer.put_bit(c.allow_screen_content_tools);  // allow_screen_content_tools
-  if (c.allow_screen_content_tools) {
-    writer.put_bit(c.force_integer_mv);          // force_integer_mv
+  // §5.18.3.3 screen_content_params() + §5.18.3.4 intrabc_params().  The
+  // screen-content module owns the exact bits and rejects an inconsistent
+  // combination; the single-picture sequence header infers both force values.
+  {
+    scc_flags::SequenceSccConfig seq_cfg;
+    seq_cfg.single_picture_header_flag = true;
+    const scc_flags::SequenceSccState seq_state =
+        scc_flags::derive_sequence_scc_state(seq_cfg);
+    scc_flags::FrameSccContext ctx;
+    ctx.frame_is_intra = true;
+    scc_flags::FrameSccConfig scc;
+    scc.allow_screen_content_tools = c.allow_screen_content_tools;
+    // force_integer_mv is only coded/present when screen tools are allowed.
+    scc.force_integer_mv =
+        c.allow_screen_content_tools ? c.force_integer_mv : false;
+    scc.allow_intrabc = c.allow_intrabc;
+    // The region bits are only present when allow_intrabc is set.
+    scc.allow_global_intrabc = c.allow_intrabc && c.allow_global_intrabc;
+    scc.allow_local_intrabc = c.allow_intrabc && c.allow_local_intrabc;
+    scc.max_bvp_drl_bits_minus_1 = 0;
+    std::string scc_error;
+    scc_flags::FrameSccState frame_state;
+    std::size_t scc_bits = 0;
+    const bool scc_ok = scc_flags::write_frame_scc_params(
+        writer, seq_state, ctx, scc, /*seq_max_bvp_drl_bits_minus_1=*/0,
+        /*allow_frame_max_bvp_drl_bits=*/false, &frame_state, &scc_bits,
+        scc_error);
+    assert(scc_ok);
+    assert(scc_error.empty());
+    (void)scc_bits;
+    assert(frame_state.allow_screen_content_tools ==
+           c.allow_screen_content_tools);
+    assert(!c.allow_intrabc || frame_state.IsIntraBC);
   }
-  writer.put_bit(false);  // allow_intrabc
   writer.put_bit(c.disable_cdf_update);
   write_tile_info(writer, c);
 
@@ -351,9 +387,17 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
     ctx.lr_tools_disable[0][pcw::kRestorePcWiener] = false;
     ctx.lr_tools_disable[0][pcw::kRestoreWienerNs] = true;
     ctx.lr_tools_disable[1][pcw::kRestorePcWiener] = true;
-    ctx.lr_tools_disable[1][pcw::kRestoreWienerNs] = true;
+    // Plane 0 is RESTORE_PC_WIENER; chroma may independently be
+    // RESTORE_WIENER_NONSEP, which composes because PC-Wiener is luma-only.
+    const bool chroma_lr = c.lr.plane[1].enabled;
+    assert(chroma_lr == c.lr.plane[2].enabled);
+    ctx.lr_tools_disable[1][pcw::kRestoreWienerNs] = !chroma_lr;
     pcw::LrParams params;
     params.frame_type[0] = pcw::kRestorePcWiener;
+    params.frame_type[1] =
+        chroma_lr ? pcw::kRestoreWienerNs : pcw::kRestoreNone;
+    params.frame_type[2] =
+        chroma_lr ? pcw::kRestoreWienerNs : pcw::kRestoreNone;
     params.luma_shift = c.lr.plane[0].shift;
     params.chroma_shift = c.lr.plane[1].shift;
     std::string pc_error;
@@ -473,9 +517,18 @@ bool make_delta_q_params(const StillDeltaQConfig& config,
   segmentation.enabled = config.segmentation_enabled;
   if (segmentation.enabled) {
     // DerivedPrimaryRefFrame == PRIMARY_REF_NONE on a CLK frame: update_map is
-    // inferred 1 and temporal_update 0.  All segment features stay disabled, so
-    // every segment has the frame's base_q_idx.
+    // inferred 1 and temporal_update 0.
     segmentation.update_map = true;
+    if (config.segmentation != nullptr) {
+      // Per-segment Q planner: keep the caller's table (ALT_Q features) but
+      // still force the key-frame map state.
+      segmentation = *config.segmentation;
+      segmentation.enabled = true;
+      segmentation.update_map = true;
+      segmentation.temporal_update = false;
+    }
+    // Otherwise every segment feature stays disabled and every segment uses
+    // the frame's base_q_idx (the neutral table).
   }
   delta_q.present = config.delta_q_present;
   delta_q.res = config.delta_q_present ? config.delta_q_res : 0;
@@ -512,6 +565,11 @@ std::vector<std::uint8_t> assemble_still_picture(
               config.film_grain_obu.size());
   out.insert(out.end(), td.begin(), td.end());
   out.insert(out.end(), seq.begin(), seq.end());
+  if (!config.qm_obu.empty()) {
+    // §7.3.8.9: the quantizer matrix OBU is available before the frame header
+    // that references its level.
+    out.insert(out.end(), config.qm_obu.begin(), config.qm_obu.end());
+  }
   if (config.content_interpretation) {
     // §7.3.3: the content interpretation OBU is the first OBU of the coded
     // output frame unit, i.e. after the sequence header and before the frame.

@@ -25,7 +25,7 @@
 #include <string>
 #include <vector>
 
-#include "tiles/svc_layers.h"
+#include "pipeline/tiles/svc_layers.h"
 
 namespace av2enc::svc {
 

@@ -54,3 +54,6 @@ add_test(NAME basic_edge_smoke
 set_tests_properties(basic_edge_smoke PROPERTIES
   SKIP_RETURN_CODE 77
   TIMEOUT 600)
+
+# Product gates (wave 4): additive test surface, see tests/gates/CMakeLists.txt.
+add_subdirectory(gates)

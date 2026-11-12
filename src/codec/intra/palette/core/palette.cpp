@@ -159,27 +159,35 @@ int palette_extra_bits_for(const std::uint8_t* remaining, int count) {
 
 // Build the cache subset and the remaining sorted run for the chosen palette.
 // `used_cache` receives a bit per cache entry (1 = reuse).
+//
+// §5.20.8.1 fills `palette_colors_y[0..]` from the cache in scan order and only
+// then from the literal/delta run, and sorts the result afterwards.  A palette
+// colour may therefore be taken from the cache at most once: `PaletteCache`
+// interleaves the above and left palettes (docs/negative-results.md records the
+// bug where a duplicated cache colour filled two palette slots and silently
+// dropped a distinct colour).  Track consumed palette entries by value, not by
+// prefix position.
 int split_cache_and_run(const std::uint8_t* colors, int size,
                         const std::uint8_t* cache, int cache_n,
                         std::uint8_t* used_cache, std::uint8_t* remaining) {
-  int idx = 0;
-  for (int i = 0; i < cache_n && idx < size; ++i) {
+  bool consumed[kPaletteMaxSize] = {};
+  int used = 0;
+  for (int i = 0; i < cache_n; ++i) {
     used_cache[i] = 0;
-    for (int c = idx; c < size; ++c) {
-      if (colors[c] == cache[i]) {
+    // The decoder stops reading use bits once PaletteSizeY entries are filled.
+    if (used >= size) continue;
+    for (int c = 0; c < size; ++c) {
+      if (!consumed[c] && colors[c] == cache[i]) {
+        consumed[c] = true;
         used_cache[i] = 1;
-        ++idx;
+        ++used;
         break;
       }
     }
   }
   int run = 0;
   for (int c = 0; c < size; ++c) {
-    bool cached = false;
-    for (int i = 0; i < cache_n; ++i) {
-      if (used_cache[i] && cache[i] == colors[c]) cached = true;
-    }
-    if (!cached) remaining[run++] = colors[c];
+    if (!consumed[c]) remaining[run++] = colors[c];
   }
   return run;
 }
@@ -679,6 +687,11 @@ bool encode_palette_y(av2::Encoder& enc, PaletteCdfState& cdfs,
   std::uint8_t remaining[kPaletteMaxSize] = {};
   const int run = split_cache_and_run(result.colors.data(), result.size, cache,
                                       cache_n, used_cache, remaining);
+  // Rebuild the colours exactly as the decoder will (§5.20.8.1) and verify the
+  // coded palette equals the analysis result after the normative sort.  This
+  // catches a cache/literal mismatch before any colour-map symbol is written.
+  std::uint8_t coded[kPaletteMaxSize] = {};
+  int coded_n = 0;
   int idx = 0;
   for (int i = 0; i < cache_n && idx < result.size; ++i) {
     const bool use = used_cache[i] != 0;
@@ -686,7 +699,10 @@ bool encode_palette_y(av2::Encoder& enc, PaletteCdfState& cdfs,
       error = "palette cache bit failed";
       return false;
     }
-    if (use) ++idx;
+    if (use) {
+      coded[coded_n++] = cache[i];
+      ++idx;
+    }
   }
   if (idx < result.size) {
     const std::uint32_t literal = remaining[0];
@@ -694,6 +710,7 @@ bool encode_palette_y(av2::Encoder& enc, PaletteCdfState& cdfs,
       error = "palette literal failed";
       return false;
     }
+    coded[coded_n++] = static_cast<std::uint8_t>(literal);
     ++idx;
   }
   if (idx < result.size) {
@@ -720,9 +737,21 @@ bool encode_palette_y(av2::Encoder& enc, PaletteCdfState& cdfs,
         error = "palette delta failed";
         return false;
       }
+      coded[coded_n++] = static_cast<std::uint8_t>(color);
       prev = color;
       const int range = 255 - color;
       palette_bits = std::min(palette_bits, palette_ceil_log2(range));
+    }
+  }
+  if (coded_n != result.size) {
+    error = "palette syntax writes the wrong number of colours";
+    return false;
+  }
+  std::sort(coded, coded + coded_n);
+  for (int i = 0; i < coded_n; ++i) {
+    if (coded[i] != result.colors[static_cast<std::size_t>(i)]) {
+      error = "palette cache/literal run does not reproduce the palette";
+      return false;
     }
   }
 

@@ -267,6 +267,44 @@ gating is impossible; this component does not fake it.
    `partition_ext::decide_frame()`; `collect_leaves()` already returns the
    decode order and the chroma block each leaf owns.
 
+## Integrated product path (`--still-ext-partitions`)
+
+The M1 writer integration is now wired:
+
+- `collect_node_ext()` carries each `pe::PartitionNode`'s
+  `has_chroma`/`chroma_offset`/`chroma` (ChromaMi) into `BlockSyntax`, so the
+  writer codes UV only on the owning leaf and at the ChromaMi origin.
+- `write_node_ext()` feeds those values to `partition_stream::plan_node()` instead
+  of hardcoding `has_chroma = true`, so the allowed set and the written symbols
+  agree for the shared 8x16/16x8 middle block and for the first children of a
+  4-way split.
+- The search uses the 4-sample floor for the extended families, which enables
+  the 1/8 subsizes.
+
+Gated rows on `testdata/shine_640x360_1f.y4m` (deblock on and off, `dav2d`
+f9dafbc, sample-exact Y/U/V):
+
+| Row | Node | Shared chroma block | Selected |
+|---|---|---|---|
+| `HORZ_3@8x32` | 8x32, part 3 | middle 4x16+4x16 own one 8x16 | yes (34) |
+| `VERT_3@32x8` | 32x8, part 4 | 16x4+16x4 own one 16x8 | yes (17) |
+| `HORZ_4A@32x32` | 32x32, part 5 | last 32x4 owns the 32x32 block | yes (5) |
+
+```sh
+src/codec/partition/ext/product_gate.sh build-int
+```
+
+The gate also checks the trace for one instance of each row, so it cannot pass
+from a stream that never exercises the shared-chroma path.
+
+**Known limitation (CONFIRMED):** vertical uneven 4-way with a 4-wide 1/8 child
+(e.g. `VERT_4A@32x32` -> `4x32` first/last) desynchronises `dav2d` at the
+bottom edge.  Reproducer: `640x40` vertical stripes with
+`--still-ext-partitions`; the vertical family is therefore restricted to
+`w >= 64` (8-wide 1/8 subsize) until that is fixed.  See
+`docs/negative-results.md`.  `VERT_4A/4B@64x64` and all three gated rows above
+are exact.
+
 ## dav2d f9dafbc status
 
 `tools/bin/dav2d-macos --version` reports `f9dafbc`.

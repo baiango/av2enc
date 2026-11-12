@@ -37,7 +37,8 @@ struct StillFormatStats {
 };
 
 // True when the requested format is served by a wired format component.
-// 10-bit is 4:2:0 only (M10-derived path); 4:2:2/4:4:4/4:0:0 are 8-bit only.
+// 10-bit serves 4:2:0/4:2:2/4:4:4/4:0:0 (qindex 1..303); 8-bit serves
+// 4:2:0/4:2:2/4:4:4/4:0:0.
 bool format_still_supported(ChromaFormat chroma, BitDepth depth,
                             std::string* reason);
 

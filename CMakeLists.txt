@@ -81,6 +81,9 @@ add_library(av2enc_core STATIC
   src/codec/partition/tree/partition.cpp
   src/codec/partition/ext/partition_ext.cpp
   src/codec/partition/ext/ext_syntax.cpp
+  src/codec/partition/sdp/sdp.cpp
+  src/codec/partition/sdp/sdp_validate.cpp
+  src/codec/partition/sdp/sdp_syntax.cpp
   src/codec/partition/stream/partition_stream.cpp
   src/codec/intra/modes/intra_modes.cpp
   src/codec/rate/rdoq/rdoq.cpp
@@ -90,6 +93,10 @@ add_library(av2enc_core STATIC
   src/codec/transform/delta_q/syntax.cpp
   src/codec/transform/qm/qm.cpp
   src/codec/transform/secondary/tx_secondary.cpp
+  src/codec/transform/tcq/cctx.cpp
+  src/codec/transform/tcq/tcq.cpp
+  src/codec/transform/tcq/tcq_av2_model.cpp
+  src/codec/transform/tx_partition/tx_partition.cpp
   src/codec/transform/tx_type/tx_type.cpp
   src/codec/transform/variants/tx_variants.cpp
   src/codec/transform/variants/tx_select.cpp
@@ -102,6 +109,15 @@ add_library(av2enc_core STATIC
   src/codec/intra/palette/core/palette.cpp
   src/codec/intra/palette/core/scc_stream.cpp
   src/codec/intra/palette/stream/palette_stream.cpp
+  # Intra block copy (§5.20.5.3/.4): CPU reference, exact §7.12.2 BV stack and
+  # the §5.20.5.4 syntax writer (opt-in `--still-ibc`).
+  src/codec/intra/ibc/core/ibc.cpp
+  src/codec/intra/ibc/stream/ibc_stack.cpp
+  src/codec/intra/ibc/stream/ibc_syntax.cpp
+  # Exact §8.3.2 use_intrabc/skip_flag context helpers (NPos/NPosBuf).
+  src/codec/intra/ibc/stream/still_ibc_stream.cpp
+  # §5.4.7/§5.18.3.3/.4 screen-content header bits + frame-scc validation.
+  src/codec/intra/screen_content/scc_flags.cpp
   src/codec/intra/mrl/core/mrl.cpp
   src/codec/intra/mrl/stream/mrl_syntax.cpp
   src/codec/intra/mrl/stream/mrl_interaction.cpp
@@ -151,6 +167,15 @@ add_library(av2enc_core STATIC
   # SWITCH / RAS frame syntax, planning and validation (opt-in,
   # --video-switch / --video-ras).
   src/codec/inter/random_access/random_access.cpp
+  # Hierarchical-P temporal layers (opt-in, --video-tlayers).
+  src/codec/inter/tlayers/tlayers.cpp
+  src/codec/inter/tlayers/tlayers_syntax.cpp
+  # B-frame schedules (opt-in, --b-frames).
+  src/codec/inter/advanced/b_frame.cpp
+  src/codec/inter/bframes/bframes.cpp
+  # Compound prediction (opt-in, --video-compound).
+  src/codec/inter/multiref/compound_predict.cpp
+  src/codec/inter/advanced/compound.cpp
   src/pipeline/video/video_headers.cpp
   src/pipeline/video/video_syntax.cpp
   src/pipeline/video/video_frame.cpp
@@ -158,6 +183,8 @@ add_library(av2enc_core STATIC
   # video_frame.cpp reference so standalone component gates stay linkable.
   src/pipeline/video/video_frames.cpp
   src/codec/entropy/av2/av2_entropy.cpp
+  # §8.2.4 / §7.5 average-CDF + frame-end bookkeeping (opt-in --avg-cdf).
+  src/codec/entropy/avg_cdf/avg_cdf_bank.cpp
   # delta-Q / segmentation syntax (neutral, opt-in still integration).
   src/codec/entropy/deltaq/still/deltaq.cpp
   src/codec/rate/rc/rc.cpp
@@ -165,6 +192,13 @@ add_library(av2enc_core STATIC
   src/codec/entropy/lossless/lossless.cpp
   # Content interpretation OBU (§5.15); opt-in, default parameters.
   src/frame/metadata/content_interpretation/content_interpretation.cpp
+  # Neutral metadata OBUs (§5.17): timecode / scan type, opt-in via
+  # --metadata-timecode / --metadata-scan-type.  Decoder-invariant.
+  src/frame/metadata/hdr/hdr_metadata.cpp
+  src/frame/metadata/types/metadata_types.cpp
+  # Multi-frame header (§5.7) on the non-single-picture video path
+  # (--video-mfh).
+  src/frame/mfh/mfh.cpp
   src/core/telemetry/profiler.cpp
   # M1 CDEF stage host half (header packing, MI grids, strength search).  It is
   # CUDA-free and the CPU M1 path needs it; the M1 GPU OBJECT target excludes
@@ -176,6 +210,10 @@ target_compile_features(av2enc_core PUBLIC cxx_std_20)
 # gate scripts compile video_frame.cpp without this define and keep the plain
 # path only, so they do not need the inter module sources.
 target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_FRAMES=1)
+# Opt-in video CDF-continuity / timing wiring (avg_cdf bank + CI timing OBU).
+# Standalone component gates compile video_frame.cpp without these modules and
+# keep the pre-wave code path; the product binary always has them.
+target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_CDF_CHAIN=1)
 av2enc_apply_warnings(av2enc_core)
 # The CPU reference must be bit-identical across compilers and platforms. The
 # M0/M1 forward transforms use binary64; FMA contraction changes coefficients
@@ -332,10 +370,34 @@ target_sources(av2enc_core PRIVATE
   src/codec/rate/rc/rc.cpp
   src/pipeline/video/post/rc_adapter.cpp)
 
+# Multi-tile video (--video --tiles).  The splitter re-enters the video syntax
+# writer per tile; the default 1x1 --video stream never calls these.
+target_sources(av2enc_core PRIVATE
+  src/codec/filters/stream/filters_stream.cpp
+  src/pipeline/video/post/bit_depth_checklist.cpp
+  src/pipeline/video/post/loop_filters.cpp
+  src/pipeline/video/post/tiled_frame.cpp)
+
+# SVC layer encode (--video --svc-layers): per-layer sequences, global LCR/OPS
+# and Annex F.3.2 selection.  Default off; the single-layer --video path never
+# calls it.
+target_sources(av2enc_core PRIVATE
+  src/pipeline/tiles/svc_layers.cpp
+  src/pipeline/svc/svc_config.cpp
+  src/pipeline/svc/svc_pipeline.cpp
+  src/pipeline/svc/svc_framing.cpp
+  src/pipeline/svc/svc_stream.cpp)
+
 # Host-only multi-GPU scheduling contract (--gpu-plan). Pure planning: no CUDA,
 # no allocations.
 target_sources(av2enc_core PRIVATE
   src/pipeline/dispatch/planner.cpp)
+
+# Effort/cpu-used feature ranking (--effort). Host-only selector; the measured
+# table is compiled in from src/pipeline/planner/effort_table.inc, which is
+# generated by tools/effort/gen_table.py. Never called unless --effort is given.
+target_sources(av2enc_core PRIVATE
+  src/pipeline/planner/effort.cpp)
 
 add_executable(av2enc src/main.cpp)
 target_link_libraries(av2enc PRIVATE av2enc_core)

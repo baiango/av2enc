@@ -371,19 +371,25 @@ keep every loop-filter flag off.
 - **10-bit checklist**: 8/10-bit pass for headers, 10-bit blocked for the tile
   path, 12-bit rejected, MaxQ overflow rejected, geometry rejection.
 
-`tiled_gate.cpp` encodes three keyframe + P-frame streams (128×64 2×1,
-256×64 2×1 with two superblocks per tile, and 256×128 2×2), wraps each in IVF,
-decodes with the pinned `dav2d`, and requires two frames whose Y/U/V samples are
-exactly the expected DC/GLOBALMV constant (128). It exits 77 (skip) when no
-decoder is found. The 2×2 case is what caught the tile-size-field ordering bug;
-two tiles alone are not enough to test §5.20.1.
+`tiled_gate.cpp` encodes six keyframe + P-frame streams (128×64 2×1,
+256×64 2×1 with two superblocks per tile, 256×128 2×2, plus the same 128×64
+2×1 geometry with CDEF enabled and each §5.4.10 `CdefOnSkipTxfm` mode:
+`DISABLED`, `ALWAYS_ON`, `ADAPTIVE`), wraps each in IVF, decodes with the pinned
+`dav2d`, and requires two frames whose Y/U/V samples are exactly the expected
+DC/GLOBALMV constant (128). It exits 77 (skip) when no decoder is found. The
+2×2 case is what caught the tile-size-field ordering bug; two tiles alone are
+not enough to test §5.20.1.
 
 The gate also enables deblocking in every frame header and enables CDEF/CCSO at
 sequence level while disabling them per frame. That exercises the deblock
 `apply`/`df_delta_q_present` bits, the full §5.4.10 sequence row, and the
 `cdef_params()` / `ccso_params()` frame rows in front of a real decoder without
-needing per-block symbols. This is the tiled stream gate; the sample-exact M2
-core gate remains `src/encoder/m2/build_and_test.sh`.
+needing per-block symbols. The three CDEF cases additionally enable CDEF per
+frame with `CdefStrengths == 1` and an all-zero strength set: no `cdef_idx`
+symbols are coded, the constant picture is unchanged, and each sequence mode's
+header row (`ALWAYS_ON` infers the frame bit to 1, `DISABLED` to 0, `ADAPTIVE`
+codes it) is consumed by the decoder. This is the tiled stream gate; the
+sample-exact M2 core gate remains `src/encoder/m2/build_and_test.sh`.
 
 ## CLI wiring (wave 3): `--rc cqp|crf|vbr`
 
@@ -402,16 +408,17 @@ av2enc in.y4m -o out.ivf --video --frames 6 --rc vbr --bitrate 500
   applies the resulting `base_q_idx` to every frame. `VideoOptions` gained an
   optional per-frame `frame_base_q_idx` vector; the frame header and the
   coefficient-CDF `qctx` slice both follow it.
-- VBR is two-pass: a statistics pass at `--qp` measures per-frame payload bits,
-  which calibrate the placeholder bitrate model (`estimate_frame_bits_model`
-  scaled by measured/modelled bits at `--qp`). The controller then bisects the
-  calibrated model per frame and the CLI reports the achieved `base_q_idx` and
-  payload bits for every frame.
-- The rate model remains a **placeholder**. On 6 frames of 720p `--rc vbr
-  --bitrate 500` the local gate measured 3.5 Mbps at QPs 123..140: the stream
-  decodes and the per-frame decisions are deterministic, but this is not a
-  bitrate-accuracy or quality result. CRF 50 / 32 / 10 measured 0.26 / 1.6 / 49.8
-  Mbps at qindex 203 / 130 / 41.
+- VBR is closed-loop: a statistics pass at `--qp` seeds a frame-uniform
+  `base_q_idx` probe; the CLI then encodes, measures the payload bits, and
+  re-encodes with the measured error until the target is met (monotonic
+  bisection over `[1, 255]`, at most 10 passes, best measured pass kept).
+  Output stays deterministic and the report prints the pass count, achieved
+  kbps, error and QP. Local 720p 6-frame result (`--video-max-depth 3`):
+  500/1000/2000/4000/8000 kbps targets measured +0.1/-0.9/-3.1/+1.3/-1.4%.
+  This is a payload-bitrate result on one clip, not a quality or VBV/HRD
+  claim; the per-frame allocation is frame-uniform.
+- CRF 50 / 32 / 10 measured 0.26 / 1.6 / 49.8 Mbps at qindex 203 / 130 / 41
+  (placeholder CRF curve, no accuracy claim).
 - `--rc`, `--crf` and `--bitrate` require `--video`, and each value knob requires
   its matching mode. Unsupported combinations are rejected by name.
 
@@ -419,6 +426,20 @@ Gate: `src/pipeline/video/post/gate_cli_rc.sh --bin build-int/av2enc` checks the
 pinned default MD5, `--rc cqp` identity, strict decoding plus sample-exact
 reconstruction (`--video-recon`) for CRF/VBR, CRF monotonicity, VBR determinism
 and the rejection paths. Local result: 12/12 cases passed.
+
+## CLI wiring (wave 4): `--video --tiles CxR`
+
+Multi-tile video uses the same tile-group writer through
+`assemble_video_tile_group_from_payloads()`. The video encoder runs one
+tile-local encode per tile and frame (fresh entropy state, tile-local
+superblock origin and contexts; ME/MC read the whole reference frame), so the
+payloads are already the independently decodable per-tile byte ranges this
+entry point expects. `--tiles 1x1` keeps `av2enc::video::make_frame_obu()`
+byte-identically.
+
+Gate: `src/pipeline/video/gate_cli_video_tiles.sh --bin build-int/av2enc`
+(720p 6-frame 2x1/2x2/4x2/8x2, `dav2d --strict 1`, sample-exact
+`--video-recon`, pinned default stream and the rejection paths).
 
 ## Known limitations
 
@@ -433,7 +454,8 @@ and the rejection paths. Local result: 12/12 cases passed.
   BD-rate or quality claim is made.
 - The tiled gate uses a constant synthetic source; it validates tile framing and
   the multi-tile header, not rate-distortion quality.
-- VBR is open-loop after calibration (no re-encode with measured pass-2 bits),
-  and the virtual buffer is fed the calibrated estimate rather than a later
-  measurement. A closed-loop second iteration is the next step if bitrate
-  accuracy becomes a requirement.
+- VBR is closed-loop at the sequence level: real encode/measure/re-encode
+  bisection over a frame-uniform `base_q_idx`. Per-frame rate allocation inside
+  the sequence is still frame-uniform; a per-frame closed loop needs a stable
+  reference-quality model first (fixed-QP allocation was non-monotonic at
+  extreme QP mixes).

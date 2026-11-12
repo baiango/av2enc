@@ -279,6 +279,18 @@ const char* scale_mode_name(ScaleMode mode) {
   return "?";
 }
 
+const char* evidence_name(Evidence evidence) {
+  switch (evidence) {
+    case Evidence::kEstimated:
+      return "estimated";
+    case Evidence::kClaimed:
+      return "claimed";
+    case Evidence::kMeasured:
+      return "measured";
+  }
+  return "?";
+}
+
 tiles::TileLayoutPreset default_layout_for_gpus(int gpu_count) {
   if (gpu_count <= 1) {
     return tiles::TileLayoutPreset::k4x2;
@@ -577,6 +589,38 @@ bool plan_multi_gpu(const TileLayout& layout, const PlannerConfig& config,
 
   plan.scaling = estimate_scaling_model(layout, config, plan.assignment,
                                         plan.transfer.total_ms);
+
+  // Deterministic per-tile host dispatch.  Raster slot == TileNum from
+  // plan_tile_layout(); a worker's payload must be written into that slot and
+  // the coordinator merges slots in ascending order.
+  plan.dispatch.clear();
+  plan.dispatch.reserve(layout.tiles.size());
+  std::vector<int> owner(static_cast<std::size_t>(layout.tile_count()), -1);
+  for (int g = 0; g < config.gpu_count; ++g) {
+    for (int index : assignment.tile_indices[static_cast<std::size_t>(g)]) {
+      owner[static_cast<std::size_t>(index)] = g;
+    }
+  }
+  for (int t = 0; t < layout.tile_count(); ++t) {
+    const tiles::TileRect& rect = layout.tiles[static_cast<std::size_t>(t)];
+    TileDispatchEntry entry;
+    entry.raster_slot = t;
+    entry.tile_index = t;
+    entry.gpu_index = owner[static_cast<std::size_t>(t)];
+    entry.sb_col_start = rect.sb_col_start;
+    entry.sb_row_start = rect.sb_row_start;
+    entry.sb_cols = rect.sb_cols;
+    entry.sb_rows = rect.sb_rows;
+    entry.x0 = rect.x0;
+    entry.y0 = rect.y0;
+    entry.x1 = rect.x1;
+    entry.y1 = rect.y1;
+    plan.dispatch.push_back(entry);
+  }
+
+  plan.measured = false;
+  plan.evidence = Evidence::kEstimated;
+  plan.scaling.evidence = Evidence::kEstimated;
   plan.valid = true;
   return true;
 }

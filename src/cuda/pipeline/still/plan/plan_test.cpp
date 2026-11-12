@@ -8,10 +8,10 @@
 #include "codec/partition/tree/partition.h"
 #include "core/io/y4m.h"
 
-#if __has_include("cuda/m1/still_gpu.h")
+#if __has_include("cuda/pipeline/still/still_gpu.h")
 #include "cuda/pipeline/still/plan/plan_gpu_bridge.h"
 #define STILL_PLAN_HAVE_GPU_PODS 1
-#if __has_include("encoder/m1/stream/still_stream_bridge.h")
+#if __has_include("pipeline/still/stream/still_stream_bridge.h")
 #define STILL_PLAN_HAVE_STREAM_TREE 1
 #else
 #define STILL_PLAN_HAVE_STREAM_TREE 0

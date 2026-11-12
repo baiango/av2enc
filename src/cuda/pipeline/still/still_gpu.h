@@ -43,6 +43,7 @@ enum class Stage : std::uint8_t {
   kChroma,
   kCfl,
   kDeblock,
+  kFilters,
   kSched,
   kCount,
 };
@@ -72,6 +73,8 @@ inline const char* stage_name(Stage stage) noexcept {
       return "cfl";
     case Stage::kDeblock:
       return "deblock";
+    case Stage::kFilters:
+      return "filters";
     case Stage::kSched:
       return "sched";
     case Stage::kCount:
@@ -286,37 +289,15 @@ inline ::av2enc::still::StillOptions gpu_options_to_m1(const GpuOptions& options
   return cpu;
 }
 
-// M3 tool options the GPU pipeline can code today.  None of the M3 tools have a
-// GPU stage yet, so every one of them must be rejected by name instead of
-// being accepted and silently dropped.  `error` receives the first unsupported
-// flag (the gate classifies a message containing "--still-" plus "not ported" as
-// SKIP-REJECTED).
+// M3 tool options the GPU pipeline can code today.  Filters that have a wired
+// GPU stage (CDEF, CCSO band-offset-only and edge-classified) and metadata-only
+// tools (film grain, whose synthesis is a decoder-side output process with no
+// encoder pixel work) are accepted; every remaining tool must be
+// rejected by name instead of being accepted and silently dropped.  `error`
+// receives the first unsupported flag (the gate classifies a message containing
+// "--still-" plus "not ported" as SKIP-REJECTED).
 inline bool gpu_m3_options_supported(const GpuOptions& options,
                                      std::string* error) {
-  if (options.enable_cdef) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-cdef is not ported to the GPU pipeline yet; use --still "
-          "(CPU)";
-    }
-    return false;
-  }
-  if (options.enable_ccso) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-ccso is not ported to the GPU pipeline yet; use --still "
-          "(CPU)";
-    }
-    return false;
-  }
-  if (options.ccso_edge) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-ccso-edge is not ported to the GPU pipeline yet; use "
-          "--still (CPU)";
-    }
-    return false;
-  }
   if (options.enable_wiener) {
     if (error != nullptr) {
       *error =
@@ -345,14 +326,6 @@ inline bool gpu_m3_options_supported(const GpuOptions& options,
     if (error != nullptr) {
       *error =
           "M1 GPU: --still-gdf is not ported to the GPU pipeline yet; use "
-          "--still (CPU)";
-    }
-    return false;
-  }
-  if (options.enable_grain) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-grain is not ported to the GPU pipeline yet; use "
           "--still (CPU)";
     }
     return false;
@@ -460,6 +433,7 @@ struct GpuStageStatus {
   StageState chroma = StageState::kStub;
   StageState cfl = StageState::kStub;
   StageState deblock = StageState::kStub;
+  StageState filters = StageState::kStub;
   StageState sched = StageState::kStub;
 
   StageState get(Stage stage) const noexcept;

@@ -37,6 +37,7 @@
 #pragma once
 
 #include "pipeline/still/still_headers.h"
+#include "codec/entropy/avg_cdf/avg_cdf_bank.h"
 #include "codec/intra/palette/core/palette.h"
 
 #include <cstddef>
@@ -48,6 +49,16 @@
 namespace av2enc::still::syntax {
 
 inline constexpr int kPlaneCount = 3;
+inline constexpr int kMaxLumaTxParts = 4;
+
+// One luma transform block of a TX_MODE_SELECT coding block (§5.20.6.3).
+struct LumaTxPart {
+  std::uint8_t tx_size = 0;      // AV2 TX_SIZE 0..24
+  std::uint8_t tx_type = 0;      // txv::TxType
+  std::uint8_t sec_tx_type = 0;  // 0 = no IST
+  std::uint8_t most_probable_stx_set = 0;
+  std::uint32_t eob = 0;         // scan-position EOB
+};
 
 // BlockSyntax::flags bits.
 enum BlockFlags : std::uint8_t {
@@ -66,6 +77,18 @@ enum BlockFlags : std::uint8_t {
   // at the palette position (after UV mode, before DIP) and is driven by the
   // side-array entry at BlockSyntax::palette_index.
   kFlagIsPalette = 1u << 3,
+  // The chroma-ownership fields (has_chroma / chroma_bsize / chroma_mi_row /
+  // chroma_mi_col) are valid.  Producers that predate sub-8 blocks (the GPU
+  // bridge, the basic path) leave this clear, which keeps the historical
+  // "derive chroma from the luma leaf" behaviour byte-identical.
+  kFlagHasChromaInfo = 1u << 4,
+  // Intra SDP luma/chroma split node (§5.20.3.1).  It codes no partition
+  // syntax; its two children are the luma root and then the chroma root.
+  kFlagSdpSplit = 1u << 5,
+  // This leaf is an intra-block-copy block (§5.20.5.3/.4).  No Y/UV mode or
+  // palette symbol is coded; use_intrabc + skip_flag + intrabc_info replace
+  // them.  The block vector is in 1/8 luma samples.
+  kFlagIsIbc = 1u << 6,
 };
 
 // One node of the partition tree, plus the leaf payload when it is a leaf.
@@ -86,6 +109,27 @@ struct BlockSyntax {
   std::uint16_t allowed_mask = 0;
   std::uint8_t flags = 0;         // BlockFlags
   std::uint16_t subtree = 0;      // entries in the child subtrees
+  // §5.20.5.7 intra_segment_id().  Always 0 unless the frame signals
+  // segmentation with active features; the real per-SB path fills it from the
+  // planner.
+  std::uint8_t segment_id = 0;
+
+  // --- chroma ownership (§5.20.3.1, sub-8 leaves) ---
+  // Valid only when kFlagHasChromaInfo is set.  `has_chroma` is the decoded
+  // HasChroma value for this leaf (false on the first children of a sub-8
+  // split, which code no UV mode/residual).  When true the leaf owns the whole
+  // inherited chroma block described by ChromaMiRow/Col/Size; `chroma_bsize`
+  // is ChromaMiSize in luma 4x4 units, so the chroma residual size is
+  // partition::chroma_plane_residual_size(chroma_bsize).
+  std::uint8_t has_chroma = 1;
+  std::uint8_t chroma_offset = 0;     // decoded chromaOffset recursion arg
+  std::uint8_t chroma_bsize = 0;      // partition::BlockSize (ChromaMiSize)
+  std::uint16_t chroma_mi_row = 0;    // luma 4x4 units
+  std::uint16_t chroma_mi_col = 0;
+  // §6.19.3.1 TreeType for an SDP frame (0 SHARED, 1 LUMA, 2 CHROMA).
+  // CHROMA_PART codes partition symbols from PlaneStart 1 and skips luma mode,
+  // luma residual, TX size, CDEF/CCSO/delta-q and palette/DIP.
+  std::uint8_t tree_type = 0;
 
   // --- leaf mode info ---
   std::uint8_t y_mode = 0;        // AV2 YMode 0..12 (§6.19.5.5)
@@ -123,11 +167,34 @@ struct BlockSyntax {
   // Only the first coding block of each 64x64 origin codes the symbol; the
   // writer ignores repeats.  Ignored when CDEF is disabled.
   std::int8_t cdef_idx = 0;
+  // §5.20.5.4 intrabc_info() for kFlagIsIbc leaves.  `ibc_mode` is 0 = NEWMV
+  // (MVD present) / 1 = NEARMV (RefStackMv only); `ibc_ref_mv_idx` is the DRL
+  // index; `ibc_bv_*` is the absolute block vector in 1/8 luma samples.
+  // `ibc_skip` = 1 codes no residual (exact copy), 0 codes a normal residual.
+  std::uint8_t ibc_skip = 1;
+  std::uint8_t ibc_mode = 1;
+  std::uint8_t ibc_ref_mv_idx = 0;
+  std::int32_t ibc_bv_row = 0;
+  std::int32_t ibc_bv_col = 0;
   // §5.20.8.2 secondary transform (IST), luma only.  sec_tx_type 0 means no
   // IST; the set is 0..6 (0..3 for a large ADST_ADST block).  Both fields are
   // ignored when enable_intra_ist is 0 or the block is not IST-applicable.
   std::uint8_t sec_tx_type = 0;
   std::uint8_t most_probable_stx_set = 0;
+  // §5.20.7.27 cctx_type (0 = CCTX_NONE) for plane 1.  Coded after the U EOB
+  // and before the coefficients when enable_cctx is on and the U eob is
+  // neither 0 nor 1; otherwise it must be 0.
+  std::uint8_t cctx_type = 0;
+
+  // --- §5.20.6.1-.3 TX_MODE_SELECT luma parts ---
+  // tx_part_count == 0 keeps the historical single-transform layout and reads
+  // tx_size[0]/tx_type[0]/eob[0].  When tx_mode_select is on, tx_part_count is
+  // 1..4 and the luma coefficients of this leaf are the parts' eobs, in part
+  // order (decode order), starting at levels_offset.  Chroma remains a single
+  // transform per plane after the luma levels.
+  std::uint8_t tx_part_count = 0;
+  std::uint8_t tx_partition = 0;  // txpartition::TxPartition value
+  LumaTxPart tx_parts[kMaxLumaTxParts];
 };
 
 // Frame geometry and ordering metadata.  `blocks` (passed to
@@ -170,7 +237,35 @@ bool assemble_still_frame(const FramePlan& plan,
                        std::string& error,
                        std::size_t* tile_bytes = nullptr,
                        std::span<const palette::PaletteResult> palette_results =
-                           {});
+                           {},
+                       std::span<const std::uint16_t> cdf_seed = {},
+                       std::vector<std::uint16_t>* cdf_final = nullptr);
+
+// ---------------------------------------------------------------------------
+// Opaque CDF image: the §8.2 CDF arrays of one tile, packed without the
+// writer's neighbour/context state.  This is the seed/export surface the
+// average-CDF bank (§8.2.2 frame->tile copy, §8.2.4 Saved* average, §7.5
+// frame-end update) needs; it deliberately carries no partition/mode context.
+// ---------------------------------------------------------------------------
+
+// Number of uint16_t entries in one image.
+std::size_t cdf_image_words();
+
+// §9.3 defaults for the coefficient-CDF slice selected by the raw base_q_idx.
+bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
+                                       std::vector<std::uint16_t>& out,
+                                       std::string* error = nullptr);
+
+// Builds the avg_cdf::CdfBank table list over four equal-sized images.  The
+// bank may then drive `load_tile_cdfs()` / `save_tile_cdfs()` /
+// `average_at_frame_end()`; the caller copies `tile` into/out of the syntax
+// writer through the `cdf_seed` / `cdf_final` arguments above.
+bool cdf_image_tables(std::vector<std::uint16_t>& frame,
+                      std::vector<std::uint16_t>& tile,
+                      std::vector<std::uint16_t>& saved,
+                      std::vector<std::uint16_t>& defaults,
+                      std::vector<entropy::avg_cdf::CdfTable>& tables,
+                      std::string* error = nullptr);
 
 // IntraJointMode for a (YMode, AngleDeltaY) pair: the reordered non-directional
 // index 0..4, or 5 + directional index for directional modes (§5.20.5.5).  The

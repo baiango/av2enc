@@ -306,6 +306,41 @@ The gate also verifies every decoded sample is 128, so a desynchronised
 chroma mode or residual changes the frame even when the decoder does not
 abort.
 
+## Integrated product path (`--still-sub8`)
+
+The M1 writer contract below has been applied: `still::syntax::BlockSyntax`
+carries `has_chroma` / `chroma_bsize` / `chroma_mi_row` / `chroma_mi_col`
+(behind `kFlagHasChromaInfo`, so older producers keep the leaf-derived path),
+`still_encoder.cpp` derives ChromaMi from `partition::PartitionNode`'s
+`has_chroma`/`chroma_offset`, and `still_syntax.cpp::write_block()` codes UV and
+the chroma residual only on the owner at the ChromaMi origin.  The non-owner
+leaf keeps only its luma payload, and the deblock/CfL grids use the owned
+chroma block.
+
+The flag is opt-in, CPU-only and default off:
+
+```sh
+av2enc in.y4m -o out.ivf --still --still-sub8 --still-dc \
+       [--no-deblock] --recon out.rec.y4m
+```
+
+`--still-sub8` sets the partition floor to 4 and the rect recursion depth to at
+least 8.  It is rejected with `--still-gpu` (the CUDA planner codes 8x8 leaves
+only) and with `--still-single`; combining it with
+`--still-ext-partitions` is rejected until that family carries chroma ownership.
+
+Product gate (builds a 4x4 checkerboard at 8x8, 16x16, 34x30, 136x88 and
+640x360, encodes with deblock on/off, decodes with the pinned `dav2d` and
+requires byte-identical Y/U/V reconstruction):
+
+```sh
+src/codec/partition/sub8/product_gate.sh build-int
+```
+
+Local result: PASS for all ten cases (`dav2d` f9dafbc, `--strict 1`), including
+right/bottom edge leaves and the 640x360 product geometry.  Default `--still`
+streams are unchanged (pinned baseline still passes).
+
 ## M1 writer contract
 
 These are the exact call sites in the current tree (function names are stable;

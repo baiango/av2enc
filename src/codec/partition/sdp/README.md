@@ -317,6 +317,11 @@ The standalone gate covers:
 
 ## Minimal stream with SDP: not feasible without core edits
 
+> **Update (completion wave):** this section is the historical plan.  The M1
+> writer now implements items 1-5 for the forced-NONE luma/chroma trees; see
+> "Integrated product path (`--still-sdp`)" above.  The text below documents
+> why a header-only patch is not a valid gate.
+
 A header-only patch is **not** a valid SDP stream. With `enable_sdp = 1`,
 `dav2d` immediately enters the luma/chroma split at the 64x64 root: it reads a
 luma-only block tree, then a chroma-only block tree. Patching the M1 sequence
@@ -407,6 +412,50 @@ array and must match `tree_signature()` for identical costs.
   block-level stream passes `tools/validate_dav2d.sh`.
 - The partition-tree layer (`partition_ext`) remains `SHARED_PART`-only. This
   module is the SDP-aware layer; the two are intentionally separate.
+
+## Integrated product path (`--still-sdp`)
+
+The M1 writer now has an SDP branch:
+
+- `StillConfig::enable_sdp` writes the §5.4.3 `enable_sdp` bit
+  (`enable_extended_sdp` is inferred 0 for a single-picture header).
+- `still_encoder.cpp` builds the tree with `sdp::decide_frame()` and walks it in
+  decode order with `collect_sdp_node()`: an intra 64x64 split node carries
+  `kFlagSdpSplit` and its two children are the `LUMA_PART` root followed by the
+  `CHROMA_PART` root.
+- `still_syntax.cpp::write_node_sdp()` codes each node's partition symbol from
+  `TileDoSplitCdf[PlaneStart]` (plane 0 for SHARED/LUMA, plane 1 for CHROMA)
+  and keeps a separate chroma-plane partition-context grid.  A `CHROMA_PART`
+  leaf codes no Y mode, MRL, TX size, CDEF/CCSO/delta-q/segment id or luma
+  residual; it codes UV (and the chroma residual) only when `HasChroma`, sized
+  by `ChromaMiSize`.
+
+The first decoder-gated configuration **forces `PARTITION_NONE` on both the
+luma and chroma tree** of every intra SDP split (`min_block_size = 64`,
+`max_depth = 0`, rect/3-way/uneven disabled).  Searching the sub-trees and
+`enable_extended_sdp` remain unwired; the writer rejects a non-NONE SDP
+sub-tree partition instead of guessing its tree-specific implied rules.
+
+```
+av2enc in.y4m -o out.ivf --still --still-sdp [--still-dc] [--no-cfl] \
+       [--no-deblock] --recon out.rec.y4m
+```
+
+Constraints: CPU-only (rejected with `--still-gpu`), 64x64 superblocks only,
+and mutually exclusive with `--still-single`, `--still-sb128`,
+`--still-sb256`, `--still-ext-partitions`, `--still-sub8`, CDEF/CCSO and
+segmentation/delta-Q.
+
+Gate (64x64, 128x128, 256x192, 640x384 and 640x360; default / `--still-dc` /
+`--no-cfl` / `--no-deblock`; decode with pinned `dav2d`, require sample-exact
+Y/U/V reconstruction):
+
+```sh
+src/codec/partition/sdp/product_gate.sh build-int
+```
+
+Local result: PASS for all 20 cases (`dav2d` f9dafbc, `--strict 1`).  Default
+`--still` streams are unchanged (pinned baseline still passes).
 
 ## Deliberate limitations
 

@@ -15,11 +15,22 @@ so this component never emits 12-bit.  12-bit remains internal-only in
 
 `av2enc --still --bit-depth 10` routes to `hbd::encode_still` through
 `src/formats/format_encode.*` and the strict Y4M reader
-`src/formats/format_y4m.*`. The input must be `C420p10` (no implicit depth
-conversion), `--qp` is limited to 1..90 (coefficient-CDF slice 0), and
-`--recon <file>` dumps the C420p10 reconstruction. `src/formats/format_gate.sh`
-pins the 64x64/640x360 IVF and decoded MD5s and requires a 0-LSB recon match.
-The default `--still` path stays byte-identical 8-bit 4:2:0.
+`src/formats/format_y4m.*`.  The input must already match the requested format
+(`C420p10`, `C422p10`, `C444p10` or `Cmono10`; select it with
+`--chroma 420|422|444|400`, default 420); no implicit depth or chroma
+conversion is done.  `--qp` covers the full 10-bit range `1..303`: the tile
+writer installs the §8.3.1 coefficient-CDF slice for the raw `base_q_idx`, so
+slices 1..3 (91..303) are gated as well as slice 0.  `--recon <file>` dumps the
+reconstruction in the same format.  `src/formats/format_gate.sh` pins the
+64x64/640x360 IVF and decoded MD5s for every format and high-QP slice and
+requires a 0-LSB recon match.  The default `--still` path stays byte-identical
+8-bit 4:2:0.
+
+The chroma path is generic, not 4:2:0-specific: the coded chroma extent,
+transform size and residual/reconstruction geometry come from
+`fmt::subsampling_x/y` and `Subsampled_Size`/`make_tx_params`, and the DC
+predictor uses the full §7.13.3.22 `Div_Lut` (4:2:2 chroma blocks such as
+16x32 have a non-power-of-two `w + h = 48`).
 
 ## What this owns
 
@@ -175,23 +186,38 @@ int cfl_scaled_luma(int alpha_q8, int luma, int luma_avg);
 int cfl_apply(int dc, int alpha_q8, int luma, int luma_avg);
 ```
 
-## qindex / qlookup seam (read this before claiming 1..303 encoding)
+## Product format matrix (still, 10-bit)
+
+| `--chroma` | `chroma_format_idc` | profile | chroma TX (64x64 / 32x32 leaf) | Gate |
+|---|---:|---:|---|---|
+| 420 (default) | 0 | 0 | 32x32 / 16x16 | `10bit_420_*` |
+| 422 | 3 | 3 | 32x64 / 16x32 | `10bit_422_*` |
+| 444 | 2 | 4 | 64x64 / 32x32 | `10bit_444_*` |
+| 400 | 1 | 0 | no plane | `10bit_400_*` |
+
+Every case is decoded with `dav2d --strict 1` and compared sample-for-sample
+with the encoder reconstruction (0 LSB).  Monochrome omits the §5.4.3/§5.4.5/
+§5.4.8 chroma bits (`enable_sdp`, `cfl_ds_filter_index`,
+`enable_chroma_dctonly`, `enable_cctx`, `separate_uv_delta_q`, the UV AC delta
+q pair) and codes no `intra_uv_mode` or chroma residual.
+
+## qindex / qlookup seam (closed)
 
 * The **header writer and reader** handle the full 10-bit range
   `1 <= base_q_idx <= 303`, and `depth::qlookup` / `qctx_slice` are tested at
-  q = 1, 64, 90, 140, 191, 303.
-* The **encode path** supports `1 <= base_q_idx <= 90`.  `base_q_idx > 90`
-  selects coefficient-CDF slice 1..3 (§8.3.1), but the reused M10 entropy
-  writer has only the frozen slice-0 tables (`src/encoder/basic_cdf_tables.h`).
-  Emitting q > 90 through it would desynchronise the decoder's coefficient
-  CDFs.  `qindex_encodable()` rejects those values with a precise message.
-* Closing the seam is a contained job: give `high_bitdepth_entropy`'s `init_cdfs()` a
-  qctx slice argument and install `av2enc::still::qctx::tables_for_base_q_idx(q)` (the
-  four slices already exist in `src/encoder/m1/qctx/`).  It is not done here
-  because `src/encoder/m10/` is owned by another agent.
-* At `q == 90` the output is byte-identical to M10.  The 64x64 test picture is
-  the M10 generator source, so the gate also pins the M10 IVF MD5
-  `1b5018610a86b8d79aba161e95770ae6`.
+  q = 1, 64, 90, 91, 140, 141, 190, 191, 303.
+* The **encode path** now supports the same range.  `high_bitdepth_entropy`'s
+  `init_cdfs()` takes the §8.3.1 slice and installs
+  `av2enc::still::qctx::tables_for_slice(slice)` for the coefficient CDFs;
+  `hbd::encode_still` passes `depth::qctx_slice(base_q_idx)` through
+  `HighBitDepthOptions::qctx`.  Slice 0 is byte-identical to the old frozen
+  tables (the q=90 MD5 did not move), so `q <= 90` stays bit-exact.
+* `qindex_encodable()` now accepts every value in `[1, 303]`; `MaxQ` still
+  rejects 304.  `--qp` accepts 256..303 only on the `--bit-depth 10` path; the
+  8-bit still/basic/video paths reject them instead of truncating to a
+  `uint8_t`.
+* At `q == 90` the output is byte-identical to M10 and both still pin the M10
+  IVF MD5 `1b5018610a86b8d79aba161e95770ae6`.
 
 ## Build, test, gate
 
@@ -240,9 +266,16 @@ step.  `--q 1` and `--q 64` were also checked by hand with 0 LSB.
 
 ## Non-goals
 
-* No 12-bit stream.  `bit_depth_idc > 1` is reserved.
+* No 12-bit stream.  `bit_depth_idc > 1` is reserved; 12-bit stays
+  internal-only in the format layer and is unsupported by policy in AV2 v1.0.0.
 * No CfL/deblock/CDEF/CCSO/GDF/restoration in the emitted still; only their
   depth-dependent *ranges* are implemented and tested.
+* No high-bit-depth inter (10-bit P frames).  The M2 video core is 8-bit
+  4:2:0 (`VideoInputFrame`/`VideoReconFrame` are `uint8_t`, the video header
+  hard-codes `bit_depth_idc = 1`, and the keyframe tile payload comes from the
+  8-bit M1 writer), so `--video --bit-depth 10` is rejected.  Closing it needs
+  a `uint16_t` video frame/recon core and the depth-aware M2 transform,
+  prediction and qctx wiring; the still 10-bit path above is the reference.
 * No GPU path here.  The verified GPU block stage remains
   `src/cuda/format/high_bitdepth_gpu.*`; a 10-bit GPU port must match this CPU oracle.
 * No CMake/product CLI changes.

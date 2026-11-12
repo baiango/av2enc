@@ -87,10 +87,36 @@ applies the derived-alpha CfL prediction for the winning candidate.
 `GpuOptions` carries every M3 tool flag and its decision knobs, even when the
 stage is not ported.  `gpu_options_to_m1()` (in `still_gpu.h`) is the single
 mapping used by the internal CPU parity encode, so a parsed flag can never be
-missing from the comparison.  `gpu_m3_options_supported()` rejects each
-unported tool (`--still-cdef`, `--still-ccso`, `--still-rdoq`, `--still-tx-type`,
-`--still-rdo-intra`, `--still-uv-full`) by name with a "not ported" message; the M3
-gate reports those as `SKIP-REJECTED`.  No flag is silently ignored.
+missing from the comparison.  `gpu_m3_options_supported()` accepts the wired
+in-loop filters and rejects each unported tool (`--still-wiener`,
+`--still-chroma-lr`, `--still-pc-wiener`, `--still-gdf`, `--still-rdoq`,
+`--still-tx-type`, `--still-rdo-intra`, `--still-uv-full`) by name with a
+"not ported" message; the M3 gate reports those as `SKIP-REJECTED`.  Additional
+CPU-only flags (`--still-qm`, `--still-ist`, `--still-dc-ac-delta-q`,
+`--still-ibp/mrl/dip/mhccp/cfl-*`, `--still-sb128/256`,
+`--still-ext-partitions`, segmentation/delta-Q) are rejected before the GPU
+stage.  No flag is silently ignored.
+
+### Wired in-loop filters
+
+The CPU reference still plans the decisions (CDEF strengths/index grid, CCSO
+offset tables and CcsoBlks, film-grain model); the GPU applies the normative
+pixel kernels and the syntax bridge replays the planned symbols.
+
+| Flag | GPU stage | Verified |
+|---|---|---|
+| `--still-cdef` | §7.18 `still_cdef_filter` after deblock | 64×64 / 256×256 / 640×360, strengths 1/2/4/8, ±deblock |
+| `--still-ccso` | §7.19 `ccso_frame` after CDEF | same sizes, bands 0/3/6 |
+| `--still-ccso-edge` | §7.19.1 edge-classified form | same sizes, per-unit CcsoBlks |
+| `--still-grain` | metadata only (decoder-side synthesis) | 64×64 / 640×360 |
+
+Every combination above produces frame bytes identical to the CPU reference
+(`--still` with the same flags) and decodes with `dav2d --strict 1`.  Without
+CDEF the CDEF frame is seeded from the deblocked reconstruction so CCSO's
+`CurrFrame`/`CdefFrame` pair matches the CPU.  Loop restoration (Wiener NS,
+chroma LR, PC-Wiener, GDF) stays rejected: the component suite still reports
+`loop_restoration_frame launch (invalid argument)`, and PC-Wiener/GDF depend on
+restoration tables that are not yet re-verified in the integrated tree.
 
 `src/cuda/m1/still_gpu_options_test.cpp` (built by `build_options_test.sh`, host
 only) pins the full mapping and the rejection set.

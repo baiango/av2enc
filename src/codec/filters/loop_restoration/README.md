@@ -4,13 +4,16 @@ AV2 v1.0.0 (commit `38f28e7`) §7.19 CCSO and §7.20 loop restoration, written
 from the spec text.  Scalar CPU reference plus a CUDA port that shares the
 same arithmetic.
 
-**Integration status (2026-11-12).**  Per-unit non-separable Wiener NS is now
-wired into the opt-in CPU still path: `--still-wiener` (luma) and
-`--still-chroma-lr` (U/V), applied after CDEF/CCSO.  Both are gated by
+**Integration status (2026-11-12).**  Per-unit non-separable Wiener NS is wired
+into the opt-in CPU still path: `--still-wiener` (luma) and `--still-chroma-lr`
+(U/V), applied after CDEF/CCSO.  PC-Wiener (`--still-pc-wiener`) and GDF
+(`--still-gdf`) are integrated too.  All of them are gated by
 `tools/still_verify/loop_restoration_gate.sh` with `dav2d --strict 1` and a
-sample-for-sample encoder-recon compare at 64x64 and 640x360.  The CUDA
-restoration kernel is still unwired, and PC-Wiener/GDF/film grain remain
-unintegrated (see blockers below).
+sample-for-sample encoder-recon compare at 64x64/640x360 (plus combined cases at
+1080p).  §7.20.2 `CdefFrame` is kept separate from `LrFrame`, so GDF composes
+with luma Wiener, PC-Wiener and chroma LR, and PC-Wiener luma composes with
+chroma Wiener.  The CUDA restoration kernel is still unwired.  Film grain is
+wired as signalling only (`--still-grain`, `--still-grain-adaptive`).
 
 ## Status
 
@@ -20,9 +23,9 @@ unintegrated (see blockers below).
 | Loop restoration framework (units, stripes, source sampling) | §5.18.7.11, §6.17.7.7, §5.20.10.4–§5.20.10.5, §7.20–§7.20.2 | yes | yes | yes | **implemented** |
 | Non-separable Wiener (luma 32-tap, chroma 12-tap + 6 luma taps) | §5.20.10.6, §7.20.3 | yes | yes | yes | **implemented** |
 | Frame-level Wiener with pixel classes | §5.18.7.11 `frame_filters_on`, §7.20.3 | partial | partial | yes | arithmetic done; the class map must be supplied (see blockers) |
-| PC-Wiener (classification + filtering) | §7.20.4 | no | no | — | reference in `../spec_tables/`; stream integration pending |
-| GDF (guided detail filter) | §5.18.7.9, §7.20.5 | no | no | — | reference in `../spec_tables/`; stream integration pending |
-| Film grain synthesis | §5.14, §7.21.7 | no | no | — | **TODO — Gaussian table missing** |
+| PC-Wiener (classification + filtering) | §7.20.4 | yes | yes | yes | **integrated** (`--still-pc-wiener`; tables recovered in `../tables/`) |
+| GDF (guided detail filter) | §5.18.7.9, §7.20.5 | yes | yes | yes | **integrated** (`--still-gdf`; tables recovered in `../tables/`) |
+| Film grain synthesis | §5.14, §7.21.7 | yes | N/A | yes | **integrated** (signalling via `src/pipeline/grain/`) |
 
 Nothing here has been decoded with `dav2d`; the filters have no syntax path yet.
 Per `docs/tool-roadmap.md` these are M3/M4 tools and each needs its own minimal

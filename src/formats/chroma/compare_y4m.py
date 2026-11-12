@@ -25,6 +25,9 @@ def coloursapce_layout(colorspace):
         return "444", sample_bytes
     if base in ("mono", "400", "monochrome"):
         return "400", sample_bytes
+    # Monochrome 10-bit is spelled "mono10" (not "monop10").
+    if base in ("mono10", "40010", "monochrome10"):
+        return "400", 2
     raise SystemExit(f"unsupported colorspace {colorspace}")
 
 

@@ -82,14 +82,18 @@ filtered="$(
       if (path ~ /(^|\/)(build|build-[^\/]*|build_stub|build-stub|cuda_stub|third_party|external|vendor|test|tests|testing|unittest|unittests)(\/|$)/) return 1;
       if (path ~ /(^|\/)[^\/]*(_test|_tests|test)\.(c|cc|cpp|cxx|cu|cuh|h|hh|hpp)$/) return 1;
       # Test-only RAII device buffer used by the restoration component tests.
-      if (path ~ /(^|\/)cuda\/restoration\/device_buffer\.h$/) return 1;
+      # It lives beside the loop-restoration component after the folder
+      # refactor; keep both spellings so the gate does not regress on a move.
+      if (path ~ /(^|\/)cuda\/(codec\/filters\/loop_restoration|restoration)\/device_buffer\.h$/) return 1;
       return 0;
     }
 
     # Pinned host staging providers (see the header comment above).
     function is_pinned_provider(path) {
+      # The multi-GPU backend moved under pipeline/dispatch/runtime in the
+      # folder refactor; both spellings stay exempt.
       return path ~ /(^|\/)cuda\/context\.cpp$/ ||
-             path ~ /(^|\/)multi_gpu\/runtime\/cuda_backend\.cpp$/;
+             path ~ /(^|\/)(multi_gpu|pipeline\/dispatch)\/runtime\/cuda_backend\.cpp$/;
     }
 
     NF == 0 { next }

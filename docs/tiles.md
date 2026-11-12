@@ -1,11 +1,13 @@
 # Multi-tile coding (opt-in CLI path; default stays 1x1)
 
-Status: **wired behind `--tiles`.** The default `--still`, `--still-gpu`,
-basic and `--video` streams are single-tile and byte-identical to before. The
-CLI accepts `--tiles <N|CxR>` (default 1x1) and routes multi-tile stills
-through `src/pipeline/tiles/stream/tiles_stream.cpp`. The geometry planner and
-tile-group writer below are the same components. Multi-tile requires
-`--no-deblock`; see §10 for the exact gate matrix.
+Status: **wired behind `--tiles` for `--still` and `--video`.** The default
+`--still`, `--still-gpu`, basic and `--video` streams are single-tile and
+byte-identical to before. The CLI accepts `--tiles <N|CxR>` (default 1x1),
+routes multi-tile stills through `src/pipeline/tiles/stream/tiles_stream.cpp`,
+and routes multi-tile video through the per-tile encoder plus
+`post::assemble_video_tile_group_from_payloads()` (the assembly half of
+`post::assemble_video_tiled_frame()`). Still multi-tile requires `--no-deblock`;
+see §10 for the exact gate matrix.
 Everything below is read off the AV2 v1.0.0 specification (`spec/AV2_Spec_v1.0.0.pdf`,
 SHA-256 `e9916f09…b533f`); section numbers are given for every claim.
 
@@ -413,9 +415,12 @@ Differences, exhaustively:
 - **`numLog2` averaging with >8 tiles**: only the first 8 tiles contribute to
   `Saved*`. If we ever add a second frame, its CDFs depend on that subset. Unknown
   whether dav2d implements the `TileNum < 1<<numLog2` guard correctly — TODO test.
-- **Video tiles are not wired.** `--tiles` is rejected for `--video`: the wave-2
-  P-frame writer is whole-frame. Next step is the `post::assemble_video_tiled_frame`
-  splitter, which already exists in `src/pipeline/video/post/tiled_frame.cpp`.
+- **Video tiles are opt-in.** `--video --tiles CxR` encodes each tile as an
+  independent tile-local picture (fresh CDF, tile-local superblock origin,
+  cleared above/left contexts, intra prediction bounded by the tile) while
+  motion compensation still reads the global reference frame. The post tile
+  group writer emits `tile_info()` and the interleaved size fields. 1x1 keeps
+  the historical whole-frame writer byte-identically.
 
 ---
 
@@ -428,14 +433,14 @@ av2enc in.y4m -o out.ivf --still --no-deblock --tiles 2x2 [--recon recon.y4m]
 - `--tiles` accepts a total tile count (`2/4/8/16/32`) or an explicit grid
   (`2x1/2x2/4x2/8x2/16x2`). `--tiles 1x1` is the default and keeps the
   single-tile writer, byte-identically.
-- Multi-tile uses `tiles_stream`, which encodes each tile as a standalone M1
-  still picture: fresh CDF (`init_symbol`), tile-local superblock origin, clear
+- Multi-tile uses `tiles_stream`, which encodes each tile as a standalone
+  Still picture: fresh CDF (`init_symbol`), tile-local superblock origin, clear
   above/left contexts, tile-bounded prediction availability. Payloads are
   interleaved with `le(TileSizeBytes) tile_size_minus_1` fields in raster order
   and the last size is implied by the OBU length.
 - `--tiles` is rejected with a named error when combined with `--video`,
   `--still-gpu`, `--lossless`, `--bit-depth 10`, `--chroma`, `--adaptive-cdf`,
-  any M1 tool flag, or `--no-deblock` missing. Deblocking is required to be off
+  any Still tool flag, or `--no-deblock` missing. Deblocking is required to be off
   because the pinned decoder filters across shared tile edges, so a deblocked
   multi-tile reconstruction cannot be sample-exact (see the module README).
 - `--recon` writes the pasted per-tile reconstruction as a one-frame Y4M.
@@ -445,4 +450,27 @@ runs `dav2d --strict 1 --threads 1` on 640x360 (2x1, 2x2, 4x2, 8x2) and 1080p
 (2x1, 2x2, 4x2, 8x2, 16x2), requires the decoded planes to equal `--recon`
 byte-for-byte, and re-checks the default `--still` MD5, `--tiles 1x1` identity
 and the rejection paths. Local result: 17/17 cases passed.
+
+Video tiles (`--video --tiles CxR`):
+
+```sh
+av2enc in.y4m -o out.ivf --video --frames 6 --tiles 2x2 --video-recon recon.y4m
+```
+
+- Each tile is encoded as a standalone tile-local picture per frame: partition
+  decision, intra prediction, CDF/context state and superblock origins are
+  tile-local, while ME/MC read the global reference frame — exactly what the
+  decoder's `is_inside()` (§5.20.9.1) reconstructs. The decoder's tile start
+  resets CDFs, above/left contexts and `CurrentQIndex`, which is why the
+  encoder and decoder agree sample-for-sample.
+- `post::VideoPostSequenceOptions::filters.disable_loopfilters_across_tiles`
+  is written as 1; the video path has no loop filters today.
+- Rejected: `--tiles 16x2` (not gate-verified for video), `--video-refs > 1`,
+  non-eighth-pel MV precision, and the frame-type modes (long-term/OLK,
+  leading, SEF, SWITCH/RAS) — the tiled frame header signals one reference and
+  1/8-pel.
+- Gate: `src/pipeline/video/gate_cli_video_tiles.sh --bin build-int/av2enc`
+  checks the pinned default stream, 720p 6-frame 2x1/2x2/4x2/8x2 strict decode
+  with sample-exact `--video-recon`, and the rejection paths. Local result:
+  9/9 cases passed.
 

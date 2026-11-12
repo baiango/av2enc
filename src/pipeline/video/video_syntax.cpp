@@ -15,6 +15,7 @@
 #include "pipeline/still/still_tables.h"
 #include "codec/entropy/qctx/qctx.h"
 #include "pipeline/video/video_cdf_tables.h"
+#include "codec/inter/multiref/gate/compound_cdf_tables.h"
 #include "codec/partition/tree/partition.h"
 #include "codec/transform/variants/tx_variants.h"
 #include "codec/entropy/av2/av2_entropy.h"
@@ -270,6 +271,11 @@ struct CdfState {
   std::uint16_t col_mv_greater[2][3];
   std::uint16_t col_mv_index[4][3];
 
+  // Compound block layer (§5.20.7.10 / §5.20.7.6).
+  std::uint16_t comp_mode[5][3];
+  std::uint16_t is_joint[2][3];
+  std::uint16_t compound_mode_non_joint[5][6];
+
   // Inter residual luma transform-type symbols (§5.20.8.2).
   std::uint16_t inter_tx_type_set1[3][2][3];
   std::uint16_t inter_tx_type_set2[3][3];
@@ -335,6 +341,10 @@ void init_cdfs(CdfState& c, int qctx_slice) {
   copy_array(c.is_inter, kIsInterCdf);
   copy_array(c.single_ref, kSingleRefCdf);
   copy_array(c.drl_mode, kDrlModeCdf);
+  copy_array(c.comp_mode, multiref::gate::kCompModeCdf);
+  copy_array(c.is_joint, multiref::gate::kIsJointCdf);
+  copy_array(c.compound_mode_non_joint,
+             multiref::gate::kCompoundModeNonJointCdf);
   copy_array(c.shell_set, kJointShellSetCdf);
   copy_array(c.shell6_class0, kJointShell6Class0Cdf);
   copy_array(c.shell6_class1, kJointShell6Class1Cdf);
@@ -353,6 +363,154 @@ void init_cdfs(CdfState& c, int qctx_slice) {
   copy_array(c.inter_tx_type_index_set2, kInterTxTypeIndexSet2Cdf);
   copy_array(c.inter_tx_type_offset_set2, kInterTxTypeOffsetSet2Cdf);
   inter::mvprec::init_default_mv_precision_cdfs(&c.mv_precision);
+}
+
+// ---------------------------------------------------------------------------
+// Packed CDF image (§8.2 tile state without context state)
+// ---------------------------------------------------------------------------
+//
+// CdfState here is trivially copyable, but the packed image keeps the seed /
+// export / bank-table surface identical to the M1 still writer.  One descriptor
+// list drives export, import and the avg_cdf::CdfBank table layout.
+struct CdfArrayDesc {
+  std::size_t struct_offset = 0;
+  std::size_t packed_offset = 0;
+  std::size_t words = 0;
+  std::uint16_t symbols = 0;
+};
+
+const std::vector<CdfArrayDesc>& cdf_arrays() {
+  static const std::vector<CdfArrayDesc> arrays = [] {
+    const CdfState probe{};
+    std::vector<CdfArrayDesc> out;
+    std::size_t packed = 0;
+    const auto* base = reinterpret_cast<const std::uint8_t*>(&probe);
+    const auto add = [&](const void* member, std::size_t bytes,
+                         std::uint16_t symbols) {
+      CdfArrayDesc desc;
+      desc.struct_offset = static_cast<std::size_t>(
+          reinterpret_cast<const std::uint8_t*>(member) - base);
+      desc.packed_offset = packed;
+      desc.words = bytes / sizeof(std::uint16_t);
+      desc.symbols = symbols;
+      packed += desc.words;
+      out.push_back(desc);
+    };
+#define AV2ENC_ADD_CDF(field, symbols) \
+  add(probe.field, sizeof(probe.field), symbols)
+    AV2ENC_ADD_CDF(do_split, 2);
+    AV2ENC_ADD_CDF(rect_type, 2);
+    AV2ENC_ADD_CDF(y_mode_set, 4);
+    AV2ENC_ADD_CDF(y_mode_index, 8);
+    AV2ENC_ADD_CDF(y_mode_offset, 6);
+    AV2ENC_ADD_CDF(uv_mode, 8);
+    AV2ENC_ADD_CDF(is_cfl, 2);
+    AV2ENC_ADD_CDF(cfl_index, 2);
+    AV2ENC_ADD_CDF(cfl_sign, 8);
+    AV2ENC_ADD_CDF(cfl_alpha, 8);
+    AV2ENC_ADD_CDF(txb_skip, 2);
+    AV2ENC_ADD_CDF(v_txb_skip, 2);
+    AV2ENC_ADD_CDF(eob_pt_1024, 8);
+    AV2ENC_ADD_CDF(eob_pt_512, 8);
+    AV2ENC_ADD_CDF(eob_pt_256, 8);
+    AV2ENC_ADD_CDF(eob_pt_128, 8);
+    AV2ENC_ADD_CDF(eob_pt_64, 7);
+    AV2ENC_ADD_CDF(eob_pt_32, 6);
+    AV2ENC_ADD_CDF(eob_pt_16, 5);
+    AV2ENC_ADD_CDF(eob_extra, 2);
+    AV2ENC_ADD_CDF(coeff_base, 4);
+    AV2ENC_ADD_CDF(coeff_base_lf, 6);
+    AV2ENC_ADD_CDF(coeff_base_eob, 3);
+    AV2ENC_ADD_CDF(coeff_base_lf_eob, 5);
+    AV2ENC_ADD_CDF(coeff_br, 4);
+    AV2ENC_ADD_CDF(coeff_br_lf, 4);
+    AV2ENC_ADD_CDF(coeff_base_uv, 4);
+    AV2ENC_ADD_CDF(coeff_base_lf_uv, 6);
+    AV2ENC_ADD_CDF(coeff_base_eob_uv, 3);
+    AV2ENC_ADD_CDF(coeff_base_lf_eob_uv, 5);
+    AV2ENC_ADD_CDF(coeff_br_uv, 4);
+    AV2ENC_ADD_CDF(dc_sign, 2);
+    AV2ENC_ADD_CDF(intra_tx_type_set1, 7);
+    AV2ENC_ADD_CDF(intra_tx_type_long, 4);
+    AV2ENC_ADD_CDF(is_long_side_dct, 2);
+    AV2ENC_ADD_CDF(single_mode, 3);
+    AV2ENC_ADD_CDF(skip, 2);
+    AV2ENC_ADD_CDF(skip_mode, 2);
+    AV2ENC_ADD_CDF(is_inter, 2);
+    AV2ENC_ADD_CDF(single_ref, 2);
+    AV2ENC_ADD_CDF(drl_mode, 2);
+    AV2ENC_ADD_CDF(shell_set, 2);
+    AV2ENC_ADD_CDF(shell6_class0, 8);
+    AV2ENC_ADD_CDF(shell6_class1, 8);
+    AV2ENC_ADD_CDF(shell_last_two, 2);
+    AV2ENC_ADD_CDF(offset_low, 2);
+    AV2ENC_ADD_CDF(offset_class2, 2);
+    AV2ENC_ADD_CDF(offset_other, 2);
+    AV2ENC_ADD_CDF(col_mv_greater, 2);
+    AV2ENC_ADD_CDF(col_mv_index, 2);
+    AV2ENC_ADD_CDF(inter_tx_type_set1, 2);
+    AV2ENC_ADD_CDF(inter_tx_type_set2, 2);
+    AV2ENC_ADD_CDF(inter_tx_type_set3, 2);
+    AV2ENC_ADD_CDF(inter_tx_type_long, 4);
+    AV2ENC_ADD_CDF(inter_tx_type_index_set1, 8);
+    AV2ENC_ADD_CDF(inter_tx_type_offset_set1, 8);
+    AV2ENC_ADD_CDF(inter_tx_type_index_set2, 8);
+    AV2ENC_ADD_CDF(inter_tx_type_offset_set2, 4);
+    add(probe.mv_precision.use_amvd, sizeof(probe.mv_precision.use_amvd), 2);
+    add(probe.mv_precision.mv_joint, sizeof(probe.mv_precision.mv_joint), 4);
+    add(probe.mv_precision.amvd_index, sizeof(probe.mv_precision.amvd_index),
+        8);
+    add(probe.mv_precision.jmvd_scale_mode,
+        sizeof(probe.mv_precision.jmvd_scale_mode), 5);
+    add(probe.mv_precision.jmvd_adaptive_scale_mode,
+        sizeof(probe.mv_precision.jmvd_adaptive_scale_mode), 3);
+    add(probe.mv_precision.use_most_probable_precision,
+        sizeof(probe.mv_precision.use_most_probable_precision), 2);
+    add(probe.mv_precision.pb_mv_precision,
+        sizeof(probe.mv_precision.pb_mv_precision), 3);
+    add(probe.mv_precision.interp_filter,
+        sizeof(probe.mv_precision.interp_filter), 3);
+    add(probe.mv_precision.shell_set, sizeof(probe.mv_precision.shell_set), 2);
+    add(probe.mv_precision.shell_last_two,
+        sizeof(probe.mv_precision.shell_last_two), 2);
+    add(probe.mv_precision.shell_offset_low,
+        sizeof(probe.mv_precision.shell_offset_low), 2);
+    add(probe.mv_precision.shell_offset_class2,
+        sizeof(probe.mv_precision.shell_offset_class2), 2);
+    add(probe.mv_precision.shell_offset_other,
+        sizeof(probe.mv_precision.shell_offset_other), 2);
+    add(probe.mv_precision.col_mv_greater,
+        sizeof(probe.mv_precision.col_mv_greater), 2);
+    add(probe.mv_precision.col_mv_index,
+        sizeof(probe.mv_precision.col_mv_index), 2);
+    add(probe.mv_precision.shell_class,
+        sizeof(probe.mv_precision.shell_class), 8);
+#undef AV2ENC_ADD_CDF
+    return out;
+  }();
+  return arrays;
+}
+
+std::size_t cdf_image_words_impl() {
+  const std::vector<CdfArrayDesc>& arrays = cdf_arrays();
+  if (arrays.empty()) return 0;
+  return arrays.back().packed_offset + arrays.back().words;
+}
+
+void export_cdf_image(const CdfState& state, std::uint16_t* out) {
+  const auto* base = reinterpret_cast<const std::uint8_t*>(&state);
+  for (const CdfArrayDesc& desc : cdf_arrays()) {
+    std::memcpy(out + desc.packed_offset, base + desc.struct_offset,
+                desc.words * sizeof(std::uint16_t));
+  }
+}
+
+void import_cdf_image(CdfState& state, const std::uint16_t* in) {
+  auto* base = reinterpret_cast<std::uint8_t*>(&state);
+  for (const CdfArrayDesc& desc : cdf_arrays()) {
+    std::memcpy(base + desc.struct_offset, in + desc.packed_offset,
+                desc.words * sizeof(std::uint16_t));
+  }
 }
 
 // One in-frame child slot of a partition (§9.2 Partition_Subsize).
@@ -404,8 +562,11 @@ int enumerate_slots(int mi_row, int mi_col, BlockSize size,
 class Writer {
  public:
   Writer(const FramePlan& plan, std::span<const BlockSyntax> blocks,
-         std::span<const std::int32_t> levels, const VideoConfig& config)
-      : plan_(plan), blocks_(blocks), levels_(levels), config_(config) {
+         std::span<const std::int32_t> levels, const VideoConfig& config,
+         std::span<const std::uint16_t> cdf_seed,
+         std::vector<std::uint16_t>* cdf_final)
+      : plan_(plan), blocks_(blocks), levels_(levels), config_(config),
+        cdf_seed_(cdf_seed), cdf_final_(cdf_final) {
     geometry_.width = plan.width;
     geometry_.height = plan.height;
     geometry_.sb_size = plan.sb_size;
@@ -417,6 +578,9 @@ class Writer {
 
     init_cdfs(cdfs_,
               qctx::slice_for_base_q_idx(static_cast<int>(config_.base_q_idx)));
+    if (!cdf_seed_.empty()) {
+      import_cdf_image(cdfs_, cdf_seed_.data());
+    }
     tile_buffer_.resize(kTileCapacityBytes);
     enc_.init_symbol(tile_buffer_.data(), tile_buffer_.size());
     enc_.disable_cdf_update = config_.disable_cdf_update ? 1 : 0;
@@ -504,6 +668,10 @@ class Writer {
                     tile_buffer_.begin() +
                         static_cast<std::ptrdiff_t>(payload_bytes));
     if (tile_bytes != nullptr) *tile_bytes = payload_bytes;
+    if (cdf_final_ != nullptr) {
+      cdf_final_->resize(cdf_image_words_impl());
+      export_cdf_image(cdfs_, cdf_final_->data());
+    }
     return true;
   }
 
@@ -1679,7 +1847,131 @@ class Writer {
     return true;
   }
 
+  static bool is_inter_ref_value(int ref) { return ref >= 0 && ref < 8; }
+
+  bool ref_backward(int ref) const {
+    return is_inter_ref_value(ref) && ref < plan_.num_total_refs &&
+           plan_.frame_distance[static_cast<std::size_t>(ref)] < 0;
+  }
+
+  // §5.20.7.10 comp_mode context (AV2 v1.0.0):
+  //   two neighbours with single prediction -> backward-ness mismatch
+  //   one single neighbour                  -> 2 + (backward or intra)
+  //   both compound                         -> 4
+  int comp_mode_context() const {
+    int pos[2][2] = {};
+    const int n = neighbor_positions(pos);
+    const auto nsingle = [&](int i) {
+      return !is_inter_ref_value(
+          mv_grid_[cell_index(pos[i][0], pos[i][1])].ref[1]);
+    };
+    const auto nref0 = [&](int i) {
+      return mv_grid_[cell_index(pos[i][0], pos[i][1])].ref[0];
+    };
+    const auto nintra = [&](int i) {
+      return is_inter_grid_[cell_index(pos[i][0], pos[i][1])] == 0;
+    };
+    if (n == 2) {
+      if (nsingle(0) && nsingle(1)) {
+        return (ref_backward(nref0(0)) ? 1 : 0) ^
+               (ref_backward(nref0(1)) ? 1 : 0);
+      }
+      if (nsingle(0)) {
+        return 2 + ((ref_backward(nref0(0)) || nintra(0)) ? 1 : 0);
+      }
+      if (nsingle(1)) {
+        return 2 + ((ref_backward(nref0(1)) || nintra(1)) ? 1 : 0);
+      }
+      return 4;
+    }
+    if (n == 1) {
+      if (nsingle(0)) return ref_backward(nref0(0)) ? 1 : 0;
+      return 3;
+    }
+    return 1;
+  }
+
+  int is_joint_context(int ref0, int ref1) const {
+    const int d0 = std::abs(plan_.frame_distance[static_cast<std::size_t>(ref0)]);
+    const int d1 = std::abs(plan_.frame_distance[static_cast<std::size_t>(ref1)]);
+    const bool same_side =
+        (plan_.frame_distance[static_cast<std::size_t>(ref0)] >= 0) ==
+        (plan_.frame_distance[static_cast<std::size_t>(ref1)] >= 0);
+    return (same_side || d0 != d1) ? 1 : 0;
+  }
+
+  // §5.20.7.10 read_ref_frames() + §5.20.7.6 compound mode for the gated
+  // subset: NumTotalRefs == 2 with num_same_ref_compound == 0, so the (0,1)
+  // pair is implied and no comp_ref bit is coded.  The only signalled compound
+  // mode is non-joint GLOBAL_GLOBALMV (compound_mode_non_joint = 3) with the
+  // AVERAGE blend: enable_masked_compound == 0 makes read_compound_type
+  // bitless and enable_cwp == 0 suppresses cwp_idx.
+  bool write_compound_mode_info(const BlockSyntax& node, std::string& error) {
+    if (!plan_.reference_select) {
+      error = "compound block without reference_select";
+      return false;
+    }
+    if (plan_.num_total_refs != 2) {
+      error = "compound syntax is wired for NumTotalRefs == 2";
+      return false;
+    }
+    if (node.ref_index != 0 || node.ref_index1 != 1) {
+      error = "compound reference pair must be (0, 1)";
+      return false;
+    }
+    if (node.compound_joint != 0) {
+      error = "joint compound is not wired";
+      return false;
+    }
+    if (node.compound_mode != 3 || node.inter_mode != kInterGlobalMv ||
+        node.mv_y != 0 || node.mv_x != 0) {
+      error = "only GLOBAL_GLOBALMV compound is wired";
+      return false;
+    }
+    if (!node.skip_flag) {
+      error = "compound inter residual is not wired";
+      return false;
+    }
+    if (!sym(&cdfs_.comp_mode[comp_mode_context()][0], 2, 1)) {
+      error = error_;
+      return false;
+    }
+    // (0, 1) is implied: no comp_ref symbols for NumTotalRefs == 2.
+    if (!sym(&cdfs_.is_joint[is_joint_context(0, 1)][0], 2,
+             node.compound_joint)) {
+      error = error_;
+      return false;
+    }
+    merge::NewMvContextParams nparams;
+    nparams.mi_row = node.mi_row;
+    nparams.mi_col = node.mi_col;
+    nparams.bw4 = cur_w4_;
+    nparams.bh4 = cur_h4_;
+    nparams.sb_h4 = 16;
+    nparams.mi_cols = mi_cols_;
+    nparams.mi_rows = mi_rows_;
+    nparams.mi = mv_grid_.data();
+    nparams.y_mode = ymode_grid_.data();
+    nparams.is_compound = true;
+    nparams.ref_frame[0] = static_cast<std::int8_t>(node.ref_index);
+    nparams.ref_frame[1] = static_cast<std::int8_t>(node.ref_index1);
+    int ctx = 0;
+    if (merge::derive_new_mv_context(nparams, &ctx) != merge::Status::kOk) {
+      error = "derive_new_mv_context failed";
+      return false;
+    }
+    if (!sym(&cdfs_.compound_mode_non_joint[ctx][0], 5,
+             node.compound_mode)) {
+      error = error_;
+      return false;
+    }
+    return true;
+  }
+
   bool write_inter_mode_info(const BlockSyntax& node, std::string& error) {
+    if (node.compound) {
+      return write_compound_mode_info(node, error);
+    }
     if (node.inter_mode > kInterNewMv) {
       error = "invalid inter mode";
       return false;
@@ -1774,6 +2066,14 @@ class Writer {
     }
 
     if (plan_.num_total_refs > 1) {
+      // §5.20.7.10 read_ref_frames(): when reference_select is on and the
+      // block may be compound, comp_mode is coded first (0 = single ref).
+      if (plan_.reference_select && cur_w4_ * 4 >= 8 && cur_h4_ * 4 >= 8) {
+        if (!sym(&cdfs_.comp_mode[comp_mode_context()][0], 2, 0)) {
+          error = error_;
+          return false;
+        }
+      }
       if (!code_single_ref(node.ref_index)) {
         error = "write single_ref failed";
         return false;
@@ -1863,16 +2163,21 @@ class Writer {
         ymode_grid_[idx] =
             node.is_inter
                 ? static_cast<std::uint8_t>(
-                      (node.inter_mode == kInterGlobalMv
-                           ? 15
-                           : (node.inter_mode == kInterNearMv ? 14 : 16)))
+                      node.compound
+                          ? 19 + node.compound_mode
+                          : (node.inter_mode == kInterGlobalMv
+                                 ? 15
+                                 : (node.inter_mode == kInterNearMv ? 14
+                                                                    : 16)))
                 : node.y_mode;
         inter::mc::MiInfo& mi = mv_grid_[idx];
         mi = inter::mc::MiInfo{};
         mi.ref[0] = node.is_inter
                         ? static_cast<std::int8_t>(node.ref_index)
                         : kRefIntraAv2;
-        mi.ref[1] = merge::kRefNone;
+        mi.ref[1] = node.compound
+                        ? static_cast<std::int8_t>(node.ref_index1)
+                        : merge::kRefNone;
         mi.mv[0][0] = node.mv_y;
         mi.mv[0][1] = node.mv_x;
         mi.mv[1][0] = node.mv_y;
@@ -2113,6 +2418,8 @@ class Writer {
   std::span<const BlockSyntax> blocks_;
   std::span<const std::int32_t> levels_;
   const VideoConfig& config_;
+  std::span<const std::uint16_t> cdf_seed_;
+  std::vector<std::uint16_t>* cdf_final_ = nullptr;
   FrameGeometry geometry_;
   int mi_cols_ = 0;
   int mi_rows_ = 0;
@@ -2175,9 +2482,15 @@ bool assemble_video_frame(const FramePlan& plan,
                              std::span<const std::int32_t> levels,
                              const VideoConfig& config,
                              std::vector<std::uint8_t>& tile_payload,
-                             std::string& error, std::size_t* tile_bytes) {
+                             std::string& error, std::size_t* tile_bytes,
+                             std::span<const std::uint16_t> cdf_seed,
+                             std::vector<std::uint16_t>* cdf_final) {
   error.clear();
   tile_payload.clear();
+  if (!cdf_seed.empty() && cdf_seed.size() != cdf_image_words_impl()) {
+    error = "CDF seed has the wrong number of entries";
+    return false;
+  }
   if (plan.width <= 0 || plan.height <= 0) {
     error = "empty frame plan";
     return false;
@@ -2200,9 +2513,62 @@ bool assemble_video_frame(const FramePlan& plan,
     return false;
   }
 
-  Writer writer(plan, blocks, levels, config);
+  Writer writer(plan, blocks, levels, config, cdf_seed, cdf_final);
   if (!writer.run(tile_bytes, error)) return false;
   tile_payload = writer.payload();
+  return true;
+}
+
+std::size_t cdf_image_words() { return cdf_image_words_impl(); }
+
+bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
+                                       std::vector<std::uint16_t>& out,
+                                       std::string* error) {
+  if (base_q_idx < 1 || base_q_idx > 255) {
+    if (error != nullptr) {
+      *error = "base_q_idx must be in [1, 255] for a CDF default image";
+    }
+    return false;
+  }
+  CdfState state{};
+  init_cdfs(state, qctx::slice_for_base_q_idx(base_q_idx));
+  out.resize(cdf_image_words_impl());
+  export_cdf_image(state, out.data());
+  return true;
+}
+
+bool cdf_image_tables(std::vector<std::uint16_t>& frame,
+                      std::vector<std::uint16_t>& tile,
+                      std::vector<std::uint16_t>& saved,
+                      std::vector<std::uint16_t>& defaults,
+                      std::vector<entropy::avg_cdf::CdfTable>& tables,
+                      std::string* error) {
+  const std::size_t words = cdf_image_words_impl();
+  if (frame.size() != words || tile.size() != words ||
+      saved.size() != words || defaults.size() != words) {
+    if (error != nullptr) {
+      *error = "CDF images must all have cdf_image_words() entries";
+    }
+    return false;
+  }
+  tables.clear();
+  for (const CdfArrayDesc& desc : cdf_arrays()) {
+    const std::size_t entries = static_cast<std::size_t>(desc.symbols) + 1U;
+    if (entries == 0U || desc.words % entries != 0U) {
+      if (error != nullptr) *error = "CDF array size is not a multiple of N+1";
+      return false;
+    }
+    const std::size_t instances = desc.words / entries;
+    for (std::size_t i = 0; i < instances; ++i) {
+      entropy::avg_cdf::CdfTable table;
+      table.symbols = desc.symbols;
+      table.frame = frame.data() + desc.packed_offset + i * entries;
+      table.tile = tile.data() + desc.packed_offset + i * entries;
+      table.saved = saved.data() + desc.packed_offset + i * entries;
+      table.defaults = defaults.data() + desc.packed_offset + i * entries;
+      tables.push_back(table);
+    }
+  }
   return true;
 }
 

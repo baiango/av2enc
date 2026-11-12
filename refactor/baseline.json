@@ -2,8 +2,8 @@
   "build": {
     "cpu": {
       "binary": "/Users/arin/work/av2enc/refactor/build/cpu/av2enc",
-      "build_seconds": 5.31,
-      "configure_seconds": 0.409,
+      "build_seconds": 26.499,
+      "configure_seconds": 0.639,
       "ok": true
     },
     "cuda": {
@@ -15,66 +15,101 @@
       "skipped": true
     }
   },
-  "created": "2026-11-12T07:52:45+08:00",
+  "created": "2026-11-12T22:51:41+08:00",
   "ctest": {
     "failed": 0,
-    "passed": 10,
+    "passed": 17,
     "returncode": 0,
-    "seconds": 2.7,
+    "seconds": 131.13,
     "skipped": 0,
     "tests": [
       {
-        "name": "bitwriter_test",
-        "status": "passed",
-        "time": "0.241913"
-      },
-      {
-        "name": "dav2d_smoke",
-        "status": "passed",
-        "time": "0.280452"
-      },
-      {
-        "name": "ivf_test",
-        "status": "passed",
-        "time": "0.36055"
-      },
-      {
         "name": "basic_edge_smoke",
         "status": "passed",
-        "time": "2.2807"
+        "time": "5.12607"
       },
       {
         "name": "basic_encode_smoke",
         "status": "passed",
-        "time": "1.4512"
+        "time": "3.79049"
       },
       {
         "name": "basic_headers_test",
         "status": "passed",
-        "time": "0.592731"
+        "time": "2.44118"
+      },
+      {
+        "name": "bitwriter_test",
+        "status": "passed",
+        "time": "1.20426"
+      },
+      {
+        "name": "dav2d_smoke",
+        "status": "passed",
+        "time": "0.296647"
+      },
+      {
+        "name": "gate_format",
+        "status": "passed",
+        "time": "6.82407"
+      },
+      {
+        "name": "gate_host_plan",
+        "status": "passed",
+        "time": "1.02984"
+      },
+      {
+        "name": "gate_intra",
+        "status": "passed",
+        "time": "9.06659"
+      },
+      {
+        "name": "gate_loop_restoration",
+        "status": "passed",
+        "time": "130.295"
+      },
+      {
+        "name": "gate_rc",
+        "status": "passed",
+        "time": "76.6833"
+      },
+      {
+        "name": "gate_tiles",
+        "status": "passed",
+        "time": "2.74402"
+      },
+      {
+        "name": "gate_video_cli",
+        "status": "passed",
+        "time": "2.73688"
+      },
+      {
+        "name": "ivf_test",
+        "status": "passed",
+        "time": "0.422946"
       },
       {
         "name": "still_feature_gate",
         "status": "passed",
-        "time": "2.6976"
+        "time": "5.66765"
       },
       {
         "name": "still_gpu_options_test",
         "status": "passed",
-        "time": "0.131254"
+        "time": "1.59559"
       },
       {
         "name": "still_headers_test",
         "status": "passed",
-        "time": "0.700406"
+        "time": "2.05665"
       },
       {
         "name": "y4m_test",
         "status": "passed",
-        "time": "0.476676"
+        "time": "0.830773"
       }
     ],
-    "total": 10
+    "total": 17
   },
   "decoder": {
     "path": "/Users/arin/work/av2enc/tools/bin/dav2d-macos",
@@ -271,10 +306,10 @@
   },
   "git": {
     "branch": "main",
-    "commit": "453c74d833291ddeee8021ca1e7b7a11efbba917",
-    "describe": "453c74d-dirty",
-    "dirty": true,
-    "dirty_paths": 1
+    "commit": "afdaf9dbc012d260b70ca242f6889dbde3c7a8f6",
+    "describe": "afdaf9d",
+    "dirty": false,
+    "dirty_paths": 0
   },
   "host": {
     "cpu": "Apple M4",

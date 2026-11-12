@@ -1,5 +1,7 @@
 #pragma once
 
+#include "pipeline/still/still_headers.h"
+
 #include <cstdint>
 #include <span>
 #include <string>
@@ -49,12 +51,23 @@ struct StillOptions {
   // (transform-skip) on every plane, so the reconstruction is the palette
   // prediction plus the normal chroma residual.  The decision is SSE-only.
   bool palette = false;
+  // Opt-in intra block copy (§5.20.5.3/.4, §7.13.3.18) for screen content.
+  // Requires the frame allow_screen_content_tools + allow_intrabc bits and
+  // force_integer_mv.  The encoder only selects exact luma copies (skip_flag=1,
+  // no residual); `--still-ibc-search-step` bounds the local BV search.
+  bool ibc = false;
+  int ibc_search_step = 8;
   // Opt-in MHCCP (CFL_MULTI, §7.13.6-.8).  Requires CfL.  The decision compares
   // the derived/explicit hypotheses with the MHCCP direction search by SSE.
   bool mhccp = false;
   // Partition search floor. 8 is the M1 target; 4 exercises the 4x4 path.
   int min_block_size = 8;
   int max_partition_depth = 4;
+  // Opt-in sub-8 coding blocks (4x4/4x8/8x4/4x16/16x4/4x32/32x4).  Enables the
+  // 4-sample partition floor and depth needed to reach it; chroma ownership is
+  // carried by HasChroma/ChromaMi.  CPU-only; default off keeps every pinned
+  // stream unchanged.
+  bool sub8 = false;
   // Debug/per-tool gates: one PARTITION_NONE superblock and DC intra only.
   bool force_single_block = false;
   bool force_dc = false;
@@ -101,12 +114,26 @@ struct StillOptions {
   // search policy only enables families whose children keep their own chroma
   // block.  CPU-only: the CUDA planner has no extended tree.
   bool ext_partitions = false;
+  // §5.4.3 enable_sdp: per-64x64 intra luma/chroma partition trees.  Opt-in and
+  // CPU-only; the first gated configuration forces PARTITION_NONE on both
+  // trees.  Default off keeps every pinned stream unchanged.
+  bool sdp = false;
   // Opt-in neutral delta-Q / segmentation syntax (§5.18.7.1/.8).  The signalled
   // segment table has no enabled features and every superblock sends a zero
   // reduced delta, so the reconstruction is unchanged.
   bool enable_segmentation = false;
   bool enable_delta_q = false;
   int delta_q_res = 0;
+  // Opt-in real per-superblock segmentation with SEG_LVL_ALT_Q: a variance
+  // planner assigns each SB to segment 0 (base qindex) or segment 1
+  // (base + per_segment_q_delta).  Forward quantisation, dequantisation and
+  // the deblock qindex all use the resulting qindex.  Default off keeps the
+  // neutral table and the pinned stream.
+  bool per_segment_q = false;
+  int per_segment_q_delta = 8;
+  // Filled by encode_still_picture when per_segment_q is on; one entry per
+  // superblock in raster order.  Not a CLI input.
+  std::vector<std::uint8_t> sb_segment;
   // Opt-in content interpretation OBU (§5.15); default parameters.
   bool content_interpretation = false;
   // Opt-in quantizer matrices (§5.18.6.2 + §7.14.4).  Signals a spec-defined
@@ -116,12 +143,46 @@ struct StillOptions {
   // "no QM" sentinel and is not a selectable set.
   bool qm = false;
   int qm_level = 3;
+  // Opt-in user-defined quantizer matrices (§5.4.11 user_defined_qm() +
+  // §5.13 quantizer_matrix_obu()).  Signals a real QM OBU with an identity
+  // (all-32) user matrix for level 3, so the §7.14.4 q2 equals q.  Implies
+  // `qm`.  The pinned dav2d rejects every QM OBU, so the product gate records
+  // that rejection; the dequant path itself is the component's tested one.
+  bool user_qm = false;
   // Opt-in intra secondary transform (§5.20.8.2, §7.15.3).  Luma-only: the
   // encoder projects the quantised primary coefficients, signals
   // sec_tx_type/most_probable_stx_set, and reconstruction applies the
   // normative inverse before the primary 2-D inverse.  Off by default.
   bool ist = false;
   double ist_sse_scale = 0.125;
+  // Opt-in identity intra transform (§5.4.8 enable_idtx_intra, §5.20.8.2).
+  // Adds IDTX to the intra luma type candidates (only the sets that can signal
+  // it) and codes the §5.20.5.5 fsc_mode = 0 symbol for luma blocks <= 32x32.
+  // IDTX is TX_CLASS_2D, so the diagonal scan and 2-D contexts apply; the
+  // one-axis identity types (V/H_DCT, ...) stay disabled.  Off by default.
+  bool idtx = false;
+  // DDT/DDTX/FDDT is inter-only: §5.4.8 omits enable_inter_ddt for a
+  // single-picture header and §7.15.4.1 applies the substitution only when
+  // is_inter.  Kept as an explicit rejected flag so the CLI is honest.
+  bool ddt = false;
+  // Opt-in trellis-coded quantisation (§5.4.8 enable_tcq, §5.20.7.27,
+  // §7.14.4).  Luma 2-D transform classes only: the coefficient syntax
+  // carries the TCQ base level and escape, and §7.14.4 doubles dqDenom for
+  // those blocks.  A single-picture header infers choose_tcq_per_frame = 0,
+  // so enabling TCQ also forces enable_parity_hiding = 0 (the bit is then
+  // absent from the sequence header).  Off by default.
+  bool tcq = false;
+  double tcq_sse_scale = 0.125;
+  // Opt-in cross-component transform (§5.4.8 enable_cctx, §5.20.7.27
+  // cctx_type, §7.14.6 joint dequant).  Chroma only: the encoder searches the
+  // seven rotation types per chroma block and reconstruction applies the §7.14.6
+  // rotation after the per-plane dequant.  Off by default.
+  bool cctx = false;
+  // Opt-in transform partition signalling (§5.20.6.1-.3 TX_MODE_SELECT).
+  // The encoder tries NONE/SPLIT/HORZ/VERT per luma coding block, writes
+  // tx_do_partition/tx_partition_type before the coefficients, and runs
+  // prediction + reconstruction per transform part.  Chroma is unaffected.
+  bool tx_partition = false;
   // Opt-in DC/AC delta-Q (§5.18.6.1).  The encoder runs the component's frame
   // delta search and signals the result; forward quantisation and §7.14.4
   // dequant use the per-plane DC/AC quantizers.  Off by default.
@@ -144,6 +205,13 @@ struct StillOptions {
   // Opt-in film grain signalling (§5.14/§5.18.10).  Grain is decoder-side
   // output only; the encoder reconstruction and reference stay grain-free.
   bool enable_grain = false;
+  // Estimate the grain model with the GrainStreamPlanner on the encoder
+  // reconstruction instead of signalling the fixed two-point model.
+  bool grain_adaptive = false;
+  // §8.2.2 tile CDF seed (packed CDF image from syntax::cdf_image_words()).
+  // Empty selects the §9.3 defaults, which is the historical path.  The
+  // multi-tile --avg-cdf writer fills this from the average-CDF bank.
+  std::vector<std::uint16_t> cdf_seed;
 };
 
 struct StillResult {
@@ -154,6 +222,27 @@ struct StillResult {
   std::vector<std::uint8_t> recon_u;
   std::vector<std::uint8_t> recon_v;
   int leaves = 0;
+  // Exact-copy intra-block-copy leaves selected by `--still-ibc`.
+  int ibc_blocks = 0;
+  // Final §8.2 tile CDFs (packed image) for the average-CDF bank.
+  std::vector<std::uint16_t> cdf_final;
+  // Exact header/filter configuration the CPU reference emitted.  The GPU
+  // orchestrator reuses it for the filter stages so the sequence/frame header
+  // bits cannot diverge from the CPU reference (one source of truth for the
+  // §5.18.7 restoration parameters).  Fields are default-off.
+  StillConfig config;
+  // Per-64x64 §5.20.10.1 cdef_idx grid, row-major on the luma 64x64 grid.
+  // Empty unless CDEF ran.  The GPU stage uploads it and the syntax bridge
+  // attaches the value to the first leaf of each 64x64 block.
+  std::vector<std::int8_t> cdef_idx;
+  int cdef_n64_cols = 0;
+  int cdef_n64_rows = 0;
+  // Per-plane §5.20.10.2 ccso_blk grids (one byte per CCSO unit).  Empty when
+  // the plane's CCSO is off.  The GPU stage uploads them for §7.19 and the
+  // syntax bridge replays them as read_ccso() symbols.
+  std::vector<std::uint8_t> ccso_blks[3];
+  int ccso_blk_cols[3] = {0, 0, 0};
+  int ccso_blk_rows[3] = {0, 0, 0};
 };
 
 bool encode_still_picture(const StillPicture& picture, const StillOptions& options,
