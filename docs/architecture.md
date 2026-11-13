@@ -239,13 +239,20 @@ Rules:
 - Precompute may change encoder decisions, but the output must still pass
   `dav2d`; it must never reduce quality just to use memory.
 
-## Speed target: 1080p at 1 fps, quality governor
+## Project objectives (2026-11-13)
 
-Product target: **at least 1 encoded frame per second at 1080p on the RTX 3060
-12 GB development box**. This is not 1× realtime; at 1080p60 it is 1/60
-realtime. The RTX 3080 Ti is the production host and the RTX 5090 the
-maximum-speed host; the encoder is allowed to be slow, but must not miss 1 fps
-on the 3060 baseline.
+- **CPU mode:** maximize **CVVDP/JOD at 256×144 @ 30 fps and 30 kbps**.
+  Quality is the KPI; CPU speed is not. Current baseline: CVVDP 8.35 JOD at
+  30.3 kbps (AVM reference: 9.93 JOD at 30.6 kbps).
+- **GPU calibration:** encode the CPU point (144p30, 30 kbps, QP 150) on GPU
+  and require minimal drift: CVVDP ±0.05 JOD, bitrate ±2%, PSNR-Y ±0.1 dB.
+  Current drift is zero (byte-identical stream, 4df16901...).
+- **GPU throughput:** the GPU uses the **same decisions** calibrated at
+  144p30/30 kbps and maximizes **encode fps at 1280×720**. The 720p run is a
+  cross-encoder throughput benchmark, not a separate decision/quality point.
+  The RTX 3080 Ti is the production host and the RTX 5090 the maximum-speed
+  host.
+- The old 1080p ≥1 fps floor and the 8 GB/4070 Super/5070 targets are retired.
 
 If a frame finishes faster than 1 s, the surplus time is spent on quality, in
 this order:

@@ -148,16 +148,16 @@ assignment and exits without writing a stream.
 
 ## Performance expectations
 
-- **Product target:** Vast.ai Linux instance (RTX 3080 Ti production,
-  RTX 5090 maximum speed), GPU-resident encoder. The host CPU is a weak,
-  shared, downclocked Xeon; it is a launch/control processor, not a pixel
-  engine.
-- **CPU-only mode:** correctness reference and test oracle only. It is not
-  optimized, has no SIMD/threading work, and may be far slower than the GPU path.
-  Do not benchmark it as the product or use it to judge CUDA design.
+- **CPU mode objective:** maximize **CVVDP/JOD at 256×144 @ 30 fps and
+  30 kbps**. The CPU is the quality reference; speed is not its KPI.
+- **GPU mode objective:** use the decisions calibrated at **144p30 @ 30 kbps**
+  (minimal drift: CVVDP ±0.05 JOD, bitrate ±2%, PSNR-Y ±0.1 dB) unchanged,
+  then maximize **1280×720** encode throughput. The 720p run is a benchmark
+  against other encoders, not a separate quality-tuning point. Production
+  hardware is the RTX 3080 Ti; the RTX 5090 is the maximum-speed host.
+- **Not targets:** the old 1080p ≥1 fps floor, 8 GB cards, RTX 4070 Super and
+  RTX 5070.
 - **macOS:** AVM/CVVDP scoring only; not an encoder target.
-- The 1080p ≥1 fps floor is measured on the RTX 3060 12 GB development box;
-  production/max-speed runs use the 3080 Ti and 5090.
 
 ## Hard constraint
 
