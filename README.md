@@ -31,74 +31,70 @@ re-reads a long context; they are normally billed at a fraction of fresh input.
 The figures keep growing while work continues, so treat them as a snapshot, not
 a final total.
 
-## Status (2026-11-11)
+## Status (2026-11-13)
 
-**First frames decode with `dav2d`, on both CPU and CUDA.** The CUDA Basic
-path uses the runtime/transform/intra components and produces a bitstream
-identical to the CPU reference.
+The encoder is feature-complete for the spec tools that the pinned decoders can
+validate. Both product paths are byte-identical to the CPU reference where the
+same decisions are used.
 
-| Case | IVF | MD5 | PSNR avg | CUDA time |
-|---|---:|---|---:|---:|
-| 64x64 | 1,138 B | `7efc3162bc0a4785685eba291a8096fd` | 42.13 dB | 1.34 ms |
-| 640x360 | 19,751 B | `56f11d4a63ff07f2356ef5064b84fe0e` | 47.20 dB | ~34 ms |
+**Objectives**
 
-Both are gated by `tests/basic_encode_smoke.sh`; the CUDA build passes 6/6
-tests. The 640x360 CUDA path is launch-bound (2,740 launches) and keeps entropy
-on the CPU. A byte-exact GPU tile entropy coder exists, but it is 34–46× slower
-per tile at Basic tile counts, so CPU entropy remains the default.
-Adaptive CDFs are opt-in (`--adaptive-cdf`); defaults stay bit-identical.
-The wavefront/CUDA-graph scheduler component reaches ~4.4 ms at 640×360 and
-~21 ms at 1080p, but is not wired into the CLI/entropy writer yet.
+- **CPU:** maximize CVVDP/JOD at **256x144 @ 30 fps, 30 kbps**. Quality is the
+  KPI, not CPU speed.
+- **GPU:** use the decisions calibrated at 144p30/30 kbps unchanged, and
+  maximize **1280x720** encode throughput as a cross-encoder benchmark.
 
-Partial edge superblocks follow the §5.20.3.2 implied-partition recursion, not
-a blanket 64×64 `PARTITION_NONE`. Basic leaf coders cover 64×64, 32×32, 32×16
-and 32×8 (64×32/32×64 are partition nodes only), with the normative rectangular
-DC predictor (`Div_Lut`), rectangular pre-scale, and luma transform-type syntax.
-If the boundary recursion needs a smaller block (for example 136×88 or 518×322,
-which reach 16×16/8×32, or right-edge 16×32 cases),
-`m0::geometry_supported()` refuses the geometry and the CLI prints a note and
-uses the Still path rather than emitting a desynchronised stream.
-`tests/basic_edge_smoke.sh` gates the five reported sizes plus 64×64, 640×360
-and 1080p.
+**Measured baselines** (Shine clip, 60 frames)
 
-### Still (opt-in, `--still`)
+| Case | Bitrate | CVVDP | PSNR-Y |
+|---|---:|---:|---:|
+| CPU 144p30, QP 150 | 30.3 kbps | 8.354 JOD | 32.25 dB |
+| AVM reference 144p30, CBR 23 | 30.6 kbps | 9.927 JOD | 59.22 dB |
+| CPU/GPU 144p30 calibration | 30.3 kbps | drift 0 | drift 0 |
+| GPU 720p, QP 150 (calibrated policy) | 268.8 kbps | 9.465 JOD | 40.83 dB |
+| GPU 720p, QP 90 | 1943 kbps | 9.876 JOD | 51.76 dB |
 
-Partition tree + full intra + variable transforms + CfL + deblock. It is
-**bit-exact against `dav2d` on all planes** (verified per sample, not by PSNR):
+GPU 720p speed on the RTX 3060: **4.15 fps at QP 150**, **5.92 fps at QP 90**
+(60 frames). The CPU is the quality reference; GPU output is currently
+byte-identical at the calibration point.
 
-| Still | Still IVF | Avg PSNR | Basic IVF | Basic avg |
-|---|---:|---:|---:|---:|
-| 64×64 | 936 B | 43.28 dB | 1,138 B | 42.13 dB |
-| 640×360 | 13,355 B | 46.37 dB | 19,751 B | 47.20 dB |
-| 1080p, native | 61,574 B | 47.73 dB | 83,228 B | 49.79 dB |
+**Reference pins**
 
-CPU Still accepts `--qp 1..255` (default 90). `base_q_idx` selects the §8.3.1
-coefficient-CDF qctx slice (`<=90`, `<=140`, `<=190`, else) and the §7.14.2
-`qlookup` quantiser step; all four slices are gated against `dav2d --strict 1`
-with zero reconstruction differences. `--still-gpu`, Basic and the Still GPU TX
-stage still pin 90.
+| Case | MD5 |
+|---|---|
+| Basic 64x64 | `7efc3162bc0a4785685eba291a8096fd` |
+| Basic 640x360 | `56f11d4a63ff07f2356ef5064b84fe0e` |
+| Still 64x64 | `0ef9825062a25c4d950ee924113c6f89` |
+| Still 640x360 | `e61de628b0812b716b0efa7dcafcdd06` |
+| Video 720p default | `c6d588647aacb2275dfaea41a00fb501` |
 
-Full directional intra (`--still-full-intra`) is also bit-exact but not a
-rate/quality win at QP 90 yet, so it stays opt-in. On the native 1080p frame
-Still is 26% smaller than Basic but 3.0 dB lower PSNR-Y; AVM is still 2.45×
-smaller than Still at comparable CVVDP. Details, source clip, and the AVM
-comparison: `docs/m1-results.md`.
+**Implemented surface**
 
-### Still GPU (opt-in, `--still-gpu`)
+- Still: partition tree, full directional intra, MRL/DIP/IBP, CfL (derived,
+  explicit, downsampling), MHCCP, palette, IntraBC, IST, TX type/partition,
+  IDTX, CCTX, TCQ, RDOQ, QM, DC/AC delta-Q, segmentation/per-segment Q,
+  deblock, CDEF, CCSO, Wiener NS, PC-Wiener, chroma LR, GDF, film grain,
+  content interpretation, SB128/256, extended/SDP/sub-8 partitions, multi-tile,
+  lossless, and the 10-bit/chroma formats.
+- Video: key/P/B frames, 1-7 references, quarter/half/eighth pel, compound
+  AVERAGE/wedge/diffwtd, temporal layers, long-term/OLK/leading/SEF/SWITCH/RAS,
+  MFH, timing, content interpretation, adaptive/average CDF, CRF/VBR,
+  multi-tile, deblock, CDEF, CCSO, Wiener/chroma LR/GDF/PC-Wiener, BAWP,
+  global motion/warp, CfL, MHCCP, QM, full intra search, TX search, and
+  10-bit/chroma formats. TIP is CPU-only; morph, OPFL/refine-MV, inter-intra,
+  sub-PU/temporal MV and video segmentation are still being completed.
 
-`--still-gpu` selects the GPU-resident Still pipeline
-(`src/cuda/pipeline/still/`, see `docs/m1-gpu.md`) and implies `--still`; Basic
-remains the default. It takes the same `--no-cfl`, `--no-deblock`,
-`--still-full-intra`, `--still-depth`, and `--vram-cap` options as the CPU Still
-path. CDEF, CCSO and film-grain signalling have device stages and are accepted;
-Wiener/chroma-LR/PC-Wiener/GDF, RDOQ, TX-type, RDO-intra, UV-full and the
-screen-content/QM tools have no GPU stage and are rejected by name. The target
-is byte-identical output to CPU Still. `--still` stays the CPU reference path.
-CPU-only builds parse the flag but reject it with a clear error, and a CUDA
-build without the orchestrator entry point
-(`src/cuda/pipeline/still/still_gpu.cu`) reports the path as unavailable rather
-than silently falling back. Still tools without a GPU stage are rejected by
-name (exit 2), never silently dropped.
+**Tests**
+
+- Default `ctest`: 10/10 in about 5 s.
+- Product gates: `gate_video_gpu`, `gate_video_filters`, `gate_video_formats`,
+  `gate_video_gpu_intra`, `gate_video_tx_search` all green on the RTX 3060.
+- CUDA module batch: 100 suites, 98 pass; the two failures are the pre-existing
+  `tx_partition` and still `recon` harnesses (test-only; the product paths pass).
+- CPU baseline: 19 pinned streams, 18 gates, 30 features.
+- Every accepted stream is checked with pinned `dav2d --strict 1` and decoded
+  picture counts; AVM is used only where `dav2d` cannot parse a spec tool
+  (user QM, CDF continuity, layered SVC).
 
 ## CLI
 
@@ -110,8 +106,8 @@ except Basic, and every mode writes an AV2 IVF (fourcc `AV02`).
 | Basic | *(default)* | One key frame: 8-bit 4:2:0, 64x64 superblocks, 32x32 DCT, DC intra only, no filters |
 | Still | `--still` | One frame with the partition tree, full intra modes, variable transform sizes, CfL and deblock |
 | Still GPU | `--still-gpu` | The same still syntax with the block pipeline on the GPU; needs a CUDA build and implies `--still` |
-| Video | `--video` | A key frame plus P frames, `--frames N` |
-| Video GPU | `--video-gpu` | The same key + P sequence with the M2 device backend; implies `--video`, needs a CUDA build, never falls back to the CPU encoder |
+| Video | `--video` | Key/P/B sequence with the full CPU video tool set, `--frames N` |
+| Video GPU | `--video-gpu` | The same sequence with the M2 device backend; implies `--video`, needs a CUDA build, never falls back to the CPU encoder |
 | Lossless | `--lossless` | Q=0 lossless still picture (DPCM intra, 8x8 blocks); its own writer |
 
 Product flags are grouped in `--help` as Basic, Still and Video; test-only
@@ -131,16 +127,19 @@ selects `--bit-depth 10` (`C420p10`/`C422p10`/`C444p10`/`Cmono10`,
 `--qp 1..303`) or an 8-bit 4:2:2/4:4:4/4:0:0 `--chroma` input (pins `--qp 90`);
 the input must already have that format. Video requires dimensions divisible by 8.
 
-Video options: `--p-frames`, `--video-refs`, `--video-mv-precision`,
-`--video-subpel-eighth`, `--video-inter-residual`, `--video-long-term`,
-`--video-olk`, `--video-leading`, `--video-sef`, `--video-switch`,
-`--video-ras`, and `--rc cqp|crf|vbr` with `--crf` / `--bitrate`. `--rc crf`
-derives `base_q_idx` from `--crf` and rejects an explicit `--qp`; `--rc vbr`
-uses `--qp` as its statistics-pass anchor and codes the controller's per-frame
-`base_q_idx` plan. `--video-gpu` mirrors the flat single-reference P chain and
-1/8/quarter/half MV precision; it rejects the reference/header modes it does not
-implement by name. B frames and DRL reordering are rejected until they pass the
-pinned decoder gate.
+Video options: `--p-frames`, `--b-frames`, `--video-refs 1..7`,
+`--video-num-ref-frames`, `--video-mv-precision`, `--video-subpel-eighth`,
+`--video-inter-residual`, `--video-tlayers`, `--video-compound`,
+`--video-compound-wedge`, `--video-compound-diffwtd`, `--video-gme`,
+`--video-warp`, `--video-tip` (CPU), `--video-bawp`, `--video-cfl`,
+`--video-mhccp`, `--video-pc-wiener`, `--video-qm`, `--video-deblock`,
+`--video-cdef`, `--video-ccso`, `--video-wiener`, `--video-chroma-lr`,
+`--video-gdf`, `--video-intra-full`, `--video-tx-search`, `--tiles CxR`,
+`--video-mfh`, `--video-timing`, `--avg-cdf`/`--adaptive-cdf`, and
+`--rc cqp|crf|vbr` with `--crf` / `--bitrate`. `--video-gpu` supports the same
+surface except the explicitly named CPU-only/decoder-gated modes (TIP on GPU,
+morph, OPFL/refine-MV, inter-intra, sub-PU/temporal MV, segmentation,
+implicit reference lists, DRL reorder, CDF continuity, SVC, user QM).
 
 Usage and option-combination errors exit 2; encoder, decoder and I/O failures
 exit 1. `--gpu-plan N` is a host-only multi-GPU dry run: it prints the tile
@@ -174,9 +173,8 @@ output, compare pixels). Do not read or copy their encoder-side code.
 - Maximum-speed target: **RTX 5090 32 GB (`sm_120`)**.
 - 8 GB cards, RTX 4070 Super and RTX 5070 are **no longer targets**.
 - Multi-GPU development: **N× RTX 3060 12 GB**, each with a device-sized arena.
-- Product speed target: **≥1 encoded fps at 1080p on the RTX 3060 12 GB**.
-  The 3080 Ti and 5090 raise throughput; surplus compute goes into quality
-  (RDOQ, partitions, modes, search, references), never into more fps.
+- GPU benchmark target: maximize **720p encode fps** on the 3060/3080 Ti/5090
+  using the 144p30/30 kbps decisions; there is no 1080p speed floor anymore.
 - Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja**. CPU is a reference/test
   path only, not the product.
 - Fat binary: `sm_86;sm_120`. The feature baseline stays `sm_86`; the same
@@ -232,31 +230,28 @@ Disk is 16GB: keep test media tiny (<100MB total), prefer 64x64/256x256 frames.
   portable in principle, but the tooling is POSIX (`tools/*.sh`, SSH/tar sync).
   Ports and PRs are welcome; Windows is not a supported target.
 
-## First milestone
+## Current capabilities
 
-A valid AV2 still-picture IVF:
+The encoder covers the spec tools that the pinned decoders validate, in both
+still and video modes. The remaining gaps are explicit decoder or product
+limits, not hidden fallbacks:
 
-- 8-bit, 4:2:0
-- one tile
-- 64x64 and 256x256
-- key frame only
-- DC intra prediction
-- DCT 32x32
-- fixed QP
-- no deblock/CDEF/CCSO/GDF/loop restoration, no film grain, no SVC, no palette/CfL
+- **CPU completeness wave in progress:** morph, OPFL/refine-MV, inter-intra,
+  sub-PU/temporal MV, video segmentation/delta-Q, 10-bit/chroma CDEF/CCSO/LR,
+  metadata OBUs, SVC layers and implicit reference lists.
+- **Decoder-gated with `dav2d`:** user-defined QM OBUs, cross-frame CDF carry,
+  multi-layer SVC and implicit reference maps (AVM validates some of these).
+- **Not signalable in AV2 v1.0.0:** 12-bit.
+- 1-D intra types with negative H/V_DCT are rejected by the pinned decoder.
 
-Success = `avmdec` (or `dav2d`) decodes the stream and output is close to source.
+See `docs/cuda-gap-analysis.md` for the per-tool CUDA matrix and
+`docs/negative-results.md` for every confirmed decoder/product limitation.
 
 ## Directory ownership
 
-| Path | Owner |
-|---|---|
-| `docs/spec-*`, `spec/tables/`, `tools/spec_extract/` | spec agent |
-| `src/io/`, `src/bitstream/`, `src/main.cpp`, `tests/`, `CMakeLists.txt` | scaffold agent |
-| `bench/hello_cuda/`, `docs/remote-env.md` | CUDA agent |
-| `src/entropy/`, `src/cpu/`, `src/cuda/` | later agents |
-
-Do not edit outside your area without coordinating.
+Read `AGENTS.md` for the current ownership map and the shared-root rules
+(`src/main.cpp`, `CMakeLists.txt`, `refactor/baseline.json`, pipeline roots).
+Agent worktrees and branches live outside the main checkout.
 
 ## Rules
 
@@ -275,11 +270,19 @@ bitrate, and always confirm `dav2d` decoded the stream first. A fast-decode
 profile is deferred until quality and encode speed are settled.
 
 `tools/score_speed.py` reports speed vs CVVDP. `tools/score_tradeoff.py` enforces
-the three-way budget: max CVVDP subject to bitrate <= R_max and speed >= S_min.
-The planned 720p60 gate is CVVDP >= 9.0 at <= 500 kbps, with speed measured
-against AVM on the same machine. The product target is **1080p at >=1 fps on the
-RTX 3060 12 GB development box**; the 3080 Ti and 5090 are the production and
-maximum-speed hosts. Validate with `tools/check_target_host.py`.
+a three-way budget (max CVVDP subject to a bitrate cap and a speed floor).
+
+Current gates:
+
+- **CPU quality:** 256x144 @ 30 fps at **30 kbps**, maximize CVVDP. Baseline
+  8.354 JOD; AVM reference 9.927 JOD at 30.6 kbps.
+- **GPU calibration:** same 144p30/QP150 decisions; CVVDP ±0.05 JOD,
+  bitrate ±2%, PSNR-Y ±0.1 dB drift. Current drift is zero.
+- **GPU benchmark:** 1280x720 throughput with the calibrated decisions
+  (4.15 fps at QP 150, 5.92 fps at QP 90 on the RTX 3060).
+
+Validate a report's host with `tools/check_target_host.py` (RTX 3060 12 GB /
+3080 Ti / 5090).
 
 ## Profiling
 
