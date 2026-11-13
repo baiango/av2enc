@@ -52,6 +52,7 @@ fi
 
 FLAGS=(-std=c++20 -O2 -Wall -Wextra -Wpedantic -Wconversion -Wshadow
        -Wno-missing-braces -DAV2ENC_VIDEO_FRAMES=1 -DAV2ENC_VIDEO_CDF_CHAIN=1
+       -DAV2ENC_VIDEO_GME=1
        ${EXTRA_INCLUDES[@]+"${EXTRA_INCLUDES[@]}"} -I"$ROOT/src" -I"$HERE")
 if [[ "${WERROR:-0}" == "1" ]]; then
   FLAGS+=(-Werror)

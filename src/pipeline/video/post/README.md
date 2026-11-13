@@ -29,6 +29,7 @@ source of truth for their own clauses:
 | `rc_adapter.h` / `.cpp` | M2-constrained per-frame QP decisions |
 | `tiled_frame.h` / `.cpp` | multi-tile frame header, tile group, per-tile assembly |
 | `loop_filters.h` / `.cpp` | post-recon deblock → CDEF → CCSO + header bits |
+| `deblock_grid.h` | §7.17 MI metadata from real video leaf decisions (CPU + CUDA video paths) |
 | `bit_depth_checklist.h` / `.cpp` | 10-bit geometry/header checklist, no 12-bit |
 | `video_post_test.cpp` | deterministic unit tests |
 | `tiled_gate.cpp` | 2-frame 2×1-tile `dav2d` gate |
@@ -445,12 +446,42 @@ Gate: `src/pipeline/video/gate_cli_video_tiles.sh --bin build-int/av2enc`
 (720p 6-frame 2x1/2x2/4x2/8x2, `dav2d --strict 1`, sample-exact
 `--video-recon`, pinned default stream and the rejection paths).
 
+## CLI wiring (wave 5): `--video --video-deblock`
+
+`deblock_grid.h` builds the §7.17 metadata from the real per-leaf decisions
+(`is_inter`, `skip_flag`, luma/chroma `tx_size`, the frame qindex and the plane
+geometry) and `write_video_deblock_params()` writes the §5.18.7.9 row
+(all four apply flags, zero `df_delta_q`).  The frame is filtered before it is
+emitted or stored as a reference.  The CPU path calls the shared
+`deblock::deblock_frame`; `--video-gpu` uploads the same grid and calls the
+CUDA kernel in `src/cuda/codec/filters/deblock/`, with no CPU pixel fallback.
+The default (flag off) stream stays byte-identical.
+
+Rejected by name (usage exit 2): `--video-deblock` with `--tiles > 1x1`
+(pinned `dav2d` filters across interior tile edges, so the CPU reference cannot
+match it) and with the long-term/OLK/leading/SEF/SWITCH/RAS wrappers (their
+header writers do not signal `deblocking_filter_params()`).
+
+Gate: `src/cuda/pipeline/video/gate_video_gpu.sh` covers deblock on the
+textured and smooth-pan clips, with inter residual, 2 references, min-block 8,
+B frames and hierarchical-P at 4 and 8 frames: CPU/GPU bytes, encoder recon and
+`dav2d --strict 1` output are identical.
+
 ## Known limitations
 
-- CDEF/CCSO header flags are emitted and tested, but their tile symbols are not
-  injected into the M2 tile writer. Do not enable them in a real M2 stream yet.
-- Loop restoration (Wiener) is not emitted; `enable_restoration` is rejected by
-  the frame-header writer.
+- The `--video` product path now runs the loop filters through
+  `video_loop_filters.{h,cpp}` and injects the §5.20.10.1 `cdef_idx`,
+  §5.20.10.2 `ccso_blk` and §5.20.10.4 `use_wiener_ns` symbols in
+  `pipeline/video/video_syntax.cpp` (see `pipeline/video/README.md`).
+  `loop_filters.cpp` remains the standalone deblock->CDEF->CCSO composition for
+  component tests and the tiled writer; do not treat its header-only output as
+  the product path.
+- PC-Wiener (§7.20.4) is not wired on `--video`: it needs its own
+  `lr_params()`/`read_lr()` writer (the shared filters_stream writer rejects a
+  PC-Wiener frame type).
+- Loop restoration is now emitted by the video path (`--video-wiener`,
+  `--video-chroma-lr`); the still-only `enable_restoration` rejection below
+  applies to this directory's tiled writer.
 - Adaptive CDFs with multiple tiles (per-tile CDF carry + context tile) are
   rejected.
 - 10-bit M2 is a checklist, not an implementation.

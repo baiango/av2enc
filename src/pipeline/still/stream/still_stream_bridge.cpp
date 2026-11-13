@@ -63,6 +63,10 @@ struct LeafView {
   int uv_mode = 0;
   int is_cfl = 0;
   int tx_type[3] = {0, 0, 0};
+  // §5.20.8.2/§7.15.3 intra secondary transform (luma only).
+  int sec_tx_type = 0;
+  int stx_set = 0;
+  int cctx_type = 0;
   // §5.20.5.5 MRL and §5.20.7.9 DIP decisions.
   int mrl_index = 0;
   int mrl_sec_index = 0;
@@ -75,6 +79,17 @@ struct LeafView {
   int cfl_alpha_u_syntax = 0;
   int cfl_alpha_v_syntax = 0;
   int cfl_mh_dir = 0;
+  // §5.20.5.7 segment id from a per-SB SEG_LVL_ALT_Q plan (0 when off).
+  int segment_id = 0;
+  // §5.20.8 / §5.20.5.3-.4 screen-content decisions.
+  int is_palette = 0;
+  std::uint32_t palette_index = 0;
+  int is_ibc = 0;
+  int ibc_skip = 1;
+  int ibc_mode = 1;
+  int ibc_ref_mv_idx = 0;
+  std::int32_t ibc_bv_row = 0;
+  std::int32_t ibc_bv_col = 0;
 };
 
 FrameGeometry make_geometry(const FrameInfo& info) {
@@ -189,6 +204,9 @@ void adapt_gpu_leaf(const cuda::still_gpu::BlockPlan& block,
   leaf.tx_type[0] = decision.tx_type_y;
   leaf.tx_type[1] = decision.tx_type_u;
   leaf.tx_type[2] = decision.tx_type_v;
+  leaf.sec_tx_type = decision.sec_tx_type;
+  leaf.stx_set = decision.stx_set;
+  leaf.cctx_type = decision.cctx_type;
   leaf.mrl_index = decision.mrl_index;
   leaf.mrl_sec_index = decision.mrl_sec_index;
   leaf.use_dip = decision.use_dip;
@@ -199,6 +217,15 @@ void adapt_gpu_leaf(const cuda::still_gpu::BlockPlan& block,
   leaf.cfl_alpha_u_syntax = decision.cfl_alpha_u_syntax;
   leaf.cfl_alpha_v_syntax = decision.cfl_alpha_v_syntax;
   leaf.cfl_mh_dir = decision.cfl_mh_dir;
+  leaf.segment_id = decision.segment_id;
+  leaf.is_palette = decision.is_palette;
+  leaf.palette_index = decision.palette_index;
+  leaf.is_ibc = decision.is_ibc;
+  leaf.ibc_skip = decision.ibc_skip;
+  leaf.ibc_mode = decision.ibc_mode;
+  leaf.ibc_ref_mv_idx = decision.ibc_ref_mv_idx;
+  leaf.ibc_bv_row = decision.ibc_bv_row;
+  leaf.ibc_bv_col = decision.ibc_bv_col;
 }
 
 bool adapt_plan_leaf(const plan::BlockPlan& block,
@@ -234,6 +261,10 @@ bool adapt_plan_leaf(const plan::BlockPlan& block,
   leaf.tx_type[0] = decision.tx_type_y;
   leaf.tx_type[1] = decision.tx_type_u;
   leaf.tx_type[2] = decision.tx_type_v;
+  leaf.segment_id = decision.segment_id;
+  leaf.sec_tx_type = decision.sec_tx_type;
+  leaf.stx_set = decision.stx_set;
+  leaf.cctx_type = decision.cctx_type;
   return true;
 }
 
@@ -482,10 +513,11 @@ class Packer {
       error = "declared adjusted TX size does not match the transform";
       return false;
     }
-    // M1 codes no tx_type syntax except DCT_DCT (§7.15.2.1).
-    if ((has_luma && leaf.tx_type[0] != 0) || leaf.tx_type[1] != 0 ||
-        leaf.tx_type[2] != 0) {
-      error = "M1 only supports DCT_DCT; tx_type must be 0";
+    // §5.20.7.27 intra TX_TYPE: the adjusted size is type-independent, so the
+    // declared tx_w/tx_h check above covers every signalled type.  The writer
+    // validates that the type is codable for the block's set/mode.
+    if (has_luma && (leaf.tx_type[0] < 0 || leaf.tx_type[0] >= 16)) {
+      error = "luma tx_type outside the §9.6 TX_TYPE range";
       return false;
     }
     if (leaf.y_mode < 0 || leaf.y_mode >= 13 || leaf.uv_mode < 0 ||
@@ -521,7 +553,35 @@ class Packer {
     entry.cfl_alpha_u = static_cast<std::uint8_t>(leaf.cfl_alpha_u_syntax);
     entry.cfl_alpha_v = static_cast<std::uint8_t>(leaf.cfl_alpha_v_syntax);
     entry.cfl_mh_dir = static_cast<std::uint8_t>(leaf.cfl_mh_dir);
+    entry.segment_id = static_cast<std::uint8_t>(leaf.segment_id);
     if (leaf.is_cfl != 0) entry.flags |= syntax::kFlagIsCfl;
+    // §5.20.8 palette / §5.20.5.3-.4 intra block copy.  The syntax writer codes
+    // the mode-info form and (for IBC) the block vector from these fields.
+    if (leaf.is_palette != 0) {
+      if (leaf.is_ibc != 0) {
+        error = "leaf is both palette and intra-block-copy";
+        return false;
+      }
+      entry.flags |= syntax::kFlagIsPalette;
+      entry.palette_index = leaf.palette_index;
+    }
+    if (leaf.is_ibc != 0) {
+      if (leaf.is_palette != 0 || leaf.is_cfl != 0 || leaf.use_dip != 0 ||
+          leaf.mrl_index != 0) {
+        error = "IBC leaf carries incompatible intra mode state";
+        return false;
+      }
+      if (leaf.eob[0] != 0 || leaf.eob[1] != 0 || leaf.eob[2] != 0) {
+        error = "IBC leaf must code no residual";
+        return false;
+      }
+      entry.flags |= syntax::kFlagIsIbc;
+      entry.ibc_skip = static_cast<std::uint8_t>(leaf.ibc_skip);
+      entry.ibc_mode = static_cast<std::uint8_t>(leaf.ibc_mode);
+      entry.ibc_ref_mv_idx = static_cast<std::uint8_t>(leaf.ibc_ref_mv_idx);
+      entry.ibc_bv_row = leaf.ibc_bv_row;
+      entry.ibc_bv_col = leaf.ibc_bv_col;
+    }
     // §5.20.10.1 cdef_idx for the 64x64 block containing this leaf's origin.
     // The writer ignores repeats, so every leaf carries its block's value.
     if (info_.cdef_idx != nullptr) {
@@ -557,6 +617,14 @@ class Packer {
         return false;
       }
       entry.tx_size[plane] = static_cast<std::uint8_t>(tx.tx_size);
+      entry.tx_type[plane] = static_cast<std::uint8_t>(leaf.tx_type[plane]);
+      if (plane == 0) {
+        entry.sec_tx_type = static_cast<std::uint8_t>(leaf.sec_tx_type);
+        entry.most_probable_stx_set = static_cast<std::uint8_t>(leaf.stx_set);
+      }
+      if (plane == 1) {
+        entry.cctx_type = static_cast<std::uint8_t>(leaf.cctx_type);
+      }
       entry.eob[plane] = static_cast<std::uint32_t>(eob);
       if (eob == 0) continue;
       const std::uint64_t offset = leaf.coeff_offset[plane];
@@ -629,11 +697,14 @@ bool pack_frame(const FrameInfo& info, std::span<const TreeNode> tree,
   return packer.run(tree, error);
 }
 
-bool assemble_packed(const PackedFrame& packed, const StillConfig& config,
-                     std::vector<std::uint8_t>& out, std::string& error,
-                     std::size_t* tile_bytes) {
+bool assemble_packed(
+    const PackedFrame& packed, const StillConfig& config,
+    std::vector<std::uint8_t>& out, std::string& error,
+    std::size_t* tile_bytes,
+    std::span<const palette::PaletteResult> palette_results = {}) {
   return syntax::assemble_still_frame(packed.plan, packed.blocks, packed.levels,
-                                   config, out, error, tile_bytes);
+                                   config, out, error, tile_bytes,
+                                   palette_results);
 }
 
 }  // namespace
@@ -834,7 +905,9 @@ bool pack_gpu_frame(const cuda::still_gpu::FramePlan& plan,
                     std::span<const cuda::still_gpu::BlockPlan> blocks,
                     std::span<const cuda::still_gpu::BlockDecision> decisions,
                     const GpuCoefficients& coeffs, PackedFrame& out,
-                    std::string& error, const FilterGrids& grids) {
+                    std::string& error, const FilterGrids& grids,
+                    std::span<const palette::PaletteResult> palette_results) {
+  (void)palette_results;
   error.clear();
   if (blocks.size() != decisions.size()) {
     error = "GPU block and decision arrays have different lengths";
@@ -982,13 +1055,15 @@ bool assemble_gpu_frame(const cuda::still_gpu::FramePlan& plan,
                         const GpuCoefficients& coeffs,
                         const StillConfig& config, std::vector<std::uint8_t>& out,
                         std::string& error, std::size_t* tile_bytes,
-                        const FilterGrids& grids) {
+                        const FilterGrids& grids,
+                        std::span<const palette::PaletteResult> palette_results) {
   PackedFrame packed;
   if (!pack_gpu_frame(plan, tree, blocks, decisions, coeffs, packed, error,
-                      grids)) {
+                      grids, palette_results)) {
     return false;
   }
-  return assemble_packed(packed, config, out, error, tile_bytes);
+  return assemble_packed(packed, config, out, error, tile_bytes,
+                         palette_results);
 }
 
 bool assemble_gpu_raster_frame(

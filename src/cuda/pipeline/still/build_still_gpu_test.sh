@@ -124,6 +124,8 @@ for optional in \
     "$ROOT/src/cuda/pipeline/still/sched/sched_exec.cu" \
     "$ROOT/src/cuda/pipeline/still/hbd/hbd_frame.cu" \
     "$ROOT/src/cuda/pipeline/still/hbd/hbd_tx.cu" \
+    "$ROOT/src/cuda/formats/high_bitdepth_gpu.cu" \
+    "$ROOT/src/cuda/formats/chroma/chroma_formats.cu" \
     "$ROOT/src/cuda/codec/transform/variants/tx_variants.cu"; do
     if [ -f "$optional" ]; then
         CUDA_COMPONENT_SOURCES+=("$optional")
@@ -141,6 +143,8 @@ if [ -f "$ROOT/src/cuda/pipeline/still/plan/plan_gpu_bridge.cpp" ]; then
 fi
 for optional in \
     "$ROOT/src/cuda/pipeline/still/hbd/hbd_cpu.cpp" \
+    "$ROOT/src/cuda/formats/format_device.cpp" \
+    "$ROOT/src/cuda/formats/chroma/chroma_formats.cpp" \
     "$ROOT/src/cuda/pipeline/still/sched/sched.cpp" \
     "$ROOT/src/cuda/pipeline/still/sched/sched_bridge.cpp" \
     "$ROOT/src/pipeline/still/stream/still_stream_bridge.cpp"; do

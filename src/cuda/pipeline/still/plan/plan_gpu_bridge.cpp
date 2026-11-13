@@ -70,6 +70,7 @@ bool map_gpu_frame(const FramePlan& plan, std::vector<GpuBlock>& blocks,
     }
     dst.mi_row = static_cast<std::uint16_t>(src.mi_row);
     dst.mi_col = static_cast<std::uint16_t>(src.mi_col);
+    dst.bsize = static_cast<std::uint8_t>(src.block_size);
     if (!narrow_u8(src.luma_w, dst.luma_w, "luma width", error) ||
         !narrow_u8(src.luma_h, dst.luma_h, "luma height", error) ||
         !narrow_u8(src.chroma_w, dst.chroma_w, "chroma width", error) ||

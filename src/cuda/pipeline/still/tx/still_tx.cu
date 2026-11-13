@@ -339,8 +339,10 @@ __global__ void still_tx_kernel(const StillTxJob* __restrict__ jobs,
         }
       } else {
         // DC/AC delta-Q: use the module's §7.14.2 get_q() but keep the CPU
-        // reference's per-coefficient expression order (`qf * 528 / q`, then
-        // multiply by coeff) so the level is bit-identical.
+        // reference's per-coefficient expression order so the level is
+        // bit-identical.  `ratio_scale` selects the non-delta-Q CPU order
+        // (`qf * (528 / q)`, as apply_qindex_step() builds it) used by the
+        // per-superblock --still-per-segment-q path.
         const int dc_quant =
             deltaq::core::get_q(job.qindex, job.delta_dc);
         const int ac_quant =
@@ -349,7 +351,15 @@ __global__ void still_tx_kernel(const StillTxJob* __restrict__ jobs,
             __dmul_rn(p.quant_factor, static_cast<double>(kQuantStep));
         for (int i = 0; i < elems; ++i) {
           const int q = i == 0 ? dc_quant : ac_quant;
-          const double factor = scaled / static_cast<double>(q);
+          double factor;
+          if (job.ratio_scale != 0) {
+            factor = __dmul_rn(
+                p.quant_factor,
+                __ddiv_rn(static_cast<double>(kQuantStep),
+                          static_cast<double>(q)));
+          } else {
+            factor = scaled / static_cast<double>(q);
+          }
           s_dq[i] = static_cast<std::int32_t>(
               lround(__dmul_rn(s_out[i], factor)));
         }

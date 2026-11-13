@@ -585,6 +585,10 @@ bool encode_high_bitdepth_gpu(const av2enc::fmt::Picture& picture,
   config.height = picture.format.height;
   config.mi_cols = picture.geometry.mi_cols;
   config.mi_rows = picture.geometry.mi_rows;
+  // Size the arena from the actual chroma geometry: 4:2:2/4:4:4/4:0:0 have
+  // different plane storage than 4:2:0, and 4:4:4 is twice the 4:2:0 chroma.
+  config.format = picture.format;
+  config.bit_depth = 10;
   const std::uint64_t need = required_device_bytes(config);
   Arena arena;
   std::string arena_error;

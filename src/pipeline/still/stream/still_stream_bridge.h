@@ -156,7 +156,8 @@ bool pack_gpu_frame(const cuda::still_gpu::FramePlan& plan,
                     std::span<const cuda::still_gpu::BlockPlan> blocks,
                     std::span<const cuda::still_gpu::BlockDecision> decisions,
                     const GpuCoefficients& coeffs, PackedFrame& out,
-                    std::string& error, const FilterGrids& grids = {});
+                    std::string& error, const FilterGrids& grids = {},
+                    std::span<const palette::PaletteResult> palette_results = {});
 
 // Pack a GPU frame whose plan is the fallback raster (one PARTITION_NONE block
 // per superblock).  The spec's allowed/forced partition flags are derived here
@@ -176,7 +177,9 @@ bool assemble_gpu_frame(const cuda::still_gpu::FramePlan& plan,
                         const GpuCoefficients& coeffs,
                         const StillConfig& config, std::vector<std::uint8_t>& out,
                         std::string& error, std::size_t* tile_bytes = nullptr,
-                        const FilterGrids& grids = {});
+                        const FilterGrids& grids = {},
+                        std::span<const palette::PaletteResult> palette_results =
+                            {});
 
 bool assemble_gpu_raster_frame(
     const cuda::still_gpu::FramePlan& plan,

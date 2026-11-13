@@ -18,8 +18,10 @@ and is gated sample-by-sample against the pinned `dav2d`.
 - P-frame tile syntax:
   - `inter_frame_mode_info()`: `is_inter`, `skip_flag`, `single_mode`,
     `read_drl_idx`, and `read_mv` (shell-coded MVD).
-  - `GLOBALMV` (zero MV), `NEARMV` (the spatial MV-stack / merge path) and
-    `NEWMV` (ME result quantised to 1/8 pel).
+  - `GLOBALMV` (zero MV by default; with `--video-gme` the §7.12.2.2
+    projected MV, and with a non-identity model the §7.13.3.19/.20 warped
+    predictor for blocks >= 8x8), `NEARMV` (the spatial MV-stack / merge path)
+    and `NEWMV` (ME result quantised to 1/8 pel).
   - Per-block intra fallback (`is_inter = 0`, DC intra + DCT residual).
   - Inter leaves use `skip_flag = 1` by default. The gated feature-1 path
   (`--inter-residual`) codes a quantised inter residual with the normative
@@ -30,6 +32,17 @@ and is gated sample-by-sample against the pinned `dav2d`.
   stages, SAD metric, diamond search.
 - Reference reconstruction: the current frame's MI-aligned reconstruction
   (`mi_cols*4 x mi_rows*4` luma) becomes slot 0 for the next P frame.
+- Global motion / warped prediction (`--video-gme`, `--video-warp`):
+  `src/pipeline/video/video_gme.cpp` builds a deterministic 16x16 integer-ME
+  grid for every explicit reference, fits the §5.18.9 model with the
+  `src/codec/inter/gme/` integer least squares (AFFINE, degraded to ROTZOOM or
+  IDENTITY), and codes it at the `reduced_tx_set` / `film_grain_config`
+  insertion point.  `GLOBALMV` then uses the §7.12.2.2 projected centre MV and,
+  for a non-identity model, the §7.13.3.19/.20 warp predictor.  The pinned
+  decoder derives `useWarp` from the model itself, so a non-identity model
+  **must** use the warp predictor; `--video-warp` is the explicit alias for
+  `--video-gme`.  The feature is gated on the plain skip-only P chain (no B /
+  temporal / frame-type wrapper / compound / inter residual / tile grid).
 
 ## Files
 
@@ -348,9 +361,12 @@ where motion compensation leaves error.
 
 ## Not implemented yet
 
-- B frames, `frame_type` beyond KEY/INTER, output-order reordering.
+- B frames, `frame_type` beyond KEY/INTER, output-order reordering. *(Landed in
+  the wave-3/4 sections below; this list is the original M2 baseline.)*
 - Multiple references per frame (`NumTotalRefs > 1`), compound prediction,
-  `reference_select`, compound refs.
+  `reference_select`, compound refs. *(Landed: `NumTotalRefs` 1–7 and
+  `NumRefFrames` 4–8 in the reference-management section; compound is the
+  GLOBAL_GLOBALMV/AVERAGE subset.)*
 - True `skip_mode` (merge) with two references / compound frames. The current
   "skip" is `skip_flag = 1` plus NEARMV/GLOBALMV on a single reference.
 - Inter transform types beyond `DCT_DCT`: the syntax writer emits the mandatory
@@ -416,12 +432,14 @@ av2enc clip.y4m --video --video-subpel-eighth --video-mv-precision quarter -o cl
 |---|---|---|
 | `--video` | off | encode a key frame plus P frames |
 | `--p-frames N` | all | number of P frames after the keyframe |
-| `--video-refs N` | 1 | `NumTotalRefs` per P frame, 1..3 |
+| `--video-refs N` | 1 | `NumTotalRefs` per P frame, 1..7 (`REFS_PER_FRAME`) |
+| `--video-num-ref-frames N` | auto | `§5.4.6 NumRefFrames`, 4..8; must be `>= --video-refs` |
 | `--video-subpel-eighth` | off | add the 1/8-pel ME refinement stage |
 | `--video-mv-precision P` | eighth | `eighth`, `quarter` or `half` pel |
 | `--video-compound` | off | `reference_select` compound (needs `--video-refs 2`) |
 | `--video-inter-residual` | off | code a quantised inter residual |
-| `--video-max-depth D` / `--video-min-block N` / `--video-force-single` | 4 / 16 / off | partition controls; `N` must be 8..64 (sub-8 leaves would need shared-chroma prediction) |
+| `--video-intra-full` | off | still product's 61-candidate luma intra search (DC, V, H, 8 directional modes with angle deltas, SMOOTH*, PAETH) instead of the DC-only fallback; chroma stays DC. Default off so the shipped streams stay byte-identical; measured +4.9% rate / −0.016 dB PSNR-Y at QP 90 (SSE-only decision) |
+| `--video-tx-search` | off | §5.18.8 `TX_MODE_SELECT`: luma TX size/type/partition search (inter partition + intra/inter type); `--video-tx-lambda` (256) tunes plan selection; see `src/cuda/pipeline/video/tx/README.md` || `--video-max-depth D` / `--video-min-block N` / `--video-force-single` | 4 / 16 / off | partition controls; `N` must be 8..64 (sub-8 leaves would need shared-chroma prediction) |
 | `--video-recon FILE` | off | dump the encoder reconstruction Y4M (gate use) |
 | `--video-tlayers N` | off | one hierarchical-P GOP of N (4/8) frames with temporal layers |
 | `--video-tlayer-drop L` | off | emit only temporal layers `<= L` |
@@ -437,13 +455,26 @@ in the IVF (TD + SEQ for the key frame, TD + tile group afterwards).
 ## Reference management
 
 * Frame 0 is an intra keyframe and refreshes all slots.
-* The new single-reference path keeps the historical two-slot layout.
-* `--video-refs N` selects `NumRefFrames = 8`, rotates one refresh slot per
-  frame, and lists the N most recent valid slots newest-first in the explicit
-  reference map. Each inter block codes `read_single_ref()` and picks the
-  reference with the lowest predictor SSE (GLOBALMV / NEARMV / NEWMV).
-* The MV stack is built per chosen reference with the §7.12.2.20 gate and
-  `FrameDistance[]`, so derived candidates match the decoder.
+* The new single-reference path keeps the historical two-slot layout
+  (`NumRefFrames = 2`).
+* `--video-refs N` (1..7) rotates one refresh slot per frame and lists the N
+  most recent valid slots newest-first in the explicit §5.18.2 reference map.
+  Each inter block codes `read_single_ref()` and picks the reference with the
+  lowest predictor SSE (GLOBALMV / NEARMV / NEWMV); a 10-frame 360p check over
+  `--video-refs 7` selects all seven slots.
+* `NumRefFrames` defaults to 8 for `--video-refs > 1` and 2 for the historical
+  single-reference chain. `--video-num-ref-frames N` (4..8) sets the §5.4.6
+  pool explicitly: the refresh mask is `f(N)`, `ref_frame_idx` is
+  `f(CeilLog2(N))`, and the rotating write slot is `i % N`. The `recent_slots`
+  list is most-recent-first, excludes the slot being refreshed, and holds at
+  most `REFS_PER_FRAME` (7) entries, so a 4-slot pool can still reference the
+  slot it is about to overwrite (§7.23 refresh happens after decoding).
+* `FrameDistance[r] = relative_dist(order_hint, slot_order_hint, OrderHintBits)`
+  is built for every listed slot and passed to the MV stack, so derived
+  candidates match the decoder for all N.
+* The §7.8 past/future/current lists only exist for `explicit_ref_frame_map =
+  0`. The M2 writer always emits an explicit map, so `--video-implicit-ref-map`
+  is rejected by name (the pinned decoder is not gated on the implicit form).
 
 ## Frame MV precision
 
@@ -453,6 +484,76 @@ in the IVF (TD + SEQ for the key frame, TD + tile group afterwards).
 quantised to the signalled precision. Note §5.20.7.13 only lowers the
 *predictor* for precisions **coarser than 1/2 pel**; for quarter/half the
 predictor is used unchanged and only the MVD is in precision units.
+
+## Loop filters (opt-in)
+
+The M2 core codes `apply_deblocking_filter = 0` and leaves every restoration
+tool off.  The opt-in loop filters run on the **completed reconstruction** and
+replace it before it becomes the output picture and the reference frame for
+later pictures, which is the order the decoder applies them in:
+
+```text
+reconstruct -> deblock -> CDEF -> CCSO -> LR -> GDF -> output/reference
+```
+
+Deblocking is a separate branch (`integration/video-deblock`); this one starts
+at CDEF so the ordering stays compatible with §7.20.1.
+
+| Flag | Spec | Default | Notes |
+|---|---|---|---|
+| `--video-cdef` | §7.18, §5.18.7.10 | off | one strength set (no tile symbol) |
+| `--video-cdef-strength N` | `CdefStrengths` 1..8 | 1 | 2..8 codes a per-64×64 `cdef_idx` |
+| `--video-cdef-damping N` | `CdefDamping` 3..6 | 3 | |
+| `--video-ccso` | §7.19, §5.18.7.12 | off | band-offset only |
+| `--video-ccso-bands N` | `CcsoMaxBandLog2` 0..6 | 4 | |
+| `--video-wiener` | §7.20.3, §5.18.7.11 | off | luma Wiener NS, per unit |
+| `--video-chroma-lr` | §7.20.3 | off | U/V Wiener NS, per unit |
+| `--video-gdf` | §7.20.5, §5.18.7.9 | off | luma, header-only (no `use_gdf`) |
+
+Wiring:
+
+* Sequence `§5.4.10`: `enable_cdef` plus the `CdefOnSkipTxfm` pair, and
+  `enable_ccso` plus `ccso_unit_matches_sb_size`.  The M2 baseline codes no
+  skip syntax on intra leaves, so only `CdefOnSkipTxfm = DISABLED` is wired;
+  other modes are rejected by name.
+* Frame rows: `§5.18.7.10 cdef_params()` then `§5.18.7.12 ccso_params()`,
+  between `deblocking_filter_params()` and `tx_mode_select` (`lr_params()`
+  slots between them when loop restoration lands).
+* Tile `§5.20.10.1 read_cdef()`: `clear_cdef()` once per superblock, then one
+  `cdef_idx` per coding block at its 64×64 origin, skipped exactly where the
+  decoder skips it (a skipped inter leaf with `CdefOnSkipTxfm` off).  With
+  `CdefStrengths == 1` no symbol is coded at all.
+* Tile `§5.20.10.2 read_ccso()`: one `ccso_blk` symbol per enabled plane at
+  every 64×64 CCSO unit origin; the plan signals an all-ones unit grid.
+* Frame `§5.18.7.11 lr_params()` sits between `cdef_params()` and
+  `ccso_params()`.  Only the per-unit `RESTORE_WIENER_NONSEP` form is wired
+  (no frame-level filters, which §5.18.7.11 only allows on intra frames).
+* Tile `§5.20.10.4 read_lr()` runs once per superblock **before** the
+  partition symbol: `use_wiener_ns` plus the §5.20.10.6 per-unit coefficients
+  for both chroma planes.  `LoopRestorationSize` is one superblock (64 luma /
+  32 chroma), so each superblock starts exactly one unit per plane.  Chroma
+  coefficients are mirrored in the plan because the shared writer codes the
+  pairs once (`wiener_ns_uv_sym`).
+* LR reads `CurrFrame` (pre-CDEF) for samples outside the current stripe and
+  filters `CdefFrame`; the output `LrFrame` is a separate buffer.
+* Frame `§5.18.7.9 gdf_params()` sits between the deblocking row and
+  `cdef_params()`; GDF runs last (§7.20.1) on the `LrFrame` while sampling
+  `CdefFrame`, in the header-only mode (`gdf_per_block = 0`), so
+  `§5.20.10.3 read_gdf()` codes nothing.  `RESTRICTED_OH` is `-1` because the
+  M2 chain codes no restricted references; passing 0 made the derivation drop
+  a reference whose OrderHint is 0 and diverge by ±1 on every P frame.
+* §7.18.1 `Skips[]` is derived from the coded inter leaves.  The decoder leaves
+  a fully-skipped 8×8 block unfiltered, so an all-zero grid diverges on the
+  first P frame.
+* CDEF reads the post-deblock reconstruction and writes a separate buffer
+  (`CurrFrame`/`CdefFrame`).  CCSO keeps `CurrFrame` (pre-CDEF) for its band
+  classifier and filters the post-CDEF buffer in place, exactly as §7.19.1
+  specifies.
+
+Gate: `src/pipeline/video/gate_video_filters.sh` (CPU: pinned default MD5,
+`dav2d --strict 1`, encoder recon == decoded output) and
+`src/cuda/pipeline/video/gate_video_gpu.sh` (CPU↔GPU byte identity, both
+`--video` and `--video-gpu`).  Both run in CTest.
 
 ## Gate
 
@@ -472,6 +573,9 @@ default single-block tree is also gated by `build-int/video_gate`):
 |---|---|---:|---|
 | default | `c6d588647aacb2275dfaea41a00fb501` | 184,966 | exact |
 | `--video-refs 2` | `961eb2010df40f638bb5afb8e45b1db2` | 172,667 | exact |
+| `--video-refs 4` | `487d5ec59f7c37a9024d810fd32ef833` | 170,891 | exact |
+| `--video-refs 4 --video-num-ref-frames 4` | `78546e3d010f70b1c300f4050de0aee2` | 170,887 | exact |
+| `--video-refs 5 --video-num-ref-frames 5` | `850226ac8b27ec0505a77c747acb4b57` | 170,869 | exact |
 | `--video-subpel-eighth` | `a1499683f8ab24177950dd61a8db4c65` | 167,863 | exact |
 | `--video-mv-precision quarter` | `bdceb54a66d6051165710e37e0d4733d` | 184,866 | exact |
 | `--video-refs 2 --video-subpel-eighth --video-mv-precision quarter` | `252e8a1a95a131e88556da40349de3b2` | 175,477 | exact |

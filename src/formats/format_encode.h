@@ -12,16 +12,37 @@
 
 #include "formats/format.h"
 
+namespace av2enc::high_bitdepth {
+struct HighBitDepthOptions;
+struct HighBitDepthResult;
+}  // namespace av2enc::high_bitdepth
+namespace av2enc::chroma {
+class ChromaGpuExecutor;
+}  // namespace av2enc::chroma
+
 namespace av2enc::formats {
 
 using av2enc::fmt::BitDepth;
 using av2enc::fmt::ChromaFormat;
+
+// Optional GPU block stage for the 10-bit product writer.  Declared as a plain
+// function pointer so the CPU-only core library never references a CUDA symbol:
+// the CLI (which links the CUDA object target when present) installs
+// `cuda::still_gpu::encode_format_gpu`; a null pointer keeps the CPU path.
+using HighBitDepthGpuEncoder = bool (*)(
+    const fmt::Picture& picture,
+    const av2enc::high_bitdepth::HighBitDepthOptions& options,
+    av2enc::high_bitdepth::HighBitDepthResult& result, std::string& error);
 
 struct StillFormatOptions {
   ChromaFormat chroma = ChromaFormat::k420;
   BitDepth depth = BitDepth::k8;
   std::uint16_t base_q_idx = 90;
   std::filesystem::path recon_out;  // empty = do not dump
+  HighBitDepthGpuEncoder high_bitdepth_gpu = nullptr;
+  // Optional 8-bit chroma device block executor.  Same rationale: the CPU
+  // core never references a CUDA symbol; the CLI installs it.
+  av2enc::chroma::ChromaGpuExecutor* chroma_gpu = nullptr;
 };
 
 struct StillFormatStats {

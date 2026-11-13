@@ -53,10 +53,43 @@ bool make_chroma_picture(int width, int height, ChromaFormat chroma,
 bool make_chroma_picture(const fmt::Picture& source, ChromaPicture& picture,
                          std::string& error);
 
+struct TxShape;
+
+// Optional device block executor for the 8-bit chroma product path.  The CPU
+// writer keeps the §8.2 entropy/syntax loop; this interface replaces only the
+// per-block pixel work (DC prediction, forward residual/transform/quantiser,
+// dequant/inverse/reconstruction) and owns the device reconstruction planes.
+// `encode_chroma_still_picture()` calls `begin()` once, `forward()` before the
+// coefficient syntax, `reconstruct()` after it, and `download_recon()` at the
+// end.  A null pointer keeps the CPU reference path byte-for-byte.
+class ChromaGpuExecutor {
+ public:
+  virtual ~ChromaGpuExecutor() = default;
+
+  virtual bool begin(const ChromaPicture& picture, std::string& error) = 0;
+
+  // Fills `pred_value`, `levels` (tx.adj_w * tx.adj_h) and the 1-based `eob`.
+  virtual bool forward(int plane, int x0, int y0, int nominal_w, int nominal_h,
+                       const TxShape& tx, bool have_left, bool have_above,
+                       int* pred_value, int* levels, int* eob,
+                       std::string& error) = 0;
+
+  // Dequant + inverse + `Clip1(pred + residual)` into the device recon plane.
+  // `eob == 0` writes the constant prediction.
+  virtual bool reconstruct(int plane, int x0, int y0, int nominal_w,
+                           int nominal_h, const TxShape& tx, int pred_value,
+                           const int* levels, int eob, std::string& error) = 0;
+
+  // Copies the final padded reconstruction plane into `out`.
+  virtual bool download_recon(int plane, std::uint8_t* out,
+                              std::string& error) = 0;
+};
+
 struct ChromaStillOptions {
   std::uint8_t base_q_idx = 90;  // qlookup(90) = 528, §8.3.1 slice 0
   std::uint8_t seq_level_idx = 7;
   bool disable_cdf_update = true;
+  ChromaGpuExecutor* gpu = nullptr;
 };
 
 struct ChromaStillResult {

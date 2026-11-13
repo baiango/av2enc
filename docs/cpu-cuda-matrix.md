@@ -121,8 +121,8 @@ kernel.
 | CfL explicit alpha | yes | `cuda/cfl` | 3,702,784 samples; M1 GPU parity | **yes** (`--still-cfl-explicit`) |
 | CfL 4 downsampling filters | yes | `cuda/cfl` | 597 checks | **yes** (`--still-cfl-ds`) |
 | MHCCP | yes | `cuda/cfl` | 542,560 samples; M1 GPU parity | **yes** (`--still-mhccp`) |
-| Palette | yes | `cuda/palette` | built parity suite | no |
-| IntraBC | yes | `cuda/ibc` | 36 checks (arena) | no |
+| Palette | yes | `cuda/palette` | built parity suite; M1 GPU map/predict parity | **yes** (`--still-palette`) |
+| IntraBC | yes | `cuda/ibc` | 36 checks (arena); M1 GPU copy parity | **yes** (`--still-ibc`) |
 | DC-subsampled, corner, IDTX | yes | `cuda/intra_full` | 70,915,222 checks | no |
 | Sub-8 blocks | yes | GPU plan (`cuda/pipeline/still/plan`) | plan parity + M1 GPU stream parity | **yes** (`--still-sub8`) |
 | SDP | yes | GPU plan (`cuda/pipeline/still/plan`) | plan parity + M1 GPU stream parity | **yes** (`--still-sdp`) |
@@ -208,10 +208,10 @@ data-flow harness.
 `--still-gpu` runs plan/search/TX/recon/chroma/deblock, CDEF, CCSO,
 Wiener NS, PC-Wiener, GDF, chroma LR, QM, DC/AC delta-Q and CfL downsampling on
 the device, plus SB128/SB256, extended partitions, SDP, sub-8 and the MRL, DIP,
-IBP, CfL-explicit and MHCCP intra candidates, with CPU↔GPU byte parity on
-64x64 and 640x360 (76-case matrix). Still rejected by name (kernels verified
-but no device decision stage): RDOQ, TX-type, IST, `--still-uv-full`, IBC,
-palette and RDO-intra; also rejected: the 10-bit/4:2:2/4:4:4/4:0:0 product
+IBP, CfL-explicit, MHCCP, full-UV, palette and IBC intra candidates, with
+CPU↔GPU byte parity on 64x64, 640x360 and 384x128 screen-content fixtures.
+Still rejected by name (kernels verified but no device decision stage): RDOQ,
+TX-type, IST and RDO-intra; also rejected: the 10-bit/4:2:2/4:4:4/4:0:0 product
 formats and SB128/256 combined with CDEF/CCSO/loop restoration.
 
 `--video-gpu` runs keyframe + P/B frames with 1-3 references (quarter/half/

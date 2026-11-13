@@ -7,8 +7,11 @@ Nothing here is wired into `src/encoder/basic_encoder.cpp` or the M1 core yet; t
 default `--still` stream remains 8-bit 4:2:0.  The opt-in product paths are
 `--still --bit-depth 10` (10-bit 4:2:0/4:2:2/4:4:4/4:0:0, qindex 1..303, via
 `src/formats/high_bitdepth/`) and `--still --chroma 422|444|400` (8-bit, via
-`src/formats/chroma/`).  See `src/encoder/m10/README.md` for the stream, gate
-and the exact M1 integration checklist.
+`src/formats/chroma/`).  The same format paths also have `--still-gpu` variants
+(10-bit via `cuda::high_bitdepth`, 8-bit chroma via the `ChromaGpuExecutor`
+seam); they are byte-identical to the CPU format writer.  See
+`src/encoder/m10/README.md` for the stream, gate and the exact M1 integration
+checklist.
 
 The 10-bit M1 transform/sample companion lives in `src/cuda/m1/hbd/`. It uses
 `BitDepthLimits` / `clip_*` from this header as the single source of truth for

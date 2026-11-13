@@ -73,6 +73,10 @@ struct VideoGpuStats {
   std::uint64_t tx_launches = 0;
   std::uint64_t residual_launches = 0;
   std::uint64_t recon_launches = 0;
+  // Two launches per deblocked frame (vertical then horizontal edges).
+  std::uint64_t deblock_launches = 0;
+  // Loop-filter kernel launches (§7.18 CDEF, ...): one per filtered frame.
+  std::uint64_t filter_launches = 0;
   std::uint64_t syncs = 0;
   std::uint64_t bytes_uploaded = 0;
   std::uint64_t bytes_downloaded = 0;
@@ -94,7 +98,8 @@ struct VideoGpuStats {
 
   std::uint64_t total_launches() const {
     return variance_launches + me_launches + mc_launches + sse_launches +
-           intra_launches + tx_launches + residual_launches + recon_launches;
+           intra_launches + tx_launches + residual_launches + recon_launches +
+           deblock_launches + filter_launches;
   }
 };
 

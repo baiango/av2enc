@@ -147,7 +147,7 @@ class TileWriter {
  public:
   TileWriter(const ChromaPicture& picture, const ChromaStillOptions& options,
              const FrameShape& shape)
-      : picture_(picture), shape_(shape) {
+      : picture_(picture), shape_(shape), gpu_(options.gpu) {
     mi_cols_ = shape.mi_cols;
     mi_rows_ = shape.mi_rows;
     padded_mi_cols_ = ((mi_cols_ + 15) / 16) * 16;
@@ -182,6 +182,9 @@ class TileWriter {
   }
 
   bool encode(std::vector<std::uint8_t>* tile_payload, std::string& error) {
+    if (gpu_ != nullptr && !gpu_->begin(picture_, error)) {
+      return false;
+    }
     clear_above_context();
     for (int r = 0; r < mi_rows_; r += 16) {
       clear_left_context();
@@ -199,6 +202,17 @@ class TileWriter {
       error = std::string("entropy exit_symbol failed: ") +
               av2::status_name(status);
       return false;
+    }
+    if (gpu_ != nullptr) {
+      for (int plane = 0; plane < 3; ++plane) {
+        if (!shape_.planes[static_cast<std::size_t>(plane)].present) {
+          continue;
+        }
+        if (!gpu_->download_recon(plane, recon_[plane].samples.data(),
+                                  error)) {
+          return false;
+        }
+      }
     }
     tile_payload->assign(tile_buffer_.begin(),
                          tile_buffer_.begin() +
@@ -615,76 +629,85 @@ class TileWriter {
     const int y0 = (mi_row >> sub_y) * 4;
     const bool have_left = is_inside(mi_row, mi_col - 1);
     const bool have_above = is_inside(mi_row - 1, mi_col);
-    // §7.13.2.1 clamps the above/left reference reads to maxX/maxY, which are
-    // the *coded* plane extents (MiCols*4 >> subX, MiRows*4 >> subY), not the
-    // 64x64-padded reconstruction buffer.  Using the padded extent changes the
-    // DC average for right/bottom edge blocks whose transform extends past the
-    // coded plane.
-    const int plane_max_x = ps.coded_width - 1;
-    const int plane_max_y = ps.coded_height - 1;
-    int sum_left = 0;
-    int sum_above = 0;
-    if (have_left) {
-      for (int i = 0; i < nominal_h; ++i) {
-        sum_left += recon_[plane].at(x0 - 1, clip3(0, plane_max_y, y0 + i));
-      }
-    }
-    if (have_above) {
-      for (int j = 0; j < nominal_w; ++j) {
-        sum_above += recon_[plane].at(clip3(0, plane_max_x, x0 + j), y0 - 1);
-      }
-    }
+    const std::size_t adj_area =
+        static_cast<std::size_t>(tx.adj_w) * static_cast<std::size_t>(tx.adj_h);
     int pred_value = 128;
-    if (have_left && have_above) {
-      pred_value = clip1(approx_divide(sum_left + sum_above,
-                                       nominal_w + nominal_h));
-    } else if (have_left) {
-      pred_value = round2(sum_left, floor_log2(nominal_h));
-    } else if (have_above) {
-      pred_value = round2(sum_above, floor_log2(nominal_w));
-    }
-
-    // Forward residual: average the upscale_x * upscale_y source samples that
-    // the decoder's §7.15.4 sample-duplication step will expand into.
-    std::vector<std::int16_t> residual_adj(
-        static_cast<std::size_t>(tx.adj_w) * static_cast<std::size_t>(tx.adj_h),
-        0);
-    const int upscale_count = tx.upscale_x * tx.upscale_y;
-    const int upscale_shift = floor_log2(upscale_count);
-    for (int j = 0; j < tx.adj_h; ++j) {
-      for (int i = 0; i < tx.adj_w; ++i) {
-        int sum = 0;
-        for (int dy = 0; dy < tx.upscale_y; ++dy) {
-          for (int dx = 0; dx < tx.upscale_x; ++dx) {
-            sum += static_cast<int>(source_sample(
-                       plane, x0 + i * tx.upscale_x + dx,
-                       y0 + j * tx.upscale_y + dy)) -
-                   pred_value;
-          }
-        }
-        residual_adj[static_cast<std::size_t>(j) * tx.adj_w + i] =
-            static_cast<std::int16_t>(round2(sum, upscale_shift));
-      }
-    }
-
-    std::vector<double> coeff(static_cast<std::size_t>(tx.adj_w) *
-                                  static_cast<std::size_t>(tx.adj_h),
-                              0.0);
-    forward_dct(residual_adj.data(), tx.adj_w, tx.adj_h, tx.odd_rect,
-                coeff.data());
-    const double quant_factor = quant_factor_for(tx);
-    std::vector<int> levels(static_cast<std::size_t>(tx.adj_w) *
-                                static_cast<std::size_t>(tx.adj_h),
-                            0);
-    quantize_coefficients(coeff.data(), tx.seg_eob, quant_factor, levels.data());
-
+    std::vector<int> levels(adj_area, 0);
+    int eob = 0;
     std::vector<std::uint16_t> scan;
     build_diagonal_scan(tx.adj_w, tx.adj_h, scan);
-    int eob = 0;
-    for (int c = tx.seg_eob - 1; c >= 0; --c) {
-      if (levels[scan[static_cast<std::size_t>(c)]] != 0) {
-        eob = c + 1;
-        break;
+
+    if (gpu_ != nullptr) {
+      // The 8-bit chroma product GPU block stage owns the reconstructed
+      // planes: it runs §7.13.2.10 DC prediction, the forward residual /
+      // transform / quantiser, and returns the same levels the CPU writer
+      // would produce.
+      if (!gpu_->forward(plane, x0, y0, nominal_w, nominal_h, tx, have_left,
+                         have_above, &pred_value, levels.data(), &eob,
+                         error_)) {
+        return false;
+      }
+    } else {
+      // §7.13.2.1 clamps the above/left reference reads to maxX/maxY, which
+      // are the *coded* plane extents (MiCols*4 >> subX, MiRows*4 >> subY),
+      // not the 64x64-padded reconstruction buffer.  Using the padded extent
+      // changes the DC average for right/bottom edge blocks whose transform
+      // extends past the coded plane.
+      const int plane_max_x = ps.coded_width - 1;
+      const int plane_max_y = ps.coded_height - 1;
+      int sum_left = 0;
+      int sum_above = 0;
+      if (have_left) {
+        for (int i = 0; i < nominal_h; ++i) {
+          sum_left += recon_[plane].at(x0 - 1, clip3(0, plane_max_y, y0 + i));
+        }
+      }
+      if (have_above) {
+        for (int j = 0; j < nominal_w; ++j) {
+          sum_above += recon_[plane].at(clip3(0, plane_max_x, x0 + j), y0 - 1);
+        }
+      }
+      if (have_left && have_above) {
+        pred_value = clip1(approx_divide(sum_left + sum_above,
+                                         nominal_w + nominal_h));
+      } else if (have_left) {
+        pred_value = round2(sum_left, floor_log2(nominal_h));
+      } else if (have_above) {
+        pred_value = round2(sum_above, floor_log2(nominal_w));
+      }
+
+      // Forward residual: average the upscale_x * upscale_y source samples
+      // that the decoder's §7.15.4 sample-duplication step will expand into.
+      std::vector<std::int16_t> residual_adj(adj_area, 0);
+      const int upscale_count = tx.upscale_x * tx.upscale_y;
+      const int upscale_shift = floor_log2(upscale_count);
+      for (int j = 0; j < tx.adj_h; ++j) {
+        for (int i = 0; i < tx.adj_w; ++i) {
+          int sum = 0;
+          for (int dy = 0; dy < tx.upscale_y; ++dy) {
+            for (int dx = 0; dx < tx.upscale_x; ++dx) {
+              sum += static_cast<int>(source_sample(
+                         plane, x0 + i * tx.upscale_x + dx,
+                         y0 + j * tx.upscale_y + dy)) -
+                     pred_value;
+            }
+          }
+          residual_adj[static_cast<std::size_t>(j) * tx.adj_w + i] =
+              static_cast<std::int16_t>(round2(sum, upscale_shift));
+        }
+      }
+
+      std::vector<double> coeff(adj_area, 0.0);
+      forward_dct(residual_adj.data(), tx.adj_w, tx.adj_h, tx.odd_rect,
+                  coeff.data());
+      const double quant_factor = quant_factor_for(tx);
+      quantize_coefficients(coeff.data(), tx.seg_eob, quant_factor,
+                            levels.data());
+      for (int c = tx.seg_eob - 1; c >= 0; --c) {
+        if (levels[scan[static_cast<std::size_t>(c)]] != 0) {
+          eob = c + 1;
+          break;
+        }
       }
     }
 
@@ -692,10 +715,17 @@ class TileWriter {
       return false;
     }
     if (eob == 0) {
-      for (int j = 0; j < nominal_h; ++j) {
-        for (int i = 0; i < nominal_w; ++i) {
-          recon_[plane].at(x0 + i, y0 + j) =
-              static_cast<std::uint8_t>(pred_value);
+      if (gpu_ != nullptr) {
+        if (!gpu_->reconstruct(plane, x0, y0, nominal_w, nominal_h, tx,
+                               pred_value, levels.data(), eob, error_)) {
+          return false;
+        }
+      } else {
+        for (int j = 0; j < nominal_h; ++j) {
+          for (int i = 0; i < nominal_w; ++i) {
+            recon_[plane].at(x0 + i, y0 + j) =
+                static_cast<std::uint8_t>(pred_value);
+          }
         }
       }
       for (int i = 0; i < w4; ++i) {
@@ -911,26 +941,34 @@ class TileWriter {
     }
 
     // Dequant + §7.15.4 inverse transform, then duplicate the adjusted
-    // residual back to the nominal residual block size.
-    std::vector<int> dequant(static_cast<std::size_t>(tx.adj_w) *
-                                 static_cast<std::size_t>(tx.adj_h),
-                             0);
-    dequantize_block(levels.data(), tx.seg_eob, tx.dq_denom, dequant.data());
-    std::vector<int> residual_back(static_cast<std::size_t>(tx.adj_w) *
-                                       static_cast<std::size_t>(tx.adj_h),
-                                   0);
-    inverse_dct(dequant.data(), tx, residual_back.data());
+    // residual back to the nominal residual block size.  The GPU executor
+    // runs the same three stages into its device reconstruction plane.
+    if (gpu_ != nullptr) {
+      if (!gpu_->reconstruct(plane, x0, y0, nominal_w, nominal_h, tx,
+                             pred_value, levels.data(), eob, error_)) {
+        return false;
+      }
+    } else {
+      std::vector<int> dequant(static_cast<std::size_t>(tx.adj_w) *
+                                   static_cast<std::size_t>(tx.adj_h),
+                               0);
+      dequantize_block(levels.data(), tx.seg_eob, tx.dq_denom, dequant.data());
+      std::vector<int> residual_back(static_cast<std::size_t>(tx.adj_w) *
+                                         static_cast<std::size_t>(tx.adj_h),
+                                     0);
+      inverse_dct(dequant.data(), tx, residual_back.data());
 
-    for (int j = 0; j < tx.adj_h; ++j) {
-      for (int i = 0; i < tx.adj_w; ++i) {
-        const int value = clip1(
-            pred_value +
-            residual_back[static_cast<std::size_t>(j) * tx.adj_w + i]);
-        for (int dy = 0; dy < tx.upscale_y; ++dy) {
-          for (int dx = 0; dx < tx.upscale_x; ++dx) {
-            recon_[plane].at(x0 + i * tx.upscale_x + dx,
-                             y0 + j * tx.upscale_y + dy) =
-                static_cast<std::uint8_t>(value);
+      for (int j = 0; j < tx.adj_h; ++j) {
+        for (int i = 0; i < tx.adj_w; ++i) {
+          const int value = clip1(
+              pred_value +
+              residual_back[static_cast<std::size_t>(j) * tx.adj_w + i]);
+          for (int dy = 0; dy < tx.upscale_y; ++dy) {
+            for (int dx = 0; dx < tx.upscale_x; ++dx) {
+              recon_[plane].at(x0 + i * tx.upscale_x + dx,
+                               y0 + j * tx.upscale_y + dy) =
+                  static_cast<std::uint8_t>(value);
+            }
           }
         }
       }
@@ -952,6 +990,7 @@ class TileWriter {
 
   const ChromaPicture& picture_;
   FrameShape shape_;
+  ChromaGpuExecutor* gpu_ = nullptr;
 
   int mi_cols_ = 0;
   int mi_rows_ = 0;

@@ -58,11 +58,12 @@ src/cuda/codec/intra/supplemental/build_gpu_test.sh
 src/cuda/codec/intra/workspace/build_intra_workspace_test.sh
 ```
 
-## Not wired
+## Product use
 
-No module here is called by the shipped `--still` / `--still-gpu` path yet,
-and none makes a bitstream claim.  `docs/negative-results.md` records the
-syntax/header work each tool needs before a `dav2d` gate: MRL sequence flag and
-`mrl_index` syntax, IBP sequence flag, DIP `dip_mode_info`, palette/IBC screen
-tools + context reset, MHCCP `cfl_index`, and 1-D intra TX types for
-`dc_sign`.
+`--still-gpu` calls `modes`, `mrl`, `dip`, `ibp`, `cfl` and `chroma` decision
+stages directly.  Palette and IBC are used as **pixel** stages: the CPU
+reference plans the palette colour set/direction (§5.20.8 analysis) and the IBC
+block vector (§7.12.2 stack + encodability + exact-copy check), and the GPU
+applies `palette_build_map`/`palette_predict` and `ibc_copy_block` for the
+reconstruction.  `supplemental` and `workspace` remain component-only (no
+product bitstream claim yet).

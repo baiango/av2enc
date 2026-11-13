@@ -60,7 +60,11 @@ struct StillTxJob {
   // `params.quant_factor` path (QP 90).  When set, the kernel derives the DC/AC
   // quantizers from `qindex + delta_*` through the shared device delta-Q core.
   std::uint8_t use_deltaq = 0;
-  std::uint8_t reserved_deltaq[3] = {0, 0, 0};
+  // Forward-quantizer expression: 0 = the DC/AC delta-Q order
+  // `(quant_factor * 528) / q`, 1 = the CPU per-SB qindex order
+  // `quant_factor * (528 / q)`.  Dequant is identical (shared q2 core).
+  std::uint8_t ratio_scale = 0;
+  std::uint8_t reserved_deltaq[2] = {0, 0};
   std::int32_t qindex = 90;
   std::int32_t delta_dc = 0;
   std::int32_t delta_ac = 0;

@@ -193,9 +193,10 @@ bool video_inter_residual_selftest(int trials, std::string& error) {
   backend->reset_stats();
   const av2enc::video::VideoReconFrame* reference_list[1] = {&host_reference};
   if (!backend->begin_frame(
-          host_source, kWidth / 4, kHeight / 4,
+          host_source, kWidth / 4, kHeight / 4, /*tile_x=*/0, /*tile_y=*/0,
+          kWidth / 4, kHeight / 4,
           std::span<const av2enc::video::VideoReconFrame* const>(reference_list),
-          error)) {
+          90, error)) {
     return false;
   }
 

@@ -321,6 +321,18 @@ expect_usage_error "b-frames frame count" \
 expect_usage_error "long-term order-hint cap" \
   "$INPUT" -o "$SENTINEL" --video --frames 17 --video-long-term
 
+# Reference-model bounds (§5.18.2 REFS_PER_FRAME = 7, §5.4.6 NumRefFrames 4..8)
+# and the §7.8 implicit-map carrier.  None of these may be clamped silently.
+expect_usage_error "refs above REFS_PER_FRAME" \
+  "$INPUT" -o "$SENTINEL" --video --frames 4 --video-refs 8
+expect_usage_error "num-ref-frames below 4" \
+  "$INPUT" -o "$SENTINEL" --video --frames 4 --video-num-ref-frames 3
+expect_usage_error "refs above NumRefFrames" \
+  "$INPUT" -o "$SENTINEL" --video --frames 4 --video-refs 5 \
+  --video-num-ref-frames 4
+expect_usage_error "implicit reference map" \
+  "$INPUT" -o "$SENTINEL" --video --frames 4 --video-implicit-ref-map
+
 # Unsupported CPU Still tool pairs (SCOUT-QUANT-01).
 STILL_INPUT="$ROOT/tests/data/basic_640x360_1f.y4m"
 if [ -f "$STILL_INPUT" ]; then
@@ -380,6 +392,26 @@ for spec in "switch:--frames 2 --video-switch" "sef:--frames 4 --video-sef"; do
     fi
   else
     echo "FAIL accepted: --rc crf + ${name}: encode failed" >&2
+    usage_failures=$((usage_failures + 1))
+  fi
+done
+if [ "$usage_failures" -ne 0 ]; then
+  exit 1
+fi
+
+# Accepted reference-model combinations must keep encoding.  The GPU parity
+# gate (src/cuda/pipeline/video/gate_video_gpu.sh) pins the bytes for the same
+# configurations; this keeps a CPU-only build covering the CLI surface.
+for spec in "refs7:--video-refs 7" \
+            "nrf4:--video-refs 4 --video-num-ref-frames 4"; do
+  name=${spec%%:*}
+  read -r -a args <<< "${spec#*:}"
+  if "$BIN" "$INPUT" -o "${OUT}.${name}.ivf" --video --frames 4 \
+      "${args[@]}" >"${OUT}.${name}.log" 2>&1 &&
+      [ "$(file_size "${OUT}.${name}.ivf")" -gt 32 ]; then
+    echo "PASS accepted: reference model ${name}"
+  else
+    echo "FAIL accepted: reference model ${name}" >&2
     usage_failures=$((usage_failures + 1))
   fi
 done

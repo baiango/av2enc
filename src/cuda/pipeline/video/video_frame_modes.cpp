@@ -714,7 +714,7 @@ bool encode_sef_sequence(std::span<const VideoInputFrame> frames,
     return false;
   }
 
-  const int num_ref_frames = options.num_total_refs > 1 ? 8 : 2;
+  const int num_ref_frames = av2enc::video::resolved_num_ref_frames(options);
   const int last_slot = static_cast<int>(
       (frames.size() - 1U) % static_cast<std::size_t>(num_ref_frames));
   sef::SefParams params;

@@ -23,7 +23,18 @@
 #include <string>
 #include <vector>
 
+#include "pipeline/video/post/video_loop_filters.h"
+
 namespace av2enc::video {
+
+// §5.18.2 REFS_PER_FRAME: NumTotalRefs is a 3-bit value, so one frame can
+// address at most seven explicit reference slots.
+inline constexpr int kRefsPerFrame = 7;
+// §5.4.6 explicit_num_ref_frames max (4-bit `num_ref_frames_minus_1`).
+inline constexpr int kMaxNumRefFrames = 16;
+// The largest DPB this encoder model manages (the flat P chain and the frame
+// type plans both stop at eight slots).
+inline constexpr int kMaxRefSlots = 8;
 
 struct VideoInputFrame {
   std::uint32_t width = 0;
@@ -48,7 +59,17 @@ struct VideoOptions {
   // path. Used by the opt-in --rc crf/vbr path; the frame header and the
   // coefficient-CDF qctx slice both follow the per-frame value.
   std::vector<std::uint8_t> frame_base_q_idx;
+  // Opt-in §7.17 deblocking of every reconstructed frame (--video-deblock).
+  // Off keeps every historical stream byte-identical.  When on, the frame
+  // header signals all four apply flags with zero df_delta_q, and the
+  // reconstructed frame is deblocked before it is emitted or stored as a
+  // reference, so encoder and decoder references match.
+  bool enable_deblock = false;
   bool enable_intra_fallback = true;
+  // Opt-in full luma intra search (--video-intra-full): the still product's
+  // 61-candidate SSE search instead of the DC-only fallback.  Off by default so
+  // the shipped streams stay byte-identical.  Chroma stays DC_PRED.
+  bool enable_intra_full = false;
   bool enable_newmv = true;
   bool enable_nearmv = true;
   bool force_global_mv = false;
@@ -68,6 +89,18 @@ struct VideoOptions {
   // at QP 90), which made every residual look unaffordable.
   double inter_rd_lambda = 4.0;
   bool force_inter_residual = false;
+  // Opt-in §5.18.8.1 TX_MODE_SELECT luma TX size/type/partition search
+  // (--video-tx-search).  Off keeps every historical stream byte-identical;
+  // when on, each coded luma residual evaluates the §5.20.6/§5.20.8 candidate
+  // sets and signals the RD-best partition/type through the existing writer.
+  bool enable_tx_search = false;
+  // SSE-per-bit weight for the TX search (Cost = SSE + lambda * rate_bits).
+  // The module's rate is a real bit count, so this is much larger than
+  // inter_rd_lambda (which weights the historical estimate_tx_bits heuristic).
+  // 256 measured best on the 360p sample at QP 90: with the inter residual
+  // tool it lowers rate and raises PSNR slightly; the default skip-only path
+  // is rate-neutral because it has no inter residual leaves to search.
+  double tx_rd_lambda = 256.0;
   int min_block_size = 16;
   int max_partition_depth = 4;
   // ME integer search radius in luma samples.
@@ -75,8 +108,14 @@ struct VideoOptions {
   // Opt-in ME refinement: add the normative 1/8-pel subpel stage.
   bool me_subpel_eighth = false;
   // References per P frame (NumTotalRefs).  1 keeps the historical M2 stream;
-  // 2..3 enables per-block single_ref selection over the most recent slots.
+  // 2..7 enables per-block single_ref selection over the most recent slots.
   int num_total_refs = 1;
+  // §5.4.6 NumRefFrames: the size of the reference-slot pool.  0 derives the
+  // historical value (2 for the single-reference chain, 8 for the
+  // multi-reference model), so every existing stream stays byte-identical.
+  // An explicit 4..8 selects the spec multi-slot surface and must be at least
+  // num_total_refs.
+  int num_ref_frames = 0;
   // B frames: N consecutive B frames per GOP (0 = the flat key + P chain).
   // Requires num_total_refs == 1 (the bframes plan owns the per-frame refs).
   int b_frames = 0;
@@ -151,6 +190,19 @@ struct VideoOptions {
   // (--video-mfh).  One MFH (id 1) in the key temporal unit; every frame
   // header then sets cur_mfh_id = 1 and omits seq_header_id_in_frame_header.
   bool mfh = false;
+  // Global motion (§5.18.9, §7.12.2, §7.13.3.19-.24).  Off by default: the
+  // historical stream keeps `enable_global_motion = 0` and every GLOBALMV
+  // candidate uses a zero MV.  `enable_gme` estimates one model per explicit
+  // reference from a deterministic integer block-MV grid and signals it in the
+  // frame header.  `enable_warp` additionally predicts GLOBALMV blocks with the
+  // §7.13.3.19/.20 warped predictor when the model is non-identity (otherwise
+  // the projected §7.12.2.2 centre MV drives ordinary translational MC).
+  bool enable_gme = false;
+  bool enable_warp = false;
+  // Opt-in M2 loop filters (--video-cdef, ...).  All default off, so a default
+  // stream is byte-identical.  They run on the reconstructed frame before it
+  // becomes the output picture and the reference for later frames.
+  post::VideoLoopFilterOptions loop_filters;
   // Debug trace to stderr.
   bool trace = false;
 };
@@ -171,6 +223,11 @@ struct VideoSequenceResult {
   std::vector<std::uint32_t> inter_blocks;
   std::vector<std::uint32_t> intra_blocks;
 };
+
+// §5.4.6 NumRefFrames actually signalled for these options: the explicit
+// `num_ref_frames`, otherwise 8 for the multi-reference model and 2 for the
+// historical single-reference chain.
+int resolved_num_ref_frames(const VideoOptions& options);
 
 bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                         const VideoOptions& options, VideoSequenceResult& result,

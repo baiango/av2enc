@@ -56,5 +56,7 @@ and all palette sizes exercised above.
 
 Palette is a screen-content tool: `allow_screen_content_tools` must be on and
 `palette_mode_info()` must be written for every DC block that satisfies
-§5.20.8.1 (see `docs/negative-results.md`).  The component supplies prediction
-and contexts only; the syntax/decision path stays on the CPU.
+§5.20.8.1 (see `docs/negative-results.md`).  `--still-gpu` applies
+`palette_build_map`/`palette_predict` for a CPU-planned palette leaf (the colour
+analysis and direction cost stay on the host, exactly as this component's scope
+states); the syntax path stays on the CPU writer.

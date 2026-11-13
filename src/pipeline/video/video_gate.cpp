@@ -497,11 +497,19 @@ int main(int argc, char** argv) {
       options.base_q_idx = static_cast<std::uint8_t>(qp);
     } else if (arg == "--refs" && i + 1 < argc) {
       const int refs = std::atoi(argv[++i]);
-      if (refs < 1 || refs > 3) {
-        std::cerr << "--refs must be in [1, 3]\n";
+      if (refs < 1 || refs > av2enc::video::kRefsPerFrame) {
+        std::cerr << "--refs must be in [1, "
+                  << av2enc::video::kRefsPerFrame << "]\n";
         return 2;
       }
       options.num_total_refs = refs;
+    } else if (arg == "--num-ref-frames" && i + 1 < argc) {
+      const int value = std::atoi(argv[++i]);
+      if (value < 4 || value > 8) {
+        std::cerr << "--num-ref-frames must be in [4, 8]\n";
+        return 2;
+      }
+      options.num_ref_frames = value;
     } else if (arg == "--subpel-eighth") {
       options.me_subpel_eighth = true;
     } else if (arg == "--mv-precision" && i + 1 < argc) {
@@ -544,6 +552,7 @@ int main(int argc, char** argv) {
                    "[--no-intra-fallback] [--force-global] [--single-block] "
                    "[--inter-residual] [--force-inter-residual] "
                    "[--min-block N] [--max-depth N] [--qp N] [--refs N] "
+                   "[--num-ref-frames N] "
                    "[--subpel-eighth] [--mv-precision eighth|quarter|half] "
                    "[--drl-reorder] [--long-term] [--olk] [--leading N] "
                    "[--sef] [--switch] [--ras] [--trace]\n";

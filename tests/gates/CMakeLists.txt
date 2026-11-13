@@ -87,6 +87,16 @@ set_tests_properties(gate_video_cli PROPERTIES
   TIMEOUT 300
   LABELS "gate;gate-video")
 
+# Opt-in M2 loop filters on --video (--video-cdef, ...): pinned default stream,
+# dav2d --strict 1, and encoder-recon == decoded output for every filter case.
+add_test(NAME gate_video_filters
+  COMMAND bash "${PROJECT_SOURCE_DIR}/src/pipeline/video/gate_video_filters.sh"
+          --bin $<TARGET_FILE:av2enc>)
+set_tests_properties(gate_video_filters PROPERTIES
+  SKIP_RETURN_CODE 77
+  TIMEOUT 600
+  LABELS "gate;gate-video")
+
 # Opt-in CUDA M2 path: CPU --video vs --video-gpu on one deterministic 360p
 # source, byte-identical temporal units/recon and a dav2d --strict 1 decode,
 # plus named rejections for every unported combination.  Registered only when
@@ -95,9 +105,12 @@ if(TARGET av2enc_video_gpu)
   add_test(NAME gate_video_gpu
     COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_gpu.sh"
             --bin $<TARGET_FILE:av2enc> --frames 4)
+  # The reference-model cases add seven 8-frame 360p CPU+GPU encodes (the
+  # NumTotalRefs 4..7 / NumRefFrames 4..8 matrix), so the budget covers a
+  # loaded shared box as well as an idle one.
   set_tests_properties(gate_video_gpu PROPERTIES
     SKIP_RETURN_CODE 77
-    TIMEOUT 1800
+    TIMEOUT 3600
     LABELS "gate;gate-video;gate-gpu")
   # Second product case: the same matrix at 8 frames, which additionally
   # exercises the rotating reference-slot pool and the full temporal GOP.
@@ -106,6 +119,26 @@ if(TARGET av2enc_video_gpu)
             --bin $<TARGET_FILE:av2enc> --frames 8)
   set_tests_properties(gate_video_gpu_long PROPERTIES
     SKIP_RETURN_CODE 77
-    TIMEOUT 2400
+    TIMEOUT 5400
     LABELS "gate;gate-video;gate-gpu;long")
+  # Opt-in full luma intra search (--video-intra-full): the still product's
+  # 61-candidate search on CPU vs the device candidate module, byte-identical
+  # units/recon and a dav2d --strict 1 decode, 8 frames at 360p.
+  add_test(NAME gate_video_gpu_intra
+    COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_gpu.sh"
+            --bin $<TARGET_FILE:av2enc> --frames 8 --intra-only)
+  set_tests_properties(gate_video_gpu_intra PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1800
+    LABELS "gate;gate-video;gate-gpu")
+  # Opt-in §5.20.6/§5.20.8 luma TX size/type/partition search
+  # (--video-tx-search): the device module path must be byte-identical to the
+  # CPU reference and decode with dav2d --strict 1.
+  add_test(NAME gate_video_tx_search
+    COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_gpu.sh"
+            --bin $<TARGET_FILE:av2enc> --frames 4 --tx-only)
+  set_tests_properties(gate_video_tx_search PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1800
+    LABELS "gate;gate-video;gate-gpu;gate-tx")
 endif()

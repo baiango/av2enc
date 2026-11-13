@@ -66,6 +66,9 @@ void test_mapping_matches_cli() {
   gpu.enable_dip = true;
   gpu.cfl_explicit = true;
   gpu.mhccp = true;
+  gpu.palette = true;
+  gpu.ibc = true;
+  gpu.ibc_search_step = 4;
   gpu.enable_cdef = true;
   gpu.cdef_num_strengths = 2;
   gpu.cdef_damping = 5;
@@ -79,6 +82,11 @@ void test_mapping_matches_cli() {
   gpu.enable_gdf = true;
   gpu.enable_grain = true;
   gpu.delta_q = true;
+  gpu.enable_segmentation = true;
+  gpu.enable_delta_q = true;
+  gpu.delta_q_res = 2;
+  gpu.per_segment_q = true;
+  gpu.per_segment_q_delta = 12;
   gpu.qm = true;
   gpu.qm_level = 2;
   gpu.rdoq = true;
@@ -87,6 +95,13 @@ void test_mapping_matches_cli() {
   gpu.tx_type_sse_scale = 0.5;
   gpu.rdo_intra = true;
   gpu.rdo_sse_scale = 1.0;
+  gpu.ist = true;
+  gpu.ist_sse_scale = 0.75;
+  gpu.idtx = true;
+  gpu.tcq = true;
+  gpu.tcq_sse_scale = 0.25;
+  gpu.cctx = true;
+  gpu.tx_partition = true;
 
   const av2enc::still::StillOptions cpu = gpu_options_to_m1(gpu);
   check_equal(cpu.base_q_idx, 90, "base_q_idx");
@@ -108,6 +123,9 @@ void test_mapping_matches_cli() {
   check(cpu.enable_dip == true, "enable_dip");
   check(cpu.cfl_explicit == true, "cfl_explicit");
   check(cpu.mhccp == true, "mhccp");
+  check(cpu.palette == true, "palette");
+  check(cpu.ibc == true, "ibc");
+  check_equal(cpu.ibc_search_step, 4, "ibc_search_step");
   check(cpu.enable_cdef == true, "enable_cdef");
   check_equal(cpu.cdef_num_strengths, 2, "cdef_num_strengths");
   check_equal(cpu.cdef_damping, 5, "cdef_damping");
@@ -121,6 +139,11 @@ void test_mapping_matches_cli() {
   check(cpu.enable_gdf == true, "enable_gdf");
   check(cpu.enable_grain == true, "enable_grain");
   check(cpu.delta_q == true, "delta_q");
+  check(cpu.enable_segmentation == true, "enable_segmentation");
+  check(cpu.enable_delta_q == true, "enable_delta_q");
+  check_equal(cpu.delta_q_res, 2, "delta_q_res");
+  check(cpu.per_segment_q == true, "per_segment_q");
+  check_equal(cpu.per_segment_q_delta, 12, "per_segment_q_delta");
   check(cpu.qm == true, "qm");
   check_equal(cpu.qm_level, 2, "qm_level");
   check(cpu.rdoq == true, "rdoq");
@@ -129,6 +152,13 @@ void test_mapping_matches_cli() {
   check_close(cpu.tx_type_sse_scale, 0.5, "tx_type_sse_scale");
   check(cpu.rdo_intra == true, "rdo_intra");
   check_close(cpu.rdo_sse_scale, 1.0, "rdo_sse_scale");
+  check(cpu.ist == true, "ist");
+  check_close(cpu.ist_sse_scale, 0.75, "ist_sse_scale");
+  check(cpu.idtx == true, "idtx");
+  check(cpu.tcq == true, "tcq");
+  check_close(cpu.tcq_sse_scale, 0.25, "tcq_sse_scale");
+  check(cpu.cctx == true, "cctx");
+  check(cpu.tx_partition == true, "tx_partition");
 }
 
 // The default GpuOptions must be supported: only M3 tool flags are gated.
@@ -240,28 +270,106 @@ void test_wired_filters_accepted() {
   check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
         "--still-qm is wired into the GPU pipeline");
   check(error.empty(), "--still-qm reports no rejection");
-}
+
+  // §5.18.7.1/.8 segmentation and delta-Q syntax reaches the CPU writer from
+  // the GPU plan; the neutral table does not change the reconstruction.
+  gpu = GpuOptions{};
+  gpu.enable_segmentation = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-segmentation is wired into the GPU pipeline");
+  check(error.empty(), "--still-segmentation reports no rejection");
+
+  gpu = GpuOptions{};
+  gpu.enable_delta_q = true;
+  gpu.delta_q_res = 1;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-delta-q is wired into the GPU pipeline");
+  check(error.empty(), "--still-delta-q reports no rejection");
+
+  // §5.4.9 per-superblock SEG_LVL_ALT_Q segmentation derives the segment map
+  // and per-SB qindex on the device.
+  gpu = GpuOptions{};
+  gpu.per_segment_q = true;
+  gpu.per_segment_q_delta = 8;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-per-segment-q is wired into the GPU pipeline");
+  check(error.empty(), "--still-per-segment-q reports no rejection");
+  // §7.13.5 full-UV chroma search: the device candidate loop consumes the
+  // luma-mode/AngleDeltaY and UVSmooth inputs the orchestrator now fills.
+  gpu = GpuOptions{};
+  gpu.uv_full = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-uv-full is wired into the GPU pipeline");
+  check(error.empty(), "--still-uv-full reports no rejection");
+
+  // §5.20.8 palette and §5.20.5.3-.4 IBC: the CPU reference plans the colour
+  // set / block vector and the GPU applies the palette and copy kernels.
+  gpu = GpuOptions{};
+  gpu.palette = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-palette is wired into the GPU pipeline");
+  check(error.empty(), "--still-palette reports no rejection");
+
+  gpu = GpuOptions{};
+  gpu.ibc = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-ibc is wired into the GPU pipeline");
+  check(error.empty(), "--still-ibc reports no rejection");}
 
 void test_every_m3_flag_rejected_by_name() {
   using av2enc::cuda::still_gpu::GpuOptions;
 
   GpuOptions gpu;
+  std::string error;
   gpu = GpuOptions{};
   gpu.rdoq = true;
   expect_rejected(gpu, "--still-rdoq", "--still-rdoq");
 
   gpu = GpuOptions{};
   gpu.tx_type = true;
-  expect_rejected(gpu, "--still-tx-type", "--still-tx-type");
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-tx-type is wired into the GPU pipeline");
+
+  gpu = GpuOptions{};
+  gpu.idtx = true;
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-idtx is wired into the GPU pipeline");
+
+  gpu = GpuOptions{};
+  gpu.ist = true;
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-ist is wired into the GPU pipeline");
+
+  gpu = GpuOptions{};
+  gpu.tcq = true;
+  expect_rejected(gpu, "--still-tcq", "--still-tcq");
+
+  gpu = GpuOptions{};
+  gpu.cctx = true;
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-cctx is wired into the GPU pipeline");
+
+  gpu = GpuOptions{};
+  gpu.tx_partition = true;
+  expect_rejected(gpu, "--still-tx-partition", "--still-tx-partition");
 
   gpu = GpuOptions{};
   gpu.rdo_intra = true;
   expect_rejected(gpu, "--still-rdo-intra", "--still-rdo-intra");
 
+  // The per-SB segmentation path does not carry the separate DC/AC delta-Q
+  // plane quantizers yet.
   gpu = GpuOptions{};
-  gpu.uv_full = true;
-  expect_rejected(gpu, "--still-uv-full", "--still-uv-full");
-
+  gpu.per_segment_q = true;
+  gpu.delta_q = true;
+  expect_rejected(gpu, "--still-per-segment-q",
+                  "--still-per-segment-q with --still-dc-ac-delta-q");
 }
 
 }  // namespace

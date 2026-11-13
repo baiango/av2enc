@@ -23,9 +23,21 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
+
+namespace av2enc::fmt {
+struct Picture;
+}
+namespace av2enc::high_bitdepth {
+struct HighBitDepthOptions;
+struct HighBitDepthResult;
+}
+namespace av2enc::chroma {
+class ChromaGpuExecutor;
+}
 
 namespace av2enc::cuda::still_gpu {
 
@@ -116,6 +128,9 @@ struct BlockPlan {
   std::uint16_t mi_col = 0;  // 4x4 units
   std::uint8_t luma_w = 0;
   std::uint8_t luma_h = 0;
+  // partition::BlockSize of the leaf (§5.20.3.1).  Needed by the IBC device
+  // copy/validate API, which takes the normative block-size enum.
+  std::uint8_t bsize = 0;
   std::uint8_t chroma_w = 0;
   std::uint8_t chroma_h = 0;
   std::uint8_t tx_w = 0;         // adjusted luma TX (§7.15.2)
@@ -176,6 +191,11 @@ struct BlockDecision {
   std::uint8_t tx_type_y = 0;      // transform type syntax, DCT_DCT = 0
   std::uint8_t tx_type_u = 0;
   std::uint8_t tx_type_v = 0;
+  // §5.20.8.2/§7.15.3 intra secondary transform (luma only).
+  std::uint8_t sec_tx_type = 0;
+  std::uint8_t stx_set = 0;        // most_probable_stx_set
+  // §5.20.7.27/§7.14.6 cross-component transform type (plane 1).
+  std::uint8_t cctx_type = 0;
   std::uint16_t eob_y = 0;
   std::uint16_t eob_u = 0;
   std::uint16_t eob_v = 0;
@@ -197,6 +217,24 @@ struct BlockDecision {
   std::uint8_t cfl_alpha_u_syntax = 0;  // magnitude minus one (explicit)
   std::uint8_t cfl_alpha_v_syntax = 0;
   std::uint8_t cfl_mh_dir = 0;
+  // §5.20.5.7 segment_id for a per-superblock SEG_LVL_ALT_Q plan.  Always 0
+  // when segmentation is off; the device segment map fills it for
+  // --still-per-segment-q.
+  std::uint8_t segment_id = 0;
+  // §5.20.8 palette leaf.  `palette_index` selects the entry in the palette
+  // side array handed to the §8.2 writer.  The leaf codes YMode DC and eob = 0
+  // on the luma plane; chroma stays the normal DC/CfL path.
+  std::uint8_t is_palette = 0;
+  std::uint32_t palette_index = 0;
+  // §5.20.5.3/.4 intra-block-copy leaf.  `ibc_mode` 1 = NEARMV (stack entry)
+  // and 0 = NEWMV; `ibc_bv_*` is the absolute block vector in 1/8 luma
+  // samples.  The leaf codes DC luma/chroma and eob = 0 on every plane.
+  std::uint8_t is_ibc = 0;
+  std::uint8_t ibc_skip = 1;
+  std::uint8_t ibc_mode = 1;
+  std::uint8_t ibc_ref_mv_idx = 0;
+  std::int32_t ibc_bv_row = 0;
+  std::int32_t ibc_bv_col = 0;
 };
 
 // Frame geometry plus the block list in syntax order.
@@ -266,6 +304,13 @@ struct GpuOptions {
   bool enable_dip = false;         // CPU --still-dip  (§5.20.7.9)
   bool cfl_explicit = false;       // CPU --still-cfl-explicit
   bool mhccp = false;              // CPU --still-mhccp
+  // Screen-content tools (§5.20.8 palette, §5.20.5.3/.4 intra block copy).
+  // The colour analysis / block-vector search is planned by the CPU reference
+  // (exposed through StillResult); the GPU applies the palette prediction and
+  // the IBC copy with the device kernels.
+  bool palette = false;            // CPU --still-palette
+  bool ibc = false;                // CPU --still-ibc
+  int ibc_search_step = 8;         // CPU --still-ibc-search
   // Tools integrated on the CPU path but not yet ported to the GPU pipeline.
   // Every one of them is present here so the CLI cannot silently drop a flag;
   // gpu_options_to_m1() maps them and gpu_m3_options_supported() rejects the
@@ -287,6 +332,16 @@ struct GpuOptions {
   // the GPU TX stage feeds the resolved per-plane deltas to the device
   // delta-Q quantizer.
   bool delta_q = false;            // CPU --still-dc-ac-delta-q
+  // §5.18.7.1/.8 neutral delta-Q / segmentation syntax.  The signalled segment
+  // table has no enabled features and every superblock codes a zero reduced
+  // delta, so the reconstruction is unchanged.
+  bool enable_segmentation = false;  // CPU --still-segmentation
+  bool enable_delta_q = false;       // CPU --still-delta-q
+  int delta_q_res = 0;               // CPU --still-delta-q-res
+  // §5.4.9 SEG_LVL_ALT_Q real per-superblock segmentation.  The device segment
+  // map splits superblocks by luma variance and derives the per-SB qindex.
+  bool per_segment_q = false;        // CPU --still-per-segment-q
+  int per_segment_q_delta = 8;       // CPU --still-seg-delta
   // §5.18.6.2 quantizer matrices (spec-defined default levels).
   bool qm = false;                 // CPU --still-qm
   int qm_level = 3;                // CPU --still-qm-level
@@ -296,6 +351,19 @@ struct GpuOptions {
   double tx_type_sse_scale = 0.125;
   bool rdo_intra = false;
   double rdo_sse_scale = 0.125;
+  // §7.15.3 intra secondary transform (--still-ist).
+  bool ist = false;
+  double ist_sse_scale = 0.125;
+  // §5.4.8 enable_idtx_intra / §5.20.8.2 identity intra transform
+  // (--still-idtx): IDTX joins the intra TX-type candidate sets.
+  bool idtx = false;
+  // §5.4.8 enable_tcq / §5.20.7.27 (--still-tcq).
+  bool tcq = false;
+  double tcq_sse_scale = 0.125;
+  // §5.4.8 enable_cctx / §7.14.6 (--still-cctx).
+  bool cctx = false;
+  // §5.20.6.1-.3 TX_MODE_SELECT (--still-tx-partition).
+  bool tx_partition = false;
 
   int device = 0;                    // CUDA ordinal
   std::uint32_t vram_cap_mb = 0;     // 0 = device-derived (see README)
@@ -337,12 +405,22 @@ inline ::av2enc::still::StillOptions gpu_options_to_m1(const GpuOptions& options
   cpu.enable_dip = options.enable_dip;
   cpu.cfl_explicit = options.cfl_explicit;
   cpu.mhccp = options.mhccp;
+  cpu.palette = options.palette;
+  cpu.ibc = options.ibc;
+  cpu.ibc_search_step = options.ibc_search_step;
   cpu.rdo_intra = options.rdo_intra;
   cpu.rdo_sse_scale = options.rdo_sse_scale;
   cpu.rdoq = options.rdoq;
   cpu.rdoq_sse_scale = options.rdoq_sse_scale;
   cpu.tx_type = options.tx_type;
   cpu.tx_type_sse_scale = options.tx_type_sse_scale;
+  cpu.ist = options.ist;
+  cpu.ist_sse_scale = options.ist_sse_scale;
+  cpu.idtx = options.idtx;
+  cpu.tcq = options.tcq;
+  cpu.tcq_sse_scale = options.tcq_sse_scale;
+  cpu.cctx = options.cctx;
+  cpu.tx_partition = options.tx_partition;
   cpu.enable_cdef = options.enable_cdef;
   cpu.cdef_num_strengths = options.cdef_num_strengths;
   cpu.cdef_damping = options.cdef_damping;
@@ -356,6 +434,11 @@ inline ::av2enc::still::StillOptions gpu_options_to_m1(const GpuOptions& options
   cpu.enable_gdf = options.enable_gdf;
   cpu.enable_grain = options.enable_grain;
   cpu.delta_q = options.delta_q;
+  cpu.enable_segmentation = options.enable_segmentation;
+  cpu.enable_delta_q = options.enable_delta_q;
+  cpu.delta_q_res = options.delta_q_res;
+  cpu.per_segment_q = options.per_segment_q;
+  cpu.per_segment_q_delta = options.per_segment_q_delta;
   cpu.qm = options.qm;
   cpu.qm_level = options.qm_level;
   return cpu;
@@ -378,11 +461,19 @@ inline bool gpu_m3_options_supported(const GpuOptions& options,
     }
     return false;
   }
-  if (options.tx_type) {
+  if (options.tcq) {
     if (error != nullptr) {
       *error =
-          "M1 GPU: --still-tx-type is not ported to the GPU pipeline yet; use "
+          "M1 GPU: --still-tcq is not ported to the GPU pipeline yet; use "
           "--still (CPU)";
+    }
+    return false;
+  }
+  if (options.tx_partition) {
+    if (error != nullptr) {
+      *error =
+          "M1 GPU: --still-tx-partition is not ported to the GPU pipeline yet; "
+          "use --still (CPU)";
     }
     return false;
   }
@@ -394,11 +485,15 @@ inline bool gpu_m3_options_supported(const GpuOptions& options,
     }
     return false;
   }
-  if (options.uv_full) {
+  // §7.13.5 full-UV chroma search: the device `chroma_decide` candidate loop
+  // already mirrors `choose_uv_mode`; the orchestrator fills the luma-mode/
+  // AngleDeltaY and UVSmooth neighbour inputs from the device decision state
+  // before every chroma job.
+  if (options.per_segment_q && options.delta_q) {
     if (error != nullptr) {
       *error =
-          "M1 GPU: --still-uv-full is not ported to the GPU pipeline yet (the "
-          "chroma job lacks the luma-mode/UVSmooth inputs); use --still (CPU)";
+          "M1 GPU: --still-per-segment-q with --still-dc-ac-delta-q is not "
+          "ported to the GPU pipeline yet; use --still (CPU)";
     }
     return false;
   }
@@ -555,6 +650,23 @@ struct GpuResult {
 bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
                    const GpuOptions& options,
                    GpuResult& result, std::string& error);
+
+// Product optical-format dispatch (10-bit 4:2:0/4:2:2/4:4:4/4:0:0).  The M1
+// orchestrator above is 8-bit `uint8_t`; the high-bit-depth product writer is
+// `av2enc::hbd` and its GPU block stage is `cuda::high_bitdepth`.  This entry
+// point is the stable seam between the CLI/format composition root and that
+// stage, so `--still-gpu --bit-depth 10` never falls back to the CPU encoder.
+bool encode_format_gpu(const ::av2enc::fmt::Picture& picture,
+                       const ::av2enc::high_bitdepth::HighBitDepthOptions& options,
+                       ::av2enc::high_bitdepth::HighBitDepthResult& result,
+                       std::string& error);
+
+// Device block executor for the 8-bit 4:2:2/4:4:4/4:0:0 product writer.  The
+// caller installs it in `chroma::ChromaStillOptions::gpu`; the CPU §8.2 writer
+// stays in charge of syntax/entropy.  Returns null only when the build has no
+// device support.
+std::unique_ptr<::av2enc::chroma::ChromaGpuExecutor>
+make_chroma_gpu_executor();
 
 // ---------------------------------------------------------------------------
 // Optional stage hooks

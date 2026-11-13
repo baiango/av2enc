@@ -24,10 +24,10 @@ returning.  `ibc_required_device_bytes(config)` is its exact arena requirement,
 and an undersized arena returns `IbcSearchStatus::kArenaTooSmall` with the byte
 count.
 
-Scope: 8-bit 4:2:0, integer BVs in 1/8 luma samples, block sizes 8x8 through
-64x64 (rectangles included).  Local four-buffer validity is a CPU concern; the
-device validates the global §6.19.7.12 rule (`allow_global`).  No hidden
-synchronization, no global state.
+Scope: 8-bit 4:2:0, integer BVs in 1/8 luma samples, every AV2 block size from
+4x4 through 64x64 (the M1 rect tree's 1:2 and 1:4 shapes included).  Local
+four-buffer validity is a CPU concern; the device validates the global
+§6.19.7.12 rule (`allow_global`).  No hidden synchronization, no global state.
 
 ## Tests
 
@@ -50,7 +50,9 @@ BVs.
 
 ## Integration
 
-The still path must set `allow_screen_content_tools` and write
-`palette_mode_info()`/IBC syntax on every eligible block, and reset the block
-contexts after a `skip_flag = 1` IBC block (see `docs/negative-results.md`).
-The component supplies prediction/SAD/validation only.
+`--still-gpu` uses the copy kernel for the luma and chroma prediction of a
+CPU-planned exact-copy IBC leaf (§5.20.5.3/.4 `skip_flag = 1`).  The still
+writer sets `allow_screen_content_tools`, writes `palette_mode_info()`/IBC
+syntax on every eligible block, and resets the block contexts after an IBC
+skip block (see `docs/negative-results.md`).  The component supplies
+prediction/SAD/validation only.

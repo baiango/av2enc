@@ -44,6 +44,11 @@ struct TxBlockJob {
   // Element offset into the coded-size residual buffer (inverse output only;
   // forward jobs may leave this equal to in_offset).
   std::int32_t out_offset = 0;
+  // §7.14.2 qlookup(base_q_idx) used by the inverse dequantizer.  The default
+  // is the 528 pinned by TxParams (qlookup(90)); a caller that codes a
+  // different frame quantizer sets it per job.  Forward jobs ignore it (the
+  // caller scales TxParams::quant_factor instead).
+  std::int32_t quant_step = av2enc::txv::kQuantStep;
 };
 
 // residual_adjusted (int16, w*h) -> coeff (double, w*h).

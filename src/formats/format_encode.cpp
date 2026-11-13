@@ -19,47 +19,68 @@ using av2enc::fmt::ChromaFormat;
 using av2enc::fmt::Format;
 using av2enc::fmt::Picture;
 
+bool write_10bit_recon(const Picture& picture,
+                       const av2enc::high_bitdepth::HighBitDepthPlane recon_planes[3],
+                       const std::filesystem::path& path, std::string* error) {
+  Picture recon;
+  Format format;
+  format.width = picture.format.width;
+  format.height = picture.format.height;
+  format.chroma = picture.format.chroma;
+  format.depth = BitDepth::k10;
+  if (!av2enc::fmt::allocate_picture(format, recon, *error)) {
+    return false;
+  }
+  const int planes = av2enc::fmt::num_planes(format.chroma);
+  for (int plane = 0; plane < planes; ++plane) {
+    const av2enc::high_bitdepth::HighBitDepthPlane& src = recon_planes[plane];
+    av2enc::fmt::PlaneBuffer& dst = recon.planes[plane];
+    for (int y = 0; y < src.visible_height; ++y) {
+      for (int x = 0; x < src.visible_width; ++x) {
+        dst.at(static_cast<std::uint32_t>(x),
+               static_cast<std::uint32_t>(y)) =
+            src.samples[static_cast<std::size_t>(y) *
+                            static_cast<std::size_t>(src.width) +
+                        static_cast<std::size_t>(x)];
+      }
+    }
+    av2enc::fmt::replicate_borders(dst);
+  }
+  return av2enc::fmt::write_y4m_picture(path, recon, error);
+}
+
 bool encode_10bit(const Picture& picture,
                   const StillFormatOptions& options,
                   std::vector<std::uint8_t>* frame,
                   std::uint32_t* tile_bytes, std::string* error) {
-  av2enc::hbd::HbdOptions hbd_options;
-  hbd_options.base_q_idx = options.base_q_idx;
-  av2enc::hbd::HbdResult result;
-  if (!av2enc::hbd::encode_still(picture, hbd_options, result, *error)) {
-    return false;
+  av2enc::high_bitdepth::HighBitDepthResult result;
+  if (options.high_bitdepth_gpu != nullptr) {
+    // Product 10-bit GPU block stage: DC prediction + forward/inverse TX +
+    // reconstruction run on the device; the shared CPU §8.2 writer assembles
+    // the same tile payload bytes as `av2enc::hbd::encode_still`.
+    av2enc::high_bitdepth::HighBitDepthOptions gpu_options;
+    gpu_options.base_q_idx = options.base_q_idx;
+    if (!options.high_bitdepth_gpu(picture, gpu_options, result, *error)) {
+      return false;
+    }
+  } else {
+    av2enc::hbd::HbdOptions hbd_options;
+    hbd_options.base_q_idx = options.base_q_idx;
+    av2enc::hbd::HbdResult cpu_result;
+    if (!av2enc::hbd::encode_still(picture, hbd_options, cpu_result, *error)) {
+      return false;
+    }
+    result.frame = std::move(cpu_result.frame);
+    result.tile_bytes = cpu_result.tile_bytes;
+    for (int plane = 0; plane < 3; ++plane) {
+      result.recon[plane] = std::move(cpu_result.recon[plane]);
+    }
   }
   *frame = std::move(result.frame);
   *tile_bytes = result.tile_bytes;
 
   if (!options.recon_out.empty()) {
-    Picture recon;
-    Format format;
-    format.width = picture.format.width;
-    format.height = picture.format.height;
-    format.chroma = picture.format.chroma;
-    format.depth = BitDepth::k10;
-    if (!av2enc::fmt::allocate_picture(format, recon, *error)) {
-      return false;
-    }
-    const int planes = av2enc::fmt::num_planes(format.chroma);
-    for (int plane = 0; plane < planes; ++plane) {
-      const av2enc::high_bitdepth::HighBitDepthPlane& src = result.recon[plane];
-      av2enc::fmt::PlaneBuffer& dst = recon.planes[plane];
-      for (int y = 0; y < src.visible_height; ++y) {
-        for (int x = 0; x < src.visible_width; ++x) {
-          dst.at(static_cast<std::uint32_t>(x),
-                 static_cast<std::uint32_t>(y)) =
-              src.samples[static_cast<std::size_t>(y) *
-                              static_cast<std::size_t>(src.width) +
-                          static_cast<std::size_t>(x)];
-        }
-      }
-      av2enc::fmt::replicate_borders(dst);
-    }
-    if (!av2enc::fmt::write_y4m_picture(options.recon_out, recon, error)) {
-      return false;
-    }
+    return write_10bit_recon(picture, result.recon, options.recon_out, error);
   }
   return true;
 }
@@ -74,6 +95,7 @@ bool encode_8bit_chroma(const Picture& picture,
   }
   av2enc::chroma::ChromaStillOptions chroma_options;
   chroma_options.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
+  chroma_options.gpu = options.chroma_gpu;
   av2enc::chroma::ChromaStillResult result;
   if (!av2enc::chroma::encode_chroma_still_picture(chroma_picture,
                                                    chroma_options, result,

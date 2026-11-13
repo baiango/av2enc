@@ -37,8 +37,16 @@ class ArenaMark {
 };
 
 __host__ __device__ int block_dim(int bsize, bool height) {
-  // The subset of AV2 block sizes used by the gate and M1.
+  // The subset of AV2 block sizes used by the gate and M1.  The M1 rect tree
+  // reaches every 1:2 / 2:1 / 1:4 / 4:1 shape down to the 8-pixel floor, so
+  // the full sub-64 set is required for product IBC leaves.
   switch (bsize) {
+    case 0:  // 4x4
+      return 4;
+    case 1:  // 4x8
+      return height ? 8 : 4;
+    case 2:  // 8x4
+      return height ? 4 : 8;
     case 3:  // 8x8
       return 8;
     case 4:  // 8x16
@@ -59,6 +67,26 @@ __host__ __device__ int block_dim(int bsize, bool height) {
       return height ? 32 : 64;
     case 12:  // 64x64
       return 64;
+    case 19:  // 4x16
+      return height ? 16 : 4;
+    case 20:  // 16x4
+      return height ? 4 : 16;
+    case 21:  // 8x32
+      return height ? 32 : 8;
+    case 22:  // 32x8
+      return height ? 8 : 32;
+    case 23:  // 16x64
+      return height ? 64 : 16;
+    case 24:  // 64x16
+      return height ? 16 : 64;
+    case 25:  // 4x32
+      return height ? 32 : 4;
+    case 26:  // 32x4
+      return height ? 4 : 32;
+    case 27:  // 8x64
+      return height ? 64 : 8;
+    case 28:  // 64x8
+      return height ? 8 : 64;
     default:
       return 0;
   }

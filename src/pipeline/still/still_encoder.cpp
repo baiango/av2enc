@@ -673,6 +673,12 @@ class Encoder {
   const std::vector<palette::PaletteResult>& palette_results() const {
     return palette_results_;
   }
+  const std::vector<std::uint32_t>& palette_index_by_leaf() const {
+    return palette_index_by_leaf_;
+  }
+  const std::vector<StillResult::IbcPlan>& ibc_by_leaf() const {
+    return ibc_by_leaf_;
+  }
   int mi_cols() const { return mi_cols_; }
   int mi_rows() const { return mi_rows_; }
   int deblock_cols() const { return deblock_cols_; }
@@ -3257,6 +3263,24 @@ class Encoder {
       leaf.ibc_bv_row = ibc_choice.bv.row;
       leaf.ibc_bv_col = ibc_choice.bv.col;
     }
+    // Leaf-order screen-content decision plan for the GPU orchestrator.  One
+    // entry per leaf, appended in the same preorder the GPU FramePlan uses.
+    {
+      std::uint32_t leaf_palette = StillResult::kNoPaletteLeaf;
+      if (use_palette) {
+        leaf_palette = static_cast<std::uint32_t>(palette_results_.size() - 1);
+      }
+      palette_index_by_leaf_.push_back(leaf_palette);
+      StillResult::IbcPlan ibc_plan;
+      if (use_ibc) {
+        ibc_plan.used = 1;
+        ibc_plan.mode = leaf.ibc_mode;
+        ibc_plan.ref_mv_idx = leaf.ibc_ref_mv_idx;
+        ibc_plan.bv_row = leaf.ibc_bv_row;
+        ibc_plan.bv_col = leaf.ibc_bv_col;
+      }
+      ibc_by_leaf_.push_back(ibc_plan);
+    }
     const TxPlan* plans[3] = {luma_plans.empty() ? nullptr : luma_plans.data(),
                               &u_plan, &v_plan};
     leaf.levels_offset = static_cast<std::uint32_t>(levels_.size());
@@ -3808,6 +3832,10 @@ class Encoder {
   ibc_stream::BvNeighbourMap ibc_neighbours_;
   ibc::IbcConfig ibc_config_{};
   int ibc_blocks_ = 0;
+  // Leaf-order decision plan exposed through StillResult (preorder, one entry
+  // per leaf, matching the GPU FramePlan block list).
+  std::vector<std::uint32_t> palette_index_by_leaf_;
+  std::vector<StillResult::IbcPlan> ibc_by_leaf_;
 
   int sb_mi_ = 16;
   int sb_mi_row_ = 0;
@@ -5391,6 +5419,9 @@ bool encode_still_picture(const StillPicture& picture,
   result.frame_bytes = static_cast<std::uint32_t>(result.frame.size());
   result.leaves = encoder.leaves();
   result.ibc_blocks = encoder.ibc_blocks();
+  result.palette_results = encoder.palette_results();
+  result.palette_index_by_leaf = encoder.palette_index_by_leaf();
+  result.ibc_by_leaf = encoder.ibc_by_leaf();
 
   const auto crop = [](const Plane& plane, int width, int height) {
     std::vector<std::uint8_t> out(static_cast<std::size_t>(width) *

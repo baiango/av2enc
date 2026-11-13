@@ -53,9 +53,10 @@ __device__ __forceinline__ const std::int16_t* kernel_dev(int type, int n) {
   }
 }
 
-__device__ __forceinline__ int dequant_dev(int qc, int denom) {
+__device__ __forceinline__ int dequant_dev(int qc, int denom,
+                                           int quant_step) {
   const int abs_qc = qc < 0 ? -qc : qc;
-  const int dq_high = (abs_qc * kQuantStep) & 0xFFFFFF;
+  const int dq_high = (abs_qc * quant_step) & 0xFFFFFF;
   const int dq = round2_dev(dq_high, kQuantTableBits) / denom;
   // §7.14.4: Dequant = Clip3(-(1 << (7 + BitDepth)), ...).
   return clip3_dev(-(1 << 15), (1 << 15) - 1, qc < 0 ? -dq : dq);
@@ -153,7 +154,7 @@ __device__ __forceinline__ void inverse_body(const std::int32_t* dequant,
                                              std::int16_t* s_kh,
                                              std::int32_t* s_dq,
                                              int* s_inter, int base_in,
-                                             int base_out) {
+                                             int base_out, int quant_step) {
   const int tid = static_cast<int>(threadIdx.x);
   const int w = p.w;
   const int h = p.h;
@@ -178,7 +179,7 @@ __device__ __forceinline__ void inverse_body(const std::int32_t* dequant,
       }
     }
     s_dq[tid] = (levels != nullptr)
-                    ? dequant_dev(levels[base_in + tid], p.dq_denom)
+                    ? dequant_dev(levels[base_in + tid], p.dq_denom, quant_step)
                     : dequant[base_in + tid];
   }
   __syncthreads();
@@ -272,7 +273,8 @@ __global__ void inverse_kernel(const std::int32_t* __restrict__ dequant,
   extern __shared__ int s_inter[];
   inverse_body(dequant, levels, residual_coded, p, s_kw, s_kh, s_dq, s_inter,
                static_cast<int>(blockIdx.x) * (p.w * p.h),
-               static_cast<int>(blockIdx.x) * (p.coded_w * p.coded_h));
+               static_cast<int>(blockIdx.x) * (p.coded_w * p.coded_h),
+               kQuantStep);
 }
 
 __global__ void inverse_job_kernel(const std::int32_t* __restrict__ dequant,
@@ -285,7 +287,7 @@ __global__ void inverse_job_kernel(const std::int32_t* __restrict__ dequant,
   extern __shared__ int s_inter[];
   const TxBlockJob job = jobs[blockIdx.x];
   inverse_body(dequant, levels, residual_coded, job.params, s_kw, s_kh, s_dq,
-               s_inter, job.in_offset, job.out_offset);
+               s_inter, job.in_offset, job.out_offset, job.quant_step);
 }
 
 __global__ void quantize_kernel(const double* __restrict__ coeff,
@@ -306,7 +308,8 @@ __global__ void dequantize_kernel(const std::int32_t* __restrict__ levels,
   const int base = static_cast<int>(blockIdx.x) * elems;
   const int tid = static_cast<int>(threadIdx.x);
   if (tid < elems) {
-    dequant[base + tid] = dequant_dev(levels[base + tid], p.dq_denom);
+    dequant[base + tid] =
+        dequant_dev(levels[base + tid], p.dq_denom, kQuantStep);
   }
 }
 

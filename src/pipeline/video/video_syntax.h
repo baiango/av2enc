@@ -22,6 +22,7 @@
 #pragma once
 
 #include "pipeline/video/video_headers.h"
+#include "pipeline/video/post/video_filter_plan.h"
 #include "codec/entropy/avg_cdf/avg_cdf_bank.h"
 
 #include <cstddef>
@@ -48,6 +49,13 @@ enum InterMode : std::uint8_t {
   kInterNearMv = 1,
   kInterNewMv = 2,
 };
+
+// §5.20.5.5 IntraJointMode value for a coded (YMode, AngleDeltaY): 0..4 for
+// the reordered non-directional modes (DC, SMOOTH, SMOOTH_V, SMOOTH_H, PAETH)
+// and 5 + directional index otherwise.  The encoder needs it to derive the
+// §7.13.2.15/.16 filterTypeAbove/Left of the following blocks; it is the same
+// mapping the syntax writer tracks internally.
+int intra_joint_mode(int y_mode, int angle_delta);
 
 struct BlockSyntax {
   // --- tree ---
@@ -86,6 +94,22 @@ struct BlockSyntax {
   std::uint8_t tx_size[kPlaneCount] = {0, 0, 0};
   std::uint32_t eob[kPlaneCount] = {0, 0, 0};
   std::uint32_t levels_offset = 0;
+
+  // --- opt-in TX_MODE_SELECT (§5.20.6) luma plan -------------------------
+  // `tx_partition` is a txpartition::TxPartition value for the coding block and
+  // `tx_part_count` the number of transform leaves it produced (1 when there is
+  // no partition syntax).  `tx_size[0]/eob[0]` still carry the first leaf so a
+  // TX_MODE_LARGEST consumer keeps working; when tx_part_count != 0 the arrays
+  // below describe every luma leaf in decode order and are authoritative.
+  std::uint8_t tx_type[kPlaneCount] = {0, 0, 0};
+  std::uint8_t tx_partition = 0;
+  std::uint8_t tx_part_count = 0;
+  std::uint8_t tx_part_tx_size[4] = {0, 0, 0, 0};
+  std::uint8_t tx_part_tx_type[4] = {0, 0, 0, 0};
+  std::int16_t tx_part_mi_row[4] = {0, 0, 0, 0};
+  std::int16_t tx_part_mi_col[4] = {0, 0, 0, 0};
+  std::uint32_t tx_part_eob[4] = {0, 0, 0, 0};
+  std::uint32_t tx_part_levels_offset[4] = {0, 0, 0, 0};
 };
 
 struct FramePlan {
@@ -103,8 +127,22 @@ struct FramePlan {
   int mv_precision = 0;
   // FrameDistance[ref] for the MV stack's derived candidates.
   std::array<int, 7> frame_distance{0, 0, 0, 0, 0, 0, 0};
+  // §5.18.9 global motion parameters for the MV-stack GlobalMvs.  Identity
+  // models (the default) reproduce the historical zero GlobalMvs.  The writer
+  // projects the centre MV per block with the frame precision.
+  std::array<inter::gme::GmParams, 7> gm_params{};
+  int gm_num_refs = 0;
   // 0 = DRL_REORDER_DISABLED, 1 = CONSTRAINT, 2 = ALWAYS.
   int drl_reorder = 0;
+  // Opt-in §5.18.8.1 TX_MODE_SELECT (--video-tx-search).  Off keeps
+  // tx_mode_select = 0 and TX_MODE_LARGEST, i.e. every historical stream is
+  // byte-identical.  When on, every leaf's luma residual follows
+  // write_tx_partition()/per-part transform blocks and the stored per-part
+  // TX types.
+  bool tx_mode_select = false;
+  bool reduced_tx_part_set = false;
+  // §5.18.2 frame-header reduced_tx_set (0 keeps the full TX-type sets).
+  int reduced_tx_set = 0;
 
   int sb_cols() const;
   int sb_rows() const;
@@ -120,7 +158,8 @@ bool assemble_video_frame(const FramePlan& plan,
                        std::vector<std::uint8_t>& tile_payload,
                        std::string& error, std::size_t* tile_bytes = nullptr,
                        std::span<const std::uint16_t> cdf_seed = {},
-                       std::vector<std::uint16_t>* cdf_final = nullptr);
+                       std::vector<std::uint16_t>* cdf_final = nullptr,
+                       const post::VideoFilterPlan* filters = nullptr);
 
 // Opaque packed §8.2 CDF image (no neighbour/context state).  Used by the
 // cross-frame continuity wiring in video_frame.cpp: the encoder seeds a frame

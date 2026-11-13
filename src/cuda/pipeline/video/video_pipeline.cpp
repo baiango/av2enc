@@ -24,11 +24,15 @@
 
 #include "codec/inter/mc/mc.h"
 #include "codec/inter/merge/merge.h"
+#include "pipeline/video/video_gme.h"
+#include "pipeline/video/video_gm_types.h"
 #include "codec/inter/bframes/bframes.h"
 #include "codec/inter/tlayers/tlayers.h"
 #include "codec/entropy/avg_cdf/avg_cdf_bank.h"
 #include "pipeline/video/video_headers.h"
 #include "pipeline/video/video_syntax.h"
+#include "pipeline/video/post/tiled_frame.h"
+#include "pipeline/tiles/tile_layout.h"
 #include "codec/partition/tree/partition.h"
 #include "codec/transform/variants/tx_variants.h"
 #include "frame/mfh/mfh.h"
@@ -39,8 +43,10 @@
 #include "video_sequence_internal.h"
 
 namespace av2enc::cuda::video {
-namespace {
 
+using av2enc::video::GmFramePlan;
+
+namespace {
 using av2enc::video::VideoConfig;
 using av2enc::video::VideoFrameHeader;
 using av2enc::video::VideoInputFrame;
@@ -54,6 +60,25 @@ using partition::PartitionType;
 
 namespace detail = av2enc::cuda::video::detail;
 namespace merge = ::av2enc::video::merge;
+namespace syntax = ::av2enc::video::syntax;
+
+// Device pixel hook for the opt-in M2 loop filters: the shared host stage runs
+// the decisions and hands each stage's planes to the CUDA kernels.
+class BackendFilterHooks final
+    : public av2enc::video::post::VideoLoopFilterHooks {
+ public:
+  explicit BackendFilterHooks(detail::Backend& backend) : backend_(backend) {}
+
+  bool apply_stage(av2enc::video::post::VideoFilterStage stage,
+                   const av2enc::video::post::VideoFilterPlan& plan,
+                   const av2enc::video::post::VideoLoopFilterDeviceFrame& frame,
+                   std::string* error) override {
+    return backend_.loop_filter_stage(stage, plan, frame, *error);
+  }
+
+ private:
+  detail::Backend& backend_;
+};
 
 // The CPU M2 path grows optional tools over time (inter residual, DRL
 // reordering).  Detect the option members instead of hard-depending on them,
@@ -78,6 +103,54 @@ template <typename T>
 struct HasDrlReorder<T,
                      std::void_t<decltype(std::declval<T&>().drl_reorder)>>
     : std::true_type {};
+
+template <typename T, typename = void>
+struct HasTxSearch : std::false_type {};
+template <typename T>
+struct HasTxSearch<
+    T, std::void_t<decltype(std::declval<const T&>().enable_tx_search)>>
+    : std::true_type {};
+
+template <typename T, typename = void>
+struct HasTxRdLambda : std::false_type {};
+template <typename T>
+struct HasTxRdLambda<
+    T, std::void_t<decltype(std::declval<const T&>().tx_rd_lambda)>>
+    : std::true_type {};
+
+template <typename T>
+double opt_tx_rd_lambda(const T& options) {
+  if constexpr (HasTxRdLambda<T>::value) {
+    return options.tx_rd_lambda;
+  } else {
+    return 256.0;
+  }
+}
+
+template <typename T>
+bool opt_enable_tx_search(const T& options) {
+  if constexpr (HasTxSearch<T>::value) {
+    return options.enable_tx_search;
+  } else {
+    return false;
+  }
+}
+
+template <typename T, typename = void>
+struct HasVideoDeblock : std::false_type {};
+template <typename T>
+struct HasVideoDeblock<
+    T, std::void_t<decltype(std::declval<T&>().enable_deblock)>>
+    : std::true_type {};
+
+template <typename T>
+bool opt_video_deblock(const T& options) {
+  if constexpr (HasVideoDeblock<T>::value) {
+    return options.enable_deblock;
+  } else {
+    return false;
+  }
+}
 
 template <typename T>
 bool opt_enable_inter_residual(const T& options) {
@@ -113,6 +186,22 @@ bool opt_force_inter_residual(const T& options) {
   }
 }
 
+template <typename T, typename = void>
+struct HasEnableIntraFull : std::false_type {};
+template <typename T>
+struct HasEnableIntraFull<
+    T, std::void_t<decltype(std::declval<T&>().enable_intra_full)>>
+    : std::true_type {};
+
+template <typename T>
+bool opt_enable_intra_full(const T& options) {
+  if constexpr (HasEnableIntraFull<T>::value) {
+    return options.enable_intra_full;
+  } else {
+    return false;
+  }
+}
+
 template <typename T>
 int opt_drl_reorder(const T& options) {
   if constexpr (HasDrlReorder<T>::value) {
@@ -143,6 +232,61 @@ double estimate_tx_bits(int eob, const std::vector<std::int32_t>& levels,
   bits += static_cast<double>(nonzero) * 2.5 +
           static_cast<double>(eob) * 0.5;
   return bits;
+}
+
+// Luma rate for the skip/residual and intra/inter decisions: the historical
+// estimate_tx_bits heuristic applied per transform leaf.  The search's own
+// cost model only selects the plan, so enabling the tool does not re-price
+// every residual against skip.
+double luma_search_bits(const detail::TxSearchPlan& plan, bool is_inter_luma) {
+  double bits = 0.0;
+  for (const detail::TxSearchPart& part : plan.parts) {
+    if (part.eob == 0) {
+      bits += 1.0;
+      continue;
+    }
+    int nonzero = 0;
+    for (int c = 0; c < part.eob; ++c) {
+      if (part.levels[static_cast<std::size_t>(c)] != 0) ++nonzero;
+    }
+    bits += 8.0 + (is_inter_luma ? 4.0 : 0.0) +
+            static_cast<double>(nonzero) * 2.5 + part.eob * 0.5;
+  }
+  return bits;
+}
+
+bool luma_search_all_zero(const detail::TxSearchPlan& plan) {
+  for (const detail::TxSearchPart& part : plan.parts) {
+    if (part.eob != 0) return false;
+  }
+  return true;
+}
+
+// Copies one searched luma plan into the syntax node and appends the
+// per-part scan-order levels.
+void write_luma_search_plan(syntax::BlockSyntax& entry,
+                            const detail::TxSearchPlan& plan,
+                            std::vector<std::int32_t>& levels) {
+  entry.tx_partition = static_cast<std::uint8_t>(plan.partition);
+  entry.tx_part_count = static_cast<std::uint8_t>(plan.parts.size());
+  for (std::size_t i = 0; i < plan.parts.size(); ++i) {
+    const detail::TxSearchPart& part = plan.parts[i];
+    entry.tx_part_tx_size[i] = static_cast<std::uint8_t>(part.tx_size);
+    entry.tx_part_tx_type[i] = static_cast<std::uint8_t>(part.tx_type);
+    entry.tx_part_mi_row[i] = static_cast<std::int16_t>(part.mi_row);
+    entry.tx_part_mi_col[i] = static_cast<std::int16_t>(part.mi_col);
+    entry.tx_part_eob[i] = static_cast<std::uint32_t>(part.eob);
+    entry.tx_part_levels_offset[i] =
+        static_cast<std::uint32_t>(levels.size());
+    for (int c = 0; c < part.eob; ++c) {
+      levels.push_back(part.levels[static_cast<std::size_t>(c)]);
+    }
+  }
+  if (!plan.parts.empty()) {
+    entry.tx_size[0] = entry.tx_part_tx_size[0];
+    entry.tx_type[0] = entry.tx_part_tx_type[0];
+    entry.eob[0] = entry.tx_part_eob[0];
+  }
 }
 
 // Round a 1/8-pel MV to the signalled frame precision: 1/8, 1/4 or 1/2 pel.
@@ -260,6 +404,7 @@ std::uint64_t me_key(int mi_row, int mi_col, BlockSize size, int ref_index) {
 struct InterCandidate {
   bool valid = false;
   bool compound = false;
+  bool use_warp = false;
   int mode = av2enc::video::syntax::kInterGlobalMv;
   int drl_index = 0;
   int ref_index = 0;
@@ -275,8 +420,11 @@ class GpuFrameEncoder {
                   std::array<int, 7> frame_distance, int num_total_refs,
                   const VideoOptions& options, bool trace, bool keyframe,
                   std::string& error,
+                  int tile_x = 0, int tile_y = 0, int tile_w = 0, int tile_h = 0,
                   std::span<const std::uint16_t> cdf_seed = {},
-                  std::vector<std::uint16_t>* cdf_final = nullptr)
+                  std::vector<std::uint16_t>* cdf_final = nullptr,
+                  const GmFramePlan* gm_plan = nullptr,
+                  std::array<int, 7> ref_order_hints = {})
       : backend_(backend),
         source_(source),
         options_(options),
@@ -284,10 +432,16 @@ class GpuFrameEncoder {
         num_total_refs_(num_total_refs),
         cdf_seed_(cdf_seed),
         cdf_final_(cdf_final),
+        ref_order_hints_(ref_order_hints),
         trace_(trace),
-        keyframe_(keyframe) {
-    width_ = static_cast<int>(source.width);
-    height_ = static_cast<int>(source.height);
+        keyframe_(keyframe),
+        tile_x_(tile_x),
+        tile_y_(tile_y),
+        gm_plan_(gm_plan) {
+    width_ = tile_w > 0 ? tile_w : static_cast<int>(source.width);
+    height_ = tile_h > 0 ? tile_h : static_cast<int>(source.height);
+    frame_mi_cols_ = static_cast<int>(2U * ((source.width + 7U) >> 3U));
+    frame_mi_rows_ = static_cast<int>(2U * ((source.height + 7U) >> 3U));
 
     geometry_.width = width_;
     geometry_.height = height_;
@@ -305,8 +459,18 @@ class GpuFrameEncoder {
     mv_grid_.assign(static_cast<std::size_t>(mi_rows_) *
                         static_cast<std::size_t>(mi_cols_),
                     inter::mc::MiInfo{});
+    // §5.20.5.5 IntraJointMode grid for the --video-intra-full filter flags.
+    // Inter leaves write 0, matching inter_block_mode_info().
+    intra_joint_.assign(static_cast<std::size_t>(mi_rows_) *
+                            static_cast<std::size_t>(mi_cols_),
+                        0);
+    decoded_[0].reset(mi_cols_, mi_rows_);
+    decoded_[1].reset(mi_cols_ / 2, mi_rows_ / 2);
+    decoded_[2].reset(mi_cols_ / 2, mi_rows_ / 2);
 
-    if (!backend_.begin_frame(source_, mi_cols_, mi_rows_, references, error)) {
+    if (!backend_.begin_frame(source_, frame_mi_cols_, frame_mi_rows_, tile_x_,
+                              tile_y_, mi_cols_, mi_rows_, references,
+                              options_.base_q_idx, error)) {
       begin_ok_ = false;
     }
   }
@@ -332,15 +496,80 @@ class GpuFrameEncoder {
       if (!collect_node(sb, error)) return false;
     }
 
+    // Opt-in M2 loop filters: decisions and tile syntax on the host, pixels on
+    // the CUDA kernels through the backend hook.
+    filter_plan_ = av2enc::video::post::VideoFilterPlan{};
+    if (options_.loop_filters.any()) {
+      av2enc::video::post::VideoLoopFilterFrame lf;
+      lf.width = width_;
+      lf.height = height_;
+      lf.mi_cols = mi_cols_;
+      lf.mi_rows = mi_rows_;
+      lf.frame_is_intra = keyframe_;
+      lf.base_q_idx = options_.base_q_idx;
+      lf.num_total_refs = num_total_refs_;
+      lf.restricted_oh = -1;
+      for (int r = 0; r < 2; ++r) {
+        lf.ref_order_hints[r] = ref_order_hints_[static_cast<std::size_t>(r)];
+        lf.frame_distance[r] = frame_distance_[static_cast<std::size_t>(r)];
+      }
+      std::vector<av2enc::video::post::VideoLoopFilterBlock> filter_blocks;
+      if (!keyframe_) {
+        filter_blocks.reserve(blocks_.size());
+        for (const av2enc::video::syntax::BlockSyntax& leaf : blocks_) {
+          if (leaf.partition !=
+              static_cast<std::uint8_t>(PartitionType::kNone)) {
+            continue;
+          }
+          av2enc::video::post::VideoLoopFilterBlock block;
+          block.mi_row = leaf.mi_row;
+          block.mi_col = leaf.mi_col;
+          block.w4 =
+              partition::block_width(
+                  static_cast<partition::BlockSize>(leaf.bsize)) >>
+              2;
+          block.h4 =
+              partition::block_height(
+                  static_cast<partition::BlockSize>(leaf.bsize)) >>
+              2;
+          block.skip = leaf.is_inter && leaf.skip_flag != 0;
+          filter_blocks.push_back(block);
+        }
+      }
+      lf.blocks = filter_blocks;
+      const std::span<const std::uint8_t> src[3] = {source_.y, source_.u,
+                                                    source_.v};
+      for (int plane = 0; plane < 3; ++plane) {
+        lf.plane[plane] = recon_[plane].samples.data();
+        lf.stride[plane] = recon_[plane].width;
+        lf.source[plane] = src[plane].data();
+        lf.source_stride[plane] =
+            plane == 0 ? static_cast<int>(source_.width)
+                       : static_cast<int>(source_.width / 2);
+      }
+      BackendFilterHooks hooks(backend_);
+      if (!av2enc::video::post::run_video_loop_filters(
+              lf, options_.loop_filters, &filter_plan_, &hooks, &error)) {
+        return false;
+      }
+    }
+
     av2enc::video::syntax::FramePlan plan;
     plan.width = width_;
     plan.height = height_;
     plan.sb_size = 64;
     plan.inter_frame = !keyframe_;
+    plan.tx_mode_select = opt_enable_tx_search(options_);
+    plan.reduced_tx_part_set = false;
+    plan.reduced_tx_set = 0;
     plan.num_total_refs = num_total_refs_;
     plan.reference_select = options_.compound && num_total_refs_ > 1;
     plan.mv_precision = options_.mv_precision;
     plan.frame_distance = frame_distance_;
+    if (gm_plan_ != nullptr) {
+      plan.gm_num_refs = gm_plan_->num_refs;
+      plan.gm_params = gm_plan_->params;
+    }
     VideoConfig config;
     config.max_frame_width = static_cast<std::uint16_t>(width_);
     config.max_frame_height = static_cast<std::uint16_t>(height_);
@@ -354,12 +583,31 @@ class GpuFrameEncoder {
     config.avg_cdf_type = true;
     set_config_drl_reorder(config, opt_drl_reorder(options_));
     config.enable_cfl_intra = true;
+    config.enable_deblock = opt_video_deblock(options_);
+    config.tx_mode_select = opt_enable_tx_search(options_);
 
     std::size_t tile_bytes = 0;
     if (!av2enc::video::syntax::assemble_video_frame(
             plan, blocks_, levels_, config, tile_payload, error, &tile_bytes,
-            cdf_seed_, cdf_final_)) {
+            cdf_seed_, cdf_final_,
+            filter_plan_.any() ? &filter_plan_ : nullptr)) {
       return false;
+    }
+    // §7.17: deblock the device reconstruction before end_frame().  The
+    // backend runs the CUDA deblock kernel and returns the filtered planes;
+    // the host mirror is replaced so the emitted recon/reference matches the
+    // decoder.
+    if (opt_video_deblock(options_)) {
+      av2enc::video::post::VideoDeblockGrid grid;
+      if (!av2enc::video::post::build_video_deblock_grid(
+              blocks_, mi_cols_, mi_rows_, options_.base_q_idx, keyframe_,
+              &grid, &error)) {
+        return false;
+      }
+      if (!backend_.deblock_frame(grid, recon_[0].samples, recon_[1].samples,
+                                  recon_[2].samples, error)) {
+        return false;
+      }
     }
     blocks = std::move(blocks_);
     levels = std::move(levels_);
@@ -371,6 +619,9 @@ class GpuFrameEncoder {
   const Plane& recon(int plane) const { return recon_[plane]; }
   std::uint32_t inter_blocks() const { return inter_blocks_; }
   std::uint32_t intra_blocks() const { return intra_blocks_; }
+  const av2enc::video::post::VideoFilterPlan& filter_plan() const {
+    return filter_plan_;
+  }
 
  private:
   bool decide_partition(std::string& error) {
@@ -396,7 +647,9 @@ class GpuFrameEncoder {
       if (index.find(key) == index.end()) {
         index.emplace(key, nodes.size());
         keys.push_back(key);
-        nodes.push_back(detail::VarianceNode{rect.x, rect.y, rect.visible_width,
+        nodes.push_back(detail::VarianceNode{rect.x + tile_x_,
+                                             rect.y + tile_y_,
+                                             rect.visible_width,
                                              rect.visible_height});
       }
       partition::NodeCosts costs;
@@ -491,8 +744,8 @@ class GpuFrameEncoder {
       for (int ref = 0; ref < num_total_refs_; ++ref) {
         job_keys.push_back(me_key(leaf.mi_row, leaf.mi_col, leaf.size, ref));
         detail::MeRequest request;
-        request.x = leaf.mi_col * 4;
-        request.y = leaf.mi_row * 4;
+        request.x = leaf.mi_col * 4 + tile_x_;
+        request.y = leaf.mi_row * 4 + tile_y_;
         request.w = w;
         request.h = h;
         request.ref_index = ref;
@@ -525,6 +778,12 @@ class GpuFrameEncoder {
   }
 
   bool collect_node(const PartitionNode& node, std::string& error) {
+    if (node.depth == 0) {
+      // §6.19.2.3 clear_block_decoded_flags(): the map is superblock-local.
+      decoded_[0].reset(mi_cols_, mi_rows_);
+      decoded_[1].reset(mi_cols_ / 2, mi_rows_ / 2);
+      decoded_[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+    }
     const std::size_t index = blocks_.size();
     blocks_.emplace_back();
     av2enc::video::syntax::BlockSyntax& entry = blocks_.back();
@@ -558,6 +817,34 @@ class GpuFrameEncoder {
     return true;
   }
 
+  // §7.12.2.2 GLOBALMV projection.  Mirrors the CPU encoder: a non-identity
+  // model selects the warped predictor for blocks >= 8x8 (§7.13.3.14).
+  void global_mv_for_block(int ref_index, int mi_row, int mi_col, int bw4,
+                           int bh4, bool& use_warp,
+                           inter::mc::Mv& mv) const {
+    use_warp = false;
+    mv = inter::mc::Mv{0, 0};
+    if (gm_plan_ == nullptr || ref_index < 0 ||
+        ref_index >= gm_plan_->num_refs) {
+      return;
+    }
+    const inter::gme::GmParams& params =
+        gm_plan_->params[static_cast<std::size_t>(ref_index)];
+    if (params.type == inter::gme::GmType::kIdentity) return;
+    inter::gme::MvPrecision precision = inter::gme::MvPrecision::kEighthPel;
+    if (options_.mv_precision == 1) {
+      precision = inter::gme::MvPrecision::kQuarterPel;
+    } else if (options_.mv_precision == 2) {
+      precision = inter::gme::MvPrecision::kHalfPel;
+    }
+    int projected[2] = {0, 0};
+    inter::gme::get_warp_motion_vector(params, mi_col, mi_row, bw4, bh4,
+                                       mi_cols_, mi_rows_, precision,
+                                       projected);
+    mv = inter::mc::Mv{projected[0], projected[1]};
+    use_warp = bw4 * 4 >= 8 && bh4 * 4 >= 8;
+  }
+
   merge::StackParams make_stack_params(int mi_row, int mi_col, int w4,
                                        int h4, int ref_index) const {
     merge::StackParams params;
@@ -573,8 +860,11 @@ class GpuFrameEncoder {
     params.ref_frame[0] = static_cast<std::int8_t>(ref_index);
     params.ref_frame[1] = merge::kRefNone;
     params.is_compound = false;
-    params.global_mv[0] = inter::mc::Mv{0, 0};
-    params.global_mv[1] = inter::mc::Mv{0, 0};
+    bool gm_use_warp = false;
+    inter::mc::Mv gm_mv{};
+    global_mv_for_block(ref_index, mi_row, mi_col, w4, h4, gm_use_warp, gm_mv);
+    params.global_mv[0] = gm_mv;
+    params.global_mv[1] = gm_mv;
     // DRL reordering is rejected by the CLI and by the entry-point validation;
     // keep the spec-exact stack with reordering disabled.
     params.reorder = merge::DrlReorder::kDisabled;
@@ -606,6 +896,12 @@ class GpuFrameEncoder {
     const int ch = h / 2;
     const int cx0 = x0 / 2;
     const int cy0 = y0 / 2;
+    // Absolute frame coordinates for source reads and motion compensation.
+    // Coded geometry, block syntax and prediction availability stay tile-local.
+    const int ax0 = x0 + tile_x_;
+    const int ay0 = y0 + tile_y_;
+    const int acx0 = cx0 + tile_x_ / 2;
+    const int acy0 = cy0 + tile_y_ / 2;
     // Mirror the CPU reference: inter candidates are only evaluated when the
     // luma block fits inside the reference planes.  At the bottom/right frame
     // edge a 64x64 node can straddle the plane; the CPU's predict_plane()
@@ -630,11 +926,17 @@ class GpuFrameEncoder {
     std::vector<inter::mc::Mv> score_mv;
     std::vector<inter::mc::Mv> score_mvd;
 
+    // §7.13.3.19/.20 warped GLOBALMV candidates are scored separately because
+    // their prediction is not a single translational MV.
+    std::vector<detail::WarpJob> warp_jobs;
+    std::vector<inter::mc::Mv> warp_mv;
+    std::vector<int> warp_ref;
+
     const auto add_score = [&](int kind, int drl, inter::mc::Mv mv,
                                inter::mc::Mv mvd, int ref_index) {
       detail::InterJob job;
-      job.x = x0;
-      job.y = y0;
+      job.x = x0 + tile_x_;
+      job.y = y0 + tile_y_;
       job.w = w;
       job.h = h;
       job.mv_y = mv.y;
@@ -656,7 +958,29 @@ class GpuFrameEncoder {
             load_stack(r, c, w4, h4, ref_index, stack_params, stack);
 
         if (inter_fits) {
-          add_score(0, 0, inter::mc::Mv{0, 0}, inter::mc::Mv{0, 0}, ref_index);
+          bool gm_use_warp = false;
+          inter::mc::Mv gm_mv{};
+          global_mv_for_block(ref_index, r, c, w4, h4, gm_use_warp, gm_mv);
+          if (gm_use_warp && gm_plan_ != nullptr &&
+              ref_index < gm_plan_->num_refs) {
+            detail::WarpJob job;
+            job.x = x0;
+            job.y = y0;
+            job.w = w;
+            job.h = h;
+            job.mi_row = r;
+            job.mi_col = c;
+            job.bw4 = w4;
+            job.bh4 = h4;
+            job.ref_index = ref_index;
+            job.params =
+                gm_plan_->params[static_cast<std::size_t>(ref_index)];
+            warp_jobs.push_back(job);
+            warp_mv.push_back(gm_mv);
+            warp_ref.push_back(ref_index);
+          } else {
+            add_score(0, 0, gm_mv, inter::mc::Mv{0, 0}, ref_index);
+          }
         }
         if (trace_ && inter_fits && !have_stack) {
           std::cerr << "  empty stack r=" << r << " c=" << c << " size="
@@ -720,6 +1044,31 @@ class GpuFrameEncoder {
       }
     }
 
+    if (!warp_jobs.empty()) {
+      std::vector<std::int64_t> sse;
+      if (!backend_.warp_sse_batch(warp_jobs, sse, error)) return false;
+      if (sse.size() != warp_jobs.size()) {
+        error = "backend returned the wrong warp-SSE count";
+        return false;
+      }
+      for (std::size_t i = 0; i < warp_jobs.size(); ++i) {
+        InterCandidate cand;
+        cand.valid = true;
+        cand.use_warp = true;
+        cand.mode = av2enc::video::syntax::kInterGlobalMv;
+        cand.drl_index = 0;
+        cand.ref_index = warp_ref[i];
+        cand.mv = warp_mv[i];
+        cand.sse = sse[i];
+        if (trace_) {
+          std::cerr << "  cand warp ref=" << cand.ref_index << " mv=("
+                    << cand.mv.y << "," << cand.mv.x << ") sse=" << cand.sse
+                    << "\n";
+        }
+        consider(cand);
+      }
+    }
+
     if (!score_jobs.empty()) {
       std::vector<std::int64_t> sse;
       if (!backend_.inter_sse_batch(score_jobs, sse, error)) return false;
@@ -757,8 +1106,8 @@ class GpuFrameEncoder {
     if (!keyframe_ && options_.compound && num_total_refs_ >= 2 && w >= 8 &&
         h >= 8 && !options_.force_intra && inter_fits) {
       detail::InterJob job;
-      job.x = x0;
-      job.y = y0;
+      job.x = x0 + tile_x_;
+      job.y = y0 + tile_y_;
       job.w = w;
       job.h = h;
       job.mv_y = 0;
@@ -784,15 +1133,52 @@ class GpuFrameEncoder {
     }
 
     // Intra fallback: DC prediction + DCT residual, the M1 transform path.
+    // --video-intra-full runs the still product's 61-candidate luma search
+    // through the device module; chroma stays DC_PRED.
     bool have_intra = false;
     std::int64_t intra_sse = 0;
     std::array<detail::PlaneTx, 3> intra_tx;
+    int intra_y_mode = 0;        // AV2 YMode (0 = DC_PRED)
+    int intra_y_angle_delta = 0;
+    detail::TxSearchPlan intra_luma_plan;
+    bool intra_luma_searched = false;
+    const int tx_qindex = static_cast<int>(options_.base_q_idx);
+    const double tx_lambda = opt_tx_rd_lambda(options_);
     if (keyframe_ || options_.enable_intra_fallback || options_.force_intra) {
-      if (!backend_.intra_candidate(x0, y0, w, h, intra_tx, error)) {
-        return false;
+      bool predicted = false;
+      if (opt_enable_intra_full(options_)) {
+        bool above_smooth = false;
+        bool left_smooth = false;
+        luma_neighbor_smooth(r, c, above_smooth, left_smooth);
+        // §5.20.9.1 availability from the §6.19.2.3 BlockDecoded replay.
+        const av2enc::video::intra_search::Availability luma_avail =
+            av2enc::video::intra_search::availability(
+                decoded_[0], c, r, w4, h4, mi_cols_, mi_rows_,
+                /*sb_mi=*/16);
+        const av2enc::video::intra_search::Availability chroma_avail =
+            av2enc::video::intra_search::availability(
+                decoded_[1], c / 2, r / 2, cw / 4, ch / 4, mi_cols_ / 2,
+                mi_rows_ / 2, /*sb_mi=*/8);
+        predicted = backend_.intra_full_candidate(
+            x0, y0, w, h, luma_avail, chroma_avail, above_smooth, left_smooth,
+            intra_tx, intra_y_mode, intra_y_angle_delta, error);
+      } else {
+        predicted = backend_.intra_candidate(x0, y0, w, h, intra_tx, error);
+      }
+      if (!predicted) return false;
+      if (opt_enable_tx_search(options_)) {
+        detail::InterJob unused_job;
+        if (!backend_.tx_search_luma(false, unused_job, x0, y0, w, h,
+                                     tx_qindex, tx_lambda,
+                                     /*partition=*/false, intra_luma_plan,
+                                     error)) {
+          return false;
+        }
+        intra_luma_searched = true;
+        intra_tx[0].recon = intra_luma_plan.recon;
       }
       intra_sse =
-          sse_against_source(source_, 0, x0, y0, w, h, intra_tx[0].recon);
+          sse_against_source(source_, 0, ax0, ay0, w, h, intra_tx[0].recon);
       if (trace_) {
         std::cerr << "  cand intra sse=" << intra_sse << "\n";
       }
@@ -810,32 +1196,65 @@ class GpuFrameEncoder {
     std::vector<std::uint8_t> inter_u;
     std::vector<std::uint8_t> inter_v;
     std::array<detail::PlaneTx, 3> res_tx;
+    detail::TxSearchPlan res_luma_plan;
+    bool res_luma_searched = false;
     std::int64_t inter_luma_sse = best.sse;
     detail::InterJob best_job;
-    best_job.x = x0;
-    best_job.y = y0;
+    best_job.x = ax0;
+    best_job.y = ay0;
     best_job.w = w;
     best_job.h = h;
     best_job.mv_y = best.mv.y;
     best_job.mv_x = best.mv.x;
     best_job.ref_index = best.ref_index;
+    detail::WarpJob best_warp;
+    best_warp.x = x0;
+    best_warp.y = y0;
+    best_warp.w = w;
+    best_warp.h = h;
+    best_warp.mi_row = r;
+    best_warp.mi_col = c;
+    best_warp.bw4 = w4;
+    best_warp.bh4 = h4;
+    best_warp.ref_index = best.ref_index;
+    if (gm_plan_ != nullptr && best.ref_index < gm_plan_->num_refs) {
+      best_warp.params =
+          gm_plan_->params[static_cast<std::size_t>(best.ref_index)];
+    }
+    const auto predict_best = [&](std::vector<std::uint8_t>& py,
+                                  std::vector<std::uint8_t>& pu,
+                                  std::vector<std::uint8_t>& pv) {
+      if (best.use_warp) {
+        return backend_.warp_420(best_warp, py, pu, pv, error);
+      }
+      return backend_.mc_420(best_job, py, pu, pv, error);
+    };
     if (inter_residual_enabled && best.valid) {
-      if (!backend_.mc_420(best_job, inter_y, inter_u, inter_v, error)) {
+      if (!predict_best(inter_y, inter_u, inter_v)) {
         return false;
       }
       inter_luma_sse =
-          sse_against_source(source_, 0, x0, y0, w, h, inter_y);
+          sse_against_source(source_, 0, ax0, ay0, w, h, inter_y);
       const std::int64_t pred_total =
           inter_luma_sse +
-          sse_against_source(source_, 1, cx0, cy0, cw, ch, inter_u) +
-          sse_against_source(source_, 2, cx0, cy0, cw, ch, inter_v);
+          sse_against_source(source_, 1, acx0, acy0, cw, ch, inter_u) +
+          sse_against_source(source_, 2, acx0, acy0, cw, ch, inter_v);
       if (!backend_.inter_residual_420(best_job, res_tx, error)) return false;
+      if (opt_enable_tx_search(options_)) {
+        if (!backend_.tx_search_luma(true, best_job, x0, y0, w, h, tx_qindex,
+                                     tx_lambda, /*partition=*/true,
+                                     res_luma_plan, error)) {
+          return false;
+        }
+        res_luma_searched = true;
+        res_tx[0].recon = res_luma_plan.recon;
+      }
       const std::int64_t res_total =
-          sse_against_source(source_, 0, x0, y0, w, h,
+          sse_against_source(source_, 0, ax0, ay0, w, h,
                              res_tx[0].recon) +
-          sse_against_source(source_, 1, cx0, cy0, cw, ch,
+          sse_against_source(source_, 1, acx0, acy0, cw, ch,
                              res_tx[1].recon) +
-          sse_against_source(source_, 2, cx0, cy0, cw, ch,
+          sse_against_source(source_, 2, acx0, acy0, cw, ch,
                              res_tx[2].recon);
       const int rcoded[3] = {w, cw, cw};
       const int rcoded_h[3] = {h, ch, ch};
@@ -851,10 +1270,15 @@ class GpuFrameEncoder {
             res_tx[static_cast<std::size_t>(plane)].levels,
             params_opt->w, params_opt->h, nullptr);
       }
-      const bool all_zero = eobs[0] == 0 && eobs[1] == 0 && eobs[2] == 0;
+      const bool all_zero =
+          (res_luma_searched ? luma_search_all_zero(res_luma_plan)
+                             : eobs[0] == 0) &&
+          eobs[1] == 0 && eobs[2] == 0;
       const double kLambda = opt_inter_rd_lambda(options_);
       res_bits =
-          3.0 + estimate_tx_bits(eobs[0], res_tx[0].levels, true) +
+          3.0 + (res_luma_searched
+                     ? luma_search_bits(res_luma_plan, true)
+                     : estimate_tx_bits(eobs[0], res_tx[0].levels, true)) +
           estimate_tx_bits(eobs[1], res_tx[1].levels, false) +
           estimate_tx_bits(eobs[2], res_tx[2].levels, false);
       const bool want =
@@ -868,7 +1292,7 @@ class GpuFrameEncoder {
         inter_u = res_tx[1].recon;
         inter_v = res_tx[2].recon;
         inter_luma_sse =
-            sse_against_source(source_, 0, x0, y0, w, h, inter_y);
+            sse_against_source(source_, 0, ax0, ay0, w, h, inter_y);
       }
       if (trace_) {
         std::cerr << "  cand inter final sse=" << inter_luma_sse
@@ -895,10 +1319,14 @@ class GpuFrameEncoder {
           intra_eobs[plane] = eob_from_levels(
               intra_tx[static_cast<std::size_t>(plane)].levels,
               params_opt->w, params_opt->h, nullptr);
-          intra_bits += estimate_tx_bits(
-              intra_eobs[plane],
-              intra_tx[static_cast<std::size_t>(plane)].levels,
-              false);
+          if (plane == 0 && intra_luma_searched) {
+            intra_bits += luma_search_bits(intra_luma_plan, false);
+          } else {
+            intra_bits += estimate_tx_bits(
+                intra_eobs[plane],
+                intra_tx[static_cast<std::size_t>(plane)].levels,
+                false);
+          }
         }
         double inter_bits = 8.0;
         if (inter_residual) inter_bits += res_bits;
@@ -916,8 +1344,8 @@ class GpuFrameEncoder {
       }
       entry.is_inter = 0;
       entry.skip_flag = 0;
-      entry.y_mode = 0;  // DC_PRED
-      entry.y_angle_delta = 0;
+      entry.y_mode = static_cast<std::uint8_t>(intra_y_mode);
+      entry.y_angle_delta = static_cast<std::int8_t>(intra_y_angle_delta);
       entry.uv_mode = 0;  // DC_PRED
       write_plane_block(recon_[0], x0, y0, w, h, intra_tx[0].recon);
       write_plane_block(recon_[1], cx0, cy0, cw, ch, intra_tx[1].recon);
@@ -928,9 +1356,12 @@ class GpuFrameEncoder {
         return false;
       }
       entry.levels_offset = static_cast<std::uint32_t>(levels_.size());
+      if (intra_luma_searched) {
+        write_luma_search_plan(entry, intra_luma_plan, levels_);
+      }
       const int coded[3] = {w, cw, cw};
       const int coded_h[3] = {h, ch, ch};
-      for (int plane = 0; plane < 3; ++plane) {
+      for (int plane = intra_luma_searched ? 1 : 0; plane < 3; ++plane) {
         const auto params_opt = txv::make_tx_params(
             coded[plane], coded_h[plane], txv::TxType::kDctDct);
         if (!params_opt.has_value()) {
@@ -957,6 +1388,9 @@ class GpuFrameEncoder {
         }
       }
       update_mv_grid(r, c, w4, h4, 0, 0, inter::mc::Mv{0, 0});
+      set_intra_joint(r, c, w4, h4,
+                      av2enc::video::syntax::intra_joint_mode(
+                          intra_y_mode, intra_y_angle_delta));
       ++intra_blocks_;
       if (trace_) {
         std::cerr << "m2 intra r=" << r << " c=" << c << " " << w << "x" << h
@@ -969,8 +1403,7 @@ class GpuFrameEncoder {
                                      error)) {
             return false;
           }
-        } else if (!backend_.mc_420(best_job, inter_y, inter_u, inter_v,
-                                    error)) {
+        } else if (!predict_best(inter_y, inter_u, inter_v)) {
           return false;
         }
       }
@@ -983,8 +1416,10 @@ class GpuFrameEncoder {
       entry.ref_index1 = 1;
       entry.compound_joint = 0;
       entry.compound_mode = 3;  // GLOBAL_GLOBALMV
-      entry.mv_y = best.mv.y;
-      entry.mv_x = best.mv.x;
+      entry.mv_y =
+          best.mode == av2enc::video::syntax::kInterGlobalMv ? 0 : best.mv.y;
+      entry.mv_x =
+          best.mode == av2enc::video::syntax::kInterGlobalMv ? 0 : best.mv.x;
       entry.mvd_y = best.mvd.y;
       entry.mvd_x = best.mvd.x;
       write_plane_block(recon_[0], x0, y0, w, h, inter_y);
@@ -996,9 +1431,12 @@ class GpuFrameEncoder {
           return false;
         }
         entry.levels_offset = static_cast<std::uint32_t>(levels_.size());
+        if (res_luma_searched) {
+          write_luma_search_plan(entry, res_luma_plan, levels_);
+        }
         const int coded[3] = {w, cw, cw};
         const int coded_h[3] = {h, ch, ch};
-        for (int plane = 0; plane < 3; ++plane) {
+        for (int plane = res_luma_searched ? 1 : 0; plane < 3; ++plane) {
           const auto params_opt = txv::make_tx_params(
               coded[plane], coded_h[plane], txv::TxType::kDctDct);
           if (!params_opt.has_value()) {
@@ -1021,6 +1459,7 @@ class GpuFrameEncoder {
       }
       update_mv_grid(r, c, w4, h4, 1, best.ref_index, best.mv,
                      best.compound ? 1 : merge::kRefNone);
+      set_intra_joint(r, c, w4, h4, 0);  // inter_block_mode_info(): DC
       ++inter_blocks_;
       if (trace_) {
         std::cerr << "m2 inter r=" << r << " c=" << c << " " << w << "x" << h
@@ -1033,8 +1472,49 @@ class GpuFrameEncoder {
       }
     }
 
+    // §6.19.2.3: this leaf's cells are now decoded for the following leaves.
+    decoded_[0].fill(c, r, w4, h4);
+    decoded_[1].fill(c / 2, r / 2, cw / 4, ch / 4);
+    decoded_[2].fill(c / 2, r / 2, cw / 4, ch / 4);
     (void)node;
     return true;
+  }
+
+  // §7.13.2.15/.16 neighbour smooth flags at the coding-block origin, derived
+  // from the IntraJointMode grid exactly like the CPU reference's
+  // luma_neighbor_smooth().  Only --video-intra-full needs them.
+  void luma_neighbor_smooth(int r, int c, bool& above_smooth,
+                            bool& left_smooth) const {
+    above_smooth = false;
+    left_smooth = false;
+    auto joint_is_smooth = [](int joint) { return joint >= 1 && joint <= 3; };
+    if (r > 0 && c < mi_cols_) {
+      above_smooth = joint_is_smooth(
+          intra_joint_[static_cast<std::size_t>(r - 1) *
+                           static_cast<std::size_t>(mi_cols_) +
+                       static_cast<std::size_t>(c)]);
+    }
+    if (c > 0 && r < mi_rows_) {
+      left_smooth = joint_is_smooth(
+          intra_joint_[static_cast<std::size_t>(r) *
+                           static_cast<std::size_t>(mi_cols_) +
+                       static_cast<std::size_t>(c - 1)]);
+    }
+  }
+
+  void set_intra_joint(int r, int c, int w4, int h4, int joint) {
+    for (int yy = 0; yy < h4; ++yy) {
+      const int rr = r + yy;
+      if (rr >= mi_rows_) break;
+      for (int xx = 0; xx < w4; ++xx) {
+        const int cc = c + xx;
+        if (cc >= mi_cols_) break;
+        intra_joint_[static_cast<std::size_t>(rr) *
+                         static_cast<std::size_t>(mi_cols_) +
+                     static_cast<std::size_t>(cc)] =
+            static_cast<std::uint8_t>(joint);
+      }
+    }
   }
 
   void update_mv_grid(int r, int c, int w4, int h4, int is_inter,
@@ -1078,6 +1558,11 @@ class GpuFrameEncoder {
   std::vector<std::uint16_t>* cdf_final_ = nullptr;
   bool trace_ = false;
   bool keyframe_ = false;
+  int tile_x_ = 0;
+  int tile_y_ = 0;
+  int frame_mi_cols_ = 0;
+  int frame_mi_rows_ = 0;
+  const GmFramePlan* gm_plan_ = nullptr;
   bool begin_ok_ = true;
   int width_ = 0;
   int height_ = 0;
@@ -1087,7 +1572,11 @@ class GpuFrameEncoder {
   partition::FrameDecision frame_;
   bool missing_cost_ = false;
   Plane recon_[3];
+  av2enc::video::post::VideoFilterPlan filter_plan_;
+  std::array<int, 7> ref_order_hints_{};
   std::vector<inter::mc::MiInfo> mv_grid_;
+  std::vector<std::uint8_t> intra_joint_;
+  std::array<av2enc::video::intra_search::BlockDecoded, 3> decoded_;
   std::vector<av2enc::video::syntax::BlockSyntax> blocks_;
   std::vector<std::int32_t> levels_;
   std::vector<detail::MeOutcome> me_results_;
@@ -1142,8 +1631,8 @@ VideoConfig make_config(std::uint32_t width, std::uint32_t height,
   config.max_frame_height = static_cast<std::uint16_t>(height);
   config.base_q_idx = options.base_q_idx;
   config.order_hint_bits = 4;
-  config.num_ref_frames =
-      options.num_total_refs > 1 ? 8 : 2;
+  config.num_ref_frames = static_cast<std::uint8_t>(
+      av2enc::video::resolved_num_ref_frames(options));
   config.num_total_refs = 1;
   config.max_drl_bits_minus_1 = 4;
   config.disable_cdf_update = !options.adaptive_cdf;
@@ -1151,7 +1640,33 @@ VideoConfig make_config(std::uint32_t width, std::uint32_t height,
   config.avg_cdf_type = true;
   set_config_drl_reorder(config, opt_drl_reorder(options));
   config.enable_cfl_intra = true;
-  if (options.mfh) config.cur_mfh_id = 1;
+  config.enable_deblock = opt_video_deblock(options);
+  config.enable_global_motion = options.enable_gme;
+  // §5.4.10 opt-in M2 loop filters.
+  if (options.loop_filters.cdef) {
+    config.enable_cdef = true;
+    config.cdef_on_skip_txfm_mode =
+        options.loop_filters.cdef_on_skip_txfm_mode;
+    config.cdef_on_skip_txfm_always_on =
+        options.loop_filters.cdef_on_skip_txfm_mode == 1;
+    config.cdef_on_skip_txfm_disabled =
+        options.loop_filters.cdef_on_skip_txfm_mode == 0;
+  }
+  if (options.loop_filters.ccso) {
+    config.enable_ccso = true;
+    config.ccso_unit_matches_sb_size = true;
+  }
+  if (options.loop_filters.gdf) {
+    config.enable_gdf = true;
+    config.gdf_unit_matches_sb_size = true;
+  }
+  if (options.loop_filters.wiener || options.loop_filters.chroma_lr) {
+    config.enable_restoration = true;
+    config.lr_disable_luma_pc_wiener = true;
+    config.lr_disable_luma_wiener_ns = !options.loop_filters.wiener;
+    config.lr_uv_present = options.loop_filters.chroma_lr;
+    config.lr_disable_chroma_wiener_ns = !options.loop_filters.chroma_lr;
+  }  config.tx_mode_select = opt_enable_tx_search(options);  if (options.mfh) config.cur_mfh_id = 1;
   if (options.video_timing) {
     // §5.4.1 decoder-compatible timing block.  The nested §5.4.13 block stays
     // off: pinned dav2d f9dafbc cannot parse it (docs/negative-results.md).
@@ -1204,10 +1719,7 @@ VideoFrameHeader make_plan_header(bool keyframe, std::uint32_t order_hint,
 
 bool common_gop_checks(std::span<const VideoInputFrame> frames,
                        const VideoOptions& options, std::string& error) {
-  if (!options.frame_base_q_idx.empty()) {
-    error = "the GPU B-frame/temporal-layer plan requires a fixed base_q_idx";
-    return false;
-  }
+  (void)options;  // per-mode option checks live in the plan-specific wrappers
   if (frames.empty()) {
     error = "no input frames";
     return false;
@@ -1227,6 +1739,356 @@ bool common_gop_checks(std::span<const VideoInputFrame> frames,
   return true;
 }
 
+// Multi-tile key + flat P chain.  This mirrors src/pipeline/video/video_frame.cpp:
+// every tile is an independent tile-local picture (fresh entropy state,
+// tile-local coded geometry and reconstruction, cleared prediction contexts)
+// while ME/MC read the whole-frame reference.  The tile payloads are then
+// framed by the CPU post writer, so header bits and entropy bytes have exactly
+// one implementation.
+bool encode_tiled_sequence_gpu(Backend& backend,
+                               std::span<const VideoInputFrame> frames,
+                               const VideoOptions& options,
+                               VideoSequenceResult& result, std::string& error) {
+  namespace post = ::av2enc::video::post;
+  if (!common_gop_checks(frames, options, error)) return false;
+  if (options.num_total_refs != 1) {
+    error = "--tiles requires --video-refs 1: the tiled frame header signals "
+            "a single explicit reference slot";
+    return false;
+  }
+  if (options.mv_precision != 0) {
+    error = "--tiles requires eighth-pel MV precision (the tiled frame header "
+            "writer signals the 1/8-pel pair)";
+    return false;
+  }
+  if (options.cdf_continuity) {
+    error = "GPU M2 baseline does not implement cross-frame CDF carry";
+    return false;
+  }
+  const int width = static_cast<int>(frames[0].width);
+  const int height = static_cast<int>(frames[0].height);
+  const post::VideoTilePlan planned = post::plan_video_tiles(
+      width, height, options.tile_cols, options.tile_rows,
+      tiles::kSuperblockPixels64, 7, 0);
+  if (!planned.ok) {
+    error = "--tiles " + std::to_string(options.tile_cols) + "x" +
+            std::to_string(options.tile_rows) + " rejected: " + planned.error;
+    return false;
+  }
+  const tiles::TileLayout& layout = planned.layout;
+  post::VideoPostSequenceOptions tile_sequence;
+  tile_sequence.filters.disable_loopfilters_across_tiles = true;
+  tile_sequence.enable_avg_cdf = options.avg_cdf;
+  tile_sequence.avg_cdf_type = true;
+
+  auto config = make_config(static_cast<std::uint32_t>(width),
+                            static_cast<std::uint32_t>(height), options);
+
+  // §8.2.4 average-CDF / §7.5 frame-end bookkeeping, one fresh state per tile.
+  const bool cdf_chain = options.avg_cdf || options.adaptive_cdf;
+  std::vector<std::uint16_t> cdf_tile;
+  std::vector<std::uint16_t> cdf_scratch;
+  std::vector<std::uint16_t> cdf_frame;
+  std::vector<std::uint16_t> cdf_saved;
+  std::vector<std::uint16_t> cdf_defaults;
+  std::vector<entropy::avg_cdf::CdfTable> cdf_bank_tables;
+  entropy::avg_cdf::CdfBank cdf_bank;
+  std::array<std::vector<std::uint16_t>, 8> cdf_slots;
+  if (cdf_chain) {
+    const std::size_t words = av2enc::video::syntax::cdf_image_words();
+    cdf_frame.assign(words, 0);
+    cdf_tile.assign(words, 0);
+    cdf_saved.assign(words, 0);
+    cdf_defaults.assign(words, 0);
+    if (!av2enc::video::syntax::cdf_image_defaults_for_base_q_idx(
+            static_cast<int>(options.base_q_idx), cdf_defaults, &error)) {
+      return false;
+    }
+    if (!av2enc::video::syntax::cdf_image_tables(
+            cdf_frame, cdf_tile, cdf_saved, cdf_defaults, cdf_bank_tables,
+            &error)) {
+      return false;
+    }
+    entropy::avg_cdf::CdfBankConfig bank_config;
+    bank_config.enable_avg_cdf = options.avg_cdf;
+    bank_config.avg_cdf_type = true;
+    bank_config.context_update_tile_id = 0;
+    if (!cdf_bank.init(cdf_bank_tables, bank_config, &error)) {
+      error = "average-CDF bank: " + error;
+      return false;
+    }
+    cdf_bank.begin_frame(/*reset_to_defaults=*/true);
+  }
+
+  const auto frame_qp = [&options](std::size_t index) -> std::uint8_t {
+    return options.frame_base_q_idx.empty()
+               ? options.base_q_idx
+               : options.frame_base_q_idx[index];
+  };
+  const auto options_for_frame = [&options, &frame_qp](std::size_t index) {
+    VideoOptions copy = options;
+    copy.base_q_idx = frame_qp(index);
+    copy.frame_base_q_idx.clear();
+    return copy;
+  };
+
+  // Full-frame reconstruction planes.  Each tile's coded-size output is pasted
+  // into them once per frame; they are the decoder-visible frame and the next
+  // P frame's reference.
+  const int frame_mi_cols = static_cast<int>(2U * ((width + 7U) >> 3U));
+  const int frame_mi_rows = static_cast<int>(2U * ((height + 7U) >> 3U));
+  Plane frame_recon[3];
+  frame_recon[0].resize(frame_mi_cols * 4, frame_mi_rows * 4, 0);
+  frame_recon[1].resize(frame_mi_cols * 2, frame_mi_rows * 2, 0);
+  frame_recon[2].resize(frame_mi_cols * 2, frame_mi_rows * 2, 0);
+  const auto paste_tile = [](const Plane& src, Plane& dst, int x0, int y0,
+                             int w, int h) {
+    for (int y = 0; y < h; ++y) {
+      std::memcpy(dst.samples.data() +
+                      static_cast<std::size_t>(y0 + y) *
+                          static_cast<std::size_t>(dst.stride) +
+                      static_cast<std::size_t>(x0),
+                  src.samples.data() +
+                      static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(src.stride),
+                  static_cast<std::size_t>(w));
+    }
+  };
+
+  const std::size_t tile_count = layout.tiles.size();
+  std::vector<std::vector<std::uint8_t>> payloads;
+  payloads.reserve(tile_count);
+
+  // ---- keyframe -----------------------------------------------------------
+  {
+    const std::array<int, 7> no_distance{};
+    const VideoOptions key_options = options_for_frame(0);
+    std::vector<std::uint16_t> cdf_seed;
+    if (cdf_chain) cdf_seed = cdf_tile;
+    std::uint32_t key_payload_bytes = 0;
+    std::uint32_t key_intra_blocks = 0;
+    std::uint32_t cdf_tile_index = 0;
+    payloads.clear();
+    for (const tiles::TileRect& tile : layout.tiles) {
+      if (cdf_chain) cdf_tile = cdf_seed;
+      GpuFrameEncoder encoder(
+          backend, frames[0],
+          std::span<const VideoReconFrame* const>{}, no_distance, 1,
+          key_options, options.trace, /*keyframe=*/true, error, tile.x0,
+          tile.y0, tile.pixel_width(), tile.pixel_height(),
+          cdf_chain ? std::span<const std::uint16_t>(cdf_tile)
+                    : std::span<const std::uint16_t>(),
+          cdf_chain ? &cdf_scratch : nullptr);
+      if (!encoder.begin_ok()) {
+        error = "keyframe tile " + std::to_string(cdf_tile_index) +
+                " backend setup failed: " + error;
+        return false;
+      }
+      std::vector<std::uint8_t> payload;
+      std::vector<av2enc::video::syntax::BlockSyntax> blocks;
+      std::vector<std::int32_t> levels;
+      if (!encoder.encode(payload, blocks, levels, error)) {
+        error = "keyframe encode failed: " + error;
+        return false;
+      }
+      if (payload.empty()) {
+        error = "keyframe produced an empty tile payload";
+        return false;
+      }
+      if (cdf_chain) {
+        std::copy(cdf_scratch.begin(), cdf_scratch.end(), cdf_tile.begin());
+        if (!cdf_bank.save_tile_cdfs(
+                cdf_tile_index, static_cast<std::uint32_t>(tile_count))) {
+          error = "average-CDF save_tile_cdfs rejected the keyframe tile";
+          return false;
+        }
+      }
+      ++cdf_tile_index;
+      key_payload_bytes += static_cast<std::uint32_t>(payload.size());
+      key_intra_blocks += encoder.intra_blocks();
+      paste_tile(encoder.recon(0), frame_recon[0], tile.x0, tile.y0,
+                 tile.pixel_width(), tile.pixel_height());
+      paste_tile(encoder.recon(1), frame_recon[1], tile.x0 / 2, tile.y0 / 2,
+                 tile.pixel_width() / 2, tile.pixel_height() / 2);
+      paste_tile(encoder.recon(2), frame_recon[2], tile.x0 / 2, tile.y0 / 2,
+                 tile.pixel_width() / 2, tile.pixel_height() / 2);
+      payloads.push_back(std::move(payload));
+    }
+    if (cdf_chain) {
+      cdf_bank.average_at_frame_end();
+      for (std::vector<std::uint16_t>& slot : cdf_slots) {
+        slot.assign(cdf_frame.begin(), cdf_frame.end());
+      }
+    }
+
+    config.base_q_idx = frame_qp(0);
+    post::VideoTiledFrameHeader header;
+    header.keyframe = true;
+    header.order_hint = 0;
+    header.ref_slot = 0;
+    header.refresh_frame_flags = (1U << config.num_ref_frames) - 1U;
+    header.base_q_idx = config.base_q_idx;
+    post::VideoTiledFrame frame;
+    if (!post::assemble_video_tile_group_from_payloads(
+            config, tile_sequence, header, layout, payloads, &frame, &error)) {
+      error = "keyframe: " + error;
+      return false;
+    }
+    const std::vector<std::uint8_t> td =
+        av2enc::video::make_temporal_delimiter_obu();
+    const std::vector<std::uint8_t> seq =
+        post::make_video_sequence_header_obu(config, tile_sequence, &error);
+    if (seq.empty()) {
+      error = "keyframe: tiled sequence header: " + error;
+      return false;
+    }
+    std::vector<std::uint8_t> unit;
+    unit.reserve(td.size() + seq.size() + frame.obu.size());
+    unit.insert(unit.end(), td.begin(), td.end());
+    unit.insert(unit.end(), seq.begin(), seq.end());
+    unit.insert(unit.end(), frame.obu.begin(), frame.obu.end());
+    result.units.push_back(std::move(unit));
+    result.recon.push_back(
+        to_recon_frame(frame_recon[0], frame_recon[1], frame_recon[2],
+                       static_cast<std::uint32_t>(width),
+                       static_cast<std::uint32_t>(height)));
+    result.frame_bytes.push_back(
+        static_cast<std::uint32_t>(result.units.back().size()));
+    result.tile_bytes.push_back(key_payload_bytes);
+    result.inter_blocks.push_back(0);
+    result.intra_blocks.push_back(key_intra_blocks);
+  }
+
+  std::array<VideoReconFrame, 8> slot_recon;
+  std::array<std::uint32_t, 8> slot_order{};
+  std::vector<int> recent_slots;
+  slot_recon[0] = result.recon.back();
+  slot_order[0] = 0;
+  recent_slots.push_back(0);
+
+  for (std::size_t i = 1; i < frames.size(); ++i) {
+    const std::uint32_t order_hint = static_cast<std::uint32_t>(i) & 0xFU;
+    const int ref_count = std::min<int>(
+        options.num_total_refs, static_cast<int>(recent_slots.size()));
+    std::vector<const VideoReconFrame*> references;
+    references.reserve(static_cast<std::size_t>(ref_count));
+    std::array<int, 7> frame_distance{};
+    for (int r = 0; r < ref_count; ++r) {
+      const int slot = recent_slots[static_cast<std::size_t>(r)];
+      references.push_back(&slot_recon[static_cast<std::size_t>(slot)]);
+      frame_distance[static_cast<std::size_t>(r)] =
+          relative_dist(order_hint, slot_order[static_cast<std::size_t>(slot)],
+                        4);
+    }
+    const VideoOptions frame_options = options_for_frame(i);
+    if (cdf_chain) cdf_bank.begin_frame(/*reset_to_defaults=*/true);
+    std::vector<std::uint16_t> cdf_seed;
+    if (cdf_chain) cdf_seed = cdf_tile;
+    std::uint32_t payload_bytes = 0;
+    std::uint32_t inter_blocks = 0;
+    std::uint32_t intra_blocks = 0;
+    std::uint32_t cdf_tile_index = 0;
+    payloads.clear();
+    for (const tiles::TileRect& tile : layout.tiles) {
+      if (cdf_chain) cdf_tile = cdf_seed;
+      GpuFrameEncoder encoder(
+          backend, frames[i], references, frame_distance, ref_count,
+          frame_options, options.trace, /*keyframe=*/false, error, tile.x0,
+          tile.y0, tile.pixel_width(), tile.pixel_height(),
+          cdf_chain ? std::span<const std::uint16_t>(cdf_tile)
+                    : std::span<const std::uint16_t>(),
+          cdf_chain ? &cdf_scratch : nullptr);
+      if (!encoder.begin_ok()) {
+        error = "P-frame " + std::to_string(i) + " tile " +
+                std::to_string(cdf_tile_index) + " setup failed: " + error;
+        return false;
+      }
+      std::vector<std::uint8_t> payload;
+      std::vector<av2enc::video::syntax::BlockSyntax> blocks;
+      std::vector<std::int32_t> levels;
+      if (!encoder.encode(payload, blocks, levels, error)) {
+        error = "P-frame " + std::to_string(i) + ": " + error;
+        return false;
+      }
+      if (cdf_chain) {
+        std::copy(cdf_scratch.begin(), cdf_scratch.end(), cdf_tile.begin());
+        if (!cdf_bank.save_tile_cdfs(
+                cdf_tile_index, static_cast<std::uint32_t>(tile_count))) {
+          error = "average-CDF save_tile_cdfs rejected the P-frame tile";
+          return false;
+        }
+      }
+      ++cdf_tile_index;
+      payload_bytes += static_cast<std::uint32_t>(payload.size());
+      inter_blocks += encoder.inter_blocks();
+      intra_blocks += encoder.intra_blocks();
+      paste_tile(encoder.recon(0), frame_recon[0], tile.x0, tile.y0,
+                 tile.pixel_width(), tile.pixel_height());
+      paste_tile(encoder.recon(1), frame_recon[1], tile.x0 / 2, tile.y0 / 2,
+                 tile.pixel_width() / 2, tile.pixel_height() / 2);
+      paste_tile(encoder.recon(2), frame_recon[2], tile.x0 / 2, tile.y0 / 2,
+                 tile.pixel_width() / 2, tile.pixel_height() / 2);
+      payloads.push_back(std::move(payload));
+    }
+    const int write_slot = static_cast<int>(
+        static_cast<unsigned>(i) % static_cast<unsigned>(config.num_ref_frames));
+    if (cdf_chain) {
+      cdf_bank.average_at_frame_end();
+      std::vector<std::uint16_t>& saved_slot =
+          cdf_slots[static_cast<std::size_t>(write_slot)];
+      std::copy(cdf_frame.begin(), cdf_frame.end(), saved_slot.begin());
+    }
+
+    config.base_q_idx = frame_qp(i);
+    post::VideoTiledFrameHeader header;
+    header.keyframe = false;
+    header.order_hint = order_hint;
+    header.ref_slot =
+        static_cast<std::uint8_t>(recent_slots[static_cast<std::size_t>(0)]);
+    header.refresh_frame_flags =
+        1U << (static_cast<unsigned>(i) %
+               static_cast<unsigned>(config.num_ref_frames));
+    header.base_q_idx = config.base_q_idx;
+    post::VideoTiledFrame frame;
+    if (!post::assemble_video_tile_group_from_payloads(
+            config, tile_sequence, header, layout, payloads, &frame, &error)) {
+      error = "P-frame " + std::to_string(i) + ": " + error;
+      return false;
+    }
+    const std::vector<std::uint8_t> td =
+        av2enc::video::make_temporal_delimiter_obu();
+    std::vector<std::uint8_t> unit;
+    unit.reserve(td.size() + frame.obu.size());
+    unit.insert(unit.end(), td.begin(), td.end());
+    unit.insert(unit.end(), frame.obu.begin(), frame.obu.end());
+    result.units.push_back(std::move(unit));
+
+    result.recon.push_back(
+        to_recon_frame(frame_recon[0], frame_recon[1], frame_recon[2],
+                       static_cast<std::uint32_t>(width),
+                       static_cast<std::uint32_t>(height)));
+    result.frame_bytes.push_back(
+        static_cast<std::uint32_t>(result.units.back().size()));
+    result.tile_bytes.push_back(payload_bytes);
+    result.inter_blocks.push_back(inter_blocks);
+    result.intra_blocks.push_back(intra_blocks);
+
+    slot_recon[static_cast<std::size_t>(write_slot)] = result.recon.back();
+    slot_order[static_cast<std::size_t>(write_slot)] = order_hint;
+    recent_slots.erase(
+        std::remove(recent_slots.begin(), recent_slots.end(), write_slot),
+        recent_slots.end());
+    recent_slots.insert(recent_slots.begin(), write_slot);
+    if (recent_slots.size() > 7) recent_slots.resize(7);
+  }
+
+  result.frame_output_index.resize(frames.size());
+  for (std::size_t i = 0; i < frames.size(); ++i) {
+    result.frame_output_index[i] = static_cast<std::int32_t>(i);
+  }
+  return true;
+}
+
 }  // namespace
 
 bool encode_b_sequence_gpu(Backend& backend,
@@ -1235,6 +2097,10 @@ bool encode_b_sequence_gpu(Backend& backend,
                            VideoSequenceResult& result, std::string& error) {
   namespace bf = ::av2enc::inter::bframes;
   if (!common_gop_checks(frames, options, error)) return false;
+  if (!options.frame_base_q_idx.empty()) {
+    error = "the GPU B-frame plan requires a fixed base_q_idx";
+    return false;
+  }
   const int gop_size = options.b_frames + 2;
   if (gop_size > 16) {
     error = "--b-frames supports at most 6 B frames per GOP";
@@ -1292,6 +2158,8 @@ bool encode_b_sequence_gpu(Backend& backend,
   config.disable_drl_reorder = true;
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
+  config.enable_deblock = opt_video_deblock(options);
+  config.tx_mode_select = opt_enable_tx_search(options);
   config.max_tlayer_id = 0;
   config.monotonic_output_order_flag = false;
 
@@ -1402,6 +2270,10 @@ bool encode_temporal_sequence_gpu(Backend& backend,
                                   std::string& error) {
   namespace tl = ::av2enc::inter::tlayers;
   if (!common_gop_checks(frames, options, error)) return false;
+  if (!options.frame_base_q_idx.empty()) {
+    error = "the GPU temporal-layer plan requires a fixed base_q_idx";
+    return false;
+  }
   const int gop = options.temporal_layers;
   if (frames.size() != static_cast<std::size_t>(gop)) {
     error = "--video-tlayers codes one closed GOP: pass exactly " +
@@ -1472,6 +2344,8 @@ bool encode_temporal_sequence_gpu(Backend& backend,
   config.disable_drl_reorder = true;
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
+  config.enable_deblock = opt_video_deblock(options);
+  config.tx_mode_select = opt_enable_tx_search(options);
   config.max_tlayer_id = static_cast<std::uint8_t>(plan.max_tlayer_id);
   config.monotonic_output_order_flag = false;
   config.tlayer_dependency_present_flag = plan.tlayer_dependency_present_flag;
@@ -1594,6 +2468,11 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
     error = "no input frames";
     return false;
   }
+  if (opt_video_deblock(options) && detail::is_frame_type_mode(options)) {
+    error = "--video-deblock does not compose with the frame-type wrappers "
+            "(long-term/OLK/leading/SEF/SWITCH/RAS)";
+    return false;
+  }
   if (detail::is_frame_type_mode(options)) {
     return detail::encode_special_sequence_gpu(frames, options, result, error,
                                                stats);
@@ -1612,6 +2491,15 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
     error = "M2 does not support lossless base_q_idx = 0";
     return false;
   }
+  if (opt_enable_tx_search(options) && opt_video_deblock(options)) {
+    error = "--video-tx-search does not compose with --video-deblock yet";
+    return false;
+  }
+  if (opt_enable_tx_search(options) &&
+      (options.avg_cdf || options.adaptive_cdf)) {
+    error = "--video-tx-search does not compose with --avg-cdf/--adaptive-cdf";
+    return false;
+  }
   if (!options.frame_base_q_idx.empty() &&
       options.frame_base_q_idx.size() != frames.size()) {
     error = "frame_base_q_idx must be empty or have one entry per frame";
@@ -1628,23 +2516,30 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
                ? options.base_q_idx
                : options.frame_base_q_idx[index];
   };
-  // The device transform chain wires the shared `tx_variants` quantiser, whose
-  // quant_factor and dequant are pinned to qlookup(90).  Per-frame QP would
-  // need the CPU `compute_tx()` quant-step scaling ported first; reject it
-  // rather than emit bytes that differ from the CPU reference.
-  for (std::size_t i = 0; i < frames.size(); ++i) {
-    if (frame_qp(i) != 90) {
-      error = "GPU M2 baseline pins base_q_idx = 90 (the device transform "
-              "quantiser is qlookup(90))";
-      return false;
-    }
-  }
+  // Per-frame base_q_idx is supported: the frame header, the coefficient-CDF
+  // slice (config.base_q_idx below) and the device transform quantizer
+  // (begin_frame's base_q_idx -> qlookup) all follow the same value.
   // The GPU pipeline mirrors the CPU reference model.  Every option the CPU
   // uses to build a different sequence/ref model that this backend has not
   // implemented is rejected by name here as well as in the CLI, so a caller
   // can never get bytes from a mode this backend did not implement.
-  if (options.num_total_refs < 1 || options.num_total_refs > 3) {
-    error = "num_total_refs must be in [1, 3]";
+  if (options.num_total_refs < 1 ||
+      options.num_total_refs > av2enc::video::kRefsPerFrame) {
+    error = "num_total_refs must be in [1, " +
+            std::to_string(av2enc::video::kRefsPerFrame) + "]";
+    return false;
+  }
+  if (options.num_ref_frames != 0 &&
+      (options.num_ref_frames < 4 ||
+       options.num_ref_frames > av2enc::video::kMaxRefSlots)) {
+    error = "num_ref_frames must be 0 (auto) or in [4, " +
+            std::to_string(av2enc::video::kMaxRefSlots) + "]";
+    return false;
+  }
+  if (options.num_ref_frames != 0 &&
+      options.num_total_refs > options.num_ref_frames) {
+    error = "num_total_refs " + std::to_string(options.num_total_refs) +
+            " exceeds NumRefFrames " + std::to_string(options.num_ref_frames);
     return false;
   }
   if (options.long_term || options.olk || options.leading_frames != 0 ||
@@ -1653,15 +2548,31 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
     return false;
   }
   if (options.tile_cols > 1 || options.tile_rows > 1) {
-    error = "GPU M2 baseline emits a single tile";
-    return false;
+    if (options.b_frames > 0 || options.temporal_layers > 0) {
+      error = "--tiles does not compose with --b-frames/--video-tlayers";
+      return false;
+    }
   }
   if (options.cdf_continuity) {
     error = "GPU M2 baseline does not implement cross-frame CDF carry";
     return false;
   }
-  if (!options.frame_base_q_idx.empty()) {
-    error = "GPU M2 baseline does not implement per-frame QP";
+  if (options.loop_filters.any()) {
+    // The loop-filter stage is wired on the flat key+P chain only, exactly like
+    // the CPU reference.  B frames and temporal layers rebuild frame headers in
+    // their own loops and would drop the per-frame filter plan.
+    if (options.b_frames > 0 || options.temporal_layers > 0) {
+      error = "GPU M2 loop filters do not compose with --b-frames or "
+              "--video-tlayers yet";
+      return false;
+    }
+  }
+  if ((options.avg_cdf || options.adaptive_cdf) &&
+      !options.frame_base_q_idx.empty()) {
+    // §8.2.4 seeds the frame CDF image from one base_q_idx; the CPU reference
+    // rejects the same pair.
+    error = "average-CDF/continuity requires a fixed base_q_idx "
+            "(no --rc crf/vbr per-frame QP)";
     return false;
   }
   if (opt_drl_reorder(options) != 0) {
@@ -1670,6 +2581,12 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
   }
   if (options.mv_precision < 0 || options.mv_precision > 2) {
     error = "mv_precision must be 0 (1/8), 1 (1/4) or 2 (1/2) pel";
+    return false;
+  }
+  if (options.enable_gme &&
+      (options.enable_inter_residual || options.compound ||
+       options.b_frames != 0 || options.temporal_layers != 0)) {
+    error = "GPU global motion is gated on the plain skip-only P chain";
     return false;
   }
   if (opt_drl_reorder(options) < 0 || opt_drl_reorder(options) > 2) {
@@ -1725,6 +2642,25 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
   }
   backend->reset_stats();
 
+  if (options.tile_cols > 1 || options.tile_rows > 1) {
+    if (!detail::encode_tiled_sequence_gpu(*backend, frames, options, result,
+                                           error)) {
+      return false;
+    }
+    if (stats != nullptr) {
+      *stats = backend->stats();
+      std::uint64_t inter = 0;
+      std::uint64_t intra = 0;
+      for (std::size_t i = 0; i < result.inter_blocks.size(); ++i) {
+        inter += result.inter_blocks[i];
+        intra += result.intra_blocks[i];
+      }
+      stats->inter_blocks = inter;
+      stats->intra_blocks = intra;
+    }
+    return true;
+  }
+
   VideoConfig config = make_config(width, height, options);
 
   // §8.2.4 average-CDF / §7.5 frame-end bookkeeping.  The decision path and
@@ -1774,7 +2710,7 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
     GpuFrameEncoder key_encoder(
         *backend, frames[0],
         std::span<const VideoReconFrame* const>{}, no_distance, 1, key_options,
-        options.trace, /*keyframe=*/true, error,
+        options.trace, /*keyframe=*/true, error, 0, 0, 0, 0,
         cdf_chain ? std::span<const std::uint16_t>(cdf_tile)
                   : std::span<const std::uint16_t>(),
         cdf_chain ? &cdf_scratch : nullptr);
@@ -1813,6 +2749,10 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
     key_header.refresh_frame_flags = (1U << config.num_ref_frames) - 1U;
     key_header.use_qtr_precision_mv = options.mv_precision == 1;
     key_header.allow_high_precision_mv = options.mv_precision != 2;
+    key_header.cdef = key_encoder.filter_plan().cdef;
+    key_header.ccso = key_encoder.filter_plan().ccso;
+    key_header.lr = key_encoder.filter_plan().lr;
+    key_header.gdf = key_encoder.filter_plan().gdf;
 
     config.base_q_idx = frame_qp(0);
 
@@ -1908,15 +2848,78 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
     VideoOptions frame_options = options;
     frame_options.base_q_idx = frame_qp(i);
     frame_options.frame_base_q_idx.clear();
+
+    // §5.18.9 global motion: collect the deterministic block-MV grid and run
+    // the fit on the backend (device estimator on the CUDA path, the CPU
+    // reference on the emulation path).  Both produce the same quantised model.
+    GmFramePlan gm_plan;
+    const GmFramePlan* gm_ptr = nullptr;
+    if (options.enable_gme) {
+      std::vector<inter::mc::RefFrame> gm_refs;
+      gm_refs.reserve(static_cast<std::size_t>(ref_count));
+      std::vector<int> ref_order_hint(static_cast<std::size_t>(ref_count));
+      std::vector<std::uint8_t> ref_slots(static_cast<std::size_t>(ref_count));
+      std::vector<int> ref_distance(static_cast<std::size_t>(ref_count));
+      for (int r = 0; r < ref_count; ++r) {
+        const int slot = recent_slots[static_cast<std::size_t>(r)];
+        const VideoReconFrame& recon =
+            slot_recon[static_cast<std::size_t>(slot)];
+        inter::mc::RefFrame gm_ref;
+        gm_ref.plane[0] =
+            inter::mc::PlaneView{recon.y.data(), static_cast<int>(width)};
+        gm_ref.plane[1] =
+            inter::mc::PlaneView{recon.u.data(), static_cast<int>(width / 2)};
+        gm_ref.plane[2] =
+            inter::mc::PlaneView{recon.v.data(), static_cast<int>(width / 2)};
+        gm_ref.mi_cols = 2 * static_cast<int>((width + 7U) >> 3U);
+        gm_ref.mi_rows = 2 * static_cast<int>((height + 7U) >> 3U);
+        gm_refs.push_back(gm_ref);
+        ref_order_hint[static_cast<std::size_t>(r)] =
+            static_cast<int>(slot_order[static_cast<std::size_t>(slot)]);
+        ref_slots[static_cast<std::size_t>(r)] =
+            static_cast<std::uint8_t>(slot);
+        ref_distance[static_cast<std::size_t>(r)] =
+            frame_distance[static_cast<std::size_t>(r)];
+      }
+      std::vector<std::vector<inter::gme::GmBlockMv>> points =
+          av2enc::video::collect_gm_block_mvs(frames[i], gm_refs,
+                                              frame_options, error);
+      if (points.size() != gm_refs.size()) {
+        error = "P-frame global motion: block-MV collection failed: " + error;
+        return false;
+      }
+      const inter::gme::GmOptions gm_options =
+          av2enc::video::make_gm_options(frames[i], frame_options);
+      std::vector<inter::gme::GmEstimate> estimates;
+      estimates.reserve(points.size());
+      for (const std::vector<inter::gme::GmBlockMv>& ref_points : points) {
+        inter::gme::GmEstimate estimate;
+        if (!backend->gme_estimate(ref_points, gm_options, estimate, error)) {
+          return false;
+        }
+        estimates.push_back(std::move(estimate));
+      }
+      gm_plan = av2enc::video::make_gm_frame_plan(estimates, ref_order_hint, ref_slots,
+                                   ref_distance);
+      gm_ptr = &gm_plan;
+    }
     if (cdf_chain) cdf_bank.begin_frame(/*reset_to_defaults=*/true);
     std::vector<std::uint16_t> cdf_seed;
     if (cdf_chain) cdf_seed = cdf_tile;
+    // §7.20.1 reference OrderHints for the GDF table derivation.
+    std::array<int, 7> ref_order_hints{};
+    for (int r = 0; r < ref_count && r < 2; ++r) {
+      ref_order_hints[static_cast<std::size_t>(r)] = static_cast<int>(
+          slot_order[static_cast<std::size_t>(
+              recent_slots[static_cast<std::size_t>(r)])]);
+    }
     GpuFrameEncoder encoder(*backend, frames[i], references, frame_distance,
                             ref_count, frame_options, options.trace,
-                            /*keyframe=*/false, error,
+                            /*keyframe=*/false, error, 0, 0, 0, 0,
                             cdf_chain ? std::span<const std::uint16_t>(cdf_seed)
                                       : std::span<const std::uint16_t>(),
-                            cdf_chain ? &cdf_scratch : nullptr);
+                            cdf_chain ? &cdf_scratch : nullptr, gm_ptr,
+                            ref_order_hints);
     if (!encoder.begin_ok()) {
       error = "P-frame " + std::to_string(i) + " setup failed: " + error;
       return false;
@@ -1964,6 +2967,11 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
     header.reference_select = options.compound && ref_count > 1;
+    header.gm = gm_plan;
+    header.cdef = encoder.filter_plan().cdef;
+    header.ccso = encoder.filter_plan().ccso;
+    header.lr = encoder.filter_plan().lr;
+    header.gdf = encoder.filter_plan().gdf;
     // SEF wrapper: code the last picture hidden so the following SEF unit can
     // re-show it (the decoder output count is unchanged).
     header.immediate_output_frame =

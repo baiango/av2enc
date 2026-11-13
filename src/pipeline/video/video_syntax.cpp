@@ -8,6 +8,7 @@
 
 #include "codec/inter/mv_precision/mv_precision.h"
 #include "codec/inter/drl_reorder/video_stack_adapter.h"
+#include "codec/filters/stream/filters_stream.h"
 
 #include "pipeline/still/basic_cdf_tables.h"
 #include "pipeline/still/basic_tables.h"
@@ -17,6 +18,9 @@
 #include "pipeline/video/video_cdf_tables.h"
 #include "codec/inter/multiref/gate/compound_cdf_tables.h"
 #include "codec/partition/tree/partition.h"
+#include "codec/transform/inter_residual/inter_tx_type.h"
+#include "codec/transform/tx_partition/tx_partition.h"
+#include "codec/transform/tx_type/tx_type.h"
 #include "codec/transform/variants/tx_variants.h"
 #include "codec/entropy/av2/av2_entropy.h"
 #include "codec/inter/mc/mc.h"
@@ -172,38 +176,6 @@ TxTypeSyntax luma_tx_type_syntax(int tx_size, int eob) {
   return TxTypeSyntax::kIntraSet1;
 }
 
-// Inter luma transform set from get_tx_set(txSz, 0) for reduced_tx_set = 0
-// and enable_chroma_dctonly = 1.  §5.20.8.2 codes a TX_TYPE for every inter
-// luma TX block whose set is not TX_SET_DCTONLY, including eob == 1 (the
-// eob == 1 shortcut is intra-only).
-enum class InterTxSet {
-  kDctOnly,
-  kDctIdtx,   // 32x32
-  kInter1,    // square <= 8x8 / rectangles with sqr <= 8x8
-  kInter2,    // 16x16
-  kWide32,
-  kHigh32,
-  kWide64,
-  kHigh64,
-};
-InterTxSet inter_tx_set(int tx_size) {
-  const int sqr = kTxSizeSqr[tx_size];
-  const int sqr_up = kTxSizeSqrUp[tx_size];
-  const auto params =
-      txv::make_tx_params(static_cast<txv::TxSize>(tx_size),
-                          txv::TxType::kDctDct);
-  const bool wider = params.has_value() && params->coded_w > params->coded_h;
-  if (sqr_up > 3) {
-    if (sqr >= 3) return InterTxSet::kDctOnly;
-    return wider ? InterTxSet::kWide64 : InterTxSet::kHigh64;
-  }
-  if (sqr_up == 3 && sqr != 3) {
-    return wider ? InterTxSet::kWide32 : InterTxSet::kHigh32;
-  }
-  if (sqr_up == 3) return InterTxSet::kDctIdtx;
-  return sqr == 2 ? InterTxSet::kInter2 : InterTxSet::kInter1;
-}
-
 // §8.3.2 inter_tx_type context from the final EOB.
 int inter_tx_type_context(int eob, int coded_w, int coded_h, bool use_min) {
   const int bwl = std::min(floor_log2(coded_w), 5);
@@ -286,6 +258,10 @@ struct CdfState {
   std::uint16_t inter_tx_type_index_set2[3][9];
   std::uint16_t inter_tx_type_offset_set2[3][5];
 
+  // §5.20.6.3 TX-partition CDFs (opt-in TX_MODE_SELECT only).  Same default
+  // tables the decoder installs; `init_cdfs()` resets them per tile.
+  txpartition::TxPartitionCdfs tx_partition;
+
   // Precision-aware shell MVD tables (1/4 and 1/2 pel frame precision).
   inter::mvprec::MvPrecisionCdfState mv_precision;
 };
@@ -298,7 +274,8 @@ void copy_array(T (&dst)[N], const T (&src)[N]) {
 // `qctx_slice` is §8.3.1 init_coeff_cdfs()'s COEFF_CDF_Q_CTXS slice, selected
 // from the raw frame base_q_idx (0..3).  Slice 0 is byte-identical to the
 // historical pinned tables.
-void init_cdfs(CdfState& c, int qctx_slice) {
+void init_cdfs(CdfState& c, int qctx_slice,
+               bool reduced_tx_part_set = false) {
   const qctx::CoeffCdfSlice& q = qctx::tables_for_slice(qctx_slice);
   copy_array(c.do_split, av2enc::basic::kDoSplitCdf);
   copy_array(c.rect_type, av2enc::basic::kRectTypeCdf);
@@ -362,6 +339,7 @@ void init_cdfs(CdfState& c, int qctx_slice) {
   copy_array(c.inter_tx_type_offset_set1, kInterTxTypeOffsetSet1Cdf);
   copy_array(c.inter_tx_type_index_set2, kInterTxTypeIndexSet2Cdf);
   copy_array(c.inter_tx_type_offset_set2, kInterTxTypeOffsetSet2Cdf);
+  c.tx_partition.reset(reduced_tx_part_set);
   inter::mvprec::init_default_mv_precision_cdfs(&c.mv_precision);
 }
 
@@ -564,9 +542,10 @@ class Writer {
   Writer(const FramePlan& plan, std::span<const BlockSyntax> blocks,
          std::span<const std::int32_t> levels, const VideoConfig& config,
          std::span<const std::uint16_t> cdf_seed,
-         std::vector<std::uint16_t>* cdf_final)
+         std::vector<std::uint16_t>* cdf_final,
+         const post::VideoFilterPlan* filters = nullptr)
       : plan_(plan), blocks_(blocks), levels_(levels), config_(config),
-        cdf_seed_(cdf_seed), cdf_final_(cdf_final) {
+        cdf_seed_(cdf_seed), cdf_final_(cdf_final), filters_(filters) {
     geometry_.width = plan.width;
     geometry_.height = plan.height;
     geometry_.sb_size = plan.sb_size;
@@ -577,7 +556,8 @@ class Writer {
     mi_rows_ = partition::mi_rows(geometry_);
 
     init_cdfs(cdfs_,
-              qctx::slice_for_base_q_idx(static_cast<int>(config_.base_q_idx)));
+              qctx::slice_for_base_q_idx(static_cast<int>(config_.base_q_idx)),
+              plan_.reduced_tx_part_set);
     if (!cdf_seed_.empty()) {
       import_cdf_image(cdfs_, cdf_seed_.data());
     }
@@ -619,6 +599,71 @@ class Writer {
     const int sb_cols = plan_.sb_cols();
     const int sb_rows = plan_.sb_rows();
     const int sb_mi = partition::sb_size_mi(geometry_);
+    const bool cdef_active = filters_ != nullptr && filters_->cdef.enabled;
+    if (cdef_active &&
+        !filters_stream::cdef_tile_init(
+            &cdef_state_, mi_cols_, mi_rows_, filters_->cdef.num_strengths,
+            /*sb_width_log2=*/plan_.sb_size == 128 ? 5 : 4, &error)) {
+      return false;
+    }
+    const bool lr_active = filters_ != nullptr && filters_->lr.enabled;
+    if (lr_active) {
+      filters_stream::LrParams params;
+      for (int plane = 0; plane < 3; ++plane) {
+        params.frame_type[plane] =
+            filters_->lr.plane[plane].enabled ? filters_stream::kRestoreWienerNs
+                                              : filters_stream::kRestoreNone;
+        params.frame_filters_on[plane] = false;
+      }
+      params.num_filter_classes = 1;
+      params.num_filter_classes_idx = 0;
+      params.luma_shift = filters_->lr.luma_shift;
+      params.chroma_shift = filters_->lr.chroma_shift;
+      if (!filters_stream::lr_state_init(&lr_state_, params, mi_cols_,
+                                         mi_rows_, 1, 1, plan_.sb_size,
+                                         &error)) {
+        return false;
+      }
+      // Seed the per-unit decision grids from the encoder plan: read_lr() must
+      // signal the same LrType/coefficients that were applied to the pixels.
+      for (int plane = 0; plane < 3; ++plane) {
+        const post::VideoLrPlane& src = filters_->lr.plane[plane];
+        if (!src.enabled) continue;
+        if (static_cast<int>(lr_state_.unit_type[plane].size()) !=
+                src.unit_rows * src.unit_cols ||
+            static_cast<int>(lr_state_.unit_coeffs[plane].size()) !=
+                src.unit_rows * src.unit_cols *
+                    static_cast<int>(
+                        ::av2enc::restoration::kWienerNsCoeffStride)) {
+          error = "video LR: unit grid does not match the plan";
+          return false;
+        }
+        lr_state_.unit_type[plane] = src.unit_type;
+        lr_state_.unit_coeffs[plane] = src.unit_coeffs;
+      }
+    }
+    const bool ccso_active = filters_ != nullptr && filters_->ccso.enabled;
+    if (ccso_active) {
+      filters_stream::CcsoParams params;
+      params.frame_flag = true;
+      params.ccso_luma_size_log2 = filters_->ccso.ccso_luma_size_log2;
+      for (int plane = 0; plane < 3; ++plane) {
+        filters_stream::CcsoPlaneParams& dst = params.plane[plane];
+        const post::VideoCcsoPlane& src = filters_->ccso.plane[plane];
+        dst.enabled = src.enabled;
+        dst.bo_only = src.bo_only;
+        dst.scale_idx = src.scale_idx;
+        dst.quant_idx = src.quant_idx;
+        dst.ext_filter = src.ext_filter;
+        dst.edge_clf = src.edge_clf;
+        dst.max_band_log2 = src.max_band_log2;
+        dst.offset_idx = src.offset_idx;
+      }
+      if (!filters_stream::ccso_tile_init(&ccso_state_, params, mi_cols_,
+                                          mi_rows_, 1, 1, &error)) {
+        return false;
+      }
+    }
     std::size_t index = 0;
     int sb_index = 0;
     while (index < blocks_.size()) {
@@ -647,6 +692,13 @@ class Writer {
         // `if (sb.mi_col == 0) clear_left_context()` in still_encoder.
         clear_left_context();
       }
+      if (cdef_active) {
+        // §5.20.9.6 clear_cdef(): once per superblock, before read_partition.
+        filters_stream::cdef_clear_superblock(&cdef_state_, node.mi_row,
+                                              node.mi_col);
+      }
+      // §5.20.10.4 read_lr(): before read_partition(), once per superblock.
+      if (!write_lr_superblock(node, error)) return false;
       std::size_t next = 0;
       if (!write_node(index, &next, error)) return false;
       index = next;
@@ -1223,51 +1275,94 @@ class Writer {
     return 0;
   }
 
-  // Luma inter transform-type syntax (§5.20.8.2).  M2 signals DCT_DCT for
-  // every codable inter TX block.  The symbol mapping is set-dependent:
-  //   INTER_1: type group 0 + offset 7  -> Tx_Type_Inter_Inv_Set1[7] = DCT_DCT
-  //   INTER_2: type group 0 + offset 3  -> Inv_Set2[3]          = DCT_DCT
-  //   DCT_IDTX: symbol 1                -> Inv_Set3[1]          = DCT_DCT
-  //   long sets: is_long_side_dct = 1, type 0 -> Inv_Long[1][*][0]
-  bool write_inter_tx_type(int tx_size, int eob, int coded_w, int coded_h) {
-    const InterTxSet set = inter_tx_set(tx_size);
-    if (set == InterTxSet::kDctOnly) return true;
+  // Luma inter transform-type syntax (§5.20.8.2).  §5.20.8.2 codes a TX_TYPE
+  // for every inter TX block whose set is not TX_SET_DCTONLY, including
+  // eob == 1 (the eob <= 1 shortcut is intra-only).  `tx_type` is a TX_TYPE
+  // value from the TX search; with the search off it is always DCT_DCT and the
+  // emitted symbols are the historical ones.
+  bool write_inter_tx_type(int tx_size, int tx_type, int eob, int coded_w,
+                           int coded_h) {
+    const auto ts = static_cast<txv::TxSize>(tx_size);
+    const residual::InterTxSet set =
+        residual::inter_tx_set(ts, plan_.reduced_tx_set);
+    if (set == residual::InterTxSet::kDctOnly) return true;
+    residual::InterTxCandidate cand;
+    if (!residual::inter_tx_symbol(ts, plan_.reduced_tx_set,
+                                   /*enable_inter_ddt=*/false,
+                                   static_cast<txv::TxType>(tx_type), &cand)) {
+      error_ = "inter tx_type is not codable for this size";
+      return false;
+    }
     const int ctx = inter_tx_type_context(eob, coded_w, coded_h, true);
     const int sqr = kTxSizeSqr[tx_size];
     switch (set) {
-      case InterTxSet::kWide64:
-      case InterTxSet::kHigh64:
+      case residual::InterTxSet::kWide64:
+      case residual::InterTxSet::kHigh64:
         // WIDE_64/HIGH_64 imply is_long_side_dct = 1; only the type is coded.
-        return sym(&cdfs_.inter_tx_type_long[ctx][sqr][0], 4, 0);
-      case InterTxSet::kWide32:
-      case InterTxSet::kHigh32:
-        if (!sym(&cdfs_.is_long_side_dct[1][0], 2, 1)) return false;
-        return sym(&cdfs_.inter_tx_type_long[ctx][sqr][0], 4, 0);
-      case InterTxSet::kInter1: {
-        if (!sym(&cdfs_.inter_tx_type_set1[ctx][sqr][0], 2, 0)) return false;
+        return sym(&cdfs_.inter_tx_type_long[ctx][sqr][0], 4, cand.symbol);
+      case residual::InterTxSet::kWide32:
+      case residual::InterTxSet::kHigh32:
+        if (!sym(&cdfs_.is_long_side_dct[1][0], 2,
+                 cand.is_long_side_dct ? 1 : 0)) {
+          return false;
+        }
+        return sym(&cdfs_.inter_tx_type_long[ctx][sqr][0], 4, cand.symbol);
+      case residual::InterTxSet::kInter1: {
+        if (!sym(&cdfs_.inter_tx_type_set1[ctx][sqr][0], 2, cand.symbol)) {
+          return false;
+        }
         const int off_ctx =
             inter_tx_type_context(eob, coded_w, coded_h, false);
-        return sym(&cdfs_.inter_tx_type_index_set1[off_ctx][0], 8, 7);
+        if (cand.symbol == 0) {
+          return sym(&cdfs_.inter_tx_type_index_set1[off_ctx][0], 8,
+                     cand.offset_symbol);
+        }
+        return sym(&cdfs_.inter_tx_type_offset_set1[off_ctx][0], 8,
+                   cand.offset_symbol);
       }
-      case InterTxSet::kInter2: {
-        if (!sym(&cdfs_.inter_tx_type_set2[ctx][0], 2, 0)) return false;
+      case residual::InterTxSet::kInter2: {
+        if (!sym(&cdfs_.inter_tx_type_set2[ctx][0], 2, cand.symbol)) {
+          return false;
+        }
         const int off_ctx =
             inter_tx_type_context(eob, coded_w, coded_h, false);
-        return sym(&cdfs_.inter_tx_type_index_set2[off_ctx][0], 8, 3);
+        if (cand.symbol == 0) {
+          return sym(&cdfs_.inter_tx_type_index_set2[off_ctx][0], 8,
+                     cand.offset_symbol);
+        }
+        return sym(&cdfs_.inter_tx_type_offset_set2[off_ctx][0], 4,
+                   cand.offset_symbol);
       }
-      case InterTxSet::kDctIdtx:
-        return sym(&cdfs_.inter_tx_type_set3[ctx][sqr][0], 2, 1);
-      case InterTxSet::kDctOnly:
+      case residual::InterTxSet::kDctIdtx:
+        return sym(&cdfs_.inter_tx_type_set3[ctx][sqr][0], 2, cand.symbol);
+      case residual::InterTxSet::kDctIdtxIddct:
+        error_ = "TX_SET_DCT_IDTX_IDDCT is not signalled by this writer";
+        return false;
+      case residual::InterTxSet::kDctOnly:
         return true;
     }
+    error_ = "unknown inter TX set";
     return false;
   }
 
+  // One transform block of a leaf.  TX_MODE_LARGEST fills it from the plane
+  // fields; TX_MODE_SELECT passes the per-part tx size/type/EOB and the part's
+  // 4x4 origin so the §8.3.2 contexts are derived from the real transform
+  // block, exactly like the decoder.
+  struct TxView {
+    int tx_size = 0;
+    int tx_type = 0;
+    int eob = 0;
+    int mi_row = 0;
+    int mi_col = 0;
+  };
+
   // `level_base` is the index of this plane's first scan-order level.
-  bool code_tx(const BlockSyntax& node, int plane, std::size_t level_base,
-               int bsize_w, int bsize_h, std::size_t levels_end,
-               bool is_inter, std::string& error) {
-    const int tx_size = node.tx_size[plane];
+  bool code_tx_view(const BlockSyntax& node, int plane, const TxView& view,
+                    std::size_t level_base, int bsize_w, int bsize_h,
+                    std::size_t levels_end, bool is_inter,
+                    std::string& error) {
+    const int tx_size = view.tx_size;
     if (tx_size >= 25) {
       error = "invalid tx_size " + std::to_string(tx_size) + " on plane " +
               std::to_string(plane);
@@ -1286,7 +1381,7 @@ class Writer {
     const int adj_w = params.w;
     const int adj_h = params.h;
     const int area = adj_w * adj_h;
-    const int eob = static_cast<int>(node.eob[plane]);
+    const int eob = view.eob;
     if (eob < 0 || eob > area) {
       error = "eob " + std::to_string(eob) + " outside the plane " +
               std::to_string(plane) + " transform area";
@@ -1300,8 +1395,8 @@ class Writer {
     const int h4 = coded_h >> 2;
     const int sub_x = plane > 0 ? 1 : 0;
     const int sub_y = plane > 0 ? 1 : 0;
-    const int x4 = node.mi_col >> sub_x;
-    const int y4 = node.mi_row >> sub_y;
+    const int x4 = view.mi_col >> sub_x;
+    const int y4 = view.mi_row >> sub_y;
     const int max_x4 = plane == 0 ? mi_cols_ : mi_cols_ / 2;
     const int max_y4 = plane == 0 ? mi_rows_ : mi_rows_ / 2;
 
@@ -1370,7 +1465,8 @@ class Writer {
     }
     if (plane == 0) {
       if (is_inter) {
-        if (!write_inter_tx_type(tx_size, eob, coded_w, coded_h)) {
+        if (!write_inter_tx_type(tx_size, view.tx_type, eob, coded_w,
+                                 coded_h)) {
           return false;
         }
       } else {
@@ -1378,24 +1474,51 @@ class Writer {
         case TxTypeSyntax::kNone:
           break;
         case TxTypeSyntax::kIntraSet1:
-          // DCT_DCT is symbol 0 in every TX_SET_INTRA_1 mode table.
-          if (!sym(&cdfs_.intra_tx_type_set1[kTxSizeSqr[tx_size]][0], 7, 0)) {
-            return false;
-          }
-          break;
         case TxTypeSyntax::kLong32:
-          // A wide/high 32 TX set codes both the long-side flag and the type.
-          if (!sym(&cdfs_.is_long_side_dct[0][0], 2, 1)) return false;
-          if (!sym(&cdfs_.intra_tx_type_long[kTxSizeSqr[tx_size]][0], 4, 0)) {
+        case TxTypeSyntax::kLong64: {
+          // §5.20.7.29 / §5.20.8.2: invert the signalled set to the symbol for
+          // this TX_TYPE.  DCT_DCT is symbol 0 in every table, so the
+          // TX_MODE_LARGEST path emits the historical bits.
+          txtype::TxTypeQuery query;
+          query.coded_w = coded_w;
+          query.coded_h = coded_h;
+          const int mapped =
+              txtype::map_intra_mode(node.y_mode, node.y_angle_delta, coded_w,
+                                     coded_h);
+          query.mapped_mode = mapped < 0 ? 0 : mapped;
+          query.reduced_tx_set = plan_.reduced_tx_set;
+          query.dct_only = false;
+          int symbol = -1;
+          bool is_long_side_dct = false;
+          if (!txtype::tx_type_symbol(
+                  query, static_cast<txtype::TxType>(view.tx_type), &symbol,
+                  &is_long_side_dct)) {
+            error_ = "intra tx_type is not codable for this size/mode";
             return false;
           }
-          break;
-        case TxTypeSyntax::kLong64:
-          // WIDE_64/HIGH_64 imply is_long_side_dct = 1; only the type is coded.
-          if (!sym(&cdfs_.intra_tx_type_long[kTxSizeSqr[tx_size]][0], 4, 0)) {
-            return false;
+          if (luma_tx_type_syntax(tx_size, eob) == TxTypeSyntax::kIntraSet1) {
+            if (!sym(&cdfs_.intra_tx_type_set1[kTxSizeSqr[tx_size]][0], 7,
+                     symbol)) {
+              return false;
+            }
+          } else if (luma_tx_type_syntax(tx_size, eob) ==
+                     TxTypeSyntax::kLong32) {
+            if (!sym(&cdfs_.is_long_side_dct[0][0], 2,
+                     is_long_side_dct ? 1 : 0)) {
+              return false;
+            }
+            if (!sym(&cdfs_.intra_tx_type_long[kTxSizeSqr[tx_size]][0], 4,
+                     symbol)) {
+              return false;
+            }
+          } else {
+            if (!sym(&cdfs_.intra_tx_type_long[kTxSizeSqr[tx_size]][0], 4,
+                     symbol)) {
+              return false;
+            }
           }
           break;
+        }
         }
       }
     }
@@ -1995,8 +2118,13 @@ class Writer {
     params.ref_frame[0] = static_cast<std::int8_t>(node.ref_index);
     params.ref_frame[1] = merge::kRefNone;
     params.is_compound = false;
-    params.global_mv[0] = inter::mc::Mv{0, 0};
-    params.global_mv[1] = inter::mc::Mv{0, 0};
+    // §7.12.2.2 GlobalMvs[0] for the MV-stack candidates.  With global motion
+    // enabled the decoder projects the accepted model at the frame precision;
+    // the encoder must feed the same value or a NEARMV/derived candidate can
+    // resolve differently.
+    const inter::mc::Mv global_mv = block_global_mv(node);
+    params.global_mv[0] = global_mv;
+    params.global_mv[1] = global_mv;
     // DRL reordering is not gated; the sequence header signals DISABLED.
     params.reorder = merge::DrlReorder::kDisabled;
     params.max_drl_bits_minus_1 =
@@ -2150,6 +2278,32 @@ class Writer {
     return true;
   }
 
+  // §7.12.2.2 GlobalMvs for this block at the frame precision.  The decoder
+  // stores the projected value in MiMv for GLOBALMV blocks and seeds the merge
+  // stack with it, so both the stack validation and the writer's own MI grid
+  // must use it instead of the (zero) coded mv.
+  inter::mc::Mv block_global_mv(const BlockSyntax& node) const {
+#if defined(AV2ENC_VIDEO_GME)
+    if (plan_.gm_num_refs > node.ref_index) {
+      inter::gme::MvPrecision precision = inter::gme::MvPrecision::kEighthPel;
+      if (plan_.mv_precision == 1) {
+        precision = inter::gme::MvPrecision::kQuarterPel;
+      } else if (plan_.mv_precision == 2) {
+        precision = inter::gme::MvPrecision::kHalfPel;
+      }
+      int projected[2] = {0, 0};
+      inter::gme::get_warp_motion_vector(
+          plan_.gm_params[static_cast<std::size_t>(node.ref_index)],
+          node.mi_col, node.mi_row, cur_w4_, cur_h4_, mi_cols_, mi_rows_,
+          precision, projected);
+      return inter::mc::Mv{projected[0], projected[1]};
+    }
+#else
+    (void)node;
+#endif
+    return inter::mc::Mv{0, 0};
+  }
+
   void update_mode_grids(const BlockSyntax& node) {
     for (int yy = 0; yy < cur_h4_; ++yy) {
       const int rr = cur_r_ + yy;
@@ -2178,10 +2332,18 @@ class Writer {
         mi.ref[1] = node.compound
                         ? static_cast<std::int8_t>(node.ref_index1)
                         : merge::kRefNone;
-        mi.mv[0][0] = node.mv_y;
-        mi.mv[0][1] = node.mv_x;
-        mi.mv[1][0] = node.mv_y;
-        mi.mv[1][1] = node.mv_x;
+        // A GLOBALMV block stores GlobalMvs[0]; every other mode stores its
+        // coded MV.  This mirrors decode_block() and keeps later merge-stack
+        // candidates identical to the decoder's.
+        const inter::mc::Mv stored_mv =
+            (!node.compound && node.is_inter &&
+             node.inter_mode == kInterGlobalMv)
+                ? block_global_mv(node)
+                : inter::mc::Mv{node.mv_y, node.mv_x};
+        mi.mv[0][0] = stored_mv.y;
+        mi.mv[0][1] = stored_mv.x;
+        mi.mv[1][0] = stored_mv.y;
+        mi.mv[1][1] = stored_mv.x;
         mi.is_inter = node.is_inter ? 1 : 0;
         mi.w4 = static_cast<std::int8_t>(cur_w4_);
         mi.h4 = static_cast<std::int8_t>(cur_h4_);
@@ -2222,15 +2384,111 @@ class Writer {
     }
   }
 
+  // Adapter that forwards §5.20.6.3 partition symbols to this writer's range
+  // coder.  The TX-partition component owns the syntax and contexts.
+  struct TxPartitionSink final : txpartition::SymbolSink {
+    Writer* writer = nullptr;
+    bool symbol(std::uint16_t* cdf, int n, int value,
+                std::string& error) override {
+      if (!writer->sym(cdf, n, value)) {
+        error = writer->error_;
+        return false;
+      }
+      return true;
+    }
+  };
+
+  // Total number of luma levels the leaf's plan contributed.
+  int luma_level_count(const BlockSyntax& node) const {
+    if (!plan_.tx_mode_select || node.tx_part_count == 0) {
+      return static_cast<int>(node.eob[0]);
+    }
+    int total = 0;
+    for (int i = 0; i < node.tx_part_count; ++i) {
+      total += static_cast<int>(node.tx_part_eob[i]);
+    }
+    return total;
+  }
+
+  // Codes the luma residual of one leaf.  In TX_MODE_LARGEST this is the
+  // historical single `code_tx()` call; with TX_MODE_SELECT it first emits the
+  // §5.20.6.3 partition (including the "NONE" do_partition symbol) and then one
+  // transform block per returned part, using the per-part TX size/type/EOB and
+  // the part's own 4x4 origin for the §8.3.2 contexts.
+  bool code_luma_residual(const BlockSyntax& node, int w, int h,
+                          std::size_t levels_end, bool is_inter,
+                          std::size_t level_base, std::string& error) {
+    if (!plan_.tx_mode_select) {
+      const TxView view{node.tx_size[0], node.tx_type[0],
+                        static_cast<int>(node.eob[0]), node.mi_row,
+                        node.mi_col};
+      return code_tx_view(node, 0, view, level_base, w, h, levels_end,
+                          is_inter, error);
+    }
+    const int part_count = node.tx_part_count != 0 ? node.tx_part_count : 1;
+    if (part_count < 1 || part_count > 4) {
+      error = "luma TX part count out of range";
+      return false;
+    }
+    // BLOCK_4X4 codes no partition syntax; every other M2 coding block does.
+    if (node.bsize != static_cast<std::uint8_t>(txpartition::kBlock4x4)) {
+      txpartition::BlockTxContext ctx;
+      ctx.mi_size = node.bsize;
+      ctx.is_inter = is_inter;
+      ctx.fsc_mode = false;
+      ctx.reduced_tx_part_set = plan_.reduced_tx_part_set;
+      TxPartitionSink sink;
+      sink.writer = this;
+      txpartition::SplitGeometry relative;
+      if (!txpartition::write_tx_partition(
+              sink, cdfs_.tx_partition, ctx,
+              static_cast<txpartition::TxPartition>(node.tx_partition),
+              &relative, error)) {
+        return false;
+      }
+      if (relative.count != part_count) {
+        error = "luma TX part count does not match the signalled partition";
+        return false;
+      }
+      for (int i = 0; i < part_count; ++i) {
+        if (relative.parts[i].tx_size != node.tx_part_tx_size[i]) {
+          error = "luma TX part size does not match the signalled geometry";
+          return false;
+        }
+      }
+    } else if (part_count != 1) {
+      error = "BLOCK_4X4 cannot signal more than one transform";
+      return false;
+    }
+
+    std::size_t base = level_base;
+    for (int i = 0; i < part_count; ++i) {
+      const TxView view{
+          node.tx_part_tx_size[i], node.tx_part_tx_type[i],
+          static_cast<int>(node.tx_part_eob[i]),
+          static_cast<int>(node.mi_row) + static_cast<int>(node.tx_part_mi_row[i]),
+          static_cast<int>(node.mi_col) + static_cast<int>(node.tx_part_mi_col[i])};
+      if (!code_tx_view(node, 0, view, base, w, h, levels_end, is_inter,
+                        error)) {
+        return false;
+      }
+      base += node.tx_part_eob[i];
+    }
+    return true;
+  }
+
   // Intra mode + residual syntax. Used by keyframe blocks and by intra
   // fallback blocks inside an inter frame.
   bool write_intra_leaf(const BlockSyntax& node, int w, int h, int cw, int ch,
                         std::string& error) {
     // Validate the declared transform sizes against TX_MODE_LARGEST geometry
-    // before emitting anything.
+    // before emitting anything.  Under TX_MODE_SELECT the luma size is carried
+    // by the per-part list (validated against the signalled partition below);
+    // chroma keeps the TX_MODE_LARGEST geometry.
     const int coded_w[kPlaneCount] = {w, cw, cw};
     const int coded_h[kPlaneCount] = {h, ch, ch};
-    for (int plane = 0; plane < kPlaneCount; ++plane) {
+    for (int plane = plan_.tx_mode_select ? 1 : 0; plane < kPlaneCount;
+         ++plane) {
       const auto params_opt = txv::make_tx_params(
           static_cast<txv::TxSize>(node.tx_size[plane]),
           txv::TxType::kDctDct);
@@ -2254,15 +2512,24 @@ class Writer {
       return false;
     }
     std::size_t level_base = node.levels_offset;
-    if (!code_tx(node, 0, level_base, w, h, levels_end, false, error)) {
+    if (!code_luma_residual(node, w, h, levels_end, false, level_base,
+                            error)) {
       return false;
     }
-    level_base += node.eob[0];
-    if (!code_tx(node, 1, level_base, cw, ch, levels_end, false, error)) {
+    level_base += luma_level_count(node);
+    const TxView u_view{node.tx_size[1], node.tx_type[1],
+                        static_cast<int>(node.eob[1]), node.mi_row,
+                        node.mi_col};
+    if (!code_tx_view(node, 1, u_view, level_base, cw, ch, levels_end, false,
+                      error)) {
       return false;
     }
     level_base += node.eob[1];
-    if (!code_tx(node, 2, level_base, cw, ch, levels_end, false, error)) {
+    const TxView v_view{node.tx_size[2], node.tx_type[2],
+                        static_cast<int>(node.eob[2]), node.mi_row,
+                        node.mi_col};
+    if (!code_tx_view(node, 2, v_view, level_base, cw, ch, levels_end, false,
+                      error)) {
       return false;
     }
     if (error.empty() && !error_.empty()) error = error_;
@@ -2277,7 +2544,8 @@ class Writer {
                             int ch, std::string& error) {
     const int coded_w[kPlaneCount] = {w, cw, cw};
     const int coded_h[kPlaneCount] = {h, ch, ch};
-    for (int plane = 0; plane < kPlaneCount; ++plane) {
+    for (int plane = plan_.tx_mode_select ? 1 : 0; plane < kPlaneCount;
+         ++plane) {
       const auto params_opt = txv::make_tx_params(
           static_cast<txv::TxSize>(node.tx_size[plane]),
           txv::TxType::kDctDct);
@@ -2292,15 +2560,23 @@ class Writer {
 
     const std::size_t levels_end = levels_.size();
     std::size_t level_base = node.levels_offset;
-    if (!code_tx(node, 0, level_base, w, h, levels_end, true, error)) {
+    if (!code_luma_residual(node, w, h, levels_end, true, level_base, error)) {
       return false;
     }
-    level_base += node.eob[0];
-    if (!code_tx(node, 1, level_base, cw, ch, levels_end, true, error)) {
+    level_base += luma_level_count(node);
+    const TxView u_view{node.tx_size[1], node.tx_type[1],
+                        static_cast<int>(node.eob[1]), node.mi_row,
+                        node.mi_col};
+    if (!code_tx_view(node, 1, u_view, level_base, cw, ch, levels_end, true,
+                      error)) {
       return false;
     }
     level_base += node.eob[1];
-    if (!code_tx(node, 2, level_base, cw, ch, levels_end, true, error)) {
+    const TxView v_view{node.tx_size[2], node.tx_type[2],
+                        static_cast<int>(node.eob[2]), node.mi_row,
+                        node.mi_col};
+    if (!code_tx_view(node, 2, v_view, level_base, cw, ch, levels_end, true,
+                      error)) {
       return false;
     }
     if (error.empty() && !error_.empty()) error = error_;
@@ -2311,6 +2587,81 @@ class Writer {
   // ---------------------------------------------------------------------
   // Coding a leaf block
   // ---------------------------------------------------------------------
+  // §5.20.10.1 read_cdef().  A no-op for CdefStrengths == 1, for a 64x64
+  // whose origin was already coded, and for a skipped inter block when
+  // cdef_on_skip_txfm is off (the decoder returns before reading cdef_idx).
+  // §5.20.10.4 read_lr(): once per superblock, before read_partition().  The
+  // unit grid is at least one superblock, so only a superblock origin starts
+  // a restoration unit.
+  bool write_lr_superblock(const BlockSyntax& node, std::string& error) {
+    if (filters_ == nullptr || !filters_->lr.enabled) return true;
+    std::vector<filters_stream::LrUnitDecision> decisions;
+    if (!filters_stream::lr_build_decisions(lr_state_, node.mi_row,
+                                            node.mi_col, /*w4=*/16, /*h4=*/16,
+                                            /*tile_mi_row_start=*/0,
+                                            /*tile_mi_col_start=*/0,
+                                            &decisions, &error)) {
+      return false;
+    }
+    if (!filters_stream::lr_write_block(
+            enc_, lr_state_, node.mi_row, node.mi_col, /*w4=*/16, /*h4=*/16,
+            /*tile_mi_row_start=*/0, /*tile_mi_col_start=*/0, decisions,
+            &error)) {
+      return false;
+    }
+    return true;
+  }
+
+  bool write_cdef_index(const BlockSyntax& node, std::string& error) {
+    if (filters_ == nullptr || !filters_->cdef.enabled) return true;
+    if (plan_.inter_frame && node.is_inter && node.skip_flag != 0 &&
+        !filters_->cdef.on_skip_txfm) {
+      return true;
+    }
+    const int br = node.mi_row >> 4;
+    const int bc = node.mi_col >> 4;
+    if (br < 0 || bc < 0 || br >= filters_->cdef.n64_rows ||
+        bc >= filters_->cdef.n64_cols) {
+      error = "cdef_idx grid does not cover a coding block";
+      return false;
+    }
+    const int idx = filters_->cdef.index[static_cast<std::size_t>(br) *
+                                            static_cast<std::size_t>(
+                                                filters_->cdef.n64_cols) +
+                                        static_cast<std::size_t>(bc)];
+    if (!filters_stream::cdef_write_block(
+            enc_, cdef_state_, /*tile_mi_col_start=*/0,
+            /*tile_mi_row_start=*/0, node.mi_row, node.mi_col, idx, &error)) {
+      return false;
+    }
+    return true;
+  }
+
+  // §5.20.10.2 read_ccso().  Called for every leaf; the shared writer is a
+  // no-op unless the leaf origin is a CCSO unit origin.
+  bool write_ccso_index(const BlockSyntax& node, std::string& error) {
+    if (filters_ == nullptr || !filters_->ccso.enabled) return true;
+    int blk[3] = {0, 0, 0};
+    const int shift = filters_->ccso.ccso_luma_size_log2 - 2;
+    for (int plane = 0; plane < 3; ++plane) {
+      const post::VideoCcsoPlane& src = filters_->ccso.plane[plane];
+      if (!src.enabled || shift < 0) continue;
+      const int row = node.mi_row >> shift;
+      const int col = node.mi_col >> shift;
+      if (row < 0 || col < 0 || row >= src.blk_rows || col >= src.blk_cols) {
+        continue;
+      }
+      blk[plane] = src.blks[static_cast<std::size_t>(row) *
+                                static_cast<std::size_t>(src.blk_cols) +
+                            static_cast<std::size_t>(col)];
+    }
+    if (!filters_stream::ccso_write_block(enc_, ccso_state_, node.mi_row,
+                                          node.mi_col, blk, &error)) {
+      return false;
+    }
+    return true;
+  }
+
   bool write_block(const BlockSyntax& node, std::string& error) {
     const int r = node.mi_row;
     const int c = node.mi_col;
@@ -2343,6 +2694,8 @@ class Writer {
           error = error_;
           return false;
         }
+        if (!write_cdef_index(node, error)) return false;
+        if (!write_ccso_index(node, error)) return false;
         if (!write_inter_mode_info(node, error)) return false;
         if (node.skip_flag) {
           reset_coeff_contexts(r, c, w4, h4);
@@ -2350,6 +2703,8 @@ class Writer {
           return false;
         }
       } else {
+        if (!write_cdef_index(node, error)) return false;
+        if (!write_ccso_index(node, error)) return false;
         if (!write_intra_leaf(node, w, h, cw, ch, error)) return false;
       }
     } else {
@@ -2358,6 +2713,10 @@ class Writer {
         error = "keyframe block marked inter";
         return false;
       }
+      // §5.20.10.1 read_cdef(): after the segment/skip group, before the
+      // intra modes.
+      if (!write_cdef_index(node, error)) return false;
+      if (!write_ccso_index(node, error)) return false;
       if (!write_intra_leaf(node, w, h, cw, ch, error)) return false;
     }
 
@@ -2420,6 +2779,10 @@ class Writer {
   const VideoConfig& config_;
   std::span<const std::uint16_t> cdf_seed_;
   std::vector<std::uint16_t>* cdf_final_ = nullptr;
+  const post::VideoFilterPlan* filters_ = nullptr;
+  filters_stream::CdefTileState cdef_state_{};
+  filters_stream::CcsoTileState ccso_state_{};
+  filters_stream::LrState lr_state_{};
   FrameGeometry geometry_;
   int mi_cols_ = 0;
   int mi_rows_ = 0;
@@ -2457,6 +2820,10 @@ class Writer {
 
 }  // namespace
 
+int intra_joint_mode(int y_mode, int angle_delta) {
+  return y_mode_code(y_mode, angle_delta).joint;
+}
+
 int FramePlan::sb_cols() const {
   FrameGeometry geometry;
   geometry.width = width;
@@ -2484,7 +2851,8 @@ bool assemble_video_frame(const FramePlan& plan,
                              std::vector<std::uint8_t>& tile_payload,
                              std::string& error, std::size_t* tile_bytes,
                              std::span<const std::uint16_t> cdf_seed,
-                             std::vector<std::uint16_t>* cdf_final) {
+                             std::vector<std::uint16_t>* cdf_final,
+                             const post::VideoFilterPlan* filters) {
   error.clear();
   tile_payload.clear();
   if (!cdf_seed.empty() && cdf_seed.size() != cdf_image_words_impl()) {
@@ -2513,7 +2881,7 @@ bool assemble_video_frame(const FramePlan& plan,
     return false;
   }
 
-  Writer writer(plan, blocks, levels, config, cdf_seed, cdf_final);
+  Writer writer(plan, blocks, levels, config, cdf_seed, cdf_final, filters);
   if (!writer.run(tile_bytes, error)) return false;
   tile_payload = writer.payload();
   return true;

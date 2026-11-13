@@ -97,9 +97,14 @@ add_library(av2enc_core STATIC
   src/codec/transform/tcq/tcq.cpp
   src/codec/transform/tcq/tcq_av2_model.cpp
   src/codec/transform/tx_partition/tx_partition.cpp
+  src/codec/transform/tx_partition/tx_scan.cpp
   src/codec/transform/tx_type/tx_type.cpp
   src/codec/transform/variants/tx_variants.cpp
   src/codec/transform/variants/tx_select.cpp
+  # §5.20.8.2 inter TX-type sets/symbols, shared by the M2 CPU reference and
+  # the opt-in TX search (the module under src/cuda/pipeline/video/tx/ links
+  # the same component).
+  src/codec/transform/inter_residual/inter_tx_type.cpp
   src/codec/intra/cfl/cfl.cpp
   src/codec/intra/cfl/mhccp/mhccp.cpp
   src/codec/intra/cfl/mhccp/mhccp_syntax.cpp
@@ -123,6 +128,8 @@ add_library(av2enc_core STATIC
   src/codec/intra/mrl/stream/mrl_interaction.cpp
   src/codec/filters/deblock/deblock.cpp
   src/codec/filters/cdef/cdef.cpp
+  # §5.18.7.10/§5.20.10.1 M2 CDEF adapter (strength plan + header bits).
+  src/codec/filters/cdef/syntax/video_cdef.cpp
   src/codec/filters/loop_restoration/restoration.cpp
   # Encoder-side Wiener-NS search/syntax (§5.18.7.11, §5.20.10.4-.6, §7.20.3).
   src/codec/filters/loop_restoration/classes/wiener_class.cpp
@@ -176,9 +183,20 @@ add_library(av2enc_core STATIC
   # Compound prediction (opt-in, --video-compound).
   src/codec/inter/multiref/compound_predict.cpp
   src/codec/inter/advanced/compound.cpp
+  # Global motion estimation + §7.13.3.19/.20 warp prediction (opt-in,
+  # --video-gme / --video-warp).
+  src/codec/inter/gme/gme.cpp
+  src/codec/inter/gme/gme_syntax.cpp
+  src/codec/inter/advanced/warp.cpp
+  src/pipeline/video/video_gme.cpp
+  src/pipeline/video/video_warp.cpp
   src/pipeline/video/video_headers.cpp
   src/pipeline/video/video_syntax.cpp
   src/pipeline/video/video_frame.cpp
+  # Luma TX size/type/partition search (opt-in --video-tx-search): the CPU
+  # reference for src/cuda/pipeline/video/tx/.  Both paths share the same
+  # candidate sets, arithmetic and tie-breaks.
+  src/pipeline/video/video_tx_search.cpp
   # Wave-3 frame types (long-term/OLK, leading, SEF, SWITCH/RAS).  Guards the
   # video_frame.cpp reference so standalone component gates stay linkable.
   src/pipeline/video/video_frames.cpp
@@ -214,6 +232,10 @@ target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_FRAMES=1)
 # Standalone component gates compile video_frame.cpp without these modules and
 # keep the pre-wave code path; the product binary always has them.
 target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_CDF_CHAIN=1)
+# Opt-in global motion / warped prediction wiring (§5.18.9, §7.13.3.19-.24).
+# Standalone gates that compile the video writer without the GME sources keep
+# the historical "enable_global_motion = 0" path.
+target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_GME=1)
 av2enc_apply_warnings(av2enc_core)
 # The CPU reference must be bit-identical across compilers and platforms. The
 # M0/M1 forward transforms use binary64; FMA contraction changes coefficients
@@ -250,6 +272,10 @@ if(AV2ENC_HAVE_CUDA)
       src/cuda/pipeline/still/cdef/still_cdef.cu
       src/cuda/pipeline/still/cfl/still_cfl.cu
       src/cuda/pipeline/still/chroma/still_chroma.cu
+      src/cuda/formats/chroma/chroma_formats.cpp
+      src/cuda/formats/chroma/chroma_formats.cu
+      src/cuda/formats/format_device.cpp
+      src/cuda/formats/high_bitdepth_gpu.cu
       src/cuda/pipeline/still/hbd/hbd_cpu.cpp
       src/cuda/pipeline/still/hbd/hbd_frame.cu
       src/cuda/pipeline/still/hbd/hbd_tx.cu
@@ -281,9 +307,13 @@ if(AV2ENC_HAVE_CUDA)
           src/cuda/codec/intra/mrl/mrl.cu
           src/cuda/codec/intra/dip/dip.cu
           src/cuda/codec/intra/ibp/ibp.cu
+          src/cuda/codec/intra/palette/palette.cu
+          src/cuda/codec/intra/ibc/ibc.cu
           src/cuda/codec/filters/deblock/deblock.cu
           src/cuda/codec/intra/modes/intra_modes.cu
           src/cuda/codec/transform/variants/tx_variants.cu
+          src/cuda/codec/transform/tx_type/tx_type.cu
+          src/cuda/codec/transform/secondary/tx_secondary_gpu.cu
           src/cuda/codec/filters/cdef/cdef.cu
           src/cuda/codec/filters/loop_restoration/ccso.cu
           src/cuda/codec/filters/loop_restoration/wiener.cu
@@ -344,7 +374,14 @@ if(AV2ENC_HAVE_CUDA)
     set(AV2ENC_VIDEO_GPU_SOURCES
       src/cuda/pipeline/video/video_pipeline.cpp
       src/cuda/pipeline/video/video_frame_modes.cpp
+      src/cuda/pipeline/video/intra/video_intra.cu
       src/cuda/pipeline/video/video_backend_cuda.cu)
+    # Opt-in luma TX size/type/partition search (--video-tx-search): the
+    # verified device module, consumed by video_backend_cuda.cu.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/pipeline/video/tx/video_tx.cu")
+      list(APPEND AV2ENC_VIDEO_GPU_SOURCES
+        src/cuda/pipeline/video/tx/video_tx.cu)
+    endif()
     # Shared CUDA components the M2 stages call.  Link each translation unit
     # once: the M1 GPU target may already provide some of them, and duplicate
     # object symbols would break the executable link.
@@ -353,11 +390,16 @@ if(AV2ENC_HAVE_CUDA)
         src/cuda/codec/inter/me/me.cu
         src/cuda/codec/inter/mc/mc.cu
         src/cuda/codec/inter/compound/compound_full.cu
+        src/cuda/codec/inter/warp_stack/warp_stack.cu
+        src/cuda/codec/inter/gme/gme.cu
+        src/cuda/codec/inter/gme/gme_plan.cpp
         src/cuda/codec/intra/modes/intra_modes.cu
+        src/cuda/pipeline/still/tx/still_tx.cu
         src/cuda/codec/transform/variants/tx_variants.cu)
       if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${support_source}")
         list(FIND AV2ENC_STILL_GPU_SUPPORT_SOURCES "${support_source}" _dup)
-        if(_dup EQUAL -1)
+        list(FIND AV2ENC_STILL_GPU_SOURCES "${support_source}" _dup_primary)
+        if(_dup EQUAL -1 AND _dup_primary EQUAL -1)
           list(APPEND AV2ENC_VIDEO_GPU_SUPPORT_SOURCES "${support_source}")
         endif()
       endif()
@@ -444,7 +486,10 @@ target_sources(av2enc_core PRIVATE
   src/codec/filters/stream/filters_stream.cpp
   src/pipeline/video/post/bit_depth_checklist.cpp
   src/pipeline/video/post/loop_filters.cpp
-  src/pipeline/video/post/tiled_frame.cpp)
+  src/pipeline/video/post/tiled_frame.cpp
+  # Opt-in M2 loop filters (--video-cdef, ...): CDEF/CCSO/LR decision + pixel
+  # stage.  All flags default off, so the default stream is unchanged.
+  src/pipeline/video/post/video_loop_filters.cpp)
 
 # SVC layer encode (--video --svc-layers): per-layer sequences, global LCR/OPS
 # and Annex F.3.2 selection.  Default off; the single-layer --video path never

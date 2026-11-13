@@ -59,9 +59,12 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/codec/filters/tables/pc_wiener.cpp
   src/codec/inter/advanced/b_frame.cpp
   src/codec/inter/advanced/compound.cpp
+  src/codec/inter/advanced/warp.cpp
   src/codec/inter/bframes/bframes.cpp
   src/codec/inter/drl_reorder/drl_reorder.cpp
   src/codec/inter/drl_reorder/video_stack_adapter.cpp
+  src/codec/inter/gme/gme.cpp
+  src/codec/inter/gme/gme_syntax.cpp
   src/codec/inter/leading/leading.cpp
   src/codec/inter/longterm/longterm_headers.cpp
   src/codec/inter/longterm/longterm_pool.cpp
@@ -113,7 +116,9 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/codec/transform/tcq/cctx.cpp
   src/codec/transform/tcq/tcq.cpp
   src/codec/transform/tcq/tcq_av2_model.cpp
+  src/codec/transform/inter_residual/inter_tx_type.cpp
   src/codec/transform/tx_partition/tx_partition.cpp
+  src/codec/transform/tx_partition/tx_scan.cpp
   src/codec/transform/tx_type/tx_type.cpp
   src/codec/transform/variants/tx_select.cpp
   src/codec/transform/variants/tx_variants.cpp
@@ -164,9 +169,11 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/pipeline/video/post/tiled_frame.cpp
   src/pipeline/video/video_frame.cpp
   src/pipeline/video/video_frames.cpp
+  src/pipeline/video/video_gme.cpp
   src/pipeline/video/video_headers.cpp
   src/pipeline/video/video_syntax.cpp
-)
+  src/pipeline/video/video_warp.cpp
+  src/pipeline/video/video_tx_search.cpp)
 
 # Append to the array named by $1 every core source that is not already there.
 #   $2 = path prefix ("" or "$ROOT/")

@@ -37,7 +37,8 @@ if [[ -n "$VIDEO_CPU_REF" ]]; then
 fi
 
 HOST_FLAGS=(-std=c++20 -O2 -Wall -Wextra -Wpedantic -Wconversion -Wshadow
-            -Wno-missing-braces ${EXTRA_INCLUDES[@]+"${EXTRA_INCLUDES[@]}"} -I"$ROOT/src" -I"$HERE")
+            -Wno-missing-braces -DAV2ENC_VIDEO_GME=1
+            ${EXTRA_INCLUDES[@]+"${EXTRA_INCLUDES[@]}"} -I"$ROOT/src" -I"$HERE")
 NVCC_FLAGS=(-std=c++20 -O2 -lineinfo -arch="sm_${ARCH}" --fmad=false
             -Xcompiler "-Wall,-Wextra,-Wconversion,-Wshadow"
             -I"$ROOT/src" -I"$HERE")
@@ -99,12 +100,21 @@ av2enc_cpu_core_append CORE "$ROOT/" \
 
 CUDA_SUPPORT=(
   "$ROOT/src/cuda/arena.cpp"
+  "$ROOT/src/cuda/codec/filters/deblock/deblock.cu"
   "$ROOT/src/cuda/codec/inter/me/me.cu"
   "$ROOT/src/cuda/codec/inter/mc/mc.cu"
   "$ROOT/src/cuda/codec/inter/compound/compound_full.cu"
+  "$ROOT/src/cuda/codec/inter/warp_stack/warp_stack.cu"
+  "$ROOT/src/cuda/codec/inter/gme/gme.cu"
+  "$ROOT/src/cuda/codec/inter/gme/gme_plan.cpp"
   "$ROOT/src/cuda/codec/intra/modes/intra_modes.cu"
   "$ROOT/src/cuda/codec/transform/variants/tx_variants.cu"
-)
+  # Full intra candidate module (--video-intra-full): the batched candidate
+  # generator and the shared still TX plan it runs for the winning mode.
+  "$HERE/intra/video_intra.cu"
+  "$ROOT/src/cuda/pipeline/still/tx/still_tx.cu"
+  # Opt-in luma TX size/type/partition search (--video-tx-search).
+  "$ROOT/src/cuda/pipeline/video/tx/video_tx.cu")
 
 OBJECTS=()
 index=0

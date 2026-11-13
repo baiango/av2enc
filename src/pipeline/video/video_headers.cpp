@@ -1,11 +1,21 @@
 #include "pipeline/video/video_headers.h"
 
 #include "core/bitstream/basic_headers.h"
+#if defined(AV2ENC_VIDEO_GME)
+#include "codec/inter/gme/gme_syntax.h"
+#endif
+#include "codec/filters/stream/filters_stream.h"
+#include "codec/filters/gdf/gdf_syntax.h"
+#include "pipeline/video/post/loop_filters.h"
 
 #include <cassert>
+#include <string>
 
 namespace av2enc::video {
 namespace {
+
+namespace filters_stream = av2enc::still::filters_stream;
+namespace gdf = ::av2enc::filters::gdf;
 
 using av2enc::basic::ObuHeader;
 using av2enc::basic::ObuType;
@@ -229,7 +239,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(false);   // enable_adaptive_mvd
   writer.put_bit(false);   // enable_mvd_sign_derive
   writer.put_bit(false);   // enable_flex_mvres
-  writer.put_bit(false);   // enable_global_motion
+  writer.put_bit(c.enable_global_motion);  // enable_global_motion (§5.4.6)
   writer.put_bit(false);   // enable_short_refresh_frame_flags
 
   // §5.4.7 sequence_scc_config(): no screen content tools, so fractional MVs
@@ -259,12 +269,30 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
 
   // §5.4.10 sequence_filter_config().
   writer.put_bit(false);  // disable_loopfilters_across_tiles
-  writer.put_bit(false);  // enable_cdef
-  writer.put_bit(false);  // enable_gdf
-  writer.put_bit(false);  // enable_restoration
-  writer.put_bit(false);  // enable_ccso
-  writer.put_bit(false);  // cdef_on_skip_txfm_always_on
-  writer.put_bit(true);   // cdef_on_skip_txfm_disabled
+  writer.put_bit(c.enable_cdef);  // enable_cdef
+  writer.put_bit(c.enable_gdf);  // enable_gdf
+  if (c.enable_gdf) {
+    // §5.4.10 codes gdf_unit_matches_sb_size only for a 64x64 sequence SB.
+    writer.put_bit(c.gdf_unit_matches_sb_size);
+  }
+  writer.put_bit(c.enable_restoration);  // enable_restoration
+  if (c.enable_restoration) {
+    writer.put_bit(c.lr_disable_luma_pc_wiener);
+    writer.put_bit(c.lr_disable_luma_wiener_ns);
+    // lr_tools_disable[1][RESTORE_PC_WIENER] is inferred to 1.
+    writer.put_bit(c.lr_uv_present);
+    if (c.lr_uv_present) {
+      writer.put_bit(c.lr_disable_chroma_wiener_ns);
+    }
+  }
+  writer.put_bit(c.enable_ccso);  // enable_ccso
+  if (c.enable_ccso) {
+    writer.put_bit(c.ccso_unit_matches_sb_size);
+  }
+  writer.put_bit(c.cdef_on_skip_txfm_always_on);
+  if (!c.cdef_on_skip_txfm_always_on) {
+    writer.put_bit(c.cdef_on_skip_txfm_disabled);
+  }
   writer.put_bits(0U, 2U); // df_par_bits_minus_2
 
   // §5.4.2 sequence_tile_config().
@@ -354,17 +382,180 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
   writer.put_bit(false);              // segmentation_enabled
   writer.put_bit(false);              // using_qmatrix
   writer.put_bit(false);              // delta_q_present (base_q_idx > 0)
-  writer.put_bit(false);              // apply_deblocking_filter[0]
-  writer.put_bit(false);              // apply_deblocking_filter[1]
-  // apply_deblocking_filter[2..3] and every df_delta_q_present are absent.
-  writer.put_bit(false);   // tx_mode_select = 0 -> TX_MODE_LARGEST
+  if (c.enable_deblock) {
+    // §5.18.7.9 deblocking_filter_params(): all four planes enabled, no
+    // df_delta_q.  df_par_bits_minus_2 is 0 in the sequence header, so the
+    // dfParBits = 2 domain only matters if a delta is ever signalled.
+    const bool apply[4] = {true, true, true, true};
+    const bool present[4] = {false, false, false, false};
+    std::string deblock_error;
+    const std::size_t deblock_bits = post::write_video_deblock_params(
+        writer, apply, present, &deblock_error);
+    assert(deblock_error.empty());
+    assert(deblock_bits == 8U);  // 4 apply flags + 4 df_delta_q_present
+    (void)deblock_bits;
+  } else {
+    writer.put_bit(false);            // apply_deblocking_filter[0]
+    writer.put_bit(false);            // apply_deblocking_filter[1]
+    // apply_deblocking_filter[2..3] and every df_delta_q_present are absent.
+  }
+  // §5.18.7.9 gdf_params(): after deblocking_filter_params(), before
+  // cdef_params().  GDF is luma-only and wired in the header-only mode
+  // (gdf_per_block = 0), so no §5.20.10.3 symbol is coded.
+  if (c.enable_gdf) {
+    gdf::FrameGdfContext gdf_context;
+    gdf_context.enable_gdf = true;
+    gdf_context.gdf_unit_matches_sb_size = c.gdf_unit_matches_sb_size;
+    gdf_context.coded_lossless = false;
+    gdf_context.single_picture_header_flag = false;
+    gdf_context.sb_size = 64;
+    gdf_context.width = static_cast<int>(c.max_frame_width);
+    gdf_context.height = static_cast<int>(c.max_frame_height);
+    gdf_context.mi_cols = static_cast<int>(mi_cols(c));
+    gdf_context.mi_rows = static_cast<int>(mi_rows(c));
+    gdf_context.disable_loopfilters_across_tiles = false;
+    gdf_context.tile_cols = 1;
+    gdf_context.tile_rows = 1;
+    gdf_context.mi_col_starts.assign(1, 0);
+    gdf_context.mi_row_starts.assign(1, 0);
+    gdf::FrameGdfParams gdf_params;
+    gdf_params.frame_enable = h.gdf.enabled;
+    gdf_params.per_block = false;
+    gdf_params.pic_qc_idx = h.gdf.qc_idx;
+    gdf_params.pic_scale_idx = h.gdf.scale_idx;
+    std::string gdf_error;
+    gdf::WriteFrameGdfParams(writer, gdf_context, &gdf_params, &gdf_error);
+    assert(gdf_error.empty());
+  }
+  // §5.18.7.10 cdef_params(): after deblocking_filter_params(), before
+  // tx_mode_select.  Only present when the sequence enables CDEF.
+  if (c.enable_cdef) {
+    filters_stream::CdefParams params;
+    params.frame_enable = h.cdef.enabled;
+    params.damping_minus_3 = h.cdef.damping - 3;
+    params.strengths_minus_1 = h.cdef.num_strengths - 1;
+    params.num_strengths = h.cdef.num_strengths;
+    params.on_skip_txfm_frame_enable = h.cdef.on_skip_txfm;
+    for (int i = 0; i < h.cdef.num_strengths; ++i) {
+      params.set[i].y_pri = h.cdef.strength[i].y_pri;
+      params.set[i].y_sec = h.cdef.strength[i].y_sec;
+      params.set[i].uv_pri = h.cdef.strength[i].uv_pri;
+      params.set[i].uv_sec = h.cdef.strength[i].uv_sec;
+    }
+    filters_stream::CdefHeaderContext context;
+    context.coded_lossless = false;
+    context.enable_cdef = true;
+    context.single_picture_header_flag = false;
+    context.cdef_on_skip_txfm = c.cdef_on_skip_txfm_mode;
+    context.num_planes = 3;
+    std::string cdef_error;
+    filters_stream::write_cdef_params(writer, params, context, &cdef_error);
+    assert(cdef_error.empty());
+  }
+  // §5.18.7.11 lr_params(): between cdef_params() and ccso_params().  Only the
+  // per-unit Wiener NS form is wired (no frame filters, no PC-Wiener yet).
+  if (c.enable_restoration) {
+    filters_stream::LrParams params;
+    for (int plane = 0; plane < 3; ++plane) {
+      params.frame_type[plane] =
+          h.lr.plane[plane].enabled ? filters_stream::kRestoreWienerNs
+                                    : filters_stream::kRestoreNone;
+      params.frame_filters_on[plane] = false;
+    }
+    params.num_filter_classes = 1;
+    params.num_filter_classes_idx = 0;
+    params.luma_shift = h.lr.luma_shift;
+    params.chroma_shift = h.lr.chroma_shift;
+    filters_stream::LrHeaderContext context;
+    context.coded_lossless = false;
+    context.enable_restoration = true;
+    context.single_picture_header_flag = false;
+    context.frame_is_intra = key;
+    context.sb_size = 64;
+    context.num_planes = 3;
+    context.sub_x = 1;
+    context.sub_y = 1;
+    context.base_q_idx = c.base_q_idx;
+    context.lr_tools_disable[0][0] = false;
+    context.lr_tools_disable[0][1] = true;   // PC-Wiener disabled
+    context.lr_tools_disable[0][2] = c.lr_disable_luma_wiener_ns;
+    context.lr_tools_disable[0][3] = false;
+    context.lr_tools_disable[1][0] = false;
+    context.lr_tools_disable[1][1] = true;
+    context.lr_tools_disable[1][2] = c.lr_uv_present
+                                         ? c.lr_disable_chroma_wiener_ns
+                                         : c.lr_disable_luma_wiener_ns;
+    context.lr_tools_disable[1][3] = false;
+    std::string lr_error;
+    filters_stream::write_lr_params(writer, params, context, &lr_error);
+    assert(lr_error.empty());
+  }
+  // §5.18.7.12 ccso_params(): after lr_params(), before tx_mode_select.
+  if (c.enable_ccso) {
+    filters_stream::CcsoParams params;
+    params.frame_flag = h.ccso.enabled;
+    params.ccso_luma_size_log2 = h.ccso.ccso_luma_size_log2;
+    for (int plane = 0; plane < 3; ++plane) {
+      filters_stream::CcsoPlaneParams& dst = params.plane[plane];
+      const post::VideoCcsoPlane& src = h.ccso.plane[plane];
+      dst.enabled = src.enabled;
+      dst.bo_only = src.bo_only;
+      dst.scale_idx = src.scale_idx;
+      dst.quant_idx = src.quant_idx;
+      dst.ext_filter = src.ext_filter;
+      dst.edge_clf = src.edge_clf;
+      dst.max_band_log2 = src.max_band_log2;
+      dst.offset_idx = src.offset_idx;
+    }
+    filters_stream::CcsoHeaderContext context;
+    context.coded_lossless = false;
+    context.enable_ccso = true;
+    context.single_picture_header_flag = false;
+    context.frame_is_intra = key;
+    context.num_planes = 3;
+    context.sb_size = 64;
+    context.ccso_unit_matches_sb_size = c.ccso_unit_matches_sb_size;
+    context.tile_start_or = 0;
+    std::string ccso_error;
+    filters_stream::write_ccso_params(writer, params, context, &ccso_error);
+    assert(ccso_error.empty());  }
+  writer.put_bit(c.tx_mode_select);  // 0 = TX_MODE_LARGEST, 1 = TX_MODE_SELECT
   if (!key) {
     writer.put_bit(h.reference_select);
     writer.put_bit(false);  // skip_mode_present
   }
   // allow_bawp / allow_warpmv_mode are disabled at sequence level.
   writer.put_bits(0U, 2U);  // reduced_tx_set
-  // global_motion_params() returns early (enable_global_motion == 0).
+#if defined(AV2ENC_VIDEO_GME)
+  // §5.18.9.1 global_motion_params(): absent for an intra frame or when the
+  // sequence bit is 0; otherwise one use_global_motion bit followed by the
+  // per-reference models.  The default plan (num_refs == 0, identity models)
+  // writes exactly the single zero bit every existing gate already produces.
+  if (c.enable_global_motion && !key) {
+    inter::gme::GmSyntaxContext gm;
+    gm.frame_is_intra = false;
+    gm.enable_global_motion = true;
+    gm.switch_frame = false;
+    gm.num_total_refs = static_cast<int>(h.num_total_refs);
+    gm.order_hint = static_cast<int>(h.order_hint);
+    gm.our_ref = -1;  // no base model; every parameter is coded directly
+    for (int r = 0; r < gm.num_total_refs && r < kGmMaxRefs; ++r) {
+      gm.ref_order_hint[static_cast<std::size_t>(r)] =
+          h.gm.ref_order_hint[static_cast<std::size_t>(r)];
+      gm.ref_frame_idx[static_cast<std::size_t>(r)] =
+          h.ref_frame_idx[static_cast<std::size_t>(r)];
+      gm.params[static_cast<std::size_t>(r)] =
+          h.gm.params[static_cast<std::size_t>(r)];
+    }
+    gm.use_global_motion = h.gm.use_global_motion;
+    std::string gm_error;
+    inter::gme::write_global_motion_params(writer, gm, &gm_error);
+  }
+#else
+  // Standalone component gates compile this writer without the GME syntax
+  // module; the product build always defines AV2ENC_VIDEO_GME.
+  assert(!c.enable_global_motion);
+#endif
   // film_grain_config() returns immediately (film_grain_params_present == 0).
 
   return writer.bit_size() - start;

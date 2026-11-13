@@ -372,12 +372,11 @@ untouched, so `tools/refactor/verify_baseline.sh --check` still passes.
 
 * `--still-uv-full` enables the directional/smooth/Paeth chroma search.  CPU is
   bit-exact on all gated sizes.
-* The GPU `chroma_decide` kernel supports `enable_uv_full`, but the
-  orchestrator never fills the chroma job's luma-mode/UVSmooth inputs
-  (`y_mode`, `y_angle_delta`, `filter_type_above/left`,
-  `num4_above_right/below_left`), so the GPU run cannot reproduce the CPU
-  decision.  `--still-gpu --still-uv-full` is therefore **rejected by name** instead
-  of running a mismatched search or crashing.
+* `--still-gpu --still-uv-full` is wired: the orchestrator patches every chroma
+  job with the leaf's device luma mode/AngleDeltaY and the §7.13.2.15/.16
+  UVSmooth neighbour flags (from a per-MI luma-mode grid), and the recon commit
+  records the chosen UV smoothness.  Byte-identical to the CPU path at 64x64
+  and 640x360; `dav2d --strict 1` decodes.
 
 ### Coefficient-CDF qctx slices (`--qp 1..255`, CPU)
 
@@ -610,10 +609,12 @@ Interactions and constraints:
   combination (`force_integer_mv` only with `allow_screen_content_tools`,
   region bits only with `allow_intrabc`, no `change_bvp_drl`) and derives
   `IsIntraBC`/`FrameMvPrecision`.  `--still-palette`/`--still-ibc` set
-  `allow_screen_content_tools`; both require `--still`, reject `--still-gpu`,
-  `--lossless`, multi-tile `--tiles`, and the 10-bit/chroma format writers.
-  IBC additionally requires `force_integer_mv` (always set) and 64x64
-  superblocks.
+  `allow_screen_content_tools`; both run on `--still` and `--still-gpu`, and
+  reject `--lossless`, multi-tile `--tiles`, and the 10-bit/chroma format
+  writers.  IBC additionally requires `force_integer_mv` (always set) and 64x64
+  superblocks.  On the GPU path the CPU reference plans the palette colour
+  set/direction and the IBC block vector (exposed through `StillResult` in leaf
+  order) and the device palette/copy kernels produce the prediction.
 
 * `--still-mrl` implies the directional luma search (only directional modes can
   signal `mrl_index`).  It rejects `--still-ibp` (IBP is specified for

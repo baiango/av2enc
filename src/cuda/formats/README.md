@@ -74,17 +74,32 @@ All buffers are arena-owned; the stage contains no `cudaMalloc`/`cudaFree`.
 # => 1742235 checks, PASS
 ```
 
-## Known integration gap
+## Product wiring
 
-The product CLI still routes `--still --bit-depth 10 --chroma ...` through the
-CPU `hbd::encode_still()`; the GPU stage is a standalone component (not in the
-root CMake target).  Wiring it needs:
+`--still-gpu --bit-depth 10` dispatches through
+`cuda::still_gpu::encode_format_gpu()` to this block stage; the CLI installs it
+as the 10-bit encoder callback, so the CPU block loop is not run under the GPU
+flag.  The compiled sources are part of the M1 OBJECT target
+(`high_bitdepth_gpu.cu`, `format_device.cpp` plus the existing `hbd`/`hbd_tx`/
+`hbd_cpu` units).  Byte parity against the CPU product writer is the CLI gate.
 
-1. add `high_bitdepth_gpu.cu`, `format_device.cpp`, and the `hbd`/`hbd_depth`/
-   `hbd_headers` host support to `AV2ENC_STILL_GPU_SOURCES`/host support in the
-   root `CMakeLists.txt` (integrator-owned);
-2. make `still_gpu.cu` accept `uint16_t` planes and dispatch this entry point
-   for depth 10 (M1 core is still 8-bit);
-3. extend the deblock kernel from 8-bit 4:2:0 to `FilterGeometry` +
-   `sample_bytes` (geometry is ready; the filter arithmetic still clips at 8
-   bits).
+Wired one format per commit:
+
+| Format | State |
+|---|---|
+| 10-bit 4:2:0 | wired (`--still-gpu --bit-depth 10`) |
+| 10-bit 4:2:2 | wired (`--still-gpu --bit-depth 10 --chroma 422`) |
+| 10-bit 4:4:4 | wired (`--still-gpu --bit-depth 10 --chroma 444`) |
+| 10-bit 4:0:0 | wired (`--still-gpu --bit-depth 10 --chroma 400`) |
+| 8-bit 4:2:2 | wired (`--still-gpu --chroma 422`) |
+| 8-bit 4:4:4 | wired (`--still-gpu --chroma 444`) |
+| 8-bit 4:0:0 | wired (`--still-gpu --chroma 400`) |
+
+For 8-bit chroma, `still_gpu.cu` provides the `chroma::ChromaGpuExecutor`
+implementation used by the CPU §8.2 writer: the entropy/syntax loop stays on
+the host, while DC prediction, forward transform/quantisation, dequantisation,
+inverse transform and reconstruction run in `cuda::chroma`.
+
+Remaining integration work: extend the deblock kernel from 8-bit 4:2:0 to
+`FilterGeometry` + `sample_bytes` (geometry is ready; the filter arithmetic
+still clips at 8 bits) and add the 8-bit chroma product block stage.

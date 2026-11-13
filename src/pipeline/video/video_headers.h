@@ -1,6 +1,8 @@
 #pragma once
 
 #include "core/bitstream/bitwriter.h"
+#include "pipeline/video/post/video_filter_plan.h"
+#include "pipeline/video/video_gm_types.h"
 
 #include <cstdint>
 #include <span>
@@ -53,6 +55,13 @@ struct VideoConfig {
   bool enable_imp_msk_bld = false;
   std::uint8_t num_same_ref_compound = 0;
   bool disable_cdf_update = true;
+  // §5.18.7.9 deblocking_filter_params(): when enabled the frame header codes
+  // all four apply_deblocking_filter flags with DfDeltaQ = 0 (df_par_bits =
+  // 2 from the sequence header).  Off keeps the historical all-zero row.
+  bool enable_deblock = false;
+  // §5.18.8.1 read_tx_mode(): opt-in TX_MODE_SELECT (--video-tx-search).  Off
+  // keeps the historical tx_mode_select = 0 / TX_MODE_LARGEST bitstream.
+  bool tx_mode_select = false;
   // §5.4.8 average-CDF config.  Opt-in (--avg-cdf); both bits are written only
   // in the non-single-picture header, so the pinned --video stream is
   // unchanged while the flags stay off.
@@ -76,6 +85,27 @@ struct VideoConfig {
   // Sequence-level intra tool used by the M1 keyframe tile payload and by the
   // M2 intra fallback blocks.
   bool enable_cfl_intra = true;
+  // §5.4.10 sequence_filter_config() flags for the opt-in M2 loop filters.
+  // All default to the historical values, so a default stream keeps its bytes.
+  bool enable_cdef = false;
+  bool cdef_on_skip_txfm_always_on = false;
+  bool cdef_on_skip_txfm_disabled = true;
+  // CdefOnSkipTxfm mode the frame header derives: 0 DISABLED, 1 ALWAYS_ON,
+  // 2 ADAPTIVE.  Mirrors the pair above.
+  int cdef_on_skip_txfm_mode = 0;
+  // §5.4.10 CCSO flags.  Off by default; `ccso_unit_matches_sb_size` is only
+  // coded when `enable_ccso` is set.
+  bool enable_ccso = false;
+  bool ccso_unit_matches_sb_size = true;
+  // §5.4.10 loop-restoration flags (non-separable Wiener / chroma LR).
+  // §5.4.10 GDF flags.  Header-only mode (gdf_per_block = 0).
+  bool enable_gdf = false;
+  bool gdf_unit_matches_sb_size = true;
+  bool enable_restoration = false;
+  bool lr_disable_luma_pc_wiener = true;
+  bool lr_disable_luma_wiener_ns = false;
+  bool lr_uv_present = false;
+  bool lr_disable_chroma_wiener_ns = false;
   // §5.4.1 layer limits for the SVC path.  The defaults reproduce the
   // single-layer header byte-for-byte (seq_lcr_id = 0, M = T = 1).
   std::uint8_t seq_lcr_id = 0;          // f(3), 1..7 with a global LCR
@@ -84,6 +114,9 @@ struct VideoConfig {
   // Dependency-present flags.  The maps written are the spec defaults
   // (ref <= curr), so the bits are explicit but semantically inert.
   bool mlayer_dependency_present = true;
+  // §5.4.6 enable_global_motion (opt-in --video-gme).  Off keeps the
+  // historical sequence header and makes global_motion_params() a no-op.
+  bool enable_global_motion = false;
 };
 
 struct VideoFrameHeader {
@@ -114,6 +147,19 @@ struct VideoFrameHeader {
   bool signal_primary_ref_frame = false;
   bool disable_cross_frame_cdf_init = true;
   std::uint8_t primary_ref_frame = 0;
+  // §5.18.9 global motion for this frame.  Defaults to "no model", which
+  // writes `use_global_motion = 0` when the sequence bit is enabled and writes
+  // nothing when it is disabled.
+  GmFramePlan gm{};
+  // §5.18.7.10 cdef_params() for this frame.  `enabled` is the
+  // cdef_frame_enable bit; the strengths are only coded when it is set.
+  post::VideoCdefPlan cdef;
+  // §5.18.7.12 ccso_params() for this frame.
+  post::VideoCcsoPlan ccso;
+  // §5.18.7.11 lr_params() for this frame.
+  post::VideoLrPlan lr;
+  // §5.18.7.9 gdf_params() for this frame.
+  post::VideoGdfPlan gdf;
 };
 
 // sequence_header_obu() for single_picture_header_flag = 0, wrapped as an

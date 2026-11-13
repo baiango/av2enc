@@ -157,7 +157,7 @@ byte-identical to the CPU path for both resolutions.
 | Item | Value | Why |
 |---|---|---|
 | `tx_mode` | TX_MODE_LARGEST (`tx_mode_select = 0`) | one transform per plane; the bridge validates that `tx_size` matches the coded block size |
-| transform type | DCT_DCT only | M1 codes no `tx_type` symbol beyond DCT_DCT; a non-zero `BlockDecision::tx_type_*` is rejected |
+| transform type | signalled per luma block | `BlockDecision::tx_type_*` is written to `BlockSyntax::tx_type`; the writer validates the §5.20.8.2 symbol for the size/mode.  Chroma stays DCT_DCT |
 | CfL alpha | CFL_DERIVED_ALPHA only | explicit `cfl_sign`/`cfl_alpha` syntax is not emitted |
 | chroma | always coded (4:2:0) | `has_chroma` must be 1 |
 | `base_q_idx` | 90 | coefficient CDF slice 0 |
@@ -230,7 +230,7 @@ non-empty `error` string instead of emitting a desynchronized stream:
 * tree: preorder/subtree consistency, child count per partition, block sizes
   against `Partition_Subsize`, superblock origins and total superblock count;
 * leaves: `BlockPlan` position/size vs tree node, 4:2:0 chroma residual size,
-  adjusted TX size vs `make_tx_params()`, `tx_type == DCT_DCT`,
+  adjusted TX size vs `make_tx_params()`, in-range `tx_type`,
   mode/angle range;
 * residual: `eob ≤ adjusted area`, coefficient plane bounds,
   `levels_offset + Σeob` inside the flat array;
@@ -336,7 +336,7 @@ invent the information):
 | `tx_size[3]` | derived from coded dims (`TX_MODE_LARGEST`) | ok — `tx_w/h`, `chroma_tx_w/h` are cross-checked against `make_tx_params()` |
 | `eob[3]` | `BlockDecision::eob_y/u/v` (`uint16`) | ok — fits the 1024-element 64x64→32x32 luma TX; `BlockSyntax` uses `uint32` for margin |
 | `y_mode`, `y_angle_delta`, `uv_mode`, `is_cfl` | `BlockDecision` | ok |
-| transform type | `BlockDecision::tx_type_y/u/v` | ok — must be 0 (DCT_DCT), otherwise rejected |
+| transform type | `BlockDecision::tx_type_y/u/v` | ok — passed to `BlockSyntax::tx_type`; the writer validates the §5.20.8.2 symbol |
 | CfL alpha syntax | `BlockDecision::cfl_alpha_u/v` (Q8) | **ignored** — M1 codes `CFL_DERIVED_ALPHA` only; explicit `cfl_sign`/`cfl_alpha` is not implemented |
 | `levels[]` (flat, interleaved) | three per-plane buffers + `coeff_offset_*` / `PlaneTxPlan::coeff_offset` | **handled by the bridge** (§1.3), incl. non-overlap validation |
 | `sse`, `plane_offset_*`, `avail`, `tx_upscale_*`, `reserved` | `BlockPlan`/`BlockDecision` | unused by syntax (recon/prediction only) |

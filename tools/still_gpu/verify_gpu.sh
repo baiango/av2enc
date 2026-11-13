@@ -86,9 +86,13 @@
 #   --modes LIST          subset of: default,full-intra,no-cfl,no-deblock,
 #                         depth-0..4,8,single,dc,adaptive-cdf,vram-cap-64,
 #                         wiener,chroma-lr,lr,gdf,gdf-lr,delta-q,qm,cfl-ds,
-#                         sb128,sb256,ext,ext-sb128,sdp,sdp-full,sub8,sub8-full,
+#                         sb128,sb256,sb128-filters,sb256-filters,
+#                         segmentation,neutral-delta-q,per-segment-q,
+#                         ext,ext-sb128,sdp,sdp-full,sub8,sub8-full,
 #                         dip,mrl,mrl-dip,ibp,ibp-full,
-#                         cfl-explicit,mhccp,mhccp-explicit
+#                         cfl-explicit,mhccp,mhccp-explicit,uv-full,
+#                         palette,ibc,palette-ibc,
+#                         tx-type,idtx,ist,cctx,tx-type-ist,ist-cctx
 #                         (default: all)
 #   --seed N              random-size seed (default 20261111)
 #   --random-count N      number of random even sizes (default 3)
@@ -420,8 +424,10 @@ PY
     local -a all_names=(default full-intra no-cfl no-deblock \
         depth-0 depth-1 depth-2 depth-3 depth-4 depth-8 single dc \
         adaptive-cdf vram-cap-64 wiener chroma-lr lr gdf gdf-lr delta-q qm cfl-ds \
-        sb128 sb256 ext ext-sb128 sdp sdp-full sub8 sub8-full dip mrl mrl-dip \
-        ibp ibp-full cfl-explicit mhccp mhccp-explicit)
+        sb128 sb256 sb128-filters sb256-filters segmentation neutral-delta-q \
+        per-segment-q ext ext-sb128 sdp sdp-full sub8 sub8-full dip mrl mrl-dip \
+        ibp ibp-full cfl-explicit mhccp mhccp-explicit uv-full \
+        palette ibc palette-ibc tx-type idtx ist cctx tx-type-ist ist-cctx)
     local -a all_args=("" "--still-full-intra" "--no-cfl" "--no-deblock" \
         "--still-depth 0" "--still-depth 1" "--still-depth 2" "--still-depth 3" \
         "--still-depth 4" "--still-depth 8" "--still-single" "--still-dc" \
@@ -430,13 +436,21 @@ PY
         "--still-gdf" \
         "--still-cdef --still-ccso --still-gdf --still-wiener --still-chroma-lr" \
         "--still-dc-ac-delta-q" "--still-qm" "--still-cfl-ds 2" \
-        "--still-sb128" "--still-sb256" "--still-ext-partitions" \
+        "--still-sb128" "--still-sb256" \
+        "--still-sb128 --still-cdef --still-ccso --still-wiener --still-chroma-lr --still-gdf" \
+        "--still-sb256 --still-cdef --still-ccso --still-pc-wiener --still-gdf" \
+        "--still-segmentation" "--still-delta-q" "--still-per-segment-q" \
+        "--still-ext-partitions" \
         "--still-ext-partitions --still-sb128" "--still-sdp" \
         "--still-sdp --still-full-intra" "--still-sub8" \
         "--still-sub8 --still-full-intra" "--still-dip" "--still-mrl" \
         "--still-mrl --still-dip" "--still-ibp" \
         "--still-ibp --still-full-intra" "--still-cfl-explicit" \
-        "--still-mhccp" "--still-mhccp --still-cfl-explicit")
+        "--still-mhccp" "--still-mhccp --still-cfl-explicit" \
+        "--still-uv-full" "--still-palette" "--still-ibc" \
+        "--still-palette --still-ibc" \
+        "--still-tx-type" "--still-idtx" "--still-ist" "--still-cctx" \
+        "--still-tx-type --still-ist" "--still-ist --still-cctx")
     local -a mode_names=() mode_args=()
     if [ "$MATRIX_MODES" = "all" ]; then
         mode_names=("${all_names[@]}")

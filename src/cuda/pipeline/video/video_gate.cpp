@@ -81,6 +81,20 @@ void set_drl_reorder(T& o, int value) {
   }
 }
 
+template <typename T, typename = void>
+struct HasEnableIntraFull : std::false_type {};
+template <typename T>
+struct HasEnableIntraFull<
+    T, std::void_t<decltype(std::declval<T&>().enable_intra_full)>>
+    : std::true_type {};
+
+template <typename T>
+void set_enable_intra_full(T& o) {
+  if constexpr (HasEnableIntraFull<T>::value) {
+    o.enable_intra_full = true;
+  }
+}
+
 struct OwnedFrame {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
@@ -517,6 +531,9 @@ int main(int argc, char** argv) {
     } else if (arg == "--inter-residual") {
       set_enable_inter_residual(options);
       set_enable_inter_residual(hd_options);
+    } else if (arg == "--intra-full") {
+      set_enable_intra_full(options);
+      set_enable_intra_full(hd_options);
     } else if (arg == "--force-inter-residual") {
       set_enable_inter_residual(options);
       set_enable_inter_residual(hd_options);
@@ -530,11 +547,23 @@ int main(int argc, char** argv) {
       const int value = std::atoi(argv[++i]);
       options.num_total_refs = value;
       hd_options.num_total_refs = value;
+    } else if (arg == "--num-ref-frames" && i + 1 < argc) {
+      const int value = std::atoi(argv[++i]);
+      options.num_ref_frames = value;
+      hd_options.num_ref_frames = value;
     } else if (arg == "--compound") {
       options.compound = true;
       hd_options.compound = true;
       if (options.num_total_refs < 2) options.num_total_refs = 2;
       if (hd_options.num_total_refs < 2) hd_options.num_total_refs = 2;
+    } else if (arg == "--gme") {
+      options.enable_gme = true;
+      hd_options.enable_gme = true;
+    } else if (arg == "--warp") {
+      options.enable_gme = true;
+      options.enable_warp = true;
+      hd_options.enable_gme = true;
+      hd_options.enable_warp = true;
     } else if (arg == "--mfh") {
       options.mfh = true;
       hd_options.mfh = true;
@@ -595,10 +624,12 @@ int main(int argc, char** argv) {
       std::cout << "usage: video_gate [--input clip.y4m] [--frames N] "
                    "[--out out.ivf] [--single-block|--full-tree] "
                    "[--force-intra] [--no-newmv] [--no-intra-fallback] "
-                   "[--force-global] [--trace] [--no-hd] "
+                   "[--force-global] [--gme] [--warp] [--trace] [--no-hd] "
                    "[--inter-residual] [--force-inter-residual] "
-                   "[--drl-reorder N] [--refs N] [--compound] [--mfh] "
-                   "[--timing] [--avg-cdf] [--adaptive-cdf] "
+                   "[--drl-reorder N] [--refs N] [--num-ref-frames N] "
+                   "[--compound] [--mfh] "
+                   "[--intra-full] "
+                   "[--drl-reorder N] [--refs N] [--compound] [--mfh] "                   "[--timing] [--avg-cdf] [--adaptive-cdf] "
                    "[--b-frames N] [--tlayers N] [--long-term] [--olk] "
                    "[--leading N] [--sef] [--switch] [--ras] [--selftest N]\n";
       return 0;

@@ -5,7 +5,9 @@
 #include "frame/mfh/mfh.h"
 #include "pipeline/video/video_frames.h"
 #include "pipeline/video/video_headers.h"
+#include "pipeline/video/video_intra_search.h"
 #include "pipeline/video/video_syntax.h"
+#include "pipeline/video/video_tx_search.h"
 #include "codec/partition/tree/partition.h"
 #include "codec/rate/rc/rc_tables.h"
 #include "codec/transform/variants/tx_variants.h"
@@ -20,13 +22,20 @@
 #include "codec/inter/bframes/bframes.h"
 #include "codec/inter/tlayers/tlayers.h"
 #endif
+#if defined(AV2ENC_VIDEO_GME)
+#include "codec/inter/gme/gme.h"
+#include "pipeline/video/video_gme.h"
+#include "pipeline/video/video_warp.h"
+#endif
 #include "pipeline/video/post/tiled_frame.h"
+#include "pipeline/video/post/deblock_grid.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <span>
@@ -81,11 +90,33 @@ struct TxPlan {
   int eob = 0;
   std::vector<std::int32_t> levels;  // adjusted-size coefficient array
   std::vector<std::uint8_t> recon;   // final coded-size samples
+
+  // Opt-in luma TX search (--video-tx-search).  When `searched` is true the
+  // per-part list below is authoritative: `parts[i].levels` are in §5.20.7.30
+  // scan order and `rate_bits` is the rate the device module also reports.
+  bool searched = false;
+  int partition = 0;
+  double rate_bits = 0.0;
+  struct Part {
+    int x = 0;
+    int y = 0;
+    int coded_w = 0;
+    int coded_h = 0;
+    int tx_size = 0;
+    int tx_type = 0;
+    int mi_row = 0;
+    int mi_col = 0;
+    int eob = 0;
+    std::vector<std::int32_t> levels;  // scan order
+  };
+  std::vector<Part> parts;
 };
 
 struct InterCandidate {
   bool valid = false;
   bool compound = false;
+  // GLOBALMV with an accepted non-identity model and the warped predictor.
+  bool use_warp = false;
   int mode = syntax::kInterGlobalMv;
   int drl_index = 0;
   int ref_index = 0;
@@ -93,8 +124,6 @@ struct InterCandidate {
   inter::mc::Mv mvd{};
   std::int64_t sse = 0;
 };
-
-constexpr int kMaxRefSlots = 8;
 
 // One decoded picture buffer slot.  The planes are MI-aligned (mi_cols*4 by
 // mi_rows*4 luma) because MC clips taps to the padded reference extent.
@@ -306,6 +335,147 @@ double estimate_tx_bits(const TxPlan& plan, bool is_inter_luma) {
   return bits;
 }
 
+// estimate_tx_bits() for a searched plan: the same heuristic applied per
+// transform leaf (the plan's scan-order levels are already the exact nonzero
+// set, so counting the first `eob` entries is the nonzero count).
+double search_plan_estimate_bits(const TxPlan& plan, bool is_inter_luma) {
+  double bits = 0.0;
+  for (const TxPlan::Part& part : plan.parts) {
+    if (part.eob == 0) {
+      bits += 1.0;
+      continue;
+    }
+    int nonzero = 0;
+    for (int c = 0; c < part.eob; ++c) {
+      if (part.levels[static_cast<std::size_t>(c)] != 0) ++nonzero;
+    }
+    bits += 8.0 + (is_inter_luma ? 4.0 : 0.0) +
+            static_cast<double>(nonzero) * 2.5 + part.eob * 0.5;
+  }
+  return bits;
+}
+
+// Rate used by the skip/residual and intra/inter decisions.  The TX search's
+// own cost model only selects the plan; the decision keeps the historical
+// estimate_tx_bits heuristic (per leaf) so enabling the search does not
+// re-price every residual against skip.
+double luma_plan_bits(const TxPlan& plan, bool is_inter_luma) {
+  return plan.searched ? search_plan_estimate_bits(plan, is_inter_luma)
+                       : estimate_tx_bits(plan, is_inter_luma);
+}
+
+bool luma_plan_all_zero(const TxPlan& plan) {
+  if (!plan.searched) return plan.eob == 0;
+  for (const TxPlan::Part& part : plan.parts) {
+    if (part.eob != 0) return false;
+  }
+  return true;
+}
+
+// Copies one leaf's luma coefficient layout into the syntax node and appends
+// the scan-order levels.  The no-search path is the historical single DCT; the
+// search path fills the TX_MODE_SELECT per-part list.
+void write_luma_plan(syntax::BlockSyntax& entry, const TxPlan& plan,
+                     std::vector<std::int32_t>& levels) {
+  entry.tx_type[0] = 0;
+  if (!plan.searched) {
+    entry.tx_size[0] = static_cast<std::uint8_t>(plan.tx_size);
+    entry.eob[0] = static_cast<std::uint32_t>(plan.eob);
+    entry.tx_partition = 0;
+    entry.tx_part_count = 0;
+    const int area = plan.adj_w * plan.adj_h;
+    std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
+    syntax::build_scan(plan.adj_w, plan.adj_h, scan);
+    for (int c = 0; c < plan.eob; ++c) {
+      levels.push_back(plan.levels[scan[static_cast<std::size_t>(c)]]);
+    }
+    return;
+  }
+  entry.tx_partition = static_cast<std::uint8_t>(plan.partition);
+  entry.tx_part_count = static_cast<std::uint8_t>(plan.parts.size());
+  const int count = static_cast<int>(plan.parts.size());
+  for (int i = 0; i < count; ++i) {
+    const TxPlan::Part& part = plan.parts[static_cast<std::size_t>(i)];
+    entry.tx_part_tx_size[i] = static_cast<std::uint8_t>(part.tx_size);
+    entry.tx_part_tx_type[i] = static_cast<std::uint8_t>(part.tx_type);
+    entry.tx_part_mi_row[i] = static_cast<std::int16_t>(part.mi_row);
+    entry.tx_part_mi_col[i] = static_cast<std::int16_t>(part.mi_col);
+    entry.tx_part_eob[i] = static_cast<std::uint32_t>(part.eob);
+    entry.tx_part_levels_offset[i] =
+        static_cast<std::uint32_t>(levels.size());
+    for (int c = 0; c < part.eob; ++c) {
+      levels.push_back(part.levels[static_cast<std::size_t>(c)]);
+    }
+  }
+  entry.tx_size[0] = entry.tx_part_tx_size[0];
+  entry.tx_type[0] = entry.tx_part_tx_type[0];
+  entry.eob[0] = entry.tx_part_eob[0];
+}
+
+// Opt-in luma TX size/type/partition search.  Builds the coded-size residual
+// from the source and prediction and runs the shared CPU reference
+// (`pipeline/video/video_tx_search.h`), which mirrors the device module under
+// `src/cuda/pipeline/video/tx/`.
+bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
+                    int ch, const std::vector<std::uint8_t>& pred, int qindex,
+                    txtsearch::Mode mode, double lambda, TxPlan& plan,
+                    std::string& error) {
+  std::vector<std::int16_t> residual(
+      static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
+  for (int y = 0; y < ch; ++y) {
+    for (int x = 0; x < cw; ++x) {
+      const int src = source_sample(frame, 0, x0 + x, y0 + y);
+      const int p = pred[static_cast<std::size_t>(y) * cw + x];
+      residual[static_cast<std::size_t>(y) * cw + x] =
+          static_cast<std::int16_t>(src - p);
+    }
+  }
+  txtsearch::Options options;
+  options.lambda = lambda;
+  // §5.20.7.24 predicts per *transform block*, in decode order, and each part's
+  // reconstruction feeds the next part's prediction.  A fixed block prediction
+  // is only equivalent when the transform block covers the coding block, so the
+  // partition search is inter-only: MC with one MV is position-independent, and
+  // the decoder's per-part prediction equals the block prediction at the same
+  // coordinates.  Intra keeps TX_PARTITION_NONE and searches the TX type only;
+  // the full intra partition search needs the per-part prediction/recon
+  // feedback the device module's fixed-predictor contract does not carry.
+  options.search_partition = mode == txtsearch::Mode::kInter;
+  txtsearch::Result result;
+  if (!txtsearch::search(residual.data(), cw, ch, mode, qindex, 0, 0,
+                         pred.data(), options, &result, &error)) {
+    return false;
+  }
+  plan.searched = true;
+  plan.partition = result.partition;
+  plan.rate_bits = result.rate_bits;
+  plan.recon = std::move(result.recon);
+  plan.parts.clear();
+  plan.parts.reserve(static_cast<std::size_t>(result.count));
+  for (int i = 0; i < result.count; ++i) {
+    const txtsearch::Leaf& leaf = result.leaves[i];
+    TxPlan::Part part;
+    part.x = leaf.x;
+    part.y = leaf.y;
+    part.coded_w = leaf.coded_w;
+    part.coded_h = leaf.coded_h;
+    part.tx_size = leaf.tx_size;
+    part.tx_type = leaf.tx_type;
+    part.mi_row = leaf.mi_row;
+    part.mi_col = leaf.mi_col;
+    part.eob = leaf.eob;
+    part.levels = leaf.levels;
+    plan.parts.push_back(std::move(part));
+  }
+  if (plan.parts.empty()) {
+    error = "TX search returned no transform leaves";
+    return false;
+  }
+  plan.tx_size = plan.parts[0].tx_size;
+  plan.eob = plan.parts[0].eob;
+  return true;
+}
+
 void write_plane_block(Plane& plane, int x0, int y0, int w, int h,
                        const std::vector<std::uint8_t>& samples) {
   for (int y = 0; y < h; ++y) {
@@ -329,7 +499,9 @@ class InterFrameEncoder {
                     const VideoOptions& options, bool trace, bool keyframe,
                     int tile_x = 0, int tile_y = 0, int tile_w = 0,
                     int tile_h = 0, std::span<const std::uint16_t> cdf_seed = {},
-                    std::vector<std::uint16_t>* cdf_final = nullptr)
+                    std::vector<std::uint16_t>* cdf_final = nullptr,
+                    const GmFramePlan* gm_plan = nullptr,
+                    std::array<int, 7> ref_order_hints = {})
       : source_(source),
         references_(std::move(references)),
         frame_distance_(frame_distance),
@@ -339,8 +511,12 @@ class InterFrameEncoder {
         keyframe_(keyframe),
         tile_x_(tile_x),
         tile_y_(tile_y),
+        tile_w_(tile_w),
+        tile_h_(tile_h),
         cdf_seed_(cdf_seed),
-        cdf_final_(cdf_final) {
+        cdf_final_(cdf_final),
+        gm_plan_(gm_plan),
+        ref_order_hints_(ref_order_hints) {
     // Coded (tile-local) geometry.  A zero tile_w/tile_h means "whole frame",
     // which keeps the historical single-tile path untouched.  Source reads and
     // motion-compensated predictions add tile_x_/tile_y_ so the reference frame
@@ -372,6 +548,16 @@ class InterFrameEncoder {
     mv_grid_.assign(static_cast<std::size_t>(mi_rows_) *
                         static_cast<std::size_t>(mi_cols_),
                     inter::mc::MiInfo{});
+    // §5.20.5.5 IntraJointMode per 4x4 cell, used only by the opt-in full
+    // intra search to derive §7.13.2.15/.16 filterTypeAbove/Left.  Inter
+    // leaves write 0, exactly like the syntax writer's inter_block_mode_info().
+    intra_joint_.assign(static_cast<std::size_t>(mi_rows_) *
+                            static_cast<std::size_t>(mi_cols_),
+                        0);
+    // §6.19.2.3 BlockDecoded maps (reset at every superblock root).
+    decoded_[0].reset(mi_cols_, mi_rows_);
+    decoded_[1].reset(mi_cols_ / 2, mi_rows_ / 2);
+    decoded_[2].reset(mi_cols_ / 2, mi_rows_ / 2);
   }
 
   std::int64_t block_variance_cost_at(
@@ -447,11 +633,81 @@ class InterFrameEncoder {
       if (!collect_node(sb, error)) return false;
     }
 
+    // Opt-in M2 loop filters (§7.18–§7.20).  They run on the completed
+    // reconstruction, before it becomes the output picture and the reference
+    // for later frames.  The plan is passed to the tile writer so the
+    // per-superblock / per-block symbols match the encoder decisions.
+    filter_plan_ = post::VideoFilterPlan{};
+    if (options_.loop_filters.any()) {
+      if (width_ != static_cast<int>(source_.width) ||
+          height_ != static_cast<int>(source_.height)) {
+        error = "video loop filters need the single-tile writer";
+        return false;
+      }
+      post::VideoLoopFilterFrame lf;
+      lf.width = width_;
+      lf.height = height_;
+      lf.mi_cols = mi_cols_;
+      lf.mi_rows = mi_rows_;
+      lf.frame_is_intra = keyframe_;
+      lf.base_q_idx = options_.base_q_idx;
+      lf.num_total_refs = num_total_refs_;
+      lf.restricted_oh = -1;
+      for (int r = 0; r < 2; ++r) {
+        lf.ref_order_hints[r] = ref_order_hints_[static_cast<std::size_t>(r)];
+        lf.frame_distance[r] = frame_distance_[static_cast<std::size_t>(r)];
+      }
+      // §7.18.1 Skips[]: derived from every coded inter leaf's skip_flag.  The
+      // decoder derives the same array, and with CdefOnSkipTxfm DISABLED it
+      // leaves a fully-skipped 8x8 block unfiltered.
+      std::vector<post::VideoLoopFilterBlock> filter_blocks;
+      if (!keyframe_) {
+        filter_blocks.reserve(blocks_.size());
+        for (const syntax::BlockSyntax& leaf : blocks_) {
+          if (leaf.partition !=
+              static_cast<std::uint8_t>(PartitionType::kNone)) {
+            continue;
+          }
+          post::VideoLoopFilterBlock block;
+          block.mi_row = leaf.mi_row;
+          block.mi_col = leaf.mi_col;
+          block.w4 =
+              partition::block_width(
+                  static_cast<partition::BlockSize>(leaf.bsize)) >>
+              2;
+          block.h4 =
+              partition::block_height(
+                  static_cast<partition::BlockSize>(leaf.bsize)) >>
+              2;
+          block.skip = leaf.is_inter && leaf.skip_flag != 0;
+          filter_blocks.push_back(block);
+        }
+      }
+      lf.blocks = filter_blocks;
+      const std::span<const std::uint8_t> src[3] = {source_.y, source_.u,
+                                                    source_.v};
+      for (int plane = 0; plane < 3; ++plane) {
+        lf.plane[plane] = recon_[plane].samples.data();
+        lf.stride[plane] = recon_[plane].width;
+        lf.source[plane] = src[plane].data();
+        lf.source_stride[plane] =
+            plane == 0 ? static_cast<int>(source_.width)
+                       : static_cast<int>(source_.width / 2);
+      }
+      if (!post::run_video_loop_filters(lf, options_.loop_filters,
+                                        &filter_plan_, nullptr, &error)) {
+        return false;
+      }
+    }
+
     syntax::FramePlan plan;
     plan.width = width_;
     plan.height = height_;
     plan.sb_size = 64;
     plan.inter_frame = !keyframe_;
+    plan.tx_mode_select = options_.enable_tx_search;
+    plan.reduced_tx_part_set = false;
+    plan.reduced_tx_set = 0;
     plan.num_total_refs = num_total_refs_;
     plan.reference_select = options_.compound && num_total_refs_ > 1;
     plan.mv_precision = options_.mv_precision;
@@ -459,6 +715,12 @@ class InterFrameEncoder {
                            ? (options_.drl_reorder_always ? 2 : 1)
                            : 0;
     plan.frame_distance = frame_distance_;
+#if defined(AV2ENC_VIDEO_GME)
+    if (gm_plan_ != nullptr) {
+      plan.gm_num_refs = gm_plan_->num_refs;
+      plan.gm_params = gm_plan_->params;
+    }
+#endif
     VideoConfig config;
     config.max_frame_width = static_cast<std::uint16_t>(width_);
     config.max_frame_height = static_cast<std::uint16_t>(height_);
@@ -471,12 +733,42 @@ class InterFrameEncoder {
     config.enable_avg_cdf = options_.avg_cdf;
     config.avg_cdf_type = true;
     config.enable_cfl_intra = true;
+    config.enable_deblock = options_.enable_deblock;
+    config.tx_mode_select = options_.enable_tx_search;
 
     std::size_t tile_bytes = 0;
     if (!syntax::assemble_video_frame(plan, blocks_, levels_, config,
                                    tile_payload, error, &tile_bytes,
-                                   cdf_seed_, cdf_final_)) {
+                                   cdf_seed_, cdf_final_,
+                                   filter_plan_.any() ? &filter_plan_ : nullptr)) {
       return false;
+    }
+    // §7.17: deblock the reconstruction before it is emitted or stored as a
+    // reference.  The metadata comes from the real per-leaf decisions above.
+    // Multi-tile deblocking is rejected at the sequence level (the pinned
+    // decoder filters across interior tile edges; see docs/negative-results.md).
+    if (options_.enable_deblock) {
+      const bool tile_local =
+          (tile_w_ != 0 && tile_w_ != static_cast<int>(source_.width)) ||
+          (tile_h_ != 0 && tile_h_ != static_cast<int>(source_.height));
+      if (tile_local) {
+        error = "video deblock: per-tile deblocking is not supported";
+        return false;
+      }
+      post::VideoDeblockGrid grid;
+      if (!post::build_video_deblock_grid(blocks_, mi_cols_, mi_rows_,
+                                          options_.base_q_idx, keyframe_, &grid,
+                                          &error)) {
+        return false;
+      }
+      std::uint8_t* data[3] = {recon_[0].samples.data(),
+                               recon_[1].samples.data(),
+                               recon_[2].samples.data()};
+      const int stride[3] = {recon_[0].stride, recon_[1].stride,
+                             recon_[2].stride};
+      if (!post::apply_video_deblock_host(grid, data, stride, &error)) {
+        return false;
+      }
     }
     blocks = std::move(blocks_);
     levels = std::move(levels_);
@@ -488,9 +780,16 @@ class InterFrameEncoder {
   int recon_mi_rows() const { return mi_rows_; }
   std::uint32_t inter_blocks() const { return inter_blocks_; }
   std::uint32_t intra_blocks() const { return intra_blocks_; }
+  const post::VideoFilterPlan& filter_plan() const { return filter_plan_; }
 
  private:
   bool collect_node(const PartitionNode& node, std::string& error) {
+    if (node.depth == 0) {
+      // §6.19.2.3 clear_block_decoded_flags(): the map is superblock-local.
+      decoded_[0].reset(mi_cols_, mi_rows_);
+      decoded_[1].reset(mi_cols_ / 2, mi_rows_ / 2);
+      decoded_[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+    }
     const std::size_t index = blocks_.size();
     blocks_.emplace_back();
     syntax::BlockSyntax& entry = blocks_.back();
@@ -524,6 +823,49 @@ class InterFrameEncoder {
     return true;
   }
 
+  // §7.12.2.2 GLOBALMV projection for this block.  A non-identity model may be
+  // predicted with the warped predictor (`use_warp`); otherwise the projected
+  // centre MV drives ordinary translational MC.  When global motion is off (or
+  // the reference has no model) this is the historical zero MV.
+  void global_mv_for_block(int ref_index, int mi_row, int mi_col, int bw4,
+                           int bh4, bool& use_warp,
+                           inter::mc::Mv& mv) const {
+    use_warp = false;
+    mv = inter::mc::Mv{0, 0};
+#if defined(AV2ENC_VIDEO_GME)
+    if (gm_plan_ == nullptr || ref_index < 0 ||
+        ref_index >= gm_plan_->num_refs) {
+      return;
+    }
+    const inter::gme::GmParams& params =
+        gm_plan_->params[static_cast<std::size_t>(ref_index)];
+    if (params.type == inter::gme::GmType::kIdentity) return;
+    inter::gme::MvPrecision precision = inter::gme::MvPrecision::kEighthPel;
+    if (options_.mv_precision == 1) {
+      precision = inter::gme::MvPrecision::kQuarterPel;
+    } else if (options_.mv_precision == 2) {
+      precision = inter::gme::MvPrecision::kHalfPel;
+    }
+    int projected[2] = {0, 0};
+    inter::gme::get_warp_motion_vector(params, mi_col, mi_row, bw4, bh4,
+                                       mi_cols_, mi_rows_, precision,
+                                       projected);
+    mv = inter::mc::Mv{projected[0], projected[1]};
+    // §7.13.3.14 derives useWarp from the model, not from an encoder flag: a
+    // non-identity GLOBALMV model always selects the §7.13.3.19/.20 warped
+    // predictor for blocks at least 8x8 (an invalid shear falls back to the
+    // extended warp).  --video-warp is therefore the explicit alias for
+    // --video-gme; using translational MC here would desync the decoder.
+    use_warp = bw4 * 4 >= 8 && bh4 * 4 >= 8;
+#else
+    (void)ref_index;
+    (void)mi_row;
+    (void)mi_col;
+    (void)bw4;
+    (void)bh4;
+#endif
+  }
+
   merge::StackParams make_stack_params(int mi_row, int mi_col, int w4,
                                        int h4, int ref_index) const {
     merge::StackParams params;
@@ -540,8 +882,11 @@ class InterFrameEncoder {
     params.ref_frame[0] = static_cast<std::int8_t>(ref_index);
     params.ref_frame[1] = merge::kRefNone;
     params.is_compound = false;
-    params.global_mv[0] = inter::mc::Mv{0, 0};
-    params.global_mv[1] = inter::mc::Mv{0, 0};
+    bool gm_use_warp = false;
+    inter::mc::Mv gm_mv{};
+    global_mv_for_block(ref_index, mi_row, mi_col, w4, h4, gm_use_warp, gm_mv);
+    params.global_mv[0] = gm_mv;
+    params.global_mv[1] = gm_mv;
     // DRL reordering is not gated (see src/pipeline/video/README.md).
     params.reorder = merge::DrlReorder::kDisabled;
     params.max_drl_bits_minus_1 = 4;
@@ -658,6 +1003,42 @@ class InterFrameEncoder {
     return true;
   }
 
+  // §7.13.2.15/.16 neighbour smooth flags at the coding-block origin, derived
+  // from the IntraJointMode grid exactly like still_encoder's
+  // neighborhood_smooth().  Only the opt-in full intra search needs them.
+  void luma_neighbor_smooth(int r, int c, bool& above_smooth,
+                            bool& left_smooth) const {
+    above_smooth = false;
+    left_smooth = false;
+    if (r > 0 && c < mi_cols_) {
+      above_smooth = intra_search::joint_is_smooth(
+          intra_joint_[static_cast<std::size_t>(r - 1) *
+                           static_cast<std::size_t>(mi_cols_) +
+                       static_cast<std::size_t>(c)]);
+    }
+    if (c > 0 && r < mi_rows_) {
+      left_smooth = intra_search::joint_is_smooth(
+          intra_joint_[static_cast<std::size_t>(r) *
+                           static_cast<std::size_t>(mi_cols_) +
+                       static_cast<std::size_t>(c - 1)]);
+    }
+  }
+
+  void set_intra_joint(int r, int c, int w4, int h4, int joint) {
+    for (int yy = 0; yy < h4; ++yy) {
+      const int rr = r + yy;
+      if (rr >= mi_rows_) break;
+      for (int xx = 0; xx < w4; ++xx) {
+        const int cc = c + xx;
+        if (cc >= mi_cols_) break;
+        intra_joint_[static_cast<std::size_t>(rr) *
+                         static_cast<std::size_t>(mi_cols_) +
+                     static_cast<std::size_t>(cc)] =
+            static_cast<std::uint8_t>(joint);
+      }
+    }
+  }
+
   bool encode_leaf(const PartitionNode& node, std::size_t index,
                    std::string& error) {
     const int r = node.mi_row;
@@ -681,33 +1062,66 @@ class InterFrameEncoder {
 
     syntax::BlockSyntax& entry = blocks_[index];
 
+    // The CUDA pipeline evaluates inter candidates only when the luma block
+    // fits inside the reconstructed reference extent.  A bottom/right edge node
+    // can straddle the MI-aligned plane; both paths must make the same choice,
+    // so the whole-frame CPU reference applies the same test.  Tiled coding has
+    // its own clipped geometry and keeps the historical path.
+    const bool inter_fits =
+        width_ != static_cast<int>(source_.width) ||
+        height_ != static_cast<int>(source_.height) ||
+        (x0 + w <= mi_cols_ * 4 && y0 + h <= mi_rows_ * 4);
+
     InterCandidate best;
     const auto consider = [&](InterCandidate cand) {
       if (!cand.valid) return;
       if (!best.valid || cand.sse < best.sse) best = cand;
     };
 
-    if (!keyframe_) {
+    if (!keyframe_ && inter_fits) {
       for (int ref_index = 0; ref_index < num_total_refs_; ++ref_index) {
         merge::StackParams stack_params;
         merge::MvStack stack;
         const bool have_stack =
             load_stack(r, c, w4, h4, ref_index, stack_params, stack);
 
-        // GLOBALMV: zero MV, no stack dependency.
+        // GLOBALMV (§5.20.7.6 / §7.13.3.14).  With an accepted non-identity
+        // model the decoder either warps the block (§7.13.3.19/.20, blocks at
+        // least 8x8) or applies the §7.12.2.2 projected centre MV as ordinary
+        // translational MC.  Without a model this is the historical zero MV.
         {
+          bool gm_use_warp = false;
+          inter::mc::Mv gm_mv{};
+          global_mv_for_block(ref_index, r, c, w4, h4, gm_use_warp, gm_mv);
           std::vector<std::uint8_t> luma;
-          if (predict_luma(ref_index, inter::mc::Mv{0, 0}, ax0, ay0, w, h,
-                           luma)) {
+          bool predicted = false;
+#if defined(AV2ENC_VIDEO_GME)
+          if (gm_use_warp && gm_plan_ != nullptr &&
+              ref_index < gm_plan_->num_refs) {
+            std::string warp_error;
+            predicted = warp_predict_plane(
+                gm_plan_->params[static_cast<std::size_t>(ref_index)],
+                references_[ref_index], 0, ax0, ay0, w, h, r, c, w4, h4,
+                luma, warp_error);
+          }
+#endif
+          if (!predicted) {
+            gm_use_warp = false;
+            predicted = predict_luma(ref_index, gm_mv, ax0, ay0, w, h, luma);
+          }
+          if (predicted) {
             InterCandidate cand;
             cand.valid = true;
+            cand.use_warp = gm_use_warp;
             cand.mode = syntax::kInterGlobalMv;
             cand.ref_index = ref_index;
-            cand.mv = inter::mc::Mv{0, 0};
+            cand.mv = gm_mv;
             cand.sse = sse_against_source(source_, 0, ax0, ay0, w, h, luma);
             if (trace_) {
-              std::cerr << "  cand ref=" << ref_index
-                        << " global mv=(0,0) sse=" << cand.sse << "\n";
+              std::cerr << "  cand ref=" << ref_index << " global mv=("
+                        << gm_mv.y << "," << gm_mv.x << ") warp="
+                        << (gm_use_warp ? 1 : 0) << " sse=" << cand.sse
+                        << "\n";
             }
             consider(cand);
           }
@@ -808,7 +1222,7 @@ class InterFrameEncoder {
     // and the block is copied out afterwards.
 #if defined(AV2ENC_VIDEO_FRAMES)
     if (!keyframe_ && options_.compound && num_total_refs_ >= 2 &&
-        w >= 8 && h >= 8 && !options_.force_intra) {
+        w >= 8 && h >= 8 && !options_.force_intra && inter_fits) {
       const inter::mc::BlockRect rect{x0, y0, w, h};
       multiref::CompoundPrediction prediction;
       std::string comp_error;
@@ -877,6 +1291,9 @@ class InterFrameEncoder {
 #endif  // AV2ENC_VIDEO_FRAMES
 
     // Intra fallback: DC prediction + DCT residual, the M1 transform path.
+    // With --video-intra-full the luma leaf runs the still product's
+    // 61-candidate search (see src/pipeline/video/video_intra_search.h);
+    // chroma stays DC_PRED because the M2 syntax cannot signal more.
     bool have_intra = false;
     std::int64_t intra_sse = 0;
     std::vector<std::uint8_t> intra_y_pred;
@@ -885,6 +1302,8 @@ class InterFrameEncoder {
     TxPlan intra_y;
     TxPlan intra_u;
     TxPlan intra_v;
+    std::uint8_t intra_y_mode = 0;  // AV2 YMode (0 = DC_PRED)
+    std::int8_t intra_y_angle_delta = 0;
     // The reconstruction planes are tile-local, so plain bounds give the
     // decoder's §5.20.9.1 availability at every tile edge.
     const int luma_max_x = recon_[0].width - 1;
@@ -896,19 +1315,49 @@ class InterFrameEncoder {
     const bool chroma_left = cx0 > 0;
     const bool chroma_above = cy0 > 0;
     if (keyframe_ || options_.enable_intra_fallback || options_.force_intra) {
-      if (!intra_dc_predict(recon_[0], source_, 0, x0, y0, w, h, luma_max_x,
-                            luma_max_y, luma_left, luma_above, intra_y_pred) ||
+      bool luma_ok = false;
+      if (options_.enable_intra_full) {
+        bool above_smooth = false;
+        bool left_smooth = false;
+        luma_neighbor_smooth(r, c, above_smooth, left_smooth);
+        const intra_search::Availability avail = intra_search::availability(
+            decoded_[0], x0 / 4, y0 / 4, w / 4, h / 4, mi_cols_, mi_rows_,
+            /*sb_mi=*/16);
+        intra_search::LumaChoice choice;
+        intra_y_pred.resize(static_cast<std::size_t>(w) *
+                            static_cast<std::size_t>(h));
+        luma_ok = intra_search::search_luma(
+            recon_[0].samples.data(), recon_[0].stride, x0, y0, w, h, avail,
+            above_smooth, left_smooth, /*enable_edge_filter=*/true,
+            source_.y.data(), static_cast<int>(source_.width),
+            static_cast<int>(source_.width) - 1,
+            static_cast<int>(source_.height) - 1, intra_y_pred.data(), choice);
+        if (luma_ok) {
+          intra_y_mode = static_cast<std::uint8_t>(choice.mode);
+          intra_y_angle_delta = static_cast<std::int8_t>(choice.angle_delta);
+        }
+      } else {
+        luma_ok = intra_dc_predict(recon_[0], source_, 0, x0, y0, w, h,
+                                   luma_max_x, luma_max_y, luma_left,
+                                   luma_above, intra_y_pred);
+      }
+      if (!luma_ok ||
           !intra_dc_predict(recon_[1], source_, 1, cx0, cy0, cw, ch,
                             chroma_max_x, chroma_max_y, chroma_left,
                             chroma_above, intra_u_pred) ||
           !intra_dc_predict(recon_[2], source_, 2, cx0, cy0, cw, ch,
                             chroma_max_x, chroma_max_y, chroma_left,
                             chroma_above, intra_v_pred)) {
-        error = "intra DC prediction failed";
+        error = "intra prediction failed";
         return false;
       }
-      if (!compute_tx(source_, 0, ax0, ay0, w, h, intra_y_pred, quant_step_,
-                      intra_y, error) ||
+      if ((options_.enable_tx_search
+               ? !search_luma_tx(source_, ax0, ay0, w, h, intra_y_pred,
+                                 options_.base_q_idx,
+                                 txtsearch::Mode::kIntra,
+                                 options_.tx_rd_lambda, intra_y, error)
+               : !compute_tx(source_, 0, ax0, ay0, w, h, intra_y_pred,
+                             quant_step_, intra_y, error)) ||
           !compute_tx(source_, 1, acx0, acy0, cw, ch, intra_u_pred, quant_step_,
                       intra_u, error) ||
           !compute_tx(source_, 2, acx0, acy0, cw, ch, intra_v_pred, quant_step_,
@@ -939,6 +1388,21 @@ class InterFrameEncoder {
         inter_y = compound_y_;
         inter_u = compound_u_;
         inter_v = compound_v_;
+      } else if (best.use_warp) {
+#if defined(AV2ENC_VIDEO_GME)
+        std::string warp_error;
+        if (gm_plan_ == nullptr || best.ref_index >= gm_plan_->num_refs ||
+            !warp_predict_420(
+                gm_plan_->params[static_cast<std::size_t>(best.ref_index)],
+                references_[best.ref_index], ax0, ay0, w, h, r, c, w4, h4,
+                inter_y, inter_u, inter_v, warp_error)) {
+          error = "inter warp prediction failed: " + warp_error;
+          return false;
+        }
+#else
+        error = "inter warp prediction is not linked in this build";
+        return false;
+#endif
       } else if (!predict_all(best.ref_index, best.mv, ax0, ay0, w, h, inter_y,
                               inter_u, inter_v)) {
         error = "inter prediction failed";
@@ -951,8 +1415,13 @@ class InterFrameEncoder {
             inter_luma_sse +
             sse_against_source(source_, 1, acx0, acy0, cw, ch, inter_u) +
             sse_against_source(source_, 2, acx0, acy0, cw, ch, inter_v);
-        if (!compute_tx(source_, 0, ax0, ay0, w, h, inter_y, quant_step_, res_y,
-                        error) ||
+        if ((options_.enable_tx_search
+                 ? !search_luma_tx(source_, ax0, ay0, w, h, inter_y,
+                                   options_.base_q_idx,
+                                   txtsearch::Mode::kInter,
+                                   options_.tx_rd_lambda, res_y, error)
+                 : !compute_tx(source_, 0, ax0, ay0, w, h, inter_y,
+                               quant_step_, res_y, error)) ||
             !compute_tx(source_, 1, acx0, acy0, cw, ch, inter_u, quant_step_,
                         res_u, error) ||
             !compute_tx(source_, 2, acx0, acy0, cw, ch, inter_v, quant_step_,
@@ -964,11 +1433,11 @@ class InterFrameEncoder {
             sse_against_source(source_, 1, acx0, acy0, cw, ch, res_u.recon) +
             sse_against_source(source_, 2, acx0, acy0, cw, ch, res_v.recon);
         const bool all_zero =
-            res_y.eob == 0 && res_u.eob == 0 && res_v.eob == 0;
+            luma_plan_all_zero(res_y) && res_u.eob == 0 && res_v.eob == 0;
         // Reconstruction step is qlookup/8 (66 at QP 90); sse_scale 0.5 is
         // the M1 calibrated value.
         const double kLambda = options_.inter_rd_lambda;
-        const double res_bits = 3.0 + estimate_tx_bits(res_y, true) +
+        const double res_bits = 3.0 + luma_plan_bits(res_y, true) +
                                 estimate_tx_bits(res_u, false) +
                                 estimate_tx_bits(res_v, false);
         const bool want =
@@ -999,12 +1468,12 @@ class InterFrameEncoder {
         // when it cost two orders of magnitude more bits.
         const double lambda = options_.inter_rd_lambda;
         const double intra_bits =
-            3.0 + estimate_tx_bits(intra_y, false) +
+            3.0 + luma_plan_bits(intra_y, false) +
             estimate_tx_bits(intra_u, false) +
             estimate_tx_bits(intra_v, false);
         double inter_bits = 8.0;
         if (inter_residual) {
-          inter_bits += 3.0 + estimate_tx_bits(res_y, true) +
+          inter_bits += 3.0 + luma_plan_bits(res_y, true) +
                         estimate_tx_bits(res_u, false) +
                         estimate_tx_bits(res_v, false);
         }
@@ -1022,29 +1491,39 @@ class InterFrameEncoder {
       }
       entry.is_inter = 0;
       entry.skip_flag = 0;
-      entry.y_mode = 0;   // DC_PRED
-      entry.y_angle_delta = 0;
+      entry.y_mode = intra_y_mode;
+      entry.y_angle_delta = intra_y_angle_delta;
       entry.uv_mode = 0;  // DC_PRED
       write_plane_block(recon_[0], x0, y0, w, h, intra_y.recon);
       write_plane_block(recon_[1], cx0, cy0, cw, ch, intra_u.recon);
       write_plane_block(recon_[2], cx0, cy0, cw, ch, intra_v.recon);
       entry.levels_offset = static_cast<std::uint32_t>(levels_.size());
-      const TxPlan* plans[3] = {&intra_y, &intra_u, &intra_v};
-      for (int plane = 0; plane < 3; ++plane) {
-        entry.tx_size[plane] = static_cast<std::uint8_t>(plans[plane]->tx_size);
-        entry.eob[plane] = static_cast<std::uint32_t>(plans[plane]->eob);
-        const int area = plans[plane]->adj_w * plans[plane]->adj_h;
-        std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
-        syntax::build_scan(plans[plane]->adj_w, plans[plane]->adj_h, scan);
-        for (int c2 = 0; c2 < plans[plane]->eob; ++c2) {
-          levels_.push_back(plans[plane]->levels[scan[
-              static_cast<std::size_t>(c2)]]);
+      write_luma_plan(entry, intra_y, levels_);
+      {
+        const TxPlan* plans[2] = {&intra_u, &intra_v};
+        for (int plane = 1; plane < 3; ++plane) {
+          entry.tx_size[plane] =
+              static_cast<std::uint8_t>(plans[plane - 1]->tx_size);
+          entry.eob[plane] = static_cast<std::uint32_t>(plans[plane - 1]->eob);
+          const int area = plans[plane - 1]->adj_w * plans[plane - 1]->adj_h;
+          std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
+          syntax::build_scan(plans[plane - 1]->adj_w, plans[plane - 1]->adj_h,
+                             scan);
+          for (int c2 = 0; c2 < plans[plane - 1]->eob; ++c2) {
+            levels_.push_back(plans[plane - 1]->levels[scan[
+                static_cast<std::size_t>(c2)]]);
+          }
         }
       }
       update_mv_grid(r, c, w4, h4, 0, 0, inter::mc::Mv{0, 0});
+      set_intra_joint(r, c, w4, h4,
+                      syntax::intra_joint_mode(intra_y_mode,
+                                               intra_y_angle_delta));
       ++intra_blocks_;
       if (trace_) {
         std::cerr << "m2 intra r=" << r << " c=" << c << " " << w << "x" << h
+                  << " mode=" << static_cast<int>(intra_y_mode)
+                  << " delta=" << static_cast<int>(intra_y_angle_delta)
                   << " sse=" << intra_sse << "\n";
       }
     } else {
@@ -1062,8 +1541,8 @@ class InterFrameEncoder {
         entry.skip_flag = 1;
         inter_residual = false;
       }
-      entry.mv_y = best.mv.y;
-      entry.mv_x = best.mv.x;
+      entry.mv_y = best.mode == syntax::kInterGlobalMv ? 0 : best.mv.y;
+      entry.mv_x = best.mode == syntax::kInterGlobalMv ? 0 : best.mv.x;
       entry.mvd_y = best.mvd.y;
       entry.mvd_x = best.mvd.x;
       write_plane_block(recon_[0], x0, y0, w, h, inter_y);
@@ -1071,22 +1550,26 @@ class InterFrameEncoder {
       write_plane_block(recon_[2], cx0, cy0, cw, ch, inter_v);
       if (inter_residual) {
         entry.levels_offset = static_cast<std::uint32_t>(levels_.size());
-        const TxPlan* plans[3] = {&res_y, &res_u, &res_v};
-        for (int plane = 0; plane < 3; ++plane) {
+        write_luma_plan(entry, res_y, levels_);
+        const TxPlan* plans[2] = {&res_u, &res_v};
+        for (int plane = 1; plane < 3; ++plane) {
           entry.tx_size[plane] =
-              static_cast<std::uint8_t>(plans[plane]->tx_size);
-          entry.eob[plane] = static_cast<std::uint32_t>(plans[plane]->eob);
-          const int area = plans[plane]->adj_w * plans[plane]->adj_h;
+              static_cast<std::uint8_t>(plans[plane - 1]->tx_size);
+          entry.eob[plane] =
+              static_cast<std::uint32_t>(plans[plane - 1]->eob);
+          const int area = plans[plane - 1]->adj_w * plans[plane - 1]->adj_h;
           std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
-          syntax::build_scan(plans[plane]->adj_w, plans[plane]->adj_h, scan);
-          for (int c2 = 0; c2 < plans[plane]->eob; ++c2) {
-            levels_.push_back(plans[plane]->levels[scan[
+          syntax::build_scan(plans[plane - 1]->adj_w, plans[plane - 1]->adj_h,
+                             scan);
+          for (int c2 = 0; c2 < plans[plane - 1]->eob; ++c2) {
+            levels_.push_back(plans[plane - 1]->levels[scan[
                 static_cast<std::size_t>(c2)]]);
           }
         }
       }
       update_mv_grid(r, c, w4, h4, 1, best.ref_index, best.mv,
                      best.compound ? 1 : merge::kRefNone);
+      set_intra_joint(r, c, w4, h4, 0);  // inter_block_mode_info(): DC
       ++inter_blocks_;
       if (trace_) {
         std::cerr << "m2 inter r=" << r << " c=" << c << " " << w << "x" << h
@@ -1099,6 +1582,11 @@ class InterFrameEncoder {
       }
     }
 
+    // §6.19.2.3: this leaf's cells are now decoded for the availability of the
+    // following leaves in this superblock.
+    decoded_[0].fill(c, r, w4, h4);
+    decoded_[1].fill(c / 2, r / 2, cw / 4, ch / 4);
+    decoded_[2].fill(c / 2, r / 2, cw / 4, ch / 4);
     (void)node;
     return true;
   }
@@ -1142,8 +1630,11 @@ class InterFrameEncoder {
   bool keyframe_ = false;
   int tile_x_ = 0;
   int tile_y_ = 0;
+  int tile_w_ = 0;
+  int tile_h_ = 0;
   std::span<const std::uint16_t> cdf_seed_;
   std::vector<std::uint16_t>* cdf_final_ = nullptr;
+  const GmFramePlan* gm_plan_ = nullptr;
   int quant_step_ = txv::kQuantStep;  // §7.14.2 qlookup(base_q_idx)
   int width_ = 0;
   int height_ = 0;
@@ -1156,12 +1647,16 @@ class InterFrameEncoder {
   FrameGeometry geometry_;
   Plane recon_[3];
   Plane compound_pred_[3];
+  post::VideoFilterPlan filter_plan_;
   std::vector<std::uint8_t> compound_y_;
   std::vector<std::uint8_t> compound_u_;
   std::vector<std::uint8_t> compound_v_;
   inter::mc::RefFrame ref_frame_;
   std::vector<inter::mc::MiInfo> mv_grid_;
+  std::vector<std::uint8_t> intra_joint_;
+  std::array<intra_search::BlockDecoded, 3> decoded_;
   std::vector<syntax::BlockSyntax> blocks_;
+  std::array<int, 7> ref_order_hints_{};
   std::vector<std::int32_t> levels_;
   std::uint32_t inter_blocks_ = 0;
   std::uint32_t intra_blocks_ = 0;
@@ -1260,6 +1755,8 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   config.disable_drl_reorder = true;
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
+  config.enable_deblock = options.enable_deblock;
+  config.tx_mode_select = options.enable_tx_search;
   config.max_tlayer_id = 0;
   config.monotonic_output_order_flag = false;
 
@@ -1458,6 +1955,8 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.disable_drl_reorder = true;
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
+  config.enable_deblock = options.enable_deblock;
+  config.tx_mode_select = options.enable_tx_search;
   config.max_tlayer_id = static_cast<std::uint8_t>(plan.max_tlayer_id);
   config.monotonic_output_order_flag = false;
   config.tlayer_dependency_present_flag = plan.tlayer_dependency_present_flag;
@@ -1584,6 +2083,11 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
 
 }  // namespace
 
+int resolved_num_ref_frames(const VideoOptions& options) {
+  if (options.num_ref_frames != 0) return options.num_ref_frames;
+  return options.num_total_refs > 1 ? kMaxRefSlots : 2;
+}
+
 bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                         const VideoOptions& options, VideoSequenceResult& result,
                         std::string& error) {
@@ -1623,6 +2127,14 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     error = "max_partition_depth must be in [0, 8]";
     return false;
   }
+  if (options.enable_tx_search && options.enable_deblock) {
+    error = "--video-tx-search does not compose with --video-deblock yet";
+    return false;
+  }
+  if (options.enable_tx_search && (options.avg_cdf || options.adaptive_cdf)) {
+    error = "--video-tx-search does not compose with --avg-cdf/--adaptive-cdf";
+    return false;
+  }
   if (!options.frame_base_q_idx.empty() &&
       options.frame_base_q_idx.size() != frames.size()) {
     error = "frame_base_q_idx must be empty or have one entry per frame";
@@ -1640,6 +2152,30 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     return options.frame_base_q_idx.empty() ? options.base_q_idx
                                             : options.frame_base_q_idx[index];
   };
+  // The opt-in loop filters are wired on the flat single-tile key+P chain.  The
+  // frame-type wrappers, B frames and temporal layers rebuild frame headers in
+  // their own loops; enabling a filter there without carrying the per-frame
+  // plan would desynchronise the decoder, so reject by name instead.
+  if (options.loop_filters.any()) {
+    if (options.tile_cols > 1 || options.tile_rows > 1) {
+      error = "video loop filters do not compose with --tiles > 1x1 yet";
+      return false;
+    }
+    if (options.b_frames > 0) {
+      error = "video loop filters do not compose with --b-frames yet";
+      return false;
+    }
+    if (options.temporal_layers > 0) {
+      error = "video loop filters do not compose with --video-tlayers yet";
+      return false;
+    }
+    if (options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras) {
+      error = "video loop filters do not compose with the random-access "
+              "frame-type modes yet";
+      return false;
+    }
+  }
   for (std::size_t i = 0; i < frames.size(); ++i) {
     const VideoInputFrame& f = frames[i];
     if (f.width != width || f.height != height) {
@@ -1659,8 +2195,21 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // tree snapshot, so the M2-owned copy of the M1 intra syntax writer emits
   // the keyframe. Decisions are DC intra + DCT; the syntax is the same
   // intra_frame_mode_info() path M1 uses.
-  if (options.num_total_refs < 1 || options.num_total_refs > 3) {
-    error = "num_total_refs must be in [1, 3]";
+  if (options.num_total_refs < 1 || options.num_total_refs > kRefsPerFrame) {
+    error = "num_total_refs must be in [1, " +
+            std::to_string(kRefsPerFrame) + "]";
+    return false;
+  }
+  if (options.num_ref_frames != 0 &&
+      (options.num_ref_frames < 4 || options.num_ref_frames > kMaxRefSlots)) {
+    error = "num_ref_frames must be 0 (auto) or in [4, " +
+            std::to_string(kMaxRefSlots) + "]";
+    return false;
+  }
+  if (options.num_ref_frames != 0 &&
+      options.num_total_refs > options.num_ref_frames) {
+    error = "num_total_refs " + std::to_string(options.num_total_refs) +
+            " exceeds NumRefFrames " + std::to_string(options.num_ref_frames);
     return false;
   }
   if (options.mv_precision < 0 || options.mv_precision > 2) {
@@ -1672,8 +2221,27 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
             "(docs/negative-results.md)";
     return false;
   }
+  if (options.enable_deblock &&
+      (options.long_term || options.olk || options.leading_frames > 0 ||
+       options.sef || options.ra_switch || options.ras)) {
+    // The frame-type wrappers assemble headers through their own modules, which
+    // do not signal deblocking_filter_params(); filtering pixels without the
+    // matching header would desynchronise the decoder.
+    error = "--video-deblock does not compose with the frame-type wrappers "
+            "(long-term/OLK/leading/SEF/SWITCH/RAS)";
+    return false;
+  }
+  if (options.enable_deblock &&
+      (options.tile_cols > 1 || options.tile_rows > 1)) {
+    // Per-tile deblocking treats tile edges as frame edges, but pinned dav2d
+    // still filters across interior tile edges even with
+    // disable_loopfilters_across_tiles = 1 (docs/negative-results.md).
+    error = "--video-deblock does not support multiple tiles: the pinned "
+            "decoder filters across interior tile edges";
+    return false;
+  }
   const int num_total_refs = options.num_total_refs;
-  const int num_ref_frames = num_total_refs > 1 ? kMaxRefSlots : 2;
+  const int num_ref_frames = resolved_num_ref_frames(options);
   const int order_hint_bits = 4;
 
   // B frames (coding order != display order, two references).
@@ -1765,6 +2333,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     std::vector<std::int32_t> levels;
     std::uint32_t inter_blocks = 0;
     std::uint32_t intra_blocks = 0;
+    post::VideoFilterPlan filter_plan;
   };
   std::vector<CodedTile> tile_sources;
   if (tiled) {
@@ -1929,7 +2498,33 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   config.disable_drl_reorder = !options.drl_reorder;
   config.constrain_drl_reorder = !options.drl_reorder_always;
   config.enable_cfl_intra = true;
-  config.seq_lcr_id = options.seq_lcr_id;
+  config.enable_deblock = options.enable_deblock;
+  config.enable_global_motion = options.enable_gme;
+  // §5.4.10 CDEF/CCSO sequence flags for the opt-in M2 loop filters.
+  if (options.loop_filters.cdef) {
+    config.enable_cdef = true;
+    config.cdef_on_skip_txfm_mode =
+        options.loop_filters.cdef_on_skip_txfm_mode;
+    config.cdef_on_skip_txfm_always_on =
+        options.loop_filters.cdef_on_skip_txfm_mode == 1;
+    config.cdef_on_skip_txfm_disabled =
+        options.loop_filters.cdef_on_skip_txfm_mode == 0;
+  }
+  if (options.loop_filters.ccso) {
+    config.enable_ccso = true;
+    config.ccso_unit_matches_sb_size = true;
+  }
+  if (options.loop_filters.gdf) {
+    config.enable_gdf = true;
+    config.gdf_unit_matches_sb_size = true;
+  }
+  if (options.loop_filters.wiener || options.loop_filters.chroma_lr) {
+    config.enable_restoration = true;
+    config.lr_disable_luma_pc_wiener = true;
+    config.lr_disable_luma_wiener_ns = !options.loop_filters.wiener;
+    config.lr_uv_present = options.loop_filters.chroma_lr;
+    config.lr_disable_chroma_wiener_ns = !options.loop_filters.chroma_lr;
+  }  config.tx_mode_select = options.enable_tx_search;  config.seq_lcr_id = options.seq_lcr_id;
   config.max_tlayer_id = options.max_tlayer_id;
   config.max_mlayer_id = options.max_mlayer_id;
   config.seq_max_mlayer_cnt = options.seq_max_mlayer_cnt;
@@ -1958,6 +2553,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       error = "keyframe encode failed: " + error;
       return false;
     }
+    tile.filter_plan = encoder.filter_plan();
     if (tile.payload.empty()) {
       error = "keyframe produced an empty tile payload";
       return false;
@@ -1998,6 +2594,10 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   std::vector<std::uint8_t> key_unit;
   {
     config.base_q_idx = frame_qp(0);
+    key_header.cdef = tile_sources[0].filter_plan.cdef;
+    key_header.ccso = tile_sources[0].filter_plan.ccso;
+    key_header.lr = tile_sources[0].filter_plan.lr;
+    key_header.gdf = tile_sources[0].filter_plan.gdf;
     std::vector<std::uint8_t> ci;
 #if defined(AV2ENC_VIDEO_CDF_CHAIN)
     if (options.video_timing) {
@@ -2131,6 +2731,34 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     }
 
     const VideoOptions frame_options = options_for_frame(i);
+    // §5.18.9 global motion: estimate one model per explicit reference before
+    // the block decisions so GLOBALMV and the header use the same parameters.
+    // Off by default; `gm_plan` then stays the identity plan.
+    GmFramePlan gm_plan;
+    const GmFramePlan* gm_ptr = nullptr;
+#if defined(AV2ENC_VIDEO_GME)
+    if (options.enable_gme && !tiled) {
+      std::vector<int> ref_order_hint(static_cast<std::size_t>(ref_count));
+      std::vector<std::uint8_t> ref_slots(static_cast<std::size_t>(ref_count));
+      std::vector<int> ref_distance(static_cast<std::size_t>(ref_count));
+      for (int r = 0; r < ref_count; ++r) {
+        const int slot = recent_slots[static_cast<std::size_t>(r)];
+        ref_order_hint[static_cast<std::size_t>(r)] =
+            static_cast<int>(slots[slot].order_hint);
+        ref_slots[static_cast<std::size_t>(r)] =
+            static_cast<std::uint8_t>(slot);
+        ref_distance[static_cast<std::size_t>(r)] =
+            frame_distance[static_cast<std::size_t>(r)];
+      }
+      if (!estimate_gm_plan_cpu(frames[i], references, ref_order_hint,
+                                ref_slots, ref_distance, frame_options,
+                                gm_plan, error)) {
+        error = "P-frame " + std::to_string(i) + " global motion: " + error;
+        return false;
+      }
+      gm_ptr = &gm_plan;
+    }
+#endif
     std::uint32_t payload_bytes = 0;
     std::uint32_t inter_blocks = 0;
     std::uint32_t intra_blocks = 0;
@@ -2153,6 +2781,12 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     std::vector<std::uint16_t> cdf_seed;
     if (cdf_chain) cdf_seed = cdf_tile;  // §8.2.2 FrameCdf seed per tile
     [[maybe_unused]] std::uint32_t cdf_tile_index = 0;
+    // §7.20.1 needs the reference OrderHints for the GDF table derivation.
+    std::array<int, 7> ref_order_hints{};
+    for (int r = 0; r < ref_count && r < 2; ++r) {
+      ref_order_hints[static_cast<std::size_t>(r)] = static_cast<int>(
+          slots[recent_slots[static_cast<std::size_t>(r)]].order_hint);
+    }
     for (CodedTile& tile : tile_sources) {
       if (cdf_chain) cdf_tile = cdf_seed;
       InterFrameEncoder encoder(
@@ -2160,11 +2794,12 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
           options.trace, /*keyframe=*/false, tile.x, tile.y, tile.w, tile.h,
           cdf_chain ? std::span<const std::uint16_t>(cdf_tile)
                     : std::span<const std::uint16_t>(),
-          cdf_chain ? &cdf_scratch : nullptr);
+          cdf_chain ? &cdf_scratch : nullptr, gm_ptr, ref_order_hints);
       if (!encoder.encode(tile.payload, tile.blocks, tile.levels, error)) {
         error = "P-frame " + std::to_string(i) + ": " + error;
         return false;
       }
+      tile.filter_plan = encoder.filter_plan();
 #if defined(AV2ENC_VIDEO_CDF_CHAIN)
       if (cdf_chain) {
         // exit_symbol() -> §8.2.4 Saved* average (§7.5 after the last tile).
@@ -2223,6 +2858,11 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     header.immediate_output_frame =
         !(options.hide_last_picture && i + 1U == frames.size());
     header.reference_select = options.compound && ref_count > 1;
+    header.gm = gm_plan;
+    header.cdef = tile_sources[0].filter_plan.cdef;
+    header.ccso = tile_sources[0].filter_plan.ccso;
+    header.lr = tile_sources[0].filter_plan.lr;
+    header.gdf = tile_sources[0].filter_plan.gdf;
 
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     config.base_q_idx = frame_qp(i);
@@ -2275,8 +2915,10 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
         std::remove(recent_slots.begin(), recent_slots.end(), write_slot),
         recent_slots.end());
     recent_slots.insert(recent_slots.begin(), write_slot);
-    if (recent_slots.size() > static_cast<std::size_t>(kMaxRefSlots - 1)) {
-      recent_slots.resize(static_cast<std::size_t>(kMaxRefSlots - 1));
+    // A frame can address at most REFS_PER_FRAME slots, so the recent list
+    // never needs more entries (it is also naturally bounded by NumRefFrames).
+    if (recent_slots.size() > static_cast<std::size_t>(kRefsPerFrame)) {
+      recent_slots.resize(static_cast<std::size_t>(kRefsPerFrame));
     }
   }
 

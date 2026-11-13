@@ -1,8 +1,11 @@
 # CUDA chroma-format support (`src/cuda/chroma_formats/`)
 
 Status: **GPU pixel path for 4:2:2, 4:4:4 and 4:0:0 at 8 and 10 bit.**
-Standalone component; it does not edit the M1/M2 cores, `CMakeLists.txt` or
-`src/main.cpp`, and it is not wired into a stream yet.
+The 8-bit product still path now consumes it for `--still-gpu --chroma 422`
+through `cuda::still_gpu::make_chroma_gpu_executor()`: the CPU §8.2 writer keeps
+the syntax/entropy loop and this component runs the per-block prediction,
+residual, transform, quantisation, inverse and reconstruction stages.  The
+10-bit product formats use the separate `high_bitdepth_gpu` stage.
 
 CPU reference: `src/encoder/format/chroma/` (geometry, Subsampled_Size,
 transform shapes, 8-bit arithmetic).  The 10-bit dequant/inverse oracle is

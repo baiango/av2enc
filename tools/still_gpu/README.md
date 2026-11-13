@@ -57,7 +57,7 @@ tools/still_gpu/verify_gpu.sh testdata/frame.y4m --recon
 # native 1080p input (testsrc2 at 1920x1080), keep artifacts
 tools/still_gpu/verify_gpu.sh --size 1920x1080 --keep
 
-# option matrix (14 modes x 8 sizes), determinism, sanitizer
+# option matrix (43 modes x 8 sizes), determinism, sanitizer
 tools/still_gpu/verify_gpu.sh --matrix
 tools/still_gpu/verify_gpu.sh --matrix --sizes 64x64,136x88 \
     --modes default,full-intra,no-cfl --determinism
@@ -108,9 +108,10 @@ tools/still_gpu/verify_gpu.sh --matrix
 ```
 
 Default dimensions: `64x64, 136x88, 640x360, 1280x720, 1920x1080` plus three
-seeded random even sizes (`--seed`, `--random-count`). Default modes:
-`default, full-intra, no-cfl, no-deblock, depth-0..4, depth-8, single, dc,
-adaptive-cdf, vram-cap-64` (14 modes, 112 cases). Narrow with
+seeded random even sizes (`--seed`, `--random-count`). Default modes cover the
+core option set plus the wired filters, partition modes and delta-Q /
+segmentation forms (`default` … `sb128-filters`, `sb256-filters`,
+`segmentation`, `neutral-delta-q`, `per-segment-q`; 43 modes). Narrow with
 `--sizes`/`--modes`.
 
 Each case is an independent `verify_gpu.sh` run, so a failure cannot poison the

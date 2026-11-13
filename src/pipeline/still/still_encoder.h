@@ -1,5 +1,6 @@
 #pragma once
 
+#include "codec/intra/palette/core/palette.h"
 #include "pipeline/still/still_headers.h"
 
 #include <cstdint>
@@ -224,6 +225,26 @@ struct StillResult {
   int leaves = 0;
   // Exact-copy intra-block-copy leaves selected by `--still-ibc`.
   int ibc_blocks = 0;
+  // Screen-content decision plan, exposed so the GPU orchestrator can execute
+  // the same candidate with its device kernels (the palette colour analysis
+  // and the IBC block-vector search stay on the host, exactly like the
+  // loop-restoration filter decisions).
+  //
+  // `palette_index_by_leaf[i]` is the leaf's entry in `palette_results`, or
+  // kNoPaletteLeaf when the leaf codes ordinary intra.  One entry per leaf in
+  // preorder syntax order, matching cuda::still_gpu::FramePlan::blocks.
+  static constexpr std::uint32_t kNoPaletteLeaf = 0xFFFFFFFFu;
+  std::vector<palette::PaletteResult> palette_results;
+  std::vector<std::uint32_t> palette_index_by_leaf;
+  // Per-leaf intra-block-copy decision (used == 0 for ordinary intra).
+  struct IbcPlan {
+    std::uint8_t used = 0;
+    std::uint8_t mode = 1;       // 1 = NEARMV (stack entry), 0 = NEWMV
+    std::uint8_t ref_mv_idx = 0;
+    std::int32_t bv_row = 0;     // 1/8 luma samples
+    std::int32_t bv_col = 0;
+  };
+  std::vector<IbcPlan> ibc_by_leaf;
   // Final §8.2 tile CDFs (packed image) for the average-CDF bank.
   std::vector<std::uint16_t> cdf_final;
   // Exact header/filter configuration the CPU reference emitted.  The GPU

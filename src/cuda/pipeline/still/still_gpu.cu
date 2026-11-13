@@ -13,6 +13,12 @@
 
 #include "cuda/arena.h"
 #include "cuda/context.h"
+#include "cuda/formats/chroma/chroma_formats.h"
+#include "cuda/formats/high_bitdepth_gpu.h"
+#include "formats/chroma/chroma_residual.h"
+#include "formats/chroma/chroma_still.h"
+#include "formats/format.h"
+#include "pipeline/still/high_bitdepth/high_bitdepth_still.h"
 
 #include <cuda_runtime.h>
 
@@ -36,6 +42,30 @@
 #endif
 #if __has_include("cuda/pipeline/still/tx/still_tx.h")
 #include "cuda/pipeline/still/tx/still_tx.h"
+#endif
+#if __has_include("cuda/codec/transform/tx_type/tx_type.h")
+#include "cuda/codec/transform/tx_type/tx_type.h"
+#define AV2ENC_STILL_GPU_HAVE_TX_TYPE 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_TX_TYPE 0
+#endif
+#if __has_include("cuda/codec/transform/secondary/tx_secondary_gpu.h")
+#include "cuda/codec/transform/secondary/tx_secondary_gpu.h"
+#include "codec/transform/secondary/tx_secondary.h"
+#include "codec/transform/secondary/tx_secondary_tables_dev.cuh"
+#define AV2ENC_STILL_GPU_HAVE_SECONDARY 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_SECONDARY 0
+#endif
+#include "codec/rate/rdo/rdo.h"
+#include "codec/intra/mrl/stream/mrl_interaction.h"
+#include "codec/transform/tx_type/tx_type.h"
+#include "codec/transform/tcq/cctx.h"
+#if __has_include("cuda/codec/transform/tcq/tcq_device.cuh")
+#include "cuda/codec/transform/tcq/tcq_device.cuh"
+#define AV2ENC_STILL_GPU_HAVE_TCQ_CORE 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_TCQ_CORE 0
 #endif
 #if __has_include("cuda/pipeline/still/recon/recon.h")
 #include "cuda/pipeline/still/recon/recon.h"
@@ -64,7 +94,20 @@
 #else
 #define AV2ENC_STILL_GPU_HAVE_INTRA_MODES 0
 #endif
+#if __has_include("cuda/codec/intra/palette/palette.h")
+#include "cuda/codec/intra/palette/palette.h"
+#define AV2ENC_STILL_GPU_HAVE_PALETTE 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_PALETTE 0
+#endif
+#if __has_include("cuda/codec/intra/ibc/ibc.h")
+#include "cuda/codec/intra/ibc/ibc.h"
+#define AV2ENC_STILL_GPU_HAVE_IBC 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_IBC 0
+#endif
 #include "codec/transform/qm/qm.h"
+#include "codec/rate/rc/rc.h"
 #if __has_include("cuda/pipeline/still/cdef/still_cdef_cuda.h")
 #include "cuda/pipeline/still/cdef/still_cdef.h"
 #include "cuda/pipeline/still/cdef/still_cdef_cuda.h"
@@ -113,7 +156,9 @@
     __has_include("cuda/pipeline/still/intra/intra_extra.h") && \
     __has_include("cuda/pipeline/still/chroma/still_chroma.h") && \
     __has_include("cuda/pipeline/still/tx/still_tx.h") && \
-    __has_include("cuda/pipeline/still/recon/recon.h")
+    __has_include("cuda/pipeline/still/recon/recon.h") && \
+    __has_include("cuda/codec/intra/palette/palette.h") && \
+    __has_include("cuda/codec/intra/ibc/ibc.h")
 #define AV2ENC_STILL_GPU_HAVE_FULL 1
 #else
 #define AV2ENC_STILL_GPU_HAVE_FULL 0
@@ -555,13 +600,138 @@ struct DeviceBuffers {
   std::size_t extra_pred_bytes = 0;
   im::IntraJob* luma_jobs = nullptr;
   std::size_t luma_jobs_bytes = 0;
+  // Chroma decision descriptors.  They are built on the host but uploaded once
+  // and patched on the device per block, so the full-UV candidate inputs
+  // (luma mode / AngleDeltaY, UVSmooth neighbour flags) come from the device
+  // decision state instead of a host round trip.
+  cm1::StillChromaJob* chroma_jobs = nullptr;
+  std::size_t chroma_jobs_bytes = 0;
   cm1::StillChromaResult* chroma_results = nullptr;
   std::size_t chroma_results_bytes = 0;
+  // Per-MI record of the final luma mode/angle, used by CHROMA_PART leaves
+  // (§5.20.5.6 reads the co-located luma-tree YMode).
+  std::int8_t* mi_luma_mode = nullptr;
+  std::int8_t* mi_luma_angle = nullptr;
+  std::size_t mi_luma_bytes = 0;
+  // §5.20.8 palette: one 8-entry colour table per leaf (indexed by leaf) and a
+  // 64x64 scratch colour map for the single-block prediction kernel.
+  std::uint8_t* palette_colors = nullptr;
+  std::size_t palette_colors_bytes = 0;
+  std::uint8_t* palette_map = nullptr;
+  std::size_t palette_map_bytes = 0;
   std::int32_t* eob = nullptr;  // 3 * block_count (Y, U, V per block)
   std::size_t eob_bytes = 0;
   StillTxJob* tx_jobs = nullptr;  // 3 * block_count
   std::size_t tx_jobs_bytes = 0;
   int* tx_errors = nullptr;
+#if AV2ENC_STILL_GPU_HAVE_TX_TYPE
+  // §5.20.7.27/§9.6 intra TX-type candidate search (one block at a time).
+  std::int16_t* tx_cand_adj = nullptr;      // candidates * kTxTypeAdjElems
+  std::size_t tx_cand_adj_bytes = 0;
+  double* tx_cand_coeff = nullptr;          // candidates * kTxTypeAdjElems
+  std::size_t tx_cand_coeff_bytes = 0;
+  std::int32_t* tx_cand_levels = nullptr;   // candidates * kTxTypeAdjElems
+  std::size_t tx_cand_levels_bytes = 0;
+  std::int16_t* tx_cand_recon = nullptr;    // candidates * kTxTypeCodedElems
+  std::size_t tx_cand_recon_bytes = 0;
+  TxTypeCandJob* tx_cand_jobs = nullptr;
+  std::size_t tx_cand_jobs_bytes = 0;
+  TxBlockJob* tx_cand_tx_jobs = nullptr;
+  std::size_t tx_cand_tx_jobs_bytes = 0;
+  TxTypeBlockJob* tx_choose_block = nullptr;
+  std::size_t tx_choose_block_bytes = 0;
+  TxTypeCandidateMetrics* tx_metrics = nullptr;
+  std::size_t tx_metrics_bytes = 0;
+  TxTypeDecision* tx_decision = nullptr;
+  std::size_t tx_decision_bytes = 0;
+  TxParams* tx_param_table = nullptr;
+  std::size_t tx_param_table_bytes = 0;
+  StillTxJob* tx_probe_job = nullptr;
+  std::size_t tx_probe_job_bytes = 0;
+  std::int16_t* tx_residual_coded = nullptr;
+  std::size_t tx_residual_coded_bytes = 0;
+  std::int16_t* tx_residual_adj = nullptr;
+  std::size_t tx_residual_adj_bytes = 0;
+  // Per-block chosen luma TX type (3 slots per block: Y/U/V).
+  std::int32_t* tx_types = nullptr;
+  std::size_t tx_types_bytes = 0;
+  // §5.20.8.2 candidate tables, one entry per TX size (16 TYPE values each),
+  // plus the per-size mapped-mode / legality / symbol-bit tables.  Built once
+  // per frame; the per-block prepass only rewrites `type_bits`.
+  TxTypeCandJob* tx_type_cands = nullptr;
+  std::size_t tx_type_cands_bytes = 0;
+  TxBlockJob* tx_type_jobs = nullptr;
+  std::size_t tx_type_jobs_bytes = 0;
+  TxTypeBlockJob* tx_type_blocks = nullptr;
+  std::size_t tx_type_blocks_bytes = 0;
+  std::int8_t* tx_type_map = nullptr;
+  std::size_t tx_type_map_bytes = 0;
+  std::uint8_t* tx_type_legal = nullptr;
+  std::size_t tx_type_legal_bytes = 0;
+  double* tx_type_bits = nullptr;
+  std::size_t tx_type_bits_bytes = 0;
+#endif
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+  // §7.15.3 IST candidate search: 3 sets x 3 sec_tx_type slots per block.
+  std::int32_t* ist_levels = nullptr;     // 9 * kTxTypeAdjElems
+  std::size_t ist_levels_bytes = 0;
+  std::int32_t* ist_dequant = nullptr;    // 9 * kTxTypeAdjElems
+  std::size_t ist_dequant_bytes = 0;
+  std::int16_t* ist_residual = nullptr;   // 9 * kTxTypeCodedElems
+  std::size_t ist_residual_bytes = 0;
+  double* ist_sse = nullptr;              // 9
+  std::size_t ist_sse_bytes = 0;
+  std::int32_t* ist_eob = nullptr;        // 9
+  std::size_t ist_eob_bytes = 0;
+  std::uint8_t* ist_valid = nullptr;      // 9
+  std::size_t ist_valid_bytes = 0;
+  double* ist_bits = nullptr;             // 9
+  std::size_t ist_bits_bytes = 0;
+  TxSecondaryJob* ist_jobs = nullptr;     // 9
+  std::size_t ist_jobs_bytes = 0;
+  TxBlockJob* ist_block_jobs = nullptr;   // 9
+  std::size_t ist_block_jobs_bytes = 0;
+  std::int32_t* ist_secs = nullptr;       // per block
+  std::size_t ist_secs_bytes = 0;
+  std::int32_t* ist_sets = nullptr;       // per block
+  std::size_t ist_sets_bytes = 0;
+  double* ist_base_sse = nullptr;         // 1
+  std::size_t ist_base_sse_bytes = 0;
+  std::int32_t* ist_primary_type = nullptr;  // 1
+  std::size_t ist_primary_type_bytes = 0;
+  // Per-size/type/mapped-mode/set/sec candidate table.
+  std::int8_t* ist_map = nullptr;              // 25 * 13 * 7 * 4
+  std::size_t ist_map_bytes = 0;
+  TxSecondaryJob* ist_job_table = nullptr;     // 25 * 2 * 13 * 9
+  std::size_t ist_job_table_bytes = 0;
+  TxBlockJob* ist_block_table = nullptr;       // 25 * 2 * 9
+  std::size_t ist_block_table_bytes = 0;
+  double* ist_bit_table = nullptr;             // 25 * 2 * 13 * 9
+  std::size_t ist_bit_table_bytes = 0;
+  std::uint8_t* ist_set_count = nullptr;       // 25 * 2 * 13
+  std::size_t ist_set_count_bytes = 0;
+#endif
+#if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+  // §7.14.6 cross-component transform search (7 types x U/V).
+  std::int32_t* cctx_levels = nullptr;    // 7 * 2 * kTxTypeAdjElems
+  std::size_t cctx_levels_bytes = 0;
+  std::int32_t* cctx_dequant = nullptr;
+  std::size_t cctx_dequant_bytes = 0;
+  std::int16_t* cctx_residual = nullptr;  // 7 * 2 * kTxTypeCodedElems
+  std::size_t cctx_residual_bytes = 0;
+  double* cctx_u_coeff = nullptr;
+  std::size_t cctx_u_coeff_bytes = 0;
+  double* cctx_v_coeff = nullptr;
+  std::size_t cctx_v_coeff_bytes = 0;
+  double* cctx_sse = nullptr;             // 7
+  std::size_t cctx_sse_bytes = 0;
+  std::int32_t* cctx_eob = nullptr;       // 7 * 2
+  std::size_t cctx_eob_bytes = 0;
+  TxBlockJob* cctx_jobs = nullptr;        // 7 * 2
+  std::size_t cctx_jobs_bytes = 0;
+  std::int32_t* cctx_types = nullptr;     // per block
+  std::size_t cctx_types_bytes = 0;
+#endif
   cm1::ReconWriteJob* recon_jobs = nullptr;  // 3 * block_count
   std::size_t recon_jobs_bytes = 0;
   cm1::ReconBlockInfo* recon_infos = nullptr;  // block_count
@@ -607,6 +777,14 @@ struct DeviceBuffers {
   // §5.18.6.2 QM: per-block adjusted-size q2 matrices.
   std::int32_t* q2 = nullptr;
   std::size_t q2_bytes = 0;
+  // §5.4.9 / §5.18.7.1 device segment map for --still-per-segment-q.  One
+  // entry per superblock plus the variance scratch used to derive it.
+  std::uint8_t* sb_segment = nullptr;
+  std::size_t sb_segment_bytes = 0;
+  std::uint8_t* sb_qindex = nullptr;
+  std::size_t sb_qindex_bytes = 0;
+  std::uint64_t* sb_variance = nullptr;
+  std::size_t sb_variance_bytes = 0;
   // Luma-only 16-bit planes for PC-Wiener (§7.20.4) and GDF (§7.20.5).
   U16Planes luma16_curr;
   U16Planes luma16_cdef;
@@ -630,6 +808,9 @@ struct FilterWorkspaces {
 #endif
   int mi_cols = 0;
   int mi_rows = 0;
+  // Frame SbSize the workspaces were sized for.  A later encode with a
+  // different --still-sb128/--still-sb256 mode has different LR unit sizes.
+  int sb_size = 0;
 
   void release() {
 #if AV2ENC_STILL_GPU_HAVE_LR_CHROMA
@@ -644,6 +825,7 @@ struct FilterWorkspaces {
 #endif
     mi_cols = 0;
     mi_rows = 0;
+    sb_size = 0;
   }
 };
 
@@ -656,6 +838,9 @@ struct GpuRuntime {
   Arena arena;
   StagingBuffer upload;
   StagingBuffer download;
+  // Per-block descriptor staging for the TX decision stages (one unique slot
+  // per block so an async H2D is never overwritten while pending).
+  StagingBuffer tx_stage;
   DeviceBuffers buffers;
   FilterWorkspaces filters;
   std::uint64_t arena_capacity = 0;
@@ -663,6 +848,7 @@ struct GpuRuntime {
   ~GpuRuntime() {
     filters.release();
     buffers = DeviceBuffers{};
+    tx_stage.release();
     download.release();
     upload.release();
     arena.release();
@@ -695,6 +881,8 @@ std::size_t packed_plane_pixels(const FramePlan& plan, int plane) {
 constexpr int kSearchMaxBlocks = 1;
 constexpr int kSearchCandidatesPerChunk = 61;
 constexpr int kSearchMaxBlockArea = 64 * 64;
+// One candidate per AV2 TX_TYPE for the §5.20.7.27 intra search.
+constexpr int kTxTypeSearchSlots = 16;
 
 // Upper bound on the §5.20.10.4 loop-restoration unit grid: the smallest
 // normative luma unit is 64 samples (16 MI cells) and the chroma grid at
@@ -707,9 +895,14 @@ std::size_t lr_unit_slots(const FramePlan& plan) {
   return cols * rows;
 }
 
+// Superblocks in the frame plan's effective (intra-clamped) SbSize grid.
+std::size_t sb_slot_count(const FramePlan& plan) {
+  return static_cast<std::size_t>(plan.sb_cols) *
+         static_cast<std::size_t>(plan.sb_rows);
+}
+
 // Adjusted-size element count of the QM q2 matrices: one per TX block/plane.
-std::size_t q2_elems(const FramePlan& plan) {
-  std::size_t total = 0;
+std::size_t q2_elems(const FramePlan& plan) {  std::size_t total = 0;
   for (const BlockPlan& block : plan.blocks) {
     total += static_cast<std::size_t>(block.tx_w) * block.tx_h;
     if (block.has_chroma != 0) {
@@ -742,18 +935,62 @@ std::size_t full_device_bytes(const FramePlan& plan) {
   total += n * sizeof(ibp::IbpJob);
   total += 2u * kSearchMaxBlockArea;  // MRL/DIP chosen-prediction scratch
   total += n * sizeof(im::IntraJob);
+  total += n * sizeof(cm1::StillChromaJob);
   total += n * sizeof(cm1::StillChromaResult);
   total += n * sizeof(cm1::ReconBlockInfo);
   total += 3u * n * sizeof(StillTxJob);
   total += 3u * n * sizeof(cm1::ReconWriteJob);
   total += 3u * n * sizeof(std::int32_t);
   total += sizeof(int);  // tx_errors
+#if AV2ENC_STILL_GPU_HAVE_TX_TYPE
+  // TX-type candidate search scratch (one block at a time).
+  total += static_cast<std::size_t>(kTxTypeSearchSlots) * kTxTypeAdjElems *
+           (sizeof(std::int16_t) + sizeof(double) + sizeof(std::int32_t));
+  total += static_cast<std::size_t>(kTxTypeSearchSlots) *
+           kTxTypeCodedElems * sizeof(std::int16_t);
+  total += kTxTypeSearchSlots *
+           (sizeof(TxTypeCandJob) + sizeof(TxBlockJob) +
+            sizeof(TxTypeCandidateMetrics));
+  total += sizeof(TxTypeBlockJob) + sizeof(TxTypeDecision) +
+           sizeof(StillTxJob) + 16u * sizeof(TxParams);
+  total += kTxTypeCodedElems * sizeof(std::int16_t);
+  total += kTxTypeAdjElems * sizeof(std::int16_t);
+  total += 3u * n * sizeof(std::int32_t);  // tx_types
+  total += 25u * 16u * (sizeof(TxTypeCandJob) + sizeof(TxBlockJob)) +
+           25u * sizeof(TxTypeBlockJob);
+  total += 25u * 13u * 7u * 4u;                       // mapped-mode table
+  total += 25u * 13u * 16u;                           // legality
+  total += 25u * 13u * 16u * sizeof(double);          // symbol bits
+#endif
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+  total += 9u * kTxTypeAdjElems * sizeof(std::int32_t) * 2u;
+  total += 9u * kTxTypeCodedElems * sizeof(std::int16_t);
+  total += 9u * (sizeof(double) + sizeof(std::int32_t) + sizeof(uint8_t) +
+                 sizeof(double) + sizeof(TxSecondaryJob) + sizeof(TxBlockJob));
+  total += 2u * n * sizeof(std::int32_t);
+  total += sizeof(double) + sizeof(std::int32_t);  // ist_base_sse/type
+  total += 25u * 13u * 7u * 4u;                       // ist_map
+  total += 25u * 2u * 13u * 9u * sizeof(TxSecondaryJob);
+  total += 25u * 2u * 9u * sizeof(TxBlockJob);
+  total += 25u * 2u * 13u * 9u * sizeof(double);
+  total += 25u * 2u * 13u * sizeof(std::uint8_t);
+#endif
+#if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+  total += 7u * 2u * kTxTypeAdjElems * sizeof(std::int32_t) * 2u;
+  total += 7u * 2u * kTxTypeCodedElems * sizeof(std::int16_t);
+  total += 2u * kTxTypeAdjElems * sizeof(double);
+  total += 7u * sizeof(double) + 7u * 2u * sizeof(std::int32_t) +
+           7u * 2u * sizeof(TxBlockJob) + n * sizeof(std::int32_t);
+#endif
   total += srch::luma_search_scratch_bytes(
       kSearchMaxBlocks, kSearchMaxBlockArea, kSearchCandidatesPerChunk);
   total += mi_cells * sizeof(deblock::DeblockMi) * 3u;
   total += mi_cells + chroma_mi * 2u;  // decoded[3]
   total += mi_cells * sizeof(int);     // intra_joint
   total += chroma_mi;                  // uv_smooth
+  total += mi_cells * 2u;              // luma mode/angle MI grids
+  total += n * 8u;                     // palette colour tables
+  total += kSearchMaxBlockArea;        // palette colour-map scratch
   // In-loop filter (§7.18) destination planes and metadata grids.
   const std::size_t plane_y =
       static_cast<std::size_t>(plan.y_stride) * plan.padded_height;
@@ -779,6 +1016,8 @@ std::size_t full_device_bytes(const FramePlan& plan) {
   total += 3u * plane_y * sizeof(std::uint16_t);
   total += mi_cells;  // PC-Wiener LrTxSkip grid
   total += q2_elems(plan) * sizeof(std::int32_t);  // QM q2 matrices
+  total += sb_slot_count(plan) * 2u;               // segment id + qindex
+  total += sb_slot_count(plan) * sizeof(std::uint64_t);  // variance scratch
   return total;
 }
 #endif
@@ -844,6 +1083,9 @@ bool buffers_fit(const FramePlan& plan, const DeviceBuffers& buffers,
          buffers.luma16_cdef.y_bytes >= luma_bytes * sizeof(std::uint16_t) &&
          buffers.luma16_lr.y_bytes >= luma_bytes * sizeof(std::uint16_t) &&
          buffers.lr_tx_skip_bytes >= mi_cells &&
+         buffers.sb_segment_bytes >= sb_slot_count(plan) &&
+         buffers.sb_qindex_bytes >= sb_slot_count(plan) &&
+         buffers.sb_variance_bytes >= sb_slot_count(plan) * sizeof(std::uint64_t) &&
          buffers.q2_bytes >= q2_elems(plan) * sizeof(std::int32_t) &&
          buffers.cdef_mi_bytes >= mi_cells &&
          buffers.cdef_chroma_mi_bytes >= mi_cells &&
@@ -857,6 +1099,7 @@ bool buffers_fit(const FramePlan& plan, const DeviceBuffers& buffers,
          buffers.luma_blocks_bytes >= n * sizeof(srch::LumaSearchBlock) &&
          buffers.luma_results_bytes >= n * sizeof(srch::LumaSearchResult) &&
          buffers.luma_jobs_bytes >= n * sizeof(im::IntraJob) &&
+         buffers.chroma_jobs_bytes >= n * sizeof(cm1::StillChromaJob) &&
          buffers.chroma_results_bytes >= n * sizeof(cm1::StillChromaResult) &&
          buffers.eob_bytes >= 3u * n * sizeof(std::int32_t) &&
          buffers.tx_jobs_bytes >= 3u * n * sizeof(StillTxJob) &&
@@ -874,7 +1117,43 @@ bool buffers_fit(const FramePlan& plan, const DeviceBuffers& buffers,
          buffers.decoded_bytes[1] >= chroma_mi &&
          buffers.decoded_bytes[2] >= chroma_mi &&
          buffers.intra_joint_bytes >= mi_cells * sizeof(int) &&
-         buffers.uv_smooth_bytes >= chroma_mi;
+         buffers.uv_smooth_bytes >= chroma_mi &&
+         buffers.mi_luma_bytes >= mi_cells &&
+         buffers.palette_colors_bytes >= n * 8u &&
+         buffers.palette_map_bytes >= kSearchMaxBlockArea
+#if AV2ENC_STILL_GPU_HAVE_TX_TYPE
+         && buffers.tx_cand_adj != nullptr && buffers.tx_cand_coeff != nullptr &&
+         buffers.tx_cand_levels != nullptr && buffers.tx_cand_recon != nullptr &&
+         buffers.tx_cand_jobs != nullptr && buffers.tx_cand_tx_jobs != nullptr &&
+         buffers.tx_choose_block != nullptr && buffers.tx_metrics != nullptr &&
+         buffers.tx_decision != nullptr && buffers.tx_param_table != nullptr &&
+         buffers.tx_probe_job != nullptr && buffers.tx_residual_coded != nullptr &&
+         buffers.tx_residual_adj != nullptr &&
+         buffers.tx_types_bytes >= 3u * n * sizeof(std::int32_t)
+#endif
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+         && buffers.ist_levels != nullptr && buffers.ist_dequant != nullptr &&
+         buffers.ist_residual != nullptr && buffers.ist_sse != nullptr &&
+         buffers.ist_eob != nullptr && buffers.ist_valid != nullptr &&
+         buffers.ist_bits != nullptr && buffers.ist_jobs != nullptr &&
+         buffers.ist_block_jobs != nullptr &&
+         buffers.ist_secs_bytes >= n * sizeof(std::int32_t) &&
+         buffers.ist_sets_bytes >= n * sizeof(std::int32_t) &&
+         buffers.ist_map != nullptr && buffers.ist_job_table != nullptr &&
+         buffers.ist_block_table != nullptr &&
+         buffers.ist_bit_table != nullptr &&
+         buffers.ist_set_count != nullptr &&
+         buffers.ist_base_sse != nullptr &&
+         buffers.ist_primary_type != nullptr
+#endif
+#if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+         && buffers.cctx_levels != nullptr && buffers.cctx_dequant != nullptr &&
+         buffers.cctx_residual != nullptr && buffers.cctx_u_coeff != nullptr &&
+         buffers.cctx_v_coeff != nullptr && buffers.cctx_sse != nullptr &&
+         buffers.cctx_eob != nullptr && buffers.cctx_jobs != nullptr &&
+         buffers.cctx_types_bytes >= n * sizeof(std::int32_t)
+#endif
+         ;
 #else
   (void)full;
   return base;
@@ -981,6 +1260,7 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
     out.ibp_jobs_bytes = n * sizeof(ibp::IbpJob);
     out.extra_pred_bytes = kSearchMaxBlockArea;
     out.luma_jobs_bytes = n * sizeof(im::IntraJob);
+    out.chroma_jobs_bytes = n * sizeof(cm1::StillChromaJob);
     out.chroma_results_bytes = n * sizeof(cm1::StillChromaResult);
     out.eob_bytes = 3u * n * sizeof(std::int32_t);
     out.tx_jobs_bytes = 3u * n * sizeof(StillTxJob);
@@ -996,6 +1276,9 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
     out.deblock_mi_bytes[2] = out.deblock_mi_bytes[0];
     out.intra_joint_bytes = mi_cells * sizeof(int);
     out.uv_smooth_bytes = chroma_mi;
+    out.mi_luma_bytes = mi_cells;
+    out.palette_colors_bytes = n * 8u;
+    out.palette_map_bytes = kSearchMaxBlockArea;
 
     out.luma_blocks = static_cast<srch::LumaSearchBlock*>(
         bump(out.luma_blocks_bytes, 256));
@@ -1012,6 +1295,8 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
     out.dip_pred = static_cast<std::uint8_t*>(bump(out.extra_pred_bytes, 256));
     out.luma_jobs =
         static_cast<im::IntraJob*>(bump(out.luma_jobs_bytes, 256));
+    out.chroma_jobs = static_cast<cm1::StillChromaJob*>(
+        bump(out.chroma_jobs_bytes, 256));
     out.chroma_results = static_cast<cm1::StillChromaResult*>(
         bump(out.chroma_results_bytes, 256));
     out.eob = static_cast<std::int32_t*>(bump(out.eob_bytes, 256));
@@ -1022,6 +1307,146 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
         bump(out.recon_infos_bytes, 256));
     out.search_scratch = bump(out.search_scratch_bytes, 256);
     out.tx_errors = static_cast<int*>(bump(sizeof(int), 256));
+#if AV2ENC_STILL_GPU_HAVE_TX_TYPE
+    out.tx_cand_adj_bytes = static_cast<std::size_t>(kTxTypeSearchSlots) *
+                            kTxTypeAdjElems * sizeof(std::int16_t);
+    out.tx_cand_coeff_bytes = static_cast<std::size_t>(kTxTypeSearchSlots) *
+                              kTxTypeAdjElems * sizeof(double);
+    out.tx_cand_levels_bytes = static_cast<std::size_t>(kTxTypeSearchSlots) *
+                               kTxTypeAdjElems * sizeof(std::int32_t);
+    out.tx_cand_recon_bytes = static_cast<std::size_t>(kTxTypeSearchSlots) *
+                              kTxTypeCodedElems * sizeof(std::int16_t);
+    out.tx_cand_jobs_bytes =
+        static_cast<std::size_t>(kTxTypeSearchSlots) * sizeof(TxTypeCandJob);
+    out.tx_cand_tx_jobs_bytes =
+        static_cast<std::size_t>(kTxTypeSearchSlots) * sizeof(TxBlockJob);
+    out.tx_choose_block_bytes = sizeof(TxTypeBlockJob);
+    out.tx_metrics_bytes =
+        static_cast<std::size_t>(kTxTypeSearchSlots) *
+        sizeof(TxTypeCandidateMetrics);
+    out.tx_decision_bytes = sizeof(TxTypeDecision);
+    out.tx_param_table_bytes = 16u * sizeof(TxParams);
+    out.tx_probe_job_bytes = sizeof(StillTxJob);
+    out.tx_residual_coded_bytes = kTxTypeCodedElems * sizeof(std::int16_t);
+    out.tx_residual_adj_bytes = kTxTypeAdjElems * sizeof(std::int16_t);
+    out.tx_types_bytes = 3u * n * sizeof(std::int32_t);
+    out.tx_cand_adj = static_cast<std::int16_t*>(
+        bump(out.tx_cand_adj_bytes, 256));
+    out.tx_cand_coeff = static_cast<double*>(
+        bump(out.tx_cand_coeff_bytes, 256));
+    out.tx_cand_levels = static_cast<std::int32_t*>(
+        bump(out.tx_cand_levels_bytes, 256));
+    out.tx_cand_recon = static_cast<std::int16_t*>(
+        bump(out.tx_cand_recon_bytes, 256));
+    out.tx_cand_jobs = static_cast<TxTypeCandJob*>(
+        bump(out.tx_cand_jobs_bytes, 256));
+    out.tx_cand_tx_jobs = static_cast<TxBlockJob*>(
+        bump(out.tx_cand_tx_jobs_bytes, 256));
+    out.tx_choose_block = static_cast<TxTypeBlockJob*>(
+        bump(out.tx_choose_block_bytes, 256));
+    out.tx_metrics = static_cast<TxTypeCandidateMetrics*>(
+        bump(out.tx_metrics_bytes, 256));
+    out.tx_decision = static_cast<TxTypeDecision*>(
+        bump(out.tx_decision_bytes, 256));
+    out.tx_param_table = static_cast<TxParams*>(
+        bump(out.tx_param_table_bytes, 256));
+    out.tx_probe_job = static_cast<StillTxJob*>(
+        bump(out.tx_probe_job_bytes, 256));
+    out.tx_residual_coded = static_cast<std::int16_t*>(
+        bump(out.tx_residual_coded_bytes, 256));
+    out.tx_residual_adj = static_cast<std::int16_t*>(
+        bump(out.tx_residual_adj_bytes, 256));
+    out.tx_types = static_cast<std::int32_t*>(bump(out.tx_types_bytes, 256));
+    out.tx_type_cands_bytes =
+        25u * 16u * sizeof(TxTypeCandJob);
+    out.tx_type_jobs_bytes = 25u * 16u * sizeof(TxBlockJob);
+    out.tx_type_blocks_bytes = 25u * sizeof(TxTypeBlockJob);
+    out.tx_type_map_bytes = 25u * 13u * 7u * 4u;
+    out.tx_type_legal_bytes = 25u * 13u * 16u;
+    out.tx_type_bits_bytes = 25u * 13u * 16u * sizeof(double);
+    out.tx_type_cands = static_cast<TxTypeCandJob*>(
+        bump(out.tx_type_cands_bytes, 256));
+    out.tx_type_jobs = static_cast<TxBlockJob*>(
+        bump(out.tx_type_jobs_bytes, 256));
+    out.tx_type_blocks = static_cast<TxTypeBlockJob*>(
+        bump(out.tx_type_blocks_bytes, 256));
+    out.tx_type_map = static_cast<std::int8_t*>(
+        bump(out.tx_type_map_bytes, 256));
+    out.tx_type_legal = static_cast<std::uint8_t*>(
+        bump(out.tx_type_legal_bytes, 256));
+    out.tx_type_bits = static_cast<double*>(
+        bump(out.tx_type_bits_bytes, 256));
+#endif
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+    out.ist_levels_bytes =
+        9u * kTxTypeAdjElems * sizeof(std::int32_t);
+    out.ist_dequant_bytes = out.ist_levels_bytes;
+    out.ist_residual_bytes = 9u * kTxTypeCodedElems * sizeof(std::int16_t);
+    out.ist_sse_bytes = 9u * sizeof(double);
+    out.ist_eob_bytes = 9u * sizeof(std::int32_t);
+    out.ist_valid_bytes = 9u;
+    out.ist_bits_bytes = 9u * sizeof(double);
+    out.ist_jobs_bytes = 9u * sizeof(TxSecondaryJob);
+    out.ist_block_jobs_bytes = 9u * sizeof(TxBlockJob);
+    out.ist_secs_bytes = n * sizeof(std::int32_t);
+    out.ist_sets_bytes = n * sizeof(std::int32_t);
+    out.ist_base_sse_bytes = sizeof(double);
+    out.ist_primary_type_bytes = sizeof(std::int32_t);
+    out.ist_map_bytes = 25u * 13u * 7u * 4u;
+    out.ist_job_table_bytes =
+        25u * 2u * 13u * 9u * sizeof(TxSecondaryJob);
+    out.ist_block_table_bytes = 25u * 2u * 9u * sizeof(TxBlockJob);
+    out.ist_bit_table_bytes = 25u * 2u * 13u * 9u * sizeof(double);
+    out.ist_set_count_bytes = 25u * 2u * 13u * sizeof(std::uint8_t);
+    out.ist_map = static_cast<std::int8_t*>(bump(out.ist_map_bytes, 256));
+    out.ist_job_table = static_cast<TxSecondaryJob*>(
+        bump(out.ist_job_table_bytes, 256));
+    out.ist_block_table = static_cast<TxBlockJob*>(
+        bump(out.ist_block_table_bytes, 256));
+    out.ist_bit_table = static_cast<double*>(
+        bump(out.ist_bit_table_bytes, 256));
+    out.ist_set_count = static_cast<std::uint8_t*>(
+        bump(out.ist_set_count_bytes, 256));
+    out.ist_levels = static_cast<std::int32_t*>(bump(out.ist_levels_bytes, 256));
+    out.ist_dequant = static_cast<std::int32_t*>(bump(out.ist_dequant_bytes, 256));
+    out.ist_residual = static_cast<std::int16_t*>(bump(out.ist_residual_bytes, 256));
+    out.ist_sse = static_cast<double*>(bump(out.ist_sse_bytes, 256));
+    out.ist_eob = static_cast<std::int32_t*>(bump(out.ist_eob_bytes, 256));
+    out.ist_valid = static_cast<std::uint8_t*>(bump(out.ist_valid_bytes, 256));
+    out.ist_bits = static_cast<double*>(bump(out.ist_bits_bytes, 256));
+    out.ist_jobs = static_cast<TxSecondaryJob*>(bump(out.ist_jobs_bytes, 256));
+    out.ist_block_jobs = static_cast<TxBlockJob*>(bump(out.ist_block_jobs_bytes, 256));
+    out.ist_secs = static_cast<std::int32_t*>(bump(out.ist_secs_bytes, 256));
+    out.ist_sets = static_cast<std::int32_t*>(bump(out.ist_sets_bytes, 256));
+    out.ist_base_sse = static_cast<double*>(bump(out.ist_base_sse_bytes, 256));
+    out.ist_primary_type = static_cast<std::int32_t*>(
+        bump(out.ist_primary_type_bytes, 256));
+#endif
+#if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+    out.cctx_levels_bytes =
+        7u * 2u * kTxTypeAdjElems * sizeof(std::int32_t);
+    out.cctx_dequant_bytes = out.cctx_levels_bytes;
+    out.cctx_residual_bytes =
+        7u * 2u * kTxTypeCodedElems * sizeof(std::int16_t);
+    out.cctx_u_coeff_bytes = kTxTypeAdjElems * sizeof(double);
+    out.cctx_v_coeff_bytes = out.cctx_u_coeff_bytes;
+    out.cctx_sse_bytes = 7u * sizeof(double);
+    out.cctx_eob_bytes = 7u * 2u * sizeof(std::int32_t);
+    out.cctx_jobs_bytes = 7u * 2u * sizeof(TxBlockJob);
+    out.cctx_types_bytes = n * sizeof(std::int32_t);
+    out.cctx_levels = static_cast<std::int32_t*>(
+        bump(out.cctx_levels_bytes, 256));
+    out.cctx_dequant = static_cast<std::int32_t*>(
+        bump(out.cctx_dequant_bytes, 256));
+    out.cctx_residual = static_cast<std::int16_t*>(
+        bump(out.cctx_residual_bytes, 256));
+    out.cctx_u_coeff = static_cast<double*>(bump(out.cctx_u_coeff_bytes, 256));
+    out.cctx_v_coeff = static_cast<double*>(bump(out.cctx_v_coeff_bytes, 256));
+    out.cctx_sse = static_cast<double*>(bump(out.cctx_sse_bytes, 256));
+    out.cctx_eob = static_cast<std::int32_t*>(bump(out.cctx_eob_bytes, 256));
+    out.cctx_jobs = static_cast<TxBlockJob*>(bump(out.cctx_jobs_bytes, 256));
+    out.cctx_types = static_cast<std::int32_t*>(bump(out.cctx_types_bytes, 256));
+#endif
     for (int p = 0; p < 3; ++p) {
       out.deblock_mi[p] = static_cast<deblock::DeblockMi*>(
           bump(out.deblock_mi_bytes[p], 256));
@@ -1030,6 +1455,14 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
     }
     out.intra_joint = static_cast<int*>(bump(out.intra_joint_bytes, 256));
     out.uv_smooth = static_cast<std::uint8_t*>(bump(out.uv_smooth_bytes, 256));
+    out.mi_luma_mode =
+        static_cast<std::int8_t*>(bump(out.mi_luma_bytes, 256));
+    out.mi_luma_angle =
+        static_cast<std::int8_t*>(bump(out.mi_luma_bytes, 256));
+    out.palette_colors =
+        static_cast<std::uint8_t*>(bump(out.palette_colors_bytes, 256));
+    out.palette_map =
+        static_cast<std::uint8_t*>(bump(out.palette_map_bytes, 256));
     // In-loop filter destination planes + metadata grids (§7.18).
     out.filter.y_bytes = luma_bytes;
     out.filter.u_bytes = chroma_bytes;
@@ -1096,6 +1529,16 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
     ok = ok && out.lr_tx_skip != nullptr;
     out.q2_bytes = q2_elems(plan) * sizeof(std::int32_t);
     out.q2 = static_cast<std::int32_t*>(bump(out.q2_bytes, 256));
+    out.sb_segment_bytes = sb_slot_count(plan);
+    out.sb_qindex_bytes = sb_slot_count(plan);
+    out.sb_variance_bytes = sb_slot_count(plan) * sizeof(std::uint64_t);
+    out.sb_segment = static_cast<std::uint8_t*>(bump(out.sb_segment_bytes, 256));
+    out.sb_qindex = static_cast<std::uint8_t*>(bump(out.sb_qindex_bytes, 256));
+    out.sb_variance = static_cast<std::uint64_t*>(
+        bump(out.sb_variance_bytes, 256));
+    ok = ok && (out.sb_segment_bytes == 0 || out.sb_segment != nullptr) &&
+         (out.sb_qindex_bytes == 0 || out.sb_qindex != nullptr) &&
+         (out.sb_variance_bytes == 0 || out.sb_variance != nullptr);
     ok = ok && (out.q2_bytes == 0 || out.q2 != nullptr);
     ok = ok && out.lr.y != nullptr && out.lr.u != nullptr &&
          out.lr.v != nullptr;
@@ -1113,14 +1556,46 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
          out.mrl_jobs != nullptr && out.dip_jobs != nullptr &&
          out.ibp_jobs != nullptr &&
          out.mrl_pred != nullptr && out.dip_pred != nullptr &&
-         out.chroma_results != nullptr && out.eob != nullptr &&
+         out.chroma_jobs != nullptr && out.chroma_results != nullptr &&
+         out.eob != nullptr &&
          out.tx_jobs != nullptr && out.recon_jobs != nullptr &&
          out.recon_infos != nullptr && out.search_scratch != nullptr &&
-         out.tx_errors != nullptr && out.deblock_mi[0] != nullptr &&
-         out.deblock_mi[1] != nullptr && out.deblock_mi[2] != nullptr &&
+         out.tx_errors != nullptr && out.deblock_mi[0] != nullptr &&         out.deblock_mi[1] != nullptr && out.deblock_mi[2] != nullptr &&
          out.decoded[0] != nullptr && out.decoded[1] != nullptr &&
          out.decoded[2] != nullptr && out.intra_joint != nullptr &&
-         out.uv_smooth != nullptr;
+         out.uv_smooth != nullptr && out.mi_luma_mode != nullptr &&
+         out.mi_luma_angle != nullptr && out.palette_colors != nullptr &&
+         out.palette_map != nullptr;
+#if AV2ENC_STILL_GPU_HAVE_TX_TYPE
+    ok = ok && out.tx_cand_adj != nullptr && out.tx_cand_coeff != nullptr &&
+         out.tx_cand_levels != nullptr && out.tx_cand_recon != nullptr &&
+         out.tx_cand_jobs != nullptr && out.tx_cand_tx_jobs != nullptr &&
+         out.tx_choose_block != nullptr && out.tx_metrics != nullptr &&
+         out.tx_decision != nullptr && out.tx_param_table != nullptr &&
+         out.tx_probe_job != nullptr && out.tx_residual_coded != nullptr &&
+         out.tx_residual_adj != nullptr && out.tx_types != nullptr &&
+         out.tx_type_cands != nullptr && out.tx_type_jobs != nullptr &&
+         out.tx_type_blocks != nullptr && out.tx_type_map != nullptr &&
+         out.tx_type_legal != nullptr && out.tx_type_bits != nullptr;
+#endif
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+    ok = ok && out.ist_levels != nullptr && out.ist_dequant != nullptr &&
+         out.ist_residual != nullptr && out.ist_sse != nullptr &&
+         out.ist_eob != nullptr && out.ist_valid != nullptr &&
+         out.ist_bits != nullptr && out.ist_jobs != nullptr &&
+         out.ist_block_jobs != nullptr && out.ist_secs != nullptr &&
+         out.ist_sets != nullptr && out.ist_map != nullptr &&
+         out.ist_job_table != nullptr && out.ist_block_table != nullptr &&
+         out.ist_bit_table != nullptr && out.ist_set_count != nullptr &&
+         out.ist_base_sse != nullptr && out.ist_primary_type != nullptr;
+#endif
+#if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+    ok = ok && out.cctx_levels != nullptr && out.cctx_dequant != nullptr &&
+         out.cctx_residual != nullptr && out.cctx_u_coeff != nullptr &&
+         out.cctx_v_coeff != nullptr && out.cctx_sse != nullptr &&
+         out.cctx_eob != nullptr && out.cctx_jobs != nullptr &&
+         out.cctx_types != nullptr;
+#endif
   }
 #else
   (void)full;
@@ -1156,6 +1631,11 @@ enum class RuntimeState { kReady, kCpuFallback, kError };
 std::uint64_t filter_workspace_bytes(const FramePlan& plan,
                                      const GpuOptions& options) {
   std::uint64_t bytes = 0;
+  // §5.18.7.11: the luma/chroma unit shift is capped by the frame SbSize.
+  // The still planner forces shift 3 at 64x64 and shift 2 at 128x128, so the
+  // component workspaces must follow plan.sb_size, not a fixed 64.
+  const int lr_shift = plan.sb_size == 128 ? 2 : 3;
+  const int sb_shift = plan.sb_size == 128 ? 5 : 4;
 #if AV2ENC_STILL_GPU_HAVE_LR_CHROMA
   if (options.enable_chroma_lr) {
     lr_chroma::LrChromaConfig cfg;
@@ -1164,9 +1644,9 @@ std::uint64_t filter_workspace_bytes(const FramePlan& plan,
     cfg.sub_x = 1;
     cfg.sub_y = 1;
     cfg.bit_depth = 8;
-    cfg.unit_size = 32;  // (512 >> max(sub_x, sub_y)) >> 3
+    cfg.unit_size = (512 >> 1) >> lr_shift;  // 32 at 64 SB, 64 at 128 SB
     cfg.cfl_ds_filter_index = 0;
-    cfg.sb_shift = 4;
+    cfg.sb_shift = sb_shift;
     bytes += lr_chroma::required_device_bytes(cfg);
   }
 #endif
@@ -1176,14 +1656,17 @@ std::uint64_t filter_workspace_bytes(const FramePlan& plan,
     cfg.width = plan.mi_cols * 4;
     cfg.height = plan.mi_rows * 4;
     cfg.bit_depth = 8;
-    cfg.unit_size = 64;
+    cfg.unit_size = 512 >> lr_shift;  // 64 at 64 SB, 128 at 128 SB
     bytes += pc_wiener::pc_wiener_required_device_bytes(cfg);
   }
 #endif
 #if AV2ENC_STILL_GPU_HAVE_GDF
   if (options.enable_gdf) {
-    const int cols = (plan.mi_cols * 4 + 63) / 64;
-    const int rows = (plan.mi_rows * 4 + 63) / 64;
+    // §5.18.7.9 GdfBlkSize = Max(Block_Width[SbSize], 128), i.e. 128 for both
+    // the 64x64 and 128x128 frame superblocks.
+    const int gdf_unit = plan.sb_size > 128 ? plan.sb_size : 128;
+    const int cols = (plan.mi_cols * 4 + gdf_unit - 1) / gdf_unit;
+    const int rows = (plan.mi_rows * 4 + gdf_unit - 1) / gdf_unit;
     gdf::GdfConfig cfg;
     cfg.max_units = gdf::gdf_grid_slots(cols, rows);
     bytes += gdf::required_device_bytes(cfg);
@@ -1197,13 +1680,17 @@ std::uint64_t filter_workspace_bytes(const FramePlan& plan,
 bool prepare_filter_workspaces(const FramePlan& plan, const GpuOptions& options,
                                std::string& error) {
   FilterWorkspaces& ws = runtime().filters;
-  if (ws.mi_cols != plan.mi_cols || ws.mi_rows != plan.mi_rows) {
+  if (ws.mi_cols != plan.mi_cols || ws.mi_rows != plan.mi_rows ||
+      ws.sb_size != plan.sb_size) {
     ws.release();
     ws.mi_cols = plan.mi_cols;
     ws.mi_rows = plan.mi_rows;
+    ws.sb_size = plan.sb_size;
   }
   Arena& arena = runtime().arena;
   (void)arena;
+  const int lr_shift = plan.sb_size == 128 ? 2 : 3;
+  const int sb_shift = plan.sb_size == 128 ? 5 : 4;
 #if AV2ENC_STILL_GPU_HAVE_LR_CHROMA
   if (options.enable_chroma_lr && !ws.chroma_lr.initialized()) {
     lr_chroma::LrChromaConfig cfg;
@@ -1212,9 +1699,9 @@ bool prepare_filter_workspaces(const FramePlan& plan, const GpuOptions& options,
     cfg.sub_x = 1;
     cfg.sub_y = 1;
     cfg.bit_depth = 8;
-    cfg.unit_size = 32;
+    cfg.unit_size = (512 >> 1) >> lr_shift;
     cfg.cfl_ds_filter_index = 0;
-    cfg.sb_shift = 4;
+    cfg.sb_shift = sb_shift;
     std::string detail;
     if (lr_chroma::allocate_checked(arena, cfg, &ws.chroma_lr, nullptr,
                                     &detail) != Status::kOk) {
@@ -1229,7 +1716,7 @@ bool prepare_filter_workspaces(const FramePlan& plan, const GpuOptions& options,
     cfg.width = plan.mi_cols * 4;
     cfg.height = plan.mi_rows * 4;
     cfg.bit_depth = 8;
-    cfg.unit_size = 64;
+    cfg.unit_size = 512 >> lr_shift;
     std::string detail;
     if (ws.pc_wiener.create(arena, cfg, &detail) != Status::kOk) {
       error = "M1 GPU: PC-Wiener workspace: " + detail;
@@ -1239,8 +1726,9 @@ bool prepare_filter_workspaces(const FramePlan& plan, const GpuOptions& options,
 #endif
 #if AV2ENC_STILL_GPU_HAVE_GDF
   if (options.enable_gdf && !ws.gdf_ready) {
-    const int cols = (plan.mi_cols * 4 + 63) / 64;
-    const int rows = (plan.mi_rows * 4 + 63) / 64;
+    const int gdf_unit = plan.sb_size > 128 ? plan.sb_size : 128;
+    const int cols = (plan.mi_cols * 4 + gdf_unit - 1) / gdf_unit;
+    const int rows = (plan.mi_rows * 4 + gdf_unit - 1) / gdf_unit;
     gdf::GdfConfig cfg;
     cfg.max_units = gdf::gdf_grid_slots(cols, rows);
     std::string detail;
@@ -1642,6 +2130,7 @@ __global__ void prepare_prediction_kernel(
 // 5 + dir_index for directional ones.
 __global__ void prepare_commit_kernel(cm1::ReconBlockInfo* infos,
                                       const srch::LumaSearchResult* results,
+                                      const cm1::StillChromaResult* chroma,
                                       int index) {
   if (blockIdx.x != 0 || threadIdx.x != 0) {
     return;
@@ -1660,11 +2149,250 @@ __global__ void prepare_commit_kernel(cm1::ReconBlockInfo* infos,
     joint = 5 + (reordered - 5) * 7 + (angle + 3);
   }
   infos[index].joint = static_cast<std::uint8_t>(joint);
+  // §7.13.2.15/.16: record whether the chosen UV mode is SMOOTH/SMOOTH_V/
+  // SMOOTH_H (9..11).  A CfL block never is.
+  const int uv_mode = chroma[index].uv_mode;
+  infos[index].uv_smooth =
+      (chroma[index].is_cfl == 0 && uv_mode >= 9 && uv_mode <= 11) ? 1 : 0;
+}
+
+// Writes a planned luma decision (palette / IBC force DC with the planned
+// score).  Used when the GPU search is skipped for a screen-content leaf.
+__global__ void set_luma_result_kernel(srch::LumaSearchResult* results,
+                                       int index, int mode, int angle,
+                                       std::int64_t sse) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  results[index].mode = mode;
+  results[index].angle_delta = angle;
+  results[index].reserved = 0;
+  results[index].sse = sse;
+}
+
+// IBC replaces the chroma mode decision: read_intrabc_info() forces DC on both
+// planes and clears CfL/palette state (§5.20.5.4).
+__global__ void set_chroma_dc_kernel(cm1::StillChromaResult* results,
+                                     int index) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  cm1::StillChromaResult& r = results[index];
+  r = cm1::StillChromaResult{};
+  r.winner = cm1::kM1ChromaDc;
+  r.uv_mode = 0;
+  r.angle_delta = 0;
+  r.is_cfl = 0;
+  r.cfl_index = 1;
+}
+
+// Records block `index`'s final luma mode/angle on the MI grid.  A later
+// CHROMA_PART leaf (§5.20.5.6) codes uv_mode against the co-located luma-tree
+// YMode, which is only available on the device until the frame sync.
+__global__ void record_luma_mode_kernel(const BlockPlan* blocks,
+                                        const srch::LumaSearchResult* results,
+                                        std::int8_t* mi_mode,
+                                        std::int8_t* mi_angle, int mi_cols,
+                                        int mi_rows, int index) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) {
+    return;
+  }
+  const BlockPlan& block = blocks[index];
+  const int w4 = block.luma_w / 4;
+  const int h4 = block.luma_h / 4;
+  if (w4 <= 0 || h4 <= 0) {
+    return;
+  }
+  const int mode = results[index].mode;
+  const int angle = results[index].angle_delta;
+  for (int yy = 0; yy < h4; ++yy) {
+    const int rr = block.mi_row + yy;
+    if (rr >= mi_rows) break;
+    for (int xx = 0; xx < w4; ++xx) {
+      const int cc = block.mi_col + xx;
+      if (cc >= mi_cols) break;
+      const std::size_t idx =
+          static_cast<std::size_t>(rr) * static_cast<std::size_t>(mi_cols) +
+          static_cast<std::size_t>(cc);
+      mi_mode[idx] = static_cast<std::int8_t>(mode);
+      mi_angle[idx] = static_cast<std::int8_t>(angle);
+    }
+  }
+}
+
+// Fills the full-UV chroma inputs from device state: the leaf's own (or the
+// co-located luma-tree) YMode/AngleDeltaY and the §7.13.2.15/.16 UVSmooth
+// neighbour flags.  Mirrors `still_encoder.cpp`'s `neighborhood_smooth()` for
+// plane > 0 and the `uv_y_mode` selection for CHROMA_PART leaves.
+__global__ void prepare_chroma_job_kernel(cm1::StillChromaJob* jobs,
+                                          const BlockPlan* blocks,
+                                          const srch::LumaSearchResult* luma,
+                                          const std::int8_t* mi_mode,
+                                          const std::int8_t* mi_angle,
+                                          const std::uint8_t* uv_smooth,
+                                          int mi_cols, int mi_rows,
+                                          int enable_edge_filter, int index) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) {
+    return;
+  }
+  cm1::StillChromaJob& job = jobs[index];
+  const BlockPlan& block = blocks[index];
+  int y_mode = 0;
+  int y_angle = 0;
+  if (block.luma_w != 0 && block.luma_h != 0) {
+    y_mode = luma[index].mode;
+    y_angle = luma[index].angle_delta;
+  } else {
+    const int r = block.chroma_mi_row;
+    const int c = block.chroma_mi_col;
+    if (r >= 0 && r < mi_rows && c >= 0 && c < mi_cols) {
+      const std::size_t idx =
+          static_cast<std::size_t>(r) * static_cast<std::size_t>(mi_cols) +
+          static_cast<std::size_t>(c);
+      y_mode = mi_mode[idx];
+      y_angle = mi_angle[idx];
+    }
+  }
+  job.y_mode = y_mode;
+  job.y_angle_delta = y_angle;
+  job.enable_edge_filter = enable_edge_filter;
+  const int cmi_cols = mi_cols / 2;
+  const int cmi_rows = mi_rows / 2;
+  const int cr = job.y >> 2;
+  const int cc = job.x >> 2;
+  job.filter_type_above =
+      (cr > 0 && cc < cmi_cols)
+          ? (uv_smooth[static_cast<std::size_t>(cr - 1) * cmi_cols + cc] != 0
+                 ? 1
+                 : 0)
+          : 0;
+  job.filter_type_left =
+      (cc > 0 && cr < cmi_rows)
+          ? (uv_smooth[static_cast<std::size_t>(cr) * cmi_cols + (cc - 1)] != 0
+                 ? 1
+                 : 0)
+          : 0;
+}
+
+// ---------------------------------------------------------------------------
+// §5.4.9 / §5.18.7.1 device segment state
+// ---------------------------------------------------------------------------
+//
+// `--still-per-segment-q` splits the frame into two used segments: segment 0
+// keeps base_q_idx and segment 1 carries a SEG_LVL_ALT_Q feature.  The table
+// is the spec's full 8-segment state (enable_ext_seg == 0), so the per-SB
+// qindex derivation is a device-side get_qindex() that consults the same
+// feature array the header writer signals.
+struct DeviceSegmentState {
+  std::int32_t base_q_idx = 0;
+  std::int32_t num_segments = 8;
+  std::int32_t sb_px = 64;
+  std::int32_t sb_cols = 0;
+  std::int32_t sb_rows = 0;
+  std::int32_t width = 0;
+  std::int32_t height = 0;
+  std::int32_t alt_q[8] = {};
+  std::uint8_t alt_q_active[8] = {};
+};
+
+// §7.14.2 get_qindex(false, segment_id) for the no-UV-delta still case.
+__device__ int segment_block_qindex(const DeviceSegmentState& state,
+                                    int segment_id) {
+  int q = state.base_q_idx;
+  if (segment_id >= 0 && segment_id < state.num_segments &&
+      state.alt_q_active[segment_id] != 0) {
+    q += state.alt_q[segment_id];
+  }
+  if (q < 1) q = 1;
+  if (q > 255) q = 255;
+  return q;
+}
+
+// Builds the per-SB segment map with the CPU planner's deterministic rule:
+// variance = (sumsq*n - sum*sum) / (n*n) over the *visible* luma samples of
+// each superblock; a superblock at or below the frame mean variance joins
+// segment 1.  The same kernel then patches the per-SB qindex into the TX and
+// reconstruction descriptors, so no host round trip is needed before the
+// block loop.
+__global__ void derive_segment_map_kernel(
+    const std::uint8_t* src, DeviceSegmentState state,
+    std::uint64_t* variance, std::uint8_t* segment, std::uint8_t* qindex,
+    const BlockPlan* blocks, StillTxJob* tx_jobs,
+    cm1::ReconBlockInfo* recon_infos, int nblocks) {
+  const int sb_count = state.sb_cols * state.sb_rows;
+  __shared__ unsigned long long reduce[256];
+  for (int sb = static_cast<int>(threadIdx.x); sb < sb_count;
+       sb += static_cast<int>(blockDim.x)) {
+    const int sby = sb / state.sb_cols;
+    const int sbx = sb - sby * state.sb_cols;
+    const int x0 = sbx * state.sb_px;
+    const int y0 = sby * state.sb_px;
+    const int w = state.sb_px < state.width - x0 ? state.sb_px
+                                                 : state.width - x0;
+    const int h = state.sb_px < state.height - y0 ? state.sb_px
+                                                  : state.height - y0;
+    std::uint64_t sum = 0;
+    std::uint64_t sumsq = 0;
+    for (int y = 0; y < h; ++y) {
+      const std::uint8_t* row =
+          src + static_cast<std::size_t>(y0 + y) * state.width + x0;
+      for (int x = 0; x < w; ++x) {
+        const std::uint64_t v = row[x];
+        sum += v;
+        sumsq += v * v;
+      }
+    }
+    const std::uint64_t n = static_cast<std::uint64_t>(w) * h;
+    variance[sb] = n == 0 ? 0 : (sumsq * n - sum * sum) / (n * n);
+  }
+  __syncthreads();
+
+  unsigned long long local = 0;
+  for (int sb = static_cast<int>(threadIdx.x); sb < sb_count;
+       sb += static_cast<int>(blockDim.x)) {
+    local += variance[sb];
+  }
+  reduce[threadIdx.x] = local;
+  __syncthreads();
+  for (int stride = static_cast<int>(blockDim.x) / 2; stride > 0;
+       stride >>= 1) {
+    if (static_cast<int>(threadIdx.x) < stride) {
+      reduce[threadIdx.x] += reduce[threadIdx.x + stride];
+    }
+    __syncthreads();
+  }
+  const std::uint64_t mean =
+      sb_count == 0 ? 0 : reduce[0] / static_cast<std::uint64_t>(sb_count);
+  for (int sb = static_cast<int>(threadIdx.x); sb < sb_count;
+       sb += static_cast<int>(blockDim.x)) {
+    const int seg = variance[sb] <= mean ? 1 : 0;
+    segment[sb] = static_cast<std::uint8_t>(seg);
+    qindex[sb] = static_cast<std::uint8_t>(segment_block_qindex(state, seg));
+  }
+  __syncthreads();
+
+  const int sb_mi = state.sb_px / 4;
+  for (int j = static_cast<int>(threadIdx.x); j < nblocks * 3;
+       j += static_cast<int>(blockDim.x)) {
+    const int i = j / 3;
+    const BlockPlan& block = blocks[i];
+    const int sb = (block.mi_row / sb_mi) * state.sb_cols +
+                   block.mi_col / sb_mi;
+    StillTxJob& job = tx_jobs[j];
+    job.use_deltaq = 1;
+    job.ratio_scale = 1;  // CPU apply_qindex_step() order
+    job.qindex = qindex[sb];
+    job.delta_dc = 0;
+    job.delta_ac = 0;
+    job.plane = j - i * 3;
+  }
+  for (int i = static_cast<int>(threadIdx.x); i < nblocks;
+       i += static_cast<int>(blockDim.x)) {
+    const BlockPlan& block = blocks[i];
+    const int sb = (block.mi_row / sb_mi) * state.sb_cols +
+                   block.mi_col / sb_mi;
+    recon_infos[i].qindex = qindex[sb];
+  }
 }
 
 ::av2enc::still::StillConfig make_still_config(const GpuOptions& options,
-                                      const ::av2enc::still::StillPicture& picture) {
-  ::av2enc::still::StillConfig config;
+                                      const ::av2enc::still::StillPicture& picture) {  ::av2enc::still::StillConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(picture.width);
   config.max_frame_height = static_cast<std::uint16_t>(picture.height);
   config.base_q_idx = options.base_q_idx;
@@ -1677,6 +2405,12 @@ __global__ void prepare_commit_kernel(cm1::ReconBlockInfo* infos,
   config.enable_mrls = options.enable_mrl;
   config.enable_dip = options.enable_dip;
   config.enable_mhccp = options.mhccp;
+  config.enable_palette = options.palette;
+  config.allow_screen_content_tools = options.palette || options.ibc;
+  config.force_integer_mv = true;
+  config.allow_intrabc = options.ibc;
+  config.allow_global_intrabc = options.ibc;
+  config.allow_local_intrabc = false;
   config.enable_ext_partitions = options.ext_partitions;
   config.enable_uneven_4way_partitions = options.ext_partitions;
   config.enable_sdp = options.sdp;
@@ -1686,12 +2420,871 @@ __global__ void prepare_commit_kernel(cm1::ReconBlockInfo* infos,
   config.use_256x256_superblock = options.sb_size == 256;
   config.enable_chroma_dctonly = true;
   config.tx_mode_select = false;
+  // §5.4.8 enable_idtx_intra / enable_intra_ist / enable_cctx / enable_tcq.
+  // These change sequence/frame header bits and the syntax writer's symbol
+  // sets, so mirror the CPU reference's flags exactly.
+  config.enable_idtx_intra = options.idtx;
+  config.enable_intra_ist = options.ist;
+  config.enable_cctx = options.cctx;
+  config.enable_tcq = options.tcq;
+  config.tx_mode_select = options.tx_partition;
   config.apply_deblock_y_vert = options.enable_deblock;
   config.apply_deblock_y_horz = options.enable_deblock;
   config.apply_deblock_u = options.enable_deblock;
   config.apply_deblock_v = options.enable_deblock;
+  // §5.18.7.1 / §5.18.7.8 neutral delta-Q / segmentation syntax.  The
+  // per-segment-Q table is installed by run_gpu_frame (it needs a live
+  // SegmentationParams), so only the neutral flags are set here.
+  config.per_sb_delta_q.segmentation_enabled = options.enable_segmentation;
+  config.per_sb_delta_q.delta_q_present = options.enable_delta_q;
+  config.per_sb_delta_q.delta_q_res =
+      options.enable_delta_q ? options.delta_q_res : 0;
   return config;
 }
+
+#if AV2ENC_STILL_GPU_HAVE_TX_TYPE
+// ---------------------------------------------------------------------------
+// §5.20.7.27/§9.6 intra TX-type search
+// ---------------------------------------------------------------------------
+//
+// The candidate set depends on the *decided* intra mode, which lives on the
+// device.  Instead of a per-block descriptor upload, the search runs over the
+// full 16-TYPE superset for the block's TX size and a device prepass rewrites
+// each candidate's `type_bits` from the per-size legality/symbol-bit tables:
+// an illegal candidate gets an impossible cost, so the shared decide kernel
+// still picks exactly the CPU `intra_tx_candidates()` winner.
+constexpr int kTxTypeSlots = kTxTypeSearchSlots;
+constexpr int kTxTypeModeCount = 13;
+constexpr int kTxTypeAngleCount = 7;   // -3..3
+constexpr int kTxTypeMrlCount = 4;     // 0..3
+constexpr int kTxTypeMapStride =
+    kTxTypeModeCount * kTxTypeAngleCount * kTxTypeMrlCount;
+
+struct TxTypeHostTables {
+  std::vector<TxTypeCandJob> cands;    // 25 * 16
+  std::vector<TxBlockJob> jobs;        // 25 * 16
+  std::vector<TxTypeBlockJob> blocks;  // 25
+  std::vector<std::int8_t> map;        // 25 * kTxTypeMapStride
+  std::vector<std::uint8_t> legal;     // 25 * 13 * 16
+  std::vector<double> bits;            // 25 * 13 * 16
+};
+
+bool build_tx_type_tables(bool allow_idtx, TxTypeHostTables* out,
+                          std::string& error) {
+  out->cands.assign(25u * kTxTypeSlots, TxTypeCandJob{});
+  out->jobs.assign(25u * kTxTypeSlots, TxBlockJob{});
+  out->blocks.assign(25u, TxTypeBlockJob{});
+  out->map.assign(25u * kTxTypeMapStride, -1);
+  out->legal.assign(25u * kTxTypeModeCount * kTxTypeSlots, 0);
+  out->bits.assign(25u * kTxTypeModeCount * kTxTypeSlots, 0.0);
+  for (int size = 0; size < 25; ++size) {
+    const auto dct = txv::make_tx_params(static_cast<txv::TxSize>(size),
+                                         txv::TxType::kDctDct);
+    if (!dct.has_value()) {
+      error = "tx_type: bad TX size index " + std::to_string(size);
+      return false;
+    }
+    TxTypeBlockJob& block = out->blocks[static_cast<std::size_t>(size)];
+    block.cand_begin = 0;
+    block.cand_count = kTxTypeSlots;
+    block.coded = 0;
+    block.coded_w = dct->coded_w;
+    block.coded_h = dct->coded_h;
+    for (int type = 0; type < kTxTypeSlots; ++type) {
+      const auto params = txv::make_tx_params(
+          static_cast<txv::TxSize>(size),
+          static_cast<txv::TxType>(type));
+      if (!params.has_value()) {
+        error = "tx_type: unsupported candidate type";
+        return false;
+      }
+      const std::size_t slot =
+          static_cast<std::size_t>(size) * kTxTypeSlots + type;
+      TxTypeCandJob& cand = out->cands[slot];
+      cand.tx.params = *params;
+      cand.tx.in_offset = static_cast<std::int32_t>(type) * kTxTypeAdjElems;
+      cand.tx.out_offset =
+          static_cast<std::int32_t>(type) * kTxTypeCodedElems;
+      cand.adj_src = 0;
+      cand.block = 0;
+      cand.type = type;
+      cand.candidate = type;
+      cand.type_bits = 0.0;
+      out->jobs[slot] = cand.tx;
+    }
+    // §5.20.7.29 mapped intra mode for every (mode, angle, mrl) at this size.
+    for (int mode = 0; mode < kTxTypeModeCount; ++mode) {
+      for (int angle = -3; angle <= 3; ++angle) {
+        for (int mrl = 0; mrl < kTxTypeMrlCount; ++mrl) {
+          const int mapped = ::av2enc::still::mrl_stream::
+              mapped_intra_mode_for_mrl(mode, angle, mrl, dct->coded_w,
+                                        dct->coded_h);
+          out->map[static_cast<std::size_t>(size) * kTxTypeMapStride +
+                   static_cast<std::size_t>(
+                       (mode * kTxTypeAngleCount + (angle + 3)) *
+                           kTxTypeMrlCount +
+                       mrl)] = static_cast<std::int8_t>(mapped);
+        }
+      }
+    }
+    // §5.20.8.2 candidate set + §9.3 symbol cost per mapped mode.
+    for (int mapped = 0; mapped < kTxTypeModeCount; ++mapped) {
+      txtype::TxTypeQuery query;
+      query.coded_w = dct->coded_w;
+      query.coded_h = dct->coded_h;
+      query.mapped_mode = mapped;
+      query.reduced_tx_set = 0;
+      query.dct_only = false;
+      txtype::TxTypeSet set;
+      if (!txtype::intra_tx_candidates(query, &set)) {
+        continue;
+      }
+      for (int i = 0; i < set.count; ++i) {
+        const txtype::TxTypeCandidate& candidate = set.candidates[i];
+        txv::Tx1dType row = txv::Tx1dType::kDct;
+        txv::Tx1dType col = txv::Tx1dType::kDct;
+        txv::tx_1d_types(candidate.type, &row, &col);
+        const bool is_idtx = row == txv::Tx1dType::kIdt &&
+                             col == txv::Tx1dType::kIdt;
+        const bool mixed_identity =
+            (row == txv::Tx1dType::kIdt) != (col == txv::Tx1dType::kIdt);
+        // CPU `compute_tx`: the enable_idtx_intra=0 path filters every
+        // identity-based 1-D type; with the flag on only pure IDTX is enabled.
+        if (mixed_identity) continue;
+        if (is_idtx && !allow_idtx) continue;
+        const int type = static_cast<int>(candidate.type);
+        if (type < 0 || type >= kTxTypeSlots) continue;
+        const std::size_t idx =
+            (static_cast<std::size_t>(size) * kTxTypeModeCount + mapped) *
+                kTxTypeSlots +
+            type;
+        out->legal[idx] = 1;
+        out->bits[idx] = txtype::static_type_bits(query, candidate);
+      }
+    }
+  }
+  return true;
+}
+
+__global__ void tx_type_prepare_candidates_kernel(
+    const srch::LumaSearchResult* __restrict__ results,
+    const iext::Choice* __restrict__ choices,
+    const std::int8_t* __restrict__ map_table,
+    const std::uint8_t* __restrict__ legal_table,
+    const double* __restrict__ bits_table,
+    const TxTypeCandJob* __restrict__ src_cands,
+    TxTypeCandJob* __restrict__ cands, int ncand) {
+  int mode = results->mode;
+  int angle = results->angle_delta;
+  int mrl = choices->mrl_index;
+  if (mode < 0 || mode >= kTxTypeModeCount) mode = 0;
+  if (angle < -3) angle = -3;
+  if (angle > 3) angle = 3;
+  if (mrl < 0 || mrl >= kTxTypeMrlCount) mrl = 0;
+  int mapped = static_cast<int>(
+      map_table[(mode * kTxTypeAngleCount + (angle + 3)) * kTxTypeMrlCount +
+                mrl]);
+  if (mapped < 0 || mapped >= kTxTypeModeCount) mapped = 0;
+  for (int j = static_cast<int>(threadIdx.x); j < ncand;
+       j += static_cast<int>(blockDim.x)) {
+    TxTypeCandJob cand = src_cands[j];
+    const int type = cand.type;
+    const std::size_t idx =
+        static_cast<std::size_t>(mapped) * kTxTypeSlots + type;
+    cand.type_bits =
+        (type >= 0 && type < kTxTypeSlots && legal_table[idx] != 0)
+            ? bits_table[idx]
+            : 1.0e9;
+    cands[j] = cand;
+  }
+}
+
+__global__ void tx_type_apply_decision_kernel(
+    const TxTypeDecision* __restrict__ decision,
+    const TxTypeCandJob* __restrict__ cands,
+    StillTxJob* __restrict__ job, std::int32_t* __restrict__ types,
+    int slot) {
+  int index = decision->candidate_index;
+  if (index < 0 || index >= kTxTypeSlots) {
+    for (int j = 0; j < kTxTypeSlots; ++j) {
+      if (cands[j].type == decision->type) {
+        index = j;
+        break;
+      }
+    }
+  }
+  if (index >= 0 && index < kTxTypeSlots &&
+      cands[index].type == decision->type) {
+    job->params = cands[index].tx.params;
+  }
+  types[slot] = decision->type;
+}
+
+// §7.15 residual = source - prediction for the coded block (source is clamped
+// to the visible plane, exactly like `TileEncoder::source_sample`).
+__global__ void still_residual_coded_kernel(
+    const std::uint8_t* __restrict__ src, int src_stride, int src_max_x,
+    int src_max_y, const std::uint8_t* __restrict__ pred, int w, int h,
+    int x0, int y0, std::int16_t* __restrict__ out) {
+  const int n = w * h;
+  for (int i = static_cast<int>(threadIdx.x); i < n;
+       i += static_cast<int>(blockDim.x)) {
+    const int y = i / w;
+    const int x = i - y * w;
+    int px = x0 + x;
+    int py = y0 + y;
+    px = px < 0 ? 0 : (px > src_max_x ? src_max_x : px);
+    py = py < 0 ? 0 : (py > src_max_y ? src_max_y : py);
+    const int s = src[static_cast<std::size_t>(py) * src_stride + px];
+    out[i] = static_cast<std::int16_t>(s - static_cast<int>(pred[i]));
+  }
+}
+#endif  // AV2ENC_STILL_GPU_HAVE_TX_TYPE
+
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+// ---------------------------------------------------------------------------
+// §7.15.3 intra secondary transform (IST) candidate search
+// ---------------------------------------------------------------------------
+//
+// Mirrors `TileEncoder::compute_tx`'s IST block: the incumbent is the primary
+// reconstruction with no secondary transform; each (most_probable_stx_set,
+// sec_tx_type) candidate projects the primary levels, dequantises, applies the
+// normative §7.15.3 inverse and scores `SSE + lambda * symbol bits`.  All
+// coefficient/pixel work stays on device; only the static §9.3 symbol costs and
+// the kernel/transpose tables are precomputed on the host.
+constexpr int kIstSets = 3;
+constexpr int kIstSecTypes = 3;
+constexpr int kIstSlots = kIstSets * kIstSecTypes;
+constexpr int kIstTypeSels = 2;  // DCT_DCT(0), ADST_ADST(3)
+
+struct IstHostTables {
+  std::vector<TxSecondaryJob> jobs;    // 25 * 2 * 13 * 9
+  std::vector<TxBlockJob> block_jobs;  // 25 * 2 * 9
+  std::vector<double> bits;            // 25 * 2 * 13 * 9
+  std::vector<std::uint8_t> set_count; // 25 * 2 * 13
+  std::vector<std::int8_t> map;        // 25 * 13 * 7 * 4
+};
+
+bool build_ist_tables(IstHostTables* out, std::string& error) {
+  const std::size_t map_stride = static_cast<std::size_t>(kTxTypeMapStride);
+  out->jobs.assign(25u * kIstTypeSels * 13u * kIstSlots, TxSecondaryJob{});
+  out->block_jobs.assign(25u * kIstTypeSels * kIstSlots, TxBlockJob{});
+  out->bits.assign(25u * kIstTypeSels * 13u * kIstSlots, 0.0);
+  out->set_count.assign(25u * kIstTypeSels * 13u, 0);
+  out->map.assign(25u * map_stride, -1);
+  for (int size = 0; size < 25; ++size) {
+    const auto params = txv::make_tx_params(static_cast<txv::TxSize>(size),
+                                            txv::TxType::kDctDct);
+    if (!params.has_value()) {
+      error = "ist: bad TX size index";
+      return false;
+    }
+    const int cw = params->coded_w;
+    const int ch = params->coded_h;
+    for (int mode = 0; mode < kTxTypeModeCount; ++mode) {
+      for (int angle = -3; angle <= 3; ++angle) {
+        for (int mrl = 0; mrl < kTxTypeMrlCount; ++mrl) {
+          out->map[static_cast<std::size_t>(size) * map_stride +
+                   static_cast<std::size_t>(
+                       (mode * kTxTypeAngleCount + (angle + 3)) *
+                           kTxTypeMrlCount +
+                       mrl)] = static_cast<std::int8_t>(
+              txsec::map_y_mode(mode, angle, mrl, cw, ch));
+        }
+      }
+    }
+    for (int type_sel = 0; type_sel < kIstTypeSels; ++type_sel) {
+      const txv::TxType type =
+          type_sel == 0 ? txv::TxType::kDctDct : txv::TxType::kAdstAdst;
+      const auto tparams = txv::make_tx_params(
+          static_cast<txv::TxSize>(size), type);
+      if (!tparams.has_value()) {
+        error = "ist: bad candidate transform size";
+        return false;
+      }
+      const int set_count =
+          txsec::most_probable_stx_set_count(type, cw, ch);
+      for (int mapped = 0; mapped < kTxTypeModeCount; ++mapped) {
+        out->set_count[(static_cast<std::size_t>(size) * kIstTypeSels +
+                        type_sel) *
+                           13u +
+                       mapped] = static_cast<std::uint8_t>(set_count);
+        for (int set = 0; set < kIstSets; ++set) {
+          int kernel = -1;
+          if (set < set_count) {
+            if (!txsec::kernel_for_syntax(mapped, type, set, false, cw, ch,
+                                          &kernel)) {
+              kernel = -1;
+            }
+          }
+          const bool transpose = txsec::transpose_for_mode(mapped);
+          for (int sec = 1; sec <= kIstSecTypes; ++sec) {
+            const int j = set * kIstSecTypes + (sec - 1);
+            const std::size_t slot =
+                ((static_cast<std::size_t>(size) * kIstTypeSels + type_sel) *
+                     13u +
+                 mapped) *
+                    kIstSlots +
+                j;
+            TxSecondaryJob& job = out->jobs[slot];
+            job.tx_size = size;
+            job.plane_tx_type = static_cast<int>(type);
+            job.kernel = kernel;
+            job.sec_tx_type = sec;
+            job.transpose = transpose ? 1 : 0;
+            job.bit_depth = 8;
+            job.in_offset = j * kTxTypeAdjElems;
+            job.out_offset = j * kTxTypeAdjElems;
+            out->block_jobs[(static_cast<std::size_t>(size) * kIstTypeSels +
+                             type_sel) *
+                                kIstSlots +
+                            j] = TxBlockJob{
+                *tparams, j * kTxTypeAdjElems, j * kTxTypeCodedElems};
+            if (kernel >= 0 && set < set_count) {
+              out->bits[slot] =
+                  txsec::sec_tx_type_bits(sec, size, false) +
+                  txsec::most_probable_stx_set_bits(set, type, cw, ch);
+            }
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
+struct IstDevTables {
+  const std::int8_t* ist4;
+  const std::int8_t* ist8;
+  const std::uint8_t* scan_map;
+  const std::uint8_t* tx_width;
+  const std::uint8_t* tx_height;
+  const std::uint8_t* tx_width_log2;
+  const std::uint8_t* scan_order4;
+  const std::uint8_t* scan_order8;
+};
+
+struct IstSizeInfo {
+  int w = 0;
+  int h = 0;
+  int n = 0;
+  int n2 = 0;
+  bool large = false;
+};
+
+__device__ __forceinline__ IstDevTables ist_device_tables() {
+  IstDevTables t;
+  t.ist4 = &av2enc::txsec::dev::kIst4x4Kernel[0][0][0][0];
+  t.ist8 = &av2enc::txsec::dev::kIst8x8Kernel[0][0][0][0];
+  t.scan_map = &av2enc::txsec::dev::kStxScanMap[0][0][0];
+  t.tx_width = &av2enc::txsec::dev::kTxWidth[0];
+  t.tx_height = &av2enc::txsec::dev::kTxHeight[0];
+  t.tx_width_log2 = &av2enc::txsec::dev::kTxWidthLog2[0];
+  t.scan_order4 = &av2enc::txsec::dev::kStxScanOrder4x4[0];
+  t.scan_order8 = &av2enc::txsec::dev::kStxScanOrder8x8[0];
+  return t;
+}
+
+// Device twin of `txsec::secondary_size_info()` (the component header's
+// helpers are not inline and cannot be included in a second translation unit).
+__device__ __forceinline__ bool ist_size_info(const IstDevTables& t,
+                                              int tx_size, int plane_tx_type,
+                                              IstSizeInfo* out) {
+  if (out == nullptr || tx_size < 0 || tx_size >= 25) return false;
+  IstSizeInfo info;
+  info.w = t.tx_width[tx_size] < 32 ? t.tx_width[tx_size] : 32;
+  info.h = t.tx_height[tx_size] < 32 ? t.tx_height[tx_size] : 32;
+  info.large = info.w >= 8 && info.h >= 8;
+  if (!info.large) {
+    info.n = 8;
+  } else if (tx_size == 1 || plane_tx_type == 3) {
+    info.n = 20;
+  } else {
+    info.n = 32;
+  }
+  info.n2 = info.large ? 48 : 16;
+  *out = info;
+  return true;
+}
+
+// §5.20.7.30 diagonal scan (`syntax::build_scan` on the CPU).
+__device__ __forceinline__ void ist_build_scan(int w, int h,
+                                               int* scan) {
+  int x = 0;
+  int y = 0;
+  const int n = w * h;
+  for (int c = 0; c < n; ++c) {
+    scan[c] = y * w + x;
+    ++x;
+    --y;
+    if (y < 0 || x >= w) {
+      ++x;
+      const int s = x < h - 1 - y ? x : h - 1 - y;
+      x -= s;
+      y += s;
+    }
+  }
+}
+
+__global__ void ist_prepare_kernel(
+    const srch::LumaSearchResult* __restrict__ results,
+    const iext::Choice* __restrict__ choices, int size_idx,
+    const std::int8_t* __restrict__ map_table,
+    const TxSecondaryJob* __restrict__ job_table,
+    const TxBlockJob* __restrict__ block_table,
+    const double* __restrict__ bit_table,
+    const std::int32_t* __restrict__ tx_types,
+    TxSecondaryJob* __restrict__ jobs, TxBlockJob* __restrict__ block_jobs,
+    std::uint8_t* __restrict__ valid, double* __restrict__ bits,
+    int* __restrict__ primary_type) {
+  const int mode = results->mode;
+  const int angle = results->angle_delta;
+  const int mrl = choices->mrl_index;
+  const int type = tx_types[blockIdx.x];
+  if (threadIdx.x == 0) {
+    *primary_type = type;
+  }
+  int type_sel = -1;
+  if (type == 0) type_sel = 0;
+  if (type == 3) type_sel = 1;
+  int mapped = -1;
+  if (mode >= 0 && mode < kTxTypeModeCount && angle >= -3 && angle <= 3 &&
+      mrl >= 0 && mrl < kTxTypeMrlCount) {
+    mapped = map_table[(mode * kTxTypeAngleCount + (angle + 3)) *
+                           kTxTypeMrlCount +
+                       mrl];
+  }
+  const int j = static_cast<int>(threadIdx.x);
+  if (j >= kIstSlots) return;
+  std::uint8_t ok = 0;
+  TxSecondaryJob job{};
+  job.tx_size = size_idx;
+  job.plane_tx_type = 0;
+  job.kernel = -1;
+  job.sec_tx_type = 1;
+  job.transpose = 0;
+  job.bit_depth = 8;
+  job.in_offset = j * kTxTypeAdjElems;
+  job.out_offset = j * kTxTypeAdjElems;
+  TxBlockJob block_job{};
+  block_job = block_table[static_cast<std::size_t>(size_idx) * kIstTypeSels *
+                              kIstSlots +
+                          j];
+  double bits_value = 0.0;
+  if (type_sel >= 0 && mapped >= 0 && mapped < kTxTypeModeCount) {
+    const std::size_t slot =
+        ((static_cast<std::size_t>(size_idx) * kIstTypeSels + type_sel) * 13u +
+         mapped) *
+            kIstSlots +
+        j;
+    job = job_table[slot];
+    bits_value = bit_table[slot];
+    ok = job.kernel >= 0 ? 1 : 0;
+    if (ok != 0) {
+      block_job =
+          block_table[(static_cast<std::size_t>(size_idx) * kIstTypeSels +
+                       type_sel) *
+                          kIstSlots +
+                      j];
+    }
+  }
+  jobs[j] = job;
+  block_jobs[j] = block_job;
+  valid[j] = ok;
+  bits[j] = bits_value;
+}
+
+// Encoder-side analysis projection, exactly `project_ist_levels()`.
+__global__ void ist_project_kernel(const std::int32_t* __restrict__ primary,
+                                   const TxSecondaryJob* __restrict__ jobs,
+                                   std::int32_t* __restrict__ levels) {
+  const int j = static_cast<int>(blockIdx.x);
+  const TxSecondaryJob job = jobs[j];
+  if (job.kernel < 0 || job.sec_tx_type < 1 || job.sec_tx_type > 3) return;
+  const IstDevTables t = ist_device_tables();
+  IstSizeInfo info;
+  if (!ist_size_info(t, job.tx_size, job.plane_tx_type, &info)) {
+    return;
+  }
+  const int elems = info.w * info.h;
+  std::int32_t* slot = levels + job.out_offset;
+  for (int i = 0; i < elems; ++i) slot[i] = primary[i];
+  const bool large = info.large;
+  const int kernel_width = large ? 48 : 16;
+  const int kernel_index = job.kernel * 3 + (job.sec_tx_type - 1);
+  const std::int8_t* matrix =
+      large ? t.ist8 + kernel_index * 32 * 48
+            : t.ist4 + kernel_index * 8 * 16;
+  const int scan_bwl = large ? 3 : 2;
+  const int scan_mask = (1 << scan_bwl) - 1;
+  int scan[1024];
+  ist_build_scan(info.w, info.h, scan);
+  int out_pos[48];
+  std::int32_t x[48];
+  for (int i = 0; i < info.n2; ++i) {
+    const int pos =
+        large ? t.scan_order8[t.scan_map[kernel_index * 48 + i]]
+              : t.scan_order4[i];
+    const int sx = pos & scan_mask;
+    const int sy = pos >> scan_bwl;
+    const int index = job.transpose ? sx * info.w + sy : sy * info.w + sx;
+    out_pos[i] = index;
+    x[i] = slot[index];
+  }
+  std::int32_t sec[32];
+  for (int i = 0; i < info.n; ++i) {
+    std::int64_t sum = 0;
+    for (int k = 0; k < info.n2; ++k) {
+      sum += static_cast<std::int64_t>(x[k]) *
+             static_cast<std::int64_t>(matrix[i * kernel_width + k]);
+    }
+    const std::int64_t magnitude = sum < 0 ? -sum : sum;
+    const std::int64_t rounded =
+        (magnitude + (static_cast<std::int64_t>(1) << 6)) >> 7;
+    sec[i] = static_cast<std::int32_t>(sum < 0 ? -rounded : rounded);
+  }
+  for (int i = 0; i < info.n2; ++i) {
+    const int index = out_pos[i];
+    bool in_first_n = false;
+    for (int k = 0; k < info.n; ++k) {
+      if (scan[k] == index) {
+        in_first_n = true;
+        break;
+      }
+    }
+    if (!in_first_n) slot[index] = 0;
+  }
+  for (int i = 0; i < info.n; ++i) {
+    slot[scan[i]] = sec[i];
+  }
+}
+
+__global__ void ist_eob_kernel(const TxSecondaryJob* __restrict__ jobs,
+                               const std::int32_t* __restrict__ levels,
+                               std::int32_t* __restrict__ eob) {
+  const int j = static_cast<int>(blockIdx.x);
+  const TxSecondaryJob job = jobs[j];
+  if (job.kernel < 0 || job.sec_tx_type < 1 || job.sec_tx_type > 3) {
+    eob[j] = 0;
+    return;
+  }
+  const IstDevTables t = ist_device_tables();
+  IstSizeInfo info;
+  if (!ist_size_info(t, job.tx_size, job.plane_tx_type, &info)) {
+    eob[j] = -1;
+    return;
+  }
+  int area = info.w * info.h;
+  int scan[1024];
+  ist_build_scan(info.w, info.h, scan);
+  const std::int32_t* slot = levels + job.out_offset;
+  int value = 0;
+  for (int c = area - 1; c >= 0; --c) {
+    if (slot[scan[c]] != 0) {
+      value = c + 1;
+      break;
+    }
+  }
+  eob[j] = value;
+}
+
+__device__ __forceinline__ int ist_clip1(int v, int bit_depth) {
+  const int high = (1 << bit_depth) - 1;
+  return v < 0 ? 0 : (v > high ? high : v);
+}
+
+__global__ void ist_sse_kernel(
+    const std::uint8_t* __restrict__ src, int src_stride, int src_max_x,
+    int src_max_y, const std::uint8_t* __restrict__ pred,
+    const TxBlockJob* __restrict__ block_jobs,
+    const std::int16_t* __restrict__ residual, int x0, int y0,
+    double* __restrict__ sse) {
+  const int j = static_cast<int>(blockIdx.x);
+  const TxBlockJob job = block_jobs[j];
+  const int w = job.params.coded_w;
+  const int h = job.params.coded_h;
+  const std::int16_t* rr = residual + job.out_offset;
+  double sum = 0.0;
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      int px = x0 + x;
+      int py = y0 + y;
+      px = px < 0 ? 0 : (px > src_max_x ? src_max_x : px);
+      py = py < 0 ? 0 : (py > src_max_y ? src_max_y : py);
+      const std::size_t i = static_cast<std::size_t>(y) * w + x;
+      const int v = ist_clip1(static_cast<int>(pred[i]) +
+                                  static_cast<int>(rr[i]), 8);
+      const double d =
+          static_cast<double>(src[static_cast<std::size_t>(py) * src_stride + px]) -
+          static_cast<double>(v);
+      sum += d * d;
+    }
+  }
+  sse[j] = sum;
+}
+
+__global__ void ist_base_sse_kernel(
+    const std::uint8_t* __restrict__ src, int src_stride, int src_max_x,
+    int src_max_y, const std::uint8_t* __restrict__ pred,
+    const std::int16_t* __restrict__ residual, int w, int h, int x0, int y0,
+    double* __restrict__ sse) {
+  double sum = 0.0;
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      int px = x0 + x;
+      int py = y0 + y;
+      px = px < 0 ? 0 : (px > src_max_x ? src_max_x : px);
+      py = py < 0 ? 0 : (py > src_max_y ? src_max_y : py);
+      const std::size_t i = static_cast<std::size_t>(y) * w + x;
+      const int v = ist_clip1(static_cast<int>(pred[i]) +
+                                  static_cast<int>(residual[i]), 8);
+      const double d =
+          static_cast<double>(src[static_cast<std::size_t>(py) * src_stride + px]) -
+          static_cast<double>(v);
+      sum += d * d;
+    }
+  }
+  *sse = sum;
+}
+
+__global__ void ist_decide_kernel(
+    const std::int32_t* __restrict__ primary_eob_addr,
+    const std::int32_t* __restrict__ type_addr,
+    const std::uint8_t* __restrict__ valid,
+    const std::int32_t* __restrict__ eob, const double* __restrict__ sse,
+    const double* __restrict__ bits, const double* __restrict__ base_sse_addr, double lambda,
+    int coded_w, int coded_h, std::int32_t* __restrict__ primary_levels,
+    std::int32_t* __restrict__ primary_eob,
+    std::int16_t* __restrict__ primary_residual,
+    const std::int32_t* __restrict__ candidate_levels,
+    const std::int16_t* __restrict__ candidate_residual,
+    std::int32_t* __restrict__ sec_out, std::int32_t* __restrict__ set_out,
+    int adj_elems, int coded_elems) {
+  const int primary = *primary_eob_addr;
+  const int type = *type_addr;
+  const double base_sse = *base_sse_addr;
+  const bool large = coded_w >= 8 && coded_h >= 8;
+  int limit = 0;
+  if (large) {
+    limit = ((coded_w == 8 && coded_h == 8) || type == 3) ? 20 : 32;
+  } else {
+    limit = 8;
+  }
+  double best_cost = base_sse;
+  int best_j = -1;
+  int best_sec = 0;
+  int best_set = 0;
+  int best_eob = primary;
+  if (primary >= 2 && primary <= limit) {
+    for (int set = 0; set < kIstSets; ++set) {
+      for (int sec = 1; sec <= kIstSecTypes; ++sec) {
+        const int j = set * kIstSecTypes + (sec - 1);
+        if (valid[j] == 0) continue;
+        const int ev = eob[j];
+        if (ev < 2 || ev > limit) continue;
+        const double cost = sse[j] + lambda * bits[j];
+        if (cost < best_cost) {
+          best_cost = cost;
+          best_j = j;
+          best_sec = sec;
+          best_set = set;
+          best_eob = ev;
+        }
+      }
+    }
+  }
+  *sec_out = best_sec;
+  *set_out = best_set;
+  if (best_sec != 0 && best_j >= 0) {
+    for (int i = 0; i < adj_elems; ++i) {
+      primary_levels[i] = candidate_levels[best_j * kTxTypeAdjElems + i];
+    }
+    for (int i = 0; i < coded_elems; ++i) {
+      primary_residual[i] = candidate_residual[best_j * kTxTypeCodedElems + i];
+    }
+    *primary_eob = best_eob;
+  }
+}
+#endif  // AV2ENC_STILL_GPU_HAVE_SECONDARY
+
+#if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+// ---------------------------------------------------------------------------
+// §7.14.6 cross-component transform (CCTX) chroma search
+// ---------------------------------------------------------------------------
+//
+// The seven rotations are evaluated on device from the forward chroma
+// coefficients; the decision mirrors `TileEncoder::compute_chroma_cctx`:
+// reconstruct both planes with the §7.14.4 dequant and the §7.14.6 inverse
+// rotation, score serial `SSE(U)+SSE(V) + lambda * cctx_type bits`, and reject
+// a non-NONE rotation with U eob <= 1 (it is not signallable).
+constexpr int kCctxTypes = ::av2enc::tcq::kCctxTypeCount;  // 7
+constexpr int kCctxSlots = kCctxTypes * 2;                 // U and V per type
+
+struct CctxBits {
+  double value[7] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+};
+
+__device__ __forceinline__ void cctx_build_scan(int w, int h, int* scan) {
+  int x = 0;
+  int y = 0;
+  const int n = w * h;
+  for (int c = 0; c < n; ++c) {
+    scan[c] = y * w + x;
+    ++x;
+    --y;
+    if (y < 0 || x >= w) {
+      ++x;
+      const int s = x < h - 1 - y ? x : h - 1 - y;
+      x -= s;
+      y += s;
+    }
+  }
+}
+
+__global__ void cctx_levels_kernel(const double* __restrict__ u_coeff,
+                                   const double* __restrict__ v_coeff,
+                                   double quant_step,
+                                   std::int32_t* __restrict__ levels,
+                                   std::int32_t* __restrict__ eob, int area,
+                                   int w, int h) {
+  namespace td = ::av2enc::cuda::tcq::detail;
+  const int t = static_cast<int>(blockIdx.x);
+  std::int32_t* u = levels + (t * 2) * kTxTypeAdjElems;
+  std::int32_t* v = levels + (t * 2 + 1) * kTxTypeAdjElems;
+  int eob_u = 0;
+  int eob_v = 0;
+  const double int32_min_plus_one = -2147483647.0;
+  const double int32_max = 2147483647.0;
+  for (int i = 0; i < area; ++i) {
+    double rot_u = 0.0;
+    double rot_v = 0.0;
+    td::tcq_cctx_forward_rotate(u_coeff[i], v_coeff[i], t, &rot_u, &rot_v);
+    const double u_q = td::tcq_round(rot_u / quant_step);
+    const double v_q = td::tcq_round(rot_v / quant_step);
+    const double uc = u_q < int32_min_plus_one
+                          ? int32_min_plus_one
+                          : (u_q > int32_max ? int32_max : u_q);
+    const double vc = v_q < int32_min_plus_one
+                          ? int32_min_plus_one
+                          : (v_q > int32_max ? int32_max : v_q);
+    const std::int32_t ul = static_cast<std::int32_t>(uc);
+    const std::int32_t vl = static_cast<std::int32_t>(vc);
+    u[i] = ul;
+    v[i] = vl;
+    if (ul != 0) eob_u = i + 1;
+    if (vl != 0) eob_v = i + 1;
+  }
+  // Convert raster eob to the §5.20.7.30 scan eob the syntax needs.
+  int scan[1024];
+  cctx_build_scan(w, h, scan);
+  int scan_u = 0;
+  int scan_v = 0;
+  for (int c = area - 1; c >= 0; --c) {
+    if (u[scan[c]] != 0) {
+      scan_u = c + 1;
+      break;
+    }
+  }
+  for (int c = area - 1; c >= 0; --c) {
+    if (v[scan[c]] != 0) {
+      scan_v = c + 1;
+      break;
+    }
+  }
+  eob[t * 2] = scan_u;
+  eob[t * 2 + 1] = scan_v;
+  (void)eob_u;
+  (void)eob_v;
+}
+
+__global__ void cctx_rotate_kernel(std::int32_t* __restrict__ dequant,
+                                   int area) {
+  namespace td = ::av2enc::cuda::tcq::detail;
+  const int t = static_cast<int>(blockIdx.x);
+  std::int32_t* u = dequant + (t * 2) * kTxTypeAdjElems;
+  std::int32_t* v = dequant + (t * 2 + 1) * kTxTypeAdjElems;
+  for (int i = 0; i < area; ++i) {
+    const td::TcQCctxPair pair =
+        td::tcq_cctx_dequant_pair(u[i], v[i], t, 8);
+    u[i] = pair.u;
+    v[i] = pair.v;
+  }
+}
+
+__global__ void cctx_sse_kernel(
+    const std::uint8_t* __restrict__ src_u, const std::uint8_t* __restrict__ src_v,
+    int src_stride, int src_max_x, int src_max_y,
+    const std::uint8_t* __restrict__ pred_u,
+    const std::uint8_t* __restrict__ pred_v,
+    const std::int16_t* __restrict__ residual, int w, int h, int x0, int y0,
+    double* __restrict__ sse) {
+  const int t = static_cast<int>(blockIdx.x);
+  double sum = 0.0;
+  for (int plane = 0; plane < 2; ++plane) {
+    const std::uint8_t* src = plane == 0 ? src_u : src_v;
+    const std::uint8_t* pred = plane == 0 ? pred_u : pred_v;
+    const std::int16_t* rr =
+        residual + (t * 2 + plane) * kTxTypeCodedElems;
+    for (int y = 0; y < h; ++y) {
+      for (int x = 0; x < w; ++x) {
+        int px = x0 + x;
+        int py = y0 + y;
+        px = px < 0 ? 0 : (px > src_max_x ? src_max_x : px);
+        py = py < 0 ? 0 : (py > src_max_y ? src_max_y : py);
+        const std::size_t i = static_cast<std::size_t>(y) * w + x;
+        const int pv = ist_clip1(static_cast<int>(pred[i]) + rr[i], 8);
+        const double d =
+            static_cast<double>(src[static_cast<std::size_t>(py) * src_stride + px]) -
+            static_cast<double>(pv);
+        sum += d * d;
+      }
+    }
+  }
+  sse[t] = sum;
+}
+
+__global__ void cctx_decide_kernel(
+    const double* __restrict__ sse, const std::int32_t* __restrict__ eob,
+    CctxBits bits, double lambda,
+    std::int32_t* __restrict__ out_type,
+    std::int32_t* __restrict__ u_levels, std::int32_t* __restrict__ v_levels,
+    std::int32_t* __restrict__ u_eob, std::int32_t* __restrict__ v_eob,
+    std::int16_t* __restrict__ u_res, std::int16_t* __restrict__ v_res,
+    const std::int32_t* __restrict__ cand_levels,
+    const std::int16_t* __restrict__ cand_res, int area, int coded_elems) {
+  int best = -1;
+  double best_cost = 0.0;
+  int best_eob_u = 0;
+  int best_eob_v = 0;
+  for (int t = 0; t < kCctxTypes; ++t) {
+    const int eob_u = eob[t * 2];
+    if (t != 0 && eob_u <= 1) continue;
+    const double b = eob_u > 1 ? bits.value[t] : 0.0;
+    const double cost = sse[t] + lambda * b;
+    if (best < 0 || cost < best_cost) {
+      best = t;
+      best_cost = cost;
+      best_eob_u = eob_u;
+      best_eob_v = eob[t * 2 + 1];
+    }
+  }
+  if (best < 0) {
+    *out_type = 0;
+    return;
+  }
+  *out_type = best;
+  *u_eob = best_eob_u;
+  *v_eob = best_eob_v;
+  for (int i = 0; i < area; ++i) {
+    u_levels[i] = cand_levels[(best * 2) * kTxTypeAdjElems + i];
+    v_levels[i] = cand_levels[(best * 2 + 1) * kTxTypeAdjElems + i];
+  }
+  for (int i = 0; i < coded_elems; ++i) {
+    u_res[i] = cand_res[(best * 2) * kTxTypeCodedElems + i];
+    v_res[i] = cand_res[(best * 2 + 1) * kTxTypeCodedElems + i];
+  }
+}
+#endif  // AV2ENC_STILL_GPU_HAVE_TCQ_CORE
 
 // Runs the full GPU frame pipeline in syntax order:
 //
@@ -1756,6 +3349,12 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
                     filter_config->lr.plane[2].enabled);
   const bool gdf_active =
       filter_config != nullptr && filter_config->gdf.enable;
+  // §5.20.8 / §5.20.5.3-.4 screen-content tools: the CPU reference plans the
+  // palette colour set/direction and the exact IBC block vector (same
+  // leaf-order contract as the filter decision grids); the GPU applies the
+  // palette prediction/map kernel and the IBC copy kernel.
+  const bool screen_plan =
+      cpu_plan != nullptr && (options.palette || options.ibc);
   if (blocks <= 0 || buffers.tx_jobs == nullptr) {
     error = "gpu: device buffers are not prepared";
     return GpuRunStatus::kError;
@@ -1777,6 +3376,146 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     error = "unsupported: AV2ENC_STILL_FORCE_Y* debug override";
     return GpuRunStatus::kUnsupported;
   }
+  if (screen_plan) {
+    if (options.palette &&
+        cpu_plan->palette_index_by_leaf.size() !=
+            static_cast<std::size_t>(blocks)) {
+      error = "gpu: palette plan does not cover the leaf list";
+      return GpuRunStatus::kError;
+    }
+    if (options.ibc &&
+        cpu_plan->ibc_by_leaf.size() != static_cast<std::size_t>(blocks)) {
+      error = "gpu: IBC plan does not cover the leaf list";
+      return GpuRunStatus::kError;
+    }
+  }
+
+#if AV2ENC_STILL_GPU_HAVE_TX_TYPE
+  // ---- §5.20.7.27/§9.6 TX-type search tables ------------------------------
+  // Built once per frame for all 25 transform sizes.  The per-block prepass
+  // only rewrites the 16 candidate `type_bits` for the decided intra mode.
+  const bool tx_type_search = options.tx_type || options.idtx;
+  const bool ist_active = options.ist;
+  const bool cctx_active = options.cctx;
+  const bool tx_type_tables_needed =
+      tx_type_search || ist_active || cctx_active;
+  TxTypeHostTables tx_tables;
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+  IstHostTables ist_tables;
+#endif
+  std::size_t tx_stage_off = 0;
+  if (tx_type_tables_needed) {
+    if (!build_tx_type_tables(options.idtx, &tx_tables, error)) {
+      return GpuRunStatus::kError;
+    }
+    std::size_t table_bytes =
+        tx_tables.cands.size() * sizeof(TxTypeCandJob) +
+        tx_tables.jobs.size() * sizeof(TxBlockJob) +
+        tx_tables.blocks.size() * sizeof(TxTypeBlockJob) +
+        tx_tables.map.size() * sizeof(std::int8_t) +
+        tx_tables.legal.size() * sizeof(std::uint8_t) +
+        tx_tables.bits.size() * sizeof(double);
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+    if (ist_active) {
+      if (!build_ist_tables(&ist_tables, error)) {
+        return GpuRunStatus::kError;
+      }
+      table_bytes +=
+          ist_tables.jobs.size() * sizeof(TxSecondaryJob) +
+          ist_tables.block_jobs.size() * sizeof(TxBlockJob) +
+          ist_tables.bits.size() * sizeof(double) +
+          ist_tables.set_count.size() * sizeof(std::uint8_t) +
+          ist_tables.map.size() * sizeof(std::int8_t);
+    }
+#endif
+      const std::size_t need_stage =
+          table_bytes + static_cast<std::size_t>(blocks) * 4096u + 16384u;
+    if (gpu.tx_stage.capacity() < need_stage) {
+      gpu.tx_stage.release();
+      std::string stage_error;
+      if (!is_ok(gpu.tx_stage.init(need_stage, &stage_error))) {
+        error = "gpu: TX decision staging init failed: " + stage_error;
+        return GpuRunStatus::kError;
+      }
+    }
+    auto* stage = static_cast<std::uint8_t*>(gpu.tx_stage.data());
+    std::size_t off = 0;
+    const auto stage_copy = [&](void* dst, const void* src,
+                                std::size_t bytes) -> bool {
+      std::memcpy(stage + off, src, bytes);
+      const cudaError_t st = cudaMemcpyAsync(dst, stage + off, bytes,
+                                             cudaMemcpyHostToDevice, stream);
+      off += (bytes + 255u) & ~static_cast<std::size_t>(255u);
+      return st == cudaSuccess;
+    };
+    bool uploaded =
+        stage_copy(buffers.tx_type_cands, tx_tables.cands.data(),
+                   tx_tables.cands.size() * sizeof(TxTypeCandJob)) &&
+        stage_copy(buffers.tx_type_jobs, tx_tables.jobs.data(),
+                   tx_tables.jobs.size() * sizeof(TxBlockJob)) &&
+        stage_copy(buffers.tx_type_blocks, tx_tables.blocks.data(),
+                   tx_tables.blocks.size() * sizeof(TxTypeBlockJob)) &&
+        stage_copy(buffers.tx_type_map, tx_tables.map.data(),
+                   tx_tables.map.size() * sizeof(std::int8_t)) &&
+        stage_copy(buffers.tx_type_legal, tx_tables.legal.data(),
+                   tx_tables.legal.size() * sizeof(std::uint8_t)) &&
+        stage_copy(buffers.tx_type_bits, tx_tables.bits.data(),
+                   tx_tables.bits.size() * sizeof(double));
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+    if (uploaded && ist_active) {
+      uploaded =
+          stage_copy(buffers.ist_job_table, ist_tables.jobs.data(),
+                     ist_tables.jobs.size() * sizeof(TxSecondaryJob)) &&
+          stage_copy(buffers.ist_block_table, ist_tables.block_jobs.data(),
+                     ist_tables.block_jobs.size() * sizeof(TxBlockJob)) &&
+          stage_copy(buffers.ist_bit_table, ist_tables.bits.data(),
+                     ist_tables.bits.size() * sizeof(double)) &&
+          stage_copy(buffers.ist_set_count, ist_tables.set_count.data(),
+                     ist_tables.set_count.size() * sizeof(std::uint8_t)) &&
+          stage_copy(buffers.ist_map, ist_tables.map.data(),
+                     ist_tables.map.size() * sizeof(std::int8_t));
+    }
+#endif
+    if (!uploaded ||
+        cudaMemsetAsync(buffers.tx_types, 0,
+                        static_cast<std::size_t>(blocks) * 3u *
+                            sizeof(std::int32_t),
+                        stream) != cudaSuccess) {
+      error = "gpu: TX decision table upload failed";
+      return GpuRunStatus::kError;
+    }
+#if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+    if (cctx_active &&
+        cudaMemsetAsync(buffers.cctx_types, 0,
+                        static_cast<std::size_t>(blocks) *
+                            sizeof(std::int32_t),
+                        stream) != cudaSuccess) {
+      error = "gpu: CCTX decision reset failed";
+      return GpuRunStatus::kError;
+    }
+#endif
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+    if (ist_active &&
+        (cudaMemsetAsync(buffers.ist_secs, 0,
+                         static_cast<std::size_t>(blocks) *
+                             sizeof(std::int32_t),
+                         stream) != cudaSuccess ||
+         cudaMemsetAsync(buffers.ist_sets, 0,
+                         static_cast<std::size_t>(blocks) *
+                             sizeof(std::int32_t),
+                         stream) != cudaSuccess)) {
+      error = "gpu: IST decision reset failed";
+      return GpuRunStatus::kError;
+    }
+#endif
+    tx_stage_off = off;
+  }
+#else
+  const bool ist_active = false;
+#endif
+#if !AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+  const bool cctx_active = false;
+#endif
 
   // ---- availability counts (from the frame plan) -------------------------
   // The plan exports the exact superblock-local availability replay for its
@@ -2115,6 +3854,8 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   const std::size_t luma_blocks_bytes =
       luma_blocks.size() * sizeof(srch::LumaSearchBlock);
   const std::size_t luma_jobs_bytes = luma_jobs.size() * sizeof(im::IntraJob);
+  const std::size_t chroma_jobs_bytes =
+      chroma_jobs.size() * sizeof(cm1::StillChromaJob);
   const std::size_t tx_jobs_bytes = tx_jobs.size() * sizeof(StillTxJob);
   const std::size_t recon_jobs_bytes =
       recon_jobs.size() * sizeof(cm1::ReconWriteJob);
@@ -2123,6 +3864,11 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   const std::size_t mrl_jobs_bytes = mrl_jobs.size() * sizeof(mrl::MrlJob);
   const std::size_t dip_jobs_bytes = dip_jobs.size() * sizeof(dip::DipJob);
   const std::size_t ibp_jobs_bytes = ibp_jobs.size() * sizeof(ibp::IbpJob);
+  // The per-SB segment kernel reads the block origins on the device.
+  const std::size_t plan_blocks_bytes =
+      options.per_segment_q
+          ? static_cast<std::size_t>(blocks) * sizeof(BlockPlan)
+          : 0;
   // §7.19 CCSO metadata: per-plane unit-enable grid + decoded offset table.
   // The decoded tables come from the CPU reference's parameters so the GPU
   // kernel sees exactly the values the bitstream signals.
@@ -2179,9 +3925,14 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
 #endif
   const std::size_t upload_total = src_y_bytes + src_c_bytes * 2u +
                                    luma_blocks_bytes + luma_jobs_bytes +
+                                   chroma_jobs_bytes +
                                    tx_jobs_bytes + recon_jobs_bytes +
                                    recon_infos_bytes + mrl_jobs_bytes +
                                    dip_jobs_bytes + ibp_jobs_bytes +
+                                   plan_blocks_bytes +
+                                   (screen_plan && options.palette
+                                        ? static_cast<std::size_t>(blocks) * 8u
+                                        : 0u) +
                                    ccso_blk_bytes[0] +
                                    ccso_blk_bytes[1] + ccso_blk_bytes[2] +
                                    ccso_off_bytes[0] + ccso_off_bytes[1] +
@@ -2206,6 +3957,9 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::memcpy(upload + up, luma_jobs.data(), luma_jobs_bytes);
   const std::uint8_t* host_luma_jobs = upload + up;
   up += luma_jobs_bytes;
+  std::memcpy(upload + up, chroma_jobs.data(), chroma_jobs_bytes);
+  const std::uint8_t* host_chroma_jobs = upload + up;
+  up += chroma_jobs_bytes;
   std::memcpy(upload + up, tx_jobs.data(), tx_jobs_bytes);
   const std::uint8_t* host_tx_jobs = upload + up;
   up += tx_jobs_bytes;
@@ -2215,6 +3969,12 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::memcpy(upload + up, recon_infos.data(), recon_infos_bytes);
   const std::uint8_t* host_recon_infos = upload + up;
   up += recon_infos_bytes;
+  const std::uint8_t* host_plan_blocks = nullptr;
+  if (plan_blocks_bytes != 0) {
+    std::memcpy(upload + up, plan.blocks.data(), plan_blocks_bytes);
+    host_plan_blocks = upload + up;
+    up += plan_blocks_bytes;
+  }
   std::memcpy(upload + up, mrl_jobs.data(), mrl_jobs_bytes);
   const std::uint8_t* host_mrl_jobs = upload + up;
   up += mrl_jobs_bytes;
@@ -2224,6 +3984,24 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::memcpy(upload + up, ibp_jobs.data(), ibp_jobs_bytes);
   const std::uint8_t* host_ibp_jobs = upload + up;
   up += ibp_jobs_bytes;
+  const std::uint8_t* host_palette_colors = nullptr;
+  if (screen_plan && options.palette) {
+    std::uint8_t* colors = upload + up;
+    std::memset(colors, 0, static_cast<std::size_t>(blocks) * 8u);
+    for (int i = 0; i < blocks; ++i) {
+      const std::uint32_t index =
+          cpu_plan->palette_index_by_leaf[static_cast<std::size_t>(i)];
+      if (index == ::av2enc::still::StillResult::kNoPaletteLeaf) continue;
+      const ::av2enc::palette::PaletteResult& result =
+          cpu_plan->palette_results[index];
+      for (int k = 0; k < 8; ++k) {
+        colors[static_cast<std::size_t>(i) * 8u + static_cast<std::size_t>(k)] =
+            k < result.size ? result.colors[static_cast<std::size_t>(k)] : 0;
+      }
+    }
+    host_palette_colors = colors;
+    up += static_cast<std::size_t>(blocks) * 8u;
+  }
   const std::uint8_t* host_ccso_blks[3] = {nullptr, nullptr, nullptr};
   const std::int16_t* host_ccso_offsets[3] = {nullptr, nullptr, nullptr};
   const std::int8_t* host_cdef_idx = nullptr;
@@ -2286,14 +4064,30 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       !enqueue_upload(buffers.luma_blocks, host_luma_blocks,
                       luma_blocks_bytes) ||
       !enqueue_upload(buffers.luma_jobs, host_luma_jobs, luma_jobs_bytes) ||
+      !enqueue_upload(buffers.chroma_jobs, host_chroma_jobs,
+                      chroma_jobs_bytes) ||
       !enqueue_upload(buffers.tx_jobs, host_tx_jobs, tx_jobs_bytes) ||
       !enqueue_upload(buffers.recon_jobs, host_recon_jobs, recon_jobs_bytes) ||
       !enqueue_upload(buffers.recon_infos, host_recon_infos,
                       recon_infos_bytes) ||
+      (plan_blocks_bytes != 0 &&
+       !enqueue_upload(buffers.blocks, host_plan_blocks,
+                       plan_blocks_bytes)) ||
       !enqueue_upload(buffers.mrl_jobs, host_mrl_jobs, mrl_jobs_bytes) ||
       !enqueue_upload(buffers.dip_jobs, host_dip_jobs, dip_jobs_bytes) ||
       !enqueue_upload(buffers.ibp_jobs, host_ibp_jobs, ibp_jobs_bytes) ||
+      (host_palette_colors != nullptr &&
+       !enqueue_upload(buffers.palette_colors, host_palette_colors,
+                       static_cast<std::size_t>(blocks) * 8u)) ||
       cudaMemsetAsync(buffers.tx_errors, 0, sizeof(int), stream) !=
+          cudaSuccess ||
+      cudaMemsetAsync(buffers.mi_luma_mode, 0, buffers.mi_luma_bytes,
+                      stream) != cudaSuccess ||
+      cudaMemsetAsync(buffers.mi_luma_angle, 0, buffers.mi_luma_bytes,
+                      stream) != cudaSuccess ||
+      cudaMemsetAsync(buffers.luma_results, 0, buffers.luma_results_bytes,
+                      stream) != cudaSuccess ||
+      cudaMemsetAsync(buffers.eob, 0, buffers.eob_bytes, stream) !=
           cudaSuccess) {
     error = "gpu: upload failed";
     return GpuRunStatus::kError;
@@ -2356,6 +4150,31 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
                       stream) != cudaSuccess) {
     error = "gpu: intra choice reset failed";
     return GpuRunStatus::kError;
+  }
+
+  // §5.4.9 / §5.18.7.1 real per-SB segmentation: derive the segment map and
+  // per-SB qindex on the device, then patch the TX/recon descriptors.  The
+  // variance rule and integer arithmetic match the CPU still planner.
+  if (options.per_segment_q) {
+    DeviceSegmentState seg_state;
+    seg_state.base_q_idx = options.base_q_idx;
+    seg_state.num_segments = 8;  // enable_ext_seg == 0
+    seg_state.sb_px = plan.sb_size;
+    seg_state.sb_cols = plan.sb_cols;
+    seg_state.sb_rows = plan.sb_rows;
+    seg_state.width = static_cast<int>(picture.width);
+    seg_state.height = static_cast<int>(picture.height);
+    for (int id = 0; id < 8; ++id) {
+      seg_state.alt_q[id] = 0;
+      seg_state.alt_q_active[id] = 0;
+    }
+    // Segment 1 carries the signalled SEG_LVL_ALT_Q; segment 0 is base_q_idx.
+    seg_state.alt_q[1] = options.per_segment_q_delta;
+    seg_state.alt_q_active[1] = 1;
+    derive_segment_map_kernel<<<1, 256, 0, stream>>>(
+        buffers.src.y, seg_state, buffers.sb_variance, buffers.sb_segment,
+        buffers.sb_qindex, buffers.blocks, buffers.tx_jobs,
+        buffers.recon_infos, blocks);
   }
 
   // ---- reconstruction state ---------------------------------------------
@@ -2451,6 +4270,8 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   int last_sb_col = -1;
   for (int i = 0; i < blocks; ++i) {
     const BlockPlan& block = plan.blocks[static_cast<std::size_t>(i)];
+    const int x0 = block.mi_col * 4;
+    const int y0 = block.mi_row * 4;
     const int sb_mi = plan.sb_size / 4;
     const int sb_row = (block.mi_row / sb_mi) * sb_mi;
     const int sb_col = (block.mi_col / sb_mi) * sb_mi;
@@ -2465,7 +4286,100 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     }
 
     const bool has_luma = block.luma_w != 0 && block.luma_h != 0;
+    const bool leaf_palette =
+        screen_plan && options.palette && has_luma &&
+        cpu_plan->palette_index_by_leaf[static_cast<std::size_t>(i)] !=
+            ::av2enc::still::StillResult::kNoPaletteLeaf;
+    const bool leaf_ibc =
+        screen_plan && options.ibc && has_luma &&
+        cpu_plan->ibc_by_leaf[static_cast<std::size_t>(i)].used != 0;
     if (has_luma) {
+    if (leaf_palette || leaf_ibc) {
+      // §5.20.8 / §5.20.5.3-.4: the CPU-planned decision forces DC luma and
+      // no residual; the GPU applies the palette map/prediction or block copy.
+      const std::int64_t planned_sse =
+          leaf_palette
+              ? cpu_plan->palette_results[cpu_plan->palette_index_by_leaf
+                                              [static_cast<std::size_t>(i)]]
+                    .sse
+              : 0;
+      set_luma_result_kernel<<<1, 1, 0, stream>>>(
+          buffers.luma_results, i, /*mode=*/0, /*angle=*/0, planned_sse);
+      record_luma_mode_kernel<<<1, 1, 0, stream>>>(
+          buffers.blocks, buffers.luma_results, buffers.mi_luma_mode,
+          buffers.mi_luma_angle, mi_cols, mi_rows, i);
+      const int luma_visible_w =
+          std::min<int>(block.luma_w, coded_w - x0);
+      const int luma_visible_h =
+          std::min<int>(block.luma_h, coded_h - y0);
+      if (leaf_palette) {
+        const ::av2enc::palette::PaletteResult& pal =
+            cpu_plan->palette_results
+                [cpu_plan->palette_index_by_leaf[static_cast<std::size_t>(i)]];
+        av2enc::cuda::PaletteDeviceBlock pb;
+        pb.src = buffers.src.y + static_cast<std::size_t>(y0) * picture.width +
+                 static_cast<std::size_t>(x0);
+        pb.src_stride = static_cast<int>(picture.width);
+        pb.block_w = block.luma_w;
+        pb.block_h = block.luma_h;
+        pb.visible_w = luma_visible_w;
+        pb.visible_h = luma_visible_h;
+        pb.colors = buffers.palette_colors + static_cast<std::size_t>(i) * 8u;
+        pb.size = pal.size;
+        pb.map = buffers.palette_map;
+        pb.map_stride = block.luma_w;
+        pb.dst = buffers.pred_packed[0] + block.pred_offset_y;
+        pb.dst_stride = block.luma_w;
+        pb.dither = false;
+        if (pal.size < 2 || pal.size > 8 ||
+            av2enc::cuda::palette_build_map(pb, stream) != cudaSuccess ||
+            av2enc::cuda::palette_predict(pb, stream) != cudaSuccess) {
+          error = "gpu: palette prediction failed";
+          return GpuRunStatus::kError;
+        }
+      } else {
+        const ::av2enc::still::StillResult::IbcPlan& ibc =
+            cpu_plan->ibc_by_leaf[static_cast<std::size_t>(i)];
+        av2enc::cuda::IbcDeviceFrame frame;
+        frame.y = buffers.recon.y;
+        frame.u = buffers.recon.u;
+        frame.v = buffers.recon.v;
+        frame.stride_y = static_cast<int>(plan.y_stride);
+        frame.stride_u = static_cast<int>(plan.u_stride);
+        frame.stride_v = static_cast<int>(plan.v_stride);
+        frame.width = coded_w;
+        frame.height = coded_h;
+        frame.has_chroma = block.has_chroma != 0;
+        frame.sub_x = 1;
+        frame.sub_y = 1;
+        const av2enc::ibc::BlockVector bv{ibc.bv_row, ibc.bv_col};
+        if (av2enc::cuda::ibc_copy_block(
+                frame, block.mi_row, block.mi_col, block.bsize, bv,
+                buffers.pred_packed[0] + block.pred_offset_y, block.luma_w,
+                nullptr, 0, nullptr, 0, luma_visible_w, luma_visible_h,
+                stream) != cudaSuccess) {
+          error = "gpu: IBC luma copy failed (bsize " +
+                  std::to_string(block.bsize) + ", " +
+                  std::to_string(block.luma_w) + "x" +
+                  std::to_string(block.luma_h) + " at " +
+                  std::to_string(x0) + "," + std::to_string(y0) + " bv " +
+                  std::to_string(ibc.bv_row) + "," +
+                  std::to_string(ibc.bv_col) + ")";
+          return GpuRunStatus::kError;
+        }
+      }
+      const std::size_t luma_pixels =
+          static_cast<std::size_t>(block.luma_w) * block.luma_h;
+      if (cudaMemsetAsync(buffers.residual_packed[0] + block.residual_offset_y,
+                          0, luma_pixels * sizeof(std::int16_t),
+                          stream) != cudaSuccess ||
+          cm1::recon_write_blocks(
+              buffers.recon_jobs + static_cast<std::size_t>(i) * 3u, 1,
+              stream) != cudaSuccess) {
+        error = "gpu: screen-content luma reconstruction failed";
+        return GpuRunStatus::kError;
+      }
+    } else {
     prepare_search_block_kernel<<<1, 1, 0, stream>>>(
         buffers.luma_blocks, buffers.intra_joint, mi_cols, mi_rows, i);
     srch::LumaSearchDebug search_debug{};
@@ -2558,6 +4472,102 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       error = "gpu: intra extra prediction selection failed";
       return GpuRunStatus::kError;
     }
+    record_luma_mode_kernel<<<1, 1, 0, stream>>>(
+        buffers.blocks, buffers.luma_results, buffers.mi_luma_mode,
+        buffers.mi_luma_angle, mi_cols, mi_rows, i);
+
+#if AV2ENC_STILL_GPU_HAVE_TX_TYPE
+    if (tx_type_search) {
+      const int size_idx =
+          txv::tx_size_index(block.luma_w, block.luma_h);
+      if (size_idx < 0 || size_idx >= 25) {
+        error = "unsupported: TX size for the type search";
+        return GpuRunStatus::kUnsupported;
+      }
+      if (tx_stage_off + 256u >
+          gpu.tx_stage.capacity()) {
+        error = "gpu: TX decision staging exhausted";
+        return GpuRunStatus::kError;
+      }
+      // Probe the block's DCT adjusted residual; the candidate kernel reuses
+      // it for every TX_TYPE.
+      StillTxJob probe = tx_jobs[static_cast<std::size_t>(i) * 3u];
+      probe.residual_adj_offset = 0;
+      probe.coeff_offset = 0;
+      probe.levels_offset = 0;
+      probe.dequant_offset = 0;
+      probe.residual_out_offset = 0;
+      probe.eob_offset = 0;
+      auto* stage = static_cast<std::uint8_t*>(gpu.tx_stage.data());
+      std::memcpy(stage + tx_stage_off, &probe, sizeof(probe));
+      const cudaError_t probe_copy = cudaMemcpyAsync(
+          buffers.tx_probe_job, stage + tx_stage_off, sizeof(probe),
+          cudaMemcpyHostToDevice, stream);
+      tx_stage_off += 256u;
+      if (probe_copy != cudaSuccess) {
+        error = "gpu: TX-type probe upload failed";
+        return GpuRunStatus::kError;
+      }
+      still_residual_coded_kernel<<<1, 256, 0, stream>>>(
+          buffers.src.y, static_cast<int>(picture.width),
+          static_cast<int>(picture.width) - 1,
+          static_cast<int>(picture.height) - 1,
+          buffers.pred_packed[0] + block.pred_offset_y, block.luma_w,
+          block.luma_h, block.mi_col * 4, block.mi_row * 4,
+          buffers.tx_residual_coded);
+      StillTxBuffers probe_buffers;
+      probe_buffers.src = buffers.src.y;
+      probe_buffers.pred = buffers.pred_packed[0];
+      probe_buffers.residual_adj = buffers.tx_residual_adj;
+      probe_buffers.coeff = buffers.tx_cand_coeff;
+      probe_buffers.levels = buffers.tx_cand_levels;
+      probe_buffers.error_count = buffers.tx_errors;
+      if (still_tx_batch(buffers.tx_probe_job, 1, probe_buffers, 0, stream) !=
+              cudaSuccess ||
+          cudaGetLastError() != cudaSuccess) {
+        error = "gpu: TX-type probe failed";
+        return GpuRunStatus::kError;
+      }
+      const std::size_t map_off =
+          static_cast<std::size_t>(size_idx) * kTxTypeMapStride;
+      const std::size_t mode_off =
+          static_cast<std::size_t>(size_idx) * kTxTypeModeCount *
+          kTxTypeSlots;
+      tx_type_prepare_candidates_kernel<<<1, 32, 0, stream>>>(
+          buffers.luma_results + i, buffers.intra_choices + i,
+          buffers.tx_type_map + map_off, buffers.tx_type_legal + mode_off,
+          buffers.tx_type_bits + mode_off,
+          buffers.tx_type_cands +
+              static_cast<std::size_t>(size_idx) * kTxTypeSlots,
+          buffers.tx_cand_jobs, kTxTypeSlots);
+      TxTypeCostModel cost;
+      cost.coeff_bits = 1.0;
+      cost.use_type_bits = true;
+      cost.lambda = ::av2enc::rdo::lambda_sse_from_quant_step(
+          1.0 / probe.params.quant_factor, options.tx_type_sse_scale);
+      if (tx_type_choose_batch(
+              buffers.tx_residual_coded, buffers.tx_residual_adj,
+              buffers.tx_type_blocks + size_idx, 1, buffers.tx_cand_jobs,
+              kTxTypeSlots,
+              buffers.tx_type_jobs +
+                  static_cast<std::size_t>(size_idx) * kTxTypeSlots,
+              buffers.tx_cand_adj, buffers.tx_cand_coeff,
+              buffers.tx_cand_levels, buffers.tx_cand_recon,
+              buffers.tx_metrics, buffers.tx_decision, cost, stream) !=
+          cudaSuccess) {
+        error = "gpu: TX-type search failed";
+        return GpuRunStatus::kError;
+      }
+      tx_type_apply_decision_kernel<<<1, 1, 0, stream>>>(
+          buffers.tx_decision, buffers.tx_cand_jobs,
+          buffers.tx_jobs + static_cast<std::size_t>(i) * 3u,
+          buffers.tx_types, i * 3);
+      if (cudaGetLastError() != cudaSuccess) {
+        error = "gpu: TX-type decision apply failed";
+        return GpuRunStatus::kError;
+      }
+    }
+#endif
 
     tx_buffers.src = buffers.src.y;
     tx_buffers.pred = buffers.pred_packed[0];
@@ -2569,18 +4579,163 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       error = "gpu: luma TX failed";
       return GpuRunStatus::kError;
     }
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+    if (ist_active) {
+      const int size_idx = txv::tx_size_index(block.luma_w, block.luma_h);
+      if (size_idx < 0 || size_idx >= 25) {
+        error = "unsupported: TX size for the IST search";
+        return GpuRunStatus::kUnsupported;
+      }
+      const int adj_elems = static_cast<int>(block.tx_w) * block.tx_h;
+      const int coded_elems = static_cast<int>(block.luma_w) * block.luma_h;
+      const auto host_params = txv::make_tx_params(
+          block.luma_w, block.luma_h, txv::TxType::kDctDct);
+      if (!host_params.has_value()) {
+        error = "unsupported: IST transform size";
+        return GpuRunStatus::kUnsupported;
+      }
+      auto* primary_levels =
+          buffers.coeff.y + block.coeff_offset_y;
+      auto* primary_residual =
+          buffers.residual_packed[0] + block.residual_offset_y;
+      const std::size_t map_off =
+          static_cast<std::size_t>(size_idx) * kTxTypeMapStride;
+      ist_prepare_kernel<<<1, 32, 0, stream>>>(
+          buffers.luma_results + i, buffers.intra_choices + i, size_idx,
+          buffers.ist_map + map_off, buffers.ist_job_table,
+          buffers.ist_block_table, buffers.ist_bit_table,
+          buffers.tx_types + i * 3,
+          buffers.ist_jobs,
+          buffers.ist_block_jobs, buffers.ist_valid, buffers.ist_bits,
+          buffers.ist_primary_type);
+      ist_project_kernel<<<kIstSlots, 1, 0, stream>>>(
+          primary_levels, buffers.ist_jobs, buffers.ist_levels);
+      ist_eob_kernel<<<kIstSlots, 1, 0, stream>>>(
+          buffers.ist_jobs, buffers.ist_levels, buffers.ist_eob);
+      bool ist_ok = cudaGetLastError() == cudaSuccess;
+      for (int j = 0; j < kIstSlots && ist_ok; ++j) {
+        ist_ok = txv_dequantize(buffers.ist_levels + j * kTxTypeAdjElems,
+                                buffers.ist_dequant + j * kTxTypeAdjElems,
+                                *host_params, 1, stream) == cudaSuccess;
+      }
+      if (ist_ok) {
+        ist_ok = txsec_inverse_dequant(
+                     buffers.ist_dequant, buffers.ist_dequant,
+                     buffers.ist_jobs, kIstSlots, stream) == cudaSuccess;
+      }
+      if (ist_ok) {
+        ist_ok = txv_inverse_block_multi(
+                     buffers.ist_dequant, buffers.ist_residual,
+                     buffers.ist_block_jobs, kIstSlots, stream) == cudaSuccess;
+      }
+      if (!ist_ok) {
+        error = "gpu: IST candidate evaluation failed";
+        return GpuRunStatus::kError;
+      }
+      const int x0 = block.mi_col * 4;
+      const int y0 = block.mi_row * 4;
+      ist_sse_kernel<<<kIstSlots, 1, 0, stream>>>(
+          buffers.src.y, static_cast<int>(picture.width),
+          static_cast<int>(picture.width) - 1,
+          static_cast<int>(picture.height) - 1,
+          buffers.pred_packed[0] + block.pred_offset_y,
+          buffers.ist_block_jobs, buffers.ist_residual, x0, y0,
+          buffers.ist_sse);
+      ist_base_sse_kernel<<<1, 1, 0, stream>>>(
+          buffers.src.y, static_cast<int>(picture.width),
+          static_cast<int>(picture.width) - 1,
+          static_cast<int>(picture.height) - 1,
+          buffers.pred_packed[0] + block.pred_offset_y, primary_residual,
+          block.luma_w, block.luma_h, x0, y0, buffers.ist_base_sse);
+      const double lambda = ::av2enc::rdo::lambda_sse_from_quant_step(
+          1.0 / host_params->quant_factor, options.ist_sse_scale);
+      ist_decide_kernel<<<1, 1, 0, stream>>>(
+          buffers.eob + static_cast<std::size_t>(i) * 3u,
+          buffers.tx_types + static_cast<std::size_t>(i) * 3u,
+          buffers.ist_valid, buffers.ist_eob, buffers.ist_sse,
+          buffers.ist_bits, buffers.ist_base_sse, lambda, block.luma_w,
+          block.luma_h, primary_levels,
+          buffers.eob + static_cast<std::size_t>(i) * 3u, primary_residual,
+          buffers.ist_levels, buffers.ist_residual,
+          buffers.ist_secs + i, buffers.ist_sets + i, adj_elems,
+          coded_elems);
+      if (cudaGetLastError() != cudaSuccess) {
+        error = "gpu: IST decision failed";
+        return GpuRunStatus::kError;
+      }
+    }
+#endif
     if (cm1::recon_write_blocks(
             buffers.recon_jobs + static_cast<std::size_t>(i) * 3u, 1,
             stream) != cudaSuccess) {
       error = "gpu: luma reconstruction failed";
       return GpuRunStatus::kError;
     }
+    }  // ordinary intra luma path
     }  // has_luma
 
     if (block.has_chroma != 0) {
-      if (cm1::chroma_decide(chroma_jobs[static_cast<std::size_t>(i)],
-                             chroma_options, buffers.chroma_results + i,
-                             stream) != cudaSuccess) {
+      if (leaf_ibc) {
+        const ::av2enc::still::StillResult::IbcPlan& ibc =
+            cpu_plan->ibc_by_leaf[static_cast<std::size_t>(i)];
+        set_chroma_dc_kernel<<<1, 1, 0, stream>>>(buffers.chroma_results, i);
+        av2enc::cuda::IbcDeviceFrame frame;
+        frame.y = buffers.recon.y;
+        frame.u = buffers.recon.u;
+        frame.v = buffers.recon.v;
+        frame.stride_y = static_cast<int>(plan.y_stride);
+        frame.stride_u = static_cast<int>(plan.u_stride);
+        frame.stride_v = static_cast<int>(plan.v_stride);
+        frame.width = coded_w;
+        frame.height = coded_h;
+        frame.has_chroma = 1;
+        frame.sub_x = 1;
+        frame.sub_y = 1;
+        const av2enc::ibc::BlockVector bv{ibc.bv_row, ibc.bv_col};
+        if (av2enc::cuda::ibc_copy_block(
+                frame, block.mi_row, block.mi_col, block.bsize, bv,
+                buffers.pred_packed[0] + block.pred_offset_y, block.luma_w,
+                buffers.pred_packed[1] + block.pred_offset_u, block.chroma_w,
+                buffers.pred_packed[2] + block.pred_offset_v, block.chroma_w,
+                std::min<int>(block.luma_w, coded_w - x0),
+                std::min<int>(block.luma_h, coded_h - y0),
+                stream) != cudaSuccess) {
+          error = "gpu: IBC chroma copy failed";
+          return GpuRunStatus::kError;
+        }
+        const std::size_t chroma_pixels =
+            static_cast<std::size_t>(block.chroma_w) * block.chroma_h;
+        for (int p = 1; p <= 2; ++p) {
+          const std::uint8_t* pred =
+              (p == 1) ? buffers.pred_packed[1] : buffers.pred_packed[2];
+          const std::size_t pred_off =
+              (p == 1) ? block.pred_offset_u : block.pred_offset_v;
+          (void)pred;
+          (void)pred_off;
+          if (cudaMemsetAsync(
+                  buffers.residual_packed[p] +
+                      ((p == 1) ? block.residual_offset_u
+                                : block.residual_offset_v),
+                  0, chroma_pixels * sizeof(std::int16_t), stream) !=
+              cudaSuccess) {
+            error = "gpu: IBC chroma residual reset failed";
+            return GpuRunStatus::kError;
+          }
+        }
+        if (cm1::recon_write_blocks(
+                buffers.recon_jobs + static_cast<std::size_t>(i) * 3u + 1u, 2,
+                stream) != cudaSuccess) {
+          error = "gpu: IBC chroma reconstruction failed";
+          return GpuRunStatus::kError;
+        }
+      } else {
+      prepare_chroma_job_kernel<<<1, 1, 0, stream>>>(
+          buffers.chroma_jobs, buffers.blocks, buffers.luma_results,
+          buffers.mi_luma_mode, buffers.mi_luma_angle, buffers.uv_smooth,
+          mi_cols, mi_rows, gates.enable_edge_filter, i);
+      if (cm1::chroma_decide_batch(
+              buffers.chroma_jobs + i, 1, chroma_options,
+              buffers.chroma_results + i, stream) != cudaSuccess) {
         error = "gpu: chroma decision failed";
         return GpuRunStatus::kError;
       }
@@ -2591,6 +4746,11 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
         tx_buffers.levels = (p == 1) ? buffers.coeff.u : buffers.coeff.v;
         tx_buffers.residual_out = buffers.residual_packed[p];
         tx_buffers.eob = buffers.eob;
+#if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+        if (cctx_active) {
+          continue;
+        }
+#endif
         if (still_tx_batch(
                 buffers.tx_jobs + static_cast<std::size_t>(i) * 3u + p, 1,
                 tx_buffers, 0, stream) != cudaSuccess) {
@@ -2598,18 +4758,149 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
           return GpuRunStatus::kError;
         }
       }
+#if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+      if (cctx_active) {
+        const auto cparams = txv::make_tx_params(
+            block.chroma_w, block.chroma_h, txv::TxType::kDctDct);
+        if (!cparams.has_value()) {
+          error = "unsupported: CCTX chroma transform size";
+          return GpuRunStatus::kUnsupported;
+        }
+        const int area = static_cast<int>(cparams->w) * cparams->h;
+        const int coded_elems =
+            static_cast<int>(block.chroma_w) * block.chroma_h;
+        const int cx = (block.chroma_mi_size != 0 ? block.chroma_mi_col
+                                                  : block.mi_col) *
+                       2;
+        const int cy = (block.chroma_mi_size != 0 ? block.chroma_mi_row
+                                                  : block.mi_row) *
+                       2;
+        const bool has_stage =
+            tx_stage_off + 3u * 4096u <= gpu.tx_stage.capacity();
+        if (!has_stage) {
+          error = "gpu: CCTX staging exhausted";
+          return GpuRunStatus::kError;
+        }
+        auto* stage = static_cast<std::uint8_t*>(gpu.tx_stage.data());
+        StillTxJob probe;
+        if (!still_tx_init_job(&probe, block.chroma_w, block.chroma_h,
+                               txv::TxType::kDctDct)) {
+          error = "unsupported: CCTX chroma TX size";
+          return GpuRunStatus::kUnsupported;
+        }
+        probe.input = static_cast<std::uint8_t>(StillTxInput::kSourcePred);
+        probe.src_packed = 0;
+        probe.src_x = static_cast<std::int16_t>(cx);
+        probe.src_y = static_cast<std::int16_t>(cy);
+        probe.src_width = static_cast<std::int16_t>(chroma_vis_w);
+        probe.src_height = static_cast<std::int16_t>(chroma_vis_h);
+        probe.src_stride = static_cast<std::int32_t>(chroma_vis_w);
+        probe.residual_adj_offset = 0;
+        probe.coeff_offset = 0;
+        probe.levels_offset = 0;
+        probe.dequant_offset = 0;
+        probe.residual_out_offset = 0;
+        probe.eob_offset = 0;
+        bool cctx_ok = true;
+        for (int p = 1; p <= 2 && cctx_ok; ++p) {
+          probe.pred_offset = static_cast<std::int32_t>(
+              p == 1 ? block.pred_offset_u : block.pred_offset_v);
+          std::memcpy(stage + tx_stage_off, &probe, sizeof(probe));
+          cctx_ok = cudaMemcpyAsync(buffers.tx_probe_job,
+                                    stage + tx_stage_off, sizeof(probe),
+                                    cudaMemcpyHostToDevice, stream) ==
+                    cudaSuccess;
+          tx_stage_off += 256u;
+          StillTxBuffers pb;
+          pb.src = (p == 1) ? buffers.src.u : buffers.src.v;
+          pb.pred = buffers.pred_packed[p];
+          pb.residual_adj = buffers.tx_residual_adj;
+          pb.levels = buffers.ist_levels;
+          pb.coeff = (p == 1) ? buffers.cctx_u_coeff : buffers.cctx_v_coeff;
+          pb.error_count = buffers.tx_errors;
+          cctx_ok = cctx_ok &&
+                    still_tx_batch(buffers.tx_probe_job, 1, pb, 0, stream) ==
+                        cudaSuccess;
+        }
+        if (!cctx_ok) {
+          error = "gpu: CCTX forward transform failed";
+          return GpuRunStatus::kError;
+        }
+        cctx_levels_kernel<<<kCctxTypes, 1, 0, stream>>>(
+            buffers.cctx_u_coeff, buffers.cctx_v_coeff,
+            1.0 / cparams->quant_factor, buffers.cctx_levels,
+            buffers.cctx_eob, area, cparams->w, cparams->h);
+        for (int slot = 0; slot < kCctxSlots && cctx_ok; ++slot) {
+          cctx_ok = txv_dequantize(buffers.cctx_levels + slot * kTxTypeAdjElems,
+                                   buffers.cctx_dequant + slot * kTxTypeAdjElems,
+                                   *cparams, 1, stream) == cudaSuccess;
+        }
+        if (cctx_ok) {
+          cctx_rotate_kernel<<<kCctxTypes, 1, 0, stream>>>(
+              buffers.cctx_dequant, area);
+        }
+        // 14 mixed jobs: every (type, plane) has its own in/out slot.
+        TxBlockJob cctx_jobs[kCctxSlots];
+        for (int slot = 0; slot < kCctxSlots; ++slot) {
+          cctx_jobs[slot].params = *cparams;
+          cctx_jobs[slot].in_offset = slot * kTxTypeAdjElems;
+          cctx_jobs[slot].out_offset = slot * kTxTypeCodedElems;
+        }
+        std::memcpy(stage + tx_stage_off, cctx_jobs, sizeof(cctx_jobs));
+        cctx_ok = cctx_ok &&
+                  cudaMemcpyAsync(buffers.cctx_jobs, stage + tx_stage_off,
+                                  sizeof(cctx_jobs), cudaMemcpyHostToDevice,
+                                  stream) == cudaSuccess;
+        tx_stage_off += 1024u;
+        if (cctx_ok) {
+          cctx_ok = txv_inverse_block_multi(
+                        buffers.cctx_dequant, buffers.cctx_residual,
+                        buffers.cctx_jobs, kCctxSlots, stream) == cudaSuccess;
+        }
+        if (!cctx_ok) {
+          error = "gpu: CCTX candidate evaluation failed";
+          return GpuRunStatus::kError;
+        }
+        cctx_sse_kernel<<<kCctxTypes, 1, 0, stream>>>(
+            buffers.src.u, buffers.src.v, chroma_vis_w, chroma_vis_w - 1,
+            chroma_vis_h - 1, buffers.pred_packed[1] + block.pred_offset_u,
+            buffers.pred_packed[2] + block.pred_offset_v,
+            buffers.cctx_residual, block.chroma_w, block.chroma_h, cx, cy,
+            buffers.cctx_sse);
+        CctxBits bits;
+        for (int t = 0; t < kCctxTypes; ++t) {
+          bits.value[t] = ::av2enc::tcq::cctx_type_bits(
+              static_cast<::av2enc::tcq::CctxType>(t));
+        }
+        const double cctx_lambda = ::av2enc::rdo::lambda_sse_from_quant_step(
+            1.0 / cparams->quant_factor, 0.125);
+        cctx_decide_kernel<<<1, 1, 0, stream>>>(
+            buffers.cctx_sse, buffers.cctx_eob, bits, cctx_lambda,
+            buffers.cctx_types + i,
+            buffers.coeff.u + block.coeff_offset_u,
+            buffers.coeff.v + block.coeff_offset_v,
+            buffers.eob + static_cast<std::size_t>(i) * 3u + 1u,
+            buffers.eob + static_cast<std::size_t>(i) * 3u + 2u,
+            buffers.residual_packed[1] + block.residual_offset_u,
+            buffers.residual_packed[2] + block.residual_offset_v,
+            buffers.cctx_levels, buffers.cctx_residual, area, coded_elems);
+        if (cudaGetLastError() != cudaSuccess) {
+          error = "gpu: CCTX decision failed";
+          return GpuRunStatus::kError;
+        }
+      }
+#endif
       if (cm1::recon_write_blocks(
               buffers.recon_jobs + static_cast<std::size_t>(i) * 3u + 1u, 2,
               stream) != cudaSuccess) {
         error = "gpu: chroma reconstruction failed";
         return GpuRunStatus::kError;
       }
-    }
+      }  // ordinary chroma path
+    }  // has_chroma
 
-    if (has_luma) {
-      prepare_commit_kernel<<<1, 1, 0, stream>>>(
-          buffers.recon_infos, buffers.luma_results, i);
-    }
+    prepare_commit_kernel<<<1, 1, 0, stream>>>(
+        buffers.recon_infos, buffers.luma_results, buffers.chroma_results, i);
     if (cm1::recon_commit_blocks(buffers.recon_infos + i, 1, state,
                                  recon_frame, stream) != cudaSuccess) {
       error = "gpu: reconstruction commit failed";
@@ -2718,9 +5009,12 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     core.sub_x = 1;
     core.sub_y = 1;
     core.bit_depth = 8;
-    core.ccso_luma_size_log2 = 6;
-    core.sb_width = 64;
-    core.sb_height = 64;
+    // §5.18.7.12: CcsoLumaSizeLog2 = Mi_Width_Log2[SbSize] + 2 (6 at 64x64,
+    // 7 at the 128x128 intra frame superblock; 8 is legal for 256).
+    const int ccso_sb_log2 = plan.sb_size == 128 ? 5 : 4;
+    core.ccso_luma_size_log2 = ccso_sb_log2 + 2;
+    core.sb_width = plan.sb_size;
+    core.sb_height = plan.sb_size;
     std::uint8_t* dst_planes[3] = {buffers.filter.y, buffers.filter.u,
                                    buffers.filter.v};
     const int dst_strides[3] = {static_cast<int>(plan.y_stride),
@@ -2784,9 +5078,11 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     frame.subsampling_x = 1;
     frame.subsampling_y = 1;
     frame.bit_depth = 8;
-    frame.sb_width = 64;
-    frame.sb_height = 64;
-    frame.sb_shift = 4;
+    // §7.20.1: sbShift = Mi_Width_Log2[SbSize]; an intra frame uses the
+    // 128x128 frame superblock under --still-sb128/--still-sb256.
+    frame.sb_width = plan.sb_size;
+    frame.sb_height = plan.sb_size;
+    frame.sb_shift = plan.sb_size == 128 ? 5 : 4;
 
     ::av2enc::restoration::LoopRestorationParams lr_params{};
     const ::av2enc::still::StillLrPlane& luma_plane =
@@ -3050,10 +5346,35 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       static_cast<std::size_t>(blocks) * sizeof(cm1::StillChromaResult);
   const std::size_t choice_bytes =
       static_cast<std::size_t>(blocks) * sizeof(iext::Choice);
+  const std::size_t sb_seg_bytes =
+      options.per_segment_q ? sb_slot_count(plan) : 0;
+#if AV2ENC_STILL_GPU_HAVE_TX_TYPE
+  const std::size_t tx_types_bytes =
+      (options.tx_type || options.idtx)
+          ? static_cast<std::size_t>(blocks) * 3u * sizeof(std::int32_t)
+          : 0u;
+#else
+  const std::size_t tx_types_bytes = 0;
+#endif
+#if AV2ENC_STILL_GPU_HAVE_SECONDARY
+  const std::size_t ist_bytes =
+      options.ist ? static_cast<std::size_t>(blocks) * sizeof(std::int32_t)
+                  : 0u;
+#else
+  const std::size_t ist_bytes = 0;
+#endif
+#if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+  const std::size_t cctx_bytes =
+      options.cctx ? static_cast<std::size_t>(blocks) * sizeof(std::int32_t)
+                   : 0u;
+#else
+  const std::size_t cctx_bytes = 0;
+#endif
   const std::size_t download_total =
       recon_y_bytes + recon_c_bytes * 2u + coeff_y_bytes + coeff_u_bytes +
       coeff_v_bytes + eob_bytes + luma_result_bytes + chroma_result_bytes +
-      choice_bytes + sizeof(int);
+      choice_bytes + sb_seg_bytes + tx_types_bytes + 2u * ist_bytes +
+      cctx_bytes + sizeof(int);
   auto* download = static_cast<std::uint8_t*>(gpu.download.data());
   if (download == nullptr || gpu.download.capacity() < download_total) {
     error = "gpu: pinned download staging is too small";
@@ -3080,6 +5401,16 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       !enqueue_download(buffers.luma_results, luma_result_bytes) ||
       !enqueue_download(buffers.chroma_results, chroma_result_bytes) ||
       !enqueue_download(buffers.intra_choices, choice_bytes) ||
+      (sb_seg_bytes != 0 &&
+       !enqueue_download(buffers.sb_segment, sb_seg_bytes)) ||
+      (tx_types_bytes != 0 &&
+       !enqueue_download(buffers.tx_types, tx_types_bytes)) ||
+      (ist_bytes != 0 &&
+       !enqueue_download(buffers.ist_secs, ist_bytes)) ||
+      (ist_bytes != 0 &&
+       !enqueue_download(buffers.ist_sets, ist_bytes)) ||
+      (cctx_bytes != 0 &&
+       !enqueue_download(buffers.cctx_types, cctx_bytes)) ||
       !enqueue_download(buffers.tx_errors, sizeof(int))) {
     error = "gpu: result download failed";
     return GpuRunStatus::kError;
@@ -3093,7 +5424,9 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   int tx_errors = 0;
   std::size_t read = recon_y_bytes + recon_c_bytes * 2u + coeff_y_bytes +
                      coeff_u_bytes + coeff_v_bytes + eob_bytes +
-                     luma_result_bytes + chroma_result_bytes + choice_bytes;
+                     luma_result_bytes + chroma_result_bytes + choice_bytes +
+                     sb_seg_bytes + tx_types_bytes + 2u * ist_bytes +
+                     cctx_bytes;
   std::memcpy(&tx_errors, download + read, sizeof(int));
   if (tx_errors != 0) {
     error = "unsupported: TX rejected " + std::to_string(tx_errors) +
@@ -3127,8 +5460,53 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   read += chroma_result_bytes;
   std::vector<iext::Choice> intra_choices(static_cast<std::size_t>(blocks));
   std::memcpy(intra_choices.data(), download + read, choice_bytes);
+  read += choice_bytes;
+  std::vector<std::uint8_t> sb_segment(sb_seg_bytes);
+  if (sb_seg_bytes != 0) {
+    std::memcpy(sb_segment.data(), download + read, sb_seg_bytes);
+    read += sb_seg_bytes;
+  }
+  std::vector<std::int32_t> tx_types(static_cast<std::size_t>(blocks) * 3u, 0);
+  if (tx_types_bytes != 0) {
+    std::memcpy(tx_types.data(), download + read, tx_types_bytes);
+    read += tx_types_bytes;
+  }
+  std::vector<std::int32_t> ist_secs(static_cast<std::size_t>(blocks), 0);
+  std::vector<std::int32_t> ist_sets(static_cast<std::size_t>(blocks), 0);
+  if (ist_bytes != 0) {
+    std::memcpy(ist_secs.data(), download + read, ist_bytes);
+    read += ist_bytes;
+    std::memcpy(ist_sets.data(), download + read, ist_bytes);
+    read += ist_bytes;
+  }
+  std::vector<std::int32_t> cctx_types(static_cast<std::size_t>(blocks), 0);
+  if (cctx_bytes != 0) {
+    std::memcpy(cctx_types.data(), download + read, cctx_bytes);
+    read += cctx_bytes;
+  }
 
   decisions.assign(static_cast<std::size_t>(blocks), BlockDecision{});
+  // §5.20.8 palette side array: the writer indexes PaletteResult entries by
+  // BlockSyntax::palette_index, so build the compact array once and remember
+  // each leaf's slot.
+  std::vector<::av2enc::palette::PaletteResult> palette_side;
+  std::vector<std::uint32_t> palette_side_index(
+      static_cast<std::size_t>(blocks),
+      ::av2enc::still::StillResult::kNoPaletteLeaf);
+  if (screen_plan && options.palette) {
+    for (int i = 0; i < blocks; ++i) {
+      const std::uint32_t index =
+          cpu_plan->palette_index_by_leaf[static_cast<std::size_t>(i)];
+      if (index == ::av2enc::still::StillResult::kNoPaletteLeaf) continue;
+      if (index >= cpu_plan->palette_results.size()) {
+        error = "gpu: palette plan index out of range";
+        return GpuRunStatus::kError;
+      }
+      palette_side_index[static_cast<std::size_t>(i)] = static_cast<std::uint32_t>(
+          palette_side.size());
+      palette_side.push_back(cpu_plan->palette_results[index]);
+    }
+  }
   // §5.20.5.6: a CHROMA_PART leaf codes uv_mode/uv_mode_index against the
   // co-located luma-tree YMode.  Record each luma leaf's decision on the MI
   // grid so chroma-only leaves can read it.
@@ -3162,6 +5540,16 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     const cm1::StillChromaResult& chroma =
         chroma_results[static_cast<std::size_t>(i)];
     const BlockPlan& plan_block = plan.blocks[static_cast<std::size_t>(i)];
+    if (sb_seg_bytes != 0) {
+      const int sb_mi = plan.sb_size / 4;
+      const std::size_t sb_index =
+          static_cast<std::size_t>((plan_block.mi_row / sb_mi) *
+                                   plan.sb_cols +
+                                   plan_block.mi_col / sb_mi);
+      if (sb_index < sb_segment.size()) {
+        decision.segment_id = sb_segment[sb_index];
+      }
+    }
     const bool block_has_luma = plan_block.luma_w != 0 && plan_block.luma_h != 0;
     if (block_has_luma) {
       decision.luma_mode = static_cast<std::uint8_t>(luma.mode);
@@ -3201,9 +5589,16 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     decision.cfl_alpha_v_syntax =
         static_cast<std::uint8_t>(chroma.alpha_v_syntax);
     decision.cfl_mh_dir = static_cast<std::uint8_t>(chroma.cfl_mh_dir);
-    decision.tx_type_y = 0;
+    decision.tx_type_y = static_cast<std::uint8_t>(
+        std::max<std::int32_t>(0, tx_types[static_cast<std::size_t>(i) * 3u]));
     decision.tx_type_u = 0;
     decision.tx_type_v = 0;
+    decision.sec_tx_type = static_cast<std::uint8_t>(
+        std::max<std::int32_t>(0, ist_secs[static_cast<std::size_t>(i)]));
+    decision.stx_set = static_cast<std::uint8_t>(
+        std::max<std::int32_t>(0, ist_sets[static_cast<std::size_t>(i)]));
+    decision.cctx_type = static_cast<std::uint8_t>(
+        std::max<std::int32_t>(0, cctx_types[static_cast<std::size_t>(i)]));
     const iext::Choice& extra = intra_choices[static_cast<std::size_t>(i)];
     decision.mrl_index = static_cast<std::uint8_t>(extra.mrl_index);
     decision.mrl_sec_index = static_cast<std::uint8_t>(extra.mrl_sec_index);
@@ -3216,6 +5611,46 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
         0, eob[static_cast<std::size_t>(i) * 3u + 1u]));
     decision.eob_v = static_cast<std::uint16_t>(std::max<std::int32_t>(
         0, eob[static_cast<std::size_t>(i) * 3u + 2u]));
+    if (screen_plan) {
+      if (options.palette) {
+        const std::uint32_t side =
+            palette_side_index[static_cast<std::size_t>(i)];
+        if (side != ::av2enc::still::StillResult::kNoPaletteLeaf) {
+          decision.is_palette = 1;
+          decision.palette_index = side;
+          // Palette forces YMode DC and clears MRL/DIP.
+          decision.luma_mode = 0;
+          decision.luma_angle_delta = 0;
+          decision.mrl_index = 0;
+          decision.mrl_sec_index = 0;
+          decision.use_dip = 0;
+          decision.dip_mode = 0;
+          decision.dip_transpose = 0;
+        }
+      }
+      if (options.ibc) {
+        const ::av2enc::still::StillResult::IbcPlan& ibc =
+            cpu_plan->ibc_by_leaf[static_cast<std::size_t>(i)];
+        if (ibc.used != 0) {
+          decision.is_ibc = 1;
+          decision.ibc_skip = 1;
+          decision.ibc_mode = ibc.mode;
+          decision.ibc_ref_mv_idx = ibc.ref_mv_idx;
+          decision.ibc_bv_row = ibc.bv_row;
+          decision.ibc_bv_col = ibc.bv_col;
+          decision.luma_mode = 0;
+          decision.luma_angle_delta = 0;
+          decision.mrl_index = 0;
+          decision.mrl_sec_index = 0;
+          decision.use_dip = 0;
+          decision.dip_mode = 0;
+          decision.dip_transpose = 0;
+          decision.uv_mode = 0;
+          decision.is_cfl = 0;
+          decision.cfl_index = 1;
+        }
+      }
+    }
   }
 
   // ---- GPU entropy assembly --------------------------------------------
@@ -3223,9 +5658,32 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   // With an in-loop filter the CPU reference's exact header configuration is
   // reused: the filter parameters are a planning output, so the GPU cannot
   // re-derive them independently without risking a header mismatch.
-  const ::av2enc::still::StillConfig config =
+  //
+  // §5.4.9 per-segment Q needs a live SegmentationParams for the CPU writer's
+  // seg_info table, so it is built here (the CPU reference's copy points at a
+  // stack local that does not outlive encode_still_picture).
+  rc::SegmentationParams segment_params;
+  if (options.per_segment_q) {
+    std::string seg_error;
+    if (!rc::set_segment_alt_q(segment_params, /*segment_id=*/1,
+                               options.per_segment_q_delta, &seg_error)) {
+      error = "gpu: per-segment Q table: " + seg_error;
+      return GpuRunStatus::kError;
+    }
+    segment_params.enabled = true;
+    segment_params.update_map = true;      // key frame: inferred 1
+    segment_params.temporal_update = false;
+  }
+  ::av2enc::still::StillConfig config =
       (filter_config != nullptr) ? *filter_config
                                  : make_still_config(options, picture);
+  config.per_sb_delta_q.segmentation_enabled =
+      options.enable_segmentation || options.per_segment_q;
+  config.per_sb_delta_q.delta_q_present = options.enable_delta_q;
+  config.per_sb_delta_q.delta_q_res =
+      options.enable_delta_q ? options.delta_q_res : 0;
+  config.per_sb_delta_q.segmentation =
+      options.per_segment_q ? &segment_params : nullptr;
   still_stream::FilterGrids grids;
   if (cdef_active) {
     grids.cdef_idx = cpu_plan->cdef_idx.data();
@@ -3248,7 +5706,8 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::size_t tile_bytes = 0;
   if (!still_stream::assemble_gpu_frame(result.plan, tree, result.blocks, decisions,
                                     coeffs, config, frame, error,
-                                    &tile_bytes, grids)) {
+                                    &tile_bytes, grids,
+                                    palette_side)) {
     error = "gpu: entropy assembly failed: " + error;
     return GpuRunStatus::kError;
   }
@@ -3347,6 +5806,289 @@ int linked_stage_count() noexcept {
   count = 7;
 #endif
   return count;
+}
+
+bool encode_format_gpu(const ::av2enc::fmt::Picture& picture,
+                       const ::av2enc::high_bitdepth::HighBitDepthOptions& options,
+                       ::av2enc::high_bitdepth::HighBitDepthResult& result,
+                       std::string& error) {
+  error.clear();
+  if (picture.format.depth != ::av2enc::fmt::BitDepth::k10) {
+    error = "--still-gpu format dispatch currently serves 10-bit pictures";
+    return false;
+  }
+  return ::av2enc::cuda::high_bitdepth::encode_high_bitdepth_gpu(
+      picture, options, result, &error);
+}
+
+// ---------------------------------------------------------------------------
+// 8-bit chroma product block executor
+// ---------------------------------------------------------------------------
+namespace {
+
+__global__ void fill_u16_kernel(std::uint16_t* data, std::size_t count,
+                                std::uint16_t value) {
+  const std::size_t index =
+      static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (index < count) data[index] = value;
+}
+
+class ChromaGpuExecutorImpl final
+    : public ::av2enc::chroma::ChromaGpuExecutor {
+ public:
+  bool begin(const ::av2enc::chroma::ChromaPicture& picture,
+             std::string& error) override {
+    error.clear();
+    config_ = ::av2enc::cuda::chroma::Config{};
+    config_.width = picture.width;
+    config_.height = picture.height;
+    config_.format = static_cast<::av2enc::cuda::chroma::Format>(
+        picture.chroma);
+    config_.bit_depth = 8;
+    config_.max_blocks = 1;
+
+    const std::uint64_t need =
+        ::av2enc::cuda::chroma::required_device_bytes(config_);
+    std::string arena_error;
+    if (!::av2enc::cuda::is_ok(arena_.init(
+            need, ::av2enc::cuda::Arena::kAlignment, &arena_error))) {
+      error = arena_error.empty() ? "chroma GPU arena init failed" : arena_error;
+      return false;
+    }
+    const ::av2enc::cuda::chroma::ChromaStatus status =
+        workspace_.init(arena_, config_, &error);
+    if (!status.ok()) {
+      if (error.empty()) error = "chroma GPU workspace init failed";
+      return false;
+    }
+
+    const ::av2enc::cuda::chroma::FrameGeom& geom = workspace_.geometry();
+    for (int plane = 0; plane < 3; ++plane) {
+      const ::av2enc::cuda::chroma::PlaneGeom& pg = geom.planes[plane];
+      if (!pg.present) continue;
+      const std::size_t count =
+          static_cast<std::size_t>(pg.padded_w) * pg.padded_h;
+      const unsigned blocks =
+          static_cast<unsigned>((count + 255) / 256);
+      fill_u16_kernel<<<blocks, 256>>>(workspace_.recon_plane(plane), count,
+                                      128);
+      if (cudaGetLastError() != cudaSuccess) {
+        error = "chroma GPU recon initialization failed";
+        return false;
+      }
+      // The device source planes are uint16_t containers; widen the 8-bit
+      // product plane once per picture.
+      std::vector<std::uint16_t> host(static_cast<std::size_t>(pg.padded_w) *
+                                      pg.padded_h);
+      for (int y = 0; y < pg.padded_h; ++y) {
+        for (int x = 0; x < pg.padded_w; ++x) {
+          host[static_cast<std::size_t>(y) * pg.padded_w + x] =
+              picture.planes[plane][static_cast<std::size_t>(y) *
+                                        picture.plane_width[plane] +
+                                    static_cast<std::size_t>(x)];
+        }
+      }
+      if (cudaMemcpy2D(workspace_.src_plane(plane),
+                       static_cast<std::size_t>(pg.padded_w) *
+                           sizeof(std::uint16_t),
+                       host.data(),
+                       static_cast<std::size_t>(pg.padded_w) *
+                           sizeof(std::uint16_t),
+                       static_cast<std::size_t>(pg.padded_w) *
+                           sizeof(std::uint16_t),
+                       static_cast<std::size_t>(pg.padded_h),
+                       cudaMemcpyHostToDevice) != cudaSuccess) {
+        error = "chroma GPU source upload failed";
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool forward(int plane, int x0, int y0, int nominal_w, int nominal_h,
+               const ::av2enc::chroma::TxShape& /*cpu_tx*/, bool have_left,
+               bool have_above, int* pred_value, int* levels, int* eob,
+               std::string& error) override {
+    using namespace ::av2enc::cuda::chroma;
+    error.clear();
+    TxShape shape{};
+    if (!make_tx_shape(nominal_w, nominal_h, &shape)) {
+      error = "chroma GPU: unsupported transform shape";
+      return false;
+    }
+    const FrameGeom& geom = workspace_.geometry();
+    const PlaneGeom& pg = geom.planes[plane];
+
+    PredictJob predict{};
+    predict.recon = workspace_.recon_plane(plane);
+    predict.stride = pg.padded_w;
+    predict.max_x = pg.coded_w - 1;
+    predict.max_y = pg.coded_h - 1;
+    predict.x0 = x0;
+    predict.y0 = y0;
+    predict.nominal_w = nominal_w;
+    predict.nominal_h = nominal_h;
+    predict.have_left = have_left ? 1 : 0;
+    predict.have_above = have_above ? 1 : 0;
+    predict.bit_depth = 8;
+    predict.pred = workspace_.pred_block(0);
+    ChromaStatus status = workspace_.predict(&predict, 1, nullptr, &error);
+    if (!status.ok()) return false;
+
+    std::uint16_t pred_scalar = 0;
+    if (cudaMemcpy(&pred_scalar, workspace_.pred_block(0),
+                   sizeof(pred_scalar), cudaMemcpyDeviceToHost) !=
+        cudaSuccess) {
+      error = "chroma GPU: prediction download failed";
+      return false;
+    }
+    *pred_value = static_cast<int>(pred_scalar);
+
+    ResidualJob residual{};
+    residual.src = workspace_.src_plane(plane);
+    residual.src_stride = pg.padded_w;
+    residual.max_x = pg.padded_w - 1;
+    residual.max_y = pg.padded_h - 1;
+    residual.x0 = x0;
+    residual.y0 = y0;
+    residual.pred = *pred_value;
+    residual.bit_depth = 8;
+    residual.shape = shape;
+    residual.residual_adj = workspace_.residual_adj(0);
+    status = workspace_.make_residuals(&residual, 1, nullptr, &error);
+    if (!status.ok()) return false;
+
+    ForwardJob forward{};
+    forward.shape = shape;
+    forward.residual_adj = workspace_.residual_adj(0);
+    forward.coeff = workspace_.coeff(0);
+    forward.levels = workspace_.levels(0);
+    status = workspace_.forward(&forward, 1, nullptr, &error);
+    if (!status.ok()) return false;
+
+    const std::size_t area =
+        static_cast<std::size_t>(shape.adj_w) * shape.adj_h;
+    std::vector<std::int32_t> host_levels(area);
+    if (cudaMemcpy(host_levels.data(), workspace_.levels(0),
+                   area * sizeof(std::int32_t), cudaMemcpyDeviceToHost) !=
+        cudaSuccess) {
+      error = "chroma GPU: level download failed";
+      return false;
+    }
+    std::vector<std::uint16_t> scan;
+    ::av2enc::chroma::build_diagonal_scan(shape.adj_w, shape.adj_h, scan);
+    int found = 0;
+    for (int c = shape.seg_eob - 1; c >= 0; --c) {
+      if (host_levels[scan[static_cast<std::size_t>(c)]] != 0) {
+        found = c + 1;
+        break;
+      }
+    }
+    *eob = found;
+    for (std::size_t i = 0; i < area; ++i) {
+      levels[i] = host_levels[i];
+    }
+    return true;
+  }
+
+  bool reconstruct(int plane, int x0, int y0, int nominal_w, int nominal_h,
+                   const ::av2enc::chroma::TxShape& /*cpu_tx*/, int pred_value,
+                   const int* levels, int eob, std::string& error) override {
+    using namespace ::av2enc::cuda::chroma;
+    error.clear();
+    TxShape shape{};
+    if (!make_tx_shape(nominal_w, nominal_h, &shape)) {
+      error = "chroma GPU: unsupported transform shape";
+      return false;
+    }
+    const FrameGeom& geom = workspace_.geometry();
+    const PlaneGeom& pg = geom.planes[plane];
+    const std::size_t area =
+        static_cast<std::size_t>(shape.adj_w) * shape.adj_h;
+
+    if (eob == 0) {
+      if (cudaMemset(workspace_.residual_adj(0), 0,
+                     area * sizeof(std::int16_t)) != cudaSuccess) {
+        error = "chroma GPU: residual clear failed";
+        return false;
+      }
+    } else {
+      std::vector<std::int32_t> host_levels(area);
+      for (std::size_t i = 0; i < area; ++i) {
+        host_levels[i] = levels[i];
+      }
+      if (cudaMemcpy(workspace_.levels(0), host_levels.data(),
+                     area * sizeof(std::int32_t), cudaMemcpyHostToDevice) !=
+          cudaSuccess) {
+        error = "chroma GPU: level upload failed";
+        return false;
+      }
+      DequantJob dequant{};
+      dequant.shape = shape;
+      dequant.bit_depth = 8;
+      dequant.levels = workspace_.levels(0);
+      dequant.dequant = workspace_.dequant(0);
+      ChromaStatus status =
+          workspace_.dequantize(&dequant, 1, nullptr, &error);
+      if (!status.ok()) return false;
+
+      InverseJob inverse{};
+      inverse.shape = shape;
+      inverse.bit_depth = 8;
+      inverse.dequant = workspace_.dequant(0);
+      inverse.residual_adj = workspace_.residual_adj(0);
+      status = workspace_.inverse(&inverse, 1, nullptr, &error);
+      if (!status.ok()) return false;
+    }
+
+    ReconstructJob reconstruct{};
+    reconstruct.shape = shape;
+    reconstruct.bit_depth = 8;
+    reconstruct.pred = pred_value;
+    reconstruct.residual_adj = workspace_.residual_adj(0);
+    reconstruct.dst = workspace_.recon_plane(plane);
+    reconstruct.dst_stride = pg.padded_w;
+    reconstruct.max_x = pg.padded_w - 1;
+    reconstruct.max_y = pg.padded_h - 1;
+    reconstruct.x0 = x0;
+    reconstruct.y0 = y0;
+    const ChromaStatus status =
+        workspace_.reconstruct(&reconstruct, 1, nullptr, &error);
+    return status.ok();
+  }
+
+  bool download_recon(int plane, std::uint8_t* out,
+                      std::string& error) override {
+    error.clear();
+    const ::av2enc::cuda::chroma::FrameGeom& geom = workspace_.geometry();
+    const ::av2enc::cuda::chroma::PlaneGeom& pg = geom.planes[plane];
+    if (!pg.present) return true;
+    const std::size_t count =
+        static_cast<std::size_t>(pg.padded_w) * pg.padded_h;
+    std::vector<std::uint16_t> host(count);
+    if (cudaMemcpy(host.data(), workspace_.recon_plane(plane),
+                   count * sizeof(std::uint16_t),
+                   cudaMemcpyDeviceToHost) != cudaSuccess) {
+      error = "chroma GPU: reconstruction download failed";
+      return false;
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+      out[i] = static_cast<std::uint8_t>(host[i] & 0xFFU);
+    }
+    return true;
+  }
+
+ private:
+  ::av2enc::cuda::Arena arena_;
+  ::av2enc::cuda::chroma::Config config_{};
+  ::av2enc::cuda::chroma::Workspace workspace_;
+};
+
+}  // namespace
+
+std::unique_ptr<::av2enc::chroma::ChromaGpuExecutor>
+make_chroma_gpu_executor() {
+  return std::make_unique<ChromaGpuExecutorImpl>();
 }
 
 bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
@@ -3448,10 +6190,12 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
                             options.ccso_edge || options.enable_grain ||
                             options.enable_wiener || options.enable_chroma_lr ||
                             options.enable_pc_wiener || options.enable_gdf ||
-                            options.delta_q || options.qm;
+                            options.delta_q || options.qm || options.ist ||
+                            options.cctx;
+  const bool screen_tools = options.palette || options.ibc;
   ::av2enc::still::StillResult cpu;
   bool cpu_ready = false;
-  if (filter_tools) {
+  if (filter_tools || screen_tools) {
     std::string cpu_error;
     if (!::av2enc::still::encode_still_picture(
             picture, to_cpu_options(options), cpu, cpu_error)) {
@@ -3517,14 +6261,35 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
     need_device += static_cast<std::uint64_t>(full_device_bytes(result.plan));
     need_upload +=
         n * (sizeof(srch::LumaSearchBlock) + sizeof(im::IntraJob) +
-             3u * sizeof(StillTxJob) + 3u * sizeof(cm1::ReconWriteJob) +
+             sizeof(cm1::StillChromaJob) + 3u * sizeof(StillTxJob) +
+             3u * sizeof(cm1::ReconWriteJob) +
              sizeof(cm1::ReconBlockInfo) + sizeof(mrl::MrlJob) +
              sizeof(dip::DipJob) + sizeof(ibp::IbpJob));
+    if (options.palette) {
+      need_upload += static_cast<std::uint64_t>(n) * 8u;
+    }
     need_download +=
         3u * n * sizeof(std::int32_t) +
         n * (sizeof(srch::LumaSearchResult) + sizeof(cm1::StillChromaResult) +
              sizeof(iext::Choice)) +
         sizeof(int);
+    if (options.per_segment_q) {
+      // Device segment map metadata: one BlockPlan upload for the origin
+      // lookup, one segment id per superblock downloaded for the syntax.
+      need_upload += n * sizeof(BlockPlan);
+      need_download +=
+          static_cast<std::uint64_t>(result.plan.sb_cols) *
+          static_cast<std::uint64_t>(result.plan.sb_rows);
+    }
+    if (options.tx_type || options.idtx) {
+      need_download += 3u * n * sizeof(std::int32_t);
+    }
+    if (options.ist) {
+      need_download += 2u * n * sizeof(std::int32_t);
+    }
+    if (options.cctx) {
+      need_download += n * sizeof(std::int32_t);
+    }
   }
 #endif
 
@@ -3548,7 +6313,7 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
 #if AV2ENC_STILL_GPU_HAVE_FULL
       bool synced = false;
       const ::av2enc::still::StillResult* cpu_plan =
-          filter_tools && cpu_ready ? &cpu : nullptr;
+          (filter_tools || screen_tools) && cpu_ready ? &cpu : nullptr;
       const GpuRunStatus status = run_gpu_frame(
           picture, options, result.plan, tree, host, result.decisions, result,
           cpu_plan, synced, error);

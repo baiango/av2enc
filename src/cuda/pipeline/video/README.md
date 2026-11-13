@@ -1,13 +1,11 @@
 # CUDA M2 P-frame baseline
 
-> **Status 2026-11-13 (CUDA 13.0, sm_86): builds and runs, gate FAILS at frame
-> 1.** `build_and_test.sh` and `build_gpu_gate.sh` both reach the stream
-> comparison and report `unit_mismatches=1 recon_mismatches=0 max_diff=0
-> first=f1 off=6` (one header byte, 0x5A vs 0x56, tile payload identical).
-> The mirror predates the CPU writer changes that landed after `a0b4ba1`
-> (`BUG-CDF-001`, `BUG-INTER-002`, and the compound/bframes/multiref/tiles/MFH
-> integration waves in `src/pipeline/video/video_frame.cpp`).  Do not treat
-> this gate as green until the mirror is re-synced.
+> **Status 2026-11-13 (CUDA 13.0, sm_86): gate PASSES.** Both
+> `build_and_test.sh` (host emulation) and `build_gpu_gate.sh` (sm_86) are green,
+> and the product `gate_video_gpu.sh` matrix passes at 4 and 8 frames including
+> the opt-in `--video-deblock` cases.  The header mirror was re-synced by the
+> integration waves after `a0b4ba1` (`BUG-CDF-001`, `BUG-INTER-002`, compound/
+> bframes/multiref/tiles/MFH); the stale "gate FAILS at frame 1" note is gone.
 
 GPU path for the M2 P-frame encoder. It is a decision-identical mirror of
 `src/pipeline/video/`: same partition tree, same MV-stack derivation, same
@@ -27,9 +25,11 @@ only `src/cuda/pipeline/video/`.
 | Single-ref §7.13.3 MC | `src/cuda/inter/mc` (`mc_predict_batch`) |
 | Luma SSE against source | `video_sse_kernel` (this tree) |
 | DC intra prediction + residual | `src/cuda/intra_modes` (`intra_predict_batch`) |
+| Full luma intra candidate search + TX plan (`--video-intra-full`) | `src/cuda/pipeline/video/intra` (`Workspace::evaluate`, `download_best`) |
 | Residual downsample / forward / quant | `src/cuda/tx_variants` (`txv_*_multi`) |
 | Inverse transform | `src/cuda/tx_variants` (`txv_inverse_transform_multi`) |
 | Reconstruction `Clip1(pred + residual)` | `video_recon_kernel` (this tree) |
+| Deblocking before reference/emit | `src/cuda/codec/filters/deblock` (`cuda::deblock_frame`) |
 | Reconstruction-plane writes / reference upload | `video_backend_cuda.cu` |
 | Partition recursion, MV stack, candidate comparison, EOB scan | host (CPU decision helpers) |
 | OBU/IVF assembly and §8.2 entropy | host (`src/pipeline/video/`) |
@@ -139,9 +139,14 @@ Wired and gated combinations:
 | 1/8, 1/4, 1/2-pel MV precision | `--video-mv-precision` | byte-identical |
 | 1/8-pel ME refinement | `--video-subpel-eighth` | byte-identical |
 | Inter residual (heuristic or forced in the gate) | `--video-inter-residual` | byte-identical |
+| §7.17 deblocking before reference/emit | `--video-deblock` | byte-identical, device `cuda::deblock_frame` |
+| Full 61-candidate luma intra search | `--video-intra-full` | byte-identical || DRL/merge stack | default | spec-exact host stack, byte-identical |
+| Multi-reference (2..7 refs, per-block ref index) | `--video-refs N` | byte-identical, ref-indexed ME/MC over per-slot device reference planes |
+| `NumRefFrames` pool 4..8 | `--video-num-ref-frames N` | byte-identical (rotating write slot, `f(N)` refresh mask) |
+| §7.8 implicit reference lists | `--video-implicit-ref-map` | rejected by name (explicit maps only) |
+| §5.20.6/§5.20.8 luma TX size/type/partition search | `--video-tx-search` | byte-identical, device `videotx::video_tx_select_batch` |
 | DRL/merge stack | default | spec-exact host stack, byte-identical |
-| Multi-reference (2..3 refs, per-block ref index) | `--video-refs N` | byte-identical, ref-indexed MC/ME |
-| Long-term / closed-GOP LTR | `--video-long-term` | byte-identical (plain GPU tiles + CPU header assembly) |
+| Multi-reference (2..3 refs, per-block ref index) | `--video-refs N` | byte-identical, ref-indexed MC/ME || Long-term / closed-GOP LTR | `--video-long-term` | byte-identical (plain GPU tiles + CPU header assembly) |
 | Open random access (OLK) | `--video-olk` | byte-identical (4-frame profile) |
 | Leading pictures | `--video-leading N` | byte-identical |
 | Show-existing-frame | `--video-sef` | byte-identical |
@@ -152,13 +157,62 @@ Wired and gated combinations:
 | Multi-frame header | `--video-mfh` | byte-identical (§5.7 MFH on the M2 stream) |
 | Timing + content interpretation | `--video-timing` | byte-identical (decoder-compatible §5.4.12 form) |
 | Average-CDF / adaptation | `--avg-cdf [--adaptive-cdf]` | byte-identical (§8.2.4 bank + §7.5 frame end) |
+| Per-frame rate control | `--rc crf` / `--rc vbr` | byte-identical; the device quantizer follows each frame's qlookup(base_q_idx) |
+| Multi-tile (§5.19) | `--tiles CxR` | byte-identical; tile-local coded geometry/recon + per-tile MV grids, CPU tile-group writer |
+
+`--video-tx-search` (opt-in, default off) is the M2 consumer of the verified
+device module under `src/cuda/pipeline/video/tx/`.  For every coded luma
+residual it evaluates the §5.20.6.3 partition candidates, the legal §5.20.8.3
+TX-type set of every leaf (DCT/ADST/FDST/IDTX; 1-D classes stay off until the
+writer codes `TX_CLASS_HORIZ/VERT`), and returns the RD-best plan.  The syntax
+writer emits `tx_mode_select = 1`, `tx_do_partition` / `tx_partition_type` and
+the per-leaf `TX_TYPE`; levels are the module's §5.20.7.30 scan-order output.
+The CPU reference is `src/pipeline/video/video_tx_search.{h,cpp}`, the same
+candidate sets, arithmetic, rate model and tie-breaks, so the two paths stay
+byte-identical.
+
+- Partition search is **inter-only**: §5.20.7.24 predicts per transform block
+  and feeds each part's reconstruction into the next part's prediction, while
+  the module's contract is a fixed block predictor.  That is equivalent for MC
+  with one MV but not for intra, so intra leaves use `TX_PARTITION_NONE` and
+  search the TX type only.  A full intra partition search needs per-part
+  prediction/recon feedback in the module.
+- Chroma stays `TX_MODE_LARGEST` with `enable_chroma_dctonly = 1`.
+- The search cost (`sse + lambda * rate`) only selects the plan; the
+  skip/residual and intra/inter decisions keep the historical per-leaf
+  `estimate_tx_bits` heuristic.  `--video-tx-lambda` (default 256) tunes the
+  plan selection.
+- Rejected by name: `--video-deblock` (the §7.17 grid derives its transform
+  edges from one transform per leaf and does not model §5.20.6.3 parts),
+  `--avg-cdf`/`--adaptive-cdf` (the §8.2.4 bank has no TX-partition CDFs),
+  `--tiles > 1x1`, `--svc-layers`, and the long-term/OLK/leading/SEF/SWITCH/RAS
+  frame-type wrappers.
 
 Rejected by name (usage exit 2, no CPU fallback):
 DRL reordering (`--video-drl-reorder`, also rejected on the CPU path),
-`--rc crf/vbr` (the device transform quantiser is pinned to qlookup(90)),
-multi-tile, cross-frame CDF carry (`--cdf-continuity`), `--svc-layers`.
+cross-frame CDF carry (`--cdf-continuity`), `--svc-layers`, and the §7.8
+implicit reference lists (`--video-implicit-ref-map`; both paths emit §5.18.2
+explicit maps).  `--video-deblock` is wired on the default/B/temporal/RC paths,
+but is rejected with multi-tile (the pinned decoder filters interior tile
+edges) and with the frame-type wrappers whose header writers do not signal
+`deblocking_filter_params()`.
 These need a different pixel stage or header/CDF model; the backend is
 deliberately an honest mirror of the modes it implements.
+
+### Multi-tile geometry
+
+`--tiles CxR` runs one tile-local encode per tile and frame.  `begin_frame`
+receives the whole-frame MI size (reference planes and arena sizing) plus the
+tile origin and tile MI size; the device reconstruction planes are indexed with
+the tile stride and cleared per tile, so intra availability stops at the tile
+edge exactly like the decoder.  Motion estimation, MC and residual source reads
+use absolute frame coordinates while their reconstruction destination is
+converted back to tile-local (x - tile_x, y - tile_y).  The partition tree,
+block syntax and MV grid are tile-local.  Tile payloads are in raster order and
+are framed by the CPU `post::assemble_video_tile_group_from_payloads()`, so
+`tile_info()`, `TileSizeBytes` and the interleaved size fields have one writer.
+Compound prediction is not reachable in tile mode (`--tiles` requires
+`--video-refs 1`); the backend rejects it explicitly if it is ever called.
 
 
 ### Device memory
@@ -193,6 +247,44 @@ The pipeline in `video_pipeline.cpp` is a line-by-line mirror of
 - EOB scan, level ordering and `BlockSyntax` fields are produced on the host
   with the CPU syntax writer.
 
+### Full intra search (`--video-intra-full`)
+
+The default stream keeps the DC-only fallback. With `--video-intra-full` the
+luma leaf runs the still product's 61-candidate SSE search (DC, V, H, the eight
+directional modes, SMOOTH/SMOOTH_V/SMOOTH_H, PAETH, then the six non-zero angle
+deltas per directional mode = 61; chroma stays DC_PRED). Both paths share
+`src/pipeline/video/video_intra_search.h`:
+
+- candidates come from `intra::build_mode_candidates(..., true)` and the
+  tie-break is the still product's strict `<` in that order;
+- the cost is SSE of the prediction against the (source-clamped) source;
+- `--video-intra-full` is the only CPU reference change; the GPU path delegates
+  the predictors and the TX plan to `src/cuda/pipeline/video/intra/`, so no
+  predictor math is duplicated.
+
+The orchestrator owns the availability inputs because they depend on the coded
+stream: `§5.20.9.1` `haveLeft`/`haveAbove` plus the `§7.13.2.1` above-right /
+below-left counts are derived from a `§6.19.2.3 BlockDecoded` replay
+(`video_intra_search.h::BlockDecoded`), reset at every superblock root exactly
+like `clear_block_decoded_flags()`. Below-left can be available inside a
+superblock when the left neighbour is taller, so the earlier "raster order means
+0" shortcut was wrong for directional modes. The `§7.13.2.15/.16` smooth
+neighbour flags come from an `§5.20.5.5 IntraJointMode` grid that mirrors the
+syntax writer's state.
+
+Device shape per intra leaf: one 63-job candidate batch (luma 61 + U/V DC, no
+TX), `download_best`, then one small batch for the winning mode group + DC
+chroma with `run_tx` (the shared `still_tx` plan), then the shared inverse
+transform and `video_recon_kernel`. The device TX quantiser is pinned to
+`qlookup(90)` like the rest of the M2 GPU path (default `--qp 90`).
+
+Measured effect (RTX 3060, 120-frame 640x360 session clip, QP 90, x264-free
+A/B): 1,254,794 B / 41.001 dB PSNR-Y default vs 1,316,505 B / 40.985 dB with
+the flag. More intra leaves are selected (19,407 vs 18,271) because the
+intra/inter decision is still SSE-only; the full search is a quality/parity
+capability, not a rate win. Keep it opt-in until a rate-aware decision lands.
+
+
 Optional CPU M2 tools are mirrored when the linked `VideoOptions` provides them:
 
 - `enable_inter_residual` / `force_inter_residual` — inter leaves can code
@@ -220,6 +312,7 @@ Emulation (no GPU, no nvcc — CPU components stand in for the device):
 ./src/cuda/pipeline/video/build_and_test.sh --frames 8 --full-tree
 ./src/cuda/pipeline/video/build_and_test.sh --inter-residual
 ./src/cuda/pipeline/video/build_and_test.sh --force-inter-residual
+./src/cuda/pipeline/video/build_and_test.sh --intra-full
 ./src/cuda/pipeline/video/build_and_test.sh --drl-reorder 2
 ./src/cuda/pipeline/video/build_and_test.sh --no-hd
 ```
@@ -230,6 +323,7 @@ CUDA (nvcc + device; default `sm_86`):
 ./src/cuda/pipeline/video/build_gpu_gate.sh
 ARCH=89 ./src/cuda/pipeline/video/build_gpu_gate.sh
 ./src/cuda/pipeline/video/build_gpu_gate.sh --frames 8 --full-tree
+./src/cuda/pipeline/video/build_gpu_gate.sh --intra-full --frames 8
 SANITIZE=1 ./src/cuda/pipeline/video/build_gpu_gate.sh   # memcheck selftest + smoke
 ```
 
@@ -263,11 +357,27 @@ both paths for every wired mode, compares the temporal units, the
 `--video-recon` dumps and the `dav2d --strict 1` decode, then asserts that each
 unported combination is rejected with exit code 2.  It is registered as CTest
 `gate_video_gpu` only when `AV2ENC_PRODUCT_GATES=ON` and the
-`av2enc_video_gpu` target exists.
+`av2enc_video_gpu` target exists.  `gate_video_gpu_intra` (`--frames 8
+--intra-only`) runs just the full intra search case; the same two cases also
+run inside `gate_video_gpu` (4 frames) and `gate_video_gpu_long` (8 frames).
 
 RTX 3060 (12 GB), CUDA 13, `sm_86`, 4-frame 640x360 synthetic clip
 (inter-sensitive cases use the smooth-pan and A/B/mid clips generated by the
 gate):
+
+`--video-tx-search` cases (RTX 3060, 4-frame 640x360 gate clip):
+
+```text
+PASS video-gpu tx-search             557c5dc0d1ec19dce367ce16d3209e3c
+PASS video-gpu tx-search-inter-residual 6a344afe787f1c4a3e2d3c2fb1b3781f
+PASS video-gpu tx-search-force-single   13b2f996f469504a02d607a66015c1af
+PASS video-gpu tx-search-depth2         7a19ec884b6a009418f2180b6615462c
+PASS video-gpu tx-search-inter          6972054a72f21cbb67b578507be4a86b
+PASS video-gpu tx-search-refs2          c5db01c1a2b0105c38487342e22b91f4
+PASS video-gpu tx-search-quarter        89f81242cf2e09f7a64e9b407ffe2d75
+PASS video-gpu tx-search-bframes2       31a2ac8c19f6f52058362e5a27d28fe1
+PASS video-gpu tx-search-tlayers4       3a70391f691070257b8b70edc9a11fc2
+```
 
 ```text
 PASS video-gpu baseline       f90c098499e293a2b019872e63c5f4bf
@@ -278,12 +388,21 @@ PASS video-gpu force-single   24fe02a91f8460fa3d4925c5267c7b70
 PASS video-gpu depth2         7e19c9f944542fb88b1c86bfccadd994
 PASS video-gpu min-block8     f1825028f70713d37d4066b52d87b752
 PASS video-gpu me-range8      a8ea5aa8541f39e7a8cfda9e1cc6faa2
+PASS video-gpu inter-residual ccd321df563aa65d041fe1cf8fb9a30c
 PASS video-gpu inter-residual f90c098499e293a2b019872e63c5f4bf
-PASS video-gpu inter-baseline 457440dc8422bcf1821b473f1a5044ad
+PASS video-gpu intra-full     fcea0cb6065ebddb9cc5eae1e5973c33
+PASS video-gpu intra-full-inter 2b1a5474d481f55193ee352b84052b3bPASS video-gpu inter-baseline 457440dc8422bcf1821b473f1a5044ad
 PASS video-gpu refs2          7ce934bfca66bde47e5928be79a40445
 PASS video-gpu refs3          e3bb47cdcba82d8c8be0e94dcbe859c9
 PASS video-gpu refs2-quarter  2fd26460b399f85548024825ae38782f
 PASS video-gpu refs2-half     5994ea23ec5b03d4163a56a8d17beca9
+PASS video-gpu refs4          bb2393dafff71d53c10b22442062fe9e
+PASS video-gpu refs7          d89e651b6d8cafa0754fe7986a5dac9f
+PASS video-gpu nrf4-refs4     8cfc8aab5ecc063dec27828d49c12a98
+PASS video-gpu nrf5-refs5     f6e448734d4def209e600a5013261f5c
+PASS video-gpu nrf6-refs6     a32bdd9b068bf3f9bb62c5ca5c2fe366
+PASS video-gpu nrf7-refs7     5a25d563dc13666bf768655a7ffee2f7
+PASS video-gpu nrf8-refs1     d996af3944eac53ad617be615382a284
 PASS video-gpu mfh            a895466ceebe60fb2c4a48b51202b810
 PASS video-gpu timing         27f4e8084123561c7c20ab85a3bf0bfb
 PASS video-gpu avg-cdf        4f3e451f82f09fced2cb6f772b2e720f
@@ -301,6 +420,7 @@ PASS video-gpu tlayers8       f42ba113e70767773de0d6fb6db92fa8
 PASS video-gpu tlayers8-drop1 30ccf21fcd2faca78c2b2104b18e28eb
 PASS video-gpu compound       c80da95dc2b00e459aa04414746d5f04
 PASS video-gpu reject rc-crf / tiles / cdf-continuity / svc
+PASS video-gpu reject ref-lists / refs-bounds
 gate_video_gpu: PASS
 ```
 
@@ -393,8 +513,10 @@ reserved in `ensure_intra_buffers()` before the first call, and
 ## Scope / limitations
 
 - Baseline decision tools only: GLOBALMV, NEARMV, NEWMV, DC-intra fallback.
-  The host decision path uses the spec-exact `src/codec/inter/merge` stack, so
-  the shared MC stack's documented deviations cannot leak into the bitstream.
+  `--video-intra-full` adds the still product's 61-candidate luma intra search
+  (device module, opt-in).  The host decision path uses the spec-exact
+  `src/codec/inter/merge` stack, so the shared MC stack's documented deviations
+  cannot leak into the bitstream.
 - Frame-type wrappers (long-term/OLK, leading, SEF, SWITCH/RAS) reuse the
   plain GPU sub-encodes; only the header/OBU assembly is shared with the CPU
   reference modules.  B frames and hierarchical-P temporal layers reuse the
