@@ -12,13 +12,21 @@
 #   * the base layer is sample-identical to an independent plain `--video`
 #     encode of the box-scaled source (so the scaler/layer encode is checked,
 #     not just self-consistency);
+#   * `--svc-temporal 2` (hierarchical-P closed GOP) decodes every expected
+#     picture per xlayer and every picture is bit-exact against the encoder
+#     reconstruction;
+#   * `--svc-embedded 2` (cross-mlayer quality refinement) decodes every
+#     expected picture per (xlayer, mlayer) and every picture is bit-exact
+#     against the encoder reconstruction;
 #   * `dav2d --strict 1` decodes the single-layer and same-resolution layered
 #     streams, and `tools/validate_dav2d.sh` accepts them.
 #
 # Pinned-decoder limitation: dav2d f9dafbc fails on a *mixed-resolution*
 # multi-xlayer stream that contains inter (P) frames (same-resolution layers and
-# single-layer streams decode).  avmdec decodes both, so the mixed-resolution
-# cases gate with avmdec only.  See src/pipeline/svc/README.md.
+# single-layer streams decode) and cannot parse a sequence header with
+# `max_mlayer_id > 0`.  avmdec decodes both, so those cases gate with avmdec
+# only and the dav2d verdict is printed as a NOTE.  See
+# src/pipeline/svc/README.md.
 #
 # Usage:
 #   src/pipeline/svc/gate_cli_svc.sh --bin build-int/av2enc
@@ -105,8 +113,14 @@ COMMON=(--video --frames 3 --video-max-depth 3)
 expect_reject "--svc-layers without --video" --svc-layers 0=640x360 --still
 expect_reject "--oppoint + --alllayers" "${COMMON[@]}" --svc-layers 0=640x360 \
     --oppoint 0 --alllayers
-expect_reject "--svc-temporal 2" "${COMMON[@]}" --svc-layers 0=640x360 \
-    --svc-temporal 2
+expect_reject "--svc-inter-layer" "${COMMON[@]}" --svc-layers 0=640x360 \
+    --svc-inter-layer
+expect_reject "--svc-temporal + --svc-embedded" "${COMMON[@]}" \
+    --svc-layers 0=640x360 --svc-temporal 2 --svc-embedded 2
+expect_reject "--svc-embedded 4 (Annex A profile cap)" "${COMMON[@]}" \
+    --svc-layers 0=640x360 --svc-embedded 4
+expect_reject "--svc-temporal 2 with a 3-frame GOP" "${COMMON[@]}" \
+    --svc-layers 0=640x360 --svc-temporal 2
 expect_reject "--svc-layers + --tiles" "${COMMON[@]}" --svc-layers 0=640x360 \
     --tiles 2x2
 expect_reject "--svc-layers + --rc vbr" "${COMMON[@]}" --svc-layers 0=640x360 \
@@ -183,6 +197,80 @@ with open(src_path, "rb") as f:
     out.close()
 PY
 }
+
+# Compares every decoded picture in <decoded.yuv> against the per-(xlayer,
+# mlayer) encoder reconstruction dumped by --video-recon.  The pinned decoders
+# may reorder pictures across layers within a temporal unit, so a picture is
+# matched by content to the next expected picture of its layer; every expected
+# picture must appear exactly once, in per-layer display order, and the decoder
+# must emit no extra pictures.
+compare_layer_recon() {
+    python3 - "$@" <<'PY'
+import os
+import sys
+
+dec_path, prefix = sys.argv[1], sys.argv[2]
+keys = [tuple(int(v) for v in arg.split(":")) for arg in sys.argv[3:]]
+
+
+def read_y4m(path):
+    with open(path, "rb") as f:
+        header = f.readline().split()
+        width = int([x for x in header if x.startswith(b"W")][0][1:])
+        height = int([x for x in header if x.startswith(b"H")][0][1:])
+        size = width * height + 2 * ((width + 1) // 2) * ((height + 1) // 2)
+        frames = []
+        while True:
+            line = f.readline()
+            if not line:
+                break
+            data = f.read(size)
+            if len(data) != size:
+                raise SystemExit("truncated " + path)
+            frames.append(data)
+    return size, frames
+
+
+dec = open(dec_path, "rb").read()
+expected = {}
+cursor = {}
+for key in keys:
+    # --video-recon keeps the exact path for a single xlayer/m0 stream and
+    # suffixes every layered stream with _x<X>m<M>.
+    path = "%s_x%dm%d.y4m" % (prefix, key[0], key[1])
+    if len(keys) == 1 and not os.path.exists(path):
+        path = prefix + ".y4m"
+    size, frames = read_y4m(path)
+    expected[key] = (size, frames)
+    cursor[key] = 0
+
+pos = 0
+matched = 0
+while pos < len(dec):
+    found = False
+    for key in keys:
+        size, frames = expected[key]
+        index = cursor[key]
+        if index >= len(frames):
+            continue
+        if len(dec) - pos >= size and dec[pos:pos + size] == frames[index]:
+            cursor[key] = index + 1
+            pos += size
+            matched += 1
+            found = True
+            break
+    if not found:
+        raise SystemExit(
+            "decoded picture at byte %d matches no expected layer picture" % pos)
+for key in keys:
+    if cursor[key] != len(expected[key][1]):
+        raise SystemExit(
+            "layer x%dm%d: %d/%d pictures decoded" %
+            (key[0], key[1], cursor[key], len(expected[key][1])))
+print("%d pictures exact across %d layer(s)" % (matched, len(keys)))
+PY
+}
+
 
 # --- 2-layer mixed-resolution stream: production + avmdec OPS --------------
 "$BIN" "$INPUT" -o "$TMP/full.ivf" "${COMMON[@]}" \
@@ -276,6 +364,116 @@ else
     fail "base layer differs from the independent plain encode"
 fi
 
+# --- hierarchical temporal layers (--svc-temporal 2) ----------------------
+# 2 temporal layers = one hierarchical-P GOP of 4 frames.  Every xlayer must
+# emit 4 pictures and every picture must equal the encoder reconstruction.
+TLAYERS=(--video --frames 4 --video-max-depth 3
+         --svc-layers 0=160x144,1=640x144 --svc-temporal 2)
+"$BIN" "$INPUT" -o "$TMP/temporal.ivf" "${TLAYERS[@]}" \
+    --video-recon "$TMP/temporal.recon.y4m" >"$TMP/temporal.log" 2>&1
+if ! grep -q "SVC layered encode complete" "$TMP/temporal.log"; then
+    cat "$TMP/temporal.log" >&2
+    fail "--svc-temporal 2 encode did not report success"
+elif decode_avm "$TMP/temporal.ivf" "$TMP/temporal.yuv" --all-layers; then
+    if compare_layer_recon "$TMP/temporal.yuv" "$TMP/temporal.recon" 0:0 1:0 \
+            >"$TMP/temporal.cmp" 2>&1; then
+        ok "avmdec --all-layers: $(cat "$TMP/temporal.cmp") (temporal)"
+    else
+        cat "$TMP/temporal.cmp" >&2
+        fail "--svc-temporal 2 decoded pictures differ from the recon"
+    fi
+else
+    cat "$TMP/avm.log" >&2
+    fail "avmdec --all-layers failed on the --svc-temporal 2 stream"
+fi
+
+# --- embedded quality layers (--svc-embedded 2) ---------------------------
+# mlayer 0 is the base chain, mlayer 1 predicts from mlayer 0 at the same
+# display index (§5.4.1 MLayerDependencyMap).  Expected: 3 temporal units x
+# 2 xlayers x 2 mlayers = 12 pictures, all bit-exact.
+EMBED=(--video --frames 3 --video-max-depth 3
+       --svc-layers 0=160x144,1=640x144 --svc-embedded 2)
+"$BIN" "$INPUT" -o "$TMP/embedded.ivf" "${EMBED[@]}" \
+    --video-recon "$TMP/embedded.recon.y4m" >"$TMP/embedded.log" 2>&1
+if ! grep -q "SVC layered encode complete" "$TMP/embedded.log"; then
+    cat "$TMP/embedded.log" >&2
+    fail "--svc-embedded 2 encode did not report success"
+elif decode_avm "$TMP/embedded.ivf" "$TMP/embedded.yuv" --all-layers; then
+    if compare_layer_recon "$TMP/embedded.yuv" "$TMP/embedded.recon" \
+            0:0 0:1 1:0 1:1 >"$TMP/embedded.cmp" 2>&1; then
+        ok "avmdec --all-layers: $(cat "$TMP/embedded.cmp") (embedded)"
+    else
+        cat "$TMP/embedded.cmp" >&2
+        fail "--svc-embedded 2 decoded pictures differ from the recon"
+    fi
+else
+    cat "$TMP/avm.log" >&2
+    fail "avmdec --all-layers failed on the --svc-embedded 2 stream"
+fi
+
+# mlayer 1 must actually be a refinement, not a duplicate of mlayer 0.
+if python3 - "$TMP/embedded.recon_x0m0.y4m" "$TMP/embedded.recon_x0m1.y4m" <<'PY'
+import sys
+
+
+def read_y4m(path):
+    with open(path, "rb") as f:
+        header = f.readline().split()
+        width = int([x for x in header if x.startswith(b"W")][0][1:])
+        height = int([x for x in header if x.startswith(b"H")][0][1:])
+        size = width * height + 2 * ((width + 1) // 2) * ((height + 1) // 2)
+        return [f.read(size) for _ in range(3)]
+
+
+if read_y4m(sys.argv[1]) == read_y4m(sys.argv[2]):
+    raise SystemExit("m0 and m1 reconstruction are identical")
+PY
+then
+    ok "embedded mlayer 1 is a distinct refinement picture"
+else
+    fail "embedded mlayer 1 duplicates mlayer 0"
+fi
+
+# Deeper temporal ladders: --svc-temporal 3 (8-frame GOP) and 4 (16-frame GOP,
+# OrderHintBits 5).  Single xlayer so dav2d can also decode them.
+for T in 3 4; do
+    FRAMES=$((1 << T))
+    "$BIN" "$INPUT" -o "$TMP/t${T}.ivf" --video --frames "$FRAMES" \
+        --video-max-depth 3 --svc-layers 0=160x144 --svc-temporal "$T" \
+        --video-recon "$TMP/t${T}.recon.y4m" >"$TMP/t${T}.log" 2>&1
+    if ! grep -q "SVC layered encode complete" "$TMP/t${T}.log"; then
+        cat "$TMP/t${T}.log" >&2
+        fail "--svc-temporal $T encode did not report success"
+        continue
+    fi
+    if decode_avm "$TMP/t${T}.ivf" "$TMP/t${T}.yuv" --all-layers &&
+        compare_layer_recon "$TMP/t${T}.yuv" "$TMP/t${T}.recon" 0:0 \
+            >"$TMP/t${T}.cmp" 2>&1; then
+        ok "avmdec --all-layers: $(cat "$TMP/t${T}.cmp") (temporal $T)"
+    else
+        cat "$TMP/avm.log" >&2
+        cat "$TMP/t${T}.cmp" >&2 2>/dev/null || true
+        fail "--svc-temporal $T decoded pictures differ from the recon"
+    fi
+done
+
+# A three-deep embedded ladder (profile Main_420_10_IP2, slots 0/1/2).
+"$BIN" "$INPUT" -o "$TMP/embed3.ivf" --video --frames 3 --video-max-depth 3 \
+    --svc-layers 0=160x144 --svc-embedded 3 \
+    --video-recon "$TMP/embed3.recon.y4m" >"$TMP/embed3.log" 2>&1
+if ! grep -q "SVC layered encode complete" "$TMP/embed3.log"; then
+    cat "$TMP/embed3.log" >&2
+    fail "--svc-embedded 3 encode did not report success"
+elif decode_avm "$TMP/embed3.ivf" "$TMP/embed3.yuv" --all-layers &&
+    compare_layer_recon "$TMP/embed3.yuv" "$TMP/embed3.recon" 0:0 0:1 0:2 \
+        >"$TMP/embed3.cmp" 2>&1; then
+    ok "avmdec --all-layers: $(cat "$TMP/embed3.cmp") (embedded 3)"
+else
+    cat "$TMP/avm.log" >&2
+    cat "$TMP/embed3.cmp" >&2 2>/dev/null || true
+    fail "--svc-embedded 3 decoded pictures differ from the recon"
+fi
+
 # --- dav2d coverage ------------------------------------------------------
 y4m_frames() {
     python3 - "$1" <<'PY'
@@ -346,6 +544,54 @@ if [ -n "$DAV2D" ] && [ -x "$DAV2D" ]; then
         ok "tools/validate_dav2d.sh accepts the single-layer SVC stream"
     else
         fail "tools/validate_dav2d.sh rejected the single-layer SVC stream"
+    fi
+
+    # Hierarchical temporal layers: a single-xlayer SVC stream decodes fully.
+    "$BIN" "$INPUT" -o "$TMP/tlayers_x0.ivf" --video --frames 4 \
+        --video-max-depth 3 --svc-layers 0=160x144 --svc-temporal 2 \
+        >/dev/null 2>&1
+    tlayers_frames=0
+    if "$DAV2D" -q -i "$TMP/tlayers_x0.ivf" -o "$TMP/tlayers_x0.y4m" \
+            --strict 1 --threads 1 >/dev/null 2>&1; then
+        tlayers_frames=$(y4m_frames "$TMP/tlayers_x0.y4m")
+    fi
+    if [ "$tlayers_frames" = "4" ]; then
+        ok "dav2d --strict 1 decodes --svc-temporal 2 (4 pictures)"
+    else
+        fail "dav2d --strict 1 decoded $tlayers_frames/4 pictures of the " \
+             "single-layer temporal stream"
+    fi
+
+    # Deeper hierarchical GOPs: 8 and 16 frames, OrderHintBits 4 and 5.
+    for T in 3 4; do
+        FRAMES=$((1 << T))
+        "$BIN" "$INPUT" -o "$TMP/dav2d_t${T}.ivf" --video --frames "$FRAMES" \
+            --video-max-depth 3 --svc-layers 0=160x144 --svc-temporal "$T" \
+            >/dev/null 2>&1
+        got=0
+        if "$DAV2D" -q -i "$TMP/dav2d_t${T}.ivf" -o "$TMP/dav2d_t${T}.y4m" \
+                --strict 1 --threads 1 >/dev/null 2>&1; then
+            got=$(y4m_frames "$TMP/dav2d_t${T}.y4m")
+        fi
+        if [ "$got" = "$FRAMES" ]; then
+            ok "dav2d --strict 1 decodes --svc-temporal $T ($got pictures)"
+        else
+            fail "dav2d --strict 1 decoded $got/$FRAMES pictures of " \
+                 "--svc-temporal $T"
+        fi
+    done
+
+    # max_mlayer_id > 0 is outside the pinned dav2d sequence-header parser.
+    "$BIN" "$INPUT" -o "$TMP/embed_x0.ivf" --video --frames 3 \
+        --video-max-depth 3 --svc-layers 0=160x144 --svc-embedded 2 \
+        >/dev/null 2>&1
+    if "$DAV2D" -q -i "$TMP/embed_x0.ivf" -o "$TMP/embed_x0.y4m" \
+            --strict 1 --threads 1 >/dev/null 2>&1; then
+        echo "NOTE: this dav2d build accepted max_mlayer_id > 0; update the"
+        echo "      documented decoder matrix."
+    else
+        echo "NOTE: dav2d f9dafbc cannot parse max_mlayer_id > 0 (sequence"
+        echo "      header overrun); embedded layers gate with avmdec."
     fi
 else
     echo "NOTE: dav2d not found; decoder-shape checks skipped"

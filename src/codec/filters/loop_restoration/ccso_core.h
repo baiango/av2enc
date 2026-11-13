@@ -22,6 +22,10 @@
 //     never CdefFrame, and clamps to the allowed (tile) extent.
 //   * CdefFrame is modified in place and is the only written array.
 //
+// The sample container is templated: `uint8_t` for the 8-bit product paths and
+// `uint16_t` for the 10/12-bit format writer.  Bit depth only enters through
+// the band shift and the Clip1 range, exactly as in the spec.
+//
 // Two spec details that are easy to get wrong:
 //   * The positive/negative neighbourhood taps are taken in *luma* samples
 //     (yLuma = y3 << subY) even when filtering chroma.
@@ -38,11 +42,12 @@
 namespace av2enc::restoration {
 
 // One plane's CCSO parameters (parsed by §5.18.7.12) plus its plane views.
-struct CcsoCorePlane {
+template <typename Sample>
+struct CcsoCorePlaneT {
   bool enabled = false;  // ccso_planes[plane]
-  const std::uint8_t* curr_luma = nullptr;  // CurrFrame[0], pre-CDEF
+  const Sample* curr_luma = nullptr;  // CurrFrame[0], pre-CDEF
   int curr_luma_stride = 0;
-  std::uint8_t* dst = nullptr;  // CdefFrame[plane], post-CDEF, modified
+  Sample* dst = nullptr;  // CdefFrame[plane], post-CDEF, modified
   int dst_stride = 0;
 
   // CcsoBlks[plane]: one byte per luma CCSO unit, row-major,
@@ -63,13 +68,15 @@ struct CcsoCorePlane {
   const std::int16_t* offsets = nullptr;
 };
 
-struct CcsoCoreFrame {
-  CcsoCorePlane plane[3];
+template <typename Sample>
+struct CcsoCoreFrameT {
+  CcsoCorePlaneT<Sample> plane[3];
   int mi_cols = 0;
   int mi_rows = 0;
   int sub_x = 1;
   int sub_y = 1;
   int bit_depth = 8;
+  int num_planes = 3;
   int ccso_luma_size_log2 = 6;
   // Superblock size in luma samples; used only to re-derive the BruModes
   // lookup position (sbBlkW/sbBlkH in the spec pseudocode).
@@ -92,31 +99,58 @@ struct CcsoCoreFrame {
   int disable_loopfilters_across_tiles = 0;
 };
 
+using CcsoCoreFrame = CcsoCoreFrameT<std::uint8_t>;
+using CcsoCoreFrame16 = CcsoCoreFrameT<std::uint16_t>;
+using CcsoCorePlane = CcsoCorePlaneT<std::uint8_t>;
+using CcsoCorePlane16 = CcsoCorePlaneT<std::uint16_t>;
+
 // Plane extents in samples, matching the spec's planeWidth/planeHeight.
-AV2ENC_LR_HD int ccso_plane_width(const CcsoCoreFrame& f, int plane) {
+template <typename Sample>
+AV2ENC_LR_HD int ccso_plane_width_t(const CcsoCoreFrameT<Sample>& f,
+                                    int plane) {
   return (f.mi_cols * kMiSize) >> (plane == 0 ? 0 : f.sub_x);
 }
 
-AV2ENC_LR_HD int ccso_plane_height(const CcsoCoreFrame& f, int plane) {
+template <typename Sample>
+AV2ENC_LR_HD int ccso_plane_height_t(const CcsoCoreFrameT<Sample>& f,
+                                     int plane) {
   return (f.mi_rows * kMiSize) >> (plane == 0 ? 0 : f.sub_y);
 }
 
+AV2ENC_LR_HD int ccso_plane_width(const CcsoCoreFrame& f, int plane) {
+  return ccso_plane_width_t(f, plane);
+}
+
+AV2ENC_LR_HD int ccso_plane_height(const CcsoCoreFrame& f, int plane) {
+  return ccso_plane_height_t(f, plane);
+}
+
 // §7.19.1 get_ccso_luma(): clamp into the allowed extent, then read CurrFrame.
+template <typename Sample>
+AV2ENC_LR_HD int ccso_get_luma_t(const CcsoCoreFrameT<Sample>& f, int x, int y,
+                                 int luma_start_x, int luma_end_x,
+                                 int luma_start_y, int luma_end_y) {
+  x = clip3(luma_start_x, luma_end_x, x);
+  y = clip3(luma_start_y, luma_end_y, y);
+  return static_cast<int>(f.plane[0].curr_luma[
+      y * f.plane[0].curr_luma_stride + x]);
+}
+
 AV2ENC_LR_HD int ccso_get_luma(const CcsoCoreFrame& f, int x, int y,
                                int luma_start_x, int luma_end_x,
                                int luma_start_y, int luma_end_y) {
-  x = clip3(luma_start_x, luma_end_x, x);
-  y = clip3(luma_start_y, luma_end_y, y);
-  return f.plane[0].curr_luma[y * f.plane[0].curr_luma_stride + x];
+  return ccso_get_luma_t(f, x, y, luma_start_x, luma_end_x, luma_start_y,
+                         luma_end_y);
 }
 
 // Applies CCSO to one sample of one plane.  Returns true when the sample was
 // visited by the normative process (i.e. inside an enabled, non-lossless,
 // non-BRU-inactive area); the caller can use the return value for coverage
 // diagnostics.
-AV2ENC_LR_HD bool ccso_apply_sample(const CcsoCoreFrame& f, int plane, int y3,
-                                    int x3) {
-  const CcsoCorePlane& p = f.plane[plane];
+template <typename Sample>
+AV2ENC_LR_HD bool ccso_apply_sample_t(const CcsoCoreFrameT<Sample>& f,
+                                      int plane, int y3, int x3) {
+  const CcsoCorePlaneT<Sample>& p = f.plane[plane];
   if (!p.enabled || p.offsets == nullptr || p.blks == nullptr) {
     return false;
   }
@@ -194,8 +228,8 @@ AV2ENC_LR_HD bool ccso_apply_sample(const CcsoCoreFrame& f, int plane, int y3,
 
   const int x_luma = x3 << sub_x;
   const int y_luma = y3 << sub_y;
-  const int c = ccso_get_luma(f, x_luma, y_luma, luma_start_x, luma_end_x,
-                              luma_start_y, luma_end_y);
+  const int c = ccso_get_luma_t(f, x_luma, y_luma, luma_start_x, luma_end_x,
+                                luma_start_y, luma_end_y);
   const int shift = f.bit_depth - p.max_band_log2;
   if (shift < 0 || shift > 24) {
     return false;
@@ -209,10 +243,12 @@ AV2ENC_LR_HD bool ccso_apply_sample(const CcsoCoreFrame& f, int plane, int y3,
     const int ext = (p.ext_filter >= 0 && p.ext_filter < 7) ? p.ext_filter : 0;
     const int ey = kCcsoPos[ext][0];
     const int ex = kCcsoPos[ext][1];
-    const int plus = ccso_get_luma(f, x_luma + ex, y_luma + ey, luma_start_x,
-                                   luma_end_x, luma_start_y, luma_end_y);
-    const int minus = ccso_get_luma(f, x_luma - ex, y_luma - ey, luma_start_x,
-                                    luma_end_x, luma_start_y, luma_end_y);
+    const int plus = ccso_get_luma_t(f, x_luma + ex, y_luma + ey,
+                                     luma_start_x, luma_end_x, luma_start_y,
+                                     luma_end_y);
+    const int minus = ccso_get_luma_t(f, x_luma - ex, y_luma - ey,
+                                      luma_start_x, luma_end_x, luma_start_y,
+                                      luma_end_y);
     cls0 = ccso_score(plus - c, quant_step, p.edge_clf);
     cls1 = ccso_score(minus - c, quant_step, p.edge_clf);
   }
@@ -221,25 +257,35 @@ AV2ENC_LR_HD bool ccso_apply_sample(const CcsoCoreFrame& f, int plane, int y3,
   const int base = static_cast<int>(p.dst[y3 * p.dst_stride + x3]);
   const int out = base + static_cast<int>(p.offsets[idx]);
   p.dst[y3 * p.dst_stride + x3] =
-      static_cast<std::uint8_t>(clip3(0, (1 << f.bit_depth) - 1, out));
+      static_cast<Sample>(clip3(0, (1 << f.bit_depth) - 1, out));
   return true;
+}
+
+AV2ENC_LR_HD bool ccso_apply_sample(const CcsoCoreFrame& f, int plane, int y3,
+                                    int x3) {
+  return ccso_apply_sample_t(f, plane, y3, x3);
 }
 
 // Runs the whole normative per-plane loop for one plane.  The CPU reference
 // calls this; the CUDA kernel maps a thread to each (y3,x3) instead, using
 // ccso_apply_sample directly.
-inline int ccso_plane(const CcsoCoreFrame& f, int plane) {
-  const int width = ccso_plane_width(f, plane);
-  const int height = ccso_plane_height(f, plane);
+template <typename Sample>
+inline int ccso_plane_t(const CcsoCoreFrameT<Sample>& f, int plane) {
+  const int width = ccso_plane_width_t(f, plane);
+  const int height = ccso_plane_height_t(f, plane);
   int visited = 0;
   for (int y = 0; y < height; ++y) {
     for (int x = 0; x < width; ++x) {
-      if (ccso_apply_sample(f, plane, y, x)) {
+      if (ccso_apply_sample_t(f, plane, y, x)) {
         ++visited;
       }
     }
   }
   return visited;
+}
+
+inline int ccso_plane(const CcsoCoreFrame& f, int plane) {
+  return ccso_plane_t(f, plane);
 }
 
 }  // namespace av2enc::restoration

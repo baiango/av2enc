@@ -42,6 +42,13 @@ struct RestorationPlane {
   int stride = 0;
 };
 
+// 10/12-bit variant of the same frame description.  CCSO and loop restoration
+// share it; `bit_depth` selects the band shift and Clip1 range.
+struct RestorationPlane16 {
+  std::uint16_t* data = nullptr;
+  int stride = 0;
+};
+
 // Full-frame description shared by CCSO and loop restoration.
 //
 // `cdef` holds the post-CDEF samples (CCSO modifies it in place; loop
@@ -83,6 +90,39 @@ struct RestorationFrame {
   int sb_shift = 4;
 
   // CfL downsampling filter index used by §7.20.3 get_luma_sample().
+  int cfl_ds_filter_index = 0;
+};
+
+// 10/12-bit frame description.  CCSO modifies `cdef` in place and reads
+// `curr`; both are uint16_t planes with the same metadata contract as
+// RestorationFrame.
+struct RestorationFrame16 {
+  RestorationPlane16 curr[3];
+  RestorationPlane16 cdef[3];
+  RestorationPlane16 lr[3];
+  int mi_cols = 0;
+  int mi_rows = 0;
+  int subsampling_x = 1;
+  int subsampling_y = 1;
+  int bit_depth = 10;
+  int num_planes = 3;
+
+  const std::uint8_t* segment_ids = nullptr;
+  const std::uint8_t* chroma_segment_ids = nullptr;
+  const std::uint8_t* lossless = nullptr;
+
+  const std::uint16_t* mi_col_start = nullptr;
+  const std::uint16_t* mi_col_end = nullptr;
+  const std::uint16_t* mi_row_start = nullptr;
+  const std::uint16_t* mi_row_end = nullptr;
+  int disable_loopfilters_across_tiles = 0;
+
+  int use_bru = 0;
+  const std::uint8_t* bru_modes = nullptr;
+
+  int sb_width = 64;
+  int sb_height = 64;
+  int sb_shift = 4;
   int cfl_ds_filter_index = 0;
 };
 
@@ -167,6 +207,14 @@ bool ccso_header_conforms(const CcsoParams& params);
 RestorationStatus ccso_frame(const RestorationFrame& frame,
                              const CcsoFrameParams& params);
 
+// 10/12-bit CCSO.  `frame.bit_depth` must be 10 or 12; every product chroma
+// format (4:2:0/4:2:2/4:4:4/4:0:0) is supported.
+bool ccso_supported16(const RestorationFrame16& frame,
+                      const CcsoFrameParams& params,
+                      RestorationStatus* status);
+RestorationStatus ccso_frame16(const RestorationFrame16& frame,
+                               const CcsoFrameParams& params);
+
 // Runs CCSO for one plane only (diagnostics/tests).  Same validation.
 RestorationStatus ccso_plane_frame(const RestorationFrame& frame,
                                    const CcsoFrameParams& params, int plane);
@@ -223,6 +271,11 @@ struct LoopRestorationParams {
 // with Wiener-filtered values where LrType selects RESTORE_WIENER_NONSEP.
 RestorationStatus loop_restoration_frame(const RestorationFrame& frame,
                                          const LoopRestorationParams& params);
+
+// 10/12-bit Wiener NS loop restoration (framework + §7.20.3).  PC-Wiener and
+// GDF are separate modules; `frame_type` must be kRestoreNone/kRestoreWienerNs.
+RestorationStatus loop_restoration_frame16(const RestorationFrame16& frame,
+                                           const LoopRestorationParams& params);
 
 // Runs the block loop for one plane into `frame.lr` (the copy step included).
 RestorationStatus loop_restoration_plane(const RestorationFrame& frame,

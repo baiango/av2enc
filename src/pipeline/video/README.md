@@ -37,6 +37,14 @@ and is gated sample-by-sample against the pinned `dav2d`.
   sequence enables `enable_ref_frame_mvs`/`enable_tip`.  Hole fill is off (see
   `docs/negative-results.md`).  Gated by `video_gate --tip` at 4 and 8
   pictures with `dav2d --strict 1` and exact recon; the GPU path is not wired.
+- Temporal reference MVs (`--video-ref-mvs`, §5.4.6/§5.18.2/§7.9/§7.12.2.7-.8):
+  every reference slot stores the §7.22 8x8 motion field, the next inter frame
+  runs §7.9 estimation and the merge stack inserts the temporal candidates at
+  the normative step-5/step-12 points.  Working for the multi-reference P chain
+  and the B-frame GOPs; `--video-tlayers` is single-reference, so §7.9 produces
+  an empty field there.  Off by default (default streams are byte-identical).
+  Gate: `src/pipeline/video/video_ref_mvs_gate.sh`; details and MD5s in
+  `docs/ref-frame-mvs.md`.
 - Reference reconstruction: the current frame's MI-aligned reconstruction
   (`mi_cols*4 x mi_rows*4` luma) becomes slot 0 for the next P frame.
 - Global motion / warped prediction (`--video-gme`, `--video-warp`):
@@ -53,6 +61,23 @@ and is gated sample-by-sample against the pinned `dav2d`.
   B / temporal / frame-type wrapper / compound / inter residual / tile grid).
   Candidate ties are resolved in reference-list order, exactly like the CPU
   reference.
+- Segmentation / delta-Q (`--video-segmentation`, `--video-delta-q`,
+  `--video-per-segment-q`, CPU only): the frame header codes the real
+  §5.18.7.1 segmentation table and §5.18.7.8 `delta_q_params()`; every leaf
+  codes `intra_segment_id()` / `inter_segment_id()` in the exact
+  `inter_frame_mode_info()` / `intra_frame_mode_info()` order, and the first
+  leaf of each superblock codes `read_delta_qindex()`.  The encoder plans one
+  `rc::DeltaQPlanStep` per superblock (`rc::plan_delta_q`) and uses the
+  resulting §7.14.2 effective qindex for the block quantizer in inter and
+  intra leaves and for the §7.17 deblock metadata.  `--video-per-segment-q`
+  assigns `SEG_LVL_ALT_Q` per superblock from the same luma-variance split the
+  still `--still-per-segment-q` uses.  A nonzero delta step cannot be coded
+  when a superblock is a single skipped 64x64 leaf, and a skipped inter leaf
+  infers its segment id from the §5.20.7.4 neighbours; both are replayed
+  exactly (see `src/codec/entropy/deltaq/video/README.md`).  Gated by
+  `src/pipeline/video/gate_video_deltaq.sh` with pinned IVF MD5s,
+  `dav2d --strict 1`, picture counts and exact recon; the default-off path is
+  byte-identical.
 
 ## Files
 
@@ -65,6 +90,7 @@ src/encoder/m2/
   video_frame.h/.cpp         multi-frame loop, mode decision, recon, IVF units
   video_gate.cpp             standalone gate (encode -> dav2d -> recon compare)
   build_and_test.sh       standalone build/run (no CMake changes)
+  gate_implicit_ref_map.sh §7.7 implicit-map decoder gate (flat/B/temporal)
   merge/                  spec-exact §7.12.2 MV stack + skip/DRL API
   README.md               this file
 ```
@@ -445,23 +471,30 @@ av2enc clip.y4m --video --video-subpel-eighth --video-mv-precision quarter -o cl
 |---|---|---|
 | `--video` | off | encode a key frame plus P frames |
 | `--p-frames N` | all | number of P frames after the keyframe |
-| `--video-refs N` | 1 | `NumTotalRefs` per P frame, 1..7 (`REFS_PER_FRAME`) |
-| `--video-num-ref-frames N` | auto | `§5.4.6 NumRefFrames`, 4..8; must be `>= --video-refs` |
+| `--video-refs N` | 1 | `NumTotalRefs` per P frame, 1..7 (`REFS_PER_FRAME`); ignored by `--video-implicit-ref-map` |
+| `--video-num-ref-frames N` | auto | `§5.4.6 NumRefFrames`, 4..8; must be `>= --video-refs`. Auto is 8 for `--video-implicit-ref-map` |
+| `--video-implicit-ref-map` | off | sequence `explicit_ref_frame_map = 0`: §7.7/§7.8 derive `NumTotalRefs`, `ref_frame_idx` and the past/future/current lists; no map bits are coded. Flat P, B-frame and `--video-tlayers` carriers; see the reference-management section |
 | `--video-subpel-eighth` | off | add the 1/8-pel ME refinement stage |
 | `--video-mv-precision P` | eighth | `eighth`, `quarter` or `half` pel |
 | `--video-compound` | off | `reference_select` compound (needs `--video-refs 2`) |
 | `--video-bawp` | off | §5.20.7.6/§7.13.3.25 fitted BAWP on eligible single-prediction luma blocks (skip-only plain P chain, single tile); CPU and `--video-gpu` byte-identical |
-| `--video-morph` | rejected | `morph_pred` is only read inside `read_intrabc_info()`; the M2 keyframe has no IBC path (component gate only) |
+| `--video-morph` | off | §5.20.5.4/§7.13.3.26 morphological prediction: the intra keyframe codes the screen-content + global-IBC mode-info path, `morph_pred` and the fitted §7.13.3.25 adaptation of the IBC copy. CPU, single tile, no loop filters |
 | `--video-opfl` | rejected | §7.13.3.8-.12 need non-GLOBALMV compound with one past and one future reference (component gate only) |
 | `--video-compound-wedge` | off | §7.13.3.27 wedge-mask compound candidate search (needs `--video-compound`) |
 | `--video-compound-diffwtd` | off | §7.13.3.28 difference-weight compound candidate search (needs `--video-compound`) |
-| `--video-compound-interintra` | rejected | §5.20.7.14 allows INTERINTRA only for single-reference blocks || `--video-inter-residual` | off | code a quantised inter residual |
+| `--video-compound-interintra` | off | single-reference §7.13.3.29/.30 inter-intra (`--video-refs 1`): codes `seq_enabled_motion_modes[INTERINTRA]`, §5.20.7.14 motion mode/interintra_mode/wedge_interintra and blends the inter prediction with an intra prediction (CPU, single tile) |
+| `--video-inter-residual` | off | code a quantised inter residual |
 | `--video-intra-full` | off | still product's 61-candidate luma intra search (DC, V, H, 8 directional modes with angle deltas, SMOOTH*, PAETH) instead of the DC-only fallback; chroma stays DC. Default off so the shipped streams stay byte-identical; measured +4.9% rate / −0.016 dB PSNR-Y at QP 90 (SSE-only decision) |
 | `--video-tx-search` | off | §5.18.8 `TX_MODE_SELECT`: luma TX size/type/partition search (inter partition + intra/inter type); `--video-tx-lambda` (256) tunes plan selection; see `src/cuda/pipeline/video/tx/README.md` |
+| `--video-idtx` | off | §5.4.8 `enable_idtx_intra = 1` + the §5.20.5.5 `fsc_mode` symbol, letting `--video-tx-search` select the 2-D identity type (9); requires `--video-tx-search`; decoder-gated (`video_idtx_gate.sh`) |
+| `--video-idtx-1d` | rejected | the one-axis V/H_DCT/A/FLIPADST types need the class scans + `dc_sign_horz_vert`, and pinned dav2d rejects negative H_DCT/V_DCT under `--strict 1`; see `docs/video-1d-intra.md` |
 | `--video-cfl` | off | §7.13.5 CfL chroma decision `{DC, CfL}` with derived alpha, shared with `--still-gpu` (`still::chroma_decide`) |
 | `--video-mhccp` | off | §7.13.6-.8 MHCCP: signals `enable_mhccp` and searches the three `CFL_MULTI` directions; implies `--video-cfl` |
 | `--video-pc-wiener` | off | §7.20.4 luma `RESTORE_PC_WIENER` (own `lr_params()`/`read_lr()` dispatch); composes with `--video-chroma-lr` |
 | `--video-qm` | off | §5.18.6.2 `using_qmatrix = 1` with the §9.4 default matrices (level 0, no user QM OBU); gated at `--qp 90` |
+| `--video-user-qm` | off | §5.13 `OBU_QUANTIZATION_MATRIX` (type 22) before the key frame with an identity all-32 user matrix for level 0, plus `using_qmatrix = 1`; implies `--video-qm`; pinned dav2d rejects every QM OBU, so the gate is avmdec (`video_user_qm_gate.sh`) |
+| `--video-grain` | off | §5.14/§5.18.10 film grain: sequence `film_grain_params_present = 1`, one model OBU (type 23) before each coded-frame OBU, per-frame `film_grain_config()`; CPU-only plain P chain; `video_grain_gate.sh` decodes with dav2d `--filmgrain 0` (recon exact) and `--filmgrain 1` (synthesis) |
+| `--video-lossless` | off | Q=0 lossless P frame sequence via `src/codec/entropy/lossless/inter/`: its own headers (`CodedLossless = 1`, `base_q_idx = 0`, `ONLY_4X4`), DPCM/reversible WHT/IDTX and FSC; `--video-lossless-intra-period N` forces one intra block per N; `--lossless-fsc` forces the FSC coefficient path; `video_lossless_gate.sh` pins 4/8-frame streams and compares dav2d recon exactly |
 | `--video-max-depth D` / `--video-min-block N` / `--video-force-single` | 4 / 16 / off | partition controls; `N` must be 8..64 (sub-8 leaves would need shared-chroma prediction) |
 | `--video-recon FILE` | off | dump the encoder reconstruction Y4M (gate use) |
 | `--video-tlayers N` | off | one hierarchical-P GOP of N (4/8) frames with temporal layers |
@@ -495,9 +528,27 @@ in the IVF (TD + SEQ for the key frame, TD + tile group afterwards).
 * `FrameDistance[r] = relative_dist(order_hint, slot_order_hint, OrderHintBits)`
   is built for every listed slot and passed to the MV stack, so derived
   candidates match the decoder for all N.
-* The §7.8 past/future/current lists only exist for `explicit_ref_frame_map =
-  0`. The M2 writer always emits an explicit map, so `--video-implicit-ref-map`
-  is rejected by name (the pinned decoder is not gated on the implicit form).
+* `--video-implicit-ref-map` switches the sequence header to
+  `explicit_ref_frame_map = 0`, so the frame header codes no
+  `frame_explicit_ref_frame_map`, `num_total_refs` or `ref_frame_idx` bits. The
+  encoder mirrors the §7.23 slot state (`mv_stack_full::RefSlotBank`, including
+  the KEY/SWITCH `RefValid = first` rule) and calls
+  `mv_stack_full::derive_implicit_ref_map()` before every inter frame; the
+  decoder's `get_ref_frames(0)/(1)` and `get_past_future_cur_ref_lists()`
+  produce the same map. The mapping is a *derived* list, not `--video-refs`:
+  the flat chain grows `NumTotalRefs` as slots become valid, a 4-slot pool caps
+  it at four, and the B/temporal schedules can select mixed past/future refs
+  (up to `REFS_PER_FRAME` = 7). `--video-trace` prints the derived list.
+* `--video-implicit-ref-map` is wired for the 8-bit 4:2:0 flat P chain, the
+  B-frame schedule and `--video-tlayers`. TIP, compound, tiles, the
+  random-access/LTR/OLK/leading/SEF wrappers and the 10-bit/chroma format cores
+  own an explicit map and reject the flag by name. `--video-gpu` rejects it
+  too.
+* Decoder gate: `src/pipeline/video/gate_implicit_ref_map.sh` encodes six
+  carriers with the flag, asserts the derived `NumTotalRefs` varies, and
+  requires `dav2d --strict 1` to decode the IVF picture count with a
+  sample-exact reconstruction (pinned `f9dafbc`; the 2026-11-13 run is exact
+  for flat/B/temporal at 1..8 pictures).
 
 ## Frame MV precision
 
@@ -963,13 +1014,82 @@ A/B/wedge or A/B/diffwtd clip from `gate_video_gpu.sh`):
 src/cuda/pipeline/video/gate_video_gpu.sh --bin build/av2enc --frames 4
 ```
 
-`--video-compound-interintra` is rejected by name: §5.20.7.14
-`motion_mode_allowed()` sets `AllowedMotionModes[INTERINTRA]` only when
-`!isCompound` and the block is a single-reference 8x8..64x64 leaf, so a
-two-reference compound block cannot carry `interintra_mode` or
-`wedge_interintra`. The §7.13.3.29 weight table and §7.13.3.30 blend stay
-component-only (`inter::adv::search_inter_intra`); see
-`docs/negative-results.md`.
+`--video-compound-interintra` is the single-reference §7.13.3.29/.30 path,
+despite its historical name.  §5.20.7.14 `motion_mode_allowed()` sets
+`AllowedMotionModes[INTERINTRA]` only when `!isCompound` and the block is a
+single-reference 8x8..64x64 leaf, so a two-reference compound block can never
+carry `interintra_mode` or `wedge_interintra`.  The flag therefore:
+
+* writes `seq_enabled_motion_modes[INTERINTRA] = 1` with
+  `seq_frame_motion_modes_present_flag = 0` (§5.4.6), so every inter frame
+  inherits it without extra bits;
+* codes `inter_intra` (and, when set, `interintra_mode`, `wedge_interintra` and
+  `read_wedge_mode()`) after `single_mode`/`use_bawp` and before `drl_idx`
+  (§5.20.7.6/.14/.15);
+* searches the four `II_DC/V/H/SMOOTH` intra modes plus the 68 wedge masks
+  against the inter prediction (`inter::adv::search_inter_intra`) on luma and
+  chroma, and picks the blend (`COMPOUND_INTRA` mask or wedge mask) when its
+  luma+chroma SSE beats the plain inter prediction.  A wedge is kept only when
+  it strictly beats the plain mask, because it codes `read_wedge_mode()`.
+
+The surface is `--video-refs 1`, CPU-only, single tile, plain key+P chain and
+no `--video-compound`/`--video-bawp`/`--video-morph`/average-CDF chain.  Pinned
+stream (`dav2d f9dafbc --strict 1 --threads 1`, recon byte-identical):
+
+| fixture | pictures | IVF MD5 | feature exercised |
+|---|---:|---|---|
+| translating gradient/texture 320x192 | 4 | `7d52d066c7437bc3bc9c66f2fc1e52ca` | 68 inter-intra leaves, 65 `wedge_interintra = 1`, 3 `COMPOUND_INTRA` |
+
+```sh
+src/pipeline/video/gate_video_morph_interintra.sh --bin build/av2enc
+```
+
+---
+
+# Morphological prediction on the keyframe (opt-in `--video-morph`)
+
+`morph_pred` is read only inside §5.20.5.4 `read_intrabc_info()`, i.e. an intra
+frame with `allow_screen_content_tools && enable_bawp`. The product carrier is
+therefore the intra keyframe:
+
+* §5.4.7 `seq_choose_screen_content_tools = seq_choose_integer_mv = 1`;
+* the keyframe frame header sets `allow_screen_content_tools = 1`,
+  `force_integer_mv = 1`, `allow_intrabc = 1`, `allow_global_intrabc = 1`,
+  `allow_local_intrabc = 0`;
+* every keyframe leaf codes `use_intrabc` (§5.20.5.3); an IBC leaf additionally
+  codes `skip_flag = 1`, `intrabc_mode`/DRL/`assign_mv` and `morph_pred`;
+* non-IBC leaves code the mandatory `palette_mode_info()` (`has_palette_y = 0`,
+  §5.20.5.5) that `allow_screen_content_tools` makes present;
+* the encoder picks a global BV from the §7.12.2 stack / periodic candidates,
+  copies the reconstructed block and evaluates the §7.13.3.25 template fit.
+  `morph_pred = 1` is signalled only when the adapted copy lowers luma SSE
+  (and §6.19.5.4 `is_offset_mv_valid(-1,-1) == 1`, enforced by
+  `is_bv_encodable()`); a plain copy tie also picks IBC because it codes no
+  residual.
+
+The carrier is gated on the plain key+P chain: single tile, no
+deblock/CDEF/CCSO/Wiener/chroma-LR/GDF (the IBC copy and morph template must
+read the unfiltered reconstruction) and no average/CDF-continuity chain. P
+frames inherit the sequence `enable_bawp`, so they code `allow_bawp = 1` and
+`use_bawp = 0`; the rest of the P-frame path is unchanged.
+
+Pinned streams (`dav2d f9dafbc --strict 1 --threads 1`, recon byte-identical
+to `--video-recon`):
+
+| fixture | pictures | IVF MD5 | feature exercised |
+|---|---:|---|---|
+| vertical gradient 256x192 | 1 | `1100a99b1c8f2e20d17ec2c55fe09ebe` | 1 IBC leaf, `morph_pred = 1`, SSE 0 |
+| vertical gradient 256x192 | 4 | `596e2af5db198939b5e8fa20df1a21d5` | keyframe IBC + P frames with `use_bawp = 0` |
+| repeated 64-row texture 256x192 | 1 | `0ddbee1a49758c3c64e15a1389687184` | 18 IBC leaves, `morph_pred = 0` |
+
+```sh
+src/pipeline/video/gate_video_morph_interintra.sh --bin build/av2enc
+```
+
+The gate generates the fixtures, pins the MD5s, runs `dav2d --strict 1`,
+compares the decoded Y4M with `--video-recon` and requires `morph=1` and
+`morph=0` leaves in the trace. The default `--video` stream is pinned in the
+same script (`ef85e55bd85357f965169051dd691612` for the 640x360 1-frame clip).
 
 ---
 
@@ -1025,6 +1145,35 @@ pending implicit-output pictures; the pinned decoder emits only the frames whose
 display gap is closed, so multi-GOP streams are rejected rather than emitted
 short.
 
+## NEAR_NEARMV compound carrier (opt-in, CPU)
+
+`--video-compound-near-near` extends the compound candidate set from the
+historical `GLOBAL_GLOBALMV` subset to §5.20.7.6 `NEAR_NEARMV` on a
+two-reference B frame.  Both lists are merged independently (`has_second_drl`),
+so the block codes `drl_idx0` + `drl_idx1` and stores the per-list MVs.  The B
+frame's references are one past and one future picture, so
+`opfl_allowed_for_refs()` is true — this is the carrier the temporal refinement
+tools need (`--video-opfl`, `--video-refine-mv`; both still rejected, see
+`docs/negative-results.md`).
+
+```sh
+src/pipeline/video/gate_video_near_near.sh --bin build/av2enc \
+  --dav2d tools/bin/dav2d --verify-rejections
+```
+
+Pinned (640x360, smooth (3,1)-per-frame pan fixture generated by the gate):
+
+| flags | IVF MD5 | coded/output | NEAR_NEARMV blocks |
+|---|---|---:|---:|
+| `--b-frames 1 --video-max-depth 3` (3 frames) | `7c9b6213ee3eb5c16a25fcbe9e799466` | 3/3 | 140 |
+| `--b-frames 3 --video-max-depth 3` (5 frames) | `8baef2a99f13a16b3df21440c678ff41` | 5/5 | 542 |
+| `--b-frames 1 --video-max-depth 4` (3 frames) | `e961f4e3af862c7e8cde83e6c83b2f67` | 3/3 | 269 |
+
+Every case is `dav2d --strict 1` exact (decoded picture count and per-sample
+recon).  The flag defaults off, so `--video-compound` and every default
+CPU/GPU stream keep their pinned bytes.  `--video-gpu` rejects the flag by
+name (the CUDA compound backend implements only the GLOBAL subset).
+
 ---
 
 # Codec-tools wave: CfL / MHCCP / PC-Wiener / QM (opt-in)
@@ -1062,6 +1211,29 @@ Wiring notes:
   emitted.  The transform chain uses the per-coefficient `q2 = Round2(q*m, 5)`
   (CPU `compute_tx` and the device `still_tx` stage).  The shared device QM
   stage builds q2 from the pinned 528 step, so the gate is QP 90.
+* `--video-user-qm` is the CPU-only §5.13 carrier: one type-22 OBU after the
+  sequence header in the key temporal unit (level 0, identity all-32 matrix).
+  `--video-qm`'s frame header is unchanged; §6.12 keeps `QmDataPresent[0]`
+  across later CLK-free P frames.  The encoder state and `compute_tx()` use the
+  same `UserQm[0]`, so the all-32 identity dequantizes exactly.  Pinned dav2d
+  f9dafbc **rejects every QM OBU** (`QM OBUs with user-defined QMs are
+  currently unsupported`), so this carrier is decoder-gated with `avmdec`:
+  `video_user_qm_gate.sh` pins base/QM streams and proves the user stream's
+  four decoded pictures equal `--video-recon` (0 differing samples, 720p).
+* `--video-grain` plans one `GrainStreamPlanner` over the coding-order
+  pictures.  A changed model emits one type-23 OBU immediately before the
+  coded-frame OBU; §5.18.10.1 codes `apply_grain`/`fgm_id`/`grain_seed` in the
+  frame header.  Film grain is output-side synthesis, so `dav2d --filmgrain 0`
+  must equal `--video-recon` (0 samples at 720p); `--filmgrain 1` decodes the
+  same picture count with different samples.  The tiled, B/temporal-layer, TIP
+  and random-access writers do not signal grain and are rejected by name.
+* `--video-idtx` signals §5.4.8 `enable_idtx_intra` and codes the §5.20.5.5
+  `fsc_mode = 0` symbol on every <= 32x32 luma coding block; the TX search then
+  exposes the 2-D `IDTX` type (9).  Without the flag the search filters IDTX so
+  `--video-tx-search` cannot select an identity type while the sequence header
+  says `enable_idtx_intra = 0`.  One-axis types (10..15) are rejected by the
+  writer and by the CLI (`--video-idtx-1d`): pinned dav2d rejects negative
+  H_DCT/V_DCT coefficients under `--strict 1` (`docs/video-1d-intra.md`).
 
 Gate evidence (360p, `--video` vs `--video-gpu`, `dav2d --strict 1`, all
 sample-exact; `gate_video_gpu.sh --cfl-only|--mhccp-only|--pcw-only|--qm-only`):
@@ -1078,6 +1250,16 @@ sample-exact; `gate_video_gpu.sh --cfl-only|--mhccp-only|--pcw-only|--qm-only`):
 | `--video-pc-wiener --video-chroma-lr` | `5a8d7a0bed6801672aec478f4213d89e` |
 | `--video-qm`, 4 frames | `16f4a20f5bc5e3c3ae9d49ba2a00d64a` |
 | `--video-qm`, 8 frames | `60006eafb2883ea103e8adeabba8b2a8` |
+| `--video-user-qm`, 4 frames, 720p | `2bba524225209c18b7af16ddf298f493` (avmdec) |
+| `--video-grain`, 4 frames, 720p | `e60ded0a500a856984cd1b575c89103b` |
+| `--video-grain`, 8 frames, 720p | `e4c9dbd7e105160aea90c66947b69bbb` |
+| `--video-lossless`, 4 frames, 720p | `3569437af68c2ff640e6deda5be2b5a5` |
+| `--video-lossless --video-lossless-intra-period 4`, 4 frames | `59cf90c17e97639bfd9ed8d06670a964` |
+| `--video-lossless ... --lossless-fsc`, 4 frames | `31e50ec0d113cc02d1383664ff371124` |
+| `--video-lossless`, 8 frames, 720p | `19c4b81811692127c108fad1c6ec7f47` |
+| `--video-tx-search`, 4 frames, 720p | `be155c435a6c4d591bb5b7ab7d084c7e` |
+| `--video-tx-search --video-idtx`, 4 frames | `13c96481b49d6150d7cb9fa4240f5c69` |
+| `--video-tx-search --video-idtx`, 8 frames | `c4e7ceab9bf98e672c992b30b93aa871` |
 
 The gate also runs **CPU-reference-only** cases (`PASS video-cpu ...`) for every
 new tool, including `--video-force-single --video-cfl|--video-mhccp`.  The

@@ -588,25 +588,24 @@ void test_reference_policy() {
 
   CHECK(!av2enc::svc::reference_allowed(plan, policy, layer(1, 0, 0),
                                         layer(0, 0, 0), error));
-  CHECK(error.find("spatial-only") != std::string::npos);
+  CHECK(error.find("6.8.2") != std::string::npos);
 
+  // §6.8.2 is a conformance requirement, so even a caller that asks for
+  // cross-xlayer prediction gets the same named rejection.
   policy.cross_xlayer_prediction = true;
   error.clear();
   CHECK(!av2enc::svc::reference_allowed(plan, policy, layer(1, 0, 0),
                                         layer(0, 0, 0), error));
-  CHECK(error.find("no inter-layer dependency") != std::string::npos);
+  CHECK(error.find("6.8.2") != std::string::npos);
 
-  // Declare a structural dependency: the ordering path becomes legal, but the
-  // emitted stream still carries no cross-layer prediction payload.
+  // The structural validator rejects a plan that declares it at all.
   plan.lcr.layers[1].dependent_xlayers = true;
   plan.lcr.layers[1].dependent_xlayer_ids.push_back(0);
   error.clear();
-  CHECK(av2enc::svc::reference_allowed(plan, policy, layer(1, 0, 0),
-                                       layer(0, 0, 0), error));
-  error.clear();
-  CHECK(!av2enc::svc::reference_allowed(plan, policy, layer(0, 0, 0),
-                                        layer(1, 0, 0), error));
-  CHECK(error.find("lower xlayer") != std::string::npos);
+  CHECK(!av2enc::svc::validate_layer_plan(plan, error));
+  CHECK(error.find("6.8.2") != std::string::npos);
+  plan.lcr.layers[1].dependent_xlayers = false;
+  plan.lcr.layers[1].dependent_xlayer_ids.clear();
 
   ReferencePolicy defaults;
   CHECK(av2enc::svc::reference_allowed(plan, defaults, layer(0, 0, 1),
@@ -616,16 +615,23 @@ void test_reference_policy() {
                                         layer(0, 0, 1), error));
   CHECK(error.find("forward") != std::string::npos);
 
+  // §5.4.1 MLayerDependencyMap: a higher embedded layer may predict from a
+  // lower one in the same xlayer (the --svc-embedded path), never the reverse.
   LayerPlan embedded_plan = make_plan(2, 2, 2);
-  CHECK(!av2enc::svc::reference_allowed(embedded_plan, defaults, layer(0, 1, 0),
-                                        layer(0, 0, 0), error));
-  CHECK(error.find("cross-mlayer") != std::string::npos);
+  CHECK(av2enc::svc::reference_allowed(embedded_plan, defaults,
+                                       layer(0, 1, 0), layer(0, 0, 0), error));
+  error.clear();
+  CHECK(!av2enc::svc::reference_allowed(embedded_plan, defaults,
+                                        layer(0, 0, 0), layer(0, 1, 0),
+                                        error));
+  CHECK(error.find("lower mlayer") != std::string::npos);
 
   ReferencePolicy mlayer;
-  mlayer.cross_mlayer_prediction = true;
+  mlayer.cross_mlayer_prediction = false;
   error.clear();
-  CHECK(av2enc::svc::reference_allowed(embedded_plan, mlayer, layer(0, 1, 0),
-                                       layer(0, 0, 0), error));
+  CHECK(!av2enc::svc::reference_allowed(embedded_plan, mlayer, layer(0, 1, 0),
+                                        layer(0, 0, 0), error));
+  CHECK(error.find("cross-mlayer") != std::string::npos);
 
   CHECK(!av2enc::svc::reference_allowed(plan, defaults, layer(0, 0, 0),
                                         layer(0, 0, 0), error));
@@ -636,8 +642,10 @@ void test_reference_policy() {
   EXPECT_OK([&](std::string& e) {
     return av2enc::svc::plan_emission_order(plan, 2, order, e);
   });
+  // Same-xlayer ordering checks: cross-xlayer references cannot exist (§6.8.2),
+  // so scheduling is exercised with a lower temporal layer in the same x/m.
   std::vector<av2enc::svc::FrameReference> references;
-  references.push_back(av2enc::svc::FrameReference{0, layer(1, 0, 0), 0,
+  references.push_back(av2enc::svc::FrameReference{0, layer(0, 0, 1), 0,
                                                    layer(0, 0, 0)});
   EXPECT_OK([&](std::string& e) {
     return av2enc::svc::validate_frame_references(plan, policy, references,
@@ -646,7 +654,7 @@ void test_reference_policy() {
 
   std::vector<av2enc::svc::FrameReference> cross_unit;
   cross_unit.push_back(
-      av2enc::svc::FrameReference{1, layer(1, 0, 0), 0, layer(0, 0, 0)});
+      av2enc::svc::FrameReference{1, layer(0, 0, 1), 0, layer(0, 0, 0)});
   EXPECT_OK([&](std::string& e) {
     return av2enc::svc::validate_frame_references(plan, policy, cross_unit,
                                                   order, e);
@@ -654,7 +662,7 @@ void test_reference_policy() {
 
   std::vector<av2enc::svc::FrameReference> future_unit;
   future_unit.push_back(
-      av2enc::svc::FrameReference{0, layer(1, 0, 0), 1, layer(0, 0, 0)});
+      av2enc::svc::FrameReference{0, layer(0, 0, 1), 1, layer(0, 0, 0)});
   EXPECT_FAILS(
       [&](std::string& e) {
         return av2enc::svc::validate_frame_references(plan, policy, future_unit,
@@ -671,7 +679,7 @@ void test_reference_policy() {
   reversed.push_back(td);
   Emission target;
   target.kind = EmissionKind::kFrame;
-  target.layer = layer(1, 0, 0);
+  target.layer = layer(0, 0, 1);
   target.temporal_unit = 0;
   reversed.push_back(target);
   Emission reference;
@@ -680,7 +688,7 @@ void test_reference_policy() {
   reference.temporal_unit = 0;
   reversed.push_back(reference);
   std::vector<av2enc::svc::FrameReference> late_ref;
-  late_ref.push_back(av2enc::svc::FrameReference{0, layer(1, 0, 0), 0,
+  late_ref.push_back(av2enc::svc::FrameReference{0, layer(0, 0, 1), 0,
                                                  layer(0, 0, 0)});
   EXPECT_FAILS(
       [&](std::string& e) {
@@ -1041,7 +1049,9 @@ void test_lcr_payload() {
   CHECK(reader.bit() == false);     // dependent xlayers
   CHECK(reader.bit() == false);     // atlas id
   CHECK(reader.bits(7) == 0);       // purpose
-  CHECK(reader.bit() == false);     // doh constraint
+  // §7.3.7: the 2-temporal-layer plan clears monotonic_output_order_flag, so
+  // the global LCR must set lcr_doh_constraint_flag.
+  CHECK(reader.bit() == true);      // doh constraint
   CHECK(reader.bit() == false);     // tile alignment
   CHECK(reader.bits(3) == 0);       // reserved
   CHECK(reader.bits(5) == 0);       // reserved
@@ -1073,6 +1083,32 @@ void test_lcr_payload() {
   CHECK(local_reader.bits(5) == 0);
   expect_xlayer_info(local_reader, 0x1U, 0x3U);
   CHECK(local_reader.ok());
+
+  // A flat (single temporal layer) plan keeps monotonic_output_order_flag = 1
+  // and therefore must keep lcr_doh_constraint_flag = 0.
+  LayerPlan flat = make_plan(1, 1, 1);
+  CHECK(!flat.lcr.doh_constraint);
+  CHECK(av2enc::svc::write_layer_config_record_payload(
+      flat.lcr, flat.sequences.front().dependencies, payload, error));
+  BitReader flat_reader{std::span<const std::uint8_t>(payload)};
+  CHECK(flat_reader.bits(3) == 1);
+  CHECK(flat_reader.bits(31) == 0x1U);
+  CHECK(flat_reader.bit() == false);  // aggregate info
+  CHECK(flat_reader.bit() == false);  // ptl info
+  CHECK(flat_reader.bit() == true);   // global payload
+  CHECK(flat_reader.bit() == false);  // dependent xlayers
+  CHECK(flat_reader.bit() == false);  // atlas id
+  CHECK(flat_reader.bits(7) == 0);    // purpose
+  CHECK(flat_reader.bit() == false);  // doh constraint
+  CHECK(flat_reader.ok());
+
+  // The plan validator requires the flag whenever the GOP clears
+  // monotonic_output_order_flag.
+  LayerPlan broken = make_plan(1, 2, 1);
+  broken.lcr.doh_constraint = false;
+  error.clear();
+  CHECK(!av2enc::svc::validate_layer_plan(broken, error));
+  CHECK(error.find("lcr_doh_constraint_flag") != std::string::npos);
 }
 
 void test_ops_payload() {

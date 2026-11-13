@@ -73,6 +73,10 @@ struct VideoOptions {
   // combination is served by the format video core (10-bit / 4:2:2 / 4:4:4 /
   // 4:0:0).  The CLI only sets it for verified formats.
   fmt::Format format{};
+  // §5.4.1 seq_profile_idc override (-1 = derive from the format).  The SVC
+  // embedded-layer ladder needs the profile whose Annex A mlayer cap covers
+  // the configured embedded layer count.
+  int seq_profile_override = -1;
   // §5.18.6.1 base_q_idx.  MaxQ is 255 at 8-bit and 303 at 10-bit.
   std::uint16_t base_q_idx = 90;
   // Optional per-frame base_q_idx (one entry per input frame). Empty keeps the
@@ -103,8 +107,30 @@ struct VideoOptions {
   // level 0 (the §9.4 default matrices, no user QM OBU).  The transform chain
   // dequantizes with the per-coefficient q2, so reconstruction stays exact.
   bool enable_qm = false;
+  // §5.13 user-defined QM carrier (--video-user-qm): implies enable_qm and
+  // emits one quantizer_matrix_obu() with an identity (all-32) user matrix for
+  // level 0 before the key frame.  §7.14.4 then reads UserQm[0] for every
+  // <=8x8 transform.  Pinned dav2d rejects QM OBUs; gate with avmdec.
+  bool user_qm = false;
   bool enable_newmv = true;
   bool enable_nearmv = true;
+  // Opt-in §5.4.6 enable_ref_frame_mvs / §5.18.2 use_ref_frame_mvs and the
+  // §7.9 + §7.12.2.7/.8 temporal MV candidates.  Off keeps every historical
+  // stream byte-identical (the sequence header omits the bit).
+  bool enable_ref_frame_mvs = false;
+  // Gate stress mode: prefer a NEARMV candidate inserted by the temporal scan
+  // whenever one exists.  Proves the coded stream actually depends on the
+  // §7.12.2.7/.8 entries (never used for product quality measurements).
+  bool ref_mvs_stress = false;
+  // Opt-in compound refinement carrier.  `compound_near_near` adds the
+  // §5.20.7.6 NEAR_NEARMV candidate on a two-reference B frame (the
+  // GLOBAL_GLOBALMV subset is the historical --video-compound surface).
+  // `opfl_refine_type` mirrors §5.4.6 enable_opfl_refine (0 NONE,
+  // 1 SWITCHABLE, 2 ALL) and `enable_refinemv` mirrors enable_refinemv.
+  // --video-opfl / --video-refine-mv own this pair; both are CPU-only.
+  bool compound_near_near = false;
+  int opfl_refine_type = 0;
+  bool enable_refinemv = false;
   bool force_global_mv = false;
   bool force_intra = false;
   bool force_single_block = false;
@@ -143,12 +169,27 @@ struct VideoOptions {
   // References per P frame (NumTotalRefs).  1 keeps the historical M2 stream;
   // 2..7 enables per-block single_ref selection over the most recent slots.
   int num_total_refs = 1;
+  // Fixed refresh/reference slot for the single-reference P chain.  -1 keeps
+  // the historical rotating `i % NumRefFrames` slot.  The SVC embedded-layer
+  // path pins the base chain to slot 0 so the refinement layers own slots
+  // 1..M-1 and never collide with a rotated base picture (a collision makes an
+  // m0 frame reference a slot holding m1, which §6.17.2 forbids).
+  int fixed_write_slot = -1;
   // §5.4.6 NumRefFrames: the size of the reference-slot pool.  0 derives the
   // historical value (2 for the single-reference chain, 8 for the
   // multi-reference model), so every existing stream stays byte-identical.
   // An explicit 4..8 selects the spec multi-slot surface and must be at least
   // num_total_refs.
   int num_ref_frames = 0;
+  // §5.4.6/§5.18.2 implicit reference map (--video-implicit-ref-map).  Sets
+  // sequence explicit_ref_frame_map = 0, so every inter frame uses the §7.7
+  // derivation (NumTotalRefs and ref_frame_idx vary per frame from the slot
+  // state) and codes no map bits.  The flat P chain, the B-frame schedule and
+  // the hierarchical-P temporal layers derive their block-level reference list
+  // from it; the frame-type wrappers (TIP/SWITCH/RAS/LTR/OLK/SEF/leading),
+  // tiles, compound and the non-8-bit format cores keep the explicit map and
+  // are rejected by name when combined with this option.
+  bool implicit_ref_map = false;
   // B frames: N consecutive B frames per GOP (0 = the flat key + P chain).
   // Requires num_total_refs == 1 (the bframes plan owns the per-frame refs).
   int b_frames = 0;
@@ -225,6 +266,12 @@ struct VideoOptions {
   bool video_timing = false;
   std::uint32_t timing_num_units_in_display_tick = 0;
   std::uint32_t timing_time_scale = 0;
+  // Opt-in §5.4.13 seq_decoder_model_info() nested block
+  // (--video-decoder-model).  Requires video_timing; the delays are 1/90000 s.
+  bool video_decoder_model = false;
+  std::uint32_t decoder_buffer_delay = 70000;
+  std::uint32_t encoder_buffer_delay = 20000;
+  bool low_delay_mode = false;
   // Opt-in §5.7 multi-frame header on the non-single-picture path
   // (--video-mfh).  One MFH (id 1) in the key temporal unit; every frame
   // header then sets cur_mfh_id = 1 and omits seq_header_id_in_frame_header.
@@ -243,16 +290,59 @@ struct VideoOptions {
   // single-prediction luma blocks evaluate the fitted BAWP predictor and code
   // use_bawp.  Chroma BAWP is never signalled (use_bawp_chroma = 0).
   bool enable_bawp = false;
+  // §5.20.5.4 / §7.13.3.26 morphological prediction (--video-morph).  Codes
+  // the screen-content + intra-block-copy mode-info path on the intra
+  // keyframe, signals `morph_pred`, and adapts the IBC copy with the BAWP
+  // template fit.  Requires enable_bawp (the sequence bit that makes
+  // `morph_pred` signallable); off keeps every historical stream unchanged.
+  bool enable_morph = false;
+  // §5.20.7.14/.15 / §7.13.3.29/.30 inter-intra (--video-compound-interintra).
+  // Codes seq_enabled_motion_modes[INTERINTRA], the single-reference
+  // motion-mode/interintra_mode/wedge_interintra syntax, and blends the inter
+  // prediction with an intra prediction.  Off keeps every historical stream
+  // byte-identical.
+  bool enable_interintra = false;
   // Opt-in TIP sequence (--video-tip, §7.10/§7.13.3.2).  Codes one future
   // anchor P and the remaining pictures as TIP_FRAME_AS_OUTPUT frames that
   // reference the anchor plus the previous picture.  Requires 3..8 frames, a
   // single tile and none of the frame-type/loop-filter/CDF-chain modes; off
   // keeps every existing stream byte-identical.
   bool enable_tip = false;
+  // Opt-in §5.14/§5.18.10 film grain signalling (--video-grain): sequence
+  // header film_grain_params_present = 1, a film grain model OBU before a
+  // frame whose model is new, and per-frame film_grain_config().  Off keeps
+  // every historical stream byte-identical.
+  bool film_grain = false;
+  // §5.4.8 enable_idtx_intra (--video-idtx): opt-in 2-D identity TX type in
+  // the intra TX-type search.  Off keeps the sequence bit 0 and the historical
+  // candidate filter, so --video-tx-search streams are unchanged.
+  bool enable_idtx_intra = false;
   // Opt-in M2 loop filters (--video-cdef, ...).  All default off, so a default
   // stream is byte-identical.  They run on the reconstructed frame before it
   // becomes the output picture and the reference for later frames.
   post::VideoLoopFilterOptions loop_filters;
+  // Opt-in §5.18.7.1/§5.18.7.8 segmentation and delta-Q on the CPU --video
+  // writer (--video-segmentation / --video-delta-q).  Both default off and
+  // keep the historical (segmentation_enabled, using_qmatrix, delta_q_present)
+  // = (0, 0, 0) header, so every existing stream stays byte-identical.
+  //
+  // enable_segmentation codes the §5.20.5.7/.8 / §5.20.7.2 segment id for
+  // every leaf from a deterministic per-superblock luma-variance split.  The
+  // table carries SEG_LVL_ALT_Q = 0 for segment 1, so the map is exercised
+  // without moving the quantizer; per_segment_q supplies a real value.
+  // enable_delta_q signals §5.18.7.8 delta_q_present plus per-superblock
+  // CurrentQIndex updates on a raster-parity staircase.
+  bool enable_segmentation = false;
+  bool enable_delta_q = false;
+  int delta_q_res = 0;  // 0..3
+  // Opt-in real SEG_LVL_ALT_Q planning (--video-per-segment-q): segment 1 is
+  // the low-variance superblocks and uses base_q_idx + seg_q_delta.
+  // The block quantizer, reconstruction and deblocking metadata all use the
+  // derived §7.14.2 effective qindex in inter and intra leaves.
+  bool per_segment_q = false;
+  // Qindex delta used by --video-per-segment-q and the --video-delta-q
+  // staircase (--video-seg-delta).
+  int seg_q_delta = 8;
   // Debug trace to stderr.
   bool trace = false;
 };
@@ -272,6 +362,12 @@ struct VideoSequenceResult {
   std::vector<std::uint32_t> tile_bytes;
   std::vector<std::uint32_t> inter_blocks;
   std::vector<std::uint32_t> intra_blocks;
+  // Number of §7.12.2.7/.8 temporal candidates the stack builder inserted
+  // across the whole sequence (0 unless enable_ref_frame_mvs was on).
+  std::uint64_t temporal_candidates = 0;
+  // Number of coded inter leaves whose selected NEARMV candidate or NEWMV
+  // predictor came from a §7.12.2.7/.8 temporal entry (gate evidence).
+  std::uint64_t temporal_selected = 0;
 };
 
 // §5.4.6 NumRefFrames actually signalled for these options: the explicit
@@ -282,6 +378,31 @@ int resolved_num_ref_frames(const VideoOptions& options);
 bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                         const VideoOptions& options, VideoSequenceResult& result,
                         std::string& error);
+
+// Cross-embedded-layer refinement sequence (SVC `--svc-embedded`, §5.4.1
+// MLayerDependencyMap / §6.17.2 reference conformance).
+//
+// Codes every input frame as an inter picture that predicts from
+// `references[i]`, the decoded picture of the lower embedded layer at the same
+// display index.  `references` must have one same-resolution entry per frame.
+// Each frame header references `reference_slot` and refreshes `refresh_slot`,
+// so the lower layer's picture survives in the DPB while the refinement layer
+// keeps its own slot.  The first frame is inter: §7.3.6 only allows the CLK in
+// the lowest embedded layer of a temporal unit, and the caller emits every
+// lower mlayer before this one, so the reference is already valid.
+struct RefinementOptions {
+  int reference_slot = 0;
+  int refresh_slot = 1;
+  // §5.4.6 NumRefFrames.  Must be > max(reference_slot, refresh_slot) and at
+  // most 16.
+  int num_ref_frames = 8;
+};
+
+bool encode_video_refinement_sequence(
+    std::span<const VideoInputFrame> frames,
+    std::span<const VideoReconFrame> references, const VideoOptions& options,
+    const RefinementOptions& refinement, VideoSequenceResult& result,
+    std::string& error);
 
 // Format video core dispatch (10-bit 4:2:0/4:2:2/4:4:4/4:0:0 and 8-bit
 // 4:2:2/4:4:4/4:0:0).  `encode_video_sequence()` calls this when

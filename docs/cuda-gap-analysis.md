@@ -66,7 +66,7 @@ interpretation, and the full 10-bit/chroma still formats.
 | §5.20.7.27, §8.3 | `dc_sign` | kernel exists; mixed 1-D intra types are decoder-rejected |
 | §5.18.2 | cross-frame CDF continuity | **decoder-gated**: AVM decodes, dav2d drops frames |
 | §7.3.6, §6.8–.10 | SVC / layers / LCR | **decoder-gated**: AVM `--all-layers` decodes; dav2d emits fewer pictures |
-| §7.8 | implicit reference lists | **decoder-gated**: never validated on `explicit_ref_frame_map = 0` |
+| §7.8 | implicit reference lists | CPU path is **decoder-gated** (`dav2d --strict 1`, 6 carriers, recon exact); the GPU path rejects the flag |
 
 ## 3. Still — kernel exists, product integration missing
 

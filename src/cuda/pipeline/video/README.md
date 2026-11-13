@@ -143,7 +143,7 @@ Wired and gated combinations:
 | Full 61-candidate luma intra search | `--video-intra-full` | byte-identical || DRL/merge stack | default | spec-exact host stack, byte-identical |
 | Multi-reference (2..7 refs, per-block ref index) | `--video-refs N` | byte-identical, ref-indexed ME/MC over per-slot device reference planes |
 | `NumRefFrames` pool 4..8 | `--video-num-ref-frames N` | byte-identical (rotating write slot, `f(N)` refresh mask) |
-| §7.8 implicit reference lists | `--video-implicit-ref-map` | rejected by name (explicit maps only) |
+| §7.8 implicit reference lists | `--video-implicit-ref-map` | rejected by name on the GPU path (implemented on the CPU path) |
 | §5.20.6/§5.20.8 luma TX size/type/partition search | `--video-tx-search` | byte-identical, device `videotx::video_tx_select_batch` |
 | DRL/merge stack | default | spec-exact host stack, byte-identical |
 | Multi-reference (2..3 refs, per-block ref index) | `--video-refs N` | byte-identical, ref-indexed MC/ME || Long-term / closed-GOP LTR | `--video-long-term` | byte-identical (plain GPU tiles + CPU header assembly) |
@@ -194,8 +194,10 @@ byte-identical.
 Rejected by name (usage exit 2, no CPU fallback):
 DRL reordering (`--video-drl-reorder`, also rejected on the CPU path),
 cross-frame CDF carry (`--cdf-continuity`), `--svc-layers`, and the §7.8
-implicit reference lists (`--video-implicit-ref-map`; both paths emit §5.18.2
-explicit maps).  `--video-deblock` is wired on the default/B/temporal/RC paths,
+implicit reference lists (`--video-implicit-ref-map`; the GPU path emits
+§5.18.2 explicit maps, while the CPU path implements the implicit form — see
+`src/pipeline/video/README.md`).  `--video-deblock` is wired on the
+default/B/temporal/RC paths,
 but is rejected with multi-tile (the pinned decoder filters interior tile
 edges) and with the frame-type wrappers whose header writers do not signal
 `deblocking_filter_params()`.
@@ -563,9 +565,95 @@ reserved in `ensure_intra_buffers()` before the first call, and
   that matches the CPU reference.
 - The decision search (partition/stack/candidate compare/EOB) stays on the
   host; only pixels/transforms/reconstruction are device-resident.
-- Every decision that needs a score synchronises the stream. This is a
-  correctness-first milestone, not a throughput claim.
+- Every decision that needs a score synchronises the stream.  The per-leaf
+  round trips are the throughput ceiling; see "720p throughput" below.
 - The CUDA backend was validated on an RTX 3060 (sm_86): selftest, full gate,
   full-tree, forced inter-residual, 360p and 720p product parity all
   byte-identical with recon 0 diffs.  The emulation gate remains the no-GPU
   reference.
+
+## 720p throughput
+
+The GPU path is the product path, so the 1280x720 encode is also the
+cross-encoder throughput benchmark.  Two points are measured separately
+(`gate_gpu_throughput.sh`):
+
+| Point | Purpose | Gate |
+|---|---|---|
+| 256x144@30 QP150 (~30 kbps) | decision-policy calibration | CVVDP <= 0.05 JOD, bitrate <= 2 %, PSNR-Y <= 0.1 dB drift vs the CPU reference |
+| 1280x720 QP90, 60 frames | throughput | fps (best of N) plus the same drift row |
+
+The calibration clip is the benchmark clip scaled to 256x144 (exactly 1/5 of
+720p), so both rows describe the same content.  The GPU pipeline is a
+decision-identical mirror, so every drift row is 0 and the throughput
+optimizations below only change *how* the same decisions are executed.
+
+### Measured stage costs (RTX 3060, 720p, 60 frames, QP 90)
+
+Per-frame host wall time of each backend/orchestration stage (instrumented
+build, `AV2ENC_GPU_PROF=1`; the harness is not committed):
+
+| Stage | before | after |
+|---|---:|---:|
+| `inter_sse_batch` (candidate MC + SSE) | 44.7 ms | 22.4 ms |
+| `intra_candidate` (DC pred + TX/quant/inverse + recon) | 54.1 ms | 51.2 ms |
+| `me_batch` (one launch per frame) | 30.2 ms | 30.3 ms |
+| `mc_420` (winning prediction) | 14.8 ms | 9.8 ms |
+| `write_recon_420` | 4.0 ms | 2.3 ms |
+| `variance_costs` | 2.2 ms | 2.2 ms |
+| partition tree (host, `decide_partition`) | 19.2 ms | 8.1 ms |
+| entropy + syntax write (host) | 15.5 ms | 15.7 ms |
+
+Whole-frame fps and transfer counters for the same clip:
+
+| Metric | before | after |
+|---|---:|---:|
+| encode wall time (60 frames) | 12.02-12.21 s | 9.19-9.38 s |
+| fps | 4.95 | 6.53 |
+| kernel launches | 254,747 | 254,747 |
+| stream syncs | 184,947 | 92,254 |
+| host->device bytes | 238 MB | 238 MB |
+| device->host bytes | 974 MB | 360 MB |
+
+What is left is dominated by two things outside the orchestrator: the
+`forward_job_kernel` double-precision DCT (~24 ms/frame; one block per plane,
+so only three SMs are busy per leaf) and `me_search_kernel` (~30 ms/frame in
+one batched launch).  Further gains need those components to expose more
+intra-leaf parallelism, or a graph-captured per-leaf launch chain.
+
+### Optimizations that landed
+
+1. **Warp-parallel candidate SSE.**  `video_sse_kernel` scored one candidate
+   per thread, i.e. a 64x64 block summed 4096 samples serially (~50 us per
+   launch, the largest single kernel).  One warp per candidate with a shuffle
+   reduction is exact (integer sum) and costs ~2 us.
+2. **Pinned staging + one sync per leaf batch.**  Every per-leaf copy used
+   pageable host memory, where a D2H has to wait for the copy, so each level /
+   recon download drained the stream and the backend synced once per copy.  The
+   pinned staging ring (`av2enc::cuda::StagingBuffer` + a bump allocator that
+   is recycled only after a sync) makes uploads true async enqueues, batches the
+   3-6 copies of `mc_420` / the TX chain into one sync, and removes the sync
+   from `write_recon_420`/`write_recon_luma` (the bytes stay valid in pinned
+   memory until the next sync).  Syncs 184,947 -> 92,254.
+3. **Size-accurate TX result downloads.**  `tx_and_recon_planes` downloaded a
+   fixed 3 x 1024 levels + 3 x 4096 recon samples per leaf (24 KiB) regardless
+   of block size, i.e. 15 MB/frame for an average ~40x40 leaf.  Per-plane
+   coded sizes only: 974 MB -> 360 MB downloaded.
+4. **Partition node-set cache.**  `decide_partition` walked the CPU partition
+   tree twice per frame (discovery + real).  The node set is a pure function of
+   the coded geometry and the partition options, so it is discovered once per
+   sequence; the real pass also uses hash maps instead of `std::map`.
+   `decide_partition` 19.2 -> 8.1 ms/frame.
+
+### Benchmarks against other encoders
+
+Same box, same 60-frame 720p clip (RTX 3060 for `av2enc`, 28-core CPU for the
+software encoders).  Bitrate/quality are not matched here; the row exists to
+put the absolute fps number in context.
+
+| Encoder | setting | fps | bitrate |
+|---|---|---:|---:|
+| `av2enc --video --video-gpu` (before) | QP 90 | 4.95 | 6,635 kbps |
+| `av2enc --video --video-gpu` (after) | QP 90 | 6.53 | 6,635 kbps |
+| x264 | medium, CRF 18 | 99 | 739 kbps |
+| x264 | medium, CRF 23 | 96 | 369 kbps |

@@ -21,9 +21,11 @@ namespace {
 void usage() {
   std::fprintf(stderr,
                "usage: hbd_encode <input.y4m> <output.ivf> [recon.y4m] "
-               "[--q N]\n"
+               "[--q N] [--cdef [N]] [--ccso] [--deblock]\n"
                "  input: 8-bit C420 or 10-bit C420p10 Y4M (first frame)\n"
-               "  --q:   raw base_q_idx (1..303; MaxQ at 10-bit)\n");
+               "  --q:   raw base_q_idx (1..303; MaxQ at 10-bit)\n"
+               "  --cdef: §7.18 CDEF (optional CdefStrengths 1..8)\n"
+               "  --ccso: §7.19 CCSO (band-offset + edge-class fit)\n");
 }
 
 bool write_recon_y4m(const std::string& path, const av2enc::hbd::HbdResult& r,
@@ -42,6 +44,10 @@ bool write_recon_y4m(const std::string& path, const av2enc::hbd::HbdResult& r,
 int main(int argc, char** argv) {
   std::vector<std::string> positional;
   av2enc::hbd::HbdOptions options;
+  auto add_cdef = [&options]() {
+    options.enable_cdef = true;
+    options.cdef_num_strengths = 4;
+  };
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--q") == 0 && i + 1 < argc) {
       const char* text = argv[++i];
@@ -56,6 +62,20 @@ int main(int argc, char** argv) {
         return 2;
       }
       options.base_q_idx = static_cast<std::uint16_t>(parsed);
+    } else if (std::strcmp(argv[i], "--cdef") == 0) {
+      add_cdef();
+      if (i + 1 < argc && argv[i + 1][0] != '-') {
+        char* end = nullptr;
+        const long n = std::strtol(argv[i + 1], &end, 10);
+        if (end != argv[i + 1] && *end == '\0' && n >= 1 && n <= 8) {
+          options.cdef_num_strengths = static_cast<int>(n);
+          ++i;
+        }
+      }
+    } else if (std::strcmp(argv[i], "--ccso") == 0) {
+      options.enable_ccso = true;
+    } else if (std::strcmp(argv[i], "--deblock") == 0) {
+      options.enable_deblock = true;
     } else if (std::strcmp(argv[i], "--help") == 0 ||
                std::strcmp(argv[i], "-h") == 0) {
       usage();

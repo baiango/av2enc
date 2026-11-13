@@ -25,6 +25,7 @@ DAV2D="${DAV2D:-}"
 INTRA_ONLY=0
 TX_ONLY=0
 BAWP_ONLY=0
+ONLY=""
 CFL_ONLY=0
 MHCCP_ONLY=0
 PCW_ONLY=0
@@ -48,6 +49,9 @@ while [[ $# -gt 0 ]]; do
     --mhccp-only) MHCCP_ONLY=1; shift ;;
     --pcw-only) PCW_ONLY=1; shift ;;
     --qm-only) QM_ONLY=1; shift ;;
+    # Run only the cases whose label contains this substring.  Keeps a single
+    # regression check cheap instead of re-encoding the whole product matrix.
+    --only) ONLY="$2"; shift 2 ;;
     -h|--help) sed -n '2,22p' "$0"; exit 0 ;;    *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -314,6 +318,7 @@ run_case_on() {
   local clip="$1"
   local label="$2"
   shift 2
+  if [[ -n "$ONLY" && "$label" != *"$ONLY"* ]]; then return 0; fi
   local cpu="$TMP/${label}.cpu.ivf"
   local gpu="$TMP/${label}.gpu.ivf"
   local cpu_recon="$TMP/${label}.cpu.recon.y4m"
@@ -634,10 +639,10 @@ FRAMES="$_saved_frames"
 # of the two references, so the opt-in masked candidate is selected (asserted
 # from the CPU trace) and must be byte-identical on both backends.  These run
 # at the caller's frame count (the 4- and 8-frame parity gates).
-EXPECT_TRACE="comp=1 ct=0" run_case_on "$CLIP_WEDGE" compound-wedge \
+EXPECT_TRACE="comp=1 .*ct=0" run_case_on "$CLIP_WEDGE" compound-wedge \
   --video-refs 2 --video-compound --video-compound-wedge --video-force-single \
   --video-trace
-EXPECT_TRACE="comp=1 ct=1" run_case_on "$CLIP_DIFF" compound-diffwtd \
+EXPECT_TRACE="comp=1 .*ct=1" run_case_on "$CLIP_DIFF" compound-diffwtd \
   --video-refs 2 --video-compound --video-compound-diffwtd --video-force-single \
   --video-trace
 # §5.18.9 global motion + §7.13.3.19/.20 GLOBALMV warp.  The panned clip gives
@@ -817,10 +822,8 @@ expect_reject_video() {
 
 # The frame-type wrapper headers still own their own tx_mode_select bit.
 expect_reject_video tx-search-long-term --video-tx-search --video-tx-search --video-long-term
-# Morphological prediction and OPFL/refine-MV decode through their component
-# gates but are not reachable from the M2 inter product path; both carriers
-# are named usage errors, not silent no-ops.
-expect_reject_video morph --video-morph --video-morph
+# OPFL decodes through its component gate but is not reachable from the M2
+# inter product path; it stays a named usage error, not a silent no-op.
 expect_reject_video opfl --video-opfl --video-opfl
 
 echo "gate_video_gpu: PASS"

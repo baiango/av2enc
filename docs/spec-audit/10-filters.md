@@ -212,3 +212,31 @@ Interpretation:
   multi-class LR, temporal frame-filter prediction and 8-bit-only scope.
 * 7 rules are absent: all of §7.16, deblock BRU, CCSO temporal reuse, and
   CCSO reference use.
+
+## Update 2026-11-13 — 10-bit and non-4:2:0 product filters
+
+The CPU format still writer (`src/formats/high_bitdepth/`, `--still --bit-depth
+10 --chroma 420|422|444|400`) now runs the in-loop filter chain at 10 bits:
+
+| Tool | Implementation | Gate |
+|---|---|---|
+| §7.17 deblock | `deblock_frame16` (already landed) | `format_gate.sh` |
+| §7.18 CDEF | `cdef_core.h` templated + `cdef_frame16`; `hbd_cdef.h` plan | `format_gate.sh` `10bit_*_cdef_*`, `hbd_test` |
+| §7.19 CCSO | `ccso_core.h` templated + `ccso_frame16`; `hbd_ccso.h` band/edge fit | `format_gate.sh` `10bit_*_ccso_*`, `hbd_test` |
+| §7.20 Wiener NS | `wiener_core.h` templated + `loop_restoration_frame16`; `hbd_lr.h` per-unit fit | `format_gate.sh` `10bit_*_wiener*`, `hbd_test` |
+| §7.20 PC-Wiener | §7.20.4 fixed bank, per-unit on/off (`hbd_lr.h`) | `format_gate.sh` `10bit_*_pc_wiener*` |
+| §7.20.5 GDF | `gdf_decision`/`tables/gdf` (already bit-depth generic) | `format_gate.sh` `10bit_*_gdf*` |
+
+`src/formats/high_bitdepth/gate_10bit_filters.sh` runs the full matrix: every
+product chroma format at 64x64 and 640x360, q90 and q303, each filter alone
+and the whole chain, requiring `dav2d --strict 1` and a 0-LSB decoder/recon
+match; the all-off stream is byte-stable across runs.
+
+Remaining gaps kept **rejected by name**:
+
+* §7.20 chroma LR at 4:2:2/4:4:4 (1-LSB stripe-boundary diffs; repro in
+  `docs/negative-results.md`).  Luma Wiener, PC-Wiener and GDF are exact.
+* The `--video --bit-depth 10` / `--video --chroma` writer still rejects every
+  loop-filter flag: its own header/tile writer has no filter plan or syntax
+  hooks.  The 8-bit 4:2:0 M2 video chain is unchanged.
+* The 8-bit non-4:2:0 still writer (`src/formats/chroma/`) has no filter stage.

@@ -668,3 +668,23 @@ Workflow:
 | `src/core/telemetry/profile_demo.cpp` | Standalone nested-scope and optional CUDA-kernel demo with output verification. |
 | `src/core/telemetry/build_demo.sh` | g++/nvcc demo build without CMake. |
 | `docs/profiling.md` | This document. |
+
+## Pageable vs pinned transfers (measured 2026-11-14, RTX 3060)
+
+`cudaMemcpyAsync` on a **pageable** `std::vector` is not asynchronous: a
+device-to-host copy has to wait for the bytes (the driver cannot return before
+the staging copy lands), so every "async" download drains the stream.  A
+per-block decision loop then pays a full pipeline drain per copy — on the M2
+720p path that was 184,947 syncs and 974 MB of host round trips for 60 frames,
+62.6 % of the CUDA API time in `cudaMemcpyAsync`.
+
+The fix is the sanctioned pinned staging provider (`av2enc::cuda::StagingBuffer`
+in `src/cuda/context.cpp`): stage through pinned memory, queue the copy, and
+collect several results behind **one** `cudaStreamSynchronize`.  Also size the
+copies from the coded block, not from the maximum block (24 KiB per leaf even
+for an 8x8 block is pure latency).  Same decisions, 4.95 -> 6.53 fps at 720p.
+
+For kernel cost, the same rule applies to tiny grids: a per-candidate SSE that
+scored one block per thread (4096 serial samples for a 64x64 candidate, ~50 us)
+becomes ~2 us with one warp per candidate and a shuffle reduction (integer
+sums are associative, so the result is unchanged).

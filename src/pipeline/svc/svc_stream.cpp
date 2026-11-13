@@ -4,6 +4,7 @@
 #include "pipeline/svc/svc_pipeline.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -85,19 +86,61 @@ bool scale_frame(const video::VideoInputFrame& src, int dst_w, int dst_h,
 struct FrameObu {
   ObuType type = ObuType::kRegularTileGroup;
   std::vector<std::uint8_t> payload;
+  std::uint8_t tlayer_id = 0;
+  bool keyframe = false;
 };
 
 struct LayerEncoded {
   int width = 0;
   int height = 0;
   std::vector<std::uint8_t> sequence_payload;
-  std::vector<FrameObu> frames;
-  std::vector<video::VideoReconFrame> recon;
+  std::vector<FrameObu> frames;  // coding order
+  std::vector<video::VideoReconFrame> recon;  // display order
 };
 
 void append_obu(std::vector<std::uint8_t>& out,
                 const std::vector<std::uint8_t>& obu) {
   out.insert(out.end(), obu.begin(), obu.end());
+}
+
+// Parses one single-layer temporal unit (TD, [SEQ], one frame) and stores the
+// frame.  `expect_sequence_header` is true for the layer's first unit.
+bool parse_layer_unit(const std::vector<std::uint8_t>& unit,
+                      bool expect_sequence_header, bool allow_sequence_header,
+                      LayerEncoded& layer, std::string& error) {
+  std::vector<ParsedObu> obus;
+  if (!parse_obus(unit, obus, error)) return false;
+  bool saw_sequence = false;
+  int frames_found = 0;
+  for (const ParsedObu& obu : obus) {
+    if (obu.header.type == ObuType::kTemporalDelimiter) continue;
+    if (obu.header.type == ObuType::kSequenceHeader) {
+      if (!allow_sequence_header) {
+        return fail(error, "spatial layer repeated its sequence header "
+                           "mid-stream");
+      }
+      layer.sequence_payload = obu.payload;
+      saw_sequence = true;
+      continue;
+    }
+    if (!is_frame_obu(obu.header.type)) {
+      return fail(error, "layer unit carries an unexpected OBU");
+    }
+    FrameObu frame;
+    frame.type = obu.header.type;
+    frame.payload = obu.payload;
+    frame.tlayer_id = obu.header.tlayer_id;
+    frame.keyframe = obu.header.type == ObuType::kClosedLoopKey;
+    layer.frames.push_back(std::move(frame));
+    ++frames_found;
+  }
+  if (frames_found != 1) {
+    return fail(error, "layer unit must contain exactly one frame");
+  }
+  if (expect_sequence_header && !saw_sequence) {
+    return fail(error, "layer emitted no sequence header");
+  }
+  return true;
 }
 
 }  // namespace
@@ -149,17 +192,42 @@ bool encode_svc_sequence(std::span<const video::VideoInputFrame> frames,
 
   LayerPlan plan;
   if (!build_layer_plan(options.config, plan, error)) return false;
-  if (options.config.embedded_layers != 1 ||
-      options.config.temporal_layers != 1) {
+
+  const int embedded_count = plan.config.embedded_layers;
+  const int temporal_count = plan.config.temporal_layers;
+  if (embedded_count > 3) {
+    // Annex A caps seq_max_mlayer_cnt per profile: 1 for Main_420_10_IP0,
+    // 2 for IP1, 3 for IP2.  The SVC 8-bit 4:2:0 path raises the profile with
+    // the ladder, so three embedded layers is the defined maximum.
     return fail(error,
-                "SVC encode currently emits one m0/t0 frame per spatial layer "
-                "per temporal unit; --svc-embedded/--svc-temporal > 1 need the "
-                "GOP scheduler (INTEGRATION.md step 4, order_frames)");
+                "--svc-embedded 4..8 exceeds the Annex A profile limit for "
+                "8-bit 4:2:0 (Main_420_10_IP2 allows 3 embedded layers)");
+  }
+  if (embedded_count > 1 && temporal_count > 1) {
+    return fail(error,
+                "--svc-embedded > 1 does not compose with --svc-temporal > 1: "
+                "the refinement sequence would need a cross-mlayer reference "
+                "schedule inside the hierarchical GOP; encode the embedded "
+                "ladder with --svc-temporal 1");
+  }
+  // Hierarchical-P closed GOP: T temporal layers are carried by 1 << T
+  // pictures (tlayers max_tlayer_id = T-1).  --svc-temporal 1 is the flat
+  // key + P chain.
+  const std::size_t temporal_units =
+      temporal_count == 1 ? frames.size()
+                          : (std::size_t{1} << temporal_count);
+  if (temporal_count > 1 && frames.size() != temporal_units) {
+    std::ostringstream text;
+    text << "--svc-temporal " << temporal_count << " codes one closed GOP of "
+         << temporal_units << " frames; the input has " << frames.size();
+    return fail(error, text.str());
   }
 
   const std::size_t layer_count = plan.config.spatial_layers.size();
   std::vector<std::vector<OwnedFrame>> scaled(layer_count);
-  std::vector<LayerEncoded> encoded(layer_count);
+  // encoded[x][m]
+  std::vector<std::vector<LayerEncoded>> encoded(
+      layer_count, std::vector<LayerEncoded>(embedded_count));
   for (std::size_t x = 0; x < layer_count; ++x) {
     const SpatialLayerSpec& spec = plan.config.spatial_layers[x];
     if (spec.width % 8 != 0 || spec.height % 8 != 0) {
@@ -193,78 +261,171 @@ bool encode_svc_sequence(std::span<const video::VideoInputFrame> frames,
     layer_options.max_tlayer_id = plan.sequences[x].max_tlayer_id;
     layer_options.max_mlayer_id = plan.sequences[x].max_mlayer_id;
     layer_options.seq_max_mlayer_cnt = plan.sequences[x].seq_max_mlayer_cnt;
+    if (temporal_count > 1) {
+      // The product hierarchical-P scheduler owns the coding order and the
+      // per-OBU tlayer id; SVC only regroups the units into temporal units.
+      layer_options.temporal_layers = static_cast<int>(temporal_units);
+      layer_options.tlayer_drop = -1;
+    }
+    if (embedded_count > 1) {
+      // One sequence header per xlayer: NumRefFrames must cover the highest
+      // slot any embedded layer refreshes or references.
+      layer_options.num_ref_frames = std::max(4, embedded_count);
+      // Annex A: profile 0 allows one embedded layer, IP1 two, IP2 three.
+      layer_options.seq_profile_override = embedded_count - 1;
+      // The base chain pins slot 0; refinements own slots 1..M-1.  Without
+      // this the rotating base slot collides with a refinement slot and an m0
+      // frame would reference a slot holding m1 (§6.17.2 rejection).
+      layer_options.fixed_write_slot = 0;
+    }
 
-    video::VideoSequenceResult sequence;
-    if (!video::encode_video_sequence(layer_frames, layer_options, sequence,
-                                      error)) {
-      std::ostringstream text;
-      text << "spatial layer x" << static_cast<int>(spec.xlayer_id)
-           << " encode failed: " << error;
-      return fail(error, text.str());
-    }
-    if (sequence.units.size() != frames.size()) {
-      return fail(error, "spatial layer emitted an unexpected temporal-unit "
-                         "count");
-    }
+    for (int m = 0; m < embedded_count; ++m) {
+      LayerEncoded& layer = encoded[x][static_cast<std::size_t>(m)];
+      layer.width = spec.width;
+      layer.height = spec.height;
 
-    LayerEncoded& layer = encoded[x];
-    layer.width = spec.width;
-    layer.height = spec.height;
-    layer.frames.reserve(sequence.units.size());
-    for (std::size_t unit = 0; unit < sequence.units.size(); ++unit) {
-      std::vector<ParsedObu> obus;
-      if (!parse_obus(sequence.units[unit], obus, error)) {
-        return fail(error, "spatial layer " + std::to_string(x) + ": " + error);
-      }
-      std::size_t frames_found = 0;
-      for (const ParsedObu& obu : obus) {
-        if (obu.header.type == ObuType::kTemporalDelimiter) continue;
-        if (obu.header.type == ObuType::kSequenceHeader) {
-          if (unit != 0) {
-            return fail(error,
-                        "spatial layer repeated its sequence header mid-stream");
-          }
-          layer.sequence_payload = obu.payload;
-          continue;
+      video::VideoSequenceResult sequence;
+      if (m == 0) {
+        const int qp = std::min(
+            255, static_cast<int>(options.video.base_q_idx) +
+                     (embedded_count - 1) * options.embedded_qp_step);
+        layer_options.base_q_idx = static_cast<std::uint16_t>(qp);
+        if (!video::encode_video_sequence(layer_frames, layer_options,
+                                          sequence, error)) {
+          std::ostringstream text;
+          text << "spatial layer x" << static_cast<int>(spec.xlayer_id)
+               << " m0 encode failed: " << error;
+          return fail(error, text.str());
         }
-        if (!is_frame_obu(obu.header.type)) {
-          return fail(error, "spatial layer unit carries an unexpected OBU");
+      } else {
+        // §5.4.1 MLayerDependencyMap / §6.17.2: a higher embedded layer may
+        // predict from the lower one.  The refinement sequence references the
+        // previous mlayer's decoded picture at the same display index and
+        // refreshes its own slot, leaving the lower layer's slot intact.
+        const LayerEncoded& below = encoded[x][static_cast<std::size_t>(m - 1)];
+        if (below.recon.size() != frames.size()) {
+          return fail(error, "refinement source has an unexpected picture "
+                             "count");
         }
-        FrameObu frame;
-        frame.type = obu.header.type;
-        frame.payload = obu.payload;
-        layer.frames.push_back(std::move(frame));
-        ++frames_found;
+        if (temporal_count > 1) {
+          return fail(error, "embedded refinement needs --svc-temporal 1");
+        }
+        const int qp = std::min(
+            255, static_cast<int>(options.video.base_q_idx) +
+                     (embedded_count - 1 - m) * options.embedded_qp_step);
+        video::VideoOptions refine_options = layer_options;
+        refine_options.base_q_idx = static_cast<std::uint16_t>(qp);
+        refine_options.temporal_layers = 0;
+        refine_options.tlayer_drop = -1;
+        video::RefinementOptions refinement;
+        refinement.reference_slot = m - 1;
+        refinement.refresh_slot = m;
+        refinement.num_ref_frames = std::max(4, embedded_count);
+        if (!video::encode_video_refinement_sequence(
+                layer_frames, below.recon, refine_options, refinement,
+                sequence, error)) {
+          std::ostringstream text;
+          text << "spatial layer x" << static_cast<int>(spec.xlayer_id)
+               << " m" << m << " refinement failed: " << error;
+          return fail(error, text.str());
+        }
       }
-      if (frames_found != 1) {
-        return fail(error, "spatial layer unit must contain exactly one frame");
+      if (sequence.units.size() != frames.size()) {
+        return fail(error, "layer emitted an unexpected temporal-unit count");
       }
-      if (unit == 0 && layer.sequence_payload.empty()) {
-        return fail(error, "spatial layer emitted no sequence header");
+      layer.frames.reserve(sequence.units.size());
+      for (std::size_t unit = 0; unit < sequence.units.size(); ++unit) {
+        if (!parse_layer_unit(sequence.units[unit], unit == 0, unit == 0, layer,
+                              error)) {
+          return fail(error, "spatial layer " + std::to_string(x) + " m" +
+                                 std::to_string(m) + ": " + error);
+        }
+      }
+      layer.recon = std::move(sequence.recon);
+      if (temporal_count == 1) {
+        // The flat chain is coded in display order, so the refinement encoder
+        // can consume these pictures directly.
+        if (layer.frames.size() != frames.size() ||
+            layer.recon.size() != frames.size()) {
+          return fail(error, "flat layer emitted an inconsistent frame count");
+        }
       }
     }
-    layer.recon = std::move(sequence.recon);
   }
 
-  // §7.3.6 / §7.3.7 order: TD, [LCR, OPS], then xlayer ascending with the
-  // sequence header in the first temporal unit only.
+  // §7.3.6 / §7.3.7 schedule.  For the flat chain every configured (x, m)
+  // layer emits one output unit per temporal unit.  A hierarchical GOP emits
+  // one frame per xlayer per coding position, carrying that frame's tlayer id.
+  std::vector<FrameRequest> requests;
+  requests.reserve(layer_count * static_cast<std::size_t>(embedded_count) *
+                   temporal_units);
+  ReferencePolicy policy;
+  std::vector<FrameReference> reference_checks;
+  for (std::size_t unit = 0; unit < temporal_units; ++unit) {
+    for (std::size_t x = 0; x < layer_count; ++x) {
+      const std::uint8_t xid = plan.config.spatial_layers[x].xlayer_id;
+      if (temporal_count > 1) {
+        const FrameObu& frame = encoded[x][0].frames[unit];
+        FrameRequest request;
+        request.temporal_unit = static_cast<int>(unit);
+        request.layer.xlayer_id = xid;
+        request.layer.mlayer_id = 0;
+        request.layer.tlayer_id = frame.tlayer_id;
+        request.role = frame.keyframe ? FrameRole::kIntra : FrameRole::kInter;
+        request.frame_index = static_cast<int>(unit);
+        request.output = true;
+        requests.push_back(request);
+        continue;
+      }
+      for (int m = 0; m < embedded_count; ++m) {
+        FrameRequest request;
+        request.temporal_unit = static_cast<int>(unit);
+        request.layer.xlayer_id = xid;
+        request.layer.mlayer_id = static_cast<std::uint8_t>(m);
+        request.layer.tlayer_id = 0;
+        request.role = encoded[x][static_cast<std::size_t>(m)]
+                           .frames[unit]
+                           .keyframe
+                    ? FrameRole::kIntra
+                    : FrameRole::kInter;
+        request.frame_index = static_cast<int>(unit);
+        request.output = true;
+        requests.push_back(request);
+        if (m > 0) {
+          // Same-TU cross-mlayer reference: emitted in ascending mlayer order,
+          // so the lower layer's picture is decoded first.
+          reference_checks.push_back(FrameReference{
+              static_cast<int>(unit), request.layer, static_cast<int>(unit),
+              layers::LayerId{xid, static_cast<std::uint8_t>(m - 1), 0}});
+        }
+      }
+    }
+  }
   std::vector<Emission> order;
-  if (!plan_emission_order(plan, static_cast<int>(frames.size()), order,
-                           error)) {
+  if (!order_frames(plan, requests, order, error)) return false;
+  if (!validate_frame_references(plan, policy, reference_checks, order,
+                                 error)) {
     return false;
   }
+
   std::vector<std::uint8_t> lcr_obu;
   std::vector<std::uint8_t> ops_obu;
   if (!make_layer_config_record_obu(plan, lcr_obu, error)) return false;
   if (!make_operating_point_set_obu(plan, ops_obu, error)) return false;
 
+  // §7.3.6 order: TD, global LCR/OPS, then xlayer ascending.  Each layer's
+  // sequence header is the first OBU of its layer unit in the first TU, which
+  // is also the CLK's TU (the only CLK we emit per xlayer).
   std::vector<std::vector<std::uint8_t>> units;
   std::vector<std::uint32_t> unit_payload_bytes;
+  int current_unit = -1;
+  std::array<bool, layers::kExtendedLayerCount> sequence_written{};
   for (const Emission& emission : order) {
     switch (emission.kind) {
       case EmissionKind::kTemporalDelimiter: {
         units.emplace_back();
         unit_payload_bytes.push_back(0);
+        current_unit = emission.temporal_unit;
         ObuHeader header;
         header.type = ObuType::kTemporalDelimiter;
         header.xlayer_id = static_cast<std::uint8_t>(layers::kGlobalXLayerId);
@@ -273,39 +434,44 @@ bool encode_svc_sequence(std::span<const video::VideoInputFrame> frames,
           return false;
         }
         append_obu(units.back(), obu);
+        if (current_unit == 0) {
+          append_obu(units.back(), lcr_obu);
+          append_obu(units.back(), ops_obu);
+        }
         break;
       }
       case EmissionKind::kLayerConfigRecord:
-        append_obu(units.back(), lcr_obu);
-        break;
       case EmissionKind::kOperatingPointSet:
-        append_obu(units.back(), ops_obu);
-        break;
-      case EmissionKind::kSequenceHeader: {
-        const std::size_t x = emission.layer.xlayer_id;
-        if (x >= encoded.size() || encoded[x].sequence_payload.empty()) {
-          return fail(error, "emission order names a layer with no sequence "
-                             "header");
-        }
-        ObuHeader header;
-        header.type = ObuType::kSequenceHeader;
-        header.xlayer_id = static_cast<std::uint8_t>(x);
-        header.mlayer_id = 0;
-        header.tlayer_id = 0;
-        std::vector<std::uint8_t> obu;
-        if (!frame_obu(header, encoded[x].sequence_payload, obu, error)) {
-          return false;
-        }
-        append_obu(units.back(), obu);
-        break;
-      }
+      case EmissionKind::kSequenceHeader:
+        return fail(error, "frame schedule must own the global OBU placement");
       case EmissionKind::kFrame: {
         const std::size_t x = emission.layer.xlayer_id;
-        const std::size_t tu = static_cast<std::size_t>(emission.temporal_unit);
-        if (x >= encoded.size() || tu >= encoded[x].frames.size()) {
+        const std::size_t m = emission.layer.mlayer_id;
+        const std::size_t frame_index =
+            static_cast<std::size_t>(emission.frame_index);
+        if (x >= encoded.size() || m >= encoded[x].size() ||
+            frame_index >= encoded[x][m].frames.size()) {
           return fail(error, "emission order names an absent frame");
         }
-        const FrameObu& frame = encoded[x].frames[tu];
+        if (current_unit == 0 && !sequence_written[x]) {
+          if (encoded[x][m].sequence_payload.empty()) {
+            return fail(error,
+                        "layer has no sequence header for the first TU");
+          }
+          ObuHeader sequence_header;
+          sequence_header.type = ObuType::kSequenceHeader;
+          sequence_header.xlayer_id = static_cast<std::uint8_t>(x);
+          sequence_header.mlayer_id = 0;
+          sequence_header.tlayer_id = 0;
+          std::vector<std::uint8_t> obu;
+          if (!frame_obu(sequence_header, encoded[x][m].sequence_payload, obu,
+                         error)) {
+            return false;
+          }
+          append_obu(units.back(), obu);
+          sequence_written[x] = true;
+        }
+        const FrameObu& frame = encoded[x][m].frames[frame_index];
         ObuHeader header;
         header.type = frame.type;
         header.xlayer_id = static_cast<std::uint8_t>(x);
@@ -364,9 +530,14 @@ bool encode_svc_sequence(std::span<const video::VideoInputFrame> frames,
   for (std::size_t x = 0; x < layer_count; ++x) {
     SvcLayerOutput& out = result.layers[x];
     out.xlayer_id = plan.config.spatial_layers[x].xlayer_id;
-    out.width = encoded[x].width;
-    out.height = encoded[x].height;
-    out.recon = std::move(encoded[x].recon);
+    out.width = encoded[x][0].width;
+    out.height = encoded[x][0].height;
+    out.mlayer_recon.resize(embedded_count);
+    for (int m = 0; m < embedded_count; ++m) {
+      out.mlayer_recon[static_cast<std::size_t>(m)] =
+          std::move(encoded[x][static_cast<std::size_t>(m)].recon);
+    }
+    out.recon = std::move(out.mlayer_recon.back());
   }
   return true;
 }

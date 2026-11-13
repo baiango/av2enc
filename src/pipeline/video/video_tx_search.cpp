@@ -294,6 +294,7 @@ bool intra_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
   for (int i = 0; i < set.count; ++i) {
     const int type = static_cast<int>(set.candidates[i].type);
     if (!options.include_1d_types && type >= 10) continue;
+    if (type == 9 && !options.allow_idtx) continue;  // §5.4.8
     TypeEntry e;
     e.type = type;
     e.codes_type = set.candidates[i].symbol >= 0 ? 1 : 0;

@@ -24,6 +24,7 @@
 #include "formats/high_bitdepth/hbd_still.h"
 #include "formats/format.h"
 #include "pipeline/still/high_bitdepth/high_bitdepth_still.h"
+#include "codec/filters/loop_restoration/restoration.h"
 
 namespace {
 
@@ -583,6 +584,141 @@ void test_high_qindex_encode() {
   expect(r90.frame != r91.frame, "q=90 and q=91 streams differ");
 }
 
+void test_ccso_16bit() {
+  namespace rest = av2enc::restoration;
+  // 32x32 10-bit luma, one 64x64 CCSO unit.  The left half is band 0 and the
+  // right half band 1 (max_band_log2 = 1); band-only offsets +3 / -3.
+  constexpr int kSize = 32;
+  std::vector<std::uint16_t> curr(static_cast<std::size_t>(kSize) * kSize);
+  std::vector<std::uint16_t> cdef(curr.size());
+  for (int y = 0; y < kSize; ++y) {
+    for (int x = 0; x < kSize; ++x) {
+      const std::uint16_t value = x < kSize / 2 ? 100 : 900;
+      curr[static_cast<std::size_t>(y) * kSize + x] = value;
+      cdef[static_cast<std::size_t>(y) * kSize + x] = value;
+    }
+  }
+  // Clipping: the top-left sample saturates at 1023 after +3.
+  cdef[0] = 1022;
+
+  rest::RestorationFrame16 frame{};
+  frame.curr[0].data = curr.data();
+  frame.curr[0].stride = kSize;
+  frame.cdef[0].data = cdef.data();
+  frame.cdef[0].stride = kSize;
+  frame.mi_cols = kSize / 4;
+  frame.mi_rows = kSize / 4;
+  frame.subsampling_x = 0;
+  frame.subsampling_y = 0;
+  frame.bit_depth = 10;
+  frame.num_planes = 1;
+
+  rest::CcsoFrameParams params;
+  params.ccso_luma_size_log2 = 6;
+  rest::CcsoParams& plane = params.plane[0];
+  plane.enabled = true;
+  plane.bo_only = true;
+  plane.scale_idx = 0;
+  plane.max_band_log2 = 1;
+  const std::uint8_t idx[2] = {3, 4};  // +3, -3
+  expect(rest::ccso_set_offsets(plane, idx, 2), "ccso 10-bit offset table");
+  std::uint8_t blks[1] = {1};
+  params.blks[0] = blks;
+  params.blk_cols[0] = 1;
+  params.blk_rows[0] = 1;
+
+  expect(rest::ccso_frame16(frame, params) == rest::RestorationStatus::kOk,
+         "ccso 10-bit frame applies");
+  expect_int(cdef[0], 1023, "ccso 10-bit positive clip");
+  expect_int(cdef[1], 103, "ccso 10-bit band-0 offset");
+  expect_int(cdef[kSize - 1], 897, "ccso 10-bit band-1 offset");
+
+  // Chroma-form geometry: the same band source is luma at x << sub_x, so a
+  // 4:2:2 plane must still use the full luma extent.
+  std::vector<std::uint16_t> cdef_u(static_cast<std::size_t>(16) * kSize);
+  for (std::size_t i = 0; i < cdef_u.size(); ++i) cdef_u[i] = 500;
+  frame.num_planes = 2;
+  frame.subsampling_x = 1;
+  frame.subsampling_y = 0;
+  frame.curr[1].data = curr.data();
+  frame.curr[1].stride = kSize;
+  frame.cdef[1].data = cdef_u.data();
+  frame.cdef[1].stride = 16;
+  rest::CcsoParams& uv = params.plane[1];
+  uv.enabled = true;
+  uv.bo_only = true;
+  uv.scale_idx = 0;
+  uv.max_band_log2 = 1;
+  expect(rest::ccso_set_offsets(uv, idx, 2), "ccso 4:2:2 offset table");
+  std::uint8_t blks_u[1] = {1};
+  params.blks[1] = blks_u;
+  params.blk_cols[1] = 1;
+  params.blk_rows[1] = 1;
+  expect(rest::ccso_frame16(frame, params) == rest::RestorationStatus::kOk,
+         "ccso 4:2:2 frame applies");
+  expect_int(cdef_u[0], 503, "ccso 4:2:2 band-0 luma-coordinate offset");
+  expect_int(cdef_u[15], 497, "ccso 4:2:2 band-1 luma-coordinate offset");
+}
+
+void test_lr_16bit() {
+  namespace rest = av2enc::restoration;
+  // 8x8 10-bit luma, identity Wiener NS filter (all coefficients zero), so
+  // LrFrame must equal CdefFrame with the 10-bit clip.
+  constexpr int kSize = 8;
+  std::vector<std::uint16_t> curr(static_cast<std::size_t>(kSize) * kSize);
+  std::vector<std::uint16_t> cdef(curr.size());
+  std::vector<std::uint16_t> lr(curr.size(), 0);
+  for (int y = 0; y < kSize; ++y) {
+    for (int x = 0; x < kSize; ++x) {
+      const std::uint16_t v = static_cast<std::uint16_t>(100 + x * 7 + y * 13);
+      curr[static_cast<std::size_t>(y) * kSize + x] = v;
+      cdef[static_cast<std::size_t>(y) * kSize + x] = v;
+    }
+  }
+  rest::RestorationFrame16 frame{};
+  frame.curr[0].data = curr.data();
+  frame.curr[0].stride = kSize;
+  frame.cdef[0].data = cdef.data();
+  frame.cdef[0].stride = kSize;
+  frame.lr[0].data = lr.data();
+  frame.lr[0].stride = kSize;
+  frame.mi_cols = 2;
+  frame.mi_rows = 2;
+  frame.subsampling_x = 1;
+  frame.subsampling_y = 1;
+  frame.bit_depth = 10;
+  frame.num_planes = 1;
+
+  rest::LoopRestorationParams params;
+  params.frame_type[0] = rest::kRestoreWienerNs;
+  params.unit_size[0] = 64;
+  std::uint8_t unit_type[1] = {rest::kRestoreWienerNs};
+  params.unit_type[0] = unit_type;
+  params.unit_rows[0] = 1;
+  params.unit_cols[0] = 1;
+  std::int16_t coeffs[rest::kWienerNsCoeffStride] = {};
+  params.unit_coeffs[0] = coeffs;
+  expect(rest::loop_restoration_frame16(frame, params) ==
+             rest::RestorationStatus::kOk,
+         "10-bit Wiener identity applies");
+  bool identity = true;
+  for (int i = 0; i < kSize * kSize; ++i) {
+    identity = identity && lr[static_cast<std::size_t>(i)] ==
+                                cdef[static_cast<std::size_t>(i)];
+  }
+  expect(identity, "10-bit Wiener identity preserves samples");
+
+  // A non-zero tap keeps the 10-bit Clip1 range: coefficient +4 on the tap
+  // above, plus a bright CdefFrame sample must clip at 1023.
+  std::fill(cdef.begin(), cdef.end(), 1023);
+  coeffs[0] = 4;
+  expect(rest::loop_restoration_frame16(frame, params) ==
+             rest::RestorationStatus::kOk,
+         "10-bit Wiener coefficient applies");
+  expect_int(lr[static_cast<std::size_t>(4) * kSize + 4], 1023,
+             "10-bit Wiener clips at 1023");
+}
+
 }  // namespace
 
 int main() {
@@ -593,6 +729,8 @@ int main() {
   test_header_bits();
   test_still_encode();
   test_chroma_formats();
+  test_ccso_16bit();
+  test_lr_16bit();
   test_high_qindex_encode();
 
   if (failures == 0) {

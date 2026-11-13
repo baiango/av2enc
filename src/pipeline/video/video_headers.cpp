@@ -1,6 +1,9 @@
 #include "pipeline/video/video_headers.h"
 
 #include "core/bitstream/basic_headers.h"
+#if defined(AV2ENC_VIDEO_DELTAQ)
+#include "codec/entropy/deltaq/video/video_deltaq.h"
+#endif
 #if defined(AV2ENC_VIDEO_GME)
 #include "codec/inter/gme/gme_syntax.h"
 #endif
@@ -9,6 +12,7 @@
 #include "codec/transform/qm/qm.h"
 #include "codec/filters/gdf/gdf_syntax.h"
 #include "codec/inter/tip/tip_signalling.h"
+#include "pipeline/grain/film_grain_syntax.h"
 #include "pipeline/video/post/loop_filters.h"
 
 #include <cassert>
@@ -116,7 +120,9 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   const int depth_idc = fmt::bit_depth_idc(c.depth);
   const fmt::Format header_format{c.max_frame_width, c.max_frame_height,
                                   c.chroma, c.depth};
-  const int profile = fmt::profile_idc(header_format);
+  const int profile = c.seq_profile_override >= 0
+                          ? c.seq_profile_override
+                          : fmt::profile_idc(header_format);
   assert(chroma_idc >= 0);
   assert(depth_idc >= 0);  // 12-bit is not signalable
   assert(profile >= 0);
@@ -167,8 +173,14 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(c.decoder_model_info_present);
   if (c.decoder_model_info_present) {
     writer.put_bits(c.num_units_in_decoding_tick, 32U);
-    // §5.4.13 nested block: pinned dav2d f9dafbc rejects it; keep it off.
-    writer.put_bit(false);  // seq_decoder_model_info_present_flag
+    // §5.4.13 nested block.  dav2d f9dafbc rejects it, so it stays absent
+    // unless --video-decoder-model asks for the full AVM-validated form.
+    writer.put_bit(c.seq_decoder_model_info_present);
+    if (c.seq_decoder_model_info_present) {
+      put_uvlc(writer, c.decoder_buffer_delay);
+      put_uvlc(writer, c.encoder_buffer_delay);
+      writer.put_bit(c.low_delay_mode_flag);
+    }
   }
 
   // §5.4.1 dependency maps.  MLayerDependencyMap defaults to ref <= curr and
@@ -225,10 +237,17 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(false);  // enable_ibp
 
   // §5.4.6 sequence_inter_config() for single_picture_header_flag = 0.
+  bool motion_mode_enabled = false;
   for (int mode = 1; mode < 5; ++mode) {  // INTERINTRA..EXTENDWARP
-    writer.put_bit(false);                // seq_enabled_motion_modes[mode]
+    const bool enabled = (mode == 1) && c.enable_interintra;
+    writer.put_bit(enabled);              // seq_enabled_motion_modes[mode]
+    motion_mode_enabled = motion_mode_enabled || enabled;
   }
-  // motionModeEnabled == 0 -> seq_frame_motion_modes_present_flag = 0.
+  if (motion_mode_enabled) {
+    // 0 -> every frame inherits the sequence values (§5.18.2); no per-frame
+    // motion-mode bits are coded.
+    writer.put_bit(false);  // seq_frame_motion_modes_present_flag
+  }
   writer.put_bit(c.enable_masked_compound);
   writer.put_bit(c.enable_ref_frame_mvs);
   if (c.enable_ref_frame_mvs) {
@@ -241,7 +260,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   if (!c.disable_drl_reorder) {
     writer.put_bit(c.constrain_drl_reorder);  // constrain_drl_reorder
   }
-  writer.put_bit(true);   // explicit_ref_frame_map
+  writer.put_bit(c.explicit_ref_frame_map);  // explicit_ref_frame_map (§5.4.6)
   writer.put_bit(true);   // explicit_num_ref_frames
   writer.put_bits(static_cast<std::uint64_t>(c.num_ref_frames) - 1U, 4U);
   writer.put_bits(0U, 3U);  // long_term_frame_id_bits
@@ -260,8 +279,8 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(c.enable_cwp);
   writer.put_bit(c.enable_imp_msk_bld);
   writer.put_bit(false);   // enable_df_sub_pu
-  writer.put_bits(0U, 2U); // enable_opfl_refine = REFINE_NONE
-  writer.put_bit(false);   // enable_refinemv
+  writer.put_bits(static_cast<std::uint64_t>(c.enable_opfl_refine), 2U);
+  writer.put_bit(c.enable_refinemv);
   writer.put_bit(false);   // enable_bru
   writer.put_bit(false);   // enable_adaptive_mvd
   writer.put_bit(false);   // enable_mvd_sign_derive
@@ -269,14 +288,21 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(c.enable_global_motion);  // enable_global_motion (§5.4.6)
   writer.put_bit(false);   // enable_short_refresh_frame_flags
 
-  // §5.4.7 sequence_scc_config(): no screen content tools, so fractional MVs
-  // are allowed (seq_force_integer_mv = SELECT_INTEGER_MV).
-  writer.put_bit(false);  // seq_choose_screen_content_tools
-  writer.put_bit(false);  // seq_force_screen_content_tools
+  // §5.4.7 sequence_scc_config().  The historical stream writes two zeros
+  // (no screen-content tools).  The morph carrier selects the per-frame form:
+  // seq_choose_screen_content_tools = SELECT and seq_choose_integer_mv =
+  // SELECT, so screen_content_params()/intrabc_params() read the frame bits.
+  if (c.seq_screen_content_tools_present) {
+    writer.put_bit(true);  // seq_choose_screen_content_tools
+    writer.put_bit(true);  // seq_choose_integer_mv
+  } else {
+    writer.put_bit(false);  // seq_choose_screen_content_tools
+    writer.put_bit(false);  // seq_force_screen_content_tools
+  }
 
   // §5.4.8 sequence_transform_quant_entropy_config().
   writer.put_bit(false);  // enable_fsc
-  writer.put_bit(false);  // enable_idtx_intra
+  writer.put_bit(c.enable_idtx_intra);  // enable_idtx_intra
   writer.put_bit(false);  // enable_intra_ist
   writer.put_bit(false);  // enable_inter_ist
   if (!monochrome) {
@@ -333,7 +359,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   // §5.4.2 sequence_tile_config().
   writer.put_bit(false);  // seq_tile_info_present_flag
 
-  writer.put_bit(false);  // film_grain_params_present
+  writer.put_bit(c.film_grain_params_present);  // §5.14 film grain models
 
   return writer.bit_size() - start;
 }
@@ -361,20 +387,36 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     writer.put_bit(h.implicit_output_frame);  // implicit_output_frame
   }
 
-  if (key) {
-    // OBU_CLOSED_LOOP_KEY + max_mlayer_id == 0 -> refresh_frame_flags =
-    // allFrames, no bits coded.
-  }
-
   writer.put_bit(false);  // frame_size_override_flag = 0
   writer.put_bits(h.order_hint, c.order_hint_bits);  // order_hint
 
   if (key) {
     // FrameIsIntra -> primary_ref_frame = PRIMARY_REF_NONE, no bits.
+    // §5.18.2: OBU_CLOSED_LOOP_KEY + max_mlayer_id == 0 implies
+    // refresh_frame_flags = allFrames with no bits.  With max_mlayer_id > 0
+    // the key codes refresh_frame_flags f(NumRefFrames) explicitly; omitting
+    // it shifts every later field and desynchronises the tile.
+    if (c.max_mlayer_id != 0U) {
+      writer.put_bits(h.refresh_frame_flags, c.num_ref_frames);
+    }
     // frame_size() uses mfh_frame_* and codes no bits.
-    // screen_content_params(): seq_force_screen_content_tools == 0, so
-    // allow_screen_content_tools is inferred 0 and no bit is coded.
-    writer.put_bit(false);  // allow_intrabc
+    // §5.18.3.3 screen_content_params(): present when the sequence selected the
+    // per-frame form; otherwise allow_screen_content_tools is inferred 0 and
+    // no bit is coded.
+    if (c.seq_screen_content_tools_present) {
+      writer.put_bit(h.allow_screen_content_tools);
+      if (h.allow_screen_content_tools) {
+        writer.put_bit(h.force_integer_mv);
+      }
+    }
+    // §5.18.3.4 intrabc_params().
+    writer.put_bit(h.allow_intrabc);
+    if (h.allow_intrabc) {
+      writer.put_bit(h.allow_global_intrabc);
+      if (h.allow_global_intrabc) {
+        writer.put_bit(h.allow_local_intrabc);
+      }
+    }
   } else {
     writer.put_bit(h.signal_primary_ref_frame);
     // §5.18.2: disable_cross_frame_cdf_init is absent for a TIP frame.
@@ -387,22 +429,29 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     // refresh_frame_flags is coded after the primary-ref block
     // (§5.18.2). enable_short_refresh_frame_flags == 0.
     writer.put_bits(h.refresh_frame_flags, c.num_ref_frames);
-    // explicit_ref_frame_map == 1 (sequence header).
-    writer.put_bit(true);   // frame_explicit_ref_frame_map
+    // §5.18.2 reference map.  The frame_explicit_ref_frame_map bit is only
+    // coded when the sequence header enables the choice; with
+    // explicit_ref_frame_map = 0 the §7.7 derivation supplies the map and no
+    // bits are written.
     const unsigned num_refs =
         h.num_total_refs == 0 ? c.num_total_refs : h.num_total_refs;
-    writer.put_bits(num_refs, 3U);  // num_total_refs
-    if (num_refs <= 1U) {
-      writer.put_bits(h.ref_slot,
-                      static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
-    } else {
-      for (unsigned i = 0; i < num_refs; ++i) {
-        writer.put_bits(h.ref_frame_idx[i],
-                        static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
+    if (c.explicit_ref_frame_map) {
+      writer.put_bit(h.frame_explicit_ref_frame_map);
+      if (h.frame_explicit_ref_frame_map) {
+        writer.put_bits(num_refs, 3U);  // num_total_refs
+        if (num_refs <= 1U) {
+          writer.put_bits(h.ref_slot,
+                          static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
+        } else {
+          for (unsigned i = 0; i < num_refs; ++i) {
+            writer.put_bits(h.ref_frame_idx[i],
+                            static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
+          }
+        }
       }
     }
     // frame_size_override_flag == 0 -> frame_size() codes no bits.
-    // get_ref_frames(1) is skipped because the map is explicit.
+    // get_ref_frames(1) runs in the decoder for the implicit form.
     if (c.enable_ref_frame_mvs) {
       // §5.18.2: present only when the sequence enables the tool.  SbSize is
       // BLOCK_64X64 on the M2 path, so tmvp_sample_step_minus_1 is absent.
@@ -441,8 +490,18 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
       return writer.bit_size() - start;
     }
     // use_ref_frame_mvs = 0, TipFrameMode = TIP_FRAME_DISABLED.
-    // screen_content_params(): seq_force_screen_content_tools == 0, no bit.
-    writer.put_bit(false);  // allow_intrabc
+    // §5.18.3.3 screen_content_params(): present only when the sequence
+    // selected the per-frame form.  The inter frames of a morph stream code
+    // allow_screen_content_tools = 0 (morph is an intra-keyframe tool).
+    if (c.seq_screen_content_tools_present) {
+      writer.put_bit(h.allow_screen_content_tools);
+      if (h.allow_screen_content_tools) {
+        writer.put_bit(h.force_integer_mv);
+      }
+    }
+    // §5.18.3.4 intrabc_params(): allow_intrabc only (an inter frame infers
+    // allow_global_intrabc = 0 / allow_local_intrabc = 1 when it is set).
+    writer.put_bit(h.allow_intrabc);
     // max_drl_bits_minus_1 = seq_max_drl_bits_minus_1, no bits.
     writer.put_bit(h.use_qtr_precision_mv);  // use_qtr_precision_mv
     if (!h.use_qtr_precision_mv) {
@@ -459,24 +518,47 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
   // §5.18.6.1: f(8) at 8-bit, f(9) at 10-bit.
   writer.put_bits(c.base_q_idx,
                   static_cast<unsigned>(fmt::base_q_idx_bits(c.depth)));
-  writer.put_bit(false);              // segmentation_enabled
-  // §5.18.6.2 setup_qm_params(): default-matrix QM only (level 0).  No
-  // quantizer-matrix OBU is emitted, so the decoder uses the §9.4 defaults.
-  {
-    qm::QmFrameState qm_state;
-    if (c.using_qmatrix) {
-      qm_state.using_qmatrix = true;
-      qm_state.pic_qm_num_minus_1 = 0;
-      qm_state.qm_y[0] = 0;
-      qm_state.qm_u[0] = 0;
-      qm_state.qm_v[0] = 0;
+#if defined(AV2ENC_VIDEO_DELTAQ)
+  // §5.18.7.1 segmentation_params(), §5.18.7.2 setup_qm_params() and
+  // §5.18.7.8 delta_q_params().  The adapter emits exactly the historical
+  // (0, 0, 0) bits when both tools are disabled, so the default stream is
+  // byte-identical; with a plan it also writes the per-frame table and
+  // delta_q_res.  `--video-qm` is rejected with these tools because
+  // write_frame_qp_syntax() owns the using_qmatrix bit.
+  if (h.qp.segmentation.enabled || h.qp.delta_q.present) {
+    deltaq::FrameQpPlan plan;
+    plan.base_q_idx = c.base_q_idx;
+    plan.segmentation = h.qp.segmentation;
+    plan.delta_q = h.qp.delta_q;
+    plan.primary_ref_is_none = h.qp.primary_ref_is_none;
+    std::string qp_error;
+    if (deltaq::write_frame_qp_syntax(writer, plan, h, &qp_error) == 0) {
+      // The header writer has no error channel; the planner validates the
+      // table before this point, so a failure is a programming error.
+      assert(false && "invalid segmentation/delta-Q frame syntax");
     }
-    std::string qm_error;
-    qm::write_setup_qm_params(writer, qm_state, /*num_planes=*/3,
-                              /*segmentation_enabled=*/false, &qm_error);
-    assert(qm_error.empty());
+  } else
+#endif
+  {
+    writer.put_bit(false);              // segmentation_enabled
+    // §5.18.6.2 setup_qm_params(): default-matrix QM only (level 0).  No
+    // quantizer-matrix OBU is emitted, so the decoder uses the §9.4 defaults.
+    {
+      qm::QmFrameState qm_state;
+      if (c.using_qmatrix) {
+        qm_state.using_qmatrix = true;
+        qm_state.pic_qm_num_minus_1 = 0;
+        qm_state.qm_y[0] = 0;
+        qm_state.qm_u[0] = 0;
+        qm_state.qm_v[0] = 0;
+      }
+      std::string qm_error;
+      qm::write_setup_qm_params(writer, qm_state, /*num_planes=*/3,
+                                /*segmentation_enabled=*/false, &qm_error);
+      assert(qm_error.empty());
+    }
+    writer.put_bit(false);              // delta_q_present (base_q_idx > 0)
   }
-  writer.put_bit(false);              // delta_q_present (base_q_idx > 0)
   if (c.enable_deblock) {
     // §5.18.7.9 deblocking_filter_params(): all four planes enabled, no
     // df_delta_q.  df_par_bits_minus_2 is 0 in the sequence header, so the
@@ -689,6 +771,24 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
   assert(!c.enable_global_motion);
 #endif
   // film_grain_config() returns immediately (film_grain_params_present == 0).
+  if (c.film_grain_params_present) {
+    // §5.18.10.1: a non-single-picture frame codes apply_grain f(1), then the
+    // model id and seed when it is set.  A hidden (non-output) picture gets
+    // apply_grain inferred 0 and codes nothing.
+    namespace grain = ::av2enc::filters::grain;
+    grain::FilmGrainConfig config;
+    config.apply_grain = h.apply_grain;
+    config.fgm_id = h.fgm_id;
+    config.grain_seed = h.grain_seed;
+    grain::FilmGrainConfigContext context;
+    context.film_grain_params_present = true;
+    context.single_picture_header_flag = false;
+    context.immediate_output_frame = h.immediate_output_frame;
+    context.implicit_output_frame = h.implicit_output_frame;
+    std::string grain_error;
+    grain::WriteFilmGrainConfig(writer, config, context, &grain_error);
+    assert(grain_error.empty());
+  }
 
   return writer.bit_size() - start;
 }

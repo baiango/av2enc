@@ -149,9 +149,10 @@ RESULT="$TMP/results.txt"
 : > "$RESULT"
 FAILED=0
 
-# run_case <name> <depth> <chroma> <source> [qp]
+# run_case <name> <depth> <chroma> <source> [qp] [extra flags...]
 run_case() {
     local name=$1 depth=$2 chroma=$3 source=$4 qp=${5:-90}
+    local extra_filters=("${@:6}")
     local ivf="$TMP/$name.ivf"
     local recon="$TMP/$name.recon.y4m"
     local decoded="$TMP/$name.decoded.y4m"
@@ -168,6 +169,7 @@ run_case() {
     echo
     echo "=== $name (${depth}-bit $chroma, qp $qp) ==="
     if ! "$BIN" "$source" -o "$ivf" --still "${extra[@]}" --qp "$qp" \
+            ${extra_filters[@]+"${extra_filters[@]}"} \
             --recon "$recon" >"$TMP/$name.encode.log" 2>&1; then
         echo "FAIL $name: encode failed" >&2
         cat "$TMP/$name.encode.log" >&2
@@ -257,6 +259,58 @@ run_case 10bit_420_q141_64x64  10 420 "$TMP/src_10_64x64.y4m" 141
 run_case 10bit_420_q191_64x64  10 420 "$TMP/src_10_64x64.y4m" 191
 run_case 10bit_420_q303_64x64  10 420 "$TMP/src_10_64x64.y4m" 303
 run_case 10bit_422_q191_64x64  10 422 "$TMP/src_10_422_64x64.y4m" 191
+# §7.18 CDEF at 10-bit on every product chroma format.  The gate requires the
+# decoded picture to equal the encoder reconstruction, which pins the strength
+# scaling (coeffShift = 2), tap parity and 10-bit clipping.
+run_case 10bit_420_cdef_64x64    10 420 "$TMP/src_10_64x64.y4m" 90 --still-cdef --still-cdef-strengths 4
+run_case 10bit_422_cdef_64x64    10 422 "$TMP/src_10_422_64x64.y4m" 90 --still-cdef --still-cdef-strengths 4
+run_case 10bit_444_cdef_64x64    10 444 "$TMP/src_10_444_64x64.y4m" 90 --still-cdef --still-cdef-strengths 4
+run_case 10bit_400_cdef_64x64    10 400 "$TMP/src_10_400_64x64.y4m" 90 --still-cdef --still-cdef-strengths 4
+run_case 10bit_420_cdef_640x360  10 420 "$TMP/src_10_640x360.y4m" 90 --still-cdef --still-cdef-strengths 4
+run_case 10bit_422_cdef_640x360  10 422 "$TMP/src_10_422_640x360.y4m" 90 --still-cdef --still-cdef-strengths 4
+run_case 10bit_444_cdef_640x360  10 444 "$TMP/src_10_444_640x360.y4m" 90 --still-cdef --still-cdef-strengths 4
+run_case 10bit_400_cdef_640x360  10 400 "$TMP/src_10_400_640x360.y4m" 90 --still-cdef --still-cdef-strengths 4
+# Header-only CdefStrengths = 1 (no cdef_idx symbol) and the 10-bit qindex
+# slices where coeffShift interacts with a coarser quantiser.
+run_case 10bit_420_cdef1_64x64   10 420 "$TMP/src_10_64x64.y4m" 90 --still-cdef --still-cdef-strengths 1
+run_case 10bit_420_cdef_q191_64x64 10 420 "$TMP/src_10_64x64.y4m" 191 --still-cdef --still-cdef-strengths 8
+# CDEF after deblock at 10-bit (normative order: reconstruct -> deblock -> CDEF).
+run_case 10bit_420_deblock_cdef_640x360 10 420 "$TMP/src_10_640x360.y4m" 90 --still-deblock --still-cdef --still-cdef-strengths 4
+# §7.19 CCSO at 10-bit on every product chroma format, plus composition with
+# CDEF and a higher qindex where the offsets are large.
+run_case 10bit_420_ccso_64x64    10 420 "$TMP/src_10_64x64.y4m" 90 --still-ccso
+run_case 10bit_422_ccso_64x64    10 422 "$TMP/src_10_422_64x64.y4m" 90 --still-ccso
+run_case 10bit_444_ccso_64x64    10 444 "$TMP/src_10_444_64x64.y4m" 90 --still-ccso
+run_case 10bit_400_ccso_64x64    10 400 "$TMP/src_10_400_64x64.y4m" 90 --still-ccso
+run_case 10bit_420_ccso_640x360  10 420 "$TMP/src_10_640x360.y4m" 90 --still-ccso
+run_case 10bit_422_ccso_640x360  10 422 "$TMP/src_10_422_640x360.y4m" 90 --still-ccso
+run_case 10bit_444_ccso_640x360  10 444 "$TMP/src_10_444_640x360.y4m" 90 --still-ccso
+run_case 10bit_400_ccso_640x360  10 400 "$TMP/src_10_400_640x360.y4m" 90 --still-ccso
+run_case 10bit_420_ccso_q191_64x64 10 420 "$TMP/src_10_64x64.y4m" 191 --still-ccso
+run_case 10bit_420_cdef_ccso_640x360 10 420 "$TMP/src_10_640x360.y4m" 90 --still-cdef --still-cdef-strengths 4 --still-ccso
+run_case 10bit_444_cdef_ccso_640x360 10 444 "$TMP/src_10_444_640x360.y4m" 90 --still-cdef --still-cdef-strengths 4 --still-ccso
+# Forced edge-classified form (ccso_bo_only = 0) so the class table is coded
+# even where the band-offset-only form would win.
+run_case 10bit_420_ccso_edge_64x64  10 420 "$TMP/src_10_64x64.y4m" 90 --still-ccso-edge
+run_case 10bit_444_ccso_edge_640x360 10 444 "$TMP/src_10_444_640x360.y4m" 90 --still-ccso-edge
+# §7.20 loop restoration / §7.20.5 GDF at 10-bit.  q303 makes the filters win
+# units; luma Wiener, PC-Wiener and GDF are gated on every product format.
+run_case 10bit_420_wiener_640x360  10 420 "$TMP/src_10_640x360.y4m" 303 --still-wiener
+run_case 10bit_420_chroma_lr_640x360 10 420 "$TMP/src_10_640x360.y4m" 303 --still-chroma-lr
+run_case 10bit_420_pc_wiener_640x360 10 420 "$TMP/src_10_640x360.y4m" 303 --still-pc-wiener
+run_case 10bit_420_gdf_640x360     10 420 "$TMP/src_10_640x360.y4m" 303 --still-gdf
+run_case 10bit_420_wiener_gdf_640x360 10 420 "$TMP/src_10_640x360.y4m" 303 --still-wiener --still-gdf
+run_case 10bit_420_all_filters_640x360 10 420 "$TMP/src_10_640x360.y4m" 303 --still-deblock --still-cdef --still-ccso --still-wiener --still-gdf
+run_case 10bit_422_wiener_640x360  10 422 "$TMP/src_10_422_640x360.y4m" 303 --still-wiener
+run_case 10bit_422_pc_wiener_640x360 10 422 "$TMP/src_10_422_640x360.y4m" 303 --still-pc-wiener
+run_case 10bit_422_gdf_640x360     10 422 "$TMP/src_10_422_640x360.y4m" 303 --still-gdf
+run_case 10bit_444_wiener_640x360  10 444 "$TMP/src_10_444_640x360.y4m" 303 --still-wiener
+run_case 10bit_444_pc_wiener_640x360 10 444 "$TMP/src_10_444_640x360.y4m" 303 --still-pc-wiener
+run_case 10bit_444_gdf_640x360     10 444 "$TMP/src_10_444_640x360.y4m" 303 --still-gdf
+run_case 10bit_400_wiener_640x360  10 400 "$TMP/src_10_400_640x360.y4m" 303 --still-wiener
+run_case 10bit_400_pc_wiener_640x360 10 400 "$TMP/src_10_400_640x360.y4m" 303 --still-pc-wiener
+run_case 10bit_400_gdf_640x360     10 400 "$TMP/src_10_400_640x360.y4m" 303 --still-gdf
+run_case 10bit_420_all_filters_64x64 10 420 "$TMP/src_10_64x64.y4m" 90 --still-cdef --still-ccso --still-pc-wiener --still-gdf
 run_case 8bit_422_64x64      8 422 "$TMP/src_422_64x64.y4m"
 run_case 8bit_444_64x64      8 444 "$TMP/src_444_64x64.y4m"
 run_case 8bit_400_64x64      8 400 "$TMP/src_400_64x64.y4m"
@@ -296,6 +350,11 @@ expect_reject 10bit_444_as420 "$TMP/bad_10bit_444_as420.y4m" \
     "oversized Y4M frame" --still --bit-depth 10 --qp 90
 expect_reject trailing_bytes "$TMP/bad_trailing.y4m" \
     "oversized Y4M frame" --still --bit-depth 10 --qp 90
+# §7.20 chroma LR is gated at 4:2:0: the 4:2:2/4:4:4 stripe-boundary path is
+# not decoder-exact yet, so the writer must reject it by name.
+expect_reject 10bit_444_chroma_lr "$TMP/src_10_444_640x360.y4m" \
+    "chroma loop restoration is only decoder-exact" --still --bit-depth 10 \
+    --chroma 444 --still-chroma-lr --qp 303
 
 # Accepted-and-ignored Still tree flags: the format paths use their own minimal
 # writer, so a flag that they cannot apply must be a usage error, not a

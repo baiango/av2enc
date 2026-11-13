@@ -8,21 +8,36 @@
 #include "pipeline/video/video_chroma_search.h"
 #include "pipeline/video/video_intra_search.h"
 #include "pipeline/video/video_syntax.h"
+#include "pipeline/video/video_temporal.h"
 #include "pipeline/video/video_tx_search.h"
 #include "codec/partition/tree/partition.h"
 #include "codec/rate/rc/rc_tables.h"
+#if defined(AV2ENC_VIDEO_DELTAQ)
+#include "codec/entropy/deltaq/still/deltaq.h"
+#include "codec/rate/rc/rc.h"
+#endif
 #include "codec/transform/variants/tx_variants.h"
 #include "codec/transform/qm/qm.h"
 #include "pipeline/video/video_bawp.h"
 #include "codec/inter/mc/mc.h"
 #include "codec/inter/me/me.h"
 #include "codec/inter/merge/merge.h"
+#include "codec/inter/morph/morph_common.h"
+#include "codec/inter/mv_stack/ref_map.h"
+#include "codec/intra/ibc/core/ibc.h"
+#include "codec/intra/ibc/stream/ibc_stack.h"
+#include "codec/intra/ibc/stream/still_ibc_stream.h"
 #include "codec/inter/drl_reorder/video_stack_adapter.h"
 #include "codec/inter/temporal/motion_field.h"
+#include "codec/inter/temporal/opfl.h"
+#include "codec/inter/temporal/refinemv.h"
+#include "codec/inter/temporal/temporal_predict.h"
 #include "codec/inter/tip/tip_build.h"
+#include "pipeline/grain/grain_stream.h"
 #if defined(AV2ENC_VIDEO_FRAMES)
 #include "codec/inter/multiref/compound_predict.h"
 #endif
+#include "codec/inter/advanced/compound.h"
 #if defined(AV2ENC_VIDEO_FRAMES)
 #include "codec/inter/bframes/bframes.h"
 #include "codec/inter/tlayers/tlayers.h"
@@ -62,12 +77,55 @@ using partition::PartitionType;
 namespace drl = inter::drl;
 namespace temporal = inter::temporal;
 namespace tip = inter::tip;
+namespace ibcs = still::ibc_stream;
+namespace morph = inter::morph;
 
 // AV2 RefFrame labels used by the merge layer's MI grid.  mc::kRefLast is an
 // internal MC label (1); §6.19.7.9 numbers LAST_FRAME = 0 and
 // INTRA_FRAME = 8.
 constexpr std::int8_t kRefLastAv2 = 0;
 constexpr std::int8_t kRefIntraAv2 = 8;
+
+namespace grain = ::av2enc::filters::grain;
+
+// §5.14 film grain: estimate/plan one picture and insert the model OBU before
+// the coded-frame OBU of its temporal unit (§7.3.3/.4, §7.3.8.8).
+bool plan_grain_frame(const VideoInputFrame& frame, std::uint32_t index,
+                      grain::GrainStreamPlanner& planner,
+                      grain::GrainFramePlan& plan, std::string& error) {
+  grain::GrainFrameView view;
+  view.y = frame.y.data();
+  view.u = frame.u.data();
+  view.v = frame.v.data();
+  view.width = static_cast<int>(frame.width);
+  view.height = static_cast<int>(frame.height);
+  view.y_stride = static_cast<int>(frame.width);
+  view.c_stride = static_cast<int>(frame.width / 2U);
+  if (!planner.PlanFrame(view, index, /*tlayer_id=*/0, /*mlayer_id=*/0, &plan,
+                         &error)) {
+    return false;
+  }
+  return true;
+}
+
+bool insert_grain_obu(const grain::GrainFramePlan& plan,
+                      std::vector<std::uint8_t>& unit, std::string& error) {
+  if (!plan.emit_model) return true;
+  std::string grain_error;
+  const std::vector<std::uint8_t> obu =
+      grain::MakeFilmGrainObu(plan.obu, &grain_error);
+  if (obu.empty()) {
+    error = "film grain OBU: " + grain_error;
+    return false;
+  }
+  std::vector<std::uint8_t> with_grain;
+  if (!grain::InsertFilmGrainObu(unit, obu, &with_grain, &grain_error)) {
+    error = "film grain OBU: " + grain_error;
+    return false;
+  }
+  unit.swap(with_grain);
+  return true;
+}
 
 struct Plane {
   int width = 0;
@@ -139,12 +197,21 @@ struct InterCandidate {
   int wedge_index = 0;
   int wedge_sign = 0;
   int mask_type = 0;
-};
+  // This candidate's MV/DRL index came from a §7.12.2.7/.8 temporal entry
+  // (instrumentation for the gate; never coded).
+  bool from_temporal = false;
+  // NEAR_NEARMV / optflow / refine-MV compound carrier.
+  int compound_mode = 3;  // 0 = NEAR_NEARMV, 3 = GLOBAL_GLOBALMV
+  inter::mc::Mv mv1{};
+  int drl_index1 = 0;
+  bool use_optflow = false;
+  bool use_refinemv = false;};
 
 // One decoded picture buffer slot.  The planes are MI-aligned (mi_cols*4 by
 // mi_rows*4 luma) because MC clips taps to the padded reference extent.
 struct RefSlot {
   bool valid = false;
+  bool is_key = false;
   std::uint32_t order_hint = 0;
   Plane plane[3];
 };
@@ -172,6 +239,68 @@ int clip3(int low, int high, int value) {
   return value < low ? low : (value > high ? high : value);
 }
 int clip1(int value) { return clip3(0, 255, value); }
+
+// §7.7 dependency maps for the implicit reference mapping.  The M2 sequence
+// headers either omit TLayerDependencyMap (default `ref_tlayer <=
+// obu_tlayer_id`) or code it explicitly; MLayerDependencyMap is the default
+// `ref_mlayer <= obu_mlayer_id`, and the M2 writers are single-mlayer.
+inter::mv_stack_full::DependencyMaps implicit_dependency_maps(
+    const VideoConfig& config, int tlayer_id) {
+  inter::mv_stack_full::DependencyMaps deps;
+  deps.mlayer_mask = ~std::uint64_t{0};
+  const int layer = clip3(0, 3, tlayer_id);
+  if (!config.tlayer_dependency_present_flag) {
+    deps.tlayer_mask = (std::uint64_t{1} << (layer + 1)) - 1;
+  } else {
+    std::uint64_t mask = 0;
+    for (int ref = 0; ref <= 3; ++ref) {
+      if (config.tlayer_dependency[layer][ref]) {
+        mask |= std::uint64_t{1} << ref;
+      }
+    }
+    deps.tlayer_mask = mask;
+  }
+  return deps;
+}
+
+// Runs the §7.7 derivation over the §7.23 bank the encoder mirrors.  `width`
+// and `height` are the current frame's size, which §7.7 checks with checkRes=1
+// (both passes are identical while frame_size_override_flag = 0).
+bool derive_implicit_fields(const inter::mv_stack_full::RefSlotBank& bank,
+                            int order_hint, int order_hint_bits, int width,
+                            int height, int tlayer_id,
+                            const inter::mv_stack_full::DependencyMaps& deps,
+                            inter::mv_stack_full::ImplicitRefMap* out,
+                            std::string* error) {
+  inter::mv_stack_full::RefMapParams params;
+  params.num_ref_frames = bank.num_ref_frames;
+  params.active_num_ref_frames =
+      std::min(inter::mv_stack_full::kRefsPerFrameConst, bank.num_ref_frames);
+  params.order_hint = order_hint;
+  params.order_hint_bits = order_hint_bits;
+  params.obu_mlayer_id = 0;
+  params.obu_tlayer_id = tlayer_id;
+  params.deps = deps;
+  params.allowed_frames = ~std::uint32_t{0};
+  params.is_bridge = false;
+  params.check_res = true;
+  params.frame_width = width;
+  params.frame_height = height;
+  params.slots = bank.slots;
+  return inter::mv_stack_full::derive_implicit_ref_map(params, out, error);
+}
+
+// --video-trace line for the derived map.  The gate greps it to prove the
+// stream actually uses the §7.7 mapping (variable NumTotalRefs).
+void trace_implicit_map(const char* path, std::size_t frame, int num_refs,
+                        const std::vector<int>& slots) {
+  std::cerr << "  implicit ref map " << path << " frame=" << frame
+            << " num_total_refs=" << num_refs << " slots=";
+  for (int r = 0; r < num_refs; ++r) {
+    std::cerr << (r == 0 ? "" : ",") << slots[static_cast<std::size_t>(r)];
+  }
+  std::cerr << "\n";
+}
 
 int source_sample(const VideoInputFrame& frame, int plane, int x, int y) {
   const int w = plane == 0 ? static_cast<int>(frame.width)
@@ -240,6 +369,57 @@ int frame_quant_step(const VideoOptions& options) {
   if (q <= 0 || q > 255) return txv::kQuantStep;
   return rc::kQlookupQ0To255[q];
 }
+
+#if defined(AV2ENC_VIDEO_DELTAQ)
+// §5.18.7.1 segmentation_params() / §5.18.7.8 delta_q_params() for one frame.
+// The table is frame-level and identical on every frame of the sequence; the
+// per-frame map lives in the tile payload.  Validates the plan before the
+// header writer runs (the writer has no error channel).
+bool build_video_frame_qp(const VideoOptions& options, int base_q_idx,
+                          bool primary_ref_is_none, VideoFrameHeader& header,
+                          std::string& error) {
+  header.qp = VideoFrameQp{};
+  header.qp.primary_ref_is_none = primary_ref_is_none;
+  if (!options.enable_segmentation && !options.per_segment_q &&
+      !options.enable_delta_q) {
+    return true;
+  }
+  if (options.enable_segmentation || options.per_segment_q) {
+    header.qp.segmentation.enabled = true;
+    header.qp.segmentation.update_map = true;
+    header.qp.segmentation.temporal_update = false;
+    // --video-segmentation alone keeps ALT_Q = 0 so segment id 1 stays
+    // representable (§5.20.5.8) without moving the quantizer;
+    // --video-per-segment-q supplies the real value.
+    const int delta =
+        options.per_segment_q ? options.seg_q_delta : 0;
+    std::string seg_error;
+    if (!rc::set_segment_alt_q(header.qp.segmentation, /*segment_id=*/1, delta,
+                               &seg_error)) {
+      error = "segmentation: " + seg_error;
+      return false;
+    }
+  }
+  header.qp.delta_q.present = options.enable_delta_q;
+  header.qp.delta_q.res = options.enable_delta_q ? options.delta_q_res : 0;
+  deltaq::FrameQpHeader qp_header;
+  qp_header.primary_ref_is_none = primary_ref_is_none;
+  qp_header.using_qmatrix = options.enable_qm;
+  deltaq::FrameSegmentation derived;
+  if (!deltaq::derive_frame_segmentation(header.qp.segmentation,
+                                         header.qp.delta_q, base_q_idx,
+                                         qp_header, derived, &error)) {
+    error = "segmentation: " + error;
+    return false;
+  }
+  if (derived.has_lossless_segment) {
+    error = "segmentation: a segment qindex reaches 0 (lossless); the video "
+            "transform path does not implement lossless";
+    return false;
+  }
+  return true;
+}
+#endif  // AV2ENC_VIDEO_DELTAQ
 
 bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, int cw,
                 int ch, const std::vector<std::uint8_t>& pred, int quant_step,
@@ -479,8 +659,8 @@ void write_luma_plan(syntax::BlockSyntax& entry, const TxPlan& plan,
 // `src/cuda/pipeline/video/tx/`.
 bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
                     int ch, const std::vector<std::uint8_t>& pred, int qindex,
-                    txtsearch::Mode mode, double lambda, TxPlan& plan,
-                    std::string& error) {
+                    txtsearch::Mode mode, double lambda, bool allow_idtx,
+                    bool trace, TxPlan& plan, std::string& error) {
   std::vector<std::int16_t> residual(
       static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
   for (int y = 0; y < ch; ++y) {
@@ -493,6 +673,7 @@ bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   }
   txtsearch::Options options;
   options.lambda = lambda;
+  options.allow_idtx = allow_idtx;
   // §5.20.7.24 predicts per *transform block*, in decode order, and each part's
   // reconstruction feeds the next part's prediction.  A fixed block prediction
   // is only equivalent when the transform block covers the coding block, so the
@@ -526,6 +707,11 @@ bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
     part.mi_col = leaf.mi_col;
     part.eob = leaf.eob;
     part.levels = leaf.levels;
+    if (trace && leaf.tx_type == 9) {
+      std::cerr << "  video tx: idtx leaf " << leaf.coded_w << "x"
+                << leaf.coded_h << " at " << x0 + leaf.x << ","
+                << y0 + leaf.y << "\n";
+    }
     plan.parts.push_back(std::move(part));
   }
   if (plan.parts.empty()) {
@@ -552,6 +738,16 @@ void write_plane_block(Plane& plane, int x0, int y0, int w, int h,
   }
 }
 
+struct TemporalFrameContext {
+  bool use_ref_frame_mvs = false;
+  int order_hint = 0;
+  int num_past_refs = 0;
+  int num_future_refs = 0;
+  int closest_past = -1;
+  int closest_future = -1;
+  const temporal::MotionField* field = nullptr;
+};
+
 class InterFrameEncoder {
  public:
   InterFrameEncoder(const VideoInputFrame& source,
@@ -562,7 +758,9 @@ class InterFrameEncoder {
                     int tile_h = 0, std::span<const std::uint16_t> cdf_seed = {},
                     std::vector<std::uint16_t>* cdf_final = nullptr,
                     const GmFramePlan* gm_plan = nullptr,
-                    std::array<int, 7> ref_order_hints = {})
+                    std::array<int, 7> ref_order_hints = {},
+                    bool primary_ref_is_none = true,
+                    const TemporalFrameContext* temporal = nullptr)
       : source_(source),
         references_(std::move(references)),
         frame_distance_(frame_distance),
@@ -578,6 +776,12 @@ class InterFrameEncoder {
         cdf_final_(cdf_final),
         gm_plan_(gm_plan),
         ref_order_hints_(ref_order_hints) {
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    primary_ref_is_none_ = primary_ref_is_none;
+#else
+    (void)primary_ref_is_none;
+#endif
+    if (temporal != nullptr) temporal_ctx_ = *temporal;
     // Coded (tile-local) geometry.  A zero tile_w/tile_h means "whole frame",
     // which keeps the historical single-tile path untouched.  Source reads and
     // motion-compensated predictions add tile_x_/tile_y_ so the reference frame
@@ -608,6 +812,7 @@ class InterFrameEncoder {
     compound_pred_[2].resize(mi_cols_ * 2, mi_rows_ * 2, 0);
 
     quant_step_ = frame_quant_step(options_);
+    current_qindex_ = static_cast<int>(options_.base_q_idx);
     // §5.18.6.2 default-matrix QM (--video-qm): one picture-level set, level 0
     // (the spec-defined default matrices; no user QM OBU).
     if (options_.enable_qm) {
@@ -618,6 +823,13 @@ class InterFrameEncoder {
       qm_state_.qm_v[0] = 0;
       for (int plane = 0; plane < 3; ++plane) {
         qm_state_.seg_qm_level[plane][0] = 0;
+      }
+      if (options_.user_qm) {
+        // §5.4.11 user-defined matrix for level 0.  The all-32 matrix is the
+        // identity (Round2(q * 32, 5) == q), so the encoder dequant follows
+        // the same state the decoder loads from the QM OBU.
+        qm_state_.qm_data_present[0] = true;
+        qm::fill_user_qm_constant(&qm_state_.user_qm[0], 32);
       }
       qm_enabled_ = true;
     }
@@ -634,6 +846,20 @@ class InterFrameEncoder {
     decoded_[0].reset(mi_cols_, mi_rows_);
     decoded_[1].reset(mi_cols_ / 2, mi_rows_ / 2);
     decoded_[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+    // §5.20.5.3/.4 IBC + §7.13.3.26 morph: only the intra keyframe carries
+    // the screen-content mode-info path.  The BV ring/neighbour map is
+    // advanced for every leaf, IBC or not.
+    plan_morph_ = keyframe_ && options_.enable_morph;
+    ibc_enabled_ = plan_morph_;
+    if (ibc_enabled_) {
+      ibc_buffer_.reset(mi_cols_, mi_rows_);
+      ibc_neighbours_.reset(mi_cols_, mi_rows_);
+      ibc_config_ = ibc::IbcConfig{};
+      ibc_config_.sb_size = geometry_.sb_size;
+      ibc_config_.allow_global = true;
+      ibc_config_.allow_local = false;
+      ibc_config_.max_bvp_drl_bits_minus_1 = 0;
+    }
   }
 
   std::int64_t block_variance_cost_at(
@@ -664,6 +890,234 @@ class InterFrameEncoder {
     }
     return static_cast<std::int64_t>(sse);
   }
+
+#if defined(AV2ENC_VIDEO_DELTAQ)
+  // ---------------------------------------------------------------------
+  // §5.18.7.1/.8 per-superblock segmentation / delta-Q planning.
+  // ---------------------------------------------------------------------
+  int qp_sb_cols() const { return (mi_cols_ + 15) / 16; }
+  int qp_sb_rows() const { return (mi_rows_ + 15) / 16; }
+  int qp_sb_count() const { return qp_sb_cols() * qp_sb_rows(); }
+  int base_q_index() const { return static_cast<int>(options_.base_q_idx); }
+  bool qp_tools_active() const {
+    return options_.enable_segmentation || options_.enable_delta_q ||
+           options_.per_segment_q;
+  }
+
+  // Deterministic per-superblock split, identical to the still
+  // --still-per-segment-q planner: segment 1 is every superblock whose luma
+  // variance is <= the frame mean variance.  --video-delta-q instead uses a
+  // raster-parity staircase for its target qindex.
+  bool build_sb_maps(std::string& error) {
+    const int cols = qp_sb_cols();
+    const int rows = qp_sb_rows();
+    const int count = cols * rows;
+    if (count <= 0) {
+      error = "delta-Q: empty superblock grid";
+      return false;
+    }
+    sb_segment_.assign(static_cast<std::size_t>(count), 0);
+    sb_target_q_.assign(static_cast<std::size_t>(count), base_q_index());
+    std::vector<std::uint64_t> variance(static_cast<std::size_t>(count), 0);
+    std::uint64_t total = 0;
+    for (int sby = 0; sby < rows; ++sby) {
+      for (int sbx = 0; sbx < cols; ++sbx) {
+        const int x0 = sbx * 64;
+        const int y0 = sby * 64;
+        const int w = std::min(64, width_ - x0);
+        const int h = std::min(64, height_ - y0);
+        std::uint64_t sum = 0;
+        std::uint64_t sumsq = 0;
+        for (int y = 0; y < h; ++y) {
+          const std::uint8_t* row =
+              source_.y.data() +
+              static_cast<std::size_t>(tile_y_ + y0 + y) * source_.width +
+              static_cast<std::size_t>(tile_x_ + x0);
+          for (int x = 0; x < w; ++x) {
+            const std::uint64_t v = row[x];
+            sum += v;
+            sumsq += v * v;
+          }
+        }
+        const std::uint64_t n =
+            static_cast<std::uint64_t>(w) * static_cast<std::uint64_t>(h);
+        const std::uint64_t var =
+            n == 0 ? 0 : (sumsq * n - sum * sum) / (n * n);
+        variance[static_cast<std::size_t>(sby * cols + sbx)] = var;
+        total += var;
+      }
+    }
+    const std::uint64_t mean =
+        total / static_cast<std::uint64_t>(count);
+    const int delta = options_.seg_q_delta;
+    for (int i = 0; i < count; ++i) {
+      const bool low =
+          variance[static_cast<std::size_t>(i)] <= mean;
+      sb_segment_[static_cast<std::size_t>(i)] = low ? 1 : 0;
+      if (options_.enable_delta_q) {
+        // The delta-Q ramp is a deterministic per-superblock staircase so the
+        // gate exercises a CurrentQIndex update at almost every superblock
+        // (a content-driven map can be uniform on flat clips).  plan_delta_q()
+        // rounds it to the nearest reachable step for delta_q_res.
+        const bool high = (i % 2) != 0;
+        sb_target_q_[static_cast<std::size_t>(i)] =
+            high ? std::clamp(base_q_index() + delta, 1, 255)
+                 : base_q_index();
+      }
+    }
+    return true;
+  }
+
+  bool build_segmentation(std::string& error) {
+    seg_params_ = rc::SegmentationParams{};
+    if (!seg_enabled_) return true;
+    seg_params_.enabled = true;
+    // The frame header codes update_map / temporal_update only when the derived
+    // primary reference is not NONE; both values are the same either way.
+    seg_params_.update_map = true;
+    seg_params_.temporal_update = false;
+    // --video-segmentation alone signals ALT_Q = 0 for segment 1 so both ids
+    // are representable (§5.20.5.8 neg_interleave covers 0..LastActiveSegId)
+    // while the quantizer stays at base_q_idx.  --video-per-segment-q supplies
+    // the real delta.
+    const int delta =
+        options_.per_segment_q ? options_.seg_q_delta : 0;
+    if (!rc::set_segment_alt_q(seg_params_, /*segment_id=*/1, delta,
+                               &error)) {
+      return false;
+    }
+    return true;
+  }
+
+  bool prepare_qp_plan(std::string& error) {
+    seg_enabled_ = options_.enable_segmentation || options_.per_segment_q;
+    delta_q_enabled_ = options_.enable_delta_q;
+    if (!seg_enabled_ && !delta_q_enabled_) return true;
+    if (!build_sb_maps(error)) return false;
+    if (!build_segmentation(error)) return false;
+    dq_params_ = rc::DeltaQParams{};
+    dq_params_.present = delta_q_enabled_;
+    dq_params_.res = delta_q_enabled_ ? options_.delta_q_res : 0;
+    deltaq::FrameQpHeader header;
+    header.primary_ref_is_none = true;
+    header.enable_ext_seg = false;
+    header.frame_type_switch = false;
+    header.using_qmatrix = options_.enable_qm;
+    if (!deltaq::derive_frame_segmentation(seg_params_, dq_params_,
+                                           base_q_index(), header, enc_seg_,
+                                           &error)) {
+      error = "segmentation: " + error;
+      return false;
+    }
+    if (seg_enabled_ &&
+        !deltaq::init_segment_grid(
+            enc_seg_grid_, mi_cols_, mi_rows_, /*tile_mi_col_start=*/0,
+            /*tile_mi_col_end=*/mi_cols_, /*tile_mi_row_start=*/0,
+            /*tile_mi_row_end=*/mi_rows_, /*enable_ext_seg=*/false,
+            deltaq::max_segments(false), {}, &error)) {
+      error = "segmentation grid: " + error;
+      return false;
+    }
+    sb_qindex_.assign(static_cast<std::size_t>(qp_sb_count()), base_q_index());
+    sb_delta_steps_.clear();
+    if (!delta_q_enabled_) {
+      // Segmentation-only: get_qindex() is evaluated once per superblock.
+      for (int i = 0; i < qp_sb_count(); ++i) {
+        int q = base_q_index();
+        if (seg_enabled_ &&
+            !deltaq::effective_qindex(
+                enc_seg_, base_q_index(), base_q_index(),
+                /*delta_q_present=*/false,
+                static_cast<int>(sb_segment_[static_cast<std::size_t>(i)]),
+                /*ignore_delta_q=*/false, q, &error)) {
+          return false;
+        }
+        if (q < 1 || q > 255) {
+          error = "per-segment Q: effective qindex " + std::to_string(q) +
+                  " is outside [1, 255] (lossless segment)";
+          return false;
+        }
+        sb_qindex_[static_cast<std::size_t>(i)] = q;
+      }
+    }
+    return true;
+  }
+
+  // Builds the per-superblock delta-Q steps from sb_target_q_.  A superblock
+  // whose first (and only) leaf is a full-SB inter skip cannot code
+  // read_delta_qindex() (§5.20.5.11: MiSize == SbSize && skip_flag), so the
+  // plan must leave it at the carried qindex.  That target fix-up can shift
+  // later steps, so re-run rc::plan_delta_q() until no target changes.
+  bool plan_delta_q_steps(std::vector<int>& actual, std::string& error) {
+    const int cols = qp_sb_cols();
+    const int count = qp_sb_count();
+    std::vector<int> targets = sb_target_q_;
+    std::vector<char> codable(static_cast<std::size_t>(count), 1);
+    for (const syntax::BlockSyntax& block : blocks_) {
+      if ((block.flags & syntax::kFlagSbRoot) == 0) continue;
+      const int index = (static_cast<int>(block.mi_row) / 16) * cols +
+                        static_cast<int>(block.mi_col) / 16;
+      if (index < 0 || index >= count) continue;
+      const bool leaf =
+          block.partition ==
+          static_cast<std::uint8_t>(partition::PartitionType::kNone);
+      if (leaf && block.is_inter != 0 && block.skip_flag != 0) {
+        codable[static_cast<std::size_t>(index)] = 0;
+      }
+    }
+    for (int attempt = 0; attempt <= 2 * count + 4; ++attempt) {
+      rc::DeltaQPlanConfig config;
+      config.base_q_idx = base_q_index();
+      config.delta_q_res = options_.delta_q_res;
+      config.cols = cols;
+      config.rows = qp_sb_rows();
+      rc::DeltaQPlan plan;
+      if (!rc::plan_delta_q(config, targets, plan, &error)) {
+        error = "delta-Q plan: " + error;
+        return false;
+      }
+      bool changed = false;
+      int current = base_q_index();
+      for (int i = 0; i < count; ++i) {
+        const rc::DeltaQPlanStep& step =
+            plan.steps[static_cast<std::size_t>(i)];
+        if (step.qindex_before != current) {
+          error = "delta-Q plan: step qindex_before does not chain";
+          return false;
+        }
+        if (codable[static_cast<std::size_t>(i)] == 0 &&
+            step.reduced_delta != 0) {
+          targets[static_cast<std::size_t>(i)] = current;
+          changed = true;
+        }
+        current = step.qindex_after;
+      }
+      if (changed) continue;
+      sb_delta_steps_ = std::move(plan.steps);
+      actual.resize(static_cast<std::size_t>(count));
+      for (int i = 0; i < count; ++i) {
+        actual[static_cast<std::size_t>(i)] =
+            sb_delta_steps_[static_cast<std::size_t>(i)].qindex_after;
+        if (trace_) {
+          const rc::DeltaQPlanStep& step =
+              sb_delta_steps_[static_cast<std::size_t>(i)];
+          std::cerr << "deltaq sb=" << i
+                    << " target=" << sb_target_q_[static_cast<std::size_t>(i)]
+                    << " before=" << step.qindex_before
+                    << " after=" << step.qindex_after
+                    << " reduced=" << step.reduced_delta
+                    << (codable[static_cast<std::size_t>(i)] == 0
+                            ? " dropped(full-SB skip)"
+                            : "")
+                    << "\n";
+        }
+      }
+      return true;
+    }
+    error = "delta-Q plan did not converge";
+    return false;
+  }
+#endif  // AV2ENC_VIDEO_DELTAQ
 
   // Decision + reconstruction phase (no syntax, no filters).  Kept
   // separate so a multi-tile frame can run one frame-level filter pass
@@ -704,12 +1158,80 @@ class InterFrameEncoder {
       return false;
     }
 
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    if (!prepare_qp_plan(error)) return false;
+    const auto collect_frame = [&]() -> bool {
+      blocks_.clear();
+      levels_.clear();
+      // A delta-Q fixpoint runs this walk more than once.  The merge stack
+      // reads the above-right / below-left MI grid, so stale entries from the
+      // previous pass would make the encoder's stack differ from the writer's.
+      // Re-initialise the per-4x4 decision grids to their constructor state.
+      mv_grid_.assign(mv_grid_.size(), inter::mc::MiInfo{});
+      intra_joint_.assign(intra_joint_.size(), 0);
+      for (int plane = 0; plane < 3; ++plane) {
+        std::fill(recon_[plane].samples.begin(), recon_[plane].samples.end(),
+                  static_cast<std::uint8_t>(0));
+      }
+      inter_blocks_ = 0;
+      intra_blocks_ = 0;
+      if (seg_enabled_) {
+        deltaq::clear_above_context(enc_seg_grid_);
+        deltaq::clear_left_context(enc_seg_grid_);
+      }
+      for (const PartitionNode& sb : frame.superblocks) {
+        if (!collect_node(sb, error)) return false;
+      }
+      return true;
+    };
+    if (qp_tools_active()) {
+      if (delta_q_enabled_) {
+        std::vector<int> effective(
+            static_cast<std::size_t>(qp_sb_count()), base_q_index());
+        bool converged = false;
+        for (int pass = 0; pass < 8; ++pass) {
+          sb_qindex_ = effective;
+          if (!collect_frame()) return false;
+          std::vector<int> actual;
+          if (!plan_delta_q_steps(actual, error)) return false;
+          if (actual == effective) {
+            converged = true;
+            break;
+          }
+          effective = std::move(actual);
+        }
+        if (!converged) {
+          // A quantizer-dependent skip decision can oscillate for a full-SB
+          // leaf (the delta is only codable while the block is not a full-SB
+          // skip).  Fall back to the neutral ramp: every step is zero, so the
+          // stream stays exact whatever the skip decisions are.
+          sb_target_q_.assign(static_cast<std::size_t>(qp_sb_count()),
+                              base_q_index());
+          sb_qindex_.assign(static_cast<std::size_t>(qp_sb_count()),
+                            base_q_index());
+          if (!collect_frame()) return false;
+          std::vector<int> actual;
+          if (!plan_delta_q_steps(actual, error)) return false;
+          if (actual != sb_qindex_) {
+            error = "delta-Q plan: neutral fallback did not produce a zero "
+                    "ramp";
+            return false;
+          }
+        }
+      } else if (!collect_frame()) {
+        return false;
+      }
+      return true;
+    }
+    return collect_frame();
+#else
     blocks_.clear();
     levels_.clear();
     for (const PartitionNode& sb : frame.superblocks) {
       if (!collect_node(sb, error)) return false;
     }
     return true;
+#endif
   }
 
   // Runs the §7.18-§7.20 decision + pixel stage on this encoder's
@@ -840,14 +1362,42 @@ class InterFrameEncoder {
     plan.reduced_tx_set = 0;
     plan.num_total_refs = num_total_refs_;
     plan.reference_select = options_.compound && num_total_refs_ > 1;
-    plan.allow_bawp = options_.enable_bawp && !keyframe_;
+    plan.allow_bawp = (options_.enable_bawp || options_.enable_morph) &&
+                      !keyframe_;
+    plan.allow_screen_content_tools =
+        keyframe_ && options_.enable_morph && options_.tile_cols == 0 &&
+        options_.tile_rows == 0 && num_total_refs_ >= 1;
+    plan.allow_intrabc = plan.allow_screen_content_tools;
+    plan.force_integer_mv = true;
+    plan.morph_pred_present = plan.allow_intrabc;
+    plan.enable_interintra = !keyframe_ && options_.enable_interintra;
     plan.enable_masked_compound =
         plan.reference_select &&
-        (options_.compound_wedge || options_.compound_diffwtd);    plan.mv_precision = options_.mv_precision;
+        (options_.compound_wedge || options_.compound_diffwtd);
+    plan.opfl_refine_type = plan.reference_select ? options_.opfl_refine_type : 0;
+    plan.enable_refinemv = plan.reference_select && options_.enable_refinemv;
+    plan.mv_precision = options_.mv_precision;
     plan.drl_reorder = options_.drl_reorder
                            ? (options_.drl_reorder_always ? 2 : 1)
                            : 0;
     plan.frame_distance = frame_distance_;
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    plan.segmentation = seg_params_;
+    plan.delta_q = dq_params_;
+    plan.primary_ref_is_none = primary_ref_is_none_;
+    plan.delta_steps = sb_delta_steps_;
+#endif
+    plan.temporal.use_ref_frame_mvs = temporal_ctx_.use_ref_frame_mvs;
+    plan.temporal.order_hint = temporal_ctx_.order_hint;
+    plan.temporal.num_past_refs = temporal_ctx_.num_past_refs;
+    plan.temporal.num_future_refs = temporal_ctx_.num_future_refs;
+    plan.temporal.closest_past = temporal_ctx_.closest_past;
+    plan.temporal.closest_future = temporal_ctx_.closest_future;
+    plan.temporal.ref_order_hints = ref_order_hints_;
+    plan.temporal.field = temporal_ctx_.field;
+    plan.temporal.scan = temporal_ctx_.use_ref_frame_mvs
+                             ? &video_temporal_scan
+                             : nullptr;
 #if defined(AV2ENC_VIDEO_GME)
     if (gm_plan_ != nullptr) {
       plan.gm_num_refs = gm_plan_->num_refs;
@@ -867,10 +1417,15 @@ class InterFrameEncoder {
     config.avg_cdf_type = true;
     config.enable_cfl_intra = true;
     config.enable_mhccp = options_.enable_mhccp;
+    config.enable_idtx_intra = options_.enable_idtx_intra;
     config.using_qmatrix = options_.enable_qm;
+    config.qm_user_data = options_.user_qm;
     config.enable_deblock = options_.enable_deblock;
     config.tx_mode_select = options_.enable_tx_search;
-    config.enable_bawp = options_.enable_bawp;
+    config.enable_bawp = options_.enable_bawp || options_.enable_morph;
+    config.seq_screen_content_tools_present =
+        options_.enable_morph && keyframe_;
+    config.enable_interintra = options_.enable_interintra;
 
     std::size_t tile_bytes = 0;
     if (!syntax::assemble_video_frame(plan, blocks_, levels_, config,
@@ -907,6 +1462,8 @@ class InterFrameEncoder {
   int recon_mi_rows() const { return mi_rows_; }
   std::uint32_t inter_blocks() const { return inter_blocks_; }
   std::uint32_t intra_blocks() const { return intra_blocks_; }
+  int temporal_added() const { return temporal_added_; }
+  int temporal_selected() const { return temporal_selected_; }
   const post::VideoFilterPlan& filter_plan() const { return filter_plan_; }
 
  private:
@@ -916,6 +1473,32 @@ class InterFrameEncoder {
       decoded_[0].reset(mi_cols_, mi_rows_);
       decoded_[1].reset(mi_cols_ / 2, mi_rows_ / 2);
       decoded_[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+#if defined(AV2ENC_VIDEO_DELTAQ)
+      // §7.14.2 get_qindex() and §5.20.5.7 SegmentIds are superblock state for
+      // this encoder: the syntax writer signals the same id and the delta at
+      // the first leaf of the superblock.
+      if (qp_tools_active()) {
+        const int sb = (node.mi_row / 16) * qp_sb_cols() + node.mi_col / 16;
+        if (sb < 0 || static_cast<std::size_t>(sb) >= sb_qindex_.size()) {
+          error = "delta-Q: superblock index outside the plan";
+          return false;
+        }
+        current_qindex_ = sb_qindex_[static_cast<std::size_t>(sb)];
+        current_segment_id_ =
+            seg_enabled_
+                ? static_cast<int>(sb_segment_[static_cast<std::size_t>(sb)])
+                : 0;
+        quant_step_ = rc::kQlookupQ0To255[std::clamp(current_qindex_, 0, 255)];
+        if (seg_enabled_ && node.mi_col == 0) {
+          deltaq::clear_left_context(enc_seg_grid_);
+        }
+        if (trace_ && seg_enabled_) {
+          std::cerr << "segq sb=" << sb
+                    << " segment=" << current_segment_id_
+                    << " qindex=" << current_qindex_ << "\n";
+        }
+      }
+#endif
     }
     const std::size_t index = blocks_.size();
     blocks_.emplace_back();
@@ -1021,6 +1604,20 @@ class InterFrameEncoder {
       params.num_refs = num_total_refs_;
       params.frame_distance = frame_distance_.data();
     }
+    params.use_ref_frame_mvs = temporal_ctx_.use_ref_frame_mvs;
+    params.motion_field = temporal_ctx_.field;
+    params.order_hint = temporal_ctx_.order_hint;
+    params.order_hints = ref_order_hints_.data();
+    params.num_past_refs = temporal_ctx_.num_past_refs;
+    params.num_future_refs = temporal_ctx_.num_future_refs;
+    params.closest_past = temporal_ctx_.closest_past;
+    params.closest_future = temporal_ctx_.closest_future;
+    params.tile_mi_col_start = tile_mi_col_;
+    params.tile_mi_row_start = tile_mi_row_;
+    params.tile_mi_col_end = frame_mi_cols_;
+    params.tile_mi_row_end = frame_mi_rows_;
+    params.temporal_added = &temporal_added_;
+    attach_video_temporal_scan(&params);
     return params;
   }
 
@@ -1166,6 +1763,730 @@ class InterFrameEncoder {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // §5.20.5.3/.4 intra block copy + §7.13.3.26 morphological prediction
+  // ---------------------------------------------------------------------
+  ibc::FrameView ibc_frame_view() const {
+    ibc::FrameView view;
+    view.y = ibc::PlaneView{recon_[0].samples.data(), recon_[0].stride,
+                            mi_cols_ * 4, mi_rows_ * 4};
+    view.u = ibc::PlaneView{recon_[1].samples.data(), recon_[1].stride,
+                            mi_cols_ * 2, mi_rows_ * 2};
+    view.v = ibc::PlaneView{recon_[2].samples.data(), recon_[2].stride,
+                            mi_cols_ * 2, mi_rows_ * 2};
+    view.has_chroma = true;
+    view.sub_x = 1;
+    view.sub_y = 1;
+    return view;
+  }
+
+  struct IbcChoice {
+    bool found = false;
+    ibc::BlockVector bv{};
+    int stack_index = -1;  // >= 0 => NEARMV with that RefMvIdx
+    bool morph = false;    // §7.13.3.26 adaptation selected
+    std::int64_t sse = 0;
+    std::vector<std::uint8_t> luma;
+    std::vector<std::uint8_t> u;
+    std::vector<std::uint8_t> v;
+    std::vector<std::uint8_t> morph_scratch;
+  };
+
+  // Chooses an IBC block vector for a keyframe leaf.  A plain exact copy and a
+  // §7.13.3.26 morphological adaptation are both evaluated; the best luma SSE
+  // below the caller's intra SSE wins.  Returns false only on a hard error.
+  bool choose_ibc_leaf(int r, int c, int bsize, std::int64_t intra_sse,
+                       IbcChoice& out, std::string& error) {
+    out = IbcChoice{};
+    if (!ibc_enabled_ || !ibcs::intrabc_available(true, bsize)) return true;
+    const auto size = static_cast<partition::BlockSize>(bsize);
+    const int w = partition::block_width(size);
+    const int h = partition::block_height(size);
+    const int x0 = c * 4;
+    const int y0 = r * 4;
+    const int visible_w = std::min(w, mi_cols_ * 4 - x0);
+    const int visible_h = std::min(h, mi_rows_ * 4 - y0);
+    const int cw = w / 2;
+    const int ch = h / 2;
+    // IBC is an 8-bit 4:2:0 tool here; a leaf whose chroma block is not the
+    // plain half-size (4:2:0 shared-chroma partitions) is not coded.
+    if (!ibc_available_for_leaf(bsize)) return true;
+    const ibc::FrameView frame = ibc_frame_view();
+    const ibcs::BvStack stack = ibcs::build_bv_stack(
+        frame, ibc_config_, ibc_buffer_, r, c, bsize, ibc_neighbours_);
+
+    morph::MorphContext mctx;
+    mctx.mi_col = c;
+    mctx.mi_row = r;
+    mctx.mi_cols = mi_cols_;
+    mctx.mi_rows = mi_rows_;
+    mctx.avail_u = y0 > 0;
+    mctx.avail_l = x0 > 0;
+    mctx.bit_depth = 8;
+    const morph::MorphRect rect{x0, y0, w, h};
+
+    const auto consider = [&](ibc::BlockVector bv, int stack_index) {
+      if ((bv.row & 7) != 0 || (bv.col & 7) != 0) return;
+      if (!ibcs::is_bv_encodable(frame, ibc_config_, ibc_buffer_, r, c, bsize,
+                                 bv, nullptr)) {
+        return;
+      }
+      std::vector<std::uint8_t> luma(static_cast<std::size_t>(w) *
+                                     static_cast<std::size_t>(h));
+      std::vector<std::uint8_t> u(static_cast<std::size_t>(cw) *
+                                  static_cast<std::size_t>(ch));
+      std::vector<std::uint8_t> v(u.size());
+      if (!ibc::copy_block(frame, r, c, bsize, bv, luma.data(), w, u.data(),
+                           cw, v.data(), cw, visible_w, visible_h)) {
+        return;
+      }
+      const std::int64_t copy_sse = sse_against_source(
+          source_, 0, x0 + tile_x_, y0 + tile_y_, w, h, luma);
+      bool best_morph = false;
+      std::int64_t best_sse = copy_sse;
+      std::vector<std::uint8_t> adapted;
+      if (plan_morph_) {
+        std::string why;
+        if (ibcs::is_bv_offset_valid(frame, ibc_config_, ibc_buffer_, r, c,
+                                     bsize, bv, -1, -1, &why)) {
+          // The fit reads the reconstructed above/left template and the source
+          // block at refX/refY, so evaluate it on a full-plane snapshot where
+          // only this block has been written.
+          out.morph_scratch.assign(recon_[0].samples.begin(),
+                                   recon_[0].samples.end());
+          morph::MorphPlane plane{out.morph_scratch.data(), recon_[0].stride};
+          for (int yy = 0; yy < h; ++yy) {
+            std::memcpy(out.morph_scratch.data() +
+                            static_cast<std::size_t>(y0 + yy) *
+                                static_cast<std::size_t>(recon_[0].stride) +
+                            static_cast<std::size_t>(x0),
+                        luma.data() + static_cast<std::size_t>(yy) * w,
+                        static_cast<std::size_t>(w));
+          }
+          morph::MorphFit fit{};
+          if (morph::morph_predict(mctx, plane, rect, bv.row, bv.col, &fit)) {
+            adapted.resize(luma.size());
+            for (int yy = 0; yy < h; ++yy) {
+              std::memcpy(
+                  adapted.data() + static_cast<std::size_t>(yy) * w,
+                  out.morph_scratch.data() +
+                      static_cast<std::size_t>(y0 + yy) *
+                          static_cast<std::size_t>(recon_[0].stride) +
+                      static_cast<std::size_t>(x0),
+                  static_cast<std::size_t>(w));
+            }
+            const std::int64_t morph_sse = sse_against_source(
+                source_, 0, x0 + tile_x_, y0 + tile_y_, w, h, adapted);
+            if (morph_sse < best_sse) {
+              best_sse = morph_sse;
+              best_morph = true;
+            }
+          }
+        }
+      }
+      if (!out.found || best_sse < out.sse) {
+        out.found = true;
+        out.bv = bv;
+        out.stack_index = stack_index;
+        out.morph = best_morph;
+        out.sse = best_sse;
+        out.luma = best_morph ? adapted : luma;
+        out.u = std::move(u);
+        out.v = std::move(v);
+      }
+    };
+
+    for (int i = 0; i < stack.count; ++i) {
+      if (!stack.entries[static_cast<std::size_t>(i)].valid) continue;
+      consider(stack.entries[static_cast<std::size_t>(i)].bv, i);
+    }
+    static constexpr int kPeriodic[] = {8, 16, 32, 64, 128};
+    for (const int d : kPeriodic) {
+      const ibc::BlockVector cands[2] = {ibc::BlockVector{-d * 8, 0},
+                                         ibc::BlockVector{0, -d * 8}};
+      for (const ibc::BlockVector& bv : cands) {
+        consider(bv, -1);
+      }
+    }
+    // A tie picks the IBC skip block: it codes no residual, so equal luma
+    // distortion is a rate win over the intra leaf.
+    if (!out.found || out.sse > intra_sse) {
+      out.found = false;
+    }
+    (void)error;
+    return true;
+  }
+
+  bool ibc_available_for_leaf(int bsize) const {
+    const auto size = static_cast<partition::BlockSize>(bsize);
+    const int w = partition::block_width(size);
+    const int h = partition::block_height(size);
+    if (w < 8 || h < 8) return false;
+    // §7.13.3.18 copies exactly w x h luma and (w/2) x (h/2) chroma.  Reject
+    // the shared-chroma ownership cases where the chroma residual block is not
+    // the plain half-size.
+    return w % 2 == 0 && h % 2 == 0 && w / 2 >= 4 && h / 2 >= 4;
+  }
+
+  // §7.13.2 single-mode prediction for the inter-intra candidates.  The
+  // neighbour counts come from the same §6.19.2.3 replay the intra search uses;
+  // chroma smooth flags are always false in this encoder (UVMode is DC/CfL).
+  bool predict_intra_plane_mode(int plane, int x0, int y0, int w, int h,
+                                intra::Mode mode, bool above_smooth,
+                                bool left_smooth,
+                                std::vector<std::uint8_t>& out) const {
+    const int sb_mi = plane == 0 ? 16 : 8;
+    const int mi_c = plane == 0 ? mi_cols_ : mi_cols_ / 2;
+    const int mi_r = plane == 0 ? mi_rows_ : mi_rows_ / 2;
+    const intra_search::Availability avail = intra_search::availability(
+        decoded_[plane], x0 / 4, y0 / 4, w / 4, h / 4, mi_c, mi_r, sb_mi);
+    intra::NeighborRequest request;
+    request.recon =
+        intra::PlaneView{recon_[plane].samples.data(), recon_[plane].stride};
+    request.x = x0;
+    request.y = y0;
+    request.w = w;
+    request.h = h;
+    request.max_x = recon_[plane].width - 1;
+    request.max_y = recon_[plane].height - 1;
+    request.have_left = x0 > 0;
+    request.have_above = y0 > 0;
+    request.num4_above_right = avail.num4_above_right;
+    request.num4_below_left = avail.num4_below_left;
+    request.color_plane = plane;
+    intra::PredictParams params;
+    params.mode = mode;
+    params.angle_delta = 0;
+    params.enable_edge_filter = true;
+    params.above_neighbor_is_smooth = above_smooth;
+    params.left_neighbor_is_smooth = left_smooth;
+    out.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    return intra::predict_block(request, 8, params, out.data(),
+                                static_cast<std::size_t>(w)) ==
+           intra::IntraStatus::kOk;
+  }
+
+  // §7.13.2 single-mode prediction for the inter-intra candidates.  The
+  // neighbour counts come from the same §6.19.2.3 replay the intra search uses;
+  // chroma smooth flags are always false in this encoder (UVMode is DC/CfL).
+  // §7.13.3.29/.30 inter-intra.  Evaluates the four intra modes plus the
+  // signalable wedge masks against the inter prediction and returns the best
+  // luma+chroma blend.  `inter_y/u/v` are the single-reference predictions.
+  bool evaluate_inter_intra(int bsize, int x0, int y0, int w, int h,
+                            const std::vector<std::uint8_t>& inter_y,
+                            const std::vector<std::uint8_t>& inter_u,
+                            const std::vector<std::uint8_t>& inter_v,
+                            std::vector<std::uint8_t>& out_y,
+                            std::vector<std::uint8_t>& out_u,
+                            std::vector<std::uint8_t>& out_v, int& mode_out,
+                            bool& wedge_out, int& index_out,
+                            std::int64_t& sse_out, std::string& error) {
+    static constexpr intra::Mode kModes[4] = {
+        intra::Mode::kDc, intra::Mode::kV, intra::Mode::kH,
+        intra::Mode::kSmooth};
+    bool above_smooth = false;
+    bool left_smooth = false;
+    luma_neighbor_smooth(y0 / 4, x0 / 4, above_smooth, left_smooth);
+    std::vector<std::uint8_t> ii_y[4];
+    std::vector<std::uint8_t> ii_u[4];
+    std::vector<std::uint8_t> ii_v[4];
+    for (int m = 0; m < 4; ++m) {
+      if (!predict_intra_plane_mode(0, x0, y0, w, h, kModes[m], above_smooth,
+                                    left_smooth, ii_y[m]) ||
+          !predict_intra_plane_mode(1, x0 / 2, y0 / 2, w / 2, h / 2,
+                                    kModes[m], false, false, ii_u[m]) ||
+          !predict_intra_plane_mode(2, x0 / 2, y0 / 2, w / 2, h / 2,
+                                    kModes[m], false, false, ii_v[m])) {
+        error = "inter-intra intra prediction failed";
+        return false;
+      }
+    }
+    inter::adv::InterIntraSearchInput in{};
+    in.bsize = bsize;
+    in.rect = inter::adv::BlockRect{0, 0, w, h};
+    for (int m = 0; m < 4; ++m) in.intra[m] = ii_y[m].data();
+    in.intra_stride = w;
+    std::vector<std::uint8_t> scratch(static_cast<std::size_t>(w) *
+                                      static_cast<std::size_t>(h));
+    in.scratch = scratch.data();
+    in.scratch_stride = w;
+    in.source = source_.y.data() +
+                static_cast<std::size_t>(y0 + tile_y_) *
+                    static_cast<std::size_t>(source_.width) +
+                static_cast<std::size_t>(x0 + tile_x_);
+    in.source_stride = static_cast<int>(source_.width);
+    in.inter_pred = inter_y.data();
+    in.inter_pred_stride = w;
+    in.enable_wedge_interintra = true;
+    in.wedge_sign = 0;
+    const std::optional<inter::adv::InterIntraDecision> decision =
+        inter::adv::search_inter_intra(in);
+    if (!decision.has_value()) {
+      error = "inter-intra search failed";
+      return false;
+    }
+    // Wedge inter-intra codes read_wedge_mode() (wedge_quad/angle/dist), so it
+    // is kept only when it beats the plain §7.13.3.29 mask in SSE.
+    inter::adv::InterIntraDecision chosen = *decision;
+    if (decision->wedge_interintra) {
+      in.enable_wedge_interintra = false;
+      const std::optional<inter::adv::InterIntraDecision> plain =
+          inter::adv::search_inter_intra(in);
+      if (plain.has_value() && plain->sse <= decision->sse) {
+        chosen = *plain;
+      }
+      in.enable_wedge_interintra = true;
+    }
+    const int mode = static_cast<int>(chosen.mode);
+    const bool wedge = chosen.wedge_interintra;
+    const int index = chosen.wedge_index;
+    out_y.resize(inter_y.size());
+    std::memcpy(out_y.data(), in.inter_pred, inter_y.size());
+    inter::adv::CompoundJob job{};
+    job.rect = inter::adv::BlockRect{0, 0, w, h};
+    job.bsize = in.bsize;
+    job.is_inter_intra = 1;
+    job.interintra_mode = chosen.mode;
+    job.type = wedge ? inter::adv::CompoundType::kWedge
+                     : inter::adv::CompoundType::kIntra;
+    job.wedge_index = index;
+    job.wedge_sign = 0;
+    job.intra = ii_y[mode].data();
+    job.intra_stride = w;
+    job.dst = out_y.data();
+    job.dst_stride = w;
+    inter::adv::run_compound_job(job);
+    // Luma mask for the chroma wedge form (§7.13.3.30 subsamples it).
+    std::vector<std::uint8_t> luma_mask;
+    if (wedge) {
+      luma_mask.resize(static_cast<std::size_t>(w) *
+                       static_cast<std::size_t>(h));
+      for (int i = 0; i < h; ++i) {
+        for (int j = 0; j < w; ++j) {
+          luma_mask[static_cast<std::size_t>(i) * w + j] =
+              static_cast<std::uint8_t>(inter::adv::wedge_mask_value(
+                  in.bsize, 0, index, i, j));
+        }
+      }
+    }
+    const int cw = w / 2;
+    const int ch = h / 2;
+    const auto blend_chroma = [&](const std::vector<std::uint8_t>& inter,
+                                  const std::vector<std::uint8_t>& intra_pred,
+                                  std::vector<std::uint8_t>& out) {
+      out = inter;
+      inter::adv::CompoundJob cjob{};
+      cjob.plane = 1;
+      cjob.sub_x = 1;
+      cjob.sub_y = 1;
+      cjob.rect = inter::adv::BlockRect{0, 0, cw, ch};
+      cjob.bsize = in.bsize;
+      cjob.is_inter_intra = 1;
+      cjob.interintra_mode = chosen.mode;
+      cjob.type = wedge ? inter::adv::CompoundType::kWedge
+                        : inter::adv::CompoundType::kIntra;
+      cjob.wedge_index = index;
+      cjob.wedge_sign = 0;
+      cjob.luma_mask = wedge ? luma_mask.data() : nullptr;
+      cjob.luma_mask_stride = w;
+      cjob.intra = intra_pred.data();
+      cjob.intra_stride = cw;
+      cjob.dst = out.data();
+      cjob.dst_stride = cw;
+      inter::adv::run_compound_job(cjob);
+    };
+    blend_chroma(inter_u, ii_u[mode], out_u);
+    blend_chroma(inter_v, ii_v[mode], out_v);
+    const std::int64_t ii_sse =
+        sse_against_source(source_, 0, x0 + tile_x_, y0 + tile_y_, w, h,
+                           out_y) +
+        sse_against_source(source_, 1, x0 / 2 + tile_x_ / 2,
+                           y0 / 2 + tile_y_ / 2, cw, ch, out_u) +
+        sse_against_source(source_, 2, x0 / 2 + tile_x_ / 2,
+                           y0 / 2 + tile_y_ / 2, cw, ch, out_v);
+    mode_out = mode;
+    wedge_out = wedge;
+    index_out = index;
+    sse_out = ii_sse;
+    return true;
+  }
+
+#if defined(AV2ENC_VIDEO_FRAMES)
+  // --- §7.13.3.8-.12 / §7.13.3.3-.6 compound prediction -------------------
+  //
+  // The temporal tools predict from the two reference planes by absolute
+  // frame coordinates and write a block-local result, so a candidate never
+  // disturbs the reconstructed reference planes.
+  static temporal::PlaneView temporal_plane(const inter::mc::RefFrame& ref,
+                                            int plane) {
+    temporal::PlaneView view;
+    view.data = ref.plane[plane].data;
+    view.stride = ref.plane[plane].stride;
+    view.width = ref.plane_width(plane);
+    view.height = ref.plane_height(plane);
+    return view;
+  }
+
+  static temporal::RefArea full_area(const temporal::PlaneView& view) {
+    return temporal::RefArea{0, 0, view.width - 1, view.height - 1};
+  }
+
+  // §7.13.3.4 get ref area for one reference list (the input is identical for
+  // both lists except the candidate MV).
+  bool temporal_ref_area(int sub_x, int sub_y, int x, int y, int w, int h,
+                         const inter::mc::Mv mvs[2],
+                         temporal::RefArea out[2]) const {
+    temporal::RefAreaInput in;
+    in.w = w;
+    in.h = h;
+    in.sub_x = sub_x;
+    in.sub_y = sub_y;
+    in.x = x;
+    in.y = y;
+    in.frame_w = static_cast<int>(source_.width);
+    in.frame_h = static_cast<int>(source_.height);
+    in.num_refs = 2;
+    for (int list = 0; list < 2; ++list) {
+      in.ref_mi_cols[list] = references_[list].mi_cols;
+      in.ref_mi_rows[list] = references_[list].mi_rows;
+      in.ref_luma_w[list] = in.frame_w;
+      in.ref_luma_h[list] = in.frame_h;
+      in.cand_mvs[list] = temporal::Mv{mvs[list].y, mvs[list].x};
+    }
+    return temporal::compute_ref_area(in, out) ==
+           temporal::TemporalStatus::kOk;
+  }
+
+  // Plain COMPOUND_AVERAGE prediction at the coded MVs.
+  bool compound_plain(const inter::mc::Mv mvs[2], int bsize, int x0, int y0,
+                      int w, int h, std::vector<std::uint8_t>& y,
+                      std::vector<std::uint8_t>& u,
+                      std::vector<std::uint8_t>& v, std::string& error,
+                      const multiref::CompoundModeParams* mode_params =
+                          nullptr) {
+    multiref::CompoundPrediction prediction;
+    if (!multiref::build_compound_prediction(
+            references_[0], references_[1],
+            inter::mc::BlockRect{x0, y0, w, h}, bsize, mvs[0], mvs[1],
+            inter::mc::InterpFilter::kEighttap, references_[0].mi_cols,
+            references_[0].mi_rows, prediction, error)) {
+      return false;
+    }
+    multiref::CompoundModeParams params;
+    if (mode_params != nullptr) {
+      params = *mode_params;
+    } else {
+      params.type = inter::adv::CompoundType::kAverage;
+      params.cwp_weight = multiref::kCwpEqual;
+    }
+    std::uint8_t* dst[3] = {compound_pred_[0].samples.data(),
+                            compound_pred_[1].samples.data(),
+                            compound_pred_[2].samples.data()};
+    int dst_stride[3] = {compound_pred_[0].stride, compound_pred_[1].stride,
+                         compound_pred_[2].stride};
+    if (!multiref::apply_compound_prediction(prediction, params, dst, dst_stride,
+                                             error)) {
+      return false;
+    }
+    const int cw = w / 2;
+    const int ch = h / 2;
+    const int cx0 = x0 / 2;
+    const int cy0 = y0 / 2;
+    y.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    u.resize(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
+    v.resize(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
+    for (int yy = 0; yy < h; ++yy) {
+      std::memcpy(y.data() + static_cast<std::size_t>(yy) * w,
+                  compound_pred_[0].samples.data() +
+                      static_cast<std::size_t>(y0 + yy) * compound_pred_[0].stride +
+                      x0,
+                  static_cast<std::size_t>(w));
+    }
+    for (int yy = 0; yy < ch; ++yy) {
+      std::memcpy(u.data() + static_cast<std::size_t>(yy) * cw,
+                  compound_pred_[1].samples.data() +
+                      static_cast<std::size_t>(cy0 + yy) * compound_pred_[1].stride +
+                      cx0,
+                  static_cast<std::size_t>(cw));
+      std::memcpy(v.data() + static_cast<std::size_t>(yy) * cw,
+                  compound_pred_[2].samples.data() +
+                      static_cast<std::size_t>(cy0 + yy) * compound_pred_[2].stride +
+                      cx0,
+                  static_cast<std::size_t>(cw));
+    }
+    return true;
+  }
+
+  // §7.13.3.8-.12 optical-flow refinement, writing compound_y_/u_/v_.  When
+  // the §7.13.3.8 SAD shortcut fires the plain coded-MV compound prediction is
+  // used instead, exactly like the decoder.
+  bool predict_compound_optflow(const inter::mc::Mv mvs[2], int bsize, int x0,
+                                int y0, int w, int h, std::string& error) {
+    const int fw = static_cast<int>(source_.width);
+    const int fh = static_cast<int>(source_.height);
+    const temporal::PlaneView l0 = temporal_plane(references_[0], 0);
+    const temporal::PlaneView l1 = temporal_plane(references_[1], 0);
+    const temporal::RefArea fa0 = full_area(l0);
+    const temporal::RefArea fa1 = full_area(l1);
+    std::vector<std::uint8_t> ip0(static_cast<std::size_t>(w) * h);
+    std::vector<std::uint8_t> ip1(ip0.size());
+    if (!temporal::predict_plane_u8_ex(
+            l0, x0, y0, w, h, temporal::Mv{mvs[0].y, mvs[0].x},
+            inter::mc::InterpFilter::kBilinear, 0, 0, false, fw, fh, l0.width,
+            l0.height, fw, fh, fa0, ip0.data(), w) ||
+        !temporal::predict_plane_u8_ex(
+            l1, x0, y0, w, h, temporal::Mv{mvs[1].y, mvs[1].x},
+            inter::mc::InterpFilter::kBilinear, 0, 0, false, fw, fh, l1.width,
+            l1.height, fw, fh, fa1, ip1.data(), w)) {
+      error = "optflow initial prediction failed";
+      return false;
+    }
+    std::int64_t sad = 0;
+    for (std::size_t i = 0; i < ip0.size(); ++i) {
+      sad += std::abs(static_cast<int>(ip0[i]) - static_cast<int>(ip1[i]));
+    }
+    if (sad < 6) {
+      // §7.13.3.8: no refinement; predict_subblock() with the coded MVs.
+      return compound_plain(mvs, bsize, x0, y0, w, h, compound_y_, compound_u_,
+                            compound_v_, error);
+    }
+    const int n = (w <= 8 && h <= 8) ? 4 : 8;
+    const int w4 = w / 4;
+    const int h4 = h / 4;
+    std::vector<std::int16_t> opfl(static_cast<std::size_t>(w4) * h4 * 4);
+    std::vector<std::int16_t> delta(opfl.size());
+    temporal::OpflJob job;
+    job.w = w;
+    job.h = h;
+    job.p0 = ip0.data();
+    job.p0_stride = w;
+    job.p1 = ip1.data();
+    job.p1_stride = w;
+    job.mvs[0] = temporal::Mv{mvs[0].y, mvs[0].x};
+    job.mvs[1] = temporal::Mv{mvs[1].y, mvs[1].x};
+    // The product B frame does not carry the absolute order hint into this
+    // class; frame_distance_ is relative_dist(OrderHint, RefOrderHint), so a
+    // synthetic origin reproduces the §7.13.3.9 distances exactly.  The base
+    // must avoid kRestrictedOrderHint (-1).
+    job.order_hint = 64;
+    job.ref0_order_hint = 64 - frame_distance_[0];
+    job.ref1_order_hint = 64 - frame_distance_[1];
+    job.n = n;
+    temporal::OpflOutput out;
+    out.opfl_mvs = opfl.data();
+    out.opfl_stride4 = w4;
+    out.mv_deltas = delta.data();
+    out.delta_stride4 = w4;
+    if (temporal::opfl_compute(job, out) != temporal::TemporalStatus::kOk) {
+      error = "opfl_compute failed";
+      return false;
+    }
+    const auto cell = [&](int row4, int col4, int list, int comp) {
+      return static_cast<std::size_t>(
+          ((static_cast<std::size_t>(row4) * w4 + col4) * 2 + list) * 2 + comp);
+    };
+    compound_y_.assign(static_cast<std::size_t>(w) * h, 0);
+    const int cw = w / 2;
+    const int ch = h / 2;
+    compound_u_.assign(static_cast<std::size_t>(cw) * ch, 0);
+    compound_v_.assign(compound_u_.size(), 0);
+    std::vector<std::int16_t> s0(static_cast<std::size_t>(n) * n);
+    std::vector<std::int16_t> s1(s0.size());
+    for (int i2 = 0; i2 < h; i2 += n) {
+      for (int j2 = 0; j2 < w; j2 += n) {
+        temporal::MvPair mvs_off;
+        mvs_off.mv[0] = temporal::Mv{
+            opfl[cell((i2 >> 2), (j2 >> 2), 0, 0)],
+            opfl[cell((i2 >> 2), (j2 >> 2), 0, 1)]};
+        mvs_off.mv[1] = temporal::Mv{
+            opfl[cell((i2 >> 2), (j2 >> 2), 1, 0)],
+            opfl[cell((i2 >> 2), (j2 >> 2), 1, 1)]};
+        // §7.13.3.8 setRefArea for an 8x8 luma subblock.
+        temporal::RefArea a0 = fa0;
+        temporal::RefArea a1 = fa1;
+        if (n == 8) {
+          temporal::RefArea area[2];
+          if (!temporal_ref_area(0, 0, x0 + j2, y0 + i2, n, n, mvs, area)) {
+            error = "optflow ref area failed";
+            return false;
+          }
+          a0 = area[0];
+          a1 = area[1];
+        }
+        if (!temporal::predict_plane_1_16_ex(
+                l0, x0 + j2, y0 + i2, n, n, mvs_off.mv[0],
+                inter::mc::InterpFilter::kEighttapSharp, 0, 0, true, fw, fh,
+                l0.width, l0.height, fw, fh, a0, s0.data(), n) ||
+            !temporal::predict_plane_1_16_ex(
+                l1, x0 + j2, y0 + i2, n, n, mvs_off.mv[1],
+                inter::mc::InterpFilter::kEighttapSharp, 0, 0, true, fw, fh,
+                l1.width, l1.height, fw, fh, a1, s1.data(), n)) {
+          error = "optflow subblock prediction failed";
+          return false;
+        }
+        temporal::compound_average(
+            s0.data(), n, s1.data(), n, n, n, multiref::kCwpEqual,
+            compound_y_.data() + static_cast<std::size_t>(i2) * w + j2, w);
+      }
+    }
+    // §7.13.3.7: luma filled OpflMvs; chroma reapplies them at 4x4 (plane>0).
+    const int cx0 = x0 / 2;
+    const int cy0 = y0 / 2;
+    const int csub = 4;  // Max(4, n >> 1)
+    std::vector<std::int16_t> cs0(16);
+    std::vector<std::int16_t> cs1(16);
+    for (int plane = 1; plane < 3; ++plane) {
+      const temporal::PlaneView c0 = temporal_plane(references_[0], plane);
+      const temporal::PlaneView c1 = temporal_plane(references_[1], plane);
+      std::vector<std::uint8_t>& dst =
+          plane == 1 ? compound_u_ : compound_v_;
+      for (int i2 = 0; i2 < ch; i2 += csub) {
+        for (int j2 = 0; j2 < cw; j2 += csub) {
+          const int row4 = i2 >> 1;
+          const int col4 = j2 >> 1;
+          temporal::MvPair mvs_off;
+          mvs_off.mv[0] = temporal::Mv{opfl[cell(row4, col4, 0, 0)],
+                                       opfl[cell(row4, col4, 0, 1)]};
+          mvs_off.mv[1] = temporal::Mv{opfl[cell(row4, col4, 1, 0)],
+                                       opfl[cell(row4, col4, 1, 1)]};
+          temporal::RefArea area[2];
+          if (!temporal_ref_area(1, 1, cx0 + j2, cy0 + i2, csub, csub, mvs,
+                                 area)) {
+            error = "optflow chroma ref area failed";
+            return false;
+          }
+          if (!temporal::predict_plane_1_16_ex(
+                  c0, cx0 + j2, cy0 + i2, csub, csub, mvs_off.mv[0],
+                  inter::mc::InterpFilter::kEighttapSharp, 1, 1, true, fw, fh,
+                  c0.width, c0.height, fw, fh, area[0], cs0.data(), csub) ||
+              !temporal::predict_plane_1_16_ex(
+                  c1, cx0 + j2, cy0 + i2, csub, csub, mvs_off.mv[1],
+                  inter::mc::InterpFilter::kEighttapSharp, 1, 1, true, fw, fh,
+                  c1.width, c1.height, fw, fh, area[1], cs1.data(), csub)) {
+            error = "optflow chroma prediction failed";
+            return false;
+          }
+          temporal::compound_average(
+              cs0.data(), csub, cs1.data(), csub, csub, csub,
+              multiref::kCwpEqual,
+              dst.data() + static_cast<std::size_t>(i2) * cw + j2, cw);
+        }
+      }
+    }
+    return true;
+  }
+
+  // §7.13.3.3-.6 refine-MV, writing compound_y_/u_/v_ with EIGHTTAP_SHARP and
+  // the compound average over §7.13.3.4 ref areas.
+  bool predict_compound_refinemv(const inter::mc::Mv mvs[2], int x0, int y0,
+                                 int w, int h, std::string& error) {
+    const int fw = static_cast<int>(source_.width);
+    const int fh = static_cast<int>(source_.height);
+    const temporal::PlaneView l0 = temporal_plane(references_[0], 0);
+    const temporal::PlaneView l1 = temporal_plane(references_[1], 0);
+    temporal::RefArea area[2];
+    if (!temporal_ref_area(0, 0, x0, y0, w, h, mvs, area)) {
+      error = "refine-MV ref area failed";
+      return false;
+    }
+    const int sw = w + 4;
+    const int sh = h + 4;
+    std::vector<std::uint8_t> s0(static_cast<std::size_t>(sw) * sh);
+    std::vector<std::uint8_t> s1(s0.size());
+    temporal::RefineSearchInput search;
+    search.x = x0;
+    search.y = y0;
+    search.w = w;
+    search.h = h;
+    search.frame_w = fw;
+    search.frame_h = fh;
+    for (int list = 0; list < 2; ++list) {
+      search.ref_mi_cols[list] = references_[list].mi_cols;
+      search.ref_mi_rows[list] = references_[list].mi_rows;
+      search.ref_luma_w[list] = fw;
+      search.ref_luma_h[list] = fh;
+      search.cand_mvs[list] = temporal::Mv{mvs[list].y, mvs[list].x};
+    }
+    search.ref[0] = l0;
+    search.ref[1] = l1;
+    search.num_refs = 2;
+    search.tip_pred = false;
+    search.switchable = false;  // §5.20.7.17: NEAR_NEARMV is not switchable
+    search.use_ref_area = true;
+    search.area[0] = area[0];
+    search.area[1] = area[1];
+    search.scratch0 = s0.data();
+    search.scratch1 = s1.data();
+    search.scratch_stride = sw;
+    temporal::RefineSearchResult result;
+    if (temporal::search_refinemv(search, &result) !=
+        temporal::TemporalStatus::kOk) {
+      error = "search_refinemv failed";
+      return false;
+    }
+    std::vector<std::int16_t> r0(static_cast<std::size_t>(w) * h);
+    std::vector<std::int16_t> r1(r0.size());
+    compound_y_.resize(r0.size());
+    auto predict_plane_refine = [&](int sub_x, int sub_y, const temporal::PlaneView& p0,
+                                    const temporal::PlaneView& p1, int px, int py,
+                                    int pw, int ph, const temporal::RefArea a[2],
+                                    std::uint8_t* dst, int dst_stride) {
+      temporal::RefinePredictInput in;
+      in.ref[0] = p0;
+      in.ref[1] = p1;
+      in.num_refs = 2;
+      in.x = px;
+      in.y = py;
+      in.w = pw;
+      in.h = ph;
+      in.sub_x = sub_x;
+      in.sub_y = sub_y;
+      in.frame_w = fw;
+      in.frame_h = fh;
+      for (int list = 0; list < 2; ++list) {
+        in.ref_luma_w[list] = fw;
+        in.ref_luma_h[list] = fh;
+      }
+      in.offset_mvs = result.offset_mvs;
+      in.cwp_weight = multiref::kCwpEqual;
+      in.use_ref_area = true;
+      in.area[0] = a[0];
+      in.area[1] = a[1];
+      in.dst = dst;
+      in.dst_stride = dst_stride;
+      in.scratch0 = r0.data();
+      in.scratch1 = r1.data();
+      in.scratch_stride = pw;
+      return temporal::refine_predict_block(in) ==
+             temporal::TemporalStatus::kOk;
+    };
+    if (!predict_plane_refine(0, 0, l0, l1, x0, y0, w, h, area,
+                              compound_y_.data(), w)) {
+      error = "refine-MV luma prediction failed";
+      return false;
+    }
+    const temporal::PlaneView c0 = temporal_plane(references_[0], 1);
+    const temporal::PlaneView c1 = temporal_plane(references_[1], 1);
+    const int cw = w / 2;
+    const int ch = h / 2;
+    temporal::RefArea carea[2];
+    if (!temporal_ref_area(1, 1, x0 / 2, y0 / 2, cw, ch, mvs, carea)) {
+      error = "refine-MV chroma ref area failed";
+      return false;
+    }
+    compound_u_.resize(static_cast<std::size_t>(cw) * ch);
+    compound_v_.resize(compound_u_.size());
+    if (!predict_plane_refine(1, 1, c0, c1, x0 / 2, y0 / 2, cw, ch, carea,
+                              compound_u_.data(), cw) ||
+        !predict_plane_refine(1, 1, c0, c1, x0 / 2, y0 / 2, cw, ch, carea,
+                              compound_v_.data(), cw)) {
+      error = "refine-MV chroma prediction failed";
+      return false;
+    }
+    return true;
+  }
+
+#endif  // AV2ENC_VIDEO_FRAMES
   bool encode_leaf(const PartitionNode& node, std::size_t index,
                    std::string& error) {
     const int r = node.mi_row;
@@ -1186,6 +2507,11 @@ class InterFrameEncoder {
     const int ay0 = y0 + tile_y_;
     const int acx0 = cx0 + tile_x_ / 2;
     const int acy0 = cy0 + tile_y_ / 2;
+    if (ibc_enabled_) {
+      // §5.20.4.1 decode_block(): update_ibc_buffers() runs at the start of
+      // every block, before its mode info builds the BV stack.
+      ibcs::begin_ibc_block(ibc_buffer_, r, c);
+    }
 
     syntax::BlockSyntax& entry = blocks_[index];
 
@@ -1259,8 +2585,14 @@ class InterFrameEncoder {
             // §7.12.2.20 inserts MVP-combination candidates only when both
             // dimensions exceed 32.  merge::build_stack_checked already applies
             // that gate.
+            // The historical search truncates small blocks to the first two
+            // candidates.  With temporal MVs enabled the §7.12.2.7/.8 entries
+            // can sit past that point (sorting by weight), so search the whole
+            // stack; every index is codable and the writer validates it.
             const int near_limit =
-                (w > 32 && h > 32) ? stack.count : std::min(stack.count, 2);
+                (w > 32 && h > 32) || options_.enable_ref_frame_mvs
+                    ? stack.count
+                    : std::min(stack.count, 2);
             for (int i = 0; i < near_limit; ++i) {
               merge::ResolvedMode resolved;
               if (merge::resolve_single_mode(
@@ -1280,7 +2612,11 @@ class InterFrameEncoder {
               cand.ref_index = ref_index;
               cand.drl_index = i;
               cand.mv = near_mv;
+              cand.from_temporal = stack.cand[i].from_temporal;
               cand.sse = sse_against_source(source_, 0, ax0, ay0, w, h, luma);
+              if (options_.ref_mvs_stress && cand.from_temporal) {
+                cand.sse = -1;
+              }
               if (trace_) {
                 std::cerr << "  cand ref=" << ref_index << " near drl=" << i
                           << " mv=(" << near_mv.y << "," << near_mv.x
@@ -1324,6 +2660,7 @@ class InterFrameEncoder {
                   cand.drl_index = 0;
                   cand.mv = new_mv;
                   cand.mvd = options_.mv_precision == 0 ? resolved.mvd[0] : mvd;
+                  cand.from_temporal = stack.cand[0].from_temporal;
                   cand.sse =
                       sse_against_source(source_, 0, ax0, ay0, w, h, luma);
                   if (trace_) {
@@ -1474,6 +2811,143 @@ class InterFrameEncoder {
         }
       }
     }
+
+    // §5.20.7.6 NEAR_NEARMV compound candidates (--video-opfl /
+    // --video-refine-mv).  The two lists are merged independently; with
+    // use_optflow the block instead codes a single RefMvIdx into the two-list
+    // stack and runs §7.13.3.8-.12 on the prediction.
+    if (!keyframe_ && options_.compound && options_.compound_near_near &&
+        !options_.force_global_mv && num_total_refs_ >= 2 && w >= 8 && h >= 8 &&
+        !options_.force_intra && inter_fits) {
+      const int m = 5;  // max_drl_bits_minus_1 + 1
+      merge::StackParams p0;
+      merge::StackParams p1;
+      merge::MvStack l0;
+      merge::MvStack l1;
+      const bool have0 = load_stack(r, c, w4, h4, 0, p0, l0);
+      const bool have1 = load_stack(r, c, w4, h4, 1, p1, l1);
+      const int d0 = frame_distance_[0];
+      const int d1 = frame_distance_[1];
+      const bool optflow_ok =
+          options_.opfl_refine_type != 0 &&
+          temporal::opfl_allowed_for_refs(d0, d1, false, false, false);
+      // §5.20.7.17: a NEAR_NEARMV compound block is not switchable, so a
+      // frame with enable_refinemv derives use_refinemv for every eligible
+      // block.  The decision must match the prediction, so it is per block.
+      bool block_refine = false;
+      if (options_.enable_refinemv) {
+        temporal::RefineMvConfig rc;
+        rc.enable_refinemv = true;
+        rc.opfl_refine_type =
+            static_cast<temporal::RefineType>(options_.opfl_refine_type);
+        rc.frame_is_switch = false;
+        rc.is_compound = true;
+        rc.skip_mode = false;
+        rc.use_optflow = false;
+        rc.is_global_global_mv = false;
+        rc.motion_mode_simple = true;
+        rc.has_newmv = false;
+        rc.y_mode_near_near_mv = true;
+        rc.y_mode_joint_new_mv = false;
+        rc.block_width = w;
+        rc.block_height = h;
+        rc.order_hint = 64;
+        rc.ref0_order_hint = 64 - d0;
+        rc.ref1_order_hint = 64 - d1;
+        temporal::RefineMvSyntax syntax;
+        if (temporal::refine_mv_syntax(rc, &syntax) ==
+            temporal::TemporalStatus::kOk) {
+          block_refine = syntax.use_refinemv;
+        }
+      }
+      std::vector<std::pair<inter::mc::Mv, inter::mc::Mv>> seen;
+      const auto already = [&seen](inter::mc::Mv a, inter::mc::Mv b) {
+        for (const auto& s : seen) {
+          if (s.first.y == a.y && s.first.x == a.x && s.second.y == b.y &&
+              s.second.x == b.x) {
+            return true;
+          }
+        }
+        seen.emplace_back(a, b);
+        return false;
+      };
+      const auto evaluate = [&](inter::mc::Mv mv0, inter::mc::Mv mv1,
+                                int drl0, int drl1, bool use_optflow) {
+        if (already(mv0, mv1)) return;
+        bool ok = false;
+        const inter::mc::Mv mvs[2] = {mv0, mv1};
+        if (use_optflow) {
+          ok = predict_compound_optflow(mvs, static_cast<int>(node.size), ax0,
+                                        ay0, w, h, error);
+        } else if (block_refine) {
+          ok = predict_compound_refinemv(mvs, ax0, ay0, w, h, error);
+        } else {
+          ok = compound_plain(mvs, static_cast<int>(node.size), ax0, ay0, w, h,
+                              compound_y_, compound_u_, compound_v_, error);
+        }
+        if (!ok) return;
+        InterCandidate cand;
+        cand.valid = true;
+        cand.compound = true;
+        cand.mode = syntax::kInterNearMv;
+        cand.ref_index = 0;
+        cand.mv = mv0;
+        cand.mv1 = mv1;
+        cand.drl_index = drl0;
+        cand.drl_index1 = drl1;
+        cand.compound_mode = 0;  // NEAR_NEARMV
+        cand.use_optflow = use_optflow;
+        cand.use_refinemv = block_refine && !use_optflow;
+        cand.sse = sse_against_source(source_, 0, ax0, ay0, w, h, compound_y_);
+        if (trace_) {
+          std::cerr << "  cand compound near-near mv0=(" << mv0.y << ","
+                    << mv0.x << ") mv1=(" << mv1.y << "," << mv1.x
+                    << ") drl=(" << drl0 << "," << drl1 << ") optflow="
+                    << (use_optflow ? 1 : 0) << " refinemv="
+                    << (cand.use_refinemv ? 1 : 0) << " sse=" << cand.sse
+                    << "\n";
+        }
+        consider(cand);
+      };
+      if (optflow_ok && !block_refine) {
+        merge::StackParams cparams = make_stack_params(r, c, w4, h4, 0);
+        cparams.ref_frame[1] = 1;
+        cparams.is_compound = true;
+        bool gm_warp = false;
+        inter::mc::Mv gm_mv1{};
+        global_mv_for_block(1, r, c, w4, h4, gm_warp, gm_mv1);
+        cparams.global_mv[1] = gm_mv1;
+        merge::MvStack compound;
+        if (merge::build_stack_checked(cparams, &compound) ==
+            merge::Status::kOk) {
+          const int limit = std::min(compound.count, m);
+          for (int i = 0; i < limit; ++i) {
+            const inter::mc::Mv mv0 =
+                merge::clamp_mv_to_integer(compound.cand[i].mv[0]);
+            const inter::mc::Mv mv1 =
+                merge::clamp_mv_to_integer(compound.cand[i].mv[1]);
+            evaluate(mv0, mv1, i, 0, /*use_optflow=*/true);
+          }
+        }
+      }
+      if (have0 && have1) {
+        const int limit0 =
+            std::min(l0.count, block_refine ? 2 : m);
+        const int limit1 =
+            std::min(l1.count, block_refine ? 2 : m);
+        for (int i = 0; i < limit0; ++i) {
+          for (int j = 0; j < limit1; ++j) {
+            merge::MvStack pair[2] = {l0, l1};
+            inter::mc::Mv resolve[2];
+            if (merge::resolve_compound_near_near(pair, i, j, resolve) !=
+                merge::Status::kOk) {
+              continue;
+            }
+            evaluate(resolve[0], resolve[1], i, j, /*use_optflow=*/false);
+          }
+        }
+      }
+    }
 #endif  // AV2ENC_VIDEO_FRAMES
 
     // Intra fallback: DC prediction + DCT residual, the M1 transform path.
@@ -1533,9 +3007,11 @@ class InterFrameEncoder {
       if (!luma_ok ||
           (options_.enable_tx_search
                ? !search_luma_tx(source_, ax0, ay0, w, h, intra_y_pred,
-                                 options_.base_q_idx,
+                                 current_qindex_,
                                  txtsearch::Mode::kIntra,
-                                 options_.tx_rd_lambda, intra_y, error)
+                                 options_.tx_rd_lambda,
+                                 options_.enable_idtx_intra, options_.trace,
+                                 intra_y, error)
                : !compute_tx(source_, 0, ax0, ay0, w, h, intra_y_pred,
                              quant_step_, intra_y, error,
                              qm_enabled_ ? &qm_state_ : nullptr))) {
@@ -1636,9 +3112,45 @@ class InterFrameEncoder {
     TxPlan res_v;
     bool bawp_applied = false;
     inter::adv::BawpFit bawp_fit{};
+    bool inter_intra_applied = false;
+    int inter_intra_mode = 0;
+    bool inter_intra_wedge = false;
+    int inter_intra_index = 0;
+    std::int64_t inter_intra_sse = 0;
     std::int64_t inter_luma_sse = best.sse;
     if (!keyframe_ && best.valid) {
       if (best.compound) {
+#if defined(AV2ENC_VIDEO_FRAMES)
+        // Re-run the winning candidate: the compound scratch planes hold the
+        // last evaluated candidate, not necessarily this one.
+        const inter::mc::Mv mvs[2] = {best.mv, best.mv1};
+        bool predicted = false;
+        if (best.use_optflow) {
+          predicted = predict_compound_optflow(mvs, static_cast<int>(node.size),
+                                               ax0, ay0, w, h, error);
+        } else if (best.use_refinemv) {
+          predicted = predict_compound_refinemv(mvs, ax0, ay0, w, h, error);
+        } else {
+          multiref::CompoundModeParams wparams;
+          wparams.cwp_weight = multiref::kCwpEqual;
+          wparams.type = best.compound_type == 0
+                             ? inter::adv::CompoundType::kWedge
+                             : (best.compound_type == 1
+                                    ? inter::adv::CompoundType::kDiffWtd
+                                    : inter::adv::CompoundType::kAverage);
+          wparams.wedge_index = best.wedge_index;
+          wparams.wedge_sign = best.wedge_sign;
+          wparams.mask_type = best.mask_type;
+          predicted = compound_plain(
+              mvs, static_cast<int>(node.size), ax0, ay0, w, h, compound_y_,
+              compound_u_, compound_v_, error,
+              best.compound_mode == 3 ? &wparams : nullptr);
+        }
+        if (!predicted) {
+          error = "compound prediction failed";
+          return false;
+        }
+#endif
         inter_y = compound_y_;
         inter_u = compound_u_;
         inter_v = compound_v_;
@@ -1696,16 +3208,56 @@ class InterFrameEncoder {
                     << " applied=" << (bawp_applied ? 1 : 0) << "\n";
         }
       }
-      if (options_.enable_inter_residual) {
+      // §5.20.7.14/.15 + §7.13.3.29/.30 single-reference inter-intra.  The
+      // blended block is skip-only (no residual) in this gated surface, and it
+      // is evaluated after BAWP so the §5.20.7.14 use_bawp early return can
+      // never be violated.
+      if (options_.enable_interintra && !best.compound && !best.use_warp &&
+          !bawp_applied && best.mode != syntax::kInterGlobalMv && w >= 8 &&
+          h >= 8 && w <= 64 && h <= 64 && !options_.force_inter_residual) {
+        std::vector<std::uint8_t> ii_y;
+        std::vector<std::uint8_t> ii_u;
+        std::vector<std::uint8_t> ii_v;
+        if (!evaluate_inter_intra(static_cast<int>(node.size), x0, y0, w, h,
+                                  inter_y, inter_u, inter_v, ii_y, ii_u, ii_v,
+                                  inter_intra_mode, inter_intra_wedge,
+                                  inter_intra_index, inter_intra_sse, error)) {
+          return false;
+        }
+        const std::int64_t plain_sse =
+            sse_against_source(source_, 0, ax0, ay0, w, h, inter_y) +
+            sse_against_source(source_, 1, acx0, acy0, cw, ch, inter_u) +
+            sse_against_source(source_, 2, acx0, acy0, cw, ch, inter_v);
+        if (inter_intra_sse < plain_sse) {
+          inter_intra_applied = true;
+          inter_y = ii_y;
+          inter_u = ii_u;
+          inter_v = ii_v;
+          inter_luma_sse =
+              sse_against_source(source_, 0, ax0, ay0, w, h, inter_y);
+        }
+        if (trace_) {
+          std::cerr << "  cand interintra applied="
+                    << (inter_intra_applied ? 1 : 0)
+                    << " mode=" << inter_intra_mode
+                    << " wedge=" << (inter_intra_wedge ? 1 : 0)
+                    << " index=" << inter_intra_index
+                    << " sse=" << inter_intra_sse
+                    << " plain=" << plain_sse << "\n";
+        }
+      }
+      if (options_.enable_inter_residual && !inter_intra_applied) {
         const std::int64_t pred_total =
             inter_luma_sse +
             sse_against_source(source_, 1, acx0, acy0, cw, ch, inter_u) +
             sse_against_source(source_, 2, acx0, acy0, cw, ch, inter_v);
         if ((options_.enable_tx_search
                  ? !search_luma_tx(source_, ax0, ay0, w, h, inter_y,
-                                   options_.base_q_idx,
+                                   current_qindex_,
                                    txtsearch::Mode::kInter,
-                                   options_.tx_rd_lambda, res_y, error)
+                                   options_.tx_rd_lambda,
+                                   /*allow_idtx=*/false, options_.trace,
+                                   res_y, error)
                  : !compute_tx(source_, 0, ax0, ay0, w, h, inter_y,
                                quant_step_, res_y, error,
                                qm_enabled_ ? &qm_state_ : nullptr)) ||
@@ -1748,6 +3300,19 @@ class InterFrameEncoder {
     }
 
     bool use_intra = keyframe_ || options_.force_intra || !best.valid;
+    // §5.20.5.3/.4 IBC + §7.13.3.26 morph on the intra keyframe.  The copy is
+    // compared with the ordinary intra leaf by luma SSE; a win selects the
+    // IBC skip block (no residual) and, when it helps, morph_pred = 1.
+    IbcChoice ibc_choice;
+    bool use_ibc = false;
+    if (keyframe_ && ibc_enabled_ && have_intra) {
+      if (!choose_ibc_leaf(r, c, static_cast<int>(node.size), intra_sse,
+                           ibc_choice, error)) {
+        return false;
+      }
+      use_ibc = ibc_choice.found;
+    }
+    if (use_ibc) use_intra = false;
     if (!use_intra && have_intra) {
       if (options_.enable_inter_residual) {
         // Rate-aware decision on the opt-in residual path.  The historical
@@ -1771,7 +3336,34 @@ class InterFrameEncoder {
       }
     }
 
-    if (use_intra) {
+    if (use_ibc) {
+      entry.is_inter = 0;
+      entry.skip_flag = 0;
+      entry.y_mode = 0;  // DC_PRED (read_intrabc_info forces it)
+      entry.flags |= syntax::kFlagIsIbc;
+      entry.ibc_skip = 1;
+      entry.ibc_mode = ibc_choice.stack_index >= 0 ? 1 : 0;
+      entry.ibc_ref_mv_idx =
+          ibc_choice.stack_index >= 0
+              ? static_cast<std::uint8_t>(ibc_choice.stack_index)
+              : 0;
+      entry.ibc_bv_row = ibc_choice.bv.row;
+      entry.ibc_bv_col = ibc_choice.bv.col;
+      entry.morph_pred = ibc_choice.morph ? 1 : 0;
+      write_plane_block(recon_[0], x0, y0, w, h, ibc_choice.luma);
+      write_plane_block(recon_[1], cx0, cy0, cw, ch, ibc_choice.u);
+      write_plane_block(recon_[2], cx0, cy0, cw, ch, ibc_choice.v);
+      update_mv_grid(r, c, w4, h4, 0, 0, inter::mc::Mv{0, 0});
+      set_intra_joint(r, c, w4, h4, 0);
+      ++intra_blocks_;
+      if (trace_) {
+        std::cerr << "m2 ibc r=" << r << " c=" << c << " " << w << "x" << h
+                  << " bv=(" << ibc_choice.bv.row << "," << ibc_choice.bv.col
+                  << ") mode=" << static_cast<int>(entry.ibc_mode)
+                  << " morph=" << static_cast<int>(entry.morph_pred)
+                  << " sse=" << ibc_choice.sse << "\n";
+      }
+    } else if (use_intra) {
       if (!have_intra) {
         error = "intra fallback unavailable";
         return false;
@@ -1821,29 +3413,54 @@ class InterFrameEncoder {
     } else {
       entry.is_inter = 1;
       entry.skip_flag = inter_residual ? 0 : 1;
+      if (best.from_temporal) ++temporal_selected_;
       entry.inter_mode = static_cast<std::uint8_t>(best.mode);
       entry.drl_index = static_cast<std::uint8_t>(best.drl_index);
       entry.ref_index = static_cast<std::uint8_t>(best.ref_index);
       entry.compound = best.compound ? 1 : 0;
       entry.ref_index1 = 1;
       entry.compound_joint = 0;
-      entry.compound_mode = 3;  // GLOBAL_GLOBALMV
+      entry.compound_mode = static_cast<std::uint8_t>(best.compound_mode);
+      entry.drl_index1 = static_cast<std::uint8_t>(best.drl_index1);
       if (best.compound) {
         // A compound leaf never carries a residual in the gated subset.
         entry.skip_flag = 1;
         inter_residual = false;
-        entry.compound_masked = best.compound_type != 2 ? 1 : 0;
-        entry.compound_type = static_cast<std::uint8_t>(best.compound_type);
+        entry.compound_masked =
+            best.compound_mode == 0 ? 0 : (best.compound_type != 2 ? 1 : 0);
+        entry.compound_type = static_cast<std::uint8_t>(
+            best.compound_mode == 0 ? 2 : best.compound_type);
         entry.wedge_index = static_cast<std::uint8_t>(best.wedge_index);
         entry.wedge_sign = static_cast<std::uint8_t>(best.wedge_sign);
         entry.mask_type = static_cast<std::uint8_t>(best.mask_type);
+        entry.use_optflow = best.use_optflow ? 1 : 0;
+        entry.use_refinemv = best.use_refinemv ? 1 : 0;
       }
-      entry.mv_y = best.mode == syntax::kInterGlobalMv ? 0 : best.mv.y;
-      entry.mv_x = best.mode == syntax::kInterGlobalMv ? 0 : best.mv.x;
+      if (best.compound && best.compound_mode == 0) {
+        entry.mv_y = best.mv.y;
+        entry.mv_x = best.mv.x;
+        entry.mv1_y = best.mv1.y;
+        entry.mv1_x = best.mv1.x;
+      } else {
+        entry.mv_y = best.mode == syntax::kInterGlobalMv ? 0 : best.mv.y;
+        entry.mv_x = best.mode == syntax::kInterGlobalMv ? 0 : best.mv.x;
+        entry.mv1_y = 0;
+        entry.mv1_x = 0;
+      }
       entry.mvd_y = best.mvd.y;
       entry.mvd_x = best.mvd.x;
       entry.use_bawp = bawp_applied ? 1 : 0;
       entry.bawp_alpha = static_cast<std::int16_t>(bawp_fit.alpha);
+      if (inter_intra_applied) {
+        // §5.20.7.14 INTERINTRA: the block is skip-only, RefFrame[1] is
+        // INTRA_FRAME and wedge_sign is forced 0.
+        entry.skip_flag = 1;
+        inter_residual = false;
+        entry.motion_mode = 1;
+        entry.interintra_mode = static_cast<std::uint8_t>(inter_intra_mode);
+        entry.wedge_interintra = inter_intra_wedge ? 1 : 0;
+        entry.wedge_index = static_cast<std::uint8_t>(inter_intra_index);
+      }
       write_plane_block(recon_[0], x0, y0, w, h, inter_y);
       write_plane_block(recon_[1], cx0, cy0, cw, ch, inter_u);
       write_plane_block(recon_[2], cx0, cy0, cw, ch, inter_v);
@@ -1867,7 +3484,8 @@ class InterFrameEncoder {
         }
       }
       update_mv_grid(r, c, w4, h4, 1, best.ref_index, best.mv,
-                     best.compound ? 1 : merge::kRefNone);
+                     best.compound ? 1 : merge::kRefNone,
+                     best.compound ? &best.mv1 : nullptr);
       set_intra_joint(r, c, w4, h4, 0);  // inter_block_mode_info(): DC
       ++inter_blocks_;
       if (trace_) {
@@ -1875,9 +3493,13 @@ class InterFrameEncoder {
                   << " mode=" << static_cast<int>(best.mode)
                   << " drl=" << best.drl_index
                   << " ref=" << best.ref_index << " mv=(" << best.mv.y << ","
-                  << best.mv.x << ") sse=" << inter_luma_sse
+                  << best.mv.x << ") mv1=(" << best.mv1.y << ","
+                  << best.mv1.x << ") sse=" << inter_luma_sse
                   << " skip=" << static_cast<int>(entry.skip_flag)
                   << " comp=" << static_cast<int>(entry.compound)
+                  << " cm=" << static_cast<int>(entry.compound_mode)
+                  << " optflow=" << static_cast<int>(entry.use_optflow)
+                  << " refinemv=" << static_cast<int>(entry.use_refinemv)
                   << " ct=" << static_cast<int>(entry.compound_type)
                   << " wedge=" << static_cast<int>(entry.wedge_index)
                   << " sign=" << static_cast<int>(entry.wedge_sign)
@@ -1885,18 +3507,74 @@ class InterFrameEncoder {
       }
     }
 
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    if (qp_tools_active()) {
+      // §5.20.7.2: a skipped inter leaf codes no segment id when the frame has
+      // no lossless segment; the decoder infers the §5.20.7.4 neighbour
+      // prediction.  Replay it here so the deblock metadata uses the same
+      // segment id (and therefore the same effective qindex) the decoder will.
+      int segment_id = seg_enabled_ ? current_segment_id_ : 0;
+      bool inferred = false;
+      if (seg_enabled_ && !keyframe_ && entry.is_inter != 0 &&
+          entry.skip_flag != 0 && !enc_seg_.has_lossless_segment) {
+        segment_id = deltaq::segment_prediction(enc_seg_grid_, r, c);
+        inferred = true;
+      }
+      int qindex = current_qindex_;
+      if (seg_enabled_) {
+        std::string qp_error;
+        if (!deltaq::effective_qindex(
+                enc_seg_, base_q_index(), current_qindex_, delta_q_enabled_,
+                segment_id, /*ignore_delta_q=*/false, qindex, &qp_error)) {
+          error = "get_qindex: " + qp_error;
+          return false;
+        }
+      }
+      if (qindex < 0 || qindex > 255) {
+        error = "get_qindex produced an out-of-range quantizer";
+        return false;
+      }
+      entry.segment_id = static_cast<std::uint8_t>(segment_id);
+      entry.qindex = static_cast<std::int16_t>(qindex);
+      if (trace_ && inferred) {
+        std::cerr << "segq inferred r=" << r << " c=" << c
+                  << " segment=" << segment_id << " qindex=" << qindex
+                  << "\n";
+      }
+      if (seg_enabled_) {
+        deltaq::SegmentBlock segment_block;
+        segment_block.mi_row = r;
+        segment_block.mi_col = c;
+        segment_block.bw4 = w4;
+        segment_block.bh4 = h4;
+        std::string seg_error;
+        if (!deltaq::commit_segment_block(enc_seg_grid_, segment_block,
+                                          segment_id, &seg_error)) {
+          error = "segment map: " + seg_error;
+          return false;
+        }
+      }
+    }
+#endif
+
     // §6.19.2.3: this leaf's cells are now decoded for the availability of the
     // following leaves in this superblock.
     decoded_[0].fill(c, r, w4, h4);
     decoded_[1].fill(c / 2, r / 2, cw / 4, ch / 4);
     decoded_[2].fill(c / 2, r / 2, cw / 4, ch / 4);
+    if (ibc_enabled_) {
+      ibcs::finish_ibc_block(ibc_buffer_, ibc_neighbours_, r, c,
+                             static_cast<int>(node.size), use_ibc,
+                             use_ibc ? ibc_choice.bv : ibc::BlockVector{});
+    }
     (void)node;
     return true;
   }
 
   void update_mv_grid(int r, int c, int w4, int h4, int is_inter,
                       int ref_index, inter::mc::Mv mv,
-                      int ref_index1 = merge::kRefNone) {
+                      int ref_index1 = merge::kRefNone,
+                      const inter::mc::Mv* mv1 = nullptr) {
     for (int yy = 0; yy < h4; ++yy) {
       const int rr = r + yy;
       if (rr >= mi_rows_) break;
@@ -1913,8 +3591,8 @@ class InterFrameEncoder {
         mi.ref[1] = static_cast<std::int8_t>(ref_index1);
         mi.mv[0][0] = mv.y;
         mi.mv[0][1] = mv.x;
-        mi.mv[1][0] = mv.y;
-        mi.mv[1][1] = mv.x;
+        mi.mv[1][0] = mv1 != nullptr ? mv1->y : mv.y;
+        mi.mv[1][1] = mv1 != nullptr ? mv1->x : mv.x;
         mi.is_inter = static_cast<std::int8_t>(is_inter);
         mi.w4 = static_cast<std::int8_t>(w4);
         mi.h4 = static_cast<std::int8_t>(h4);
@@ -1941,6 +3619,22 @@ class InterFrameEncoder {
   std::vector<std::uint16_t>* cdf_final_ = nullptr;
   const GmFramePlan* gm_plan_ = nullptr;
   int quant_step_ = txv::kQuantStep;  // §7.14.2 qlookup(base_q_idx)
+  int current_qindex_ = 0;            // §5.20.1 CurrentQIndex for this SB
+  int current_segment_id_ = 0;        // §5.20.5.7 SegmentIds for this SB
+#if defined(AV2ENC_VIDEO_DELTAQ)
+  // §5.18.7.1/.8 segmentation + delta-Q planning for this tile.
+  bool seg_enabled_ = false;
+  bool delta_q_enabled_ = false;
+  rc::SegmentationParams seg_params_{};
+  rc::DeltaQParams dq_params_{};
+  deltaq::FrameSegmentation enc_seg_{};
+  deltaq::SegmentGrid enc_seg_grid_{};
+  std::vector<std::uint8_t> sb_segment_;   // variance split: 1 = low variance
+  std::vector<int> sb_target_q_;           // delta-Q target per superblock
+  std::vector<int> sb_qindex_;             // effective qindex per superblock
+  std::vector<rc::DeltaQPlanStep> sb_delta_steps_;  // raster order
+  bool primary_ref_is_none_ = true;
+#endif
   qm::QmFrameState qm_state_;
   bool qm_enabled_ = false;
   int width_ = 0;
@@ -1961,12 +3655,21 @@ class InterFrameEncoder {
   inter::mc::RefFrame ref_frame_;
   std::vector<inter::mc::MiInfo> mv_grid_;
   std::vector<std::uint8_t> intra_joint_;
+  // §5.20.5.3/.4 IBC + §7.13.3.26 morph state (intra keyframe only).
+  bool ibc_enabled_ = false;
+  bool plan_morph_ = false;
+  ibc::IbcBufferState ibc_buffer_;
+  ibcs::BvNeighbourMap ibc_neighbours_;
+  ibc::IbcConfig ibc_config_{};
   std::array<intra_search::BlockDecoded, 3> decoded_;
   std::vector<syntax::BlockSyntax> blocks_;
   std::array<int, 7> ref_order_hints_{};
+  TemporalFrameContext temporal_ctx_;
   std::vector<std::int32_t> levels_;
   std::uint32_t inter_blocks_ = 0;
   std::uint32_t intra_blocks_ = 0;
+  mutable int temporal_added_ = 0;
+  int temporal_selected_ = 0;
 };
 
 VideoReconFrame to_recon_frame(const Plane& y, const Plane& u, const Plane& v,
@@ -1993,6 +3696,213 @@ VideoReconFrame to_recon_frame(const Plane& y, const Plane& u, const Plane& v,
                 cw);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// §7.22 saved motion field for an ordinary reference slot.
+//
+// The decoder's `motion_field_motion_vector_storage()` stores the 8x8 motion
+// field of every inter frame when `enable_ref_frame_mvs = 1`; a later frame
+// with `use_ref_frame_mvs = 1` projects those fields in §7.9 and consumes the
+// result in §7.12.2.7/.8.  This is the same field the TIP path already built
+// for its slots, factored out for the P / B / temporal-layer loops.
+// ---------------------------------------------------------------------------
+struct SlotField {
+  bool valid = false;
+  int order_hint = 0;
+  int w8 = 0;
+  int h8 = 0;
+  int num_saved_refs = 0;
+  int saved_order_hint[7] = {temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint};
+  std::vector<std::int8_t> field_ref;
+  std::vector<std::int16_t> field_mv;
+
+  temporal::SavedMvField saved() const {
+    temporal::SavedMvField out;
+    out.w8 = w8;
+    out.h8 = h8;
+    out.ref = field_ref.data();
+    out.mv = field_mv.data();
+    return out;
+  }
+};
+
+// Allocates an empty §7.22 field (intra key / no coded inter blocks).
+void init_slot_field(SlotField* slot, int mi_cols, int mi_rows) {
+  slot->w8 = mi_cols / 2;
+  slot->h8 = mi_rows / 2;
+  slot->num_saved_refs = 0;
+  for (int i = 0; i < 7; ++i) {
+    slot->saved_order_hint[i] = temporal::kRestrictedOrderHint;
+  }
+  slot->field_ref.assign(static_cast<std::size_t>(slot->w8) *
+                             static_cast<std::size_t>(slot->h8) * 2U,
+                         static_cast<std::int8_t>(temporal::kRefNone));
+  slot->field_mv.assign(static_cast<std::size_t>(slot->w8) *
+                            static_cast<std::size_t>(slot->h8) * 4U,
+                        0);
+}
+
+// Stores one coded frame's §7.22 field from its per-4x4 mode/MV grid.
+bool store_slot_field(const InterFrameEncoder& encoder, int order_hint,
+                      const int* ref_order_hint, int num_refs,
+                      SlotField* slot, std::string& error) {
+  const std::vector<inter::mc::MiInfo>& grid = encoder.mv_grid();
+  const int mi_cols = encoder.mv_mi_cols();
+  const int mi_rows = encoder.mv_mi_rows();
+  init_slot_field(slot, mi_cols, mi_rows);
+  temporal::RefMvField view;
+  view.w8 = slot->w8;
+  view.h8 = slot->h8;
+  view.ref = slot->field_ref.data();
+  view.mv = slot->field_mv.data();
+  for (int y8 = 0; y8 < slot->h8; ++y8) {
+    for (int x8 = 0; x8 < slot->w8; ++x8) {
+      const std::size_t index =
+          static_cast<std::size_t>(y8 * 2) *
+              static_cast<std::size_t>(mi_cols) +
+          static_cast<std::size_t>(x8 * 2);
+      const inter::mc::MiInfo& mi = grid[index];
+      temporal::MotionFieldStoreEntry entry;
+      for (int list = 0; list < 2; ++list) {
+        const int ref = mi.ref[list];
+        entry.refs[list] =
+            (ref >= 0 && ref < num_refs) ? ref : temporal::kRefNone;
+        entry.ref_order_hint[list] =
+            entry.refs[list] >= 0
+                ? ref_order_hint[entry.refs[list]]
+                : temporal::kRestrictedOrderHint;
+      }
+      entry.mv[0] = temporal::Mv{mi.mv[0][0], mi.mv[0][1]};
+      entry.mv[1] = temporal::Mv{mi.mv[1][0], mi.mv[1][1]};
+      entry.order_hint = order_hint;
+      entry.i8 = y8 & 1;
+      entry.j8 = x8 & 1;
+      if (temporal::store_motion_field_entry(entry, &view, y8, x8) !=
+          temporal::TemporalStatus::kOk) {
+        error = "§7.22 motion-field store failed";
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// §7.9 estimation result plus the arrays it borrows.
+struct MotionFieldFrame {
+  int mi_cols = 0;
+  int mi_rows = 0;
+  std::vector<std::int32_t> mv;
+  std::vector<std::int32_t> offset;
+  std::vector<std::uint8_t> valid;
+  temporal::MotionField field;
+  temporal::MotionFieldConfig config;
+  temporal::MotionFieldResult result;
+  bool ready = false;
+};
+
+// Runs §7.9 for the current frame from its reference slots' saved fields and
+// fills closest_past/closest_future from the §7.8 past/future split.
+bool estimate_motion_field(const SlotField* const* ref_fields,
+                           const int* ref_slots, const int* ref_order_hint,
+                           const std::uint8_t* ref_is_key, bool ref_valid,
+                           int num_total_refs, int order_hint, int frame_width,
+                           int frame_height, int mi_cols, int mi_rows,
+                           int proj_step, MotionFieldFrame* out,
+                           std::string& error) {
+  out->mi_cols = mi_cols;
+  out->mi_rows = mi_rows;
+  out->ready = false;
+  const std::size_t cells =
+      static_cast<std::size_t>(mi_cols / 2) *
+      static_cast<std::size_t>(mi_rows / 2);
+  out->mv.assign(cells * 2, 0);
+  out->offset.assign(cells, 0);
+  out->valid.assign(cells, 0);
+  out->field.w8 = mi_cols / 2;
+  out->field.h8 = mi_rows / 2;
+  out->field.mv = out->mv.data();
+  out->field.valid = out->valid.data();
+  out->field.offset = out->offset.data();
+
+  temporal::MotionFieldConfig& cfg = out->config;
+  cfg = temporal::MotionFieldConfig{};
+  cfg.mi_cols = mi_cols;
+  cfg.mi_rows = mi_rows;
+  cfg.proj_step = proj_step;
+  cfg.sb_64x64 = proj_step == 1;
+  cfg.enable_tip = false;
+  cfg.enable_mv_traj = false;
+  cfg.reduced_ref_frame_mvs_mode = false;
+  cfg.use_bru = false;
+  cfg.bru_ref = -1;
+  cfg.order_hint = order_hint;
+  cfg.num_total_refs = num_total_refs;
+  cfg.num_past_refs = 0;
+  cfg.num_future_refs = 0;
+  cfg.frame_width = frame_width;
+  cfg.frame_height = frame_height;
+
+  int closest_past = -1;
+  int closest_future = -1;
+  int closest_past_hint = 0;
+  int closest_future_hint = 0;
+  for (int rf = 0; rf < num_total_refs; ++rf) {
+    cfg.ref_order_hint[rf] = ref_order_hint[rf];
+    cfg.refs[rf].slot = ref_slots[rf];
+    cfg.refs[rf].type = ref_is_key[rf] ? temporal::FrameType::kKey
+                                       : temporal::FrameType::kInter;
+    cfg.refs[rf].width = frame_width;
+    cfg.refs[rf].height = frame_height;
+    cfg.refs[rf].order_hint = ref_order_hint[rf];
+    cfg.refs[rf].num_saved_refs = ref_fields[rf]->num_saved_refs;
+    for (int k = 0; k < ref_fields[rf]->num_saved_refs; ++k) {
+      cfg.refs[rf].saved_order_hint[k] = ref_fields[rf]->saved_order_hint[k];
+    }
+    cfg.saved[rf] = ref_fields[rf]->saved();
+    const int dist = order_hint - ref_order_hint[rf];
+    if (dist > 0) {
+      ++cfg.num_past_refs;
+      if (closest_past < 0 || ref_order_hint[rf] > closest_past_hint) {
+        closest_past = rf;
+        closest_past_hint = ref_order_hint[rf];
+      }
+    } else if (dist < 0) {
+      ++cfg.num_future_refs;
+      if (closest_future < 0 || ref_order_hint[rf] < closest_future_hint) {
+        closest_future = rf;
+        closest_future_hint = ref_order_hint[rf];
+      }
+    }
+  }
+  if (!ref_valid) {
+    // No valid reference slot: the decoder leaves the field empty.
+    out->result = temporal::MotionFieldResult{};
+    out->ready = true;
+    return true;
+  }
+  const temporal::TemporalStatus status = temporal::motion_field_estimation(
+      cfg, &out->field, nullptr, &out->result);
+  if (status != temporal::TemporalStatus::kOk) {
+    error = "§7.9 motion-field estimation failed";
+    return false;
+  }
+  // §5.18.2: fill_tpl_mvs_sample_gap() runs when TIP is disabled.
+  if (temporal::fill_motion_field_sample_gap(cfg, &out->field) !=
+      temporal::TemporalStatus::kOk) {
+    error = "§7.10.5 motion-field gap fill failed";
+    return false;
+  }
+  out->result.closest_past = closest_past;
+  out->result.closest_future = closest_future;
+  out->ready = true;
+  return true;
 }
 
 #if defined(AV2ENC_VIDEO_FRAMES)
@@ -2050,6 +3960,7 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   config.base_q_idx = options.base_q_idx;
   config.order_hint_bits = static_cast<std::uint8_t>(plan.order_hint_bits);
   config.num_ref_frames = static_cast<std::uint8_t>(plan.num_slots);
+  config.explicit_ref_frame_map = !options.implicit_ref_map;
   config.num_total_refs = 1;
   config.max_drl_bits_minus_1 = 4;
   config.disable_cdf_update = !options.adaptive_cdf;
@@ -2060,15 +3971,20 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   config.enable_cwp = false;
   config.enable_imp_msk_bld = false;
   config.num_same_ref_compound = 0;
+  config.enable_opfl_refine = options.compound ? options.opfl_refine_type : 0;
+  config.enable_refinemv = options.compound && options.enable_refinemv;
   config.disable_drl_reorder = true;
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
   config.enable_mhccp = options.enable_mhccp;
+  config.enable_idtx_intra = options.enable_idtx_intra;
   config.using_qmatrix = options.enable_qm;
+  config.qm_user_data = options.user_qm;
   config.enable_deblock = options.enable_deblock;
   apply_video_loop_filter_sequence_config(config, options.loop_filters);
   config.tx_mode_select = options.enable_tx_search;
   config.enable_bawp = options.enable_bawp;
+  config.enable_ref_frame_mvs = options.enable_ref_frame_mvs;
   config.max_tlayer_id = 0;
   config.monotonic_output_order_flag = false;
 
@@ -2076,11 +3992,22 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   const int mi_rows = 2 * static_cast<int>((height + 7U) >> 3U);
   std::vector<VideoReconFrame> recon_by_display(
       static_cast<std::size_t>(plan.display_count()));
+  std::vector<SlotField> b_fields(static_cast<std::size_t>(plan.num_slots));
+  std::vector<bool> b_is_key(static_cast<std::size_t>(plan.num_slots), false);
   VideoOptions frame_options = options;
   frame_options.temporal_layers = 0;
   frame_options.tlayer_drop = -1;
 
   bool wrote_sequence_header = false;
+  // §7.23 mirror for the implicit map.  This path signals obu_tlayer_id = 0
+  // for every frame (max_tlayer_id = 0), so every RefTLayerId is 0 and the
+  // default TLayerDependencyMap admits all of them.
+  inter::mv_stack_full::RefSlotBank ref_bank;
+  ref_bank.num_ref_frames = config.num_ref_frames;
+  std::vector<int> slot_display(
+      static_cast<std::size_t>(config.num_ref_frames), -1);
+  const inter::mv_stack_full::DependencyMaps ref_deps =
+      implicit_dependency_maps(config, 0);
   for (std::size_t ci = 0; ci < plan.coding_order.size(); ++ci) {
     const int display = plan.coding_order[ci];
     const bf::FramePlan* fp = plan.frame_at_display(display);
@@ -2088,11 +4015,60 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
       error = "B-frame plan is missing a display index";
       return false;
     }
-    const int num_refs = fp->num_total_refs;
-    std::vector<inter::mc::RefFrame> references;
+    const bf::FrameHeaderFields hf = bf::header_fields(*fp);
+    // Map slots (header ref_frame_idx) and the display picture each one holds.
+    std::vector<int> map_slots;
+    std::vector<int> ref_displays;
     std::array<int, 7> frame_distance{};
+    std::array<int, 7> ref_order_hints{};
+    if (options.implicit_ref_map && !fp->is_key) {
+      inter::mv_stack_full::ImplicitRefMap implicit;
+      if (!derive_implicit_fields(ref_bank, fp->display_order_hint,
+                                  plan.order_hint_bits,
+                                  static_cast<int>(width),
+                                  static_cast<int>(height), 0, ref_deps,
+                                  &implicit, &error)) {
+        error = "B-frame display " + std::to_string(display) +
+                " implicit ref map: " + error;
+        return false;
+      }
+      const inter::mv_stack_full::RefMap& map = implicit.stage1;
+      map_slots.reserve(static_cast<std::size_t>(map.num_total_refs));
+      ref_displays.reserve(static_cast<std::size_t>(map.num_total_refs));
+      for (int r = 0; r < map.num_total_refs; ++r) {
+        const int slot = map.ref_frame_idx[r];
+        if (slot < 0 || slot >= ref_bank.num_ref_frames ||
+            slot_display[static_cast<std::size_t>(slot)] < 0) {
+          error = "B-frame display " + std::to_string(display) +
+                  " implicit map names a slot with no coded picture";
+          return false;
+        }
+        map_slots.push_back(slot);
+        ref_displays.push_back(slot_display[static_cast<std::size_t>(slot)]);
+        frame_distance[static_cast<std::size_t>(r)] = map.scores_distance[r];
+        ref_order_hints[static_cast<std::size_t>(r)] =
+            ref_bank.slots[static_cast<std::size_t>(slot)].order_hint;
+      }
+    } else {
+      for (int r = 0; r < hf.num_total_refs; ++r) {
+        map_slots.push_back(hf.ref_frame_idx[r]);
+        ref_displays.push_back(fp->ref_display[r]);
+        frame_distance[static_cast<std::size_t>(r)] = static_cast<int>(
+            relative_dist(static_cast<std::uint32_t>(fp->display_order_hint),
+                          static_cast<std::uint32_t>(fp->ref_order_hint[r]),
+                          plan.order_hint_bits));
+        ref_order_hints[static_cast<std::size_t>(r)] = fp->ref_order_hint[r];
+      }
+    }
+    const int num_refs = static_cast<int>(map_slots.size());
+    if (options.trace && options.implicit_ref_map && !fp->is_key) {
+      trace_implicit_map("B", static_cast<std::size_t>(display), num_refs,
+                         map_slots);
+    }
+    std::vector<inter::mc::RefFrame> references;
+    references.reserve(static_cast<std::size_t>(num_refs));
     for (int r = 0; r < num_refs; ++r) {
-      const int ref_display = fp->ref_display[r];
+      const int ref_display = ref_displays[static_cast<std::size_t>(r)];
       if (ref_display < 0 ||
           recon_by_display[static_cast<std::size_t>(ref_display)].y.empty()) {
         error = "B-frame reference is not available";
@@ -2109,21 +4085,45 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
       ref.mi_cols = mi_cols;
       ref.mi_rows = mi_rows;
       references.push_back(ref);
-      frame_distance[static_cast<std::size_t>(r)] = static_cast<int>(
-          relative_dist(static_cast<std::uint32_t>(fp->display_order_hint),
-                        static_cast<std::uint32_t>(fp->ref_order_hint[r]),
-                        plan.order_hint_bits));
     }
-
-    std::array<int, 7> ref_order_hints{};
-    for (int r = 0; r < num_refs; ++r) {
-      ref_order_hints[static_cast<std::size_t>(r)] = fp->ref_order_hint[r];
+    TemporalFrameContext temporal_ctx;
+    MotionFieldFrame motion_field;
+    if (options.enable_ref_frame_mvs && !fp->is_key) {
+      const SlotField* ref_fields[kRefsPerFrame] = {};
+      int ref_slots[kRefsPerFrame] = {};
+      std::uint8_t ref_is_key[kRefsPerFrame] = {};
+      for (int r = 0; r < num_refs; ++r) {
+        const int slot = fp->ref_slot[r];
+        if (slot < 0 || slot >= plan.num_slots) {
+          error = "B-frame reference slot outside the encoder DPB";
+          return false;
+        }
+        ref_fields[r] = &b_fields[static_cast<std::size_t>(slot)];
+        ref_slots[r] = slot;
+        ref_is_key[r] = b_is_key[static_cast<std::size_t>(slot)] ? 1U : 0U;
+      }
+      if (!estimate_motion_field(
+              ref_fields, ref_slots, ref_order_hints.data(), ref_is_key,
+              /*ref_valid=*/true, num_refs, fp->display_order_hint,
+              static_cast<int>(width), static_cast<int>(height), mi_cols,
+              mi_rows, /*proj_step=*/1, &motion_field, error)) {
+        error = "B-frame display " + std::to_string(display) + ": " + error;
+        return false;
+      }
+      temporal_ctx.use_ref_frame_mvs = true;
+      temporal_ctx.order_hint = fp->display_order_hint;
+      temporal_ctx.num_past_refs = motion_field.config.num_past_refs;
+      temporal_ctx.num_future_refs = motion_field.config.num_future_refs;
+      temporal_ctx.closest_past = motion_field.result.closest_past;
+      temporal_ctx.closest_future = motion_field.result.closest_future;
+      temporal_ctx.field = &motion_field.field;
     }
     InterFrameEncoder encoder(frames[static_cast<std::size_t>(display)],
                               std::move(references), frame_distance,
                               std::max(1, num_refs), frame_options,
                               options.trace, fp->is_key, 0, 0, 0, 0, {}, nullptr,
-                              nullptr, ref_order_hints);
+                              nullptr, ref_order_hints,
+                              /*primary_ref_is_none=*/true, &temporal_ctx);
     std::vector<std::uint8_t> tile;
     std::vector<syntax::BlockSyntax> blocks;
     std::vector<std::int32_t> levels;
@@ -2131,23 +4131,30 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
       error = "B-frame display " + std::to_string(display) + ": " + error;
       return false;
     }
+    result.temporal_candidates +=
+        static_cast<std::uint64_t>(encoder.temporal_added());
+    result.temporal_selected +=
+        static_cast<std::uint64_t>(encoder.temporal_selected());
 
-    const bf::FrameHeaderFields hf = bf::header_fields(*fp);
     VideoFrameHeader header;
     header.keyframe = hf.keyframe;
     header.order_hint = hf.order_hint_lsbs;
-    header.num_total_refs = hf.num_total_refs;
-    for (int r = 0; r < hf.num_total_refs; ++r) {
-      header.ref_frame_idx[static_cast<std::size_t>(r)] = hf.ref_frame_idx[r];
+    header.num_total_refs = static_cast<std::uint8_t>(num_refs);
+    for (int r = 0; r < num_refs; ++r) {
+      header.ref_frame_idx[static_cast<std::size_t>(r)] =
+          static_cast<std::uint8_t>(map_slots[static_cast<std::size_t>(r)]);
     }
     header.ref_slot = header.ref_frame_idx[0];
+    header.frame_explicit_ref_frame_map = !options.implicit_ref_map;
     header.refresh_frame_flags = hf.refresh_frame_flags;
     header.immediate_output_frame = hf.immediate_output_frame;
     header.implicit_output_frame = hf.implicit_output_frame;
     header.reference_select = hf.reference_select && options.compound &&
-                              hf.num_total_refs > 1;
+                              num_refs > 1;
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
+    header.use_ref_frame_mvs =
+        options.enable_ref_frame_mvs && !hf.keyframe;
     apply_video_loop_filter_frame_header(encoder.filter_plan(), header);
 
     std::vector<std::uint8_t> unit;
@@ -2169,6 +4176,66 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
     result.intra_blocks.push_back(encoder.intra_blocks());
     recon_by_display[static_cast<std::size_t>(display)] = to_recon_frame(
         encoder.recon(0), encoder.recon(1), encoder.recon(2), width, height);
+    if (options.implicit_ref_map) {
+      // §7.23: the next frame's derivation reads this frame's slot state.
+      if (!ref_bank.refresh(hf.refresh_frame_flags, fp->display_order_hint,
+                            static_cast<int>(width), static_cast<int>(height),
+                            config.base_q_idx, hf.keyframe, /*tlayer_id=*/0,
+                            /*mlayer_id=*/0, hf.implicit_output_frame,
+                            hf.immediate_output_frame, -1, &error)) {
+        error = "B-frame display " + std::to_string(display) +
+                " reference bank: " + error;
+        return false;
+      }
+      int first_refreshed = -1;
+      for (int slot = 0; slot < ref_bank.num_ref_frames; ++slot) {
+        if (((hf.refresh_frame_flags >> slot) & 1U) != 0) {
+          first_refreshed = slot;
+          break;
+        }
+      }
+      for (int slot = 0; slot < ref_bank.num_ref_frames; ++slot) {
+        if (((hf.refresh_frame_flags >> slot) & 1U) == 0) continue;
+        slot_display[static_cast<std::size_t>(slot)] =
+            (hf.keyframe && slot != first_refreshed) ? -1 : display;
+      }
+    }
+
+
+    // §7.22/§7.23: refresh the plan slot with this frame's motion field.
+    if (options.enable_ref_frame_mvs) {
+      if (fp->is_key) {
+        // §7.23 refreshes every slot with the key frame (allFrames); its
+        // field is empty for all of them.
+        for (int slot = 0; slot < plan.num_slots; ++slot) {
+          init_slot_field(&b_fields[static_cast<std::size_t>(slot)], mi_cols,
+                          mi_rows);
+          b_fields[static_cast<std::size_t>(slot)].order_hint =
+              fp->display_order_hint;
+          b_is_key[static_cast<std::size_t>(slot)] = true;
+        }
+      } else {
+        const int slot = fp->slot;
+        if (slot < 0 || slot >= plan.num_slots) {
+          error = "B-frame plan slot outside the encoder DPB";
+          return false;
+        }
+        SlotField& field = b_fields[static_cast<std::size_t>(slot)];
+        if (!store_slot_field(encoder, fp->display_order_hint,
+                              ref_order_hints.data(), num_refs, &field,
+                              error)) {
+          error = "B-frame display " + std::to_string(display) + ": " + error;
+          return false;
+        }
+        field.order_hint = fp->display_order_hint;
+        field.num_saved_refs = num_refs;
+        for (int r = 0; r < num_refs; ++r) {
+          field.saved_order_hint[r] =
+              ref_order_hints[static_cast<std::size_t>(r)];
+        }
+        b_is_key[static_cast<std::size_t>(slot)] = false;
+      }
+    }
   }
 
   std::vector<std::int32_t> rank(static_cast<std::size_t>(plan.display_count()),
@@ -2216,7 +4283,10 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   pc.schedule = tl::Schedule::kHierarchicalP;
   pc.dependency = tl::DependencyMode::kAllLower;
   pc.explicit_dependency_map = false;  // pinned dav2d parses the default map
-  pc.order_hint_bits = 4;
+  // A 16-frame GOP needs OrderHintBits 5: the display hint of the anchor at
+  // index 8 is a half-span away from the key's hint 0, which the §5.18.2
+  // modulo reconstruction cannot resolve with 4 bits.
+  pc.order_hint_bits = gop >= 16 ? 5 : 4;
   pc.num_slots = gop;
   pc.base_q_idx = options.base_q_idx;
   tl::Plan plan;
@@ -2265,6 +4335,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.base_q_idx = options.base_q_idx;
   config.order_hint_bits = static_cast<std::uint8_t>(pc.order_hint_bits);
   config.num_ref_frames = static_cast<std::uint8_t>(plan.num_slots);
+  config.explicit_ref_frame_map = !options.implicit_ref_map;
   config.num_total_refs = 1;
   config.max_drl_bits_minus_1 = 4;
   config.disable_cdf_update = !options.adaptive_cdf;
@@ -2274,13 +4345,23 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
   config.enable_mhccp = options.enable_mhccp;
+  config.enable_idtx_intra = options.enable_idtx_intra;
   config.using_qmatrix = options.enable_qm;
+  config.qm_user_data = options.user_qm;
   config.enable_deblock = options.enable_deblock;
   apply_video_loop_filter_sequence_config(config, options.loop_filters);
   config.tx_mode_select = options.enable_tx_search;
   config.enable_bawp = options.enable_bawp;
+  config.enable_ref_frame_mvs = options.enable_ref_frame_mvs;
   config.max_tlayer_id = static_cast<std::uint8_t>(plan.max_tlayer_id);
   config.monotonic_output_order_flag = false;
+  // SVC layered encodes carry seq_lcr_id / max_mlayer_id from the layer plan;
+  // the plain --video-tlayers path keeps the single-layer defaults (0/0/1) and
+  // therefore stays byte-identical.
+  config.seq_lcr_id = options.seq_lcr_id;
+  config.seq_profile_override = options.seq_profile_override;
+  config.max_mlayer_id = options.max_mlayer_id;
+  config.seq_max_mlayer_cnt = options.seq_max_mlayer_cnt;
   config.tlayer_dependency_present_flag = plan.tlayer_dependency_present_flag;
   for (int curr = 0; curr <= plan.max_tlayer_id; ++curr) {
     for (int ref = 0; ref <= plan.max_tlayer_id; ++ref) {
@@ -2294,12 +4375,20 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   const int mi_rows = 2 * static_cast<int>((height + 7U) >> 3U);
   std::vector<VideoReconFrame> recon_by_display(
       static_cast<std::size_t>(plan.display_count()));
+  std::vector<SlotField> t_fields(static_cast<std::size_t>(plan.num_slots));
+  std::vector<bool> t_is_key(static_cast<std::size_t>(plan.num_slots), false);
 
   VideoOptions frame_options = options;
   frame_options.temporal_layers = 0;
   frame_options.tlayer_drop = -1;
 
   bool wrote_sequence_header = false;
+  // §7.23 mirror for the implicit map; the OBU tlayer id is stored per slot so
+  // the default TLayerDependencyMap (`ref_tlayer <= obu_tlayer_id`) applies.
+  inter::mv_stack_full::RefSlotBank ref_bank;
+  ref_bank.num_ref_frames = config.num_ref_frames;
+  std::vector<int> slot_display(
+      static_cast<std::size_t>(config.num_ref_frames), -1);
   for (std::size_t ci = 0; ci < coding.size(); ++ci) {
     const int display = coding[ci];
     const tl::PlannedFrame& pf =
@@ -2308,11 +4397,63 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       error = "temporal-layer plan codes a key outside coding position 0";
       return false;
     }
+    const int tlayer_id = pf.obu_tlayer_id();
+
+    std::vector<int> map_slots;
+    std::vector<int> ref_displays;
+    std::array<int, 7> frame_distance{};
+    std::array<int, 7> ref_order_hints{};
+    if (options.implicit_ref_map && !pf.is_key) {
+      inter::mv_stack_full::ImplicitRefMap implicit;
+      const inter::mv_stack_full::DependencyMaps deps =
+          implicit_dependency_maps(config, tlayer_id);
+      if (!derive_implicit_fields(ref_bank, pf.display_order_hint,
+                                  static_cast<int>(pc.order_hint_bits),
+                                  static_cast<int>(width),
+                                  static_cast<int>(height), tlayer_id, deps,
+                                  &implicit, &error)) {
+        error = "temporal-layer frame " + std::to_string(display) +
+                " implicit ref map: " + error;
+        return false;
+      }
+      const inter::mv_stack_full::RefMap& map = implicit.stage1;
+      map_slots.reserve(static_cast<std::size_t>(map.num_total_refs));
+      ref_displays.reserve(static_cast<std::size_t>(map.num_total_refs));
+      for (int r = 0; r < map.num_total_refs; ++r) {
+        const int slot = map.ref_frame_idx[r];
+        if (slot < 0 || slot >= ref_bank.num_ref_frames ||
+            slot_display[static_cast<std::size_t>(slot)] < 0) {
+          error = "temporal-layer frame " + std::to_string(display) +
+                  " implicit map names a slot with no coded picture";
+          return false;
+        }
+        map_slots.push_back(slot);
+        ref_displays.push_back(slot_display[static_cast<std::size_t>(slot)]);
+        frame_distance[static_cast<std::size_t>(r)] = map.scores_distance[r];
+        ref_order_hints[static_cast<std::size_t>(r)] =
+            ref_bank.slots[static_cast<std::size_t>(slot)].order_hint;
+      }
+    } else {
+      for (int r = 0; r < pf.num_refs; ++r) {
+        map_slots.push_back(pf.ref_slot[r]);
+        ref_displays.push_back(pf.ref_display[r]);
+        frame_distance[static_cast<std::size_t>(r)] =
+            static_cast<int>(relative_dist(pf.display_order_hint,
+                                           pf.ref_order_hint[r],
+                                           static_cast<int>(pc.order_hint_bits)));
+        ref_order_hints[static_cast<std::size_t>(r)] = pf.ref_order_hint[r];
+      }
+    }
+    const int num_refs = static_cast<int>(map_slots.size());
+    if (options.trace && options.implicit_ref_map && !pf.is_key) {
+      trace_implicit_map("tl", static_cast<std::size_t>(display), num_refs,
+                         map_slots);
+    }
 
     std::vector<inter::mc::RefFrame> references;
-    std::array<int, 7> frame_distance{};
-    if (!pf.is_key) {
-      const int ref_display = pf.ref_display[0];
+    references.reserve(static_cast<std::size_t>(num_refs));
+    for (int r = 0; r < num_refs; ++r) {
+      const int ref_display = ref_displays[static_cast<std::size_t>(r)];
       if (ref_display < 0 ||
           recon_by_display[static_cast<std::size_t>(ref_display)].y.empty()) {
         error = "temporal-layer reference is not available";
@@ -2329,17 +4470,47 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       ref.mi_cols = mi_cols;
       ref.mi_rows = mi_rows;
       references.push_back(ref);
-      frame_distance[0] = static_cast<int>(relative_dist(
-          pf.display_order_hint, pf.ref_order_hint[0],
-          static_cast<int>(pc.order_hint_bits)));
     }
 
-    std::array<int, 7> ref_order_hints{};
-    ref_order_hints[0] = pf.ref_order_hint[0];
+    TemporalFrameContext temporal_ctx;
+    MotionFieldFrame motion_field;
+    if (options.enable_ref_frame_mvs && !pf.is_key) {
+      const SlotField* ref_fields[kRefsPerFrame] = {};
+      int ref_slots[kRefsPerFrame] = {};
+      std::uint8_t ref_is_key[kRefsPerFrame] = {};
+      for (int r = 0; r < pf.num_refs; ++r) {
+        const int slot = pf.ref_slot[r];
+        if (slot < 0 || slot >= plan.num_slots) {
+          error = "temporal-layer reference slot outside the encoder DPB";
+          return false;
+        }
+        ref_fields[r] = &t_fields[static_cast<std::size_t>(slot)];
+        ref_slots[r] = slot;
+        ref_is_key[r] = t_is_key[static_cast<std::size_t>(slot)] ? 1U : 0U;
+      }
+      if (!estimate_motion_field(
+              ref_fields, ref_slots, ref_order_hints.data(), ref_is_key,
+              /*ref_valid=*/true, pf.num_refs, pf.display_order_hint,
+              static_cast<int>(width), static_cast<int>(height), mi_cols,
+              mi_rows, /*proj_step=*/1, &motion_field, error)) {
+        error = "temporal-layer frame " + std::to_string(display) + ": " +
+                error;
+        return false;
+      }
+      temporal_ctx.use_ref_frame_mvs = true;
+      temporal_ctx.order_hint = static_cast<int>(pf.display_order_hint);
+      temporal_ctx.num_past_refs = motion_field.config.num_past_refs;
+      temporal_ctx.num_future_refs = motion_field.config.num_future_refs;
+      temporal_ctx.closest_past = motion_field.result.closest_past;
+      temporal_ctx.closest_future = motion_field.result.closest_future;
+      temporal_ctx.field = &motion_field.field;
+    }
     InterFrameEncoder encoder(frames[static_cast<std::size_t>(display)],
-                              std::move(references), frame_distance, 1,
-                              frame_options, options.trace, pf.is_key, 0, 0, 0,
-                              0, {}, nullptr, nullptr, ref_order_hints);
+                              std::move(references), frame_distance,
+                              std::max(1, num_refs), frame_options,
+                              options.trace, pf.is_key, 0, 0, 0, 0, {}, nullptr,
+                              nullptr, ref_order_hints,
+                              /*primary_ref_is_none=*/true, &temporal_ctx);
     std::vector<std::uint8_t> tile;
     std::vector<syntax::BlockSyntax> blocks;
     std::vector<std::int32_t> levels;
@@ -2347,22 +4518,29 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       error = "temporal-layer frame " + std::to_string(display) + ": " + error;
       return false;
     }
+    result.temporal_candidates +=
+        static_cast<std::uint64_t>(encoder.temporal_added());
+    result.temporal_selected +=
+        static_cast<std::uint64_t>(encoder.temporal_selected());
 
     VideoFrameHeader header;
     header.keyframe = pf.is_key;
     header.order_hint = pf.order_hint_lsbs;
-    header.num_total_refs = static_cast<std::uint8_t>(pf.num_refs);
-    for (int r = 0; r < pf.num_refs; ++r) {
+    header.num_total_refs = static_cast<std::uint8_t>(num_refs);
+    for (int r = 0; r < num_refs; ++r) {
       header.ref_frame_idx[static_cast<std::size_t>(r)] =
-          static_cast<std::uint8_t>(pf.ref_slot[r]);
+          static_cast<std::uint8_t>(map_slots[static_cast<std::size_t>(r)]);
     }
-    header.ref_slot = static_cast<std::uint8_t>(pf.ref_slot[0]);
+    header.ref_slot = header.ref_frame_idx[0];
+    header.frame_explicit_ref_frame_map = !options.implicit_ref_map;
     header.refresh_frame_flags = pf.refresh_frame_flags;
     header.immediate_output_frame = pf.immediate_output_frame;
     header.implicit_output_frame = pf.implicit_output_frame;
     header.reference_select = false;  // --video-tlayers is single-reference
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
+    header.use_ref_frame_mvs =
+        options.enable_ref_frame_mvs && !pf.is_key;
     apply_video_loop_filter_frame_header(encoder.filter_plan(), header);
 
     std::vector<std::uint8_t> unit;
@@ -2386,6 +4564,59 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
         static_cast<std::uint32_t>(result.units.back().size()));
     recon_by_display[static_cast<std::size_t>(display)] = to_recon_frame(
         encoder.recon(0), encoder.recon(1), encoder.recon(2), width, height);
+    if (options.implicit_ref_map) {
+      if (!ref_bank.refresh(pf.refresh_frame_flags, pf.display_order_hint,
+                            static_cast<int>(width), static_cast<int>(height),
+                            config.base_q_idx, pf.is_key, tlayer_id,
+                            /*mlayer_id=*/0, pf.implicit_output_frame,
+                            pf.immediate_output_frame, -1, &error)) {
+        error = "temporal-layer frame " + std::to_string(display) +
+                " reference bank: " + error;
+        return false;
+      }
+      int first_refreshed = -1;
+      for (int slot = 0; slot < ref_bank.num_ref_frames; ++slot) {
+        if (((pf.refresh_frame_flags >> slot) & 1U) != 0) {
+          first_refreshed = slot;
+          break;
+        }
+      }
+      for (int slot = 0; slot < ref_bank.num_ref_frames; ++slot) {
+        if (((pf.refresh_frame_flags >> slot) & 1U) == 0) continue;
+        slot_display[static_cast<std::size_t>(slot)] =
+            (pf.is_key && slot != first_refreshed) ? -1 : display;
+      }
+    }
+
+
+    // §7.22/§7.23: refresh the plan slot with this frame's motion field.
+    if (options.enable_ref_frame_mvs) {
+      if (pf.is_key) {
+        for (int slot = 0; slot < plan.num_slots; ++slot) {
+          init_slot_field(&t_fields[static_cast<std::size_t>(slot)], mi_cols,
+                          mi_rows);
+          t_fields[static_cast<std::size_t>(slot)].order_hint =
+              static_cast<int>(pf.display_order_hint);
+          t_is_key[static_cast<std::size_t>(slot)] = true;
+        }
+      } else if (pf.slot >= 0 && pf.slot < plan.num_slots) {
+        SlotField& field = t_fields[static_cast<std::size_t>(pf.slot)];
+        if (!store_slot_field(encoder, static_cast<int>(pf.display_order_hint),
+                              ref_order_hints.data(), pf.num_refs, &field,
+                              error)) {
+          error = "temporal-layer frame " + std::to_string(display) + ": " +
+                  error;
+          return false;
+        }
+        field.order_hint = static_cast<int>(pf.display_order_hint);
+        field.num_saved_refs = pf.num_refs;
+        for (int r = 0; r < pf.num_refs; ++r) {
+          field.saved_order_hint[r] =
+              ref_order_hints[static_cast<std::size_t>(r)];
+        }
+        t_is_key[static_cast<std::size_t>(pf.slot)] = false;
+      }
+    }
   }
 
   // Decoder output: display order over the retained frames.
@@ -2409,8 +4640,181 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// Cross-embedded-layer refinement sequence (SVC --svc-embedded).
+//
+// Every frame is a regular inter picture that predicts from the lower
+// embedded layer's decoded picture at the same display index.  §7.3.6 only
+// permits the CLK in the lowest embedded layer of a temporal unit, so the
+// first refinement frame is inter; the caller emits every lower mlayer of the
+// same temporal unit first, which makes the reference slot valid (§5.18.2
+// reference conformance, §7.23 slot refresh).  The frame header references
+// `reference_slot` and refreshes `refresh_slot`; the lower layer keeps its own
+// slot, so the next temporal unit's refinement frame still predicts from the
+// lower layer, not from the previous refinement picture.
+// ---------------------------------------------------------------------------
+bool encode_video_refinement_sequence(
+    std::span<const VideoInputFrame> frames,
+    std::span<const VideoReconFrame> references, const VideoOptions& options,
+    const RefinementOptions& refinement, VideoSequenceResult& result,
+    std::string& error) {
+  if (frames.empty()) {
+    error = "refinement sequence has no input frames";
+    return false;
+  }
+  if (references.size() != frames.size()) {
+    error = "refinement sequence needs one reference picture per frame";
+    return false;
+  }
+  if (refinement.reference_slot < 0 || refinement.refresh_slot < 0 ||
+      refinement.reference_slot >= refinement.num_ref_frames ||
+      refinement.refresh_slot >= refinement.num_ref_frames ||
+      refinement.num_ref_frames > kMaxNumRefFrames) {
+    error = "refinement slots are outside NumRefFrames";
+    return false;
+  }
+  const std::uint32_t width = frames[0].width;
+  const std::uint32_t height = frames[0].height;
+  if (width == 0 || height == 0) {
+    error = "refinement sequence needs a non-empty frame size";
+    return false;
+  }
+  for (std::size_t i = 0; i < frames.size(); ++i) {
+    if (frames[i].width != width || frames[i].height != height) {
+      error = "refinement sequence frame dimensions differ";
+      return false;
+    }
+    if (references[i].width != width || references[i].height != height ||
+        references[i].y.empty() || references[i].u.empty() ||
+        references[i].v.empty()) {
+      error = "refinement reference " + std::to_string(i) +
+              " has the wrong size or is not reconstructed";
+      return false;
+    }
+  }
+  if (options.enable_deblock || options.loop_filters.any() ||
+      options.compound || options.enable_gme || options.enable_warp ||
+      options.enable_tip || options.b_frames > 0) {
+    // Deblock/loop filters need a picture-global filter plan per frame, and
+    // the frame-type tools own their own reference schedules.  The SVC path
+    // never sets them; reject instead of emitting an unfiltered picture.
+    error = "embedded refinement does not compose with loop filters, "
+            "compound prediction, global motion or the B/TIP frame types";
+    return false;
+  }
+
+  VideoConfig config;
+  config.max_frame_width = static_cast<std::uint16_t>(width);
+  config.max_frame_height = static_cast<std::uint16_t>(height);
+  config.base_q_idx = options.base_q_idx;
+  config.order_hint_bits = 4;
+  config.num_ref_frames = static_cast<std::uint8_t>(refinement.num_ref_frames);
+  config.num_total_refs = 1;
+  config.max_drl_bits_minus_1 = 4;
+  config.disable_cdf_update = true;
+  config.enable_avg_cdf = options.avg_cdf;
+  config.avg_cdf_type = true;
+  config.disable_drl_reorder = true;
+  config.constrain_drl_reorder = true;
+  config.enable_cfl_intra = true;
+  config.enable_mhccp = options.enable_mhccp;
+  config.using_qmatrix = options.enable_qm;
+  config.enable_deblock = options.enable_deblock;
+  config.enable_bawp = options.enable_bawp;
+  config.tx_mode_select = options.enable_tx_search;
+  config.enable_global_motion = false;
+  // §5.4.1 layer limits from the SVC plan.  max_mlayer_id > 0 selects the
+  // §5.4.1 dependency-map rows and the SeqMaxMlayerCnt field; the default
+  // map (ref <= curr) is exactly what the cross-mlayer reference needs.
+  config.seq_lcr_id = options.seq_lcr_id;
+  config.seq_profile_override = options.seq_profile_override;
+  config.max_tlayer_id = options.max_tlayer_id;
+  config.max_mlayer_id = options.max_mlayer_id;
+  config.seq_max_mlayer_cnt = options.seq_max_mlayer_cnt;
+  config.mlayer_dependency_present = true;
+
+  const int mi_cols = 2 * static_cast<int>((width + 7U) >> 3U);
+  const int mi_rows = 2 * static_cast<int>((height + 7U) >> 3U);
+
+  VideoOptions frame_options = options;
+  frame_options.temporal_layers = 0;
+  frame_options.tlayer_drop = -1;
+  frame_options.force_intra = false;
+
+  bool wrote_sequence_header = false;
+  for (std::size_t i = 0; i < frames.size(); ++i) {
+    std::vector<inter::mc::RefFrame> refs;
+    inter::mc::RefFrame ref;
+    const VideoReconFrame& reference = references[i];
+    ref.plane[0] = inter::mc::PlaneView{
+        reference.y.data(), static_cast<int>(width)};
+    ref.plane[1] = inter::mc::PlaneView{
+        reference.u.data(), static_cast<int>((width + 1U) / 2U)};
+    ref.plane[2] = inter::mc::PlaneView{
+        reference.v.data(), static_cast<int>((width + 1U) / 2U)};
+    ref.mi_cols = mi_cols;
+    ref.mi_rows = mi_rows;
+    refs.push_back(ref);
+
+    std::array<int, 7> frame_distance{};
+    frame_distance[0] = 0;  // same display time as the lower embedded layer
+    std::array<int, 7> ref_order_hints{};
+    ref_order_hints[0] = static_cast<int>(i);
+
+    InterFrameEncoder encoder(frames[i], std::move(refs), frame_distance, 1,
+                              frame_options, options.trace,
+                              /*keyframe=*/false, 0, 0, 0, 0, {}, nullptr,
+                              nullptr, ref_order_hints);
+    std::vector<std::uint8_t> tile;
+    std::vector<syntax::BlockSyntax> blocks;
+    std::vector<std::int32_t> levels;
+    if (!encoder.encode(tile, blocks, levels, error)) {
+      error = "refinement frame " + std::to_string(i) + ": " + error;
+      return false;
+    }
+
+    VideoFrameHeader header;
+    header.keyframe = false;
+    header.order_hint = static_cast<std::uint32_t>(i);
+    header.num_total_refs = 1;
+    header.ref_frame_idx[0] = static_cast<std::uint8_t>(refinement.reference_slot);
+    header.ref_slot = static_cast<std::uint8_t>(refinement.reference_slot);
+    header.refresh_frame_flags =
+        static_cast<std::uint8_t>(1U << refinement.refresh_slot);
+    header.immediate_output_frame = true;
+    header.implicit_output_frame = false;
+    header.reference_select = false;
+    header.use_qtr_precision_mv = options.mv_precision == 1;
+    header.allow_high_precision_mv = options.mv_precision != 2;
+
+    std::vector<std::uint8_t> unit;
+    const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
+    unit.insert(unit.end(), td.begin(), td.end());
+    if (!wrote_sequence_header) {
+      const std::vector<std::uint8_t> seq = make_sequence_header_obu(config);
+      unit.insert(unit.end(), seq.begin(), seq.end());
+      wrote_sequence_header = true;
+    }
+    const std::vector<std::uint8_t> obu = make_frame_obu(config, header, tile);
+    unit.insert(unit.end(), obu.begin(), obu.end());
+    result.units.push_back(std::move(unit));
+
+    result.tile_bytes.push_back(static_cast<std::uint32_t>(tile.size()));
+    result.inter_blocks.push_back(encoder.inter_blocks());
+    result.intra_blocks.push_back(encoder.intra_blocks());
+    result.frame_bytes.push_back(
+        static_cast<std::uint32_t>(result.units.back().size()));
+    result.recon.push_back(to_recon_frame(
+        encoder.recon(0), encoder.recon(1), encoder.recon(2), width, height));
+  }
+  return true;
+}
+
 int resolved_num_ref_frames(const VideoOptions& options) {
   if (options.num_ref_frames != 0) return options.num_ref_frames;
+  // The implicit map ranks every distinct slot up to REFS_PER_FRAME, so the
+  // 2-slot historical default would cap it at two; give it the full pool.
+  if (options.implicit_ref_map) return kMaxRefSlots;
   return options.num_total_refs > 1 ? kMaxRefSlots : 2;
 }
 
@@ -2554,6 +4958,7 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
   config.base_q_idx = options.base_q_idx;
   config.order_hint_bits = static_cast<std::uint8_t>(kOrderHintBits);
   config.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);
+  config.explicit_ref_frame_map = !options.implicit_ref_map;
   config.num_total_refs = 1;
   config.max_drl_bits_minus_1 = 4;
   config.disable_cdf_update = true;
@@ -2671,7 +5076,7 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
     header.refresh_frame_flags = 1U << 1;
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
-    header.use_ref_frame_mvs = false;
+    header.use_ref_frame_mvs = options.enable_ref_frame_mvs;
 
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> obu =
@@ -2891,6 +5296,11 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // 8-bit 4:2:0 path below is untouched.
   if (options.format.chroma != fmt::ChromaFormat::k420 ||
       options.format.depth != fmt::BitDepth::k8) {
+    if (options.implicit_ref_map) {
+      error = "the implicit reference map is wired for the 8-bit 4:2:0 video "
+              "core only; the format cores keep the explicit map";
+      return false;
+    }
     return encode_video_sequence_format(frames, options, result, error);
   }
   error.clear();
@@ -2964,6 +5374,47 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       return false;
     }
   }
+  // §5.13 user-defined QM (--video-user-qm) is emitted once, before the key
+  // frame of the plain single-tile chain; every other composition writes its
+  // own temporal units and would omit the OBU.
+  if (options.user_qm) {
+    if (!options.enable_qm) {
+      error = "--video-user-qm requires --video-qm";
+      return false;
+    }
+    if (options.tile_cols > 0 || options.tile_rows > 0) {
+      error = "--video-user-qm does not compose with --tiles";
+      return false;
+    }
+    if (options.b_frames > 0 || options.temporal_layers > 0 ||
+        options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras) {
+      error = "--video-user-qm does not compose with the B/temporal-layer/"
+              "random-access frame schedules";
+      return false;
+    }
+    if (options.enable_tip) {
+      error = "--video-user-qm does not compose with --video-tip";
+      return false;
+    }
+  }
+  // §5.14 film grain is planned per output picture and inserted into the
+  // plain single-tile temporal units.  The frame-type wrappers and the tiled
+  // writer have their own header writers and are rejected by name.
+  if (options.film_grain) {
+    if (options.tile_cols > 0 || options.tile_rows > 0) {
+      error = "--video-grain does not compose with --tiles";
+      return false;
+    }
+    if (options.b_frames > 0 || options.temporal_layers > 0 ||
+        options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras ||
+        options.enable_tip) {
+      error = "--video-grain does not compose with the B/temporal-layer/"
+              "random-access/TIP frame schedules";
+      return false;
+    }
+  }
   for (std::size_t i = 0; i < frames.size(); ++i) {
     const VideoInputFrame& f = frames[i];
     if (f.width != width || f.height != height) {
@@ -2999,6 +5450,33 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     error = "num_total_refs " + std::to_string(options.num_total_refs) +
             " exceeds NumRefFrames " + std::to_string(options.num_ref_frames);
     return false;
+  }
+  if (options.implicit_ref_map) {
+    // §7.7 derives NumTotalRefs and ref_frame_idx from the slot state, so every
+    // tool that owns its own reference map / block-level ref list stays on the
+    // explicit form and is rejected by name here.
+    if (options.enable_tip) {
+      error = "--video-implicit-ref-map does not compose with --video-tip: "
+              "TIP needs the explicit past/future anchor pair";
+      return false;
+    }
+    if (options.compound) {
+      error = "--video-implicit-ref-map does not compose with "
+              "--video-compound: reference_select and the compound ref pairs "
+              "require an explicit two-reference map";
+      return false;
+    }
+    if (options.tile_cols > 0 || options.tile_rows > 0) {
+      error = "--video-implicit-ref-map does not compose with --tiles: the "
+              "tiled frame header signals a single explicit reference slot";
+      return false;
+    }
+    if (options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras) {
+      error = "--video-implicit-ref-map does not compose with the "
+              "long-term/OLK/leading/SEF/SWITCH/RAS frame-type wrappers";
+      return false;
+    }
   }
   if (options.mv_precision < 0 || options.mv_precision > 2) {
     error = "mv_precision must be 0 (1/8), 1 (1/4) or 2 (1/2) pel";
@@ -3080,8 +5558,71 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
             "decoder filters across interior tile edges";
     return false;
   }
+  // §5.18.7.1/.8 opt-in segmentation and delta-Q: CPU --video only.  Every
+  // rejection below keeps either an unsupported header writer or a mode whose
+  // block decision is not replayed by the segmentation planner out of the
+  // gated surface.
+  const bool qp_tools = options.enable_segmentation || options.enable_delta_q ||
+                        options.per_segment_q;
+  if (qp_tools) {
+#if !defined(AV2ENC_VIDEO_DELTAQ)
+    error = "segmentation/delta-Q (--video-segmentation/--video-delta-q/"
+            "--video-per-segment-q) needs the full build "
+            "(src/codec/entropy/deltaq)";
+    return false;
+#else
+    if (options.enable_delta_q && options.per_segment_q) {
+      error = "--video-per-segment-q does not compose with --video-delta-q: "
+              "the SEG_LVL_ALT_Q planner and the per-superblock delta-Q ramp "
+              "are separate features";
+      return false;
+    }
+    if (options.enable_qm) {
+      error = "segmentation/delta-Q does not compose with --video-qm: the "
+              "frame-header writer owns the using_qmatrix bit";
+      return false;
+    }
+    if (options.delta_q_res < 0 || options.delta_q_res > 3) {
+      error = "delta_q_res must be in [0, 3]";
+      return false;
+    }
+    if (options.seg_q_delta < -351 ||
+        options.seg_q_delta > 351) {
+      error = "the per-segment Q delta must be in [-351, 351]";
+      return false;
+    }
+    if (options.b_frames > 0 || options.temporal_layers > 0 ||
+        options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras) {
+      error = "segmentation/delta-Q does not compose with the B/temporal-layer/"
+              "random-access frame schedules (their header writers do not own "
+              "the §5.18.7.1/.8 rows)";
+      return false;
+    }
+    if (options.enable_tip) {
+      error = "segmentation/delta-Q does not compose with --video-tip";
+      return false;
+    }
+    if (options.tile_cols > 1 || options.tile_rows > 1) {
+      error = "segmentation/delta-Q does not support --tiles > 1x1 yet: the "
+              "tiled frame-header writer does not signal the §5.18.7 rows";
+      return false;
+    }
+    if (!options.frame_base_q_idx.empty()) {
+      error = "segmentation/delta-Q requires a fixed base_q_idx "
+              "(no --rc crf/vbr per-frame QP)";
+      return false;
+    }
+    if (options.adaptive_cdf || options.cdf_continuity) {
+      error = "segmentation/delta-Q does not compose with --adaptive-cdf/"
+              "--cdf-continuity: the per-tile delta/segment CDFs are not part "
+              "of the §8.2.4 CDF image";
+      return false;
+    }
+#endif
+  }
   const int num_total_refs = options.num_total_refs;
-  const int num_ref_frames = resolved_num_ref_frames(options);
+  const int num_ref_frames = av2enc::video::resolved_num_ref_frames(options);
   const int order_hint_bits = 4;
 
   // B frames (coding order != display order, two references).
@@ -3327,6 +5868,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   config.base_q_idx = options.base_q_idx;
   config.order_hint_bits = order_hint_bits;
   config.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);
+  config.explicit_ref_frame_map = !options.implicit_ref_map;
   config.num_total_refs = 1;
   config.max_drl_bits_minus_1 = 4;
   config.disable_cdf_update = !options.adaptive_cdf;
@@ -3351,22 +5893,33 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
 #endif
   if (options.video_timing) {
     // §5.4.1 decoder-compatible timing block.  The nested §5.4.13 block stays
-    // off: pinned dav2d f9dafbc cannot parse it (docs/negative-results.md).
+    // off unless --video-decoder-model is set (pinned dav2d f9dafbc cannot
+    // parse it; avmdec can).
     config.initial_display_delay_present = true;
     config.initial_display_delay_minus_1 = 0;
     config.decoder_model_info_present = true;
     config.num_units_in_decoding_tick =
         options.timing_num_units_in_display_tick;
+    config.seq_decoder_model_info_present = options.video_decoder_model;
+    config.decoder_buffer_delay = options.decoder_buffer_delay;
+    config.encoder_buffer_delay = options.encoder_buffer_delay;
+    config.low_delay_mode_flag = options.low_delay_mode;
   }
   config.disable_drl_reorder = !options.drl_reorder;
   config.constrain_drl_reorder = !options.drl_reorder_always;
   config.enable_cfl_intra = true;
   config.enable_mhccp = options.enable_mhccp;
+  config.enable_idtx_intra = options.enable_idtx_intra;
   config.using_qmatrix = options.enable_qm;
+  config.qm_user_data = options.user_qm;
   config.enable_deblock = options.enable_deblock;
   config.enable_global_motion = options.enable_gme;
-  config.enable_bawp = options.enable_bawp;
-  // §5.4.10 CDEF/CCSO sequence flags for the opt-in M2 loop filters.
+  config.enable_bawp = options.enable_bawp || options.enable_morph;
+  // §5.4.7/§5.20.5.4: the morph carrier selects the per-frame screen-content
+  // form and codes the IBC mode-info path on the intra keyframe.
+  config.seq_screen_content_tools_present = options.enable_morph;
+  config.enable_interintra = options.enable_interintra;
+  config.enable_ref_frame_mvs = options.enable_ref_frame_mvs;  // §5.4.10 CDEF/CCSO sequence flags for the opt-in M2 loop filters.
   if (options.loop_filters.cdef) {
     config.enable_cdef = true;
     config.cdef_on_skip_txfm_mode =
@@ -3394,15 +5947,68 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   }
   config.tx_mode_select = options.enable_tx_search;
   config.seq_lcr_id = options.seq_lcr_id;
+  config.seq_profile_override = options.seq_profile_override;
   config.max_tlayer_id = options.max_tlayer_id;
   config.max_mlayer_id = options.max_mlayer_id;
   config.seq_max_mlayer_cnt = options.seq_max_mlayer_cnt;
+  config.film_grain_params_present = options.film_grain;
+
+  // §5.13/§7.3.8.9 user-defined QM: a complete OBU_QUANTIZATION_MATRIX that is
+  // available before the key frame header references level 0.  §6.12 resets
+  // QmProtected/QmDataPresent at every CLK, so only the key temporal unit
+  // carries the QM OBU.
+  std::vector<std::uint8_t> qm_obu;
+  if (options.enable_qm && options.user_qm) {
+    qm::QmObuConfig qm_config;
+    qm_config.bit_map = 1U;  // level 0
+    qm_config.chroma_info_present = true;
+    qm_config.levels[0].is_default = false;
+    qm::fill_user_qm_constant(&qm_config.levels[0].user, 32);
+    std::string qm_error;
+    qm_obu = qm::make_quantizer_matrix_obu(qm_config, &qm_error);
+    if (qm_obu.empty()) {
+      error = "quantizer_matrix_obu failed: " + qm_error;
+      return false;
+    }
+  }
 
   VideoFrameHeader key_header;
   key_header.keyframe = true;
   key_header.order_hint = 0;
   key_header.ref_slot = 0;
   key_header.refresh_frame_flags = (1U << config.num_ref_frames) - 1U;
+#if defined(AV2ENC_VIDEO_DELTAQ)
+  if (!build_video_frame_qp(key_options,
+                            static_cast<int>(key_options.base_q_idx),
+                            /*primary_ref_is_none=*/true, key_header,
+                            error)) {
+    error = "keyframe: " + error;
+    return false;
+  }
+#endif
+
+  // §5.14: plan the key picture's model before its header is written.  A new
+  // model emits one film grain OBU in the key temporal unit.
+  grain::GrainStreamPlanner grain_planner;
+  grain::GrainFramePlan key_grain;
+  if (options.film_grain) {
+    if (!plan_grain_frame(frames[0], 0, grain_planner, key_grain, error)) {
+      error = "keyframe film grain: " + error;
+      return false;
+    }
+    key_header.apply_grain = key_grain.apply_grain;
+    key_header.fgm_id = static_cast<std::uint8_t>(key_grain.fgm_id);
+    key_header.grain_seed = key_grain.grain_seed;
+  }
+  if (config.seq_screen_content_tools_present) {
+    // §5.18.3.3/.4: the morph carrier's keyframe allows screen-content tools
+    // and global IBC, with integer block vectors.
+    key_header.allow_screen_content_tools = true;
+    key_header.force_integer_mv = true;
+    key_header.allow_intrabc = true;
+    key_header.allow_global_intrabc = true;
+    key_header.allow_local_intrabc = false;
+  }
 
   // Key frame: intra keyframe coded once per tile.
   std::uint32_t key_payload_bytes = 0;
@@ -3586,13 +6192,19 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       seq = make_sequence_header_obu(config);
       obu = make_frame_obu(config, key_header, tile_sources[0].payload);
     }
-    key_unit.reserve(td.size() + seq.size() + ci.size() + mfh_obu.size() +
-                     obu.size());
+    key_unit.reserve(td.size() + seq.size() + qm_obu.size() + ci.size() +
+                     mfh_obu.size() + obu.size());
     key_unit.insert(key_unit.end(), td.begin(), td.end());
     key_unit.insert(key_unit.end(), seq.begin(), seq.end());
+    key_unit.insert(key_unit.end(), qm_obu.begin(), qm_obu.end());
     key_unit.insert(key_unit.end(), ci.begin(), ci.end());
     key_unit.insert(key_unit.end(), mfh_obu.begin(), mfh_obu.end());
     key_unit.insert(key_unit.end(), obu.begin(), obu.end());
+  }
+  if (options.film_grain &&
+      !insert_grain_obu(key_grain, key_unit, error)) {
+    error = "keyframe " + error;
+    return false;
   }
   result.units.push_back(std::move(key_unit));
   result.recon.push_back(
@@ -3608,13 +6220,35 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // valid, so the first P frame has a single reference.  Later frames reference
   // the most recently decoded slots and refresh a rotating slot.
   std::array<RefSlot, kMaxRefSlots> slots;
+  std::array<SlotField, kMaxRefSlots> slot_fields;
   std::vector<int> recent_slots;
   slots[0].valid = true;
+  slots[0].is_key = true;
   slots[0].order_hint = 0;
   for (int plane = 0; plane < 3; ++plane) {
     slots[0].plane[plane] = frame_recon[plane];
   }
-  recent_slots.push_back(0);
+  recent_slots.push_back(options.fixed_write_slot >= 0
+                             ? options.fixed_write_slot
+                             : 0);
+
+  // §7.23 mirror the §7.7 derivation reads.  The key frame refreshes every
+  // slot but only the first stays valid, so the first P frame sees one
+  // candidate.  `num_ref_frames` is the signalled pool size.
+  inter::mv_stack_full::RefSlotBank ref_bank;
+  ref_bank.num_ref_frames = num_ref_frames;
+  if (options.implicit_ref_map) {
+    if (!ref_bank.refresh(key_header.refresh_frame_flags,
+                          key_header.order_hint, static_cast<int>(width),
+                          static_cast<int>(height), frame_qp(0),
+                          /*key_frame=*/true, 0, 0, true, true, -1, &error)) {
+      error = "keyframe reference bank: " + error;
+      return false;
+    }
+  }
+  const inter::mv_stack_full::DependencyMaps ref_deps =
+      implicit_dependency_maps(config, 0);
+  init_slot_field(&slot_fields[0], recon_mi_cols, recon_mi_rows);
 
   const auto make_reference = [&](int slot) {
     inter::mc::RefFrame ref;
@@ -3633,19 +6267,58 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     const std::uint32_t order_hint =
         static_cast<std::uint32_t>(i) &
         static_cast<std::uint32_t>((1U << order_hint_bits) - 1U);
-    const int ref_count = std::min<int>(
-        num_total_refs, static_cast<int>(recent_slots.size()));
+    // Reference list for this frame: the explicit recency list, or the §7.7
+    // implicit mapping the decoder derives from the same slot state.
+    std::vector<int> frame_ref_slots;
+    std::array<int, 7> derived_distance{};
+    if (options.implicit_ref_map) {
+      inter::mv_stack_full::ImplicitRefMap implicit;
+      if (!derive_implicit_fields(ref_bank, static_cast<int>(i),
+                                  order_hint_bits, static_cast<int>(width),
+                                  static_cast<int>(height), 0, ref_deps,
+                                  &implicit, &error)) {
+        error = "P-frame " + std::to_string(i) + " implicit ref map: " + error;
+        return false;
+      }
+      const inter::mv_stack_full::RefMap& map = implicit.stage1;
+      frame_ref_slots.reserve(static_cast<std::size_t>(map.num_total_refs));
+      for (int r = 0; r < map.num_total_refs; ++r) {
+        frame_ref_slots.push_back(map.ref_frame_idx[r]);
+        derived_distance[static_cast<std::size_t>(r)] = map.scores_distance[r];
+      }
+    } else {
+      const int explicit_count =
+          std::min<int>(num_total_refs, static_cast<int>(recent_slots.size()));
+      frame_ref_slots.assign(recent_slots.begin(),
+                             recent_slots.begin() + explicit_count);
+    }
+    const int ref_count = static_cast<int>(frame_ref_slots.size());
+    if (options.trace && options.implicit_ref_map) {
+      trace_implicit_map("P", i, ref_count, frame_ref_slots);
+    }
     std::vector<inter::mc::RefFrame> references;
     references.reserve(static_cast<std::size_t>(ref_count));
     std::array<int, 7> frame_distance{};
     for (int r = 0; r < ref_count; ++r) {
-      const int slot = recent_slots[static_cast<std::size_t>(r)];
+      const int slot = frame_ref_slots[static_cast<std::size_t>(r)];
       references.push_back(make_reference(slot));
       frame_distance[static_cast<std::size_t>(r)] =
-          relative_dist(order_hint, slots[slot].order_hint, order_hint_bits);
+          options.implicit_ref_map
+              ? derived_distance[static_cast<std::size_t>(r)]
+              : relative_dist(order_hint, slots[slot].order_hint,
+                              order_hint_bits);
     }
 
     const VideoOptions frame_options = options_for_frame(i);
+    // §5.14: plan this picture's grain model in coding order before the frame
+    // header is written; a changed model emits one film grain OBU.
+    grain::GrainFramePlan grain_plan;
+    if (options.film_grain &&
+        !plan_grain_frame(frames[i], static_cast<std::uint32_t>(i),
+                          grain_planner, grain_plan, error)) {
+      error = "P-frame " + std::to_string(i) + " film grain: " + error;
+      return false;
+    }
     // §5.18.9 global motion: estimate one model per explicit reference before
     // the block decisions so GLOBALMV and the header use the same parameters.
     // Off by default; `gm_plan` then stays the identity plan.
@@ -3657,7 +6330,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       std::vector<std::uint8_t> ref_slots(static_cast<std::size_t>(ref_count));
       std::vector<int> ref_distance(static_cast<std::size_t>(ref_count));
       for (int r = 0; r < ref_count; ++r) {
-        const int slot = recent_slots[static_cast<std::size_t>(r)];
+        const int slot = frame_ref_slots[static_cast<std::size_t>(r)];
         ref_order_hint[static_cast<std::size_t>(r)] =
             static_cast<int>(slots[slot].order_hint);
         ref_slots[static_cast<std::size_t>(r)] =
@@ -3683,7 +6356,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
         // §7.4.4 load_cdfs(ref_frame_idx[primary_ref_frame]); we signal
         // primary_ref_frame = 0, so the first reference's saved CDFs are
         // installed into the frame state.
-        const int primary_slot = recent_slots.front();
+        const int primary_slot = frame_ref_slots.front();
         std::copy(cdf_slots[static_cast<std::size_t>(primary_slot)].begin(),
                   cdf_slots[static_cast<std::size_t>(primary_slot)].end(),
                   cdf_frame.begin());
@@ -3698,9 +6371,40 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     [[maybe_unused]] std::uint32_t cdf_tile_index = 0;
     // §7.20.1 needs the reference OrderHints for the GDF table derivation.
     std::array<int, 7> ref_order_hints{};
-    for (int r = 0; r < ref_count && r < 2; ++r) {
+    for (int r = 0; r < ref_count; ++r) {
       ref_order_hints[static_cast<std::size_t>(r)] = static_cast<int>(
-          slots[recent_slots[static_cast<std::size_t>(r)]].order_hint);
+          slots[frame_ref_slots[static_cast<std::size_t>(r)]].order_hint);
+    }
+    // §7.9 + §7.12.2.7/.8: project this frame's reference motion fields into
+    // the current frame's motion field for the temporal MV candidates.
+    TemporalFrameContext temporal_ctx;
+    MotionFieldFrame motion_field;
+    if (options.enable_ref_frame_mvs) {
+      const SlotField* ref_fields[kRefsPerFrame] = {};
+      int ref_slots[kRefsPerFrame] = {};
+      std::uint8_t ref_is_key[kRefsPerFrame] = {};
+      for (int r = 0; r < ref_count; ++r) {
+        const int slot = recent_slots[static_cast<std::size_t>(r)];
+        ref_fields[r] = &slot_fields[static_cast<std::size_t>(slot)];
+        ref_slots[r] = slot;
+        ref_is_key[r] = slots[slot].is_key ? 1U : 0U;
+      }
+      if (!estimate_motion_field(
+              ref_fields, ref_slots, ref_order_hints.data(), ref_is_key,
+              /*ref_valid=*/true, ref_count, static_cast<int>(order_hint),
+              static_cast<int>(width), static_cast<int>(height),
+              recon_mi_cols, recon_mi_rows, /*proj_step=*/1, &motion_field,
+              error)) {
+        error = "P-frame " + std::to_string(i) + ": " + error;
+        return false;
+      }
+      temporal_ctx.use_ref_frame_mvs = true;
+      temporal_ctx.order_hint = static_cast<int>(order_hint);
+      temporal_ctx.num_past_refs = motion_field.config.num_past_refs;
+      temporal_ctx.num_future_refs = motion_field.config.num_future_refs;
+      temporal_ctx.closest_past = motion_field.result.closest_past;
+      temporal_ctx.closest_future = motion_field.result.closest_future;
+      temporal_ctx.field = &motion_field.field;
     }
     std::vector<std::unique_ptr<InterFrameEncoder>> tile_encoders;
     tile_encoders.reserve(tile_sources.size());
@@ -3711,8 +6415,8 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
           options.trace, /*keyframe=*/false, tile.x, tile.y, tile.w, tile.h,
           cdf_chain ? std::span<const std::uint16_t>(cdf_tile)
                     : std::span<const std::uint16_t>(),
-          cdf_chain ? &cdf_scratch : nullptr, gm_ptr, ref_order_hints);
-      if (!encoder->decide(error) || !encoder->deblock(error)) {
+          cdf_chain ? &cdf_scratch : nullptr, gm_ptr, ref_order_hints,
+          /*primary_ref_is_none=*/i == 1, &temporal_ctx);      if (!encoder->decide(error) || !encoder->deblock(error)) {
         error = "P-frame " + std::to_string(i) + ": " + error;
         return false;
       }
@@ -3725,6 +6429,12 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       paste_tile(encoder->recon(2), frame_recon[2], tile.x / 2, tile.y / 2,
                  tile.w / 2, tile.h / 2);
       tile_encoders.push_back(std::move(encoder));
+    }
+    for (const std::unique_ptr<InterFrameEncoder>& encoder : tile_encoders) {
+      result.temporal_candidates +=
+          static_cast<std::uint64_t>(encoder->temporal_added());
+      result.temporal_selected +=
+          static_cast<std::uint64_t>(encoder->temporal_selected());
     }
     post::VideoFilterPlan frame_filters;
     if (options.loop_filters.any()) {
@@ -3813,7 +6523,9 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       payload_bytes += static_cast<std::uint32_t>(tile.payload.size());
     }
 
-    const int write_slot = static_cast<int>(i % num_ref_frames);
+    const int write_slot = options.fixed_write_slot >= 0
+                               ? options.fixed_write_slot
+                               : static_cast<int>(i % num_ref_frames);
 #if defined(AV2ENC_VIDEO_CDF_CHAIN)
     if (cdf_chain) {
       // save_tile_cdfs() already ran per tile; §7.5 frame_end_update_cdf(),
@@ -3835,19 +6547,38 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     header.num_total_refs = static_cast<std::uint8_t>(ref_count);
     for (int r = 0; r < ref_count; ++r) {
       header.ref_frame_idx[static_cast<std::size_t>(r)] =
-          static_cast<std::uint8_t>(recent_slots[static_cast<std::size_t>(r)]);
+          static_cast<std::uint8_t>(frame_ref_slots[static_cast<std::size_t>(r)]);
     }
     header.ref_slot = header.ref_frame_idx[0];
+    header.frame_explicit_ref_frame_map = !options.implicit_ref_map;
     header.refresh_frame_flags = 1U << write_slot;
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
+    header.use_ref_frame_mvs = options.enable_ref_frame_mvs;
     // SEF wrapper: code the last picture hidden so a following SEF unit can
     // re-show it; the decoder output count is unchanged.
     header.immediate_output_frame =
         !(options.hide_last_picture && i + 1U == frames.size());
     header.reference_select = options.compound && ref_count > 1;
     header.gm = gm_plan;
+    if (options.film_grain) {
+      header.apply_grain = grain_plan.apply_grain;
+      header.fgm_id = static_cast<std::uint8_t>(grain_plan.fgm_id);
+      header.grain_seed = grain_plan.grain_seed;
+    }
     apply_video_loop_filter_frame_header(tile_sources[0].filter_plan, header);
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    // §5.18.2 choose_primary_secondary_ref_frame(): only a reference whose
+    // frame type is INTER_FRAME counts.  Frame 1 references the key frame, so
+    // its derived primary reference is PRIMARY_REF_NONE; every later P frame
+    // references an earlier P frame and codes update_map/temporal_update.
+    if (!build_video_frame_qp(frame_options,
+                              static_cast<int>(frame_options.base_q_idx),
+                              /*primary_ref_is_none=*/i == 1, header, error)) {
+      error = "P-frame " + std::to_string(i) + ": " + error;
+      return false;
+    }
+#endif
 
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     config.base_q_idx = frame_qp(i);
@@ -3886,6 +6617,11 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     unit.reserve(td.size() + obu.size());
     unit.insert(unit.end(), td.begin(), td.end());
     unit.insert(unit.end(), obu.begin(), obu.end());
+    if (options.film_grain &&
+        !insert_grain_obu(grain_plan, unit, error)) {
+      error = "P-frame " + std::to_string(i) + " " + error;
+      return false;
+    }
     result.units.push_back(std::move(unit));
 
     result.recon.push_back(
@@ -3899,10 +6635,38 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
 
     // Store the reconstruction and refresh the rotating slot.
     slots[write_slot].valid = true;
+    slots[write_slot].is_key = false;
     slots[write_slot].order_hint = order_hint;
     for (int plane = 0; plane < 3; ++plane) {
       slots[write_slot].plane[plane] = frame_recon[plane];
     }
+    // §7.23: the next frame's implicit mapping must see this frame exactly as
+    // the decoder stores it.
+    if (options.implicit_ref_map &&
+        !ref_bank.refresh(header.refresh_frame_flags,
+                          static_cast<int>(order_hint),
+                          static_cast<int>(width), static_cast<int>(height),
+                          frame_qp(i), /*key_frame=*/false, 0, 0,
+                          header.implicit_output_frame,
+                          header.immediate_output_frame, -1, &error)) {
+      error = "P-frame " + std::to_string(i) + " reference bank: " + error;
+      return false;
+    }
+    // §7.22/§7.23: save this frame's motion field and reference order hints
+    // for later §7.9 estimation.
+    if (options.enable_ref_frame_mvs) {
+      SlotField& field = slot_fields[static_cast<std::size_t>(write_slot)];
+      if (!store_slot_field(*tile_encoders[0], static_cast<int>(order_hint),
+                            ref_order_hints.data(), ref_count, &field,
+                            error)) {
+        error = "P-frame " + std::to_string(i) + ": " + error;
+        return false;
+      }
+      field.order_hint = static_cast<int>(order_hint);
+      field.num_saved_refs = ref_count;
+      for (int r = 0; r < ref_count; ++r) {
+        field.saved_order_hint[r] = ref_order_hints[static_cast<std::size_t>(r)];
+      }    }
     recent_slots.erase(
         std::remove(recent_slots.begin(), recent_slots.end(), write_slot),
         recent_slots.end());

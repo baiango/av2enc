@@ -60,25 +60,27 @@ inline int32_t predict_sample(const PlaneView& ref, int first_x, int first_y,
 
 // Predicts a rectangle into an int16 plane at 1/16 sample precision.
 // `out_stride` is in samples.  Returns false for invalid geometry.
-inline bool predict_plane_1_16(const PlaneView& ref, int x, int y, int w,
-                               int h, Mv mv, InterpFilter filter, int sub_x,
-                               int sub_y, bool prescaled, int ref_w,
-                               int ref_h, int frame_w, int frame_h,
-                               const RefArea& area, std::int16_t* out,
-                               int out_stride) {
+//
+// `ref_luma_w`/`ref_luma_h` are the reference frame's visible (cropped) luma
+// dimensions, i.e. §7.13.3.17 `RefFrameWidth/Height`.  `plane_w`/`plane_h` are
+// the MI-aligned plane extent the §7.13.3.4 ref area is clamped against.  The
+// two differ for a frame whose height is not a multiple of 8 (640x360 has a
+// 368-row MI-aligned luma plane): the decoder scales by 360, not 368.
+inline bool predict_plane_1_16_ex(const PlaneView& ref, int x, int y, int w,
+                                  int h, Mv mv, InterpFilter filter, int sub_x,
+                                  int sub_y, bool prescaled, int ref_luma_w,
+                                  int ref_luma_h, int plane_w, int plane_h,
+                                  int frame_w, int frame_h,
+                                  const RefArea& area, std::int16_t* out,
+                                  int out_stride) {
   if (ref.data == nullptr || out == nullptr || w <= 0 || h <= 0 ||
-      out_stride < w || ref_w <= 0 || ref_h <= 0 || frame_w <= 0 ||
-      frame_h <= 0 || area.first_x < 0 || area.first_y < 0 ||
-      area.last_x >= ref_w || area.last_y >= ref_h ||
+      out_stride < w || ref_luma_w <= 0 || ref_luma_h <= 0 || plane_w <= 0 ||
+      plane_h <= 0 || frame_w <= 0 || frame_h <= 0 || area.first_x < 0 ||
+      area.first_y < 0 || area.last_x >= plane_w || area.last_y >= plane_h ||
       area.first_x > area.last_x || area.first_y > area.last_y) {
     return false;
   }
   const int mv_pair[2] = {mv.row, mv.col};
-  // §7.13.3.17 scales with the LUMA reference/frame dimensions.  `ref_w` and
-  // `ref_h` are the plane extent; recover the MI-aligned luma dimensions from
-  // the chroma subsampling.
-  const int ref_luma_w = ref_w << sub_x;
-  const int ref_luma_h = ref_h << sub_y;
   const adv::MvScaleOutput loc = adv::motion_vector_scaling(
       sub_x > 0 ? 1 : 0, sub_x, sub_y, x, y, mv_pair, prescaled, ref_luma_w,
       ref_luma_h, frame_w, frame_h);
@@ -98,25 +100,37 @@ inline bool predict_plane_1_16(const PlaneView& ref, int x, int y, int w,
   return true;
 }
 
+// Historical signature: `ref_w`/`ref_h` are both the plane extent and the
+// inferred luma source for the scale.  Correct only when the frame dimensions
+// are MI-aligned; the product path calls `_ex` with the real visible size.
+inline bool predict_plane_1_16(const PlaneView& ref, int x, int y, int w,
+                               int h, Mv mv, InterpFilter filter, int sub_x,
+                               int sub_y, bool prescaled, int ref_w,
+                               int ref_h, int frame_w, int frame_h,
+                               const RefArea& area, std::int16_t* out,
+                               int out_stride) {
+  return predict_plane_1_16_ex(ref, x, y, w, h, mv, filter, sub_x, sub_y,
+                               prescaled, ref_w << sub_x, ref_h << sub_y,
+                               ref_w, ref_h, frame_w, frame_h, area, out,
+                               out_stride);
+}
+
 // Predicts a rectangle as clipped 8-bit samples (single-reference rounding).
-inline bool predict_plane_u8(const PlaneView& ref, int x, int y, int w, int h,
-                             Mv mv, InterpFilter filter, int sub_x, int sub_y,
-                             bool prescaled, int ref_w, int ref_h,
-                             int frame_w, int frame_h, const RefArea& area,
-                             std::uint8_t* out, int out_stride) {
+// See predict_plane_1_16_ex for the visible-vs-MI-aligned dimension split.
+inline bool predict_plane_u8_ex(const PlaneView& ref, int x, int y, int w,
+                                int h, Mv mv, InterpFilter filter, int sub_x,
+                                int sub_y, bool prescaled, int ref_luma_w,
+                                int ref_luma_h, int plane_w, int plane_h,
+                                int frame_w, int frame_h, const RefArea& area,
+                                std::uint8_t* out, int out_stride) {
   if (ref.data == nullptr || out == nullptr || w <= 0 || h <= 0 ||
-      out_stride < w || ref_w <= 0 || ref_h <= 0 || frame_w <= 0 ||
-      frame_h <= 0 || area.first_x < 0 || area.first_y < 0 ||
-      area.last_x >= ref_w || area.last_y >= ref_h ||
+      out_stride < w || ref_luma_w <= 0 || ref_luma_h <= 0 || plane_w <= 0 ||
+      plane_h <= 0 || frame_w <= 0 || frame_h <= 0 || area.first_x < 0 ||
+      area.first_y < 0 || area.last_x >= plane_w || area.last_y >= plane_h ||
       area.first_x > area.last_x || area.first_y > area.last_y) {
     return false;
   }
   const int mv_pair[2] = {mv.row, mv.col};
-  // §7.13.3.17 scales with the LUMA reference/frame dimensions.  `ref_w` and
-  // `ref_h` are the plane extent; recover the MI-aligned luma dimensions from
-  // the chroma subsampling.
-  const int ref_luma_w = ref_w << sub_x;
-  const int ref_luma_h = ref_h << sub_y;
   const adv::MvScaleOutput loc = adv::motion_vector_scaling(
       sub_x > 0 ? 1 : 0, sub_x, sub_y, x, y, mv_pair, prescaled, ref_luma_w,
       ref_luma_h, frame_w, frame_h);
@@ -133,6 +147,16 @@ inline bool predict_plane_u8(const PlaneView& ref, int x, int y, int w, int h,
     }
   }
   return true;
+}
+
+inline bool predict_plane_u8(const PlaneView& ref, int x, int y, int w, int h,
+                             Mv mv, InterpFilter filter, int sub_x, int sub_y,
+                             bool prescaled, int ref_w, int ref_h,
+                             int frame_w, int frame_h, const RefArea& area,
+                             std::uint8_t* out, int out_stride) {
+  return predict_plane_u8_ex(ref, x, y, w, h, mv, filter, sub_x, sub_y,
+                             prescaled, ref_w << sub_x, ref_h << sub_y, ref_w,
+                             ref_h, frame_w, frame_h, area, out, out_stride);
 }
 
 // §7.13.3.1 compound average for COMPOUND_AVERAGE:

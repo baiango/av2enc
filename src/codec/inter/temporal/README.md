@@ -5,6 +5,13 @@ directory is standalone: it does **not** write the M0/M1/M2 bitstream, does not
 edit `src/encoder/m2/`, `src/encoder/inter/me/`, `src/encoder/inter/mc/`,
 `src/main.cpp`, or `CMakeLists.txt`, and does not touch CUDA build files.
 
+**Product carrier (2026-11-13):** `--video --video-ref-mvs` now wires §7.22
+storage, §7.9 estimation and the §7.12.2.7/.8 scan into the ordinary P/B video
+path through `src/pipeline/video/video_temporal.h`; see
+`docs/ref-frame-mvs.md` for the gated MD5s and the remaining gaps (GPU, TIP as
+a tile reference, multi-reference temporal layers).  The component API below
+is unchanged.
+
 **No integration and no BD-rate claim.** The decoder gate for *our* syntax is
 blocked on M2 header ownership (see “Decoder gate”); the only empirical decoder evidence
 here is a black-box AVM/dav2d probe (§8).
@@ -249,6 +256,17 @@ Coverage:
     conditional path and truncated input.
 
 ## Decoder gate — why there is no stream from this component
+
+> **Update (CPU OPFL/refine-MV wave):** the product CLI now has the
+> `--video-compound-near-near` B-frame carrier
+> (`src/pipeline/video/gate_video_near_near.sh`, `dav2d --strict 1` exact), and
+> `src/pipeline/video/video_frame.cpp` calls `opfl_compute()` /
+> `search_refinemv()` / `refine_predict_block()` and signals §5.20.7.6
+> `use_optflow` / §5.20.7.17 `use_refinemv`.  Pinned `dav2d` parses those
+> streams, but the refined reconstruction is **not bit-exact** (OPFL: 2 chroma
+> samples at 1 LSB; refine-MV: 16,149 luma / 32,268 chroma samples), so `--video-opfl` and
+> `--video-refine-mv` stay rejected by name.  See `docs/negative-results.md`.
+> The TIP text below is unchanged.
 
 The text below is the honest status: **no `dav2d` gate exists for our temporal
 syntax**, because a valid minimal TIP stream cannot be produced without editing

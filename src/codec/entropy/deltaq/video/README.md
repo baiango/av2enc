@@ -83,7 +83,7 @@ delta (full-SB skip or `ReadDeltas == 0`).  `begin_superblock()` sets
 `write_superblock_delta_q()` takes an `rc::DeltaQPlanStep` and verifies both
 `qindex_before` (tile state) and `qindex_after` (apply rule) before writing.
 
-## Exact M2 call sites (core edits, not made here)
+## Exact M2 call sites (for reference; the product wiring is below)
 
 ### `src/encoder/m2/video_headers.cpp`, `write_frame_header_syntax()`
 
@@ -172,18 +172,84 @@ The pipeline/RC output maps directly:
 | `rc::DeltaQPlan` (per tile, one step per SB) | `write_superblock_delta_q()` |
 | `rc::SegmentationMap` (previous frame) | `begin_frame(..., prev_segment_ids, ...)` |
 
-CMake integration is intentionally not part of this change.  Add
-`src/encoder/m1/deltaq/deltaq.cpp` and `src/encoder/m2/deltaq/video_deltaq.cpp`
-to `av2enc_core` when wiring the module into the product build.
+The product build adds `src/codec/entropy/deltaq/video/video_deltaq.cpp` to
+`av2enc_core` and defines `AV2ENC_VIDEO_DELTAQ`; standalone gates compile the
+neutral path without it.  See "Product wiring (CPU `--video`)" below for the
+call sites that were actually integrated.
 
 ## Tests and decoder gate
 
 ```sh
-./src/encoder/m2/deltaq/build_and_test.sh          # 119 checks
+./src/encoder/m2/deltaq/build_and_test.sh          # 121 checks
 ./src/encoder/m2/deltaq/build_gate.sh              # needs dav2d
 DAV2D=/path/to/dav2d ./src/encoder/m2/deltaq/build_gate.sh
 ./src/encoder/m2/deltaq/build_gate.sh --no-decode  # bytes only
 ```
+
+## Product wiring (CPU `--video`)
+
+`src/pipeline/video/video_headers.cpp`, `video_syntax.cpp` and `video_frame.cpp`
+now call this adapter behind `AV2ENC_VIDEO_DELTAQ` (defined by the root
+`CMakeLists.txt` for `av2enc_core`; standalone gates compile the historical
+neutral path without it).  The gated CLI surface is:
+
+| Flag | Header | Tile side | Encoder |
+|---|---|---|---|
+| `--video-segmentation` | `segmentation_enabled = 1`, `SEG_LVL_ALT_Q = 0` for segment 1 | `intra_segment_id` / `inter_segment_id` from the per-SB variance split | segment id only; qindex unchanged |
+| `--video-delta-q` | `delta_q_present = 1`, `delta_q_res` | `begin_superblock` + one delta step at the first leaf of every SB | per-SB `CurrentQIndex` staircase (`rc::plan_delta_q`) drives the block quantizer |
+| `--video-per-segment-q` | `segmentation_enabled = 1`, `SEG_LVL_ALT_Q = delta` for segment 1 | segment ids as above | §7.14.2 effective qindex drives quantizer and deblock metadata |
+
+Call order as coded (the adapter refuses a mismatch):
+
+```cpp
+// inter frame, write_block()
+if (SegIdPreSkip) write_inter_segment_id_pre(...);   // §5.20.7.2
+code_is_inter(); code_skip_flag();
+if (!SegIdPreSkip) write_inter_segment_id_post(...);
+write_cdef_index(); write_ccso_index();
+write_superblock_delta_q(...);                       // first leaf of the SB only
+write_inter_mode_info(); ...residual...
+commit_segment_block(...);                           // §5.20.5.7
+
+// intra keyframe / intra leaf in a P frame
+write_intra_segment_id(...);                         // §5.20.5.3
+write_cdef_index(); write_ccso_index();
+write_superblock_delta_q(...);
+write_intra_leaf(...);
+commit_segment_block(...);
+```
+
+### Two hazards the wiring must replay
+
+1. **Skip-first-leaf delta-Q.** `read_delta_qindex()` codes nothing when
+   `MiSize == SbSize && skip_flag`, and clears `ReadDeltas` regardless.  A
+   superblock whose only leaf is a skipped 64x64 inter block therefore cannot
+   move `CurrentQIndex`; `write_superblock_delta_q()` verifies the achieved
+   qindex and fails loudly if the plan asked for a nonzero step.  The planner
+   walks its steps, rewrites the unreachable targets to the carried qindex and
+   re-runs `rc::plan_delta_q()` until stable.  If the quantizer-dependent skip
+   decision oscillates, the encoder falls back to an all-zero ramp.
+2. **Skipped-leaf segment inference.** With `update_map = 1`,
+   `SegIdPreSkip = 0` and no lossless segment, §5.20.7.2 codes no segment id
+   for a skipped inter leaf: the decoder infers
+   `segment_prediction(above/left/above-left)`.  The encoder replays
+   `deltaq::segment_prediction()` over its own committed map, stores that id in
+   `BlockSyntax::segment_id` (the module errors if it differs) and uses that
+   id's §7.14.2 qindex in the §7.17 deblock grid.
+
+### Limits of the product wiring
+
+- CPU 8-bit 4:2:0 `--video` only (`--video-gpu` and the 10-bit / 4:2:2 / 4:4:4
+  core are rejected by name).
+- One tile (`--tiles > 1x1` rejected: the tiled header writer does not own the
+  §5.18.7 rows), fixed `--rc cqp` base_q_idx, no `--adaptive-cdf` /
+  `--cdf-continuity` (the delta/segment CDFs are not in the §8.2.4 image), no
+  B/temporal-layer/random-access/TIP schedules, no `--video-qm`.
+- `--video-per-segment-q` and `--video-delta-q` are mutually exclusive (the
+  encoder supports `ALT_Q + delta-Q` arithmetically but the planner would need
+  a joint target; not wired).
+- `SEG_LVL_SKIP` / `SEG_LVL_GLOBALMV`, temporal segmentation prediction, 16
+  segments and UV/DC delta-Q remain unwired, as in the still path.
 
 The gate:
 

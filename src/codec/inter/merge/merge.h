@@ -40,11 +40,22 @@
 #include <vector>
 
 #include "codec/inter/mc/mc.h"
+#include "codec/inter/temporal/temporal_types.h"
 #include "codec/partition/tree/partition.h"
 
 namespace av2enc::video::merge {
 
 using partition::BlockSize;
+
+struct StackParams;
+struct MvStack;
+// §7.12.2.7/.8 injection point.  The builder calls this at the normative step
+// with its own params (so the callback reads the §7.9 field and order hints)
+// and the current stack.  Keeping it a callback lets `merge` stay linkable
+// without the temporal component; `pipeline/video/video_temporal.h` supplies
+// the adapter that calls `inter::temporal::temporal_scan()`.
+using TemporalScanFn = void (*)(const StackParams& params, MvStack* stack,
+                                int* prune_count);
 
 // §9.2 constants used by the stack and DRL.
 inline constexpr int kMaxRefMvStackSize = 6;  // MAX_REF_MV_STACK_SIZE
@@ -292,12 +303,41 @@ struct StackParams {
   inter::mc::Mv global_mv[2]{};
 
   DrlReorder reorder = DrlReorder::kDisabled;
-  // useTemporalFirst can only be true when ref_frame_mvs is enabled.  M2 has
-  // enable_ref_frame_mvs = 0, so this is false.
+  // Input `use_temporal_first` is retained for callers/tests that already know
+  // the §7.12.2 step-5 result; the builder recomputes it from
+  // use_ref_frame_mvs/order hints and ORs the two.  M2 without
+  // enable_ref_frame_mvs keeps it false.
   bool use_temporal_first = false;
   // max_drl_bits_minus_1 from the sequence/frame header.  The derived-SMVP
   // fill cap is max_drl_bits_minus_1 + 2.  The M2 baseline uses 4.
   int max_drl_bits_minus_1 = 4;
+
+  // §7.12.2 steps 5/12 temporal scan.  `use_ref_frame_mvs` is the frame
+  // header bit; when it is 1 the decoder invokes §7.12.2.7/.8 with the §7.9
+  // motion field before/after the spatial scans.  `field` must describe the
+  // current frame's MotionField (MiCols/MiRows grid) and `order_hints` is
+  // OrderHints[ref] for ref labels 0..num_refs-1 (RESTRICTED_OH = -1).
+  // `closest_past`/`closest_future` are the §7.8 OrigiClosest* ref labels
+  // (kRefNone when that side is empty).
+  bool use_ref_frame_mvs = false;
+  const inter::temporal::MotionField* motion_field = nullptr;
+  // Supplied by the caller (pipeline/video/video_temporal.h).  A null callback
+  // makes the temporal scan a no-op even when use_ref_frame_mvs is set.
+  TemporalScanFn temporal_scan = nullptr;
+  int order_hint = 0;
+  const int* order_hints = nullptr;
+  int num_past_refs = 0;
+  int num_future_refs = 0;
+  int closest_past = kRefNone;
+  int closest_future = kRefNone;
+  // Tile bounds for §7.12.2.8 is_inside().  Zero ends mean "single tile".
+  int tile_mi_col_start = 0;
+  int tile_mi_col_end = 0;
+  int tile_mi_row_start = 0;
+  int tile_mi_row_end = 0;
+  // Optional instrumented counter: increments by the number of candidates the
+  // §7.12.2.7/.8 scan inserted (for gates/trace only; no effect on the stack).
+  int* temporal_added = nullptr;
 
   // Out of scope and rejected when true: intra block copy.
   bool use_intrabc = false;
@@ -316,6 +356,10 @@ struct StackCandidate {
   int row_offset = 0;
   int col_offset = 0;
   std::int8_t cwp = 8;  // CWP_EQUAL; M2 has enable_cwp = 0
+  // True when this entry was first inserted by the §7.12.2.7/.8 temporal
+  // scan.  Instrumentation only (never coded); lets a gate prove the stream
+  // actually selected a temporal candidate.
+  bool from_temporal = false;
 };
 
 struct MvStack {
@@ -400,6 +444,14 @@ Status resolve_mode(const MvStack& stack, const StackParams& params,
 Status resolve_single_mode(const MvStack& stack, const StackParams& params,
                            SingleMode mode, int drl_index,
                            inter::mc::Mv mvd, ResolvedMode* out);
+
+// §5.20.7.6 compound NEAR_NEARMV (has_second_drl): the two lists are merged
+// independently, so list `l` takes RefStackMvs[l][drl[l]] from the
+// single-reference stack built for RefFrame[l].  `stacks[0]`/`stacks[1]` must
+// be the `is_compound = false` stacks for the two reference frames.  Returns
+// the clamped per-list MVs exactly as decode_block() stores them.
+Status resolve_compound_near_near(const MvStack stacks[2], int drl0, int drl1,
+                                  inter::mc::Mv out[2]);
 
 // Convenience for the compound merge case.  Derives the two reference frames
 // with skip_mode_frames() (including the neighbour override) and resolves the

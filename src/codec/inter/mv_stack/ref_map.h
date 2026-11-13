@@ -74,6 +74,28 @@ struct RefMapParams {
   const RefSlot* slots = nullptr;  // num_ref_frames entries
 };
 
+// §7.23 reference frame update state.  This is the encoder-side mirror of the
+// decoder variables §7.7 reads (RefValid, RefCounter, RefOrderHint,
+// RefFrameWidth/Height, RefBaseQIdx, RefTLayerId, RefMLayerId).  Every coded
+// frame must call refresh() with the same refresh_frame_flags the frame header
+// carries, or the implicit mapping diverges at the next frame.
+struct RefSlotBank {
+  int num_ref_frames = 0;
+  int frame_counter = -1;
+  RefSlot slots[kMaxNumRefSlots] = {};
+
+  // Applies §7.23 for one decoded frame (called after the frame is coded).
+  // For a KEY_FRAME / SWITCH_FRAME only the first refreshed slot stays valid
+  // (`RefValid[i] = first ? 1 : 0`); a regular frame refreshes every named slot
+  // with `RefCounter = FrameCounter`.  `counter < 0` increments the stored
+  // FrameCounter, which is the decoder behaviour.
+  bool refresh(int refresh_frame_flags, int order_hint, int frame_width,
+               int frame_height, int base_q_idx, bool key_frame,
+               int tlayer_id = 0, int mlayer_id = 0,
+               bool implicit_output = true, bool immediate_output = true,
+               int counter = -1, std::string* error = nullptr);
+};
+
 struct RefMap {
   int num_total_refs = 0;
   int ref_frame_idx[kRefsPerFrameConst] = {};
@@ -106,6 +128,16 @@ bool get_ref_frames(const RefMapParams& params, RefMap* out,
 // get_ref_frames() with the same params.
 bool get_past_future_cur_ref_lists(const RefMapParams& params, RefMap* map,
                                    std::string* error);
+
+// §5.18.2 for an *explicit* map: after frame_size() the decoder sets
+// `ScoresDistance[i] = get_relative_dist(OrderHint, RefOrderHint[ref_frame_idx[i]])`
+// and then calls get_past_future_cur_ref_lists().  This fills the same fields
+// as the implicit path (scores_*, past/future/cur, ClosestPast/Future,
+// FurthestFuture, SkipSegFrame) so the encoder can use one model for both.
+// The indices are validated against the live slot bank.
+bool derive_explicit_ref_map(const RefMapParams& params, int num_total_refs,
+                             const int* ref_frame_idx, RefMap* out,
+                             std::string* error);
 
 // Full implicit-mapping sequence for one frame: §5.18.2 calls get_ref_frames(0)
 // before frame_size() and get_ref_frames(1) after it.  Both passes are
@@ -205,16 +237,29 @@ struct FrameRefMapResult {
   RefMap map;
 };
 
-// Writer.  In implicit mode `syntax.explicit_ref_frame_map` must be false and
-// the supplied `implicit` stage-1 map is checked against `params`.
+// Writer.  Codes exactly the §5.18.2 frame-header reference-map syntax for the
+// gates in `syntax`:
+//   * sequence `explicit_ref_frame_map == 1` -> one frame_explicit_ref_frame_map
+//     bit; if it is 1, `num_total_refs f(3)` and that many
+//     `ref_frame_idx f(CeilLog2(NumRefFrames))` values follow (the count is
+//     per frame, so the list length varies);
+//   * sequence `explicit_ref_frame_map == 0` -> no bits at all, and the mapping
+//     is the §7.7 result;
+//   * a SWITCH frame (or a bridge) is forced to the explicit form.
+// In implicit mode the supplied stage-1 map is re-derived and checked against
+// `params`; `false` means the encoder's block syntax would not match the
+// decoder's mapping.
 bool write_frame_ref_map_syntax(av2enc::BitWriter* writer,
                                 const FrameRefMapSyntax& syntax,
                                 const RefMapParams& params,
                                 const ImplicitRefMap& implicit,
                                 std::string* error);
 
-// Reader.  In explicit mode it reads num_total_refs and the indices; in
-// implicit mode it runs both get_ref_frames() passes over `params`.
+// Reader.  Mirrors the writer, including the frame_explicit_ref_frame_map bit.
+// In explicit mode it also derives ScoresDistance and the §7.8 classification
+// for the read map; in implicit mode it runs both get_ref_frames() passes over
+// `params`.
+
 bool read_frame_ref_map_syntax(BitReader* reader,
                                const FrameRefMapSyntax& gates,
                                const RefMapParams& params,

@@ -92,3 +92,12 @@ CUDA 13.0:
   (this is what makes 8x4 / 16x4 chroma blocks exact).
 * ME returns MVs in 1/8 luma samples (an integer-pel offset is 8 units); the
   mode decision and the syntax writer share the same 1/8-pel values.
+
+## In-loop filters
+
+The format video writer still rejects deblock/CDEF/CCSO/LR/GDF by name.  Its
+private sequence/frame writer has no filter plan or tile hooks, so none of the
+10-bit still filter work is reachable here yet.  The still writer is gated by
+`src/formats/high_bitdepth/gate_10bit_filters.sh`; the video gap is tracked in
+`docs/spec-audit/10-filters.md` with the reproducer
+`av2enc C420p10.y4m -o v.ivf --video --bit-depth 10 --video-cdef`.

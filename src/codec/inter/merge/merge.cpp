@@ -6,6 +6,7 @@
 
 #include "codec/inter/merge/merge.h"
 
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -136,7 +137,15 @@ class StackBuilder {
   void run() {
     const bool sb_border = (p_.mi_row & (p_.sb_h4 - 1)) == 0;
 
-    // Steps 6-13.
+    const bool temporal = temporal_active();
+    const bool temporal_first = use_temporal_first();
+
+    // Step 5: temporal scan before the spatial neighbourhood.
+    if (temporal && temporal_first) {
+      run_temporal_scan();
+    }
+
+    // Steps 6-11.
     scan_point(p_.bh4 - 1, -1);
     const int above_right_col = p_.bw4 - 1 - (sb_border ? 1 : 0);
     scan_point(-1, above_right_col > 0 ? above_right_col : 0);
@@ -152,6 +161,10 @@ class StackBuilder {
     if (p_.bw4 <= 16) {
       scan_point(-1, sb_border ? ((p_.bw4 > 2) ? p_.bw4 : 2) : p_.bw4);
     }
+    if (temporal && !temporal_first) {
+      run_temporal_scan();
+    }
+    // Step 13: scan_point(-1, -1 - isSbBorder).
     if (options_.mc_above_left_scan) {
       // Current inter::mc behaviour: the spec call is
       // scan_point(-1, -1 - isSbBorder).
@@ -169,7 +182,7 @@ class StackBuilder {
     // Steps 16-17.
     const bool use_sort =
         p_.reorder == DrlReorder::kAlways ||
-        (p_.reorder == DrlReorder::kConstraint && !p_.use_temporal_first &&
+        (p_.reorder == DrlReorder::kConstraint && !temporal_first &&
          stack_->num_nearest >= 4);
     stack_->sorted = use_sort;
     if (use_sort) {
@@ -240,6 +253,55 @@ class StackBuilder {
  private:
   int block_width_for_params() const { return p_.bw4 * 4; }
   int block_height_for_params() const { return p_.bh4 * 4; }
+
+  // §7.12.2 useTemporal.
+  bool temporal_active() const {
+    if (!p_.use_ref_frame_mvs || p_.motion_field == nullptr ||
+        p_.temporal_scan == nullptr) {
+      return false;
+    }
+    if (p_.use_intrabc) return false;
+    if (p_.ref_frame[0] == kTipFrame) return false;
+    return p_.is_compound || p_.ref_frame[0] != p_.ref_frame[1];
+  }
+
+  // §7.12.2 useTemporalFirst.
+  bool use_temporal_first() const {
+    if (!temporal_active() || p_.reorder == DrlReorder::kAlways) return false;
+    if (p_.ref_frame[1] != kRefNone) return false;
+    const std::int8_t ref0 = p_.ref_frame[0];
+    if (!is_inter_ref(ref0) || ref0 == kTipFrame) return false;
+    if (p_.closest_future != kRefNone && p_.closest_past != kRefNone) {
+      return false;
+    }
+    if (p_.order_hints == nullptr || ref0 >= p_.num_refs) return false;
+    if (p_.order_hints[ref0] < 0) return false;
+    return std::abs(relative_dist(p_.order_hint, p_.order_hints[ref0])) <= 2;
+  }
+
+  // §7.12.2.7 Temporal scan process.  The caller-supplied adapter owns the
+  // conversion to the temporal component's StackMv view; candidate order,
+  // weights, cwp and the shared PruneCount budget are preserved exactly (new
+  // entries keep RefStackRowOffset/ColOffset = 0, as the spec leaves them).
+  void run_temporal_scan() {
+    if (p_.temporal_scan == nullptr) return;
+    const int before = stack_->count;
+    int prune = prune_count_;
+    p_.temporal_scan(p_, stack_, &prune);
+    prune_count_ = prune;
+    if (p_.temporal_added != nullptr) {
+      *p_.temporal_added += stack_->count - before;
+    }
+    // §7.12.2.8 leaves list 1 at its initialized value for single blocks.
+    for (int i = before; i < stack_->count; ++i) {
+      StackCandidate& c = stack_->cand[i];
+      if (!p_.is_compound) c.mv[1] = inter::mc::Mv{0, 0};
+      c.row_offset = 0;
+      c.col_offset = 0;
+      c.cwp = kCwpEqual;
+      c.from_temporal = true;
+    }
+  }
 
   bool same_mv(const inter::mc::Mv& a, const inter::mc::Mv& b) const {
     return a == b;
@@ -602,6 +664,10 @@ Status validate_stack_params(const StackParams& p, bool allow_compound) {
   }
   if (p.use_intrabc) {
     return Status::kUnsupportedFeature;
+  }
+  if (p.use_ref_frame_mvs &&
+      (p.motion_field == nullptr || p.order_hints == nullptr)) {
+    return Status::kInvalidArgument;
   }
   if (p.max_drl_bits_minus_1 < 0 || p.max_drl_bits_minus_1 > 4) {
     return Status::kInvalidArgument;
@@ -1404,6 +1470,18 @@ Status resolve_single_mode(const MvStack& stack, const StackParams& params,
   syntax.ref_frame[0] = params.ref_frame[0];
   syntax.ref_frame[1] = kRefNone;
   return resolve_mode(stack, params, syntax, out);
+}
+
+Status resolve_compound_near_near(const MvStack stacks[2], int drl0, int drl1,
+                                  inter::mc::Mv out[2]) {
+  if (stacks == nullptr || out == nullptr || drl0 < 0 || drl1 < 0 ||
+      drl0 >= stacks[0].count || drl1 >= stacks[1].count ||
+      drl0 > kMaxDrlIndex || drl1 > kMaxDrlIndex) {
+    return Status::kInvalidDrlIndex;
+  }
+  out[0] = clamp_mv_to_integer(stacks[0].cand[drl0].mv[0]);
+  out[1] = clamp_mv_to_integer(stacks[1].cand[drl1].mv[0]);
+  return Status::kOk;
 }
 
 Status resolve_skip_mode(const MvStack& stack, const StackParams& params,

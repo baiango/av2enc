@@ -1,16 +1,21 @@
 #include "formats/high_bitdepth/hbd_headers.h"
 
+#include <algorithm>
 #include <cassert>
 #include <string>
 
 #include "core/bitstream/basic_headers.h"
+#include "codec/filters/gdf/gdf_syntax.h"
 #include "formats/high_bitdepth/hbd_depth.h"
+#include "formats/high_bitdepth/hbd_lr_syntax.h"
 
 namespace av2enc::hbd {
 namespace {
 
 using av2enc::basic::ObuHeader;
 using av2enc::basic::ObuType;
+
+namespace gdf = av2enc::filters::gdf;
 
 // uvlc() (§4.11.3).
 void put_uvlc(BitWriter& writer, std::uint32_t value) {
@@ -178,10 +183,39 @@ std::size_t write_sequence_header_syntax(BitWriter& writer,
 
   // §5.4.10 sequence_filter_config().
   writer.put_bit(false);  // disable_loopfilters_across_tiles
-  writer.put_bit(false);  // enable_cdef
-  writer.put_bit(false);  // enable_gdf
-  writer.put_bit(false);  // enable_restoration
-  writer.put_bit(false);  // enable_ccso
+  writer.put_bit(c.enable_cdef);  // enable_cdef
+  const bool enable_gdf = c.gdf != nullptr && c.gdf->enabled;
+  writer.put_bit(enable_gdf);  // enable_gdf
+  if (enable_gdf) {
+    writer.put_bit(true);  // gdf_unit_matches_sb_size (64x64 sequence SB)
+  }
+  const bool enable_lr = c.lr != nullptr && c.lr->enabled;
+  writer.put_bit(enable_lr);  // enable_restoration
+  if (enable_lr) {
+    const bool luma_pc =
+        c.lr->plane[0].frame_type == lr_syntax::kRestorePcWiener;
+    const bool luma_ns =
+        c.lr->plane[0].frame_type == lr_syntax::kRestoreWienerNs;
+    writer.put_bit(!luma_pc);  // lr_tools_disable[0][RESTORE_PC_WIENER]
+    writer.put_bit(!luma_ns);  // lr_tools_disable[0][RESTORE_WIENER_NONSEP]
+    const bool chroma_ns =
+        c.lr->plane[1].frame_type == lr_syntax::kRestoreWienerNs ||
+        c.lr->plane[2].frame_type == lr_syntax::kRestoreWienerNs;
+    // Code the chroma tool list explicitly (lr_tools_uv_present = 1) so a
+    // luma-only restoration signal does not inherit luma's enabled tool list
+    // into planes 1/2 (§5.4.10).  The latter would make the decoder read two
+    // extra FrameRestorationType rows.
+    const bool uv_present = fmt::has_chroma(c.chroma);
+    writer.put_bit(uv_present);  // lr_tools_uv_present
+    if (uv_present) {
+      writer.put_bit(!chroma_ns);  // lr_tools_disable[1][WIENER_NONSEP]
+    }
+  }
+  const bool enable_ccso = c.ccso != nullptr && c.ccso->enabled;
+  writer.put_bit(enable_ccso);  // enable_ccso
+  if (enable_ccso) {
+    writer.put_bit(c.ccso->unit_matches_sb_size);  // ccso_unit_matches_sb_size
+  }
   writer.put_bits(0U, 2U);  // df_par_bits_minus_2
 
   // §5.4.2 sequence_tile_config().
@@ -228,6 +262,132 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const HbdConfig& c) {
   if (c.apply_deblock_y_horz) writer.put_bit(false);
   if (have_chroma_deblock && c.apply_deblock_u) writer.put_bit(false);
   if (have_chroma_deblock && c.apply_deblock_v) writer.put_bit(false);
+
+  // §5.18.7.9 gdf_params(): between deblocking_filter_params() and
+  // cdef_params().  single_picture_header_flag infers gdf_frame_enable = 1.
+  if (c.gdf != nullptr && c.gdf->enabled) {
+    gdf::FrameGdfContext context;
+    context.enable_gdf = true;
+    context.gdf_unit_matches_sb_size = true;
+    context.coded_lossless = false;
+    context.single_picture_header_flag = true;
+    context.sb_size = 64;
+    context.width = c.max_frame_width;
+    context.height = c.max_frame_height;
+    context.mi_cols = static_cast<int>(mi_cols(c));
+    context.mi_rows = static_cast<int>(mi_rows(c));
+    context.disable_loopfilters_across_tiles = false;
+    context.tile_cols = 1;
+    context.tile_rows = 1;
+    context.mi_col_starts.assign(1, 0);
+    context.mi_row_starts.assign(1, 0);
+    gdf::FrameGdfParams params;
+    params.frame_enable = true;
+    params.per_block = false;
+    params.pic_qc_idx = c.gdf->pic_qc_idx;
+    params.pic_scale_idx = c.gdf->pic_scale_idx;
+    std::string gdf_error;
+    const std::size_t bits =
+        gdf::WriteFrameGdfParams(writer, context, &params, &gdf_error);
+    assert(gdf_error.empty());
+    assert(!params.per_block);
+    (void)bits;
+  }
+
+  // §5.18.7.10 cdef_params().  single_picture_header_flag infers
+  // cdef_frame_enable = 1, so only damping/strengths/skip/strength sets are
+  // coded.  The 10-bit syntax is identical to 8-bit: strengths are in the
+  // decoded domain and the filter applies coeffShift at use.
+  if (c.enable_cdef) {
+    assert(c.cdef_damping >= 3 && c.cdef_damping <= 6);
+    assert(c.cdef_num_strengths >= 1 && c.cdef_num_strengths <= 8);
+    writer.put_bits(static_cast<std::uint64_t>(c.cdef_damping - 3), 2U);
+    writer.put_bits(static_cast<std::uint64_t>(c.cdef_num_strengths - 1), 3U);
+    writer.put_bit(false);  // on_skip_txfm_frame_enable (ADAPTIVE, no skips)
+    const bool have_chroma_cdef = fmt::has_chroma(c.chroma);
+    for (int i = 0; i < c.cdef_num_strengths; ++i) {
+      const cdef::CdefStrength& s = c.cdef_strengths[i];
+      assert(s.y_pri >= 0 && s.y_pri <= 15);
+      assert(s.uv_pri >= 0 && s.uv_pri <= 15);
+      assert(s.y_sec == 0 || s.y_sec == 1 || s.y_sec == 2 || s.y_sec == 4);
+      assert(s.uv_sec == 0 || s.uv_sec == 1 || s.uv_sec == 2 || s.uv_sec == 4);
+      writer.put_bit(s.y_pri == 0);
+      if (s.y_pri != 0) {
+        writer.put_bits(static_cast<std::uint64_t>(s.y_pri), 4U);
+      }
+      writer.put_bits(static_cast<std::uint64_t>(s.y_sec == 4 ? 3 : s.y_sec),
+                      2U);
+      // §5.18.7.10: the UV strength fields are absent for monochrome.
+      if (have_chroma_cdef) {
+        writer.put_bit(s.uv_pri == 0);
+        if (s.uv_pri != 0) {
+          writer.put_bits(static_cast<std::uint64_t>(s.uv_pri), 4U);
+        }
+        writer.put_bits(
+            static_cast<std::uint64_t>(s.uv_sec == 4 ? 3 : s.uv_sec), 2U);
+      }
+    }
+  }
+
+  // §5.18.7.11 lr_params(): between cdef_params() and ccso_params().
+  if (c.lr != nullptr && c.lr->enabled) {
+    lr_syntax::LrParams params;
+    fill_lr_params(*c.lr, fmt::num_planes(c.chroma), &params);
+    lr_syntax::LrHeaderContext context;
+    fill_lr_header_context(*c.lr, fmt::num_planes(c.chroma),
+                           fmt::subsampling_x(c.chroma),
+                           fmt::subsampling_y(c.chroma),
+                           static_cast<int>(c.base_q_idx), &context);
+    std::string lr_error;
+    const std::size_t bits =
+        lr_syntax::WriteLrParams(writer, &params, context, &lr_error);
+    assert(lr_error.empty());
+    assert(bits > 0);
+    (void)bits;
+  }
+
+  // §5.18.7.12 ccso_params(): after lr_params(), before tx_mode_select.
+  // single_picture_header_flag infers ccso_frame_flag = 1, so no bit is coded
+  // for it.  The offset table is signalled per plane in (d0, d1, band) order.
+  const bool enable_ccso = c.ccso != nullptr && c.ccso->enabled;
+  if (enable_ccso) {
+    for (int plane = 0; plane < 3; ++plane) {
+      if (plane > 0 && !fmt::has_chroma(c.chroma)) break;
+      const HbdCcsoPlaneConfig& p = c.ccso->plane[plane];
+      writer.put_bit(p.enabled);
+      if (!p.enabled) continue;
+      assert(p.scale_idx >= 0 && p.scale_idx <= 3);
+      writer.put_bit(p.bo_only);  // ccso_bo_only
+      writer.put_bits(static_cast<std::uint64_t>(p.scale_idx), 2U);
+      if (p.bo_only) {
+        assert(p.quant_idx == 0 && p.ext_filter == 0 && p.edge_clf == 0);
+      } else {
+        assert(p.quant_idx >= 0 && p.quant_idx <= 3);
+        assert(p.ext_filter >= 0 && p.ext_filter <= 6);
+        assert(p.edge_clf == 0 || p.edge_clf == 1);
+        writer.put_bits(static_cast<std::uint64_t>(p.quant_idx), 2U);
+        writer.put_bits(static_cast<std::uint64_t>(p.ext_filter), 3U);
+        const int quant =
+            restoration::kCcsoQuantSz[p.scale_idx & 3][p.quant_idx & 3];
+        if (quant != 0) writer.put_bit(p.edge_clf != 0);
+      }
+      const int band_bits = 2 + (p.bo_only ? 1 : 0);
+      writer.put_bits(static_cast<std::uint64_t>(p.max_band_log2),
+                      static_cast<unsigned>(band_bits));
+      const int bands = 1 << p.max_band_log2;
+      const int interval = p.bo_only ? 1 : (3 - p.edge_clf);
+      const std::size_t need = static_cast<std::size_t>(bands) *
+                               static_cast<std::size_t>(interval) *
+                               static_cast<std::size_t>(interval);
+      assert(p.offset_idx.size() == need);
+      for (std::size_t k = 0; k < need; ++k) {
+        const int idx = p.offset_idx[k];
+        assert(idx >= 0 && idx <= 7);
+        for (int i = 0; i < idx; ++i) writer.put_bit(true);
+        if (idx < 7) writer.put_bit(false);
+      }
+    }
+  }
 
   writer.put_bit(c.tx_mode_select);  // 0 = TX_MODE_LARGEST
   writer.put_bits(static_cast<std::uint32_t>(c.reduced_tx_set), 2U);
@@ -282,6 +442,90 @@ bool validate_config(const HbdConfig& config, std::string* error) {
   if (!fmt::has_chroma(config.chroma) &&
       (config.apply_deblock_u || config.apply_deblock_v)) {
     return fail("monochrome has no chroma deblock planes");
+  }
+  if (config.enable_cdef) {
+    if (config.cdef_damping < 3 || config.cdef_damping > 6) {
+      return fail("CdefDamping outside 3..6");
+    }
+    if (config.cdef_num_strengths < 1 || config.cdef_num_strengths > 8) {
+      return fail("CdefStrengths outside 1..8");
+    }
+    for (int i = 0; i < config.cdef_num_strengths; ++i) {
+      const cdef::CdefStrength& s = config.cdef_strengths[i];
+      if (s.y_pri < 0 || s.y_pri > 15 || s.uv_pri < 0 || s.uv_pri > 15 ||
+          (s.y_sec != 0 && s.y_sec != 1 && s.y_sec != 2 && s.y_sec != 4) ||
+          (s.uv_sec != 0 && s.uv_sec != 1 && s.uv_sec != 2 &&
+           s.uv_sec != 4)) {
+        return fail("CDEF strength set is not representable");
+      }
+    }
+  }
+  if (config.lr != nullptr && config.lr->enabled) {
+    const int chroma_shift = 3 - std::max(fmt::subsampling_x(config.chroma),
+                                          fmt::subsampling_y(config.chroma));
+    if (config.lr->luma_shift != 3 ||
+        config.lr->chroma_shift != chroma_shift) {
+      return fail("LoopRestorationSize shift does not match the chroma format");
+    }
+    for (int plane = 0; plane < 3; ++plane) {
+      if (plane > 0 && !fmt::has_chroma(config.chroma)) break;
+      const HbdLrPlaneConfig& p = config.lr->plane[plane];
+      if (p.frame_type != restoration::kRestoreNone &&
+          p.frame_type != restoration::kRestoreWienerNs &&
+          p.frame_type != restoration::kRestorePcWiener) {
+        return fail("unsupported FrameRestorationType");
+      }
+      if (p.frame_type == restoration::kRestorePcWiener && plane != 0) {
+        return fail("PC-Wiener is luma-only");
+      }
+      if (p.frame_type != restoration::kRestoreNone &&
+          (p.unit_type.size() !=
+               static_cast<std::size_t>(p.unit_rows) *
+                   static_cast<std::size_t>(p.unit_cols) ||
+           p.unit_coeffs.size() !=
+               p.unit_type.size() *
+                   static_cast<std::size_t>(restoration::kWienerNsCoeffStride))) {
+        return fail("LR unit grid size mismatch");
+      }
+    }
+  }
+  if (config.gdf != nullptr && config.gdf->enabled) {
+    if ((config.max_frame_width & 1U) != 0U ||
+        (config.max_frame_height & 1U) != 0U) {
+      return fail("GDF requires even luma dimensions");
+    }
+    if (config.gdf->pic_qc_idx < 0 || config.gdf->pic_qc_idx > 3 ||
+        config.gdf->pic_scale_idx < 0 || config.gdf->pic_scale_idx > 3) {
+      return fail("GDF pic indices outside f(2)");
+    }
+  }
+  if (config.ccso != nullptr && config.ccso->enabled) {
+    if (config.ccso->ccso_luma_size_log2 < 6 ||
+        config.ccso->ccso_luma_size_log2 > 8) {
+      return fail("CcsoLumaSizeLog2 outside 6..8");
+    }
+    for (int plane = 0; plane < 3; ++plane) {
+      if (plane > 0 && !fmt::has_chroma(config.chroma)) break;
+      const HbdCcsoPlaneConfig& p = config.ccso->plane[plane];
+      if (!p.enabled) continue;
+      if (p.scale_idx < 0 || p.scale_idx > 3 ||
+          p.max_band_log2 < 0 || p.max_band_log2 > 6) {
+        return fail("CCSO scalar field outside its f() range");
+      }
+      if (!p.bo_only && (p.quant_idx < 0 || p.quant_idx > 3 ||
+                         p.ext_filter < 0 || p.ext_filter > 6 ||
+                         p.edge_clf < 0 || p.edge_clf > 1)) {
+        return fail("CCSO edge-class field outside its f() range");
+      }
+      const int bands = 1 << p.max_band_log2;
+      const int interval = p.bo_only ? 1 : (3 - p.edge_clf);
+      const std::size_t need = static_cast<std::size_t>(bands) *
+                               static_cast<std::size_t>(interval) *
+                               static_cast<std::size_t>(interval);
+      if (p.offset_idx.size() != need) {
+        return fail("CCSO offset table size does not match its header fields");
+      }
+    }
   }
   return true;
 }

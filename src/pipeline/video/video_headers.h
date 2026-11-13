@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/bitstream/bitwriter.h"
+#include "codec/rate/rc/rc.h"
 #include "formats/format.h"
 #include "pipeline/video/post/video_filter_plan.h"
 #include "pipeline/video/post/video_loop_filters.h"
@@ -26,6 +27,11 @@ struct VideoConfig {
   std::uint16_t max_frame_width = 64;
   std::uint16_t max_frame_height = 64;
   std::uint8_t seq_level_idx = 7;  // level 5.1
+  // §5.4.1 seq_profile_idc override. -1 derives the profile from the pixel
+  // format (the historical path). The SVC embedded-layer ladder raises it
+  // because Annex A caps seq_max_mlayer_cnt per profile (0 -> 1 embedded
+  // layer, 1 -> 2, 2 -> 3).
+  int seq_profile_override = -1;
   // §6.4.1 Table 6.2 / 6.3.  The defaults are the historical 8-bit 4:2:0
   // header (`chroma_format_idc = 0`, `bit_depth_idc = 1`).
   fmt::ChromaFormat chroma = fmt::ChromaFormat::k420;
@@ -36,6 +42,10 @@ struct VideoConfig {
   std::uint8_t order_hint_bits = 4;
   // §5.4.6 explicit_num_ref_frames / num_ref_frames_minus_1.
   std::uint8_t num_ref_frames = 2;
+  // §5.4.6 explicit_ref_frame_map.  1 keeps the historical per-frame
+  // frame_explicit_ref_frame_map choice (the M2 explicit map); 0 makes every
+  // inter frame use the §7.7 implicit mapping and codes no map bits at all.
+  bool explicit_ref_frame_map = true;
   // §5.18.2 frame_explicit_ref_frame_map / num_total_refs.
   std::uint8_t num_total_refs = 1;
   // §5.4.6 seq_max_drl_bits_minus_1. m = value + 1 DRL indices are codable;
@@ -64,7 +74,26 @@ struct VideoConfig {
   // sequence header.  When on, every inter frame codes allow_bawp and eligible
   // single-prediction blocks code use_bawp (§5.20.7.6).
   bool enable_bawp = false;
+  // §5.4.6 enable_opfl_refine: 0 = REFINE_NONE, 1 = REFINE_SWITCHABLE,
+  // 2 = REFINE_ALL.  A non-AUTO sequence value means the frame header codes no
+  // frame_opfl_refine_type() bits (§5.18.3.2).  --video-opfl signals
+  // REFINE_SWITCHABLE so each eligible compound block codes use_optflow.
+  int enable_opfl_refine = 0;
+  // §5.4.6 enable_refinemv (--video-refine-mv).  With a non-GLOBALMV compound
+  // block the decision is not switchable (§5.20.7.17), so every eligible
+  // NEAR_NEARMV block uses §7.13.3.3 refine-MV.
+  bool enable_refinemv = false;
   std::uint8_t num_same_ref_compound = 0;
+  // §5.4.6 seq_enabled_motion_modes[INTERINTRA] (--video-compound-interintra).
+  // When set, seq_frame_motion_modes_present_flag = 0, so every inter frame
+  // inherits the sequence value and codes no extra bit; each eligible
+  // single-reference block then codes the §5.20.7.14 motion-mode symbol.
+  bool enable_interintra = false;
+  // §5.4.7 screen-content config.  `seq_screen_content_tools_present` writes
+  // seq_choose_screen_content_tools = seq_choose_integer_mv = 1, so the frame
+  // header decides allow_screen_content_tools / force_integer_mv.  Off keeps
+  // the historical two zero bits and no frame-header screen syntax.
+  bool seq_screen_content_tools_present = false;
   bool disable_cdf_update = true;
   // §5.18.7.9 deblocking_filter_params(): when enabled the frame header codes
   // all four apply_deblocking_filter flags with DfDeltaQ = 0 (df_par_bits =
@@ -86,6 +115,13 @@ struct VideoConfig {
   std::uint8_t initial_display_delay_minus_1 = 0;
   bool decoder_model_info_present = false;
   std::uint32_t num_units_in_decoding_tick = 0;
+  // §5.4.13 nested seq_decoder_model_info() block.  Opt-in via
+  // --video-decoder-model; the default form keeps the block absent so the
+  // pinned dav2d timing stream is byte-identical.
+  bool seq_decoder_model_info_present = false;
+  std::uint32_t decoder_buffer_delay = 70000;  // 1/90000 s
+  std::uint32_t encoder_buffer_delay = 20000;  // 1/90000 s
+  bool low_delay_mode_flag = false;
   // §5.7 multi-frame header: 0 = no MFH (seq_header_id_in_frame_header is
   // coded); >0 makes every frame header reference that MFH and omit the
   // sequence-header id.  Opt-in via --video-mfh.
@@ -100,6 +136,10 @@ struct VideoConfig {
   bool enable_mhccp = false;
   // §5.18.6.2 using_qmatrix (--video-qm) with the §9.4 default matrices.
   bool using_qmatrix = false;
+  // §5.13 user-defined QM carrier (--video-user-qm): a
+  // quantizer_matrix_obu() for level 0 precedes the key frame, so the decoder
+  // sets QmDataPresent[0] and §7.14.4 reads UserQm[0] for <=8x8 blocks.
+  bool qm_user_data = false;
   // §5.4.10 sequence_filter_config() flags for the opt-in M2 loop filters.
   // All default to the historical values, so a default stream keeps its bytes.
   bool enable_cdef = false;
@@ -138,9 +178,32 @@ struct VideoConfig {
   // enable_ref_frame_mvs gates the per-frame use_ref_frame_mvs bit; enable_tip
   // enables OBU_REGULAR_TIP frames and the TipFrameMode syntax slice.
   bool enable_ref_frame_mvs = false;
+  // §5.4.6 enable_tip ...
   bool enable_tip = false;
   bool disable_tip_output = false;
   bool enable_tip_hole_fill = false;
+  // §5.14/§5.18.10 film grain signalling (--video-grain).  Off keeps the
+  // historical sequence/header bits (film_grain_params_present = 0) and every
+  // frame header byte-identical.
+  bool film_grain_params_present = false;
+  // §5.4.8 enable_idtx_intra (--video-idtx): allows the 2-D identity TX type
+  // (type 9) in the intra TX-type search.  The one-axis 1-D types (10..15)
+  // remain unsignalled (pinned dav2d rejects negative H/V_DCT coefficients).
+  bool enable_idtx_intra = false;
+};
+
+// §5.18.7.1 segmentation_params() / §5.18.7.8 delta_q_params() state for one
+// frame.  Every field defaults to the historical disabled stream, so the bit
+// writer emits exactly the previous three zero bits when neither tool is on.
+struct VideoFrameQp {
+  rc::SegmentationParams segmentation{};
+  rc::DeltaQParams delta_q{};
+  // DerivedPrimaryRefFrame == PRIMARY_REF_NONE for this frame.  This is NOT
+  // `keyframe`: a P frame whose only reference is an INTRA/key frame also
+  // derives PRIMARY_REF_NONE, so segmentation_update_map /
+  // segmentation_temporal_update are not coded for it (see
+  // src/codec/entropy/deltaq/video/README.md).
+  bool primary_ref_is_none = true;
 };
 
 struct VideoFrameHeader {
@@ -151,6 +214,11 @@ struct VideoFrameHeader {
   std::uint8_t ref_slot = 0;
   // §5.18.2 explicit reference map.  For num_total_refs > 1 the slots are
   // listed newest first; every block then selects one with single_ref syntax.
+  // `frame_explicit_ref_frame_map` is coded only when the sequence header sets
+  // explicit_ref_frame_map; 0 selects the §7.7 implicit mapping, so
+  // num_total_refs/ref_frame_idx carry the derived values for the block syntax
+  // but no map bits are written.
+  bool frame_explicit_ref_frame_map = true;
   std::uint8_t num_total_refs = 1;
   std::uint8_t ref_frame_idx[7] = {0, 0, 0, 0, 0, 0, 0};
   // §5.18.2 use_ref_frame_mvs.  Only coded when the sequence enables
@@ -170,6 +238,14 @@ struct VideoFrameHeader {
   bool allow_high_precision_mv = true;
   // §5.18.2 refresh_frame_flags. The key frame refreshes all slots.
   std::uint32_t refresh_frame_flags = 1;
+  // §5.18.3.3/.4 screen-content and IBC bits.  Only coded when the sequence
+  // selected the per-frame form (VideoConfig::seq_screen_content_tools_present).
+  // The morph carrier sets all of them on the intra keyframe.
+  bool allow_screen_content_tools = false;
+  bool force_integer_mv = false;
+  bool allow_intrabc = false;
+  bool allow_global_intrabc = true;
+  bool allow_local_intrabc = false;
   // §5.18.2 immediate_output_frame.  Clearing it codes a hidden picture, which
   // a later show-existing-frame OBU can re-show (derive_sef_order_hint = 1).
   // monotonic_output_order_flag = 1 means implicit_output_frame stays absent.
@@ -196,6 +272,14 @@ struct VideoFrameHeader {
   post::VideoLrPlan lr;
   // §5.18.7.9 gdf_params() for this frame.
   post::VideoGdfPlan gdf;
+  // §5.18.10.1 film_grain_config(): only coded when the sequence sets
+  // film_grain_params_present.  Non-single-picture frames code apply_grain
+  // f(1), then fgm_id uvlc() + grain_seed f(16) when it is 1.
+  bool apply_grain = false;
+  std::uint8_t fgm_id = 0;
+  std::uint16_t grain_seed = 0;
+  // §5.18.7.1/.8 quantization tail: segmentation table and delta-Q parameters.
+  VideoFrameQp qp;
 };
 
 // §5.4.10 filter sequence flags for the opt-in M2 loop-filter chain.  Every

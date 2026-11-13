@@ -10,12 +10,16 @@
 #include "codec/inter/drl_reorder/video_stack_adapter.h"
 #include "codec/filters/stream/filters_stream.h"
 #include "codec/filters/pc_wiener/pc_wiener_stream.h"
+#if defined(AV2ENC_VIDEO_DELTAQ)
+#include "codec/entropy/deltaq/video/video_deltaq.h"
+#endif
 
 #include "pipeline/still/basic_cdf_tables.h"
 #include "pipeline/still/basic_tables.h"
 #include "pipeline/still/still_cdf_tables.h"
 #include "pipeline/still/still_tables.h"
 #include "codec/entropy/qctx/qctx.h"
+#include "codec/entropy/lossless/lossless_cdf_tables.h"
 #include "codec/intra/cfl/mhccp/mhccp.h"
 #include "codec/intra/cfl/mhccp/mhccp_syntax.h"
 #include "pipeline/video/video_cdf_tables.h"
@@ -29,7 +33,17 @@
 #include "codec/entropy/av2/av2_entropy.h"
 #include "codec/inter/mc/mc.h"
 #include "codec/inter/merge/merge.h"
-
+#include "codec/inter/morph/morph_common.h"
+#include "codec/inter/advanced/video/advanced_syntax.h"
+#include "codec/inter/morph/morph_syntax.h"
+#include "codec/intra/ibc/core/ibc.h"
+#include "codec/intra/ibc/stream/ibc_stack.h"
+#include "codec/intra/ibc/stream/ibc_syntax.h"
+#include "codec/intra/ibc/stream/still_ibc_stream.h"
+#include "codec/intra/palette/core/palette.h"
+#include "codec/intra/palette/stream/palette_stream.h"
+#include "codec/inter/temporal/opfl.h"
+#include "codec/inter/temporal/refinemv.h"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -38,6 +52,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -45,6 +60,10 @@ namespace av2enc::video::syntax {
 namespace {
 
 namespace drl = inter::drl;
+namespace ibcs = still::ibc_stream;
+namespace morph = inter::morph;
+namespace adv = video::adv;
+namespace pals = still::palette_stream;
 
 using partition::BlockSize;
 using partition::FrameGeometry;
@@ -108,6 +127,11 @@ int floor_log2(int value) {
 }
 
 bool y_mode_is_directional(int mode) { return mode >= kV && mode <= kD67; }
+
+// §9.2 Fsc_Bsize_Groups[BLOCK_SIZES] (same table as the still/lossless writer).
+constexpr int kFscBsizeGroups[29] = {
+    0, 1, 1, 2, 3, 3, 4, 5, 5, 5, 6, 6, 6, 6, 6, 6,
+    6, 6, 6, 3, 3, 4, 4, 6, 6, 4, 4, 6, 6};
 
 // Reordered index of a YMode (0..12).
 int reordered_index(int mode) {
@@ -264,6 +288,8 @@ struct CdfState {
   std::uint16_t comp_mode[5][3];
   std::uint16_t is_joint[2][3];
   std::uint16_t compound_mode_non_joint[5][6];
+  // §5.20.7.6 use_optflow (REFINE_SWITCHABLE only; ctx = YMode != NEAR_NEARMV).
+  std::uint16_t use_optflow[2][3];
   // §5.20.7.16 masked compound (enable_masked_compound = 1).
   std::uint16_t comp_group_idx[12][3];
   std::uint16_t compound_type[3];
@@ -288,6 +314,10 @@ struct CdfState {
 
   // Precision-aware shell MVD tables (1/4 and 1/2 pel frame precision).
   inter::mvprec::MvPrecisionCdfState mv_precision;
+
+  // §5.20.5.5 fsc_mode (enable_idtx_intra/--video-idtx).  Default_Fsc_Mode_Cdf
+  // [4][6][3]; the product codes 0 with context [0][group].
+  std::uint16_t fsc_mode[4][6][3];
 };
 
 template <typename T, std::size_t N>
@@ -311,6 +341,7 @@ void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.cfl_index, kCflIndexCdf);
   copy_array(c.cfl_sign, kCflSignCdf);
   copy_array(c.cfl_alpha, kCflAlphaCdf);
+  copy_array(c.fsc_mode, av2enc::lossless::kFscModeCdf);  // §5.20.5.5
   c.mh_cdfs.init();
   copy_array(c.txb_skip, *q.txb_skip);
   copy_array(c.v_txb_skip, *q.v_txb_skip);
@@ -351,6 +382,12 @@ void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.is_joint, multiref::gate::kIsJointCdf);
   copy_array(c.compound_mode_non_joint,
              multiref::gate::kCompoundModeNonJointCdf);
+  // §9.3 TileUseOptflowCdf[2] defaults (not generated into
+  // video_cdf_tables.h; the compound component pins the same values).
+  static constexpr std::uint16_t kUseOptflowCdf[2][3] = {
+      11582, 31, 0, 24076, 26, 0,
+  };
+  copy_array(c.use_optflow, kUseOptflowCdf);
   copy_array(c.comp_group_idx, multiref::gate::kCompGroupIdxCdf);
   copy_array(c.compound_type, multiref::gate::kCompoundTypeCdf);
   copy_array(c.wedge_quad, multiref::gate::kWedgeQuadCdf);
@@ -424,6 +461,7 @@ const std::vector<CdfArrayDesc>& cdf_arrays() {
     AV2ENC_ADD_CDF(cfl_index, 2);
     AV2ENC_ADD_CDF(cfl_sign, 8);
     AV2ENC_ADD_CDF(cfl_alpha, 8);
+    AV2ENC_ADD_CDF(fsc_mode, 2);  // §5.20.5.5 (enable_idtx_intra)
     AV2ENC_ADD_CDF(txb_skip, 2);
     AV2ENC_ADD_CDF(v_txb_skip, 2);
     AV2ENC_ADD_CDF(eob_pt_1024, 8);
@@ -642,6 +680,45 @@ class Writer {
     ymode_grid_.assign(mi_cells, 0);
     comp_group_grid_.assign(mi_cells, 0);
     mv_grid_.assign(mi_cells, inter::mc::MiInfo{});
+    if (plan_.allow_intrabc) {
+      ibcs::init_ibc_cdfs(ibc_cdfs_);
+      ibc_grid_.assign(mi_cells, 0);
+      ibc_skip_grid_.assign(mi_cells, 0);
+      ibc_neighbours_.reset(mi_cols_, mi_rows_);
+      ibc_buffer_.reset(mi_cols_, mi_rows_);
+      ibc_config_ = ibc::IbcConfig{};
+      ibc_config_.sb_size = plan_.sb_size;
+      ibc_config_.allow_global = true;
+      ibc_config_.allow_local = false;
+      ibc_config_.max_bvp_drl_bits_minus_1 = 0;
+      ibc_content_.force_integer_mv = plan_.force_integer_mv;
+      ibc_content_.max_bvp_drl_bits_minus_1 = 0;
+    }
+    if (plan_.morph_pred_present) {
+      morph::init_morph_cdfs(morph_cdfs_);
+      morph_grid_.assign(mi_cells, 0);
+    }
+    if (plan_.enable_interintra) {
+      adv_cdfs_.reset();
+    }
+    if (plan_.allow_screen_content_tools) {
+      // §5.20.5.5 palette_mode_info() is parsed for every eligible DC block
+      // when screen-content tools are enabled, even if this encoder never
+      // chooses a palette.  The adapter writes has_palette_y = 0 in that case.
+      pals::ScreenContentFlags flags;
+      flags.single_picture_header = false;
+      flags.allow_screen_content_tools = true;
+      flags.allow_palette = true;
+      flags.force_integer_mv = plan_.force_integer_mv;
+      flags.allow_intrabc = plan_.allow_intrabc;
+      flags.allow_global_intrabc = plan_.allow_intrabc;
+      flags.allow_local_intrabc = false;
+      palette_writer_.emplace(flags);
+      if (!palette_writer_->reset(mi_cols_, mi_rows_, error_)) {
+        palette_reset_error_ = error_;
+      }
+      palette::init_palette_cdfs(palette_cdfs_);
+    }
     for (int plane = 0; plane < kPlaneCount; ++plane) {
       const int n = (plane == 0 ? mi_cols_ : chroma_mi_cols()) + 16;
       const int m = (plane == 0 ? mi_rows_ : chroma_mi_rows()) + 16;
@@ -651,10 +728,40 @@ class Writer {
       left_dc_[plane].assign(static_cast<std::size_t>(m), 0);
     }
     clear_above_context();
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    if (plan_.qp_enabled()) {
+      video::deltaq::FrameQpPlan qp_plan;
+      qp_plan.base_q_idx = static_cast<int>(config_.base_q_idx);
+      qp_plan.segmentation = plan_.segmentation;
+      qp_plan.delta_q = plan_.delta_q;
+      qp_plan.enable_ext_seg = false;
+      qp_plan.primary_ref_is_none = plan_.primary_ref_is_none;
+      VideoFrameHeader frame_header;
+      frame_header.keyframe = !plan_.inter_frame;
+      std::string qp_error;
+      if (!video::deltaq::begin_frame(dqp_, qp_plan, frame_header, mi_cols_,
+                                      mi_rows_, {}, &qp_error)) {
+        dqp_init_error_ = "delta-Q setup: " + qp_error;
+      } else if (plan_.delta_q.present &&
+                 static_cast<int>(plan_.delta_steps.size()) !=
+                     plan_.superblock_count()) {
+        dqp_init_error_ =
+            "delta-Q plan does not cover every superblock of this tile";
+      } else {
+        dqp_active_ = true;
+      }
+    }
+#endif
     trace_ = std::getenv("AV2ENC_VIDEO_TRACE") != nullptr;
   }
 
   bool run(std::size_t* tile_bytes, std::string& error) {
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    if (!dqp_init_error_.empty()) {
+      error = dqp_init_error_;
+      return false;
+    }
+#endif
     if (blocks_.empty()) {
       error = "syntax stream is empty";
       return false;
@@ -841,6 +948,24 @@ class Writer {
         // `if (sb.mi_col == 0) clear_left_context()` in still_encoder.
         clear_left_context();
       }
+#if defined(AV2ENC_VIDEO_DELTAQ)
+      if (dqp_active_) {
+        // §5.20.2.1: ReadDeltas = delta_q_present at every superblock start;
+        // the segment-prediction left context restarts at a superblock row.
+        video::deltaq::begin_superblock(dqp_, node.mi_col);
+        sb_step_ = nullptr;
+        if (plan_.delta_q.present) {
+          if (sb_index < 0 ||
+              static_cast<std::size_t>(sb_index) >= plan_.delta_steps.size()) {
+            error = "delta-Q plan is missing superblock " +
+                    std::to_string(sb_index);
+            return false;
+          }
+          sb_step_ = &plan_.delta_steps[static_cast<std::size_t>(sb_index)];
+        }
+        sb_first_leaf_ = true;
+      }
+#endif
       if (cdef_active) {
         // §5.20.9.6 clear_cdef(): once per superblock, before read_partition.
         filters_stream::cdef_clear_superblock(&cdef_state_, node.mi_row,
@@ -1554,6 +1679,18 @@ class Writer {
               std::to_string(plane);
       return false;
     }
+    // §5.20.7.27/.30: the one-axis 1-D classes need the class-specific scan,
+    // get_lf_limits() contexts and the dc_sign_horz_vert element.  This writer
+    // (and the TX search's 1-D opt-in) does not signal them; pinned dav2d also
+    // rejects any negative H_DCT/V_DCT coefficient under --strict 1.  Fail
+    // loudly instead of coding a 2-D scan for a 1-D transform.
+    if (view.tx_type >= 10 && view.tx_type <= 15) {
+      error = "1-D TX types (V/H_DCT, V/H_ADST, V/H_FLIPADST) are not "
+              "signalled: dc_sign_horz_vert (§5.20.7.27) needs the "
+              "class-specific scan, and pinned dav2d rejects negative "
+              "H_DCT/V_DCT coefficients under --strict 1";
+      return false;
+    }
     const auto params_opt =
         txv::make_tx_params(static_cast<txv::TxSize>(tx_size),
                             txv::TxType::kDctDct);
@@ -2093,10 +2230,10 @@ class Writer {
     return want == num_refs - 1;
   }
 
-  bool code_drl_index(int ctx, int index) {
+  bool code_drl_index(int ctx, int index, int start = 0) {
     const int m = static_cast<int>(config_.max_drl_bits_minus_1) + 1;
-    if (index < 0 || index > m) return false;
-    for (int idx = 0; idx < m; ++idx) {
+    if (index < start || index > m) return false;
+    for (int idx = start; idx < m; ++idx) {
       const int mode = idx < index ? 1 : 0;
       if (!sym(&cdfs_.drl_mode[std::min(idx, 2)][ctx][0], 2, mode)) {
         return false;
@@ -2302,6 +2439,85 @@ class Writer {
   // mode is non-joint GLOBAL_GLOBALMV (compound_mode_non_joint = 3) with the
   // AVERAGE blend: enable_masked_compound == 0 makes read_compound_type
   // bitless and enable_cwp == 0 suppresses cwp_idx.
+  // Builds the §7.12.2 stack the decoder derives for one reference.  With
+  // `is_compound` the two-list stack (skip_mode / use_optflow form) is built;
+  // otherwise the single-reference stack for `ref`.  The global MVs come from
+  // the same §7.12.2.2 projection the writer stores in the MI grid.
+  bool build_mode_stack(const BlockSyntax& node, int ref, bool is_compound,
+                        const BlockSyntax& mv_source,
+                        merge::StackParams& params,
+                        merge::MvStack& stack) const {
+    params.mi_row = node.mi_row;
+    params.mi_col = node.mi_col;
+    params.bw4 = cur_w4_;
+    params.bh4 = cur_h4_;
+    params.sb_h4 = 16;
+    params.mi_cols = mi_cols_;
+    params.mi_rows = mi_rows_;
+    params.mi = mv_grid_.data();
+    params.ref_frame[0] = static_cast<std::int8_t>(ref);
+    params.is_compound = is_compound;
+    params.ref_frame[1] = is_compound
+                              ? static_cast<std::int8_t>(mv_source.ref_index1)
+                              : merge::kRefNone;
+    params.global_mv[0] = block_global_mv_for_ref(mv_source, ref);
+    params.global_mv[1] = is_compound
+                              ? block_global_mv_for_ref(
+                                    mv_source, mv_source.ref_index1)
+                              : params.global_mv[0];
+    params.reorder = merge::DrlReorder::kDisabled;
+    params.max_drl_bits_minus_1 =
+        static_cast<int>(config_.max_drl_bits_minus_1);
+    if (plan_.num_total_refs > 1) {
+      params.num_refs = plan_.num_total_refs;
+      params.frame_distance = plan_.frame_distance.data();
+    }
+    return merge::build_stack_checked(params, &stack) == merge::Status::kOk;
+  }
+
+  // §7.13.3.8 opfl_allowed_for_refs() for this frame's reference pair.
+  bool opfl_allowed_for_pair(int ref0, int ref1) const {
+    if (plan_.frame_is_switch) return false;
+    const int d0 = plan_.frame_distance[static_cast<std::size_t>(ref0)];
+    const int d1 = plan_.frame_distance[static_cast<std::size_t>(ref1)];
+    return inter::temporal::opfl_allowed_for_refs(d0, d1, false, false, false);
+  }
+
+  // §5.20.7.17 non-GLOBALMV compound refine-MV decision (no bit: NEAR_NEARMV
+  // is not switchable).
+  bool refine_mv_derived(const BlockSyntax& node, bool* use) const {
+    inter::temporal::RefineMvConfig ctx;
+    ctx.enable_refinemv = plan_.enable_refinemv;
+    ctx.opfl_refine_type =
+        static_cast<inter::temporal::RefineType>(plan_.opfl_refine_type);
+    ctx.frame_is_switch = plan_.frame_is_switch;
+    ctx.is_compound = true;
+    ctx.skip_mode = false;
+    ctx.use_optflow = node.use_optflow != 0;
+    ctx.is_global_global_mv = node.compound_mode == 3;
+    ctx.motion_mode_simple = true;
+    ctx.has_newmv = false;
+    ctx.y_mode_near_near_mv = node.compound_mode == 0;
+    ctx.y_mode_joint_new_mv = false;
+    ctx.block_width = cur_w4_ * 4;
+    ctx.block_height = cur_h4_ * 4;
+    const int d0 = plan_.frame_distance[static_cast<std::size_t>(node.ref_index)];
+    const int d1 =
+        plan_.frame_distance[static_cast<std::size_t>(node.ref_index1)];
+    // Synthetic origin: only the relative distances matter, and -1 is the
+    // §5.18.3.1 restricted sentinel.
+    ctx.order_hint = 64;
+    ctx.ref0_order_hint = 64 - d0;
+    ctx.ref1_order_hint = 64 - d1;
+    inter::temporal::RefineMvSyntax syntax;
+    if (inter::temporal::refine_mv_syntax(ctx, &syntax) !=
+        inter::temporal::TemporalStatus::kOk) {
+      return false;
+    }
+    *use = syntax.use_refinemv;
+    return true;
+  }
+
   bool write_compound_mode_info(const BlockSyntax& node, std::string& error) {
     if (!plan_.reference_select) {
       error = "compound block without reference_select";
@@ -2319,13 +2535,79 @@ class Writer {
       error = "joint compound is not wired";
       return false;
     }
-    if (node.compound_mode != 3 || node.inter_mode != kInterGlobalMv ||
-        node.mv_y != 0 || node.mv_x != 0) {
-      error = "only GLOBAL_GLOBALMV compound is wired";
-      return false;
-    }
     if (!node.skip_flag) {
       error = "compound inter residual is not wired";
+      return false;
+    }
+    const bool near_near = node.compound_mode == 0;
+    const bool global_global = node.compound_mode == 3;
+    if (!near_near && !global_global) {
+      error = "unsupported compound mode " +
+              std::to_string(static_cast<int>(node.compound_mode));
+      return false;
+    }
+    if (!near_near && (node.inter_mode != kInterGlobalMv || node.mv_y != 0 ||
+                       node.mv_x != 0 || node.mv1_y != 0 || node.mv1_x != 0 ||
+                       node.use_optflow || node.use_refinemv)) {
+      error = "only GLOBAL_GLOBALMV compound is wired without MVs";
+      return false;
+    }
+    // Validate the decision against the decoder's MV stack(s).  This is the
+    // only place a compound MV can silently desynchronise.
+    if (near_near) {
+      merge::MvStack stacks[2];
+      merge::StackParams params[2];
+      inter::mc::Mv resolve[2];
+      if (node.use_optflow) {
+        merge::MvStack compound;
+        merge::StackParams cparams;
+        if (!build_mode_stack(node, 0, true, node, cparams, compound)) {
+          error = "build_mv_stack (compound) failed";
+          return false;
+        }
+        if (node.drl_index >= compound.count) {
+          error = "compound DRL index outside the MV stack";
+          return false;
+        }
+        resolve[0] = compound.cand[node.drl_index].mv[0];
+        resolve[1] = compound.cand[node.drl_index].mv[1];
+      } else {
+        if (!build_mode_stack(node, 0, false, node, params[0], stacks[0]) ||
+            !build_mode_stack(node, 1, false, node, params[1], stacks[1])) {
+          error = "build_mv_stack (per-list) failed";
+          return false;
+        }
+        if (merge::resolve_compound_near_near(stacks, node.drl_index,
+                                              node.drl_index1, resolve) !=
+            merge::Status::kOk) {
+          error = "compound per-list DRL index outside the MV stack";
+          return false;
+        }
+      }
+      if (resolve[0].y != node.mv_y || resolve[0].x != node.mv_x ||
+          resolve[1].y != node.mv1_y || resolve[1].x != node.mv1_x) {
+        error = "compound MV does not match the stack candidates";
+        return false;
+      }
+    }
+    // §5.20.7.17: the derived refine-MV decision must match the prediction the
+    // encoder applied.  NEAR_NEARMV is never switchable, so it codes no bit.
+    bool derived_refinemv = false;
+    if (near_near && !refine_mv_derived(node, &derived_refinemv)) {
+      error = "refine_mv_syntax failed";
+      return false;
+    }
+    if (derived_refinemv != (node.use_refinemv != 0)) {
+      error = "compound refine-MV decision does not match §5.20.7.17";
+      return false;
+    }
+    // §5.20.7.6 use_optflow is coded for a switchable frame over an allowed
+    // reference pair, before the DRL indices and compound type.
+    const bool optflow_eligible =
+        near_near && plan_.opfl_refine_type == 1 && opfl_allowed_for_pair(0, 1) &&
+        cur_w4_ * 4 >= 8 && cur_h4_ * 4 >= 8 && !plan_.frame_is_switch;
+    if (!optflow_eligible && node.use_optflow) {
+      error = "use_optflow set outside the §5.20.7.6 gate";
       return false;
     }
     if (!sym(&cdfs_.comp_mode[comp_mode_context()][0], 2, 1)) {
@@ -2361,10 +2643,47 @@ class Writer {
       error = error_;
       return false;
     }
-    // §5.20.7.16 read_compound_type().  With enable_masked_compound the
-    // comp_group_idx symbol is present for every compound block (0 = AVERAGE);
-    // a masked block then codes compound_type and the mask symbols.
-    if (plan_.enable_masked_compound) {
+    if (optflow_eligible &&
+        !sym(&cdfs_.use_optflow[node.compound_mode != 0 ? 1 : 0][0], 2,
+             node.use_optflow ? 1 : 0)) {
+      error = error_;
+      return false;
+    }
+    if (near_near) {
+      // §5.20.7.8 read_drl_idx(): has_second_drl() is true for a non-skip
+      // NEAR_NEARMV block without use_optflow, so both list indices are coded.
+      if (!code_drl_index(ctx, node.drl_index)) {
+        error = "write drl_idx failed";
+        return false;
+      }
+      if (!node.use_optflow) {
+        int start = 0;
+        if (merge::derive_second_drl_start(
+                merge::kYModeNearNearMv,
+                node.ref_index == node.ref_index1, node.drl_index,
+                &start) != merge::Status::kOk) {
+          error = "derive_second_drl_start failed";
+          return false;
+        }
+        if (!code_drl_index(ctx, node.drl_index1, start)) {
+          error = "write second drl_idx failed";
+          return false;
+        }
+      }
+      // §5.20.7.17 read_refinemv(): only the switchable form codes a bit, and
+      // NEAR_NEARMV is not switchable, so the decision above is implicit.
+    }
+    // §5.20.7.16 read_compound_type().  use_optflow (and the switchable
+    // refine-MV form) select COMPOUND_AVERAGE and code no symbols.  Otherwise,
+    // with enable_masked_compound the comp_group_idx symbol is present for
+    // every compound block (0 = AVERAGE); a masked block then codes
+    // compound_type and the mask symbols.
+    if (node.use_optflow) {
+      if (node.compound_masked) {
+        error = "use_optflow compound must be COMPOUND_AVERAGE";
+        return false;
+      }
+    } else if (plan_.enable_masked_compound) {
       if (node.compound_masked && plan_.num_total_refs != 2) {
         error = "masked compound is wired for two references";
         return false;
@@ -2477,6 +2796,22 @@ class Writer {
       params.num_refs = plan_.num_total_refs;
       params.frame_distance = plan_.frame_distance.data();
     }
+    // §7.12.2 steps 5/12 temporal scan: the writer must rebuild the same
+    // stack the decision path used, including the §7.9 motion-field
+    // candidates.
+    params.use_ref_frame_mvs = plan_.temporal.use_ref_frame_mvs;
+    params.motion_field = plan_.temporal.field;
+    params.temporal_scan = plan_.temporal.scan;
+    params.order_hint = plan_.temporal.order_hint;
+    params.order_hints = plan_.temporal.ref_order_hints.data();
+    params.num_past_refs = plan_.temporal.num_past_refs;
+    params.num_future_refs = plan_.temporal.num_future_refs;
+    params.closest_past = plan_.temporal.closest_past;
+    params.closest_future = plan_.temporal.closest_future;
+    params.tile_mi_col_start = plan_.tile_mi_col;
+    params.tile_mi_row_start = plan_.tile_mi_row;
+    params.tile_mi_col_end = plan_.frame_mi_cols;
+    params.tile_mi_row_end = plan_.frame_mi_rows;
     merge::MvStack stack;
     const drl::Mode reorder_mode =
         plan_.drl_reorder == 2
@@ -2598,6 +2933,38 @@ class Writer {
       error = "BAWP symbols set outside the §5.20.7.6 gate";
       return false;
     }
+    // §5.20.7.14 read_motion_mode(isCompound = 0).  It follows single_mode /
+    // use_bawp and precedes read_drl_idx().  INTERINTRA is allowed only for a
+    // non-compound block of 8x8..64x64 that does not use BAWP.
+    if (!node.compound) {
+      const int bw = cur_w4_ * 4;
+      const int bh = cur_h4_ * 4;
+      const bool interintra_allowed =
+          plan_.enable_interintra && !node.use_bawp && bw >= 8 && bh >= 8 &&
+          bw <= 64 && bh <= 64;
+      if (!interintra_allowed && node.motion_mode != 0) {
+        error = "INTERINTRA motion mode outside the §5.20.7.14 gate";
+        return false;
+      }
+      if (plan_.enable_interintra) {
+        adv::MotionModeSymbols symbols;
+        symbols.is_warp_newmv = false;
+        symbols.extend_allowed = false;
+        symbols.local_allowed = false;
+        symbols.inter_intra_allowed = interintra_allowed;
+        symbols.inter_intra = node.motion_mode == 1;
+        symbols.interintra_mode = node.interintra_mode;
+        symbols.wedge_allowed = adv::kWedgeBits[node.bsize] != 0;
+        symbols.wedge_interintra = node.wedge_interintra != 0;
+        symbols.wedge_index = node.wedge_index;
+        std::string mm_error;
+        if (!adv::write_motion_mode(enc_, adv_cdfs_, node.bsize, symbols,
+                                    &mm_error)) {
+          error = "motion mode: " + mm_error;
+          return false;
+        }
+      }
+    }
     if (node.inter_mode == kInterNearMv || node.inter_mode == kInterNewMv) {
       // §5.20.7.6: read_drl_idx() is present for both NEARMV and NEWMV.
       // M2 NEWMV always uses DRL index 0 (the predictor resolve_mode used).
@@ -2641,9 +3008,10 @@ class Writer {
   // stores the projected value in MiMv for GLOBALMV blocks and seeds the merge
   // stack with it, so both the stack validation and the writer's own MI grid
   // must use it instead of the (zero) coded mv.
-  inter::mc::Mv block_global_mv(const BlockSyntax& node) const {
+  inter::mc::Mv block_global_mv_for_ref(const BlockSyntax& node,
+                                        int ref) const {
 #if defined(AV2ENC_VIDEO_GME)
-    if (plan_.gm_num_refs > node.ref_index) {
+    if (ref >= 0 && plan_.gm_num_refs > ref) {
       inter::gme::MvPrecision precision = inter::gme::MvPrecision::kEighthPel;
       if (plan_.mv_precision == 1) {
         precision = inter::gme::MvPrecision::kQuarterPel;
@@ -2652,15 +3020,20 @@ class Writer {
       }
       int projected[2] = {0, 0};
       inter::gme::get_warp_motion_vector(
-          plan_.gm_params[static_cast<std::size_t>(node.ref_index)],
-          node.mi_col, node.mi_row, cur_w4_, cur_h4_, mi_cols_, mi_rows_,
-          precision, projected);
+          plan_.gm_params[static_cast<std::size_t>(ref)], node.mi_col,
+          node.mi_row, cur_w4_, cur_h4_, mi_cols_, mi_rows_, precision,
+          projected);
       return inter::mc::Mv{projected[0], projected[1]};
     }
 #else
     (void)node;
+    (void)ref;
 #endif
     return inter::mc::Mv{0, 0};
+  }
+
+  inter::mc::Mv block_global_mv(const BlockSyntax& node) const {
+    return block_global_mv_for_ref(node, node.ref_index);
   }
 
   void update_mode_grids(const BlockSyntax& node) {
@@ -2692,19 +3065,24 @@ class Writer {
                         : kRefIntraAv2;
         mi.ref[1] = node.compound
                         ? static_cast<std::int8_t>(node.ref_index1)
-                        : merge::kRefNone;
+                        : (node.is_inter && node.motion_mode == 1
+                               ? kRefIntraAv2
+                               : merge::kRefNone);
         // A GLOBALMV block stores GlobalMvs[0]; every other mode stores its
-        // coded MV.  This mirrors decode_block() and keeps later merge-stack
-        // candidates identical to the decoder's.
-        const inter::mc::Mv stored_mv =
-            (!node.compound && node.is_inter &&
-             node.inter_mode == kInterGlobalMv)
-                ? block_global_mv(node)
-                : inter::mc::Mv{node.mv_y, node.mv_x};
-        mi.mv[0][0] = stored_mv.y;
-        mi.mv[0][1] = stored_mv.x;
-        mi.mv[1][0] = stored_mv.y;
-        mi.mv[1][1] = stored_mv.x;
+        // coded MV.  A compound block stores the per-list MVs.  This mirrors
+        // decode_block() and keeps later merge-stack candidates identical to
+        // the decoder's.
+        inter::mc::Mv mv0 = inter::mc::Mv{node.mv_y, node.mv_x};
+        inter::mc::Mv mv1 = inter::mc::Mv{node.mv1_y, node.mv1_x};
+        if (node.is_inter && node.inter_mode == kInterGlobalMv) {
+          mv0 = block_global_mv_for_ref(node, node.ref_index);
+          mv1 = node.compound ? block_global_mv_for_ref(node, node.ref_index1)
+                              : mv0;
+        }
+        mi.mv[0][0] = mv0.y;
+        mi.mv[0][1] = mv0.x;
+        mi.mv[1][0] = mv1.y;
+        mi.mv[1][1] = mv1.x;
         mi.is_inter = node.is_inter ? 1 : 0;
         mi.w4 = static_cast<std::int8_t>(cur_w4_);
         mi.h4 = static_cast<std::int8_t>(cur_h4_);
@@ -2841,6 +3219,134 @@ class Writer {
 
   // Intra mode + residual syntax. Used by keyframe blocks and by intra
   // fallback blocks inside an inter frame.
+  // ---------------------------------------------------------------------
+  // §5.20.5.3/.4 intra block copy + §5.20.5.4 morph_pred on an intra frame.
+  // ---------------------------------------------------------------------
+  // `is_bv_valid` only needs the plane geometry, so the writer builds a view
+  // with null sample pointers; it never copies pixels.
+  ibc::FrameView ibc_frame_view() const {
+    ibc::FrameView view;
+    view.y = ibc::PlaneView{nullptr, mi_cols_ * 4, mi_cols_ * 4,
+                            mi_rows_ * 4};
+    view.u = ibc::PlaneView{nullptr, chroma_mi_cols() * 4,
+                            chroma_mi_cols() * 4, chroma_mi_rows() * 4};
+    view.v = view.u;
+    view.has_chroma = has_chroma_;
+    view.sub_x = sub_x_;
+    view.sub_y = sub_y_;
+    return view;
+  }
+
+  // §5.20.5.3 use_intrabc (+ read_skip when set).  Present for every leaf when
+  // allow_intrabc is on; only eligible block sizes carry the symbol.
+  bool write_keyframe_mode_info(const BlockSyntax& node, bool is_ibc,
+                                std::string& error) {
+    if (!plan_.allow_intrabc) {
+      if (is_ibc) {
+        error = "IBC leaf supplied but the frame disables intrabc";
+        return false;
+      }
+      return true;
+    }
+    if (!ibcs::intrabc_available(plan_.allow_intrabc, node.bsize)) {
+      if (is_ibc) {
+        error = "IBC leaf is not signalable at this block size";
+        return false;
+      }
+      return true;
+    }
+    if (is_ibc) {
+      // read_intrabc_info() forces DC luma/chroma and clears palette/CfL.
+      if (node.y_mode != kDcPred || (node.flags & kFlagIsCfl) != 0) {
+        error = "IBC leaf carries intra/palette mode state";
+        return false;
+      }
+    }
+    const int ctx = std::min(
+        ibcs::ibc_symbol_context(ibc_grid_, mi_cols_, mi_rows_, node.mi_row,
+                                 node.mi_col, node.bsize, plan_.sb_size),
+        2);
+    if (!ibcs::write_use_intrabc(enc_, ibc_cdfs_, ctx, is_ibc, error)) {
+      return false;
+    }
+    if (!is_ibc) return true;
+    const int skip_ctx = std::min(
+        ibcs::skip_symbol_context(ibc_skip_grid_, mi_cols_, mi_rows_,
+                                  node.mi_row, node.mi_col, node.bsize,
+                                  plan_.sb_size),
+        2);
+    return ibcs::write_skip_flag(enc_, ibc_cdfs_, skip_ctx,
+                                 node.ibc_skip != 0, error);
+  }
+
+  // §5.20.5.4 intrabc_info() (intrabc_mode/DRL/assign_mv) and, when the
+  // sequence enables it, morph_pred.  The BV stack is rebuilt from the same
+  // neighbour map and ring buffer the decoder maintains.
+  bool write_ibc_body(const BlockSyntax& node, std::string& error) {
+    const ibc::FrameView frame = ibc_frame_view();
+    const ibcs::BvStack stack = ibcs::build_bv_stack(
+        frame, ibc_config_, ibc_buffer_, node.mi_row, node.mi_col, node.bsize,
+        ibc_neighbours_);
+    ibcs::BvSyntax syntax;
+    syntax.mode = node.ibc_mode == 1 ? ibcs::IntrabcMode::kNearMv
+                                     : ibcs::IntrabcMode::kNewMv;
+    syntax.ref_mv_idx = node.ibc_ref_mv_idx;
+    syntax.intrabc_precision_quarter = false;
+    const ibc::BlockVector target{node.ibc_bv_row, node.ibc_bv_col};
+    if (!ibcs::write_intrabc_info(enc_, ibc_cdfs_, ibc_content_, stack, syntax,
+                                  target, error)) {
+      return false;
+    }
+    if (plan_.morph_pred_present) {
+      const int w4 = std::max(1, cur_w4_);
+      const int h4 = std::max(1, cur_h4_);
+      const int ctx = morph::morph_symbol_context(
+          morph_grid_.data(), mi_cols_, mi_rows_, node.mi_row, node.mi_col, w4,
+          h4, plan_.sb_size);
+      if (!morph::write_morph_pred(enc_, morph_cdfs_, ctx,
+                                   node.morph_pred != 0, error)) {
+        return false;
+      }
+    } else if (node.morph_pred != 0) {
+      error = "morph_pred set but the frame does not signal it";
+      return false;
+    }
+    if (node.ibc_skip != 0) {
+      // §5.20.5.1: an IBC skip block codes no residual, but the decoder still
+      // resets the level/DC contexts over the block.
+      reset_coeff_contexts(node.mi_row, node.mi_col, cur_w4_, cur_h4_);
+    }
+    return true;
+  }
+
+  // §5.20.8 palette_mode_info() for a keyframe leaf.  No palette is ever
+  // chosen on the video path; the adapter still must write has_palette_y = 0
+  // for every reachable DC block when screen-content tools are enabled.
+  bool write_palette(const BlockSyntax& node, int w, int h,
+                     std::string& error) {
+    if (!plan_.allow_screen_content_tools) return true;
+    if ((node.flags & kFlagIsIbc) != 0) return true;
+    if (!palette_writer_.has_value()) {
+      error = "palette writer is not initialised: " + palette_reset_error_;
+      return false;
+    }
+    const int onscreen_w = std::min(w, mi_cols_ * 4 - node.mi_col * 4);
+    const int onscreen_h = std::min(h, mi_rows_ * 4 - node.mi_row * 4);
+    pals::PaletteModeInfo info;
+    std::string palette_error;
+    if (!palette_writer_->write(enc_, palette_cdfs_, node.mi_row, node.mi_col,
+                                node.bsize, w, h, onscreen_w, onscreen_h,
+                                nullptr, node.y_mode, &info, palette_error)) {
+      error = "palette syntax: " + palette_error;
+      return false;
+    }
+    if (info.has_palette_y) {
+      error = "palette output on the video keyframe path";
+      return false;
+    }
+    return true;
+  }
+
   bool write_intra_leaf(const BlockSyntax& node, int w, int h, int cw, int ch,
                         std::string& error) {
     // Validate the declared transform sizes against TX_MODE_LARGEST geometry
@@ -2869,10 +3375,19 @@ class Writer {
       error = error_;
       return false;
     }
+    // §5.20.5.5: after the Y mode/angle delta, every luma coding block with
+    // Block_Width/Height <= FSC_MAX codes fsc_mode when enable_idtx_intra is
+    // 1.  This encoder never uses FSC (enable_fsc = 0), so it codes 0 and all
+    // neighbours stay 0 (CDF context [0][group]).
+    if (config_.enable_idtx_intra && w <= 32 && h <= 32) {
+      const int group = kFscBsizeGroups[node.bsize];
+      if (!sym(&cdfs_.fsc_mode[0][group][0], 2, 0)) return false;
+    }
     if (has_chroma_ && !code_uv_mode(node, cw, ch)) {
       error = error_;
       return false;
     }
+    if (!write_palette(node, w, h, error)) return false;
     std::size_t level_base = node.levels_offset;
     if (!code_luma_residual(node, w, h, levels_end, false, level_base,
                             error)) {
@@ -3082,6 +3597,39 @@ class Writer {
   }
 
   bool write_block(const BlockSyntax& node, std::string& error) {
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    // Mirrors src/codec/entropy/deltaq/video/video_deltaq.cpp::
+    // write_superblock_delta_q(): verify the planned tile state before the
+    // symbol, emit §5.20.5.11 (or no symbol for a full-SB skip), then verify
+    // the achieved qindex.  §5.20.5.11 codes nothing when
+    // MiSize == SbSize && skip_flag, so such a superblock can only realize a
+    // zero step; the planner must have produced one.
+    const auto write_delta_step = [this](const rc::DeltaQPlanStep& step,
+                                         const BlockSyntax& leaf,
+                                         bool skip_flag,
+                                         std::string& step_error) -> bool {
+      std::string dq_error;
+      if (!av2enc::deltaq::check_plan_step(dqp_.tile_qp, step, &dq_error)) {
+        step_error = "delta-Q plan: " + dq_error;
+        return false;
+      }
+      if (!video::deltaq::write_delta_qindex(dqp_, enc_, leaf, skip_flag,
+                                             step.reduced_delta, &dq_error)) {
+        step_error = "delta_qindex: " + dq_error;
+        return false;
+      }
+      if (dqp_.tile_qp.current_q_index != step.qindex_after) {
+        step_error =
+            "delta_qindex: superblock (" + std::to_string(step.sb_y) + "," +
+            std::to_string(step.sb_x) + ") did not reach the planned qindex " +
+            std::to_string(step.qindex_after) + " (got " +
+            std::to_string(dqp_.tile_qp.current_q_index) +
+            "); a full-SB skip cannot code a delta";
+        return false;
+      }
+      return true;
+    };
+#endif
     const int r = node.mi_row;
     const int c = node.mi_col;
     const auto size = static_cast<BlockSize>(node.bsize);
@@ -3093,11 +3641,16 @@ class Writer {
     cur_c_ = c;
     cur_w4_ = w4;
     cur_h4_ = h4;
+    // §5.20.4.1 decode_block(): update_ibc_buffers() runs at the start of the
+    // block, before mode_info() builds the BV stack.
+    const bool is_ibc_block = (node.flags & kFlagIsIbc) != 0;
+    if (plan_.allow_intrabc) {
+      ibcs::begin_ibc_block(ibc_buffer_, r, c);
+    }
 
     int cw = 0;
     int ch = 0;
-    if (has_chroma_) {
-      // §5.20.7.26 get_plane_residual_size() via the Subsampled_Size table.
+    if (has_chroma_) {      // §5.20.7.26 get_plane_residual_size() via the Subsampled_Size table.
       // `fmt::chroma_residual_size()` models 4:2:0/4:2:2/4:4:4; the 4:2:0
       // values are the historical `block_width/2` pair.
       const auto chroma_size =
@@ -3110,7 +3663,28 @@ class Writer {
       ch = fmt::block_height(*chroma_size);
     }
 
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    // §5.20.5.7/.8 / §5.20.7.2 / §5.20.5.11 ordering state for this leaf.
+    // `first_leaf` is set at each superblock root: only that leaf calls
+    // read_delta_qindex(), and read_delta_qindex() clears ReadDeltas whether
+    // or not it coded a symbol.
+    const bool dqp = dqp_active_;
+    const bool seg_pre_skip = dqp && dqp_.segmentation.seg_id_pre_skip;
+    const int segment_id = dqp ? static_cast<int>(node.segment_id) : 0;
+    const rc::DeltaQPlanStep* delta_step = sb_first_leaf_ ? sb_step_ : nullptr;
+    sb_first_leaf_ = false;
+    std::string dq_error;
+#endif
+
     if (plan_.inter_frame) {
+#if defined(AV2ENC_VIDEO_DELTAQ)
+      if (dqp && seg_pre_skip &&
+          !video::deltaq::write_inter_segment_id_pre(
+              dqp_, enc_, node, segment_id, /*skip_flag=*/false, &dq_error)) {
+        error = "inter_segment_id(preSkip): " + dq_error;
+        return false;
+      }
+#endif
       if (!code_is_inter(node.is_inter != 0)) {
         error = error_;
         return false;
@@ -3120,8 +3694,23 @@ class Writer {
           error = error_;
           return false;
         }
+#if defined(AV2ENC_VIDEO_DELTAQ)
+        if (dqp && !seg_pre_skip &&
+            !video::deltaq::write_inter_segment_id_post(
+                dqp_, enc_, node, segment_id, node.skip_flag != 0,
+                &dq_error)) {
+          error = "inter_segment_id: " + dq_error;
+          return false;
+        }
+#endif
         if (!write_cdef_index(node, error)) return false;
         if (!write_ccso_index(node, error)) return false;
+#if defined(AV2ENC_VIDEO_DELTAQ)
+        if (dqp && delta_step != nullptr &&
+            !write_delta_step(*delta_step, node, node.skip_flag != 0, error)) {
+          return false;
+        }
+#endif
         if (!write_inter_mode_info(node, error)) return false;
         if (node.skip_flag) {
           reset_coeff_contexts(r, c, w4, h4);
@@ -3129,22 +3718,72 @@ class Writer {
           return false;
         }
       } else {
+#if defined(AV2ENC_VIDEO_DELTAQ)
+        if (dqp && !seg_pre_skip &&
+            !video::deltaq::write_inter_segment_id_post(
+                dqp_, enc_, node, segment_id, /*skip_flag=*/false, &dq_error)) {
+          error = "inter_segment_id: " + dq_error;
+          return false;
+        }
+#endif
         if (!write_cdef_index(node, error)) return false;
         if (!write_ccso_index(node, error)) return false;
+#if defined(AV2ENC_VIDEO_DELTAQ)
+        if (dqp && delta_step != nullptr &&
+            !write_delta_step(*delta_step, node, /*skip_flag=*/false, error)) {
+          return false;
+        }
+#endif
         if (!write_intra_leaf(node, w, h, cw, ch, error)) return false;
       }
     } else {
       // Intra keyframe: intra_frame_mode_info() does not code is_inter.
+      const bool is_ibc = (node.flags & kFlagIsIbc) != 0;
       if (node.is_inter) {
         error = "keyframe block marked inter";
         return false;
       }
-      // §5.20.10.1 read_cdef(): after the segment/skip group, before the
-      // intra modes.
-      if (!write_cdef_index(node, error)) return false;
-      if (!write_ccso_index(node, error)) return false;
-      if (!write_intra_leaf(node, w, h, cw, ch, error)) return false;
+#if defined(AV2ENC_VIDEO_DELTAQ)
+      // §5.20.5.3: intra_segment_id() precedes the keyframe mode info.
+      if (dqp && !video::deltaq::write_intra_segment_id(
+                     dqp_, enc_, node, segment_id, /*skip_flag=*/false,
+                     &dq_error)) {
+        error = "intra_segment_id: " + dq_error;
+        return false;
+      }
+#endif
+      if (!write_keyframe_mode_info(node, is_ibc, error)) return false;
+      // §5.20.10.1 read_cdef(): after the skip group, before the modes.  An
+      // IBC skip block returns before cdef_idx unless CDEF filters skip blocks.
+      const bool cdef_skip =
+          is_ibc && node.ibc_skip != 0 && filters_ != nullptr &&
+          filters_->cdef.enabled && !filters_->cdef.on_skip_txfm;
+      if (!cdef_skip) {
+        if (!write_cdef_index(node, error)) return false;
+        if (!write_ccso_index(node, error)) return false;
+      }
+#if defined(AV2ENC_VIDEO_DELTAQ)
+      if (dqp && delta_step != nullptr &&
+          !write_delta_step(*delta_step, node, /*skip_flag=*/false, error)) {
+        return false;
+      }
+#endif
+      if (is_ibc) {
+        if (!write_ibc_body(node, error)) return false;
+      } else if (!write_intra_leaf(node, w, h, cw, ch, error)) {
+        return false;
+      }
     }
+
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    // §5.20.5.7: record SegmentIds for the following leaves' prediction.
+    if (dqp &&
+        !video::deltaq::commit_segment_block(dqp_, node, segment_id,
+                                             &dq_error)) {
+      error = "commit_segment_block: " + dq_error;
+      return false;
+    }
+#endif
 
     // Update partition context.
     for (int yy = 0; yy < h4; ++yy) {
@@ -3196,6 +3835,31 @@ class Writer {
         uvcfl(rr, cc) = is_cfl ? 1 : 0;
       }
     }
+    if (plan_.allow_intrabc) {
+      // §5.20.4.1: MorphPreds = use_intrabc && morph_pred and UseIntrabc over
+      // every 4x4 of the decoded block.  The BV neighbour map/ring must be
+      // advanced for every leaf, IBC or not.
+      const std::uint8_t ibc_value = is_ibc_block ? 1 : 0;
+      const std::uint8_t skip_value =
+          (is_ibc_block && node.ibc_skip != 0) ? 1 : 0;
+      const std::uint8_t morph_value =
+          (is_ibc_block && node.morph_pred != 0) ? 1 : 0;
+      for (int yy = 0; yy < h4; ++yy) {
+        const int rr = r + yy;
+        if (rr >= mi_rows_) break;
+        for (int xx = 0; xx < w4; ++xx) {
+          const int cc = c + xx;
+          if (cc >= mi_cols_) break;
+          const std::size_t idx = cell_index(rr, cc);
+          ibc_grid_[idx] = ibc_value;
+          ibc_skip_grid_[idx] = skip_value;
+          if (plan_.morph_pred_present) morph_grid_[idx] = morph_value;
+        }
+      }
+      ibcs::finish_ibc_block(
+          ibc_buffer_, ibc_neighbours_, r, c, node.bsize, is_ibc_block,
+          ibc::BlockVector{node.ibc_bv_row, node.ibc_bv_col});
+    }
     return true;
   }
 
@@ -3227,7 +3891,35 @@ class Writer {
   int mi_cols_ = 0;
   int mi_rows_ = 0;
 
+#if defined(AV2ENC_VIDEO_DELTAQ)
+  // §5.18.7.1/.8 tile-local segmentation + delta-Q state.  `dqp_active_` is
+  // false on every default stream, so none of the symbols below are emitted.
+  video::deltaq::FrameQpContext dqp_{};
+  bool dqp_active_ = false;
+  std::string dqp_init_error_;
+  bool sb_first_leaf_ = false;
+  const rc::DeltaQPlanStep* sb_step_ = nullptr;
+#endif
+
   CdfState cdfs_{};
+  // §5.20.5.3/.4 IBC + §7.13.3.26 morph state (keyframe carrier).
+  ibc::IbcBufferState ibc_buffer_;
+  ibcs::BvNeighbourMap ibc_neighbours_;
+  ibc::IbcConfig ibc_config_{};
+  ibcs::IbcCdfs ibc_cdfs_{};
+  ibcs::ScreenContentConfig ibc_content_{};
+  std::vector<std::uint8_t> ibc_grid_;
+  std::vector<std::uint8_t> ibc_skip_grid_;
+  morph::MorphCdfs morph_cdfs_{};
+  std::vector<std::uint8_t> morph_grid_;
+  // §5.20.7.14-.15 inter-intra motion-mode CDFs.
+  adv::AdvancedCdfState adv_cdfs_{};
+  // §5.20.8.1 palette_mode_info() state: the video path never signals a
+  // palette, but the has_palette_y=0 symbol is mandatory when screen tools are
+  // on.
+  std::optional<pals::PaletteSyntaxWriter> palette_writer_;
+  palette::PaletteCdfState palette_cdfs_{};
+  std::string palette_reset_error_;
   av2::Encoder enc_{};
   std::vector<std::uint8_t> tile_buffer_;
   std::vector<std::uint8_t> payload_;

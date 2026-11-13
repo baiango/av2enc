@@ -61,6 +61,9 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/codec/inter/advanced/b_frame.cpp
   src/codec/inter/advanced/compound.cpp
   src/codec/inter/advanced/warp.cpp
+  # §7.7/§7.8 implicit reference map and the §5.18.2 frame-map syntax.
+  src/codec/inter/mv_stack/ref_map.cpp
+  src/codec/inter/advanced/video/advanced_syntax.cpp
   src/codec/inter/bframes/bframes.cpp
   src/codec/inter/drl_reorder/drl_reorder.cpp
   src/codec/inter/drl_reorder/video_stack_adapter.cpp
@@ -181,6 +184,7 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/pipeline/video/hbd/video_hbd.cpp
   src/pipeline/video/video_chroma_search.cpp
   src/codec/inter/advanced/bawp.cpp
+  src/codec/inter/morph/morph_syntax.cpp
   src/pipeline/video/video_frame.cpp
   src/pipeline/video/video_frames.cpp
   src/pipeline/video/video_gme.cpp

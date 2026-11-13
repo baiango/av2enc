@@ -120,14 +120,13 @@ header writers only add fields inside `if (config.enable_tip)` /
    state (`kTipModeCdf` / `kTipDrlModeCdf` / `kTipPredModeCdf` in
    `video_cdf_tables.h`) and the §7.12.2.15/.17/.18 candidate helpers exist in
    `src/codec/inter/tip/tip_candidates.cpp`.
-3. **§7.22 feed into the merge stack.** The temporal scan
-   (§7.12.2.7/.8, `temporal_scan()`/`temporal_sample()` in
-   `src/codec/inter/temporal/motion_field.cpp`) is still not spliced into
-   `merge::StackBuilder`.  Today only TIP-as-output frames set
-   `use_ref_frame_mvs = 1`, and they have no tile, so the stack path is not
-   reached.  Enabling it on a tile-coded frame needs the saved field to be
-   persisted per slot in the frame loop (done for the TIP schedule) and the
-   two temporal additions inserted between §7.12.2 steps 13 and 15.
+3. **§7.22 feed into the merge stack.** Wired for the ordinary P and B chains
+   (`--video-ref-mvs`, `docs/ref-frame-mvs.md`): every reference slot stores its
+   §7.22 field, §7.9 estimation runs at frame start and the §7.12.2.7/.8 scan is
+   spliced at steps 5/12 in both the decision and syntax stacks.  What remains
+   open is **TIP as a reference inside a tile-coded frame**: `RefFrame[0] ==
+   TIP_FRAME` needs the `TIP_FRAME_AS_REF` tile symbols and a following
+   tile-coded frame, which the product TIP schedule does not build.
 4. **TIP hole fill** as described above.
 5. **OPFL/refine-MV inside TIP** (`enable_tip_refinemv`,
    `enable_opfl_refine`) stays `REFINE_NONE`; the component supports it but

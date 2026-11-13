@@ -24,6 +24,9 @@
 #include "pipeline/video/video_headers.h"
 #include "pipeline/video/post/video_filter_plan.h"
 #include "codec/entropy/avg_cdf/avg_cdf_bank.h"
+#include "codec/inter/merge/merge.h"
+#include "codec/inter/temporal/temporal_types.h"
+#include "codec/rate/rc/rc.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -40,6 +43,9 @@ enum BlockFlags : std::uint8_t {
   kFlagForced = 1u << 0,
   kFlagIsCfl = 1u << 1,
   kFlagSbRoot = 1u << 2,
+  // §5.20.5.3 use_intrabc = 1 on an intra frame.  The block carries the BV and
+  // (optionally) morph_pred; it codes no intra mode or residual when skip.
+  kFlagIsIbc = 1u << 3,
 };
 
 // Inter prediction mode as signalled through single_mode:
@@ -80,7 +86,18 @@ struct BlockSyntax {
   std::uint8_t compound = 0;
   std::uint8_t ref_index1 = 0;
   std::uint8_t compound_joint = 0;
-  std::uint8_t compound_mode = 3;  // 3 = GLOBAL_GLOBALMV
+  std::uint8_t compound_mode = 3;  // 0 = NEAR_NEARMV, 3 = GLOBAL_GLOBALMV
+  // §5.20.7.6 compound MVs.  NEAR_NEARMV resolves list 0/1 independently:
+  // `drl_index`/`mv_y,mv_x` are list 0 and `drl_index1`/`mv1_y,mv1_x` list 1.
+  // With use_optflow the block codes a single RefMvIdx into the two-list
+  // stack, so `drl_index1` is unused and both MVs come from entry
+  // `drl_index` of that stack.
+  std::uint8_t drl_index1 = 0;
+  std::int32_t mv1_y = 0;
+  std::int32_t mv1_x = 0;
+  // §5.20.7.6 use_optflow (REFINE_SWITCHABLE only) and §5.20.7.17 use_refinemv.
+  std::uint8_t use_optflow = 0;
+  std::uint8_t use_refinemv = 0;
   // §5.20.7.16 masked compound (enable_masked_compound = 1).  `compound_masked`
   // is comp_group_idx; when set, `compound_type` selects the mask
   // (0 = WEDGE, 1 = DIFFWTD) and the matching symbols follow.
@@ -97,6 +114,28 @@ struct BlockSyntax {
   std::uint8_t y_mode = 0;
   std::int8_t y_angle_delta = 0;
   std::uint8_t uv_mode = 0;
+  // §5.20.5.7/.8, §5.20.7.2 segment id signalled for this leaf.  A skipped
+  // inter leaf does not code the symbol; the encoder replays the decoder's
+  // §5.20.7.4 neighbour prediction and stores that value here.  Unused (0)
+  // when the frame does not enable segmentation.
+  std::uint8_t segment_id = 0;
+  // §7.14.2 get_qindex() for this leaf (effective quantizer after
+  // delta-Q/segmentation).  -1 means "not supplied": the deblock grid then
+  // falls back to the frame base_q_idx (the historical default path).
+  std::int16_t qindex = -1;
+
+  // --- §5.20.5.3/.4 intra block copy (kFlagIsIbc) --------------------------
+  std::uint8_t ibc_skip = 1;
+  std::uint8_t ibc_mode = 0;
+  std::uint8_t ibc_ref_mv_idx = 0;
+  std::int32_t ibc_bv_row = 0;
+  std::int32_t ibc_bv_col = 0;
+  std::uint8_t morph_pred = 0;
+
+  // --- §5.20.7.14/.15 motion mode (INTERINTRA) -----------------------------
+  std::uint8_t motion_mode = 0;
+  std::uint8_t interintra_mode = 0;
+  std::uint8_t wedge_interintra = 0;
   // §5.20.7.32 cfl_index when kFlagIsCfl is set (1 = CFL_DERIVED_ALPHA,
   // 2 = CFL_MULTI/MHCCP).
   std::uint8_t cfl_index = 1;
@@ -138,16 +177,53 @@ struct BlockSyntax {
   std::uint32_t tx_part_levels_offset[4] = {0, 0, 0, 0};
 };
 
+// §7.9/§7.12.2 frame-level temporal state the syntax writer needs to rebuild
+// the same MV stack the decision path used.  `field` is owned by the caller and
+// must stay alive for the whole write() call.
+struct TemporalFramePlan {
+  bool use_ref_frame_mvs = false;
+  int order_hint = 0;
+  int num_past_refs = 0;
+  int num_future_refs = 0;
+  int closest_past = -1;    // §7.8 OrigClosestPast ref label, -1 = NONE
+  int closest_future = -1;  // §7.8 OrigClosestFuture ref label, -1 = NONE
+  // OrderHints[ref] for ref labels 0..num_total_refs-1.
+  std::array<int, 7> ref_order_hints{-1, -1, -1, -1, -1, -1, -1};
+  // merge::TemporalScanFn supplied by video_frame.cpp; nullptr keeps the stack
+  // builder temporal-inert without a link dependency on motion_field.cpp.
+  merge::TemporalScanFn scan = nullptr;
+  const inter::temporal::MotionField* field = nullptr;
+};
+
 struct FramePlan {
   int width = 0;
   int height = 0;
-  int sb_size = 64;
-  // false for the intra keyframe (intra_frame_mode_info), true for P frames
+  int sb_size = 64;  // false for the intra keyframe (intra_frame_mode_info), true for P frames
   // (inter_frame_mode_info, which codes is_inter/skip).
   bool inter_frame = true;
   // §5.18.2 allow_bawp: code use_bawp after single_mode for every eligible
   // single-prediction block.  Off keeps every historical stream byte-identical.
   bool allow_bawp = false;
+  // §5.20.5.3/.4 intra block copy + §7.13.3.26 morph_pred on an intra frame.
+  // `allow_screen_content_tools` also makes palette_mode_info() present for
+  // every eligible non-IBC block (the writer emits has_palette_y = 0).
+  bool allow_screen_content_tools = false;
+  bool allow_intrabc = false;
+  bool force_integer_mv = true;
+  bool morph_pred_present = false;
+  // §5.20.7.14/.15 single-reference motion-mode syntax.  When set, every
+  // eligible inter block codes inter_intra (and the inter-intra payload when
+  // set).
+  bool enable_interintra = false;
+  // §5.4.6 temporal refinement tools.  `opfl_refine_type` mirrors the sequence
+  // value (0 NONE, 1 SWITCHABLE, 2 ALL).  SWITCHABLE codes use_optflow on every
+  // eligible compound block; `enable_refinemv` makes §5.20.7.17 derive
+  // use_refinemv for eligible NEAR_NEARMV compound blocks (no bit: the
+  // non-GLOBALMV form is not switchable).
+  int opfl_refine_type = 0;
+  bool enable_refinemv = false;
+  // §5.18.2 FrameType == SWITCH_FRAME (refine-MV/OPFL are disabled on it).
+  bool frame_is_switch = false;
   // §5.18.2 per-frame reference map.  num_total_refs > 1 lists the explicit
   // map; reference_select enables per-block comp_mode (compound).
   int num_total_refs = 1;
@@ -160,6 +236,8 @@ struct FramePlan {
   int mv_precision = 0;
   // FrameDistance[ref] for the MV stack's derived candidates.
   std::array<int, 7> frame_distance{0, 0, 0, 0, 0, 0, 0};
+  // §7.12.2 temporal scan state (use_ref_frame_mvs + the §7.9 field).
+  TemporalFramePlan temporal{};
   // §5.18.9 global motion parameters for the MV-stack GlobalMvs.  Identity
   // models (the default) reproduce the historical zero GlobalMvs.  The writer
   // projects the centre MV per block with the frame precision.
@@ -185,9 +263,21 @@ struct FramePlan {
   int tile_mi_row = 0;
   int tile_mi_col = 0;
 
+  // §5.18.7.1/.8 opt-in segmentation + delta-Q state for this tile.  The
+  // fields are inert (disabled/empty) on every default stream, so the writer
+  // emits exactly the historical bits.  `delta_steps` holds one planned step
+  // per superblock in raster order (the decoder resets CurrentQIndex at every
+  // tile, so the plan never spans tiles).
+  rc::SegmentationParams segmentation{};
+  rc::DeltaQParams delta_q{};
+  bool primary_ref_is_none = true;
+  std::vector<rc::DeltaQPlanStep> delta_steps;
+
   int sb_cols() const;
   int sb_rows() const;
   int superblock_count() const;
+  // True when the tile codes the §5.20.5.7/.11 segmentation/delta-Q symbols.
+  bool qp_enabled() const { return segmentation.enabled || delta_q.present; }
 };
 
 // Emit the range-coded tile payload for one frame (key or inter). The caller

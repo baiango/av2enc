@@ -1,9 +1,13 @@
-# Production integration (blocked, exact construction)
+# Production integration
 
-This component is deliberately self-contained. The shipped M1/M2 paths still
-have **no IBC mode-info branch**, so `morph_pred` cannot be reached from
-`src/main.cpp` without the edits below. They are listed as exact construction
-and call sites; none is applied in this work.
+**Status:** the M2 video path now carries `morph_pred` on the intra keyframe
+(`--video-morph`).  The edits below were the construction sketch; the shipped
+implementation lives in `src/pipeline/video/video_syntax.cpp`
+(`write_keyframe_mode_info()`, `write_ibc_body()`) and
+`src/pipeline/video/video_frame.cpp` (`choose_ibc_leaf()`).  It is gated by
+`src/pipeline/video/gate_video_morph_interintra.sh` (1/4 pictures, `dav2d --strict 1`,
+recon exact).  The M1 `--still-ibc` writer also has the IBC mode-info branch
+(`write_intrabc_info()`), but does not signal `morph_pred`.
 
 The closest working example is `src/encoder/m1/ibc_stream/still_ibc_stream.cpp`
 (the IBC gate writer). It already writes `use_intrabc`, `skip_flag`,

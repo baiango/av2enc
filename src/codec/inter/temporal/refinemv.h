@@ -97,6 +97,10 @@ struct RefinePredictInput {
   int sub_y = 0;
   int frame_w = 0;
   int frame_h = 0;
+  // Visible (§7.13.3.17 RefFrameWidth/Height) luma size per list.  0 falls
+  // back to the plane extent (the historical component/test form).
+  int ref_luma_w[2] = {0, 0};
+  int ref_luma_h[2] = {0, 0};
   MvPair offset_mvs;  // result of offset_refinemv(), 1/8 luma
   int cwp_weight = kCwpEqual;
   bool use_ref_area = true;

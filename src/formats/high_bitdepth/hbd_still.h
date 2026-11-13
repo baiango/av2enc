@@ -43,6 +43,26 @@ struct HbdOptions {
   // §7.17 deblocking at the 10-bit sample depth.  Off by default so the pinned
   // 10-bit streams are unchanged; `--still-deblock` opts in.
   bool enable_deblock = false;
+  // §7.18 CDEF at 10-bit.  Off by default; the strength search runs over the
+  // default candidate ladder.  `cdef_num_strengths == 1` codes the
+  // header-only form (no per-block index), 2..8 codes `cdef_idx`.
+  bool enable_cdef = false;
+  int cdef_damping = 3;        // CdefDamping 3..6
+  int cdef_num_strengths = 4;  // CdefStrengths 1..8
+  // §7.19 CCSO at 10-bit (band-offset and edge-classified forms).
+  bool enable_ccso = false;
+  int ccso_luma_size_log2 = 6;  // 6 for the 64x64 frame superblock
+  // `--still-ccso-edge`: restrict the fit to the edge-classified form so the
+  // gate exercises its offset table even when the band-only form wins.
+  bool ccso_edge_only = false;
+  // §7.20 loop restoration.  `enable_wiener` covers luma Wiener NS,
+  // `enable_chroma_lr` the chroma planes.  `enable_pc_wiener` selects
+  // RESTORE_PC_WIENER for luma instead of Wiener NS.
+  bool enable_wiener = false;
+  bool enable_chroma_lr = false;
+  bool enable_pc_wiener = false;
+  // §7.20.5 GDF (luma, header-only mode).
+  bool enable_gdf = false;
 };
 
 struct HbdResult {

@@ -77,9 +77,10 @@ const char* restoration_status_string(RestorationStatus status) {
     case RestorationStatus::kInvalidArgument:
       return "invalid argument";
     case RestorationStatus::kUnsupportedBitDepth:
-      return "unsupported bit depth (8-bit only)";
+      return "unsupported bit depth (8-bit via ccso_frame, 10/12-bit via "
+             "ccso_frame16)";
     case RestorationStatus::kUnsupportedSubsampling:
-      return "unsupported chroma subsampling (4:2:0 only)";
+      return "unsupported chroma subsampling";
     case RestorationStatus::kUnsupportedPcWiener:
       return "PC-Wiener needs pc_wiener_*.h tables (not in the spec text)";
     case RestorationStatus::kUnsupportedGdf:
@@ -291,6 +292,153 @@ RestorationStatus ccso_frame(const RestorationFrame& frame,
   for (int p = 0; p < 3; ++p) {
     if (params.plane[p].enabled) {
       ccso_plane(core, p);
+    }
+  }
+  return RestorationStatus::kOk;
+}
+
+// ---------------------------------------------------------------------------
+// 10/12-bit CCSO
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool plane_valid16(const RestorationPlane16& p, int width, int height) {
+  return p.data != nullptr && p.stride >= width && height > 0;
+}
+
+// One validation body for both sample containers: the metadata contract is
+// identical, only the plane type and the accepted depth range differ.
+RestorationStatus validate_frame16(const RestorationFrame16& f) {
+  if (f.mi_cols <= 0 || f.mi_rows <= 0) {
+    return RestorationStatus::kInvalidArgument;
+  }
+  if (f.bit_depth != 10 && f.bit_depth != 12) {
+    return RestorationStatus::kUnsupportedBitDepth;
+  }
+  if (f.num_planes < 1 || f.num_planes > 3) {
+    return RestorationStatus::kInvalidArgument;
+  }
+  if (f.subsampling_x < 0 || f.subsampling_x > 1 || f.subsampling_y < 0 ||
+      f.subsampling_y > 1) {
+    return RestorationStatus::kUnsupportedSubsampling;
+  }
+  if (f.sb_width <= 0 || f.sb_height <= 0 || f.sb_shift < 0 || f.sb_shift > 8) {
+    return RestorationStatus::kInvalidArgument;
+  }
+  if (f.cfl_ds_filter_index < 0 || f.cfl_ds_filter_index > 3) {
+    return RestorationStatus::kInvalidArgument;
+  }
+  for (int p = 0; p < f.num_planes; ++p) {
+    const int w = (f.mi_cols * kMiSize) >> (p == 0 ? 0 : f.subsampling_x);
+    const int h = (f.mi_rows * kMiSize) >> (p == 0 ? 0 : f.subsampling_y);
+    if (!plane_valid16(f.curr[p], w, h) || !plane_valid16(f.cdef[p], w, h)) {
+      return RestorationStatus::kInvalidArgument;
+    }
+  }
+  return RestorationStatus::kOk;
+}
+
+bool ccso_grid_covers16(const RestorationFrame16& frame,
+                        const CcsoFrameParams& params, int plane) {
+  if (!params.plane[plane].enabled) {
+    return true;
+  }
+  const int sub_x = (plane == 0) ? 0 : frame.subsampling_x;
+  const int sub_y = (plane == 0) ? 0 : frame.subsampling_y;
+  int cols = 0;
+  int rows = 0;
+  const int w = (frame.mi_cols * kMiSize) >> sub_x;
+  const int h = (frame.mi_rows * kMiSize) >> sub_y;
+  ccso_blk_grid_size(w, h, params.ccso_luma_size_log2, sub_x, sub_y, &cols,
+                     &rows);
+  return params.blk_cols[plane] >= cols && params.blk_rows[plane] >= rows;
+}
+
+CcsoCoreFrame16 ccso_to_core16(const RestorationFrame16& frame,
+                               const CcsoFrameParams& params) {
+  CcsoCoreFrame16 core{};
+  for (int p = 0; p < 3; ++p) {
+    CcsoCorePlaneT<std::uint16_t>& c = core.plane[p];
+    c.curr_luma = frame.curr[0].data;
+    c.curr_luma_stride = frame.curr[0].stride;
+    c.dst = frame.cdef[p].data;
+    c.dst_stride = frame.cdef[p].stride;
+    c.blks = params.blks[p];
+    c.blk_cols = params.blk_cols[p];
+    c.blk_rows = params.blk_rows[p];
+    c.enabled = params.plane[p].enabled;
+    c.scale_idx = params.plane[p].scale_idx;
+    c.quant_idx = params.plane[p].quant_idx;
+    c.ext_filter = params.plane[p].ext_filter;
+    c.edge_clf = params.plane[p].edge_clf;
+    c.max_band_log2 = params.plane[p].max_band_log2;
+    c.bo_only = params.plane[p].bo_only;
+    c.offsets = params.plane[p].offsets;
+  }
+  core.mi_cols = frame.mi_cols;
+  core.mi_rows = frame.mi_rows;
+  core.sub_x = frame.subsampling_x;
+  core.sub_y = frame.subsampling_y;
+  core.bit_depth = frame.bit_depth;
+  core.num_planes = frame.num_planes;
+  core.ccso_luma_size_log2 = params.ccso_luma_size_log2;
+  core.sb_width = frame.sb_width;
+  core.sb_height = frame.sb_height;
+  core.bru_modes = frame.bru_modes;
+  core.segment_ids = frame.segment_ids;
+  core.chroma_segment_ids = frame.chroma_segment_ids;
+  core.lossless = frame.lossless;
+  core.mi_col_start = frame.mi_col_start;
+  core.mi_col_end = frame.mi_col_end;
+  core.mi_row_start = frame.mi_row_start;
+  core.mi_row_end = frame.mi_row_end;
+  core.disable_loopfilters_across_tiles =
+      frame.disable_loopfilters_across_tiles;
+  return core;
+}
+
+}  // namespace
+
+bool ccso_supported16(const RestorationFrame16& frame,
+                      const CcsoFrameParams& params,
+                      RestorationStatus* status) {
+  auto set = [status](RestorationStatus s) {
+    if (status != nullptr) *status = s;
+    return s == RestorationStatus::kOk;
+  };
+  const RestorationStatus st = validate_frame16(frame);
+  if (st != RestorationStatus::kOk) return set(st);
+  if (params.ccso_luma_size_log2 < 6 || params.ccso_luma_size_log2 > 8) {
+    return set(RestorationStatus::kInvalidArgument);
+  }
+  for (int p = 0; p < 3; ++p) {
+    if (!ccso_params_valid(params.plane[p])) {
+      return set(RestorationStatus::kInvalidArgument);
+    }
+    if (params.plane[p].enabled) {
+      if (params.blks[p] == nullptr || params.blk_cols[p] <= 0 ||
+          params.blk_rows[p] <= 0) {
+        return set(RestorationStatus::kInvalidArgument);
+      }
+      if (!ccso_grid_covers16(frame, params, p)) {
+        return set(RestorationStatus::kInvalidArgument);
+      }
+    }
+  }
+  return set(RestorationStatus::kOk);
+}
+
+RestorationStatus ccso_frame16(const RestorationFrame16& frame,
+                               const CcsoFrameParams& params) {
+  RestorationStatus status = RestorationStatus::kOk;
+  if (!ccso_supported16(frame, params, &status)) {
+    return status;
+  }
+  const CcsoCoreFrame16 core = ccso_to_core16(frame, params);
+  for (int p = 0; p < frame.num_planes; ++p) {
+    if (params.plane[p].enabled) {
+      ccso_plane_t(core, p);
     }
   }
   return RestorationStatus::kOk;
@@ -598,6 +746,145 @@ RestorationStatus loop_restoration_frame(const RestorationFrame& frame,
   for (int p = 0; p < 3; ++p) {
     if (params.frame_type[p] != kRestoreNone) {
       lr_plane(core, p);
+    }
+  }
+  return RestorationStatus::kOk;
+}
+
+// ---------------------------------------------------------------------------
+// 10/12-bit loop restoration (Wiener NS)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool frame_type_only_wiener(int type) {
+  return type == kRestoreNone || type == kRestoreWienerNs;
+}
+
+bool is_power_of_two16(int value) {
+  return value > 0 && (value & (value - 1)) == 0;
+}
+
+RestorationStatus validate_lr16(const RestorationFrame16& frame,
+                                const LoopRestorationParams& params) {
+  const RestorationStatus frame_st = validate_frame16(frame);
+  if (frame_st != RestorationStatus::kOk) return frame_st;
+  if (params.num_filter_classes != 1) {
+    return RestorationStatus::kInvalidArgument;
+  }
+  if (params.unit_size[1] != params.unit_size[2]) {
+    return RestorationStatus::kNonConformingUnitSize;
+  }
+  for (int p = 0; p < frame.num_planes; ++p) {
+    if (!frame_type_only_wiener(params.frame_type[p])) {
+      return RestorationStatus::kUnsupportedPcWiener;
+    }
+    const int sub_x = (p == 0) ? 0 : frame.subsampling_x;
+    const int sub_y = (p == 0) ? 0 : frame.subsampling_y;
+    const int w = (frame.mi_cols * kMiSize) >> sub_x;
+    if (frame.lr[p].data == nullptr || frame.lr[p].stride < w) {
+      return RestorationStatus::kInvalidArgument;
+    }
+    if (frame.lr[p].data == frame.cdef[p].data ||
+        frame.lr[p].data == frame.curr[p].data) {
+      return RestorationStatus::kInvalidArgument;
+    }
+    if (params.frame_type[p] == kRestoreNone) continue;
+    if (!is_power_of_two16(params.unit_size[p]) ||
+        params.unit_size[p] >
+            (kRestorationTileSizeMax >> ((p == 0) ? 0 : sub_y))) {
+      return RestorationStatus::kNonConformingUnitSize;
+    }
+    if (p == 0) {
+      if (params.unit_size[0] < 64) {
+        return RestorationStatus::kNonConformingUnitSize;
+      }
+    } else if (params.unit_size[p] < (64 >> sub_y)) {
+      return RestorationStatus::kNonConformingUnitSize;
+    }
+    const int need_rows = restoration_count_units(
+        params.unit_size[p], (frame.mi_rows * kMiSize) >> sub_y);
+    const int need_cols = restoration_count_units(
+        params.unit_size[p], (frame.mi_cols * kMiSize) >> sub_x);
+    if (params.unit_type[p] == nullptr || params.unit_rows[p] < need_rows ||
+        params.unit_cols[p] < need_cols) {
+      return RestorationStatus::kInvalidArgument;
+    }
+    if (params.frame_filters_on[p] != 0) {
+      if (params.frame_coeffs[p] == nullptr) {
+        return RestorationStatus::kInvalidArgument;
+      }
+    } else if (params.unit_coeffs[p] == nullptr) {
+      return RestorationStatus::kInvalidArgument;
+    }
+  }
+  return RestorationStatus::kOk;
+}
+
+LrCoreFrame16 loop_restoration_to_core16(
+    const RestorationFrame16& frame, const LoopRestorationParams& params) {
+  LrCoreFrame16 core{};
+  for (int p = 0; p < 3; ++p) {
+    LrCorePlane16& c = core.plane[p];
+    c.curr = frame.curr[p].data;
+    c.curr_stride = frame.curr[p].stride;
+    c.cdef = frame.cdef[p].data;
+    c.cdef_stride = frame.cdef[p].stride;
+    c.dst = frame.lr[p].data;
+    c.dst_stride = frame.lr[p].stride;
+    c.unit_type = params.unit_type[p];
+    c.unit_cols = params.unit_cols[p];
+    c.unit_rows = params.unit_rows[p];
+    c.unit_coeffs = params.unit_coeffs[p];
+    c.frame_coeffs = params.frame_coeffs[p];
+    c.filter_class_grid = params.filter_class_grid;
+    c.subclass_lookup = params.subclass_lookup;
+  }
+  core.mi_cols = frame.mi_cols;
+  core.mi_rows = frame.mi_rows;
+  core.sub_x = frame.subsampling_x;
+  core.sub_y = frame.subsampling_y;
+  core.bit_depth = frame.bit_depth;
+  core.num_planes = frame.num_planes;
+  for (int p = 0; p < 3; ++p) {
+    core.unit_size[p] = params.unit_size[p];
+    core.frame_type[p] = static_cast<int>(params.frame_type[p]);
+    core.frame_filters_on[p] = params.frame_filters_on[p];
+  }
+  core.num_filter_classes = params.num_filter_classes;
+  core.filter_class_grid = params.filter_class_grid;
+  core.subclass_lookup = params.subclass_lookup;
+  core.subclass_grid = params.subclass_grid;
+  core.filter_class_count = params.filter_class_count;
+  core.segment_ids = frame.segment_ids;
+  core.chroma_segment_ids = frame.chroma_segment_ids;
+  core.lossless = frame.lossless;
+  core.mi_col_start = frame.mi_col_start;
+  core.mi_col_end = frame.mi_col_end;
+  core.mi_row_start = frame.mi_row_start;
+  core.mi_row_end = frame.mi_row_end;
+  core.disable_loopfilters_across_tiles =
+      frame.disable_loopfilters_across_tiles;
+  core.use_bru = frame.use_bru;
+  core.bru_modes = frame.bru_modes;
+  core.sb_shift = frame.sb_shift;
+  core.cfl_ds_filter_index = frame.cfl_ds_filter_index;
+  return core;
+}
+
+}  // namespace
+
+RestorationStatus loop_restoration_frame16(
+    const RestorationFrame16& frame, const LoopRestorationParams& params) {
+  const RestorationStatus st = validate_lr16(frame, params);
+  if (st != RestorationStatus::kOk) return st;
+  LrCoreFrame16 core = loop_restoration_to_core16(frame, params);
+  for (int p = 0; p < frame.num_planes; ++p) {
+    lr_copy_plane_t(core, p);
+  }
+  for (int p = 0; p < frame.num_planes; ++p) {
+    if (params.frame_type[p] != kRestoreNone) {
+      lr_plane_t(core, p);
     }
   }
   return RestorationStatus::kOk;

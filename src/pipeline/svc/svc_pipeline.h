@@ -12,11 +12,10 @@
 //         output frame unit
 //       (tlayer ascending inside each mlayer)
 //
-// Spatial-only path: the plan declares no xlayer dependency, so every layer is
-// independently decodable and a reference that crosses xlayers is rejected.
-// That is a deliberate product limitation, not an unimplemented edge case: AV2
-// specifies separate per-xlayer decode contexts and this encoder does not
-// implement cross-layer sample/MV/coefficient prediction.
+// Cross-layer rules: §6.8.2 requires lcr_dependent_xlayers_flag = 0, so a
+// cross-xlayer reference can never be signalled and is rejected here
+// unconditionally.  Embedded-layer refinement (§5.4.1 MLayerDependencyMap)
+// predicts from a lower mlayer of the same xlayer and is allowed.
 
 #pragma once
 
@@ -47,11 +46,16 @@ struct Emission {
 };
 
 struct ReferencePolicy {
-  // AV2 v1.0.0 layer machinery in this encoder is packaging, not inter-layer
-  // prediction. Leave these false unless a future decoder-gated design adds a
-  // real cross-layer predictor.
+  // AV2 v1.0.0 §6.8.2 makes lcr_dependent_xlayers_flag = 0 a conformance
+  // requirement, so cross-xlayer (inter-layer) prediction is unreachable for
+  // every conforming stream.  The field is retained for source compatibility;
+  // reference_allowed() rejects cross-xlayer references unconditionally.
   bool cross_xlayer_prediction = false;
-  bool cross_mlayer_prediction = false;
+  // Embedded-layer refinement (--svc-embedded) predicts from a lower mlayer of
+  // the same xlayer.  §5.4.1 MLayerDependencyMap / §6.17.2 allow it, and the
+  // encoder's refinement sequence writes the matching reference slots and
+  // refresh masks.
+  bool cross_mlayer_prediction = true;
   // Normal temporal prediction across tlayers inside the same x/m is allowed.
   bool cross_tlayer_prediction = true;
 };

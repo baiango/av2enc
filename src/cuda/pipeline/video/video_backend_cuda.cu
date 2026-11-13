@@ -34,6 +34,7 @@
 #include <cuda_runtime.h>
 
 #include "cuda/arena.h"
+#include "cuda/context.h"
 #include "cuda/error.h"
 #include "cuda/codec/filters/deblock/deblock.h"
 #include "cuda/codec/filters/cdef/cdef.h"
@@ -193,13 +194,45 @@ __global__ void video_variance_kernel(const VarianceNode* __restrict__ nodes,
                                          node.x, node.y, node.w, node.h);
 }
 
+// One warp per scored candidate.  The score is an integer sum, so splitting the
+// row-major sample sequence across lanes and reducing with shuffles returns the
+// same value as the single-thread loop.  A 64x64 candidate is 4096 samples:
+// serialising those on one thread cost ~50 us per launch and was the largest
+// single kernel on the 720p path.
+constexpr int kSseWarpsPerBlock = 4;
+constexpr int kSseThreads = kSseWarpsPerBlock * 32;
+
+__device__ __forceinline__ std::int64_t warp_sum_i64(std::int64_t value) {
+  value += __shfl_down_sync(0xffffffffu, value, 16);
+  value += __shfl_down_sync(0xffffffffu, value, 8);
+  value += __shfl_down_sync(0xffffffffu, value, 4);
+  value += __shfl_down_sync(0xffffffffu, value, 2);
+  value += __shfl_down_sync(0xffffffffu, value, 1);
+  return __shfl_sync(0xffffffffu, value, 0);
+}
+
 __global__ void video_sse_kernel(const SseJob* __restrict__ jobs, int count) {
-  const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-  if (i >= count) return;
-  const SseJob job = jobs[i];
-  *job.out = device::sse_against_source(
-      job.src, job.src_stride, job.frame_w, job.frame_h, job.x, job.y,
-      job.pred, job.pred_stride, job.w, job.h);
+  const int warp = static_cast<int>((blockIdx.x * blockDim.x + threadIdx.x) >>
+                                    5);
+  if (warp >= count) return;
+  const int lane = static_cast<int>(threadIdx.x) & 31;
+  const SseJob job = jobs[warp];
+  const int pixels = job.w * job.h;
+  std::int64_t local = 0;
+  for (int i = lane; i < pixels; i += 32) {
+    const int x = i % job.w;
+    const int y = i / job.w;
+    const int src = device::source_sample(job.src, job.src_stride, job.frame_w,
+                                          job.frame_h, job.x + x, job.y + y);
+    const int p =
+        job.pred[static_cast<std::size_t>(y) *
+                     static_cast<std::size_t>(job.pred_stride) +
+                 static_cast<std::size_t>(x)];
+    const int d = src - p;
+    local += static_cast<std::int64_t>(d) * d;
+  }
+  local = warp_sum_i64(local);
+  if (lane == 0) *job.out = local;
 }
 
 __global__ void video_residual_kernel(const std::uint8_t* __restrict__ src,
@@ -273,27 +306,31 @@ __global__ void video_recon_kernel(const ReconJob* __restrict__ jobs, int count)
 
 __global__ void video_warp_sse_kernel(const WarpSseJob* __restrict__ jobs,
                                       int count) {
-  const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-  if (i >= count) return;
-  const WarpSseJob job = jobs[i];
-  std::int64_t sse = 0;
-  for (int row = 0; row < job.h; ++row) {
+  const int warp = static_cast<int>((blockIdx.x * blockDim.x + threadIdx.x) >>
+                                    5);
+  if (warp >= count) return;
+  const int lane = static_cast<int>(threadIdx.x) & 31;
+  const WarpSseJob job = jobs[warp];
+  const int pixels = job.w * job.h;
+  std::int64_t local = 0;
+  for (int i = lane; i < pixels; i += 32) {
+    const int row = i / job.w;
+    const int col = i % job.w;
     const int py = job.y + row;
     const int cy = py < 0 ? 0 : (py >= job.frame_h ? job.frame_h - 1 : py);
-    for (int col = 0; col < job.w; ++col) {
-      const int px = job.x + col;
-      const int cx = px < 0 ? 0 : (px >= job.frame_w ? job.frame_w - 1 : px);
-      const int s = job.src[static_cast<std::size_t>(cy) *
-                                static_cast<std::size_t>(job.src_stride) +
-                            static_cast<std::size_t>(cx)];
-      const int p = job.pred[static_cast<std::size_t>(row) *
-                                 static_cast<std::size_t>(job.pred_stride) +
-                             static_cast<std::size_t>(col)];
-      const int d = s - p;
-      sse += static_cast<std::int64_t>(d) * d;
-    }
+    const int px = job.x + col;
+    const int cx = px < 0 ? 0 : (px >= job.frame_w ? job.frame_w - 1 : px);
+    const int s = job.src[static_cast<std::size_t>(cy) *
+                              static_cast<std::size_t>(job.src_stride) +
+                          static_cast<std::size_t>(cx)];
+    const int p = job.pred[static_cast<std::size_t>(row) *
+                               static_cast<std::size_t>(job.pred_stride) +
+                           static_cast<std::size_t>(col)];
+    const int d = s - p;
+    local += static_cast<std::int64_t>(d) * d;
   }
-  *job.out = sse;
+  local = warp_sum_i64(local);
+  if (lane == 0) *job.out = local;
 }
 
 __global__ void video_warp_store_kernel(const WarpStoreJob* __restrict__ jobs,
@@ -862,10 +899,10 @@ class CudaBackend final : public Backend {
     stats_.inter_candidates += jobs.size();
 
     upload(d_sse_jobs, sse_jobs.data(), sse_jobs.size() * sizeof(SseJob));
-    const int threads = 128;
-    const int blocks = div_up(static_cast<int>(jobs.size()), threads);
-    video_sse_kernel<<<blocks, threads, 0, stream_>>>(d_sse_jobs,
-                                                   static_cast<int>(jobs.size()));
+    const int blocks =
+        div_up(static_cast<int>(jobs.size()), kSseWarpsPerBlock);
+    video_sse_kernel<<<blocks, kSseThreads, 0, stream_>>>(
+        d_sse_jobs, static_cast<int>(jobs.size()));
     if (!check(cudaGetLastError(), "video_sse_kernel", error)) return false;
     ++stats_.sse_launches;
     return check(download(sse.data(), d_sse_out,
@@ -928,23 +965,25 @@ class CudaBackend final : public Backend {
       return false;
     }
     ++stats_.mc_launches;
-    if (!download_2d(y.data(), w, recon_planes_[0] +
-                                     static_cast<std::size_t>(ly) *
-                                         static_cast<std::size_t>(luma_w_) +
-                                     static_cast<std::size_t>(lx),
-                     luma_w_, w, h, error) ||
-        !download_2d(u.data(), cw,
-                     recon_planes_[1] +
-                         static_cast<std::size_t>(lcy) *
-                             static_cast<std::size_t>(chroma_mi_w_) +
-                         static_cast<std::size_t>(lcx),
-                     chroma_mi_w_, cw, ch, error) ||
-        !download_2d(v.data(), cw,
-                     recon_planes_[2] +
-                         static_cast<std::size_t>(lcy) *
-                             static_cast<std::size_t>(chroma_mi_w_) +
-                         static_cast<std::size_t>(lcx),
-                     chroma_mi_w_, cw, ch, error)) {
+    if (!download_2d_deferred(y.data(), w, recon_planes_[0] +
+                                                  static_cast<std::size_t>(ly) *
+                                                      static_cast<std::size_t>(
+                                                          luma_w_) +
+                                                  static_cast<std::size_t>(lx),
+                              luma_w_, w, h, error) ||
+        !download_2d_deferred(u.data(), cw,
+                              recon_planes_[1] +
+                                  static_cast<std::size_t>(lcy) *
+                                      static_cast<std::size_t>(chroma_mi_w_) +
+                                  static_cast<std::size_t>(lcx),
+                              chroma_mi_w_, cw, ch, error) ||
+        !download_2d_deferred(v.data(), cw,
+                              recon_planes_[2] +
+                                  static_cast<std::size_t>(lcy) *
+                                      static_cast<std::size_t>(chroma_mi_w_) +
+                                  static_cast<std::size_t>(lcx),
+                              chroma_mi_w_, cw, ch, error) ||
+        !flush_downloads(error)) {
       return false;
     }
     return true;
@@ -1049,10 +1088,10 @@ class CudaBackend final : public Backend {
     stats_.inter_candidates += jobs.size();
 
     upload(d_sse_jobs, sse_jobs.data(), sse_jobs.size() * sizeof(SseJob));
-    const int threads = 128;
-    const int blocks = div_up(static_cast<int>(jobs.size()), threads);
-    video_sse_kernel<<<blocks, threads, 0, stream_>>>(d_sse_jobs,
-                                                   static_cast<int>(jobs.size()));
+    const int blocks =
+        div_up(static_cast<int>(jobs.size()), kSseWarpsPerBlock);
+    video_sse_kernel<<<blocks, kSseThreads, 0, stream_>>>(
+        d_sse_jobs, static_cast<int>(jobs.size()));
     if (!check(cudaGetLastError(), "video_sse_kernel", error)) return false;
     ++stats_.sse_launches;
     return check(download(sse.data(), d_sse_out,
@@ -1131,24 +1170,25 @@ class CudaBackend final : public Backend {
     y.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
     u.resize(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
     v.resize(u.size());
-    if (!download_2d(y.data(), w,
-                     recon_planes_[0] +
-                         static_cast<std::size_t>(luma_job.y) *
-                             static_cast<std::size_t>(luma_w_) +
-                         static_cast<std::size_t>(luma_job.x),
-                     luma_w_, w, h, error) ||
-        !download_2d(u.data(), cw,
-                     recon_planes_[1] +
-                         static_cast<std::size_t>(luma_job.y / 2) *
-                             static_cast<std::size_t>(chroma_mi_w_) +
-                         static_cast<std::size_t>(luma_job.x / 2),
-                     chroma_mi_w_, cw, ch, error) ||
-        !download_2d(v.data(), cw,
-                     recon_planes_[2] +
-                         static_cast<std::size_t>(luma_job.y / 2) *
-                             static_cast<std::size_t>(chroma_mi_w_) +
-                         static_cast<std::size_t>(luma_job.x / 2),
-                     chroma_mi_w_, cw, ch, error)) {
+    if (!download_2d_deferred(y.data(), w,
+                              recon_planes_[0] +
+                                  static_cast<std::size_t>(luma_job.y) *
+                                      static_cast<std::size_t>(luma_w_) +
+                                  static_cast<std::size_t>(luma_job.x),
+                              luma_w_, w, h, error) ||
+        !download_2d_deferred(u.data(), cw,
+                              recon_planes_[1] +
+                                  static_cast<std::size_t>(luma_job.y / 2) *
+                                      static_cast<std::size_t>(chroma_mi_w_) +
+                                  static_cast<std::size_t>(luma_job.x / 2),
+                              chroma_mi_w_, cw, ch, error) ||
+        !download_2d_deferred(v.data(), cw,
+                              recon_planes_[2] +
+                                  static_cast<std::size_t>(luma_job.y / 2) *
+                                      static_cast<std::size_t>(chroma_mi_w_) +
+                                  static_cast<std::size_t>(luma_job.x / 2),
+                              chroma_mi_w_, cw, ch, error) ||
+        !flush_downloads(error)) {
       return false;
     }
     return true;
@@ -1246,9 +1286,10 @@ class CudaBackend final : public Backend {
     }
     upload(d_warp_sse_jobs_, host_sse.data(),
            host_sse.size() * sizeof(WarpSseJob));
-    video_warp_sse_kernel<<<1, static_cast<unsigned>(host_sse.size()), 0,
-                            stream_>>>(d_warp_sse_jobs_,
-                                       static_cast<int>(host_sse.size()));
+    const int warp_blocks =
+        div_up(static_cast<int>(host_sse.size()), kSseWarpsPerBlock);
+    video_warp_sse_kernel<<<warp_blocks, kSseThreads, 0, stream_>>>(
+        d_warp_sse_jobs_, static_cast<int>(host_sse.size()));
     if (!check(cudaGetLastError(), "warp SSE kernel", error)) return false;
     if (!check(download(sse.data(), d_warp_sse_out_,
                         jobs.size() * sizeof(std::int64_t)),
@@ -1314,24 +1355,25 @@ class CudaBackend final : public Backend {
     y.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
     u.resize(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
     v.resize(u.size());
-    if (!download_2d(y.data(), w,
-                     recon_planes_[0] +
-                         static_cast<std::size_t>(luma_job.y) *
-                             static_cast<std::size_t>(luma_w_) +
-                         static_cast<std::size_t>(luma_job.x),
-                     luma_w_, w, h, error) ||
-        !download_2d(u.data(), cw,
-                     recon_planes_[1] +
-                         static_cast<std::size_t>(luma_job.y / 2) *
-                             static_cast<std::size_t>(chroma_mi_w_) +
-                         static_cast<std::size_t>(luma_job.x / 2),
-                     chroma_mi_w_, cw, ch, error) ||
-        !download_2d(v.data(), cw,
-                     recon_planes_[2] +
-                         static_cast<std::size_t>(luma_job.y / 2) *
-                             static_cast<std::size_t>(chroma_mi_w_) +
-                         static_cast<std::size_t>(luma_job.x / 2),
-                     chroma_mi_w_, cw, ch, error)) {
+    if (!download_2d_deferred(y.data(), w,
+                              recon_planes_[0] +
+                                  static_cast<std::size_t>(luma_job.y) *
+                                      static_cast<std::size_t>(luma_w_) +
+                                  static_cast<std::size_t>(luma_job.x),
+                              luma_w_, w, h, error) ||
+        !download_2d_deferred(u.data(), cw,
+                              recon_planes_[1] +
+                                  static_cast<std::size_t>(luma_job.y / 2) *
+                                      static_cast<std::size_t>(chroma_mi_w_) +
+                                  static_cast<std::size_t>(luma_job.x / 2),
+                              chroma_mi_w_, cw, ch, error) ||
+        !download_2d_deferred(v.data(), cw,
+                              recon_planes_[2] +
+                                  static_cast<std::size_t>(luma_job.y / 2) *
+                                      static_cast<std::size_t>(chroma_mi_w_) +
+                                  static_cast<std::size_t>(luma_job.x / 2),
+                              chroma_mi_w_, cw, ch, error) ||
+        !flush_downloads(error)) {
       return false;
     }
     ++stats_.mc_launches;
@@ -1881,29 +1923,54 @@ class CudaBackend final : public Backend {
     if (!check(cudaGetLastError(), "video_recon_kernel", error)) return false;
     ++stats_.recon_launches;
 
-    std::vector<std::int32_t> host_levels(3 * kMaxPlaneTx);
-    std::vector<std::uint8_t> host_recon(3 * kMaxCodedPixels);
-    if (!check(download(host_levels.data(), d_levels_,
-                        host_levels.size() * sizeof(std::int32_t)),
-               "tx levels download", error) ||
-        !check(download(host_recon.data(), d_recon_out_,
-                        host_recon.size() * sizeof(std::uint8_t)),
-               "tx recon download", error)) {
-      return false;
-    }
-
+    // Only the coded block travels back: the per-plane level count is the
+    // adjusted transform area and the reconstruction is coded_w x coded_h.
+    // Copying the fixed 3 x 1024 levels + 3 x 4096 recon slots moved 24 KiB per
+    // leaf even for an 8x8 block.
+    std::array<av2enc::txv::TxParams, 3> params{};
+    std::array<int, 3> corners{};
+    std::array<int, 3> coded_elems{};
     for (int j = 0; j < plane_count; ++j) {
       const int plane = first_plane + j;
       const auto params_opt = av2enc::txv::make_tx_params(
           coded_w[plane], coded_h[plane], av2enc::txv::TxType::kDctDct);
-      const av2enc::txv::TxParams& params = *params_opt;
-      const int corners = params.w * params.h;
-      out[j].levels.assign(host_levels.begin() + plane * kMaxPlaneTx,
-                           host_levels.begin() + plane * kMaxPlaneTx + corners);
-      const int coded_elems = coded_w[plane] * coded_h[plane];
-      out[j].recon.assign(host_recon.begin() + plane * kMaxCodedPixels,
-                          host_recon.begin() + plane * kMaxCodedPixels +
-                              coded_elems);
+      if (!params_opt.has_value()) {
+        error = "unsupported transform size";
+        return false;
+      }
+      params[static_cast<std::size_t>(j)] = *params_opt;
+      corners[static_cast<std::size_t>(j)] = params_opt->w * params_opt->h;
+      coded_elems[static_cast<std::size_t>(j)] =
+          coded_w[plane] * coded_h[plane];
+    }
+    std::array<std::vector<std::int32_t>, 3> host_levels;
+    std::array<std::vector<std::uint8_t>, 3> host_recon;
+    for (int j = 0; j < plane_count; ++j) {
+      const int plane = first_plane + j;
+      host_levels[static_cast<std::size_t>(j)].resize(
+          static_cast<std::size_t>(corners[static_cast<std::size_t>(j)]));
+      host_recon[static_cast<std::size_t>(j)].resize(
+          static_cast<std::size_t>(coded_elems[static_cast<std::size_t>(j)]));
+      if (!download_deferred(
+              host_levels[static_cast<std::size_t>(j)].data(),
+              d_levels_ + plane * kMaxPlaneTx,
+              host_levels[static_cast<std::size_t>(j)].size() *
+                  sizeof(std::int32_t),
+              error) ||
+          !download_deferred(host_recon[static_cast<std::size_t>(j)].data(),
+                             d_recon_out_ + plane * kMaxCodedPixels,
+                             host_recon[static_cast<std::size_t>(j)].size(),
+                             error)) {
+        return false;
+      }
+    }
+    // All 2 x plane_count copies travel in one pinned round trip: one sync per
+    // leaf instead of a stream drain per copy.
+    if (!flush_downloads(error)) return false;
+
+    for (int j = 0; j < plane_count; ++j) {
+      out[j].levels = std::move(host_levels[static_cast<std::size_t>(j)]);
+      out[j].recon = std::move(host_recon[static_cast<std::size_t>(j)]);
     }
     return true;
   }
@@ -1943,13 +2010,9 @@ class CudaBackend final : public Backend {
                       w / 2, error)) {
       return false;
     }
-    // The caller's host vectors die at the end of the block decision, so the
-    // copies must complete before returning.
-    if (!check(cudaStreamSynchronize(stream_), "cudaStreamSynchronize",
-               error)) {
-      return false;
-    }
-    ++stats_.syncs;
+    // The host vectors die at the end of the block decision, but the upload
+    // reads from pinned staging that stays valid until the next stream sync,
+    // so the write is ordered on the stream without draining it here.
     ++stats_.recon_launches;
     return true;
   }
@@ -1961,11 +2024,6 @@ class CudaBackend final : public Backend {
                       h, y.data(), w, error)) {
       return false;
     }
-    if (!check(cudaStreamSynchronize(stream_), "cudaStreamSynchronize",
-               error)) {
-      return false;
-    }
-    ++stats_.syncs;
     ++stats_.recon_launches;
     return true;
   }
@@ -3484,9 +3542,178 @@ class CudaBackend final : public Backend {
     return true;
   }
 
+  // ---- Pinned staging -----------------------------------------------------
+  // `pin_alloc` hands out a slice of the pinned buffer for one copy.  Slices are
+  // only recycled after a stream sync (which is what makes it safe to return
+  // before the copy has executed).  When the buffer is full we sync: correct
+  // first, and the hot path never reaches it (a leaf needs ~40 KiB).
+  enum class PinResult { kStaged, kFallback, kError };
+
+  PinResult pin_alloc(std::size_t bytes, std::uint8_t** out,
+                      std::string& error) {
+    *out = nullptr;
+    if (bytes == 0 || bytes > kPinMaxCopy) return PinResult::kFallback;
+    if (!pinned_.initialized()) {
+      std::string init_error;
+      if (!is_ok(pinned_.init(kPinCapacityBytes, &init_error))) {
+        // Host staging is an optimization, not a requirement: fall back to the
+        // pageable path rather than failing the encode.
+        return PinResult::kFallback;
+      }
+    }
+    if (pin_offset_ + bytes > pinned_.capacity()) {
+      if (!check(cudaStreamSynchronize(stream_), "cudaStreamSynchronize",
+                 error)) {
+        return PinResult::kError;
+      }
+      ++stats_.syncs;
+      copy_out_pending();
+      pin_reset();
+    }
+    *out = static_cast<std::uint8_t*>(pinned_.data()) + pin_offset_;
+    pin_offset_ += (bytes + 255u) & ~static_cast<std::size_t>(255u);
+    return PinResult::kStaged;
+  }
+
+  void pin_reset() {
+    pin_offset_ = 0;
+    pending_.clear();
+  }
+
+  // Device -> pinned staging.  The bytes land in `dst` when a later
+  // flush_downloads() (or any other stream sync) completes.
+  bool download_deferred(void* dst, const void* src, std::size_t bytes,
+                         std::string& error) {
+    if (bytes == 0) return true;
+    std::uint8_t* pin = nullptr;
+    switch (pin_alloc(bytes, &pin, error)) {
+      case PinResult::kError:
+        return false;
+      case PinResult::kFallback:
+        return check(download(dst, src, bytes), "download", error);
+      case PinResult::kStaged:
+        break;
+    }
+    if (!check(cudaMemcpyAsync(pin, src, bytes, cudaMemcpyDeviceToHost,
+                              stream_),
+               "pinned download", error)) {
+      return false;
+    }
+    PendingDownload entry;
+    entry.dst = dst;
+    entry.bytes = bytes;
+    entry.offset = static_cast<std::size_t>(
+        pin - static_cast<std::uint8_t*>(pinned_.data()));
+    pending_.push_back(entry);
+    return true;
+  }
+
+  // Strided device rows -> packed host rows.
+  bool download_2d_deferred(void* dst, int dst_stride, const void* src,
+                            int src_stride, int width, int rows,
+                            std::string& error) {
+    if (width <= 0 || rows <= 0) return true;
+    const std::size_t bytes = static_cast<std::size_t>(width) *
+                              static_cast<std::size_t>(rows);
+    std::uint8_t* pin = nullptr;
+    switch (pin_alloc(bytes, &pin, error)) {
+      case PinResult::kError:
+        return false;
+      case PinResult::kFallback:
+        return download_2d(static_cast<std::uint8_t*>(dst), dst_stride,
+                           static_cast<const std::uint8_t*>(src), src_stride,
+                           width, rows, error);
+      case PinResult::kStaged:
+        break;
+    }
+    if (!check(cudaMemcpy2DAsync(
+                   pin, static_cast<std::size_t>(width), src,
+                   static_cast<std::size_t>(src_stride),
+                   static_cast<std::size_t>(width),
+                   static_cast<std::size_t>(rows), cudaMemcpyDeviceToHost,
+                   stream_),
+               "pinned 2D download", error)) {
+      return false;
+    }
+    PendingDownload entry;
+    entry.dst = dst;
+    entry.bytes = bytes;
+    entry.offset = static_cast<std::size_t>(
+        pin - static_cast<std::uint8_t*>(pinned_.data()));
+    entry.dst_stride = dst_stride;
+    entry.row_bytes = width;
+    entry.rows = rows;
+    pending_.push_back(entry);
+    return true;
+  }
+
+  // Copies every completed deferred transfer into its host destination.  Must
+  // run after a stream sync (the pinned bytes are only valid then).
+  void copy_out_pending() {
+    const std::uint8_t* base =
+        static_cast<const std::uint8_t*>(pinned_.data());
+    for (const PendingDownload& entry : pending_) {
+      const std::uint8_t* pin = base + entry.offset;
+      if (entry.dst_stride == 0) {
+        std::memcpy(entry.dst, pin, entry.bytes);
+        stats_.bytes_downloaded += entry.bytes;
+        continue;
+      }
+      std::uint8_t* dst = static_cast<std::uint8_t*>(entry.dst);
+      for (int row = 0; row < entry.rows; ++row) {
+        std::memcpy(dst + static_cast<std::size_t>(row) *
+                              static_cast<std::size_t>(entry.dst_stride),
+                    pin + static_cast<std::size_t>(row) *
+                              static_cast<std::size_t>(entry.row_bytes),
+                    static_cast<std::size_t>(entry.row_bytes));
+      }
+      stats_.bytes_downloaded += entry.bytes;
+    }
+  }
+
+  // One sync for every deferred copy since the last flush.
+  bool flush_downloads(std::string& error) {
+    if (pending_.empty()) return true;
+    if (!check(cudaStreamSynchronize(stream_), "cudaStreamSynchronize", error)) {
+      return false;
+    }
+    ++stats_.syncs;
+    copy_out_pending();
+    pin_reset();
+    return true;
+  }
+
   bool upload_2d(std::uint8_t* dst, int dst_stride, const std::uint8_t* src,
                  int src_stride, int width, int rows, std::string& error) {
     if (width <= 0 || rows <= 0) return true;
+    const std::size_t bytes = static_cast<std::size_t>(width) *
+                              static_cast<std::size_t>(rows);
+    std::uint8_t* pin = nullptr;
+    switch (pin_alloc(bytes, &pin, error)) {
+      case PinResult::kError:
+        return false;
+      case PinResult::kFallback:
+        break;
+      case PinResult::kStaged:
+        for (int row = 0; row < rows; ++row) {
+          std::memcpy(pin + static_cast<std::size_t>(row) *
+                               static_cast<std::size_t>(width),
+                      src + static_cast<std::size_t>(row) *
+                                static_cast<std::size_t>(src_stride),
+                      static_cast<std::size_t>(width));
+        }
+        if (!check(cudaMemcpy2DAsync(
+                       dst, static_cast<std::size_t>(dst_stride), pin,
+                       static_cast<std::size_t>(width),
+                       static_cast<std::size_t>(width),
+                       static_cast<std::size_t>(rows),
+                       cudaMemcpyHostToDevice, stream_),
+                   "pinned 2D upload", error)) {
+          return false;
+        }
+        stats_.bytes_uploaded += bytes;
+        return true;
+    }
     if (!check(cudaMemcpy2DAsync(
                    dst, static_cast<std::size_t>(dst_stride), src,
                    static_cast<std::size_t>(src_stride),
@@ -3522,21 +3749,52 @@ class CudaBackend final : public Backend {
     return true;
   }
 
+  // Host -> device.  Small job arrays stage through pinned memory (the H2D no
+  // longer blocks the issuing thread and the copy is a true async enqueue);
+  // large frame-sized copies keep the pageable path.
   void upload(void* dst, const void* src, std::size_t bytes) {
     if (bytes == 0) return;
+    std::uint8_t* pin = nullptr;
+    std::string pin_error;
+    if (pin_alloc(bytes, &pin, pin_error) == PinResult::kStaged) {
+      std::memcpy(pin, src, bytes);
+      cudaMemcpyAsync(dst, pin, bytes, cudaMemcpyHostToDevice, stream_);
+      stats_.bytes_uploaded += bytes;
+      return;
+    }
     cudaMemcpyAsync(dst, src, bytes, cudaMemcpyHostToDevice, stream_);
     stats_.bytes_uploaded += bytes;
   }
 
+  // Device -> host, completed before returning.  Any earlier deferred copy is
+  // copied out by the same sync instead of stalling the stream twice.
   cudaError_t download(void* dst, const void* src, std::size_t bytes) {
     if (bytes == 0) return cudaSuccess;
-    cudaError_t err =
-        cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDeviceToHost, stream_);
+    std::uint8_t* pin = nullptr;
+    std::string pin_error;
+    const bool staged =
+        pin_alloc(bytes, &pin, pin_error) == PinResult::kStaged;
+    cudaError_t err = cudaMemcpyAsync(staged ? static_cast<void*>(pin) : dst,
+                                      src, bytes, cudaMemcpyDeviceToHost,
+                                      stream_);
     if (err != cudaSuccess) return err;
+    if (staged) {
+      PendingDownload entry;
+      entry.dst = dst;
+      entry.bytes = bytes;
+      entry.offset = static_cast<std::size_t>(
+          pin - static_cast<std::uint8_t*>(pinned_.data()));
+      pending_.push_back(entry);
+    }
     err = cudaStreamSynchronize(stream_);
     if (err != cudaSuccess) return err;
     ++stats_.syncs;
-    stats_.bytes_downloaded += bytes;
+    if (staged) {
+      copy_out_pending();
+      pin_reset();
+    } else {
+      stats_.bytes_downloaded += bytes;
+    }
     return cudaSuccess;
   }
 
@@ -3554,6 +3812,26 @@ class CudaBackend final : public Backend {
   bool stream_ok_ = false;
   cudaEvent_t start_event_ = nullptr;
   cudaEvent_t end_event_ = nullptr;
+
+  // Pinned host staging for the per-leaf copies (docs/cuda-interface.md: the
+  // runtime helper is the only pinned provider; the arena stays device-only).
+  // Copies <= kPinMaxCopy stage through this buffer, so a small D2H no longer
+  // drains the stream (pageable D2H must wait for the copy) and a small H2D no
+  // longer blocks the issuing thread. The bump allocator is reset only after a
+  // stream sync, so bytes handed to an enqueued copy stay valid until then.
+  static constexpr std::size_t kPinCapacityBytes = 1u << 20;
+  static constexpr std::size_t kPinMaxCopy = 32u << 10;
+  av2enc::cuda::StagingBuffer pinned_;
+  std::size_t pin_offset_ = 0;
+  struct PendingDownload {
+    void* dst = nullptr;
+    std::size_t bytes = 0;
+    std::size_t offset = 0;   // into pinned_
+    int dst_stride = 0;       // 0 = contiguous copy
+    int row_bytes = 0;
+    int rows = 0;
+  };
+  std::vector<PendingDownload> pending_;
 
   int width_ = 0;   // coded tile width (MI-aligned)
   int height_ = 0;  // coded tile height

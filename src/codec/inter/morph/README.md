@@ -202,7 +202,7 @@ This is a predictor-level measurement, not a coded-stream BD-rate: there is no
 residual coding, in-loop filtering, or production IBC mode decision in the
 gate writer.
 
-## Production call sites (not edited)
+## Production call sites (video carrier landed)
 
 Exact snippets: `INTEGRATION.md`.
 
@@ -238,8 +238,13 @@ Exact snippets: `INTEGRATION.md`.
 
 * 8-bit 4:2:0, luma only (the spec's morph process is plane 0).
 * The gate writer is a minimal still writer, not the production M1 encoder.
-* `morph_pred` is never signalled by the shipped CLI or M2 core; the two edits
-  above and an IBC mode-info path are required.
+* **The product carrier is the M2 intra keyframe** (`--video-morph`): a
+  single tile, no deblock/CDEF/CCSO/Wiener/chroma-LR/GDF and no
+  average/CDF-continuity chain.  `src/pipeline/video/gate_video_morph_interintra.sh`
+  gates 1 and 4 pictures with `dav2d --strict 1`; P frames code
+  `allow_bawp = 1` / `use_bawp = 0` because the sequence bit is shared.
+* The M1 `--still-ibc` writer has the IBC mode-info path but does not signal
+  `morph_pred`; `src/main.cpp` has no `--still-ibc-morph` flag.
 * The gate's SMOOTH row-0 blocks are a test scaffold for a non-flat
   reconstruction; a production encoder gets non-flat contexts from real
   residual coding.

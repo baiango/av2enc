@@ -167,6 +167,7 @@ add_library(av2enc_core STATIC
   src/codec/inter/temporal/tip.cpp
   src/codec/inter/temporal/temporal_syntax.cpp
   src/codec/inter/temporal/refinemv.cpp
+  src/codec/inter/temporal/opfl.cpp
   src/codec/inter/tip/tip_signalling.cpp
   src/codec/inter/tip/tip_candidates.cpp
   src/codec/inter/tip/tip_build.cpp
@@ -193,11 +194,20 @@ add_library(av2enc_core STATIC
   # B-frame schedules (opt-in, --b-frames).
   src/codec/inter/advanced/b_frame.cpp
   src/codec/inter/bframes/bframes.cpp
+  # §7.7/§7.8 implicit reference map and the §5.18.2 frame-map syntax
+  # (opt-in, --video-implicit-ref-map).
+  src/codec/inter/mv_stack/ref_map.cpp
   # Compound prediction (opt-in, --video-compound).
   src/codec/inter/multiref/compound_predict.cpp
   src/codec/inter/advanced/compound.cpp
   # §7.13.3.25 block adaptive weighted prediction (opt-in, --video-bawp).
   src/codec/inter/advanced/bawp.cpp
+  # §7.13.3.26 morphological prediction: morph_pred syntax + §7.13.3.25 fit
+  # (opt-in, --video-morph keyframe carrier).
+  src/codec/inter/morph/morph_syntax.cpp
+  # §5.20.7.14-.15 motion-mode / inter-intra / wedge syntax (opt-in,
+  # --video-compound-interintra).
+  src/codec/inter/advanced/video/advanced_syntax.cpp
   # Global motion estimation + §7.13.3.19/.20 warp prediction (opt-in,
   # --video-gme / --video-warp).
   src/codec/inter/gme/gme.cpp
@@ -225,13 +235,22 @@ add_library(av2enc_core STATIC
   src/codec/entropy/avg_cdf/avg_cdf_bank.cpp
   # delta-Q / segmentation syntax (neutral, opt-in still integration).
   src/codec/entropy/deltaq/still/deltaq.cpp
+  # M2 tile adapter for the same module: the exact
+  # inter_frame_mode_info()/intra_frame_mode_info() call order plus the
+  # per-superblock CurrentQIndex check (opt-in --video-segmentation /
+  # --video-delta-q / --video-per-segment-q).
+  src/codec/entropy/deltaq/video/video_deltaq.cpp
   src/codec/rate/rc/rc.cpp
   # Lossless (Q=0, DPCM, FSC) still-picture path; opt-in via --lossless.
   src/codec/entropy/lossless/lossless.cpp
+  # Lossless P frames (WHT/IDTX/FSC inter), opt-in via --video-lossless.
+  src/codec/entropy/lossless/inter/lossless_inter.cpp
   # Content interpretation OBU (§5.15); opt-in, default parameters.
   src/frame/metadata/content_interpretation/content_interpretation.cpp
-  # Neutral metadata OBUs (§5.17): timecode / scan type, opt-in via
-  # --metadata-timecode / --metadata-scan-type.  Decoder-invariant.
+  # Neutral metadata OBUs (§5.17): timecode / scan type / content light level,
+  # opt-in via --metadata-timecode / --metadata-scan-type / --metadata-cll.
+  # Decoder-invariant.
+  src/frame/metadata/cli/metadata_cli.cpp
   src/frame/metadata/hdr/hdr_metadata.cpp
   src/frame/metadata/types/metadata_types.cpp
   # Multi-frame header (§5.7) on the non-single-picture video path
@@ -259,6 +278,11 @@ target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_GME=1)
 # Format video core dispatch for 10-bit / 4:2:2 / 4:4:4 / 4:0:0.  Standalone
 # component gates keep the 8-bit 4:2:0 path without the extra source.
 target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_FORMATS=1)
+# Opt-in §5.18.7.1/.8 segmentation + per-superblock delta-Q on --video
+# (--video-segmentation/--video-delta-q/--video-per-segment-q).  Standalone
+# component gates compile the video writer without the deltaq adapter and keep
+# the historical (0,0,0) quantization tail.
+target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_DELTAQ=1)
 av2enc_apply_warnings(av2enc_core)
 # The CPU reference must be bit-identical across compilers and platforms. The
 # M0/M1 forward transforms use binary64; FMA contraction changes coefficients
@@ -507,6 +531,9 @@ target_sources(av2enc_core PRIVATE
 # does not call into these; they are always linked so the CPU gate can build.
 target_sources(av2enc_core PRIVATE
   src/codec/rate/rc/rc.cpp
+  # §5.4.13/§6.11 decoder model info + buffer removal timing OBUs
+  # (--video-decoder-model / --video-brt).
+  src/codec/rate/rc/hrd/hrd.cpp
   src/pipeline/video/post/rc_adapter.cpp)
 
 # Multi-tile video (--video --tiles).  The splitter re-enters the video syntax

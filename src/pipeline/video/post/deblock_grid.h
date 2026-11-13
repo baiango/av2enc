@@ -52,6 +52,62 @@ inline int video_deblock_max_tx(int bsize) {
   return still::kMaxTxSizeRect[bsize];
 }
 
+// §5.20.6.3 find_tx_size(): the TX_SIZES_ALL entry whose Tx_Width/Tx_Height
+// match (w, h) exactly, or -1.
+inline int video_find_tx_size(int w, int h) {
+  for (int i = 0; i < deblock::kTxSizesAll; ++i) {
+    const auto tx = static_cast<deblock::TxSize>(i);
+    if (deblock::tx_width(tx) == w && deblock::tx_height(tx) == h) return i;
+  }
+  return -1;
+}
+
+// §7.13.3.15 save subpu size process.  Invoked per plane from
+// §7.13.3.14 predict_subblock() with the predicted subblock origin/size and the
+// whole prediction unit size.  The whole-PU case (ordinary P/B leaves, which
+// predict once with the coding-block MV) returns immediately, leaving the
+// §6.19.3 `Max_Tx_Size_Rect[MiSize]` value in place; TIP/OPFL/refine-MV
+// subblocks replace it with `find_tx_size(w, h)`.
+inline bool video_save_subpu(int plane, int x, int y, int w, int h, int pu_w,
+                             int pu_h, VideoDeblockGrid* grid,
+                             std::string* error) {
+  if (grid == nullptr || plane < 0 || plane > 2) {
+    if (error != nullptr) *error = "save_subpu: invalid plane/grid";
+    return false;
+  }
+  if (w == pu_w && h == pu_h) return true;  // normative early return
+  const int sub_pu = video_find_tx_size(w, h);
+  if (sub_pu < 0) {
+    if (error != nullptr) {
+      *error = "save_subpu: no TX size for " + std::to_string(w) + "x" +
+               std::to_string(h);
+    }
+    return false;
+  }
+  const int sub_x = plane > 0 ? 1 : 0;
+  const int sub_y = plane > 0 ? 1 : 0;
+  const int luma_row = y >> (2 - sub_y);
+  const int luma_col = x >> (2 - sub_x);
+  const int rows = h >> (2 - sub_y);
+  const int cols = w >> (2 - sub_x);
+  for (int r = 0; r < rows; ++r) {
+    const int row = luma_row + r;
+    if (row < 0 || row >= grid->mi_rows) continue;
+    for (int c = 0; c < cols; ++c) {
+      const int col = luma_col + c;
+      if (col < 0 || col >= grid->mi_cols) continue;
+      deblock::DeblockMi& mi =
+          grid->mi[plane][static_cast<std::size_t>(row) *
+                              static_cast<std::size_t>(grid->mi_cols) +
+                          static_cast<std::size_t>(col)];
+      mi.sub_pu_col_base = static_cast<std::uint16_t>(luma_col);
+      mi.sub_pu_row_base = static_cast<std::uint16_t>(luma_row);
+      mi.sub_pu_size = static_cast<deblock::TxSize>(sub_pu);
+    }
+  }
+  return true;
+}
+
 // Chroma residual block size for the 8-bit 4:2:0 video path.
 inline partition::BlockSize video_deblock_chroma_size(int bsize) {
   partition::FrameGeometry geometry;
@@ -111,14 +167,27 @@ inline void init_video_deblock_grid(int mi_cols, int mi_rows, int base_q_idx,
   grid->options.bit_depth = 8;
 }
 
+// A predicted subblock (§7.13.3.14 predict_subblock) for §7.13.3.15.
+struct VideoSubPuRect {
+  int x = 0;      // luma sample origin
+  int y = 0;
+  int w = 0;
+  int h = 0;
+  int pu_w = 0;   // whole prediction unit extent
+  int pu_h = 0;
+};
+
 // Applies the leaves of one coded tile (tile-local MI coordinates) to the
 // frame-wide grid.  `blocks` is the complete partition list produced by the
 // syntax collector, including internal nodes; only partition == kNone nodes are
-// coding leaves.
+// coding leaves.  `sub_pus` optionally lists the predicted subblocks of the
+// frame (TIP/OPFL/refine-MV); ordinary P/B leaves predict the whole PU and
+// take the §7.13.3.15 early return.
 inline bool add_video_deblock_blocks(
     const std::vector<syntax::BlockSyntax>& blocks, int tile_mi_row,
     int tile_mi_col, int base_q_idx, bool frame_is_intra,
-    VideoDeblockGrid* grid, std::string* error) {
+    VideoDeblockGrid* grid, std::string* error,
+    const VideoSubPuRect* sub_pus = nullptr, int num_sub_pus = 0) {
   const int q = std::min(std::max(base_q_idx, 0), 255);
   for (const syntax::BlockSyntax& block : blocks) {
     if (block.partition !=
@@ -147,6 +216,10 @@ inline bool add_video_deblock_blocks(
     }
     const int clamped_w = std::min(w4, grid->mi_cols - c);
     const int clamped_h = std::min(h4, grid->mi_rows - r);
+    // §7.14.2 effective qindex for this leaf.  The producer fills it when the
+    // frame codes segmentation / delta-Q; -1 keeps the frame base_q_idx.
+    const int leaf_q =
+        block.qindex >= 0 ? std::min(static_cast<int>(block.qindex), 255) : q;
     const bool inter_skip = block.is_inter != 0 && block.skip_flag != 0;
     const int luma_max_tx = video_deblock_max_tx(bsize);
     if (luma_max_tx < 0) {
@@ -202,7 +275,7 @@ inline bool add_video_deblock_blocks(
           mi.skip = inter_skip ? 1 : 0;
           mi.region_intra = frame_is_intra ? 1 : 0;
           mi.lossless = 0;
-          mi.qindex = static_cast<std::uint8_t>(q);
+          mi.qindex = static_cast<std::uint8_t>(leaf_q);
         }
       }
     }
@@ -250,12 +323,84 @@ inline bool add_video_deblock_blocks(
       }
     }
   }
+  // §7.13.3.15: sub-PU prediction overrides SubPuSize/SubPuRowBase/
+  // SubPuColBase for the predicted subblocks.  With no sub-PU list (ordinary
+  // P/B leaves) every rect is the whole PU and the process early-returns.
+  if (sub_pus != nullptr) {
+    for (int i = 0; i < num_sub_pus; ++i) {
+      for (int plane = 0; plane < 3; ++plane) {
+        if (!video_save_subpu(plane, sub_pus[i].x, sub_pus[i].y, sub_pus[i].w,
+                              sub_pus[i].h, sub_pus[i].pu_w, sub_pus[i].pu_h,
+                              grid, error)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+// Self-check for §5.20.6.3/§7.13.3.15 used by the video gate.
+inline bool video_save_subpu_selftest(std::string* error) {
+  if (video_find_tx_size(8, 8) != static_cast<int>(deblock::TxSize::k8x8) ||
+      video_find_tx_size(16, 8) != static_cast<int>(deblock::TxSize::k16x8) ||
+      video_find_tx_size(8, 32) != static_cast<int>(deblock::TxSize::k8x32) ||
+      video_find_tx_size(48, 8) >= 0) {
+    if (error != nullptr) *error = "find_tx_size table mismatch";
+    return false;
+  }
+  VideoDeblockGrid grid;
+  init_video_deblock_grid(16, 16, 90, false, &grid);
+  // Whole-PU prediction takes the early return (Max_Tx_Size_Rect stays).
+  if (!video_save_subpu(0, 0, 0, 16, 16, 16, 16, &grid, error)) return false;
+  for (int p = 0; p < 3; ++p) {
+    for (int r = 0; r < 16; ++r) {
+      for (int c = 0; c < 16; ++c) {
+        const deblock::DeblockMi& mi =
+            grid.mi[p][static_cast<std::size_t>(r) * 16U +
+                       static_cast<std::size_t>(c)];
+        if (mi.sub_pu_size != deblock::TxSize::k4x4) {
+          if (error != nullptr) *error = "whole-PU early return changed sub-PU";
+          return false;
+        }
+      }
+    }
+  }
+  // An 8x8 luma sub-PU of a 16x16 PU: one 8x8 TX over the bottom-right
+  // 4x4-block region (lumaRow = 4/4 = 1, lumaCol = 2).
+  if (!video_save_subpu(0, 8, 4, 8, 8, 16, 16, &grid, error)) return false;
+  for (int r = 1; r <= 2; ++r) {
+    for (int c = 2; c <= 3; ++c) {
+      const deblock::DeblockMi& mi =
+          grid.mi[0][static_cast<std::size_t>(r) * 16U +
+                     static_cast<std::size_t>(c)];
+      if (mi.sub_pu_size != deblock::TxSize::k8x8 ||
+          mi.sub_pu_row_base != 1 || mi.sub_pu_col_base != 2) {
+        if (error != nullptr) *error = "luma sub-PU rect mismatch";
+        return false;
+      }
+    }
+  }
+  // Chroma uses the subsampled origin and extent: an 8x8 chroma sub-PU of a
+  // 16x16 PU at (4,0) covers luma rows 0..3 and columns 2..5.
+  if (!video_save_subpu(1, 4, 0, 8, 8, 16, 16, &grid, error)) return false;
+  for (int r = 0; r <= 3; ++r) {
+    for (int c = 2; c <= 5; ++c) {
+      const deblock::DeblockMi& mi =
+          grid.mi[1][static_cast<std::size_t>(r) * 16U +
+                     static_cast<std::size_t>(c)];
+      if (mi.sub_pu_size != deblock::TxSize::k8x8 ||
+          mi.sub_pu_row_base != 0 || mi.sub_pu_col_base != 2) {
+        if (error != nullptr) *error = "chroma sub-PU rect mismatch";
+        return false;
+      }
+    }
+  }
   return true;
 }
 
 // Convenience wrapper for a single-tile frame.
-inline bool build_video_deblock_grid(
-    const std::vector<syntax::BlockSyntax>& blocks, int mi_cols, int mi_rows,
+inline bool build_video_deblock_grid(    const std::vector<syntax::BlockSyntax>& blocks, int mi_cols, int mi_rows,
     int base_q_idx, bool frame_is_intra, VideoDeblockGrid* grid,
     std::string* error) {
   init_video_deblock_grid(mi_cols, mi_rows, base_q_idx, frame_is_intra, grid);

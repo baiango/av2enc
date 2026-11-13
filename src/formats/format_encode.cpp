@@ -55,6 +55,22 @@ bool encode_10bit(const Picture& picture,
                   std::uint32_t* tile_bytes, std::string* error) {
   av2enc::high_bitdepth::HighBitDepthResult result;
   if (options.high_bitdepth_gpu != nullptr) {
+    if (options.enable_cdef) {
+      *error = "--still-cdef has no GPU block stage for the 10-bit format "
+               "writer; use --still (CPU)";
+      return false;
+    }
+    if (options.enable_ccso) {
+      *error = "--still-ccso has no GPU block stage for the 10-bit format "
+               "writer; use --still (CPU)";
+      return false;
+    }
+    if (options.enable_wiener || options.enable_chroma_lr ||
+        options.enable_pc_wiener || options.enable_gdf) {
+      *error = "loop restoration/GDF have no GPU block stage for the 10-bit "
+               "format writer; use --still (CPU)";
+      return false;
+    }
     // Product 10-bit GPU block stage: DC prediction + forward/inverse TX +
     // reconstruction run on the device; the shared CPU §8.2 writer assembles
     // the same tile payload bytes as `av2enc::hbd::encode_still`.
@@ -68,6 +84,16 @@ bool encode_10bit(const Picture& picture,
     av2enc::hbd::HbdOptions hbd_options;
     hbd_options.base_q_idx = options.base_q_idx;
     hbd_options.enable_deblock = options.enable_deblock;
+    hbd_options.enable_cdef = options.enable_cdef;
+    hbd_options.cdef_damping = options.cdef_damping;
+    hbd_options.cdef_num_strengths = options.cdef_num_strengths;
+    hbd_options.enable_ccso = options.enable_ccso;
+    hbd_options.ccso_luma_size_log2 = options.ccso_luma_size_log2;
+    hbd_options.ccso_edge_only = options.ccso_edge_only;
+    hbd_options.enable_wiener = options.enable_wiener;
+    hbd_options.enable_chroma_lr = options.enable_chroma_lr;
+    hbd_options.enable_pc_wiener = options.enable_pc_wiener;
+    hbd_options.enable_gdf = options.enable_gdf;
     av2enc::hbd::HbdResult cpu_result;
     if (!av2enc::hbd::encode_still(picture, hbd_options, cpu_result, *error)) {
       return false;

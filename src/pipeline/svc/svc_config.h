@@ -10,13 +10,12 @@
 // Normative reference: AV2 Bitstream & Decoding Process Specification v1.0.0
 // (commit 38f28e7), §5.2.2, §5.4.1, §5.8, §5.10, §5.11, §7.3.6, Annex F.3.1.
 //
-// Scope note: AV2 layers are delivery/scalability packaging. This pipeline
-// implements the **spatial-only path**: every extended layer is coded
-// independently (its own sequence header and frame units) and no sample, MV,
-// or coefficient prediction crosses an xlayer boundary. That matches the
-// spec's separate per-xlayer decode contexts (`load_xlayer_context()` /
-// `save_xlayer_context()`); see `svc_pipeline.h` for the explicit reference
-// policy that enforces it.
+// Scope note: AV2 layers are delivery/scalability packaging. Cross-xlayer
+// prediction cannot be signalled in a conforming v1.0.0 stream (§6.8.2
+// requires lcr_dependent_xlayers_flag = 0), so every extended layer is
+// independently decodable. Embedded layers within one xlayer *may* use
+// cross-mlayer prediction (§5.4.1 MLayerDependencyMap / §6.17.2); see
+// `svc_pipeline.h` for the reference policy that enforces both rules.
 
 #pragma once
 

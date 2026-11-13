@@ -21,6 +21,11 @@
 #include <string>
 #include <vector>
 
+#include "cuda/pipeline/still/cdef/still_cdef_cdf.h"
+#include "cuda/pipeline/still/cdef/still_cdef_index_syntax.h"
+#include "codec/filters/stream/filter_cdfs.h"
+#include "codec/filters/pc_wiener/pc_wiener_stream.h"
+#include "formats/high_bitdepth/hbd_lr_syntax.h"
 #include "cuda/pipeline/still/hbd/hbd_cpu.h"
 #include "formats/format.h"
 #include "pipeline/still/basic_cdf_tables.h"
@@ -165,6 +170,38 @@ class Writer {
     enc_.init_symbol(tile_buffer_.data(), tile_buffer_.size());
     enc_.disable_cdf_update = options_.disable_cdf_update ? 1 : 0;
 
+    std::memcpy(ccso_cdf_, av2enc::still::filters_stream::kCcsoBlkCdf,
+                sizeof(ccso_cdf_));
+    if (options_.lr != nullptr && options_.lr->enabled) {
+      namespace lrs = av2enc::hbd::lr_syntax;
+      lrs::LrParams params;
+      av2enc::hbd::fill_lr_params(*options_.lr, monochrome_ ? 1 : 3, &params);
+      lrs::LrHeaderContext context;
+      av2enc::hbd::fill_lr_header_context(*options_.lr,
+                                          monochrome_ ? 1 : 3, sub_x_, sub_y_,
+                                          options_.base_q_idx, &context);
+      std::string lr_error;
+      lr_ready_ = lrs::InitTileState(&lr_state_, params, mi_cols_, mi_rows_,
+                                     sub_x_, sub_y_, &lr_error);
+      if (!lr_ready_) error_ = "LR tile init failed: " + lr_error;
+    }
+    if (options_.cdef_idx != nullptr && options_.cdef_num_strengths > 1) {
+      cdef_grid_.reset(mi_cols_, mi_rows_);
+      std::memcpy(cdef_index0_, av2enc::cuda::still::kCdefIndex0Cdf,
+                  sizeof(cdef_index0_));
+      cdef_cdfs_.index0 = &cdef_index0_[0][0];
+      cdef_cdfs_.minus1 = cdef_minus1_;
+      const std::uint16_t* minus1 =
+          av2enc::cuda::still::cdef_index_minus1_default(
+              options_.cdef_num_strengths);
+      if (minus1 != nullptr) {
+        std::memcpy(cdef_minus1_, minus1,
+                    sizeof(std::uint16_t) *
+                        static_cast<std::size_t>(
+                            options_.cdef_num_strengths));
+      }
+    }
+
     above_mi_.assign(static_cast<std::size_t>(mi_cols_) + 16U, 6);
     left_mi_.assign(static_cast<std::size_t>(mi_rows_) + 16U, 6);
     for (int plane = 0; plane < 3; ++plane) {
@@ -181,11 +218,16 @@ class Writer {
   }
 
   bool run(std::uint32_t* tile_bytes, std::string* error) {
+    if (!error_.empty()) return fail(error, error_);
     std::size_t block_index = 0;
 
     for (int r = 0; r < mi_rows_; r += 16) {
       clear_left_context();
       for (int c = 0; c < mi_cols_; c += 16) {
+        // §5.20.10.4 read_lr(): before read_partition() at the coding-block
+        // origin.  Unit origins align with 64x64 superblocks (chroma units may
+        // cover two SBs horizontally in 4:2:0/4:2:2).
+        if (!write_lr_sb(r, c, error)) return false;
         const bool edge = (r + 16 > mi_rows_) || (c + 16 > mi_cols_);
         if (!edge) {
           if (!code_partition_64_vert(r, c, error)) return false;
@@ -769,6 +811,103 @@ class Writer {
     return true;
   }
 
+  bool write_lr_sb(int r, int c, std::string* error) {
+    if (!lr_ready_) return true;
+    namespace lrs = av2enc::hbd::lr_syntax;
+    const av2enc::hbd::HbdLrConfig& cfg = *options_.lr;
+    for (int plane = 0; plane < 3; ++plane) {
+      if (plane > 0 && monochrome_) break;
+      const av2enc::hbd::HbdLrPlaneConfig& pc = cfg.plane[plane];
+      if (pc.frame_type == 0) continue;
+      const int ox = (c * 4) >> (plane == 0 ? 0 : sub_x_);
+      const int oy = (r * 4) >> (plane == 0 ? 0 : sub_y_);
+      const int unit_size = lr_state_.unit_size[plane];
+      if (unit_size <= 0 || ox % unit_size != 0 || oy % unit_size != 0) {
+        continue;
+      }
+      const int unit_row = oy / unit_size;
+      const int unit_col = ox / unit_size;
+      if (unit_row >= lr_state_.unit_rows[plane] ||
+          unit_col >= lr_state_.unit_cols[plane]) {
+        continue;
+      }
+      const std::size_t index =
+          static_cast<std::size_t>(unit_row) *
+              static_cast<std::size_t>(lr_state_.unit_cols[plane]) +
+          static_cast<std::size_t>(unit_col);
+      if (index >= pc.unit_type.size()) {
+        return fail(error, "LR unit decision grid is too small");
+      }
+      lrs::UnitDecision decision;
+      decision.type = pc.unit_type[index];
+      if (decision.type == av2enc::restoration::kRestoreWienerNs) {
+        if (index >= pc.unit_subset.size() ||
+            index * av2enc::restoration::kWienerNsCoeffStride >=
+                pc.unit_coeffs.size()) {
+          return fail(error, "LR unit coefficient grid is too small");
+        }
+        decision.subset = pc.unit_subset[index];
+        decision.uv_sym = index < pc.unit_uv_sym.size() &&
+                          pc.unit_uv_sym[index] != 0;
+        for (int j = 0; j < av2enc::restoration::kWienerNsCoeffStride; ++j) {
+          decision.coeffs[j] =
+              pc.unit_coeffs[index *
+                                 static_cast<std::size_t>(
+                                     av2enc::restoration::kWienerNsCoeffStride) +
+                             static_cast<std::size_t>(j)];
+        }
+      }
+      if (!lrs::WriteUnit(enc_, lr_state_, plane, unit_row, unit_col, decision,
+                          error)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool write_ccso(int r, int c, std::string* error) {
+    bool any = false;
+    for (int plane = 0; plane < 3; ++plane) {
+      any = any || options_.ccso_plane_enabled[plane];
+    }
+    if (!any) return true;
+    const int unit_mi = 1 << (options_.ccso_luma_size_log2 - 2);
+    if (unit_mi <= 0 || (r & (unit_mi - 1)) != 0 ||
+        (c & (unit_mi - 1)) != 0) {
+      return true;
+    }
+    for (int plane = 0; plane < 3; ++plane) {
+      if (!options_.ccso_plane_enabled[plane]) continue;
+      const std::uint8_t* grid = options_.ccso_blks[plane];
+      const int cols = options_.ccso_blk_cols[plane];
+      const int rows = options_.ccso_blk_rows[plane];
+      if (grid == nullptr || cols <= 0 || rows <= 0) {
+        return fail(error, "ccso unit grid is missing");
+      }
+      const int shift = options_.ccso_luma_size_log2 - 2;
+      const int unit_row = r >> shift;
+      const int unit_col = c >> shift;
+      if (unit_row >= rows || unit_col >= cols) {
+        return fail(error, "ccso unit grid does not cover a coding block");
+      }
+      const int value =
+          grid[static_cast<std::size_t>(unit_row) * static_cast<std::size_t>(cols) +
+               static_cast<std::size_t>(unit_col)] != 0
+              ? 1
+              : 0;
+      int ctx = 0;
+      if (unit_col > 0) {
+        const std::uint8_t left =
+            grid[static_cast<std::size_t>(unit_row) *
+                     static_cast<std::size_t>(cols) +
+                 static_cast<std::size_t>(unit_col - 1)];
+        ctx = 2 * (left != 0 ? 1 : 0);
+      }
+      if (!sym(&ccso_cdf_[plane][ctx][0], 2, value)) return false;
+    }
+    return true;
+  }
+
   bool write_block(const HighBitDepthBlock& block, std::string* error) {
     const int r = block.mi_row;
     const int c = block.mi_col;
@@ -798,6 +937,30 @@ class Writer {
         tx_size_context_from_dims(coded_w[1], coded_h[1]),
         tx_size_context_from_dims(coded_w[2], coded_h[2])};
 
+    // §5.20.10.1 read_cdef(): after intra_segment_id (absent here, no
+    // segmentation) and before read_intra_y_mode().  A repeated call at a
+    // non-origin block is a no-op inside the helper.
+    if (options_.cdef_num_strengths > 1 && options_.cdef_idx != nullptr) {
+      const int n64_cols = (mi_cols_ + 15) / 16;
+      const int idx =
+          static_cast<int>(options_.cdef_idx[
+              static_cast<std::size_t>(r / 16) *
+                  static_cast<std::size_t>(n64_cols) +
+              static_cast<std::size_t>(c / 16)]);
+      if (!av2enc::cuda::still::cdef_encode_block_index(
+              &cdef_grid_, options_.cdef_num_strengths,
+              /*sb_width_log2=*/4, /*tile_mi_col_start=*/0,
+              /*tile_mi_row_start=*/0, r, c, idx, cdef_cdfs_,
+              [this](std::uint16_t* cdf, int n, int symbol) {
+                return sym(cdf, n, symbol);
+              })) {
+        return fail(error, "cdef_idx is not signallable");
+      }
+    }
+    // §5.20.10.2 read_ccso(): after read_cdef() and before read_delta_qindex/
+    // the mode info.  One binary symbol per enabled plane at a CCSO unit
+    // origin; the context is the left unit's already-coded value.
+    if (!write_ccso(r, c, error)) return false;
     if (!code_mode_info_dc()) return fail(error, error_);
 
     std::size_t level_base = block.levels_offset;
@@ -841,6 +1004,13 @@ class Writer {
   std::array<std::vector<std::uint8_t>, 3> left_dc_;
   std::vector<std::uint8_t> above_mi_;
   std::vector<std::uint8_t> left_mi_;
+  av2enc::cuda::still::CdefIndexGrid cdef_grid_;
+  av2enc::cuda::still::CdefIndexCdfs cdef_cdfs_{};
+  std::uint16_t cdef_index0_[4][3] = {};
+  std::uint16_t cdef_minus1_[8] = {};
+  std::uint16_t ccso_cdf_[3][4][3] = {};
+  av2enc::filters::pc_wiener_stream::TileState lr_state_;
+  bool lr_ready_ = false;
   int eob_u_ = 0;
   int hr_level_avg_ = 0;
 };

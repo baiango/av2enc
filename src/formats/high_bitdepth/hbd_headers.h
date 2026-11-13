@@ -23,6 +23,8 @@
 
 #include "core/bitstream/bitwriter.h"
 #include "formats/format.h"
+#include "codec/filters/cdef/cdef.h"
+#include "formats/high_bitdepth/hbd_filter_config.h"
 
 namespace av2enc::hbd {
 
@@ -61,6 +63,21 @@ struct HbdConfig {
   bool apply_deblock_y_horz = false;
   bool apply_deblock_u = false;
   bool apply_deblock_v = false;
+
+  // §5.4.10 / §5.18.7.10 CDEF.  Off by default so every pinned stream keeps
+  // its bytes.  The strength sets are the decoded-domain values (pri 0..15,
+  // sec in {0,1,2,4}); coeffShift scaling happens in the filter.
+  bool enable_cdef = false;
+  int cdef_damping = 3;         // CdefDamping 3..6
+  int cdef_num_strengths = 1;   // CdefStrengths 1..8
+  cdef::CdefStrength cdef_strengths[cdef::kMaxStrengths] = {};
+
+  // §5.4.10 / §5.18.7.12 CCSO.  `ccso` is null while the tool is off.
+  const HbdCcsoConfig* ccso = nullptr;
+
+  // §7.20 loop restoration and §7.20.5 GDF.  Null while the tool is off.
+  const HbdLrConfig* lr = nullptr;
+  const HbdGdfConfig* gdf = nullptr;
 };
 
 // True when the config is a legal 10-bit still configuration.  Rejects 8-bit

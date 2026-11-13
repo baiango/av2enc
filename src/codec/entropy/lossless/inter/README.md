@@ -15,6 +15,18 @@ From-scratch CPU reference for the lossless inter paths that
 Normative source: `spec/AV2_Spec_v1.0.0.pdf` (v1.0.0, commit `38f28e7`).
 `dav2d` is a black-box validator only.
 
+## CLI wiring
+
+`av2enc --video-lossless` (8-bit 4:2:0, CPU) routes the plain multi-frame
+sequence to `encode_video()`; the module's sequence/frame headers,
+`CodedLossless` quantization, DPCM/WHT/IDTX reconstruction and FSC syntax are
+used unchanged.  `--video-lossless-intra-period N` sets `Options::intra_period`
+(0 = all inter), `--video-min-block 8|16|32` selects the coding block size, and
+`--lossless-fsc` forces `force_intra_fsc`.  The decoder gate is
+`src/pipeline/video/video_lossless_gate.sh`: 4/8-frame 720p streams decode with
+`dav2d --strict 1` and equal `--video-recon` exactly.  This module's own
+`build_and_test.sh` still builds and gates it standalone.
+
 ## What is encoded
 
 * 8-bit, one tile, 64×64 superblocks.

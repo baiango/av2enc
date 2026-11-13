@@ -227,6 +227,8 @@ if [ "$QUICK" -eq 0 ]; then
     run_gate gate_video_inter_residual src/pipeline/video/video_cli_gate.sh \
         --frames 4 --illumination-shift --expect-inter-residual \
         -- --video-inter-residual
+    run_gate gate_implicit_ref_map src/pipeline/video/gate_implicit_ref_map.sh
+    run_gate gate_video_near_near src/pipeline/video/gate_video_near_near.sh
 fi
 
 echo

@@ -129,6 +129,10 @@ struct LayerConfigRecord {
   bool is_global = true;
   std::uint8_t xlayer_id = kGlobalXLayerId;
   std::uint8_t global_config_record_id = 0;  // f(3)
+  // §5.8 lcr_doh_constraint_flag.  Required to be 1 when any activated
+  // sequence header clears monotonic_output_order_flag (§7.3.7), i.e. for the
+  // hierarchical temporal-layer GOP.
+  bool doh_constraint = false;
   AggregateInfo aggregate;
   std::uint32_t xlayer_map = 0;  // global LCR f(31): bits 0..30
   std::vector<ExtendedLayerConfig> layers;

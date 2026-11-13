@@ -6,16 +6,22 @@
 //   * every spatial layer is encoded as an independent video sequence with its
 //     own sequence header (seq_lcr_id / max_mlayer_id / max_tlayer_id /
 //     seq_max_mlayer_cnt from the LayerPlan);
+//   * embedded layers (`embedded_layers > 1`) are a quality ladder inside one
+//     xlayer: mlayer 0 is the normal CLK + P chain, and each higher mlayer is a
+//     refinement sequence whose pictures predict from the lower mlayer's
+//     decoded picture at the same display index (§5.4.1 MLayerDependencyMap /
+//     §6.17.2).  This is the only decodable cross-layer prediction AV2 v1.0.0
+//     defines: §6.8.2 makes `lcr_dependent_xlayers_flag = 0` a conformance
+//     requirement, so cross-xlayer prediction/resampling cannot be signalled;
+//   * temporal layers (`temporal_layers > 1`) use the hierarchical-P closed GOP
+//     (`1 << temporal_layers` frames) per spatial/embedded layer and emit the
+//     plan's coding order into temporal units;
 //   * the global LCR and OPS are wrapped as OBU types 16/18 in the first
 //     temporal unit;
-//   * temporal units follow plan_emission_order(): TD, [LCR, OPS], then
-//     xlayer ascending with the sequence header in the first TU only;
+//   * temporal units follow §7.3.6/§7.3.7: TD, [LCR, OPS], then xlayer
+//     ascending, with each layer's sequence header in the first TU;
 //   * --oppoint / --alllayers / --spatial-layers run resolve_selection() and
 //     extract_substream().
-//
-// Spatial-only path: layers are independent (no inter-layer prediction), which
-// is what the plan's LCR declares.  AV2 layers are delivery packaging, not a
-// compression tool; no BD-rate gain is claimed.
 #pragma once
 
 #include <cstdint>
@@ -34,6 +40,11 @@ struct SvcEncodeOptions {
   // trace setting are shared by every layer.  tile_cols/tile_rows and the
   // sequence-layer fields are overwritten by this module.
   video::VideoOptions video;
+  // Quality step between embedded layers.  mlayer 0 gets
+  // `base_q_idx + (embedded_layers - 1) * embedded_qp_step` and the highest
+  // mlayer keeps `base_q_idx`, so each refinement layer predicts from a lower
+  // quality picture and improves it (clamped to 1..255).
+  int embedded_qp_step = 12;
   // Output selection.  all_layers (the default) keeps the full stream;
   // otherwise exactly one of oppoint (>= 0) or spatial_layers (>= 1) applies.
   bool all_layers = true;
@@ -45,7 +56,12 @@ struct SvcLayerOutput {
   int xlayer_id = 0;
   int width = 0;
   int height = 0;
-  std::vector<video::VideoReconFrame> recon;  // one per coded frame
+  // Highest embedded layer's reconstruction, in display order (one per input
+  // frame; the temporal-layer path emits coding-order units but display-order
+  // pictures).
+  std::vector<video::VideoReconFrame> recon;
+  // Per-embedded-layer reconstruction, `mlayer_recon[m]`, same ordering.
+  std::vector<std::vector<video::VideoReconFrame>> mlayer_recon;
 };
 
 struct SvcStreamResult {

@@ -1209,9 +1209,11 @@ void test_frame_ref_map_syntax(Test& t) {
   t.expect(full::write_frame_ref_map_syntax(&writer, syntax, params, implicit,
                                             &why),
            "implicit ref map writes no bits");
+  t.eq_int(static_cast<long long>(writer.bit_size()), 0,
+           "sequence-implicit reference map occupies zero bits");
   const std::vector<std::uint8_t> bytes = writer.take_bytes();
   t.eq_int(static_cast<long long>(bytes.size()), 0,
-           "implicit-frame reference map occupies zero bits");
+           "implicit-frame reference map produces no byte");
   full::BitReader reader(bytes.data(), bytes.size());
   full::FrameRefMapResult read;
   t.expect(full::read_frame_ref_map_syntax(&reader, syntax, params, &read,
@@ -1225,8 +1227,40 @@ void test_frame_ref_map_syntax(Test& t) {
              "implicit mapping index matches");
   }
 
-  // Explicit mode round-trip.
+  // Sequence implicit bit off + frame bit 0: one bit, still no map.
   syntax.seq_explicit_ref_frame_map = true;
+  syntax.explicit_ref_frame_map = false;
+  av2enc::BitWriter frame_implicit_writer;
+  t.expect(full::write_frame_ref_map_syntax(&frame_implicit_writer, syntax,
+                                            params, implicit, &why),
+           "frame-implicit ref map writes the gate bit");
+  t.eq_int(static_cast<long long>(frame_implicit_writer.bit_size()), 1,
+           "frame-implicit reference map is one bit");
+  const std::vector<std::uint8_t> frame_implicit_bytes =
+      frame_implicit_writer.take_bytes();
+  full::BitReader frame_implicit_reader(frame_implicit_bytes.data(),
+                                        frame_implicit_bytes.size());
+  full::FrameRefMapResult frame_implicit_read;
+  t.expect(full::read_frame_ref_map_syntax(&frame_implicit_reader, syntax,
+                                           params, &frame_implicit_read, &why),
+           "frame-implicit ref map reads");
+  t.expect(!frame_implicit_read.explicit_map,
+           "reader reports the frame-implicit path");
+  t.eq_int(frame_implicit_read.map.num_total_refs,
+           implicit.stage1.num_total_refs,
+           "frame-implicit reader derives the same §7.7 mapping");
+
+  // A mismatched implicit map is rejected: the block syntax would diverge.
+  full::ImplicitRefMap mismatch = implicit;
+  mismatch.stage1.ref_frame_idx[0] =
+      (mismatch.stage1.ref_frame_idx[0] + 1) % params.num_ref_frames;
+  av2enc::BitWriter reject_writer;
+  t.expect(!full::write_frame_ref_map_syntax(&reject_writer, syntax, params,
+                                             mismatch, &why),
+           "implicit map mismatch is rejected");
+
+  // Explicit mode round-trip.  One frame bit, then num_total_refs f(3) and
+  // three ref_frame_idx f(3) values (NumRefFrames = 8).
   syntax.explicit_ref_frame_map = true;
   syntax.num_total_refs = 3;
   syntax.ref_frame_idx[0] = 1;
@@ -1236,6 +1270,8 @@ void test_frame_ref_map_syntax(Test& t) {
   t.expect(full::write_frame_ref_map_syntax(&explicit_writer, syntax, params,
                                             implicit, &why),
            "explicit ref map writes");
+  t.eq_int(static_cast<long long>(explicit_writer.bit_size()), 1 + 3 + 3 * 3,
+           "explicit map is frame-bit + NumTotalRefs + indices");
   const std::vector<std::uint8_t> explicit_bytes = explicit_writer.take_bytes();
   t.expect(!explicit_bytes.empty(), "explicit ref map occupies bits");
   full::BitReader explicit_reader(explicit_bytes.data(), explicit_bytes.size());
@@ -1248,13 +1284,161 @@ void test_frame_ref_map_syntax(Test& t) {
   t.eq_int(explicit_read.map.ref_frame_idx[0], 1, "explicit index 0");
   t.eq_int(explicit_read.map.ref_frame_idx[1], 3, "explicit index 1");
   t.eq_int(explicit_read.map.ref_frame_idx[2], 0, "explicit index 2");
+  // §5.18.2 computes ScoresDistance for the explicit map: OrderHint 8 against
+  // RefOrderHint {2, 4, 1} -> {6, 4, 7}.
+  t.eq_int(explicit_read.map.scores_distance[0], 6, "explicit distance 0");
+  t.eq_int(explicit_read.map.scores_distance[1], 4, "explicit distance 1");
+  t.eq_int(explicit_read.map.scores_distance[2], 7, "explicit distance 2");
+  t.eq_int(explicit_read.map.num_past_refs, 3, "explicit refs are all past");
 
-  // The switch-frame path forces an explicit map even with the sequence bit 0.
+  // The switch-frame path forces an explicit map even with the sequence bit 0
+  // and never codes the frame bit.
   syntax.seq_explicit_ref_frame_map = false;
   syntax.frame_is_switch = true;
-  t.expect(full::write_frame_ref_map_syntax(&explicit_writer, syntax, params,
+  av2enc::BitWriter switch_writer;
+  t.expect(full::write_frame_ref_map_syntax(&switch_writer, syntax, params,
                                             implicit, &why),
            "switch frame forces an explicit map");
+  t.eq_int(static_cast<long long>(switch_writer.bit_size()), 3 + 3 * 3,
+           "switch map omits the frame bit");
+}
+
+// ---------------------------------------------------------------------------
+// §7.7 / §7.8 implicit reference model: the §7.23 slot mirror, variable
+// NumTotalRefs across a flat chain, and the past/future/current lists.
+// ---------------------------------------------------------------------------
+
+void test_implicit_ref_model(Test& t) {
+  std::string why;
+  full::RefSlotBank bank;
+  bank.num_ref_frames = 4;
+  t.expect(bank.refresh(/*refresh_frame_flags=*/0xF, /*order_hint=*/0,
+                        /*frame_width=*/640, /*frame_height=*/360,
+                        /*base_q_idx=*/90, /*key_frame=*/true, 0, 0, true,
+                        true, -1, &why),
+           "key frame refresh");
+  // §7.23: a key frame refreshes all slots but only the first stays valid.
+  t.expect(bank.slots[0].valid, "key frame keeps slot 0 valid");
+  for (int i = 1; i < 4; ++i) {
+    t.expect(!bank.slots[i].valid, "key frame invalidates the other slots");
+  }
+
+  full::RefMapParams params;
+  params.num_ref_frames = 4;
+  params.active_num_ref_frames = 4;
+  params.order_hint_bits = 4;
+  params.frame_width = 640;
+  params.frame_height = 360;
+  params.check_res = true;
+  params.slots = bank.slots;
+
+  // A flat P chain: NumTotalRefs grows 1,2,3,4 as slots become valid, and the
+  // order is newest-first (the decay score is monotonic in |distance| when no
+  // future frame is held).
+  const int expected_refs[4] = {1, 2, 3, 4};
+  for (int i = 1; i <= 4; ++i) {
+    params.order_hint = i;
+    full::ImplicitRefMap implicit;
+    t.expect(full::derive_implicit_ref_map(params, &implicit, &why),
+             "flat-chain implicit map derives");
+    t.eq_int(implicit.stage1.num_total_refs, expected_refs[i - 1],
+             "flat-chain NumTotalRefs grows with the valid slots");
+    for (int r = 0; r < implicit.stage1.num_total_refs; ++r) {
+      if (r == 0) t.eq_int(implicit.stage1.ref_frame_idx[0], i - 1,
+                           "newest slot is first");
+      t.eq_int(implicit.stage1.scores_distance[r], r + 1,
+               "ScoresDistance is the display distance");
+    }
+    t.eq_int(implicit.stage1.num_past_refs, implicit.stage1.num_total_refs,
+             "flat chain has no future reference");
+    t.eq_int(implicit.stage1.skip_seg_frame,
+             implicit.stage1.closest_past,
+             "SkipSegFrame falls back to ClosestPast");
+    if (i < bank.num_ref_frames) {
+      t.expect(bank.refresh(1 << i, i, 640, 360, 90, /*key_frame=*/false, 0, 0,
+                            true, true, -1, &why),
+               "P frame refresh");
+    }
+  }
+
+  // A frame with one past, one future and one current reference exercises the
+  // §7.8 classification and the SkipSegFrame current-ref priority.
+  full::RefSlotBank mix;
+  mix.num_ref_frames = 3;
+  mix.frame_counter = 2;
+  mix.slots[0] = full::RefSlot{};
+  mix.slots[0].valid = true;
+  mix.slots[0].order_hint = 1;
+  mix.slots[0].counter = 0;
+  mix.slots[0].frame_width = 64;
+  mix.slots[0].frame_height = 64;
+  mix.slots[1].valid = true;
+  mix.slots[1].order_hint = 5;
+  mix.slots[1].counter = 1;
+  mix.slots[1].frame_width = 64;
+  mix.slots[1].frame_height = 64;
+  mix.slots[2].valid = true;
+  mix.slots[2].order_hint = 3;
+  mix.slots[2].counter = 2;
+  mix.slots[2].frame_width = 64;
+  mix.slots[2].frame_height = 64;
+
+  full::RefMapParams mp;
+  mp.num_ref_frames = 3;
+  mp.active_num_ref_frames = 3;
+  mp.order_hint = 3;
+  mp.frame_width = 64;
+  mp.frame_height = 64;
+  mp.check_res = true;
+  mp.slots = mix.slots;
+  full::ImplicitRefMap mixed;
+  t.expect(full::derive_implicit_ref_map(mp, &mixed, &why),
+           "mixed-distance implicit map derives");
+  // Current reference (distance 0) ranks first; the equal-distance past and
+  // future candidates keep their slot order.
+  t.eq_int(mixed.stage1.num_total_refs, 3, "mixed map selects three refs");
+  t.eq_int(mixed.stage1.ref_frame_idx[0], 2, "current ref ranked first");
+  t.eq_int(mixed.stage1.ref_frame_idx[1], 0, "past ref ranked second");
+  t.eq_int(mixed.stage1.ref_frame_idx[2], 1, "future ref ranked third");
+  t.eq_int(mixed.stage1.scores_distance[0], 0, "current distance is 0");
+  t.eq_int(mixed.stage1.scores_distance[1], 2, "past distance is +2");
+  t.eq_int(mixed.stage1.scores_distance[2], -2, "future distance is -2");
+  t.eq_int(mixed.stage1.num_past_refs, 1, "one past ref");
+  t.eq_int(mixed.stage1.num_future_refs, 1, "one future ref");
+  t.eq_int(mixed.stage1.num_cur_refs, 1, "one current ref");
+  t.eq_int(mixed.stage1.closest_past, 1, "ClosestPast index");
+  t.eq_int(mixed.stage1.closest_future, 2, "ClosestFuture index");
+  t.eq_int(mixed.stage1.furthest_future, 2, "FurthestFuture index");
+  t.eq_int(mixed.stage1.skip_seg_frame, 0, "SkipSegFrame prefers curRefs[0]");
+
+  // §5.18.2 explicit form: ScoresDistance comes from the signalled indices and
+  // the §7.8 lists are derived from it.
+  const int explicit_idx[2] = {1, 0};  // future, past
+  full::RefMap explicit_map;
+  t.expect(full::derive_explicit_ref_map(mp, 2, explicit_idx, &explicit_map,
+                                         &why),
+           "explicit ref map derives the §7.8 fields");
+  t.eq_int(explicit_map.scores_distance[0], -2, "explicit future distance");
+  t.eq_int(explicit_map.scores_distance[1], 2, "explicit past distance");
+  t.eq_int(explicit_map.num_future_refs, 1, "explicit future count");
+  t.eq_int(explicit_map.num_past_refs, 1, "explicit past count");
+  t.eq_int(explicit_map.closest_future, 0, "explicit ClosestFuture");
+  t.eq_int(explicit_map.closest_past, 1, "explicit ClosestPast");
+  t.eq_int(explicit_map.skip_seg_frame, 1, "explicit SkipSegFrame");
+
+  // Invalid explicit indices are rejected.
+  const int bad_idx[1] = {3};
+  full::RefMap bad_map;
+  t.expect(!full::derive_explicit_ref_map(mp, 1, bad_idx, &bad_map, &why),
+           "explicit ref outside NumRefFrames is rejected");
+  const int invalid_slot[1] = {2};
+  full::RefSlotBank invalid = mix;
+  invalid.slots[2].valid = false;
+  full::RefMapParams invalid_params = mp;
+  invalid_params.slots = invalid.slots;
+  t.expect(!full::derive_explicit_ref_map(invalid_params, 1, invalid_slot,
+                                          &bad_map, &why),
+           "explicit ref naming an invalid slot is rejected");
 }
 
 // ---------------------------------------------------------------------------
@@ -1534,6 +1718,7 @@ int main(int argc, char** argv) {
   test_display_order_hint(t);
   test_r77(t);
   test_frame_ref_map_syntax(t);
+  test_implicit_ref_model(t);
   test_corners(t);
   test_stack_mirror(t);
   test_goldens(t, print_goldens);

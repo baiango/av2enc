@@ -1,16 +1,18 @@
 # SVC layer pipeline
 
-Status: **encoder-side component + standalone compose/gate tool.** It is not
-wired into `src/main.cpp`, the root `CMakeLists.txt`, or the M1/M2 core. It
-builds a validated layer plan, deterministic emission order, OBU/layer framing,
-and Annex F.3.1/F.3.2 selection/extraction. The gate in `gate_dav2d.sh` composes
-real 2- and 3-layer streams from independent single-layer encodes and validates
-them with `dav2d` and `avmdec`.
+Status: **wired into the product CLI** (`--video --svc-layers`). `src/main.cpp`
+parses the layer flags, `svc_stream.cpp` builds the plan and drives per-layer
+encode + §7.3.6 emission, and the root `CMakeLists.txt` links the module. The
+gate in `gate_cli_svc.sh` decodes real 2-layer streams with `dav2d` and
+`avmdec`, checks decoded picture counts and compares every picture against the
+encoder reconstruction; `gate_dav2d.sh` still covers the still-picture
+`svc_mux` composition path.
 
 Normative reference: AV2 Bitstream & Decoding Process Specification v1.0.0
-(commit `38f28e7`), §5.2.2, §5.4.1, §5.8, §5.10, §5.11, §7.3.6, §7.3.7,
-Annex F.3.1 and Annex F.3.2. No AVM, SVT, clave, or av2-turbo encoder code was
-consulted. `dav2d` / `avmdec` are used as black-box decoders only.
+(2026-05-28, commit `38f28e7`), §5.2.2, §5.4.1, §5.8, §5.10, §5.11, §6.8.2,
+§7.3.6, §7.3.7, Annex A.2, Annex F.3.1 and Annex F.3.2. No AVM, SVT, clave, or
+av2-turbo encoder code was consulted. `dav2d` / `avmdec` are used as black-box
+decoders only.
 
 ## Files
 
@@ -86,23 +88,46 @@ if (!av2enc::svc::build_layer_plan(config, plan, error)) {
 `validate_layer_plan()` re-runs every sequence/LCR/OPS check plus plan-level
 consistency (one SH per spatial layer, cumulative OPs, exact layer order).
 
-### Spatial-only path (no inter-layer prediction)
+### Cross-layer prediction: embedded refinement, not xlayers
 
 AV2 keeps a separate decode context per extended layer (`load_xlayer_context()`
-/ `save_xlayer_context()`), and this encoder does not implement cross-layer
-sample, MV, or coefficient prediction. Every extended layer is independently
-decodable. `ReferencePolicy` makes that explicit:
+/ `save_xlayer_context()`), and **cross-xlayer prediction cannot be signalled at
+all** in a conforming v1.0.0 stream: §6.8.2 requires
+`lcr_dependent_xlayers_flag == 0`. `--svc-inter-layer` is therefore a named
+rejection and `validate_layer_plan()` rejects any LCR that declares a
+dependency. There is no reference-resampling process to implement.
 
-```cpp
-av2enc::svc::ReferencePolicy policy;  // all cross-layer prediction = false
-av2enc::svc::reference_allowed(plan, policy, target, reference, error);
-```
+The decodable cross-layer form is **embedded (mlayer) refinement**
+(`--svc-embedded N`). Within one xlayer:
 
-A cross-xlayer reference is rejected with a message naming the spatial-only
-path. Lower same-xlayer tlayers and (same-xlayer, same-mlayer) temporal
-references are allowed; forward-in-time and cross-mlayer references are
-rejected by default. `validate_frame_references()` additionally requires the
-reference to be emitted before the target in the schedule.
+* mlayer 0 is the normal CLK + P chain and is independently decodable;
+* mlayer `m > 0` is coded by `encode_video_refinement_sequence()`: every picture
+  is a regular inter picture that predicts from mlayer `m-1`'s decoded picture
+  at the same display index, references slot `m-1` and refreshes slot `m`;
+* the sequence header raises `max_mlayer_id` and `seq_max_mlayer_cnt`, and
+  Annex A caps the ladder at three embedded layers for 8-bit 4:2:0
+  (`seq_profile_idc` 0/1/2), which is why `--svc-embedded 4..8` is rejected;
+* the base chain pins slot 0 (`VideoOptions::fixed_write_slot`) so the rotating
+  base slot never collides with a refinement slot — a collision makes an m0
+  frame reference a slot holding m1, which §6.17.2 forbids.
+
+`ReferencePolicy` encodes the rule: cross-xlayer is always rejected with the
+§6.8.2 citation, cross-mlayer is allowed for a higher mlayer, and forward
+temporal references are rejected. `validate_frame_references()` additionally
+requires the reference to be emitted before the target in the schedule.
+
+### Hierarchical temporal layers
+
+`--svc-temporal N` (N = 2..4) codes one closed hierarchical-P GOP of
+`1 << N` frames per xlayer/mlayer (the product `inter::tlayers` planner), and
+emits each frame into the temporal unit that owns its coding position with the
+plan's `obu_tlayer_id`. All layers share the plan, so every coded output frame
+unit in a TU carries the same `OrderHint` (§7.3.7). Because the plan clears
+`monotonic_output_order_flag`, the global LCR sets
+`lcr_doh_constraint_flag = 1`; `avmdec` rejects the stream otherwise
+("lcr_doh_constraint_flag must be 1 when monotonic_output_order_flag is 0").
+`--svc-temporal` and `--svc-embedded` cannot be combined: the embedded path
+codes a flat chain.
 
 ### Deterministic assignment and order
 
@@ -272,10 +297,11 @@ formally associated with the global LCR. The real layered path sets
 `seq_lcr_id` and `max_mlayer_id` / `max_tlayer_id` from the plan (see
 `INTEGRATION.md`).
 
-**Wave-4 status: wired into the product CLI.** `src/main.cpp` exposes
+**Product CLI (wired).** `src/main.cpp` exposes
 `--video --svc-layers x0=WxH[,x1=WxH,...]` (plus `--svc-lcr-id`,
-`--svc-temporal`, `--svc-embedded`, `--oppoint`, `--alllayers`,
-`--spatial-layers`) and `svc_stream.cpp` performs the INTEGRATION.md steps:
+`--svc-temporal 1..4`, `--svc-embedded 1..3`, `--oppoint`, `--alllayers`,
+`--spatial-layers`, and the `--svc-inter-layer` named rejection).
+`svc_stream.cpp` performs the INTEGRATION.md steps:
 
 1. the video sequence header is parameterised by
    `seq_lcr_id`/`max_mlayer_id`/`max_tlayer_id`/`seq_max_mlayer_cnt_minus_1`
@@ -283,42 +309,65 @@ formally associated with the global LCR. The real layered path sets
 2. `make_layer_config_record_obu()` / `make_operating_point_set_obu()` wrap the
    payload writers as OBU types 16/18;
 3. each spatial layer is box-scaled and encoded as an independent video
-   sequence with its own sequence header and OBU `xlayer_id`;
-4. temporal units follow `plan_emission_order()` (one TD per TU, global LCR/OPS
+   sequence with its own sequence header and OBU `xlayer_id`; embedded layers
+   add the cross-mlayer refinement sequences described above;
+4. temporal units follow the shared schedule (one TD per TU, global LCR/OPS
    and per-layer sequence headers in TU 0 only);
 5. `resolve_selection()` + `extract_substream()` implement `--oppoint`,
-   `--spatial-layers` and `--alllayers`.
+   `--spatial-layers` and `--alllayers`;
+6. `--video-recon` writes one reconstruction Y4M per (xlayer, mlayer) so the
+   gate can compare every decoded picture sample-exactly.
 
-Gate: `src/pipeline/svc/gate_cli_svc.sh --bin build-int/av2enc` (15/15 local
-cases with `AVMDEC=/Users/arin/work/avm_src/build/avmdec`): the 2-layer
-mixed-resolution stream decodes with `avmdec --all-layers` and equals the
-interleaving of independent per-layer decodes, `--select-ops=0,0/0,1` equals the
-cumulative operating points, CLI extraction equals the same layers, and the base
-layer is sample-identical to an independent plain `--video` encode of the
-box-scaled source.
+`gate_cli_svc.sh` result on the pinned builds (27/27):
 
-Pinned-decoder limitation (same `dav2d` build the rest of the repo uses):
-single-layer SVC streams decode fully under `dav2d --strict 1`; **multi-xlayer
-streams that contain inter (P) frames do not** — it emits fewer pictures than
-the layer×TU count (and exits 0), for same-resolution and mixed-resolution
-layers alike. `avmdec` is the OPS/inter-layer gate. The earlier still-picture
-`svc_mux` composition still decodes in `dav2d`.
+| Check | Result |
+|---|---|
+| 2-layer mixed-resolution `avmdec --all-layers` | byte-exact vs per-layer decodes |
+| `avmdec --select-ops=0,0/0,1` | byte-exact cumulative OPs |
+| `--oppoint 0` / `--spatial-layers 1` extraction | byte-exact |
+| base layer vs plain `--video` encode of the scaled source | byte-exact |
+| `--svc-temporal 2` (4-frame GOP, 2 xlayers) | 8/8 pictures, all == recon |
+| `--svc-embedded 2` (3 TUs, 2 xlayers, 2 mlayers) | 12/12 pictures, all == recon |
+| `--svc-embedded 2` mlayer 1 vs mlayer 0 | distinct refinement picture |
+| `dav2d --strict 1` single-layer flat stream | 3/3 pictures |
+| `dav2d --strict 1` single-layer `--svc-temporal 2` | 4/4 pictures |
+| `dav2d --strict 1` single-layer `--svc-embedded 2` | **parse failure** (below) |
 
-## Blockers
+Measured embedded ladder (3 frames, x0 160x144, `--qp 90`, step 12):
+mlayer 0 (QP 102) 36.95 dB PSNR-Y, mlayer 1 (QP 90) 45.95 dB PSNR-Y. The
+refinement is a real quality step, not a duplicate picture.
 
-1. **One temporal/embedded layer per TU.** `plan_emission_order()` emits every
-   configured layer every TU, so `--svc-temporal > 1` and `--svc-embedded > 1`
-   are rejected at the CLI. A hierarchical GOP must go through `order_frames()`
-   with a real per-tlayer frame schedule; an embedded-layer scheduler does not
-   exist.
-2. **No inter-layer prediction.** Layers are independent. The LCR deliberately
-   declares no `lcr_num_dependent_xlayer_map`, so no cross-layer gain is
-   claimed or possible in this path.
-3. **`dav2d` cannot validate multi-xlayer inter streams or LCR/OPS.** Use
-   `avmdec --select-ops` for OPS and inter-layer gating; keep `dav2d` for
-   single-layer decode/framing. Do not report an SVC result from
-   `dav2d --oppoint` on this build.
-4. **Default OP count.** More than 7 spatial layers needs an explicit OP list
+Pinned-decoder limitations (`dav2d` `f9dafbc`, `avmdec` macOS build):
+
+- Single-layer SVC streams decode fully under `dav2d --strict 1`, including the
+  hierarchical temporal GOP. **Multi-xlayer streams that contain inter (P)
+  frames do not**: `dav2d` emits fewer pictures than layers x TUs and still
+  exits 0 (same-resolution 2-layer 3-TU: 4 pictures, mixed-resolution: 2), so
+  an exit-code-only check is a false pass. Use `avmdec` and count pictures.
+- `dav2d` cannot parse a sequence header with `max_mlayer_id > 0` ("Error
+  parsing sequence header / Overrun in OBU bit buffer"), so embedded streams
+  are `avmdec`-only. `avmdec` implements LCR/OPS, `--select-ops`,
+  `--all-layers` and the mlayer dependency rules.
+- `dav2d` ignores OBU type 16 (LCR) and type 18 (OPS) ("Unknown OBU type
+  16/18"); its `--oppoint` has no effect on this build, so OPS selection is
+  `avmdec`-only.
+
+## Remaining limits
+
+1. **Cross-xlayer prediction does not exist in AV2 v1.0.0.** §6.8.2 requires
+   `lcr_dependent_xlayers_flag = 0`; the encoder rejects the flag and the
+   `--svc-inter-layer` flag by name (see `docs/negative-results.md`).
+   Compression across layers is only the embedded (mlayer) ladder.
+2. **Temporal + embedded cannot be combined.** `--svc-temporal > 1` with
+   `--svc-embedded > 1` is rejected: the refinement sequence would need a
+   cross-mlayer reference schedule inside the hierarchical GOP. The flat chain
+   and the GOP are each complete.
+3. **Embedded ladder depth.** Annex A caps `seq_max_mlayer_cnt` at 3 for 8-bit
+   4:2:0 (`seq_profile_idc` 0/1/2); `--svc-embedded 4..8` is rejected by name.
+4. **`dav2d` cannot validate multi-xlayer inter, LCR/OPS, or
+   `max_mlayer_id > 0`.** Use `avmdec` for those; keep `dav2d` for single-layer
+   decode/framing.
+5. **Default OP count.** More than 7 spatial layers needs an explicit OP list
    (not exposed yet); the plan rejects instead of truncating.
-5. **`svc_mux` is still-only.** It composes one-frame units; multi-frame video
+6. **`svc_mux` is still-only.** It composes one-frame units; multi-frame video
    goes through `svc_stream.cpp`, not the mux.

@@ -88,7 +88,14 @@ fi
 # clip from testdata when it is present. Both phases run the full 2-frame +
 # short-clip decode/recon comparison.
 STATUS=0
+"${OUT}" --subpu-selftest || STATUS=1
 "${OUT}" --frames 2 --out "${TMPDIR:-/tmp}/video_gate_2f.ivf" || STATUS=1
+# §7.9/§7.12.2.7-.8 temporal MVs: two references so the motion field is
+# non-empty, 8 frames so the saved-field chain feeds later frames.
+"${OUT}" --frames 8 --refs 2 --ref-mvs \
+  --out "${TMPDIR:-/tmp}/video_gate_refmvs.ivf" || STATUS=1
+"${OUT}" --frames 8 --refs 3 --ref-mvs \
+  --out "${TMPDIR:-/tmp}/video_gate_refmvs3.ivf" || STATUS=1
 # TIP (§7.10) product case: key + future anchor P + TIP_FRAME_AS_OUTPUT
 # pictures at 4 and 8 pictures.  Uses the synthetic clip unless an input is
 # supplied; each phase decodes with dav2d --strict 1 and compares the recon.

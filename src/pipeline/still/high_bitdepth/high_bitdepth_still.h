@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "formats/format.h"
+#include "formats/high_bitdepth/hbd_filter_config.h"
 
 namespace av2enc::high_bitdepth {
 
@@ -35,6 +36,25 @@ struct HighBitDepthOptions {
   // sets it.  The filter is applied after the whole tile, using the same
   // pre-filter reconstruction the decoder predicts from.
   bool enable_deblock = false;
+
+  // §7.18 CDEF tile syntax.  `cdef_idx` holds one entry per 64x64 luma block,
+  // row-major.  `cdef_num_strengths == 1` codes no symbol (§5.20.10.1); values
+  // 2..8 code the per-block index.  Null/1 keeps the pinned M10 bytes.
+  const std::int8_t* cdef_idx = nullptr;
+  int cdef_num_strengths = 1;
+
+  // §7.19 CCSO tile syntax.  The grid pointers are one byte per luma CCSO
+  // unit; `ccso_plane_enabled[plane]` gates the per-unit symbol.  Null/off
+  // keeps the pinned bytes.
+  const std::uint8_t* ccso_blks[3] = {nullptr, nullptr, nullptr};
+  int ccso_blk_cols[3] = {0, 0, 0};
+  int ccso_blk_rows[3] = {0, 0, 0};
+  bool ccso_plane_enabled[3] = {false, false, false};
+  int ccso_luma_size_log2 = 6;
+
+  // §7.20 loop restoration decisions.  GDF is header-only, so it needs no
+  // tile state here.
+  const hbd::HbdLrConfig* lr = nullptr;
 };
 
 // One leaf coding block.  `luma_size` is 32 or 64 (square).  Coefficient

@@ -42,6 +42,20 @@ struct StillFormatOptions {
   // §7.17 deblocking for the 10-bit product path (`--still-deblock`).  Off by
   // default keeps every pinned format stream unchanged.
   bool enable_deblock = false;
+  // §7.18 CDEF for the 10-bit product path (`--still-cdef`).  Off by default;
+  // the strength search runs on the 10-bit reconstruction.
+  bool enable_cdef = false;
+  int cdef_damping = 3;
+  int cdef_num_strengths = 4;
+  // §7.19 CCSO for the 10-bit product path (`--still-ccso`).
+  bool enable_ccso = false;
+  int ccso_luma_size_log2 = 6;
+  bool ccso_edge_only = false;
+  // §7.20 loop restoration and §7.20.5 GDF for the 10-bit product path.
+  bool enable_wiener = false;
+  bool enable_chroma_lr = false;
+  bool enable_pc_wiener = false;
+  bool enable_gdf = false;
   HighBitDepthGpuEncoder high_bitdepth_gpu = nullptr;
   // Optional 8-bit chroma device block executor.  Same rationale: the CPU
   // core never references a CUDA symbol; the CLI installs it.

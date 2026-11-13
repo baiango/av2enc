@@ -330,8 +330,18 @@ expect_usage_error "num-ref-frames below 4" \
 expect_usage_error "refs above NumRefFrames" \
   "$INPUT" -o "$SENTINEL" --video --frames 4 --video-refs 5 \
   --video-num-ref-frames 4
-expect_usage_error "implicit reference map" \
-  "$INPUT" -o "$SENTINEL" --video --frames 4 --video-implicit-ref-map
+expect_usage_error "implicit map + tiles" \
+  "$INPUT" -o "$SENTINEL" --video --frames 4 --video-implicit-ref-map \
+  --tiles 2x1
+expect_usage_error "implicit map + compound" \
+  "$INPUT" -o "$SENTINEL" --video --frames 4 --video-implicit-ref-map \
+  --video-compound --video-refs 2
+expect_usage_error "implicit map + tip" \
+  "$INPUT" -o "$SENTINEL" --video --frames 4 --video-implicit-ref-map \
+  --video-tip
+expect_usage_error "implicit map + 10-bit" \
+  "$INPUT" -o "$SENTINEL" --video --frames 4 --video-implicit-ref-map \
+  --bit-depth 10
 
 # Unsupported CPU Still tool pairs (SCOUT-QUANT-01).
 STILL_INPUT="$ROOT/tests/data/basic_640x360_1f.y4m"
@@ -403,7 +413,8 @@ fi
 # gate (src/cuda/pipeline/video/gate_video_gpu.sh) pins the bytes for the same
 # configurations; this keeps a CPU-only build covering the CLI surface.
 for spec in "refs7:--video-refs 7" \
-            "nrf4:--video-refs 4 --video-num-ref-frames 4"; do
+            "nrf4:--video-refs 4 --video-num-ref-frames 4" \
+            "implicit:--video-implicit-ref-map"; do
   name=${spec%%:*}
   read -r -a args <<< "${spec#*:}"
   if "$BIN" "$INPUT" -o "${OUT}.${name}.ivf" --video --frames 4 \

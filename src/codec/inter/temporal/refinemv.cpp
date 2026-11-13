@@ -162,16 +162,22 @@ std::int64_t sad_refinemv(const RefineSearchInput& in, int dx, int dy,
     a0 = RefArea{0, 0, in.ref[0].width - 1, in.ref[0].height - 1};
     a1 = RefArea{0, 0, in.ref[1].width - 1, in.ref[1].height - 1};
   }
-  if (!predict_plane_u8(in.ref[0], x, y, w, h, mvs.mv[0],
-                        InterpFilter::kBilinear, 0, 0, false,
-                        in.ref[0].width, in.ref[0].height, in.frame_w,
-                        in.frame_h, a0, in.scratch0, in.scratch_stride)) {
+  // A scale source of 0 means "the caller only supplied the plane extent"
+  // (the historical component/test form); derive the MI-aligned luma size.
+  const int lw0 = in.ref_luma_w[0] > 0 ? in.ref_luma_w[0] : in.ref[0].width;
+  const int lh0 = in.ref_luma_h[0] > 0 ? in.ref_luma_h[0] : in.ref[0].height;
+  const int lw1 = in.ref_luma_w[1] > 0 ? in.ref_luma_w[1] : in.ref[1].width;
+  const int lh1 = in.ref_luma_h[1] > 0 ? in.ref_luma_h[1] : in.ref[1].height;
+  if (!predict_plane_u8_ex(in.ref[0], x, y, w, h, mvs.mv[0],
+                           InterpFilter::kBilinear, 0, 0, false, lw0, lh0,
+                           in.ref[0].width, in.ref[0].height, in.frame_w,
+                           in.frame_h, a0, in.scratch0, in.scratch_stride)) {
     return -1;
   }
-  if (!predict_plane_u8(in.ref[1], x, y, w, h, mvs.mv[1],
-                        InterpFilter::kBilinear, 0, 0, false,
-                        in.ref[1].width, in.ref[1].height, in.frame_w,
-                        in.frame_h, a1, in.scratch1, in.scratch_stride)) {
+  if (!predict_plane_u8_ex(in.ref[1], x, y, w, h, mvs.mv[1],
+                           InterpFilter::kBilinear, 0, 0, false, lw1, lh1,
+                           in.ref[1].width, in.ref[1].height, in.frame_w,
+                           in.frame_h, a1, in.scratch1, in.scratch_stride)) {
     return -1;
   }
   return refine_sad(in.scratch0, in.scratch_stride, in.scratch1,
@@ -264,16 +270,26 @@ TemporalStatus refine_predict_block(const RefinePredictInput& in) {
     a0 = RefArea{0, 0, in.ref[0].width - 1, in.ref[0].height - 1};
     a1 = RefArea{0, 0, in.ref[1].width - 1, in.ref[1].height - 1};
   }
-  if (!predict_plane_1_16(in.ref[0], in.x, in.y, in.w, in.h, in.offset_mvs.mv[0],
-                          InterpFilter::kEighttapSharp, in.sub_x, in.sub_y,
-                          false, in.ref[0].width, in.ref[0].height, in.frame_w,
-                          in.frame_h, a0, in.scratch0, in.scratch_stride)) {
+  const int lw0 = in.ref_luma_w[0] > 0 ? in.ref_luma_w[0]
+                                       : (in.ref[0].width << in.sub_x);
+  const int lh0 = in.ref_luma_h[0] > 0 ? in.ref_luma_h[0]
+                                       : (in.ref[0].height << in.sub_y);
+  const int lw1 = in.ref_luma_w[1] > 0 ? in.ref_luma_w[1]
+                                       : (in.ref[1].width << in.sub_x);
+  const int lh1 = in.ref_luma_h[1] > 0 ? in.ref_luma_h[1]
+                                       : (in.ref[1].height << in.sub_y);
+  if (!predict_plane_1_16_ex(in.ref[0], in.x, in.y, in.w, in.h,
+                             in.offset_mvs.mv[0], InterpFilter::kEighttapSharp,
+                             in.sub_x, in.sub_y, false, lw0, lh0,
+                             in.ref[0].width, in.ref[0].height, in.frame_w,
+                             in.frame_h, a0, in.scratch0, in.scratch_stride)) {
     return TemporalStatus::kInvalidArgument;
   }
-  if (!predict_plane_1_16(in.ref[1], in.x, in.y, in.w, in.h, in.offset_mvs.mv[1],
-                          InterpFilter::kEighttapSharp, in.sub_x, in.sub_y,
-                          false, in.ref[1].width, in.ref[1].height, in.frame_w,
-                          in.frame_h, a1, in.scratch1, in.scratch_stride)) {
+  if (!predict_plane_1_16_ex(in.ref[1], in.x, in.y, in.w, in.h,
+                             in.offset_mvs.mv[1], InterpFilter::kEighttapSharp,
+                             in.sub_x, in.sub_y, false, lw1, lh1,
+                             in.ref[1].width, in.ref[1].height, in.frame_w,
+                             in.frame_h, a1, in.scratch1, in.scratch_stride)) {
     return TemporalStatus::kInvalidArgument;
   }
   compound_average(in.scratch0, in.scratch_stride, in.scratch1,

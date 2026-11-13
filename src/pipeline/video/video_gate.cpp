@@ -12,6 +12,7 @@
 
 #include "core/io/ivf.h"
 #include "core/io/y4m.h"
+#include "pipeline/video/post/deblock_grid.h"
 
 #include <algorithm>
 #include <cmath>
@@ -377,7 +378,14 @@ bool run_phase(const char* name, const std::vector<OwnedFrame>& frames,
   }
   std::cout << "  units=" << sequence.units.size()
             << " coded=" << sequence.frame_bytes.size()
-            << " output=" << sequence.recon.size() << "\n";
+            << " output=" << sequence.recon.size()
+            << " temporal_candidates=" << sequence.temporal_candidates << "\n";
+  if (options.enable_ref_frame_mvs && options.num_total_refs > 1 &&
+      sequence.frame_bytes.size() > 2 && sequence.temporal_candidates == 0) {
+    std::cerr << "TEMPORAL-MV FAIL: --ref-mvs coded no §7.12.2.7/.8 candidate "
+                 "with " << options.num_total_refs << " references\n";
+    return false;
+  }
   {
     std::uint64_t total_bytes = 0;
     for (const std::uint32_t bytes : sequence.frame_bytes) {
@@ -546,6 +554,20 @@ int main(int argc, char** argv) {
       options.ras = true;
     } else if (arg == "--tip") {
       options.enable_tip = true;
+    } else if (arg == "--ref-mvs") {
+      options.enable_ref_frame_mvs = true;
+    } else if (arg == "--b-frames" && i + 1 < argc) {
+      options.b_frames = std::atoi(argv[++i]);
+    } else if (arg == "--tlayers" && i + 1 < argc) {
+      options.temporal_layers = std::atoi(argv[++i]);
+    } else if (arg == "--subpu-selftest") {
+      std::string selftest_error;
+      if (!av2enc::video::post::video_save_subpu_selftest(&selftest_error)) {
+        std::cerr << "save_subpu selftest FAIL: " << selftest_error << "\n";
+        return 1;
+      }
+      std::cout << "save_subpu selftest PASS (§7.13.3.15)\n";
+      return 0;
     } else if (arg == "--trace") {
       options.trace = true;
     } else if (arg == "--help") {
@@ -661,19 +683,48 @@ int main(int argc, char** argv) {
   }
 
   // Phase 1: exactly two frames.
-  std::vector<OwnedFrame> two(frames_owned.begin(),
-                              frames_owned.begin() +
-                                  std::min<std::size_t>(2, frames_owned.size()));
-  const bool two_ok =
-      run_phase("two-frame P-frame", two, options, out_path, true);
-
-  // Phase 2: short clip.
+  bool two_ok = true;
   bool clip_ok = true;
-  if (frames_owned.size() > 2) {
-    clip_ok = run_phase("short clip", frames_owned, options,
-                        out_path + ".clip.ivf", true);
+  const bool exact_shape =
+      options.b_frames > 0 || options.temporal_layers > 0;
+  if (!exact_shape) {
+    std::vector<OwnedFrame> two(
+        frames_owned.begin(),
+        frames_owned.begin() +
+            std::min<std::size_t>(2, frames_owned.size()));
+    two_ok = run_phase("two-frame P-frame", two, options, out_path, true);
+
+    // Phase 2: short clip.
+    if (frames_owned.size() > 2) {
+      clip_ok = run_phase("short clip", frames_owned, options,
+                          out_path + ".clip.ivf", true);
+    }
   }
 
-  std::cout << (two_ok && clip_ok ? "M2 GATE PASS" : "M2 GATE FAIL") << "\n";
-  return two_ok && clip_ok ? 0 : 1;
+  // Phase 3: B frames and temporal layers with the temporal MV field.  These
+  // stream shapes need an exact frame count, so they are separate phases.
+  bool extra_ok = true;
+  if (options.b_frames > 0) {
+    const int gop = options.b_frames + 2;
+    if (frames_owned.size() != static_cast<std::size_t>(gop)) {
+      std::cerr << "--b-frames needs exactly " << gop
+                << " input frames for this gate\n";
+      return 2;
+    }
+    extra_ok = run_phase("B frames + temporal MVs", frames_owned, options,
+                         out_path + ".b.ivf", true);
+  } else if (options.temporal_layers > 0) {
+    const int gop = options.temporal_layers;
+    if (frames_owned.size() != static_cast<std::size_t>(gop)) {
+      std::cerr << "--tlayers needs exactly " << gop
+                << " input frames for this gate\n";
+      return 2;
+    }
+    extra_ok = run_phase("temporal layers + temporal MVs", frames_owned,
+                         options, out_path + ".tl.ivf", true);
+  }
+
+  std::cout << (two_ok && clip_ok && extra_ok ? "M2 GATE PASS" : "M2 GATE FAIL")
+            << "\n";
+  return two_ok && clip_ok && extra_ok ? 0 : 1;
 }

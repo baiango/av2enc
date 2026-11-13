@@ -242,3 +242,37 @@ All five steps are implemented and gate-verified:
 - **No inter-layer prediction / no compression claim.** Layers are delivery
   packaging (`docs/bitrate-features.md` §7).
 - **No OP list > 7.** More than 7 spatial layers is rejected by the plan.
+
+---
+
+## Wave-5 status (CPU feature completeness): temporal + embedded layers
+
+`--svc-temporal N` and `--svc-embedded N` are now wired and decoder-gated. The
+wiring seams are:
+
+1. **Temporal layers.** `SvcEncodeOptions::config.temporal_layers` reaches
+   `video::VideoOptions::temporal_layers = 1 << N` for each per-layer encode.
+   The product `inter::tlayers` hierarchical-P planner owns the coding order and
+   `obu_tlayer_id`; `svc_stream.cpp` regroups the per-layer units into temporal
+   units through `order_frames()` and keeps every coded output frame unit in a
+   TU on the same `OrderHint`. `LayerConfigRecord::doh_constraint` is set for
+   `temporal_layers > 1` because the plan clears `monotonic_output_order_flag`.
+2. **Embedded layers.** `svc_stream.cpp` codes mlayer 0 with the normal
+   `encode_video_sequence()` chain and each higher mlayer with
+   `video::encode_video_refinement_sequence()`: every picture is an inter
+   picture referencing the lower mlayer's decoded picture at the same display
+   index (`reference_slot = m-1`) and refreshing its own slot `m`. The sequence
+   header carries `max_mlayer_id = M-1`, `seq_max_mlayer_cnt = M` and
+   `seq_profile_idc = M-1` (Annex A). The base chain pins slot 0 through
+   `VideoOptions::fixed_write_slot` so it cannot collide with a refinement slot.
+3. **Reconstruction dump.** `--video-recon <stem>.y4m` writes
+   `<stem>_x<X>m<M>.y4m` per layer (the single xlayer/m0 case keeps the exact
+   path) so the gate compares every decoded picture against the encoder recon.
+4. **Gate.** `gate_cli_svc.sh` checks 8/8 temporal and 12/12 embedded pictures
+   (`avmdec --all-layers`), each bit-exact against the recon, plus the pinned
+   `dav2d --strict 1` single-layer cases. `dav2d` cannot parse
+   `max_mlayer_id > 0`; that limitation is recorded in `docs/negative-results.md`.
+
+Cross-xlayer prediction remains impossible by specification (§6.8.2), not by
+omission: `--svc-inter-layer` is a named rejection and `validate_layer_plan()`
+rejects an LCR that declares `dependent_xlayers`.

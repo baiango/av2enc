@@ -32,6 +32,38 @@ transform size and residual/reconstruction geometry come from
 predictor uses the full §7.13.3.22 `Div_Lut` (4:2:2 chroma blocks such as
 16x32 have a non-power-of-two `w + h = 48`).
 
+## In-loop filters
+
+| Filter | 10-bit / non-4:2:0 status | Gate |
+|---|---|---|
+| §7.17 deblock | `--still-deblock`, 10-bit 4:2:0/4:2:2/4:4:4/4:0:0 | `format_gate.sh` |
+| §7.18 CDEF | `--still-cdef[=strengths]`; strength search over the shared candidate ladder at 10-bit, per-64x64 `cdef_idx` when strengths >= 2 | `format_gate.sh` `10bit_*_cdef_*` (0-LSB recon) |
+| §7.19 CCSO | `--still-ccso` (band-offset and edge-classified fit) and `--still-ccso-edge` (force the edge table); per-plane offsets + per-unit `CcsoBlks` | `format_gate.sh` `10bit_*_ccso_*` (0-LSB recon) |
+| §7.20 Wiener NS | `--still-wiener` (luma, all product formats) and `--still-chroma-lr` (4:2:0 only) | `format_gate.sh` `10bit_*_wiener*` / `10bit_420_chroma_lr*` |
+| §7.20 PC-Wiener | `--still-pc-wiener` (luma, all product formats) | `format_gate.sh` `10bit_*_pc_wiener*` |
+| §7.20.5 GDF | `--still-gdf` (luma, header-only mode) | `format_gate.sh` `10bit_*_gdf*` |
+
+CDEF reads the post-deblock reconstruction (`CurrFrame`) and writes a separate
+`CdefFrame`; the filtered picture is the output and the next reference.  The
+sequence/frame header signals `enable_cdef` and the §5.18.7.10 `cdef_params()`
+row; `CdefStrengths == 1` codes no per-block symbol.
+
+CCSO reads the pre-CDEF luma (a separate `CurrFrame` copy) and modifies the
+post-CDEF planes in place, exactly like the decoder.  The fit searches the
+band-offset-only form and the edge-classified form over a small parameter
+ladder, fits one offset per `[band][cls0][cls1]` cell, and keeps a unit only
+when applying the offsets lowers SSE.  `CcsoBlks` is coded once per CCSO unit
+per enabled plane (§5.20.10.2).
+
+Loop restoration keeps `CdefFrame` and `LrFrame` separate.  Luma Wiener NS is
+fitted per unit with a least-squares solve over the shared stripe-aware source
+sampler and re-evaluated with the exact integer filter; PC-Wiener uses the
+recovered §7.20.4 bank with a per-unit on/off decision; GDF runs after LR and
+reads `CdefFrame` (§7.20.1).  Chroma LR is gated at 4:2:0: the 4:2:2/4:4:4
+CfL path differs from `dav2d` by 1 LSB on a few stripe-boundary samples, so
+the writer rejects `--still-chroma-lr` there by name (repro in
+`docs/negative-results.md`).
+
 ## What this owns
 
 | File | Purpose |
@@ -45,6 +77,7 @@ predictor uses the full §7.13.3.22 `Div_Lut` (4:2:2 chroma blocks such as
 | `hbd_test.cpp` | 193 checks: ranges, qlookup/qctx, deblock/CfL, header bits, reader, encode goldens |
 | `build_and_test.sh` | standalone build/test (no CMake changes) |
 | `gate_hbd_still.sh` | `dav2d --strict 1` + `tools/validate_dav2d.sh` gate for 64x64/640x360/4K |
+| `gate_10bit_filters.sh` | 10-bit in-loop filter matrix: every chroma format, q90/q303, each filter and the whole chain (dav2d strict + 0-LSB recon) |
 | `INTEGRATION.md` | exact M1/M2 call sites and risks |
 
 The component does **not** edit `src/encoder/m10/`, the M1/M2 core,

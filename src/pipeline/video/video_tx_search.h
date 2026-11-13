@@ -52,6 +52,10 @@ struct Options {
   bool search_partition = true;
   bool search_type = true;
   bool include_1d_types = false;
+  // §5.4.8 enable_idtx_intra.  IDTX (type 9) is a TX_CLASS_2D identity type;
+  // when the sequence bit is 0 the decoder rejects it, so the candidate is
+  // filtered unless the caller signals the flag.
+  bool allow_idtx = false;
   // Partition bit mask, same values as VideoTxPartitionBit.
   std::int32_t partition_mask = 0x3f;
   std::int32_t reduced_tx_set = 0;

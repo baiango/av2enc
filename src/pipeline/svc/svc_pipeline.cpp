@@ -166,41 +166,19 @@ bool reference_allowed(const LayerPlan& plan, const ReferencePolicy& policy,
   }
 
   if (reference.xlayer_id != target.xlayer_id) {
-    if (!policy.cross_xlayer_prediction) {
-      std::ostringstream out;
-      out << "cross-xlayer reference "
-          << layers::layer_id_name(reference) << " -> "
-          << layers::layer_id_name(target)
-          << " is rejected: inter-layer prediction is not implemented "
-             "(spatial-only path); layers must be independently decodable";
-      return fail(error, out.str());
-    }
-    if (reference.xlayer_id >= target.xlayer_id) {
-      return fail(error, "an extended layer may only reference a lower xlayer");
-    }
-    bool declared = false;
-    for (const layers::ExtendedLayerConfig& layer : plan.lcr.layers) {
-      if (layer.xlayer_id == target.xlayer_id) {
-        for (std::uint8_t dep : layer.dependent_xlayer_ids) {
-          if (dep == reference.xlayer_id) {
-            declared = true;
-          }
-        }
-      }
-    }
-    if (!declared) {
-      return fail(error,
-                  "the LCR declares no inter-layer dependency for this xlayer");
-    }
-    if (reference.mlayer_id > target.mlayer_id) {
-      return fail(error,
-                  "cross-xlayer reference uses a higher embedded layer");
-    }
-    if (reference.tlayer_id > target.tlayer_id) {
-      return fail(error,
-                  "cross-xlayer reference uses a higher temporal layer");
-    }
-    return true;
+    // AV2 v1.0.0 §6.8.2: "It is a requirement of bitstream conformance that
+    // the value of lcr_dependent_xlayers_flag is equal to 0."  Cross-xlayer
+    // sample/MV/coefficient prediction therefore cannot be signalled at all,
+    // and there is no reference-resampling process to implement.  This is a
+    // spec constraint, not a missing encoder feature.
+    std::ostringstream out;
+    out << "cross-xlayer reference " << layers::layer_id_name(reference)
+        << " -> " << layers::layer_id_name(target)
+        << " is rejected: AV2 v1.0.0 §6.8.2 requires "
+           "lcr_dependent_xlayers_flag = 0, so inter-layer prediction cannot "
+           "be signalled in a conforming stream; every extended layer is "
+           "independently decodable";
+    return fail(error, out.str());
   }
 
   if (reference.mlayer_id != target.mlayer_id) {

@@ -51,13 +51,23 @@ struct CdefOptions {
   // disable_loopfilters_across_tiles: when true, taps outside the block's tile
   // are unavailable (is_inside_filter_region uses the tile bounds).
   bool disable_loopfilters_across_tiles = false;
-  // Only 8 is supported; coeffShift = bit_depth - 8 is therefore zero.
+  // 8 for cdef_frame(); 10 or 12 for cdef_frame16().  The value selects the
+  // coeffShift = BitDepth - 8 strength/damping scaling and the tap parity.
   int bit_depth = 8;
 };
 
 struct CdefPlane {
   const std::uint8_t* src = nullptr;  // CurrFrame (unfiltered)
   std::uint8_t* dst = nullptr;        // CdefFrame (filtered / copied)
+  int stride = 0;
+};
+
+// 10/12-bit variant of the same description.  `options.bit_depth` selects the
+// §4.8 Clip1 range, the coeffShift = BitDepth - 8 strength/damping scaling and
+// the §7.18.3 tap parity, exactly like the 8-bit path at shift 0.
+struct CdefPlane16 {
+  const std::uint16_t* src = nullptr;  // CurrFrame (unfiltered)
+  std::uint16_t* dst = nullptr;        // CdefFrame (filtered / copied)
   int stride = 0;
 };
 
@@ -86,6 +96,27 @@ struct CdefFrame {
   int n64_rows = 0;
 
   // Tile starts in luma MI units.  num_* == 0 means one implicit tile.
+  const std::uint16_t* tile_col_starts = nullptr;
+  int num_tile_cols = 0;
+  const std::uint16_t* tile_row_starts = nullptr;
+  int num_tile_rows = 0;
+};
+
+// 10/12-bit frame description for cdef_frame16().
+struct CdefFrame16 {
+  CdefPlane16 planes[3];
+  int mi_cols = 0;  // must be even
+  int mi_rows = 0;  // must be even
+  int subsampling_x = 1;
+  int subsampling_y = 1;
+  int num_planes = 3;  // 1 for 4:0:0
+
+  const std::uint8_t* skip = nullptr;
+  const std::uint8_t* lossless = nullptr;
+  const std::uint8_t* lossless_chroma = nullptr;
+  const std::int8_t* cdef_idx = nullptr;
+  int n64_cols = 0;
+  int n64_rows = 0;
   const std::uint16_t* tile_col_starts = nullptr;
   int num_tile_cols = 0;
   const std::uint16_t* tile_row_starts = nullptr;
@@ -126,6 +157,15 @@ bool cdef_supported(const CdefFrame& frame, const CdefOptions& options,
 // Runs CDEF over the whole frame.  Every 8x8 luma block (4x4 chroma) is
 // visited exactly once; the destination plane is fully written.
 CdefStatus cdef_frame(const CdefFrame& frame, const CdefOptions& options);
+
+// 10/12-bit variant (uint16_t sample container).  Supports 4:2:0, 4:2:2, 4:4:4
+// and 4:0:0; `options.bit_depth` must be 10 or 12.
+bool cdef_supported16(const CdefFrame16& frame, const CdefOptions& options,
+                      CdefStatus* status);
+CdefStatus cdef_frame16(const CdefFrame16& frame,
+                        const CdefOptions& options);
+int cdef_plane_width16(const CdefFrame16& frame, int plane);
+int cdef_plane_height16(const CdefFrame16& frame, int plane);
 
 // Runs the decision path for one block without writing pixels.  `r`/`c` are in
 // luma MI units and must address an 8x8 block origin (multiples of 2).

@@ -53,6 +53,44 @@ struct ScoreEntry {
 
 }  // namespace
 
+bool RefSlotBank::refresh(int refresh_frame_flags, int order_hint,
+                          int frame_width, int frame_height, int base_q_idx,
+                          bool key_frame, int tlayer_id, int mlayer_id,
+                          bool implicit_output, bool immediate_output,
+                          int counter, std::string* error) {
+  const auto fail = [&](const char* message) {
+    if (error != nullptr) *error = message;
+    return false;
+  };
+  if (num_ref_frames < 1 || num_ref_frames > kMaxNumRefSlots) {
+    return fail("NumRefFrames outside 1..16");
+  }
+  if (counter < 0) {
+    counter = frame_counter + 1;
+  }
+  frame_counter = counter;
+  bool first = true;
+  for (int i = 0; i < num_ref_frames; ++i) {
+    if (((refresh_frame_flags >> i) & 1) == 0) continue;
+    RefSlot& slot = slots[i];
+    // §7.23: a KEY/SWITCH frame marks only the first refreshed slot valid.
+    slot.valid = key_frame ? first : true;
+    first = false;
+    slot.restricted = false;
+    slot.order_hint = order_hint;
+    slot.frame_width = frame_width;
+    slot.frame_height = frame_height;
+    slot.counter = counter;
+    slot.mlayer = mlayer_id;
+    slot.tlayer = tlayer_id;
+    slot.base_q_idx = base_q_idx;
+    slot.implicit_output = implicit_output;
+    slot.immediate_output = immediate_output;
+    slot.is_bridge = false;
+  }
+  return true;
+}
+
 bool get_ref_frames(const RefMapParams& params, RefMap* out,
                     std::string* error) {
   const auto fail = [&](const char* message) {
@@ -286,6 +324,58 @@ bool get_past_future_cur_ref_lists(const RefMapParams& params, RefMap* map,
   }
   map->skip_seg_frame =
       map->num_cur_refs > 0 ? map->cur_refs[0] : map->closest_past;
+  // §7.8 tail: `if (SkipSegFrame == NONE) SkipSegFrame = 0`.
+  if (map->skip_seg_frame == kRefNone) map->skip_seg_frame = 0;
+  return true;
+}
+
+bool derive_explicit_ref_map(const RefMapParams& params, int num_total_refs,
+                             const int* ref_frame_idx, RefMap* out,
+                             std::string* error) {
+  const auto fail = [&](const char* message) {
+    if (error != nullptr) *error = message;
+    return false;
+  };
+  if (out == nullptr) return fail("null output");
+  if (params.slots == nullptr) return fail("null slot bank");
+  if (params.num_ref_frames < 1 || params.num_ref_frames > kMaxNumRefSlots) {
+    return fail("NumRefFrames outside 1..16");
+  }
+  if (num_total_refs < 0 || num_total_refs > kRefsPerFrameConst) {
+    return fail("NumTotalRefs outside 0..7");
+  }
+  if (num_total_refs > 0 && ref_frame_idx == nullptr) {
+    return fail("null ref_frame_idx");
+  }
+  RefMap map;
+  map.num_total_refs = num_total_refs;
+  for (int i = 0; i < num_total_refs; ++i) {
+    const int slot_index = ref_frame_idx[i];
+    if (slot_index < 0 || slot_index >= params.num_ref_frames) {
+      return fail("ref_frame_idx outside NumRefFrames");
+    }
+    const RefSlot& slot = params.slots[slot_index];
+    if (!slot.valid) return fail("ref_frame_idx names an invalid slot");
+    if (params.check_res) {
+      const bool size_ok =
+          2 * params.frame_width >= slot.frame_width &&
+          2 * params.frame_height >= slot.frame_height &&
+          params.frame_width <= 16 * slot.frame_width &&
+          params.frame_height <= 16 * slot.frame_height;
+      if (!size_ok) return fail("reference frame size ratio is invalid");
+    }
+    map.ref_frame_idx[i] = slot_index;
+    map.scores_index[i] = slot_index;
+    map.scores_order_hint[i] = ref_order_hint(slot);
+    // §5.18.2: ScoresDistance[i] = get_relative_dist(OrderHint,
+    // RefOrderHint[ref_frame_idx[i]]) for the explicit form (the implicit form
+    // produces it inside get_ref_frames()).
+    map.scores_distance[i] =
+        relative_dist(params.order_hint, ref_order_hint(slot));
+    map.scores_score[i] = 0;
+  }
+  if (!get_past_future_cur_ref_lists(params, &map, error)) return false;
+  *out = map;
   return true;
 }
 
@@ -462,13 +552,30 @@ bool write_frame_ref_map_syntax(av2enc::BitWriter* writer,
     return false;
   }
   const bool explicit_map = frame_uses_explicit_map(syntax);
+  // §5.18.2 codes frame_explicit_ref_frame_map only when the sequence header
+  // enables the choice; a SWITCH frame never codes it and always uses the
+  // explicit form.
+  if (syntax.seq_explicit_ref_frame_map && !syntax.frame_is_switch &&
+      !syntax.is_bridge) {
+    writer->put_bit(syntax.explicit_ref_frame_map);
+  }
   if (!explicit_map) {
-    // Nothing is coded.  The mapping is the §7.7 result, which the writer has
-    // already derived; make sure it is representable.
-    if (implicit.stage1.num_total_refs < 0 ||
-        implicit.stage1.num_total_refs > kRefsPerFrameConst) {
-      if (error != nullptr) *error = "implicit mapping outside 0..7";
+    // No map bits.  The mapping is the §7.7 result, which the encoder has
+    // already derived.  Re-derive it and fail if the supplied stage-1 map does
+    // not match, because the block syntax uses the encoder's copy.
+    ImplicitRefMap check;
+    if (!derive_implicit_ref_map(params, &check, error)) return false;
+    if (check.stage1.num_total_refs != implicit.stage1.num_total_refs) {
+      if (error != nullptr) *error = "implicit NumTotalRefs does not match §7.7";
       return false;
+    }
+    for (int i = 0; i < check.stage1.num_total_refs; ++i) {
+      if (check.stage1.ref_frame_idx[i] != implicit.stage1.ref_frame_idx[i]) {
+        if (error != nullptr) {
+          *error = "implicit ref_frame_idx does not match §7.7";
+        }
+        return false;
+      }
     }
     return true;
   }
@@ -500,12 +607,26 @@ bool read_frame_ref_map_syntax(BitReader* reader,
     return false;
   }
   FrameRefMapResult result;
-  const bool explicit_map = frame_uses_explicit_map(gates);
+  bool explicit_map = false;
+  if (gates.frame_is_switch || gates.is_bridge) {
+    explicit_map = true;
+  } else if (gates.seq_explicit_ref_frame_map) {
+    std::uint32_t bit = 0;
+    if (!reader->read_bits(1, &bit)) {
+      if (error != nullptr) *error = "invalid frame_explicit_ref_frame_map";
+      return false;
+    }
+    explicit_map = bit != 0;
+  }
   result.explicit_map = explicit_map;
   if (explicit_map) {
     if (gates.is_bridge) {
       result.map.num_total_refs = 1;
       result.map.ref_frame_idx[0] = gates.bridge_frame_ref_idx;
+      if (!derive_explicit_ref_map(params, 1, result.map.ref_frame_idx,
+                                   &result.map, error)) {
+        return false;
+      }
       *out = result;
       return true;
     }
@@ -515,16 +636,22 @@ bool read_frame_ref_map_syntax(BitReader* reader,
       if (error != nullptr) *error = "invalid num_total_refs";
       return false;
     }
-    result.map.num_total_refs = static_cast<int>(num_total_refs);
+    int indices[kRefsPerFrameConst] = {};
     const int index_bits = ceil_log2(static_cast<std::uint32_t>(params.num_ref_frames));
-    for (int i = 0; i < result.map.num_total_refs; ++i) {
+    for (int i = 0; i < static_cast<int>(num_total_refs); ++i) {
       std::uint32_t index = 0;
       if (!reader->read_bits(index_bits, &index) ||
           static_cast<int>(index) >= params.num_ref_frames) {
         if (error != nullptr) *error = "invalid ref_frame_idx";
         return false;
       }
-      result.map.ref_frame_idx[i] = static_cast<int>(index);
+      indices[i] = static_cast<int>(index);
+    }
+    // §5.18.2 computes ScoresDistance and then the §7.8 lists for the read
+    // explicit map too.
+    if (!derive_explicit_ref_map(params, static_cast<int>(num_total_refs),
+                                 indices, &result.map, error)) {
+      return false;
     }
     *out = result;
     return true;

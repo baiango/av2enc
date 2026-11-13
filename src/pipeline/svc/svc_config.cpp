@@ -152,6 +152,11 @@ layers::LayerConfigRecord build_lcr(const LayerConfig& config) {
   record.xlayer_id = static_cast<std::uint8_t>(layers::kGlobalXLayerId);
   record.global_config_record_id = config.seq_lcr_id;
   record.aggregate.present = false;
+  // §7.3.7: the hierarchical temporal-layer GOP codes
+  // monotonic_output_order_flag = 0, which requires the activated global LCR
+  // to set lcr_doh_constraint_flag = 1.  The flat chain keeps it 0 so the
+  // existing streams stay byte-identical.
+  record.doh_constraint = config.temporal_layers > 1;
 
   for (const SpatialLayerSpec& spatial : config.spatial_layers) {
     record.xlayer_map |= layer_bit(spatial.xlayer_id);
@@ -308,6 +313,11 @@ bool validate_layer_plan(const LayerPlan& plan, std::string& error) {
   if (plan.ops.xlayer_id != layers::kGlobalXLayerId) {
     return fail(error, "layer plan expects a global operating point set");
   }
+  if (plan.config.temporal_layers > 1 && !plan.lcr.doh_constraint) {
+    return fail(error,
+                "hierarchical temporal layers require the global LCR "
+                "lcr_doh_constraint_flag (§7.3.7)");
+  }
   if (static_cast<int>(plan.ops.points.size()) != spatial_count ||
       plan.operating_points.size() != plan.ops.points.size()) {
     return fail(error, "layer plan needs one operating point per spatial layer");
@@ -351,6 +361,21 @@ bool validate_layer_plan(const LayerPlan& plan, std::string& error) {
     const layers::ExtendedLayerConfig& lcr_layer = plan.lcr.layers[i];
     if (static_cast<int>(lcr_layer.xlayer_id) != static_cast<int>(i)) {
       return fail(error, "LCR layer entries are not in ascending xlayer order");
+    }
+    if (lcr_layer.dependent_xlayers ||
+        !lcr_layer.dependent_xlayer_ids.empty()) {
+      // AV2 v1.0.0 §6.8.2: "It is a requirement of bitstream conformance that
+      // the value of lcr_dependent_xlayers_flag is equal to 0."  A conforming
+      // stream therefore cannot signal cross-xlayer (inter-layer) prediction,
+      // and there is no resampling process to gate.  Embedded (mlayer)
+      // refinement is the decodable quality-scalability path (§5.4.1
+      // MLayerDependencyMap).
+      return fail(
+          error,
+          "inter-layer prediction is not a conforming AV2 v1.0.0 feature: "
+          "§6.8.2 requires lcr_dependent_xlayers_flag = 0, so no cross-xlayer "
+          "reference or resampling can be signalled; use embedded (mlayer) "
+          "refinement instead");
     }
     const std::uint32_t mlayer_map =
         (1U << static_cast<unsigned>(plan.config.embedded_layers)) - 1U;

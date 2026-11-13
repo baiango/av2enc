@@ -37,7 +37,8 @@ bitstreams, but it is not the shipped CLI.
 | **G-IBC** | `src/encoder/m1/ibc_stream/build_and_test.sh` — 4 streams, recon exact. |
 | **G-M2** | `src/encoder/m2/build_and_test.sh` — 2-frame and 8-frame 1280×720, `dav2d`, Y/U/V exact. |
 | **G-M2-COMPOUND** | `src/encoder/m2/multiref/gate` — 3-frame 128×128 and 1280×704, compound P, recon exact. |
-| *(none)* | DIP, IBP, MHCCP, warp, BAWP, inter-intra, TIP, OPFL, refine-MV — no decoder-gated stream exists. |
+| **G-NN** | `src/pipeline/video/gate_video_near_near.sh` — 640×360 3/5-frame B GOPs, `--video-compound-near-near` (NEAR_NEARMV over past+future), pinned IVF MD5s + picture count + `dav2d --strict 1` recon exact. The `--video-opfl`/`--video-refine-mv` refinement overlay is **rejected** (see the rows below). |
+| *(none)* | DIP, IBP, MHCCP, warp, BAWP, inter-intra, TIP, optimizer-only OPFL/refine-MV — no decoder-gated *tool* stream exists. |
 
 ---
 
@@ -89,12 +90,12 @@ bitstreams, but it is not the shipped CLI.
 | N6 | Reference-area clipping (`RefFirst/RefLast`, `useRefArea`) | §7.13.3.4-.5 / p471-472 | **PARTIAL** | Base clip to the MI-aligned plane in `mc.cpp`; `compute_ref_area` in `src/encoder/inter/temporal/refinemv.cpp`; candidate-ref-area in `multiref` | Only the temporal/refinemv components use `useRefArea`; wired MC always clips to the full plane. |
 | N7 | TIP `refFrames` selection + `Tip_Weighting_Factor` | §7.13.3.1 / p465-468 | **COMPONENT** | `src/encoder/inter/temporal/tip.cpp`; 8,980 checks; table pinned | `enable_tip=0`; M2 has no TIP syntax. |
 | N8 | Predict TIP (subblock loop, `tipSize` 8×8/16×16, `RefineMvs` fill) | §7.13.3.2 / p468-469 | **COMPONENT** | `temporal/tip.cpp`, `motion_field.cpp` (`build_tip_plan`) | No stream. |
-| N9 | Predict refine MV + `offset_refinemv` | §7.13.3.3 / p469-471 | **COMPONENT** | `temporal/refinemv.cpp` (`offset_refinemv`, `refine_mv_syntax`) | `enable_refinemv=0`. |
-| N10 | Search refine MV (24 neighbours, SAD gating, RefArea) | §7.13.3.6 / p472-473 | **COMPONENT** | `temporal/refinemv.cpp`; search/gating tests | No stream. |
+| N9 | Predict refine MV + `offset_refinemv` | §7.13.3.3 / p469-471 | **PARTIAL** | `temporal/refinemv.cpp` (`offset_refinemv`, `refine_mv_syntax`); product: `video_frame.cpp predict_compound_refinemv()` + §5.4.6 `enable_refinemv`; G-NN carrier | The product stream parses and uses the tool but the refined recon differs on 16,149 luma / 32,268 chroma samples of the 640x360 B frame, so `--video-refine-mv` is rejected by name (`docs/negative-results.md`). |
+| N10 | Search refine MV (24 neighbours, SAD gating, RefArea) | §7.13.3.6 / p472-473 | **PARTIAL** | `temporal/refinemv.cpp`; search/gating tests; product `search_refinemv()` call on the G-NN carrier | Same mismatch as N9; the search itself is component-tested but no decoder-exact product stream exists. |
 | N11 | Predict block orchestration (optflow / warp / ref-area dispatch) | §7.13.3.7 / p473-475 | **COMPONENT** | `temporal/opfl.cpp`, `refinemv.cpp` | M2 uses a direct `predict_plane`, not this dispatcher. |
-| N12 | Predict optflow block (subblock size, SAD shortcut, OpflMvs) | §7.13.3.8 / p475-476 | **COMPONENT** | `temporal/opfl.cpp` | `enable_opfl_refine=REFINE_NONE`. |
-| N13 | Get optflow based MV + distance reduction | §7.13.3.9 / p476-477 | **COMPONENT** | `temporal/opfl.cpp`, `temporal_math.h` (`opfl_scale_distances`) | No stream. |
-| N14 | Optflow difference / gradient / `compute_opfl_mv` (LS solve, ±16 clamp) | §7.13.3.10-.12 / p477-480 | **COMPONENT** | `temporal/opfl.cpp`; zero-diff + solve tests | No stream. |
+| N12 | Predict optflow block (subblock size, SAD shortcut, OpflMvs) | §7.13.3.8 / p475-476 | **PARTIAL** | `temporal/opfl.cpp`; product `video_frame.cpp predict_compound_optflow()` + §5.20.7.6 `use_optflow` (`REFINE_SWITCHABLE`); G-NN carrier | Luma is bit-exact; the chroma subblocks differ by 1 LSB on 2 samples, so `--video-opfl` is rejected by name. |
+| N13 | Get optflow based MV + distance reduction | §7.13.3.9 / p476-477 | **PARTIAL** | `temporal/opfl.cpp`, `temporal_math.h` (`opfl_scale_distances`); product call | Same chroma mismatch as N12. |
+| N14 | Optflow difference / gradient / `compute_opfl_mv` (LS solve, ±16 clamp) | §7.13.3.10-.12 / p477-480 | **PARTIAL** | `temporal/opfl.cpp`; zero-diff + solve tests; product `opfl_compute()` | Same chroma mismatch as N12. |
 | N15 | Predict subblock (per-list loop, warp dispatch `useWarp` 1/2, interp selection) | §7.13.3.14 / p481-482 | **COMPONENT** | `temporal/*` orchestration; `multiref/compound_predict.cpp` for the compound subset | Not the wired M2 path. |
 | N16 | Compound AVERAGE + CWP (`Cwp_Weighting_Factor`, `(cw*p0+(16-cw)*p1)`) | §7.13.3.14 / p483 | **PARTIAL** | `src/encoder/inter/advanced/advanced_common.h:123-125`, `compound_common.h`, `multiref/compound_predict.cpp`; **G-M2-COMPOUND** (AVERAGE + CWP forced) | Only via the 3-frame gate writer; `reference_select=0` and `enable_cwp=0` in the M2 core (`video_headers.cpp:172`). |
 | N17 | Implicit mask blend `get_mask` (ref on/off-screen weights 0/1/2) | §7.13.3.14 / p483-484 | **PARTIAL** | `multiref/compound_predict.cpp` (`implicit_mask_eligible`), `advanced_common.h`; unit-tested | The gate forces `GLOBAL_GLOBALMV`, which **disqualifies** the implicit mask, so no decoded stream exercises `get_mask`. |
@@ -108,10 +109,10 @@ bitstreams, but it is not the shipped CLI.
 | N25 | Warp estimation (least squares, `reduce_warp_model`, `get_warp_translation`) | §7.13.3.23 / p496-498 | **COMPONENT** | `warp.cpp` (`estimate_local_warp`), `warp_common.h`; random-model parity | Missing `find_warp_samples` / warp candidate stack (external). |
 | N26 | Extend warp estimation (neighbour model extension) | §7.13.3.24 / p498-500 | **COMPONENT** | `warp.cpp`; `Default_Warp_Params` path | `ExtendDeltaRow/Col` plumbing is caller-owned and not integrated. |
 | N27 | BAWP (fitted / explicit / chroma, conformance checks) | §7.13.3.25 / p500-503 | **WIRED** (fitted luma only) | `inter/advanced/bawp.cpp`, `bawp_common.h`; `--video-bawp` writes `use_bawp`, applies the fitted predictor on CPU and `--video-gpu`, and `gate_video_bawp` proves byte-identical 360p 4/8-frame streams decode with `dav2d --strict 1` | Explicit BAWP and `use_bawp_chroma` are not signalled; the product path is the skip-only single-prediction P chain. |
-| N28 | Morphological prediction (`morphPred` / IBC template) | §7.13.3.26 / p503 | **COMPONENT** | `bawp.cpp:66` (`morph_pred` selects `job.cur`), `inter/advanced/bawp.h:28`; `src/codec/inter/morph/build_and_test.sh` decodes two pinned streams exactly | `morph_pred` is read only inside `read_intrabc_info()`; the M2 `--video` keyframe has no IBC mode-info branch, so `--video-morph` is rejected by name. |
+| N28 | Morphological prediction (`morphPred` / IBC template) | §7.13.3.26 / p503 | **WIRED** | `--video-morph` codes the §5.20.5.3/.4 IBC mode-info path on the intra keyframe (screen tools + `enable_bawp`), signals `morph_pred`, and applies the §7.13.3.25 fit; `src/pipeline/video/gate_video_morph_interintra.sh` pins 1/4-picture streams with `dav2d --strict 1` and exact recon (morph=1 and morph=0 leaves) | Keyframe-only, single tile, no loop filters. Inter-frame morph is impossible: §5.20.5.4 reads the symbol only with `FrameIsIntra`. |
 | N29 | Save sub-PU size (`SubPuSize`, `SubPuColBase/RowBase`) | §7.13.3.15 / p484 | **ABSENT** | Only the deblock core carries a `sub_pu_size` field (`src/encoder/filters/deblock/deblock_core.h:118-127`) | Only used when `enable_df_sub_pu=1`; `video_headers.cpp` writes 0. |
 | N30 | OBMC | not in AV2 | **N/A** | `spec/tables/constants.csv:202` (`MOTION_MODES,5`); `inter/advanced/obmc_common.h` documents the removal | Encoder-only experiment in `obmc.*`; never signalled. |
-| N31 | Inter-intra (`COMPOUND_INTRA`, `interintra_mode`, `wedge_interintra`, blend) | §7.13.3.29-.30 / p506 | **COMPONENT** | `src/encoder/m2/advanced/advanced_decision.cpp:235`, `advanced_syntax.cpp` (1,964,773 entropy round-trip checks); `inter/advanced/compound.cpp` | M2 cannot signal `seq_enabled_motion_modes[INTERINTRA]`; no `dav2d` stream. |
+| N31 | Inter-intra (`COMPOUND_INTRA`, `interintra_mode`, `wedge_interintra`, blend) | §7.13.3.29-.30 / p506 | **WIRED** | `--video-compound-interintra` (single reference, `--video-refs 1`) codes `seq_enabled_motion_modes[INTERINTRA]`, the §5.20.7.14 motion-mode/interintra_mode/wedge_interintra syntax and the §7.13.3.29/.30 blend; `src/pipeline/video/gate_video_morph_interintra.sh` pins a 4-picture stream with `dav2d --strict 1` and exact recon, exercising both `wedge_interintra = 0` and `= 1` | The two-reference/compound form is impossible by §5.20.7.14 and stays rejected. CPU-only; single tile, plain key+P chain. |
 
 ---
 
@@ -173,14 +174,14 @@ bitstreams, but it is not the shipped CLI.
 
 | Status | Count |
 |---|---:|
-| WIRED | 23 |
+| WIRED | 25 |
 | PARTIAL | 15 |
-| COMPONENT | 32 |
+| COMPONENT | 30 |
 | ABSENT | 2 |
 | N/A | 1 |
 | **Total audited rules** | **73** |
 
-Breakdown: intra 16 W / 3 P / 9 C / 1 A = 29; inter 3 W / 8 P / 18 C / 1 A /
+Breakdown: intra 16 W / 3 P / 9 C / 1 A = 29; inter 5 W / 8 P / 16 C / 1 A /
 1 N/A = 31; palette 3 P; CfL 4 W / 1 P / 1 C = 6; MHCCP 4 C.
 
 Interpretation: the **encoder's intra predictor is genuinely wired and
@@ -229,8 +230,13 @@ streams, M2 single-ref, M2 compound gate) all compare byte-exact against
    change the intra-mode bit layout.
 7. **Inter-intra / warp / BAWP / TIP / OPFL / refine-MV** — sequence bits exist
    (`seq_enabled_motion_modes`, `enable_bawp`, `enable_tip`, `enable_opfl_refine`,
-   `enable_refinemv`) but are hard-coded 0; flipping any of them adds syntax the
-   M2 tile writer cannot emit and prediction the M2 predictor does not run.
+   `enable_refinemv`).  BAWP (`--video-bawp`), morph (`--video-morph`) and the
+   single-reference inter-intra mask blend (`--video-compound-interintra`) are
+   now decoder-gated.  Warp and TIP remain hard-coded 0 or gated elsewhere.
+   **OPFL / refine-MV are implemented on the `--video-compound-near-near`
+   B-frame carrier** (bits, block syntax, search and application), but the
+   refined prediction is not bit-exact, so both flags stay rejected by name
+   (`docs/negative-results.md`).
 8. **`--still-uv-full` + non-CfL chroma modes** is gated exact at 64×64/640×360,
    but only with `cfl_ds_filter_index=0` and 8-bit. Non-zero ds filters and
    directional/CfL chroma in 4:2:2/4:4:4 are component-tested only; the

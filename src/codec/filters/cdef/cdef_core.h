@@ -265,11 +265,15 @@ AV2ENC_CDEF_HD int cdef_constrain(int diff, int threshold,
 // plane coordinates of the block origin, `i`/`j` the sample inside the block.
 // Returns false when the candidate luma MI cell is outside the filter region;
 // the caller must use the returned `value` only when the function is true.
-AV2ENC_CDEF_HD bool cdef_get_at(const std::uint8_t* src,
-                                       std::size_t stride, int x0, int y0,
-                                       int i, int j, int dir, int k, int sign,
-                                       int sub_x, int sub_y,
-                                       const CdefRegion& region, int* value) {
+//
+// Templated on the sample container so the same normative arithmetic serves
+// the 8-bit (uint8_t) and 10/12-bit (uint16_t) product writers.
+template <typename Sample>
+AV2ENC_CDEF_HD bool cdef_get_at_t(const Sample* src,
+                                  std::size_t stride, int x0, int y0,
+                                  int i, int j, int dir, int k, int sign,
+                                  int sub_x, int sub_y,
+                                  const CdefRegion& region, int* value) {
   const int y = y0 + i + sign * kCdefDirections[dir][k][0];
   const int x = x0 + j + sign * kCdefDirections[dir][k][1];
   // Map the plane coordinate to a luma MI coordinate.  For chroma the shift
@@ -281,31 +285,45 @@ AV2ENC_CDEF_HD bool cdef_get_at(const std::uint8_t* src,
       candidate_r < region.row_start || candidate_r >= region.row_end) {
     return false;
   }
-  *value = src[static_cast<std::size_t>(y) * stride +
-               static_cast<std::size_t>(x)];
+  *value = static_cast<int>(src[static_cast<std::size_t>(y) * stride +
+                                static_cast<std::size_t>(x)]);
   return true;
+}
+
+AV2ENC_CDEF_HD bool cdef_get_at(const std::uint8_t* src,
+                                       std::size_t stride, int x0, int y0,
+                                       int i, int j, int dir, int k, int sign,
+                                       int sub_x, int sub_y,
+                                       const CdefRegion& region, int* value) {
+  return cdef_get_at_t(src, stride, x0, y0, i, j, dir, k, sign, sub_x, sub_y,
+                       region, value);
 }
 
 // Filter one sample of one plane with the §7.18.3 process.  `pri_str` is the
 // final primary strength (after the variance scaling for luma, unscaled for
 // chroma); `damping` already includes CdefDamping + coeffShift adjustments.
-AV2ENC_CDEF_HD int cdef_filter_sample(const std::uint8_t* src,
-                                             std::size_t stride, int x0,
-                                             int y0, int i, int j, int dir,
-                                             int pri_str, int sec_str,
-                                             int damping, int sub_x, int sub_y,
-                                             const CdefRegion& region) {
-  const int x = src[static_cast<std::size_t>(y0 + i) * stride +
-                    static_cast<std::size_t>(x0 + j)];
+// `coeff_shift` is BitDepth - 8 and is applied only to the tap-parity index,
+// exactly as the spec derives `(priStr >> coeffShift) & 1`.
+template <typename Sample>
+AV2ENC_CDEF_HD int cdef_filter_sample_t(const Sample* src,
+                                        std::size_t stride, int x0,
+                                        int y0, int i, int j, int dir,
+                                        int pri_str, int sec_str,
+                                        int damping, int sub_x, int sub_y,
+                                        int coeff_shift,
+                                        const CdefRegion& region) {
+  const int x = static_cast<int>(
+      src[static_cast<std::size_t>(y0 + i) * stride +
+          static_cast<std::size_t>(x0 + j)]);
   int sum = 0;
   int max_value = x;
   int min_value = x;
-  const int tap_row = pri_str & 1;  // (priStr >> coeffShift) & 1, 8-bit
+  const int tap_row = (pri_str >> coeff_shift) & 1;
   for (int k = 0; k < 2; ++k) {
     for (int sign = -1; sign <= 1; sign += 2) {
       int p = 0;
-      if (cdef_get_at(src, stride, x0, y0, i, j, dir, k, sign, sub_x, sub_y,
-                      region, &p)) {
+      if (cdef_get_at_t(src, stride, x0, y0, i, j, dir, k, sign, sub_x, sub_y,
+                        region, &p)) {
         sum += kCdefPriTaps[tap_row][k] *
                cdef_constrain(p - x, pri_str, damping);
         max_value = p > max_value ? p : max_value;
@@ -314,8 +332,8 @@ AV2ENC_CDEF_HD int cdef_filter_sample(const std::uint8_t* src,
       for (int dir_off = -2; dir_off <= 2; dir_off += 4) {
         int s = 0;
         const int sec_dir = (dir + dir_off) & 7;
-        if (cdef_get_at(src, stride, x0, y0, i, j, sec_dir, k, sign, sub_x,
-                        sub_y, region, &s)) {
+        if (cdef_get_at_t(src, stride, x0, y0, i, j, sec_dir, k, sign, sub_x,
+                          sub_y, region, &s)) {
           sum += kCdefSecTaps[tap_row][k] *
                  cdef_constrain(s - x, sec_str, damping);
           max_value = s > max_value ? s : max_value;
@@ -328,12 +346,24 @@ AV2ENC_CDEF_HD int cdef_filter_sample(const std::uint8_t* src,
   return cdef_clip3(min_value, max_value, adjusted);
 }
 
+// 8-bit compatibility entry point (coeffShift == 0).
+AV2ENC_CDEF_HD int cdef_filter_sample(const std::uint8_t* src,
+                                             std::size_t stride, int x0,
+                                             int y0, int i, int j, int dir,
+                                             int pri_str, int sec_str,
+                                             int damping, int sub_x, int sub_y,
+                                             const CdefRegion& region) {
+  return cdef_filter_sample_t(src, stride, x0, y0, i, j, dir, pri_str, sec_str,
+                              damping, sub_x, sub_y, 0, region);
+}
+
 // §7.18.2 CDEF direction process for the 8x8 luma block at (x0, y0).
 // Outputs the direction index 0..7 and the scaled variance.
-AV2ENC_CDEF_HD void cdef_direction(const std::uint8_t* luma,
-                                          std::size_t stride, int x0, int y0,
-                                          int bit_depth, int* out_dir,
-                                          std::int64_t* out_var) {
+template <typename Sample>
+AV2ENC_CDEF_HD void cdef_direction_t(const Sample* luma,
+                                     std::size_t stride, int x0, int y0,
+                                     int bit_depth, int* out_dir,
+                                     std::int64_t* out_var) {
   std::int64_t partial[8][15];
   for (int i = 0; i < 8; ++i) {
     for (int j = 0; j < 15; ++j) {
@@ -344,8 +374,8 @@ AV2ENC_CDEF_HD void cdef_direction(const std::uint8_t* luma,
   for (int i = 0; i < 8; ++i) {
     for (int j = 0; j < 8; ++j) {
       const int sample =
-          (luma[static_cast<std::size_t>(y0 + i) * stride +
-                static_cast<std::size_t>(x0 + j)] >>
+          (static_cast<int>(luma[static_cast<std::size_t>(y0 + i) * stride +
+                                 static_cast<std::size_t>(x0 + j)]) >>
            shift) -
           128;
       const std::int64_t value = sample;
@@ -402,6 +432,13 @@ AV2ENC_CDEF_HD void cdef_direction(const std::uint8_t* luma,
   }
   *out_dir = best_dir;
   *out_var = (best_cost - cost[(best_dir + 4) & 7]) >> 10;
+}
+
+AV2ENC_CDEF_HD void cdef_direction(const std::uint8_t* luma,
+                                          std::size_t stride, int x0, int y0,
+                                          int bit_depth, int* out_dir,
+                                          std::int64_t* out_var) {
+  cdef_direction_t(luma, stride, x0, y0, bit_depth, out_dir, out_var);
 }
 
 }  // namespace av2enc::cdef

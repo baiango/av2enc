@@ -15,6 +15,7 @@
 #include <cstring>
 #include <iostream>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <span>
 #include <string>
@@ -471,6 +472,37 @@ struct InterCandidate {
   // so an equal-SSE tie must be resolved by this key instead of list position.
   int order = 0;};
 
+// The partition node set is a pure function of the coded geometry and the
+// partition options: only the per-node variance *costs* change per frame.  The
+// CPU decision traversal that discovers it is a host tree walk (8.9 ms/frame at
+// 720p), so cache it across the frames of a sequence.  The runtime is
+// single-control-thread by contract (docs/cuda-interface.md), so a plain cache
+// is safe; a different geometry simply misses and rebuilds.
+struct PartitionNodeSet {
+  int width = 0;
+  int height = 0;
+  int tile_x = 0;
+  int tile_y = 0;
+  int max_depth = 0;
+  int min_block_px = 0;
+  bool force_single = false;
+  std::vector<detail::VarianceNode> nodes;
+  std::vector<std::uint64_t> keys;
+  std::unordered_map<std::uint64_t, std::size_t> index;
+
+  bool matches(int w, int h, int tx, int ty, int depth, int min_px,
+               bool single) const {
+    return width == w && height == h && tile_x == tx && tile_y == ty &&
+           max_depth == depth && min_block_px == min_px &&
+           force_single == single;
+  }
+};
+
+PartitionNodeSet& partition_node_cache() {
+  static PartitionNodeSet cache;
+  return cache;
+}
+
 class GpuFrameEncoder {
  public:
   GpuFrameEncoder(detail::Backend& backend, const VideoInputFrame& source,
@@ -735,38 +767,54 @@ class GpuFrameEncoder {
       poptions.max_depth = 0;
       poptions.min_block_size_px = 64;
     }
-    // Pass 1: record every node the CPU decision traversal can visit.  The
-    // visited set is geometry-driven; the callback returns finite zero costs so
-    // both policy passes are explored.  Extra nodes are harmless.
-    std::vector<detail::VarianceNode> nodes;
-    std::vector<std::uint64_t> keys;
-    std::map<std::uint64_t, std::size_t> index;
-    const auto record = [&](const partition::PartitionNodeInfo& info) {
-      const partition::BlockRect rect = partition::block_rect(
-          geometry_, info.mi_row, info.mi_col, info.size);
-      const std::uint64_t key = node_key(info.mi_row, info.mi_col, info.size);
-      if (index.find(key) == index.end()) {
-        index.emplace(key, nodes.size());
-        keys.push_back(key);
-        nodes.push_back(detail::VarianceNode{rect.x + tile_x_,
-                                             rect.y + tile_y_,
-                                             rect.visible_width,
-                                             rect.visible_height});
+    // The node set is geometry-driven: the callback returns finite zero costs
+    // so both policy passes are explored, and extra nodes are harmless.
+    PartitionNodeSet& cache = partition_node_cache();
+    if (!cache.matches(width_, height_, tile_x_, tile_y_,
+                       poptions.max_depth, poptions.min_block_size_px,
+                       options_.force_single_block)) {
+      cache.width = width_;
+      cache.height = height_;
+      cache.tile_x = tile_x_;
+      cache.tile_y = tile_y_;
+      cache.max_depth = poptions.max_depth;
+      cache.min_block_px = poptions.min_block_size_px;
+      cache.force_single = options_.force_single_block;
+      cache.nodes.clear();
+      cache.keys.clear();
+      cache.index.clear();
+      cache.nodes.reserve(4096);
+      cache.keys.reserve(4096);
+      cache.index.reserve(8192);
+      const auto record = [&](const partition::PartitionNodeInfo& info) {
+        const partition::BlockRect rect = partition::block_rect(
+            geometry_, info.mi_row, info.mi_col, info.size);
+        const std::uint64_t key = node_key(info.mi_row, info.mi_col, info.size);
+        if (cache.index.find(key) == cache.index.end()) {
+          cache.index.emplace(key, cache.nodes.size());
+          cache.keys.push_back(key);
+          cache.nodes.push_back(detail::VarianceNode{rect.x + tile_x_,
+                                                     rect.y + tile_y_,
+                                                     rect.visible_width,
+                                                     rect.visible_height});
+        }
+        partition::NodeCosts costs;
+        costs.leaf = 0.0;
+        costs.none_signal = 0.0;
+        costs.split_signal = 0.0;
+        costs.horz_signal = 0.0;
+        costs.vert_signal = 0.0;
+        return costs;
+      };
+      const partition::FrameDecision discovery =
+          partition::decide_frame(geometry_, record, poptions);
+      if (discovery.status != partition::DecisionStatus::kOk) {
+        error = "partition discovery failed: " + discovery.error;
+        return false;
       }
-      partition::NodeCosts costs;
-      costs.leaf = 0.0;
-      costs.none_signal = 0.0;
-      costs.split_signal = 0.0;
-      costs.horz_signal = 0.0;
-      costs.vert_signal = 0.0;
-      return costs;
-    };
-    const partition::FrameDecision discovery =
-        partition::decide_frame(geometry_, record, poptions);
-    if (discovery.status != partition::DecisionStatus::kOk) {
-      error = "partition discovery failed: " + discovery.error;
-      return false;
     }
+    const std::vector<detail::VarianceNode>& nodes = cache.nodes;
+    const std::vector<std::uint64_t>& keys = cache.keys;
 
     std::vector<std::int64_t> costs;
     if (!backend_.variance_costs(nodes, costs, error)) return false;
@@ -774,7 +822,8 @@ class GpuFrameEncoder {
       error = "backend returned the wrong variance-cost count";
       return false;
     }
-    std::map<std::uint64_t, std::int64_t> cost_map;
+    std::unordered_map<std::uint64_t, std::int64_t> cost_map;
+    cost_map.reserve(keys.size() * 2);
     for (std::size_t i = 0; i < keys.size(); ++i) {
       cost_map.emplace(keys[i], costs[i]);
     }

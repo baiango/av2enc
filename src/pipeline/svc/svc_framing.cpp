@@ -581,7 +581,7 @@ bool write_layer_config_record_payload(
     writer.put_bit(dependent);
     writer.put_bit(false);  // lcr_global_atlas_id_present_flag
     writer.put_bits(0U, 7);  // lcr_global_purpose_id
-    writer.put_bit(false);   // lcr_doh_constraint_flag
+    writer.put_bit(record.doh_constraint);  // lcr_doh_constraint_flag
     writer.put_bit(false);   // lcr_enforce_tile_alignment_flag
     writer.put_bits(0U, 3);  // atlas id / reserved
     writer.put_bits(0U, 5);  // reserved

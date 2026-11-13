@@ -95,9 +95,22 @@ and `get_ref_frames(1)` (after it). `RefMap` reproduces `mapOrderHint`,
 resolution score, dedup, the `NRanked > REFS_PER_FRAME` drop rule, the stable
 bubble sort, and the restricted append. §7.8 returns `ClosestPast`,
 `ClosestFuture`, `FurthestFuture`, the past/future/current lists and
-`SkipSegFrame`; `SkipSegFrame` is left as `NONE` when there is no past or
-current reference (the spec leaves `ClosestPast == NONE`; `adv` substitutes 0 —
-see “Deviations” below).
+`SkipSegFrame`; `SkipSegFrame` follows the §7.8 tail and becomes 0 when there is
+neither a current nor a past reference.
+
+`RefSlotBank` is the encoder-side §7.23 store the implicit mapping reads
+(`RefValid`, `RefCounter`, `RefOrderHint`, `RefFrameWidth/Height`,
+`RefBaseQIdx`, `RefTLayerId`, `RefMLayerId`). `refresh()` mirrors
+`refresh_frame_flags`: a regular frame makes every named slot valid with one
+shared `RefCounter`, while a KEY/SWITCH frame leaves only the first refreshed
+slot valid (`RefValid[i] = first ? 1 : 0`). The M2 writer must call it after
+each frame or the next frame's implicit mapping diverges.
+
+`derive_explicit_ref_map()` computes the same §5.18.2/§7.8 fields for an
+*explicit* map: it validates each index against the live bank, sets
+`ScoresDistance[i] = get_relative_dist(OrderHint, RefOrderHint[ref_frame_idx[i]])`
+and then runs the §7.8 classification. Encoder block decisions and the decoder
+model therefore expose one field set for both mapping modes.
 
 `get_disp_order_hint()` implements the CLK / restricted-SWITCH short-circuit,
 `get_max_disp_order_hint(onlyShowable = 1)`, the wrap adjustment and the
@@ -108,9 +121,21 @@ points: equal display order hints, an identical implicit mapping per reference
 index, and an explicit buffer index that denotes the same frame everywhere.
 
 `write_frame_ref_map_syntax` / `read_frame_ref_map_syntax` implement the
-§5.18.2 presence rules: `SWITCH`/bridge forces an explicit map; otherwise
-`explicit_ref_frame_map == 0` writes **no** bits and the reader derives the
-mapping with §7.7.
+§5.18.2 presence rules exactly:
+
+* a `SWITCH` frame or a bridge forces the explicit form and never codes the
+  frame bit;
+* sequence `explicit_ref_frame_map == 1` codes one
+  `frame_explicit_ref_frame_map` bit, then — only when it is 1 —
+  `num_total_refs f(3)` and that many
+  `ref_frame_idx f(CeilLog2(NumRefFrames))` values (the list length varies per
+  frame);
+* sequence `explicit_ref_frame_map == 0` writes **no** bits and the reader
+  derives the mapping with §7.7.
+
+In implicit mode the writer re-derives the map and rejects an encoder copy that
+does not match, so a divergence fails at stream construction instead of
+desynchronising the tile syntax.
 
 ## Tests
 
@@ -254,9 +279,10 @@ in this tree.
 * `PruneCount` can exceed `MAX_PR_NUM` within one pruning sweep (the guard is
   outside the loop); the mirror’s invariant allows
   `MAX_PR_NUM - 1 + NumMvFound`.
-* §7.8 leaves `SkipSegFrame == ClosestPast == NONE` when nothing is past or
-  current; `adv::get_past_future_cur_ref_lists` substitutes 0. The parity test
-  normalises that one field and documents it.
+* The pinned golden stack hashes in `mv_stack_full_test` were produced on the
+  reference host; GCC 13 on the RTX 3060 box reports 8 mismatches on the
+  unmodified tree too (checks/failures are otherwise identical). The pinned
+  §7.7/§7.8/§5.18.2 tests are bit-exact and unaffected.
 * A single-reference stack’s list-1 entries are unused by the spec; they are
   canonicalised to list 0 so the record is deterministic.
 * `use_intrabc` is accepted but the §7.12.2.20 `add_to_ref_bv` candidates

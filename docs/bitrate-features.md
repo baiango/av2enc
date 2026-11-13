@@ -337,7 +337,7 @@ streams, because a bad RD decision can produce a valid but poor stream.
 | Tiles (up to 64 columns × 64 rows; independent entropy/prediction boundaries) | §5.18.7.2, §6.17.7.2, §5.18.7.3, §6.17.7.3 | B | M; depends on tile-aware availability and entropy reset | Parallelism, not compression; costs roughly 0.1–0.5% BD-rate at tile boundaries | M4 (for speed) | U1 — unverified |
 | Tile groups (multiple tile-group OBUs per frame) | §5.19, §6.18, §5.20.1, §6.19.1 | B | M; depends on tiles | Parallel encode/transmit and low-latency slicing; ~0 compression gain | M4 (for speed) | U1 — unverified |
 | Temporal layers (`obu_tlayer_id`, dependency maps) | §5.2.2, §6.2.2, §5.4.1 | B | M–L; depends on GOP scheduler | No direct gain; enables temporal scalability and hierarchical B (the gain is counted under B-frames) | M4 | U2 — unverified |
-| Extended/embedded layers (SVC-like scalable/multistream) | §5.8, §6.8, §7.3.6, Annex F, Annex G | B | XL; layer management, extraction, composition | Packaging/scalability, not a proven single-layer BD-rate gain. Do not budget compression gain for it. | Optional | U2 — unverified |
+| Extended/embedded layers (SVC-like scalable/multistream) | §5.8, §6.8, §7.3.6, Annex F, Annex G | B | XL; layer management, extraction, composition | Packaging/scalability, not a proven single-layer BD-rate gain. Cross-xlayer prediction is forbidden (§6.8.2); only the embedded (mlayer) ladder has cross-layer prediction. Do not budget compression gain for it. | Optional | **U1 — CPU path gated** (`gate_cli_svc.sh`: temporal 8/8, embedded 12/12 pictures exact; avmdec only for embedded) |
 | Multi-stream / atlas composition | §5.9, §6.9, Annex D, Annex G | B | XL; atlas/region mapping | Delivery/composition only; no single-stream gain | Optional | U2 — unverified |
 
 **Notes.**
@@ -348,7 +348,11 @@ streams, because a bad RD decision can produce a valid but poor stream.
   and low-latency delivery.
 - AV2's layer machinery is primarily for scalable/multistream delivery. There is
   no normative "free" inter-layer prediction gain to assume; treat SVC as
-  packaging until a specific layered use case proves otherwise.
+  packaging until a specific layered use case proves otherwise. Cross-xlayer
+  prediction cannot be signalled at all: §6.8.2 requires
+  `lcr_dependent_xlayers_flag = 0`. The only decodable cross-layer tool is the
+  embedded (mlayer) refinement ladder (`--svc-embedded`), which is gated by
+  `src/pipeline/svc/gate_cli_svc.sh` with `avmdec --all-layers`.
 
 ---
 
