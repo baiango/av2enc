@@ -122,6 +122,18 @@ if [[ "$LIST_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
+# `timeout` is coreutils; macOS has it only as `gtimeout` unless installed.
+TIMEOUT_CMD=()
+if [[ "$TIMEOUT" -gt 0 ]]; then
+  if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_CMD=(timeout "$TIMEOUT")
+  elif command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_CMD=(gtimeout "$TIMEOUT")
+  else
+    echo "cuda_module_suites: no timeout/gtimeout; running without a per-suite limit" >&2
+  fi
+fi
+
 mkdir -p "$LOGS"
 rm -f "$LOGS"/*.log "$LOGS"/*.status 2>/dev/null
 
@@ -138,7 +150,7 @@ run_one() {
   start="$(date +%s)"
   # Absolute path: suites compute their repo root from "$0" and some cd twice.
   # stdin is /dev/null so a suite can never eat the worker's job list.
-  ( cd "$ROOT" && timeout "$TIMEOUT" bash "$ROOT/$path" ) \
+  ( cd "$ROOT" && ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} bash "$ROOT/$path" ) \
     </dev/null >"$log" 2>&1
   rc=$?
   end="$(date +%s)"
