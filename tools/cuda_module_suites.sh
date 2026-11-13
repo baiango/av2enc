@@ -13,7 +13,7 @@
 # one worker each; different directories run in parallel.
 #
 # Usage:
-#   tools/cuda_module_suites.sh                     # run everything, 4 workers
+#   tools/cuda_module_suites.sh                     # run everything, N workers (N=CPU count, max 16)
 #   tools/cuda_module_suites.sh --list              # print the discovered suites
 #   tools/cuda_module_suites.sh -f transform        # only paths matching regex
 #   tools/cuda_module_suites.sh --kind host         # host-emulation suites only
@@ -28,7 +28,10 @@ set -uo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-JOBS=4
+# Default worker count is derived from the host after argument parsing; a
+# compile-heavy suite is ~single-threaded, so 4 workers left most of a shared
+# 28-core box idle for the whole run.
+JOBS=""
 TIMEOUT=900
 LOGS="build-cuda-suites/logs"
 FILTER=""
@@ -59,6 +62,17 @@ case "$KIND" in
   all|host|gpu) ;;
   *) echo "cuda_module_suites: --kind must be all, host or gpu" >&2; exit 2 ;;
 esac
+if [[ -z "$JOBS" ]]; then
+  if command -v nproc >/dev/null 2>&1; then
+    JOBS="$(nproc)"
+  elif command -v sysctl >/dev/null 2>&1; then
+    JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+  else
+    JOBS=4
+  fi
+  # Compilation is memory-hungry; 16 concurrent c++ processes is plenty.
+  (( JOBS > 16 )) && JOBS=16
+fi
 case "$JOBS" in
   ''|*[!0-9]*|0) echo "cuda_module_suites: --jobs needs a positive integer" >&2; exit 2 ;;
 esac

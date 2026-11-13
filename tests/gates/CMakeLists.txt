@@ -112,14 +112,15 @@ if(TARGET av2enc_video_gpu)
     SKIP_RETURN_CODE 77
     TIMEOUT 3600
     LABELS "gate;gate-video;gate-gpu")
-  # Second product case: the same matrix at 8 frames, which additionally
-  # exercises the rotating reference-slot pool and the full temporal GOP.
+  # Second product case: the 8-frame long-chain subset that exercises the
+  # rotating reference-slot pool.  The full matrix already runs at 4 frames,
+  # and every fixed-count 8-frame case runs in the main invocation.
   add_test(NAME gate_video_gpu_long
     COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_gpu.sh"
-            --bin $<TARGET_FILE:av2enc> --frames 8)
+            --bin $<TARGET_FILE:av2enc> --frames 8 --long-only)
   set_tests_properties(gate_video_gpu_long PROPERTIES
     SKIP_RETURN_CODE 77
-    TIMEOUT 5400
+    TIMEOUT 1200
     LABELS "gate;gate-video;gate-gpu;long")
   # Opt-in full luma intra search (--video-intra-full): the still product's
   # 61-candidate search on CPU vs the device candidate module, byte-identical

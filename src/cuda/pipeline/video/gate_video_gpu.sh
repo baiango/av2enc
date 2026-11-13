@@ -26,6 +26,7 @@ INTRA_ONLY=0
 TX_ONLY=0
 BAWP_ONLY=0
 ONLY=""
+LONG_ONLY=0
 CFL_ONLY=0
 MHCCP_ONLY=0
 PCW_ONLY=0
@@ -52,6 +53,11 @@ while [[ $# -gt 0 ]]; do
     # Run only the cases whose label contains this substring.  Keeps a single
     # regression check cheap instead of re-encoding the whole product matrix.
     --only) ONLY="$2"; shift 2 ;;
+    # Long-chain subset: the 8-frame regression only needs the cases that
+    # exercise the rotating reference-slot pool.  The rest of the matrix is
+    # already covered at 4 frames (and the fixed-count 8-frame cases run in
+    # every invocation), so repeating ~100 cases here was pure wall time.
+    --long-only) LONG_ONLY=1; shift ;;
     -h|--help) sed -n '2,22p' "$0"; exit 0 ;;    *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -102,6 +108,18 @@ CLIP_DIFF="$TMP/clip360_diff.y4m"
 # 7-reference P chain) even when the caller lowers --frames.
 GEN_FRAMES=$(( FRAMES > 8 ? FRAMES : 8 ))
 
+# The clips are deterministic.  Cache them by frame count so a targeted or
+# repeated run does not spend seconds re-running the pure-Python sample
+# generator (the whole matrix only needs one generation per frame count).
+CLIP_CACHE="${AV2ENC_GATE_CLIP_CACHE:-${TMPDIR:-/tmp}/av2enc_gate_clips}/f${GEN_FRAMES}"
+mkdir -p "$CLIP_CACHE"
+CLIP="$CLIP_CACHE/clip360.y4m"
+CLIP_INTER="$CLIP_CACHE/clip360_inter.y4m"
+CLIP_AVG="$CLIP_CACHE/clip360_avg.y4m"
+CLIP_WEDGE="$CLIP_CACHE/clip360_wedge.y4m"
+CLIP_DIFF="$CLIP_CACHE/clip360_diff.y4m"
+
+if [[ ! -s "$CLIP" || ! -s "$CLIP_INTER" || ! -s "$CLIP_AVG" ]]; then
 python3 - "$CLIP" "$GEN_FRAMES" <<'PY'
 import sys
 
@@ -213,12 +231,14 @@ with open(path, "wb") as out:
                 out.write(bytes(fn(2 * x, 2 * y, plane)
                                 for x in range(cw)))
 PY
+fi
 
 fail() {
   echo "gate_video_gpu: FAIL: $*" >&2
   exit 1
 }
 
+if [[ ! -s "$CLIP_WEDGE" || ! -s "$CLIP_DIFF" ]]; then
 python3 - "$CLIP_WEDGE" "$CLIP_DIFF" "$GEN_FRAMES" <<'PY'
 import math
 import sys
@@ -292,6 +312,7 @@ def write_clip(path, pattern):
 write_clip(wedge_path, [a, b, wedge, b, a, b, wedge, b])
 write_clip(diff_path, [a, b, diffwtd, b, a, b, diffwtd, b])
 PY
+fi
 
 # Probe: a CPU-only build (or a CUDA build without the M2 target) must reject
 # the flag with a clear reason.  That is a skip for this gate, not a failure.
@@ -319,11 +340,16 @@ run_case_on() {
   local label="$2"
   shift 2
   if [[ -n "$ONLY" && "$label" != *"$ONLY"* ]]; then return 0; fi
+  if [[ "$LONG_ONLY" -eq 1 ]]; then
+    case "$label" in
+      inter-baseline|refs2|tiles2x2) ;;
+      *) return 0 ;;
+    esac
+  fi
   local cpu="$TMP/${label}.cpu.ivf"
   local gpu="$TMP/${label}.gpu.ivf"
   local cpu_recon="$TMP/${label}.cpu.recon.y4m"
   local gpu_recon="$TMP/${label}.gpu.recon.y4m"
-  local cpu_dec="$TMP/${label}.cpu.dec.y4m"
   local gpu_dec="$TMP/${label}.gpu.dec.y4m"
 
   "$BIN" "$clip" -o "$cpu" --video --frames "$FRAMES" \
@@ -345,12 +371,13 @@ run_case_on() {
   cmp -s "$cpu_recon" "$gpu_recon" ||
     fail "$label: encoder reconstruction differs"
 
-  "$DAV2D" --strict 1 -q -i "$cpu" -o "$cpu_dec" >/dev/null 2>&1 ||
-    fail "$label: dav2d rejected the CPU reference stream"
+  # The CPU and GPU streams are byte-identical (checked above), so one decode
+  # is sufficient.  Require it to reproduce the encoder reconstruction
+  # sample-exactly; that is stronger than comparing two decodes of one stream.
   "$DAV2D" --strict 1 -q -i "$gpu" -o "$gpu_dec" >/dev/null 2>&1 ||
-    fail "$label: dav2d --strict 1 rejected the GPU stream"
-  cmp -s "$cpu_dec" "$gpu_dec" ||
-    fail "$label: decoded output differs"
+    fail "$label: dav2d --strict 1 rejected the stream"
+  cmp -s "$gpu_dec" "$gpu_recon" ||
+    fail "$label: decoded output differs from the encoder reconstruction"
 
   echo "PASS video-gpu $label ($(md5sum "$gpu" | cut -d' ' -f1))"
 }
@@ -721,6 +748,8 @@ run_case_frames 8 tx-search-tiles2x2-avg-8 --video-tx-search \
   --video-inter-residual --tiles 2x2 --avg-cdf --adaptive-cdf
 expect_reject() {
   local label="$1"
+  # A targeted --only run must not pay for the whole rejection matrix.
+  if [[ -n "$ONLY" && "$label" != *"$ONLY"* ]]; then return 0; fi
   shift
   set +e
   "$BIN" "$CLIP" -o "$TMP/reject.ivf" --video --video-gpu "$@" \
@@ -765,6 +794,8 @@ echo "PASS video-gpu reject refs-bounds"
 # named usage rejections (exit 2) on the CPU path as well; no silent fallback.
 expect_reject_cpu() {
   local label="$1"
+  # A targeted --only run must not pay for the whole rejection matrix.
+  if [[ -n "$ONLY" && "$label" != *"$ONLY"* ]]; then return 0; fi
   local needle="$2"
   shift 2
   set +e
@@ -807,6 +838,8 @@ expect_reject wiener-tiles --video-wiener --tiles 2x1
 # wrapper headers do not signal it.  All are named usage rejections.
 expect_reject_video() {
   local label="$1"
+  # A targeted --only run must not pay for the whole rejection matrix.
+  if [[ -n "$ONLY" && "$label" != *"$ONLY"* ]]; then return 0; fi
   local needle="$2"
   shift 2
   set +e

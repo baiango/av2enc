@@ -177,7 +177,6 @@ run_case() {
   local gpu="$TMP/${tag}_${label}.gpu.ivf"
   local cpu_rec="$TMP/${tag}_${label}.cpu.rec.y4m"
   local gpu_rec="$TMP/${tag}_${label}.gpu.rec.y4m"
-  local cpu_dec="$TMP/${tag}_${label}.cpu.dec.y4m"
   local gpu_dec="$TMP/${tag}_${label}.gpu.dec.y4m"
 
   "$BIN" "$clip" -o "$cpu" --video --frames "$FRAMES" --bit-depth "$bitdepth" \
@@ -196,12 +195,9 @@ run_case() {
   cmp -s "$cpu_rec" "$gpu_rec" ||
     fail "$tag $label: encoder reconstruction differs"
 
-  "$DAV2D" --strict 1 -q -i "$cpu" -o "$cpu_dec" >/dev/null 2>&1 ||
-    fail "$tag $label: dav2d rejected the CPU reference stream"
+  # The streams are byte-identical (checked above), so one decode suffices.
   "$DAV2D" --strict 1 -q -i "$gpu" -o "$gpu_dec" >/dev/null 2>&1 ||
-    fail "$tag $label: dav2d --strict 1 rejected the GPU stream"
-  cmp -s "$cpu_dec" "$gpu_dec" ||
-    fail "$tag $label: decoded output differs"
+    fail "$tag $label: dav2d --strict 1 rejected the stream"
   local pictures
   pictures="$(decoded_frames "$gpu_dec")"
   [[ "$pictures" == "$FRAMES" ]] ||
