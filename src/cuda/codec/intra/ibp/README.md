@@ -104,10 +104,15 @@ The GPU test runs the same prediction matrix through `ibp_predict()`, adds a
 96-job `ibp_predict_batch()` comparison, real y4m blocks and invalid-argument
 checks.
 
-**Status:** this workspace is macOS and has no `nvcc` or CUDA device, so the
-`sm_86` run was not executed here. The device body is covered bit-exactly by
-the emulation test; the `.cu` kernel is a thin launch wrapper around that same
-body.
+**Status:** verified on the RTX 3060 (`sm_86`, CUDA 13.0):
+
+```
+ibp_test_cuda: PASS (147814518 checks)
+```
+
+The device body is also covered bit-exactly by the emulation test.  The arena
+workspace in `../workspace/` adds 352,256 CPU-exact samples through
+`ibp_predict_batch`.
 
 ## Integration
 

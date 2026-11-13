@@ -73,7 +73,12 @@ Status query_device(int index, DeviceInfo* info) noexcept {
   result.shared_mem_per_block_optin = prop.sharedMemPerBlockOptin;
   result.shared_mem_per_sm = prop.sharedMemPerMultiprocessor;
   result.regs_per_sm = prop.regsPerMultiprocessor;
-  result.memory_clock_khz = prop.memoryClockRate;
+  // CUDA 13 removed cudaDeviceProp::memoryClockRate; query the attribute.
+  int memory_clock_khz = 0;
+  if (cudaDeviceGetAttribute(&memory_clock_khz, cudaDevAttrMemoryClockRate,
+                             index) == cudaSuccess) {
+    result.memory_clock_khz = static_cast<std::uint32_t>(memory_clock_khz);
+  }
   result.memory_bus_width_bits = prop.memoryBusWidth;
 
   // cudaMemGetInfo() reports the current device, so switch and restore. This

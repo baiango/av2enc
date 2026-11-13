@@ -11,8 +11,9 @@
 //
 // Build/run: ./build_luma_search_test.sh
 //
-// Media defaults:
-//   testdata/basic_64x64_1f.y4m
+// Media defaults (first existing path wins):
+//   tests/data/basic_64x64_1f.y4m   (tracked fixture)
+//   testdata/basic_64x64_1f.y4m     (optional real-content drop)
 //   testdata/shine_640x360_1f.y4m
 // Override with --y4m64 PATH / --y4m360 PATH, or --allow-missing-media.
 
@@ -1152,9 +1153,24 @@ void time_wavefront(const char* label, int plane_w, int plane_h,
 // CLI
 // ---------------------------------------------------------------------------
 
+// The 64x64 fixture is tracked under tests/data/; testdata/ is the optional,
+// gitignored real-content drop.  Pick whichever exists so the suite runs on a
+// plain checkout.
+std::string default_media(const char* first, const char* second) {
+  if (std::FILE* f = std::fopen(first, "rb")) {
+    std::fclose(f);
+    return first;
+  }
+  return second;
+}
+
 struct Options {
-  std::string y4m64 = "testdata/basic_64x64_1f.y4m";
-  std::string y4m360 = "testdata/shine_640x360_1f.y4m";
+  std::string y4m64 =
+      default_media("tests/data/basic_64x64_1f.y4m",
+                    "testdata/basic_64x64_1f.y4m");
+  std::string y4m360 =
+      default_media("testdata/shine_640x360_1f.y4m",
+                    "tests/data/basic_640x360_1f.y4m");
   bool allow_missing_media = false;
   bool quick = false;
   bool timing = true;

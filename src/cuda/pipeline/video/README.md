@@ -1,13 +1,22 @@
 # CUDA M2 P-frame baseline
 
+> **Status 2026-11-13 (CUDA 13.0, sm_86): builds and runs, gate FAILS at frame
+> 1.** `build_and_test.sh` and `build_gpu_gate.sh` both reach the stream
+> comparison and report `unit_mismatches=1 recon_mismatches=0 max_diff=0
+> first=f1 off=6` (one header byte, 0x5A vs 0x56, tile payload identical).
+> The mirror predates the CPU writer changes that landed after `a0b4ba1`
+> (`BUG-CDF-001`, `BUG-INTER-002`, and the compound/bframes/multiref/tiles/MFH
+> integration waves in `src/pipeline/video/video_frame.cpp`).  Do not treat
+> this gate as green until the mirror is re-synced.
+
 GPU path for the M2 P-frame encoder. It is a decision-identical mirror of
-`src/encoder/m2/`: same partition tree, same MV-stack derivation, same
+`src/pipeline/video/`: same partition tree, same MV-stack derivation, same
 candidate ordering/tie-breaking, same transform and same §8.2 range coder. The
 output is **byte-identical** to the CPU M2 encoder for the same input and
 options, and `dav2d` decodes both to the same reconstruction.
 
 The CPU directory is not modified and remains the reference. This tree owns
-only `src/cuda/m2/`.
+only `src/cuda/pipeline/video/`.
 
 ## What runs where
 
@@ -23,7 +32,7 @@ only `src/cuda/m2/`.
 | Reconstruction `Clip1(pred + residual)` | `video_recon_kernel` (this tree) |
 | Reconstruction-plane writes / reference upload | `video_backend_cuda.cu` |
 | Partition recursion, MV stack, candidate comparison, EOB scan | host (CPU decision helpers) |
-| OBU/IVF assembly and §8.2 entropy | host (`src/encoder/m2/`) |
+| OBU/IVF assembly and §8.2 entropy | host (`src/pipeline/video/`) |
 
 The split is deliberate. Pixel work, ME/MC, transform and reconstruction are
 device-resident; the decisions are the CPU decisions by construction, which is
@@ -33,9 +42,11 @@ search to the device is a follow-up that must re-run this gate.
 ## Files
 
 ```text
-src/cuda/m2/
+src/cuda/pipeline/video/
   video_gpu.h              public integration API + stats
+  video_sequence_internal.h internal plain/wrapper entries
   video_pipeline.cpp       frame loop, partition/MV/mode decisions, OBU assembly
+  video_frame_modes.cpp    long-term/OLK, leading, SEF, SWITCH/RAS wrappers
   video_backend.h          backend contract (pixel/transform work only)
   video_backend_cuda.cu    CUDA backend + four M2-owned kernels
   video_backend_cpu.cpp    host-emulation backend (no GPU/nvcc needed)
@@ -86,16 +97,21 @@ emulated backend calls.
 
 ### Build-system wiring
 
-The root `CMakeLists.txt` is not edited by this tree. A product build needs
-these objects, with the CUDA component sources linked **once** (share them with
-`av2enc_still_gpu` if it is already in the target):
+The M2 pipeline is now a product target: `av2enc_video_gpu` in the root
+`CMakeLists.txt` compiles `video_pipeline.cpp` and `video_backend_cuda.cu` and
+links the shared CUDA components (`inter/me`, `inter/mc`, `intra/modes`,
+`transform/variants`) **once**.  When the M1 target is also present, any shared
+component it already provides is skipped so the executable does not get duplicate
+object symbols.  `--video-gpu` is accepted only in that build; a CPU-only or
+target-less build rejects the flag with a usage error and exit code 2.
+
+The CMake target needs these objects if you build the gate scripts by hand:
 
 ```cmake
 add_library(av2enc_video_gpu OBJECT
-  src/cuda/m2/video_pipeline.cpp
-  src/cuda/m2/video_backend_cuda.cu
-  src/cuda/m2/video_selftest.cpp)
-target_link_libraries(av2enc_video_gpu PUBLIC av2enc_core CUDA::cudart)
+  src/cuda/pipeline/video/video_pipeline.cpp
+  src/cuda/pipeline/video/video_backend_cuda.cu
+  src/cuda/pipeline/video/video_selftest.cpp)target_link_libraries(av2enc_video_gpu PUBLIC av2enc_core CUDA::cudart)
 target_include_directories(av2enc_video_gpu PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 # video_backend_cuda.cu and the shared component .cu files: --fmad=false
 ```
@@ -104,6 +120,46 @@ target_include_directories(av2enc_video_gpu PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 `video_selftest.cpp` is optional (gate/test builds). Do not link
 `video_backend_cpu.cpp` in the same binary: it defines the same
 `detail::make_backend()` factory.
+
+### Product CLI (`--video-gpu`)
+
+`--video-gpu` implies `--video` and selects `encode_video_sequence_gpu()`.  The
+CPU `--video` path remains the default and the reference.  There is **no silent
+CPU fallback**: the CUDA backend's `VideoGpuStats::frame_bytes_from_cpu` stays
+`false` and the CLI prints
+`av2enc: --video-gpu backend=cuda frame_bytes_from_cpu=0`.
+
+Wired and gated combinations:
+
+| Mode | CPU flag | GPU status |
+|---|---|---|
+| Keyframe + flat P chain | `--video` | byte-identical |
+| Partition tree / `--video-force-single` / `--video-max-depth` | same | byte-identical |
+| ME + GLOBALMV/NEARMV/NEWMV | default | byte-identical |
+| 1/8, 1/4, 1/2-pel MV precision | `--video-mv-precision` | byte-identical |
+| 1/8-pel ME refinement | `--video-subpel-eighth` | byte-identical |
+| Inter residual (heuristic or forced in the gate) | `--video-inter-residual` | byte-identical |
+| DRL/merge stack | default | spec-exact host stack, byte-identical |
+| Multi-reference (2..3 refs, per-block ref index) | `--video-refs N` | byte-identical, ref-indexed MC/ME |
+| Long-term / closed-GOP LTR | `--video-long-term` | byte-identical (plain GPU tiles + CPU header assembly) |
+| Open random access (OLK) | `--video-olk` | byte-identical (4-frame profile) |
+| Leading pictures | `--video-leading N` | byte-identical |
+| Show-existing-frame | `--video-sef` | byte-identical |
+| SWITCH / RAS | `--video-switch` / `--video-ras` | byte-identical (2/3-frame profiles) |
+| B frames (one closed IPBB GOP) | `--b-frames N` | byte-identical (plan coding order) |
+| Hierarchical-P temporal layers | `--video-tlayers N` | byte-identical (4/8-frame GOP) |
+| Compound / CWP AVERAGE | `--video-compound` (refs >= 2) | byte-identical (GLOBAL_GLOBALMV average); device `compound_full::skip_batch` |
+| Multi-frame header | `--video-mfh` | byte-identical (§5.7 MFH on the M2 stream) |
+| Timing + content interpretation | `--video-timing` | byte-identical (decoder-compatible §5.4.12 form) |
+| Average-CDF / adaptation | `--avg-cdf [--adaptive-cdf]` | byte-identical (§8.2.4 bank + §7.5 frame end) |
+
+Rejected by name (usage exit 2, no CPU fallback):
+DRL reordering (`--video-drl-reorder`, also rejected on the CPU path),
+`--rc crf/vbr` (the device transform quantiser is pinned to qlookup(90)),
+multi-tile, cross-frame CDF carry (`--cdf-continuity`), `--svc-layers`.
+These need a different pixel stage or header/CDF model; the backend is
+deliberately an honest mirror of the modes it implements.
+
 
 ### Device memory
 
@@ -121,7 +177,7 @@ back on the host (see below).
 ## Decision parity
 
 The pipeline in `video_pipeline.cpp` is a line-by-line mirror of
-`src/encoder/m2/video_frame.cpp`:
+`src/pipeline/video/video_frame.cpp`:
 
 - partition costs are discovered with the CPU traversal, computed by the device
   kernel, then fed back into `partition::decide_frame()` so the tree is the CPU
@@ -160,21 +216,21 @@ the gate would catch as a partition/bitstream difference.
 Emulation (no GPU, no nvcc — CPU components stand in for the device):
 
 ```sh
-./src/cuda/m2/build_and_test.sh
-./src/cuda/m2/build_and_test.sh --frames 8 --full-tree
-./src/cuda/m2/build_and_test.sh --inter-residual
-./src/cuda/m2/build_and_test.sh --force-inter-residual
-./src/cuda/m2/build_and_test.sh --drl-reorder 2
-./src/cuda/m2/build_and_test.sh --no-hd
+./src/cuda/pipeline/video/build_and_test.sh
+./src/cuda/pipeline/video/build_and_test.sh --frames 8 --full-tree
+./src/cuda/pipeline/video/build_and_test.sh --inter-residual
+./src/cuda/pipeline/video/build_and_test.sh --force-inter-residual
+./src/cuda/pipeline/video/build_and_test.sh --drl-reorder 2
+./src/cuda/pipeline/video/build_and_test.sh --no-hd
 ```
 
 CUDA (nvcc + device; default `sm_86`):
 
 ```sh
-./src/cuda/m2/build_gpu_gate.sh
-ARCH=89 ./src/cuda/m2/build_gpu_gate.sh
-./src/cuda/m2/build_gpu_gate.sh --frames 8 --full-tree
-SANITIZE=1 ./src/cuda/m2/build_gpu_gate.sh   # memcheck selftest + smoke
+./src/cuda/pipeline/video/build_gpu_gate.sh
+ARCH=89 ./src/cuda/pipeline/video/build_gpu_gate.sh
+./src/cuda/pipeline/video/build_gpu_gate.sh --frames 8 --full-tree
+SANITIZE=1 ./src/cuda/pipeline/video/build_gpu_gate.sh   # memcheck selftest + smoke
 ```
 
 Both scripts build `video_gate.cpp` and run, for each phase:
@@ -191,14 +247,70 @@ Phases: 2-frame and 8-frame 64x64 synthetic, and 2-frame and 8-frame 720p from
 the CPU gate); `--full-tree` runs the variance-driven tree. `DAV2D=` overrides
 decoder discovery.
 
-If the working tree's `src/encoder/m2/` is mid-refactor, point
-`VIDEO_CPU_REF=/path/to/checkout` (containing `src/encoder/m2/`) at a clean
+If the working tree's `src/pipeline/video/` is mid-refactor, point
+`VIDEO_CPU_REF=/path/to/checkout` (containing `src/pipeline/video/`) at a clean
 reference; the gate builds against that snapshot without touching the tree.
-The scripts link `src/encoder/m2/merge/merge.cpp` when it exists (the current
+The scripts link `src/codec/inter/merge/merge.cpp` when it exists (the current
 CPU gate needs it); if the CPU reference grows another helper module, mirror
-the addition from `src/encoder/m2/build_and_test.sh` into both CORE lists.
+the addition from `src/pipeline/video/build_and_test.sh` into both CORE lists.
 
 ## Gate results
+
+### Product CPU-vs-GPU gate (`--video-gpu`)
+
+`gate_video_gpu.sh` generates a deterministic 640x360 clip, encodes it with
+both paths for every wired mode, compares the temporal units, the
+`--video-recon` dumps and the `dav2d --strict 1` decode, then asserts that each
+unported combination is rejected with exit code 2.  It is registered as CTest
+`gate_video_gpu` only when `AV2ENC_PRODUCT_GATES=ON` and the
+`av2enc_video_gpu` target exists.
+
+RTX 3060 (12 GB), CUDA 13, `sm_86`, 4-frame 640x360 synthetic clip
+(inter-sensitive cases use the smooth-pan and A/B/mid clips generated by the
+gate):
+
+```text
+PASS video-gpu baseline       f90c098499e293a2b019872e63c5f4bf
+PASS video-gpu quarter        735f787872eb84f583e9eea1c30d5da6
+PASS video-gpu half           b4ec6e1cb27fc98dae95ca936621fca5
+PASS video-gpu subpel-eighth  f90c098499e293a2b019872e63c5f4bf
+PASS video-gpu force-single   24fe02a91f8460fa3d4925c5267c7b70
+PASS video-gpu depth2         7e19c9f944542fb88b1c86bfccadd994
+PASS video-gpu min-block8     f1825028f70713d37d4066b52d87b752
+PASS video-gpu me-range8      a8ea5aa8541f39e7a8cfda9e1cc6faa2
+PASS video-gpu inter-residual f90c098499e293a2b019872e63c5f4bf
+PASS video-gpu inter-baseline 457440dc8422bcf1821b473f1a5044ad
+PASS video-gpu refs2          7ce934bfca66bde47e5928be79a40445
+PASS video-gpu refs3          e3bb47cdcba82d8c8be0e94dcbe859c9
+PASS video-gpu refs2-quarter  2fd26460b399f85548024825ae38782f
+PASS video-gpu refs2-half     5994ea23ec5b03d4163a56a8d17beca9
+PASS video-gpu mfh            a895466ceebe60fb2c4a48b51202b810
+PASS video-gpu timing         27f4e8084123561c7c20ab85a3bf0bfb
+PASS video-gpu avg-cdf        4f3e451f82f09fced2cb6f772b2e720f
+PASS video-gpu adaptive-cdf   4ee704d2f3554c0c5e3f7c62484a2357
+PASS video-gpu long-term      ec86d616e394c81665e75043f7b2b722
+PASS video-gpu olk            11ae750a86cdbd0a6e0758a03eb0990c
+PASS video-gpu leading        030e6d998fbabd3db4dda08a2f0c0411
+PASS video-gpu sef            44d63b9864aaa9d806477f99c9bf8db3
+PASS video-gpu switch         a50a0f3cb25b21fb8d1b23ab6c46b19f
+PASS video-gpu ras            4ef352d711c72b47d20c813d21087c86
+PASS video-gpu bframes2       71d970d517850cc01e466e1c912a9120
+PASS video-gpu bframes3       0c46731c4a700e5b617b0f1f7523debe
+PASS video-gpu tlayers4       957c3a51d801c1ac3dd48871df7564fa
+PASS video-gpu tlayers8       f42ba113e70767773de0d6fb6db92fa8
+PASS video-gpu tlayers8-drop1 30ccf21fcd2faca78c2b2104b18e28eb
+PASS video-gpu compound       c80da95dc2b00e459aa04414746d5f04
+PASS video-gpu reject rc-crf / tiles / cdf-continuity / svc
+gate_video_gpu: PASS
+```
+
+Additional real runs on the same box: 640x360 8 frames default
+`12d2df474b9d6314af81428c39651108` and 1280x720 6 frames default are
+byte-identical to the CPU reference; `dav2d --strict 1` decoded output and the
+encoder recon dump are identical; `build_gpu_gate.sh --input <720p> --frames 6
+--full-tree` and `--force-inter-residual` both report byte-identical units,
+recon 0 diffs and a clean decode.  The CUDA inter-residual selftest reports
+`mc=128 tx=256 resid=384 recon=128` PASS.
 
 ### RTX 3060 12 GB, CUDA 12.8, `sm_86` (real event times)
 
@@ -281,16 +393,26 @@ reserved in `ensure_intra_buffers()` before the first call, and
 ## Scope / limitations
 
 - Baseline decision tools only: GLOBALMV, NEARMV, NEWMV, DC-intra fallback.
-  B frames, multiple references, compound, skip-mode, warp/OBMC/inter-intra,
-  BAWP, TIP, OPFL, refine-MV, temporal MVs, ref-MV bank, loop filters are not
-  implemented here.
-- Inter leaves are `skip_flag = 1` unless the optional inter-residual tool is
-  enabled; that matches the CPU reference.
+  The host decision path uses the spec-exact `src/codec/inter/merge` stack, so
+  the shared MC stack's documented deviations cannot leak into the bitstream.
+- Frame-type wrappers (long-term/OLK, leading, SEF, SWITCH/RAS) reuse the
+  plain GPU sub-encodes; only the header/OBU assembly is shared with the CPU
+  reference modules.  B frames and hierarchical-P temporal layers reuse the
+  same device frame encoder with plan-owned coding order and explicit
+  per-frame reference lists.  Compound is the gated GLOBAL_GLOBALMV /
+  CWP_EQUAL AVERAGE subset, computed by the device compound skip kernel.
+  Skip-mode beyond that subset, warp/OBMC/inter-intra, BAWP, TIP, OPFL,
+  refine-MV, temporal MVs, the ref-MV bank and loop filters are not
+  implemented on this path; the CLI rejects every one by name.
+- DRL reordering is wired to `merge::DrlReorder` but disabled; the CPU product
+  path rejects it for the same decoder-gap reason.
+- Inter leaves are `skip_flag = 1` unless the inter-residual tool is enabled;
+  that matches the CPU reference.
 - The decision search (partition/stack/candidate compare/EOB) stays on the
   host; only pixels/transforms/reconstruction are device-resident.
 - Every decision that needs a score synchronises the stream. This is a
   correctness-first milestone, not a throughput claim.
-- The CUDA backend was validated on an RTX 3060 (sm_86, CUDA 12.8): selftest,
-  full gate, full-tree and forced inter-residual all byte-identical with recon
-  0 diffs, and compute-sanitizer memcheck reports 0 errors. The emulation gate
-  remains the no-GPU reference.
+- The CUDA backend was validated on an RTX 3060 (sm_86): selftest, full gate,
+  full-tree, forced inter-residual, 360p and 720p product parity all
+  byte-identical with recon 0 diffs.  The emulation gate remains the no-GPU
+  reference.

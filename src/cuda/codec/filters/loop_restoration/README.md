@@ -93,34 +93,39 @@ implemented.
 ## Build and test
 
 ```sh
-src/cuda/restoration/build_and_test.sh                 # sm_86
-ARCH=sm_120 src/cuda/restoration/build_and_test.sh     # secondary target
+src/cuda/codec/filters/loop_restoration/build_and_test.sh             # sm_86
+ARCH=sm_120 src/cuda/codec/filters/loop_restoration/build_and_test.sh # secondary
 ```
 
 The script compiles `restoration.cpp` with the host compiler, then builds
 `ccso_test` and `wiener_test` with nvcc, linking the host object.  Both print
 `PASS: N checks, 0 failures` and a 1280x720 timing line:
 
+Measured on the RTX 3060 (`sm_86`, CUDA 13.0), 2026-11-13:
+
 ```text
-  timing: 1280x720 CCSO 0.xxx ms/frame (xx.x MPix/s, 100 iters)
-  timing: 1280x720 Wiener NS 0.xxx ms/frame (xx.x MPix/s, 50 iters)
+CCSO: PASS: 418 checks, 0 failures
+  timing: 1280x720 CCSO 0.093 ms/frame (14904.0 MPix/s, 100 iters)
+Wiener NS: PASS: 202 checks, 0 failures
+  timing: 1280x720 Wiener NS 0.542 ms/frame (2550.3 MPix/s, 50 iters)
 ```
 
 Timing is measured with CUDA events on the kernel path only (upload/download
-excluded).  Record the numbers from the RTX 3060 box in the component report;
-they are not yet measured on this host (macOS has no CUDA toolchain), so no GPU
-number is claimed here.
+excluded).
 
 ## Test coverage (CPU vs GPU)
 
 - CCSO: 21 edge-class × extension-filter combinations, 6 `bo_only` band counts,
-  all 16 `(scale, quant)` pairs, per-plane unit grids, lossless, BRU,
-  tile clipping, odd geometries (5×3 … 21×11 MI), 24 randomized frames, plus
-  guard-column and validation checks.
+  all 16 `(scale, quant)` pairs, every `CcsoLumaSizeLog2` 6/7/8 (SB64/SB128/
+  SB256 units, with the per-plane chroma grid at log2-1 and a disabled last
+  unit), per-plane unit grids, lossless, BRU, tile clipping, odd geometries
+  (5×3 … 21×11 MI), 24 randomized frames, plus guard-column and validation
+  checks.
 - Wiener: per-unit filters, zero coefficients, chroma-from-luma for
-  `cfl_ds_filter_index` 0–3, stripe sourcing, two-class frame filters, mixed
-  unit types on odd geometries, tile clipping, lossless/BRU, 16 randomized
-  frames, validation and 720p timing.
+  `cfl_ds_filter_index` 0–3, all `LoopRestorationSize` values 64/128/256/512
+  luma (32/64/128/256 chroma, plus a unit larger than the frame), stripe
+  sourcing, two-class frame filters, mixed unit types on odd geometries, tile
+  clipping, lossless/BRU, 16 randomized frames, validation and 720p timing.
 
 Fixtures must themselves be conforming, or the CPU oracle refuses them and
 there is nothing for the device output to match: `LoopRestorationSize[0]` is

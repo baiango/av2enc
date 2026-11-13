@@ -581,11 +581,108 @@ void test_geometry_agreement() {
   CHECK(!chbd::hbd_make_420_frame(four_four_four, &frame, &error));
 }
 
+// 10/12-bit native picture conversion for every chroma format: the generic
+// frame layout must match `fmt::make_frame_geometry()`, upload must replicate
+// visible edges into coded padding, and download must return the visible
+// rectangle unchanged.
+void test_generic_frame_upload_download() {
+  std::mt19937 rng(0x10B1u);
+  std::uniform_int_distribution<int> dist(0, 1023);
+  const fmt::ChromaFormat formats[] = {
+      fmt::ChromaFormat::k400, fmt::ChromaFormat::k420,
+      fmt::ChromaFormat::k422, fmt::ChromaFormat::k444};
+  const std::pair<int, int> dims[] = {{64, 64},   {67, 43},
+                                      {100, 100}, {640, 360}};
+  for (const fmt::ChromaFormat chroma : formats) {
+    for (const auto& size : dims) {
+      fmt::Format format;
+      format.width = static_cast<std::uint32_t>(size.first);
+      format.height = static_cast<std::uint32_t>(size.second);
+      format.chroma = chroma;
+      format.depth = fmt::BitDepth::k10;
+      fmt::Picture picture;
+      std::string error;
+      CHECK(fmt::allocate_picture(format, picture, error));
+      if (picture.geometry.num_planes == 0) continue;
+      for (int plane = 0; plane < picture.geometry.num_planes; ++plane) {
+        fmt::PlaneBuffer& p = picture.planes[plane];
+        for (std::uint32_t y = 0; y < p.visible_height; ++y) {
+          for (std::uint32_t x = 0; x < p.visible_width; ++x) {
+            p.at(x, y) = static_cast<std::uint16_t>(dist(rng));
+          }
+        }
+        fmt::replicate_borders(p);
+      }
+
+      chbd::Hbd420Frame frame;
+      CHECK(chbd::hbd_make_frame(format, &frame, &error));
+      CHECK(frame.num_planes == picture.geometry.num_planes);
+      CHECK(frame.total_samples == picture.geometry.total_samples);
+      CHECK(frame.frame_bytes == picture.geometry.frame_bytes);
+      for (int plane = 0; plane < frame.num_planes; ++plane) {
+        const chbd::HbdPlane420& fp = frame.planes[plane];
+        const fmt::PlaneGeometry& cp = picture.geometry.planes[plane];
+        CHECK(fp.coded_width == cp.coded_width);
+        CHECK(fp.coded_height == cp.coded_height);
+        CHECK(fp.visible_width == cp.visible_width);
+        CHECK(fp.visible_height == cp.visible_height);
+      }
+
+      std::uint16_t* dev_frame = nullptr;
+      CUDA_TRY(cudaMalloc(reinterpret_cast<void**>(&dev_frame),
+                          frame.total_samples * sizeof(std::uint16_t)));
+      CUDA_TRY(cudaMemset(dev_frame, 0, frame.frame_bytes));
+      CUDA_TRY(chbd::hbd_upload_picture_10(picture, frame, dev_frame));
+      CUDA_TRY(cudaDeviceSynchronize());
+
+      std::vector<std::uint16_t> actual(frame.total_samples, 0);
+      CUDA_TRY(cudaMemcpy(actual.data(), dev_frame, frame.frame_bytes,
+                          cudaMemcpyDeviceToHost));
+      for (int plane = 0; plane < frame.num_planes; ++plane) {
+        const chbd::HbdPlane420& fp = frame.planes[plane];
+        const fmt::PlaneBuffer& cp = picture.planes[plane];
+        for (std::uint32_t y = 0; y < fp.coded_height; ++y) {
+          for (std::uint32_t x = 0; x < fp.coded_width; ++x) {
+            CHECK(actual[fp.offset + static_cast<std::size_t>(y) * fp.stride +
+                         x] == cp.at(x, y));
+          }
+        }
+      }
+
+      std::vector<std::uint16_t> out[3];
+      chbd::HbdPlane16View views[3];
+      for (int plane = 0; plane < frame.num_planes; ++plane) {
+        const chbd::HbdPlane420& fp = frame.planes[plane];
+        out[plane].assign(static_cast<std::size_t>(fp.visible_width) *
+                              fp.visible_height,
+                          0);
+        views[plane] = {out[plane].data(), static_cast<int>(fp.visible_width),
+                        static_cast<int>(fp.visible_width),
+                        static_cast<int>(fp.visible_height)};
+      }
+      CUDA_TRY(chbd::hbd_download_picture_10(frame, dev_frame, views));
+      CUDA_TRY(cudaDeviceSynchronize());
+      for (int plane = 0; plane < frame.num_planes; ++plane) {
+        const chbd::HbdPlane420& fp = frame.planes[plane];
+        const fmt::PlaneBuffer& cp = picture.planes[plane];
+        for (std::uint32_t y = 0; y < fp.visible_height; ++y) {
+          for (std::uint32_t x = 0; x < fp.visible_width; ++x) {
+            CHECK(out[plane][static_cast<std::size_t>(y) * fp.visible_width +
+                             x] == cp.at(x, y));
+          }
+        }
+      }
+      CUDA_TRY(cudaFree(dev_frame));
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
   test_geometry_agreement();
   test_frame_upload_download();
+  test_generic_frame_upload_download();
   run_depth(8);
   run_depth(10);
   run_depth(12);

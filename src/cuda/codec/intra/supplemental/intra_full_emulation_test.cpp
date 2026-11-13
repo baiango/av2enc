@@ -43,6 +43,7 @@ static inline double __dmul_rn(double a, double b) { return a * b; }
 
 #include "codec/intra/modes/intra_modes.h"
 #include "codec/intra/supplemental/dc_intra_subsampled.h"
+#include "codec/intra/supplemental/dc_sign_horz_vert.h"
 #include "codec/intra/supplemental/intra_filter_corner.h"
 #include "codec/transform/idtx/idtx_intra.h"
 #include "codec/transform/tx_type/tx_type.h"
@@ -435,6 +436,66 @@ void test_chroma() {
 }
 
 // ---------------------------------------------------------------------------
+// §5.20.7.27 / §8.3 dc_sign and dc_sign_horz_vert
+// ---------------------------------------------------------------------------
+
+void test_dc_sign() {
+  namespace mb = av2enc::still::missing_bits;
+  std::int8_t above[64];
+  std::int8_t left[64];
+  std::uint32_t seed = 0x12345678u;
+  auto next = [&seed]() {
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    return seed;
+  };
+  for (int i = 0; i < 64; ++i) {
+    above[i] = static_cast<std::int8_t>(next() % 3u);
+    left[i] = static_cast<std::int8_t>(next() % 3u);
+  }
+
+  for (int plane = 0; plane <= 2; ++plane) {
+    for (int tx = 0; tx <= 2; ++tx) {
+      for (int row = 0; row < 8; ++row) {
+        for (int col = 0; col < 8; ++col) {
+          const int got =
+              av2enc::cuda::intra_full::intra_full_select_sign_element_dev(
+                  plane, row, col, tx);
+          const int want = static_cast<int>(mb::select_sign_element(
+              plane, row, col, static_cast<mb::TxClass>(tx)));
+          EXPECT_EQ(got, want, "dc_sign element");
+        }
+      }
+    }
+  }
+
+  for (int w4 = 1; w4 <= 8; ++w4) {
+    for (int h4 = 1; h4 <= 8; ++h4) {
+      for (int x4 = 0; x4 <= 8; ++x4) {
+        for (int y4 = 0; y4 <= 8; ++y4) {
+          for (int mi_cols = 1; mi_cols <= 12; mi_cols += 3) {
+            for (int mi_rows = 1; mi_rows <= 12; mi_rows += 3) {
+              const int got =
+                  av2enc::cuda::intra_full::intra_full_dc_sign_context_dev(
+                      above, left, x4, y4, w4, h4, mi_cols, mi_rows);
+              const int want = mb::dc_sign_context(above, left, x4, y4, w4, h4,
+                                                   mi_cols, mi_rows);
+              EXPECT_EQ(got, want, "dc_sign context");
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Null arrays contribute nothing.
+  EXPECT_EQ(av2enc::cuda::intra_full::intra_full_dc_sign_context_dev(
+                nullptr, nullptr, 0, 0, 8, 8, 64, 64),
+            0, "dc_sign null context");
+}
+
+// ---------------------------------------------------------------------------
 // Arena contract
 // ---------------------------------------------------------------------------
 
@@ -544,6 +605,7 @@ int main() {
   test_corner();
   test_transforms();
   test_chroma();
+  test_dc_sign();
   test_arena();
 
   std::printf(

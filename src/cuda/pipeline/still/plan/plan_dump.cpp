@@ -38,8 +38,13 @@ void usage(std::ostream& out) {
          "  --print-options         print the resolved PlanOptions and exit\n"
          "  --depth N               max_partition_depth (default 4)\n"
          "  --min-block-size N      partition floor in pixels (default 8)\n"
+         "  --sb-size N             sequence superblock flag: 64/128/256 (default 64)\n"
          "  --qp N                  base_q_idx used by the signal cost (default 90)\n"
          "  --single                force one PARTITION_NONE superblock\n"
+         "  --sub8                  lower the partition floor to 4 (sub-8 leaves)\n"
+         "  --ext-partitions        enable HORZ_3/VERT_3 extended partitions\n"
+         "  --uneven-4way           enable uneven 4-way partitions (implies ext)\n"
+         "  --sdp                   force PARTITION_NONE luma/chroma SDP trees\n"
          "  --square-only           apply the AV2ENC_STILL_SQUARE_ONLY gate\n"
          "  --leaf32                apply the AV2ENC_STILL_LEAF32 gate\n"
          "  --no-env                ignore the AV2ENC_STILL_* debug environment\n"
@@ -144,12 +149,23 @@ int main(int argc, char** argv) {
       if (!parse_int(next("--min-block-size"), options.min_block_size)) {
         return 2;
       }
+    } else if (arg == "--sb-size") {
+      if (!parse_int(next("--sb-size"), options.sb_size)) return 2;
     } else if (arg == "--qp") {
       int qp = 90;
       if (!parse_int(next("--qp"), qp)) return 2;
       options.base_q_idx = static_cast<std::uint8_t>(qp);
     } else if (arg == "--single") {
       options.force_single_block = true;
+    } else if (arg == "--sub8") {
+      options.sub8 = true;
+    } else if (arg == "--ext-partitions") {
+      options.enable_ext_partitions = true;
+    } else if (arg == "--uneven-4way") {
+      options.enable_ext_partitions = true;
+      options.enable_uneven_4way_partitions = true;
+    } else if (arg == "--sdp") {
+      options.sdp = true;
     } else if (arg == "--square-only") {
       options.square_only = true;
     } else if (arg == "--leaf32") {
@@ -169,11 +185,18 @@ int main(int argc, char** argv) {
   if (use_env) still_plan::apply_debug_env(options);
 
   if (print_options) {
-    std::cout << "{\"base_q_idx\":" << static_cast<int>(options.base_q_idx)
+    std::cout << "{\"sb_size\":" << options.sb_size
+              << ",\"base_q_idx\":" << static_cast<int>(options.base_q_idx)
               << ",\"min_block_size\":" << options.min_block_size
               << ",\"max_partition_depth\":" << options.max_partition_depth
               << ",\"force_single_block\":"
               << (options.force_single_block ? "true" : "false")
+              << ",\"sub8\":" << (options.sub8 ? "true" : "false")
+              << ",\"enable_ext_partitions\":"
+              << (options.enable_ext_partitions ? "true" : "false")
+              << ",\"enable_uneven_4way_partitions\":"
+              << (options.enable_uneven_4way_partitions ? "true" : "false")
+              << ",\"sdp\":" << (options.sdp ? "true" : "false")
               << ",\"square_only\":"
               << (options.square_only ? "true" : "false")
               << ",\"leaf32\":" << (options.leaf32 ? "true" : "false")

@@ -80,6 +80,11 @@ struct VideoGpuStats {
   std::uint64_t inter_candidates = 0;
   std::uint64_t intra_blocks = 0;
   std::uint64_t inter_blocks = 0;
+  // Honest backend provenance: false on the CUDA backend (pixels and the
+  // temporal units came from the device path), true on the CPU-emulation
+  // backend.  The product --video-gpu path never silently falls back to the
+  // CPU encoder, so this stays false there.
+  bool frame_bytes_from_cpu = false;
   // Sum of the per-frame GPU intervals (CUDA events) or of the per-frame wall
   // time for the emulation backend, in milliseconds.
   double device_ms = 0.0;

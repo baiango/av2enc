@@ -113,31 +113,18 @@ CFLAGS=(-std=c++20 -O2 -ffp-contract=off -fno-fast-math
 "$CXX" "${CFLAGS[@]}" -x c++ -c frame_emulation_shim.cpp \
   -o "$BUILD_DIR/frame_emulation_shim.o"
 
-HOST_SOURCES=(
-  "src/core/io/y4m.cpp"
-  "src/core/bitstream/bitwriter.cpp"
-  "src/core/bitstream/basic_headers.cpp"
-  "src/core/bitstream/obu.cpp"
-  "src/codec/partition/tree/partition.cpp"
-  "src/codec/intra/modes/intra_modes.cpp"
-  "src/codec/rate/rdoq/rdoq.cpp"
-  "src/codec/rate/rdoq/rdoq_av2_model.cpp"
-  "src/codec/transform/tx_type/tx_type.cpp"
-  "src/codec/transform/variants/tx_variants.cpp"
-  "src/codec/transform/variants/tx_select.cpp"
-  "src/codec/intra/cfl/cfl.cpp"
-  "src/codec/filters/deblock/deblock.cpp"
-  "src/codec/filters/cdef/cdef.cpp"
-  "src/codec/rate/rdo/rdo.cpp"
-  "src/codec/rate/rdo/intra_decision.cpp"
-  "src/pipeline/still/still_headers.cpp"
-  "src/cuda/pipeline/still/cdef/still_cdef.cpp"
-  "src/codec/entropy/av2/av2_entropy.cpp"
-)
-if ! grep -q '#include "pipeline/still/still_syntax.cpp"' \
-    "$ROOT/src/pipeline/still/still_encoder.cpp"; then
-  HOST_SOURCES+=("src/pipeline/still/still_syntax.cpp")
-fi
+# Shared CPU-reference source list (still_syntax + the integrated tool set);
+# still_encoder.cpp is included textually by still_chroma_test.cu.
+source "$ROOT/src/cuda/codec/filters/still_reference_sources.sh"
+HOST_SOURCES=("${STILL_REFERENCE_SOURCES[@]}")
+
+# Fill in the rest of the canonical CPU reference (`av2enc_core`).
+source "$ROOT/src/cuda/pipeline/cpu_reference_sources.sh"
+# still_encoder.cpp is #included by still_chroma_test.cu, so it must not be
+# linked a second time.
+av2enc_cpu_core_append HOST_SOURCES "" \
+  "${HOST_SOURCES[@]+"${HOST_SOURCES[@]}"}" \
+  src/pipeline/still/still_encoder.cpp
 
 HOST_OBJECTS=()
 for src in "${HOST_SOURCES[@]}"; do

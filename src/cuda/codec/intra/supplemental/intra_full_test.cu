@@ -35,6 +35,7 @@
 #include "cuda/codec/intra/supplemental/intra_full_device.cuh"
 #include "codec/intra/modes/intra_modes.h"
 #include "codec/intra/supplemental/dc_intra_subsampled.h"
+#include "codec/intra/supplemental/dc_sign_horz_vert.h"
 #include "codec/intra/supplemental/intra_filter_corner.h"
 #include "codec/transform/idtx/idtx_intra.h"
 #include "codec/transform/tx_type/tx_type.h"
@@ -53,6 +54,11 @@ using av2enc::cuda::intra_full::CornerResult;
 using av2enc::cuda::intra_full::DcJob;
 using av2enc::cuda::intra_full::DcResult;
 using av2enc::cuda::intra_full::DcSubsampledDesc;
+using av2enc::cuda::intra_full::SignContextJob;
+using av2enc::cuda::intra_full::SignElement;
+using av2enc::cuda::intra_full::SignQuery;
+using av2enc::cuda::intra_full::SignResult;
+using av2enc::cuda::intra_full::SignTxClass;
 using av2enc::cuda::intra_full::TxJob;
 using av2enc::cuda::intra_full::Workspace;
 
@@ -100,10 +106,12 @@ Config make_config() {
   config.max_corner_jobs = 256;
   config.max_chroma_jobs = 256;
   config.max_tx_blocks = 3;
+  config.max_sign_jobs = 256;
   return config;
 }
 
 constexpr int kMaxDcJobs = 4;
+constexpr int kMaxSignJobs = 256;
 constexpr int kMaxSamples = 64;
 constexpr int kMaxTxElems = 32 * 32;
 constexpr int kMaxCodedElems = 64 * 64;
@@ -122,6 +130,8 @@ struct DeviceData {
   double* tx_coeff = nullptr;
   std::int32_t* tx_dequant = nullptr;
   std::int16_t* tx_coded = nullptr;
+  std::int8_t* sign_above = nullptr;
+  std::int8_t* sign_left = nullptr;
 };
 
 // Test-only kernels that call the shared device functions directly.
@@ -161,12 +171,15 @@ bool alloc_all(Arena& arena, DeviceData* d) {
   d->tx_coeff = arena.allocate_array<double>(3 * kMaxTxElems);
   d->tx_dequant = arena.allocate_array<std::int32_t>(3 * kMaxTxElems);
   d->tx_coded = arena.allocate_array<std::int16_t>(3 * kMaxCodedElems);
+  d->sign_above = arena.allocate_array<std::int8_t>(kMaxSignJobs * 64);
+  d->sign_left = arena.allocate_array<std::int8_t>(kMaxSignJobs * 64);
   return d->dc_above != nullptr && d->dc_left != nullptr &&
          d->dc_dst != nullptr && d->corner_above != nullptr &&
          d->corner_left != nullptr && d->corner_values != nullptr &&
          d->corner_guard != nullptr && d->tx_residual != nullptr &&
          d->tx_coeff != nullptr && d->tx_dequant != nullptr &&
-         d->tx_coded != nullptr;
+         d->tx_coded != nullptr && d->sign_above != nullptr &&
+         d->sign_left != nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -604,6 +617,172 @@ void test_chroma(Workspace& workspace, Arena& arena) {
 }
 
 // ---------------------------------------------------------------------------
+// §5.20.7.27 / §8.3 dc_sign and dc_sign_horz_vert
+// ---------------------------------------------------------------------------
+
+void test_dc_sign(Workspace& workspace, Arena& arena, DeviceData& d) {
+  namespace mb = av2enc::still::missing_bits;
+  const std::uint64_t before = arena.used();
+  long long element_checks = 0;
+  long long context_checks = 0;
+
+  // 1. Sign-element sweep: every plane, TX class and a 8x8 position grid.
+  {
+    std::vector<SignQuery> queries;
+    std::vector<std::int8_t> above(kMaxSignJobs * 64);
+    std::vector<std::int8_t> left(kMaxSignJobs * 64);
+    int cases = 0;
+    auto flush = [&]() {
+      if (queries.empty()) {
+        return;
+      }
+      std::vector<SignResult> got(queries.size());
+      CHECK_EQ(static_cast<int>(workspace.select_sign_elements(
+                   queries.data(), static_cast<int>(queries.size()),
+                   got.data())),
+               static_cast<int>(Status::kOk), "dc_sign select launch");
+      for (std::size_t i = 0; i < queries.size(); ++i) {
+        const SignQuery& q = queries[i];
+        const mb::TxClass cpu_class = static_cast<mb::TxClass>(
+            static_cast<int>(q.tx_class));
+        const mb::SignElement want =
+            mb::select_sign_element(q.plane, q.row, q.col, cpu_class);
+        CHECK_EQ(got[i].element, static_cast<int>(want), "sign element");
+        ++element_checks;
+        if (want == mb::SignElement::kDcSign) {
+          const int want_ctx = mb::dc_sign_context(
+              above.data() + i * 64, left.data() + i * 64, q.x4, q.y4, q.w4,
+              q.h4, q.mi_cols, q.mi_rows);
+          CHECK_EQ(got[i].ctx, want_ctx, "sign ctx");
+        } else {
+          CHECK_EQ(got[i].ctx, 0, "non-dc ctx is zero");
+        }
+        ++element_checks;
+      }
+      cases += static_cast<int>(queries.size());
+      queries.clear();
+    };
+
+    std::uint32_t seed = 0x9e3779b9u;
+    auto next = [&seed]() {
+      seed ^= seed << 13;
+      seed ^= seed >> 17;
+      seed ^= seed << 5;
+      return seed;
+    };
+    for (int plane = 0; plane <= 2; ++plane) {
+      for (int tx = 0; tx <= 2; ++tx) {
+        for (int row = 0; row < 8; ++row) {
+          for (int col = 0; col < 8; ++col) {
+            const std::size_t slot = queries.size();
+            for (int k = 0; k < 64; ++k) {
+              above[slot * 64 + static_cast<std::size_t>(k)] =
+                  static_cast<std::int8_t>(next() % 3u);
+              left[slot * 64 + static_cast<std::size_t>(k)] =
+                  static_cast<std::int8_t>(next() % 3u);
+            }
+            SignQuery q;
+            q.plane = plane;
+            q.row = row;
+            q.col = col;
+            q.tx_class = static_cast<SignTxClass>(tx);
+            q.above_dc = d.sign_above + slot * 64;
+            q.left_dc = d.sign_left + slot * 64;
+            q.x4 = 1;
+            q.y4 = 1;
+            q.w4 = 4;
+            q.h4 = 4;
+            q.mi_cols = 64;
+            q.mi_rows = 64;
+            queries.push_back(q);
+            if (queries.size() == kMaxSignJobs) {
+              CHECK(cuda_ok(cudaMemcpy(
+                  d.sign_above, above.data(),
+                  sizeof(std::int8_t) * above.size(), cudaMemcpyHostToDevice)));
+              CHECK(cuda_ok(cudaMemcpy(
+                  d.sign_left, left.data(), sizeof(std::int8_t) * left.size(),
+                  cudaMemcpyHostToDevice)));
+              flush();
+            }
+          }
+        }
+      }
+    }
+    flush();
+    std::printf("  dc_sign elements: cases=%d checks=%lld\n", cases,
+                element_checks);
+  }
+
+  // 2. Context sweep with random geometry, including frame-edge limits.
+  {
+    constexpr int kBatches = 16;
+    std::vector<SignContextJob> jobs(kMaxSignJobs);
+    std::vector<std::int8_t> above(kMaxSignJobs * 64);
+    std::vector<std::int8_t> left(kMaxSignJobs * 64);
+    std::vector<int> got(kMaxSignJobs);
+    int cases = 0;
+    for (int batch = 0; batch < kBatches; ++batch) {
+      for (int i = 0; i < kMaxSignJobs; ++i) {
+        for (int k = 0; k < 64; ++k) {
+          above[static_cast<std::size_t>(i * 64 + k)] =
+              static_cast<std::int8_t>(random_range(0, 2));
+          left[static_cast<std::size_t>(i * 64 + k)] =
+              static_cast<std::int8_t>(random_range(0, 2));
+        }
+        SignContextJob job;
+        job.above_dc = d.sign_above + i * 64;
+        job.left_dc = d.sign_left + i * 64;
+        job.w4 = random_range(1, 8);
+        job.h4 = random_range(1, 8);
+        job.x4 = random_range(0, 32);
+        job.y4 = random_range(0, 32);
+        job.mi_cols = random_range(1, job.x4 + job.w4 + 2);
+        job.mi_rows = random_range(1, job.y4 + job.h4 + 2);
+        jobs[static_cast<std::size_t>(i)] = job;
+      }
+      CHECK(cuda_ok(cudaMemcpy(d.sign_above, above.data(),
+                               sizeof(std::int8_t) * above.size(),
+                               cudaMemcpyHostToDevice)));
+      CHECK(cuda_ok(cudaMemcpy(d.sign_left, left.data(),
+                               sizeof(std::int8_t) * left.size(),
+                               cudaMemcpyHostToDevice)));
+      CHECK_EQ(static_cast<int>(workspace.dc_sign_contexts(
+                   jobs.data(), kMaxSignJobs, got.data())),
+               static_cast<int>(Status::kOk), "dc_sign context launch");
+      for (int i = 0; i < kMaxSignJobs; ++i) {
+        const SignContextJob& job = jobs[static_cast<std::size_t>(i)];
+        const int want = mb::dc_sign_context(
+            above.data() + static_cast<std::size_t>(i * 64),
+            left.data() + static_cast<std::size_t>(i * 64), job.x4, job.y4,
+            job.w4, job.h4, job.mi_cols, job.mi_rows);
+        CHECK_EQ(got[static_cast<std::size_t>(i)], want, "dc_sign ctx sweep");
+      }
+      cases += kMaxSignJobs;
+      context_checks += kMaxSignJobs;
+    }
+
+    // Null neighbour arrays are legal and contribute nothing.
+    SignContextJob null_job;
+    null_job.x4 = 0;
+    null_job.y4 = 0;
+    null_job.w4 = 4;
+    null_job.h4 = 4;
+    null_job.mi_cols = 64;
+    null_job.mi_rows = 64;
+    int ctx = -1;
+    CHECK_EQ(static_cast<int>(workspace.dc_sign_contexts(&null_job, 1, &ctx)),
+             static_cast<int>(Status::kOk), "dc_sign null ctx launch");
+    CHECK_EQ(ctx, 0, "dc_sign null ctx");
+    ++context_checks;
+
+    std::printf("  dc_sign contexts: cases=%d checks=%lld\n", cases,
+                context_checks);
+  }
+
+  CHECK_EQ(arena.used(), before, "dc_sign: arena flat after");
+}
+
+// ---------------------------------------------------------------------------
 // Argument validation, arena negative test, mark/rewind growth
 // ---------------------------------------------------------------------------
 
@@ -755,6 +934,7 @@ int main() {
   test_corner(workspace, arena, data);
   test_transforms(workspace, arena, data);
   test_chroma(workspace, arena);
+  test_dc_sign(workspace, arena, data);
   test_arguments_and_arena(workspace, arena, data, config, required);
 
   std::printf(

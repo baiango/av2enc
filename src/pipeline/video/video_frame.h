@@ -55,10 +55,18 @@ struct VideoOptions {
   bool force_intra = false;
   bool force_single_block = false;
   // Feature 1: inter residual.  Off by default; the baseline is skip-only.
+  // With it on, the skip/residual and intra/inter decisions use a rate-aware
+  // RD cost weighted by inter_rd_lambda instead of the historical SSE-only
+  // comparison.
   // When true, a non-skip inter leaf codes transform coefficients for all
   // three planes.  force_inter_residual bypasses the rate heuristic and codes
   // residual on every inter leaf (gate stress mode).
   bool enable_inter_residual = false;
+  // Distortion-per-bit weight for the opt-in residual RD decision.  Tuned on
+  // 360p content: 4 keeps the default-path quality while cutting the stream
+  // roughly 3x; the historical implicit value was ~0.5*(qlookup/8)^2 (2178
+  // at QP 90), which made every residual look unaffordable.
+  double inter_rd_lambda = 4.0;
   bool force_inter_residual = false;
   int min_block_size = 16;
   int max_partition_depth = 4;

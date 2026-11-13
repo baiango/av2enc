@@ -18,6 +18,8 @@
 
 #include "../../../../codec/intra/cfl/cfl_common.h"
 #include "../../../codec/intra/modes/intra_predict_device.cuh"
+#include "../../../codec/intra/ibp/ibp_predict_device.cuh"
+#include "../../../../codec/intra/cfl/mhccp/mhccp_device.cuh"
 
 namespace av2enc::cuda::still {
 namespace {
@@ -378,6 +380,41 @@ __device__ __forceinline__ long long warp_reduce_sum(long long value) {
 }
 
 // Shared state for the default DC/CfL policy.
+__device__ __forceinline__ av2enc::cfl::mhccp::Block make_mhccp_block(
+    const StillChromaJob& job, bool use_v, int ds_filter,
+    av2enc::cfl::mhccp::Refs* refs, int dir, bool derived,
+    const av2enc::cfl::mhccp::MultiParams& params,
+    av2enc::cfl::mhccp::MultiParams* out_params, bool* ok) {
+  av2enc::cfl::mhccp::Block block{};
+  block.luma = job.luma;
+  block.luma_stride = job.luma_stride;
+  block.luma_max_x = job.luma_max_x;
+  block.luma_max_y = job.luma_max_y;
+  block.chroma =
+      const_cast<std::uint8_t*>(use_v ? job.chroma_v : job.chroma_u);
+  block.chroma_stride = job.chroma_stride;
+  block.chroma_max_x = max_int(job.coded_width, job.x + job.w) - 1;
+  block.chroma_max_y = max_int(job.coded_height, job.y + job.h) - 1;
+  block.x = job.x;
+  block.y = job.y;
+  block.w = job.w;
+  block.h = job.h;
+  block.bit_depth = 8;
+  block.ds_filter = ds_filter;
+  block.sub_x = 1;
+  block.sub_y = 1;
+  block.have_above = job.y >= 4 ? 1 : 0;
+  block.have_left = job.x >= 4 ? 1 : 0;
+  block.num4_above_right = job.num4_above_right;
+  block.num4_below_left = job.num4_below_left;
+  block.mi_col_end = job.coded_width << 1;
+  block.mi_row_end = job.coded_height << 1;
+  block.sb_luma_y = job.sb_top_y;
+  *ok = av2enc::cfl::mhccp::device::prepare(block, dir, derived, params, refs,
+                                           out_params);
+  return block;
+}
+
 struct ChromaDcCflShared {
   int above[kMaxDim];
   int left[kMaxDim];
@@ -388,6 +425,29 @@ struct ChromaDcCflShared {
   int dc_v;
   int is_cfl;
   long long warp_sums[kWarps][4];
+  long long reduce_scratch[kThreads];
+  long long alpha_sse[2][17];
+  int cfl_index;
+  int alpha_signs;
+  int alpha_u_syntax;
+  int alpha_v_syntax;
+  int alpha_u_q8;
+  int alpha_v_q8;
+  long long cfl_sse;
+  // §7.13.7 CFL_MULTI decision state.
+  av2enc::cfl::mhccp::Refs mh_refs;
+  av2enc::cfl::mhccp::MultiParams mh_params_u;
+  av2enc::cfl::mhccp::MultiParams mh_params_v;
+  av2enc::cfl::mhccp::MultiParams mh_tmp_params;
+  av2enc::cfl::mhccp::MultiParams mh_tmp_params2;
+  av2enc::cfl::mhccp::Block mh_block;
+  int mh_dir;
+  int mh_prepare_ok;
+  long long mh_sse;
+  // §7.13.2.12 IBP DC post-filter result (uniform blocks otherwise).
+  std::uint8_t dc_pred_u[kMaxDim * kMaxDim];
+  std::uint8_t dc_pred_v[kMaxDim * kMaxDim];
+  ibp::SharedScratch ibp_scratch;
 };
 
 __device__ __forceinline__ void chroma_dc_cfl_search(
@@ -414,14 +474,60 @@ __device__ __forceinline__ void chroma_dc_cfl_search(
     s->alpha_u = alpha_u;
     s->alpha_v = alpha_v;
     s->is_cfl = 0;
+    // Default CfL signalling (derived alpha).  The explicit/MHCCP hypotheses
+    // override these below when they win.
+    s->cfl_index = 1;
+    s->alpha_signs = 0;
+    s->alpha_u_syntax = 0;
+    s->alpha_v_syntax = 0;
+    s->alpha_u_q8 = alpha_u;
+    s->alpha_v_q8 = alpha_v;
+    s->mh_sse = kSseMax;
+    s->mh_dir = 0;
   }
   __syncthreads();
+
+  const int total = w * h;
+  const bool ibp_dc = opt.enable_ibp != 0 && !(w == 4 && h == 4);
+  if (ibp_dc) {
+    // The DC candidate prediction is the ordinary DC block plus the IBP
+    // post-filter rows/columns; the CfL base keeps the unfiltered scalar.
+    for (int index = tid; index < total; index += nthr) {
+      s->dc_pred_u[index] = static_cast<std::uint8_t>(s->dc_u);
+      s->dc_pred_v[index] = static_cast<std::uint8_t>(s->dc_v);
+    }
+    __syncthreads();
+    ibp::IbpBlock block{};
+    block.intra.recon_plane = job.chroma_u;
+    block.intra.recon_stride = job.chroma_stride;
+    block.intra.x0 = job.x;
+    block.intra.y0 = job.y;
+    block.intra.width = w;
+    block.intra.height = h;
+    block.intra.max_x = max_x;
+    block.intra.max_y = max_y;
+    block.intra.have_left = job.x > 0 ? 1 : 0;
+    block.intra.have_above = job.y > 0 ? 1 : 0;
+    block.intra.num4_above_right = job.num4_above_right;
+    block.intra.num4_below_left = job.num4_below_left;
+    block.intra.plane = 1;
+    block.intra.mode = intra_modes::kDcPred;
+    block.intra.angle_delta = 0;
+    block.intra.enable_edge_filter = job.enable_edge_filter;
+    block.enable_ibp = 1;
+    block.uv_is_cfl = 0;
+    ibp::ibp_run_block_device(block, s->dc_pred_u, &s->ibp_scratch);
+    __syncthreads();
+    block.intra.recon_plane = job.chroma_v;
+    block.intra.plane = 2;
+    ibp::ibp_run_block_device(block, s->dc_pred_v, &s->ibp_scratch);
+    __syncthreads();
+  }
 
   long long dc_u = 0;
   long long dc_v = 0;
   long long cfl_u = 0;
   long long cfl_v = 0;
-  const int total = w * h;
   for (int index = tid; index < total; index += nthr) {
     const int i = index / w;
     const int j = index - i * w;
@@ -429,8 +535,10 @@ __device__ __forceinline__ void chroma_dc_cfl_search(
     const int sx = min_int(job.src_max_x, job.x + j);
     const int src_u = plane_at(job.src_u, job.src_stride_u, sy, sx);
     const int src_v = plane_at(job.src_v, job.src_stride_v, sy, sx);
-    const int diff_dc_u = src_u - s->dc_u;
-    const int diff_dc_v = src_v - s->dc_v;
+    const int pred_dc_u = ibp_dc ? s->dc_pred_u[index] : s->dc_u;
+    const int pred_dc_v = ibp_dc ? s->dc_pred_v[index] : s->dc_v;
+    const int diff_dc_u = src_u - pred_dc_u;
+    const int diff_dc_v = src_v - pred_dc_v;
     dc_u += static_cast<long long>(diff_dc_u) * diff_dc_u;
     dc_v += static_cast<long long>(diff_dc_v) * diff_dc_v;
     if (opt.enable_cfl != 0) {
@@ -459,6 +567,215 @@ __device__ __forceinline__ void chroma_dc_cfl_search(
   }
   __syncthreads();
 
+  if (opt.cfl_explicit != 0) {
+    // §5.20.7.32 CFL_EXPLICIT: 17 sign/magnitude values per plane in the CPU
+    // order (zero, +1, -1, ..., +8, -8), strict-less-than tie-break.
+    for (int plane = 0; plane < 2; ++plane) {
+      for (int a = 0; a < 17; ++a) {
+        int sign = 0;
+        int magnitude = 0;
+        if (a > 0) {
+          magnitude = (a - 1) / 2 + 1;
+          sign = ((a - 1) % 2 == 0) ? av2enc::cfl::kSignPos
+                                    : av2enc::cfl::kSignNeg;
+        }
+        const int alpha_q8 =
+            sign == 0 ? 0
+                      : (sign == av2enc::cfl::kSignPos ? 1 : -1) * magnitude * 32;
+        long long acc = 0;
+        for (int index = tid; index < total; index += nthr) {
+          const int i = index / w;
+          const int j = index - i * w;
+          const int luma_value = sample_luma(job, filter, i, j);
+          // The CPU `choose_uv_mode()` alpha search runs on a CfL block whose
+          // chroma plane already holds the DERIVED prediction (it applies the
+          // derived alpha before search_alpha).  Reproduce that incumbent so
+          // the decision matches; the coding pass later applies the explicit
+          // alpha to the plain DC prediction.
+          const int dc = plane == 0 ? s->dc_u : s->dc_v;
+          const int derived_alpha = plane == 0 ? s->alpha_u : s->alpha_v;
+          const int base =
+              cfl_sample(dc, derived_alpha, luma_value, s->luma_avg);
+          const int scaled = av2enc::cfl::round2_signed(
+              alpha_q8 * (luma_value - s->luma_avg),
+              av2enc::cfl::kScaleShift);
+          const int pred =
+              av2enc::cfl::clip1(base + scaled, kBitDepth);
+          const int src = intra_source_sample(job, plane != 0, job.x + j,
+                                              job.y + i);
+          const int diff = src - pred;
+          acc += static_cast<long long>(diff) * diff;
+        }
+        const long long value = block_reduce_sum(acc, s->reduce_scratch, tid,
+                                                 nthr);
+        if (tid == 0) {
+          s->alpha_sse[plane][a] = value;
+        }
+        __syncthreads();
+      }
+    }
+    if (tid == 0) {
+      // Best over all 17 values per plane (zero evaluated first).
+      int best_index[2] = {0, 0};
+      long long best_sse[2] = {s->alpha_sse[0][0], s->alpha_sse[1][0]};
+      for (int plane = 0; plane < 2; ++plane) {
+        for (int a = 1; a < 17; ++a) {
+          if (s->alpha_sse[plane][a] < best_sse[plane]) {
+            best_sse[plane] = s->alpha_sse[plane][a];
+            best_index[plane] = a;
+          }
+        }
+      }
+      const int sign_u = best_index[0] == 0
+                             ? av2enc::cfl::kSignZero
+                             : (((best_index[0] - 1) % 2 == 0)
+                                    ? av2enc::cfl::kSignPos
+                                    : av2enc::cfl::kSignNeg);
+      const int sign_v = best_index[1] == 0
+                             ? av2enc::cfl::kSignZero
+                             : (((best_index[1] - 1) % 2 == 0)
+                                    ? av2enc::cfl::kSignPos
+                                    : av2enc::cfl::kSignNeg);
+      int mag_u = best_index[0] == 0 ? 0 : (best_index[0] - 1) / 2 + 1;
+      int mag_v = best_index[1] == 0 ? 0 : (best_index[1] - 1) / 2 + 1;
+      long long sse_u = best_sse[0];
+      long long sse_v = best_sse[1];
+      if (sign_u == av2enc::cfl::kSignZero &&
+          sign_v == av2enc::cfl::kSignZero) {
+        // §6.19.7.25 forbids (zero, zero): force the cheaper plane to a
+        // non-zero alpha (nonzero-only order, <= tie-break).
+        int nz_u = 1;
+        long long nz_us = s->alpha_sse[0][1];
+        for (int a = 2; a < 17; ++a) {
+          if (s->alpha_sse[0][a] < nz_us) {
+            nz_us = s->alpha_sse[0][a];
+            nz_u = a;
+          }
+        }
+        int nz_v = 1;
+        long long nz_vs = s->alpha_sse[1][1];
+        for (int a = 2; a < 17; ++a) {
+          if (s->alpha_sse[1][a] < nz_vs) {
+            nz_vs = s->alpha_sse[1][a];
+            nz_v = a;
+          }
+        }
+        if (nz_us + sse_v <= sse_u + nz_vs) {
+          best_index[0] = nz_u;
+          sse_u = nz_us;
+          mag_u = (nz_u - 1) / 2 + 1;
+        } else {
+          best_index[1] = nz_v;
+          sse_v = nz_vs;
+          mag_v = (nz_v - 1) / 2 + 1;
+        }
+      }
+      s->cfl_index = 1;
+      s->alpha_signs = 0;
+      s->alpha_u_syntax = 0;
+      s->alpha_v_syntax = 0;
+      s->alpha_u_q8 = s->alpha_u;
+      s->alpha_v_q8 = s->alpha_v;
+      // Stash the explicit hypothesis; the derived comparison happens in the
+      // result block where cfl_total is known.
+      s->alpha_sse[0][0] = sse_u + sse_v;  // explicit total SSE
+      // §5.20.7.32 syntax: joint_signs = 3*signU + signV - 1.
+      const int joint = 3 * sign_u + sign_v - 1;
+      s->alpha_signs = joint < 0 ? 0 : joint;
+      s->alpha_u_syntax = sign_u == av2enc::cfl::kSignZero ? 0 : mag_u - 1;
+      s->alpha_v_syntax = sign_v == av2enc::cfl::kSignZero ? 0 : mag_v - 1;
+      // Remember the Q8 weights for the winning prediction (slots 1 and 2).
+      s->alpha_sse[0][1] = sign_u == av2enc::cfl::kSignZero
+                               ? 0
+                               : (sign_u == av2enc::cfl::kSignPos ? 1 : -1) *
+                                     mag_u * 32;
+      s->alpha_sse[0][2] = sign_v == av2enc::cfl::kSignZero
+                               ? 0
+                               : (sign_v == av2enc::cfl::kSignPos ? 1 : -1) *
+                                     mag_v * 32;
+    }
+    __syncthreads();
+  }
+
+  const bool mhccp_ok =
+      opt.enable_mhccp != 0 &&
+      av2enc::cfl::mhccp::allowed(w, h, /*enable_mhccp=*/true,
+                                  /*is_chroma_part=*/false,
+                                  /*frame_is_intra=*/true,
+                                  /*cfl_allowed_in_sdp=*/false,
+                                  /*lossless=*/false);
+  if (mhccp_ok) {
+    if (tid == 0) {
+      s->mh_sse = kSseMax;
+      s->mh_dir = 0;
+      s->mh_prepare_ok = 1;
+    }
+    __syncthreads();
+    for (int dir = 0; dir < av2enc::cfl::mhccp::kDirections; ++dir) {
+      if (tid == 0) {
+        av2enc::cfl::mhccp::MultiParams unused{};
+        bool ok = false;
+        s->mh_block = make_mhccp_block(job, /*use_v=*/false, filter,
+                                       &s->mh_refs, dir, /*derived=*/true,
+                                       unused, &s->mh_tmp_params, &ok);
+        if (!ok) {
+          s->mh_prepare_ok = 0;
+        }
+      }
+      __syncthreads();
+      if (s->mh_prepare_ok == 0) {
+        continue;
+      }
+      long long acc = 0;
+      for (int index = tid; index < total; index += nthr) {
+        const int i = index / w;
+        const int j = index - i * w;
+        const int pred = av2enc::cfl::mhccp::device::sample(
+            s->mh_block, s->mh_refs, s->mh_tmp_params, dir, i, j);
+        const int src = intra_source_sample(job, false, job.x + j, job.y + i);
+        const int diff = src - pred;
+        acc += static_cast<long long>(diff) * diff;
+      }
+      const long long sse_u = block_reduce_sum(acc, s->reduce_scratch, tid,
+                                               nthr);
+      if (tid == 0) {
+        av2enc::cfl::mhccp::MultiParams unused{};
+        bool ok = false;
+        make_mhccp_block(job, /*use_v=*/true, filter, &s->mh_refs, dir,
+                         /*derived=*/true, unused, &s->mh_tmp_params2, &ok);
+        if (!ok) {
+          s->mh_prepare_ok = 0;
+        }
+      }
+      __syncthreads();
+      if (s->mh_prepare_ok == 0) {
+        continue;
+      }
+      acc = 0;
+      for (int index = tid; index < total; index += nthr) {
+        const int i = index / w;
+        const int j = index - i * w;
+        const int pred = av2enc::cfl::mhccp::device::sample(
+            s->mh_block, s->mh_refs, s->mh_tmp_params2, dir, i, j);
+        const int src = intra_source_sample(job, true, job.x + j, job.y + i);
+        const int diff = src - pred;
+        acc += static_cast<long long>(diff) * diff;
+      }
+      const long long sse_v = block_reduce_sum(acc, s->reduce_scratch, tid,
+                                               nthr);
+      if (tid == 0) {
+        const long long candidate = sse_u + sse_v;
+        if (candidate < s->mh_sse) {
+          s->mh_sse = candidate;
+          s->mh_dir = dir;
+          s->mh_params_u = s->mh_tmp_params;
+          s->mh_params_v = s->mh_tmp_params2;
+        }
+      }
+      __syncthreads();
+    }
+  }
+
   if (tid == 0) {
     long long total_dc_u = 0;
     long long total_dc_v = 0;
@@ -472,8 +789,29 @@ __device__ __forceinline__ void chroma_dc_cfl_search(
       total_cfl_v += s->warp_sums[i][3];
     }
 
-    const long long cfl_total = total_cfl_u + total_cfl_v;
-    const bool is_cfl = opt.enable_cfl != 0 && cfl_total < total_dc_u;
+    const long long derived_total = total_cfl_u + total_cfl_v;
+    long long explicit_total = s->alpha_sse[0][0];
+    bool explicit_wins = false;
+    if (opt.cfl_explicit != 0 && explicit_total < derived_total) {
+      explicit_wins = true;
+      s->cfl_index = 0;
+      s->alpha_u_q8 = static_cast<int>(s->alpha_sse[0][1]);
+      s->alpha_v_q8 = static_cast<int>(s->alpha_sse[0][2]);
+    }
+    const long long cfl_total =
+        explicit_wins ? explicit_total : derived_total;
+    bool mh_wins = false;
+    if (mhccp_ok && s->mh_prepare_ok != 0 && s->mh_sse < cfl_total) {
+      mh_wins = true;
+      s->cfl_index = 2;
+      s->alpha_u_q8 = 0;
+      s->alpha_v_q8 = 0;
+      s->alpha_signs = 0;
+      s->alpha_u_syntax = 0;
+      s->alpha_v_syntax = 0;
+    }
+    const long long final_cfl_total = mh_wins ? s->mh_sse : cfl_total;
+    const bool is_cfl = opt.enable_cfl != 0 && final_cfl_total < total_dc_u;
     s->is_cfl = is_cfl ? 1 : 0;
 
     StillChromaResult r{};
@@ -481,8 +819,13 @@ __device__ __forceinline__ void chroma_dc_cfl_search(
     r.uv_mode = 0;
     r.angle_delta = 0;
     r.is_cfl = is_cfl ? 1 : 0;
-    r.alpha_u = s->alpha_u;
-    r.alpha_v = s->alpha_v;
+    r.alpha_u = s->alpha_u_q8;
+    r.alpha_v = s->alpha_v_q8;
+    r.cfl_index = s->cfl_index;
+    r.alpha_signs = s->alpha_signs;
+    r.alpha_u_syntax = s->alpha_u_syntax;
+    r.alpha_v_syntax = s->alpha_v_syntax;
+    r.cfl_mh_dir = mh_wins ? s->mh_dir : 0;
     r.dc_u = s->dc_u;
     r.dc_v = s->dc_v;
     r.sse_dc_u = total_dc_u;
@@ -490,22 +833,50 @@ __device__ __forceinline__ void chroma_dc_cfl_search(
     r.sse_cfl_u = total_cfl_u;
     r.sse_cfl_v = total_cfl_v;
     r.sse = opt.enable_cfl == 0 ? 0
-                                : (is_cfl ? cfl_total : total_dc_u);
+                                : (is_cfl ? final_cfl_total : total_dc_u);
     out[0] = r;
   }
   __syncthreads();
 
   const bool is_cfl = s->is_cfl != 0;
   const int pred_stride = job.pred_stride > 0 ? job.pred_stride : w;
+  if (is_cfl && s->cfl_index == 2) {
+    // §7.13.7 CFL_MULTI: re-capture the chosen direction's references and
+    // apply the derived weights to both planes.
+    for (int plane = 0; plane < 2; ++plane) {
+      if (tid == 0) {
+        const av2enc::cfl::mhccp::MultiParams chosen =
+            plane == 0 ? s->mh_params_u : s->mh_params_v;
+        bool ok = false;
+        s->mh_block = make_mhccp_block(
+            job, /*use_v=*/plane != 0, filter, &s->mh_refs, s->mh_dir,
+            /*derived=*/false, chosen, &s->mh_tmp_params, &ok);
+        (void)ok;
+      }
+      __syncthreads();
+      std::uint8_t* dst = plane == 0 ? job.pred_u : job.pred_v;
+      if (dst != nullptr) {
+        for (int index = tid; index < total; index += nthr) {
+          const int i = index / w;
+          const int j = index - i * w;
+          const int pred = av2enc::cfl::mhccp::device::sample(
+              s->mh_block, s->mh_refs, s->mh_tmp_params, s->mh_dir, i, j);
+          dst[i * pred_stride + j] = static_cast<std::uint8_t>(pred);
+        }
+      }
+      __syncthreads();
+    }
+    return;
+  }
   for (int index = tid; index < total; index += nthr) {
     const int i = index / w;
     const int j = index - i * w;
-    int pred_u = s->dc_u;
-    int pred_v = s->dc_v;
+    int pred_u = ibp_dc ? static_cast<int>(s->dc_pred_u[index]) : s->dc_u;
+    int pred_v = ibp_dc ? static_cast<int>(s->dc_pred_v[index]) : s->dc_v;
     if (is_cfl) {
       const int luma_value = sample_luma(job, filter, i, j);
-      pred_u = cfl_sample(s->dc_u, s->alpha_u, luma_value, s->luma_avg);
-      pred_v = cfl_sample(s->dc_v, s->alpha_v, luma_value, s->luma_avg);
+      pred_u = cfl_sample(s->dc_u, s->alpha_u_q8, luma_value, s->luma_avg);
+      pred_v = cfl_sample(s->dc_v, s->alpha_v_q8, luma_value, s->luma_avg);
     }
     const int offset = i * pred_stride + j;
     if (job.pred_u != nullptr) {

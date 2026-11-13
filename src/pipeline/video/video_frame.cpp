@@ -967,8 +967,7 @@ class InterFrameEncoder {
             res_y.eob == 0 && res_u.eob == 0 && res_v.eob == 0;
         // Reconstruction step is qlookup/8 (66 at QP 90); sse_scale 0.5 is
         // the M1 calibrated value.
-        const double sample_step = static_cast<double>(quant_step_) / 8.0;
-        const double kLambda = 0.5 * sample_step * sample_step;
+        const double kLambda = options_.inter_rd_lambda;
         const double res_bits = 3.0 + estimate_tx_bits(res_y, true) +
                                 estimate_tx_bits(res_u, false) +
                                 estimate_tx_bits(res_v, false);
@@ -992,9 +991,29 @@ class InterFrameEncoder {
       }
     }
 
-    const bool use_intra =
-        keyframe_ || options_.force_intra || !best.valid ||
-        (have_intra && intra_sse < inter_luma_sse);
+    bool use_intra = keyframe_ || options_.force_intra || !best.valid;
+    if (!use_intra && have_intra) {
+      if (options_.enable_inter_residual) {
+        // Rate-aware decision on the opt-in residual path.  The historical
+        // path compared raw SSE only, so a fine quantiser made intra win even
+        // when it cost two orders of magnitude more bits.
+        const double lambda = options_.inter_rd_lambda;
+        const double intra_bits =
+            3.0 + estimate_tx_bits(intra_y, false) +
+            estimate_tx_bits(intra_u, false) +
+            estimate_tx_bits(intra_v, false);
+        double inter_bits = 8.0;
+        if (inter_residual) {
+          inter_bits += 3.0 + estimate_tx_bits(res_y, true) +
+                        estimate_tx_bits(res_u, false) +
+                        estimate_tx_bits(res_v, false);
+        }
+        use_intra = static_cast<double>(intra_sse) + lambda * intra_bits <
+                    static_cast<double>(inter_luma_sse) + lambda * inter_bits;
+      } else {
+        use_intra = intra_sse < inter_luma_sse;
+      }
+    }
 
     if (use_intra) {
       if (!have_intra) {

@@ -16,12 +16,19 @@
 #include <string>
 #include <vector>
 
+#include "cuda/arena.h"
+#include "tables_redirect.h"
+
 #include "advanced.h"
 
 namespace {
 
 using namespace av2enc::inter::adv;
 namespace gpu = av2enc::cuda::advinter;
+
+// The component test also uses the single persistent arena; there is no direct
+// cudaMalloc in this file.
+av2enc::cuda::Arena g_arena;
 
 int g_checks = 0;
 int g_failures = 0;
@@ -69,18 +76,15 @@ struct DeviceBuffer {
   DeviceBuffer() = default;
   DeviceBuffer(const DeviceBuffer&) = delete;
   DeviceBuffer& operator=(const DeviceBuffer&) = delete;
-  ~DeviceBuffer() {
-    if (ptr != nullptr) {
-      cudaFree(ptr);
-    }
-  }
+  ~DeviceBuffer() = default;
 
   bool allocate(std::size_t n) {
     count = n;
     if (n == 0) {
       return true;
     }
-    return cudaMalloc(reinterpret_cast<void**>(&ptr), n * sizeof(T)) == cudaSuccess;
+    ptr = g_arena.allocate_array<T>(n);
+    return ptr != nullptr;
   }
 
   bool upload(const std::vector<T>& host) {
@@ -96,6 +100,19 @@ struct DeviceBuffer {
     return cudaMemcpy(host->data(), ptr, count * sizeof(T), cudaMemcpyDeviceToHost) == cudaSuccess;
   }
 };
+
+// The *_batch entry points take a *device-resident* job array: the kernel
+// dereferences `jobs[i]` on the device, so a host stack copy faults with
+// cudaErrorIllegalAddress (docs/negative-results.md, "Pass a host vector to a
+// *_batch device API").  Upload the one job first.
+template <typename Job, typename Launch>
+void launch_one(const Job& job, Launch launch) {
+  const std::vector<Job> host(1, job);
+  DeviceBuffer<Job> device;
+  EXPECT(device.allocate(host.size()));
+  EXPECT(device.upload(host));
+  CUDA_OK(launch(device.ptr, 1));
+}
 
 int bsize_for(int w, int h) {
   if (w == h) {
@@ -303,8 +320,11 @@ struct RefFixture {
   int h = 128;
   std::vector<std::uint8_t> data;
   DeviceBuffer<std::uint8_t> device;
+  // `view` points at device memory (the GPU jobs use it); `host_view` exposes
+  // the same bytes to the CPU reference.  `cudaMalloc` memory is not host
+  // accessible, so the two must not be interchanged.
   PlaneView view{};
-
+  PlaneView host_view{};
   RefFixture() {
     data.resize(static_cast<std::size_t>(w) * h);
     for (int i = 0; i < w * h; ++i) {
@@ -316,6 +336,10 @@ struct RefFixture {
     view.stride = w;
     view.max_x = w - 1;
     view.max_y = h - 1;
+    host_view.data = data.data();
+    host_view.stride = w;
+    host_view.max_x = w - 1;
+    host_view.max_y = h - 1;
   }
 };
 
@@ -343,7 +367,7 @@ void test_warp() {
 
     for (int compound = 0; compound < 2; ++compound) {
       std::vector<std::int16_t> cpu(count, 0);
-      EXPECT(warp_predict(params, fixture.view, geom, compound != 0, cpu.data(), block_w));
+      EXPECT(warp_predict(params, fixture.host_view, geom, compound != 0, cpu.data(), block_w));
 
       DeviceBuffer<std::int16_t> d_dst;
       EXPECT(d_dst.allocate(count));
@@ -357,8 +381,7 @@ void test_warp() {
       job.compound = compound;
       job.dst = d_dst.ptr;
       job.dst_stride = block_w;
-      CUDA_OK(gpu::warp_batch(&job, 1));
-      std::vector<std::int16_t> gpu_dst;
+      launch_one(job, [](const auto* j, int n) { return gpu::warp_batch(j, n); });      std::vector<std::int16_t> gpu_dst;
       EXPECT(d_dst.download(&gpu_dst));
       EXPECT(gpu_dst == cpu);
     }
@@ -396,7 +419,7 @@ void test_warp_ext() {
 
     for (int compound = 0; compound < 2; ++compound) {
       std::vector<std::int16_t> cpu(count, 0);
-      EXPECT(warp_predict_ext(params, fixture.view, geom, compound != 0, cpu.data(), block_w));
+      EXPECT(warp_predict_ext(params, fixture.host_view, geom, compound != 0, cpu.data(), block_w));
       DeviceBuffer<std::int16_t> d_dst;
       EXPECT(d_dst.allocate(count));
       std::vector<std::int16_t> zeros(count, 0);
@@ -408,8 +431,7 @@ void test_warp_ext() {
       job.compound = compound;
       job.dst = d_dst.ptr;
       job.dst_stride = block_w;
-      CUDA_OK(gpu::ext_warp_batch(&job, 1));
-      std::vector<std::int16_t> gpu_dst;
+      launch_one(job, [](const auto* j, int n) { return gpu::ext_warp_batch(j, n); });      std::vector<std::int16_t> gpu_dst;
       EXPECT(d_dst.download(&gpu_dst));
       EXPECT(gpu_dst == cpu);
     }
@@ -528,11 +550,12 @@ void test_warp_chroma() {
   EXPECT(d_ref.allocate(ref_data.size()));
   EXPECT(d_ref.upload(ref_data));
   PlaneView ref{};
-  ref.data = d_ref.ptr;
+  ref.data = d_ref.ptr;  // device view for the GPU job
   ref.stride = ref_w;
   ref.max_x = ref_w - 1;
   ref.max_y = ref_h - 1;
-
+  PlaneView host_ref = ref;
+  host_ref.data = ref_data.data();  // host view for the CPU reference
   WarpBlockGeometry geom = make_geometry_local();
   geom.plane = 1;
   geom.sub_x = 1;
@@ -553,9 +576,9 @@ void test_warp_chroma() {
     for (int compound = 0; compound < 2; ++compound) {
       std::vector<std::int16_t> cpu(count, 0);
       if (kind == 0) {
-        EXPECT(warp_predict(params, ref, geom, compound != 0, cpu.data(), 16));
+        EXPECT(warp_predict(params, host_ref, geom, compound != 0, cpu.data(), 16));
       } else {
-        EXPECT(warp_predict_ext(params, ref, geom, compound != 0, cpu.data(), 16));
+        EXPECT(warp_predict_ext(params, host_ref, geom, compound != 0, cpu.data(), 16));
       }
       DeviceBuffer<std::int16_t> d_dst;
       EXPECT(d_dst.allocate(count));
@@ -568,8 +591,11 @@ void test_warp_chroma() {
       job.compound = compound;
       job.dst = d_dst.ptr;
       job.dst_stride = 16;
-      CUDA_OK(kind == 0 ? gpu::warp_batch(&job, 1) : gpu::ext_warp_batch(&job, 1));
-      std::vector<std::int16_t> gpu_dst;
+      if (kind == 0) {
+        launch_one(job, [](const auto* j, int n) { return gpu::warp_batch(j, n); });
+      } else {
+        launch_one(job, [](const auto* j, int n) { return gpu::ext_warp_batch(j, n); });
+      }      std::vector<std::int16_t> gpu_dst;
       EXPECT(d_dst.download(&gpu_dst));
       EXPECT(gpu_dst == cpu);
     }
@@ -588,11 +614,12 @@ void test_warp_ext_scaled() {
   EXPECT(d_ref.allocate(ref_data.size()));
   EXPECT(d_ref.upload(ref_data));
   PlaneView ref{};
-  ref.data = d_ref.ptr;
+  ref.data = d_ref.ptr;  // device view for the GPU job
   ref.stride = ref_w;
   ref.max_x = ref_w - 1;
   ref.max_y = ref_h - 1;
-
+  PlaneView host_ref = ref;
+  host_ref.data = ref_data.data();  // host view for the CPU reference
   const int block_w = 16;
   const int block_h = 16;
   const std::size_t count = static_cast<std::size_t>(block_w) * block_h;
@@ -617,7 +644,7 @@ void test_warp_ext_scaled() {
 
   for (int compound = 0; compound < 2; ++compound) {
     std::vector<std::int16_t> cpu(count, 0);
-    EXPECT(warp_predict_ext(params, ref, geom, compound != 0, cpu.data(), block_w));
+    EXPECT(warp_predict_ext(params, host_ref, geom, compound != 0, cpu.data(), block_w));
     DeviceBuffer<std::int16_t> d_dst;
     EXPECT(d_dst.allocate(count));
     std::vector<std::int16_t> zeros(count, 0);
@@ -629,8 +656,7 @@ void test_warp_ext_scaled() {
     job.compound = compound;
     job.dst = d_dst.ptr;
     job.dst_stride = block_w;
-    CUDA_OK(gpu::ext_warp_batch(&job, 1));
-    std::vector<std::int16_t> gpu_dst;
+    launch_one(job, [](const auto* j, int n) { return gpu::ext_warp_batch(j, n); });    std::vector<std::int16_t> gpu_dst;
     EXPECT(d_dst.download(&gpu_dst));
     EXPECT(gpu_dst == cpu);
   }
@@ -727,8 +753,7 @@ void test_bawp() {
     gpu_job.job.dst.max_x = w - 1;
     gpu_job.job.dst.max_y = h - 1;
     gpu_job.fit_out = d_fit.ptr;
-    CUDA_OK(gpu::bawp_batch(&gpu_job, 1));
-
+    launch_one(gpu_job, [](const auto* j, int n) { return gpu::bawp_batch(j, n); });
     std::vector<std::uint8_t> gpu_dst;
     std::vector<BawpFit> gpu_fit;
     EXPECT(d_dst.download(&gpu_dst));
@@ -784,8 +809,7 @@ void test_obmc() {
     job.above_stride = w;
     job.left = d_left.ptr;
     job.left_stride = w;
-    CUDA_OK(gpu::obmc_batch(&job, 1));
-    std::vector<std::uint8_t> gpu_dst;
+    launch_one(job, [](const auto* j, int n) { return gpu::obmc_batch(j, n); });    std::vector<std::uint8_t> gpu_dst;
     EXPECT(d_dst.download(&gpu_dst));
     EXPECT(gpu_dst == host_dst);
   }
@@ -916,6 +940,14 @@ int main() {
   std::printf("device: %s (cc %d.%d, %d SMs)\n", prop.name, prop.major, prop.minor,
               prop.multiProcessorCount);
 
+  std::string arena_error;
+  constexpr std::uint64_t kArenaBytes = 128ull * 1024ull * 1024ull;
+  if (g_arena.init(kArenaBytes, av2enc::cuda::Arena::kAlignment, &arena_error) !=
+      av2enc::cuda::Status::kOk) {
+    std::printf("advanced_cuda_test: arena init failed: %s\n", arena_error.c_str());
+    return 1;
+  }
+
   test_compound();
   test_compound_inter_intra();
   test_compound_chroma();
@@ -930,6 +962,10 @@ int main() {
   if (g_failures == 0) {
     std::printf("advanced_cuda_test: %d checks passed\n", g_checks);
     benchmark();
+    std::printf("arena: used=%llu peak=%llu capacity=%llu\n",
+                static_cast<unsigned long long>(g_arena.used()),
+                static_cast<unsigned long long>(g_arena.peak_used()),
+                static_cast<unsigned long long>(g_arena.capacity()));
     return 0;
   }
   std::printf("advanced_cuda_test: %d/%d checks FAILED\n", g_failures, g_checks);

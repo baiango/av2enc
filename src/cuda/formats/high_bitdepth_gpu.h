@@ -37,6 +37,10 @@ struct HighBitDepthGpuConfig {
   std::uint32_t height = 0;
   std::uint32_t mi_cols = 0;
   std::uint32_t mi_rows = 0;
+  // Optional; when `format.width == 0` the config falls back to a 10-bit
+  // 4:2:0 frame of `width x height` (the historical M10 call shape).
+  av2enc::fmt::Format format{};
+  int bit_depth = 10;
 };
 
 // Includes arena alignment padding, so `Arena::init(required_device_bytes(c))`

@@ -37,6 +37,7 @@
 #include "cuda/error.h"
 #include "cuda/codec/inter/mc/mc.h"
 #include "cuda/codec/inter/me/me.h"
+#include "cuda/codec/inter/compound/compound_full.h"
 #include "cuda/codec/intra/modes/intra_modes.h"
 #include "cuda/codec/transform/variants/tx_variants.h"
 #include "pipeline/video/video_frame.h"
@@ -47,14 +48,18 @@
 namespace av2enc::cuda::video::detail {
 namespace {
 
+namespace cf = ::av2enc::cuda::compound_full;
+
 constexpr int kMaxBlockDim = 64;
 constexpr int kMaxBlockPixels = kMaxBlockDim * kMaxBlockDim;
 constexpr int kMaxPlaneTx = 1024;  // adjusted transform is at most 32x32
 constexpr int kMaxCodedPixels = 4096;
 constexpr int kPredSlots = 12;  // global + 6 near + new + final 4:2:0
+// Explicit per-frame reference planes: 8 slots covers the CPU `kMaxRefSlots`
+// rotating P pool and every B/temporal plan (at most two refs per frame).
+constexpr int kMaxRefSlots = 8;
 
-constexpr std::uint64_t kMiB = 1024ull * 1024ull;
-constexpr std::uint64_t kArenaFloorBytes = 256ull * kMiB;
+constexpr std::uint64_t kMiB = 1024ull * 1024ull;constexpr std::uint64_t kArenaFloorBytes = 256ull * kMiB;
 constexpr std::uint64_t kArenaSlackBytes = 16ull * kMiB;
 // Conservative default for the largest variance/ME/SSE batch.  A caller that
 // knows its batch size can pass a smaller or larger value through
@@ -220,13 +225,15 @@ std::uint64_t required_device_bytes_impl(const VideoDeviceConfig& config) {
     bytes += align_up_u64(count * element, Arena::kAlignment);
   };
 
-  // Persistent frame planes (source, reference, reconstruction).
+  // Persistent frame planes (source, per-slot references, reconstruction).
   add(luma, 1);
   add(chroma, 1);
   add(chroma, 1);
-  add(mi_luma, 1);
-  add(mi_chroma, 1);
-  add(mi_chroma, 1);
+  for (int slot = 0; slot < kMaxRefSlots; ++slot) {
+    add(mi_luma, 1);
+    add(mi_chroma, 1);
+    add(mi_chroma, 1);
+  }
   add(mi_luma, 1);
   add(mi_chroma, 1);
   add(mi_chroma, 1);
@@ -251,8 +258,9 @@ std::uint64_t required_device_bytes_impl(const VideoDeviceConfig& config) {
   add(jobs, sizeof(std::int64_t));
   add(jobs, sizeof(me::MeCoreJob));
   add(jobs, sizeof(me::MeCoreResult));
-  add(1, sizeof(me::MeCoreRef));
+  add(kMaxRefSlots, sizeof(me::MeCoreRef));
   add(jobs, sizeof(McBlockJob));
+  add(jobs, sizeof(cf::SkipJob));
   add(jobs, sizeof(SseJob));
   add(jobs, sizeof(std::int64_t));
   // inter_sse_batch() keeps at least kPredSlots prediction blocks, even for a
@@ -287,9 +295,10 @@ class CudaBackend final : public Backend {
 
   const char* name() const override { return "cuda"; }
 
-  bool begin_frame(const av2enc::video::VideoInputFrame& source, int mi_cols,
-                   int mi_rows, const av2enc::video::VideoReconFrame* reference,
-                   std::string& error) override {
+  bool begin_frame(
+      const av2enc::video::VideoInputFrame& source, int mi_cols, int mi_rows,
+      std::span<const av2enc::video::VideoReconFrame* const> references,
+      std::string& error) override {
     if (!stream_ok_) {
       error = "CUDA stream creation failed";
       return false;
@@ -323,17 +332,27 @@ class CudaBackend final : public Backend {
       return false;
     }
 
-    if (reference != nullptr) {
+    ref_count_ = static_cast<int>(references.size());
+    if (ref_count_ > kMaxRefSlots) {
+      error = "too many references for the M2 CUDA backend";
+      return false;
+    }
+    for (int slot = 0; slot < ref_count_; ++slot) {
+      const av2enc::video::VideoReconFrame* reference = references[slot];
+      if (reference == nullptr) {
+        error = "reference list contains null";
+        return false;
+      }
       if (reference->width != source.width ||
           reference->height != source.height) {
         error = "reference dimensions differ from the current frame";
         return false;
       }
-      if (!upload_2d(ref_planes_[0], luma_w_, reference->y.data(), width_,
-                     luma_w_, height_, error) ||
-          !upload_2d(ref_planes_[1], chroma_mi_w_, reference->u.data(),
+      if (!upload_2d(ref_planes_[slot][0], luma_w_, reference->y.data(),
+                     width_, luma_w_, height_, error) ||
+          !upload_2d(ref_planes_[slot][1], chroma_mi_w_, reference->u.data(),
                      chroma_w_, chroma_mi_w_, chroma_h_, error) ||
-          !upload_2d(ref_planes_[2], chroma_mi_w_, reference->v.data(),
+          !upload_2d(ref_planes_[slot][2], chroma_mi_w_, reference->v.data(),
                      chroma_w_, chroma_mi_w_, chroma_h_, error)) {
         return false;
       }
@@ -418,12 +437,15 @@ class CudaBackend final : public Backend {
     ArenaAllocation alloc;
     me::MeCoreJob* d_jobs = nullptr;
     me::MeCoreResult* d_results = nullptr;
-    me::MeCoreRef* d_ref = nullptr;
+    me::MeCoreRef* d_refs = nullptr;
+    const std::size_t ref_count =
+        static_cast<std::size_t>(std::max(ref_count_, 1));
     if (!arena_alloc_array(arena_, jobs.size(), &d_jobs, "ME jobs", alloc,
                            error) ||
         !arena_alloc_array(arena_, jobs.size(), &d_results, "ME results", alloc,
                            error) ||
-        !arena_alloc_array(arena_, 1, &d_ref, "ME reference", alloc, error)) {
+        !arena_alloc_array(arena_, ref_count, &d_refs, "ME references", alloc,
+                           error)) {
       return record_arena_failure(alloc);
     }
     std::vector<me::MeCoreJob> host_jobs(jobs.size());
@@ -434,18 +456,23 @@ class CudaBackend final : public Backend {
       host_jobs[i].w = jobs[i].w;
       host_jobs[i].h = jobs[i].h;
       host_jobs[i].num_refs = 1;
-      host_jobs[i].ref_indices[0] = 0;
+      host_jobs[i].ref_indices[0] = static_cast<std::int8_t>(jobs[i].ref_index);
     }
-    me::MeCoreRef host_ref;
-    host_ref.plane[0] = me::MeCorePlane{ref_planes_[0], luma_w_, luma_w_,
-                                        luma_h_};
-    host_ref.plane[1] = me::MeCorePlane{ref_planes_[1], chroma_mi_w_,
-                                        chroma_mi_w_, chroma_mi_h_};
-    host_ref.plane[2] = me::MeCorePlane{ref_planes_[2], chroma_mi_w_,
-                                        chroma_mi_w_, chroma_mi_h_};
+    std::vector<me::MeCoreRef> host_refs(ref_count);
+    for (std::size_t slot = 0; slot < ref_count; ++slot) {
+      const int s = static_cast<int>(slot);
+      host_refs[slot].plane[0] =
+          me::MeCorePlane{ref_planes_[s][0], luma_w_, luma_w_, luma_h_};
+      host_refs[slot].plane[1] =
+          me::MeCorePlane{ref_planes_[s][1], chroma_mi_w_, chroma_mi_w_,
+                          chroma_mi_h_};
+      host_refs[slot].plane[2] =
+          me::MeCorePlane{ref_planes_[s][2], chroma_mi_w_, chroma_mi_w_,
+                          chroma_mi_h_};
+    }
     upload(d_jobs, host_jobs.data(),
            host_jobs.size() * sizeof(me::MeCoreJob));
-    upload(d_ref, &host_ref, sizeof(me::MeCoreRef));
+    upload(d_refs, host_refs.data(), host_refs.size() * sizeof(me::MeCoreRef));
 
     me::MeCoreFrame cur;
     cur.width = width_;
@@ -457,8 +484,9 @@ class CudaBackend final : public Backend {
         me::MeCorePlane{src_planes_[2], chroma_w_, chroma_w_, chroma_h_};
 
     if (!check(av2enc::cuda::me_search_batch(
-                   cur, d_ref, 1, d_jobs, static_cast<int>(jobs.size()),
-                   options, nullptr, d_results, stream_),
+                   cur, d_refs, static_cast<int>(ref_count), d_jobs,
+                   static_cast<int>(jobs.size()), options, nullptr, d_results,
+                   stream_),
                "me_search_batch", error)) {
       return false;
     }
@@ -527,14 +555,24 @@ class CudaBackend final : public Backend {
       sse_jobs[i].h = jobs[i].h;
       sse_jobs[i].out = d_sse_out + i;
     }
-    upload(d_mc_jobs, mc_jobs.data(), mc_jobs.size() * sizeof(McBlockJob));
-    if (!check(av2enc::cuda::mc_predict_batch(
-                   ref_frame(), d_mc_jobs, static_cast<int>(jobs.size()),
-                   stream_),
-               "mc_predict_batch", error)) {
-      return false;
+    // mc_predict_batch() takes one reference frame, so group the jobs by their
+    // ref_index and launch once per reference.  The prediction destinations and
+    // the SSE job array stay in the caller's one-slot-per-job order.
+    for (int slot = 0; slot < ref_count_; ++slot) {
+      std::vector<McBlockJob> subset;
+      for (std::size_t i = 0; i < jobs.size(); ++i) {
+        if (jobs[i].ref_index == slot) subset.push_back(mc_jobs[i]);
+      }
+      if (subset.empty()) continue;
+      upload(d_mc_jobs, subset.data(), subset.size() * sizeof(McBlockJob));
+      if (!check(av2enc::cuda::mc_predict_batch(
+                     ref_frame(slot), d_mc_jobs, static_cast<int>(subset.size()),
+                     stream_),
+                 "mc_predict_batch", error)) {
+        return false;
+      }
+      ++stats_.mc_launches;
     }
-    ++stats_.mc_launches;
     stats_.inter_candidates += jobs.size();
 
     upload(d_sse_jobs, sse_jobs.data(), sse_jobs.size() * sizeof(SseJob));
@@ -594,7 +632,7 @@ class CudaBackend final : public Backend {
       jobs[plane].filter = inter::mc::InterpFilter::kEighttap;
     }
     upload(d_jobs, jobs, sizeof(jobs));
-    if (!check(av2enc::cuda::mc_predict_batch(ref_frame(), d_jobs, 3,
+    if (!check(av2enc::cuda::mc_predict_batch(ref_frame(luma_job.ref_index), d_jobs, 3,
                                               stream_),
                "mc_predict_batch 4:2:0", error)) {
       return false;
@@ -604,6 +642,187 @@ class CudaBackend final : public Backend {
                                      static_cast<std::size_t>(luma_job.y) *
                                          static_cast<std::size_t>(luma_w_) +
                                      static_cast<std::size_t>(luma_job.x),
+                     luma_w_, w, h, error) ||
+        !download_2d(u.data(), cw,
+                     recon_planes_[1] +
+                         static_cast<std::size_t>(luma_job.y / 2) *
+                             static_cast<std::size_t>(chroma_mi_w_) +
+                         static_cast<std::size_t>(luma_job.x / 2),
+                     chroma_mi_w_, cw, ch, error) ||
+        !download_2d(v.data(), cw,
+                     recon_planes_[2] +
+                         static_cast<std::size_t>(luma_job.y / 2) *
+                             static_cast<std::size_t>(chroma_mi_w_) +
+                         static_cast<std::size_t>(luma_job.x / 2),
+                     chroma_mi_w_, cw, ch, error)) {
+      return false;
+    }
+    return true;
+  }
+
+  bool compound_sse_batch(const std::vector<InterJob>& jobs,
+                          std::vector<std::int64_t>& sse,
+                          std::string& error) override {
+    sse.assign(jobs.size(), 0);
+    if (jobs.empty()) return true;
+    if (ref_count_ < 2) {
+      error = "M2 CUDA compound prediction needs two references";
+      return false;
+    }
+    ScratchScope scratch(arena_);
+    ArenaAllocation alloc;
+    cf::SkipJob* d_jobs = nullptr;
+    SseJob* d_sse_jobs = nullptr;
+    std::int64_t* d_sse_out = nullptr;
+    if (!arena_alloc_array(arena_, jobs.size(), &d_jobs, "compound jobs",
+                           alloc, error) ||
+        !arena_alloc_array(arena_, jobs.size(), &d_sse_jobs, "compound SSE jobs",
+                           alloc, error) ||
+        !arena_alloc_array(arena_, jobs.size(), &d_sse_out, "compound SSE out",
+                           alloc, error)) {
+      return record_arena_failure(alloc);
+    }
+    std::vector<cf::SkipJob> host_jobs(jobs.size());
+    std::vector<SseJob> sse_jobs(jobs.size());
+    for (std::size_t i = 0; i < jobs.size(); ++i) {
+      const InterJob& job = jobs[i];
+      std::uint8_t* luma = recon_planes_[0];
+      std::uint8_t* u = recon_planes_[1];
+      std::uint8_t* v = recon_planes_[2];
+      cf::SkipJob& out = host_jobs[i];
+      out = cf::SkipJob{};
+      out.bit_depth = 8;
+      out.frame_w = width_;
+      out.frame_h = height_;
+      out.mi_cols = mi_cols_;
+      out.mi_rows = mi_rows_;
+      out.x = job.x;
+      out.y = job.y;
+      out.w = job.w;
+      out.h = job.h;
+      out.bsize = 0;
+      out.mv_row = job.mv_y;
+      out.mv_col = job.mv_x;
+      out.filter = static_cast<int>(inter::mc::InterpFilter::kEighttap);
+      out.cwp_weight = 8;
+      const int plane_w[3] = {luma_w_, chroma_mi_w_, chroma_mi_w_};
+      const int plane_h[3] = {luma_h_, chroma_mi_h_, chroma_mi_h_};
+      const int strides[3] = {luma_w_, chroma_mi_w_, chroma_mi_w_};
+      std::uint8_t* dsts[3] = {luma, u, v};
+      for (int plane = 0; plane < 3; ++plane) {
+        for (int list = 0; list < 2; ++list) {
+          cf::RefPlane& ref = out.ref[list][plane];
+          ref.data = ref_planes_[list][plane];
+          ref.stride = strides[plane];
+          ref.width = plane_w[plane];
+          ref.height = plane_h[plane];
+          ref.is_16bit = 0;
+        }
+        out.dst[plane] = dsts[plane];
+        out.dst_stride[plane] = strides[plane];
+        out.dst_16bit[plane] = 0;
+      }
+      sse_jobs[i].src = src_planes_[0];
+      sse_jobs[i].src_stride = width_;
+      sse_jobs[i].frame_w = width_;
+      sse_jobs[i].frame_h = height_;
+      sse_jobs[i].pred = recon_planes_[0] +
+                         static_cast<std::size_t>(job.y) *
+                             static_cast<std::size_t>(luma_w_) +
+                         static_cast<std::size_t>(job.x);
+      sse_jobs[i].pred_stride = luma_w_;
+      sse_jobs[i].x = job.x;
+      sse_jobs[i].y = job.y;
+      sse_jobs[i].w = job.w;
+      sse_jobs[i].h = job.h;
+      sse_jobs[i].out = d_sse_out + i;
+    }
+    upload(d_jobs, host_jobs.data(), host_jobs.size() * sizeof(cf::SkipJob));
+    if (!check(cf::skip_batch(d_jobs, static_cast<int>(jobs.size()), stream_),
+               "compound skip_batch", error)) {
+      return false;
+    }
+    ++stats_.mc_launches;
+    stats_.inter_candidates += jobs.size();
+
+    upload(d_sse_jobs, sse_jobs.data(), sse_jobs.size() * sizeof(SseJob));
+    const int threads = 128;
+    const int blocks = div_up(static_cast<int>(jobs.size()), threads);
+    video_sse_kernel<<<blocks, threads, 0, stream_>>>(d_sse_jobs,
+                                                   static_cast<int>(jobs.size()));
+    if (!check(cudaGetLastError(), "video_sse_kernel", error)) return false;
+    ++stats_.sse_launches;
+    return check(download(sse.data(), d_sse_out,
+                          jobs.size() * sizeof(std::int64_t)),
+                 "compound SSE download", error);
+  }
+
+  bool compound_420(const InterJob& luma_job, std::vector<std::uint8_t>& y,
+                    std::vector<std::uint8_t>& u,
+                    std::vector<std::uint8_t>& v, std::string& error) override {
+    if (ref_count_ < 2) {
+      error = "M2 CUDA compound prediction needs two references";
+      return false;
+    }
+    const int w = luma_job.w;
+    const int h = luma_job.h;
+    const int cw = w / 2;
+    const int ch = h / 2;
+    ScratchScope scratch(arena_);
+    ArenaAllocation alloc;
+    cf::SkipJob* d_job = nullptr;
+    if (!arena_alloc_array(arena_, 1, &d_job, "compound 4:2:0 job", alloc,
+                           error)) {
+      return record_arena_failure(alloc);
+    }
+    cf::SkipJob job;
+    job.bit_depth = 8;
+    job.frame_w = width_;
+    job.frame_h = height_;
+    job.mi_cols = mi_cols_;
+    job.mi_rows = mi_rows_;
+    job.x = luma_job.x;
+    job.y = luma_job.y;
+    job.w = w;
+    job.h = h;
+    job.bsize = 0;
+    job.mv_row = luma_job.mv_y;
+    job.mv_col = luma_job.mv_x;
+    job.filter = static_cast<int>(inter::mc::InterpFilter::kEighttap);
+    job.cwp_weight = 8;
+    const int plane_w[3] = {luma_w_, chroma_mi_w_, chroma_mi_w_};
+    const int plane_h[3] = {luma_h_, chroma_mi_h_, chroma_mi_h_};
+    const int strides[3] = {luma_w_, chroma_mi_w_, chroma_mi_w_};
+    std::uint8_t* dsts[3] = {recon_planes_[0], recon_planes_[1],
+                             recon_planes_[2]};
+    const int dst_strides[3] = {luma_w_, chroma_mi_w_, chroma_mi_w_};
+    for (int plane = 0; plane < 3; ++plane) {
+      for (int list = 0; list < 2; ++list) {
+        cf::RefPlane& ref = job.ref[list][plane];
+        ref.data = ref_planes_[list][plane];
+        ref.stride = strides[plane];
+        ref.width = plane_w[plane];
+        ref.height = plane_h[plane];
+        ref.is_16bit = 0;
+      }
+      job.dst[plane] = dsts[plane];
+      job.dst_stride[plane] = dst_strides[plane];
+      job.dst_16bit[plane] = 0;
+    }
+    upload(d_job, &job, sizeof(job));
+    if (!check(cf::skip_batch(d_job, 1, stream_), "compound skip_batch 4:2:0",
+               error)) {
+      return false;
+    }
+    ++stats_.mc_launches;
+    y.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    u.resize(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
+    v.resize(u.size());
+    if (!download_2d(y.data(), w,
+                     recon_planes_[0] +
+                         static_cast<std::size_t>(luma_job.y) *
+                             static_cast<std::size_t>(luma_w_) +
+                         static_cast<std::size_t>(luma_job.x),
                      luma_w_, w, h, error) ||
         !download_2d(u.data(), cw,
                      recon_planes_[1] +
@@ -863,7 +1082,7 @@ class CudaBackend final : public Backend {
           inter::mc::InterpFilter::kEighttap;
     }
     upload(d_mc_jobs, mc_jobs, sizeof(mc_jobs));
-    if (!check(av2enc::cuda::mc_predict_batch(ref_frame(), d_mc_jobs, 3,
+    if (!check(av2enc::cuda::mc_predict_batch(ref_frame(luma_job.ref_index), d_mc_jobs, 3,
                                               stream_),
                "mc_predict_batch residual 4:2:0", error)) {
       return false;
@@ -913,7 +1132,7 @@ class CudaBackend final : public Backend {
     mc_job.mv = inter::mc::Mv{job.mv_y, job.mv_x};
     mc_job.filter = inter::mc::InterpFilter::kEighttap;
     upload(d_mc_job, &mc_job, sizeof(mc_job));
-    if (!check(av2enc::cuda::mc_predict_batch(ref_frame(), d_mc_job, 1,
+    if (!check(av2enc::cuda::mc_predict_batch(ref_frame(job.ref_index), d_mc_job, 1,
                                               stream_),
                "mc_predict_batch residual", error)) {
       return false;
@@ -1022,11 +1241,12 @@ class CudaBackend final : public Backend {
   void reset_stats() override { stats_ = VideoGpuStats{}; }
 
  private:
-  McDeviceFrame ref_frame() const {
+  McDeviceFrame ref_frame(int slot) const {
+    const int index = std::clamp(slot, 0, kMaxRefSlots - 1);
     McDeviceFrame frame;
-    frame.plane[0] = ref_planes_[0];
-    frame.plane[1] = ref_planes_[1];
-    frame.plane[2] = ref_planes_[2];
+    frame.plane[0] = ref_planes_[index][0];
+    frame.plane[1] = ref_planes_[index][1];
+    frame.plane[2] = ref_planes_[index][2];
     frame.stride[0] = luma_w_;
     frame.stride[1] = chroma_mi_w_;
     frame.stride[2] = chroma_mi_w_;
@@ -1110,9 +1330,14 @@ class CudaBackend final : public Backend {
   void clear_persistent() {
     for (int plane = 0; plane < 3; ++plane) {
       src_planes_[plane] = nullptr;
-      ref_planes_[plane] = nullptr;
       recon_planes_[plane] = nullptr;
     }
+    for (int slot = 0; slot < kMaxRefSlots; ++slot) {
+      for (int plane = 0; plane < 3; ++plane) {
+        ref_planes_[slot][plane] = nullptr;
+      }
+    }
+    ref_count_ = 0;
     d_pred_ = nullptr;
     d_residual_ = nullptr;
     d_residual_adj_ = nullptr;
@@ -1155,10 +1380,15 @@ class CudaBackend final : public Backend {
       const std::size_t mi_count = plane == 0 ? mi_luma : mi_chroma;
       ok = arena_alloc_array(arena_, src_count, &src_planes_[plane],
                              "source plane", alloc, error) &&
-           arena_alloc_array(arena_, mi_count, &ref_planes_[plane],
-                             "reference plane", alloc, error) &&
            arena_alloc_array(arena_, mi_count, &recon_planes_[plane],
                              "recon plane", alloc, error);
+    }
+    for (int slot = 0; slot < kMaxRefSlots && ok; ++slot) {
+      for (int plane = 0; plane < 3 && ok; ++plane) {
+        const std::size_t mi_count = plane == 0 ? mi_luma : mi_chroma;
+        ok = arena_alloc_array(arena_, mi_count, &ref_planes_[slot][plane],
+                               "reference plane", alloc, error);
+      }
     }
     ok = ok &&
          arena_alloc_array(arena_,
@@ -1292,7 +1522,8 @@ class CudaBackend final : public Backend {
   ArenaStatus last_arena_status_ = ArenaStatus::kOk;
 
   std::uint8_t* src_planes_[3] = {nullptr, nullptr, nullptr};
-  std::uint8_t* ref_planes_[3] = {nullptr, nullptr, nullptr};
+  std::uint8_t* ref_planes_[kMaxRefSlots][3] = {};
+  int ref_count_ = 0;
   std::uint8_t* recon_planes_[3] = {nullptr, nullptr, nullptr};
 
   std::uint8_t* d_pred_ = nullptr;

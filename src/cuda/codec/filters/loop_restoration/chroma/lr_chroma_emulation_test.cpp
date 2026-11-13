@@ -24,7 +24,7 @@
 #include <utility>
 #include <vector>
 
-#include "codec/filters/loop_restoration_chroma/chroma_lr.h"
+#include "codec/filters/loop_restoration/chroma/chroma_lr.h"
 #include "codec/filters/loop_restoration/restoration_common.h"
 #include "lr_chroma_device.cuh"
 #include "lr_chroma_reference.h"

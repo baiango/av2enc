@@ -1,6 +1,7 @@
 # CUDA M0 interface contract
 
-Primary target: 8 GB Ampere (`sm_86`), CUDA 12.8. Secondary build: `sm_120`.
+Primary target: 8 GB Ampere (`sm_86`), **CUDA 13.0** (verified 2026-11-13 on
+driver 580.178.04); CUDA 12.8 still builds. Secondary build: `sm_120`.
 No Blackwell-only instructions. No root `CMakeLists.txt` edits by component
 agents; put CUDA build fragments under `src/cuda/`.
 
@@ -75,11 +76,15 @@ frame or per block.
   and re-initialises the arena (or rewinds past an older mark). That invalidates
   every pointer handed out before it. Never grow with outstanding kernels or
   inside a block loop.
-- **Enforcement.** `tools/check_arena.sh` fails on `cudaMalloc`, `cudaFree`,
-  `cudaMallocHost` (and the async variants) outside `arena.cpp`,
-  `context.cpp`, and test/build-stub trees. It treats `cudaFree(nullptr)` as a
-  non-allocation and recognizes the independent multi-GPU pinned-staging
-  provider; the script header documents those two narrow distinctions.
+- **Enforcement.** `tools/check_arena.sh` fails on every `cudaMalloc*`/`cudaFree*`
+  spelling (`cudaMallocManaged`, `cudaMallocPitch`, `cudaMalloc3D`,
+  `cudaMallocArray`, `cudaMallocAsync`, ... included), `cudaHostAlloc` and
+  `cudaHostRegister` outside `arena.cpp`, `context.cpp`, and test/build-stub
+  trees; a call whose `(` sits on the next line is reported too. It treats
+  `cudaFree(nullptr)` as a non-allocation, recognizes the independent multi-GPU
+  pinned-staging provider, and reports (without failing on) the allocation
+  sites inside `bench/` standalone harnesses. The script header documents
+  those distinctions.
 
 - **Still-path clamp (documented exception).** `encode_still_gpu()`
   (`src/cuda/pipeline/still/still_gpu.cu`) computes the same device budget
@@ -126,3 +131,13 @@ ssh -p <port> <user>@<host>
 Use `nvcc -arch=sm_86` for component tests; build the fat binary only for the
 final integration. Nsight Systems 2025.1.3 is available. `ncu` counters are
 blocked.
+
+Every component suite is discoverable and runnable in one pass:
+
+```sh
+tools/cuda_module_suites.sh --list        # what exists
+tools/cuda_module_suites.sh -j 5          # pass/fail table + logs
+```
+
+`docs/cpu-cuda-matrix.md` records the last full merge run (2026-11-13:
+**96/96** suites on `sm_86`, including both M2 video suites).

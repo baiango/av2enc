@@ -51,7 +51,8 @@ if [[ -n "$VIDEO_CPU_REF" ]]; then
 fi
 
 FLAGS=(-std=c++20 -O2 -Wall -Wextra -Wpedantic -Wconversion -Wshadow
-       -Wno-missing-braces ${EXTRA_INCLUDES[@]+"${EXTRA_INCLUDES[@]}"} -I"$ROOT/src" -I"$HERE")
+       -Wno-missing-braces -DAV2ENC_VIDEO_FRAMES=1 -DAV2ENC_VIDEO_CDF_CHAIN=1
+       ${EXTRA_INCLUDES[@]+"${EXTRA_INCLUDES[@]}"} -I"$ROOT/src" -I"$HERE")
 if [[ "${WERROR:-0}" == "1" ]]; then
   FLAGS+=(-Werror)
 fi
@@ -69,9 +70,40 @@ CORE=(
   "$ROOT/src/codec/entropy/av2/av2_entropy.cpp"
   "$ROOT/src/codec/inter/me/me.cpp"
   "$ROOT/src/codec/inter/mc/mc.cpp"
+  "$ROOT/src/codec/inter/drl_reorder/drl_reorder.cpp"
+  "$ROOT/src/codec/inter/drl_reorder/video_stack_adapter.cpp"
+  "$ROOT/src/codec/inter/mv_precision/mv_precision.cpp"
+  "$ROOT/src/codec/inter/longterm/longterm_headers.cpp"
+  "$ROOT/src/codec/inter/longterm/longterm_pool.cpp"
+  "$ROOT/src/codec/inter/longterm/longterm_stream.cpp"
+  "$ROOT/src/codec/inter/leading/leading.cpp"
+  "$ROOT/src/codec/inter/sef/sef.cpp"
+  "$ROOT/src/codec/inter/random_access/random_access.cpp"
+  "$ROOT/src/codec/inter/tlayers/tlayers.cpp"
+  "$ROOT/src/codec/inter/tlayers/tlayers_syntax.cpp"
+  "$ROOT/src/codec/inter/advanced/b_frame.cpp"
+  "$ROOT/src/codec/inter/bframes/bframes.cpp"
+  "$ROOT/src/codec/inter/multiref/compound_predict.cpp"
+  "$ROOT/src/codec/inter/advanced/compound.cpp"
+  "$ROOT/src/pipeline/video/post/tiled_frame.cpp"
+  "$ROOT/src/pipeline/video/post/bit_depth_checklist.cpp"
+  "$ROOT/src/pipeline/video/post/loop_filters.cpp"
+  "$ROOT/src/pipeline/video/post/rc_adapter.cpp"
+  "$ROOT/src/pipeline/tiles/tile_layout.cpp"
+  "$ROOT/src/pipeline/tiles/tile_group.cpp"
+  "$ROOT/src/codec/filters/stream/filters_stream.cpp"
+  "$ROOT/src/codec/filters/deblock/deblock.cpp"
+  "$ROOT/src/codec/filters/cdef/cdef.cpp"
+  "$ROOT/src/codec/filters/loop_restoration/restoration.cpp"
+  "$ROOT/src/codec/rate/rc/rc.cpp"
+  "$ROOT/src/frame/mfh/mfh.cpp"
+  "$ROOT/src/codec/entropy/avg_cdf/avg_cdf_bank.cpp"
+  "$ROOT/src/frame/metadata/content_interpretation/content_interpretation.cpp"
+  "$ROOT/src/formats/format.cpp"
   "$VIDEO_DIR/video_headers.cpp"
   "$VIDEO_DIR/video_syntax.cpp"
   "$VIDEO_DIR/video_frame.cpp"
+  "$VIDEO_DIR/video_frames.cpp"
 )
 
 # The extended CPU M2 reference grows optional modules.  Link the merge helper
@@ -81,10 +113,26 @@ if [[ -f "$VIDEO_SRC/codec/inter/merge/merge.cpp" ]]; then
   CORE+=("$VIDEO_SRC/codec/inter/merge/merge.cpp")
 fi
 
+# The M2 writer now calls into drl_reorder / mv_precision / video post
+# (tiles, RC adapter) and the rest of the integrated core.  Take the canonical
+# `av2enc_core` list instead of chasing undefined references by hand.
+source "$ROOT/src/cuda/pipeline/cpu_reference_sources.sh"
+CORE_RELATIVE=()
+for src in "${CORE[@]}"; do
+  case "$src" in
+    "$ROOT"/*) CORE_RELATIVE+=("${src#"$ROOT"/}") ;;
+    "$VIDEO_SRC"/*) CORE_RELATIVE+=("src/${src#"$VIDEO_SRC"/}") ;;
+    *) CORE_RELATIVE+=("$src") ;;
+  esac
+done
+av2enc_cpu_core_append CORE "$ROOT/" \
+  "${CORE_RELATIVE[@]+"${CORE_RELATIVE[@]}"}"
+
 mkdir -p "$BUILD_DIR"
 "${CXX}" "${FLAGS[@]}" \
   "$HERE/video_gate.cpp" \
   "$HERE/video_pipeline.cpp" \
+  "$HERE/video_frame_modes.cpp" \
   "$HERE/video_backend_cpu.cpp" \
   "$HERE/video_selftest.cpp" \
   "${CORE[@]}" \

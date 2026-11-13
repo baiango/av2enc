@@ -19,7 +19,7 @@ __global__ void histogram_kernel(const std::uint8_t* src, int stride, int w,
   atomicAdd(&hist[v], 1u);
 }
 
-__global__ void build_map_kernel(PaletteDeviceBlock block) {
+__device__ void build_map_impl(const PaletteDeviceBlock& block) {
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
   const int y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= block.block_w || y >= block.block_h) return;
@@ -47,7 +47,7 @@ __global__ void build_map_kernel(PaletteDeviceBlock block) {
 
 // §5.20.8.4 replication runs as a second kernel. Doing it in the first kernel
 // would read map cells written by other threads in the same launch.
-__global__ void replicate_map_kernel(PaletteDeviceBlock block) {
+__device__ void replicate_map_impl(const PaletteDeviceBlock& block) {
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
   const int y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= block.block_w || y >= block.block_h) return;
@@ -62,7 +62,7 @@ __global__ void replicate_map_kernel(PaletteDeviceBlock block) {
                 static_cast<std::size_t>(sx)];
 }
 
-__global__ void predict_kernel(PaletteDeviceBlock block) {
+__device__ void predict_impl(const PaletteDeviceBlock& block) {
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
   const int y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= block.block_w || y >= block.block_h) return;
@@ -74,7 +74,7 @@ __global__ void predict_kernel(PaletteDeviceBlock block) {
             static_cast<std::size_t>(x)] = block.colors[idx];
 }
 
-__global__ void context_kernel(PaletteContextDevice block) {
+__device__ void context_impl(const PaletteContextDevice& block) {
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
   const int y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= block.width || y >= block.height) return;
@@ -89,6 +89,38 @@ __global__ void context_kernel(PaletteContextDevice block) {
     block.order[idx * static_cast<std::size_t>(block.order_stride) +
                 static_cast<std::size_t>(i)] = order[i];
   }
+}
+
+__global__ void build_map_kernel(PaletteDeviceBlock block) {
+  build_map_impl(block);
+}
+
+__global__ void replicate_map_kernel(PaletteDeviceBlock block) {
+  replicate_map_impl(block);
+}
+
+__global__ void predict_kernel(PaletteDeviceBlock block) {
+  predict_impl(block);
+}
+
+__global__ void context_kernel(PaletteContextDevice block) {
+  context_impl(block);
+}
+
+__global__ void build_map_batch_kernel(const PaletteDeviceBlock* blocks) {
+  build_map_impl(blocks[blockIdx.z]);
+}
+
+__global__ void replicate_map_batch_kernel(const PaletteDeviceBlock* blocks) {
+  replicate_map_impl(blocks[blockIdx.z]);
+}
+
+__global__ void predict_batch_kernel(const PaletteDeviceBlock* blocks) {
+  predict_impl(blocks[blockIdx.z]);
+}
+
+__global__ void context_batch_kernel(const PaletteContextDevice* blocks) {
+  context_impl(blocks[blockIdx.z]);
 }
 
 dim3 grid_for(int w, int h) {
@@ -155,6 +187,72 @@ cudaError_t palette_color_contexts(const PaletteContextDevice& block,
   const dim3 thread(16, 16, 1);
   const dim3 grid = grid_for(block.width, block.height);
   context_kernel<<<grid, thread, 0, stream>>>(block);
+  return cudaGetLastError();
+}
+
+cudaError_t palette_build_map_batch(const PaletteDeviceBlock* blocks, int count,
+                                    cudaStream_t stream) {
+  if (count < 0 || (count > 0 && blocks == nullptr)) {
+    return cudaErrorInvalidValue;
+  }
+  if (count == 0) {
+    return cudaSuccess;
+  }
+  // Palette blocks are at most 64x64, so a fixed 4x4x16x16 grid covers every
+  // descriptor; each kernel returns for coordinates outside its own block.
+  const dim3 thread(16, 16, 1);
+  const dim3 grid(4, 4, static_cast<unsigned>(count));
+  build_map_batch_kernel<<<grid, thread, 0, stream>>>(blocks);
+  cudaError_t status = cudaGetLastError();
+  if (status != cudaSuccess) {
+    return status;
+  }
+  replicate_map_batch_kernel<<<grid, thread, 0, stream>>>(blocks);
+  return cudaGetLastError();
+}
+
+cudaError_t palette_predict_batch(const PaletteDeviceBlock* blocks, int count,
+                                  cudaStream_t stream) {
+  if (count < 0 || (count > 0 && blocks == nullptr)) {
+    return cudaErrorInvalidValue;
+  }
+  if (count == 0) {
+    return cudaSuccess;
+  }
+  const dim3 thread(16, 16, 1);
+  const dim3 grid(4, 4, static_cast<unsigned>(count));
+  predict_batch_kernel<<<grid, thread, 0, stream>>>(blocks);
+  return cudaGetLastError();
+}
+
+cudaError_t palette_color_contexts_batch(const PaletteContextDevice* blocks,
+                                         int count, cudaStream_t stream) {
+  if (count < 0 || (count > 0 && blocks == nullptr)) {
+    return cudaErrorInvalidValue;
+  }
+  if (count == 0) {
+    return cudaSuccess;
+  }
+  const dim3 thread(16, 16, 1);
+  const dim3 grid(4, 4, static_cast<unsigned>(count));
+  context_batch_kernel<<<grid, thread, 0, stream>>>(blocks);
+  return cudaGetLastError();
+}
+
+cudaError_t palette_apply_batch(const PaletteDeviceBlock* blocks,
+                                const PaletteContextDevice* contexts,
+                                int count, cudaStream_t stream) {
+  const cudaError_t status = palette_build_map_batch(blocks, count, stream);
+  if (status != cudaSuccess) {
+    return status;
+  }
+  const cudaError_t predict_status = palette_predict_batch(blocks, count, stream);
+  if (predict_status != cudaSuccess) {
+    return predict_status;
+  }
+  if (contexts != nullptr) {
+    return palette_color_contexts_batch(contexts, count, stream);
+  }
   return cudaGetLastError();
 }
 

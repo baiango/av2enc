@@ -12,6 +12,16 @@
 
 #include <cstdint>
 
+// Host and device passes need different storage classes for a
+// namespace-scope table: CUDA cannot odr-use a host `constexpr` array from
+// device code ("identifier is undefined in device code").  Same pattern as
+// deblock_core.h / mc_subpel_tables.h.
+#if defined(__CUDA_ARCH__)
+#define AV2ENC_ADV_TABLE static __device__ constexpr
+#else
+#define AV2ENC_ADV_TABLE static constexpr
+#endif
+
 namespace av2enc::inter::adv::tables {
 
 inline constexpr int kWedgeAngles = 20;
@@ -21,25 +31,25 @@ inline constexpr int kWedgeBldLutSize = 32;
 inline constexpr int kWedgeBoundaryTypes = 2;
 inline constexpr int kBlockSizes = 29;
 
-inline constexpr std::int8_t kWedgeCosLut[20] = {
+AV2ENC_ADV_TABLE std::int8_t kWedgeCosLut[20] = {
        4,    4,    4,    2,    2,    0,   -2,   -2,   -4,   -4,   -4,   -4,   -4,   -2,   -2,    0,    2,    2,    4,    4,
 };
 
-inline constexpr std::int8_t kWedgeSinLut[20] = {
+AV2ENC_ADV_TABLE std::int8_t kWedgeSinLut[20] = {
        0,   -1,   -2,   -2,   -4,   -4,   -4,   -2,   -2,   -1,    0,    1,    2,    2,    4,    4,    4,    2,    2,    1,
 };
 
-inline constexpr std::int8_t kPosDist2BldWeight[32] = {
+AV2ENC_ADV_TABLE std::int8_t kPosDist2BldWeight[32] = {
        8,    8,    9,    9,   10,   10,   11,   11,   12,   12,   12,   13,   13,   13,   14,   14,
       14,   14,   14,   15,   15,   15,   15,   15,   15,   15,   15,   15,   16,   16,   16,   16,
 };
 
-inline constexpr std::int8_t kNegDist2BldWeight[32] = {
+AV2ENC_ADV_TABLE std::int8_t kNegDist2BldWeight[32] = {
        8,    8,    7,    7,    6,    6,    5,    5,    4,    4,    4,    3,    3,    3,    2,    2,
        2,    2,    2,    1,    1,    1,    1,    1,    1,    1,    1,    1,    0,    0,    0,    0,
 };
 
-inline constexpr std::int8_t kWedgeAngleDist2Index[20][4] = {
+AV2ENC_ADV_TABLE std::int8_t kWedgeAngleDist2Index[20][4] = {
     {   -1,     0,     1,     2},
     {    3,     4,     5,     6},
     {    7,     8,     9,    10},
@@ -62,19 +72,19 @@ inline constexpr std::int8_t kWedgeAngleDist2Index[20][4] = {
     {   -1,    65,    66,    67},
 };
 
-inline constexpr std::int8_t kWedgeBits[29] = {
+AV2ENC_ADV_TABLE std::int8_t kWedgeBits[29] = {
        0,    0,    0,    4,    4,    4,    4,    4,    4,    4,    4,    4,
        4,    0,    0,    0,    0,    0,    0,    0,    0,    4,    4,    4,
        4,    0,    0,    4,    4,
 };
 
-inline constexpr std::int16_t kWedgeBlockWidth[29] = {
+AV2ENC_ADV_TABLE std::int16_t kWedgeBlockWidth[29] = {
        4,    4,    8,    8,    8,   16,   16,   16,   32,   32,
       32,   64,   64,   64,  128,  128,  128,  256,  256,    4,
       16,    8,   32,   16,   64,    4,   32,    8,   64,
 };
 
-inline constexpr std::int16_t kWedgeBlockHeight[29] = {
+AV2ENC_ADV_TABLE std::int16_t kWedgeBlockHeight[29] = {
        4,    8,    4,    8,   16,    8,   16,   32,   16,   32,
       64,   32,   64,  128,   64,  128,  256,  128,  256,   16,
        4,   32,    8,   64,   16,   32,    4,   64,    8,
@@ -85,7 +95,7 @@ inline constexpr int kBlock8x8 = 3;
 inline constexpr int kBlock16x16 = 6;
 inline constexpr int kBlock64x64 = 12;
 
-inline constexpr std::int8_t kIiWeights1d[128] = {
+AV2ENC_ADV_TABLE std::int8_t kIiWeights1d[128] = {
       60,   58,   56,   54,   52,   50,   48,   47,   45,   44,   42,   41,
       39,   38,   37,   35,   34,   33,   32,   31,   30,   29,   28,   27,
       26,   25,   24,   23,   22,   22,   21,   20,   19,   19,   18,   18,
@@ -101,7 +111,7 @@ inline constexpr std::int8_t kIiWeights1d[128] = {
 
 // §7.13.3.27 Wedge_Codebook[WEDGE_TYPES][3] = { { angle, xoff, yoff } }.
 // `angle` indexes kWedgeCosLut / kWedgeSinLut.
-inline constexpr std::int8_t kWedgeCodebook[kWedgeTypes][3] = {
+AV2ENC_ADV_TABLE std::int8_t kWedgeCodebook[kWedgeTypes][3] = {
     { 0,  5,  4},
     { 0,  6,  4},
     { 0,  7,  4},
@@ -173,5 +183,7 @@ inline constexpr std::int8_t kWedgeCodebook[kWedgeTypes][3] = {
 };
 
 }  // namespace av2enc::inter::adv::tables
+
+#undef AV2ENC_ADV_TABLE
 
 #endif  // AV2ENC_INTER_ADVANCED_TABLES_WEDGE_TABLES_H_

@@ -28,7 +28,7 @@
 #include <vector>
 
 #include "cuda/arena.h"
-#include "cuda/codec/filters/loop_restoration_chroma/lr_chroma.h"
+#include "cuda/codec/filters/loop_restoration/chroma/lr_chroma.h"
 
 namespace {
 

@@ -301,6 +301,38 @@ void test_modes_and_filters() {
   std::cout << "  modes: 21 edge/filter combos, 6 bo_only band counts\n";
 }
 
+void test_unit_sizes() {
+  // §5.18.7.12: CcsoLumaSizeLog2 is 6 (64x64), 7 (128x128) or 8 (256x256).
+  // The per-plane CcsoBlks grid is derived from that unit, so chroma units are
+  // half the luma size (log2 - 1) and cover a different column/row count.  An
+  // 8x5 MI frame gives >1 unit column at 64 and a single unit at 256.
+  for (int log2 = 6; log2 <= 8; ++log2) {
+    TestFrame f = make_frame(8, 5);
+    Rng rng(static_cast<std::uint32_t>(500 + log2));
+    fill_random(f, rng);
+    CcsoFrameParams params = base_params(3, false, 1, 2);
+    params.ccso_luma_size_log2 = log2;
+    for (int p = 0; p < 3; ++p) {
+      CcsoParams& cp = params.plane[p];
+      cp.enabled = true;
+      cp.edge_clf = p % 2;
+    }
+    std::vector<std::uint8_t> grids[3];
+    attach_unit_grid(params, grids, f);
+    // Disable the last unit of each plane to exercise the per-unit skip in the
+    // larger grids (a 256 unit has exactly one, so this is a no-op there).
+    for (int p = 0; p < 3; ++p) {
+      if (!grids[p].empty()) {
+        grids[p].back() = 0;
+      }
+    }
+    char tag[32];
+    std::snprintf(tag, sizeof(tag), "unit log2 %d", log2);
+    run_case(f, params, CcsoMeta{}, tag);
+  }
+  std::cout << "  unit sizes: ccso_luma_size_log2 6/7/8 (SB64/SB128/SB256)\n";
+}
+
 void test_quant_pairs() {
   for (int scale = 0; scale < 4; ++scale) {
     for (int quant = 0; quant < 4; ++quant) {
@@ -530,6 +562,7 @@ void test_timing() {
 int main() {
   std::cout << "AV2 §7.19 CCSO — CPU vs CUDA bit-exactness\n";
   test_modes_and_filters();
+  test_unit_sizes();
   test_quant_pairs();
   test_planes_units_and_metadata();
   test_odd_geometry();

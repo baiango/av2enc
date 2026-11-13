@@ -8,6 +8,13 @@
 //  * Every numeric step calls the shared `AV2ENC_ADV_HD` helpers, so the result
 //    is bit-identical to the CPU reference by construction, not by testing.
 
+// The shared CPU headers are compiled into this TU as device code.  Their
+// inline helpers index namespace-scope host `constexpr` tables, which nvcc
+// rejects in device code ("undefined in device code").  `tables_redirect.h`
+// points those lookups at device-storage copies and host-checks them against
+// the CPU tables.
+#include "tables_redirect.h"
+
 #include "advanced.h"
 
 namespace av2enc::cuda::advinter {
@@ -16,6 +23,12 @@ namespace {
 using namespace av2enc::inter::adv;
 
 constexpr int kThreads = 128;
+
+// `warp_ref_is_scaled()` is a host-only convenience defined in warp.cpp; the
+// shared §7.13.3.20 predicate it wraps is already `AV2ENC_ADV_HD`.
+__device__ inline bool warp_ref_is_scaled_device(const WarpBlockGeometry& geom) {
+  return is_scaled_ref(geom.ref_w, geom.ref_h, geom.frame_w, geom.frame_h);
+}
 
 __device__ inline void compound_job_device(const CompoundJob& job) {
   const int w = job.rect.w;
@@ -106,8 +119,7 @@ __device__ inline void ext_warp_job_device(const WarpJob& job) {
   ctx.bh4 = job.geom.bh4;
   ctx.mi_cols = job.geom.mi_cols;
   ctx.mi_rows = job.geom.mi_rows;
-  ctx.scaled = warp_ref_is_scaled(job.geom);
-  ctx.ref_w = job.geom.ref_w;
+  ctx.scaled = warp_ref_is_scaled_device(job.geom);  ctx.ref_w = job.geom.ref_w;
   ctx.ref_h = job.geom.ref_h;
   ctx.frame_w = job.geom.frame_w;
   ctx.frame_h = job.geom.frame_h;

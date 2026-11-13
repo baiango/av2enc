@@ -262,10 +262,10 @@ FEATURES: list[dict] = [
     dict(
         tool="filters/lr_chroma (syntax/decision)",
         spec="§5.18.7.11, §5.20.10.5–.6",
-        cpu="src/codec/filters/loop_restoration_chroma/chroma_lr.cpp",
+        cpu="src/codec/filters/loop_restoration/chroma/chroma_lr.cpp",
         cuda="—",
-        parity="src/codec/filters/loop_restoration_chroma/chroma_lr_test.cpp",
-        emu="src/codec/filters/loop_restoration_chroma/gate/",
+        parity="src/codec/filters/loop_restoration/chroma/chroma_lr_test.cpp",
+        emu="src/codec/filters/loop_restoration/chroma/gate/",
         gpu="—",
         wired="no",
         verdict=SERIAL,
@@ -274,9 +274,9 @@ FEATURES: list[dict] = [
     dict(
         tool="filters/lr_chroma (apply §7.20.3)",
         spec="§7.20.3",
-        cpu="src/codec/filters/loop_restoration_chroma/chroma_lr.cpp (chroma_apply)",
-        cuda="src/cuda/codec/filters/loop_restoration_chroma/",
-        parity="src/cuda/codec/filters/loop_restoration_chroma/lr_chroma_test.cu",
+        cpu="src/codec/filters/loop_restoration/chroma/chroma_lr.cpp (chroma_apply)",
+        cuda="src/cuda/codec/filters/loop_restoration/chroma/",
+        parity="src/cuda/codec/filters/loop_restoration/chroma/lr_chroma_test.cu",
         emu="33,270 checks / 95.2M samples",
         gpu="57,009 checks / 95.2M samples (sm_86)",
         wired="no",
@@ -483,6 +483,13 @@ KERNELS: list[dict] = [
          parity="src/cuda/formats/high_bitdepth_gpu_test.cu", emu="—",
          gpu="not executed (README)", wired="no (M10 standalone)",
          verdict=UNWIRED, note="10-bit still path; direct cudaMalloc."),
+    dict(tool="formats/format_device.cpp", module="format",
+         spec="§5.18.4.4, §7.21.2, §7.17",
+         cpu="src/formats/format.cpp, src/codec/filters/deblock/",
+         parity="src/cuda/formats/format_device_test.cpp", emu="—",
+         gpu="1,064,426 checks (sm_86)", wired="no (geometry for the HBD/deblock stage)",
+         verdict=UNWIRED,
+         note="Frame/filter plane geometry for all depths and chroma formats."),
     dict(tool="ibc/ibc.cu", module="ibc", spec="§5.20.5.4, §6.19.7.12",
          cpu="src/codec/intra/ibc/core/",
          parity="src/cuda/codec/intra/ibc/ibc_test.cu", emu="—",
@@ -538,7 +545,7 @@ KERNELS: list[dict] = [
          gpu="RTX 3060 (README)", wired="no (wrapper never called)",
          verdict=UNWIRED, note="derived-alpha CfL batch."),
     dict(tool="m1/chroma/still_chroma.cu", module="m1/chroma", spec="§7.13.2, §7.13.5",
-         cpu="src/encoder/m1/still_encoder.cpp (chroma decide)",
+         cpu="src/pipeline/still/still_encoder.cpp (chroma decide)",
          parity="src/cuda/pipeline/still/chroma/still_chroma_test.cu",
          emu="src/cuda/pipeline/still/chroma/uv_full_emulation_test.cpp, frame_emulation_shim.cpp",
          gpu="RTX 3060 PASS", wired="M1",
@@ -561,7 +568,7 @@ KERNELS: list[dict] = [
          gpu="RTX 3060: 105-case matrix", wired="M1 product (--still-gpu)",
          verdict=REQUIRED, note="Arena-owned, mark()/rewind() per frame."),
     dict(tool="m1/recon/recon.cu", module="m1/recon", spec="§7.14.3, §7.17 metadata",
-         cpu="src/encoder/m1/still_encoder.cpp (fill_deblock_mi)",
+         cpu="src/pipeline/still/still_encoder.cpp (fill_deblock_mi)",
          parity="src/cuda/pipeline/still/recon/recon_test.cu", emu="—",
          gpu="RTX 3060: 2,652 checks", wired="M1",
          verdict=REQUIRED, note="recon writes + IntraJointModes + deblock MI."),
@@ -578,7 +585,7 @@ KERNELS: list[dict] = [
          gpu="not run here (host-only plan tests)", wired="no (host availability only)",
          verdict=UNWIRED, note="level/wavefront executor not used by orchestrator."),
     dict(tool="m1/search/luma_search.cu", module="m1/search", spec="§7.13.2",
-         cpu="src/encoder/m1/still_encoder.cpp (choose_luma_mode)",
+         cpu="src/pipeline/still/still_encoder.cpp (choose_luma_mode)",
          parity="src/cuda/pipeline/still/search/luma_search_test.cu", emu="—",
          gpu="RTX 3060", wired="M1",
          verdict=REQUIRED, note="61-candidate SSE search."),
@@ -587,13 +594,14 @@ KERNELS: list[dict] = [
          parity="src/cuda/pipeline/still/tx/still_tx_test.cu", emu="—",
          gpu="RTX 3060 timings; parity expected-result wording", wired="M1",
          verdict=REQUIRED, note="all 25 sizes / 16 TX types; quantizer state is a parameter."),
-    dict(tool="m2/video_backend_cuda.cu", module="m2", spec="§7.12, §7.13.3, §7.15, §7.14.3",
-         cpu="src/encoder/m2/",
+    dict(tool="m2/video_backend_cuda.cu", module="m2",
+         spec="§7.12, §7.13.3, §7.13.3.14, §7.15, §7.14.3, §5.4.12, §5.7",
+         cpu="src/pipeline/video/",
          parity="src/cuda/pipeline/video/video_gate.cpp, src/cuda/pipeline/video/video_selftest.cpp",
          emu="src/cuda/pipeline/video/video_backend_cpu.cpp",
-         gpu="README claim (pre-refactor): RTX 3060 byte-identical",
-         wired="M2 gate (not in CMake)",
-         verdict=REQUIRED, note="variance/SSE/residual/recon kernels + orchestration; allocation policy is in flux in this snapshot (details in the arena section)."),
+         gpu="RTX 3060 `gate_video_gpu`: key+P, refs 2/3, B frames, tlayers, compound, MFH/timing byte-identical at 360p",
+         wired="M2 product (`--video-gpu`, `av2enc_video_gpu`)",
+         verdict=REQUIRED, note="variance/SSE/residual/recon kernels + orchestration; per-slot reference planes and list-1 jobs; arena-only."),
     dict(tool="mrl/mrl.cu", module="mrl", spec="§7.13.2.7–.8",
          cpu="src/codec/intra/mrl/core/",
          parity="src/cuda/codec/intra/mrl/mrl_test.cu",
@@ -626,7 +634,7 @@ KERNELS: list[dict] = [
          gpu="not measured (README)", wired="no",
          verdict=UNWIRED, note="per-plane non-separable Wiener; PC-Wiener rejected."),
     dict(tool="scheduler/scheduler.cu", module="scheduler", spec="scheduler / §5.20 dependency order",
-         cpu="src/encoder/basic_encoder.cpp + src/cuda/pipeline/dispatch/scheduler/scheduler.cpp",
+         cpu="src/pipeline/still/basic_encoder.cpp + src/cuda/pipeline/dispatch/scheduler/scheduler.cpp",
          parity="src/cuda/pipeline/dispatch/scheduler/scheduler_plan_test.cpp", emu="—",
          gpu="RTX 3060 (README)", wired="M0 only",
          verdict=REQUIRED, note="CUDA-graph executor; Arena-owned."),
@@ -879,9 +887,10 @@ def video_migration_lines() -> list[str]:
     frees = len(re.findall(r"\bcudaFree\s*\(", text))
     mallocs = len(re.findall(r"\bcudaMalloc\s*\(", text))
     arena = "arena.h" in text
-    if defined and mallocs == 0 and frees == 0:
+    if arena and mallocs == 0 and frees == 0:
+        detail = " and `ensure_device` is defined" if defined else ""
         return ["The backend is fully arena-backed in this snapshot: no direct",
-                "`cudaMalloc` or `cudaFree`, and `ensure_device` is defined."]
+                f"`cudaMalloc` or `cudaFree`{detail}."]
     out = ["This file is the one in the tree whose allocation policy is"]
     out.append("internally inconsistent in this snapshot:")
     out.append("")
@@ -1098,18 +1107,16 @@ def render(scan_result: Scan) -> str:
     A("Inventory under `src/`:")
     A("")
     A(f"- **{len(scan_result.cu)}** `.cu` files, **{len(scan_result.cuh)}** `.cuh` files.")
-    A("  The audit brief said \"the earlier 80 `.cu` files\": at audit start the")
-    A("  tree had exactly 80 (72 under `src/cuda/`, 8 beside CPU components under")
-    A("  `src/encoder/`). The extra TUs are the modules that landed mid-audit;")
-    A("  see Matrix 3.")
+    A("  Counts are recomputed from the tree on every run; the number moves when")
+    A("  a component lands.")
     A(f"- **{len(scan_result.kernel_cu)}** kernel translation units, "
       f"**{len(scan_result.test_cu)}** test/bench/gate translation units.")
     A(f"- Of the kernel TUs, **{len([k for k in scan_result.kernel_cu if k.startswith('src/cuda/')])}** "
       f"are under `src/cuda/` and "
       f"**{len([k for k in scan_result.kernel_cu if not k.startswith('src/cuda/')])}** "
-      f"under `src/encoder/`.")
-    A("- The 26 newest feature directories are the `src/encoder/` component dirs")
-    A("  added after commit `19c5dd9` (inherited audit baseline) up to `debb00e`.")
+      f"under other trees.")
+    A("- The 26 feature rows in Matrix 1 are the component directories added")
+    A("  after commit `19c5dd9` (inherited audit baseline) up to `debb00e`.")
     A("  They are marked with `†` in the matrix.")
     A("")
     A("## Matrix 1 — the 26 newest feature directories")
@@ -1128,8 +1135,9 @@ def render(scan_result: Scan) -> str:
     A("")
     A("## Matrix 2 — all CUDA kernel units")
     A("")
-    A(f"One row per non-test `.cu` in the tree ({len(krows)}), including the three kernel TUs")
-    A("that live beside their CPU component under `src/encoder/`.")
+    A(f"One row per non-test `.cu` in the tree ({len(krows)}).  Every kernel TU")
+    A("lives under `src/cuda/` after the folder refactor; the `src/encoder/`")
+    A("kernel TUs the earlier audit counted were moved there.")
     A("")
     A(mrow(["tool", "spec §", "CPU reference dir", "CUDA kernel dir", "parity test",
             "host emulation", "real-GPU evidence", "wired into M1/M2", "verdict"]))
@@ -1394,6 +1402,10 @@ def render(scan_result: Scan) -> str:
     A("")
     A("`--check` fails (exit 1) when a curated path no longer exists, which is the")
     A("stale-doc guard: the tree wins over this document.")
+    A("")
+    A("This file is a static inventory; it does not compile or run anything.  The")
+    A("executable module-suite status (2026-11-13: 96/96 passing on sm_86) and the")
+    A("reproduction commands live in `docs/cpu-cuda-matrix.md`.")
     return "\n".join(L) + "\n"
 
 
@@ -1407,15 +1419,16 @@ def main() -> int:
     doc = render(s)
 
     missing = check_paths()
+    # Status lines go to stderr so `--stdout` emits only the document.
     print(f"cu={len(s.cu)} cuh={len(s.cuh)} kernel_tu={len(s.kernel_cu)} "
-          f"test_tu={len(s.test_cu)}")
+          f"test_tu={len(s.test_cu)}", file=sys.stderr)
     print(f"alloc_sites={len(s.allocs)} prod_alloc_sites={len(s.prod_allocs)} "
           f"prod_alloc_files={len({a.path for a in s.prod_allocs})} "
-          f"test_alloc_sites={len(s.test_allocs)}")
+          f"test_alloc_sites={len(s.test_allocs)}", file=sys.stderr)
     print(f"required_device_bytes={len(s.required_device_bytes)} "
-          f"mark_rewind={len(s.mark_rewind)}")
-    print("feature_verdicts=" + repr(verdict_counts(FEATURES)))
-    print("kernel_verdicts_curated=" + repr(verdict_counts(KERNELS)))
+          f"mark_rewind={len(s.mark_rewind)}", file=sys.stderr)
+    print("feature_verdicts=" + repr(verdict_counts(FEATURES)), file=sys.stderr)
+    print("kernel_verdicts_curated=" + repr(verdict_counts(KERNELS)), file=sys.stderr)
 
     if missing:
         print("STALE PATHS:", file=sys.stderr)

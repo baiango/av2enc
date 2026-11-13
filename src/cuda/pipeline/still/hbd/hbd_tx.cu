@@ -78,9 +78,10 @@ __device__ __forceinline__ const std::int16_t* kernel_dev(int type, int n) {
   }
 }
 
-__device__ __forceinline__ int dequant_dev(int qc, int denom, int bit_depth) {
+__device__ __forceinline__ int dequant_dev(int qc, int denom, int bit_depth,
+                                           int quant_step) {
   const int abs_qc = qc < 0 ? -qc : qc;
-  const int dq_high = (abs_qc * kQuantStep) & 0xFFFFFF;
+  const int dq_high = (abs_qc * quant_step) & 0xFFFFFF;
   const int dq = round2_dev(dq_high, kQuantTableBits) / denom;
   return dequant_clip_dev(qc < 0 ? -dq : dq, bit_depth);
 }
@@ -355,7 +356,9 @@ __global__ void hbd_tx_kernel(const HbdTxJob* __restrict__ jobs,
   // Dequantize in place (levels are dead after the eob pass).
   // ---------------------------------------------------------------------
   for (int t = tid; t < elems; t += nthreads) {
-    const std::int32_t value = dequant_dev(s_dq[t], p.dq_denom, bit_depth);
+    const std::int32_t value =
+        dequant_dev(s_dq[t], p.dq_denom, bit_depth,
+                    job.quant_step > 0 ? job.quant_step : kQuantStep);
     s_dq[t] = value;
     if (dequant != nullptr) dequant[job.dequant_offset + t] = value;
   }

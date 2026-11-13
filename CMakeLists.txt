@@ -261,6 +261,7 @@ if(AV2ENC_HAVE_CUDA)
       src/cuda/pipeline/still/sched/sched_bridge.cpp
       src/cuda/pipeline/still/sched/sched_exec.cu
       src/cuda/pipeline/still/search/luma_search.cu
+      src/cuda/pipeline/still/intra/intra_extra.cu
       src/cuda/pipeline/still/tx/still_tx.cu)
     if(AV2ENC_STILL_GPU_SOURCES)
       set(AV2ENC_HAVE_STILL_GPU ON)
@@ -276,12 +277,19 @@ if(AV2ENC_HAVE_CUDA)
       set(AV2ENC_STILL_GPU_SUPPORT_SOURCES)
       foreach(support_source
           src/cuda/codec/intra/cfl/cfl.cu
+          src/cuda/codec/intra/modes/intra_modes.cu
+          src/cuda/codec/intra/mrl/mrl.cu
+          src/cuda/codec/intra/dip/dip.cu
+          src/cuda/codec/intra/ibp/ibp.cu
           src/cuda/codec/filters/deblock/deblock.cu
           src/cuda/codec/intra/modes/intra_modes.cu
           src/cuda/codec/transform/variants/tx_variants.cu
           src/cuda/codec/filters/cdef/cdef.cu
           src/cuda/codec/filters/loop_restoration/ccso.cu
-          src/cuda/codec/filters/loop_restoration/wiener.cu)
+          src/cuda/codec/filters/loop_restoration/wiener.cu
+          src/cuda/codec/filters/loop_restoration/chroma/lr_chroma.cu
+          src/cuda/codec/filters/pc_wiener/pc_wiener.cu
+          src/cuda/codec/filters/gdf/gdf.cu)
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${support_source}")
           list(APPEND AV2ENC_STILL_GPU_SUPPORT_SOURCES "${support_source}")
         endif()
@@ -323,10 +331,70 @@ if(AV2ENC_HAVE_CUDA)
   else()
     target_compile_definitions(av2enc_core PUBLIC AV2ENC_HAVE_STILL_GPU=0)
   endif()
+
+  # M2 video GPU pipeline (src/cuda/pipeline/video/, owner: orchestrator).
+  # Opt-in product path behind --video-gpu.  The CPU --video path stays the
+  # default reference; this target only adds the device backend and the
+  # orchestration that mirrors the CPU decisions.
+  set(AV2ENC_VIDEO_GPU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/pipeline/video")
+  set(AV2ENC_HAVE_VIDEO_GPU OFF)
+  if(EXISTS "${AV2ENC_VIDEO_GPU_DIR}/video_gpu.h" AND
+     EXISTS "${AV2ENC_VIDEO_GPU_DIR}/video_pipeline.cpp" AND
+     EXISTS "${AV2ENC_VIDEO_GPU_DIR}/video_backend_cuda.cu")
+    set(AV2ENC_VIDEO_GPU_SOURCES
+      src/cuda/pipeline/video/video_pipeline.cpp
+      src/cuda/pipeline/video/video_frame_modes.cpp
+      src/cuda/pipeline/video/video_backend_cuda.cu)
+    # Shared CUDA components the M2 stages call.  Link each translation unit
+    # once: the M1 GPU target may already provide some of them, and duplicate
+    # object symbols would break the executable link.
+    set(AV2ENC_VIDEO_GPU_SUPPORT_SOURCES)
+    foreach(support_source
+        src/cuda/codec/inter/me/me.cu
+        src/cuda/codec/inter/mc/mc.cu
+        src/cuda/codec/inter/compound/compound_full.cu
+        src/cuda/codec/intra/modes/intra_modes.cu
+        src/cuda/codec/transform/variants/tx_variants.cu)
+      if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${support_source}")
+        list(FIND AV2ENC_STILL_GPU_SUPPORT_SOURCES "${support_source}" _dup)
+        if(_dup EQUAL -1)
+          list(APPEND AV2ENC_VIDEO_GPU_SUPPORT_SOURCES "${support_source}")
+        endif()
+      endif()
+    endforeach()
+    set(AV2ENC_HAVE_VIDEO_GPU ON)
+    add_library(av2enc_video_gpu OBJECT
+      ${AV2ENC_VIDEO_GPU_SOURCES}
+      ${AV2ENC_VIDEO_GPU_SUPPORT_SOURCES})
+    target_link_libraries(av2enc_video_gpu PUBLIC av2enc_core CUDA::cudart)
+    target_include_directories(av2enc_video_gpu PRIVATE
+      ${CUDAToolkit_INCLUDE_DIRS})
+    target_compile_definitions(av2enc_video_gpu PRIVATE
+      AV2ENC_HAVE_CUDA=1
+      AV2ENC_HAVE_VIDEO_GPU=1)
+    av2enc_apply_warnings(av2enc_video_gpu)
+    foreach(video_source IN LISTS AV2ENC_VIDEO_GPU_SOURCES
+                            AV2ENC_VIDEO_GPU_SUPPORT_SOURCES)
+      if(video_source MATCHES "\\.cu$")
+        set_source_files_properties("${video_source}" PROPERTIES
+          COMPILE_OPTIONS "--fmad=false")
+      endif()
+    endforeach()
+    message(STATUS
+      "av2enc: M2 GPU video pipeline enabled (--video-gpu)")
+  endif()
+  # av2enc_core compiles main.cpp users against this macro; --video-gpu is
+  # rejected by name when the target is absent (CPU-only build or missing tree).
+  if(AV2ENC_HAVE_VIDEO_GPU)
+    target_compile_definitions(av2enc_core PUBLIC AV2ENC_HAVE_VIDEO_GPU=1)
+  else()
+    target_compile_definitions(av2enc_core PUBLIC AV2ENC_HAVE_VIDEO_GPU=0)
+  endif()
 else()
   target_compile_definitions(av2enc_core PUBLIC
     AV2ENC_HAVE_CUDA=0
-    AV2ENC_HAVE_STILL_GPU=0)
+    AV2ENC_HAVE_STILL_GPU=0
+    AV2ENC_HAVE_VIDEO_GPU=0)
 endif()
 
 # Optical formats: 10-bit 4:2:0 (M10-derived) and 8-bit 4:2:2/4:4:4/4:0:0.
@@ -405,6 +473,11 @@ if(TARGET av2enc_still_gpu)
   # OBJECT library: all M1 GPU stage objects are linked directly, so weak
   # stage-hook references resolve without --whole-archive on av2enc_core.
   target_link_libraries(av2enc PRIVATE av2enc_still_gpu)
+endif()
+if(TARGET av2enc_video_gpu)
+  # M2 video backend (--video-gpu).  The M1 target may already supply the shared
+  # intra/transform components; CMake links each object once.
+  target_link_libraries(av2enc PRIVATE av2enc_video_gpu)
 endif()
 av2enc_apply_warnings(av2enc)
 

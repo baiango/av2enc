@@ -16,6 +16,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -55,7 +56,9 @@ struct VarianceNode {
   int h = 0;
 };
 
-// One block in a plane (luma or chroma) and a 1/8-luma-sample MV.
+// One block in a plane (luma or chroma) and a 1/8-luma-sample MV.  `ref_index`
+// selects the entry in the frame's explicit reference list (0 = most recent,
+// mirroring `ref_frame_idx[]` in the frame header).
 struct InterJob {
   int x = 0;
   int y = 0;
@@ -63,6 +66,7 @@ struct InterJob {
   int h = 0;
   int mv_y = 0;
   int mv_x = 0;
+  int ref_index = 0;
 };
 
 // One ME job: luma origin and block size in the current (source) frame.
@@ -71,6 +75,7 @@ struct MeRequest {
   int y = 0;
   int w = 0;
   int h = 0;
+  int ref_index = 0;
 };
 
 // ME output in 1/16-luma-sample units, matching me::MeCoreResult.
@@ -92,12 +97,13 @@ class Backend {
 
   virtual const char* name() const = 0;
 
-  // Uploads the source planes, binds the reference (null for a keyframe),
-  // zeroes the reconstructed planes and starts frame timing.
-  virtual bool begin_frame(const av2enc::video::VideoInputFrame& source, int mi_cols,
-                           int mi_rows,
-                           const av2enc::video::VideoReconFrame* reference,
-                           std::string& error) = 0;
+  // Uploads the source planes, binds the explicit reference list (empty for a
+  // keyframe, otherwise frame_header ref_frame_idx order), zeroes the
+  // reconstructed planes and starts frame timing.
+  virtual bool begin_frame(
+      const av2enc::video::VideoInputFrame& source, int mi_cols, int mi_rows,
+      std::span<const av2enc::video::VideoReconFrame* const> references,
+      std::string& error) = 0;
 
   // Ends frame timing.  The orchestration already holds the host recon.
   virtual bool end_frame(std::string& error) = 0;
@@ -123,6 +129,19 @@ class Backend {
   virtual bool mc_420(const InterJob& luma_job, std::vector<std::uint8_t>& y,
                       std::vector<std::uint8_t>& u, std::vector<std::uint8_t>& v,
                       std::string& error) = 0;
+
+  // Compound skip-mode prediction: both references at the same MV, CWP_EQUAL
+  // average, no residual.  `compound_sse_batch` scores luma against the source
+  // without touching the reconstructed planes; `compound_420` writes the
+  // chosen block's prediction into them and returns host copies.
+  virtual bool compound_sse_batch(const std::vector<InterJob>& jobs,
+                                  std::vector<std::int64_t>& sse,
+                                  std::string& error) = 0;
+  virtual bool compound_420(const InterJob& luma_job,
+                            std::vector<std::uint8_t>& y,
+                            std::vector<std::uint8_t>& u,
+                            std::vector<std::uint8_t>& v,
+                            std::string& error) = 0;
 
   // DC intra candidate for all three planes: prediction is taken from the
   // current device reconstructed planes, the residual is transformed and

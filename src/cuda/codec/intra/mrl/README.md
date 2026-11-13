@@ -10,8 +10,10 @@ Status:
   angle delta, all four MRL indices, secondary on/off, 4x4..64x64, frame/SB
   edges, and smooth-neighbour flags.
 * Host emulation of the exact device header passes locally without a GPU
-  (`build_emulation_test.sh`); it compares against the CPU reference. The
-  on-device run still needs the Linux + CUDA box.
+  (`build_emulation_test.sh`); it compares against the CPU reference.
+* Verified on the RTX 3060 (`sm_86`, CUDA 13.0):
+  `mrl_test: PASS (22512 checks)`.  The workspace path in
+  `../workspace/` adds 517,440 CPU-exact samples through `mrl_predict_batch`.
 
 ## Files
 

@@ -421,6 +421,18 @@ bool run_phase(const Phase& phase, const std::string& out_path,
               << " recon_mismatches=" << diff.recon_mismatches
               << " max_diff=" << diff.max_diff << " first=f"
               << diff.first_frame << " off=" << diff.first_offset << "\n";
+    // Keep both sides for byte-level diagnosis.  Writing these here (rather
+    // than only the passing stream) is deliberate: a failing gate must leave
+    // the evidence behind.
+    std::string dump_error;
+    if (!write_ivf(out_path + ".cpu.ivf", cpu, phase.frames[0].width,
+                   phase.frames[0].height, dump_error)) {
+      std::cerr << "CPU IVF WRITE FAIL: " << dump_error << "\n";
+    }
+    if (!write_ivf(out_path + ".gpu.ivf", gpu, phase.frames[0].width,
+                   phase.frames[0].height, dump_error)) {
+      std::cerr << "GPU IVF WRITE FAIL: " << dump_error << "\n";
+    }
     return false;
   }
   std::cout << "  PASS: bitstream byte-identical, recon 0 diffs\n";
@@ -474,6 +486,7 @@ int main(int argc, char** argv) {
   av2enc::video::VideoOptions hd_options;
   hd_options.force_single_block = true;
   bool skip_hd = false;
+  std::string special;
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -513,8 +526,66 @@ int main(int argc, char** argv) {
       const int value = std::atoi(argv[++i]);
       set_drl_reorder(options, value);
       set_drl_reorder(hd_options, value);
+    } else if (arg == "--refs" && i + 1 < argc) {
+      const int value = std::atoi(argv[++i]);
+      options.num_total_refs = value;
+      hd_options.num_total_refs = value;
+    } else if (arg == "--compound") {
+      options.compound = true;
+      hd_options.compound = true;
+      if (options.num_total_refs < 2) options.num_total_refs = 2;
+      if (hd_options.num_total_refs < 2) hd_options.num_total_refs = 2;
+    } else if (arg == "--mfh") {
+      options.mfh = true;
+      hd_options.mfh = true;
+    } else if (arg == "--timing") {
+      options.video_timing = true;
+      options.timing_num_units_in_display_tick = 1;
+      options.timing_time_scale = 30;
+      hd_options.video_timing = true;
+      hd_options.timing_num_units_in_display_tick = 1;
+      hd_options.timing_time_scale = 30;
+    } else if (arg == "--avg-cdf") {
+      options.avg_cdf = true;
+      hd_options.avg_cdf = true;
+    } else if (arg == "--adaptive-cdf") {
+      options.avg_cdf = true;
+      options.adaptive_cdf = true;
+      hd_options.avg_cdf = true;
+      hd_options.adaptive_cdf = true;
+    } else if (arg == "--mv-precision" && i + 1 < argc) {
+      const int value = std::atoi(argv[++i]);
+      options.mv_precision = value;
+      hd_options.mv_precision = value;
+    } else if (arg == "--subpel-eighth") {
+      options.me_subpel_eighth = true;
+      hd_options.me_subpel_eighth = true;
     } else if (arg == "--no-hd") {
       skip_hd = true;
+    } else if (arg == "--long-term") {
+      options.long_term = true;
+      special = "long-term";
+    } else if (arg == "--olk") {
+      options.olk = true;
+      special = "olk";
+    } else if (arg == "--leading" && i + 1 < argc) {
+      options.leading_frames = std::atoi(argv[++i]);
+      special = "leading";
+    } else if (arg == "--sef") {
+      options.sef = true;
+      special = "sef";
+    } else if (arg == "--switch") {
+      options.ra_switch = true;
+      special = "switch";
+    } else if (arg == "--ras") {
+      options.ras = true;
+      special = "ras";
+    } else if (arg == "--b-frames" && i + 1 < argc) {
+      options.b_frames = std::atoi(argv[++i]);
+      special = "b-frames";
+    } else if (arg == "--tlayers" && i + 1 < argc) {
+      options.temporal_layers = std::atoi(argv[++i]);
+      special = "tlayers";
     } else if (arg == "--trace") {
       options.trace = true;
       hd_options.trace = true;
@@ -526,7 +597,10 @@ int main(int argc, char** argv) {
                    "[--force-intra] [--no-newmv] [--no-intra-fallback] "
                    "[--force-global] [--trace] [--no-hd] "
                    "[--inter-residual] [--force-inter-residual] "
-                   "[--drl-reorder N] [--selftest N]\n";
+                   "[--drl-reorder N] [--refs N] [--compound] [--mfh] "
+                   "[--timing] [--avg-cdf] [--adaptive-cdf] "
+                   "[--b-frames N] [--tlayers N] [--long-term] [--olk] "
+                   "[--leading N] [--sef] [--switch] [--ras] [--selftest N]\n";
       return 0;
     } else {
       std::cerr << "unknown argument: " << arg << "\n";
@@ -541,6 +615,26 @@ int main(int argc, char** argv) {
       std::cerr << "INTER RESIDUAL SELFTEST FAIL: " << error << "\n";
       return 1;
     }
+    return 0;
+  }
+
+  if (!special.empty()) {
+    std::vector<OwnedFrame> clip;
+    if (!input.empty()) {
+      std::string load_error;
+      if (!load_y4m(input, frames, clip, load_error)) {
+        std::cerr << "Y4M LOAD FAIL: " << load_error << "\n";
+        return 2;
+      }
+    } else {
+      clip = make_synthetic_clip(frames, 64, 64);
+    }
+    if (!run_phase(Phase{special, clip, options}, out_path + ".special.ivf",
+                   true)) {
+      std::cerr << "M2 GPU GATE FAIL\n";
+      return 1;
+    }
+    std::cout << "M2 GPU GATE PASS\n";
     return 0;
   }
 

@@ -511,6 +511,69 @@ __device__ __forceinline__ int intra_full_derive_chroma_type_dev(
   return 1;
 }
 
+// ---------------------------------------------------------------------------
+// §5.20.7.27 sign element selection and §8.3 dc_sign context
+// ---------------------------------------------------------------------------
+
+// §5.20.7.27 coefficient sign element.  The DC position of luma wins over the
+// 1-D class test; chroma never uses dc_sign/dc_sign_horz_vert.
+__device__ __forceinline__ int intra_full_select_sign_element_dev(int plane,
+                                                                 int row,
+                                                                 int col,
+                                                                 int tx_class) {
+  if (plane == 0) {
+    if (row == 0 && col == 0) {
+      return static_cast<int>(SignElement::kDcSign);
+    }
+    if (tx_class == static_cast<int>(SignTxClass::kHoriz) && col == 0) {
+      return static_cast<int>(SignElement::kDcSignHorzVert);
+    }
+    if (tx_class == static_cast<int>(SignTxClass::kVert) && row == 0) {
+      return static_cast<int>(SignElement::kDcSignHorzVert);
+    }
+  }
+  return static_cast<int>(SignElement::kSignBit);
+}
+
+// §8.3: sum the stored dcCategory values over the above row and left column of
+// the block.  Returns 0, 1 or 2.  A null array contributes nothing.
+__device__ __forceinline__ int intra_full_dc_sign_context_dev(
+    const std::int8_t* above_dc, const std::int8_t* left_dc, int x4, int y4,
+    int w4, int h4, int mi_cols, int mi_rows) {
+  int dc_sign = 0;
+  if (above_dc != nullptr) {
+    for (int k = 0; k < w4; ++k) {
+      if (x4 + k < mi_cols) {
+        const int sign = static_cast<int>(above_dc[x4 + k]);
+        if (sign == 1) {
+          --dc_sign;
+        } else if (sign == 2) {
+          ++dc_sign;
+        }
+      }
+    }
+  }
+  if (left_dc != nullptr) {
+    for (int k = 0; k < h4; ++k) {
+      if (y4 + k < mi_rows) {
+        const int sign = static_cast<int>(left_dc[y4 + k]);
+        if (sign == 1) {
+          --dc_sign;
+        } else if (sign == 2) {
+          ++dc_sign;
+        }
+      }
+    }
+  }
+  if (dc_sign < 0) {
+    return 1;
+  }
+  if (dc_sign > 0) {
+    return 2;
+  }
+  return 0;
+}
+
 }  // namespace
 }  // namespace av2enc::cuda::intra_full
 

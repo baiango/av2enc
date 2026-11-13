@@ -123,6 +123,11 @@ CORE_SOURCES=(
     "$SRC/cuda/pipeline/still/sched/sched.cpp"
     "$SRC/cuda/pipeline/still/sched/sched_bridge.cpp"
 )
+# Fill in the rest of the canonical CPU reference (`av2enc_core`).  The M1
+# encoder keeps growing; listing it by hand here is what went stale before.
+source "$SRC/cuda/pipeline/cpu_reference_sources.sh"
+av2enc_cpu_core_append CORE_SOURCES "$ROOT/" \
+    "${CORE_SOURCES[@]+"${CORE_SOURCES[@]}"}"
 # Scheduler device half + the verification executor.
 CUDA_SOURCES=(
     "$SRC/cuda/pipeline/still/sched/sched_exec.cu"

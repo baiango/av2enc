@@ -49,9 +49,12 @@ struct Hbd420Frame {
   std::size_t frame_bytes = 0;
 };
 
-// Builds the 10-bit 4:2:0 frame layout from `fmt::make_frame_geometry()`.
-// Accepts only `ChromaFormat::k420`; the depth may be 8/10/12 so the same
-// plumbing can be tested, but the M1 deliverable is 10-bit.
+// Builds the frame layout from `fmt::make_frame_geometry()`.  `hbd_make_frame`
+// accepts every AV2 chroma format (4:0:0/4:2:0/4:2:2/4:4:4); the depth may be
+// 8/10/12 so the same plumbing can be tested, but the M1 deliverable is 10-bit.
+bool hbd_make_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
+                    std::string* error);
+// Historical 4:2:0 name; still rejects other chroma formats.
 bool hbd_make_420_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
                         std::string* error);
 bool hbd_make_420_frame_10(std::uint32_t width, std::uint32_t height,
@@ -98,5 +101,34 @@ cudaError_t hbd_download_420_8(const Hbd420Frame& frame,
 cudaError_t hbd_replicate_420_borders(const Hbd420Frame& frame,
                                       std::uint16_t* d_frame,
                                       cudaStream_t stream = nullptr);
+
+// ---------------------------------------------------------------------------
+// Native high-bit-depth picture conversion (all chroma formats)
+// ---------------------------------------------------------------------------
+
+// Uploads a coded 10/12-bit `fmt::Picture` into the frame layout.  Only the
+// visible rectangle is read, and coded padding is filled by edge replication
+// (the same rule as `fmt::replicate_borders()`).  `picture.format` must match
+// `frame.format`; planes absent from the format are skipped.  The source is
+// host memory (a `fmt::Picture`), so this is the cold path; the hot path copies
+// packed planes directly.
+cudaError_t hbd_upload_picture_10(const av2enc::fmt::Picture& picture,
+                                  const Hbd420Frame& frame,
+                                  std::uint16_t* d_frame,
+                                  cudaStream_t stream = nullptr);
+
+struct HbdPlane16View {
+  std::uint16_t* data = nullptr;
+  int stride_samples = 0;
+  int width = 0;
+  int height = 0;
+};
+
+// Copies the visible rectangle of every present plane back to a packed
+// 10/12-bit destination (no depth conversion).
+cudaError_t hbd_download_picture_10(const Hbd420Frame& frame,
+                                    const std::uint16_t* d_frame,
+                                    const HbdPlane16View out[3],
+                                    cudaStream_t stream = nullptr);
 
 }  // namespace av2enc::cuda::hbd

@@ -26,7 +26,7 @@ mkdir -p "$BUILD_DIR"
 CXX="${CXX:-c++}"
 
 CORE=(
-  "$ROOT/src/codec/filters/loop_restoration_chroma/chroma_lr.cpp"
+  "$ROOT/src/codec/filters/loop_restoration/chroma/chroma_lr.cpp"
   "$ROOT/src/codec/filters/loop_restoration/restoration.cpp"
   "$ROOT/src/codec/filters/loop_restoration/classes/wiener_fit.cpp"
   "$ROOT/src/codec/filters/loop_restoration/classes/wiener_syntax.cpp"

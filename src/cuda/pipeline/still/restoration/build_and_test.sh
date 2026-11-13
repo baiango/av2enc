@@ -54,7 +54,8 @@ nvcc -std=c++20 -O3 -lineinfo -arch="$ARCH" \
   -Xcompiler -Wall,-Wextra,-Wconversion,-Wshadow \
   -I "$REPO_ROOT/src" -I . \
   still_restoration.cu still_restoration_test.cu \
-  ../../../../codec/filters/loop_restoration/ccso.cu ../../../../codec/filters/loop_restoration/wiener.cu \
+  "$REPO_ROOT/src/cuda/codec/filters/loop_restoration/ccso.cu" \
+  "$REPO_ROOT/src/cuda/codec/filters/loop_restoration/wiener.cu" \
   "$BUILD_DIR/restoration_cpu.o" \
   -o "$BUILD_DIR/still_restoration_test"
 

@@ -129,20 +129,23 @@ cudaError_t replicate_plane_16(std::uint16_t* plane, int stride,
 
 }  // namespace
 
-bool hbd_make_420_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
-                        std::string* error) {
+bool hbd_make_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
+                    std::string* error) {
   if (out == nullptr) {
     if (error != nullptr) *error = "null frame";
-    return false;
-  }
-  if (format.chroma != av2enc::fmt::ChromaFormat::k420) {
-    if (error != nullptr) *error = "hbd_make_420_frame requires 4:2:0";
     return false;
   }
   const int depth = depth_value(format.depth);
   if (depth < 8 || depth > 12 || format.width == 0 || format.height == 0 ||
       format.width > 65535U || format.height > 65535U) {
     if (error != nullptr) *error = "unsupported frame format";
+    return false;
+  }
+  const int num_planes = av2enc::fmt::num_planes(format.chroma);
+  const int sub_x = av2enc::fmt::subsampling_x(format.chroma);
+  const int sub_y = av2enc::fmt::subsampling_y(format.chroma);
+  if (num_planes < 1) {
+    if (error != nullptr) *error = "unsupported chroma format";
     return false;
   }
 
@@ -153,18 +156,22 @@ bool hbd_make_420_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
   frame.mi_rows = 2U * ((format.height + 7U) >> 3U);
   frame.coded_width = frame.mi_cols * 4U;
   frame.coded_height = frame.mi_rows * 4U;
-  frame.num_planes = 3;
-  frame.sub_x = 1;
-  frame.sub_y = 1;
+  frame.num_planes = num_planes;
+  frame.sub_x = sub_x;
+  frame.sub_y = sub_y;
   std::size_t offset = 0;
-  for (int plane = 0; plane < 3; ++plane) {
+  for (int plane = 0; plane < num_planes; ++plane) {
     HbdPlane420& dst = frame.planes[plane];
-    dst.coded_width = frame.coded_width >> (plane == 0 ? 0 : 1);
-    dst.coded_height = frame.coded_height >> (plane == 0 ? 0 : 1);
+    const int shift_x = plane == 0 ? 0 : sub_x;
+    const int shift_y = plane == 0 ? 0 : sub_y;
+    dst.coded_width = frame.coded_width >> shift_x;
+    dst.coded_height = frame.coded_height >> shift_y;
     dst.visible_width =
-        plane == 0 ? format.width : (format.width + 1U) >> 1U;
+        plane == 0 ? format.width
+                   : (format.width + ((1U << sub_x) - 1U)) >> sub_x;
     dst.visible_height =
-        plane == 0 ? format.height : (format.height + 1U) >> 1U;
+        plane == 0 ? format.height
+                   : (format.height + ((1U << sub_y) - 1U)) >> sub_y;
     dst.stride = dst.coded_width;
     dst.offset = offset;
     offset += static_cast<std::size_t>(dst.coded_width) * dst.coded_height;
@@ -174,6 +181,15 @@ bool hbd_make_420_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
   *out = frame;
   if (error != nullptr) error->clear();
   return true;
+}
+
+bool hbd_make_420_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
+                        std::string* error) {
+  if (format.chroma != av2enc::fmt::ChromaFormat::k420) {
+    if (error != nullptr) *error = "hbd_make_420_frame requires 4:2:0";
+    return false;
+  }
+  return hbd_make_frame(format, out, error);
 }
 
 bool hbd_make_420_frame_10(std::uint32_t width, std::uint32_t height,
@@ -286,7 +302,7 @@ cudaError_t hbd_replicate_420_borders(const Hbd420Frame& frame,
   if (d_frame == nullptr) {
     return cudaErrorInvalidValue;
   }
-  for (int plane = 0; plane < 3; ++plane) {
+  for (int plane = 0; plane < frame.num_planes; ++plane) {
     const HbdPlane420& p = frame.planes[plane];
     const cudaError_t err = replicate_plane_16(
         d_frame + p.offset, static_cast<int>(p.stride),
@@ -296,6 +312,77 @@ cudaError_t hbd_replicate_420_borders(const Hbd420Frame& frame,
     if (err != cudaSuccess) {
       return err;
     }
+  }
+  return cudaSuccess;
+}
+
+cudaError_t hbd_upload_picture_10(const av2enc::fmt::Picture& picture,
+                                  const Hbd420Frame& frame,
+                                  std::uint16_t* d_frame,
+                                  cudaStream_t stream) {
+  if (d_frame == nullptr) return cudaErrorInvalidValue;
+  if (picture.format.width != frame.format.width ||
+      picture.format.height != frame.format.height ||
+      picture.format.chroma != frame.format.chroma ||
+      picture.format.depth != frame.format.depth) {
+    return cudaErrorInvalidValue;
+  }
+  const int depth = depth_value(frame.format.depth);
+  if (depth != 10 && depth != 12) return cudaErrorInvalidValue;
+  for (int plane = 0; plane < frame.num_planes; ++plane) {
+    const HbdPlane420& dst = frame.planes[plane];
+    const av2enc::fmt::PlaneBuffer& src = picture.planes[plane];
+    if (src.samples.empty() ||
+        src.visible_width != dst.visible_width ||
+        src.visible_height != dst.visible_height ||
+        src.stride < src.width) {
+      return cudaErrorInvalidValue;
+    }
+    // `Picture` is host memory, so stage the visible rectangle with a 2D copy
+    // (unified addressing would otherwise make the kernel dereference a host
+    // pointer) and fill coded padding in a second pass.
+    cudaError_t err = cudaMemcpy2D(
+        d_frame + dst.offset,
+        static_cast<std::size_t>(dst.stride) * sizeof(std::uint16_t),
+        src.samples.data(),
+        static_cast<std::size_t>(src.stride) * sizeof(std::uint16_t),
+        static_cast<std::size_t>(dst.visible_width) * sizeof(std::uint16_t),
+        static_cast<std::size_t>(dst.visible_height), cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) return err;
+    err = replicate_plane_16(d_frame + dst.offset, static_cast<int>(dst.stride),
+                             static_cast<int>(dst.coded_width),
+                             static_cast<int>(dst.coded_height),
+                             static_cast<int>(dst.visible_width),
+                             static_cast<int>(dst.visible_height), stream);
+    if (err != cudaSuccess) return err;
+  }
+  return cudaSuccess;
+}
+
+cudaError_t hbd_download_picture_10(const Hbd420Frame& frame,
+                                    const std::uint16_t* d_frame,
+                                    const HbdPlane16View out[3],
+                                    cudaStream_t stream) {
+  if (d_frame == nullptr || out == nullptr) return cudaErrorInvalidValue;
+  for (int plane = 0; plane < frame.num_planes; ++plane) {
+    const HbdPlane420& src = frame.planes[plane];
+    const HbdPlane16View& dst = out[plane];
+    if (dst.data == nullptr || dst.width <= 0 || dst.height <= 0 ||
+        dst.stride_samples < dst.width ||
+        dst.width < static_cast<int>(src.visible_width) ||
+        dst.height < static_cast<int>(src.visible_height)) {
+      return cudaErrorInvalidValue;
+    }
+    // `HbdPlane16View` is host memory (cold download path); use a 2D D2H copy.
+    const cudaError_t err = cudaMemcpy2DAsync(
+        dst.data,
+        static_cast<std::size_t>(dst.stride_samples) * sizeof(std::uint16_t),
+        d_frame + src.offset,
+        static_cast<std::size_t>(src.stride) * sizeof(std::uint16_t),
+        static_cast<std::size_t>(src.visible_width) * sizeof(std::uint16_t),
+        static_cast<std::size_t>(src.visible_height), cudaMemcpyDeviceToHost,
+        stream);
+    if (err != cudaSuccess) return err;
   }
   return cudaSuccess;
 }

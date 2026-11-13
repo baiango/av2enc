@@ -59,6 +59,14 @@ struct StillChromaOptions {
   int enable_uv_full = 0;
   // `cfl_ds_filter_index`. M1's make_cfl_block() hardcodes 0; 3 behaves as 0.
   int ds_filter = 0;
+  // §5.4.5 enable_ibp.  When set the DC candidate uses the §7.13.2.12 IBP DC
+  // post-filter; the CfL base prediction excludes it (uv_is_cfl).
+  int enable_ibp = 0;
+  // CPU --still-cfl-explicit: also score CFL_EXPLICIT (17 sign/magnitude
+  // values per plane) and keep it when its U+V SSE beats the derived alpha.
+  int cfl_explicit = 0;
+  // CPU --still-mhccp: score the three §7.13.7 CFL_MULTI directions.
+  int enable_mhccp = 0;
   // Clamp applied to the derived (implicit) alpha, in Q8 units. §7.13.5
   // resolve_division() returns a signed value with magnitude <= 511 (chroma
   // can correlate negatively with luma), so the default range is a no-op and
@@ -135,6 +143,15 @@ struct StillChromaResult {
   int is_cfl = 0;
   int alpha_u = 0;  // Q8, only meaningful when is_cfl
   int alpha_v = 0;  // Q8, only meaningful when is_cfl
+  // §5.20.7.32 signalling for the winning CfL hypothesis: 1 = derived,
+  // 0 = explicit.  `alpha_signs`/`alpha_u`/`alpha_v` are the syntax symbols
+  // (magnitude minus one), unused when cfl_index != 0.
+  int cfl_index = 1;
+  int alpha_signs = 0;
+  int alpha_u_syntax = 0;
+  int alpha_v_syntax = 0;
+  // §7.13.7 CFL_MULTI direction when cfl_index == 2.
+  int cfl_mh_dir = 0;
   // The DC prediction value the kernel used as the CfL base (diagnostic).
   int dc_u = 0;
   int dc_v = 0;

@@ -59,6 +59,12 @@ CPU_SOURCES=(
   src/codec/entropy/av2/av2_entropy.cpp
 )
 
+# Fill in the rest of the canonical CPU reference (`av2enc_core`).  Entries
+# stay repo-relative: the compile loop below prepends $REPO_ROOT.
+source "$REPO_ROOT/src/cuda/pipeline/cpu_reference_sources.sh"
+av2enc_cpu_core_append CPU_SOURCES "" \
+  "${CPU_SOURCES[@]+"${CPU_SOURCES[@]}"}"
+
 CPU_OBJECTS=()
 for src in "${CPU_SOURCES[@]}"; do
   obj="$BUILD_DIR/$(basename "${src%.cpp}").o"

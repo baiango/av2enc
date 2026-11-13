@@ -109,6 +109,10 @@ struct ReconBlockInfo {
   int h4 = 0;  // luma height in 4x4 units
   int chroma_w4 = 0;  // chroma residual block extent in chroma 4x4 units
   int chroma_h4 = 0;
+  int chroma_mi_row = 0;  // owned ChromaMi origin, luma 4x4 units
+  int chroma_mi_col = 0;
+  int chroma_mi_w4 = 0;   // ChromaMi block extent, luma 4x4 units
+  int chroma_mi_h4 = 0;
   std::uint8_t joint = 0;      // IntraJointMode written over the luma MI cells
   std::uint8_t uv_smooth = 0;  // §7.13.5.5 smooth-neighbour flag
   std::uint8_t qindex = 90;
@@ -148,8 +152,9 @@ cudaError_t recon_init_state(const ReconPredState& state,
 
 // Starts a superblock: sets the host-side sb_* fields and resets all three
 // decoded maps (the CPU resets `clear_block_decoded_flags` per SB).
+// `sb_mi` is the frame SbSize in 4x4 units: 16 for 64x64, 32 for 128x128.
 cudaError_t recon_begin_sb(ReconPredState& state, int sb_mi_row, int sb_mi_col,
-                           cudaStream_t stream = nullptr);
+                           cudaStream_t stream = nullptr, int sb_mi = 16);
 
 // Clip1(pred + residual) into the padded plane, same clamping as CPU
 // `write_recon`.  One launch for the whole batch; jobs are independent.

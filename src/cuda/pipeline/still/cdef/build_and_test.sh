@@ -56,66 +56,28 @@ mkdir -p "$BUILD_DIR"
 WARN="-Wall -Wextra -Wpedantic -Wconversion -Wshadow"
 INC="-I$ROOT/src"
 
+# Shared CPU-reference source list (still_syntax + the integrated tool set).
+source "$ROOT/src/cuda/codec/filters/still_reference_sources.sh"
 STILL_SOURCES=(
   "$ROOT/src/pipeline/still/still_encoder.cpp"
-  "$ROOT/src/pipeline/still/still_syntax.cpp"
-  "$ROOT/src/pipeline/still/still_headers.cpp"
-  "$ROOT/src/core/bitstream/bitwriter.cpp"
-  "$ROOT/src/core/bitstream/obu.cpp"
-  "$ROOT/src/core/bitstream/basic_headers.cpp"
-  "$ROOT/src/codec/partition/tree/partition.cpp"
-  "$ROOT/src/codec/intra/modes/intra_modes.cpp"
-  "$ROOT/src/codec/rate/rdoq/rdoq.cpp"
-  "$ROOT/src/codec/rate/rdoq/rdoq_av2_model.cpp"
-  "$ROOT/src/codec/transform/tx_type/tx_type.cpp"
-  "$ROOT/src/codec/transform/variants/tx_variants.cpp"
-  "$ROOT/src/codec/transform/variants/tx_select.cpp"
-  "$ROOT/src/codec/intra/cfl/cfl.cpp"
-  "$ROOT/src/codec/filters/deblock/deblock.cpp"
-  "$ROOT/src/codec/filters/loop_restoration/restoration.cpp"
-  "$ROOT/src/codec/rate/rdo/rdo.cpp"
-  "$ROOT/src/codec/rate/rdo/intra_decision.cpp"
-  "$ROOT/src/codec/entropy/av2/av2_entropy.cpp"
-  "$ROOT/src/core/io/y4m.cpp"
-  "$ROOT/src/core/io/ivf.cpp"
-  # Dependencies added by later integration waves (still_headers/syntax now
-  # reference the full integrated tool set: QM, IST, delta-Q, restoration,
-  # GDF, PC-Wiener, film grain and content interpretation).
-  "$ROOT/src/codec/rate/rc/rc.cpp"
-  "$ROOT/src/codec/entropy/deltaq/still/deltaq.cpp"
-  "$ROOT/src/codec/transform/delta_q/syntax.cpp"
-  "$ROOT/src/codec/transform/delta_q/quant.cpp"
-  "$ROOT/src/codec/transform/delta_q/search.cpp"
-  "$ROOT/src/codec/transform/qm/qm.cpp"
-  "$ROOT/src/codec/transform/secondary/tx_secondary.cpp"
-  "$ROOT/src/codec/intra/cfl/mhccp/mhccp.cpp"
-  "$ROOT/src/codec/intra/cfl/mhccp/mhccp_syntax.cpp"
-  "$ROOT/src/codec/intra/dip/dip.cpp"
-  "$ROOT/src/codec/intra/dip/dip_syntax.cpp"
-  "$ROOT/src/codec/intra/ibp/ibp.cpp"
-  "$ROOT/src/codec/intra/mrl/core/mrl.cpp"
-  "$ROOT/src/codec/intra/mrl/stream/mrl_syntax.cpp"
-  "$ROOT/src/codec/intra/mrl/stream/mrl_interaction.cpp"
-  "$ROOT/src/codec/filters/loop_restoration/classes/wiener_class.cpp"
-  "$ROOT/src/codec/filters/loop_restoration/classes/wiener_fit.cpp"
-  "$ROOT/src/codec/filters/loop_restoration/classes/wiener_syntax.cpp"
-  "$ROOT/src/codec/filters/loop_restoration/classes/wiener_decision.cpp"
-  "$ROOT/src/codec/filters/pc_wiener/pc_wiener_stream.cpp"
-  "$ROOT/src/codec/filters/tables/pc_wiener.cpp"
-  "$ROOT/src/codec/filters/tables/luma_source.cpp"
-  "$ROOT/src/codec/filters/tables/gdf.cpp"
-  "$ROOT/src/codec/filters/gdf/gdf_syntax.cpp"
-  "$ROOT/src/codec/filters/gdf/gdf_decision.cpp"
-  "$ROOT/src/codec/partition/ext/partition_ext.cpp"
-  "$ROOT/src/codec/partition/ext/ext_syntax.cpp"
-  "$ROOT/src/codec/partition/stream/partition_stream.cpp"
-  "$ROOT/src/codec/intra/palette/core/palette.cpp"
-  "$ROOT/src/codec/intra/palette/core/scc_stream.cpp"
-  "$ROOT/src/codec/intra/palette/stream/palette_stream.cpp"
-  "$ROOT/src/pipeline/grain/film_grain_syntax.cpp"
-  "$ROOT/src/pipeline/grain/grain_stream.cpp"
-  "$ROOT/src/frame/metadata/content_interpretation/content_interpretation.cpp"
 )
+for src in "${STILL_REFERENCE_SOURCES[@]}"; do
+  # The host stage half is compiled explicitly by each target below.
+  case "$src" in
+    src/cuda/pipeline/still/cdef/still_cdef.cpp) continue ;;
+  esac
+  STILL_SOURCES+=("$ROOT/$src")
+done
+
+# The still CPU reference grows with every integration wave; take the rest of
+# the canonical `av2enc_core` source list instead of re-listing it here.
+source "$ROOT/src/cuda/pipeline/cpu_reference_sources.sh"
+# These two are passed to the binaries explicitly below; keep them out of the
+# appended list so they are not linked twice.
+av2enc_cpu_core_append STILL_SOURCES "$ROOT/" \
+  "${STILL_SOURCES[@]+"${STILL_SOURCES[@]}"}" \
+  src/cuda/pipeline/still/cdef/still_cdef.cpp \
+  src/codec/filters/cdef/cdef.cpp
 
 echo "CXX: $($CXX --version | head -1)"
 echo "build: $BUILD_DIR"
@@ -130,7 +92,6 @@ if [ "$RUN" -eq 1 ] || [ "$DO_CUDA" -eq 0 ]; then
     -o "$BUILD_DIR/still_cdef_test"
   "$CXX" -std=c++20 -O2 -g -w $INC \
     "$SELF/run_stream_gate.cpp" "$SELF/still_cdef.cpp" \
-    "$ROOT/src/codec/filters/cdef/cdef.cpp" \
     "${STILL_SOURCES[@]}" \
     -o "$BUILD_DIR/run_stream_gate"
 fi

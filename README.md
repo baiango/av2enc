@@ -111,6 +111,7 @@ except Basic, and every mode writes an AV2 IVF (fourcc `AV02`).
 | Still | `--still` | One frame with the partition tree, full intra modes, variable transform sizes, CfL and deblock |
 | Still GPU | `--still-gpu` | The same still syntax with the block pipeline on the GPU; needs a CUDA build and implies `--still` |
 | Video | `--video` | A key frame plus P frames, `--frames N` |
+| Video GPU | `--video-gpu` | The same key + P sequence with the M2 device backend; implies `--video`, needs a CUDA build, never falls back to the CPU encoder |
 | Lossless | `--lossless` | Q=0 lossless still picture (DPCM intra, 8x8 blocks); its own writer |
 
 Product flags are grouped in `--help` as Basic, Still and Video; test-only
@@ -136,7 +137,9 @@ Video options: `--p-frames`, `--video-refs`, `--video-mv-precision`,
 `--video-ras`, and `--rc cqp|crf|vbr` with `--crf` / `--bitrate`. `--rc crf`
 derives `base_q_idx` from `--crf` and rejects an explicit `--qp`; `--rc vbr`
 uses `--qp` as its statistics-pass anchor and codes the controller's per-frame
-`base_q_idx` plan. B frames and DRL reordering are rejected until they pass the
+`base_q_idx` plan. `--video-gpu` mirrors the flat single-reference P chain and
+1/8/quarter/half MV precision; it rejects the reference/header modes it does not
+implement by name. B frames and DRL reordering are rejected until they pass the
 pinned decoder gate.
 
 Usage and option-combination errors exit 2; encoder, decoder and I/O failures

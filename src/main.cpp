@@ -90,8 +90,24 @@ bool encode_still_gpu(const av2enc::still::StillPicture& picture,
 #else
 #define AV2ENC_STILL_GPU_CALLABLE 0
 #endif
+
+// Video GPU pipeline (owner: orchestrator, src/cuda/pipeline/video/).  Same
+// pattern as the Still path: include the contract header when visible and only
+// treat the call as linkable when CMake built the M2 target.
+#if __has_include("cuda/pipeline/video/video_gpu.h")
+#include "cuda/pipeline/video/video_gpu.h"
+#define AV2ENC_VIDEO_GPU_HEADER 1
+#else
+#define AV2ENC_VIDEO_GPU_HEADER 0
+#endif
+#if AV2ENC_VIDEO_GPU_HEADER && defined(AV2ENC_HAVE_VIDEO_GPU) && AV2ENC_HAVE_VIDEO_GPU
+#define AV2ENC_VIDEO_GPU_CALLABLE 1
+#else
+#define AV2ENC_VIDEO_GPU_CALLABLE 0
+#endif
 #else
 #define AV2ENC_STILL_GPU_CALLABLE 0
+#define AV2ENC_VIDEO_GPU_CALLABLE 0
 #endif
 
 namespace {
@@ -180,6 +196,8 @@ struct Options {
   // Multi-frame inter (video) path.  Opt-in; every default still/basic stream
   // is untouched.
   bool video = false;
+  // Opt-in CUDA M2 backend for --video (--video-gpu).  Implies --video.
+  bool video_gpu = false;
   std::uint64_t p_frames = 0;  // 0 = every frame after the keyframe
   std::uint64_t b_frames = 0;  // B frames per GOP (0 = key + P chain)
   int video_refs = 1;          // NumTotalRefs (1..3)
@@ -367,37 +385,49 @@ void print_usage(std::ostream& out) {
                        "--still-gpu)"});
   item("--still-ccso-edge", {"Edge-classified CCSO + per-unit skip (CPU; runs",
                              "on --still-gpu)"});
-  item("--still-wiener", {"Luma Wiener NS loop restoration (CPU-only)"});
-  item("--still-chroma-lr", {"Chroma Wiener NS loop restoration (CPU-only)"});
-  item("--still-pc-wiener", {"Luma PC-Wiener loop restoration (CPU-only)"});
-  item("--still-gdf", {"Guided detail filter, pre-Wiener (CPU-only)"});
+  item("--still-wiener", {"Luma Wiener NS loop restoration (CPU; runs on",
+                          "--still-gpu)"});
+  item("--still-chroma-lr", {"Chroma Wiener NS loop restoration (CPU; runs on",
+                             "--still-gpu)"});
+  item("--still-pc-wiener", {"Luma PC-Wiener loop restoration (CPU; runs on",
+                             "--still-gpu)"});
+  item("--still-gdf", {"Guided detail filter after loop restoration (CPU;",
+                       "runs on --still-gpu)"});
   item("--still-grain", {"Signal film grain for decoder synthesis (CPU; runs",
                          "on --still-gpu)"});
   item("--still-grain-adaptive", {"Estimate and signal a film-grain model from",
                                   "the reconstruction; requires --still-grain",
                                   "(CPU-only)"});
-  item("--still-cfl-ds <N>", {"cfl_ds_filter_index 0..3 (default 0; CPU-only)"});
+  item("--still-cfl-ds <N>", {"cfl_ds_filter_index 0..3 (default 0; runs on",
+                              "--still-gpu)"});
   item("--still-cfl-explicit", {"Allow explicit CfL alpha, CFL_EXPLICIT",
-                                "(CPU-only)"});
-  item("--still-ibp", {"Intra bi-prediction, 5.4.5 (CPU-only)"});
+                                "(CPU; runs on --still-gpu)"});
+  item("--still-ibp", {"Intra bi-prediction, 5.4.5 (CPU; runs on",
+                       "--still-gpu)"});
   item("--still-mrl", {"Multiple reference lines for directional luma;",
-                       "implies the directional search (CPU-only)"});
-  item("--still-dip", {"DIP as a luma DC alternative (CPU-only)"});
-  item("--still-mhccp", {"MHCCP (CFL_MULTI) chroma prediction (CPU-only)"});
+                       "implies the directional search (CPU; runs on",
+                       "--still-gpu)"});
+  item("--still-dip", {"DIP as a luma DC alternative (CPU; runs on",
+                       "--still-gpu)"});
+  item("--still-mhccp", {"MHCCP (CFL_MULTI) chroma prediction (CPU; runs",
+                         "on --still-gpu)"});
   item("--still-segmentation", {"Signal a neutral 8-segment table (CPU-only)"});
   item("--still-delta-q", {"Signal neutral per-superblock delta-Q (CPU-only)"});
   item("--still-per-segment-q", {"Real per-SB segmentation with ALT_Q; low-",
                                  "variance SBs use base_q_idx + delta"});
-  item("--still-sb128", {"128x128 superblocks (default 64x64; CPU-only)"});
+  item("--still-sb128", {"128x128 superblocks (default 64x64; CPU; runs",
+                          "on --still-gpu)"});
   item("--still-sb256", {"Signal 256x256 sequence superblocks; intra frames",
-                         "still code 128x128 (CPU-only)"});
+                         "still code 128x128 (CPU; runs on --still-gpu)"});
   item("--still-ext-partitions", {"HORZ_3/VERT_3 and uneven 4-way partitions",
-                                  "(CPU-only)"});
+                                  "(CPU; runs on --still-gpu)"});
   item("--still-sub8", {"Allow sub-8x8 coding blocks (4xN/Nx4); needs a depth",
-                        "of at least 8 (CPU-only)"});
+                        "of at least 8 (CPU; runs on --still-gpu)"});
   item("--still-sdp", {"Semi-decoupled partition: luma tree then chroma tree",
-                       "(forced PARTITION_NONE trees; 64-SB only; CPU-only)"});
-  item("--still-qm", {"Spec-defined quantizer matrix (CPU-only)"});
+                       "(forced PARTITION_NONE trees; 64-SB only; CPU; runs on",
+                       "--still-gpu)"});
+  item("--still-qm", {"Spec-defined quantizer matrix (CPU; runs on",
+                      "--still-gpu)"});
   item("--still-user-qm", {"Carry a real user QM OBU (identity matrix; the",
                            "pinned dav2d rejects QM OBUs; CPU-only)"});
   item("--still-ist", {"Intra secondary transform, luma (CPU-only)"});
@@ -410,7 +440,8 @@ void print_usage(std::ostream& out) {
   item("--still-idtx", {"Identity intra transform (enable_idtx_intra +",
                         "fsc_mode)"});
   item("--still-ddt", {"Rejected: DDT/DDTX/FDDT is inter-only"});
-  item("--still-dc-ac-delta-q", {"DC/AC delta-Q frame search (CPU-only)"});
+  item("--still-dc-ac-delta-q", {"DC/AC delta-Q frame search (CPU; runs on",
+                                 "--still-gpu)"});
   item("--still-content-interpretation",
        {"Emit a default content interpretation OBU (CPU-only)"});
   item("--metadata-timecode", {"Emit a neutral metadata_timecode OBU (suffix;",
@@ -448,6 +479,9 @@ void print_usage(std::ostream& out) {
 
   out << "\nVideo options (--video):\n";
   item("--video", {"Encode a multi-frame P-frame sequence"});
+  item("--video-gpu", {"Opt-in CUDA backend for --video (implies --video);",
+                       "same decisions/bytes as the CPU reference, no silent",
+                       "CPU fallback. CUDA build only"});
   item("--video-timing", {"Signal decoder_model_info and a CI OBU with",
                           "timing_info() from the Y4M frame rate"});
   item("--video-mfh", {"Emit a multi-frame header (§5.7) and reference it",
@@ -1291,6 +1325,15 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-gpu") {
+      // Implies --video: the GPU path is the same multi-frame sequence with a
+      // device backend.  It is rejected by name in a build without the target
+      // (see AV2ENC_VIDEO_GPU_CALLABLE below).
+      options.video = true;
+      options.video_gpu = true;
+      continue;
+    }
+
     if (argument == "--p-frames") {
       if (i + 1 >= argc) {
         error = "missing value after '--p-frames'";
@@ -1955,6 +1998,39 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       error = "--video-tlayer-drop requires --video-tlayers";
       return ParseStatus::kError;
     }
+
+    if (options.video_gpu) {
+      // The CUDA M2 backend mirrors the flat one-reference P chain.  Every
+      // option that builds a different ref/header model is rejected by name
+      // instead of being accepted and silently ignored (or falling back to the
+      // CPU encoder).  --video without this flag keeps the full CPU surface.
+#if !AV2ENC_VIDEO_GPU_CALLABLE
+#if AV2ENC_HAVE_CUDA
+      error = "--video-gpu is not available in this build: the M2 video GPU "
+              "entry point (src/cuda/pipeline/video/) is not linked. Use "
+              "--video for the CPU reference path.";
+#else
+      error = "--video-gpu requires a CUDA build; this is a CPU-only reference "
+              "build. Use --video for the CPU reference path.";
+#endif
+      return ParseStatus::kError;
+#else
+      const auto reject_gpu = [&](const char* flag) {
+        error = std::string("--video-gpu does not implement ") + flag +
+                " yet; use --video for the CPU reference path";
+        return ParseStatus::kError;
+      };
+      if (options.rc_mode != "cqp") {
+        return reject_gpu("--rc crf/vbr (the device transform quantiser is "
+                          "pinned to qlookup(90))");
+      }
+      if (options.tiles != "1x1") return reject_gpu("--tiles > 1x1");
+      if (options.cdf_continuity) {
+        return reject_gpu("--cdf-continuity (cross-frame CDF carry)");
+      }
+      if (options.svc_given) return reject_gpu("--svc-layers");
+#endif
+    }
   } else {
     if (flag_given(options, "--p-frames") ||
         flag_given(options, "--b-frames") ||
@@ -2164,11 +2240,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       error = "--still-ext-partitions requires --still";
       return ParseStatus::kError;
     }
-    if (options.still_gpu) {
-      error = "--still-ext-partitions is CPU-only: the CUDA planner has no "
-              "extended partition tree";
-      return ParseStatus::kError;
-    }
+
     if (options.still_single) {
       error = "--still-ext-partitions cannot be combined with --still-single";
       return ParseStatus::kError;
@@ -2238,11 +2310,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       error = "--still-ext-partitions requires --still";
       return ParseStatus::kError;
     }
-    if (options.still_gpu) {
-      error = "--still-ext-partitions is CPU-only: the CUDA planner has no "
-              "extended partition tree";
-      return ParseStatus::kError;
-    }
+
     if (options.still_single) {
       error = "--still-ext-partitions cannot be combined with --still-single";
       return ParseStatus::kError;
@@ -2251,11 +2319,6 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
   if (options.still_sub8) {
     if (!options.m1 && !options.still_gpu) {
       error = "--still-sub8 requires --still";
-      return ParseStatus::kError;
-    }
-    if (options.still_gpu) {
-      error = "--still-sub8 is CPU-only: the CUDA planner codes 8x8 leaves "
-              "only";
       return ParseStatus::kError;
     }
     if (options.still_single) {
@@ -2272,10 +2335,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       error = "--still-sdp requires --still";
       return ParseStatus::kError;
     }
-    if (options.still_gpu) {
-      error = "--still-sdp is CPU-only: the CUDA planner has no SDP tree";
-      return ParseStatus::kError;
-    }
+
     if (options.still_single) {
       error = "--still-sdp cannot be combined with --still-single";
       return ParseStatus::kError;
@@ -2311,10 +2371,17 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       return ParseStatus::kError;
     }
     if (options.still_gpu) {
-      error =
-          "--still-sb128/--still-sb256 are CPU-only: the CUDA planner accepts "
-          "64x64 superblocks only";
-      return ParseStatus::kError;
+      if (options.still_sb128 || options.still_sb256) {
+        if (options.still_cdef || options.still_ccso ||
+            options.still_ccso_edge || options.still_wiener ||
+            options.still_chroma_lr || options.still_pc_wiener ||
+            options.still_gdf) {
+          error = "--still-sb128/--still-sb256 with CDEF/CCSO/loop "
+                  "restoration is CPU-only: the CUDA filter stages size their "
+                  "unit grids from 64x64 superblocks";
+          return ParseStatus::kError;
+        }
+      }
     }
     if (options.still_single) {
       error = "--still-single cannot be combined with a 128x128 superblock";
@@ -2942,6 +3009,33 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
     frame_qp = best_qp;
     video_options.frame_base_q_idx = frame_qp;
     video_options.base_q_idx = frame_qp.front();
+  } else if (options.video_gpu) {
+#if AV2ENC_VIDEO_GPU_CALLABLE
+    av2enc::cuda::video::VideoGpuStats gpu_stats;
+    if (!av2enc::cuda::video::encode_video_sequence_gpu(
+            inputs, video_options, result, error, &gpu_stats)) {
+      std::cerr << "av2enc: error: --video-gpu: " << error << "\n";
+      return 1;
+    }
+    // Honest provenance: this path never re-enters the CPU encoder, so
+    // frame_bytes_from_cpu stays 0.  Name the linked backend explicitly.
+    std::cerr << "av2enc: --video-gpu backend="
+              << av2enc::cuda::video::video_backend_name()
+              << " frame_bytes_from_cpu="
+              << (gpu_stats.frame_bytes_from_cpu ? 1 : 0) << "\n";
+#if AV2ENC_HAVE_CUDA
+    if (options.video_trace) {
+      std::cerr << "av2enc: video GPU stats: launches="
+                << gpu_stats.total_launches() << " syncs=" << gpu_stats.syncs
+                << " uploaded=" << gpu_stats.bytes_uploaded
+                << " downloaded=" << gpu_stats.bytes_downloaded
+                << " device_ms=" << gpu_stats.device_ms << "\n";
+    }
+#endif
+#else
+    std::cerr << "av2enc: error: --video-gpu is not linked in this build\n";
+    return 1;
+#endif
   } else if (!av2enc::video::encode_video_sequence(inputs, video_options,
                                                    result, error)) {
     std::cerr << "av2enc: error: " << error << "\n";
@@ -3361,20 +3455,9 @@ int main(int argc, char** argv) {
                 << " is not ported to the GPU pipeline yet; use --still (CPU)\n";
       return 2;
     };
-    if (options.still_ibp) return reject_cpu_only("--still-ibp");
-    if (options.still_mrl) return reject_cpu_only("--still-mrl");
-    if (options.still_dip) return reject_cpu_only("--still-dip");
-    if (options.still_mhccp) return reject_cpu_only("--still-mhccp");
-    if (options.still_cfl_explicit) {
-      return reject_cpu_only("--still-cfl-explicit");
-    }
-    if (options.still_cfl_ds != 0 ||
-        flag_given(options, "--still-cfl-ds")) {
-      return reject_cpu_only("--still-cfl-ds");
-    }
+    if (options.still_ist) return reject_cpu_only("--still-ist");
     if (options.still_palette) return reject_cpu_only("--still-palette");
     if (options.still_ibc) return reject_cpu_only("--still-ibc");
-    if (options.still_qm) return reject_cpu_only("--still-qm");
     if (options.still_user_qm) return reject_cpu_only("--still-user-qm");
     if (options.still_ist) return reject_cpu_only("--still-ist");
     if (options.still_tcq) return reject_cpu_only("--still-tcq");
@@ -3384,16 +3467,10 @@ int main(int argc, char** argv) {
     }
     if (options.still_idtx) return reject_cpu_only("--still-idtx");
     if (options.still_ddt) return reject_cpu_only("--still-ddt");
-    if (options.still_dc_ac_delta_q) {
-      return reject_cpu_only("--still-dc-ac-delta-q");
-    }
-    // CDEF, CCSO and film-grain signalling now have GPU stages (see
+    // CDEF, CCSO, loop restoration (Wiener NS, chroma LR, PC-Wiener, GDF) and
+    // film-grain signalling now have GPU stages (see
     // gpu_m3_options_supported() in src/cuda/pipeline/still/still_gpu.h); the
     // remaining filters have no stage yet and are rejected by name.
-    if (options.still_wiener) return reject_cpu_only("--still-wiener");
-    if (options.still_chroma_lr) return reject_cpu_only("--still-chroma-lr");
-    if (options.still_pc_wiener) return reject_cpu_only("--still-pc-wiener");
-    if (options.still_gdf) return reject_cpu_only("--still-gdf");
     if (options.still_grain_adaptive) {
       return reject_cpu_only("--still-grain-adaptive");
     }
@@ -3849,10 +3926,23 @@ int main(int argc, char** argv) {
       av2enc::cuda::still_gpu::GpuOptions gpu_options;
       gpu_options.base_q_idx = static_cast<std::uint8_t>(options.qp);
       gpu_options.enable_cfl = options.still_cfl;
+      gpu_options.cfl_ds_filter = options.still_cfl_ds;
       gpu_options.enable_deblock = options.still_deblock;
       gpu_options.enable_edge_filter = true;
-      gpu_options.luma_dc_only = !options.still_full_intra;
+      gpu_options.luma_dc_only = !options.still_full_intra &&
+                                 !options.still_rdo_intra && !options.still_mrl;
       gpu_options.min_block_size = 8;
+      gpu_options.sb_size = options.still_sb256 ? 256
+                            : options.still_sb128 ? 128
+                                                  : 64;
+      gpu_options.enable_ibp = options.still_ibp;
+      gpu_options.enable_mrl = options.still_mrl;
+      gpu_options.enable_dip = options.still_dip;
+      gpu_options.cfl_explicit = options.still_cfl_explicit;
+      gpu_options.mhccp = options.still_mhccp;
+      gpu_options.ext_partitions = options.still_ext_partitions;
+      gpu_options.sdp = options.still_sdp;
+      gpu_options.sub8 = options.still_sub8;
       if (options.still_depth >= 0) {
         gpu_options.max_partition_depth = options.still_depth;
       }
@@ -3871,6 +3961,9 @@ int main(int argc, char** argv) {
       gpu_options.enable_pc_wiener = options.still_pc_wiener;
       gpu_options.enable_gdf = options.still_gdf;
       gpu_options.enable_grain = options.still_grain;
+      gpu_options.delta_q = options.still_dc_ac_delta_q;
+      gpu_options.qm = options.still_qm;
+      gpu_options.qm_level = options.still_qm_level;
       gpu_options.rdoq = options.still_rdoq;
       gpu_options.rdoq_sse_scale = options.still_rdoq_scale;
       gpu_options.tx_type = options.still_tx_type;

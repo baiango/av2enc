@@ -624,7 +624,7 @@ int main(int argc, char** argv) {
   if (argc < 3) {
     std::fprintf(stderr,
                  "usage: %s <src.y4m> <out_dir> [--strengths N] [--damping D]\n"
-                 "       [--dav2d PATH] [--no-df-check]\n",
+                 "       [--qp N] [--dav2d PATH] [--no-df-check]\n",
                  argv[0]);
     return 2;
   }
@@ -632,6 +632,7 @@ int main(int argc, char** argv) {
   const std::string out_dir = argv[2];
   int report_strengths = 4;
   int damping = 3;
+  int qp = 0;
   std::string dav2d = "tools/bin/dav2d";
   std::string dump_path;
   std::string y4m_path;
@@ -642,6 +643,8 @@ int main(int argc, char** argv) {
       report_strengths = std::atoi(argv[++i]);
     } else if (arg == "--damping" && i + 1 < argc) {
       damping = std::atoi(argv[++i]);
+    } else if (arg == "--qp" && i + 1 < argc) {
+      qp = std::atoi(argv[++i]);
     } else if (arg == "--dav2d" && i + 1 < argc) {
       dav2d = argv[++i];
     } else if (arg == "--dump-planes" && i + 1 < argc) {
@@ -683,6 +686,9 @@ int main(int argc, char** argv) {
   picture.u = source.u;
   picture.v = source.v;
   av2enc::still::StillOptions options;
+  if (qp > 0) {
+    options.base_q_idx = static_cast<std::uint8_t>(qp);
+  }
   av2enc::still::StillResult encoded;
   if (!av2enc::still::encode_still_picture(picture, options, encoded, error)) {
     std::fprintf(stderr, "M1 encode failed: %s\n", error.c_str());

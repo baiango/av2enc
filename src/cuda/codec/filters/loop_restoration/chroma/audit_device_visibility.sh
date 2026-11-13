@@ -9,6 +9,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+HERE="$(pwd)"
+ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
+while [ ! -f "${ROOT}/CMakeLists.txt" ] && [ "${ROOT}" != "/" ]; do
+    ROOT="$(dirname -- "${ROOT}")"
+done
 FILE="lr_chroma_device.cuh"
 FAIL=0
 
@@ -90,7 +95,7 @@ __global__ void lrc_visibility_probe(
 }
 PROBE
   if nvcc -std=c++20 -arch="$ARCH" --expt-relaxed-constexpr -c \
-      -I"$PWD" -I"$PWD/../.." "$TMP/probe.cu" -o "$TMP/probe.o" \
+      -I"$HERE" -I"$ROOT/src" "$TMP/probe.cu" -o "$TMP/probe.o" \
       >"$TMP/probe.log" 2>&1; then
     say "nvcc device-visibility probe: PASS ($ARCH)"
   else

@@ -2,6 +2,8 @@
 
 #include "cuda/pipeline/still/plan/plan_gpu_bridge.h"
 
+#include "codec/partition/tree/partition.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -78,20 +80,61 @@ bool map_gpu_frame(const FramePlan& plan, std::vector<GpuBlock>& blocks,
         !narrow_u8(src.u.adj_h, dst.chroma_tx_h, "chroma TX height", error)) {
       return false;
     }
-    if (!upscale_ratio(src.luma_w, src.luma.adj_w, dst.tx_upscale_w, error) ||
-        !upscale_ratio(src.luma_h, src.luma.adj_h, dst.tx_upscale_h, error)) {
+    if (src.luma_w == 0 && src.luma_h == 0) {
+      // A CHROMA_PART (SDP) leaf carries no luma payload.
+      dst.tx_w = 0;
+      dst.tx_h = 0;
+      dst.tx_upscale_w = 1;
+      dst.tx_upscale_h = 1;
+    } else if (!upscale_ratio(src.luma_w, src.luma.adj_w, dst.tx_upscale_w,
+                              error) ||
+               !upscale_ratio(src.luma_h, src.luma.adj_h, dst.tx_upscale_h,
+                              error)) {
       return false;
     }
     dst.has_chroma = src.has_chroma ? 1 : 0;
+    dst.chroma_offset = src.chroma_offset ? 1 : 0;
+    if (src.chroma_mi_row > std::numeric_limits<std::uint16_t>::max() ||
+        src.chroma_mi_col > std::numeric_limits<std::uint16_t>::max()) {
+      error = "chroma block origin does not fit the orchestrator POD";
+      return false;
+    }
+    dst.chroma_mi_row = static_cast<std::uint16_t>(src.chroma_mi_row);
+    dst.chroma_mi_col = static_cast<std::uint16_t>(src.chroma_mi_col);
+    dst.chroma_mi_size = src.chroma_mi_size;
+    dst.tree_type = src.tree_type;
+    const auto chroma_bsize =
+        static_cast<::av2enc::partition::BlockSize>(src.chroma_mi_size);
+    if (src.chroma_mi_size != 255 &&
+        ::av2enc::partition::is_valid_block_size(chroma_bsize)) {
+      dst.chroma_mi_w4 = static_cast<std::uint8_t>(
+          ::av2enc::partition::block_width(chroma_bsize) / 4);
+      dst.chroma_mi_h4 = static_cast<std::uint8_t>(
+          ::av2enc::partition::block_height(chroma_bsize) / 4);
+    }
     dst.avail = avail_mask(src.luma_avail);
     dst.tree_depth = src.depth;
+    dst.n4_above_right = src.luma_avail.num4_above_right;
+    dst.n4_below_left = src.luma_avail.num4_below_left;
+    dst.chroma_n4_above_right = src.chroma_avail.num4_above_right;
+    dst.chroma_n4_below_left = src.chroma_avail.num4_below_left;
 
-    // Padded reconstruction-plane sample offsets (see still_encoder.cpp strides).
-    dst.plane_offset_y =
-        static_cast<std::uint32_t>(src.y * plan.luma_stride + src.x);
-    dst.plane_offset_u = static_cast<std::uint32_t>(
-        src.chroma_y * plan.chroma_stride + src.chroma_x);
-    dst.plane_offset_v = dst.plane_offset_u;
+    // Padded reconstruction-plane sample offsets (see still_encoder.cpp
+    // strides).  An owned chroma block starts at its ChromaMi origin, which can
+    // differ from the leaf origin for sub-8 and extended partitions.
+    dst.plane_offset_y = src.luma_w == 0
+                             ? 0
+                             : static_cast<std::uint32_t>(src.y *
+                                                              plan.luma_stride +
+                                                          src.x);
+    if (src.has_chroma) {
+      dst.plane_offset_u = static_cast<std::uint32_t>(
+          src.chroma_mi_row * 2 * plan.chroma_stride + src.chroma_mi_col * 2);
+      dst.plane_offset_v = dst.plane_offset_u;
+    } else {
+      dst.plane_offset_u = 0;
+      dst.plane_offset_v = 0;
+    }
 
     dst.coeff_offset_y = src.luma.coeff_offset;
     dst.coeff_offset_u = src.u.coeff_offset;
@@ -113,7 +156,7 @@ bool map_gpu_frame(const FramePlan& plan, std::vector<GpuBlock>& blocks,
   frame.mi_rows = static_cast<std::uint16_t>(plan.mi_rows);
   frame.sb_cols = static_cast<std::uint16_t>(plan.sb_cols);
   frame.sb_rows = static_cast<std::uint16_t>(plan.sb_rows);
-  frame.sb_size = 64;
+  frame.sb_size = static_cast<std::uint8_t>(plan.sb_size);
   frame.chroma_shift_x = 1;
   frame.chroma_shift_y = 1;
   frame.is_placeholder = 0;
@@ -152,6 +195,12 @@ bool map_stream_tree(const FramePlan& plan,
         (src.sb_root ? syntax::kFlagSbRoot : 0));
     dst.child_count = src.child_count;
     dst.leaf_index = src.leaf_index == kNoTreeNode ? 0 : src.leaf_index;
+    dst.ext_partition = src.ext_partition;
+    dst.allowed_mask_ext = src.allowed_mask_ext;
+    dst.partition_is_ext =
+        plan.options.enable_ext_partitions ? 1 : 0;
+    dst.tree_type = src.tree_type;
+    dst.sdp_split = src.sdp_split ? 1 : 0;
   }
   return true;
 }

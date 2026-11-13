@@ -85,15 +85,11 @@ CORE_SOURCES=(
     "$ROOT/src/cuda/context.cpp"
     "$ROOT/src/cuda/arena.cpp"
 )
-# The CPU M1 encoder was split into a syntax writer while this wave was in
-# flight; include the split source when the shared tree has it.
-for optional in \
-    "$ROOT/src/pipeline/still/still_syntax.cpp" \
-    "$ROOT/src/encoder/intra.cpp"; do
-    if [ -f "$optional" ]; then
-        CORE_SOURCES+=("$optional")
-    fi
-done
+# The CPU M1 encoder was split into a syntax writer; keep adding it when the
+# shared tree has it (it is also part of the canonical list below).
+if [ -f "$ROOT/src/pipeline/still/still_syntax.cpp" ]; then
+    CORE_SOURCES+=("$ROOT/src/pipeline/still/still_syntax.cpp")
+fi
 TEST_SOURCES=(
     "$ROOT/src/cuda/pipeline/still/still_gpu_test.cc"
 )
@@ -107,11 +103,28 @@ CUDA_COMPONENT_SOURCES=()
 for optional in \
     "$ROOT/src/cuda/codec/intra/modes/intra_modes.cu" \
     "$ROOT/src/cuda/codec/filters/deblock/deblock.cu" \
+    "$ROOT/src/cuda/codec/filters/cdef/cdef.cu" \
+    "$ROOT/src/cuda/codec/filters/loop_restoration/ccso.cu" \
+    "$ROOT/src/cuda/codec/filters/loop_restoration/wiener.cu" \
+    "$ROOT/src/cuda/codec/filters/loop_restoration/chroma/lr_chroma.cu" \
+    "$ROOT/src/cuda/codec/filters/pc_wiener/pc_wiener.cu" \
+    "$ROOT/src/cuda/codec/filters/gdf/gdf.cu" \
     "$ROOT/src/cuda/codec/intra/cfl/cfl.cu" \
+    "$ROOT/src/cuda/codec/intra/mrl/mrl.cu" \
+    "$ROOT/src/cuda/codec/intra/dip/dip.cu" \
+    "$ROOT/src/cuda/codec/intra/ibp/ibp.cu" \
+    "$ROOT/src/cuda/pipeline/still/intra/intra_extra.cu" \
     "$ROOT/src/cuda/pipeline/still/tx/still_tx.cu" \
     "$ROOT/src/cuda/pipeline/still/recon/recon.cu" \
     "$ROOT/src/cuda/pipeline/still/search/luma_search.cu" \
-    "$ROOT/src/cuda/pipeline/still/chroma/still_chroma.cu"; do
+    "$ROOT/src/cuda/pipeline/still/chroma/still_chroma.cu" \
+    "$ROOT/src/cuda/pipeline/still/cdef/still_cdef.cu" \
+    "$ROOT/src/cuda/pipeline/still/cfl/still_cfl.cu" \
+    "$ROOT/src/cuda/pipeline/still/restoration/still_restoration.cu" \
+    "$ROOT/src/cuda/pipeline/still/sched/sched_exec.cu" \
+    "$ROOT/src/cuda/pipeline/still/hbd/hbd_frame.cu" \
+    "$ROOT/src/cuda/pipeline/still/hbd/hbd_tx.cu" \
+    "$ROOT/src/cuda/codec/transform/variants/tx_variants.cu"; do
     if [ -f "$optional" ]; then
         CUDA_COMPONENT_SOURCES+=("$optional")
     fi
@@ -127,6 +140,7 @@ if [ -f "$ROOT/src/cuda/pipeline/still/plan/plan_gpu_bridge.cpp" ]; then
     )
 fi
 for optional in \
+    "$ROOT/src/cuda/pipeline/still/hbd/hbd_cpu.cpp" \
     "$ROOT/src/cuda/pipeline/still/sched/sched.cpp" \
     "$ROOT/src/cuda/pipeline/still/sched/sched_bridge.cpp" \
     "$ROOT/src/pipeline/still/stream/still_stream_bridge.cpp"; do
@@ -134,6 +148,13 @@ for optional in \
         STAGE_SOURCES+=("$optional")
     fi
 done
+
+# Fill in the rest of the canonical CPU reference (`av2enc_core`).  Pass the
+# stage sources too so `still_stream_bridge.cpp` is not compiled twice.
+source "$ROOT/src/cuda/pipeline/cpu_reference_sources.sh"
+av2enc_cpu_core_append CORE_SOURCES "$ROOT/" \
+    "${CORE_SOURCES[@]+"${CORE_SOURCES[@]}"}" \
+    "${STAGE_SOURCES[@]+"${STAGE_SOURCES[@]}"}"
 
 echo "== build =="
 echo "  root:   $ROOT"

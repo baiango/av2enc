@@ -8,6 +8,7 @@
 # Run on a CUDA host:
 #   BIN=build-cuda/av2enc DAV2D=tools/bin/dav2d \
 #     src/cuda/pipeline/still/restoration/run_real_chain_gate.sh
+#   QP=1 .../run_real_chain_gate.sh   # near-lossless fixture
 #
 # Requires a CUDA build of av2enc (no CPU fallback for the GPU half).
 set -euo pipefail
@@ -19,7 +20,8 @@ while [ ! -f "${ROOT}/CMakeLists.txt" ] && [ "${ROOT}" != "/" ]; do
 done
 BIN="${BIN:-$ROOT/build-cuda/av2enc}"
 DAV2D="${DAV2D:-$ROOT/tools/bin/dav2d}"
-TMP="${TMPDIR:-/tmp}/av2enc_lr_chain"
+QP="${QP:-90}"
+TMP="${TMPDIR:-/tmp}/av2enc_lr_chain_qp${QP}"
 mkdir -p "$TMP"
 
 if [[ ! -x "$BIN" ]]; then
@@ -34,10 +36,14 @@ fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 DAV2D="$(cd "$(dirname "$DAV2D")" && pwd)/$(basename "$DAV2D")"
 
-"$BIN" "$ROOT/tests/data/basic_64x64_1f.y4m" -o "$TMP/pre64.ivf" --still
-"$BIN" "$ROOT/tests/data/basic_64x64_1f.y4m" -o "$TMP/post64.ivf" --still --still-cdef
-"$BIN" "$ROOT/tests/data/basic_640x360_1f.y4m" -o "$TMP/pre360.ivf" --still
-"$BIN" "$ROOT/tests/data/basic_640x360_1f.y4m" -o "$TMP/post360.ivf" --still --still-cdef
+"$BIN" "$ROOT/tests/data/basic_64x64_1f.y4m" -o "$TMP/pre64.ivf" --still \
+  --qp "$QP"
+"$BIN" "$ROOT/tests/data/basic_64x64_1f.y4m" -o "$TMP/post64.ivf" --still \
+  --still-cdef --qp "$QP"
+"$BIN" "$ROOT/tests/data/basic_640x360_1f.y4m" -o "$TMP/pre360.ivf" --still \
+  --qp "$QP"
+"$BIN" "$ROOT/tests/data/basic_640x360_1f.y4m" -o "$TMP/post360.ivf" --still \
+  --still-cdef --qp "$QP"
 
 "$DAV2D" -q -i "$TMP/pre64.ivf" -o "$TMP/pre64.y4m" --threads 1
 "$DAV2D" -q -i "$TMP/post64.ivf" -o "$TMP/post64.y4m" --threads 1

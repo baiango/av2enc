@@ -11,6 +11,10 @@
 //   4. §5.20.7.29  chroma PlaneTxType derivation when
 //      `enable_chroma_dctonly == 0`: Mode_To_Txfm[wide-angle-mapped UVMode]
 //      filtered through `Tx_Type_In_Set_Intra[set]`, else DCT_DCT.
+//   5. §5.20.7.27 / §8.3  `dc_sign` and `dc_sign_horz_vert` sign-element
+//      selection plus the neighbour-derived `dc_sign` context.  The decision is
+//      pure integer work; the shipped M1 writer never selects a 1-D intra TX
+//      type, so this kernel is coverage for a future gate, not a wired path.
 //
 // This component owns only `src/cuda/intra_full/`.  It does not edit the core,
 // the root CMakeLists, or `src/main.cpp`, and it is not wired into a stream.
@@ -182,6 +186,62 @@ struct ChromaResult {
 };
 
 // ---------------------------------------------------------------------------
+// §5.20.7.27 / §8.3 dc_sign and dc_sign_horz_vert
+// ---------------------------------------------------------------------------
+
+// §5.20.7.29 get_tx_class(): which sign element a non-zero coefficient uses.
+enum class SignTxClass : std::uint8_t {
+  k2D = 0,
+  kHoriz = 1,
+  kVert = 2,
+};
+
+// §5.20.7.27 sign element for one coefficient position.
+enum class SignElement : std::uint8_t {
+  kDcSign = 0,
+  kDcSignHorzVert = 1,
+  kSignBit = 2,
+};
+
+struct SignQuery {
+  int plane = 0;  // 0 = luma (the sign elements are luma-only)
+  int row = 0;
+  int col = 0;
+  SignTxClass tx_class = SignTxClass::k2D;
+  // Optional dc_sign context inputs.  They are read only when the selected
+  // element is kDcSign; leave them null to get ctx 0 (above/left unavailable).
+  const std::int8_t* above_dc = nullptr;
+  const std::int8_t* left_dc = nullptr;
+  int x4 = 0;
+  int y4 = 0;
+  int w4 = 0;
+  int h4 = 0;
+  int mi_cols = 0;
+  int mi_rows = 0;
+};
+
+// `element` is the §5.20.7.27 selection; `ctx` is the §8.3 dc_sign context for
+// kDcSign and the constant 0 for kDcSignHorzVert (and kSignBit, unused).
+struct SignResult {
+  std::uint8_t element = static_cast<std::uint8_t>(SignElement::kSignBit);
+  std::uint8_t ctx = 0;
+};
+
+// §8.3 dc_sign context inputs.  `above_dc` is AboveDcContext[plane] indexed by
+// x4, `left_dc` is LeftDcContext[plane] indexed by y4; either may be null.  The
+// entries are the stored dcCategory values (0, 1 or 2).
+struct SignContextJob {
+  const std::int8_t* above_dc = nullptr;
+  const std::int8_t* left_dc = nullptr;
+  int x4 = 0;
+  int y4 = 0;
+  int w4 = 0;
+  int h4 = 0;
+  int mi_cols = 0;
+  int mi_rows = 0;
+};
+
+// ---------------------------------------------------------------------------
 // Configuration and arena sizing
 // ---------------------------------------------------------------------------
 
@@ -192,6 +252,7 @@ struct Config {
   int max_corner_jobs = 256;
   int max_chroma_jobs = 256;
   int max_tx_blocks = 64;
+  int max_sign_jobs = 256;
 };
 
 namespace detail {
@@ -208,7 +269,8 @@ constexpr bool config_valid(const Config& c) noexcept {
   return c.max_dc_jobs >= 1 && c.max_dc_jobs <= kMaxBatch &&
          c.max_corner_jobs >= 1 && c.max_corner_jobs <= kMaxBatch &&
          c.max_chroma_jobs >= 1 && c.max_chroma_jobs <= kMaxBatch &&
-         c.max_tx_blocks >= 1 && c.max_tx_blocks <= kMaxBatch;
+         c.max_tx_blocks >= 1 && c.max_tx_blocks <= kMaxBatch &&
+         c.max_sign_jobs >= 1 && c.max_sign_jobs <= kMaxBatch;
 }
 
 }  // namespace detail
@@ -229,6 +291,13 @@ inline std::uint64_t persistent_device_bytes(const Config& config) noexcept {
          detail::align_up_bytes(
              sizeof(ChromaResult) *
                  static_cast<std::uint64_t>(config.max_chroma_jobs),
+             align) +
+         detail::align_up_bytes(
+             sizeof(SignResult) *
+                 static_cast<std::uint64_t>(config.max_sign_jobs),
+             align) +
+         detail::align_up_bytes(
+             sizeof(int) * static_cast<std::uint64_t>(config.max_sign_jobs),
              align);
 }
 
@@ -254,10 +323,22 @@ inline std::uint64_t scratch_device_bytes(const Config& config) noexcept {
       detail::align_up_bytes(sizeof(TxJob) *
                                  static_cast<std::uint64_t>(config.max_tx_blocks),
                              align);
+  const std::uint64_t sign_query =
+      detail::align_up_bytes(
+          sizeof(SignQuery) *
+              static_cast<std::uint64_t>(config.max_sign_jobs),
+          align);
+  const std::uint64_t sign_context =
+      detail::align_up_bytes(
+          sizeof(SignContextJob) *
+              static_cast<std::uint64_t>(config.max_sign_jobs),
+          align);
   std::uint64_t largest = dc;
   if (corner > largest) largest = corner;
   if (chroma > largest) largest = chroma;
   if (tx > largest) largest = tx;
+  if (sign_query > largest) largest = sign_query;
+  if (sign_context > largest) largest = sign_context;
   return largest;
 }
 
@@ -301,6 +382,12 @@ class Workspace {
   const ChromaResult* chroma_results_device() const noexcept {
     return d_chroma_results_;
   }
+  const SignResult* sign_results_device() const noexcept {
+    return d_sign_results_;
+  }
+  const int* sign_context_results_device() const noexcept {
+    return d_sign_context_results_;
+  }
 
   // §7.13.2.11 batch.  `count <= config().max_dc_jobs`; `host_results` may be
   // null.  Synchronous (see the file-level contract).
@@ -317,6 +404,17 @@ class Workspace {
   Status derive_chroma_type(const ChromaQuery* host_queries, int count,
                             ChromaResult* host_results,
                             cudaStream_t stream = nullptr);
+
+  // §5.20.7.27 batch: sign element (and the dc_sign context) for `count`
+  // coefficient positions.  `host_results` must hold `count` entries.
+  Status select_sign_elements(const SignQuery* host_queries, int count,
+                              SignResult* host_results,
+                              cudaStream_t stream = nullptr);
+
+  // §8.3 batch: neighbour-derived `dc_sign` context for `count` blocks.
+  // `host_ctx` receives one int per job.
+  Status dc_sign_contexts(const SignContextJob* host_jobs, int count,
+                          int* host_ctx, cudaStream_t stream = nullptr);
 
   // Forward / inverse for the identity TX_TYPEs.  `residual` (int16, adjusted
   // size), `coeff` (double, adjusted size), `dequant` (int32, adjusted size)
@@ -336,6 +434,8 @@ class Workspace {
   DcResult* d_dc_results_ = nullptr;
   CornerResult* d_corner_results_ = nullptr;
   ChromaResult* d_chroma_results_ = nullptr;
+  SignResult* d_sign_results_ = nullptr;
+  int* d_sign_context_results_ = nullptr;
 };
 
 // ---------------------------------------------------------------------------
@@ -351,6 +451,8 @@ inline Status Workspace::init(Arena& arena, const Config& config,
   d_dc_results_ = nullptr;
   d_corner_results_ = nullptr;
   d_chroma_results_ = nullptr;
+  d_sign_results_ = nullptr;
+  d_sign_context_results_ = nullptr;
 
   if (!detail::config_valid(config)) {
     if (required_out != nullptr) *required_out = 0;
@@ -379,12 +481,19 @@ inline Status Workspace::init(Arena& arena, const Config& config,
       static_cast<std::size_t>(config.max_corner_jobs));
   d_chroma_results_ = arena.allocate_array<ChromaResult>(
       static_cast<std::size_t>(config.max_chroma_jobs));
+  d_sign_results_ = arena.allocate_array<SignResult>(
+      static_cast<std::size_t>(config.max_sign_jobs));
+  d_sign_context_results_ = arena.allocate_array<int>(
+      static_cast<std::size_t>(config.max_sign_jobs));
   if (d_dc_results_ == nullptr || d_corner_results_ == nullptr ||
-      d_chroma_results_ == nullptr) {
+      d_chroma_results_ == nullptr || d_sign_results_ == nullptr ||
+      d_sign_context_results_ == nullptr) {
     arena.rewind(mark);
     d_dc_results_ = nullptr;
     d_corner_results_ = nullptr;
     d_chroma_results_ = nullptr;
+    d_sign_results_ = nullptr;
+    d_sign_context_results_ = nullptr;
     if (error != nullptr) {
       *error = "intra_full: arena exhausted after " + std::to_string(need) +
                " bytes";

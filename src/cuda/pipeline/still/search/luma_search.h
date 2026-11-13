@@ -87,6 +87,9 @@ inline constexpr LumaCandidate kLumaCandidates[kMaxLumaCandidates] = {
 // Gates supported by the CPU path. `kGateDcOnly` mirrors
 // `luma_dc_only`/`force_dc`/`AV2ENC_STILL_LUMA_DC` and also reports `sse = 0`
 // without running any prediction, exactly like `choose_luma_mode`.
+// `kGateDcOnlyPredict` is the same candidate set but evaluates the real DC
+// prediction/SSE; the CPU path does that whenever DIP (or palette) is enabled
+// and needs the ordinary DC score as the incumbent to compare against.
 // `kGateBaseOnly` mirrors `AV2ENC_STILL_BASE_ONLY` (drop non-zero angle deltas).
 // `kGateNoDirectional` mirrors `AV2ENC_STILL_NO_DIR` (drop directional modes).
 enum LumaSearchGate : unsigned {
@@ -94,6 +97,7 @@ enum LumaSearchGate : unsigned {
   kGateDcOnly = 1u << 0,
   kGateBaseOnly = 1u << 1,
   kGateNoDirectional = 1u << 2,
+  kGateDcOnlyPredict = 1u << 3,
 };
 
 struct LumaSearchGates {
@@ -105,7 +109,8 @@ struct LumaSearchGates {
 
 AV2ENC_STILL_SEARCH_HD inline constexpr bool luma_candidate_enabled(
     const LumaCandidate& candidate, unsigned flags) noexcept {
-  if ((flags & kGateDcOnly) != 0u) {
+  if ((flags & kGateDcOnly) != 0u ||
+      (flags & kGateDcOnlyPredict) != 0u) {
     return candidate.mode == intra_modes::kDcPred;
   }
   if ((flags & kGateBaseOnly) != 0u && candidate.angle_delta != 0) {

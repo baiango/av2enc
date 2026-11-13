@@ -1,15 +1,19 @@
 # 10-bit M1 path (`src/cuda/m1/hbd/`)
 
-Status: **component + standalone stream delivered.** `src/encoder/m10/`
-now writes a 10-bit 4:2:0 still stream using this directory and
-`src/encoder/format/`; `dav2d` decodes it and every decoded sample matches the
-encoder reconstruction (0 LSB) at 64x64 and 640x360.  This directory itself is
-still not wired into the M1 core, so `--still` remains 8-bit.  The exact M1
-integration steps live in `src/encoder/m10/README.md` and are summarized below.
-The GPU block stage (`src/cuda/format/high_bitdepth_gpu.cu`) and its CPU-vs-GPU test are
-written but were not executed on the macOS host (no `nvcc`); run
-`src/cuda/format/build_high_bitdepth_gpu_test.sh` on `sm_86` before claiming GPU parity.
-Do not claim 10-bit M1 (`--still`) support until its gate passes.
+Status: **component + standalone stream delivered, device chain verified on
+`sm_86` for 10-bit 4:2:0 / 4:2:2 / 4:4:4 / 4:0:0.**
+`src/formats/high_bitdepth/` writes the product 10-bit still stream; `dav2d`
+decodes it and every decoded sample matches the encoder reconstruction (0 LSB)
+at 64x64 and 640x360.  This directory is still not wired into the M1 core, so
+`--still` (8-bit) is unchanged.  The GPU block stage
+(`src/cuda/formats/high_bitdepth_gpu.cu`) now runs the same block plan for every
+chroma format and every `base_q_idx` in 1..303; its CPU-vs-GPU test is
+`src/cuda/formats/build_high_bitdepth_gpu_test.sh` (27,147,456 element
+comparisons on the RTX 3060).  The generic sample-conversion kernels
+(`hbd_make_frame`, `hbd_upload_picture_10`, `hbd_download_picture_10`) are
+covered by `build_hbd_test.sh` (5,244,850 checks).  Do not claim 10-bit M1
+(`--still-gpu`) support until the M1 gate itself passes; this component's own
+GPU parity is complete.
 
 12-bit is not signalable in AV2 v1.0.0 (`bit_depth_idc` is one bit:
 `0 = 10-bit`, `1 = 8-bit`; greater values are reserved, §6.4.1 Table 6.3).
@@ -22,7 +26,7 @@ bounds generalize. **Do not emit a 12-bit sequence header.**
 |---|---|
 | `hbd_cpu.h/.cpp` | CPU oracle: depth-aware dequant/inverse clips, DC bias, EOB, whole-block reference |
 | `hbd_tx.h/.cu` | batched GPU forward/inverse TX; `uint16_t` source, depth-parameterized clips |
-| `hbd_frame.h/.cu` | 10-bit 4:2:0 geometry, 8→10 upload + padding, 10→8 download |
+| `hbd_frame.h/.cu` | 10-bit geometry for every chroma format, 8→10 / native-10 upload + padding, 10→8 / native-10 download |
 | `hbd_test.cpp` | CPU-only tests; proves `bit_depth=8` is bit-identical to `tx_variants` |
 | `hbd_test.cu` | CPU-vs-GPU element-for-element tests (upload/download, mixed TX batch) |
 | `build_hbd_test.sh` | standalone CPU test, plus CUDA test when `nvcc` exists |
@@ -167,11 +171,14 @@ Run:
 
 CPU-only host: `hbd_test: PASS (19312 checks)`.
 
-`sm_86` (RTX 3060, Linux, `nvcc`): `hbd_cuda_test: PASS (1523424 checks)`,
+`sm_86` (RTX 3060, Linux, `nvcc`): `hbd_cuda_test: PASS (5244850 checks)`,
 `compute-sanitizer --tool memcheck`: **0 errors**, `--tool initcheck`:
 **0 errors**, `--tool racecheck`: **0 hazards**. It compares every element
 (levels, EOB, dequant, inverse residual, every uploaded sample, every
-replicated padding sample, every downloaded sample), not a checksum.
+replicated padding sample, every downloaded sample), not a checksum.  The
+native 10-bit conversion test covers 4:0:0/4:2:0/4:2:2/4:4:4 at 64x64, 67x43,
+100x100 and 640x360 against `fmt::make_frame_geometry()` and
+`fmt::replicate_borders()`.
 
 > Upload contract: `hbd_upload_420_8()` takes **device-resident** 8-bit
 > source planes (`source.y/u/v.data`), with byte strides. Copy the input

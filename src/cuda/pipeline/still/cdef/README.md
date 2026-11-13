@@ -363,18 +363,31 @@ without a GPU; only the kernel byte comparison needs CUDA.
 It needs `nvcc` on the 3060 box:
 
 ```sh
-cd src/cuda/m1/cdef
-./build_and_test.sh --gate <src.y4m> --cuda --arch=sm_86
+cd src/cuda/pipeline/still/cdef
+./build_and_test.sh --gate tests/data/basic_640x360_1f.y4m --cuda --arch=sm_86
+# optional fixture QP for the gate/dump:
+./build-m1-cdef/run_stream_gate <src.y4m> <out_dir> --qp 1 --dav2d tools/bin/dav2d \
+    --dump-planes /tmp/recon_qp1.bin
+./build-m1-cdef/still_cdef_gpu_test /tmp/recon_qp1.bin
 ```
 
-**Not run here:** this dev box has no CUDA toolkit (and no reachable GPU host),
-so the kernel byte comparison and the GPU timings are pending. The kernel uses
-the same inline arithmetic as the CPU path (`cdef_filter_sample`,
-`cdef_direction`, `cdef_luma_params`, `cdef_chroma_params`, `cdef_eval_block`),
-so bit-exactness is structural; the test is the check. The host half
-(`still_cdef_test` on the gate's `recon.bin`) passes: 603 checks, 0 failures, with
-the real 640×360 plan producing a 20-bit single-strength header and a 4-set
-grid whose 96-bit index stream round-trips.
+**Measured (RTX 3060, `sm_86`, CUDA 13.0, 2026-11-13).** The kernel byte
+comparison and GPU timings ran:
+
+```
+QP90 640x360: still_cdef_test 517 checks, 0 failures; stream gate PASS
+              search table 10x60, 0 mismatches; filter output Y/U/V 0 mismatches
+              copy path 0 mismatches; still_cdef_gpu_test 129 checks, 0 failures
+              timing: search 13.762 ms, filter 0.228 ms (20 iters)
+QP1  640x360: gate PASS (1 all-zero strength set), filter/copy parity 0 mismatches
+              still_cdef_gpu_test 129 checks, 0 failures
+```
+
+The kernel uses the same inline arithmetic as the CPU path
+(`cdef_filter_sample`, `cdef_direction`, `cdef_luma_params`,
+`cdef_chroma_params`, `cdef_eval_block`), and the test now proves it on both a
+normal-QP and a near-lossless fixture.  The 4-set index stream round-trips
+through the normative §8.2 coder.
 
 
 ## Indirect verification performed here (no M1 edits)

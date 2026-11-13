@@ -56,6 +56,19 @@ enum class StillTxInput : std::uint8_t {
 struct StillTxJob {
   TxParams params;  // coded/adjusted size, TX_TYPE, quantizer state
 
+  // §7.14.4 DC/AC delta-Q.  `use_deltaq == 0` keeps the historical scalar
+  // `params.quant_factor` path (QP 90).  When set, the kernel derives the DC/AC
+  // quantizers from `qindex + delta_*` through the shared device delta-Q core.
+  std::uint8_t use_deltaq = 0;
+  std::uint8_t reserved_deltaq[3] = {0, 0, 0};
+  std::int32_t qindex = 90;
+  std::int32_t delta_dc = 0;
+  std::int32_t delta_ac = 0;
+  std::int32_t plane = 0;  // 0 = Y, 1 = U, 2 = V for the delta-Q quantizer
+  // >=0: element offset of this block's adjusted-size q2 matrix in
+  // `StillTxBuffers::q2` (quantizer-matrix path). -1: derive q2 from qindex.
+  std::int32_t q2_offset = -1;
+
   std::uint8_t input = static_cast<std::uint8_t>(StillTxInput::kSourcePred);
   // 1: `src` is a packed coded-size block (src_offset only, stride = coded_w).
   // 0: `src` is a plane; src_offset/src_stride/src_x/src_y/src_width/
@@ -92,6 +105,9 @@ struct StillTxBuffers {
   std::int32_t* dequant = nullptr;
   std::int16_t* residual_out = nullptr;
   std::int32_t* eob = nullptr;
+  // Optional: prebuilt adjusted-size q2 matrices for the quantizer-matrix path,
+  // addressed by StillTxJob::q2_offset.
+  const std::int32_t* q2 = nullptr;
   // Optional: counts jobs rejected by the device-side parameter/smem guards.
   // A rejected job also writes eob = -1 when `eob` is non-null.
   int* error_count = nullptr;

@@ -103,6 +103,38 @@ bool valid_chroma_query(const ChromaQuery& q) {
   return av2enc::txv::tx_size_supported(q.coded_w, q.coded_h);
 }
 
+bool valid_sign_query(const SignQuery& q) {
+  if (q.plane < 0 || q.plane > 2) {
+    return false;
+  }
+  if (q.row < 0 || q.col < 0) {
+    return false;
+  }
+  const int tx_class = static_cast<int>(q.tx_class);
+  if (tx_class < static_cast<int>(SignTxClass::k2D) ||
+      tx_class > static_cast<int>(SignTxClass::kVert)) {
+    return false;
+  }
+  if (q.x4 < 0 || q.y4 < 0 || q.w4 < 0 || q.h4 < 0 || q.mi_cols < 0 ||
+      q.mi_rows < 0) {
+    return false;
+  }
+  if ((q.above_dc != nullptr || q.left_dc != nullptr) &&
+      (q.mi_cols < 1 || q.mi_rows < 1)) {
+    return false;
+  }
+  return true;
+}
+
+bool valid_sign_context(const SignContextJob& job) {
+  if (job.x4 < 0 || job.y4 < 0 || job.w4 < 1 || job.h4 < 1 ||
+      job.mi_cols < 1 || job.mi_rows < 1) {
+    return false;
+  }
+  return job.w4 <= 128 && job.h4 <= 128 && job.mi_cols <= 4096 &&
+         job.mi_rows <= 4096;
+}
+
 // ---------------------------------------------------------------------------
 // Kernels
 // ---------------------------------------------------------------------------
@@ -142,6 +174,39 @@ __global__ void if_chroma_kernel(const ChromaQuery* __restrict__ queries,
   ChromaResult result;
   (void)intra_full_derive_chroma_type_dev(queries[i], &result);
   results[i] = result;
+}
+
+__global__ void if_sign_kernel(const SignQuery* __restrict__ queries,
+                               SignResult* __restrict__ results, int count) {
+  const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  if (i >= count) {
+    return;
+  }
+  const SignQuery q = queries[i];
+  SignResult result;
+  result.element = static_cast<std::uint8_t>(intra_full_select_sign_element_dev(
+      q.plane, q.row, q.col, static_cast<int>(q.tx_class)));
+  // dc_sign_horz_vert always uses context 0; only dc_sign carries a context.
+  result.ctx =
+      result.element == static_cast<std::uint8_t>(SignElement::kDcSign)
+          ? static_cast<std::uint8_t>(intra_full_dc_sign_context_dev(
+                q.above_dc, q.left_dc, q.x4, q.y4, q.w4, q.h4, q.mi_cols,
+                q.mi_rows))
+          : static_cast<std::uint8_t>(0);
+  results[i] = result;
+}
+
+__global__ void if_sign_context_kernel(
+    const SignContextJob* __restrict__ jobs, int* __restrict__ results,
+    int count) {
+  const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  if (i >= count) {
+    return;
+  }
+  const SignContextJob job = jobs[i];
+  results[i] = intra_full_dc_sign_context_dev(
+      job.above_dc, job.left_dc, job.x4, job.y4, job.w4, job.h4, job.mi_cols,
+      job.mi_rows);
 }
 
 __global__ void if_forward_kernel(const TxJob* __restrict__ jobs,
@@ -427,6 +492,106 @@ Status Workspace::identity_inverse(const TxJob* host_jobs, int count,
     if_inverse_kernel<<<count, max_elems, smem, stream>>>(d_jobs, dequant,
                                                           coded);
     status = last_error();
+  }
+  if (is_ok(status)) {
+    status = status_from_cuda(cudaStreamSynchronize(stream));
+  }
+  arena.rewind(mark);
+  return status;
+}
+
+// ---------------------------------------------------------------------------
+// §5.20.7.27 / §8.3 dc_sign and dc_sign_horz_vert
+// ---------------------------------------------------------------------------
+
+Status Workspace::select_sign_elements(const SignQuery* host_queries, int count,
+                                       SignResult* host_results,
+                                       cudaStream_t stream) {
+  if (!initialized()) {
+    return Status::kNotInitialized;
+  }
+  if (count < 0 || count > config_.max_sign_jobs ||
+      (count > 0 && (host_queries == nullptr || host_results == nullptr))) {
+    return Status::kInvalidArgument;
+  }
+  for (int i = 0; i < count; ++i) {
+    if (!valid_sign_query(host_queries[i])) {
+      return Status::kInvalidArgument;
+    }
+  }
+  if (count == 0) {
+    return Status::kOk;
+  }
+
+  Arena& arena = *arena_;
+  const std::uint64_t mark = arena.mark();
+  SignQuery* d_queries = stage_jobs<SignQuery>(arena, count);
+  if (d_queries == nullptr) {
+    arena.rewind(mark);
+    return Status::kArenaExhausted;
+  }
+  Status status = status_from_cuda(cudaMemcpyAsync(
+      d_queries, host_queries,
+      sizeof(SignQuery) * static_cast<std::size_t>(count),
+      cudaMemcpyHostToDevice, stream));
+  if (is_ok(status)) {
+    if_sign_kernel<<<grid_for(count), kThreads, 0, stream>>>(d_queries,
+                                                             d_sign_results_,
+                                                             count);
+    status = last_error();
+  }
+  if (is_ok(status)) {
+    status = status_from_cuda(cudaMemcpyAsync(
+        host_results, d_sign_results_,
+        sizeof(SignResult) * static_cast<std::size_t>(count),
+        cudaMemcpyDeviceToHost, stream));
+  }
+  if (is_ok(status)) {
+    status = status_from_cuda(cudaStreamSynchronize(stream));
+  }
+  arena.rewind(mark);
+  return status;
+}
+
+Status Workspace::dc_sign_contexts(const SignContextJob* host_jobs, int count,
+                                   int* host_ctx, cudaStream_t stream) {
+  if (!initialized()) {
+    return Status::kNotInitialized;
+  }
+  if (count < 0 || count > config_.max_sign_jobs ||
+      (count > 0 && (host_jobs == nullptr || host_ctx == nullptr))) {
+    return Status::kInvalidArgument;
+  }
+  for (int i = 0; i < count; ++i) {
+    if (!valid_sign_context(host_jobs[i])) {
+      return Status::kInvalidArgument;
+    }
+  }
+  if (count == 0) {
+    return Status::kOk;
+  }
+
+  Arena& arena = *arena_;
+  const std::uint64_t mark = arena.mark();
+  SignContextJob* d_jobs = stage_jobs<SignContextJob>(arena, count);
+  if (d_jobs == nullptr) {
+    arena.rewind(mark);
+    return Status::kArenaExhausted;
+  }
+  Status status = status_from_cuda(cudaMemcpyAsync(
+      d_jobs, host_jobs,
+      sizeof(SignContextJob) * static_cast<std::size_t>(count),
+      cudaMemcpyHostToDevice, stream));
+  if (is_ok(status)) {
+    if_sign_context_kernel<<<grid_for(count), kThreads, 0, stream>>>(
+        d_jobs, d_sign_context_results_, count);
+    status = last_error();
+  }
+  if (is_ok(status)) {
+    status = status_from_cuda(cudaMemcpyAsync(
+        host_ctx, d_sign_context_results_,
+        sizeof(int) * static_cast<std::size_t>(count), cudaMemcpyDeviceToHost,
+        stream));
   }
   if (is_ok(status)) {
     status = status_from_cuda(cudaStreamSynchronize(stream));

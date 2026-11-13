@@ -46,6 +46,10 @@ fi
   "${HERE}/plan_test.cpp" \
   "${ROOT}/src/core/io/y4m.cpp" \
   "${ROOT}/src/codec/partition/tree/partition.cpp" \
+  "${ROOT}/src/codec/partition/ext/partition_ext.cpp" \
+  "${ROOT}/src/codec/partition/sdp/sdp.cpp" \
+  "${ROOT}/src/codec/partition/sdp/sdp_validate.cpp" \
+  "${ROOT}/src/codec/partition/sdp/sdp_syntax.cpp" \
   "${ROOT}/src/codec/transform/variants/tx_variants.cpp" \
   -o "${OUT}"
 

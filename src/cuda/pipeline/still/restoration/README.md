@@ -269,15 +269,18 @@ The test decodes the IVF with `tools/bin/dav2d` (override with
 (post-CDEF), so CCSO reads the real pre-CDEF luma and the whole normative chain
 is exercised.
 
-**Status on this host:** the development Mac has no CUDA toolchain (`nvcc` is
-absent), so the GPU binaries were **not executed here**.  The changed CUDA
-translation units (`still_restoration.cu`, `still_restoration_test.cu`, `ccso.cu`,
-`wiener.cu`) pass a clang `--cuda-host-only` syntax check against a stubbed
-`cuda_runtime.h`; the shared CPU core and the real deblock+CDEF chain oracle
-pass.  Do not report the GPU parity test as run until the command above has
-executed on the 3060 box.
+**Status (RTX 3060, `sm_86`, CUDA 13.0, 2026-11-13):** executed and passing.
 
-CPU suite status (this host):
+```
+synthetic (validation + randomized CCSO/LR):  PASS: 278 checks, 0 failures
++ real deblock->CDEF pairs (64x64, 640x360):   PASS: 448 checks, 0 failures
++ QP1 pairs (64x64, 640x360):                  PASS: 448 checks, 0 failures
+```
+
+`run_real_chain_gate.sh` runs the QP90 pair set by default; `QP=1` selects the
+near-lossless fixtures.  Both were run through `tools/bin/dav2d`.
+
+CPU suite status:
 
 ```
 CCSO:   PASS: 5518 checks, 0 failures   (ASan+UBSan clean)

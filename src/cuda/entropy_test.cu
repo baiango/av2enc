@@ -1870,7 +1870,9 @@ void benchmark() {
   CUDA_CHECK(cudaGetDevice(&device));
   cudaDeviceProp prop{};
   CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
-  const double clock_khz = static_cast<double>(prop.clockRate);  // kHz
+  int clock_khz_i = 0;
+  CUDA_CHECK(cudaDeviceGetAttribute(&clock_khz_i, cudaDevAttrClockRate, device));
+  const double clock_khz = static_cast<double>(clock_khz_i);  // kHz
   const int sm_count = prop.multiProcessorCount;
 
   int enc_blocks = 0;

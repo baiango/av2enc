@@ -42,7 +42,9 @@ HOST_FLAGS=(-std=c++20 -O3 -ffp-contract=off -I"$REPO/src" "${CUDA_INC[@]}" -w)
 REF_SOURCES=(
   "$REPO/src/cuda/arena.cpp"
   "$REPO/src/codec/intra/supplemental/dc_intra_subsampled.cpp"
+  "$REPO/src/codec/intra/supplemental/dc_sign_horz_vert.cpp"
   "$REPO/src/codec/intra/supplemental/intra_filter_corner.cpp"
+  "$REPO/src/codec/entropy/av2/av2_entropy.cpp"
   "$REPO/src/codec/transform/variants/tx_variants.cpp"
   "$REPO/src/codec/transform/idtx/idtx_intra.cpp"
   "$REPO/src/codec/transform/tx_type/tx_type.cpp"

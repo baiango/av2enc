@@ -70,6 +70,21 @@ struct PaletteContextDevice {
 cudaError_t palette_color_contexts(const PaletteContextDevice& block,
                                    cudaStream_t stream = nullptr);
 
+// Batched forms: one grid.z slice per descriptor.  `blocks` / `contexts` are
+// device arrays; the batch entry point assumes the caller validated each
+// descriptor (the single-block forms validate).  `palette_apply_batch` runs
+// build_map -> predict -> (optional) color contexts for every job on `stream`.
+cudaError_t palette_build_map_batch(const PaletteDeviceBlock* blocks, int count,
+                                    cudaStream_t stream = nullptr);
+cudaError_t palette_predict_batch(const PaletteDeviceBlock* blocks, int count,
+                                  cudaStream_t stream = nullptr);
+cudaError_t palette_color_contexts_batch(const PaletteContextDevice* blocks,
+                                         int count,
+                                         cudaStream_t stream = nullptr);
+cudaError_t palette_apply_batch(const PaletteDeviceBlock* blocks,
+                                const PaletteContextDevice* contexts,
+                                int count, cudaStream_t stream = nullptr);
+
 }  // namespace av2enc::cuda
 
 #endif  // AV2ENC_CUDA_PALETTE_PALETTE_H_

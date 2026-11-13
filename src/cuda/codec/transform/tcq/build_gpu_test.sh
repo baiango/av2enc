@@ -55,9 +55,14 @@ if grep -nE '^[[:space:]]*(constexpr|static|extern)[^;()]*\[' "$DEVICE_HEADER"; 
   echo "device audit: namespace-scope array in the device header" >&2
   exit 3
 fi
-if grep -nE '^[[:space:]]*#include[[:space:]]+.*(cuda_runtime|encoder/|codec/|core/|pipeline/|formats/|frame/)' "$DEVICE_HEADER"; then
-  echo "device audit: device header pulls a host/CUDA-runtime header" >&2
+if grep -nE '^[[:space:]]*#include[[:space:]]+["<](cuda_runtime|cuda)[a-z_]*\.h' "$DEVICE_HEADER"; then
+  echo "device audit: device header pulls a CUDA-runtime header" >&2
   exit 3
+fi
+# Reject the CPU tree, but not the module's own `cuda/...` headers (the
+# previous unanchored `codec/` pattern also matched `cuda/codec/transform/...`).
+if grep -nE '^[[:space:]]*#include[[:space:]]+"(encoder|codec|core|pipeline|formats|frame|multi_gpu|profile)/' "$DEVICE_HEADER"; then
+  echo "device audit: device header pulls a host encoder header" >&2  exit 3
 fi
 echo "device audit: $ANNOTATED TCQ_HD helpers, no storage arrays, no host includes"
 

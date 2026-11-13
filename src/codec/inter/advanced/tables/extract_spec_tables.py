@@ -33,6 +33,22 @@ HEADER_BANNER = (
     "// Do not hand-edit; rerun the script instead.\n"
 )
 
+# Host and device passes need different storage classes for a namespace-scope
+# table: CUDA cannot odr-use a host `constexpr` array from device code.  The
+# device pass of nvcc (__CUDA_ARCH__ defined) gets `__device__ constexpr`
+# storage; every host pass keeps a plain `constexpr` copy.
+TABLE_STORAGE_MACRO = (
+    "// Host and device passes need different storage classes for a\n"
+    "// namespace-scope table: CUDA cannot odr-use a host `constexpr` array from\n"
+    "// device code (\"identifier is undefined in device code\").  Same pattern as\n"
+    "// deblock_core.h / mc_subpel_tables.h.\n"
+    "#if defined(__CUDA_ARCH__)\n"
+    "#define AV2ENC_ADV_TABLE static __device__ constexpr\n"
+    "#else\n"
+    "#define AV2ENC_ADV_TABLE static constexpr\n"
+    "#endif"
+)
+
 
 def page_text(doc, pages):
     text = "".join(doc[i].get_text() for i in pages)
@@ -58,7 +74,7 @@ def emit_array(name, elem_type, values, width, columns, indent="    "):
     total = len(values)
     assert total % columns == 0, (name, total, columns)
     rows = total // columns
-    out.append(f"inline constexpr {elem_type} {name}[{rows}][{columns}] = {{")
+    out.append(f"AV2ENC_ADV_TABLE {elem_type} {name}[{rows}][{columns}] = {{")
     for r in range(rows):
         chunk = values[r * columns:(r + 1) * columns]
         out.append(indent + "{" + ", ".join(f"{v:5d}" for v in chunk) + "},")
@@ -67,7 +83,7 @@ def emit_array(name, elem_type, values, width, columns, indent="    "):
 
 
 def emit_flat(name, elem_type, values, columns, indent="    "):
-    out = [f"inline constexpr {elem_type} {name}[{len(values)}] = {{"]
+    out = [f"AV2ENC_ADV_TABLE {elem_type} {name}[{len(values)}] = {{"]
     for i in range(0, len(values), columns):
         chunk = values[i:i + columns]
         out.append(indent + ", ".join(f"{v:4d}" for v in chunk) + ",")
@@ -99,6 +115,8 @@ def make_warp_headers(doc):
         "",
         "#include <cstdint>",
         "",
+        TABLE_STORAGE_MACRO,
+        "",
         "namespace av2enc::inter::adv::tables {",
         "",
         "inline constexpr int kWarpedFilterRows = 449;",
@@ -115,6 +133,8 @@ def make_warp_headers(doc):
     lines += [
         "",
         "}  // namespace av2enc::inter::adv::tables",
+        "",
+        "#undef AV2ENC_ADV_TABLE",
         "",
         "#endif  // AV2ENC_INTER_ADVANCED_TABLES_WARP_FILTERS_H_",
         "",
@@ -203,6 +223,8 @@ def make_wedge_header(doc):
         "",
         "#include <cstdint>",
         "",
+        TABLE_STORAGE_MACRO,
+        "",
         "namespace av2enc::inter::adv::tables {",
         "",
         "inline constexpr int kWedgeAngles = 20;",
@@ -240,7 +262,7 @@ def make_wedge_header(doc):
         "",
         "// §7.13.3.27 Wedge_Codebook[WEDGE_TYPES][3] = { { angle, xoff, yoff } }.",
         "// `angle` indexes kWedgeCosLut / kWedgeSinLut.",
-        "inline constexpr std::int8_t kWedgeCodebook[kWedgeTypes][3] = {",
+        "AV2ENC_ADV_TABLE std::int8_t kWedgeCodebook[kWedgeTypes][3] = {",
     ]
     for a, x, y in codebook:
         lines.append(f"    {{{a:2d}, {x:2d}, {y:2d}}},")
@@ -248,6 +270,8 @@ def make_wedge_header(doc):
         "};",
         "",
         "}  // namespace av2enc::inter::adv::tables",
+        "",
+        "#undef AV2ENC_ADV_TABLE",
         "",
         "#endif  // AV2ENC_INTER_ADVANCED_TABLES_WEDGE_TABLES_H_",
         "",

@@ -6,7 +6,7 @@ lines in component READMEs are used only for the *real-GPU evidence*
 column, and are labelled as documentation rather than as a measurement
 performed here.
 
-**Snapshot:** audit start at `debb00e`; document generated at git `477f712` with 114 `.cu` / 28 `.cuh`, 58 kernel TUs.
+**Snapshot:** audit start at `debb00e`; document generated at git `7673295` with 122 `.cu` / 31 `.cuh`, 62 kernel TUs.
 Ten GPU modules landed while the audit was running; the snapshot is the
 contract. `--check` fails if
 a curated path disappears, and any kernel TU that is not in the curated
@@ -29,53 +29,51 @@ only through `src/cuda/pipeline/video/build_gpu_gate.sh`.
 
 Inventory under `src/`:
 
-- **114** `.cu` files, **28** `.cuh` files.
-  The audit brief said "the earlier 80 `.cu` files": at audit start the
-  tree had exactly 80 (72 under `src/cuda/`, 8 beside CPU components under
-  `src/encoder/`). The extra TUs are the modules that landed mid-audit;
-  see Matrix 3.
-- **58** kernel translation units, **56** test/bench/gate translation units.
-- Of the kernel TUs, **55** are under `src/cuda/` and **3** under `src/encoder/`.
-- The 26 newest feature directories are the `src/encoder/` component dirs
-  added after commit `19c5dd9` (inherited audit baseline) up to `debb00e`.
+- **122** `.cu` files, **31** `.cuh` files.
+  Counts are recomputed from the tree on every run; the number moves when
+  a component lands.
+- **62** kernel translation units, **60** test/bench/gate translation units.
+- Of the kernel TUs, **59** are under `src/cuda/` and **3** under other trees.
+- The 26 feature rows in Matrix 1 are the component directories added
+  after commit `19c5dd9` (inherited audit baseline) up to `debb00e`.
   They are marked with `†` in the matrix.
 
 ## Matrix 1 — the 26 newest feature directories
 
 | tool | spec § | CPU reference dir | CUDA kernel dir | parity test | host emulation | real-GPU evidence | wired into M1/M2 | verdict |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| filters/ccso_reuse † | §5.18.7.12, §6.17.7.8, §7.19/§7.19.1, §7.23 | src/encoder/filters/ccso_reuse/ | — (apply is src/cuda/restoration/ccso.cu, unwired) | src/encoder/filters/ccso_reuse/ccso_reuse_test.cpp | — | — (no kernel) | no | GPU-SERIAL |
-| m2/tx_partition (TX_MODE_SELECT) † | §5.18.8.1, §5.20.6.1–.3, §5.20.7.30 | src/encoder/m2/tx_partition/ | — (TX kernels exist: src/cuda/m1/tx/, src/cuda/tx_variants/) | src/encoder/m2/tx_partition/tx_partition_test.cpp | src/encoder/m2/tx_partition/gate/ | — (geometry/scan is host-side) | no | GPU-SERIAL |
-| filters/film_grain_stream (signalling) † | §5.14, §5.18.10.1–.2, §7.3.8.8, §7.3.3/.4 | src/encoder/filters/film_grain_stream/ | — | src/encoder/filters/film_grain_stream/film_grain_stream_test.cpp | — | — | no | GPU-SERIAL |
-| filters/film_grain_stream (synthesis) † | §7.21.7.3–.5 | src/encoder/filters/spec_tables/film_grain.cpp | — none (decoder/output side) | src/encoder/filters/spec_tables/film_grain_test.cpp | 611 checks (CPU oracle) | N/A | no | GPU-SERIAL |
-| svc/ops_full † | §5.8, §5.10, §5.11, §6.8, §6.10, §6.11 | src/encoder/svc/ops_full/ | — | src/encoder/svc/ops_full/lcr_ops_full_test.cpp | — | — | no | GPU-SERIAL |
-| inter/mlayers † | §5.2.2, §5.4.1, §6.2.2, §6.4.1, §7.3.6–.8 | src/encoder/inter/mlayers/ | — | src/encoder/inter/mlayers/mlayers_test.cpp | — | — | no | GPU-SERIAL |
-| filters/tip_deblock † | §7.16, §7.17.3, §7.17.7 | src/encoder/filters/tip_deblock/tip_deblock.cpp | src/cuda/tip_deblock/tip_deblock.cu | src/cuda/tip_deblock/tip_deblock_emulation_test.cpp (host emulation) | — | — (not run) | no | GPU-UNWIRED |
-| m1/missing_bits — DC intra subsampled † | §7.13.2.11 | src/encoder/m1/missing_bits/dc_intra_subsampled.cpp | src/cuda/intra_full/intra_full.cu | src/cuda/intra_full/intra_full_emulation_test.cpp (host emulation) | — | — (not run) | no | GPU-UNWIRED |
-| m1/missing_bits — intra filter corner † | §7.13.2.14 | src/encoder/m1/missing_bits/intra_filter_corner.cpp | src/cuda/intra_modes/intra_predict_device.cuh | src/cuda/intra_modes/intra_modes_test.cu | src/cuda/intra_modes/intra_device_emulation_test.cpp | RTX 3060 (README §“Test result”) | M1 + M2 | GPU-REQUIRED |
-| m1/missing_bits — dc_sign_horz_vert † | §5.20.7.27 | src/encoder/m1/missing_bits/dc_sign_horz_vert.cpp | — | src/encoder/m1/missing_bits/missing_bits_test.cpp | — | — | no | GPU-SERIAL |
-| m1/missing_bits — save_subpu † | §7.13.3.15 | src/encoder/m1/missing_bits/save_subpu.cpp | src/cuda/subpu/ | src/cuda/subpu/subpu_test.cu | subpu_emulation_test: 31,474 checks | subpu_test: 77,986 checks (sm_86) | no | GPU-UNWIRED |
-| inter/gme † | §7.13.3.21, §5.18.9, §7.12.2.2 | src/encoder/inter/gme/ | src/cuda/gme/ | src/cuda/gme/gme_test.cu | 1,354,622 checks | 81,300 checks incl. real 720p (sm_86) | no | GPU-UNWIRED |
-| tables/missing † | §9.2, §9.3 | src/encoder/tables/missing/ | — | src/encoder/tables/missing/missing_tables_test.cpp | — | — | no | GPU-SERIAL |
-| metadata/gaps † | §5.17.2/.3, §7.23 | src/encoder/metadata/gaps/ | — | src/encoder/metadata/gaps/metadata_gaps_test.cpp | — | — | no | GPU-SERIAL |
-| conformance † | Annex A.2–A.5, §6.4.1 | src/encoder/conformance/ | — | src/encoder/conformance/conformance_test.cpp | — | — | no | GPU-SERIAL |
-| m2/tile_groups † | §5.19, §5.20.2.1, §5.18.1, §6.18 | src/encoder/m2/tile_groups/ | — | src/encoder/m2/tile_groups/tile_groups_test.cpp | — | — | no | GPU-SERIAL |
-| qm/obu † | §5.13, §5.18.6.2, §6.12, §6.4.11, §6.2.2 | src/encoder/qm/obu/ | — (dequant kernel src/cuda/qm/qm_gpu.cu exists, unwired) | src/encoder/qm/obu/qm_obu_test.cpp | — | — | no | GPU-SERIAL |
-| filters/lr_chroma (syntax/decision) † | §5.18.7.11, §5.20.10.5–.6 | src/encoder/filters/lr_chroma/chroma_lr.cpp | — | src/encoder/filters/lr_chroma/chroma_lr_test.cpp | src/encoder/filters/lr_chroma/gate/ | — | no | GPU-SERIAL |
-| filters/lr_chroma (apply §7.20.3) † | §7.20.3 | src/encoder/filters/lr_chroma/chroma_lr.cpp (chroma_apply) | src/cuda/lr_chroma/ | src/cuda/lr_chroma/lr_chroma_test.cu | 33,270 checks / 95.2M samples | 57,009 checks / 95.2M samples (sm_86) | no | GPU-UNWIRED |
-| inter/drl_reorder † | §5.4.6, §7.12.2, §7.12.2.19 | src/encoder/inter/drl_reorder/ | — | src/encoder/inter/drl_reorder/drl_reorder_test.cpp | — | — | no | GPU-SERIAL |
-| tcq/parity † | §5.20.7.27, §5.20.7.28, §5.4.8, §6.17.2 | src/encoder/tcq/parity/ | src/cuda/tcq/ | src/cuda/tcq/tcq_test.cu | 1,491,655 checks | 933,016 checks (sm_86) | no | GPU-UNWIRED |
-| m2/ddt † | §7.15.2.1, §7.15.4.1, §9.6, Table 7.1 | src/encoder/m2/ddt/ddt_transform.cpp | src/cuda/ddt/ | src/cuda/ddt/ddt_gpu_test.cu | 828,114 checks | 685,590 checks / 1,956,864 elements (sm_86) | no | GPU-UNWIRED |
-| format/chroma (4:2:2 / 4:4:4 / 4:0:0) † | §6.4.1 Table 6.2, §5.4.3/.5/.8, §7.13 | src/encoder/format/chroma/chroma_residual.cpp | src/cuda/chroma_formats/ | src/cuda/chroma_formats/chroma_formats_test.cu | 1,514,866 checks | 1,742,235 checks (sm_86) | no | GPU-UNWIRED |
-| rc/hrd † | §5.4.12/.13, §5.12, §5.15, Annex E.5.4/E.7 | src/encoder/rc/hrd/ | — | src/encoder/rc/hrd/hrd_test.cpp | — | — | no | GPU-SERIAL |
-| inter/longterm † | §5.4.1/.6, §5.18.2, §7.4.2–.4, §7.23 | src/encoder/inter/longterm/ | — | src/encoder/inter/longterm/longterm_test.cpp | — | — | no | GPU-SERIAL |
-| inter/tlayers † | §5.2.2, §5.4.1, §5.18.2, §7.3.7, §7.7, §7.23 | src/encoder/inter/tlayers/ | — | src/encoder/inter/tlayers/tlayers_test.cpp | — | — | no | GPU-SERIAL |
-| inter/random_access † | §6.2.2, §5.18.2, §6.17, §7.4.5 | src/encoder/inter/random_access/ | — | src/encoder/inter/random_access/random_access_test.cpp | — | — | no | GPU-SERIAL |
-| frame/mfh † | §5.7, §6.7, §5.18.2, §6.17.2, §5.2.1 | src/encoder/frame/mfh/ | — | src/encoder/frame/mfh/mfh_test.cpp | — | — | no | GPU-SERIAL |
-| quant/dcdeltaq † | §5.4.8, §5.18.6.1/.3, §7.14.2, §7.14.4 | src/encoder/quant/dcdeltaq/ | — (quant step is an input to m1/tx and tx_variants) | src/encoder/quant/dcdeltaq/dcdeltaq_test.cpp | — | — | no | GPU-SERIAL |
-| inter/sef † | §5.18.1/.2, §6.2.2, §6.17.2, §7.2, §7.21 | src/encoder/inter/sef/ | — | src/encoder/inter/sef/sef_test.cpp | — | — | no | GPU-SERIAL |
-| metadata/types † | §5.17.1–.13, §6.16.3–.13 | src/encoder/metadata/types/ | — | src/encoder/metadata/types/metadata_types_test.cpp | — | — | no | GPU-SERIAL |
-| metadata/content_interpretation † | §5.15, §5.4.12, §6.14, §7.3.3, §7.3.8.10/.11 | src/encoder/metadata/content_interpretation/ | — | src/encoder/metadata/content_interpretation/content_interpretation_test.cpp | — | — | no | GPU-SERIAL |
+| filters/ccso_reuse † | §5.18.7.12, §6.17.7.8, §7.19/§7.19.1, §7.23 | src/codec/filters/ccso/ | — (apply is src/cuda/codec/filters/loop_restoration/ccso.cu, unwired) | src/codec/filters/ccso/ccso_reuse_test.cpp | — | — (no kernel) | no | GPU-SERIAL |
+| m2/tx_partition (TX_MODE_SELECT) † | §5.18.8.1, §5.20.6.1–.3, §5.20.7.30 | src/codec/transform/tx_partition/ | — (TX kernels exist: src/cuda/pipeline/still/tx/, src/cuda/codec/transform/variants/) | src/codec/transform/tx_partition/tx_partition_test.cpp | src/codec/transform/tx_partition/gate/ | — (geometry/scan is host-side) | no | GPU-SERIAL |
+| filters/film_grain_stream (signalling) † | §5.14, §5.18.10.1–.2, §7.3.8.8, §7.3.3/.4 | src/pipeline/grain/ | — | src/pipeline/grain/film_grain_stream_test.cpp | — | — | no | GPU-SERIAL |
+| filters/film_grain_stream (synthesis) † | §7.21.7.3–.5 | src/codec/filters/tables/film_grain.cpp | — none (decoder/output side) | src/codec/filters/tables/film_grain_test.cpp | 611 checks (CPU oracle) | N/A | no | GPU-SERIAL |
+| svc/ops_full † | §5.8, §5.10, §5.11, §6.8, §6.10, §6.11 | src/pipeline/svc/ops_full/ | — | src/pipeline/svc/ops_full/lcr_ops_full_test.cpp | — | — | no | GPU-SERIAL |
+| inter/mlayers † | §5.2.2, §5.4.1, §6.2.2, §6.4.1, §7.3.6–.8 | src/codec/inter/mlayers/ | — | src/codec/inter/mlayers/mlayers_test.cpp | — | — | no | GPU-SERIAL |
+| filters/tip_deblock † | §7.16, §7.17.3, §7.17.7 | src/codec/filters/tip_deblock/tip_deblock.cpp | src/cuda/codec/filters/tip_deblock/tip_deblock.cu | src/cuda/codec/filters/tip_deblock/tip_deblock_emulation_test.cpp (host emulation) | — | — (not run) | no | GPU-UNWIRED |
+| m1/missing_bits — DC intra subsampled † | §7.13.2.11 | src/codec/intra/supplemental/dc_intra_subsampled.cpp | src/cuda/codec/intra/supplemental/intra_full.cu | src/cuda/codec/intra/supplemental/intra_full_emulation_test.cpp (host emulation) | — | — (not run) | no | GPU-UNWIRED |
+| m1/missing_bits — intra filter corner † | §7.13.2.14 | src/codec/intra/supplemental/intra_filter_corner.cpp | src/cuda/codec/intra/modes/intra_predict_device.cuh | src/cuda/codec/intra/modes/intra_modes_test.cu | src/cuda/codec/intra/modes/intra_device_emulation_test.cpp | RTX 3060 (README §“Test result”) | M1 + M2 | GPU-REQUIRED |
+| m1/missing_bits — dc_sign_horz_vert † | §5.20.7.27 | src/codec/intra/supplemental/dc_sign_horz_vert.cpp | — | src/codec/intra/supplemental/missing_bits_test.cpp | — | — | no | GPU-SERIAL |
+| m1/missing_bits — save_subpu † | §7.13.3.15 | src/codec/intra/supplemental/save_subpu.cpp | src/cuda/codec/filters/deblock/subpu/ | src/cuda/codec/filters/deblock/subpu/subpu_test.cu | subpu_emulation_test: 31,474 checks | subpu_test: 77,986 checks (sm_86) | no | GPU-UNWIRED |
+| inter/gme † | §7.13.3.21, §5.18.9, §7.12.2.2 | src/codec/inter/gme/ | src/cuda/codec/inter/gme/ | src/cuda/codec/inter/gme/gme_test.cu | 1,354,622 checks | 81,300 checks incl. real 720p (sm_86) | no | GPU-UNWIRED |
+| tables/missing † | §9.2, §9.3 | src/spec_tables/missing/ | — | src/spec_tables/missing/missing_tables_test.cpp | — | — | no | GPU-SERIAL |
+| metadata/gaps † | §5.17.2/.3, §7.23 | src/frame/metadata/gaps/ | — | src/frame/metadata/gaps/metadata_gaps_test.cpp | — | — | no | GPU-SERIAL |
+| conformance † | Annex A.2–A.5, §6.4.1 | src/core/conformance/ | — | src/core/conformance/conformance_test.cpp | — | — | no | GPU-SERIAL |
+| m2/tile_groups † | §5.19, §5.20.2.1, §5.18.1, §6.18 | src/pipeline/tiles/groups/ | — | src/pipeline/tiles/groups/tile_groups_test.cpp | — | — | no | GPU-SERIAL |
+| qm/obu † | §5.13, §5.18.6.2, §6.12, §6.4.11, §6.2.2 | src/codec/transform/qm/obu/ | — (dequant kernel src/cuda/codec/transform/qm/qm_gpu.cu exists, unwired) | src/codec/transform/qm/obu/qm_obu_test.cpp | — | — | no | GPU-SERIAL |
+| filters/lr_chroma (syntax/decision) † | §5.18.7.11, §5.20.10.5–.6 | src/codec/filters/loop_restoration/chroma/chroma_lr.cpp | — | src/codec/filters/loop_restoration/chroma/chroma_lr_test.cpp | src/codec/filters/loop_restoration/chroma/gate/ | — | no | GPU-SERIAL |
+| filters/lr_chroma (apply §7.20.3) † | §7.20.3 | src/codec/filters/loop_restoration/chroma/chroma_lr.cpp (chroma_apply) | src/cuda/codec/filters/loop_restoration/chroma/ | src/cuda/codec/filters/loop_restoration/chroma/lr_chroma_test.cu | 33,270 checks / 95.2M samples | 57,009 checks / 95.2M samples (sm_86) | no | GPU-UNWIRED |
+| inter/drl_reorder † | §5.4.6, §7.12.2, §7.12.2.19 | src/codec/inter/drl_reorder/ | — | src/codec/inter/drl_reorder/drl_reorder_test.cpp | — | — | no | GPU-SERIAL |
+| tcq/parity † | §5.20.7.27, §5.20.7.28, §5.4.8, §6.17.2 | src/codec/transform/tcq/parity/ | src/cuda/codec/transform/tcq/ | src/cuda/codec/transform/tcq/tcq_test.cu | 1,491,655 checks | 933,016 checks (sm_86) | no | GPU-UNWIRED |
+| m2/ddt † | §7.15.2.1, §7.15.4.1, §9.6, Table 7.1 | src/codec/transform/ddt/ddt_transform.cpp | src/cuda/codec/transform/ddt/ | src/cuda/codec/transform/ddt/ddt_gpu_test.cu | 828,114 checks | 685,590 checks / 1,956,864 elements (sm_86) | no | GPU-UNWIRED |
+| format/chroma (4:2:2 / 4:4:4 / 4:0:0) † | §6.4.1 Table 6.2, §5.4.3/.5/.8, §7.13 | src/formats/chroma/chroma_residual.cpp | src/cuda/formats/chroma/ | src/cuda/formats/chroma/chroma_formats_test.cu | 1,514,866 checks | 1,742,235 checks (sm_86) | no | GPU-UNWIRED |
+| rc/hrd † | §5.4.12/.13, §5.12, §5.15, Annex E.5.4/E.7 | src/codec/rate/rc/hrd/ | — | src/codec/rate/rc/hrd/hrd_test.cpp | — | — | no | GPU-SERIAL |
+| inter/longterm † | §5.4.1/.6, §5.18.2, §7.4.2–.4, §7.23 | src/codec/inter/longterm/ | — | src/codec/inter/longterm/longterm_test.cpp | — | — | no | GPU-SERIAL |
+| inter/tlayers † | §5.2.2, §5.4.1, §5.18.2, §7.3.7, §7.7, §7.23 | src/codec/inter/tlayers/ | — | src/codec/inter/tlayers/tlayers_test.cpp | — | — | no | GPU-SERIAL |
+| inter/random_access † | §6.2.2, §5.18.2, §6.17, §7.4.5 | src/codec/inter/random_access/ | — | src/codec/inter/random_access/random_access_test.cpp | — | — | no | GPU-SERIAL |
+| frame/mfh † | §5.7, §6.7, §5.18.2, §6.17.2, §5.2.1 | src/frame/mfh/ | — | src/frame/mfh/mfh_test.cpp | — | — | no | GPU-SERIAL |
+| quant/dcdeltaq † | §5.4.8, §5.18.6.1/.3, §7.14.2, §7.14.4 | src/codec/transform/delta_q/ | — (quant step is an input to m1/tx and tx_variants) | src/codec/transform/delta_q/dcdeltaq_test.cpp | — | — | no | GPU-SERIAL |
+| inter/sef † | §5.18.1/.2, §6.2.2, §6.17.2, §7.2, §7.21 | src/codec/inter/sef/ | — | src/codec/inter/sef/sef_test.cpp | — | — | no | GPU-SERIAL |
+| metadata/types † | §5.17.1–.13, §6.16.3–.13 | src/frame/metadata/types/ | — | src/frame/metadata/types/metadata_types_test.cpp | — | — | no | GPU-SERIAL |
+| metadata/content_interpretation † | §5.15, §5.4.12, §6.14, §7.3.3, §7.3.8.10/.11 | src/frame/metadata/content_interpretation/ | — | src/frame/metadata/content_interpretation/content_interpretation_test.cpp | — | — | no | GPU-SERIAL |
 
 Notes on split rows: `film_grain_stream` is split into signalling
 (serial) and synthesis (missing); `m1/missing_bits` is split into four
@@ -84,75 +82,103 @@ split into syntax (serial) and §7.20.3 apply (unwired kernel).
 
 ## Matrix 2 — all CUDA kernel units
 
-One row per non-test `.cu` in the tree (58), including the three kernel TUs
-that live beside their CPU component under `src/encoder/`.
+One row per non-test `.cu` in the tree (85).  Every kernel TU
+lives under `src/cuda/` after the folder refactor; the `src/encoder/`
+kernel TUs the earlier audit counted were moved there.
 
 | tool | spec § | CPU reference dir | CUDA kernel dir | parity test | host emulation | real-GPU evidence | wired into M1/M2 | verdict |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| cdef/cdef.cu | §7.18 | src/encoder/filters/cdef/ | its own directory | src/cuda/cdef/cdef_test.cu | — | RTX 3060: 51,047 checks | no (M1 rejects --still-cdef) | GPU-UNWIRED |
-| cfl/cfl.cu | §7.13.5 | src/encoder/cfl/ | its own directory | src/cuda/cfl/cfl_test.cu | — | RTX 3060 (README status) | linked, never called | GPU-UNWIRED |
-| deblock/deblock.cu | §7.17 | src/encoder/filters/deblock/ | its own directory | src/cuda/deblock/deblock_test.cu | — | RTX 3060 (README) | M1 (recon_deblock_frame) | GPU-REQUIRED |
-| dip/dip.cu | §7.13.2.1, §7.13.2.3–.6 | src/encoder/dip/ | its own directory | src/cuda/dip/dip_test.cu | src/cuda/dip/dip_emulation_test.cpp | not run (README) | no | GPU-UNWIRED |
-| entropy.cu | §8.2 | src/entropy/av2/ | its own directory | src/cuda/entropy_test.cu | — | RTX 3060: byte-exact | no (M1/M2 use CPU writer) | GPU-SERIAL |
-| format/high_bitdepth.cu | §6.4.1 Table 6.3, §7.15 | src/encoder/hbd/ | its own directory | src/cuda/format/high_bitdepth_test.cu | — | not executed (README) | no | GPU-UNWIRED |
-| format/high_bitdepth_gpu.cu | §6.4.1, §7.15 | src/encoder/m10/ | its own directory | src/cuda/format/high_bitdepth_gpu_test.cu | — | not executed (README) | no (M10 standalone) | GPU-UNWIRED |
-| ibc/ibc.cu | §5.20.5.4, §6.19.7.12 | src/encoder/ibc/ | its own directory | src/cuda/ibc/ibc_test.cu | — | not documented | no | GPU-UNWIRED |
-| ibp/ibp.cu | §7.13.2.7–.9, .12, .14, .17–.18 | src/encoder/ibp/ | its own directory | src/cuda/ibp/ibp_test.cu | src/cuda/ibp/ibp_device_emulation_test.cpp (273,958,171 checks) | not executed (README) | no | GPU-UNWIRED |
-| inter/advanced/advanced.cu | §7.13.3.14, §7.13.3.27, §7.13.3.30 | src/encoder/inter/advanced/ | its own directory | src/cuda/inter/advanced/advanced_test.cu | — | not run (no CUDA device) | no | GPU-UNWIRED |
-| inter/mc/mc.cu | §7.13.3.17–.18 | src/encoder/inter/mc/ | its own directory | src/cuda/inter/mc/mc_test.cu | — | RTX 3060: 1,069 checks | M2 gate (not in CMake) | GPU-REQUIRED |
-| inter/me/me.cu | §7.13.3.14, §7.13.3.16 | src/encoder/inter/me/ | its own directory | src/cuda/inter/me/me_test.cu | — | RTX 3060: 510 checks | M2 gate (not in CMake) | GPU-REQUIRED |
-| intra.cu | §7.13.2 | src/encoder/basic_encoder.cpp | its own directory | src/cuda/intra_test.cu | — | RTX 3060 (README-intra) | M0 only | GPU-REQUIRED |
-| intra_modes/intra_modes.cu | §7.13.2 | src/encoder/intra_modes/ | its own directory | src/cuda/intra_modes/intra_modes_test.cu | src/cuda/intra_modes/intra_device_emulation_test.cpp (2,782 checks) | RTX 3060 | M1 + M2 | GPU-REQUIRED |
-| basic_pipeline.cu | orchestration | src/encoder/basic_encoder.cpp | its own directory | src/cuda/basic_pipeline_test.cpp | — | RTX 3060 PASS | M0 only | GPU-REQUIRED |
-| m1/cdef/still_cdef.cu | §7.18 | src/encoder/m1/filters_stream/ + src/encoder/filters/cdef/ | its own directory | src/cuda/m1/cdef/still_cdef_gpu_test.cu | src/cuda/m1/cdef/still_cdef_test.cpp | not run (README) | no (rejected by GpuOptions) | GPU-UNWIRED |
-| m1/cfl/still_cfl.cu | §7.13.5 | src/encoder/cfl/ | its own directory | src/cuda/m1/cfl/still_cfl_test.cu | — | RTX 3060 (README) | no (wrapper never called) | GPU-UNWIRED |
-| m1/chroma/still_chroma.cu | §7.13.2, §7.13.5 | src/encoder/m1/still_encoder.cpp (chroma decide) | its own directory | src/cuda/m1/chroma/still_chroma_test.cu | src/cuda/m1/chroma/uv_full_emulation_test.cpp, frame_emulation_shim.cpp | RTX 3060 PASS | M1 | GPU-REQUIRED |
-| m1/hbd/hbd_frame.cu | §6.4.1 Table 6.3, §7.15 | src/encoder/hbd/ | its own directory | src/cuda/m1/hbd/hbd_test.cu | src/cuda/m1/hbd/hbd_test.cpp (19,312 checks) | RTX 3060: 1,523,424 checks | no | GPU-UNWIRED |
-| m1/hbd/hbd_tx.cu | §7.15, §7.14.4 | src/encoder/hbd/ | its own directory | src/cuda/m1/hbd/hbd_test.cu | src/cuda/m1/hbd/hbd_test.cpp | RTX 3060: 1,523,424 checks | no | GPU-UNWIRED |
-| m1/still_gpu.cu | orchestration | src/encoder/m1/still_encoder.cpp | its own directory | src/cuda/m1/still_gpu_test.cc | — | RTX 3060: 105-case matrix | M1 product (--still-gpu) | GPU-REQUIRED |
-| m1/recon/recon.cu | §7.14.3, §7.17 metadata | src/encoder/m1/still_encoder.cpp (fill_deblock_mi) | its own directory | src/cuda/m1/recon/recon_test.cu | — | RTX 3060: 2,652 checks | M1 | GPU-REQUIRED |
-| m1/restoration/still_restoration.cu | §7.19, §7.20–§7.20.3 | src/encoder/filters/restoration/ | its own directory | src/cuda/m1/restoration/still_restoration_test.cu | src/cuda/m1/restoration/real_recon_oracle_test.cpp | not executed (README) | no | GPU-UNWIRED |
-| m1/sched/sched_exec.cu | scheduler | src/cuda/m1/plan/ + src/cuda/m1/sched/sched.cpp | its own directory | src/cuda/m1/sched/sched_plan_test.cpp | — | not run here (host-only plan tests) | no (host availability only) | GPU-UNWIRED |
-| m1/search/luma_search.cu | §7.13.2 | src/encoder/m1/still_encoder.cpp (choose_luma_mode) | its own directory | src/cuda/m1/search/luma_search_test.cu | — | RTX 3060 | M1 | GPU-REQUIRED |
-| m1/tx/still_tx.cu | §7.15.2–§7.15.4, §7.14.4 | src/encoder/tx_variants/ | its own directory | src/cuda/m1/tx/still_tx_test.cu | — | RTX 3060 timings; parity expected-result wording | M1 | GPU-REQUIRED |
-| m2/video_backend_cuda.cu | §7.12, §7.13.3, §7.15, §7.14.3 | src/encoder/m2/ | its own directory | src/cuda/m2/video_gate.cpp, src/cuda/m2/video_selftest.cpp | src/cuda/m2/video_backend_cpu.cpp | README claim (pre-refactor): RTX 3060 byte-identical | M2 gate (not in CMake) | GPU-REQUIRED |
-| mrl/mrl.cu | §7.13.2.7–.8 | src/encoder/mrl/ | its own directory | src/cuda/mrl/mrl_test.cu | src/cuda/mrl/mrl_emulation_test.cpp (16,904 checks) | not documented | no | GPU-UNWIRED |
-| palette/palette.cu | §5.20.8, §7.13.4 | src/encoder/palette/ | its own directory | src/cuda/palette/palette_test.cu | — | not documented | no | GPU-UNWIRED |
-| qm/qm_gpu.cu | §7.14.4, §5.13 | src/encoder/qm/ | its own directory | src/cuda/qm/qm_gpu_test.cu | — | not run (README) | no | GPU-UNWIRED |
-| rdoq/rdoq_batch.cu | §7.14.4, §5.20.7 | src/encoder/rdoq/ | its own directory | src/cuda/rdoq/rdoq_batch_test.cu | — | not run (README) | no | GPU-UNWIRED |
-| restoration/ccso.cu | §7.19/§7.19.1 | src/encoder/filters/restoration/ccso_core.h | its own directory | src/cuda/restoration/ccso_test.cu | — | not measured (README) | no | GPU-UNWIRED |
-| restoration/wiener.cu | §7.20, §7.20.3 | src/encoder/filters/restoration/wiener_core.h | its own directory | src/cuda/restoration/wiener_test.cu | — | not measured (README) | no | GPU-UNWIRED |
-| scheduler/scheduler.cu | scheduler / §5.20 dependency order | src/encoder/basic_encoder.cpp + src/cuda/scheduler/scheduler.cpp | its own directory | src/cuda/scheduler/scheduler_plan_test.cpp | — | RTX 3060 (README) | M0 only | GPU-REQUIRED |
-| transform.cu | §7.15.2, §7.15.4 | src/encoder/basic_encoder.cpp | its own directory | src/cuda/transform_test.cu | — | RTX 3060 PASS | M0 only | GPU-REQUIRED |
-| tx_secondary/tx_secondary_gpu.cu | §7.15.3 | src/encoder/tx_secondary/ | its own directory | src/cuda/tx_secondary/tx_secondary_test.cu | src/cuda/tx_secondary/tx_secondary_emulation_test.cpp (11,504,810 checks) | not run (README) | no | GPU-UNWIRED |
-| tx_type/tx_type.cu | §7.15.4, §9.6 | src/encoder/tx_type/ | its own directory | src/cuda/tx_type/tx_type_test.cu | — | RTX 3060: 328,694 checks | no | GPU-UNWIRED |
-| tx_variants/tx_variants.cu | §7.15.2, §7.14.4 | src/encoder/tx_variants/ | its own directory | src/cuda/tx_variants/tx_variants_test.cu | — | RTX 3060: 7,203 checks | M2 (also M1 support link) | GPU-REQUIRED |
-| cfl/mhccp/mhccp_gpu.cu | §7.13.6–.8 | src/encoder/cfl/mhccp/ | its own directory | src/encoder/cfl/mhccp/mhccp_gpu_test.cu | src/encoder/cfl/mhccp/mhccp_emulation_test.cpp (16,803 checks) | not run (no nvcc) | no | GPU-UNWIRED |
-| inter/me2/me2_gpu.cu | §7.13.3.14, §7.12.2 | src/encoder/inter/me2/ | its own directory | src/encoder/inter/me2/me2_gpu_test.cu | — | not documented | no (M2 uses cuda/inter/me) | GPU-UNWIRED |
-| m1/transform_stream/transform_stream_gpu.cu | §7.15.4, §7.14.4 | src/encoder/m1/transform_stream/ | its own directory | src/encoder/m1/transform_stream/transform_stream_gpu_test.cu | — | not run (no nvcc) | no | GPU-UNWIRED |
-| intra_full/intra_full.cu | §7.13.2.11, §7.13.2.14, §7.15.4, §5.20.7.29 | src/encoder/m1/missing_bits/, src/encoder/tx_variants/ | its own directory | src/cuda/intra_full/intra_full_emulation_test.cpp (host emulation) | src/cuda/intra_full/intra_full_emulation_test.cpp | not run | no | GPU-UNWIRED |
-| lossless_inter/lossless_inter.cu | §7.15.2.2, §7.15.4, §5.20.6.1, §5.18.2 | src/encoder/lossless/inter/ | its own directory | src/cuda/lossless_inter/lossless_inter_emulation_test.cpp (host emulation) | src/cuda/lossless_inter/lossless_inter_emulation_test.cpp | not run | no | GPU-UNWIRED |
-| morph/morph.cu | §7.13.3.26 (→ §7.13.3.25) | src/encoder/inter/morph/morph_common.h | its own directory | src/cuda/morph/morph_emulation.cpp (host emulation) | src/cuda/morph/morph_emulation.cpp | not run | no | GPU-UNWIRED |
-| pc_wiener/pc_wiener.cu | §7.20.4 | src/encoder/filters/spec_tables/pc_wiener.cpp | its own directory | none | — | not run | no | GPU-UNWIRED |
-| tip/tip.cu | §7.10.2–.6, §7.13.3.2/.17/.18 | src/encoder/inter/tip_stream/tip_build.cpp | its own directory | none | — | not run | no | GPU-UNWIRED |
-| tip_deblock/tip_deblock.cu | §7.16, §7.17.3, §7.17.7 | src/encoder/filters/tip_deblock/tip_deblock.cpp | its own directory | src/cuda/tip_deblock/tip_deblock_emulation_test.cpp (host emulation) | src/cuda/tip_deblock/tip_deblock_emulation_test.cpp | not run | no | GPU-UNWIRED |
-| warp_stack/warp_stack.cu | §7.13.3.19–.20, §7.13.3 warp | src/encoder/inter/warp_stack/ | its own directory | none | src/cuda/warp_stack/warp_stack_host_ref.cpp (host reference shim) | not run | no | GPU-UNWIRED |
-| compound_full/compound_full.cu | §7.13.3.3–.14, .29–.30 | src/encoder/m2/compound_stream/, src/encoder/inter/advanced/ | its own directory | none | — | not run | no | GPU-UNWIRED |
-| gdf/gdf.cu | §7.20.5, §5.20.10.3, §7.20.1 | src/encoder/filters/spec_tables/gdf.cpp | its own directory | none | — | not run | no | GPU-UNWIRED |
-| tx_partition/tx_partition_gpu.cu | §5.20.6.1–.3, §5.18.8.1 | src/encoder/m2/tx_partition/ | its own directory | none | — | not run | no | GPU-UNWIRED |
-| cuda/chroma_formats/chroma_formats.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
-| cuda/ddt/ddt_gpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
-| cuda/gme/gme.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
-| cuda/lr_chroma/lr_chroma.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
-| cuda/motion_field/motion_field.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
-| cuda/subpu/subpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
-| cuda/tcq/tcq.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cdef/cdef.cu | §7.18 | src/codec/filters/cdef/ | its own directory | src/cuda/codec/filters/cdef/cdef_test.cu | — | RTX 3060: 51,047 checks | no (M1 rejects --still-cdef) | GPU-UNWIRED |
+| cfl/cfl.cu | §7.13.5 | src/codec/intra/cfl/ | its own directory | src/cuda/codec/intra/cfl/cfl_test.cu | — | RTX 3060 (README status) | linked, never called | GPU-UNWIRED |
+| deblock/deblock.cu | §7.17 | src/codec/filters/deblock/ | its own directory | src/cuda/codec/filters/deblock/deblock_test.cu | — | RTX 3060 (README) | M1 (recon_deblock_frame) | GPU-REQUIRED |
+| dip/dip.cu | §7.13.2.1, §7.13.2.3–.6 | src/codec/intra/dip/ | its own directory | src/cuda/codec/intra/dip/dip_test.cu | src/cuda/codec/intra/dip/dip_emulation_test.cpp | not run (README) | no | GPU-UNWIRED |
+| entropy.cu | §8.2 | src/codec/entropy/av2/ | its own directory | src/cuda/entropy_test.cu | — | RTX 3060: byte-exact | no (M1/M2 use CPU writer) | GPU-SERIAL |
+| format/high_bitdepth.cu | §6.4.1 Table 6.3, §7.15 | src/formats/high_bitdepth/ | its own directory | src/cuda/formats/high_bitdepth_test.cu | — | not executed (README) | no | GPU-UNWIRED |
+| format/high_bitdepth_gpu.cu | §6.4.1, §7.15 | src/pipeline/still/high_bitdepth/ | its own directory | src/cuda/formats/high_bitdepth_gpu_test.cu | — | not executed (README) | no (M10 standalone) | GPU-UNWIRED |
+| formats/format_device.cpp | §5.18.4.4, §7.21.2, §7.17 | src/formats/format.cpp, src/codec/filters/deblock/ | its own directory | src/cuda/formats/format_device_test.cpp | — | 1,064,426 checks (sm_86) | no (geometry for the HBD/deblock stage) | GPU-UNWIRED |
+| ibc/ibc.cu | §5.20.5.4, §6.19.7.12 | src/codec/intra/ibc/core/ | its own directory | src/cuda/codec/intra/ibc/ibc_test.cu | — | not documented | no | GPU-UNWIRED |
+| ibp/ibp.cu | §7.13.2.7–.9, .12, .14, .17–.18 | src/codec/intra/ibp/ | its own directory | src/cuda/codec/intra/ibp/ibp_test.cu | src/cuda/codec/intra/ibp/ibp_device_emulation_test.cpp (273,958,171 checks) | not executed (README) | no | GPU-UNWIRED |
+| inter/advanced/advanced.cu | §7.13.3.14, §7.13.3.27, §7.13.3.30 | src/codec/inter/advanced/ | its own directory | src/cuda/codec/inter/advanced/advanced_test.cu | — | not run (no CUDA device) | no | GPU-UNWIRED |
+| inter/mc/mc.cu | §7.13.3.17–.18 | src/codec/inter/mc/ | its own directory | src/cuda/codec/inter/mc/mc_test.cu | — | RTX 3060: 1,069 checks | M2 gate (not in CMake) | GPU-REQUIRED |
+| inter/me/me.cu | §7.13.3.14, §7.13.3.16 | src/codec/inter/me/ | its own directory | src/cuda/codec/inter/me/me_test.cu | — | RTX 3060: 510 checks | M2 gate (not in CMake) | GPU-REQUIRED |
+| intra.cu | §7.13.2 | src/pipeline/still/basic_encoder.cpp | its own directory | src/cuda/intra_test.cu | — | RTX 3060 (README-intra) | M0 only | GPU-REQUIRED |
+| intra_modes/intra_modes.cu | §7.13.2 | src/codec/intra/modes/ | its own directory | src/cuda/codec/intra/modes/intra_modes_test.cu | src/cuda/codec/intra/modes/intra_device_emulation_test.cpp (2,782 checks) | RTX 3060 | M1 + M2 | GPU-REQUIRED |
+| basic_pipeline.cu | orchestration | src/pipeline/still/basic_encoder.cpp | its own directory | src/cuda/basic_pipeline_test.cpp | — | RTX 3060 PASS | M0 only | GPU-REQUIRED |
+| m1/cdef/still_cdef.cu | §7.18 | src/codec/filters/stream/ + src/codec/filters/cdef/ | its own directory | src/cuda/pipeline/still/cdef/still_cdef_gpu_test.cu | src/cuda/pipeline/still/cdef/still_cdef_test.cpp | not run (README) | no (rejected by GpuOptions) | GPU-UNWIRED |
+| m1/cfl/still_cfl.cu | §7.13.5 | src/codec/intra/cfl/ | its own directory | src/cuda/pipeline/still/cfl/still_cfl_test.cu | — | RTX 3060 (README) | no (wrapper never called) | GPU-UNWIRED |
+| m1/chroma/still_chroma.cu | §7.13.2, §7.13.5 | src/pipeline/still/still_encoder.cpp (chroma decide) | its own directory | src/cuda/pipeline/still/chroma/still_chroma_test.cu | src/cuda/pipeline/still/chroma/uv_full_emulation_test.cpp, frame_emulation_shim.cpp | RTX 3060 PASS | M1 | GPU-REQUIRED |
+| m1/hbd/hbd_frame.cu | §6.4.1 Table 6.3, §7.15 | src/formats/high_bitdepth/ | its own directory | src/cuda/pipeline/still/hbd/hbd_test.cu | src/cuda/pipeline/still/hbd/hbd_test.cpp (19,312 checks) | RTX 3060: 1,523,424 checks | no | GPU-UNWIRED |
+| m1/hbd/hbd_tx.cu | §7.15, §7.14.4 | src/formats/high_bitdepth/ | its own directory | src/cuda/pipeline/still/hbd/hbd_test.cu | src/cuda/pipeline/still/hbd/hbd_test.cpp | RTX 3060: 1,523,424 checks | no | GPU-UNWIRED |
+| m1/still_gpu.cu | orchestration | src/pipeline/still/still_encoder.cpp | its own directory | src/cuda/pipeline/still/still_gpu_test.cc | — | RTX 3060: 105-case matrix | M1 product (--still-gpu) | GPU-REQUIRED |
+| m1/recon/recon.cu | §7.14.3, §7.17 metadata | src/pipeline/still/still_encoder.cpp (fill_deblock_mi) | its own directory | src/cuda/pipeline/still/recon/recon_test.cu | — | RTX 3060: 2,652 checks | M1 | GPU-REQUIRED |
+| m1/restoration/still_restoration.cu | §7.19, §7.20–§7.20.3 | src/codec/filters/loop_restoration/ | its own directory | src/cuda/pipeline/still/restoration/still_restoration_test.cu | src/cuda/pipeline/still/restoration/real_recon_oracle_test.cpp | not executed (README) | no | GPU-UNWIRED |
+| m1/sched/sched_exec.cu | scheduler | src/cuda/pipeline/still/plan/ + src/cuda/pipeline/still/sched/sched.cpp | its own directory | src/cuda/pipeline/still/sched/sched_plan_test.cpp | — | not run here (host-only plan tests) | no (host availability only) | GPU-UNWIRED |
+| m1/search/luma_search.cu | §7.13.2 | src/pipeline/still/still_encoder.cpp (choose_luma_mode) | its own directory | src/cuda/pipeline/still/search/luma_search_test.cu | — | RTX 3060 | M1 | GPU-REQUIRED |
+| m1/tx/still_tx.cu | §7.15.2–§7.15.4, §7.14.4 | src/codec/transform/variants/ | its own directory | src/cuda/pipeline/still/tx/still_tx_test.cu | — | RTX 3060 timings; parity expected-result wording | M1 | GPU-REQUIRED |
+| m2/video_backend_cuda.cu | §7.12, §7.13.3, §7.13.3.14, §7.15, §7.14.3, §5.4.12, §5.7 | src/pipeline/video/ | its own directory | src/cuda/pipeline/video/video_gate.cpp, src/cuda/pipeline/video/video_selftest.cpp | src/cuda/pipeline/video/video_backend_cpu.cpp | RTX 3060 `gate_video_gpu`: key+P, refs 2/3, B frames, tlayers, compound, MFH/timing byte-identical at 360p | M2 product (`--video-gpu`, `av2enc_video_gpu`) | GPU-REQUIRED |
+| mrl/mrl.cu | §7.13.2.7–.8 | src/codec/intra/mrl/core/ | its own directory | src/cuda/codec/intra/mrl/mrl_test.cu | src/cuda/codec/intra/mrl/mrl_emulation_test.cpp (16,904 checks) | not documented | no | GPU-UNWIRED |
+| palette/palette.cu | §5.20.8, §7.13.4 | src/codec/intra/palette/core/ | its own directory | src/cuda/codec/intra/palette/palette_test.cu | — | not documented | no | GPU-UNWIRED |
+| qm/qm_gpu.cu | §7.14.4, §5.13 | src/codec/transform/qm/ | its own directory | src/cuda/codec/transform/qm/qm_gpu_test.cu | — | not run (README) | no | GPU-UNWIRED |
+| rdoq/rdoq_batch.cu | §7.14.4, §5.20.7 | src/codec/rate/rdoq/ | its own directory | src/cuda/codec/rate/rdoq/rdoq_batch_test.cu | — | not run (README) | no | GPU-UNWIRED |
+| restoration/ccso.cu | §7.19/§7.19.1 | src/codec/filters/loop_restoration/ccso_core.h | its own directory | src/cuda/codec/filters/loop_restoration/ccso_test.cu | — | not measured (README) | no | GPU-UNWIRED |
+| restoration/wiener.cu | §7.20, §7.20.3 | src/codec/filters/loop_restoration/wiener_core.h | its own directory | src/cuda/codec/filters/loop_restoration/wiener_test.cu | — | not measured (README) | no | GPU-UNWIRED |
+| scheduler/scheduler.cu | scheduler / §5.20 dependency order | src/pipeline/still/basic_encoder.cpp + src/cuda/pipeline/dispatch/scheduler/scheduler.cpp | its own directory | src/cuda/pipeline/dispatch/scheduler/scheduler_plan_test.cpp | — | RTX 3060 (README) | M0 only | GPU-REQUIRED |
+| transform.cu | §7.15.2, §7.15.4 | src/pipeline/still/basic_encoder.cpp | its own directory | src/cuda/transform_test.cu | — | RTX 3060 PASS | M0 only | GPU-REQUIRED |
+| tx_secondary/tx_secondary_gpu.cu | §7.15.3 | src/codec/transform/secondary/ | its own directory | src/cuda/codec/transform/secondary/tx_secondary_test.cu | src/cuda/codec/transform/secondary/tx_secondary_emulation_test.cpp (11,504,810 checks) | not run (README) | no | GPU-UNWIRED |
+| tx_type/tx_type.cu | §7.15.4, §9.6 | src/codec/transform/tx_type/ | its own directory | src/cuda/codec/transform/tx_type/tx_type_test.cu | — | RTX 3060: 328,694 checks | no | GPU-UNWIRED |
+| tx_variants/tx_variants.cu | §7.15.2, §7.14.4 | src/codec/transform/variants/ | its own directory | src/cuda/codec/transform/variants/tx_variants_test.cu | — | RTX 3060: 7,203 checks | M2 (also M1 support link) | GPU-REQUIRED |
+| cfl/mhccp/mhccp_gpu.cu | §7.13.6–.8 | src/codec/intra/cfl/mhccp/ | its own directory | src/codec/intra/cfl/mhccp/mhccp_gpu_test.cu | src/codec/intra/cfl/mhccp/mhccp_emulation_test.cpp (16,803 checks) | not run (no nvcc) | no | GPU-UNWIRED |
+| inter/me2/me2_gpu.cu | §7.13.3.14, §7.12.2 | src/codec/inter/me_precision/ | its own directory | src/codec/inter/me_precision/me2_gpu_test.cu | — | not documented | no (M2 uses cuda/inter/me) | GPU-UNWIRED |
+| m1/transform_stream/transform_stream_gpu.cu | §7.15.4, §7.14.4 | src/codec/transform/stream/ | its own directory | src/codec/transform/stream/transform_stream_gpu_test.cu | — | not run (no nvcc) | no | GPU-UNWIRED |
+| intra_full/intra_full.cu | §7.13.2.11, §7.13.2.14, §7.15.4, §5.20.7.29 | src/codec/intra/supplemental/, src/codec/transform/variants/ | its own directory | src/cuda/codec/intra/supplemental/intra_full_emulation_test.cpp (host emulation) | src/cuda/codec/intra/supplemental/intra_full_emulation_test.cpp | not run | no | GPU-UNWIRED |
+| lossless_inter/lossless_inter.cu | §7.15.2.2, §7.15.4, §5.20.6.1, §5.18.2 | src/codec/entropy/lossless/inter/ | its own directory | src/cuda/codec/entropy/lossless/inter/lossless_inter_emulation_test.cpp (host emulation) | src/cuda/codec/entropy/lossless/inter/lossless_inter_emulation_test.cpp | not run | no | GPU-UNWIRED |
+| morph/morph.cu | §7.13.3.26 (→ §7.13.3.25) | src/codec/inter/morph/morph_common.h | its own directory | src/cuda/codec/inter/morph/morph_emulation.cpp (host emulation) | src/cuda/codec/inter/morph/morph_emulation.cpp | not run | no | GPU-UNWIRED |
+| pc_wiener/pc_wiener.cu | §7.20.4 | src/codec/filters/tables/pc_wiener.cpp | its own directory | none | — | not run | no | GPU-UNWIRED |
+| tip/tip.cu | §7.10.2–.6, §7.13.3.2/.17/.18 | src/codec/inter/tip/tip_build.cpp | its own directory | none | — | not run | no | GPU-UNWIRED |
+| tip_deblock/tip_deblock.cu | §7.16, §7.17.3, §7.17.7 | src/codec/filters/tip_deblock/tip_deblock.cpp | its own directory | src/cuda/codec/filters/tip_deblock/tip_deblock_emulation_test.cpp (host emulation) | src/cuda/codec/filters/tip_deblock/tip_deblock_emulation_test.cpp | not run | no | GPU-UNWIRED |
+| warp_stack/warp_stack.cu | §7.13.3.19–.20, §7.13.3 warp | src/codec/inter/warp_stack/ | its own directory | none | src/cuda/codec/inter/warp_stack/warp_stack_host_ref.cpp (host reference shim) | not run | no | GPU-UNWIRED |
+| compound_full/compound_full.cu | §7.13.3.3–.14, .29–.30 | src/codec/inter/compound/, src/codec/inter/advanced/ | its own directory | none | — | not run | no | GPU-UNWIRED |
+| gdf/gdf.cu | §7.20.5, §5.20.10.3, §7.20.1 | src/codec/filters/tables/gdf.cpp | its own directory | none | — | not run | no | GPU-UNWIRED |
+| tx_partition/tx_partition_gpu.cu | §5.20.6.1–.3, §5.18.8.1 | src/codec/transform/tx_partition/ | its own directory | none | — | not run | no | GPU-UNWIRED |
+| codec/inter/me_precision/me2_gpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| codec/transform/stream/transform_stream_gpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/entropy/lossless/inter/lossless_inter.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/filters/deblock/subpu/subpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/filters/loop_restoration/chroma/lr_chroma.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/inter/compound/compound_full.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/inter/gme/gme.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/inter/mv_stack/mv_stack.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/inter/temporal/motion_field/motion_field.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/intra/modes/intra_modes.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/intra/supplemental/intra_full.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/intra/workspace/intra_workspace.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/transform/ddt/ddt_gpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/transform/delta_q/deltaq_gpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/transform/secondary/tx_secondary_gpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/transform/tcq/tcq.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/codec/transform/variants/tx_variants.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/formats/chroma/chroma_formats.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/formats/high_bitdepth.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/formats/high_bitdepth_gpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/cdef/still_cdef.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/cfl/still_cfl.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/chroma/still_chroma.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/hbd/hbd_frame.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/hbd/hbd_tx.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/plan/plan_cost.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/recon/recon.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/restoration/still_restoration.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/sched/sched_exec.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/search/luma_search.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/still_gpu.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/still/tx/still_tx.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
+| cuda/pipeline/video/video_backend_cuda.cu | — | — | its own directory | — | — | — | no | GPU-UNWIRED |
 
 `GPU-UNWIRED` here is not a defect by itself: `cdef`, `restoration`, `dip`,
 `ibp`, `mrl`, `palette`, `ibc`, `qm`, `rdoq`, `tx_type`, `tx_secondary`,
 `hbd`, `mhccp` and `me2` are landed components waiting for a caller. It
 becomes a shipping defect when the option is exposed and silently falls
-back. `src/cuda/m1/still_gpu.h:gpu_m3_options_supported()` rejects every
+back. `src/cuda/pipeline/still/still_gpu.h:gpu_m3_options_supported()` rejects every
 unported tool by name, so the M1 path is honest about the gap.
 
 ## Matrix 3 — modules that landed during this audit
@@ -164,16 +190,16 @@ real-GPU parity test yet; none is called from a GPU path.
 
 | module | kernel TU | spec § | CPU reference | parity test | real-GPU evidence | arena contract | state |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| src/cuda/compound_full/ | compound_full.cu | §7.13.3.3–.14, .29–.30 | src/encoder/m2/compound_stream/, src/encoder/inter/advanced/ | none | none | Arena + required_device_bytes | landed during this audit; unwired |
-| src/cuda/intra_full/ | intra_full.cu | §7.13.2.11, §7.13.2.14, §7.15.4, §5.20.7.29 | src/encoder/m1/missing_bits/, src/encoder/tx_variants/ | intra_full_emulation_test.cpp | none | Arena + required_device_bytes + mark/rewind | closes the DC-subsampled and identity-TX gaps; unwired |
-| src/cuda/lossless_inter/ | lossless_inter.cu + lossless_inter_host.cpp | §7.15.2.2, §7.15.4, §5.20.6.1, §5.18.2 | src/encoder/lossless/inter/ | lossless_inter_emulation_test.cpp | none | Arena + required_device_bytes | unwired |
-| src/cuda/morph/ | morph.cu + morph_workspace.cpp | §7.13.3.26 (→ §7.13.3.25 BAWP process) | src/encoder/inter/morph/morph_common.h | morph_emulation.cpp | none | Arena + required_device_bytes + mark/rewind | unwired |
-| src/cuda/pc_wiener/ | pc_wiener.cu | §7.20.4 | src/encoder/filters/spec_tables/pc_wiener.cpp | none | none | Arena + pc_wiener_required_device_bytes | closes the PC-Wiener gap; unwired |
-| src/cuda/tip/ | tip.cu | §7.10.2–.6, §7.13.3.2/.17/.18 | src/encoder/inter/tip_stream/tip_build.cpp | none | none | Arena + required_device_bytes + mark/rewind | closes the TIP prediction gap; unwired |
-| src/cuda/tip_deblock/ | tip_deblock.cu | §7.16, §7.17.3, §7.17.7 | src/encoder/filters/tip_deblock/tip_deblock.cpp | tip_deblock_emulation_test.cpp | none | Arena + required_device_bytes + mark/rewind | closes the §7.16 gap; unwired |
-| src/cuda/gdf/ | gdf.cu | §7.20.5 | src/encoder/filters/spec_tables/gdf.cpp | none | none | Arena + required_device_bytes + mark/rewind | closes the GDF gap; unwired |
-| src/cuda/tx_partition/ | tx_partition_gpu.cu + tx_partition_plan.cpp | §5.20.6.1–.3, §5.18.8.1 | src/encoder/m2/tx_partition/ | none | none | Arena + required_device_bytes + mark/rewind | closes the per-TU TX driver gap; unwired |
-| src/cuda/warp_stack/ | warp_stack.cu + warp_stack_host_ref.cpp | §7.13.3 warp stack | src/encoder/inter/warp_stack/ | host reference shim only | none | Arena + required_device_bytes | landed during this audit; unwired |
+| src/cuda/codec/inter/compound/ | compound_full.cu | §7.13.3.3–.14, .29–.30 | src/codec/inter/compound/, src/codec/inter/advanced/ | none | none | Arena + required_device_bytes | landed during this audit; unwired |
+| src/cuda/codec/intra/supplemental/ | intra_full.cu | §7.13.2.11, §7.13.2.14, §7.15.4, §5.20.7.29 | src/codec/intra/supplemental/, src/codec/transform/variants/ | intra_full_emulation_test.cpp | none | Arena + required_device_bytes + mark/rewind | closes the DC-subsampled and identity-TX gaps; unwired |
+| src/cuda/codec/entropy/lossless/inter/ | lossless_inter.cu + lossless_inter_host.cpp | §7.15.2.2, §7.15.4, §5.20.6.1, §5.18.2 | src/codec/entropy/lossless/inter/ | lossless_inter_emulation_test.cpp | none | Arena + required_device_bytes | unwired |
+| src/cuda/codec/inter/morph/ | morph.cu + morph_workspace.cpp | §7.13.3.26 (→ §7.13.3.25 BAWP process) | src/codec/inter/morph/morph_common.h | morph_emulation.cpp | none | Arena + required_device_bytes + mark/rewind | unwired |
+| src/cuda/codec/filters/pc_wiener/ | pc_wiener.cu | §7.20.4 | src/codec/filters/tables/pc_wiener.cpp | none | none | Arena + pc_wiener_required_device_bytes | closes the PC-Wiener gap; unwired |
+| src/cuda/codec/inter/tip/ | tip.cu | §7.10.2–.6, §7.13.3.2/.17/.18 | src/codec/inter/tip/tip_build.cpp | none | none | Arena + required_device_bytes + mark/rewind | closes the TIP prediction gap; unwired |
+| src/cuda/codec/filters/tip_deblock/ | tip_deblock.cu | §7.16, §7.17.3, §7.17.7 | src/codec/filters/tip_deblock/tip_deblock.cpp | tip_deblock_emulation_test.cpp | none | Arena + required_device_bytes + mark/rewind | closes the §7.16 gap; unwired |
+| src/cuda/codec/filters/gdf/ | gdf.cu | §7.20.5 | src/codec/filters/tables/gdf.cpp | none | none | Arena + required_device_bytes + mark/rewind | closes the GDF gap; unwired |
+| src/cuda/codec/transform/tx_partition/ | tx_partition_gpu.cu + tx_partition_plan.cpp | §5.20.6.1–.3, §5.18.8.1 | src/codec/transform/tx_partition/ | none | none | Arena + required_device_bytes + mark/rewind | closes the per-TU TX driver gap; unwired |
+| src/cuda/codec/inter/warp_stack/ | warp_stack.cu + warp_stack_host_ref.cpp | §7.13.3 warp stack | src/codec/inter/warp_stack/ | host reference shim only | none | Arena + required_device_bytes | landed during this audit; unwired |
 
 All ten landed with an arena-based `required_device_bytes()` contract and
 no direct allocator. **None has a parity test or a caller.** Two of them
@@ -189,8 +215,8 @@ Estimates are order-of-magnitude, not measurements.
 
 | # | tool | spec § | CPU reference | parity / gate | samples/frame | basis |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Motion-field storage (§7.22) | §7.22 | src/encoder/inter/temporal/motion_field.cpp | src/encoder/inter/temporal/ (gate) | 129,600 | per-4x4 grid entries, not pixels |
-| 2 | Temporal MV projection / ref-MV bank update | §7.12.2, §7.12.2.19 | src/encoder/inter/temporal/ + src/encoder/inter/mv_stack_full/ | src/encoder/inter/mv_stack_full/mv_stack_full_test.cpp | 129,600 | per-4x4 MV entries; metadata, not pixels |
+| 1 | Motion-field storage (§7.22) | §7.22 | src/codec/inter/temporal/motion_field.cpp | src/codec/inter/temporal/ (gate) | 129,600 | per-4x4 grid entries, not pixels |
+| 2 | Temporal MV projection / ref-MV bank update | §7.12.2, §7.12.2.19 | src/codec/inter/temporal/ + src/codec/inter/mv_stack/ | src/codec/inter/mv_stack/mv_stack_full_test.cpp | 129,600 | per-4x4 MV entries; metadata, not pixels |
 
 **Closed while this audit was running.** At the start of the audit the
 same method found twelve missing pixel families. Six gained kernels
@@ -211,83 +237,87 @@ Rule: all device memory comes from the single persistent
 allocators are `arena.cpp` (the single `cudaMalloc` that backs the arena)
 and the pinned-host staging in `context.cpp` (`cudaMallocHost`).
 
-- Direct-allocator sites outside the two allowed files: **556**.
+- Direct-allocator sites outside the two allowed files: **608**.
 - Production (non-test) sites: **3** in **1** files.
-- Test/bench/gate sites: **553** in **36** files.
-- Files exposing `required_device_bytes`: **39**.
-- Files using `mark()`/`rewind()`: **25** (`src/cuda/chroma_formats/chroma_formats.cu`, `src/cuda/chroma_formats/chroma_formats.h`, `src/cuda/compound_full/compound_full.h`, `src/cuda/ddt/ddt_gpu.cu`, `src/cuda/format/high_bitdepth_gpu.cu`, `src/cuda/gdf/gdf.cu`, `src/cuda/gme/gme_plan.cpp`, `src/cuda/ibc/ibc.cu`, `src/cuda/intra_full/intra_full.cu`, `src/cuda/intra_full/intra_full.h`, `src/cuda/lossless_inter/lossless_inter_host.cpp`, `src/cuda/lr_chroma/lr_chroma.cu`, `src/cuda/lr_chroma/lr_chroma.h`, `src/cuda/m1/still_gpu.cu`, `src/cuda/m2/video_backend_cuda.cu`, `src/cuda/morph/morph.h`, `src/cuda/morph/morph_workspace.cpp`, `src/cuda/motion_field/motion_field.cu`, `src/cuda/pc_wiener/pc_wiener.cu`, `src/cuda/subpu/subpu_plan.cpp`, `src/cuda/tcq/tcq.h`, `src/cuda/tip/tip.h`, `src/cuda/tip_deblock/tip_deblock.cu`, `src/cuda/tx_partition/tx_partition_plan.cpp`, `src/cuda/tx_partition/tx_partition_plan.h`).
+- Test/bench/gate sites: **605** in **36** files.
+- Files exposing `required_device_bytes`: **43**.
+- Files using `mark()`/`rewind()`: **27** (`src/cuda/codec/entropy/lossless/inter/lossless_inter_host.cpp`, `src/cuda/codec/filters/deblock/subpu/subpu_plan.cpp`, `src/cuda/codec/filters/gdf/gdf.cu`, `src/cuda/codec/filters/loop_restoration/chroma/lr_chroma.cu`, `src/cuda/codec/filters/loop_restoration/chroma/lr_chroma.h`, `src/cuda/codec/filters/pc_wiener/pc_wiener.cu`, `src/cuda/codec/filters/tip_deblock/tip_deblock.cu`, `src/cuda/codec/inter/compound/compound_full.h`, `src/cuda/codec/inter/gme/gme_plan.cpp`, `src/cuda/codec/inter/morph/morph.h`, `src/cuda/codec/inter/morph/morph_workspace.cpp`, `src/cuda/codec/inter/mv_stack/mv_stack.cu`, `src/cuda/codec/inter/temporal/motion_field/motion_field.cu`, `src/cuda/codec/inter/tip/tip.h`, `src/cuda/codec/intra/ibc/ibc.cu`, `src/cuda/codec/intra/supplemental/intra_full.cu`, `src/cuda/codec/intra/supplemental/intra_full.h`, `src/cuda/codec/intra/workspace/intra_workspace.h`, `src/cuda/codec/transform/ddt/ddt_gpu.cu`, `src/cuda/codec/transform/tcq/tcq.h`, `src/cuda/codec/transform/tx_partition/tx_partition_plan.cpp`, `src/cuda/codec/transform/tx_partition/tx_partition_plan.h`, `src/cuda/formats/chroma/chroma_formats.cu`, `src/cuda/formats/chroma/chroma_formats.h`, `src/cuda/formats/high_bitdepth_gpu.cu`, `src/cuda/pipeline/still/still_gpu.cu`, `src/cuda/pipeline/video/video_backend_cuda.cu`).
 
 ### Per-directory result
 
 | directory | arena status | direct sites (file:line) | required_device_bytes | mark/rewind |
 | --- | --- | --- | --- | --- |
-| src/cuda | owner (allocator) | `src/cuda/arena.cpp:98` cudaMalloc<br>`src/cuda/arena.cpp:102` cudaMalloc<br>`src/cuda/arena.cpp:111` cudaFree<br>`src/cuda/arena.cpp:122` cudaFree<br>`src/cuda/arena.cpp:160` cudaFree<br>`src/cuda/context.cpp:142` cudaFree<br>`src/cuda/context.cpp:145` cudaFree<br>`src/cuda/context.cpp:257` cudaMallocHost<br>`src/cuda/context.cpp:260` cudaMallocHost | no | no |
-| src/cuda/cdef | compliant in production; test harness allocates | — | no | no |
-| src/cuda/cfl | compliant in production; test harness allocates | — | no | no |
-| src/cuda/chroma_formats | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/compound_full | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/ddt | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/deblock | compliant in production; test harness allocates | — | no | no |
-| src/cuda/dip | compliant in production; test harness allocates | — | no | no |
-| src/cuda/format | compliant in production; test harness allocates | — | yes | yes |
-| src/cuda/gdf | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/gme | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/ibc | compliant in production; test harness allocates | — | yes | yes |
-| src/cuda/ibp | compliant in production; test harness allocates | — | no | no |
-| src/cuda/inter/advanced | compliant in production; test harness allocates | — | no | no |
-| src/cuda/inter/mc | compliant in production; test harness allocates | — | no | no |
-| src/cuda/inter/me | compliant in production; test harness allocates | — | no | no |
-| src/cuda/intra_full | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/intra_modes | compliant in production; test harness allocates | — | no | no |
-| src/cuda/lossless_inter | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/lr_chroma | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/m1 | compliant — arena-only allocation | — | no | yes |
-| src/cuda/m1/cdef | compliant in production; test harness allocates | — | no | no |
-| src/cuda/m1/cfl | compliant in production; test harness allocates | — | no | no |
-| src/cuda/m1/chroma | compliant in production; test harness allocates | — | no | no |
-| src/cuda/m1/hbd | compliant in production; test harness allocates | — | no | no |
-| src/cuda/m1/recon | compliant in production; test harness allocates | — | no | no |
-| src/cuda/m1/restoration | compliant — no device allocation | — | no | no |
-| src/cuda/m1/sched | compliant — no device allocation | — | no | no |
-| src/cuda/m1/search | compliant in production; test harness allocates | — | no | no |
-| src/cuda/m1/tx | compliant in production; test harness allocates | — | no | no |
-| src/cuda/m2 | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/morph | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/motion_field | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/mrl | compliant in production; test harness allocates | — | no | no |
-| src/cuda/palette | compliant in production; test harness allocates | — | no | no |
-| src/cuda/pc_wiener | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/qm | compliant in production; test harness allocates | — | no | no |
-| src/cuda/rdoq | compliant in production; test harness allocates | — | no | no |
-| src/cuda/restoration | compliant in production; test harness allocates | — | no | no |
-| src/cuda/scheduler | compliant — no device allocation | — | no | no |
-| src/cuda/subpu | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/tcq | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/tip | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/tip_deblock | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/tx_partition | compliant — arena-only allocation | — | yes | yes |
-| src/cuda/tx_secondary | compliant in production; test harness allocates | — | no | no |
-| src/cuda/tx_type | compliant in production; test harness allocates | — | no | no |
-| src/cuda/tx_variants | compliant in production; test harness allocates | — | no | no |
-| src/cuda/warp_stack | compliant — arena-only allocation | — | yes | no |
-| src/encoder/cfl/alpha | compliant in production; test harness allocates | — | no | no |
-| src/encoder/cfl/ds_filters | compliant in production; test harness allocates | — | no | no |
-| src/encoder/cfl/mhccp | compliant in production; test harness allocates | — | no | no |
-| src/encoder/inter/me2 | compliant in production; test harness allocates | — | no | no |
-| src/encoder/m1/transform_stream | compliant — no device allocation | — | no | no |
-| src/encoder/m2/residual | compliant — no device allocation | — | no | no |
-| src/encoder/tx_secondary | compliant — no device allocation | — | no | no |
-| src/encoder/tx_variants | compliant — no device allocation | — | no | no |
-| src/multi_gpu/runtime | **NON-COMPLIANT** — direct cudaMalloc/cudaFree | `src/multi_gpu/runtime/cuda_backend.cpp:183` cudaFree<br>`src/multi_gpu/runtime/cuda_backend.cpp:408` cudaMallocHost<br>`src/multi_gpu/runtime/cuda_backend.cpp:410` cudaMallocHost | no | no |
-| src/profile | compliant — no device allocation | — | no | no |
+| src/codec/inter/me_precision | compliant in production; test harness allocates | — | no | no |
+| src/codec/intra/cfl/alpha | compliant in production; test harness allocates | — | no | no |
+| src/codec/intra/cfl/ds_filters | compliant in production; test harness allocates | — | no | no |
+| src/codec/intra/cfl/mhccp | compliant in production; test harness allocates | — | no | no |
+| src/codec/transform/inter_residual | compliant — no device allocation | — | no | no |
+| src/codec/transform/secondary | compliant — no device allocation | — | no | no |
+| src/codec/transform/stream | compliant — no device allocation | — | no | no |
+| src/codec/transform/variants | compliant — no device allocation | — | no | no |
+| src/core/telemetry | compliant — no device allocation | — | no | no |
+| src/cuda | owner (allocator) | `src/cuda/arena.cpp:98` cudaMalloc<br>`src/cuda/arena.cpp:102` cudaMalloc<br>`src/cuda/arena.cpp:111` cudaFree<br>`src/cuda/arena.cpp:122` cudaFree<br>`src/cuda/arena.cpp:160` cudaFree<br>`src/cuda/context.cpp:147` cudaFree<br>`src/cuda/context.cpp:150` cudaFree<br>`src/cuda/context.cpp:262` cudaMallocHost<br>`src/cuda/context.cpp:265` cudaMallocHost | no | no |
+| src/cuda/codec/entropy/lossless/inter | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/filters/cdef | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/filters/deblock | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/filters/deblock/subpu | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/filters/gdf | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/filters/loop_restoration | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/filters/loop_restoration/chroma | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/filters/pc_wiener | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/filters/tip_deblock | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/inter/advanced | compliant — no device allocation | — | no | no |
+| src/cuda/codec/inter/compound | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/inter/gme | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/inter/mc | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/inter/me | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/inter/morph | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/inter/mv_stack | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/inter/temporal/motion_field | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/inter/tip | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/inter/warp_stack | compliant — arena-only allocation | — | yes | no |
+| src/cuda/codec/intra/cfl | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/intra/dip | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/intra/ibc | compliant in production; test harness allocates | — | yes | yes |
+| src/cuda/codec/intra/ibp | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/intra/modes | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/intra/mrl | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/intra/palette | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/intra/supplemental | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/intra/workspace | compliant in production; test harness allocates | — | yes | yes |
+| src/cuda/codec/rate/rdoq | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/transform/ddt | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/transform/delta_q | compliant — no device allocation | — | no | no |
+| src/cuda/codec/transform/qm | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/transform/secondary | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/transform/tcq | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/transform/tx_partition | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/codec/transform/tx_type | compliant in production; test harness allocates | — | no | no |
+| src/cuda/codec/transform/variants | compliant in production; test harness allocates | — | no | no |
+| src/cuda/formats | compliant in production; test harness allocates | — | yes | yes |
+| src/cuda/formats/chroma | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/pipeline/dispatch/scheduler | compliant — no device allocation | — | no | no |
+| src/cuda/pipeline/still | compliant — arena-only allocation | — | yes | yes |
+| src/cuda/pipeline/still/cdef | compliant in production; test harness allocates | — | no | no |
+| src/cuda/pipeline/still/cfl | compliant in production; test harness allocates | — | no | no |
+| src/cuda/pipeline/still/chroma | compliant in production; test harness allocates | — | no | no |
+| src/cuda/pipeline/still/hbd | compliant in production; test harness allocates | — | no | no |
+| src/cuda/pipeline/still/plan | compliant — no device allocation | — | no | no |
+| src/cuda/pipeline/still/recon | compliant in production; test harness allocates | — | no | no |
+| src/cuda/pipeline/still/restoration | compliant — no device allocation | — | no | no |
+| src/cuda/pipeline/still/sched | compliant — no device allocation | — | no | no |
+| src/cuda/pipeline/still/search | compliant in production; test harness allocates | — | no | no |
+| src/cuda/pipeline/still/tx | compliant in production; test harness allocates | — | no | no |
+| src/cuda/pipeline/video | compliant — arena-only allocation | — | yes | yes |
+| src/pipeline/dispatch/runtime | **NON-COMPLIANT** — direct cudaMalloc/cudaFree | `src/pipeline/dispatch/runtime/cuda_backend.cpp:183` cudaFree<br>`src/pipeline/dispatch/runtime/cuda_backend.cpp:408` cudaMallocHost<br>`src/pipeline/dispatch/runtime/cuda_backend.cpp:410` cudaMallocHost | no | no |
 
 ### Non-compliant files (production code)
 
 | file:line | call | code | impact |
 | --- | --- | --- | --- |
-| `src/multi_gpu/runtime/cuda_backend.cpp:183` | cudaFree | `const Status init_status = from_cuda(cudaFree(nullptr));` | separate multi-GPU runtime: `ArenaState` is arena-backed but `pinned_alloc()` uses `cudaMallocHost` outside `context.cpp` |
-| `src/multi_gpu/runtime/cuda_backend.cpp:408` | cudaMallocHost | `const Status status = from_cuda(cudaMallocHost(out, bytes));` | separate multi-GPU runtime: `ArenaState` is arena-backed but `pinned_alloc()` uses `cudaMallocHost` outside `context.cpp` |
-| `src/multi_gpu/runtime/cuda_backend.cpp:410` | cudaMallocHost | `set_error(error, "cudaMallocHost failed");` | separate multi-GPU runtime: `ArenaState` is arena-backed but `pinned_alloc()` uses `cudaMallocHost` outside `context.cpp` |
+| `src/pipeline/dispatch/runtime/cuda_backend.cpp:183` | cudaFree | `const Status init_status = from_cuda(cudaFree(nullptr));` | separate multi-GPU runtime: `ArenaState` is arena-backed but `pinned_alloc()` uses `cudaMallocHost` outside `context.cpp` |
+| `src/pipeline/dispatch/runtime/cuda_backend.cpp:408` | cudaMallocHost | `const Status status = from_cuda(cudaMallocHost(out, bytes));` | separate multi-GPU runtime: `ArenaState` is arena-backed but `pinned_alloc()` uses `cudaMallocHost` outside `context.cpp` |
+| `src/pipeline/dispatch/runtime/cuda_backend.cpp:410` | cudaMallocHost | `set_error(error, "cudaMallocHost failed");` | separate multi-GPU runtime: `ArenaState` is arena-backed but `pinned_alloc()` uses `cudaMallocHost` outside `context.cpp` |
 
 The M1 product hot path is clean. `video_backend_cuda.cu` is the one that
 will matter when M2 is added to the build; its own README already says
@@ -297,14 +327,8 @@ only rule violation there. `profile_demo.cpp` is a demo binary.
 
 ### M2 backend allocation state
 
-This file is the one in the tree whose allocation policy is
-internally inconsistent in this snapshot:
-
-- header comment: arena policy; `cudaMalloc` sites: **0**, `cudaFree` sites: **0**.
-
-The backend cannot compile in this shape. The byte-identical
-gate results in `src/cuda/m2/README.md` predate the refactor and
-must be re-run once it lands.
+The backend is fully arena-backed in this snapshot: no direct
+`cudaMalloc` or `cudaFree`.
 
 ### Test harnesses that allocate directly
 
@@ -313,42 +337,42 @@ so they are listed for completeness.
 
 | file | sites |
 |---|---:|
-| `src/cuda/cdef/cdef_test.cu` | 24 |
-| `src/cuda/cfl/cfl_test.cu` | 16 |
+| `src/codec/inter/me_precision/me2_gpu_test.cu` | 18 |
+| `src/codec/intra/cfl/alpha/alpha_gpu_test.cu` | 14 |
+| `src/codec/intra/cfl/alpha/cuda_stub/cuda_runtime.h` | 2 |
+| `src/codec/intra/cfl/ds_filters/ds_filters_cuda_test.cu` | 6 |
+| `src/codec/intra/cfl/mhccp/mhccp_gpu_test.cu` | 14 |
+| `src/cuda/codec/filters/cdef/cdef_test.cu` | 24 |
+| `src/cuda/codec/filters/deblock/deblock_test.cu` | 18 |
+| `src/cuda/codec/filters/loop_restoration/device_buffer.h` | 2 |
+| `src/cuda/codec/inter/mc/mc_test.cu` | 2 |
+| `src/cuda/codec/inter/me/me_test.cu` | 18 |
+| `src/cuda/codec/intra/cfl/cfl_test.cu` | 16 |
+| `src/cuda/codec/intra/dip/dip_test.cu` | 10 |
+| `src/cuda/codec/intra/ibc/ibc_test.cu` | 16 |
+| `src/cuda/codec/intra/ibp/ibp_test.cu` | 13 |
+| `src/cuda/codec/intra/modes/intra_modes_test.cu` | 28 |
+| `src/cuda/codec/intra/mrl/mrl_test.cu` | 11 |
+| `src/cuda/codec/intra/palette/palette_test.cu` | 14 |
+| `src/cuda/codec/intra/workspace/intra_workspace_test.cu` | 52 |
+| `src/cuda/codec/rate/rdoq/rdoq_batch_test.cu` | 17 |
+| `src/cuda/codec/transform/qm/qm_gpu_test.cu` | 12 |
+| `src/cuda/codec/transform/secondary/tx_secondary_test.cu` | 16 |
+| `src/cuda/codec/transform/tx_type/tx_type_test.cu` | 22 |
+| `src/cuda/codec/transform/variants/tx_variants_test.cu` | 17 |
 | `src/cuda/context_test.cu` | 1 |
-| `src/cuda/deblock/deblock_test.cu` | 18 |
-| `src/cuda/dip/dip_test.cu` | 10 |
 | `src/cuda/entropy_test.cu` | 2 |
-| `src/cuda/format/high_bitdepth_test.cu` | 10 |
-| `src/cuda/ibc/ibc_test.cu` | 16 |
-| `src/cuda/ibp/ibp_test.cu` | 13 |
-| `src/cuda/inter/advanced/advanced_test.cu` | 2 |
-| `src/cuda/inter/mc/mc_test.cu` | 2 |
-| `src/cuda/inter/me/me_test.cu` | 18 |
-| `src/cuda/intra_modes/intra_modes_test.cu` | 28 |
+| `src/cuda/formats/high_bitdepth_test.cu` | 10 |
 | `src/cuda/intra_test.cu` | 2 |
-| `src/cuda/m1/cdef/still_cdef_gpu_test.cu` | 18 |
-| `src/cuda/m1/cfl/still_cfl_test.cu` | 30 |
-| `src/cuda/m1/chroma/still_chroma_test.cu` | 46 |
-| `src/cuda/m1/hbd/hbd_test.cu` | 34 |
-| `src/cuda/m1/recon/recon_test.cu` | 39 |
-| `src/cuda/m1/search/luma_search_test.cu` | 38 |
-| `src/cuda/m1/tx/still_tx_test.cu` | 17 |
-| `src/cuda/mrl/mrl_test.cu` | 11 |
-| `src/cuda/palette/palette_test.cu` | 14 |
-| `src/cuda/qm/qm_gpu_test.cu` | 12 |
-| `src/cuda/rdoq/rdoq_batch_test.cu` | 17 |
-| `src/cuda/restoration/device_buffer.h` | 2 |
+| `src/cuda/pipeline/still/cdef/still_cdef_gpu_test.cu` | 18 |
+| `src/cuda/pipeline/still/cfl/still_cfl_test.cu` | 30 |
+| `src/cuda/pipeline/still/chroma/still_chroma_test.cu` | 46 |
+| `src/cuda/pipeline/still/hbd/hbd_test.cu` | 36 |
+| `src/cuda/pipeline/still/recon/recon_test.cu` | 39 |
+| `src/cuda/pipeline/still/search/luma_search_test.cu` | 38 |
+| `src/cuda/pipeline/still/tx/still_tx_test.cu` | 17 |
 | `src/cuda/transform_test.cu` | 3 |
-| `src/cuda/tx_secondary/tx_secondary_test.cu` | 16 |
-| `src/cuda/tx_type/tx_type_test.cu` | 22 |
-| `src/cuda/tx_variants/tx_variants_test.cu` | 17 |
-| `src/encoder/cfl/alpha/alpha_gpu_test.cu` | 14 |
-| `src/encoder/cfl/alpha/cuda_stub/cuda_runtime.h` | 2 |
-| `src/encoder/cfl/ds_filters/ds_filters_cuda_test.cu` | 6 |
-| `src/encoder/cfl/mhccp/mhccp_gpu_test.cu` | 14 |
-| `src/encoder/inter/me2/me2_gpu_test.cu` | 18 |
-| `src/multi_gpu/runtime/tests/mock_backend.h` | 1 |
+| `src/pipeline/dispatch/runtime/tests/mock_backend.h` | 1 |
 
 ## The 10 earlier standalone GPU modules
 
@@ -360,16 +384,16 @@ Matrix 3 above.
 
 | module | kernel | parity test | host emulation | GPU evidence | arena | verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| src/cuda/dip/ | dip.cu | dip_test.cu | dip_emulation_test.cpp | not run | compliant | GPU-UNWIRED |
-| src/cuda/ibp/ | ibp.cu | ibp_test.cu | ibp_device_emulation_test.cpp | not executed | compliant | GPU-UNWIRED |
-| src/cuda/mrl/ | mrl.cu | mrl_test.cu | mrl_emulation_test.cpp | undocumented | compliant | GPU-UNWIRED |
-| src/cuda/qm/ | qm_gpu.cu | qm_gpu_test.cu | — | not run | compliant | GPU-UNWIRED |
-| src/cuda/rdoq/ | rdoq_batch.cu | rdoq_batch_test.cu | — | not run | compliant | GPU-UNWIRED |
-| src/cuda/tx_secondary/ | tx_secondary_gpu.cu | tx_secondary_test.cu | tx_secondary_emulation_test.cpp | not run | compliant | GPU-UNWIRED |
-| src/cuda/tx_type/ | tx_type.cu | tx_type_test.cu | — | RTX 3060 328,694 checks | compliant | GPU-UNWIRED |
-| src/cuda/m1/hbd/ | hbd_frame.cu, hbd_tx.cu | hbd_test.cu | hbd_test.cpp | RTX 3060 1,523,424 checks | compliant | GPU-UNWIRED |
-| src/cuda/m1/restoration/ | still_restoration.cu | still_restoration_test.cu | real_recon_oracle_test.cpp | not executed | compliant | GPU-UNWIRED |
-| src/encoder/cfl/mhccp/ | mhccp_gpu.cu | mhccp_gpu_test.cu | mhccp_emulation_test.cpp | not run | compliant | GPU-UNWIRED |
+| src/cuda/codec/intra/dip/ | dip.cu | dip_test.cu | dip_emulation_test.cpp | not run | compliant | GPU-UNWIRED |
+| src/cuda/codec/intra/ibp/ | ibp.cu | ibp_test.cu | ibp_device_emulation_test.cpp | not executed | compliant | GPU-UNWIRED |
+| src/cuda/codec/intra/mrl/ | mrl.cu | mrl_test.cu | mrl_emulation_test.cpp | undocumented | compliant | GPU-UNWIRED |
+| src/cuda/codec/transform/qm/ | qm_gpu.cu | qm_gpu_test.cu | — | not run | compliant | GPU-UNWIRED |
+| src/cuda/codec/rate/rdoq/ | rdoq_batch.cu | rdoq_batch_test.cu | — | not run | compliant | GPU-UNWIRED |
+| src/cuda/codec/transform/secondary/ | tx_secondary_gpu.cu | tx_secondary_test.cu | tx_secondary_emulation_test.cpp | not run | compliant | GPU-UNWIRED |
+| src/cuda/codec/transform/tx_type/ | tx_type.cu | tx_type_test.cu | — | RTX 3060 328,694 checks | compliant | GPU-UNWIRED |
+| src/cuda/pipeline/still/hbd/ | hbd_frame.cu, hbd_tx.cu | hbd_test.cu | hbd_test.cpp | RTX 3060 1,523,424 checks | compliant | GPU-UNWIRED |
+| src/cuda/pipeline/still/restoration/ | still_restoration.cu | still_restoration_test.cu | real_recon_oracle_test.cpp | not executed | compliant | GPU-UNWIRED |
+| src/codec/intra/cfl/mhccp/ | mhccp_gpu.cu | mhccp_gpu_test.cu | mhccp_emulation_test.cpp | not run | compliant | GPU-UNWIRED |
 
 ## What this means
 
@@ -408,15 +432,15 @@ Matrix 3 above.
 | GPU-SERIAL | 23 |
 | **total** | **32** |
 
-### Matrix 2 — 58 CUDA kernel TUs
+### Matrix 2 — 85 CUDA kernel TUs
 
 | verdict | TUs |
 | --- | ---: |
 | GPU-MISSING | 0 |
-| GPU-UNWIRED | 42 |
+| GPU-UNWIRED | 69 |
 | GPU-REQUIRED | 15 |
 | GPU-SERIAL | 1 |
-| **total** | **58** |
+| **total** | **85** |
 
 ### Matrix 3 — 10 module directories (overlaps Matrix 2)
 
@@ -437,15 +461,15 @@ row set.
 | verdict | rows |
 | --- | ---: |
 | GPU-MISSING | 0 |
-| GPU-UNWIRED | 50 |
+| GPU-UNWIRED | 77 |
 | GPU-REQUIRED | 16 |
 | GPU-SERIAL | 24 |
-| **total** | **90** |
+| **total** | **117** |
 
 - GPU-MISSING rows in the two matrices: **0**; additional missing pixel tools outside the matrices: **2**; total after de-duplication: **2**.
-- GPU-UNWIRED: **50** kernel rows.
+- GPU-UNWIRED: **77** kernel rows.
 - Production direct-allocator files: **1**.
-- `required_device_bytes` implementations: **39** files.
+- `required_device_bytes` implementations: **43** files.
   The M0/M1/shared core still has no module-level reservation API (only
   local `need_device` math in `still_gpu.cu:790-860` and
   `luma_search_scratch_bytes()`); every module landed during this audit
@@ -455,8 +479,8 @@ row set.
 
 | rank | tool | CPU reference | samples/frame | basis |
 | --- | --- | --- | --- | --- |
-| 1 | Motion-field storage (§7.22) | src/encoder/inter/temporal/motion_field.cpp | 129,600 | per-4x4 grid entries, not pixels |
-| 2 | Temporal MV projection / ref-MV bank update | src/encoder/inter/temporal/ + src/encoder/inter/mv_stack_full/ | 129,600 | per-4x4 MV entries; metadata, not pixels |
+| 1 | Motion-field storage (§7.22) | src/codec/inter/temporal/motion_field.cpp | 129,600 | per-4x4 grid entries, not pixels |
+| 2 | Temporal MV projection / ref-MV bank update | src/codec/inter/temporal/ + src/codec/inter/mv_stack/ | 129,600 | per-4x4 MV entries; metadata, not pixels |
 
 ## Reproduce
 
@@ -467,3 +491,7 @@ python3 tools/gpu_coverage/inventory.py           # rewrite this file
 
 `--check` fails (exit 1) when a curated path no longer exists, which is the
 stale-doc guard: the tree wins over this document.
+
+This file is a static inventory; it does not compile or run anything.  The
+executable module-suite status (2026-11-13: 96/96 passing on sm_86) and the
+reproduction commands live in `docs/cpu-cuda-matrix.md`.

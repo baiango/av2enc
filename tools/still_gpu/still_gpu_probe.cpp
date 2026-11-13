@@ -52,6 +52,7 @@ void usage(std::ostream& out) {
          "  --adaptive-cdf          --vram-cap MiB\n"
          "  --allow-cpu-fallback    allow the staged CPU reference (default: fail)\n"
          "  --no-verify-cpu         skip the orchestrator's internal CPU parity\n"
+         "  --delta-q               enable --still-dc-ac-delta-q\n"
          "  --verbose               one stderr line per stage\n"
          "  --print-json            print the stats JSON to stdout\n"
          "  -h, --help\n";
@@ -183,6 +184,8 @@ int parse_args(int argc, char** argv, Cli& cli) {
       cli.options.allow_cpu_fallback = true;
     } else if (arg == "--no-verify-cpu") {
       cli.options.verify_against_cpu = false;
+    } else if (arg == "--delta-q") {
+      cli.options.delta_q = true;
     } else if (arg == "--verbose") {
       cli.options.verbose = true;
     } else if (arg == "--print-json") {
@@ -419,6 +422,11 @@ int main(int argc, char** argv) {
 
   const std::string header = dump_header(picture.width, picture.height, cli,
                                          first);
+  if (const char* frame_out = std::getenv("PROBE_FRAME_OUT")) {
+    std::ofstream fout(frame_out, std::ios::binary | std::ios::trunc);
+    fout.write(reinterpret_cast<const char*>(first.frame.data()),
+               static_cast<std::streamsize>(first.frame.size()));
+  }
   if (!write_dump(cli.output, header, first.recon_y, first.recon_u,
                   first.recon_v)) {
     std::cerr << "still_gpu_probe: failed to write " << cli.output << "\n";

@@ -417,6 +417,39 @@ void test_types_odd_geometry() {
   std::cout << "  mixed unit types: 4 odd geometries\n";
 }
 
+void test_unit_sizes() {
+  // §5.18.7.11 / §6.17.7.7: LoopRestorationSize is a power of two in 64..512
+  // for luma and 32..256 for 4:2:0 chroma.  Exercise every legal size with a
+  // frame large enough to hold one unit, plus a frame smaller than the unit
+  // (the unit index must clamp to the last unit).
+  struct Case {
+    int mi_cols;
+    int mi_rows;
+    int luma;
+    int chroma;
+  };
+  const Case cases[] = {
+      {20, 12, 64, 32},
+      {40, 24, 128, 64},
+      {80, 48, 256, 128},
+      {128, 128, 512, 256},
+      {12, 8, 512, 256},  // unit larger than the frame
+  };
+  for (const Case& c : cases) {
+    Rng rng(static_cast<std::uint32_t>(c.luma * 31 + c.mi_cols));
+    TestFrame f = make_frame(c.mi_cols, c.mi_rows);
+    fill_random(f, rng);
+    LoopRestorationParams params;
+    LrBuffers buf;
+    setup(f, c.luma, kRestoreWienerNs, &params, &buf, c.chroma);
+    fill_coeffs(&buf, &rng, 16);
+    char tag[64];
+    std::snprintf(tag, sizeof(tag), "unit %d/%d", c.luma, c.chroma);
+    run_case(f, params, LrMeta{}, tag);
+  }
+  std::cout << "  unit sizes: 64/128/256/512 luma, 32..256 chroma\n";
+}
+
 void test_tiles_lossless_bru() {
   // §6.17.7.7 check_ru_size(): the LR unit must not cross an internal tile
   // boundary and the boundary spacing must be a multiple of maxPlaneRuSize.
@@ -619,6 +652,7 @@ int main() {
   test_stripe_sourcing();
   test_frame_filters();
   test_types_odd_geometry();
+  test_unit_sizes();
   test_tiles_lossless_bru();
   test_randomized();
   test_validation();

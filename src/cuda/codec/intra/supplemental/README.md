@@ -9,6 +9,7 @@ GPU counterparts for the intra rules that landed in
 | 2 | §7.13.2.14 filter corner (5/6/5, `Round2(.,4)`, guard `pAngle in (90,180) && w+h >= 24`) | `m1/missing_bits/intra_filter_corner.*` | device value/guard/apply + batch apply kernel |
 | 3 | All intra identity transform types: IDTX, V/H_DCT, V/H_ADST, V/H_FLIPADST | `tx_variants/` (`forward_block` / `inverse_block`) | new separable kernels for the seven TX_TYPEs, bit-exact including §7.15.4 duplication |
 | 4 | §5.20.7.29 chroma PlaneTxType derivation when `enable_chroma_dctonly == 0` | `transform/idtx_intra/` (`derive_chroma_type`) | device derivation over wide-angle-mapped UVMode + set filtering |
+| 5 | §5.20.7.27 / §8.3 `dc_sign` + `dc_sign_horz_vert` element selection and the neighbour-derived `dc_sign` context | `m1/missing_bits/dc_sign_horz_vert.*` | batch selection kernel + batch context kernel |
 
 Normative source: AV2 Bitstream & Decoding Process Specification v1.0.0
 (2026-05-28, commit `38f28e7`).
@@ -36,6 +37,7 @@ struct Config {                 // bounds the largest single launch
   int max_corner_jobs = 256;
   int max_chroma_jobs = 256;
   int max_tx_blocks = 64;
+  int max_sign_jobs = 256;
 };
 
 std::uint64_t required_device_bytes(const Config&);   // exact init requirement
@@ -56,6 +58,11 @@ class Workspace {
   Status derive_chroma_type(const ChromaQuery*, int count,
                             ChromaResult* host_results,
                             cudaStream_t = nullptr);
+  Status select_sign_elements(const SignQuery*, int count,
+                              SignResult* host_results,
+                              cudaStream_t = nullptr);
+  Status dc_sign_contexts(const SignContextJob*, int count, int* host_ctx,
+                          cudaStream_t = nullptr);
   Status identity_forward(const TxJob*, int count,
                           const std::int16_t* residual, double* coeff,
                           cudaStream_t = nullptr);
@@ -98,6 +105,12 @@ Semantics:
 * `ChromaQuery` is the §5.20.7.29 tuple (`uv_mode`, `uv_angle_delta`, coded
   size, plane, `enable_chroma_dctonly`).  `ChromaResult` returns the derived
   TX_TYPE and the §6.19.8.2 intra set value.
+* `SignQuery` is one §5.20.7.27 coefficient position (`plane`, `row`, `col`,
+  `tx_class`) plus optional `AboveDcContext`/`LeftDcContext` device pointers for
+  the §8.3 `dc_sign` context.  `SignResult.element` is the selected sign
+  element; `ctx` is the neighbour context for `kDcSign` and 0 otherwise.
+  `SignContextJob` computes just the §8.3 context (both arrays may be null).
+  `dc_sign_horz_vert` has no neighbour context, so its ctx is always 0.
 * Batch sizes above the configured maximum, null pointers, or out-of-range
   geometry return `Status::kInvalidArgument` before any launch.
 
@@ -122,21 +135,22 @@ Every device byte comes from the caller's single `av2enc::cuda::Arena`:
   CUDA error) with the required byte count in `*required_out` / `error`; there
   is no `cudaMalloc` fallback and a failed init leaves `used()` untouched.
 
-Sizing (`sizeof(DcJob)=56`, `CornerJob=32`, `ChromaQuery=24`, `TxJob=64`):
+Sizing (`sizeof(DcJob)=56`, `CornerJob=32`, `ChromaQuery=24`, `TxJob=64`,
+`SignQuery=56`, `SignResult=2`, `SignContextJob=40`):
 
-| Config (`dc/corner/chroma/tx`) | persistent | scratch | required |
+| Config (`dc/corner/chroma/tx/sign`) | persistent | scratch | required |
 |---|---:|---:|---:|
-| defaults `64/256/256/64` | 5,376 B | 8,192 B | **13,568 B** |
-| emulation test `8/512/512/3` | 8,448 B | 16,384 B | **24,832 B** |
-| GPU test `4/256/256/3` | 4,352 B | 8,192 B | **12,544 B** |
+| defaults `64/256/256/64/256` | 6,912 B | 14,336 B | **21,248 B** |
+| emulation test `8/512/512/3/256` | 9,984 B | 16,384 B | **26,368 B** |
+| GPU test `4/256/256/3/256` | 5,888 B | 14,336 B | **20,224 B** |
 
 Measured arena high-water marks:
 
-* emulation test: peak `24,832 B` (persistent + one scratch cycle).
-* GPU test: `required=12,544`, `capacity=20,001,024`, **peak `18,005,248 B`**
+* emulation test: peak `26,368 B` (persistent + one scratch cycle).
+* GPU test: `required=20,224`, `capacity=20,008,704`, **peak `18,045,696 B`**
   (17.2 MiB).  Almost all of that is the test's own exhaustive 16.7M-entry
   corner-value buffer (16.0 MiB) plus the 8-bit guard buffer; the component's
-  workspace is only 12.5 KiB.  The test prints the live values.
+  workspace is only 20 KiB.  The test prints the live values.
 
 `grep -n "cudaMalloc\|cudaFree\|cudaMallocHost" src/cuda/intra_full/*.{h,cuh,cu,cpp}`
 returns comments only.  The one `cudaMalloc` in `build_and_test.sh` is the
@@ -173,7 +187,7 @@ thread, against the real CPU components, plus the real `Arena` against a host
 `cuda_runtime` stub.
 
 ```
-intra_full_emulation_test: PASS (70843430 checks, 0 failures)
+intra_full_emulation_test: PASS (70926951 checks, 0 failures)
 ```
 
 Identical on macOS/Apple clang 21 and on the Ubuntu 24.04 / GCC 13.3 box.
@@ -193,6 +207,11 @@ Coverage:
 * **Chroma derivation** — 2 planes × 2 `enable_chroma_dctonly` values ×
   14 UV modes × 7 angle deltas × 25 sizes = `9,800` cases, comparing TX_TYPE
   and set with `idtx::derive_chroma_type`.
+* **dc_sign / dc_sign_horz_vert** — the full 3 planes × 3 TX classes × 8×8
+  `(row,col)` grid = `576` element decisions against
+  `missing_bits::select_sign_element`, including the DC-position precedence;
+  `4,096` random §8.3 contexts against `missing_bits::dc_sign_context` with
+  frame-edge `MiCols`/`MiRows` limits and null-array cases.
 * **Arena** — sizing identity `required = persistent + scratch`, exact init
   growth, two mark/rewind scratch cycles with no net growth, stable peak, and
   a one-byte-short arena returning `kArenaExhausted` with the required size.
@@ -205,9 +224,11 @@ device: NVIDIA GeForce RTX 3060 (sm_86, 28 SMs)
   corner: values=16777216 guard=1110016 apply_checks=225280
   identity tx: cases=175 coeffs=177744 coded=322896
   chroma derivation: cases=9800 checks=29400
-  arena: required=12544 persistent=4352 scratch=8192 capacity=20001024 peak=18005248
-  direct device allocation: none (Arena only); reserved=20001024 bytes
-intra_full_test: PASS (70915222 checks, 0 failures)
+  dc_sign elements: cases=576 checks=1152
+  dc_sign contexts: cases=4096 checks=4097
+  arena: required=20224 persistent=5888 scratch=14336 capacity=20008704 peak=18045696
+  direct device allocation: none (Arena only); reserved=20008704 bytes
+intra_full_test: PASS (70920528 checks, 0 failures)
 ```
 
 * `compute-sanitizer --tool memcheck`: **0 errors**.

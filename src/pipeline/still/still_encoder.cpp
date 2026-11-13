@@ -4086,6 +4086,14 @@ bool encode_still_picture(const StillPicture& picture,
     frame_delta_q = search_result.frame;
     delta_quant = search_result.quant;
     delta_quant_ptr = &delta_quant;
+    result.delta_q_enabled = true;
+    result.delta_q_index = delta_quant.qindex;
+    result.delta_q_dc[0] = delta_quant.delta.y_dc;
+    result.delta_q_dc[1] = delta_quant.delta.u_dc;
+    result.delta_q_dc[2] = delta_quant.delta.v_dc;
+    result.delta_q_ac[0] = 0;  // luma AC never carries a delta
+    result.delta_q_ac[1] = delta_quant.delta.u_ac;
+    result.delta_q_ac[2] = delta_quant.delta.v_ac;
     if (std::getenv("AV2ENC_STILL_TRACE") != nullptr) {
       std::cerr << "delta-q: frame ydc=" << frame_delta_q.delta_q_y_dc
                 << " udc=" << frame_delta_q.delta_q_u_dc
@@ -4162,6 +4170,8 @@ bool encode_still_picture(const StillPicture& picture,
   }
 
   Encoder encoder(picture, encode_options, delta_quant_ptr);
+  result.qm_enabled = options.qm;
+  result.qm_state = encoder.qm_state();
   SyntaxStream stream;
   if (!encoder.encode(&stream, error)) {
     return false;
@@ -5016,6 +5026,12 @@ bool encode_still_picture(const StillPicture& picture,
     }
     planes.lr_tx_skip = lr_tx_skip.data();
     planes.lr_tx_skip_stride = encoder.mi_cols();
+    // Publish the same map to the GPU orchestrator: its §7.20.4 classifier
+    // reads LrTxSkip for every 4x4 block, and the still path's skip map is the
+    // per-block eob==0 mask (not all zero).
+    result.lr_tx_skip = lr_tx_skip;
+    result.lr_tx_skip_cols = encoder.mi_cols();
+    result.lr_tx_skip_rows = encoder.mi_rows();
 
     pcw::DecisionResult pc_result;
     if (!pcw::DecidePerUnitPcWiener(planes, 0.0, &pc_result, &error)) {

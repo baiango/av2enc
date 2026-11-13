@@ -160,10 +160,11 @@ std::string trace_order_signature(const still_plan::FramePlan& plan) {
 
 bool read_expected_signature(const std::string& name, std::string& out,
                              std::string& error) {
+  // The fixtures live beside this TU, so derive the path from __FILE__ rather
+  // than a hard-coded tree path (the module moved once already).
   const std::filesystem::path path =
-      std::filesystem::path(PLAN_REPO_ROOT) / "src" / "cuda" / "m1" / "plan" /
-      "tests" / ("trace_order_" + name + ".txt");
-  std::ifstream file(path);
+      std::filesystem::path(__FILE__).parent_path() / "tests" /
+      ("trace_order_" + name + ".txt");  std::ifstream file(path);
   if (!file) {
     error = "cannot open expected trace file " + path.string();
     return false;
@@ -351,23 +352,38 @@ void test_min_block_4() {
   still_plan::PlanOptions options = base_options();
   options.min_block_size = 4;
   options.max_partition_depth = 8;
+  options.sub8 = true;
   const auto luma = mosaic_luma(64, 64, 4);
   still_plan::FramePlan plan;
   CHECK(build(64, 64, luma, options, plan));
   std::string error;
   CHECK(still_plan::validate_frame_plan(plan, error));
   bool saw_4x4 = false;
+  bool saw_non_owner = false;
+  bool saw_owner = false;
   for (const still_plan::BlockPlan& b : plan.blocks) {
     if (b.luma_w == 4 && b.luma_h == 4) {
       saw_4x4 = true;
-      CHECK_EQ_INT(b.chroma_w, 4);
-      CHECK_EQ_INT(b.chroma_h, 4);
       CHECK_EQ_INT(b.luma.tx_size, 0);  // TX_4X4
       CHECK_EQ_INT(b.luma.adj_w, 4);
       CHECK_EQ_INT(b.luma.adj_h, 4);
     }
+    if (b.has_chroma) {
+      saw_owner = true;
+      CHECK(b.chroma_w > 0 && b.chroma_h > 0);
+      CHECK_EQ_INT(b.chroma_x, b.chroma_mi_col * 2);
+      CHECK_EQ_INT(b.chroma_y, b.chroma_mi_row * 2);
+    } else {
+      saw_non_owner = true;
+      CHECK_EQ_INT(b.chroma_w, 0);
+      CHECK_EQ_INT(b.chroma_h, 0);
+      CHECK_EQ_INT(b.u.coeff_count, 0);
+      CHECK_EQ_INT(b.v.coeff_count, 0);
+    }
   }
   CHECK(saw_4x4);
+  CHECK(saw_non_owner);
+  CHECK(saw_owner);
 }
 
 void test_640x360() {
@@ -432,6 +448,226 @@ void test_640x360() {
   }
   CHECK(saw_bottom_sb);
   CHECK(saw_crossing_block);
+}
+
+void test_superblock_roots() {
+  const int sizes[][2] = {{128, 128}, {640, 360}, {512, 512}, {1920, 1080}};
+  for (const auto& size : sizes) {
+    const int width = size[0];
+    const int height = size[1];
+    const auto luma = mosaic_luma(width, height, 8);
+
+    still_plan::PlanOptions sb128 = base_options();
+    sb128.sb_size = 128;
+    still_plan::FramePlan plan128;
+    CHECK(build(width, height, luma, sb128, plan128));
+    std::string error;
+    CHECK(still_plan::validate_frame_plan(plan128, error));
+    CHECK(verify_decode_order(plan128, error));
+    CHECK_EQ_INT(plan128.sb_size, 128);
+    CHECK_EQ_INT(plan128.sequence_sb_size, 128);
+    CHECK_EQ_INT(plan128.sb_cols, (plan128.mi_cols + 31) / 32);
+    CHECK_EQ_INT(plan128.sb_rows, (plan128.mi_rows + 31) / 32);
+    for (const still_plan::BlockPlan& block : plan128.blocks) {
+      CHECK(block.luma_w <= 64);
+      CHECK(block.luma_h <= 64);
+      CHECK_EQ_INT(block.sb_mi_row, (block.mi_row / 32) * 32);
+      CHECK_EQ_INT(block.sb_mi_col, (block.mi_col / 32) * 32);
+    }
+    bool saw_split_root = false;
+    for (const still_plan::TreeNode& node : plan128.tree) {
+      if (node.mi_row % 32 != 0 || node.mi_col % 32 != 0) continue;
+      if (node.block_size !=
+          static_cast<int>(partition::BlockSize::k128x128)) {
+        continue;
+      }
+      if ((node.allowed_mask & 2U) != 0) saw_split_root = true;
+    }
+    CHECK(saw_split_root);
+
+    // The 256x256 sequence flag clamps an intra frame to 128x128 roots.
+    still_plan::PlanOptions sb256 = sb128;
+    sb256.sb_size = 256;
+    still_plan::FramePlan plan256;
+    CHECK(build(width, height, luma, sb256, plan256));
+    CHECK(still_plan::validate_frame_plan(plan256, error));
+    CHECK_EQ_INT(plan256.sb_size, 128);
+    CHECK_EQ_INT(plan256.sequence_sb_size, 256);
+    CHECK_EQ_INT(plan256.sb_cols, plan128.sb_cols);
+    CHECK_EQ_INT(plan256.sb_rows, plan128.sb_rows);
+    CHECK_EQ_INT(plan256.blocks.size(), plan128.blocks.size());
+    CHECK_EQ_INT(plan256.tree.size(), plan128.tree.size());
+    for (std::size_t i = 0;
+         i < std::min(plan256.blocks.size(), plan128.blocks.size()); ++i) {
+      const still_plan::BlockPlan& a = plan256.blocks[i];
+      const still_plan::BlockPlan& b = plan128.blocks[i];
+      CHECK_EQ_INT(a.mi_row, b.mi_row);
+      CHECK_EQ_INT(a.mi_col, b.mi_col);
+      CHECK_EQ_INT(a.block_size, b.block_size);
+      CHECK_EQ_INT(a.luma_w, b.luma_w);
+      CHECK_EQ_INT(a.luma_h, b.luma_h);
+      CHECK_EQ_INT(a.chroma_w, b.chroma_w);
+      CHECK_EQ_INT(a.chroma_h, b.chroma_h);
+      CHECK_EQ_INT(a.luma.coeff_offset, b.luma.coeff_offset);
+    }
+    CHECK(plan256.cost == plan128.cost);
+  }
+
+  // A 64x64 frame under a 128 SB is a partial root; it must still build.
+  const auto small = mosaic_luma(64, 64, 4);
+  still_plan::PlanOptions sb128 = base_options();
+  sb128.sb_size = 128;
+  still_plan::FramePlan plan;
+  CHECK(build(64, 64, small, sb128, plan));
+  std::string error;
+  CHECK(still_plan::validate_frame_plan(plan, error));
+  CHECK_EQ_INT(plan.sb_cols, 1);
+  CHECK_EQ_INT(plan.sb_rows, 1);
+}
+
+void test_extended_partitions() {
+  const int sizes[][2] = {{64, 64}, {640, 360}, {640, 40}, {1280, 720}};
+  for (const auto& size : sizes) {
+    const int width = size[0];
+    const int height = size[1];
+    const auto luma = mosaic_luma(width, height, 8);
+    still_plan::PlanOptions options = base_options();
+    options.enable_ext_partitions = true;
+    options.enable_uneven_4way_partitions = true;
+    still_plan::FramePlan plan;
+    CHECK(build(width, height, luma, options, plan));
+    std::string error;
+    CHECK(still_plan::validate_frame_plan(plan, error));
+    CHECK(verify_decode_order(plan, error));
+
+    int extended_nodes = 0;
+    for (const still_plan::TreeNode& node : plan.tree) {
+      if (node.ext_partition >= 3 && node.ext_partition <= 8) {
+        ++extended_nodes;
+      }
+      // The extended row is folded to its rect direction for the base enum.
+      if (node.ext_partition == 1 || node.ext_partition == 3 ||
+          node.ext_partition == 5 || node.ext_partition == 6) {
+        CHECK_EQ_INT(node.partition,
+                     static_cast<int>(partition::PartitionType::kHorz));
+      }
+      if (node.ext_partition == 2 || node.ext_partition == 4 ||
+          node.ext_partition == 7 || node.ext_partition == 8) {
+        CHECK_EQ_INT(node.partition,
+                     static_cast<int>(partition::PartitionType::kVert));
+      }
+    }
+    CHECK(extended_nodes > 0);
+
+    // Every leaf that owns chroma uses its ChromaMi block, never the luma
+    // leaf size, and non-owners carry no U/V payload.
+    for (const still_plan::BlockPlan& block : plan.blocks) {
+      if (block.has_chroma) {
+        const auto chroma_size = partition::chroma_plane_residual_size(
+            [&] {
+              partition::FrameGeometry g;
+              g.width = width;
+              g.height = height;
+              g.sb_size = plan.sb_size;
+              return g;
+            }(),
+            static_cast<partition::BlockSize>(block.chroma_mi_size));
+        CHECK_EQ_INT(block.chroma_w, partition::block_width(chroma_size));
+        CHECK_EQ_INT(block.chroma_h, partition::block_height(chroma_size));
+      } else {
+        CHECK_EQ_INT(block.u.coeff_count, 0);
+        CHECK_EQ_INT(block.v.coeff_count, 0);
+      }
+    }
+  }
+
+  // Extended rows on a 128x128 root: 128 roots cannot use the extended rows
+  // themselves, but their 64x64 children can.
+  const auto luma = mosaic_luma(640, 360, 8);
+  still_plan::PlanOptions sb128 = base_options();
+  sb128.sb_size = 128;
+  sb128.enable_ext_partitions = true;
+  sb128.enable_uneven_4way_partitions = true;
+  still_plan::FramePlan plan;
+  CHECK(build(640, 360, luma, sb128, plan));
+  std::string error;
+  CHECK(still_plan::validate_frame_plan(plan, error));
+  CHECK(verify_decode_order(plan, error));
+  bool saw_ext_below_root = false;
+  for (const still_plan::TreeNode& node : plan.tree) {
+    if (node.ext_partition >= 3 && node.ext_partition <= 8) {
+      saw_ext_below_root = true;
+      CHECK(node.block_size !=
+            static_cast<int>(partition::BlockSize::k128x128));
+    }
+  }
+  CHECK(saw_ext_below_root);
+}
+
+void test_sdp_plan() {
+  const int sizes[][2] = {{64, 64}, {128, 128}, {640, 360}};
+  for (const auto& size : sizes) {
+    const int width = size[0];
+    const int height = size[1];
+    const auto luma = mosaic_luma(width, height, 8);
+    still_plan::PlanOptions options = base_options();
+    options.sdp = true;
+    still_plan::FramePlan plan;
+    CHECK(build(width, height, luma, options, plan));
+    std::string error;
+    CHECK(still_plan::validate_frame_plan(plan, error));
+    CHECK(verify_decode_order(plan, error));
+
+    const int sb_count = plan.sb_cols * plan.sb_rows;
+    CHECK_EQ_INT(plan.leaves, sb_count * 2);
+    CHECK_EQ_INT(plan.blocks.size(), static_cast<std::size_t>(sb_count * 2));
+    CHECK_EQ_INT(plan.blocks[0].tree_type, 1);  // LUMA_PART first
+    CHECK_EQ_INT(plan.blocks[1].tree_type, 2);  // CHROMA_PART second
+
+    for (std::size_t i = 0; i + 1 < plan.blocks.size(); i += 2) {
+      const still_plan::BlockPlan& luma_block = plan.blocks[i];
+      const still_plan::BlockPlan& chroma_block = plan.blocks[i + 1];
+      CHECK_EQ_INT(luma_block.tree_type, 1);
+      CHECK_EQ_INT(chroma_block.tree_type, 2);
+      CHECK_EQ_INT(luma_block.mi_row, chroma_block.mi_row);
+      CHECK_EQ_INT(luma_block.mi_col, chroma_block.mi_col);
+      CHECK_EQ_INT(luma_block.luma_w, 64);
+      CHECK_EQ_INT(luma_block.luma_h, 64);
+      CHECK(!luma_block.has_chroma);
+      CHECK_EQ_INT(luma_block.chroma_w, 0);
+      CHECK_EQ_INT(chroma_block.luma_w, 0);
+      CHECK_EQ_INT(chroma_block.luma_h, 0);
+      CHECK(chroma_block.has_chroma);
+      CHECK_EQ_INT(chroma_block.chroma_w, 32);
+      CHECK_EQ_INT(chroma_block.chroma_h, 32);
+      CHECK_EQ_INT(chroma_block.u.tx_size, 3);  // TX_32X32
+    }
+
+    int sdp_splits = 0;
+    for (const still_plan::TreeNode& node : plan.tree) {
+      if (node.sdp_split) {
+        ++sdp_splits;
+        CHECK_EQ_INT(node.tree_type, 0);
+        CHECK_EQ_INT(node.child_count, 2);
+        CHECK_EQ_INT(node.partition,
+                     static_cast<int>(partition::PartitionType::kNone));
+      }
+      if (node.tree_type == 1) CHECK_EQ_INT(node.partition, 0);
+      if (node.tree_type == 2) CHECK_EQ_INT(node.partition, 0);
+    }
+    CHECK_EQ_INT(sdp_splits, sb_count);
+    CHECK_EQ_INT(plan.nodes, static_cast<int>(plan.tree.size()));
+  }
+
+  // SDP cannot be combined with the extended families or sub-8 search.
+  still_plan::PlanOptions options = base_options();
+  options.sdp = true;
+  options.enable_ext_partitions = true;
+  still_plan::FramePlan plan;
+  std::string error;
+  const auto luma = mosaic_luma(64, 64, 8);
+  CHECK(!still_plan::build_frame_plan(64, 64, luma, options, plan, error));
+  CHECK(error.find("SDP") != std::string::npos);
 }
 
 void test_1080p() {
@@ -666,9 +902,9 @@ void test_errors() {
 
   const auto luma = constant_luma(64, 64, 0);
   still_plan::PlanOptions options = base_options();
-  options.sb_size = 128;
+  options.sb_size = 65;
   CHECK(!still_plan::build_frame_plan(64, 64, luma, options, plan, error));
-  CHECK(error.find("64x64 superblock") != std::string::npos);
+  CHECK(error.find("64, 128, or 256") != std::string::npos);
 
   options = base_options();
   options.max_partition_depth = -1;
@@ -806,9 +1042,16 @@ void test_gpu_bridge() {
   for (std::size_t i = 0; i < deep_blocks.size(); ++i) {
     if (deep_blocks[i].has_chroma == 0) saw_no_chroma = true;
     if (i == 0) continue;
-    CHECK(deep_blocks[i].coeff_offset_y >= deep_blocks[i - 1].coeff_offset_y);
-    CHECK(deep_blocks[i].coeff_offset_u >= deep_blocks[i - 1].coeff_offset_u);
-    CHECK(deep_blocks[i].coeff_offset_v >= deep_blocks[i - 1].coeff_offset_v);
+    if (deep_blocks[i].luma_w != 0) {
+      CHECK(deep_blocks[i].coeff_offset_y >=
+            deep_blocks[i - 1].coeff_offset_y);
+    }
+    if (deep_blocks[i].has_chroma != 0) {
+      CHECK(deep_blocks[i].coeff_offset_u >=
+            deep_blocks[i - 1].coeff_offset_u);
+      CHECK(deep_blocks[i].coeff_offset_v >=
+            deep_blocks[i - 1].coeff_offset_v);
+    }
   }
   CHECK(saw_no_chroma);
 }
@@ -823,6 +1066,9 @@ int main() {
   test_min_block_4();
   test_640x360();
   test_1080p();
+  test_superblock_roots();
+  test_extended_partitions();
+  test_sdp_plan();
   test_partial_right_and_bottom();
   test_partial_sb_option_matrix();
   test_force_single_block();

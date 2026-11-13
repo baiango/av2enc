@@ -71,7 +71,7 @@ stream; batching by `sched::run_level`/`LevelGraph` is the remaining speed step.
 | Stage | State |
 |---|---|
 | plan | GPU path, real tree (`plan_gpu_bridge` tree overload) |
-| search | GPU per block (`luma_search`, 61 candidates gated by options/env) |
+| search | GPU per block (`luma_search`, 61 candidates gated by options/env); MRL/DIP candidates from `intra_extra` |
 | chroma + CfL | GPU (`chroma_decide`; the winning DC/CfL prediction is written in-kernel) |
 | TX | GPU (`still_tx_batch`, DCT_DCT, 3 jobs per block) |
 | recon | GPU (`recon_write_blocks` + `recon_commit_blocks`) |
@@ -88,14 +88,54 @@ applies the derived-alpha CfL prediction for the winning candidate.
 stage is not ported.  `gpu_options_to_m1()` (in `still_gpu.h`) is the single
 mapping used by the internal CPU parity encode, so a parsed flag can never be
 missing from the comparison.  `gpu_m3_options_supported()` accepts the wired
-in-loop filters and rejects each unported tool (`--still-wiener`,
-`--still-chroma-lr`, `--still-pc-wiener`, `--still-gdf`, `--still-rdoq`,
+in-loop filters and rejects each unported tool (`--still-rdoq`,
 `--still-tx-type`, `--still-rdo-intra`, `--still-uv-full`) by name with a
-"not ported" message; the M3 gate reports those as `SKIP-REJECTED`.  Additional
-CPU-only flags (`--still-qm`, `--still-ist`, `--still-dc-ac-delta-q`,
-`--still-ibp/mrl/dip/mhccp/cfl-*`, `--still-sb128/256`,
-`--still-ext-partitions`, segmentation/delta-Q) are rejected before the GPU
-stage.  No flag is silently ignored.
+"not ported" message; the M3 gate reports those as `SKIP-REJECTED`.  Additional CPU-only flags (`--still-ist`,
+`--still-ext-partitions`, segmentation) are rejected
+before the GPU stage. `--still-ibp`, `--still-mrl`, `--still-dip`,
+`--still-cfl-explicit` and `--still-mhccp` are accepted (see "Wired intra
+decision candidates"); `--still-sb128`/`--still-sb256`/`--still-ext-partitions`/`--still-sdp` are
+accepted (see "Wired partition modes").  `--still-cfl-ds N` (sequence-level CfL luma
+down-sampling) is accepted and is carried into both the chroma decision and the
+header.  `--still-dc-ac-delta-q` and `--still-qm` are accepted:
+the CPU reference plans the frame deltas / q2 matrices and the GPU TX stage
+feeds them to the shared `cuda/codec/transform/delta_q` device quantizer
+(`quantize_job` / `dequantize_job`), including the §7.17.6 UV AC deblock deltas.
+`--still-user-qm` stays rejected (the pinned decoder rejects the QM OBU).  No
+flag is silently ignored.
+
+### Wired intra decision candidates
+
+| Flag | GPU stage | Verified |
+|---|---|---|
+| `--still-mrl` | `pipeline/still/intra` MRL pass (`mrl_device.cuh`): every directional candidate is re-evaluated for mrl_index 1..3 and the secondary line, in the CPU's exact order/tie-break | 64×64 / 640×360 |
+| `--still-dip` | `pipeline/still/intra` DIP pass (`dip_device.cuh`): §5.20.7.9 modes/transposes scored against the incumbent SSE, DC-only search evaluates the real DC score | 64×64 / 640×360 |
+| `--still-mrl --still-dip` | both passes, DIP after MRL (CPU order) | 64×64 / 640×360 |
+| `--still-ibp` | full 61-candidate search and chosen prediction use the §7.13.2.7/.8/.9 IBP predictor; chroma DC uses the §7.13.2.12 post-filter (CfL base excludes it) | 64×64 / 640×360, also with `--still-full-intra` |
+| `--still-cfl-explicit` | chroma scores all 17 §5.20.7.32 sign/magnitude values per plane and signals CFL_EXPLICIT when it beats derived (same incumbent base as the CPU search) | 64×64 / 640×360 |
+| `--still-mhccp` | chroma scores the three §7.13.7 CFL_MULTI directions with the device MHCCP core and signals `cfl_mh_dir` when it beats the incumbent | 64×64 / 640×360, alone and with explicit/DIP/IBP |
+
+The per-candidate base SSE comes from the search's debug output, so the MRL
+interleave is not a second independent search: it replays the CPU candidate
+sequence (base candidate, then its MRL variants) with the same strict-`<`
+replacement.  The winning prediction is selected on device from the ordinary,
+MRL and DIP candidates; no decision is downloaded before the single frame sync.
+
+### Wired partition modes
+
+| Flag | GPU stage | Verified |
+|---|---|---|
+| `--still-sb128` | plan/search/TX/recon use the 128x128 frame SbSize; §5.4.3 `use_128x128_superblock` | 64×64 / 640×360 |
+| `--still-sb256` | sequence 256 flag with the §5.18.1 intra clamp to 128x128 roots | 64×64 / 640×360 |
+| `--still-ext-partitions` | plan's extended/uneven 4-way solver; the bridge writes the spec `partition` (0..9) and 10-bit `allowed_mask` into the syntax entry | 64×64 / 640×360, also with `--still-sb128`, `--still-full-intra`, `--still-dip` |
+| `--still-sdp` | plan's SDP luma/chroma trees; `kFlagSdpSplit`/`tree_type` reach the writer, chroma-only leaves skip luma search/TX/recon and read the co-located luma mode for uv_mode_index | 64×64 / 640×360, also with `--still-full-intra`, `--still-dip`, `--still-mrl` |
+| `--still-sub8` | plan's 4x4/4x8/8x4 leaves with ChromaMi ownership; non-owning leaves skip U/V TX/recon and code luma only | 64×64 / 640×360, also with `--still-full-intra`, `--still-dip`, `--still-mrl`, `--still-sb128` |
+
+The plan's `allowed_mask`/`partition` fields drive the bridge for these modes;
+the SPLIT root is legal only at 128. Availability counts come from the plan's
+own superblock-local replay, so the search follows the frame SbSize instead of
+a hard-coded 64. CDEF/CCSO/loop restoration combined with 128x128 superblocks
+stay rejected by name (the GPU unit grids are sized from 64x64 SBs).
 
 ### Wired in-loop filters
 
@@ -108,15 +148,20 @@ pixel kernels and the syntax bridge replays the planned symbols.
 | `--still-cdef` | §7.18 `still_cdef_filter` after deblock | 64×64 / 256×256 / 640×360, strengths 1/2/4/8, ±deblock |
 | `--still-ccso` | §7.19 `ccso_frame` after CDEF | same sizes, bands 0/3/6 |
 | `--still-ccso-edge` | §7.19.1 edge-classified form | same sizes, per-unit CcsoBlks |
+| `--still-wiener` | §7.20.3 `loop_restoration_frame` luma | 64×64 / 256×256 / 640×360, ±CDEF/CCSO |
+| `--still-chroma-lr` | §7.20.3 chroma `lr_chroma` workspace | 64×64 / 256×256 / 640×360, ±Wiener |
+| `--still-pc-wiener` | §7.20.4 `pc_wiener_classify` + `filter_units` | 64×64 / 256×256 / 640×360, ±chroma LR |
+| `--still-gdf` | §7.20.5 `gdf_apply_grid`, last in the §7.20 block | 64×64 / 256×256 / 640×360, ±Wiener/PC-Wiener/CCSO |
 | `--still-grain` | metadata only (decoder-side synthesis) | 64×64 / 640×360 |
 
 Every combination above produces frame bytes identical to the CPU reference
 (`--still` with the same flags) and decodes with `dav2d --strict 1`.  Without
 CDEF the CDEF frame is seeded from the deblocked reconstruction so CCSO's
-`CurrFrame`/`CdefFrame` pair matches the CPU.  Loop restoration (Wiener NS,
-chroma LR, PC-Wiener, GDF) stays rejected: the component suite still reports
-`loop_restoration_frame launch (invalid argument)`, and PC-Wiener/GDF depend on
-restoration tables that are not yet re-verified in the integrated tree.
+`CurrFrame`/`CdefFrame` pair matches the CPU.  The CPU reference plans the
+per-unit Wiener/chroma-LR/PC-Wiener/GDF decisions and coefficient tables; the
+GPU applies the normative pixel kernels in §7.20.1 order (`Wiener` or
+`PC-Wiener` first, GDF last) and `gdf_apply_grid` reads the post-CCSO
+`CdefFrame` snapshot.
 
 `src/cuda/pipeline/still/still_gpu_options_test.cpp` (built by `build_options_test.sh`, host
 only) pins the full mapping and the rejection set.
@@ -259,8 +304,21 @@ links the same set (`tools/sync_remote.sh` excludes `build-*`).
 
 1. Batch the block loop by scheduler dependency level (`sched::run_level` /
    `LevelGraph`) instead of one launch per block. Correctness is already gated.
+   The rect-only scheduler adapter is no longer used for availability (it
+   cannot represent SDP/sub-8 ChromaMi ownership); levels still need a
+   ChromaMi-aware model.
 2. Add a GPU recon dump (`AV2ENC_STILL_GPU_DUMP`) so `verify_gpu.sh --recon` can
    compare encoder-side recon instead of the decoded-frame fallback.
 3. Update the two forced-directional CPU cases in `run_matrix.sh` (F6/F11 at
    1080p) if the CPU forced-mode path is expected to be exact at the proxy.
 4. Wire video frames / multiple stills; this path is one still per call.
+5. 10-bit / 4:2:2 / 4:4:4 / 4:0:0 product streams.  `cuda/formats/high_bitdepth_gpu`
+   is the standalone M10 block stage (fixed tree + its own header writer); the
+   shipped CPU product path is `av2enc::hbd` with `hbd_headers` and
+   `assemble_high_bitdepth_tile_payload()`.  Matching the CPU `--bit-depth 10`
+   bytes needs a GPU block/decision stage for the hbd product writer (and the
+   8-bit chroma path has no product GPU stage at all), so the CLI keeps those
+   modes rejected by name.
+6. IST / TX-type / RDOQ / RDO-intra / IDTX decisions.  The CUDA kernels exist
+   (`cuda/codec/transform/secondary|tx_type|rdoq`); the per-block decision
+   stages that must reproduce the CPU rate model and tie-breaks are not wired.

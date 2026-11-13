@@ -3,6 +3,7 @@
 
 #include "cuda/pipeline/still/plan/plan.h"
 #include "pipeline/still/still_tables.h"
+#include "codec/partition/ext/partition_ext.h"
 #include "codec/partition/tree/partition.h"
 #include "codec/transform/variants/tx_variants.h"
 
@@ -42,6 +43,11 @@ struct LeafView {
   int mi_col = 0;
   int bsize = 0;
   int has_chroma = 0;
+  int chroma_offset = 0;
+  int chroma_mi_row = 0;
+  int chroma_mi_col = 0;
+  int chroma_bsize = 0;
+  int tree_type = 0;
   int luma_w = 0;
   int luma_h = 0;
   int chroma_w = 0;
@@ -57,6 +63,18 @@ struct LeafView {
   int uv_mode = 0;
   int is_cfl = 0;
   int tx_type[3] = {0, 0, 0};
+  // §5.20.5.5 MRL and §5.20.7.9 DIP decisions.
+  int mrl_index = 0;
+  int mrl_sec_index = 0;
+  int use_dip = 0;
+  int dip_mode = 0;
+  int dip_transpose = 0;
+  // §5.20.7.32 CfL signalling.
+  int cfl_index = 1;
+  int cfl_alpha_signs = 0;
+  int cfl_alpha_u_syntax = 0;
+  int cfl_alpha_v_syntax = 0;
+  int cfl_mh_dir = 0;
 };
 
 FrameGeometry make_geometry(const FrameInfo& info) {
@@ -145,6 +163,11 @@ void adapt_gpu_leaf(const cuda::still_gpu::BlockPlan& block,
   leaf.mi_row = block.mi_row;
   leaf.mi_col = block.mi_col;
   leaf.has_chroma = block.has_chroma;
+  leaf.chroma_offset = block.chroma_offset;
+  leaf.chroma_mi_row = block.chroma_mi_row;
+  leaf.chroma_mi_col = block.chroma_mi_col;
+  leaf.chroma_bsize = block.chroma_mi_size;
+  leaf.tree_type = block.tree_type;
   leaf.luma_w = block.luma_w;
   leaf.luma_h = block.luma_h;
   leaf.chroma_w = block.chroma_w;
@@ -166,6 +189,16 @@ void adapt_gpu_leaf(const cuda::still_gpu::BlockPlan& block,
   leaf.tx_type[0] = decision.tx_type_y;
   leaf.tx_type[1] = decision.tx_type_u;
   leaf.tx_type[2] = decision.tx_type_v;
+  leaf.mrl_index = decision.mrl_index;
+  leaf.mrl_sec_index = decision.mrl_sec_index;
+  leaf.use_dip = decision.use_dip;
+  leaf.dip_mode = decision.dip_mode;
+  leaf.dip_transpose = decision.dip_transpose;
+  leaf.cfl_index = decision.cfl_index;
+  leaf.cfl_alpha_signs = decision.cfl_alpha_signs;
+  leaf.cfl_alpha_u_syntax = decision.cfl_alpha_u_syntax;
+  leaf.cfl_alpha_v_syntax = decision.cfl_alpha_v_syntax;
+  leaf.cfl_mh_dir = decision.cfl_mh_dir;
 }
 
 bool adapt_plan_leaf(const plan::BlockPlan& block,
@@ -175,6 +208,11 @@ bool adapt_plan_leaf(const plan::BlockPlan& block,
   leaf.mi_col = block.mi_col;
   leaf.bsize = block.block_size;
   leaf.has_chroma = block.has_chroma ? 1 : 0;
+  leaf.chroma_offset = block.chroma_offset ? 1 : 0;
+  leaf.chroma_mi_row = block.chroma_mi_row;
+  leaf.chroma_mi_col = block.chroma_mi_col;
+  leaf.chroma_bsize = block.chroma_mi_size;
+  leaf.tree_type = block.tree_type;
   leaf.luma_w = block.luma_w;
   leaf.luma_h = block.luma_h;
   leaf.chroma_w = block.chroma_w;
@@ -267,36 +305,89 @@ class Packer {
     const TreeNode& node = tree[tree_index];
     const auto bsize = static_cast<BlockSize>(node.bsize);
     const auto partition = static_cast<PartitionType>(node.partition);
+    const bool is_ext = node.partition_is_ext != 0;
     if (!partition::is_valid_block_size(bsize)) {
       error = "partition tree node has an invalid block size";
       return false;
     }
-    if (node.partition >= partition::kPartitionTypeCount) {
+    if (!is_ext && node.partition >= partition::kPartitionTypeCount) {
       error = "partition tree node has an invalid partition type";
+      return false;
+    }
+    if (is_ext && node.ext_partition >= partition_ext::kPartitionCount) {
+      error = "partition tree node has an invalid extended partition type";
+      return false;
+    }
+    const int code_partition =
+        is_ext ? static_cast<int>(node.ext_partition)
+               : static_cast<int>(node.partition);
+    const std::uint32_t code_mask =
+        is_ext ? node.allowed_mask_ext : node.allowed_mask;
+    if ((node.flags & syntax::kFlagForced) == 0 &&
+        (code_mask & (1u << static_cast<unsigned>(code_partition))) == 0) {
+      error = "partition is not in the node's allowed set";
       return false;
     }
 
     const std::size_t block_index = out_.blocks.size();
     out_.blocks.emplace_back();
+    if (node.sdp_split != 0) {
+      // §6.19.3.1 SDP split node: codes no partition syntax; its two children
+      // are the LUMA_PART and CHROMA_PART tree roots.
+      syntax::BlockSyntax& entry = out_.blocks.back();
+      entry.mi_row = node.mi_row;
+      entry.mi_col = node.mi_col;
+      entry.bsize = node.bsize;
+      entry.partition = 0;
+      entry.allowed_mask = 0;
+      entry.flags = static_cast<std::uint8_t>(syntax::kFlagSdpSplit);
+      if (is_root) {
+        entry.flags =
+            static_cast<std::uint8_t>(entry.flags | syntax::kFlagSbRoot);
+      }
+      if (node.child_count == 0 || node.child_count > 4) {
+        error = "SDP split node has an invalid child count";
+        return false;
+      }
+      std::size_t cursor = tree_index + 1;
+      for (int child = 0; child < static_cast<int>(node.child_count); ++child) {
+        if (cursor >= tree.size()) {
+          error = "SDP split node ended before all children were listed";
+          return false;
+        }
+        std::size_t after = 0;
+        if (!pack_node(tree, cursor, /*is_root=*/false, depth + 1, &after,
+                       error)) {
+          return false;
+        }
+        cursor = after;
+      }
+      const std::size_t subtree = out_.blocks.size() - block_index - 1;
+      if (subtree > 0xFFFFU) {
+        error = "partition subtree too large for the syntax stream";
+        return false;
+      }
+      out_.blocks[block_index].subtree = static_cast<std::uint16_t>(subtree);
+      *next = out_.blocks.size();
+      return true;
+    }
     {
       syntax::BlockSyntax& entry = out_.blocks.back();
       entry.mi_row = node.mi_row;
       entry.mi_col = node.mi_col;
       entry.bsize = node.bsize;
-      entry.partition = node.partition;
-      entry.allowed_mask = node.allowed_mask;
+      entry.partition = static_cast<std::uint8_t>(code_partition);
+      entry.allowed_mask = static_cast<std::uint16_t>(code_mask);
+      entry.tree_type = node.tree_type;
       entry.flags = static_cast<std::uint8_t>(node.flags & syntax::kFlagForced);
       if (is_root) {
         entry.flags =
             static_cast<std::uint8_t>(entry.flags | syntax::kFlagSbRoot);
       }
-      if ((entry.allowed_mask & (1u << static_cast<unsigned>(partition))) == 0) {
-        error = "partition is not in the node's allowed set";
-        return false;
-      }
     }
 
-    if (partition == PartitionType::kNone) {
+    const bool is_leaf = code_partition == 0;
+    if (is_leaf) {
       if (node.child_count != 0) {
         error = "leaf node reports children";
         return false;
@@ -350,20 +441,25 @@ class Packer {
     // M1 codes U and V for every leaf, so the partition recursion's
     // `has_chroma` proxy (CHROMA_PART bookkeeping) does not gate residual
     // syntax here.  The chroma residual size is validated instead.
-    const int luma_w = partition::block_width(bsize);
-    const int luma_h = partition::block_height(bsize);
+    const bool has_luma = leaf.luma_w != 0 || leaf.luma_h != 0;
+    const int luma_w = has_luma ? partition::block_width(bsize) : 0;
+    const int luma_h = has_luma ? partition::block_height(bsize) : 0;
     if (leaf.luma_w != luma_w || leaf.luma_h != luma_h) {
       error = "block luma size does not match the tree node block size";
       return false;
     }
+    const bool has_chroma = leaf.has_chroma != 0;
+    const BlockSize chroma_mi_size =
+        leaf.chroma_bsize != 0 ? static_cast<BlockSize>(leaf.chroma_bsize)
+                               : bsize;
     const BlockSize chroma_size =
-        partition::chroma_plane_residual_size(geometry_, bsize);
+        partition::chroma_plane_residual_size(geometry_, chroma_mi_size);
     if (!partition::is_valid_block_size(chroma_size)) {
       error = "tree node has no valid 4:2:0 chroma residual size";
       return false;
     }
-    const int chroma_w = partition::block_width(chroma_size);
-    const int chroma_h = partition::block_height(chroma_size);
+    const int chroma_w = has_chroma ? partition::block_width(chroma_size) : 0;
+    const int chroma_h = has_chroma ? partition::block_height(chroma_size) : 0;
     if (leaf.chroma_w != chroma_w || leaf.chroma_h != chroma_h) {
       error = "block chroma size does not match the 4:2:0 residual size";
       return false;
@@ -371,20 +467,24 @@ class Packer {
 
     // TX_MODE_LARGEST: one transform per plane spanning the coded block, so
     // the declared transform size is derived from the coded dimensions.
-    const auto luma_tx = txv::make_tx_params(luma_w, luma_h);
-    const auto chroma_tx = txv::make_tx_params(chroma_w, chroma_h);
-    if (!luma_tx.has_value() || !chroma_tx.has_value()) {
+    std::optional<txv::TxParams> luma_tx =
+        has_luma ? txv::make_tx_params(luma_w, luma_h)
+                 : std::optional<txv::TxParams>{};
+    std::optional<txv::TxParams> chroma_tx =
+        has_chroma ? txv::make_tx_params(chroma_w, chroma_h) : luma_tx;
+    if ((has_luma && !luma_tx.has_value()) || !chroma_tx.has_value()) {
       error = "unsupported M1 transform size";
       return false;
     }
-    if (leaf.tx_w != luma_tx->w || leaf.tx_h != luma_tx->h ||
-        leaf.chroma_tx_w != chroma_tx->w ||
-        leaf.chroma_tx_h != chroma_tx->h) {
+    if ((has_luma && (leaf.tx_w != luma_tx->w || leaf.tx_h != luma_tx->h)) ||
+        (has_chroma && (leaf.chroma_tx_w != chroma_tx->w ||
+                        leaf.chroma_tx_h != chroma_tx->h))) {
       error = "declared adjusted TX size does not match the transform";
       return false;
     }
     // M1 codes no tx_type syntax except DCT_DCT (§7.15.2.1).
-    if (leaf.tx_type[0] != 0 || leaf.tx_type[1] != 0 || leaf.tx_type[2] != 0) {
+    if ((has_luma && leaf.tx_type[0] != 0) || leaf.tx_type[1] != 0 ||
+        leaf.tx_type[2] != 0) {
       error = "M1 only supports DCT_DCT; tx_type must be 0";
       return false;
     }
@@ -402,6 +502,25 @@ class Packer {
     entry.y_mode = static_cast<std::uint8_t>(leaf.y_mode);
     entry.y_angle_delta = static_cast<std::int8_t>(leaf.y_angle_delta);
     entry.uv_mode = static_cast<std::uint8_t>(leaf.uv_mode);
+    entry.flags |= syntax::kFlagHasChromaInfo;
+    entry.tree_type = static_cast<std::uint8_t>(leaf.tree_type);
+    entry.has_chroma = has_chroma ? 1 : 0;
+    entry.chroma_offset = static_cast<std::uint8_t>(leaf.chroma_offset);
+    entry.chroma_bsize = static_cast<std::uint8_t>(chroma_mi_size);
+    entry.chroma_mi_row = static_cast<std::uint16_t>(
+        leaf.chroma_bsize != 0 ? leaf.chroma_mi_row : leaf.mi_row);
+    entry.chroma_mi_col = static_cast<std::uint16_t>(
+        leaf.chroma_bsize != 0 ? leaf.chroma_mi_col : leaf.mi_col);
+    entry.mrl_index = static_cast<std::int8_t>(leaf.mrl_index);
+    entry.mrl_sec_index = static_cast<std::uint8_t>(leaf.mrl_sec_index);
+    entry.use_dip = static_cast<std::uint8_t>(leaf.use_dip);
+    entry.dip_mode = static_cast<std::uint8_t>(leaf.dip_mode);
+    entry.dip_transpose = static_cast<std::uint8_t>(leaf.dip_transpose);
+    entry.cfl_index = static_cast<std::uint8_t>(leaf.cfl_index);
+    entry.cfl_alpha_signs = static_cast<std::uint8_t>(leaf.cfl_alpha_signs);
+    entry.cfl_alpha_u = static_cast<std::uint8_t>(leaf.cfl_alpha_u_syntax);
+    entry.cfl_alpha_v = static_cast<std::uint8_t>(leaf.cfl_alpha_v_syntax);
+    entry.cfl_mh_dir = static_cast<std::uint8_t>(leaf.cfl_mh_dir);
     if (leaf.is_cfl != 0) entry.flags |= syntax::kFlagIsCfl;
     // §5.20.10.1 cdef_idx for the 64x64 block containing this leaf's origin.
     // The writer ignores repeats, so every leaf carries its block's value.
@@ -421,12 +540,15 @@ class Packer {
                          static_cast<std::size_t>(n64_col)];
     }
 
-    const txv::TxParams* params[3] = {&*luma_tx, &*chroma_tx, &*chroma_tx};
+    const txv::TxParams* params[3] = {has_luma ? &*luma_tx : nullptr,
+                                      &*chroma_tx, &*chroma_tx};
+    const int plane_count = has_chroma ? 3 : (has_luma ? 1 : 0);
     const std::span<const std::int32_t> planes[3] = {coeffs_.y, coeffs_.u,
                                                      coeffs_.v};
 
     entry.levels_offset = static_cast<std::uint32_t>(out_.levels.size());
-    for (int plane = 0; plane < 3; ++plane) {
+    for (int plane = 0; plane < plane_count; ++plane) {
+      if (params[plane] == nullptr) continue;
       const txv::TxParams& tx = *params[plane];
       const int area = tx.w * tx.h;
       const int eob = leaf.eob[plane];

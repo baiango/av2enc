@@ -28,6 +28,12 @@
 #if __has_include("cuda/pipeline/still/search/luma_search.h")
 #include "cuda/pipeline/still/search/luma_search.h"
 #endif
+#if __has_include("cuda/pipeline/still/intra/intra_extra.h")
+#include "cuda/pipeline/still/intra/intra_extra.h"
+#define AV2ENC_STILL_GPU_HAVE_INTRA_EXTRA 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_INTRA_EXTRA 0
+#endif
 #if __has_include("cuda/pipeline/still/tx/still_tx.h")
 #include "cuda/pipeline/still/tx/still_tx.h"
 #endif
@@ -58,6 +64,7 @@
 #else
 #define AV2ENC_STILL_GPU_HAVE_INTRA_MODES 0
 #endif
+#include "codec/transform/qm/qm.h"
 #if __has_include("cuda/pipeline/still/cdef/still_cdef_cuda.h")
 #include "cuda/pipeline/still/cdef/still_cdef.h"
 #include "cuda/pipeline/still/cdef/still_cdef_cuda.h"
@@ -72,6 +79,30 @@
 #else
 #define AV2ENC_STILL_GPU_HAVE_CCSO 0
 #endif
+#if __has_include("cuda/codec/filters/loop_restoration/wiener.h")
+#include "cuda/codec/filters/loop_restoration/wiener.h"
+#define AV2ENC_STILL_GPU_HAVE_WIENER 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_WIENER 0
+#endif
+#if __has_include("cuda/codec/filters/loop_restoration/chroma/lr_chroma.h")
+#include "cuda/codec/filters/loop_restoration/chroma/lr_chroma.h"
+#define AV2ENC_STILL_GPU_HAVE_LR_CHROMA 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_LR_CHROMA 0
+#endif
+#if __has_include("cuda/codec/filters/pc_wiener/pc_wiener.h")
+#include "cuda/codec/filters/pc_wiener/pc_wiener.h"
+#define AV2ENC_STILL_GPU_HAVE_PC_WIENER 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_PC_WIENER 0
+#endif
+#if __has_include("cuda/codec/filters/gdf/gdf.h")
+#include "cuda/codec/filters/gdf/gdf.h"
+#define AV2ENC_STILL_GPU_HAVE_GDF 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_GDF 0
+#endif
 
 // Full GPU frame pipeline: real plan tree + luma search + chroma/CfL + TX +
 // reconstruction + deblock + GPU entropy assembly.  Every component must be
@@ -79,6 +110,7 @@
 #if AV2ENC_STILL_GPU_HAVE_PLAN_BRIDGE && AV2ENC_STILL_GPU_HAVE_INTRA_MODES && \
     AV2ENC_STILL_GPU_HAVE_SCHED_BRIDGE && AV2ENC_STILL_GPU_HAVE_STREAM_BRIDGE && \
     __has_include("cuda/pipeline/still/search/luma_search.h") && \
+    __has_include("cuda/pipeline/still/intra/intra_extra.h") && \
     __has_include("cuda/pipeline/still/chroma/still_chroma.h") && \
     __has_include("cuda/pipeline/still/tx/still_tx.h") && \
     __has_include("cuda/pipeline/still/recon/recon.h")
@@ -111,6 +143,7 @@ namespace {
 namespace cm1 = ::av2enc::cuda::still;
 namespace im = ::av2enc::cuda::intra_modes;
 namespace srch = ::av2enc::cuda::still::search;
+namespace iext = ::av2enc::cuda::still::intra_extra;
 namespace sch = ::av2enc::cuda::still::sched;
 namespace still_stream = ::av2enc::still::stream;
 #endif
@@ -341,18 +374,24 @@ bool validate_plan(const FramePlan& plan, std::string& error) {
   std::uint32_t last_coeff_v = 0;
   for (std::uint32_t i = 0; i < plan.block_count; ++i) {
     const BlockPlan& block = plan.blocks[i];
-    if (block.luma_w == 0 || block.luma_h == 0 || block.tx_w == 0 ||
-        block.tx_h == 0) {
-      error = "plan: zero-sized block or transform";
+    const bool has_luma = block.luma_w != 0 && block.luma_h != 0;
+    if (!has_luma && block.has_chroma == 0) {
+      error = "plan: block codes neither luma nor chroma";
       return false;
     }
-    const std::size_t luma_end =
-        static_cast<std::size_t>(block.plane_offset_y) +
-        static_cast<std::size_t>(block.luma_h - 1u) * plan.y_stride +
-        block.luma_w;
-    if (luma_end > luma_bytes) {
-      error = "plan: luma block outside the padded plane";
+    if (has_luma && (block.tx_w == 0 || block.tx_h == 0)) {
+      error = "plan: zero-sized luma transform";
       return false;
+    }
+    if (has_luma) {
+      const std::size_t luma_end =
+          static_cast<std::size_t>(block.plane_offset_y) +
+          static_cast<std::size_t>(block.luma_h - 1u) * plan.y_stride +
+          block.luma_w;
+      if (luma_end > luma_bytes) {
+        error = "plan: luma block outside the padded plane";
+        return false;
+      }
     }
     if (block.has_chroma != 0) {
       const std::size_t chroma_end =
@@ -364,15 +403,13 @@ bool validate_plan(const FramePlan& plan, std::string& error) {
         return false;
       }
     }
-    if (block.coeff_offset_y < last_coeff_y ||
-        block.coeff_offset_u < last_coeff_u ||
-        block.coeff_offset_v < last_coeff_v) {
-      error = "plan: coefficient offsets are not monotonic";
-      return false;
-    }
-    last_coeff_y = block.coeff_offset_y;
-    last_coeff_u = block.coeff_offset_u;
-    last_coeff_v = block.coeff_offset_v;
+    // Extended/uneven partitions can own chroma blocks whose syntax order
+    // differs from the per-plane coefficient allocation order, so offsets are
+    // not necessarily monotonic.  The stream bridge validates that the
+    // declared per-plane ranges do not overlap.
+    last_coeff_y = std::max(last_coeff_y, block.coeff_offset_y);
+    last_coeff_u = std::max(last_coeff_u, block.coeff_offset_u);
+    last_coeff_v = std::max(last_coeff_v, block.coeff_offset_v);
   }
   if ((plan.coeff_count_y > 0 && last_coeff_y >= plan.coeff_count_y) ||
       (plan.coeff_count_u > 0 && last_coeff_u >= plan.coeff_count_u) ||
@@ -381,6 +418,59 @@ bool validate_plan(const FramePlan& plan, std::string& error) {
     return false;
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// 8-bit <-> 16-bit plane conversions for the uint16_t filter cores
+// ---------------------------------------------------------------------------
+
+__global__ void u8_to_u16_plane_kernel(const std::uint8_t* src, int src_stride,
+                                       std::uint16_t* dst, int dst_stride,
+                                       int width, int height) {
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= width || y >= height) {
+    return;
+  }
+  dst[static_cast<std::size_t>(y) * dst_stride + x] =
+      static_cast<std::uint16_t>(
+          src[static_cast<std::size_t>(y) * src_stride + x]);
+}
+
+// PC-Wiener/GDF write uint16 samples; the 8-bit still stream clips them to
+// [0, 255] exactly as the CPU reference does.
+__global__ void u16_to_u8_plane_kernel(const std::uint16_t* src,
+                                       int src_stride, std::uint8_t* dst,
+                                       int dst_stride, int width, int height) {
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= width || y >= height) {
+    return;
+  }
+  const int v = static_cast<int>(
+      src[static_cast<std::size_t>(y) * src_stride + x]);
+  dst[static_cast<std::size_t>(y) * dst_stride + x] =
+      static_cast<std::uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v));
+}
+
+void launch_u8_to_u16(const std::uint8_t* src, int src_stride,
+                      std::uint16_t* dst, int dst_stride, int width, int height,
+                      cudaStream_t stream) {
+  const dim3 block(32, 8);
+  const dim3 grid(static_cast<unsigned>((width + 31) / 32),
+                  static_cast<unsigned>((height + 7) / 8));
+  u8_to_u16_plane_kernel<<<grid, block, 0, stream>>>(src, src_stride, dst,
+                                                     dst_stride, width, height);
+}
+
+void launch_u16_to_u8(const std::uint16_t* src, int src_stride,
+                      std::uint8_t* dst, int dst_stride, int width, int height,
+                      cudaStream_t stream) {
+  const dim3 block(32, 8);
+  const dim3 grid(static_cast<unsigned>((width + 31) / 32),
+                  static_cast<unsigned>((height + 7) / 8));
+  u16_to_u8_plane_kernel<<<grid, block, 0, stream>>>(src, src_stride, dst,
+                                                     dst_stride, width, height);
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +538,21 @@ struct DeviceBuffers {
   std::size_t luma_blocks_bytes = 0;
   srch::LumaSearchResult* luma_results = nullptr;
   std::size_t luma_results_bytes = 0;
+  // Per-candidate base SSE (search debug) for the MRL ordered combine, and the
+  // MRL/DIP choice plus their chosen-prediction descriptors/scratch.
+  std::int64_t* candidate_sse = nullptr;
+  std::size_t candidate_sse_bytes = 0;
+  iext::Choice* intra_choices = nullptr;
+  std::size_t intra_choices_bytes = 0;
+  mrl::MrlJob* mrl_jobs = nullptr;
+  std::size_t mrl_jobs_bytes = 0;
+  dip::DipJob* dip_jobs = nullptr;
+  std::size_t dip_jobs_bytes = 0;
+  ibp::IbpJob* ibp_jobs = nullptr;
+  std::size_t ibp_jobs_bytes = 0;
+  std::uint8_t* mrl_pred = nullptr;
+  std::uint8_t* dip_pred = nullptr;
+  std::size_t extra_pred_bytes = 0;
   im::IntraJob* luma_jobs = nullptr;
   std::size_t luma_jobs_bytes = 0;
   cm1::StillChromaResult* chroma_results = nullptr;
@@ -487,7 +592,59 @@ struct DeviceBuffers {
   std::size_t ccso_blk_bytes[3] = {0, 0, 0};
   std::int16_t* ccso_offsets[3] = {nullptr, nullptr, nullptr};
   std::size_t ccso_offset_bytes[3] = {0, 0, 0};
+  // §7.20 loop restoration.  `lr` receives the final LrFrame; `curr` for the
+  // stage is the deblocked reconstruction (`recon`) and `cdef` is `filter`
+  // once CDEF/CCSO ran.  The per-plane unit descriptor arrays are uploaded
+  // from the CPU reference's §5.20.10.5/.6 decision.
+  U8Planes lr;
+  std::uint8_t* lr_unit_type[3] = {nullptr, nullptr, nullptr};
+  std::size_t lr_unit_type_bytes[3] = {0, 0, 0};
+  std::int16_t* lr_unit_coeffs[3] = {nullptr, nullptr, nullptr};
+  std::size_t lr_unit_coeffs_bytes[3] = {0, 0, 0};
+  // §7.20.1 LrTxSkip luma MI grid for PC-Wiener (per-4x4 eob == 0).
+  std::uint8_t* lr_tx_skip = nullptr;
+  std::size_t lr_tx_skip_bytes = 0;
+  // §5.18.6.2 QM: per-block adjusted-size q2 matrices.
+  std::int32_t* q2 = nullptr;
+  std::size_t q2_bytes = 0;
+  // Luma-only 16-bit planes for PC-Wiener (§7.20.4) and GDF (§7.20.5).
+  U16Planes luma16_curr;
+  U16Planes luma16_cdef;
+  U16Planes luma16_lr;
 #endif
+};
+
+// Persistent per-frame filter workspaces.  These own arena memory for the
+// components that expose a workspace (chroma LR, PC-Wiener, GDF tables); they
+// are recreated at a frame boundary whenever the arena is rebuilt.
+struct FilterWorkspaces {
+#if AV2ENC_STILL_GPU_HAVE_LR_CHROMA
+  lr_chroma::LrChromaWorkspace chroma_lr;
+#endif
+#if AV2ENC_STILL_GPU_HAVE_PC_WIENER
+  pc_wiener::PcWienerWorkspace pc_wiener;
+#endif
+#if AV2ENC_STILL_GPU_HAVE_GDF
+  gdf::GdfDeviceBuffers gdf;
+  bool gdf_ready = false;
+#endif
+  int mi_cols = 0;
+  int mi_rows = 0;
+
+  void release() {
+#if AV2ENC_STILL_GPU_HAVE_LR_CHROMA
+    chroma_lr.reset();
+#endif
+#if AV2ENC_STILL_GPU_HAVE_PC_WIENER
+    pc_wiener.reset();
+#endif
+#if AV2ENC_STILL_GPU_HAVE_GDF
+    gdf = gdf::GdfDeviceBuffers{};
+    gdf_ready = false;
+#endif
+    mi_cols = 0;
+    mi_rows = 0;
+  }
 };
 
 struct GpuRuntime {
@@ -500,9 +657,11 @@ struct GpuRuntime {
   StagingBuffer upload;
   StagingBuffer download;
   DeviceBuffers buffers;
+  FilterWorkspaces filters;
   std::uint64_t arena_capacity = 0;
 
   ~GpuRuntime() {
+    filters.release();
     buffers = DeviceBuffers{};
     download.release();
     upload.release();
@@ -537,6 +696,30 @@ constexpr int kSearchMaxBlocks = 1;
 constexpr int kSearchCandidatesPerChunk = 61;
 constexpr int kSearchMaxBlockArea = 64 * 64;
 
+// Upper bound on the §5.20.10.4 loop-restoration unit grid: the smallest
+// normative luma unit is 64 samples (16 MI cells) and the chroma grid at
+// 4:2:0/32 is the same shape, so one slot per 16x16 MI tile covers both.
+std::size_t lr_unit_slots(const FramePlan& plan) {
+  const std::size_t cols =
+      (static_cast<std::size_t>(plan.mi_cols) + 15u) / 16u;
+  const std::size_t rows =
+      (static_cast<std::size_t>(plan.mi_rows) + 15u) / 16u;
+  return cols * rows;
+}
+
+// Adjusted-size element count of the QM q2 matrices: one per TX block/plane.
+std::size_t q2_elems(const FramePlan& plan) {
+  std::size_t total = 0;
+  for (const BlockPlan& block : plan.blocks) {
+    total += static_cast<std::size_t>(block.tx_w) * block.tx_h;
+    if (block.has_chroma != 0) {
+      total += 2u * static_cast<std::size_t>(block.chroma_tx_w) *
+               block.chroma_tx_h;
+    }
+  }
+  return total;
+}
+
 std::size_t full_device_bytes(const FramePlan& plan) {
   const std::size_t n = plan.block_count;
   const std::size_t mi_cells = static_cast<std::size_t>(plan.mi_cols) *
@@ -552,6 +735,12 @@ std::size_t full_device_bytes(const FramePlan& plan) {
   }
   total += n * sizeof(srch::LumaSearchBlock);
   total += n * sizeof(srch::LumaSearchResult);
+  total += n * kSearchCandidatesPerChunk * sizeof(std::int64_t);
+  total += n * sizeof(iext::Choice);
+  total += n * sizeof(mrl::MrlJob);
+  total += n * sizeof(dip::DipJob);
+  total += n * sizeof(ibp::IbpJob);
+  total += 2u * kSearchMaxBlockArea;  // MRL/DIP chosen-prediction scratch
   total += n * sizeof(im::IntraJob);
   total += n * sizeof(cm1::StillChromaResult);
   total += n * sizeof(cm1::ReconBlockInfo);
@@ -580,6 +769,16 @@ std::size_t full_device_bytes(const FramePlan& plan) {
   // decoded offset tables (576 int16 per plane).
   total += 3u * n64_cols * n64_rows;
   total += 3u * 576u * sizeof(std::int16_t);
+  // §7.20 loop restoration: final LrFrame planes, per-plane unit type grids
+  // and coefficient arrays, plus the luma-only 16-bit curr/cdef/lr planes used
+  // by PC-Wiener and GDF.
+  const std::size_t unit_slots = lr_unit_slots(plan);
+  total += plane_y + plane_c * 2u;
+  total += 3u * unit_slots;
+  total += 3u * unit_slots * 18u * sizeof(std::int16_t);
+  total += 3u * plane_y * sizeof(std::uint16_t);
+  total += mi_cells;  // PC-Wiener LrTxSkip grid
+  total += q2_elems(plan) * sizeof(std::int32_t);  // QM q2 matrices
   return total;
 }
 #endif
@@ -628,9 +827,24 @@ bool buffers_fit(const FramePlan& plan, const DeviceBuffers& buffers,
   }
   const std::size_t n64_cols = (plan.mi_cols + 15u) / 16u;
   const std::size_t n64_rows = (plan.mi_rows + 15u) / 16u;
+  const std::size_t unit_slots = lr_unit_slots(plan);
   return buffers.filter.y_bytes >= luma_bytes &&
          buffers.filter.u_bytes >= chroma_bytes &&
          buffers.filter.v_bytes >= chroma_bytes &&
+         buffers.lr.y_bytes >= luma_bytes &&
+         buffers.lr.u_bytes >= chroma_bytes &&
+         buffers.lr.v_bytes >= chroma_bytes &&
+         buffers.lr_unit_type_bytes[0] >= unit_slots &&
+         buffers.lr_unit_type_bytes[1] >= unit_slots &&
+         buffers.lr_unit_type_bytes[2] >= unit_slots &&
+         buffers.lr_unit_coeffs_bytes[0] >= unit_slots * 18u * sizeof(std::int16_t) &&
+         buffers.lr_unit_coeffs_bytes[1] >= unit_slots * 18u * sizeof(std::int16_t) &&
+         buffers.lr_unit_coeffs_bytes[2] >= unit_slots * 18u * sizeof(std::int16_t) &&
+         buffers.luma16_curr.y_bytes >= luma_bytes * sizeof(std::uint16_t) &&
+         buffers.luma16_cdef.y_bytes >= luma_bytes * sizeof(std::uint16_t) &&
+         buffers.luma16_lr.y_bytes >= luma_bytes * sizeof(std::uint16_t) &&
+         buffers.lr_tx_skip_bytes >= mi_cells &&
+         buffers.q2_bytes >= q2_elems(plan) * sizeof(std::int32_t) &&
          buffers.cdef_mi_bytes >= mi_cells &&
          buffers.cdef_chroma_mi_bytes >= mi_cells &&
          buffers.cdef_idx_bytes >= n64_cols * n64_rows &&
@@ -760,6 +974,12 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
     }
     out.luma_blocks_bytes = n * sizeof(srch::LumaSearchBlock);
     out.luma_results_bytes = n * sizeof(srch::LumaSearchResult);
+    out.candidate_sse_bytes = n * kSearchCandidatesPerChunk * sizeof(std::int64_t);
+    out.intra_choices_bytes = n * sizeof(iext::Choice);
+    out.mrl_jobs_bytes = n * sizeof(mrl::MrlJob);
+    out.dip_jobs_bytes = n * sizeof(dip::DipJob);
+    out.ibp_jobs_bytes = n * sizeof(ibp::IbpJob);
+    out.extra_pred_bytes = kSearchMaxBlockArea;
     out.luma_jobs_bytes = n * sizeof(im::IntraJob);
     out.chroma_results_bytes = n * sizeof(cm1::StillChromaResult);
     out.eob_bytes = 3u * n * sizeof(std::int32_t);
@@ -781,6 +1001,15 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
         bump(out.luma_blocks_bytes, 256));
     out.luma_results = static_cast<srch::LumaSearchResult*>(
         bump(out.luma_results_bytes, 256));
+    out.candidate_sse = static_cast<std::int64_t*>(
+        bump(out.candidate_sse_bytes, 256));
+    out.intra_choices =
+        static_cast<iext::Choice*>(bump(out.intra_choices_bytes, 256));
+    out.mrl_jobs = static_cast<mrl::MrlJob*>(bump(out.mrl_jobs_bytes, 256));
+    out.dip_jobs = static_cast<dip::DipJob*>(bump(out.dip_jobs_bytes, 256));
+    out.ibp_jobs = static_cast<ibp::IbpJob*>(bump(out.ibp_jobs_bytes, 256));
+    out.mrl_pred = static_cast<std::uint8_t*>(bump(out.extra_pred_bytes, 256));
+    out.dip_pred = static_cast<std::uint8_t*>(bump(out.extra_pred_bytes, 256));
     out.luma_jobs =
         static_cast<im::IntraJob*>(bump(out.luma_jobs_bytes, 256));
     out.chroma_results = static_cast<cm1::StillChromaResult*>(
@@ -831,6 +1060,45 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
       ok = ok && out.ccso_blks[plane] != nullptr &&
            out.ccso_offsets[plane] != nullptr;
     }
+    // §7.20 loop restoration output and its per-plane unit descriptors.
+    out.lr.y_bytes = luma_bytes;
+    out.lr.u_bytes = chroma_bytes;
+    out.lr.v_bytes = chroma_bytes;
+    ok = ok && bump_u8(out.lr.y_bytes, &out.lr.y);
+    ok = ok && bump_u8(out.lr.u_bytes, &out.lr.u);
+    ok = ok && bump_u8(out.lr.v_bytes, &out.lr.v);
+    const std::size_t unit_slots = lr_unit_slots(plan);
+    for (int plane = 0; plane < 3; ++plane) {
+      out.lr_unit_type_bytes[plane] = unit_slots;
+      out.lr_unit_coeffs_bytes[plane] =
+          unit_slots * 18u * sizeof(std::int16_t);
+      out.lr_unit_type[plane] = static_cast<std::uint8_t*>(
+          bump(out.lr_unit_type_bytes[plane], 256));
+      out.lr_unit_coeffs[plane] = static_cast<std::int16_t*>(
+          bump(out.lr_unit_coeffs_bytes[plane], 256));
+      ok = ok && out.lr_unit_type[plane] != nullptr &&
+           out.lr_unit_coeffs[plane] != nullptr;
+    }
+    out.luma16_curr.y_bytes = luma_bytes * sizeof(std::uint16_t);
+    out.luma16_cdef.y_bytes = out.luma16_curr.y_bytes;
+    out.luma16_lr.y_bytes = out.luma16_curr.y_bytes;
+    out.luma16_curr.y = static_cast<std::uint16_t*>(
+        bump(out.luma16_curr.y_bytes, 256));
+    out.luma16_cdef.y = static_cast<std::uint16_t*>(
+        bump(out.luma16_cdef.y_bytes, 256));
+    out.luma16_lr.y = static_cast<std::uint16_t*>(
+        bump(out.luma16_lr.y_bytes, 256));
+    ok = ok && out.luma16_curr.y != nullptr &&
+         out.luma16_cdef.y != nullptr && out.luma16_lr.y != nullptr;
+    out.lr_tx_skip_bytes = mi_cells;
+    out.lr_tx_skip = static_cast<std::uint8_t*>(
+        bump(out.lr_tx_skip_bytes, 256));
+    ok = ok && out.lr_tx_skip != nullptr;
+    out.q2_bytes = q2_elems(plan) * sizeof(std::int32_t);
+    out.q2 = static_cast<std::int32_t*>(bump(out.q2_bytes, 256));
+    ok = ok && (out.q2_bytes == 0 || out.q2 != nullptr);
+    ok = ok && out.lr.y != nullptr && out.lr.u != nullptr &&
+         out.lr.v != nullptr;
     ok = ok && out.filter.y != nullptr && out.filter.u != nullptr &&
          out.filter.v != nullptr && out.cdef_skip != nullptr &&
          out.cdef_lossless != nullptr &&
@@ -841,6 +1109,10 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
          out.residual_packed[1] != nullptr &&
          out.residual_packed[2] != nullptr && out.luma_blocks != nullptr &&
          out.luma_results != nullptr && out.luma_jobs != nullptr &&
+         out.candidate_sse != nullptr && out.intra_choices != nullptr &&
+         out.mrl_jobs != nullptr && out.dip_jobs != nullptr &&
+         out.ibp_jobs != nullptr &&
+         out.mrl_pred != nullptr && out.dip_pred != nullptr &&
          out.chroma_results != nullptr && out.eob != nullptr &&
          out.tx_jobs != nullptr && out.recon_jobs != nullptr &&
          out.recon_infos != nullptr && out.search_scratch != nullptr &&
@@ -878,6 +1150,110 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
 }
 
 enum class RuntimeState { kReady, kCpuFallback, kError };
+
+// Persistent bytes the filter workspaces will request from the arena.  Kept
+// separate from DeviceBuffers because the components own their own layout.
+std::uint64_t filter_workspace_bytes(const FramePlan& plan,
+                                     const GpuOptions& options) {
+  std::uint64_t bytes = 0;
+#if AV2ENC_STILL_GPU_HAVE_LR_CHROMA
+  if (options.enable_chroma_lr) {
+    lr_chroma::LrChromaConfig cfg;
+    cfg.mi_cols = plan.mi_cols;
+    cfg.mi_rows = plan.mi_rows;
+    cfg.sub_x = 1;
+    cfg.sub_y = 1;
+    cfg.bit_depth = 8;
+    cfg.unit_size = 32;  // (512 >> max(sub_x, sub_y)) >> 3
+    cfg.cfl_ds_filter_index = 0;
+    cfg.sb_shift = 4;
+    bytes += lr_chroma::required_device_bytes(cfg);
+  }
+#endif
+#if AV2ENC_STILL_GPU_HAVE_PC_WIENER
+  if (options.enable_pc_wiener) {
+    pc_wiener::PcWienerConfig cfg;
+    cfg.width = plan.mi_cols * 4;
+    cfg.height = plan.mi_rows * 4;
+    cfg.bit_depth = 8;
+    cfg.unit_size = 64;
+    bytes += pc_wiener::pc_wiener_required_device_bytes(cfg);
+  }
+#endif
+#if AV2ENC_STILL_GPU_HAVE_GDF
+  if (options.enable_gdf) {
+    const int cols = (plan.mi_cols * 4 + 63) / 64;
+    const int rows = (plan.mi_rows * 4 + 63) / 64;
+    gdf::GdfConfig cfg;
+    cfg.max_units = gdf::gdf_grid_slots(cols, rows);
+    bytes += gdf::required_device_bytes(cfg);
+  }
+#endif
+  return bytes;
+}
+
+// Allocates the component workspaces once per arena/geometry.  Called at a
+// frame boundary only, after the arena and DeviceBuffers exist.
+bool prepare_filter_workspaces(const FramePlan& plan, const GpuOptions& options,
+                               std::string& error) {
+  FilterWorkspaces& ws = runtime().filters;
+  if (ws.mi_cols != plan.mi_cols || ws.mi_rows != plan.mi_rows) {
+    ws.release();
+    ws.mi_cols = plan.mi_cols;
+    ws.mi_rows = plan.mi_rows;
+  }
+  Arena& arena = runtime().arena;
+  (void)arena;
+#if AV2ENC_STILL_GPU_HAVE_LR_CHROMA
+  if (options.enable_chroma_lr && !ws.chroma_lr.initialized()) {
+    lr_chroma::LrChromaConfig cfg;
+    cfg.mi_cols = plan.mi_cols;
+    cfg.mi_rows = plan.mi_rows;
+    cfg.sub_x = 1;
+    cfg.sub_y = 1;
+    cfg.bit_depth = 8;
+    cfg.unit_size = 32;
+    cfg.cfl_ds_filter_index = 0;
+    cfg.sb_shift = 4;
+    std::string detail;
+    if (lr_chroma::allocate_checked(arena, cfg, &ws.chroma_lr, nullptr,
+                                    &detail) != Status::kOk) {
+      error = "M1 GPU: chroma loop-restoration workspace: " + detail;
+      return false;
+    }
+  }
+#endif
+#if AV2ENC_STILL_GPU_HAVE_PC_WIENER
+  if (options.enable_pc_wiener && !ws.pc_wiener.initialized()) {
+    pc_wiener::PcWienerConfig cfg;
+    cfg.width = plan.mi_cols * 4;
+    cfg.height = plan.mi_rows * 4;
+    cfg.bit_depth = 8;
+    cfg.unit_size = 64;
+    std::string detail;
+    if (ws.pc_wiener.create(arena, cfg, &detail) != Status::kOk) {
+      error = "M1 GPU: PC-Wiener workspace: " + detail;
+      return false;
+    }
+  }
+#endif
+#if AV2ENC_STILL_GPU_HAVE_GDF
+  if (options.enable_gdf && !ws.gdf_ready) {
+    const int cols = (plan.mi_cols * 4 + 63) / 64;
+    const int rows = (plan.mi_rows * 4 + 63) / 64;
+    gdf::GdfConfig cfg;
+    cfg.max_units = gdf::gdf_grid_slots(cols, rows);
+    std::string detail;
+    if (gdf::gdf_buffers_init(arena, cfg, &ws.gdf, nullptr, &detail) !=
+        Status::kOk) {
+      error = "M1 GPU: GDF workspace: " + detail;
+      return false;
+    }
+    ws.gdf_ready = true;
+  }
+#endif
+  return true;
+}
 
 RuntimeState ensure_runtime(const GpuOptions& options, const FramePlan* plan,
                             std::uint64_t need_device,
@@ -970,6 +1346,7 @@ RuntimeState ensure_runtime(const GpuOptions& options, const FramePlan* plan,
         (gpu.arena.initialized() && !over_cap)
             ? std::max(desired, gpu.arena.capacity())
             : desired;
+    gpu.filters.release();
     gpu.buffers = DeviceBuffers{};
     gpu.upload.release();
     gpu.download.release();
@@ -993,6 +1370,14 @@ RuntimeState ensure_runtime(const GpuOptions& options, const FramePlan* plan,
         }
         return RuntimeState::kError;
       }
+    }
+  }
+  if (plan != nullptr && need_device > 0) {
+    if (!prepare_filter_workspaces(*plan, options, error)) {
+      if (options.allow_cpu_fallback) {
+        return RuntimeState::kCpuFallback;
+      }
+      return RuntimeState::kError;
     }
   }
   if (need_upload > gpu.upload.capacity()) {
@@ -1287,6 +1672,18 @@ __global__ void prepare_commit_kernel(cm1::ReconBlockInfo* infos,
   config.enable_intra_edge_filter =
       options.enable_edge_filter && std::getenv("AV2ENC_STILL_NO_EDGE") == nullptr;
   config.enable_cfl_intra = options.enable_cfl;
+  config.cfl_ds_filter_index = options.cfl_ds_filter;
+  config.enable_ibp = options.enable_ibp;
+  config.enable_mrls = options.enable_mrl;
+  config.enable_dip = options.enable_dip;
+  config.enable_mhccp = options.mhccp;
+  config.enable_ext_partitions = options.ext_partitions;
+  config.enable_uneven_4way_partitions = options.ext_partitions;
+  config.enable_sdp = options.sdp;
+  // §5.4.3 sequence_partition_config(): a still frame uses the matching
+  // SbSize; 256x256 is clamped to 128x128 for an intra frame (§5.18.1).
+  config.use_128x128_superblock = options.sb_size == 128;
+  config.use_256x256_superblock = options.sb_size == 256;
   config.enable_chroma_dctonly = true;
   config.tx_mode_select = false;
   config.apply_deblock_y_vert = options.enable_deblock;
@@ -1343,13 +1740,35 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
 #else
       false;
 #endif
+  // §7.20 loop restoration: the CPU reference plans the per-unit decisions and
+  // coefficient tables; the GPU applies the normative pixel kernels.  Chroma
+  // LR (and the luma LrFrame copy when only chroma is enabled) is part of the
+  // same stage.  PC-Wiener replaces luma restoration with §7.20.4.
+  const bool pcw_active =
+      filter_config != nullptr && filter_config->lr.enable &&
+      filter_config->lr.pc_wiener;
+  const bool lr_wiener_active =
+      filter_config != nullptr && filter_config->lr.enable &&
+      !filter_config->lr.pc_wiener;
+  const bool lr_active = lr_wiener_active || pcw_active;
+  const bool lr_chroma_active =
+      lr_active && (filter_config->lr.plane[1].enabled ||
+                    filter_config->lr.plane[2].enabled);
+  const bool gdf_active =
+      filter_config != nullptr && filter_config->gdf.enable;
   if (blocks <= 0 || buffers.tx_jobs == nullptr) {
     error = "gpu: device buffers are not prepared";
     return GpuRunStatus::kError;
   }
   for (const BlockPlan& block : plan.blocks) {
-    if (block.has_chroma == 0 || block.chroma_w < 4 || block.chroma_h < 4) {
-      error = "unsupported: chroma-less M1 block";
+    const bool has_luma = block.luma_w != 0 && block.luma_h != 0;
+    if (!has_luma && block.has_chroma == 0) {
+      error = "unsupported: leaf has neither luma nor chroma";
+      return GpuRunStatus::kUnsupported;
+    }
+    if (block.has_chroma != 0 &&
+        (block.chroma_w < 4 || block.chroma_h < 4)) {
+      error = "unsupported: chroma block smaller than 4x4";
       return GpuRunStatus::kUnsupported;
     }
   }
@@ -1359,20 +1778,11 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     return GpuRunStatus::kUnsupported;
   }
 
-  // ---- availability counts (scheduler replay, host-only) ----------------
-  sch::Plan wave;
-  if (!sch::build_still_plan(plan, nullptr, &wave, error)) {
-    error = "gpu: scheduler plan failed: " + error;
-    return GpuRunStatus::kError;
-  }
-  std::vector<int> n4_above_right(static_cast<std::size_t>(blocks), 0);
-  std::vector<int> n4_below_left(static_cast<std::size_t>(blocks), 0);
-  for (const sch::PlaneJob& job : wave.jobs()) {
-    if (job.plane == 0 && job.block >= 0 && job.block < blocks) {
-      n4_above_right[static_cast<std::size_t>(job.block)] = job.n4_above_right;
-      n4_below_left[static_cast<std::size_t>(job.block)] = job.n4_below_left;
-    }
-  }
+  // ---- availability counts (from the frame plan) -------------------------
+  // The plan exports the exact superblock-local availability replay for its
+  // frame SbSize (64 or 128), including ChromaMi ownership for extended and
+  // sub-8 leaves.  The rect-only scheduler model cannot represent non-owning
+  // chroma leaves, so it is not used for availability here.
 
   // ---- static descriptor arrays -----------------------------------------
   std::vector<srch::LumaSearchBlock> luma_blocks(static_cast<std::size_t>(blocks));
@@ -1381,13 +1791,22 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::vector<cm1::ReconWriteJob> recon_jobs(static_cast<std::size_t>(blocks) * 3u);
   std::vector<cm1::ReconBlockInfo> recon_infos(static_cast<std::size_t>(blocks));
   std::vector<cm1::StillChromaJob> chroma_jobs(static_cast<std::size_t>(blocks));
+  std::vector<mrl::MrlJob> mrl_jobs(static_cast<std::size_t>(blocks));
+  std::vector<dip::DipJob> dip_jobs(static_cast<std::size_t>(blocks));
+  std::vector<ibp::IbpJob> ibp_jobs(static_cast<std::size_t>(blocks));
 
   for (int i = 0; i < blocks; ++i) {
     const BlockPlan& block = plan.blocks[static_cast<std::size_t>(i)];
     const int x0 = block.mi_col * 4;
     const int y0 = block.mi_row * 4;
-    const int cx = block.mi_col * 2;
-    const int cy = block.mi_row * 2;
+    // An owning extended leaf codes U/V at its ChromaMi origin, which can
+    // differ from the luma leaf origin.
+    const int cx = (block.chroma_mi_size != 0 ? block.chroma_mi_col
+                                              : block.mi_col) *
+                   2;
+    const int cy = (block.chroma_mi_size != 0 ? block.chroma_mi_row
+                                              : block.mi_row) *
+                   2;
 
     srch::LumaSearchBlock& search = luma_blocks[static_cast<std::size_t>(i)];
     search.recon_plane = buffers.recon.y;
@@ -1400,8 +1819,8 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     search.max_y = coded_h - 1;
     search.have_left = x0 > 0 ? 1 : 0;
     search.have_above = y0 > 0 ? 1 : 0;
-    search.num4_above_right = n4_above_right[static_cast<std::size_t>(i)];
-    search.num4_below_left = n4_below_left[static_cast<std::size_t>(i)];
+    search.num4_above_right = block.n4_above_right;
+    search.num4_below_left = block.n4_below_left;
     search.source_plane = buffers.src.y;
     search.source_stride = static_cast<int>(picture.width);
     search.source_max_x = static_cast<int>(picture.width) - 1;
@@ -1455,30 +1874,45 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       return true;
     };
 
-    if (!init_tx(tx_jobs[static_cast<std::size_t>(i) * 3u], block.luma_w,
-                 block.luma_h, static_cast<int>(picture.width), x0, y0,
-                 static_cast<int>(picture.width),
-                 static_cast<int>(picture.height),
-                 static_cast<int>(block.pred_offset_y),
-                 static_cast<int>(block.residual_offset_y),
-                 static_cast<int>(block.coeff_offset_y), i * 3)) {
-      return GpuRunStatus::kUnsupported;
+    if (block.luma_w != 0 && block.luma_h != 0) {
+      if (!init_tx(tx_jobs[static_cast<std::size_t>(i) * 3u], block.luma_w,
+                   block.luma_h, static_cast<int>(picture.width), x0, y0,
+                   static_cast<int>(picture.width),
+                   static_cast<int>(picture.height),
+                   static_cast<int>(block.pred_offset_y),
+                   static_cast<int>(block.residual_offset_y),
+                   static_cast<int>(block.coeff_offset_y), i * 3)) {
+        return GpuRunStatus::kUnsupported;
+      }
     }
-    if (!init_tx(tx_jobs[static_cast<std::size_t>(i) * 3u + 1u], block.chroma_w,
-                 block.chroma_h, chroma_vis_w, cx, cy, chroma_vis_w,
-                 chroma_vis_h,
-                 static_cast<int>(block.pred_offset_u),
-                 static_cast<int>(block.residual_offset_u),
-                 static_cast<int>(block.coeff_offset_u), i * 3 + 1)) {
-      return GpuRunStatus::kUnsupported;
+    if (block.has_chroma != 0) {
+      if (!init_tx(tx_jobs[static_cast<std::size_t>(i) * 3u + 1u],
+                   block.chroma_w, block.chroma_h, chroma_vis_w, cx, cy,
+                   chroma_vis_w, chroma_vis_h,
+                   static_cast<int>(block.pred_offset_u),
+                   static_cast<int>(block.residual_offset_u),
+                   static_cast<int>(block.coeff_offset_u), i * 3 + 1)) {
+        return GpuRunStatus::kUnsupported;
+      }
+      if (!init_tx(tx_jobs[static_cast<std::size_t>(i) * 3u + 2u],
+                   block.chroma_w, block.chroma_h, chroma_vis_w, cx, cy,
+                   chroma_vis_w, chroma_vis_h,
+                   static_cast<int>(block.pred_offset_v),
+                   static_cast<int>(block.residual_offset_v),
+                   static_cast<int>(block.coeff_offset_v), i * 3 + 2)) {
+        return GpuRunStatus::kUnsupported;
+      }
     }
-    if (!init_tx(tx_jobs[static_cast<std::size_t>(i) * 3u + 2u], block.chroma_w,
-                 block.chroma_h, chroma_vis_w, cx, cy, chroma_vis_w,
-                 chroma_vis_h,
-                 static_cast<int>(block.pred_offset_v),
-                 static_cast<int>(block.residual_offset_v),
-                 static_cast<int>(block.coeff_offset_v), i * 3 + 2)) {
-      return GpuRunStatus::kUnsupported;
+    if (cpu_plan != nullptr && cpu_plan->delta_q_enabled) {
+      for (int plane = 0; plane < 3; ++plane) {
+        StillTxJob& job = tx_jobs[static_cast<std::size_t>(i) * 3u +
+                                  static_cast<std::size_t>(plane)];
+        job.use_deltaq = 1;
+        job.qindex = cpu_plan->delta_q_index;
+        job.delta_dc = cpu_plan->delta_q_dc[plane];
+        job.delta_ac = cpu_plan->delta_q_ac[plane];
+        job.plane = plane;
+      }
     }
 
     cm1::ReconWriteJob& write_y = recon_jobs[static_cast<std::size_t>(i) * 3u];
@@ -1515,13 +1949,28 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     info.mi_col = block.mi_col;
     info.w4 = block.luma_w / 4;
     info.h4 = block.luma_h / 4;
-    info.chroma_w4 = block.chroma_w / 4;
-    info.chroma_h4 = block.chroma_h / 4;
+    info.chroma_w4 = block.has_chroma != 0 ? block.chroma_w / 4 : 0;
+    info.chroma_h4 = block.has_chroma != 0 ? block.chroma_h / 4 : 0;
+    info.chroma_mi_row = block.chroma_mi_size != 0
+                             ? static_cast<int>(block.chroma_mi_row)
+                             : static_cast<int>(block.mi_row);
+    info.chroma_mi_col = block.chroma_mi_size != 0
+                             ? static_cast<int>(block.chroma_mi_col)
+                             : static_cast<int>(block.mi_col);
+    info.chroma_mi_w4 = block.chroma_mi_w4 != 0
+                            ? static_cast<int>(block.chroma_mi_w4)
+                            : block.luma_w / 4;
+    info.chroma_mi_h4 = block.chroma_mi_h4 != 0
+                            ? static_cast<int>(block.chroma_mi_h4)
+                            : block.luma_h / 4;
     info.joint = 0;
     info.uv_smooth = 0;
     info.qindex = options.base_q_idx;
-    const auto luma_params =
-        txv::make_tx_params(block.luma_w, block.luma_h, txv::TxType::kDctDct);
+    const auto luma_params = block.luma_w != 0
+                                 ? txv::make_tx_params(block.luma_w,
+                                                       block.luma_h,
+                                                       txv::TxType::kDctDct)
+                                 : std::optional<txv::TxParams>{};
     const auto chroma_params =
         txv::make_tx_params(block.chroma_w, block.chroma_h,
                             txv::TxType::kDctDct);
@@ -1542,7 +1991,10 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     chroma.luma_stride = static_cast<int>(plan.y_stride);
     chroma.luma_max_x = coded_w - 1;
     chroma.luma_max_y = coded_h - 1;
-    chroma.sb_top_y = (y0 / 64) * 64;
+    chroma.sb_top_y =
+        ((block.chroma_mi_size != 0 ? block.chroma_mi_row * 4 : y0) /
+         plan.sb_size) *
+        plan.sb_size;
     chroma.chroma_u = buffers.recon.u;
     chroma.chroma_v = buffers.recon.v;
     chroma.chroma_stride = static_cast<int>(plan.u_stride);
@@ -1555,12 +2007,104 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     chroma.src_stride_v = chroma_vis_w;
     chroma.src_max_x = chroma_vis_w - 1;
     chroma.src_max_y = chroma_vis_h - 1;
+    chroma.num4_above_right = block.chroma_n4_above_right;
+    chroma.num4_below_left = block.chroma_n4_below_left;
     chroma.x = cx;
     chroma.y = cy;
     chroma.w = block.chroma_w;
     chroma.h = block.chroma_h;
     chroma.coded_width = chroma_coded_w;
     chroma.coded_height = chroma_coded_h;
+
+    mrl::MrlJob& mrl_job = mrl_jobs[static_cast<std::size_t>(i)];
+    mrl_job.block.recon = buffers.recon.y;
+    mrl_job.block.recon_stride = static_cast<int>(plan.y_stride);
+    mrl_job.block.x = x0;
+    mrl_job.block.y = y0;
+    mrl_job.block.w = block.luma_w;
+    mrl_job.block.h = block.luma_h;
+    mrl_job.block.max_x = coded_w - 1;
+    mrl_job.block.max_y = coded_h - 1;
+    mrl_job.block.have_left = search.have_left;
+    mrl_job.block.have_above = search.have_above;
+    mrl_job.block.num4_above_right = search.num4_above_right;
+    mrl_job.block.num4_below_left = search.num4_below_left;
+    mrl_job.block.plane = 0;
+    mrl_job.block.sb_height = plan.sb_size;
+    mrl_job.pred = buffers.mrl_pred;
+
+    dip::DipJob& dip_job = dip_jobs[static_cast<std::size_t>(i)];
+    dip_job.block.recon = buffers.recon.y;
+    dip_job.block.recon_stride = static_cast<int>(plan.y_stride);
+    dip_job.block.x = x0;
+    dip_job.block.y = y0;
+    dip_job.block.w = block.luma_w;
+    dip_job.block.h = block.luma_h;
+    dip_job.block.max_x = coded_w - 1;
+    dip_job.block.max_y = coded_h - 1;
+    dip_job.block.have_left = search.have_left;
+    dip_job.block.have_above = search.have_above;
+    dip_job.block.num4_above_right = search.num4_above_right;
+    dip_job.block.num4_below_left = search.num4_below_left;
+    dip_job.pred = buffers.dip_pred;
+
+    ibp::IbpJob& ibp_job = ibp_jobs[static_cast<std::size_t>(i)];
+    ibp_job.block.intra.recon_plane = buffers.recon.y;
+    ibp_job.block.intra.recon_stride = static_cast<int>(plan.y_stride);
+    ibp_job.block.intra.x0 = x0;
+    ibp_job.block.intra.y0 = y0;
+    ibp_job.block.intra.width = block.luma_w;
+    ibp_job.block.intra.height = block.luma_h;
+    ibp_job.block.intra.max_x = coded_w - 1;
+    ibp_job.block.intra.max_y = coded_h - 1;
+    ibp_job.block.intra.have_left = search.have_left;
+    ibp_job.block.intra.have_above = search.have_above;
+    ibp_job.block.intra.num4_above_right = search.num4_above_right;
+    ibp_job.block.intra.num4_below_left = search.num4_below_left;
+    ibp_job.block.intra.plane = 0;
+    ibp_job.block.intra.mode = im::kDcPred;
+    ibp_job.block.enable_ibp = 1;
+    ibp_job.block.uv_is_cfl = 0;
+    ibp_job.pred = buffers.pred_packed[0] + block.pred_offset_y;
+  }
+
+  // ---- QM q2 matrices ----------------------------------------------------
+  std::vector<std::int32_t> q2_host;
+  std::size_t q2_upload_bytes = 0;
+  if (cpu_plan != nullptr && cpu_plan->qm_enabled) {
+    q2_host.assign(q2_elems(plan), 0);
+    std::size_t q2_offset = 0;
+    for (int i = 0; i < blocks; ++i) {
+      for (int plane = 0; plane < 3; ++plane) {
+        StillTxJob& job = tx_jobs[static_cast<std::size_t>(i) * 3u +
+                                  static_cast<std::size_t>(plane)];
+        const TxParams& p = job.params;
+        qm::QmDequantParams qp;
+        qp.state = &cpu_plan->qm_state;
+        qp.tx_size = p.tx_size;
+        qp.plane = plane;
+        qp.tx_type = p.tx_type;
+        qp.segment_id = 0;
+        qp.dc_quant = av2enc::txv::kQuantStep;
+        qp.ac_quant = av2enc::txv::kQuantStep;
+        qp.bit_depth = 8;
+        const std::size_t n =
+            static_cast<std::size_t>(p.w) * static_cast<std::size_t>(p.h);
+        if (q2_offset + n > q2_host.size() ||
+            !qm::build_q2_matrix(qp, q2_host.data() + q2_offset)) {
+          error = "gpu: QM q2 matrix build failed";
+          return GpuRunStatus::kUnsupported;
+        }
+        job.use_deltaq = 1;  // shared device quantizer
+        job.qindex = options.base_q_idx;
+        job.delta_dc = 0;
+        job.delta_ac = 0;
+        job.plane = plane;
+        job.q2_offset = static_cast<std::int32_t>(q2_offset);
+        q2_offset += n;
+      }
+    }
+    q2_upload_bytes = q2_host.size() * sizeof(std::int32_t);
   }
 
   // ---- upload ------------------------------------------------------------
@@ -1576,6 +2120,9 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       recon_jobs.size() * sizeof(cm1::ReconWriteJob);
   const std::size_t recon_infos_bytes =
       recon_infos.size() * sizeof(cm1::ReconBlockInfo);
+  const std::size_t mrl_jobs_bytes = mrl_jobs.size() * sizeof(mrl::MrlJob);
+  const std::size_t dip_jobs_bytes = dip_jobs.size() * sizeof(dip::DipJob);
+  const std::size_t ibp_jobs_bytes = ibp_jobs.size() * sizeof(ibp::IbpJob);
   // §7.19 CCSO metadata: per-plane unit-enable grid + decoded offset table.
   // The decoded tables come from the CPU reference's parameters so the GPU
   // kernel sees exactly the values the bitstream signals.
@@ -1584,6 +2131,19 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::int16_t ccso_offset_tables[3][576] = {};
   const std::size_t cdef_idx_bytes =
       cdef_active ? cpu_plan->cdef_idx.size() : 0;
+  const std::size_t lr_tx_skip_bytes =
+      pcw_active && cpu_plan != nullptr ? cpu_plan->lr_tx_skip.size() : 0;
+  // §7.20 luma Wiener NS unit descriptors (device copies).  Chroma descriptors
+  // are consumed by the lr_chroma workspace through upload_units() below.
+  std::size_t lr_type_bytes[3] = {0, 0, 0};
+  std::size_t lr_coeff_bytes[3] = {0, 0, 0};
+  if (lr_active) {
+    const ::av2enc::still::StillLrPlane& plane = filter_config->lr.plane[0];
+    if (plane.enabled) {
+      lr_type_bytes[0] = plane.unit_type.size();
+      lr_coeff_bytes[0] = plane.unit_coeffs.size() * sizeof(std::int16_t);
+    }
+  }
 #if AV2ENC_STILL_GPU_HAVE_CCSO
   if (ccso_active) {
     for (int plane = 0; plane < 3; ++plane) {
@@ -1620,10 +2180,14 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   const std::size_t upload_total = src_y_bytes + src_c_bytes * 2u +
                                    luma_blocks_bytes + luma_jobs_bytes +
                                    tx_jobs_bytes + recon_jobs_bytes +
-                                   recon_infos_bytes + ccso_blk_bytes[0] +
+                                   recon_infos_bytes + mrl_jobs_bytes +
+                                   dip_jobs_bytes + ibp_jobs_bytes +
+                                   ccso_blk_bytes[0] +
                                    ccso_blk_bytes[1] + ccso_blk_bytes[2] +
                                    ccso_off_bytes[0] + ccso_off_bytes[1] +
-                                   ccso_off_bytes[2] + cdef_idx_bytes;
+                                   ccso_off_bytes[2] + cdef_idx_bytes +
+                                   lr_type_bytes[0] + lr_coeff_bytes[0] +
+                                   lr_tx_skip_bytes + q2_upload_bytes;
   auto* upload = static_cast<std::uint8_t*>(gpu.upload.data());
   if (upload == nullptr || gpu.upload.capacity() < upload_total) {
     error = "gpu: pinned upload staging is too small";
@@ -1651,9 +2215,45 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::memcpy(upload + up, recon_infos.data(), recon_infos_bytes);
   const std::uint8_t* host_recon_infos = upload + up;
   up += recon_infos_bytes;
+  std::memcpy(upload + up, mrl_jobs.data(), mrl_jobs_bytes);
+  const std::uint8_t* host_mrl_jobs = upload + up;
+  up += mrl_jobs_bytes;
+  std::memcpy(upload + up, dip_jobs.data(), dip_jobs_bytes);
+  const std::uint8_t* host_dip_jobs = upload + up;
+  up += dip_jobs_bytes;
+  std::memcpy(upload + up, ibp_jobs.data(), ibp_jobs_bytes);
+  const std::uint8_t* host_ibp_jobs = upload + up;
+  up += ibp_jobs_bytes;
   const std::uint8_t* host_ccso_blks[3] = {nullptr, nullptr, nullptr};
   const std::int16_t* host_ccso_offsets[3] = {nullptr, nullptr, nullptr};
   const std::int8_t* host_cdef_idx = nullptr;
+  const std::uint8_t* host_lr_type = nullptr;
+  const std::int16_t* host_lr_coeff = nullptr;
+  if (lr_type_bytes[0] != 0) {
+    std::memcpy(upload + up, filter_config->lr.plane[0].unit_type.data(),
+                lr_type_bytes[0]);
+    host_lr_type = upload + up;
+    up += lr_type_bytes[0];
+  }
+  if (lr_coeff_bytes[0] != 0) {
+    std::memcpy(upload + up, filter_config->lr.plane[0].unit_coeffs.data(),
+                lr_coeff_bytes[0]);
+    host_lr_coeff =
+        reinterpret_cast<const std::int16_t*>(upload + up);
+    up += lr_coeff_bytes[0];
+  }
+  const std::uint8_t* host_lr_tx_skip = nullptr;
+  if (lr_tx_skip_bytes != 0) {
+    std::memcpy(upload + up, cpu_plan->lr_tx_skip.data(), lr_tx_skip_bytes);
+    host_lr_tx_skip = upload + up;
+    up += lr_tx_skip_bytes;
+  }
+  const std::int32_t* host_q2 = nullptr;
+  if (q2_upload_bytes != 0) {
+    std::memcpy(upload + up, q2_host.data(), q2_upload_bytes);
+    host_q2 = reinterpret_cast<const std::int32_t*>(upload + up);
+    up += q2_upload_bytes;
+  }
   if (cdef_idx_bytes != 0) {
     std::memcpy(upload + up, cpu_plan->cdef_idx.data(), cdef_idx_bytes);
     host_cdef_idx = reinterpret_cast<const std::int8_t*>(upload + up);
@@ -1690,6 +2290,9 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       !enqueue_upload(buffers.recon_jobs, host_recon_jobs, recon_jobs_bytes) ||
       !enqueue_upload(buffers.recon_infos, host_recon_infos,
                       recon_infos_bytes) ||
+      !enqueue_upload(buffers.mrl_jobs, host_mrl_jobs, mrl_jobs_bytes) ||
+      !enqueue_upload(buffers.dip_jobs, host_dip_jobs, dip_jobs_bytes) ||
+      !enqueue_upload(buffers.ibp_jobs, host_ibp_jobs, ibp_jobs_bytes) ||
       cudaMemsetAsync(buffers.tx_errors, 0, sizeof(int), stream) !=
           cudaSuccess) {
     error = "gpu: upload failed";
@@ -1723,6 +2326,36 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       error = "gpu: CDEF metadata upload failed";
       return GpuRunStatus::kError;
     }
+  }
+  if (lr_type_bytes[0] != 0 &&
+      !enqueue_upload(buffers.lr_unit_type[0], host_lr_type,
+                      lr_type_bytes[0])) {
+    error = "gpu: loop-restoration unit type upload failed";
+    return GpuRunStatus::kError;
+  }
+  if (lr_coeff_bytes[0] != 0 &&
+      !enqueue_upload(buffers.lr_unit_coeffs[0], host_lr_coeff,
+                      lr_coeff_bytes[0])) {
+    error = "gpu: loop-restoration coefficient upload failed";
+    return GpuRunStatus::kError;
+  }
+  if (lr_tx_skip_bytes != 0 &&
+      !enqueue_upload(buffers.lr_tx_skip, host_lr_tx_skip,
+                      lr_tx_skip_bytes)) {
+    error = "gpu: PC-Wiener LrTxSkip upload failed";
+    return GpuRunStatus::kError;
+  }
+  if (q2_upload_bytes != 0 &&
+      !enqueue_upload(buffers.q2, host_q2, q2_upload_bytes)) {
+    error = "gpu: QM q2 matrix upload failed";
+    return GpuRunStatus::kError;
+  }
+  if (cudaMemsetAsync(buffers.intra_choices, 0,
+                      static_cast<std::size_t>(blocks) *
+                          sizeof(iext::Choice),
+                      stream) != cudaSuccess) {
+    error = "gpu: intra choice reset failed";
+    return GpuRunStatus::kError;
   }
 
   // ---- reconstruction state ---------------------------------------------
@@ -1769,7 +2402,11 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   srch::LumaSearchGates gates;
   if (options.luma_dc_only || options.force_dc ||
       std::getenv("AV2ENC_STILL_LUMA_DC") != nullptr) {
-    gates.flags |= srch::kGateDcOnly;
+    // DIP (and palette on the CPU path) need the real DC score even in the
+    // DC-only fast path, so the search must predict DC instead of returning
+    // sse = 0.
+    gates.flags |= options.enable_dip ? srch::kGateDcOnlyPredict
+                                      : srch::kGateDcOnly;
   }
   if (std::getenv("AV2ENC_STILL_BASE_ONLY") != nullptr) {
     gates.flags |= srch::kGateBaseOnly;
@@ -1795,6 +2432,10 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
           ? 1
           : 0;
   chroma_options.enable_uv_full = options.uv_full ? 1 : 0;
+  chroma_options.ds_filter = options.cfl_ds_filter;
+  chroma_options.enable_ibp = options.enable_ibp ? 1 : 0;
+  chroma_options.cfl_explicit = options.cfl_explicit ? 1 : 0;
+  chroma_options.enable_mhccp = options.mhccp ? 1 : 0;
 
   StillTxBuffers tx_buffers;
   tx_buffers.src = buffers.src.y;
@@ -1802,6 +2443,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   tx_buffers.levels = buffers.coeff.y;
   tx_buffers.residual_out = buffers.residual_packed[0];
   tx_buffers.eob = buffers.eob;
+  tx_buffers.q2 = buffers.q2;
   tx_buffers.error_count = buffers.tx_errors;
 
   // ---- ordered block loop ----------------------------------------------
@@ -1809,10 +2451,12 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   int last_sb_col = -1;
   for (int i = 0; i < blocks; ++i) {
     const BlockPlan& block = plan.blocks[static_cast<std::size_t>(i)];
-    const int sb_row = (block.mi_row / 16) * 16;
-    const int sb_col = (block.mi_col / 16) * 16;
+    const int sb_mi = plan.sb_size / 4;
+    const int sb_row = (block.mi_row / sb_mi) * sb_mi;
+    const int sb_col = (block.mi_col / sb_mi) * sb_mi;
     if (sb_row != last_sb_row || sb_col != last_sb_col) {
-      if (cm1::recon_begin_sb(state, sb_row, sb_col, stream) != cudaSuccess) {
+      if (cm1::recon_begin_sb(state, sb_row, sb_col, stream, sb_mi) !=
+          cudaSuccess) {
         error = "gpu: recon_begin_sb failed";
         return GpuRunStatus::kError;
       }
@@ -1820,12 +2464,63 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       last_sb_col = sb_col;
     }
 
+    const bool has_luma = block.luma_w != 0 && block.luma_h != 0;
+    if (has_luma) {
     prepare_search_block_kernel<<<1, 1, 0, stream>>>(
         buffers.luma_blocks, buffers.intra_joint, mi_cols, mi_rows, i);
-    if (srch::luma_search(buffers.luma_blocks + i, 1, gates, search_scratch,
-                          buffers.luma_results + i, nullptr,
-                          stream) != cudaSuccess) {
+    srch::LumaSearchDebug search_debug{};
+    if (options.enable_mrl) {
+      search_debug.d_candidate_sse =
+          buffers.candidate_sse +
+          static_cast<std::size_t>(i) * srch::kMaxLumaCandidates;
+      search_debug.stride = srch::kMaxLumaCandidates;
+    }
+    if (options.enable_ibp) {
+      if (iext::ibp_luma_search(
+              buffers.luma_blocks + i, plan.sb_size, gates.flags,
+              gates.enable_edge_filter, buffers.luma_results + i,
+              options.enable_mrl
+                  ? buffers.candidate_sse +
+                        static_cast<std::size_t>(i) *
+                            srch::kMaxLumaCandidates
+                  : nullptr,
+              stream) != cudaSuccess) {
+        error = "gpu: IBP luma search failed";
+        return GpuRunStatus::kError;
+      }
+    } else if (srch::luma_search(buffers.luma_blocks + i, 1, gates,
+                                 search_scratch, buffers.luma_results + i,
+                                 &search_debug, stream) != cudaSuccess) {
       error = "gpu: luma search failed";
+      return GpuRunStatus::kError;
+    }
+    if (options.enable_mrl &&
+        iext::mrl_search(
+            buffers.luma_blocks + i, plan.sb_size,
+            gates.enable_edge_filter,
+            buffers.candidate_sse +
+                static_cast<std::size_t>(i) * srch::kMaxLumaCandidates,
+            gates.flags, buffers.luma_results + i, buffers.intra_choices + i,
+            stream) != cudaSuccess) {
+      error = "gpu: MRL search failed";
+      return GpuRunStatus::kError;
+    }
+    if (options.enable_dip &&
+        iext::dip_search(buffers.luma_blocks + i, plan.sb_size,
+                         gates.enable_edge_filter, options.enable_dip ? 1 : 0,
+                         std::getenv("AV2ENC_STILL_BASE_ONLY") != nullptr ? 1 : 0,
+                         buffers.luma_results + i, buffers.intra_choices + i,
+                         stream) != cudaSuccess) {
+      error = "gpu: DIP search failed";
+      return GpuRunStatus::kError;
+    }
+    if ((options.enable_mrl || options.enable_dip || options.enable_ibp) &&
+        iext::prepare_jobs(buffers.mrl_jobs, buffers.dip_jobs,
+                           buffers.ibp_jobs,
+                           buffers.luma_blocks, buffers.luma_results,
+                           buffers.intra_choices, i, gates.enable_edge_filter,
+                           stream) != cudaSuccess) {
+      error = "gpu: intra extra job preparation failed";
       return GpuRunStatus::kError;
     }
     prepare_prediction_kernel<<<1, 1, 0, stream>>>(
@@ -1833,6 +2528,34 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     if (im::intra_predict_batch(buffers.luma_jobs + i, 1, stream) !=
         cudaSuccess) {
       error = "gpu: chosen-mode prediction failed";
+      return GpuRunStatus::kError;
+    }
+    if (options.enable_ibp &&
+        ibp::ibp_predict_batch(buffers.ibp_jobs + i, 1, stream) !=
+            cudaSuccess) {
+      error = "gpu: IBP prediction failed";
+      return GpuRunStatus::kError;
+    }
+    if (options.enable_mrl &&
+        mrl::mrl_predict_batch(buffers.mrl_jobs + i, 1, stream) !=
+            cudaSuccess) {
+      error = "gpu: MRL prediction failed";
+      return GpuRunStatus::kError;
+    }
+    if (options.enable_dip &&
+        dip::dip_predict_batch(buffers.dip_jobs + i, 1, stream) !=
+            cudaSuccess) {
+      error = "gpu: DIP prediction failed";
+      return GpuRunStatus::kError;
+    }
+    if ((options.enable_mrl || options.enable_dip) &&
+        iext::select_prediction(
+            buffers.intra_choices + i,
+            options.enable_mrl ? buffers.mrl_pred : nullptr,
+            options.enable_dip ? buffers.dip_pred : nullptr,
+            buffers.pred_packed[0] + block.pred_offset_y,
+            block.luma_w * block.luma_h, stream) != cudaSuccess) {
+      error = "gpu: intra extra prediction selection failed";
       return GpuRunStatus::kError;
     }
 
@@ -1852,36 +2575,41 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       error = "gpu: luma reconstruction failed";
       return GpuRunStatus::kError;
     }
+    }  // has_luma
 
-    if (cm1::chroma_decide(chroma_jobs[static_cast<std::size_t>(i)],
-                           chroma_options, buffers.chroma_results + i,
-                           stream) != cudaSuccess) {
-      error = "gpu: chroma decision failed";
-      return GpuRunStatus::kError;
-    }
+    if (block.has_chroma != 0) {
+      if (cm1::chroma_decide(chroma_jobs[static_cast<std::size_t>(i)],
+                             chroma_options, buffers.chroma_results + i,
+                             stream) != cudaSuccess) {
+        error = "gpu: chroma decision failed";
+        return GpuRunStatus::kError;
+      }
 
-    for (int p = 1; p <= 2; ++p) {
-      tx_buffers.src = (p == 1) ? buffers.src.u : buffers.src.v;
-      tx_buffers.pred = buffers.pred_packed[p];
-      tx_buffers.levels = (p == 1) ? buffers.coeff.u : buffers.coeff.v;
-      tx_buffers.residual_out = buffers.residual_packed[p];
-      tx_buffers.eob = buffers.eob;
-      if (still_tx_batch(
-              buffers.tx_jobs + static_cast<std::size_t>(i) * 3u + p, 1,
-              tx_buffers, 0, stream) != cudaSuccess) {
-        error = "gpu: chroma TX failed";
+      for (int p = 1; p <= 2; ++p) {
+        tx_buffers.src = (p == 1) ? buffers.src.u : buffers.src.v;
+        tx_buffers.pred = buffers.pred_packed[p];
+        tx_buffers.levels = (p == 1) ? buffers.coeff.u : buffers.coeff.v;
+        tx_buffers.residual_out = buffers.residual_packed[p];
+        tx_buffers.eob = buffers.eob;
+        if (still_tx_batch(
+                buffers.tx_jobs + static_cast<std::size_t>(i) * 3u + p, 1,
+                tx_buffers, 0, stream) != cudaSuccess) {
+          error = "gpu: chroma TX failed";
+          return GpuRunStatus::kError;
+        }
+      }
+      if (cm1::recon_write_blocks(
+              buffers.recon_jobs + static_cast<std::size_t>(i) * 3u + 1u, 2,
+              stream) != cudaSuccess) {
+        error = "gpu: chroma reconstruction failed";
         return GpuRunStatus::kError;
       }
     }
-    if (cm1::recon_write_blocks(
-            buffers.recon_jobs + static_cast<std::size_t>(i) * 3u + 1u, 2,
-            stream) != cudaSuccess) {
-      error = "gpu: chroma reconstruction failed";
-      return GpuRunStatus::kError;
-    }
 
-    prepare_commit_kernel<<<1, 1, 0, stream>>>(
-        buffers.recon_infos, buffers.luma_results, i);
+    if (has_luma) {
+      prepare_commit_kernel<<<1, 1, 0, stream>>>(
+          buffers.recon_infos, buffers.luma_results, i);
+    }
     if (cm1::recon_commit_blocks(buffers.recon_infos + i, 1, state,
                                  recon_frame, stream) != cudaSuccess) {
       error = "gpu: reconstruction commit failed";
@@ -1897,6 +2625,14 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     }
     deblock_options.frame_is_intra = true;
     deblock_options.enable_sdp = false;
+    if (cpu_plan != nullptr && cpu_plan->delta_q_enabled) {
+      // §7.17.6: the chroma filter strength uses the effective UV AC delta.
+      // The CPU plan carries the resolved totals (frame + sequence base), so
+      // they are passed as the frame delta with a zero base.
+      deblock_options.delta_q_u_ac = cpu_plan->delta_q_ac[1];
+      deblock_options.delta_q_v_ac = cpu_plan->delta_q_ac[2];
+      deblock_options.base_uv_ac_delta_q = 0;
+    }
     if (cm1::recon_deblock_frame(recon_frame, deblock_options, stream) !=
         cudaSuccess) {
       error = "gpu: deblock failed";
@@ -2018,6 +2754,286 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   }
 #endif
 
+  // ---- in-loop filters (§7.20 loop restoration) -------------------------
+  bool lr_filtered = false;
+#if AV2ENC_STILL_GPU_HAVE_WIENER
+  if (lr_active || gdf_active) {
+    // CdefFrame is the post-CDEF/CCSO picture; without either filter it is the
+    // deblocked reconstruction.  LrFrame must be a distinct buffer.
+    const U8Planes& cdef_planes = filtered ? buffers.filter : buffers.recon;
+    ::av2enc::restoration::RestorationFrame frame{};
+    for (int plane = 0; plane < 3; ++plane) {
+      frame.curr[plane].data =
+          plane == 0 ? buffers.recon.y
+                     : (plane == 1 ? buffers.recon.u : buffers.recon.v);
+      frame.curr[plane].stride =
+          static_cast<int>(plane == 0 ? plan.y_stride : plan.u_stride);
+      frame.cdef[plane].data =
+          plane == 0 ? cdef_planes.y
+                     : (plane == 1 ? cdef_planes.u : cdef_planes.v);
+      frame.cdef[plane].stride =
+          static_cast<int>(plane == 0 ? plan.y_stride : plan.u_stride);
+      frame.lr[plane].data =
+          plane == 0 ? buffers.lr.y
+                     : (plane == 1 ? buffers.lr.u : buffers.lr.v);
+      frame.lr[plane].stride =
+          static_cast<int>(plane == 0 ? plan.y_stride : plan.u_stride);
+    }
+    frame.mi_cols = mi_cols;
+    frame.mi_rows = mi_rows;
+    frame.subsampling_x = 1;
+    frame.subsampling_y = 1;
+    frame.bit_depth = 8;
+    frame.sb_width = 64;
+    frame.sb_height = 64;
+    frame.sb_shift = 4;
+
+    ::av2enc::restoration::LoopRestorationParams lr_params{};
+    const ::av2enc::still::StillLrPlane& luma_plane =
+        filter_config->lr.plane[0];
+    lr_params.frame_type[0] =
+        (luma_plane.enabled && !pcw_active)
+            ? ::av2enc::restoration::kRestoreWienerNs
+            : ::av2enc::restoration::kRestoreNone;
+    lr_params.unit_size[0] = 512 >> luma_plane.shift;
+    // Chroma is applied by the lr_chroma workspace (it carries the
+    // §5.20.10.6 subset/uv_sym/bank syntax that the generic Wiener launcher
+    // does not model); the generic launcher still performs the §7.20
+    // LrFrame := CdefFrame copy for every plane.
+    lr_params.frame_type[1] = ::av2enc::restoration::kRestoreNone;
+    lr_params.frame_type[2] = ::av2enc::restoration::kRestoreNone;
+    lr_params.unit_size[1] = (512 >> 1) >> filter_config->lr.plane[1].shift;
+    lr_params.unit_size[2] = (512 >> 1) >> filter_config->lr.plane[2].shift;
+    if (luma_plane.enabled) {
+      lr_params.unit_type[0] = buffers.lr_unit_type[0];
+      lr_params.unit_rows[0] = luma_plane.unit_rows;
+      lr_params.unit_cols[0] = luma_plane.unit_cols;
+      lr_params.unit_coeffs[0] = buffers.lr_unit_coeffs[0];
+    }
+    const cudaError_t lr_err =
+        ::av2enc::cuda::loop_restoration_frame(frame, lr_params, stream);
+    if (lr_err != cudaSuccess) {
+      error = std::string("gpu: loop restoration failed: ") +
+              cudaGetErrorName(lr_err);
+      return GpuRunStatus::kError;
+    }
+    lr_filtered = true;
+  }
+#endif
+#if AV2ENC_STILL_GPU_HAVE_PC_WIENER
+  if (pcw_active) {
+    FilterWorkspaces& workspaces = gpu.filters;
+    if (!workspaces.pc_wiener.initialized()) {
+      error = "gpu: PC-Wiener workspace is not initialized";
+      return GpuRunStatus::kError;
+    }
+    const U8Planes& cdef_planes = filtered ? buffers.filter : buffers.recon;
+    const int luma_w = coded_w;
+    const int luma_h = coded_h;
+    const int luma_stride = static_cast<int>(plan.y_stride);
+    launch_u8_to_u16(buffers.recon.y, luma_stride, buffers.luma16_curr.y,
+                     luma_stride, luma_w, luma_h, stream);
+    launch_u8_to_u16(cdef_planes.y, luma_stride, buffers.luma16_cdef.y,
+                     luma_stride, luma_w, luma_h, stream);
+    // §7.20.1 LrTxSkip is the CPU plan's per-4x4 eob==0 map; its grid is
+    // uploaded above so the device classifier matches the reference.
+    pc_wiener::PcWienerSource src{};
+    src.curr = buffers.luma16_curr.y;
+    src.curr_stride = luma_stride;
+    src.cdef = buffers.luma16_cdef.y;
+    src.cdef_stride = luma_stride;
+    src.luma_start_x = 0;
+    src.luma_end_x = luma_w - 1;
+    src.luma_start_y = 0;
+    src.luma_end_y = luma_h - 1;
+    src.stripe_start_y = 0;
+    src.stripe_end_y = luma_h - 1;
+    pc_wiener::PcWienerParams params{};
+    params.base_q_idx = options.base_q_idx;
+    params.bit_depth = 8;
+    params.mi_col_end = mi_cols;
+    params.mi_row_start = 0;
+    params.mi_row_end = mi_rows;
+    params.lr_tx_skip = buffers.lr_tx_skip;
+    params.lr_tx_skip_stride = mi_cols;
+    std::string detail;
+    if (!is_ok(pc_wiener::pc_wiener_classify(workspaces.pc_wiener, src, params,
+                                             stream))) {
+      error = "gpu: PC-Wiener classify failed";
+      return GpuRunStatus::kError;
+    }
+    if (!is_ok(pc_wiener::pc_wiener_filter_units(
+            workspaces.pc_wiener, src, params, nullptr,
+            buffers.lr_unit_type[0], buffers.luma16_lr.y, luma_stride,
+            stream))) {
+      error = "gpu: PC-Wiener filter failed";
+      return GpuRunStatus::kError;
+    }
+    launch_u16_to_u8(buffers.luma16_lr.y, luma_stride, buffers.lr.y, luma_stride,
+                     luma_w, luma_h, stream);
+    lr_filtered = true;
+  }
+#endif
+#if AV2ENC_STILL_GPU_HAVE_LR_CHROMA
+  if (lr_chroma_active) {
+    FilterWorkspaces& workspaces = gpu.filters;
+    if (!workspaces.chroma_lr.initialized()) {
+      error = "gpu: chroma loop-restoration workspace is not initialized";
+      return GpuRunStatus::kError;
+    }
+    lr_chroma::LrChromaFrame frame{};
+    const U8Planes& cdef_planes = filtered ? buffers.filter : buffers.recon;
+    frame.chroma[0].curr = buffers.recon.u;
+    frame.chroma[0].curr_stride = static_cast<int>(plan.u_stride);
+    frame.chroma[0].cdef = cdef_planes.u;
+    frame.chroma[0].cdef_stride = static_cast<int>(plan.u_stride);
+    frame.chroma[0].dst = buffers.lr.u;
+    frame.chroma[0].dst_stride = static_cast<int>(plan.u_stride);
+    frame.chroma[1].curr = buffers.recon.v;
+    frame.chroma[1].curr_stride = static_cast<int>(plan.v_stride);
+    frame.chroma[1].cdef = cdef_planes.v;
+    frame.chroma[1].cdef_stride = static_cast<int>(plan.v_stride);
+    frame.chroma[1].dst = buffers.lr.v;
+    frame.chroma[1].dst_stride = static_cast<int>(plan.v_stride);
+    frame.luma.curr = buffers.recon.y;
+    frame.luma.curr_stride = static_cast<int>(plan.y_stride);
+    frame.luma.cdef = cdef_planes.y;
+    frame.luma.cdef_stride = static_cast<int>(plan.y_stride);
+    frame.luma.dst = buffers.lr.y;
+    frame.luma.dst_stride = static_cast<int>(plan.y_stride);
+    frame.mi_cols = mi_cols;
+    frame.mi_rows = mi_rows;
+    frame.sub_x = 1;
+    frame.sub_y = 1;
+    frame.bit_depth = 8;
+    frame.cfl_ds_filter_index = 0;
+    frame.disable_loopfilters_across_tiles = 0;
+
+    for (int chroma = 0; chroma < 2; ++chroma) {
+      const ::av2enc::still::StillLrPlane& plane =
+          filter_config->lr.plane[chroma + 1];
+      const int units = workspaces.chroma_lr.unit_count(chroma);
+      if (units <= 0 ||
+          static_cast<int>(plane.unit_type.size()) != units ||
+          static_cast<int>(plane.unit_coeffs.size()) !=
+              units * 18) {
+        error = "gpu: chroma loop-restoration unit plan mismatch";
+        return GpuRunStatus::kError;
+      }
+      std::vector<lr_chroma::LrChromaUnit> host_units(
+          static_cast<std::size_t>(units));
+      for (int i = 0; i < units; ++i) {
+        lr_chroma::LrChromaUnit& unit = host_units[static_cast<std::size_t>(i)];
+        unit.on = plane.unit_type[static_cast<std::size_t>(i)] ==
+                          ::av2enc::restoration::kRestoreWienerNs
+                      ? 1
+                      : 0;
+        if (i < static_cast<int>(plane.unit_merged.size())) {
+          unit.merged = plane.unit_merged[static_cast<std::size_t>(i)] != 0;
+          unit.bank_k = plane.unit_bank_k[static_cast<std::size_t>(i)];
+          unit.subset = plane.unit_subset[static_cast<std::size_t>(i)];
+          unit.uv_sym = plane.unit_uv_sym[static_cast<std::size_t>(i)] != 0;
+        }
+        std::memcpy(unit.coeffs,
+                    plane.unit_coeffs.data() + static_cast<std::size_t>(i) * 18u,
+                    18u * sizeof(std::int16_t));
+      }
+      std::string detail;
+      const Status upload = lr_chroma::upload_units(
+          workspaces.chroma_lr, chroma, host_units.data(), units, stream,
+          &detail);
+      if (!is_ok(upload)) {
+        error = "gpu: chroma loop-restoration unit upload failed: " + detail;
+        return GpuRunStatus::kError;
+      }
+    }
+    std::string detail;
+    if (!is_ok(lr_chroma::resolve_units(workspaces.chroma_lr, stream,
+                                        &detail))) {
+      error = "gpu: chroma loop-restoration resolve failed: " + detail;
+      return GpuRunStatus::kError;
+    }
+    if (!is_ok(lr_chroma::apply(workspaces.chroma_lr, frame, stream,
+                                &detail))) {
+      error = "gpu: chroma loop-restoration apply failed: " + detail;
+      return GpuRunStatus::kError;
+    }
+    lr_filtered = true;
+  }
+#endif
+#if AV2ENC_STILL_GPU_HAVE_GDF
+  if (gdf_active) {
+    FilterWorkspaces& workspaces = gpu.filters;
+    if (!workspaces.gdf_ready) {
+      error = "gpu: GDF workspace is not initialized";
+      return GpuRunStatus::kError;
+    }
+    const U8Planes& cdef_planes = filtered ? buffers.filter : buffers.recon;
+    const int luma_w = coded_w;
+    const int luma_h = coded_h;
+    const int luma_stride = static_cast<int>(plan.y_stride);
+    launch_u8_to_u16(buffers.recon.y, luma_stride, buffers.luma16_curr.y,
+                     luma_stride, luma_w, luma_h, stream);
+    launch_u8_to_u16(cdef_planes.y, luma_stride, buffers.luma16_cdef.y,
+                     luma_stride, luma_w, luma_h, stream);
+    // GDF rewrites the LrFrame produced by Wiener/PC-Wiener (or the CdefFrame
+    // copy when neither ran); only the filtered units change.
+    launch_u8_to_u16(buffers.lr.y, luma_stride, buffers.luma16_lr.y,
+                     luma_stride, luma_w, luma_h, stream);
+    const int gdf_cols = filter_config->gdf.cols;
+    const int gdf_rows = filter_config->gdf.rows;
+    if (gdf_cols <= 0 || gdf_rows <= 0 ||
+        gdf_cols * gdf_rows > workspaces.gdf.max_units) {
+      error = "gpu: GDF unit grid exceeds the workspace";
+      return GpuRunStatus::kError;
+    }
+    std::vector<std::uint8_t> use_gdf(
+        static_cast<std::size_t>(gdf_cols) * gdf_rows, 1);
+    std::string detail;
+    if (!is_ok(gdf::gdf_upload_use_gdf(workspaces.gdf, use_gdf.data(),
+                                       gdf_cols * gdf_rows, stream, &detail))) {
+      error = "gpu: GDF use_gdf upload failed: " + detail;
+      return GpuRunStatus::kError;
+    }
+    gdf::GdfFrameGrid grid{};
+    grid.src.curr = buffers.luma16_curr.y;
+    grid.src.curr_stride = luma_stride;
+    grid.src.cdef = buffers.luma16_cdef.y;
+    grid.src.cdef_stride = luma_stride;
+    grid.src.start_x = 0;
+    grid.src.end_x = luma_w - 1;
+    grid.src.start_y = 0;
+    grid.src.end_y = luma_h - 1;
+    grid.src.stripe_start_y = 0;
+    grid.src.stripe_end_y = luma_h - 1;
+    grid.lr = buffers.luma16_lr.y;
+    grid.lr_stride = luma_stride;
+    grid.bit_depth = 8;
+    grid.pix_scale = filter_config->gdf.pix_scale;
+    grid.unit_size = filter_config->gdf.blk_size;
+    grid.cols = gdf_cols;
+    grid.rows = gdf_rows;
+    grid.width = luma_w;
+    grid.height = luma_h;
+    grid.mi_rows = mi_rows;
+    grid.index.frame_is_intra = 1;
+    grid.index.base_q_idx = options.base_q_idx;
+    grid.index.bit_depth = 8;
+    grid.index.gdf_pic_qc_idx = filter_config->gdf.pic_qc_idx;
+    grid.index.order_hints = nullptr;
+    grid.index.frame_distance = nullptr;
+    grid.index.num_total_refs = 0;
+    grid.index.restricted_oh = 0;
+    if (!is_ok(gdf::gdf_apply_grid(grid, workspaces.gdf, stream, &detail))) {
+      error = "gpu: GDF apply failed: " + detail;
+      return GpuRunStatus::kError;
+    }
+    launch_u16_to_u8(buffers.luma16_lr.y, luma_stride, buffers.lr.y, luma_stride,
+                     luma_w, luma_h, stream);
+    lr_filtered = true;
+  }
+#endif
+
   // ---- download + the one synchronisation ------------------------------
   const std::size_t recon_y_bytes =
       static_cast<std::size_t>(plan.y_stride) * plan.padded_height;
@@ -2032,10 +3048,12 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       static_cast<std::size_t>(blocks) * sizeof(srch::LumaSearchResult);
   const std::size_t chroma_result_bytes =
       static_cast<std::size_t>(blocks) * sizeof(cm1::StillChromaResult);
+  const std::size_t choice_bytes =
+      static_cast<std::size_t>(blocks) * sizeof(iext::Choice);
   const std::size_t download_total =
       recon_y_bytes + recon_c_bytes * 2u + coeff_y_bytes + coeff_u_bytes +
       coeff_v_bytes + eob_bytes + luma_result_bytes + chroma_result_bytes +
-      sizeof(int);
+      choice_bytes + sizeof(int);
   auto* download = static_cast<std::uint8_t*>(gpu.download.data());
   if (download == nullptr || gpu.download.capacity() < download_total) {
     error = "gpu: pinned download staging is too small";
@@ -2049,7 +3067,9 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     down += bytes;
     return true;
   };
-  const U8Planes& out_planes = filtered ? buffers.filter : buffers.recon;
+  const U8Planes& out_planes = lr_filtered
+                                   ? buffers.lr
+                                   : (filtered ? buffers.filter : buffers.recon);
   if (!enqueue_download(out_planes.y, recon_y_bytes) ||
       !enqueue_download(out_planes.u, recon_c_bytes) ||
       !enqueue_download(out_planes.v, recon_c_bytes) ||
@@ -2059,6 +3079,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       !enqueue_download(buffers.eob, eob_bytes) ||
       !enqueue_download(buffers.luma_results, luma_result_bytes) ||
       !enqueue_download(buffers.chroma_results, chroma_result_bytes) ||
+      !enqueue_download(buffers.intra_choices, choice_bytes) ||
       !enqueue_download(buffers.tx_errors, sizeof(int))) {
     error = "gpu: result download failed";
     return GpuRunStatus::kError;
@@ -2072,7 +3093,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   int tx_errors = 0;
   std::size_t read = recon_y_bytes + recon_c_bytes * 2u + coeff_y_bytes +
                      coeff_u_bytes + coeff_v_bytes + eob_bytes +
-                     luma_result_bytes + chroma_result_bytes;
+                     luma_result_bytes + chroma_result_bytes + choice_bytes;
   std::memcpy(&tx_errors, download + read, sizeof(int));
   if (tx_errors != 0) {
     error = "unsupported: TX rejected " + std::to_string(tx_errors) +
@@ -2103,17 +3124,65 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::vector<cm1::StillChromaResult> chroma_results(
       static_cast<std::size_t>(blocks));
   std::memcpy(chroma_results.data(), download + read, chroma_result_bytes);
+  read += chroma_result_bytes;
+  std::vector<iext::Choice> intra_choices(static_cast<std::size_t>(blocks));
+  std::memcpy(intra_choices.data(), download + read, choice_bytes);
 
   decisions.assign(static_cast<std::size_t>(blocks), BlockDecision{});
+  // §5.20.5.6: a CHROMA_PART leaf codes uv_mode/uv_mode_index against the
+  // co-located luma-tree YMode.  Record each luma leaf's decision on the MI
+  // grid so chroma-only leaves can read it.
+  std::vector<std::int8_t> mi_luma_mode(
+      static_cast<std::size_t>(mi_cols) * static_cast<std::size_t>(mi_rows), 0);
+  std::vector<std::int8_t> mi_luma_angle(
+      static_cast<std::size_t>(mi_cols) * static_cast<std::size_t>(mi_rows), 0);
+  for (int i = 0; i < blocks; ++i) {
+    const BlockPlan& b = plan.blocks[static_cast<std::size_t>(i)];
+    if (b.luma_w == 0 || b.luma_h == 0) continue;
+    const srch::LumaSearchResult& r =
+        luma_results[static_cast<std::size_t>(i)];
+    const int w4 = b.luma_w / 4;
+    const int h4 = b.luma_h / 4;
+    for (int yy = 0; yy < h4; ++yy) {
+      const int rr = b.mi_row + yy;
+      if (rr >= mi_rows) break;
+      for (int xx = 0; xx < w4; ++xx) {
+        const int cc = b.mi_col + xx;
+        if (cc >= mi_cols) break;
+        const std::size_t idx = static_cast<std::size_t>(rr) * mi_cols + cc;
+        mi_luma_mode[idx] = static_cast<std::int8_t>(r.mode);
+        mi_luma_angle[idx] = static_cast<std::int8_t>(r.angle_delta);
+      }
+    }
+  }
   for (int i = 0; i < blocks; ++i) {
     BlockDecision& decision = decisions[static_cast<std::size_t>(i)];
     const srch::LumaSearchResult& luma =
         luma_results[static_cast<std::size_t>(i)];
     const cm1::StillChromaResult& chroma =
         chroma_results[static_cast<std::size_t>(i)];
-    decision.luma_mode = static_cast<std::uint8_t>(luma.mode);
-    decision.luma_angle_delta = static_cast<std::int8_t>(luma.angle_delta);
-    decision.sse = (luma.sse > 0 &&
+    const BlockPlan& plan_block = plan.blocks[static_cast<std::size_t>(i)];
+    const bool block_has_luma = plan_block.luma_w != 0 && plan_block.luma_h != 0;
+    if (block_has_luma) {
+      decision.luma_mode = static_cast<std::uint8_t>(luma.mode);
+      decision.luma_angle_delta = static_cast<std::int8_t>(luma.angle_delta);
+    } else {
+      const int mr = plan_block.chroma_mi_row;
+      const int mc = plan_block.chroma_mi_col;
+      std::uint8_t mode = 0;
+      std::int8_t angle = 0;
+      if (mr >= 0 && mr < mi_rows && mc >= 0 && mc < mi_cols) {
+        const std::size_t idx =
+            static_cast<std::size_t>(mr) * mi_cols + mc;
+        mode = static_cast<std::uint8_t>(mi_luma_mode[idx]);
+        angle = mi_luma_angle[idx];
+      }
+      decision.luma_mode = mode;
+      decision.luma_angle_delta = angle;
+    }
+    decision.sse = (!block_has_luma)
+                       ? 0u
+                       : (luma.sse > 0 &&
                     static_cast<std::uint64_t>(luma.sse) <
                         std::numeric_limits<std::uint32_t>::max())
                        ? static_cast<std::uint32_t>(luma.sse)
@@ -2124,9 +3193,23 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     decision.is_cfl = chroma.is_cfl != 0 ? 1 : 0;
     decision.cfl_alpha_u = static_cast<std::int16_t>(chroma.alpha_u);
     decision.cfl_alpha_v = static_cast<std::int16_t>(chroma.alpha_v);
+    decision.cfl_index = static_cast<std::uint8_t>(chroma.cfl_index);
+    decision.cfl_alpha_signs =
+        static_cast<std::uint8_t>(chroma.alpha_signs);
+    decision.cfl_alpha_u_syntax =
+        static_cast<std::uint8_t>(chroma.alpha_u_syntax);
+    decision.cfl_alpha_v_syntax =
+        static_cast<std::uint8_t>(chroma.alpha_v_syntax);
+    decision.cfl_mh_dir = static_cast<std::uint8_t>(chroma.cfl_mh_dir);
     decision.tx_type_y = 0;
     decision.tx_type_u = 0;
     decision.tx_type_v = 0;
+    const iext::Choice& extra = intra_choices[static_cast<std::size_t>(i)];
+    decision.mrl_index = static_cast<std::uint8_t>(extra.mrl_index);
+    decision.mrl_sec_index = static_cast<std::uint8_t>(extra.mrl_sec_index);
+    decision.use_dip = static_cast<std::uint8_t>(extra.use_dip);
+    decision.dip_mode = static_cast<std::uint8_t>(extra.dip_mode);
+    decision.dip_transpose = static_cast<std::uint8_t>(extra.dip_transpose);
     decision.eob_y = static_cast<std::uint16_t>(
         std::max<std::int32_t>(0, eob[static_cast<std::size_t>(i) * 3u]));
     decision.eob_u = static_cast<std::uint16_t>(std::max<std::int32_t>(
@@ -2157,6 +3240,9 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       grids.ccso_blk_cols[plane] = cpu_plan->ccso_blk_cols[plane];
       grids.ccso_blk_rows[plane] = cpu_plan->ccso_blk_rows[plane];
     }
+    std::fprintf(stderr, "ccso cpu grid: %d x %d (enable=%d)\n",
+                 cpu_plan->ccso_blk_cols[0], cpu_plan->ccso_blk_rows[0],
+                 filter_config->ccso.enable ? 1 : 0);
   }
   std::vector<std::uint8_t> frame;
   std::size_t tile_bytes = 0;
@@ -2284,13 +3370,17 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
   std::vector<still_stream::TreeNode> tree;
   {
     ::av2enc::still::plan::PlanOptions plan_options;
-    plan_options.sb_size = 64;
+    plan_options.sb_size = options.sb_size;
     plan_options.base_q_idx = options.base_q_idx;
     plan_options.min_block_size = options.min_block_size;
     plan_options.max_partition_depth = options.max_partition_depth;
     plan_options.allow_rect = true;
     plan_options.allow_split = false;
     plan_options.force_single_block = options.force_single_block;
+    plan_options.enable_ext_partitions = options.ext_partitions;
+    plan_options.enable_uneven_4way_partitions = options.ext_partitions;
+    plan_options.sdp = options.sdp;
+    plan_options.sub8 = options.sub8;
     ::av2enc::still::plan::apply_debug_env(plan_options);
     const std::size_t luma_bytes =
         static_cast<std::size_t>(picture.width) * picture.height;
@@ -2355,7 +3445,10 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
   // only the §5.14/§5.18.10 metadata.  All reuse the CPU reference's exact
   // config and planned decision grids.
   const bool filter_tools = options.enable_cdef || options.enable_ccso ||
-                            options.ccso_edge || options.enable_grain;
+                            options.ccso_edge || options.enable_grain ||
+                            options.enable_wiener || options.enable_chroma_lr ||
+                            options.enable_pc_wiener || options.enable_gdf ||
+                            options.delta_q || options.qm;
   ::av2enc::still::StillResult cpu;
   bool cpu_ready = false;
   if (filter_tools) {
@@ -2397,7 +3490,9 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
   std::uint64_t need_download = recon_total + coeff_total + decision_bytes;
   if (filter_tools) {
     // CDEF index grid + CCSO unit grids/offset tables are staged through the
-    // same pinned upload buffer.
+    // same pinned upload buffer.  Loop-restoration unit descriptors come from
+    // the CPU plan as well (luma unit grid/coefficients, chroma via the
+    // component's upload_units()).
     const std::uint64_t n64_cols =
         (static_cast<std::uint64_t>(result.plan.mi_cols) + 15u) / 16u;
     const std::uint64_t n64_rows =
@@ -2405,6 +3500,15 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
     need_upload += n64_cols * n64_rows;                       // cdef_idx
     need_upload += 3u * n64_cols * n64_rows;                  // ccso_blks
     need_upload += 3u * 576u * sizeof(std::int16_t);          // ccso offsets
+    need_upload += n64_cols * n64_rows;                       // lr unit types
+    need_upload += n64_cols * n64_rows * 18u * sizeof(std::int16_t);
+    need_upload += static_cast<std::uint64_t>(result.plan.mi_cols) *
+                   static_cast<std::uint64_t>(result.plan.mi_rows);  // LrTxSkip
+    if (options.qm) {
+      need_upload += static_cast<std::uint64_t>(q2_elems(result.plan)) *
+                     sizeof(std::int32_t);
+    }
+    need_device += filter_workspace_bytes(result.plan, options);
   }
 
 #if AV2ENC_STILL_GPU_HAVE_FULL
@@ -2414,10 +3518,12 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
     need_upload +=
         n * (sizeof(srch::LumaSearchBlock) + sizeof(im::IntraJob) +
              3u * sizeof(StillTxJob) + 3u * sizeof(cm1::ReconWriteJob) +
-             sizeof(cm1::ReconBlockInfo));
+             sizeof(cm1::ReconBlockInfo) + sizeof(mrl::MrlJob) +
+             sizeof(dip::DipJob) + sizeof(ibp::IbpJob));
     need_download +=
         3u * n * sizeof(std::int32_t) +
-        n * (sizeof(srch::LumaSearchResult) + sizeof(cm1::StillChromaResult)) +
+        n * (sizeof(srch::LumaSearchResult) + sizeof(cm1::StillChromaResult) +
+             sizeof(iext::Choice)) +
         sizeof(int);
   }
 #endif
@@ -2457,7 +3563,11 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
         result.stats.kernel_launches =
             7 * static_cast<int>(result.plan.block_count) + 2 +
             (options.enable_cdef ? 1 : 0) +    // §7.18 CDEF filter
-            (options.enable_ccso || options.ccso_edge ? 1 : 0);  // §7.19
+            (options.enable_ccso || options.ccso_edge ? 1 : 0) +  // §7.19
+            (options.enable_wiener ? 1 : 0) +   // §7.20.3 luma Wiener NS
+            (options.enable_chroma_lr ? 2 : 0) +  // §7.20.3 chroma LR
+            (options.enable_pc_wiener ? 2 : 0) +  // §7.20.4 classify + filter
+            (options.enable_gdf ? 2 : 0);  // §7.20.5 derive + apply
         result.stats.host_upload_bytes = need_upload;
         result.stats.host_download_bytes = need_download;
       } else {
@@ -2468,7 +3578,8 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
           error = "M1 GPU: " + error;
           return false;
         }
-        if (options.verbose) {
+        if (options.verbose ||
+            std::getenv("AV2ENC_STILL_GPU_VERBOSE") != nullptr) {
           std::fprintf(stderr, "m1-gpu: GPU path unsupported, CPU fallback: %s\n",
                        error.c_str());
         }
@@ -2492,7 +3603,9 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
     result.stages.deblock = options.enable_deblock ? StageState::kGpu
                                                    : StageState::kStub;
     result.stages.filters =
-        (options.enable_cdef || options.enable_ccso || options.ccso_edge)
+        (options.enable_cdef || options.enable_ccso || options.ccso_edge ||
+         options.enable_wiener || options.enable_chroma_lr ||
+         options.enable_pc_wiener || options.enable_gdf)
             ? StageState::kGpu
             : StageState::kStub;
     result.stages.sched = StageState::kGpu;
@@ -2510,7 +3623,9 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
     result.stages.cfl = StageState::kCpuReference;
     result.stages.deblock = StageState::kCpuReference;
     result.stages.filters =
-        (options.enable_cdef || options.enable_ccso || options.ccso_edge)
+        (options.enable_cdef || options.enable_ccso || options.ccso_edge ||
+         options.enable_wiener || options.enable_chroma_lr ||
+         options.enable_pc_wiener || options.enable_gdf)
             ? StageState::kCpuReference
             : StageState::kStub;
     result.stages.sched = StageState::kStub;
@@ -2523,7 +3638,9 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
     result.stages.cfl = StageState::kCpuReference;
     result.stages.deblock = StageState::kCpuReference;
     result.stages.filters =
-        (options.enable_cdef || options.enable_ccso || options.ccso_edge)
+        (options.enable_cdef || options.enable_ccso || options.ccso_edge ||
+         options.enable_wiener || options.enable_chroma_lr ||
+         options.enable_pc_wiener || options.enable_gdf)
             ? StageState::kCpuReference
             : StageState::kStub;
     result.stages.sched = StageState::kStub;

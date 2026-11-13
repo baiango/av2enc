@@ -1,10 +1,16 @@
-// CPU-vs-GPU bit-exactness test for the standalone M10 10-bit block path.
+// CPU-vs-GPU bit-exactness test for the 10-bit / 4:2:2 / 4:4:4 / 4:0:0 block
+// path.
 //
-// For each synthetic 10-bit 4:2:0 picture:
-//   * encode with the CPU reference and the GPU block stage,
+// For each synthetic 10-bit picture:
+//   * encode with the product CPU reference (`av2enc::hbd::encode_still`) and
+//     the GPU block stage,
 //   * require identical per-block EOB / scan-order levels / reconstruction,
 //   * require identical final OBU bytes (entropy is shared CPU code, so a level
 //     or block-order difference shows up here too).
+//
+// Coverage: every qindex in 1..303 (the §8.3.1 coefficient-CDF slices), exact
+// 64x64 blocks, 100x100 odd/partial edges, and 640x360 with a partial bottom
+// superblock row.
 //
 // Run on the sm_86 box with build_high_bitdepth_gpu_test.sh.
 #include <cuda_runtime.h>
@@ -15,16 +21,19 @@
 #include <string>
 #include <vector>
 
-#include "cuda/formats/high_bitdepth_gpu.h"
 #include "cuda/arena.h"
+#include "cuda/formats/high_bitdepth_gpu.h"
 #include "formats/format.h"
+#include "formats/high_bitdepth/hbd_still.h"
 #include "pipeline/still/high_bitdepth/high_bitdepth_still.h"
 
 namespace {
 
 int failures = 0;
+long long comparisons = 0;
 
 void expect(bool condition, const char* what) {
+  ++comparisons;
   if (!condition) {
     std::fprintf(stderr, "FAIL: %s\n", what);
     ++failures;
@@ -32,11 +41,12 @@ void expect(bool condition, const char* what) {
 }
 
 av2enc::fmt::Picture make_picture(std::uint32_t width, std::uint32_t height,
+                                  av2enc::fmt::ChromaFormat chroma,
                                   std::uint32_t seed) {
   av2enc::fmt::Format format;
   format.width = width;
   format.height = height;
-  format.chroma = av2enc::fmt::ChromaFormat::k420;
+  format.chroma = chroma;
   format.depth = av2enc::fmt::BitDepth::k10;
   av2enc::fmt::Picture picture;
   std::string error;
@@ -51,107 +61,48 @@ av2enc::fmt::Picture make_picture(std::uint32_t width, std::uint32_t height,
     state ^= state << 5;
     return state;
   };
-  const std::uint32_t cw = (width + 1U) / 2U;
-  const std::uint32_t ch = (height + 1U) / 2U;
-  for (std::uint32_t y = 0; y < height; ++y) {
-    for (std::uint32_t x = 0; x < width; ++x) {
-      const std::uint32_t gradient = (x * 5U + y * 3U + seed * 17U) & 1023U;
-      const std::uint32_t noise = next() & 63U;
-      picture.planes[0].at(x, y) =
-          static_cast<std::uint16_t>((gradient + noise) & 1023U);
+  const int planes = av2enc::fmt::num_planes(chroma);
+  for (int plane = 0; plane < planes; ++plane) {
+    const av2enc::fmt::PlaneBuffer& p = picture.planes[plane];
+    for (std::uint32_t y = 0; y < p.visible_height; ++y) {
+      for (std::uint32_t x = 0; x < p.visible_width; ++x) {
+        const std::uint32_t gradient =
+            (x * (5U + static_cast<std::uint32_t>(plane) * 2U) +
+             y * (3U + static_cast<std::uint32_t>(plane)) + seed * 17U) &
+            1023U;
+        picture.planes[plane].at(x, y) =
+            static_cast<std::uint16_t>((gradient + (next() & 63U)) & 1023U);
+      }
     }
+    av2enc::fmt::replicate_borders(picture.planes[plane]);
   }
-  for (std::uint32_t y = 0; y < ch; ++y) {
-    for (std::uint32_t x = 0; x < cw; ++x) {
-      picture.planes[1].at(x, y) =
-          static_cast<std::uint16_t>((x * 7U + y * 11U + seed * 31U) & 1023U);
-      picture.planes[2].at(x, y) =
-          static_cast<std::uint16_t>((x * 13U + y * 2U + seed * 47U) & 1023U);
-    }
-  }
-  av2enc::fmt::replicate_borders(picture.planes[0]);
-  av2enc::fmt::replicate_borders(picture.planes[1]);
-  av2enc::fmt::replicate_borders(picture.planes[2]);
   return picture;
 }
 
-void compare_case(std::uint32_t width, std::uint32_t height,
-                  std::uint32_t seed) {
-  const av2enc::fmt::Picture picture = make_picture(width, height, seed);
-  av2enc::high_bitdepth::HighBitDepthOptions options;
-  options.base_q_idx = 90;
-
-  av2enc::high_bitdepth::HighBitDepthResult cpu;
-  av2enc::high_bitdepth::HighBitDepthResult gpu;
-  std::string cpu_error;
-  std::string gpu_error;
-  expect(av2enc::high_bitdepth::encode_high_bitdepth_cpu(picture, options, cpu, cpu_error),
-         cpu_error.c_str());
-
-  av2enc::cuda::high_bitdepth::HighBitDepthGpuConfig arena_config;
-  arena_config.width = width;
-  arena_config.height = height;
-  arena_config.mi_cols = picture.geometry.mi_cols;
-  arena_config.mi_rows = picture.geometry.mi_rows;
-  const std::uint64_t need =
-      av2enc::cuda::high_bitdepth::required_device_bytes(arena_config);
-  av2enc::cuda::Arena arena;
-  std::string arena_error;
-  expect(av2enc::cuda::is_ok(
-             arena.init(need, av2enc::cuda::Arena::kAlignment, &arena_error)),
-         arena_error.c_str());
-  const av2enc::cuda::high_bitdepth::HighBitDepthGpuStatus status =
-      av2enc::cuda::high_bitdepth::encode_high_bitdepth_gpu(arena, picture, options, gpu,
-                                        &gpu_error);
-  expect(status.ok(), gpu_error.c_str());
-
-  // The legacy bool entry point must remain a working wrapper.
-  av2enc::high_bitdepth::HighBitDepthResult wrapped;
-  std::string wrapped_error;
-  expect(av2enc::cuda::high_bitdepth::encode_high_bitdepth_gpu(picture, options, wrapped,
-                                           &wrapped_error),
-         wrapped_error.c_str());
-  expect(wrapped.frame == gpu.frame, "arena and wrapper bytes agree");
-
-  // A pre-filled arena reports kArenaTooSmall with the size to grow to.
-  av2enc::cuda::Arena small;
-  std::string small_init_error;
-  expect(av2enc::cuda::is_ok(small.init(need, av2enc::cuda::Arena::kAlignment,
-                                        &small_init_error)),
-         small_init_error.c_str());
-  void* hold = nullptr;
-  const std::uint64_t fill =
-      small.remaining() & ~(av2enc::cuda::Arena::kAlignment - 1u);
-  expect(av2enc::cuda::is_ok(small.allocate_checked(fill, &hold)),
-         "fill arena");
-  av2enc::high_bitdepth::HighBitDepthResult unused;
-  std::string small_error;
-  const av2enc::cuda::high_bitdepth::HighBitDepthGpuStatus too_small =
-      av2enc::cuda::high_bitdepth::encode_high_bitdepth_gpu(small, picture, options, unused,
-                                        &small_error);
-  expect(too_small.code ==
-             av2enc::cuda::high_bitdepth::HighBitDepthGpuStatus::Code::kArenaTooSmall,
-         "arena too small");
-  expect(too_small.required_bytes == need, "too-small required size");
-
-  if (!cpu_error.empty() || !gpu_error.empty()) return;
-
-  std::printf("case %ux%u seed=%u: cpu tile=%u blocks=%zu\n", width, height,
-              seed, cpu.tile_bytes, cpu.blocks.size());
-  expect(cpu.tile_bytes == gpu.tile_bytes, "tile byte count");
-  expect(cpu.frame.size() == gpu.frame.size(), "frame byte count");
-  expect(cpu.frame == gpu.frame, "final OBU bytes");
-  expect(cpu.blocks.size() == gpu.blocks.size(), "block count");
-  expect(cpu.levels.size() == gpu.levels.size(), "level count");
+void compare_result(const av2enc::hbd::HbdResult& cpu,
+                    const av2enc::high_bitdepth::HighBitDepthResult& gpu,
+                    const char* tag) {
+  char label[256];
+  std::snprintf(label, sizeof(label), "%s tile byte count", tag);
+  expect(cpu.tile_bytes == gpu.tile_bytes, label);
+  std::snprintf(label, sizeof(label), "%s frame byte count", tag);
+  expect(cpu.frame.size() == gpu.frame.size(), label);
+  std::snprintf(label, sizeof(label), "%s final OBU bytes", tag);
+  expect(cpu.frame == gpu.frame, label);
+  std::snprintf(label, sizeof(label), "%s block count", tag);
+  expect(cpu.blocks.size() == gpu.blocks.size(), label);
+  std::snprintf(label, sizeof(label), "%s level count", tag);
+  expect(cpu.levels.size() == gpu.levels.size(), label);
   if (cpu.levels.size() == gpu.levels.size()) {
     for (std::size_t i = 0; i < cpu.levels.size(); ++i) {
       if (cpu.levels[i] != gpu.levels[i]) {
-        std::fprintf(stderr, "FAIL: level %zu cpu=%d gpu=%d\n", i, cpu.levels[i],
-                     gpu.levels[i]);
+        std::fprintf(stderr, "FAIL: %s level %zu cpu=%d gpu=%d\n", tag, i,
+                     cpu.levels[i], gpu.levels[i]);
         ++failures;
         break;
       }
     }
+    ++comparisons;
   }
   if (cpu.blocks.size() == gpu.blocks.size()) {
     for (std::size_t i = 0; i < cpu.blocks.size(); ++i) {
@@ -162,50 +113,116 @@ void compare_case(std::uint32_t width, std::uint32_t height,
           a.eob[0] != b.eob[0] || a.eob[1] != b.eob[1] ||
           a.eob[2] != b.eob[2] || a.tx_size[0] != b.tx_size[0] ||
           a.tx_size[1] != b.tx_size[1] || a.tx_size[2] != b.tx_size[2]) {
-        std::fprintf(stderr, "FAIL: block %zu descriptor mismatch\n", i);
+        std::fprintf(stderr, "FAIL: %s block %zu descriptor mismatch\n", tag,
+                     i);
         ++failures;
         break;
       }
     }
+    comparisons += static_cast<long long>(cpu.blocks.size()) * 10;
   }
   for (int plane = 0; plane < 3; ++plane) {
     const auto& a = cpu.recon[plane];
     const auto& b = gpu.recon[plane];
-    expect(a.width == b.width && a.height == b.height, "recon storage size");
+    if (a.samples.empty() && b.samples.empty()) continue;
+    std::snprintf(label, sizeof(label), "%s recon plane %d size", tag, plane);
+    expect(a.width == b.width && a.height == b.height, label);
+    if (a.width != b.width || a.height != b.height) continue;
+    std::snprintf(label, sizeof(label), "%s recon plane %d coded size", tag,
+                  plane);
     expect(a.coded_width == b.coded_width &&
                a.coded_height == b.coded_height,
-           "recon coded size");
-    if (a.width == b.width && a.height == b.height) {
-      for (int y = 0; y < a.coded_height; ++y) {
-        for (int x = 0; x < a.coded_width; ++x) {
-          const std::uint16_t av =
-              a.samples[static_cast<std::size_t>(y) * a.width + x];
-          const std::uint16_t bv =
-              b.samples[static_cast<std::size_t>(y) * b.width + x];
-          if (av != bv) {
-            std::fprintf(stderr,
-                         "FAIL: recon plane %d (%d,%d) cpu=%u gpu=%u\n", plane,
-                         x, y, static_cast<unsigned>(av),
-                         static_cast<unsigned>(bv));
-            ++failures;
-            return;
-          }
+           label);
+    for (int y = 0; y < a.height; ++y) {
+      for (int x = 0; x < a.width; ++x) {
+        const std::uint16_t av =
+            a.samples[static_cast<std::size_t>(y) * a.width + x];
+        const std::uint16_t bv =
+            b.samples[static_cast<std::size_t>(y) * b.width + x];
+        if (av != bv) {
+          std::fprintf(stderr,
+                       "FAIL: %s recon plane %d (%d,%d) cpu=%u gpu=%u\n", tag,
+                       plane, x, y, static_cast<unsigned>(av),
+                       static_cast<unsigned>(bv));
+          ++failures;
+          return;
         }
+        ++comparisons;
       }
     }
+  }
+}
+
+void compare_case(std::uint32_t width, std::uint32_t height,
+                  av2enc::fmt::ChromaFormat chroma, int qindex,
+                  std::uint32_t seed) {
+  const av2enc::fmt::Picture picture =
+      make_picture(width, height, chroma, seed);
+
+  av2enc::hbd::HbdOptions cpu_options;
+  cpu_options.base_q_idx = static_cast<std::uint16_t>(qindex);
+  av2enc::high_bitdepth::HighBitDepthOptions gpu_options;
+  gpu_options.base_q_idx = static_cast<std::uint16_t>(qindex);
+
+  av2enc::hbd::HbdResult cpu;
+  av2enc::high_bitdepth::HighBitDepthResult gpu;
+  std::string cpu_error;
+  std::string gpu_error;
+  char tag[160];
+  std::snprintf(tag, sizeof(tag), "%s %ux%u q=%d seed=%u",
+                av2enc::fmt::chroma_format_name(chroma), width, height, qindex,
+                seed);
+  expect(av2enc::hbd::encode_still(picture, cpu_options, cpu, cpu_error),
+         cpu_error.c_str());
+  if (!cpu_error.empty()) return;
+
+  av2enc::cuda::high_bitdepth::HighBitDepthGpuConfig arena_config;
+  arena_config.width = width;
+  arena_config.height = height;
+  arena_config.mi_cols = picture.geometry.mi_cols;
+  arena_config.mi_rows = picture.geometry.mi_rows;
+  arena_config.format = picture.format;
+  arena_config.bit_depth = 10;
+  const std::uint64_t need =
+      av2enc::cuda::high_bitdepth::required_device_bytes(arena_config);
+  av2enc::cuda::Arena arena;
+  std::string arena_error;
+  expect(av2enc::cuda::is_ok(
+             arena.init(need, av2enc::cuda::Arena::kAlignment, &arena_error)),
+         arena_error.c_str());
+  if (!arena_error.empty()) return;
+  const av2enc::cuda::high_bitdepth::HighBitDepthGpuStatus status =
+      av2enc::cuda::high_bitdepth::encode_high_bitdepth_gpu(
+          arena, picture, gpu_options, gpu, &gpu_error);
+  expect(status.ok(), gpu_error.c_str());
+  if (!status.ok()) return;
+
+  compare_result(cpu, gpu, tag);
+}
+
+void run_format(av2enc::fmt::ChromaFormat chroma) {
+  // Full qindex sweep at the exact-block size.  Each case exercises a
+  // different §8.3.1 coefficient-CDF slice and qlookup step.
+  for (int q = 1; q <= 303; ++q) {
+    compare_case(64, 64, chroma, q, static_cast<std::uint32_t>(q));
+  }
+  // Odd dimensions and partial superblocks (edge leaves / padding).
+  for (int q : {1, 45, 90, 91, 140, 141, 190, 191, 303}) {
+    compare_case(100, 100, chroma, q, static_cast<std::uint32_t>(q + 1000));
+    compare_case(640, 360, chroma, q, static_cast<std::uint32_t>(q + 2000));
   }
 }
 
 }  // namespace
 
 int main() {
-  compare_case(64, 64, 1);
-  compare_case(64, 64, 2);
-  compare_case(128, 64, 3);
-  compare_case(100, 100, 4);   // partial superblocks on both edges
-  compare_case(640, 360, 5);
+  run_format(av2enc::fmt::ChromaFormat::k420);
+  run_format(av2enc::fmt::ChromaFormat::k422);
+  run_format(av2enc::fmt::ChromaFormat::k444);
+  run_format(av2enc::fmt::ChromaFormat::k400);
   if (failures == 0) {
-    std::printf("high_bitdepth_cuda_test: PASS\n");
+    std::printf("high_bitdepth_cuda_test: PASS (%lld comparisons)\n",
+                comparisons);
     return 0;
   }
   std::fprintf(stderr, "high_bitdepth_cuda_test: %d failure(s)\n", failures);

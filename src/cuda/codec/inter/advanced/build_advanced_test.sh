@@ -54,7 +54,9 @@ echo "build: $BUILD_DIR/advanced_cuda_test"
 
 nvcc -std=c++20 -O3 -lineinfo -arch="$ARCH" \
   -Xcompiler -Wall,-Wextra,-Wconversion,-Wshadow \
+  -I "../../../.." \
   advanced.cu advanced_test.cu \
+  ../../../../cuda/arena.cpp \
   "${CPU_DIR}/compound.cpp" "${CPU_DIR}/warp.cpp" \
   "${CPU_DIR}/bawp.cpp" "${CPU_DIR}/b_frame.cpp" \
   "${CPU_DIR}/obmc.cpp" \

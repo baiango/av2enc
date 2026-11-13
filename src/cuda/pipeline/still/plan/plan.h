@@ -48,6 +48,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -56,6 +57,9 @@ namespace av2enc::still::plan {
 
 // M1 partition search options.  Defaults match av2enc::still::StillOptions.
 struct PlanOptions {
+  // Sequence-level superblock flag: 64, 128, or 256.  A still picture is an
+  // intra frame, and §5.18.1 clamps its frame `SbSize` to 128 even when
+  // use_256x256_superblock is signalled, so a 256 request plans 128x128 roots.
   int sb_size = 64;
   std::uint8_t base_q_idx = 90;
   int min_block_size = 8;
@@ -63,6 +67,17 @@ struct PlanOptions {
   bool allow_rect = true;
   bool allow_split = false;
   bool force_single_block = false;
+  // Sub-8 coding blocks: the CPU path lowers the partition floor to 4 and
+  // raises the rect recursion depth to at least 8.
+  bool sub8 = false;
+  // §5.4.3 / §5.20.3.2 extended partition families.  `enable_uneven_4way`
+  // requires ext partitions just like the sequence header.
+  bool enable_ext_partitions = false;
+  bool enable_uneven_4way_partitions = false;
+  // Semi-decoupled partitioning.  The CPU product path currently gates the
+  // forced-PARTITION_NONE luma/chroma trees of every intra 64x64 split; the
+  // planner reproduces exactly that configuration.
+  bool sdp = false;
   // Debug gates; normally set by apply_debug_env().
   bool square_only = false;
   bool leaf32 = false;
@@ -121,6 +136,18 @@ struct TreeNode {
   std::uint32_t first_child = kNoTreeNode;
   std::uint32_t subtree = 0;      // descendant entries
   std::uint32_t leaf_index = kNoTreeNode;  // FramePlan::blocks index for leaves
+  // Extended-partition view (§6.19.3 spec enum 0..9).  `partition` above keeps
+  // the four-value M1 enum for existing consumers; an extended row is folded
+  // to HORZ/VERT there and stays exact here.
+  std::uint8_t ext_partition = 0;
+  std::uint16_t allowed_mask_ext = 0;  // bit p => allowed[spec PartitionType p]
+  double cost = 0.0;                   // decided subtree cost
+  // SDP (§6.19.3.1 TreeType): 0 = SHARED_PART, 1 = LUMA_PART,
+  // 2 = CHROMA_PART.  `sdp_split` marks the intra luma/chroma split node; it
+  // codes no partition syntax and its two children are the tree roots.
+  std::uint8_t tree_type = 0;
+  bool sdp_split = false;
+  bool sdp_chroma_block = false;
 };
 
 // One leaf coding block.  Plain data; upload as an array.
@@ -150,6 +177,15 @@ struct BlockPlan {
   // (only reachable below the default 8-pixel floor).
   bool has_chroma = false;
   bool chroma_offset = false;
+  // ChromaMi* (luma 4x4 units) for the block this leaf owns.  A sub-8 leaf
+  // that does not own the inherited 8x8 chroma block has has_chroma == false
+  // and codes no U/V payload; chroma_mi_* still records the shared block.
+  int chroma_mi_row = 0;
+  int chroma_mi_col = 0;
+  std::uint8_t chroma_mi_size = 255;
+  // 0 = SHARED_PART, 1 = LUMA_PART, 2 = CHROMA_PART (SDP).  Zero for the
+  // shared-tree rect/extended paths.
+  std::uint8_t tree_type = 0;
   PlaneTxPlan luma;
   PlaneTxPlan u;
   PlaneTxPlan v;
@@ -165,7 +201,11 @@ struct FramePlan {
   int chroma_height = 0;
   int mi_cols = 0;
   int mi_rows = 0;
+  // Effective frame SbSize (§5.18.1): 64 or 128.  A still picture clamps a
+  // 256x256 sequence flag to 128x128.
   int sb_size = 0;
+  // Requested sequence-level superblock flag (PlanOptions::sb_size).
+  int sequence_sb_size = 64;
   int sb_cols = 0;
   int sb_rows = 0;
   // MiCols*4 / MiRows*4 coded plane and the 64-aligned backing store size used
@@ -197,6 +237,25 @@ struct FramePlan {
 bool build_frame_plan(int width, int height, std::span<const std::uint8_t> luma,
                       const PlanOptions& options, FramePlan& plan,
                       std::string& error);
+
+// One candidate node handed to a caller-supplied leaf-cost provider.
+struct NodeGeometry {
+  int mi_row = 0;
+  int mi_col = 0;
+  std::uint8_t block_size = 255;  // partition::BlockSize enum value
+};
+
+// Leaf variance in the same units as block_variance_cost_at(): the truncated
+// SSE of the visible luma part, as an int64.  The planner adds the >64 and
+// debug-gate penalties; the provider only computes the variance.
+using LeafCostFunction = std::function<std::int64_t(const NodeGeometry&)>;
+
+// Same plan, but leaf variances come from `leaf_cost`.  A device cost kernel
+// (plan_cost.cu) can fill these without changing tree/leaf ordering.
+bool build_frame_plan_with_leaf_cost(
+    int width, int height, std::span<const std::uint8_t> luma,
+    const PlanOptions& options, const LeafCostFunction& leaf_cost,
+    FramePlan& plan, std::string& error);
 
 // Structural check of a built plan: block geometry, chroma residual rules,
 // coefficient-offset contiguity, availability counts, and exact coverage of

@@ -123,8 +123,27 @@ struct BlockPlan {
   std::uint8_t chroma_tx_w = 0;
   std::uint8_t chroma_tx_h = 0;
   std::uint8_t has_chroma = 0;
+  // Owned §5.20.3.1 ChromaMi block.  A non-owning extended/sub-8 leaf has
+  // has_chroma == 0 and codes no U/V payload; an owning leaf's chroma origin
+  // can differ from its luma origin.
+  std::uint8_t chroma_offset = 0;
+  std::uint16_t chroma_mi_row = 0;
+  std::uint16_t chroma_mi_col = 0;
+  std::uint8_t chroma_mi_size = 0;  // partition::BlockSize (luma units)
+  std::uint8_t chroma_mi_w4 = 0;    // ChromaMi extent, luma 4x4 units
+  std::uint8_t chroma_mi_h4 = 0;
+  // §6.19.3.1 TreeType: 0 SHARED, 1 LUMA_PART, 2 CHROMA_PART.
+  std::uint8_t tree_type = 0;
   std::uint8_t avail = 0;        // AvailabilityBit mask
   std::uint8_t tree_depth = 0;
+  // §7.13.2.1 above-right / below-left availability counts in 4x4 units,
+  // exported by the CPU plan (superblock-local `clear_block_decoded_flags`
+  // replay).  The orchestrator feeds them to the luma/chroma search so the
+  // counts follow the plan's real SbSize instead of a hard-coded 64.
+  std::uint8_t n4_above_right = 0;
+  std::uint8_t n4_below_left = 0;
+  std::uint8_t chroma_n4_above_right = 0;
+  std::uint8_t chroma_n4_below_left = 0;
   std::uint8_t tx_upscale_w = 1;  // 2 for the 64 -> 32 adjusted luma TX
   std::uint8_t tx_upscale_h = 1;
   std::uint8_t reserved = 0;
@@ -161,6 +180,23 @@ struct BlockDecision {
   std::uint16_t eob_u = 0;
   std::uint16_t eob_v = 0;
   std::uint32_t sse = 0;           // luma SSE of the chosen mode
+  // §5.20.5.5 MRL.  mrl_index == 0 is the ordinary prediction; the secondary
+  // line needs mrl_index > 0 and is unavailable on a 4x4 block.
+  std::uint8_t mrl_index = 0;
+  std::uint8_t mrl_sec_index = 0;
+  // §5.20.7.9 DIP alternative to DC.  `use_dip` must be 0 unless the block is
+  // DC and the size predicate holds.
+  std::uint8_t use_dip = 0;
+  std::uint8_t dip_mode = 0;
+  std::uint8_t dip_transpose = 0;
+  // §5.20.7.32 CfL signalling: 1 = derived (default), 0 = CFL_EXPLICIT,
+  // 2 = CFL_MULTI (MHCCP).  `cfl_alpha_signs`/`cfl_alpha_u`/`cfl_alpha_v` are
+  // the explicit syntax values; `cfl_mh_dir` is the MHCCP direction.
+  std::uint8_t cfl_index = 1;
+  std::uint8_t cfl_alpha_signs = 0;
+  std::uint8_t cfl_alpha_u_syntax = 0;  // magnitude minus one (explicit)
+  std::uint8_t cfl_alpha_v_syntax = 0;
+  std::uint8_t cfl_mh_dir = 0;
 };
 
 // Frame geometry plus the block list in syntax order.
@@ -203,11 +239,17 @@ struct GpuOptions {
   // path supports 1..255 with the matching §8.3.1 qctx slice.
   std::uint8_t base_q_idx = 90;
   bool enable_cfl = true;
+  int cfl_ds_filter = 0;           // CPU --still-cfl-ds (0..3)
   bool enable_deblock = true;
   bool enable_edge_filter = true;
   bool luma_dc_only = true;
   int min_block_size = 8;
   int max_partition_depth = 4;
+  // §5.4.3/§5.18.1 sequence superblock selection: 64 (default), 128, or 256.
+  // An intra still clamps 256 to 128x128 coding roots, so 256 only changes the
+  // sequence-level bit.  The GPU plan/search/recon path uses the same effective
+  // frame SbSize as the CPU reference.
+  int sb_size = 64;
 
   // Pass-through M1 mode switches, needed to reproduce the CPU path exactly
   // when a debug mode is active.
@@ -215,6 +257,15 @@ struct GpuOptions {
   bool force_single_block = false;
   bool force_dc = false;
   bool uv_full = false;
+  // Intra tool decisions wired on the GPU decision path.
+  bool enable_ibp = false;         // CPU --still-ibp (§5.4.5, no per-block bit)
+  bool ext_partitions = false;     // CPU --still-ext-partitions
+  bool sdp = false;                // CPU --still-sdp
+  bool sub8 = false;               // CPU --still-sub8
+  bool enable_mrl = false;         // CPU --still-mrl (§5.20.5.5)
+  bool enable_dip = false;         // CPU --still-dip  (§5.20.7.9)
+  bool cfl_explicit = false;       // CPU --still-cfl-explicit
+  bool mhccp = false;              // CPU --still-mhccp
   // Tools integrated on the CPU path but not yet ported to the GPU pipeline.
   // Every one of them is present here so the CLI cannot silently drop a flag;
   // gpu_options_to_m1() maps them and gpu_m3_options_supported() rejects the
@@ -232,6 +283,13 @@ struct GpuOptions {
   bool enable_pc_wiener = false;   // CPU --still-pc-wiener
   bool enable_gdf = false;         // CPU --still-gdf
   bool enable_grain = false;       // CPU --still-grain
+  // §5.18.6.1/§7.14.4 DC/AC delta-Q.  The CPU reference plans the frame deltas;
+  // the GPU TX stage feeds the resolved per-plane deltas to the device
+  // delta-Q quantizer.
+  bool delta_q = false;            // CPU --still-dc-ac-delta-q
+  // §5.18.6.2 quantizer matrices (spec-defined default levels).
+  bool qm = false;                 // CPU --still-qm
+  int qm_level = 3;                // CPU --still-qm-level
   bool rdoq = false;
   double rdoq_sse_scale = 0.125;
   bool tx_type = false;
@@ -259,15 +317,26 @@ inline ::av2enc::still::StillOptions gpu_options_to_m1(const GpuOptions& options
   ::av2enc::still::StillOptions cpu;
   cpu.base_q_idx = options.base_q_idx;
   cpu.enable_cfl = options.enable_cfl;
+  cpu.cfl_ds_filter = options.cfl_ds_filter;
   cpu.enable_deblock = options.enable_deblock;
   cpu.enable_intra_edge_filter = options.enable_edge_filter;
   cpu.luma_dc_only = options.luma_dc_only;
   cpu.min_block_size = options.min_block_size;
   cpu.max_partition_depth = options.max_partition_depth;
+  cpu.sb128 = options.sb_size == 128;
+  cpu.sb256 = options.sb_size == 256;
   cpu.adaptive_cdf = options.adaptive_cdf;
   cpu.force_single_block = options.force_single_block;
   cpu.force_dc = options.force_dc;
   cpu.uv_full = options.uv_full;
+  cpu.enable_ibp = options.enable_ibp;
+  cpu.ext_partitions = options.ext_partitions;
+  cpu.sdp = options.sdp;
+  cpu.sub8 = options.sub8;
+  cpu.enable_mrl = options.enable_mrl;
+  cpu.enable_dip = options.enable_dip;
+  cpu.cfl_explicit = options.cfl_explicit;
+  cpu.mhccp = options.mhccp;
   cpu.rdo_intra = options.rdo_intra;
   cpu.rdo_sse_scale = options.rdo_sse_scale;
   cpu.rdoq = options.rdoq;
@@ -286,6 +355,9 @@ inline ::av2enc::still::StillOptions gpu_options_to_m1(const GpuOptions& options
   cpu.enable_pc_wiener = options.enable_pc_wiener;
   cpu.enable_gdf = options.enable_gdf;
   cpu.enable_grain = options.enable_grain;
+  cpu.delta_q = options.delta_q;
+  cpu.qm = options.qm;
+  cpu.qm_level = options.qm_level;
   return cpu;
 }
 
@@ -298,38 +370,6 @@ inline ::av2enc::still::StillOptions gpu_options_to_m1(const GpuOptions& options
 // "--still-" plus "not ported" as SKIP-REJECTED).
 inline bool gpu_m3_options_supported(const GpuOptions& options,
                                      std::string* error) {
-  if (options.enable_wiener) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-wiener is not ported to the GPU pipeline yet; use "
-          "--still (CPU)";
-    }
-    return false;
-  }
-  if (options.enable_chroma_lr) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-chroma-lr is not ported to the GPU pipeline yet; use "
-          "--still (CPU)";
-    }
-    return false;
-  }
-  if (options.enable_pc_wiener) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-pc-wiener is not ported to the GPU pipeline yet; use "
-          "--still (CPU)";
-    }
-    return false;
-  }
-  if (options.enable_gdf) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-gdf is not ported to the GPU pipeline yet; use "
-          "--still (CPU)";
-    }
-    return false;
-  }
   if (options.rdoq) {
     if (error != nullptr) {
       *error =
@@ -383,6 +423,14 @@ struct I32Planes {
   std::size_t y_bytes = 0;
   std::size_t u_bytes = 0;
   std::size_t v_bytes = 0;
+};
+
+// Luma-only 16-bit working planes used by the PC-Wiener and GDF kernels, whose
+// device cores take `uint16_t` samples at every bit depth.  The still GPU path
+// converts from/to its 8-bit reconstruction at the stage boundary.
+struct U16Planes {
+  std::uint16_t* y = nullptr;
+  std::size_t y_bytes = 0;
 };
 
 // Host + device view passed to every stage.  Host recon/coeff/pred buffers are

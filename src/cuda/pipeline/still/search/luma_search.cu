@@ -360,7 +360,7 @@ cudaError_t luma_search(const LumaSearchBlock* d_blocks, int block_count,
                         const LumaSearchDebug* debug,
                         cudaStream_t stream) {
   constexpr unsigned kKnownGates =
-      kGateDcOnly | kGateBaseOnly | kGateNoDirectional;
+      kGateDcOnly | kGateBaseOnly | kGateNoDirectional | kGateDcOnlyPredict;
   if (block_count < 0 || (gates.flags & ~kKnownGates) != 0u) {
     return cudaErrorInvalidValue;
   }

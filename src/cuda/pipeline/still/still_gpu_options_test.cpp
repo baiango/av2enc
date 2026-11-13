@@ -50,15 +50,22 @@ void test_mapping_matches_cli() {
   GpuOptions gpu;
   gpu.base_q_idx = 90;  // GPU pins 90 today
   gpu.enable_cfl = false;
+  gpu.cfl_ds_filter = 2;
   gpu.enable_deblock = false;
   gpu.enable_edge_filter = false;
   gpu.luma_dc_only = false;
   gpu.min_block_size = 16;
   gpu.max_partition_depth = 2;
+  gpu.sb_size = 128;
   gpu.adaptive_cdf = true;
   gpu.force_single_block = true;
   gpu.force_dc = true;
   gpu.uv_full = true;
+  gpu.enable_ibp = true;
+  gpu.enable_mrl = true;
+  gpu.enable_dip = true;
+  gpu.cfl_explicit = true;
+  gpu.mhccp = true;
   gpu.enable_cdef = true;
   gpu.cdef_num_strengths = 2;
   gpu.cdef_damping = 5;
@@ -71,6 +78,9 @@ void test_mapping_matches_cli() {
   gpu.enable_pc_wiener = true;
   gpu.enable_gdf = true;
   gpu.enable_grain = true;
+  gpu.delta_q = true;
+  gpu.qm = true;
+  gpu.qm_level = 2;
   gpu.rdoq = true;
   gpu.rdoq_sse_scale = 0.25;
   gpu.tx_type = true;
@@ -81,15 +91,23 @@ void test_mapping_matches_cli() {
   const av2enc::still::StillOptions cpu = gpu_options_to_m1(gpu);
   check_equal(cpu.base_q_idx, 90, "base_q_idx");
   check(cpu.enable_cfl == false, "enable_cfl");
+  check_equal(cpu.cfl_ds_filter, 2, "cfl_ds_filter");
   check(cpu.enable_deblock == false, "enable_deblock");
   check(cpu.enable_intra_edge_filter == false, "enable_intra_edge_filter");
   check(cpu.luma_dc_only == false, "luma_dc_only");
   check_equal(cpu.min_block_size, 16, "min_block_size");
   check_equal(cpu.max_partition_depth, 2, "max_partition_depth");
+  check(cpu.sb128 == true, "sb128");
+  check(cpu.sb256 == false, "sb256");
   check(cpu.adaptive_cdf == true, "adaptive_cdf");
   check(cpu.force_single_block == true, "force_single_block");
   check(cpu.force_dc == true, "force_dc");
   check(cpu.uv_full == true, "uv_full");
+  check(cpu.enable_ibp == true, "enable_ibp");
+  check(cpu.enable_mrl == true, "enable_mrl");
+  check(cpu.enable_dip == true, "enable_dip");
+  check(cpu.cfl_explicit == true, "cfl_explicit");
+  check(cpu.mhccp == true, "mhccp");
   check(cpu.enable_cdef == true, "enable_cdef");
   check_equal(cpu.cdef_num_strengths, 2, "cdef_num_strengths");
   check_equal(cpu.cdef_damping, 5, "cdef_damping");
@@ -102,6 +120,9 @@ void test_mapping_matches_cli() {
   check(cpu.enable_pc_wiener == true, "enable_pc_wiener");
   check(cpu.enable_gdf == true, "enable_gdf");
   check(cpu.enable_grain == true, "enable_grain");
+  check(cpu.delta_q == true, "delta_q");
+  check(cpu.qm == true, "qm");
+  check_equal(cpu.qm_level, 2, "qm_level");
   check(cpu.rdoq == true, "rdoq");
   check_close(cpu.rdoq_sse_scale, 0.25, "rdoq_sse_scale");
   check(cpu.tx_type == true, "tx_type");
@@ -178,6 +199,47 @@ void test_wired_filters_accepted() {
   check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
         "--still-ccso-edge is wired into the GPU pipeline");
   check(error.empty(), "--still-ccso-edge reports no rejection");
+
+  // §7.20 loop restoration: Wiener NS luma and shared chroma LR both apply
+  // their device kernels after CDEF/CCSO.
+  gpu = GpuOptions{};
+  gpu.enable_wiener = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-wiener is wired into the GPU pipeline");
+  check(error.empty(), "--still-wiener reports no rejection");
+
+  gpu = GpuOptions{};
+  gpu.enable_chroma_lr = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-chroma-lr is wired into the GPU pipeline");
+  check(error.empty(), "--still-chroma-lr reports no rejection");
+
+  // §7.20.4 PC-Wiener classifies and filters luma on the device.
+  gpu = GpuOptions{};
+  gpu.enable_pc_wiener = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-pc-wiener is wired into the GPU pipeline");
+  check(error.empty(), "--still-pc-wiener reports no rejection");
+
+  // §7.20.5 GDF runs last, on the post-restoration LrFrame.
+  gpu = GpuOptions{};
+  gpu.enable_gdf = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-gdf is wired into the GPU pipeline");
+  check(error.empty(), "--still-gdf reports no rejection");
+
+  // §5.18.6.2 QM changes the per-coefficient q2 and rides the shared device
+  // delta-Q quantizer.
+  gpu = GpuOptions{};
+  gpu.qm = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-qm is wired into the GPU pipeline");
+  check(error.empty(), "--still-qm reports no rejection");
 }
 
 void test_every_m3_flag_rejected_by_name() {
@@ -199,22 +261,6 @@ void test_every_m3_flag_rejected_by_name() {
   gpu = GpuOptions{};
   gpu.uv_full = true;
   expect_rejected(gpu, "--still-uv-full", "--still-uv-full");
-
-  gpu = GpuOptions{};
-  gpu.enable_wiener = true;
-  expect_rejected(gpu, "--still-wiener", "--still-wiener");
-
-  gpu = GpuOptions{};
-  gpu.enable_chroma_lr = true;
-  expect_rejected(gpu, "--still-chroma-lr", "--still-chroma-lr");
-
-  gpu = GpuOptions{};
-  gpu.enable_pc_wiener = true;
-  expect_rejected(gpu, "--still-pc-wiener", "--still-pc-wiener");
-
-  gpu = GpuOptions{};
-  gpu.enable_gdf = true;
-  expect_rejected(gpu, "--still-gdf", "--still-gdf");
 
 }
 

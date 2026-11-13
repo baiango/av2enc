@@ -55,6 +55,21 @@ CORE=(
   "$ROOT/src/codec/entropy/av2/av2_entropy.cpp"
   "$ROOT/src/codec/inter/me/me.cpp"
   "$ROOT/src/codec/inter/mc/mc.cpp"
+  "$ROOT/src/codec/inter/drl_reorder/drl_reorder.cpp"
+  "$ROOT/src/codec/inter/drl_reorder/video_stack_adapter.cpp"
+  "$ROOT/src/codec/inter/mv_precision/mv_precision.cpp"
+  "$ROOT/src/pipeline/video/post/tiled_frame.cpp"
+  "$ROOT/src/pipeline/video/post/bit_depth_checklist.cpp"
+  "$ROOT/src/pipeline/video/post/loop_filters.cpp"
+  "$ROOT/src/pipeline/video/post/rc_adapter.cpp"
+  "$ROOT/src/pipeline/tiles/tile_layout.cpp"
+  "$ROOT/src/pipeline/tiles/tile_group.cpp"
+  "$ROOT/src/codec/filters/stream/filters_stream.cpp"
+  "$ROOT/src/codec/filters/deblock/deblock.cpp"
+  "$ROOT/src/codec/filters/cdef/cdef.cpp"
+  "$ROOT/src/codec/filters/loop_restoration/restoration.cpp"
+  "$ROOT/src/codec/rate/rc/rc.cpp"
+  "$ROOT/src/formats/format.cpp"
   "$VIDEO_DIR/video_headers.cpp"
   "$VIDEO_DIR/video_syntax.cpp"
   "$VIDEO_DIR/video_frame.cpp"
@@ -67,18 +82,34 @@ if [[ -f "$VIDEO_SRC/codec/inter/merge/merge.cpp" ]]; then
   CORE+=("$VIDEO_SRC/codec/inter/merge/merge.cpp")
 fi
 
+# The M2 writer now calls into drl_reorder / mv_precision / video post
+# (tiles, RC adapter) and the rest of the integrated core.  Take the canonical
+# `av2enc_core` list instead of chasing undefined references by hand.
+source "$ROOT/src/cuda/pipeline/cpu_reference_sources.sh"
+CORE_RELATIVE=()
+for src in "${CORE[@]}"; do
+  case "$src" in
+    "$ROOT"/*) CORE_RELATIVE+=("${src#"$ROOT"/}") ;;
+    "$VIDEO_SRC"/*) CORE_RELATIVE+=("src/${src#"$VIDEO_SRC"/}") ;;
+    *) CORE_RELATIVE+=("$src") ;;
+  esac
+done
+av2enc_cpu_core_append CORE "$ROOT/" \
+  "${CORE_RELATIVE[@]+"${CORE_RELATIVE[@]}"}"
+
 CUDA_SUPPORT=(
   "$ROOT/src/cuda/arena.cpp"
   "$ROOT/src/cuda/codec/inter/me/me.cu"
   "$ROOT/src/cuda/codec/inter/mc/mc.cu"
+  "$ROOT/src/cuda/codec/inter/compound/compound_full.cu"
   "$ROOT/src/cuda/codec/intra/modes/intra_modes.cu"
   "$ROOT/src/cuda/codec/transform/variants/tx_variants.cu"
 )
 
 OBJECTS=()
 index=0
-for src in "${CORE[@]}" "$HERE/video_pipeline.cpp" "$HERE/video_selftest.cpp" \
-           "$HERE/video_gate.cpp"; do
+for src in "${CORE[@]}" "$HERE/video_pipeline.cpp" "$HERE/video_frame_modes.cpp" \
+           "$HERE/video_selftest.cpp" "$HERE/video_gate.cpp"; do
   obj="$BUILD_DIR/host_${index}.o"
   "$CXX" "${HOST_FLAGS[@]}" -c "$src" -o "$obj"
   OBJECTS+=("$obj")

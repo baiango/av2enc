@@ -9,6 +9,7 @@
 #include <cstdint>
 
 #include "codec/transform/variants/tx_tables_dev.cuh"
+#include "cuda/codec/transform/delta_q/deltaq_device.cuh"
 
 namespace av2enc::cuda {
 namespace {
@@ -153,6 +154,7 @@ __global__ void still_tx_kernel(const StillTxJob* __restrict__ jobs,
                              std::int32_t* __restrict__ dequant,
                              std::int16_t* __restrict__ residual_out,
                              std::int32_t* __restrict__ eob,
+                             const std::int32_t* __restrict__ q2,
                              int* __restrict__ error_count, int smem_elems) {
   extern __shared__ __align__(16) unsigned char smem[];
   __shared__ int s_eob;
@@ -191,9 +193,9 @@ __global__ void still_tx_kernel(const StillTxJob* __restrict__ jobs,
   const int elems_pad = (smem_elems + 7) & ~7;
   auto* s_adj = reinterpret_cast<std::int16_t*>(smem);
   auto* s_tmp = reinterpret_cast<double*>(smem + 2 * elems_pad);
-  auto* s_dq = reinterpret_cast<std::int32_t*>(smem + 2 * elems_pad +
-                                               8 * elems_pad);
-  auto* s_kw = reinterpret_cast<std::int16_t*>(smem + 14 * elems_pad);
+  auto* s_out = reinterpret_cast<double*>(smem + 10 * elems_pad);
+  auto* s_dq = reinterpret_cast<std::int32_t*>(smem + 18 * elems_pad);
+  auto* s_kw = reinterpret_cast<std::int16_t*>(smem + 22 * elems_pad);
   auto* s_kh = s_kw + kMaxElems;
   auto* s_inter = reinterpret_cast<std::int32_t*>(s_tmp);
 
@@ -308,13 +310,57 @@ __global__ void still_tx_kernel(const StillTxJob* __restrict__ jobs,
     if (p.rect_prescale != 1.0) {
       out = __dmul_rn(out, p.rect_prescale);
     }
-    const std::int32_t level =
-        static_cast<std::int32_t>(lround(__dmul_rn(out, p.quant_factor)));
-    s_dq[t] = level;
-    levels[job.levels_offset + t] = level;
+    if (job.use_deltaq != 0) {
+      s_out[t] = out;
+    } else {
+      const std::int32_t level =
+          static_cast<std::int32_t>(lround(__dmul_rn(out, p.quant_factor)));
+      s_dq[t] = level;
+      levels[job.levels_offset + t] = level;
+    }
     if (coeff != nullptr) coeff[job.coeff_offset + t] = out;
   }
   __syncthreads();
+
+  // DC/AC delta-Q reuses the shared §7.14.4 device core so its DC/AC
+  // quantizers come from the CPU plan's resolved deltas.
+  if (job.use_deltaq != 0) {
+    if (tid == 0) {
+      if (job.q2_offset >= 0) {
+        // Quantizer-matrix path: q2 = Round2(q * m, 5) from the CPU plan;
+        // keep the CPU reference's expression order.
+        const double scaled =
+            __dmul_rn(p.quant_factor, static_cast<double>(kQuantStep));
+        for (int i = 0; i < elems; ++i) {
+          const std::int32_t q = q2[job.q2_offset + i];
+          const double factor = scaled / static_cast<double>(q);
+          s_dq[i] = static_cast<std::int32_t>(
+              lround(__dmul_rn(s_out[i], factor)));
+        }
+      } else {
+        // DC/AC delta-Q: use the module's §7.14.2 get_q() but keep the CPU
+        // reference's per-coefficient expression order (`qf * 528 / q`, then
+        // multiply by coeff) so the level is bit-identical.
+        const int dc_quant =
+            deltaq::core::get_q(job.qindex, job.delta_dc);
+        const int ac_quant =
+            deltaq::core::get_q(job.qindex, job.delta_ac);
+        const double scaled =
+            __dmul_rn(p.quant_factor, static_cast<double>(kQuantStep));
+        for (int i = 0; i < elems; ++i) {
+          const int q = i == 0 ? dc_quant : ac_quant;
+          const double factor = scaled / static_cast<double>(q);
+          s_dq[i] = static_cast<std::int32_t>(
+              lround(__dmul_rn(s_out[i], factor)));
+        }
+      }
+    }
+    __syncthreads();
+    for (int t = tid; t < elems; t += nthreads) {
+      levels[job.levels_offset + t] = s_dq[t];
+    }
+    __syncthreads();
+  }
 
   // ---------------------------------------------------------------------
   // End of block over the scan order (build_scan() equivalent).
@@ -334,10 +380,33 @@ __global__ void still_tx_kernel(const StillTxJob* __restrict__ jobs,
   // ---------------------------------------------------------------------
   // Dequantize in place (levels are dead after the eob pass).
   // ---------------------------------------------------------------------
-  for (int t = tid; t < elems; t += nthreads) {
-    const std::int32_t value = dequant_dev(s_dq[t], p.dq_denom);
-    s_dq[t] = value;
-    if (dequant != nullptr) dequant[job.dequant_offset + t] = value;
+  if (job.use_deltaq != 0) {
+    if (tid == 0) {
+      deltaq::Job q{};
+      q.plane = job.plane;
+      q.coded_w = p.coded_w;
+      q.coded_h = p.coded_h;
+      q.qindex = job.qindex;
+      q.delta_dc = job.delta_dc;
+      q.delta_ac = job.delta_ac;
+      q.tx_type = p.tx_type;
+      q.q2_offset = job.q2_offset;
+      q.lossless = 0;
+      q.allow_tcq = 0;
+      q.use_fsc = 0;
+      q.coefficient_scale = p.quant_factor;
+      deltaq::core::dequantize_job(q, s_dq, s_dq, q2);
+    }
+  } else {
+    for (int t = tid; t < elems; t += nthreads) {
+      s_dq[t] = dequant_dev(s_dq[t], p.dq_denom);
+    }
+  }
+  __syncthreads();
+  if (dequant != nullptr) {
+    for (int t = tid; t < elems; t += nthreads) {
+      dequant[job.dequant_offset + t] = s_dq[t];
+    }
   }
   __syncthreads();
 
@@ -451,14 +520,14 @@ cudaError_t still_tx_batch(const StillTxJob* d_jobs, int nblocks,
     return cudaErrorInvalidValue;
   }
   const int elems = padded_elems(smem_elems);
-  // int16 adjusted residual (2E) + double forward staging (8E) + int32
-  // levels/dequant (4E) + the two int16 transform kernels (2 * 1024 * 2 B).
-  const int smem_bytes = 14 * elems + kKernelBytes;
+  // int16 adjusted residual (2E) + two double staging arrays (2 * 8E) +
+  // int32 levels/dequant (4E) + the two int16 transform kernels (2 * 1024 * 2 B).
+  const int smem_bytes = 22 * elems + kKernelBytes;
   still_tx_kernel<<<static_cast<unsigned>(nblocks), kThreads,
                  static_cast<std::size_t>(smem_bytes), stream>>>(
       d_jobs, buffers.src, buffers.pred, buffers.residual_in,
       buffers.residual_adj, buffers.coeff, buffers.levels, buffers.dequant,
-      buffers.residual_out, buffers.eob, buffers.error_count, elems);
+      buffers.residual_out, buffers.eob, buffers.q2, buffers.error_count, elems);
   return cudaGetLastError();
 }
 

@@ -51,7 +51,7 @@ nvcc -std=c++20 -O3 -lineinfo -arch="$ARCH" \
   -I"$ROOT/src" \
   -Xcompiler -Wall,-Wextra,-Wshadow \
   "$SELF/still_cfl.cu" \
-  "$SELF/../../cfl/cfl.cu" \
+  "$SELF/../../../codec/intra/cfl/cfl.cu" \
   "$SELF/still_cfl_test.cu" \
   "$ROOT/src/codec/intra/cfl/cfl.cpp" \
   "$ROOT/src/codec/intra/modes/intra_modes.cpp" \

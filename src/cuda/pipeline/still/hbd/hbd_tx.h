@@ -66,6 +66,10 @@ struct HbdTxJob {
   std::int32_t dequant_offset = 0;
   std::int32_t residual_out_offset = 0;
   std::int32_t eob_offset = 0;
+
+  // §7.14.2 dequantizer step (`qlookup(base_q_idx)`).  The M10/QP-90 default
+  // is 528; qindex-dependent callers set this per job.
+  std::int32_t quant_step = av2enc::txv::kQuantStep;
 };
 
 struct HbdTxBuffers {

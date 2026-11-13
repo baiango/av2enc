@@ -115,7 +115,9 @@ fi
 REF_SOURCES=(
   "$ROOT/src/cuda/arena.cpp"
   "$ROOT/src/codec/intra/supplemental/dc_intra_subsampled.cpp"
+  "$ROOT/src/codec/intra/supplemental/dc_sign_horz_vert.cpp"
   "$ROOT/src/codec/intra/supplemental/intra_filter_corner.cpp"
+  "$ROOT/src/codec/entropy/av2/av2_entropy.cpp"
   "$ROOT/src/codec/transform/variants/tx_variants.cpp"
   "$ROOT/src/codec/transform/idtx/idtx_intra.cpp"
   "$ROOT/src/codec/transform/tx_type/tx_type.cpp"

@@ -7,15 +7,21 @@
 # staging.  Tests and build stubs may allocate directly because they are not
 # part of the encoder runtime.
 #
-# Two narrow distinctions are made here:
+# Narrow distinctions made here:
 #   * cudaFree(nullptr) only forces primary-context creation; it frees no
 #     memory and is not an allocation site.
 #   * cudaMallocHost/cudaFreeHost allocate pinned *host* RAM, not device VRAM.
 #     The runtime helper (src/cuda/context.cpp) and the independent multi-GPU
-#     device backend (src/pipeline/dispatch/runtime/cuda_backend.cpp, which is linked
-#     without context.cpp) are the only pinned-staging providers.
-# Device allocations (cudaMalloc, cudaMallocAsync) remain banned outside
+#     device backend (src/pipeline/dispatch/runtime/cuda_backend.cpp, which is
+#     linked without context.cpp) are the only pinned-staging providers.
+# Device allocations (cudaMalloc, cudaMallocManaged, cudaMallocPitch,
+# cudaMalloc3D, cudaMallocArray, cudaMallocAsync, ...) remain banned outside
 # arena.cpp everywhere.
+#
+# The matcher is deliberately broad on the cudaMalloc*/cudaFree* families so a
+# new allocator spelling cannot slip through.  A call whose '(' sits on the
+# next line would evade a line-oriented scan, so that shape is reported as a
+# violation with a request to keep the call on one line.
 #
 # Usage:
 #   tools/check_arena.sh              # scan src/ (the encoder/runtime tree)
@@ -34,7 +40,7 @@ roots=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -q|--quiet) quiet=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     --) shift; roots+=("$@"); break ;;
     -*) echo "check_arena: unknown option '$1'" >&2; exit 2 ;;
     *) roots+=("$1"); shift ;;
@@ -50,9 +56,10 @@ if [[ ${#roots[@]} -eq 0 ]]; then
   exit 2
 fi
 
-# Only real allocation calls, not prose in comments.  The trailing '(' keeps
-# cudaMallocHost/cudaFreeHost distinct from a bare mention of the name.
-pattern='(cudaMalloc|cudaFree|cudaMallocHost|cudaFreeHost|cudaHostAlloc|cudaMallocAsync|cudaFreeAsync)[[:space:]]*\('
+# Every cudaMalloc*/cudaFree* spelling plus the host-pinning allocators.
+# The trailing '(' keeps the name distinct from prose in comments; the split
+# detector below covers the '(' on the next line.
+pattern='(cudaMalloc[A-Za-z]*|cudaFree[A-Za-z]*|cudaHostAlloc|cudaHostRegister)[[:space:]]*\('
 
 source_globs=(-g '*.c' -g '*.cc' -g '*.cpp' -g '*.cxx'
               -g '*.cu' -g '*.cuh' -g '*.h' -g '*.hh' -g '*.hpp')
@@ -80,7 +87,14 @@ filtered="$(
 
       # Test, build and emulation-stub trees are not the encoder runtime.
       if (path ~ /(^|\/)(build|build-[^\/]*|build_stub|build-stub|cuda_stub|third_party|external|vendor|test|tests|testing|unittest|unittests)(\/|$)/) return 1;
-      if (path ~ /(^|\/)[^\/]*(_test|_tests|test)\.(c|cc|cpp|cxx|cu|cuh|h|hh|hpp)$/) return 1;
+      # Standalone benchmark harnesses (bench/*) are their own binaries with
+      # their own main(); none is linked into the encoder or the arena.  They
+      # are reported separately instead of failing the runtime guard.
+      if (path ~ /(^|\/)bench\//) return 1;
+      # Only genuine test suffixes: the old loose "test\.(...)" rule also
+      # exempted production files whose name merely ends in "test"
+      # (e.g. video_selftest.cpp).
+      if (path ~ /(^|\/)[^\/]*(_test|_tests)\.(c|cc|cpp|cxx|cu|cuh|h|hh|hpp)$/) return 1;
       # Test-only RAII device buffer used by the restoration component tests.
       # It lives beside the loop-restoration component after the folder
       # refactor; keep both spellings so the gate does not regress on a move.
@@ -125,10 +139,61 @@ filtered="$(
   ' | sort -u
 )"
 
-if [[ -n "$filtered" ]]; then
-  count="$(printf '%s\n' "$filtered" | wc -l | tr -d ' ')"
+# A cudaMalloc*/cudaFree* token at end of line means the call is split over
+# lines and the line-oriented matcher above cannot see it.  Report it instead
+# of silently missing it.
+split_pattern='(cudaMalloc[A-Za-z]*|cudaFree[A-Za-z]*|cudaHostAlloc)[[:space:]]*$'
+if command -v rg >/dev/null 2>&1; then
+  split_raw="$(rg --line-number --no-heading --color never "${source_globs[@]}" \
+                 -e "$split_pattern" "${roots[@]}" 2>/dev/null || true)"
+else
+  split_raw="$(grep -rInE "$split_pattern" "${roots[@]}" 2>/dev/null || true)"
+fi
+
+split_filtered="$(
+  printf '%s\n' "$split_raw" | awk -F: '
+    function is_exempt(path) {
+      if (path !~ /\.(c|cc|cpp|cxx|cu|cuh|h|hh|hpp)$/) return 1;
+      if (path == "src/cuda/arena.cpp") return 1;
+      if (path == "src/cuda/context.cpp") return 1;
+      if (path ~ /(^|\/)(build|build-[^\/]*|build_stub|build-stub|cuda_stub|third_party|external|vendor|test|tests|testing|unittest|unittests)(\/|$)/) return 1;
+      if (path ~ /(^|\/)[^\/]*(_test|_tests)\.(c|cc|cpp|cxx|cu|cuh|h|hh|hpp)$/) return 1;
+      if (path ~ /(^|\/)bench\//) return 1;
+      return 0;
+    }
+    NF == 0 { next }
+    {
+      path = $1; line = $2; text = $0;
+      sub(/^[^:]*:[^:]*:/, "", text);
+      trim = text; sub(/^[ \t]+/, "", trim);
+      if (trim ~ /^\/\// || trim ~ /^\*/ || trim ~ /^\/\*/) next;
+      if (is_exempt(path)) next;
+      print path ":" line ": " trim "  [call split across lines]";
+    }
+  ' | sort -u
+)"
+
+all_violations="$(printf '%s\n%s\n' "$filtered" "$split_filtered" |
+  sed '/^$/d' | sort -u)"
+
+# Report (but do not fail on) standalone benchmark harness allocations.
+bench_hits=0
+if [[ "$quiet" -eq 0 ]]; then
+  bench_hits="$(printf '%s\n' "$raw" | awk -F: '
+    NF == 0 { next }
+    {
+      path = $1; text = $0;
+      sub(/^[^:]*:[^:]*:/, "", text);
+      trim = text; sub(/^[ \t]+/, "", trim);
+      if (trim ~ /^\/\// || trim ~ /^\*/ || trim ~ /^\/\*/) next;
+      if (path ~ /(^|\/)bench\//) print;
+    }' | wc -l | tr -d ' ')"
+fi
+
+if [[ -n "$all_violations" ]]; then
+  count="$(printf '%s\n' "$all_violations" | wc -l | tr -d ' ')"
   if [[ "$quiet" -eq 0 ]]; then
-    printf '%s\n' "$filtered"
+    printf '%s\n' "$all_violations"
     echo
   fi
   echo "check_arena: FAIL: $count allocation call(s) outside arena.cpp/context.cpp/test stubs" >&2
@@ -137,6 +202,9 @@ if [[ -n "$filtered" ]]; then
 fi
 
 if [[ "$quiet" -eq 0 ]]; then
+  if [[ "${bench_hits:-0}" -gt 0 ]]; then
+    echo "check_arena: note: $bench_hits allocation site(s) in bench/ standalone harnesses (excluded: not the encoder runtime)"
+  fi
   echo "check_arena: PASS: no raw CUDA allocations outside arena.cpp/context.cpp"
 fi
 exit 0

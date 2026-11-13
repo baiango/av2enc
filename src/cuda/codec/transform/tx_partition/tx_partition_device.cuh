@@ -320,7 +320,6 @@ TXP_HD inline bool plan_geometry(int mi_size, int partition, int mi_row,
   if (mi_size < 0 || mi_size >= kBlockCount) return false;
   const int tx = max_tx_size_rect(mi_size);
   if (tx < 0) return false;
-  if (partition_signallable(mi_size, partition) == 0) return false;
 
   const int w4 = tx_width(tx) / kMiSizePx;
   const int h4 = tx_height(tx) / kMiSizePx;
@@ -332,6 +331,17 @@ TXP_HD inline bool plan_geometry(int mi_size, int partition, int mi_row,
       ++out->count;
     }
   };
+
+  // §5.20.6.3: a BLOCK_4X4 coding block (and a >64 chunk) codes no partition
+  // syntax, so the only legal shape is the single max-rect transform.  This
+  // mirrors `tx_partition_geometry()` in the CPU reference: NONE succeeds,
+  // every other partition is rejected.
+  if (legal_splits(mi_size, /*reduced_tx_part_set=*/0).applicable == 0) {
+    if (partition != kPartNone) return false;
+    push(mi_row, mi_col, tx);
+    return true;
+  }
+  if (partition_signallable(mi_size, partition) == 0) return false;
 
   switch (partition) {
     case kPartNone:

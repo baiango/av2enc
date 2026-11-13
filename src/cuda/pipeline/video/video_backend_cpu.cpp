@@ -18,6 +18,7 @@
 
 #include "codec/inter/mc/mc.h"
 #include "codec/inter/me/me.h"
+#include "codec/inter/multiref/compound_predict.h"
 #include "codec/intra/modes/intra_modes.h"
 #include "pipeline/video/video_frame.h"
 #include "codec/transform/variants/tx_variants.h"
@@ -34,6 +35,8 @@ using av2enc::inter::mc::McStatus;
 using av2enc::inter::mc::MutablePlane;
 using av2enc::inter::mc::Mv;
 using av2enc::inter::mc::RefFrame;
+
+namespace multiref = ::av2enc::video::multiref;
 
 int source_sample(const av2enc::video::VideoInputFrame& frame, int plane, int x,
                   int y) {
@@ -131,9 +134,10 @@ class CpuBackend final : public Backend {
  public:
   const char* name() const override { return "cpu-emulation"; }
 
-  bool begin_frame(const av2enc::video::VideoInputFrame& source, int mi_cols,
-                   int mi_rows, const av2enc::video::VideoReconFrame* reference,
-                   std::string& error) override {
+  bool begin_frame(
+      const av2enc::video::VideoInputFrame& source, int mi_cols, int mi_rows,
+      std::span<const av2enc::video::VideoReconFrame* const> references,
+      std::string& error) override {
     (void)error;
     begin_time_ = std::chrono::steady_clock::now();
     source_ = source;
@@ -149,22 +153,29 @@ class CpuBackend final : public Backend {
     stats_.bytes_uploaded +=
         static_cast<std::uint64_t>(width_) * static_cast<std::uint64_t>(height_) +
         2ULL * static_cast<std::uint64_t>(cw) * static_cast<std::uint64_t>(ch);
-    if (reference != nullptr) {
-      reference_ = *reference;
-      ref_frame_ = RefFrame{};
-      ref_frame_.plane[0] = av2enc::inter::mc::PlaneView{
-          reference_.y.data(), static_cast<int>(reference_.width)};
-      ref_frame_.plane[1] = av2enc::inter::mc::PlaneView{
-          reference_.u.data(),
-          static_cast<int>((reference_.width + 1U) / 2U)};
-      ref_frame_.plane[2] = av2enc::inter::mc::PlaneView{
-          reference_.v.data(),
-          static_cast<int>((reference_.width + 1U) / 2U)};
-      ref_frame_.mi_cols = mi_cols_;
-      ref_frame_.mi_rows = mi_rows_;
-    } else {
-      reference_ = av2enc::video::VideoReconFrame{};
-      ref_frame_ = RefFrame{};
+    references_.clear();
+    ref_frames_.clear();
+    references_.reserve(references.size());
+    ref_frames_.reserve(references.size());
+    for (const av2enc::video::VideoReconFrame* reference : references) {
+      if (reference == nullptr) {
+        error = "CPU emulation reference list contains null";
+        return false;
+      }
+      references_.push_back(*reference);
+      RefFrame ref;
+      ref.plane[0] = av2enc::inter::mc::PlaneView{
+          references_.back().y.data(),
+          static_cast<int>(references_.back().width)};
+      ref.plane[1] = av2enc::inter::mc::PlaneView{
+          references_.back().u.data(),
+          static_cast<int>((references_.back().width + 1U) / 2U)};
+      ref.plane[2] = av2enc::inter::mc::PlaneView{
+          references_.back().v.data(),
+          static_cast<int>((references_.back().width + 1U) / 2U)};
+      ref.mi_cols = mi_cols_;
+      ref.mi_rows = mi_rows_;
+      ref_frames_.push_back(ref);
     }
     return true;
   }
@@ -207,16 +218,25 @@ class CpuBackend final : public Backend {
                                    height_ / 2};
     cur.plane[2] = me::MeCorePlane{source_.v.data(), width_ / 2, width_ / 2,
                                    height_ / 2};
-    me::MeCoreRef ref;
-    ref.plane[0] = me::MeCorePlane{ref_frame_.plane[0].data,
-                                   ref_frame_.plane[0].stride, mi_cols_ * 4,
-                                   mi_rows_ * 4};
-    ref.plane[1] = me::MeCorePlane{ref_frame_.plane[1].data,
-                                   ref_frame_.plane[1].stride, mi_cols_ * 2,
-                                   mi_rows_ * 2};
-    ref.plane[2] = me::MeCorePlane{ref_frame_.plane[2].data,
-                                   ref_frame_.plane[2].stride, mi_cols_ * 2,
-                                   mi_rows_ * 2};
+    std::vector<me::MeCoreRef> refs(ref_frames_.size());
+    for (std::size_t r = 0; r < ref_frames_.size(); ++r) {
+      refs[r].plane[0] =
+          me::MeCorePlane{ref_frames_[r].plane[0].data,
+                          ref_frames_[r].plane[0].stride, mi_cols_ * 4,
+                          mi_rows_ * 4};
+      refs[r].plane[1] =
+          me::MeCorePlane{ref_frames_[r].plane[1].data,
+                          ref_frames_[r].plane[1].stride, mi_cols_ * 2,
+                          mi_rows_ * 2};
+      refs[r].plane[2] =
+          me::MeCorePlane{ref_frames_[r].plane[2].data,
+                          ref_frames_[r].plane[2].stride, mi_cols_ * 2,
+                          mi_rows_ * 2};
+    }
+    if (!jobs.empty() && refs.empty()) {
+      error = "CPU emulation ME batch has no reference";
+      return false;
+    }
 
     std::vector<me::MeCoreJob> me_jobs(jobs.size());
     for (std::size_t i = 0; i < jobs.size(); ++i) {
@@ -226,13 +246,13 @@ class CpuBackend final : public Backend {
       me_jobs[i].w = jobs[i].w;
       me_jobs[i].h = jobs[i].h;
       me_jobs[i].num_refs = 1;
-      me_jobs[i].ref_indices[0] = 0;
+      me_jobs[i].ref_indices[0] = static_cast<std::int8_t>(jobs[i].ref_index);
     }
     std::vector<me::MeCoreResult> me_results(jobs.size());
     const me::MeStatus status =
-        me::me_search_batch(cur, &ref, 1, me_jobs.data(),
-                            static_cast<int>(me_jobs.size()), options, nullptr,
-                            me_results.data());
+        me::me_search_batch(cur, refs.data(), static_cast<int>(refs.size()),
+                            me_jobs.data(), static_cast<int>(me_jobs.size()),
+                            options, nullptr, me_results.data());
     if (status != me::MeStatus::kOk) {
       error = "CPU emulation ME batch failed";
       return false;
@@ -255,9 +275,14 @@ class CpuBackend final : public Backend {
       std::vector<std::uint8_t> pred(
           static_cast<std::size_t>(job.w) * static_cast<std::size_t>(job.h));
       const BlockRect rect{job.x, job.y, job.w, job.h};
+      if (job.ref_index < 0 ||
+          static_cast<std::size_t>(job.ref_index) >= ref_frames_.size()) {
+        error = "CPU emulation MC ref_index out of range";
+        return false;
+      }
       const McStatus status = av2enc::inter::mc::predict_plane(
-          ref_frame_, 0, rect, Mv{job.mv_y, job.mv_x},
-          InterpFilter::kEighttap, pred.data(), job.w);
+          ref_frames_[static_cast<std::size_t>(job.ref_index)], 0, rect,
+          Mv{job.mv_y, job.mv_x}, InterpFilter::kEighttap, pred.data(), job.w);
       if (status != McStatus::kOk) {
         error = "CPU emulation MC luma failed";
         return false;
@@ -287,8 +312,14 @@ class CpuBackend final : public Backend {
     dst[1] = MutablePlane{u.data(), cw};
     dst[2] = MutablePlane{v.data(), cw};
     const BlockRect rect{luma_job.x, luma_job.y, w, h};
+    if (luma_job.ref_index < 0 ||
+        static_cast<std::size_t>(luma_job.ref_index) >= ref_frames_.size()) {
+      error = "CPU emulation MC ref_index out of range";
+      return false;
+    }
     if (av2enc::inter::mc::predict_block_420(
-            ref_frame_, rect, Mv{luma_job.mv_y, luma_job.mv_x},
+            ref_frames_[static_cast<std::size_t>(luma_job.ref_index)], rect,
+            Mv{luma_job.mv_y, luma_job.mv_x},
             InterpFilter::kEighttap, dst) != McStatus::kOk) {
       error = "CPU emulation MC 4:2:0 failed";
       return false;
@@ -296,6 +327,105 @@ class CpuBackend final : public Backend {
     write_plane_block(recon_[0], luma_job.x, luma_job.y, w, h, y);
     write_plane_block(recon_[1], luma_job.x / 2, luma_job.y / 2, cw, ch, u);
     write_plane_block(recon_[2], luma_job.x / 2, luma_job.y / 2, cw, ch, v);
+    ++stats_.mc_launches;
+    stats_.bytes_downloaded +=
+        static_cast<std::uint64_t>(y.size() + u.size() + v.size());
+    return true;
+  }
+
+  bool compound_sse_batch(const std::vector<InterJob>& jobs,
+                          std::vector<std::int64_t>& sse,
+                          std::string& error) override {
+    sse.assign(jobs.size(), 0);
+    if (jobs.empty()) return true;
+    if (ref_frames_.size() < 2) {
+      error = "CPU emulation compound prediction needs two references";
+      return false;
+    }
+    for (std::size_t i = 0; i < jobs.size(); ++i) {
+      const InterJob& job = jobs[i];
+      multiref::CompoundPrediction prediction;
+      const BlockRect rect{job.x, job.y, job.w, job.h};
+      if (!multiref::build_compound_prediction(
+              ref_frames_[0], ref_frames_[1], rect, 0, Mv{0, 0}, Mv{0, 0},
+              InterpFilter::kEighttap, mi_cols_, mi_rows_, prediction,
+              error)) {
+        return false;
+      }
+      multiref::CompoundModeParams params;
+      params.type = av2enc::inter::adv::CompoundType::kAverage;
+      params.cwp_weight = multiref::kCwpEqual;
+      std::vector<std::uint8_t> scratch(
+          static_cast<std::size_t>(job.w) * static_cast<std::size_t>(job.h));
+      sse[i] = multiref::compound_luma_sse(
+          prediction, params,
+          source_.y.data() + static_cast<std::size_t>(job.y) *
+                                 static_cast<std::size_t>(width_) +
+              static_cast<std::size_t>(job.x),
+          width_, scratch.data(), job.w);
+    }
+    ++stats_.mc_launches;
+    ++stats_.sse_launches;
+    stats_.inter_candidates += jobs.size();
+    return true;
+  }
+
+  bool compound_420(const InterJob& luma_job, std::vector<std::uint8_t>& y,
+                    std::vector<std::uint8_t>& u, std::vector<std::uint8_t>& v,
+                    std::string& error) override {
+    if (ref_frames_.size() < 2) {
+      error = "CPU emulation compound prediction needs two references";
+      return false;
+    }
+    const int w = luma_job.w;
+    const int h = luma_job.h;
+    const int cw = w / 2;
+    const int ch = h / 2;
+    multiref::CompoundPrediction prediction;
+    const BlockRect rect{luma_job.x, luma_job.y, w, h};
+    if (!multiref::build_compound_prediction(
+            ref_frames_[0], ref_frames_[1], rect, 0, Mv{0, 0}, Mv{0, 0},
+            InterpFilter::kEighttap, mi_cols_, mi_rows_, prediction, error)) {
+      return false;
+    }
+    multiref::CompoundModeParams params;
+    params.type = av2enc::inter::adv::CompoundType::kAverage;
+    params.cwp_weight = multiref::kCwpEqual;
+    std::uint8_t* dst[3] = {recon_[0].samples.data(), recon_[1].samples.data(),
+                            recon_[2].samples.data()};
+    int dst_stride[3] = {recon_[0].stride, recon_[1].stride, recon_[2].stride};
+    if (!multiref::apply_compound_prediction(prediction, params, dst,
+                                             dst_stride, error)) {
+      return false;
+    }
+    y.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    u.resize(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
+    v.resize(u.size());
+    for (int row = 0; row < h; ++row) {
+      std::memcpy(y.data() + static_cast<std::size_t>(row) *
+                                 static_cast<std::size_t>(w),
+                  recon_[0].samples.data() +
+                      static_cast<std::size_t>(luma_job.y + row) *
+                          static_cast<std::size_t>(recon_[0].stride) +
+                      static_cast<std::size_t>(luma_job.x),
+                  static_cast<std::size_t>(w));
+    }
+    for (int row = 0; row < ch; ++row) {
+      std::memcpy(u.data() + static_cast<std::size_t>(row) *
+                                 static_cast<std::size_t>(cw),
+                  recon_[1].samples.data() +
+                      static_cast<std::size_t>(luma_job.y / 2 + row) *
+                          static_cast<std::size_t>(recon_[1].stride) +
+                      static_cast<std::size_t>(luma_job.x / 2),
+                  static_cast<std::size_t>(cw));
+      std::memcpy(v.data() + static_cast<std::size_t>(row) *
+                                 static_cast<std::size_t>(cw),
+                  recon_[2].samples.data() +
+                      static_cast<std::size_t>(luma_job.y / 2 + row) *
+                          static_cast<std::size_t>(recon_[2].stride) +
+                      static_cast<std::size_t>(luma_job.x / 2),
+                  static_cast<std::size_t>(cw));
+    }
     ++stats_.mc_launches;
     stats_.bytes_downloaded +=
         static_cast<std::uint64_t>(y.size() + u.size() + v.size());
@@ -370,10 +500,15 @@ class CpuBackend final : public Backend {
     std::vector<std::uint8_t> pred(
         static_cast<std::size_t>(job.w) * static_cast<std::size_t>(job.h));
     const BlockRect rect{job.x, job.y, job.w, job.h};
-    if (av2enc::inter::mc::predict_plane(ref_frame_, 0, rect,
-                                         Mv{job.mv_y, job.mv_x},
-                                         InterpFilter::kEighttap, pred.data(),
-                                         job.w) != McStatus::kOk) {
+    if (job.ref_index < 0 ||
+        static_cast<std::size_t>(job.ref_index) >= ref_frames_.size()) {
+      error = "CPU emulation inter residual ref_index out of range";
+      return false;
+    }
+    if (av2enc::inter::mc::predict_plane(
+            ref_frames_[static_cast<std::size_t>(job.ref_index)], 0, rect,
+            Mv{job.mv_y, job.mv_x}, InterpFilter::kEighttap, pred.data(),
+            job.w) != McStatus::kOk) {
       error = "CPU emulation inter residual MC failed";
       return false;
     }
@@ -403,8 +538,14 @@ class CpuBackend final : public Backend {
     dst[1] = MutablePlane{u.data(), cw};
     dst[2] = MutablePlane{v.data(), cw};
     const BlockRect rect{luma_job.x, luma_job.y, w, h};
+    if (luma_job.ref_index < 0 ||
+        static_cast<std::size_t>(luma_job.ref_index) >= ref_frames_.size()) {
+      error = "CPU emulation MC ref_index out of range";
+      return false;
+    }
     if (av2enc::inter::mc::predict_block_420(
-            ref_frame_, rect, Mv{luma_job.mv_y, luma_job.mv_x},
+            ref_frames_[static_cast<std::size_t>(luma_job.ref_index)], rect,
+            Mv{luma_job.mv_y, luma_job.mv_x},
             InterpFilter::kEighttap, dst) != McStatus::kOk) {
       error = "CPU emulation inter residual MC 4:2:0 failed";
       return false;
@@ -439,7 +580,10 @@ class CpuBackend final : public Backend {
   }
 
   const VideoGpuStats& stats() const override { return stats_; }
-  void reset_stats() override { stats_ = VideoGpuStats{}; }
+  void reset_stats() override {
+    stats_ = VideoGpuStats{};
+    stats_.frame_bytes_from_cpu = true;
+  }
 
  private:
   static void write_plane_block(EmuPlane& plane, int x0, int y0, int w, int h,
@@ -459,8 +603,8 @@ class CpuBackend final : public Backend {
   }
 
   av2enc::video::VideoInputFrame source_{};
-  av2enc::video::VideoReconFrame reference_{};
-  RefFrame ref_frame_{};
+  std::vector<av2enc::video::VideoReconFrame> references_;
+  std::vector<RefFrame> ref_frames_;
   EmuPlane recon_[3];
   int width_ = 0;
   int height_ = 0;

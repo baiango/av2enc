@@ -73,9 +73,15 @@ host-emulation parity test only:
 dip_emulation_test: 3612 cases, 3613 checks, 0 failures
 ```
 
-The actual CUDA parity test is committed and builds with
-`ARCH=sm_86 ./build_gpu_test.sh` on the Linux/CUDA target. It has not been run
-on this host.
+`ARCH=sm_86 ./build_gpu_test.sh` on the Linux/CUDA box reports:
+
+```
+dip_test: 3252 single cases, 3252 batch cases, 22771 checks, 0 failures
+```
+
+The arena workspace in `../workspace/` adds 319,488 CPU-exact samples through
+`dip_predict_batch` (all 6 modes, both transpose values, all availability
+combinations, seven DIP extents).
 
 ## Integration
 

@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 HERE="$(pwd)"
-ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
+ROOT="${HERE}"
 while [ ! -f "${ROOT}/CMakeLists.txt" ] && [ "${ROOT}" != "/" ]; do
     ROOT="$(dirname -- "${ROOT}")"
 done

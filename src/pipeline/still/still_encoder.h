@@ -243,6 +243,25 @@ struct StillResult {
   std::vector<std::uint8_t> ccso_blks[3];
   int ccso_blk_cols[3] = {0, 0, 0};
   int ccso_blk_rows[3] = {0, 0, 0};
+  // §7.20.1 LrTxSkip luma MI grid used by the PC-Wiener decision and apply
+  // (§7.20.4 `lr_tx_skip`).  Empty unless PC-Wiener ran.  The GPU stage uploads
+  // it so its classifier sees the same per-4x4 skip map as the CPU reference.
+  std::vector<std::uint8_t> lr_tx_skip;
+  int lr_tx_skip_cols = 0;
+  int lr_tx_skip_rows = 0;
+  // §7.14.4 DC/AC delta-Q plan (resolved totals).  `delta_q_index` is the
+  // §5.20.1 CurrentQIndex; `delta_q_dc/ac[plane]` are the ResolvedDeltaQ
+  // totals the CPU's forward quantiser and dequantiser used.  The GPU TX stage
+  // feeds them to the device delta-Q quantizer.  Zero/empty when delta-Q is
+  // off.
+  int delta_q_index = 0;
+  int delta_q_dc[3] = {0, 0, 0};
+  int delta_q_ac[3] = {0, 0, 0};
+  bool delta_q_enabled = false;
+  // §5.18.6.2/§7.14.4 quantizer-matrix state planned by the CPU reference.
+  // The GPU TX stage builds the per-block q2 matrices from this exact state.
+  bool qm_enabled = false;
+  qm::QmFrameState qm_state;
 };
 
 bool encode_still_picture(const StillPicture& picture, const StillOptions& options,

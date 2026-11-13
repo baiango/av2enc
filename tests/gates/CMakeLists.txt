@@ -86,3 +86,26 @@ set_tests_properties(gate_video_cli PROPERTIES
   SKIP_RETURN_CODE 77
   TIMEOUT 300
   LABELS "gate;gate-video")
+
+# Opt-in CUDA M2 path: CPU --video vs --video-gpu on one deterministic 360p
+# source, byte-identical temporal units/recon and a dav2d --strict 1 decode,
+# plus named rejections for every unported combination.  Registered only when
+# the CUDA target exists; the script itself skips on a CPU-only binary.
+if(TARGET av2enc_video_gpu)
+  add_test(NAME gate_video_gpu
+    COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_gpu.sh"
+            --bin $<TARGET_FILE:av2enc> --frames 4)
+  set_tests_properties(gate_video_gpu PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1800
+    LABELS "gate;gate-video;gate-gpu")
+  # Second product case: the same matrix at 8 frames, which additionally
+  # exercises the rotating reference-slot pool and the full temporal GOP.
+  add_test(NAME gate_video_gpu_long
+    COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_gpu.sh"
+            --bin $<TARGET_FILE:av2enc> --frames 8)
+  set_tests_properties(gate_video_gpu_long PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 2400
+    LABELS "gate;gate-video;gate-gpu;long")
+endif()

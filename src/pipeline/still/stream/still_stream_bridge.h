@@ -57,6 +57,15 @@ struct TreeNode {
   std::uint8_t flags = 0;         // syntax::kFlagForced (kFlagSbRoot is added)
   std::uint8_t child_count = 0;   // 0 for a leaf, else 1..4 in decode order
   std::uint32_t leaf_index = 0;   // leaf_index into BlockPlan / BlockDecision
+  // Extended-partition view (spec PartitionType 0..9, 10-bit allowed mask).
+  // `partition`/`allowed_mask` above stay the M1 four-value enum; when
+  // `partition_is_ext` is set the packer writes these instead.
+  std::uint8_t ext_partition = 0;
+  std::uint16_t allowed_mask_ext = 0;
+  std::uint8_t partition_is_ext = 0;
+  // §6.19.3.1 TreeType / SDP split marker.
+  std::uint8_t tree_type = 0;
+  std::uint8_t sdp_split = 0;
 };
 
 // Bridge output: everything syntax::assemble_still_frame() needs.

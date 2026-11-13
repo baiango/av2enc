@@ -13,6 +13,16 @@
 
 #include <cstdint>
 
+// Host and device passes need different storage classes for a
+// namespace-scope table: CUDA cannot odr-use a host `constexpr` array from
+// device code ("identifier is undefined in device code").  Same pattern as
+// deblock_core.h / mc_subpel_tables.h.
+#if defined(__CUDA_ARCH__)
+#define AV2ENC_ADV_TABLE static __device__ constexpr
+#else
+#define AV2ENC_ADV_TABLE static constexpr
+#endif
+
 namespace av2enc::inter::adv::tables {
 
 inline constexpr int kWarpedFilterRows = 449;
@@ -20,7 +30,7 @@ inline constexpr int kWarpedFilterTaps = 8;
 inline constexpr int kExtWarpedFilterRows = 65;
 inline constexpr int kExtWarpedFilterTaps = 6;
 
-inline constexpr std::int16_t kWarpedFilters[449][8] = {
+AV2ENC_ADV_TABLE std::int16_t kWarpedFilters[449][8] = {
     {  127,     1,     0,     0,     0,     0,     0,     0},
     {  126,     2,     0,     0,     0,     0,     0,     0},
     {  124,     4,     0,     0,     0,     0,     0,     0},
@@ -472,7 +482,7 @@ inline constexpr std::int16_t kWarpedFilters[449][8] = {
     {    0,     0,     0,     0,     0,     0,     2,   126},
 };
 
-inline constexpr std::int16_t kExtWarpedFilters[65][6] = {
+AV2ENC_ADV_TABLE std::int16_t kExtWarpedFilters[65][6] = {
     {    0,     0,   128,     0,     0,     0},
     {    0,    -1,   127,     2,     0,     0},
     {    0,    -2,   127,     4,    -1,     0},
@@ -541,5 +551,7 @@ inline constexpr std::int16_t kExtWarpedFilters[65][6] = {
 };
 
 }  // namespace av2enc::inter::adv::tables
+
+#undef AV2ENC_ADV_TABLE
 
 #endif  // AV2ENC_INTER_ADVANCED_TABLES_WARP_FILTERS_H_

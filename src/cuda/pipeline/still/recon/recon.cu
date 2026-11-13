@@ -185,8 +185,8 @@ __device__ void commit_one(const ReconBlockInfo& b, const ReconPredState& s,
   }
 
   // UV smooth context on the chroma 4x4 grid.
-  const int cr = b.mi_row / 2;
-  const int cc0 = b.mi_col / 2;
+  const int cr = b.chroma_mi_row / 2;
+  const int cc0 = b.chroma_mi_col / 2;
   const int chroma_mi_rows = mi_rows / 2;
   const int chroma_mi_cols = mi_cols / 2;
   for (int yy = 0; yy < b.chroma_h4; ++yy) {
@@ -216,8 +216,8 @@ __device__ void commit_one(const ReconBlockInfo& b, const ReconPredState& s,
   for (int plane = 1; plane <= 2; ++plane) {
     for (int yy = 0; yy < b.chroma_h4; ++yy) {
       for (int xx = 0; xx < b.chroma_w4; ++xx) {
-        const int x = b.mi_col / 2 + xx;
-        const int y = b.mi_row / 2 + yy;
+        const int x = b.chroma_mi_col / 2 + xx;
+        const int y = b.chroma_mi_row / 2 + yy;
         if (x < 0 || y < 0 || x >= s.decoded_cols[plane] ||
             y >= s.decoded_rows[plane]) {
           continue;
@@ -260,10 +260,35 @@ __device__ void commit_one(const ReconBlockInfo& b, const ReconPredState& s,
       const std::ptrdiff_t idx =
           static_cast<std::ptrdiff_t>(rr) * mi_cols + cc;
       f.deblock_mi[0][idx] = mi;
+    }
+  }
+
+  // Chroma metadata is owned by the ChromaMi block (CPU fill_deblock_mi), so
+  // extended/sub-8 leaves that share a ChromaMi entry update the same cells.
+  if (b.chroma_w4 <= 0 || b.chroma_mi_w4 <= 0 || b.chroma_mi_h4 <= 0) {
+    return;
+  }
+  const int c_w4 = imin(b.chroma_mi_w4, mi_cols - b.chroma_mi_col);
+  const int c_h4 = imin(b.chroma_mi_h4, mi_rows - b.chroma_mi_row);
+  for (int yy = 0; yy < b.chroma_mi_h4; ++yy) {
+    const int rr = b.chroma_mi_row + yy;
+    if (rr >= mi_rows) break;
+    for (int xx = 0; xx < b.chroma_mi_w4; ++xx) {
+      const int cc = b.chroma_mi_col + xx;
+      if (cc >= mi_cols) break;
+      const std::ptrdiff_t idx =
+          static_cast<std::ptrdiff_t>(rr) * mi_cols + cc;
+      deblock::DeblockMi mi = f.deblock_mi[0][idx];
+      mi.block_col_base = static_cast<std::uint16_t>(b.chroma_mi_col);
+      mi.block_row_base = static_cast<std::uint16_t>(b.chroma_mi_row);
+      mi.block_w4 = static_cast<std::uint8_t>(c_w4);
+      mi.block_h4 = static_cast<std::uint8_t>(c_h4);
+      mi.tx_size = chroma;
+      mi.tx_col_base = static_cast<std::uint16_t>(b.chroma_mi_col);
+      mi.tx_row_base = static_cast<std::uint16_t>(b.chroma_mi_row);
+      mi.qindex = b.qindex;
       f.deblock_mi[1][idx] = mi;
       f.deblock_mi[2][idx] = mi;
-      f.deblock_mi[1][idx].tx_size = chroma;
-      f.deblock_mi[2][idx].tx_size = chroma;
     }
   }
 }
@@ -346,17 +371,20 @@ cudaError_t recon_init_state(const ReconPredState& state,
 }
 
 cudaError_t recon_begin_sb(ReconPredState& state, int sb_mi_row, int sb_mi_col,
-                           cudaStream_t stream) {
+                           cudaStream_t stream, int sb_mi) {
   if (state.mi_cols <= 0 || state.mi_rows <= 0) {
+    return cudaErrorInvalidValue;
+  }
+  if (sb_mi != 16 && sb_mi != 32 && sb_mi != 64) {
     return cudaErrorInvalidValue;
   }
   state.sb_mi_row = sb_mi_row;
   state.sb_mi_col = sb_mi_col;
   // Same bounds as the CPU encode loop (plane 1/2 share the chroma values).
-  state.sb_cols[0] = std::min(16, state.mi_cols - sb_mi_col);
-  state.sb_rows[0] = std::min(16, state.mi_rows - sb_mi_row);
-  state.sb_cols[1] = std::min(8, state.mi_cols / 2 - sb_mi_col / 2);
-  state.sb_rows[1] = std::min(8, state.mi_rows / 2 - sb_mi_row / 2);
+  state.sb_cols[0] = std::min(sb_mi, state.mi_cols - sb_mi_col);
+  state.sb_rows[0] = std::min(sb_mi, state.mi_rows - sb_mi_row);
+  state.sb_cols[1] = std::min(sb_mi / 2, state.mi_cols / 2 - sb_mi_col / 2);
+  state.sb_rows[1] = std::min(sb_mi / 2, state.mi_rows / 2 - sb_mi_row / 2);
   state.sb_cols[2] = state.sb_cols[1];
   state.sb_rows[2] = state.sb_rows[1];
   for (int p = 0; p < 3; ++p) {
