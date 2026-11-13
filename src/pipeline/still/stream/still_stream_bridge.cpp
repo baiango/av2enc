@@ -701,10 +701,12 @@ bool assemble_packed(
     const PackedFrame& packed, const StillConfig& config,
     std::vector<std::uint8_t>& out, std::string& error,
     std::size_t* tile_bytes,
-    std::span<const palette::PaletteResult> palette_results = {}) {
+    std::span<const palette::PaletteResult> palette_results = {},
+    std::span<const std::uint16_t> cdf_seed = {},
+    std::vector<std::uint16_t>* cdf_final = nullptr) {
   return syntax::assemble_still_frame(packed.plan, packed.blocks, packed.levels,
                                    config, out, error, tile_bytes,
-                                   palette_results);
+                                   palette_results, cdf_seed, cdf_final);
 }
 
 }  // namespace
@@ -1056,14 +1058,16 @@ bool assemble_gpu_frame(const cuda::still_gpu::FramePlan& plan,
                         const StillConfig& config, std::vector<std::uint8_t>& out,
                         std::string& error, std::size_t* tile_bytes,
                         const FilterGrids& grids,
-                        std::span<const palette::PaletteResult> palette_results) {
+                        std::span<const palette::PaletteResult> palette_results,
+                        std::span<const std::uint16_t> cdf_seed,
+                        std::vector<std::uint16_t>* cdf_final) {
   PackedFrame packed;
   if (!pack_gpu_frame(plan, tree, blocks, decisions, coeffs, packed, error,
                       grids, palette_results)) {
     return false;
   }
   return assemble_packed(packed, config, out, error, tile_bytes,
-                         palette_results);
+                         palette_results, cdf_seed, cdf_final);
 }
 
 bool assemble_gpu_raster_frame(

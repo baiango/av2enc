@@ -27,11 +27,12 @@ set(AV2ENC_HAVE_CUDA OFF)
 if(AV2ENC_ENABLE_CUDA)
   if(AV2ENC_CUDA_AVAILABLE)
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-      # 86 = RTX 3060 (primary, feature baseline), 89 = RTX 4070 Super
-      # (secondary cost-efficiency target), 120 = RTX 5070 / Blackwell (smoke).
-      # No arch-specific accelerators: the code uses the sm_86 feature set.
-      set(CMAKE_CUDA_ARCHITECTURES "86;89;120" CACHE STRING
-          "CUDA architectures (86 = RTX 3060 primary, 89 = RTX 4070S secondary, 120 = RTX 5070 smoke)")
+      # 86 = RTX 3060 12 GB (development and feature baseline) and
+      # RTX 3080 Ti (production), 120 = RTX 5090 (maximum-speed target).
+      # No arch-specific accelerators are required: the baseline kernels use
+      # the sm_86 feature set and also run on sm_120.
+      set(CMAKE_CUDA_ARCHITECTURES "86;120" CACHE STRING
+          "CUDA architectures (86 = RTX 3060/3080 Ti, 120 = RTX 5090)")
     endif()
     enable_language(CUDA)
     set(AV2ENC_HAVE_CUDA ON)
@@ -158,6 +159,18 @@ add_library(av2enc_core STATIC
   src/codec/inter/me/me.cpp
   src/codec/inter/mc/mc.cpp
   src/codec/inter/merge/merge.cpp
+  # §7.10/§7.13.3.2 TIP and the §7.9/§7.22 temporal motion field
+  # (opt-in --video-tip).  Off the default path, so every existing stream is
+  # byte-identical.
+  src/codec/inter/temporal/motion_field.cpp
+  src/codec/inter/temporal/temporal_common.cpp
+  src/codec/inter/temporal/tip.cpp
+  src/codec/inter/temporal/temporal_syntax.cpp
+  src/codec/inter/temporal/refinemv.cpp
+  src/codec/inter/tip/tip_signalling.cpp
+  src/codec/inter/tip/tip_candidates.cpp
+  src/codec/inter/tip/tip_build.cpp
+  src/codec/inter/tip/tip_output.cpp
   src/codec/inter/drl_reorder/drl_reorder.cpp
   src/codec/inter/drl_reorder/video_stack_adapter.cpp
   src/codec/inter/mv_precision/mv_precision.cpp
@@ -183,6 +196,8 @@ add_library(av2enc_core STATIC
   # Compound prediction (opt-in, --video-compound).
   src/codec/inter/multiref/compound_predict.cpp
   src/codec/inter/advanced/compound.cpp
+  # §7.13.3.25 block adaptive weighted prediction (opt-in, --video-bawp).
+  src/codec/inter/advanced/bawp.cpp
   # Global motion estimation + §7.13.3.19/.20 warp prediction (opt-in,
   # --video-gme / --video-warp).
   src/codec/inter/gme/gme.cpp
@@ -192,7 +207,12 @@ add_library(av2enc_core STATIC
   src/pipeline/video/video_warp.cpp
   src/pipeline/video/video_headers.cpp
   src/pipeline/video/video_syntax.cpp
+  src/pipeline/video/video_chroma_search.cpp
   src/pipeline/video/video_frame.cpp
+  # Format video core (10-bit 4:2:0/4:2:2/4:4:4/4:0:0 and 8-bit 4:2:2/4:4:4/
+  # 4:0:0).  The CPU reference and the shared orchestration live here; the CUDA
+  # backend is under src/cuda/pipeline/video/hbd/.
+  src/pipeline/video/hbd/video_hbd.cpp
   # Luma TX size/type/partition search (opt-in --video-tx-search): the CPU
   # reference for src/cuda/pipeline/video/tx/.  Both paths share the same
   # candidate sets, arithmetic and tie-breaks.
@@ -236,6 +256,9 @@ target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_CDF_CHAIN=1)
 # Standalone gates that compile the video writer without the GME sources keep
 # the historical "enable_global_motion = 0" path.
 target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_GME=1)
+# Format video core dispatch for 10-bit / 4:2:2 / 4:4:4 / 4:0:0.  Standalone
+# component gates keep the 8-bit 4:2:0 path without the extra source.
+target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_FORMATS=1)
 av2enc_apply_warnings(av2enc_core)
 # The CPU reference must be bit-identical across compilers and platforms. The
 # M0/M1 forward transforms use binary64; FMA contraction changes coefficients
@@ -276,7 +299,6 @@ if(AV2ENC_HAVE_CUDA)
       src/cuda/formats/chroma/chroma_formats.cu
       src/cuda/formats/format_device.cpp
       src/cuda/formats/high_bitdepth_gpu.cu
-      src/cuda/pipeline/still/hbd/hbd_cpu.cpp
       src/cuda/pipeline/still/hbd/hbd_frame.cu
       src/cuda/pipeline/still/hbd/hbd_tx.cu
       src/cuda/pipeline/still/plan/plan.cpp
@@ -288,6 +310,7 @@ if(AV2ENC_HAVE_CUDA)
       src/cuda/pipeline/still/sched/sched_exec.cu
       src/cuda/pipeline/still/search/luma_search.cu
       src/cuda/pipeline/still/intra/intra_extra.cu
+      src/cuda/pipeline/still/lossless/still_lossless_gpu.cu
       src/cuda/pipeline/still/tx/still_tx.cu)
     if(AV2ENC_STILL_GPU_SOURCES)
       set(AV2ENC_HAVE_STILL_GPU ON)
@@ -375,7 +398,10 @@ if(AV2ENC_HAVE_CUDA)
       src/cuda/pipeline/video/video_pipeline.cpp
       src/cuda/pipeline/video/video_frame_modes.cpp
       src/cuda/pipeline/video/intra/video_intra.cu
-      src/cuda/pipeline/video/video_backend_cuda.cu)
+      src/cuda/pipeline/video/video_backend_cuda.cu
+      # Format video core (10-bit / chroma) CUDA backend.  Shares the CPU
+      # orchestration and `hbd_tx_batch` with the still HBD module.
+      src/cuda/pipeline/video/hbd/video_hbd_cuda.cu)
     # Opt-in luma TX size/type/partition search (--video-tx-search): the
     # verified device module, consumed by video_backend_cuda.cu.
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/pipeline/video/tx/video_tx.cu")
@@ -395,6 +421,7 @@ if(AV2ENC_HAVE_CUDA)
         src/cuda/codec/inter/gme/gme_plan.cpp
         src/cuda/codec/intra/modes/intra_modes.cu
         src/cuda/pipeline/still/tx/still_tx.cu
+        src/cuda/pipeline/still/hbd/hbd_tx.cu
         src/cuda/codec/transform/variants/tx_variants.cu)
       if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${support_source}")
         list(FIND AV2ENC_STILL_GPU_SUPPORT_SOURCES "${support_source}" _dup)
@@ -459,13 +486,15 @@ target_sources(av2enc_core PRIVATE
   src/formats/chroma/chroma_still.cpp)
 if(NOT AV2ENC_HAVE_STILL_GPU)
   # In a CUDA build with the M1 GPU pipeline, `format.cpp` is already added by
-  # the still-GPU block above and `hbd_cpu.cpp` is part of the
-  # av2enc_still_gpu OBJECT target; adding either here would duplicate.  The
-  # CPU-only reference build needs both.
+  # the still-GPU block above.  The CPU-only reference build needs it here.
   target_sources(av2enc_core PRIVATE
-    src/formats/format.cpp
-    src/cuda/pipeline/still/hbd/hbd_cpu.cpp)
+    src/formats/format.cpp)
 endif()
+# The format video core uses the verified 10-bit block arithmetic
+# (`hbd::dequantize` / `hbd::inverse_block`) in both builds, so the oracle is
+# part of the core archive; the M1 GPU target links it from there.
+target_sources(av2enc_core PRIVATE
+  src/cuda/pipeline/still/hbd/hbd_cpu.cpp)
 
 # Multi-tile stills (--tiles): geometry planner, tile-group framing and the
 # tiled writer.  Opt-in; the 1x1 default still stream is unchanged.

@@ -28,8 +28,9 @@ __global__ void blend_kernel(const BlendJob* jobs, const std::uint8_t* cache) {
 }
 
 __global__ void skip_kernel(const SkipJob* jobs) {
+  __shared__ int s_mask[kMaxMaskSamples];
   detail::run_skip_job_device(jobs[blockIdx.x], static_cast<int>(threadIdx.x),
-                              static_cast<int>(blockDim.x));
+                              static_cast<int>(blockDim.x), s_mask);
 }
 
 __global__ void opfl_kernel(OpflJob* jobs) {

@@ -154,6 +154,9 @@ Wired and gated combinations:
 | B frames (one closed IPBB GOP) | `--b-frames N` | byte-identical (plan coding order) |
 | Hierarchical-P temporal layers | `--video-tlayers N` | byte-identical (4/8-frame GOP) |
 | Compound / CWP AVERAGE | `--video-compound` (refs >= 2) | byte-identical (GLOBAL_GLOBALMV average); device `compound_full::skip_batch` |
+| §7.13.3.27 wedge compound | `--video-compound-wedge` | byte-identical; `SkipJob.type = WEDGE`, device luma-mask build + chroma subsample |
+| §7.13.3.28 diffwtd compound | `--video-compound-diffwtd` | byte-identical; `SkipJob.type = DIFFWTD` |
+| §7.13.3.29–.30 inter-intra | `--video-compound-interintra` | rejected by name (`motion_mode_allowed()` needs `!isCompound`) |
 | Multi-frame header | `--video-mfh` | byte-identical (§5.7 MFH on the M2 stream) |
 | Timing + content interpretation | `--video-timing` | byte-identical (decoder-compatible §5.4.12 form) |
 | Average-CDF / adaptation | `--avg-cdf [--adaptive-cdf]` | byte-identical (§8.2.4 bank + §7.5 frame end) |
@@ -424,6 +427,30 @@ PASS video-gpu reject ref-lists / refs-bounds
 gate_video_gpu: PASS
 ```
 
+> Consistency-wave matrix (2026-11-13, 8-frame 640x360 gate clip, RTX 3060):
+
+```text
+PASS video-gpu gme-refs2-8        e3f5d3471182d93c74bce23ff1fbde5e
+PASS video-gpu gme-refs3-8        4f92dea888b91f35dacefc141605937f
+PASS video-gpu bframes2-cdef      ec1b59d4dd5316be206f16363cb1bfa3
+PASS video-gpu bframes2-cdef-ccso d42474f1cd4a161bef797a3a47cd633e
+PASS video-gpu tlayers4-cdef      ae06cd3f771f5790946506372c4a414d
+PASS video-gpu tlayers8-cdef-ccso-gdf        658eb69b22e778a435e635e751911bd3
+PASS video-gpu tiles2x1-cdef      9042ebc00c3fa5493ba586dd29fa3276
+PASS video-gpu tiles2x2-cdef      9d88640c614000aa43bb301dc4d25510
+PASS video-gpu tiles2x2-ccso      ce23af433e06af8ec1a63ff3a64743f5
+PASS video-gpu tiles2x2-gdf       cd85de7bb5861419c0b7b0badcb0ce85
+PASS video-gpu tiles2x2-cdef-ccso-gdf    e8d1db981132a830719157b681e69795
+PASS video-gpu tiles2x2-cdef-ccso-gdf-8  36b94be7f0bd5161269e8dfff26a3b7d
+PASS video-gpu tx-search-deblock  29285c5cdc0cbc49fa3bbfd4ed9fc537
+PASS video-gpu tx-search-avg-cdf  d130109b2c1530cc40f5f53933803928
+PASS video-gpu tx-search-tiles2x2 f84647c19de4c94a5c6837a186e86c09
+PASS video-gpu tx-search-tiles2x2-avg-8 1d0dcdd9e8166479352f3390e135dc26
+```
+
+Loop restoration keeps its named `--tiles > 1x1` rejection and the frame-type
+wrappers keep theirs (see `docs/negative-results.md`).
+
 Additional real runs on the same box: 640x360 8 frames default
 `12d2df474b9d6314af81428c39651108` and 1280x720 6 frames default are
 byte-identical to the CPU reference; `dav2d --strict 1` decoded output and the
@@ -523,9 +550,13 @@ reserved in `ensure_intra_buffers()` before the first call, and
   same device frame encoder with plan-owned coding order and explicit
   per-frame reference lists.  Compound is the gated GLOBAL_GLOBALMV /
   CWP_EQUAL AVERAGE subset, computed by the device compound skip kernel.
-  Skip-mode beyond that subset, warp/OBMC/inter-intra, BAWP, TIP, OPFL,
-  refine-MV, temporal MVs, the ref-MV bank and loop filters are not
-  implemented on this path; the CLI rejects every one by name.
+  Skip-mode beyond that subset, warp/OBMC/inter-intra, TIP, OPFL, refine-MV,
+  temporal MVs, the ref-MV bank and loop filters are not implemented on this
+  path; the CLI rejects every one by name.  BAWP is wired for the fitted luma
+  form (`--video-bawp`): the orchestration applies the shared
+  `video_bawp.h` fit to the host prediction and mirrors the adapted block into
+  the device recon, and `gate_video_bawp` requires byte-identical CPU/GPU
+  streams at 360p, 4 and 8 frames.
 - DRL reordering is wired to `merge::DrlReorder` but disabled; the CPU product
   path rejects it for the same decoder-gap reason.
 - Inter leaves are `skip_flag = 1` unless the inter-residual tool is enabled;

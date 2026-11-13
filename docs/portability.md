@@ -1,4 +1,4 @@
-# Portability — 8 GB Ampere primary, sm_120 build/smoke
+# Portability — RTX 3060/3080 Ti (sm_86) and RTX 5090 (sm_120)
 
 ## Focus freeze
 
@@ -6,7 +6,7 @@
 |---|---|---|---|
 | **Primary target** | **RTX 3060 8 GB (Ampere)** | **sm_86** | **8 GB hardware pending**; dev-box emulation only |
 | **Dev box** | RTX 3060 12 GB | sm_86 | Validated under the 7500 MiB cap |
-| Build/smoke only | RTX 5070 | sm_120 | SASS built and inspected; **runtime pending host** |
+| Maximum-speed target | RTX 5090 | sm_120 | production throughput host |
 | Out of scope | 4/6/16/24 GB cards, Turing | — | Not a target; profile notes are estimates only |
 
 The encoder is built from one source tree. **sm_86 is the baseline feature
@@ -14,7 +14,7 @@ set**; sm_120 is a second fatbin slice for build/smoke coverage, not a
 performance target. The primary runtime budget is the 8 GB card with a
 **7500 MiB VRAM cap**; the 12 GB dev box runs the same cap.
 
-No 8 GB card and no RTX 5070 are attached to this instance. The 8 GB claim is
+The RTX 3060 12 GB is the development host; the 3080 Ti and 5090 are production/max-speed targets. The old 8 GB claim is
 **12 GB emulation, actual 8 GB hardware pending**.
 
 ## Build
@@ -40,7 +40,7 @@ cuobjdump -lelf build/hello_cuda_bench
 cmake -G Ninja -S . -B build86 -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_CUDA_ARCHITECTURES=86
 
-# 5070-only smoke build
+# RTX 5090 (sm_120) build
 cmake -G Ninja -S . -B build120 -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_CUDA_ARCHITECTURES=120
 ```
@@ -142,16 +142,17 @@ shared memory: 48 KiB/block default, 99 KiB/block opt-in, 100 KiB/SM
 loaded kernel image: sm_86
 ```
 
-## RTX 5070 — build/smoke only, PENDING HOST
+## RTX 5090 — maximum-speed target
 
-**No RTX 5070 was available.** The `sm_120` SASS exists and was inspected with
-`cuobjdump`; it has never executed. Do not report the 5070 as validated.
+**The RTX 5090 is the maximum-speed target.** The `sm_120` SASS is built and
+inspected with `cuobjdump`; execution is pending a 5090 host. Do not report a
+5090 as validated until this smoke run passes.
 
-Smoke procedure when a 5070 host is available:
+Smoke procedure when a 5090 host is available:
 
 ```sh
 nvidia-smi --query-gpu=name,compute_cap,memory.total,driver_version --format=csv
-# Expected: NVIDIA GeForce RTX 5070, 12.0, ~12288 MiB, driver >= 570
+# Expected: NVIDIA GeForce RTX 5090, 12.0, ~32768 MiB, driver >= 570
 
 cd /workspace/av2enc/bench/hello_cuda
 rm -rf build
@@ -163,22 +164,15 @@ CUDA_DISABLE_PTX_JIT=1 ./build/hello_cuda_bench --tiny
 #           ALL CHECKS PASSED
 ```
 
-This is a build/smoke check only. Performance numbers from a 5070 are not part
-of the current plan. `nsys` tracing is expected to work; `ncu` counters depend
-on host permissions and may still fail with `ERR_NVGPUCTRPERM`.
+This is a build/smoke check only. Performance numbers from a 5090 are not yet
+measured. `nsys` tracing is expected to work; `ncu` counters depend on host
+permissions and may still fail with `ERR_NVGPUCTRPERM`.
 
-## 8 GB emulation caveat
+## Retired 8 GB target
 
-The 12 GB dev box is run with a 7500 MiB cap to emulate the primary 8 GB
-target. The measured `vram_budget` peak is 7369 MiB with 4551 MiB left free:
-
-- **12 GB emulation, actual 8 GB hardware pending.**
-- This is a process-level budget, not a hardware partition. Other processes can
-  still use the remaining VRAM.
-- On a real 8 GB card the same peak leaves ~823 MiB for driver/context and small
-  allocations. That margin has **not** been tested on physical 8 GB hardware.
-
-See `docs/vram.md` for the allocation result and the `compat8g` profile.
+8 GB cards, the RTX 4070 Super and the RTX 5070 are no longer targets. The
+`compat8g` 7500 MiB cap is historical and is not part of the current target
+matrix. The arena is sized from the device on the 3060 12 GB, 3080 Ti and 5090.
 
 ## What was actually tested
 
@@ -186,9 +180,9 @@ See `docs/vram.md` for the allocation result and the `compat8g` profile.
 |---|---|
 | RTX 3060 12 GB, full suite, sm_86 SASS (PTX JIT disabled) | **PASS** |
 | 7500 MiB cap / `compat8g` on the 12 GB dev box | **PASS** (emulation) |
-| Actual 8 GB RTX 3060 | **PENDING HARDWARE** |
-| `sm_120` SASS present in fatbin | **PASS (compiled/inspected only)** |
-| RTX 5070 execution | **PENDING HOST** |
+| 8 GB cards / 4070 Super / 5070 | **Retired targets** |
+| `sm_120` SASS present for the RTX 5090 | **PASS (compiled/inspected only)** |
+| RTX 5090 execution | **PENDING HOST** |
 | 4/6/16/24 GB cards | **Out of scope; estimates only** |
 | Turing sm_75 | **Out of scope; unsupported** |
 | Nsight Systems tracing on the 3060 | **PASS** (2025.1.3.140) |

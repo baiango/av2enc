@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Verify that quality reports came from the target 8 GB RTX 3060.
+"""Verify that quality reports came from a target host.
 
-Target host:
-  - GPU memory enumerated as 8192 MiB
-  - compute capability 8.6 (Ampere)
+Target hosts:
+  - RTX 3060 12 GB (development/feature baseline): 12288 MiB, cc 8.6
+  - RTX 3080 Ti (production): 12288 MiB, cc 8.6
+  - RTX 5090 (maximum speed): >= 30000 MiB, cc 12.0
 
-The 12 GB dev box (12288 MiB) is a compatibility proxy only. Its speed and QBS
-numbers are not target validation.
+8 GB cards, RTX 4070 Super and RTX 5070 are no longer targets.
 """
 
 from __future__ import annotations
@@ -24,7 +24,10 @@ def check(path: Path) -> tuple[bool, str]:
     mem = host.get("gpu_memory_mib")
     cc = str(host.get("gpu_compute_cap", "")).strip()
     is_target = bool(target.get("is_target", False))
-    if is_target and mem == 8192 and cc == "8.6":
+    valid = (mem == 12288 and cc == "8.6") or (
+        isinstance(mem, int) and mem >= 30000 and cc == "12.0"
+    )
+    if is_target and valid:
         return True, f"{mem} MiB, cc {cc}"
     return False, f"{mem} MiB, cc {cc or 'unknown'}"
 
@@ -48,12 +51,12 @@ def main() -> int:
 
     if not ok:
         print(
-            "Not target validation: need an RTX 3060 enumerating 8192 MiB "
-            "(compute capability 8.6). The 12 GB dev box is a proxy.",
+            "Not target validation: need an RTX 3060 12 GB or RTX 3080 Ti "
+            "(12288 MiB, cc 8.6), or an RTX 5090 (>= 30000 MiB, cc 12.0).",
             file=sys.stderr,
         )
         return 1
-    print("PASS: target 8 GB RTX 3060")
+    print("PASS: target host (RTX 3060 12 GB / 3080 Ti / 5090)")
     return 0
 
 

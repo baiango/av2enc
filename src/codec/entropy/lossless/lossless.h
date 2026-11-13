@@ -145,6 +145,30 @@ struct StillPicture {
   std::span<const std::uint8_t> v;
 };
 
+// Precomputed coding plan + syntax-domain levels for one 8x8 luma block and
+// its two 4x4 chroma transforms.  An external block stage (the CUDA
+// `still_lossless` kernels) fills an array of these in raster 8x8 order; the
+// CPU writer then skips its own DPCM/FSC search and forward transform and only
+// writes the syntax and runs the decoder-side inverse for verification.
+//
+// Modes use the reference's numbering: 0 = DC_PRED, 1 = V_PRED, 2 = H_PRED.
+// `luma[4][16]` holds the four 4x4 DCT_DCT (reversible WHT) sub-blocks in
+// raster (ty * 2 + tx) order; `luma_fsc[64]` holds the 8x8 IDTX levels when
+// `fsc != 0`; `chroma[plane - 1][16]` holds the 4x4 levels (WHT or IDTX).
+struct BlockCoding {
+  std::uint8_t y_mode = 0;
+  std::uint8_t uv_mode = 0;
+  std::uint8_t use_dpcm_y = 0;
+  std::uint8_t dpcm_y_vertical = 0;
+  std::uint8_t fsc = 0;
+  std::uint8_t use_dpcm_uv = 0;
+  std::uint8_t dpcm_uv_vertical = 0;
+  std::uint8_t reserved = 0;
+  std::int32_t luma[4][16] = {};
+  std::int32_t luma_fsc[64] = {};
+  std::int32_t chroma[2][16] = {};
+};
+
 struct Options {
   // 64 only: this reference encoder emits one 64x64 superblock grid.
   int sb_size = 64;
@@ -162,6 +186,9 @@ struct Options {
   bool enable_intra_edge_filter = false;
   // Verify the reconstruction is bit exact before returning success.
   bool verify_exact = true;
+  // Optional external block stage output in raster 8x8-block order
+  // (ceil(width/8) columns).  Null keeps the host search/transform path.
+  const BlockCoding* precomputed = nullptr;
 };
 
 struct Stats {

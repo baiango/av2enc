@@ -43,6 +43,7 @@ HOST_SOURCES=(
   "${REPO}/src/formats/high_bitdepth/hbd_still.cpp"
   "${REPO}/src/codec/transform/variants/tx_variants.cpp"
   "${REPO}/src/cuda/pipeline/still/hbd/hbd_cpu.cpp"
+  "${REPO}/src/codec/filters/deblock/deblock.cpp"
   "${REPO}/src/codec/entropy/av2/av2_entropy.cpp"
   "${REPO}/src/core/bitstream/bitwriter.cpp"
   "${REPO}/src/core/bitstream/obu.cpp"
@@ -61,6 +62,7 @@ CUDA_SOURCES=(
   "${REPO}/src/cuda/formats/high_bitdepth_gpu.cu"
   "${REPO}/src/cuda/formats/high_bitdepth_gpu_test.cu"
   "${REPO}/src/cuda/pipeline/still/hbd/hbd_tx.cu"
+  "${REPO}/src/cuda/codec/filters/deblock/deblock.cu"
 )
 
 nvcc -std=c++20 -arch="${ARCH}" -O3 -lineinfo -fmad=false \

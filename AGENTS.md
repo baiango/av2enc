@@ -18,7 +18,9 @@ leave the shared roots (`src/main.cpp`, `CMakeLists.txt`, `still_*`, `video_*`,
 
 ## Non-negotiables
 
-- Encoder target: Linux + CUDA, 8 GB Ampere `sm_86` primary. macOS is not an
+- Encoder targets: Linux + CUDA. RTX 3060 12 GB (`sm_86`) is the development
+  and feature baseline; RTX 3080 Ti (`sm_86`) is production; RTX 5090
+  (`sm_120`) is the maximum-speed target. macOS is not an
   encoder build target. Windows is unsupported.
 - VRAM arena is sized from the device: `min(total, free) - 512 MiB`, optionally
   bounded by `--vram-cap <MiB>`. There is no fixed 7,500 MB preset. Do not tune

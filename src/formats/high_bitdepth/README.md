@@ -39,7 +39,8 @@ predictor uses the full §7.13.3.22 `Div_Lut` (4:2:2 chroma blocks such as
 | `hbd_depth.{h,cpp}` | depth-dependent sample ranges: Clip1, DC bias, intra edge defaults, dequant/inverse clips, residual range, deblock q offset/side/qThr, CfL luma average/scaled luma, `qlookup`, MaxQ, §8.3.1 CDF slice |
 | `hbd_headers.{h,cpp}` | 10-bit sequence/frame/tile-group writer, `bit_depth_idc = 0`, `base_q_idx` f(9), qindex up to 303 |
 | `hbd_reader.{h,cpp}` | Annex B OBU + sequence/frame reader used for bit goldens and round-trips |
-| `hbd_still.{h,cpp}` | 10-bit still encoder: qlookup-aware quant/dequant + M10 block plan/DC/entropy |
+| `hbd_still.{h,cpp}` | 10-bit still encoder: qlookup-aware quant/dequant + M10 block plan/DC/entropy; optional §7.17 deblock (`--still-deblock`) |
+| `hbd_deblock.h` | per-MI §7.17 metadata shared by the CPU writer and the GPU block stage |
 | `hbd_encode.cpp` | component CLI (`hbd_encode in.y4m out.ivf [recon.y4m] [--q N]`) |
 | `hbd_test.cpp` | 193 checks: ranges, qlookup/qctx, deblock/CfL, header bits, reader, encode goldens |
 | `build_and_test.sh` | standalone build/test (no CMake changes) |

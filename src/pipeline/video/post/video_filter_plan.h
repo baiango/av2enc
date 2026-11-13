@@ -79,6 +79,8 @@ struct VideoCcsoPlan {
 struct VideoLrPlane {
   // FrameRestorationType[plane] != RESTORE_NONE.
   bool enabled = false;
+  // §6.17.7.7 RestorationType value (0 none, 1 PC-Wiener, 2 Wiener NS).
+  std::uint8_t restore_type = 0;
   // LoopRestorationSize[plane] in plane samples, and the §5.18.7.11 shift that
   // signals it.
   int unit_size = 64;
@@ -93,6 +95,14 @@ struct VideoLrPlane {
 
 struct VideoLrPlan {
   bool enabled = false;
+  // FrameRestorationType[0] == RESTORE_PC_WIENER (--video-pc-wiener).
+  bool pc_wiener = false;
+  // §7.20.1 LrTxSkip on the luma MI grid (mi_cols * mi_rows bytes, row-major),
+  // exactly the map the §7.20.4 classifier reads.  Empty for a non-PC plan.
+  std::vector<std::uint8_t> tx_skip;
+  int base_q_idx = 90;
+  int tx_skip_cols = 0;
+  int tx_skip_rows = 0;
   int luma_shift = 3;
   int chroma_shift = 3;
   VideoLrPlane plane[3];

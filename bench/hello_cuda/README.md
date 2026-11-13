@@ -4,8 +4,8 @@ Standalone benchmark used to establish the RTX 3060 baseline for av2enc. It is
 deliberately not part of the root CMake project and must not be included in the
 encoder build.
 
-Targets: **sm_86 (8 GB RTX 3060) is the primary baseline**; sm_120 is built for
-RTX 5070 build/smoke coverage. The default fatbin is `86;120`; override with
+Targets: **sm_86 (RTX 3060 12 GB dev / 3080 Ti production)**; sm_120 (RTX 5090) is built for
+RTX 5090 coverage. The default fatbin is `86;120`; override with
 `-DCMAKE_CUDA_ARCHITECTURES=...`. The 12 GB dev box is run under a 7500 MiB
 VRAM cap; see `docs/vram.md`.
 
@@ -48,6 +48,6 @@ CUDA_DISABLE_PTX_JIT=1 ./build/hello_cuda_bench          # prove SASS path
 
 On the RTX 3060, the binary prints `loaded kernel image: sm_86`. With PTX JIT
 disabled, a successful run proves the sm_86 cubin executed. The sm_120 slice is
-for build/smoke on a 5070 host; it has not been executed here.
+for the RTX 5090 host; it has not been executed here.
 
 The process exits non-zero if any correctness check fails.

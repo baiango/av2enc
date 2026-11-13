@@ -544,6 +544,8 @@ int main(int argc, char** argv) {
       options.ra_switch = true;
     } else if (arg == "--ras") {
       options.ras = true;
+    } else if (arg == "--tip") {
+      options.enable_tip = true;
     } else if (arg == "--trace") {
       options.trace = true;
     } else if (arg == "--help") {
@@ -555,7 +557,7 @@ int main(int argc, char** argv) {
                    "[--num-ref-frames N] "
                    "[--subpel-eighth] [--mv-precision eighth|quarter|half] "
                    "[--drl-reorder] [--long-term] [--olk] [--leading N] "
-                   "[--sef] [--switch] [--ras] [--trace]\n";
+                   "[--sef] [--switch] [--ras] [--tip] [--trace]\n";
       return 0;
     } else {
       std::cerr << "unknown argument: " << arg << "\n";
@@ -582,6 +584,30 @@ int main(int argc, char** argv) {
   if (frames_owned.empty()) {
     std::cerr << "no frames\n";
     return 2;
+  }
+
+  // TIP phase (--video-tip): key + future anchor P + TIP_FRAME_AS_OUTPUT
+  // pictures.  The stream shape needs at least 3 input frames, so it replaces
+  // the historical two-frame phase.
+  if (options.enable_tip) {
+    bool tip_ok = true;
+    if (frames_owned.size() < 3) {
+      std::cerr << "--tip needs at least 3 input frames\n";
+      return 2;
+    }
+    const std::size_t four = std::min<std::size_t>(4, frames_owned.size());
+    std::vector<OwnedFrame> four_frames(frames_owned.begin(),
+                                        frames_owned.begin() + four);
+    tip_ok = run_phase("TIP 4 pics (key + anchor + 2 TIP)", four_frames,
+                       options, out_path + ".tip4.ivf", true);
+    if (tip_ok && frames_owned.size() >= 8) {
+      std::vector<OwnedFrame> eight_frames(frames_owned.begin(),
+                                           frames_owned.begin() + 8);
+      tip_ok = run_phase("TIP 8 pics (key + anchor + 6 TIP)", eight_frames,
+                         options, out_path + ".tip8.ivf", true);
+    }
+    std::cout << (tip_ok ? "M2 GATE PASS" : "M2 GATE FAIL") << "\n";
+    return tip_ok ? 0 : 1;
   }
 
   // Frame-type phases.  These change the stream shape, so they replace the

@@ -936,6 +936,7 @@ int main(int argc, char** argv) {
   std::string out_path = "/tmp/tip_gate.ivf";
   std::string decoded_path = "/tmp/tip_gate_decoded.y4m";
   std::string control_path;
+  bool allow_control_drift = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--width" && i + 1 < argc) {
@@ -950,6 +951,12 @@ int main(int argc, char** argv) {
       decoded_path = argv[++i];
     } else if (arg == "--control" && i + 1 < argc) {
       control_path = argv[++i];
+    } else if (arg == "--allow-control-drift") {
+      // Diagnostic mode: the pinned M2 writer occasionally changes a header
+      // bit, which makes the byte-identical control assertion stale.  The
+      // decode/reconstruction check below is unaffected; use this flag to
+      // produce the TIP decoder repro stream without weakening the default.
+      allow_control_drift = true;
     } else {
       std::fprintf(stderr, "unknown argument: %s\n", arg.c_str());
       return 2;
@@ -1276,7 +1283,9 @@ int main(int argc, char** argv) {
         }
       }
     }
-    return 1;
+    if (!allow_control_drift) return 1;
+    std::fprintf(stderr,
+                 "  --allow-control-drift: continuing to the decoder check\n");
   }
   {
     // The control has no TIP OBU at all: enable_tip = 0.

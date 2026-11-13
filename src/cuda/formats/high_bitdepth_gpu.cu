@@ -13,6 +13,8 @@
 #include "cuda/formats/format_device.h"
 #include "cuda/pipeline/still/hbd/hbd_tx.h"
 #include "cuda/pipeline/still/hbd/hbd_cpu.h"
+#include "cuda/codec/filters/deblock/deblock.h"
+#include "formats/high_bitdepth/hbd_deblock.h"
 #include "formats/high_bitdepth/hbd_depth.h"
 #include "formats/high_bitdepth/hbd_headers.h"
 #include "pipeline/still/high_bitdepth/high_bitdepth_headers.h"
@@ -230,6 +232,14 @@ std::uint64_t required_device_bytes(const HighBitDepthGpuConfig& config) {
   add(1, sizeof(std::int32_t));           // d_eob
   add(1, sizeof(int));                    // d_errors
   add(1, sizeof(av2enc::cuda::hbd::HbdTxJob));  // d_job
+  if (config.enable_deblock) {
+    const std::uint64_t mi_count =
+        static_cast<std::uint64_t>(layout.mi_cols) *
+        static_cast<std::uint64_t>(layout.mi_rows);
+    for (int plane = 0; plane < layout.num_planes; ++plane) {
+      add(mi_count, sizeof(av2enc::deblock::DeblockMi));  // d_mi[plane]
+    }
+  }
   // Arena::init() aligns the usable base inside the reservation; budget one
   // alignment unit so the sum above is fully usable.
   bytes += Arena::kAlignment - 1u;
@@ -509,6 +519,51 @@ bool encode_high_bitdepth_gpu_impl(Arena& arena, const av2enc::fmt::Picture& pic
     return false;
   }
 
+  // §7.17 10-bit deblocking on the device reconstruction, before the
+  // download.  The per-MI grid is the same host helper the CPU product writer
+  // uses, so both paths filter identical metadata.
+  if (options.enable_deblock) {
+    av2enc::hbd::DeblockGrids grids;
+    if (!av2enc::hbd::build_deblock_grids(picture.format, blocks,
+                                          options.base_q_idx, &grids,
+                                          error)) {
+      return false;
+    }
+    av2enc::cuda::DeblockDeviceFrame16 frame{};
+    for (int plane = 0; plane < grids.num_planes; ++plane) {
+      av2enc::deblock::DeblockMi* d_mi = nullptr;
+      if (!arena_array(arena, grids.mi[plane].size(), &d_mi, "deblock mi",
+                       arena_need, status, error)) {
+        return false;
+      }
+      if (!check(cudaMemcpy(
+                     d_mi, grids.mi[plane].data(),
+                     grids.mi[plane].size() * sizeof(av2enc::deblock::DeblockMi),
+                     cudaMemcpyHostToDevice),
+                 "upload deblock mi", error)) {
+        return false;
+      }
+      frame.plane[plane] = d_recon[plane];
+      frame.stride[plane] = layout.planes[plane].stride;
+      frame.mi[plane] = d_mi;
+    }
+    frame.mi_cols = grids.mi_cols;
+    frame.mi_rows = grids.mi_rows;
+    frame.subsampling_x = grids.sub_x;
+    frame.subsampling_y = grids.sub_y;
+    frame.num_planes = grids.num_planes;
+    av2enc::deblock::DeblockOptions deblock_options;
+    for (int i = 0; i < 4; ++i) {
+      deblock_options.apply_deblocking_filter[i] = true;
+    }
+    deblock_options.frame_is_intra = true;
+    deblock_options.bit_depth = 10;
+    if (!check(av2enc::cuda::deblock16_frame(frame, deblock_options, nullptr),
+               "deblock 10-bit", error)) {
+      return false;
+    }
+  }
+
   for (int plane = 0; plane < num_planes; ++plane) {
     const fmtdev::PlaneLayout& p = layout.planes[plane];
     if (!check(cudaMemcpy(host_recon[plane].samples.data(), d_recon[plane],
@@ -542,6 +597,10 @@ bool encode_high_bitdepth_gpu_impl(Arena& arena, const av2enc::fmt::Picture& pic
   hbd_config.chroma = picture.format.chroma;
   hbd_config.base_q_idx = options.base_q_idx;
   hbd_config.disable_cdf_update = options.disable_cdf_update;
+  hbd_config.apply_deblock_y_vert = options.enable_deblock;
+  hbd_config.apply_deblock_y_horz = options.enable_deblock;
+  hbd_config.apply_deblock_u = options.enable_deblock && num_planes > 1;
+  hbd_config.apply_deblock_v = options.enable_deblock && num_planes > 2;
   std::string hbd_reason;
   if (!av2enc::hbd::validate_config(hbd_config, &hbd_reason)) {
     if (error != nullptr) *error = hbd_reason;
@@ -589,6 +648,7 @@ bool encode_high_bitdepth_gpu(const av2enc::fmt::Picture& picture,
   // different plane storage than 4:2:0, and 4:4:4 is twice the 4:2:0 chroma.
   config.format = picture.format;
   config.bit_depth = 10;
+  config.enable_deblock = options.enable_deblock;
   const std::uint64_t need = required_device_bytes(config);
   Arena arena;
   std::string arena_error;

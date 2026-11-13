@@ -62,13 +62,19 @@ struct StillTxJob {
   std::uint8_t use_deltaq = 0;
   // Forward-quantizer expression: 0 = the DC/AC delta-Q order
   // `(quant_factor * 528) / q`, 1 = the CPU per-SB qindex order
-  // `quant_factor * (528 / q)`.  Dequant is identical (shared q2 core).
+  // `quant_factor * (528 / q)`, 2 = the combined per-SB segment qindex +
+  // DC/AC delta-Q order `(quant_factor * (528 / step)) * step / q` (the CPU
+  // `apply_qindex_step()` product then its delta-Q division).  Dequant is
+  // identical (shared q2 core).
   std::uint8_t ratio_scale = 0;
   std::uint8_t reserved_deltaq[2] = {0, 0};
   std::int32_t qindex = 90;
   std::int32_t delta_dc = 0;
   std::int32_t delta_ac = 0;
   std::int32_t plane = 0;  // 0 = Y, 1 = U, 2 = V for the delta-Q quantizer
+  // ratio_scale == 2 only: qlookup(per-SB segment qindex), the CPU
+  // `quant_step_` that pre-scales the forward quantizer.
+  std::int32_t qscale_step = 0;
   // >=0: element offset of this block's adjusted-size q2 matrix in
   // `StillTxBuffers::q2` (quantizer-matrix path). -1: derive q2 from qindex.
   std::int32_t q2_offset = -1;

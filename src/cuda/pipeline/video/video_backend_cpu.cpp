@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -21,11 +22,13 @@
 #include "codec/inter/multiref/compound_predict.h"
 #include "codec/intra/modes/intra_modes.h"
 #include "codec/rate/rc/rc_tables.h"
+#include "pipeline/video/video_chroma_search.h"
 #include "pipeline/video/video_frame.h"
 #include "pipeline/video/video_warp.h"
 #include "pipeline/video/video_intra_search.h"
 #include "pipeline/video/video_tx_search.h"
 #include "codec/transform/variants/tx_variants.h"
+#include "codec/transform/qm/qm.h"
 
 #include "video_backend.h"
 #include "video_device.cuh"
@@ -42,6 +45,13 @@ using av2enc::inter::mc::RefFrame;
 
 namespace multiref = ::av2enc::video::multiref;
 namespace vintra = ::av2enc::video::intra_search;
+
+// 0 = WEDGE, 1 = DIFFWTD, anything else = AVERAGE.
+av2enc::inter::adv::CompoundType compound_type_of(int value) {
+  if (value == 0) return av2enc::inter::adv::CompoundType::kWedge;
+  if (value == 1) return av2enc::inter::adv::CompoundType::kDiffWtd;
+  return av2enc::inter::adv::CompoundType::kAverage;
+}
 
 int source_sample(const av2enc::video::VideoInputFrame& frame, int plane, int x,
                   int y) {
@@ -83,14 +93,15 @@ struct EmuPlane {
 bool tx_plane_cpu(const av2enc::video::VideoInputFrame& source, int plane,
                   int src_x0, int src_y0, int w, int h,
                   const std::vector<std::uint8_t>& pred, int quant_step,
-                  PlaneTx& out, std::string& error) {
+                  PlaneTx& out, std::string& error,
+                  const av2enc::qm::QmFrameState* qm_state = nullptr) {
   auto params_opt =
       av2enc::txv::make_tx_params(w, h, av2enc::txv::TxType::kDctDct);
   if (!params_opt.has_value()) {
     error = "unsupported transform size";
     return false;
   }
-  if (quant_step != av2enc::txv::kQuantStep) {
+  if (quant_step != av2enc::txv::kQuantStep && qm_state == nullptr) {
     params_opt->quant_factor *=
         static_cast<double>(av2enc::txv::kQuantStep) /
         static_cast<double>(quant_step);
@@ -118,11 +129,52 @@ bool tx_plane_cpu(const av2enc::video::VideoInputFrame& source, int plane,
   std::vector<double> coeff(
       static_cast<std::size_t>(params.w) * static_cast<std::size_t>(params.h));
   out.levels.assign(coeff.size(), 0);
-  av2enc::txv::forward_transform(residual_adj.data(), params, coeff.data(),
-                                 out.levels.data());
+  std::vector<std::int32_t> q2;
+  if (qm_state != nullptr) {
+    av2enc::qm::QmDequantParams qp;
+    qp.state = qm_state;
+    qp.tx_size = params.tx_size;
+    qp.plane = plane;
+    qp.tx_type = params.tx_type;
+    qp.segment_id = 0;
+    qp.dc_quant = quant_step;
+    qp.ac_quant = quant_step;
+    qp.bit_depth = 8;
+    q2.assign(coeff.size(), 0);
+    if (!av2enc::qm::build_q2_matrix(qp, q2.data())) {
+      error = "CPU emulation QM q2 matrix build failed";
+      return false;
+    }
+    av2enc::txv::forward_block(residual_adj.data(), params, coeff.data());
+    for (std::size_t i = 0; i < coeff.size(); ++i) {
+      const double factor = static_cast<double>(params.quant_factor) *
+                            static_cast<double>(quant_step) /
+                            static_cast<double>(q2[i]);
+      out.levels[i] = static_cast<std::int32_t>(std::lround(coeff[i] * factor));
+    }
+  } else {
+    av2enc::txv::forward_transform(residual_adj.data(), params, coeff.data(),
+                                   out.levels.data());
+  }
   std::vector<std::int32_t> dequant(coeff.size());
   std::vector<std::int16_t> recon_residual(coded);
-  if (quant_step == av2enc::txv::kQuantStep) {
+  if (qm_state != nullptr) {
+    const int n = params.w * params.h;
+    for (int i = 0; i < n; ++i) {
+      const std::int32_t qc = out.levels[static_cast<std::size_t>(i)];
+      const std::int64_t aq = qc < 0 ? -static_cast<std::int64_t>(qc) : qc;
+      const std::int64_t high =
+          (aq * q2[static_cast<std::size_t>(i)]) & 0xFFFFFF;
+      const std::int32_t dq =
+          av2enc::txv::round2(static_cast<std::int32_t>(high),
+                              av2enc::txv::kQuantTableBits) /
+          params.dq_denom;
+      const std::int32_t value = qc < 0 ? -dq : dq;
+      dequant[static_cast<std::size_t>(i)] =
+          std::max(-(1 << 15), std::min((1 << 15) - 1, value));
+    }
+    av2enc::txv::inverse_block(dequant.data(), params, recon_residual.data());
+  } else if (quant_step == av2enc::txv::kQuantStep) {
     av2enc::txv::inverse_transform(out.levels.data(), params, dequant.data(),
                                    recon_residual.data());
   } else {
@@ -163,6 +215,21 @@ bool tx_plane_cpu(const av2enc::video::VideoInputFrame& source, int plane,
 class CpuBackend final : public Backend {
  public:
   const char* name() const override { return "cpu-emulation"; }
+
+  void set_qm(bool enabled) override {
+    qm_enabled_ = enabled;
+    qm_state_ = av2enc::qm::QmFrameState{};
+    if (enabled) {
+      qm_state_.using_qmatrix = true;
+      qm_state_.pic_qm_num_minus_1 = 0;
+      qm_state_.qm_y[0] = 0;
+      qm_state_.qm_u[0] = 0;
+      qm_state_.qm_v[0] = 0;
+      for (int plane = 0; plane < 3; ++plane) {
+        qm_state_.seg_qm_level[plane][0] = 0;
+      }
+    }
+  }
 
   bool begin_frame(
       const av2enc::video::VideoInputFrame& source, int frame_mi_cols,
@@ -400,14 +467,17 @@ class CpuBackend final : public Backend {
       multiref::CompoundPrediction prediction;
       const BlockRect rect{job.x, job.y, job.w, job.h};
       if (!multiref::build_compound_prediction(
-              ref_frames_[0], ref_frames_[1], rect, 0, Mv{0, 0}, Mv{0, 0},
-              InterpFilter::kEighttap, mi_cols_, mi_rows_, prediction,
-              error)) {
+              ref_frames_[0], ref_frames_[1], rect, job.bsize, Mv{0, 0},
+              Mv{0, 0}, InterpFilter::kEighttap, mi_cols_, mi_rows_,
+              prediction, error)) {
         return false;
       }
       multiref::CompoundModeParams params;
-      params.type = av2enc::inter::adv::CompoundType::kAverage;
+      params.type = compound_type_of(job.compound_type);
       params.cwp_weight = multiref::kCwpEqual;
+      params.wedge_index = job.wedge_index;
+      params.wedge_sign = job.wedge_sign;
+      params.mask_type = job.mask_type;
       std::vector<std::uint8_t> scratch(
           static_cast<std::size_t>(job.w) * static_cast<std::size_t>(job.h));
       sse[i] = multiref::compound_luma_sse(
@@ -442,13 +512,17 @@ class CpuBackend final : public Backend {
     multiref::CompoundPrediction prediction;
     const BlockRect rect{luma_job.x, luma_job.y, w, h};
     if (!multiref::build_compound_prediction(
-            ref_frames_[0], ref_frames_[1], rect, 0, Mv{0, 0}, Mv{0, 0},
-            InterpFilter::kEighttap, mi_cols_, mi_rows_, prediction, error)) {
+            ref_frames_[0], ref_frames_[1], rect, luma_job.bsize, Mv{0, 0},
+            Mv{0, 0}, InterpFilter::kEighttap, mi_cols_, mi_rows_, prediction,
+            error)) {
       return false;
     }
     multiref::CompoundModeParams params;
-    params.type = av2enc::inter::adv::CompoundType::kAverage;
+    params.type = compound_type_of(luma_job.compound_type);
     params.cwp_weight = multiref::kCwpEqual;
+    params.wedge_index = luma_job.wedge_index;
+    params.wedge_sign = luma_job.wedge_sign;
+    params.mask_type = luma_job.mask_type;
     std::uint8_t* dst[3] = {recon_[0].samples.data(), recon_[1].samples.data(),
                             recon_[2].samples.data()};
     int dst_stride[3] = {recon_[0].stride, recon_[1].stride, recon_[2].stride};
@@ -604,7 +678,8 @@ class CpuBackend final : public Backend {
       }
       if (!tx_plane_cpu(source_, plane, src_x[plane], src_y[plane],
                         coords[plane][2], coords[plane][3], pred, quant_step_,
-                        planes[static_cast<std::size_t>(plane)], error)) {
+                        planes[static_cast<std::size_t>(plane)], error,
+                        qm_enabled_ ? &qm_state_ : nullptr)) {
         return false;
       }
     }
@@ -684,7 +759,9 @@ class CpuBackend final : public Backend {
       if (!tx_plane_cpu(source_, plane, coords[plane][0], coords[plane][1],
                         coords[plane][2], coords[plane][3],
                         pred[static_cast<std::size_t>(plane)],
-                        planes[static_cast<std::size_t>(plane)], error)) {
+                        av2enc::txv::kQuantStep,
+                        planes[static_cast<std::size_t>(plane)], error,
+                        qm_enabled_ ? &qm_state_ : nullptr)) {
         return false;
       }
     }
@@ -710,11 +787,123 @@ class CpuBackend final : public Backend {
     return true;
   }
 
+  bool write_recon_luma(int x0, int y0, int w, int h,
+                        const std::vector<std::uint8_t>& y,
+                        std::string& error) override {
+    (void)error;
+    write_plane_block(recon_[0], x0, y0, w, h, y);
+    ++stats_.recon_launches;
+    stats_.bytes_uploaded += static_cast<std::uint64_t>(y.size());
+    return true;
+  }
+
+  bool chroma_cfl_candidate(int x0, int y0, int w, int h,
+                            int num4_above_right, int num4_below_left,
+                            bool enable_mhccp, std::array<PlaneTx, 2>& planes,
+                            int& is_cfl, int& cfl_index, int& cfl_mh_dir,
+                            std::string& error) override {
+    const int cw = w / 2;
+    const int ch = h / 2;
+    const int cx = x0 / 2;
+    const int cy = y0 / 2;
+    const int src_x = cx + tile_x_ / 2;
+    const int src_y = cy + tile_y_ / 2;
+    std::vector<std::uint8_t> dc[2];
+    std::int64_t dc_sse_u = 0;
+    for (int i = 0; i < 2; ++i) {
+      const int plane = i + 1;
+      const EmuPlane& recon = recon_[plane];
+      dc[i].resize(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
+      av2enc::intra::NeighborRequest request;
+      request.recon =
+          av2enc::intra::PlaneView{recon.samples.data(), recon.stride};
+      request.x = cx;
+      request.y = cy;
+      request.w = cw;
+      request.h = ch;
+      request.max_x = recon.width - 1;
+      request.max_y = recon.height - 1;
+      request.have_left = request.x > 0;
+      request.have_above = request.y > 0;
+      request.num4_above_right = 0;
+      request.num4_below_left = 0;
+      request.color_plane = plane;
+      av2enc::intra::PredictParams params;
+      params.mode = av2enc::intra::Mode::kDc;
+      params.angle_delta = 0;
+      params.enable_edge_filter = false;
+      if (av2enc::intra::predict_block(request, 8, params, dc[i].data(),
+                                       static_cast<std::size_t>(cw)) !=
+          av2enc::intra::IntraStatus::kOk) {
+        error = "CPU emulation CfL DC prediction failed";
+        return false;
+      }
+    }
+    for (int yy = 0; yy < ch; ++yy) {
+      for (int xx = 0; xx < cw; ++xx) {
+        const int src = source_sample(source_, 1, src_x + xx, src_y + yy);
+        const int pred = dc[0][static_cast<std::size_t>(yy) *
+                                   static_cast<std::size_t>(cw) +
+                               static_cast<std::size_t>(xx)];
+        const int d = src - pred;
+        dc_sse_u += static_cast<std::int64_t>(d) * d;
+      }
+    }
+    const int chroma_w = static_cast<int>((source_.width + 1U) / 2U);
+    const int chroma_h = static_cast<int>((source_.height + 1U) / 2U);
+    const int tile_cx = tile_x_ / 2;
+    const int tile_cy = tile_y_ / 2;
+    av2enc::video::chroma_search::PlaneView u_plane;
+    u_plane.recon = recon_[1].samples.data();
+    u_plane.recon_stride = recon_[1].stride;
+    u_plane.recon_width = recon_[1].width;
+    u_plane.recon_height = recon_[1].height;
+    u_plane.source = source_.u.data() +
+                     static_cast<std::size_t>(tile_cy) *
+                         static_cast<std::size_t>(chroma_w) +
+                     static_cast<std::size_t>(tile_cx);
+    u_plane.source_stride = chroma_w;
+    u_plane.source_max_x = chroma_w - 1 - tile_cx;
+    u_plane.source_max_y = chroma_h - 1 - tile_cy;
+    av2enc::video::chroma_search::PlaneView v_plane = u_plane;
+    v_plane.recon = recon_[2].samples.data();
+    v_plane.recon_stride = recon_[2].stride;
+    v_plane.source = source_.v.data() +
+                     static_cast<std::size_t>(tile_cy) *
+                         static_cast<std::size_t>(chroma_w) +
+                     static_cast<std::size_t>(tile_cx);
+    av2enc::video::chroma_search::Options options;
+    options.enable_cfl = true;
+    options.ds_filter = 0;
+    options.enable_mhccp = enable_mhccp;
+    av2enc::video::chroma_search::Choice choice;
+    if (!av2enc::video::chroma_search::choose(
+            u_plane, v_plane, recon_[0].samples.data(), recon_[0].stride,
+            recon_[0].width - 1, recon_[0].height - 1, (cy * 2 / 64) * 64, cx,
+            cy, cw, ch, recon_[1].width, recon_[1].height, num4_above_right,
+            num4_below_left, dc[0], dc[1], dc_sse_u, options, choice, error)) {
+      return false;
+    }
+    is_cfl = choice.is_cfl ? 1 : 0;
+    cfl_index = choice.cfl_index;
+    cfl_mh_dir = choice.cfl_mh_dir;
+    const std::vector<std::uint8_t>* preds[2] = {&choice.u, &choice.v};
+    for (int i = 0; i < 2; ++i) {
+      if (!tx_plane_cpu(source_, i + 1, src_x, src_y, cw, ch, *preds[i],
+                        quant_step_, planes[static_cast<std::size_t>(i)],
+                        error, qm_enabled_ ? &qm_state_ : nullptr)) {
+        return false;
+      }
+    }
+    stats_.intra_launches += 1;
+    stats_.tx_launches += 2;
+    return true;
+  }
+
   bool inter_residual_candidate(const InterJob& job, PlaneTx& out,
                                 std::string& error) override {
     std::vector<std::uint8_t> pred(
-        static_cast<std::size_t>(job.w) * static_cast<std::size_t>(job.h));
-    const BlockRect rect{job.x, job.y, job.w, job.h};
+        static_cast<std::size_t>(job.w) * static_cast<std::size_t>(job.h));    const BlockRect rect{job.x, job.y, job.w, job.h};
     if (job.ref_index < 0 ||
         static_cast<std::size_t>(job.ref_index) >= ref_frames_.size()) {
       error = "CPU emulation inter residual ref_index out of range";
@@ -728,7 +917,8 @@ class CpuBackend final : public Backend {
       return false;
     }
     if (!tx_plane_cpu(source_, 0, job.x, job.y, job.w, job.h, pred,
-                      quant_step_, out, error)) {
+                      quant_step_, out, error,
+                      qm_enabled_ ? &qm_state_ : nullptr)) {
       return false;
     }
     ++stats_.mc_launches;
@@ -814,7 +1004,8 @@ class CpuBackend final : public Backend {
       if (!tx_plane_cpu(source_, plane, coords[plane][0], coords[plane][1],
                         coords[plane][2], coords[plane][3],
                         *preds[static_cast<std::size_t>(plane)], quant_step_,
-                        planes[static_cast<std::size_t>(plane)], error)) {
+                        planes[static_cast<std::size_t>(plane)], error,
+                        qm_enabled_ ? &qm_state_ : nullptr)) {
         return false;
       }
     }
@@ -873,11 +1064,16 @@ class CpuBackend final : public Backend {
       ++stats_.intra_launches;
     }
 
+    // Intra is called with tile-local coordinates (its reconstruction plane
+    // is tile-local); inter is called with absolute coordinates (the
+    // reference and source planes are frame-wide).
+    const int src_x0 = inter ? x0 : x0 + tile_x_;
+    const int src_y0 = inter ? y0 : y0 + tile_y_;
     std::vector<std::int16_t> residual(
         static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
     for (int y = 0; y < h; ++y) {
       for (int x = 0; x < w; ++x) {
-        const int src = source_sample(source_, 0, x0 + x, y0 + y);
+        const int src = source_sample(source_, 0, src_x0 + x, src_y0 + y);
         const int p = pred[static_cast<std::size_t>(y) *
                                static_cast<std::size_t>(w) +
                            static_cast<std::size_t>(x)];
@@ -994,6 +1190,8 @@ class CpuBackend final : public Backend {
   int mi_cols_ = 0;
   int mi_rows_ = 0;
   int quant_step_ = av2enc::txv::kQuantStep;  // §7.14.2 qlookup(base_q_idx)
+  av2enc::qm::QmFrameState qm_state_;
+  bool qm_enabled_ = false;
   std::chrono::steady_clock::time_point begin_time_{};
   VideoGpuStats stats_{};
 };

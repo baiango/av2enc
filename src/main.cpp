@@ -1,6 +1,7 @@
 #include "core/bitstream/basic_headers.h"
 #include "codec/entropy/lossless/lossless.h"
 #include "formats/chroma/chroma_still.h"
+#include "formats/format_y4m.h"
 #include "formats/format_encode.h"
 #include "formats/format_y4m.h"
 #include "pipeline/still/basic_encoder.h"
@@ -20,6 +21,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -27,6 +29,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -41,6 +44,13 @@
 // the contract header when it is visible.  The call itself is only linked when
 // CMake also found the orchestrator entry point; until then --still-gpu reports
 // itself as unavailable at runtime.
+#if __has_include("cuda/pipeline/still/lossless/still_lossless_gpu.h")
+#include "cuda/pipeline/still/lossless/still_lossless_gpu.h"
+#define AV2ENC_STILL_LOSSLESS_HEADER 1
+#else
+#define AV2ENC_STILL_LOSSLESS_HEADER 0
+#endif
+
 #if __has_include("cuda/pipeline/still/still_gpu.h")
 #include "cuda/pipeline/still/still_gpu.h"
 #define AV2ENC_STILL_GPU_HEADER 1
@@ -209,6 +219,12 @@ struct Options {
   // Documented rejected carrier for the §7.8 implicit reference lists.
   bool video_implicit_ref_map = false;
   bool video_compound = false;  // reference_select compound (needs refs 2)
+  // §7.13.3.27/.28 masked compound, opt-in behind --video-compound.
+  bool video_compound_wedge = false;
+  bool video_compound_diffwtd = false;
+  // Rejected carrier: §7.13.3.29-.30 inter-intra is a single-reference motion
+  // mode (§5.20.7.14 motion_mode_allowed() requires !isCompound).
+  bool video_compound_interintra = false;
   bool video_inter_residual = false;
   // Opt-in §5.18.8.1 TX_MODE_SELECT luma TX size/type/partition search.
   bool video_tx_search = false;
@@ -217,7 +233,17 @@ struct Options {
   bool video_deblock = false;
   bool video_gme = false;
   bool video_warp = false;
+  bool video_bawp = false;  // opt-in §7.13.3.25 block adaptive weighted pred
+  // Documented rejected carriers.  Both tools decode with the pinned dav2d
+  // through their component gates, but neither is reachable from the M2
+  // inter product path (see the parse errors).
+  bool video_morph = false;
+  bool video_opfl = false;
+  bool video_tip = false;
   bool video_intra_full = false;  // opt-in 61-candidate luma intra search
+  bool video_cfl = false;         // opt-in §7.13.5 CfL chroma decision
+  bool video_mhccp = false;       // opt-in §7.13.6-.8 MHCCP (implies CfL)
+  bool video_qm = false;          // opt-in default-matrix QM
   bool video_subpel_eighth = false;
   int video_mv_precision = 0;  // 0 = 1/8, 1 = 1/4, 2 = 1/2 pel
   bool video_drl_reorder = false;
@@ -240,6 +266,7 @@ struct Options {
   bool video_ccso = false;
   int video_ccso_bands = 4;  // CcsoMaxBandLog2 (band-offset-only form)
   bool video_wiener = false;
+  bool video_pc_wiener = false;
   bool video_chroma_lr = false;
   bool video_gdf = false;
   bool video_trace = false;
@@ -300,6 +327,16 @@ enum class ParseStatus {
   kHelp,
   kError,
 };
+
+// Formats the format video core has been verified and gated on.  Everything
+// else keeps the historical `--video is 8-bit 4:2:0` rejection, by name.
+// Order of landing: 10-bit 4:2:0 first, then the remaining 10-bit chroma
+// formats, then the 8-bit chroma formats.
+bool video_format_wired(int bit_depth, const std::string& chroma) {
+  if (bit_depth != 8 && bit_depth != 10) return false;
+  return chroma == "420" || chroma == "422" || chroma == "444" ||
+         chroma == "400";
+}
 
 // Appends the opt-in neutral metadata OBUs as §5.17.2 suffix units at the end
 // of one temporal unit.  The payloads are the minimal spec-valid forms (no
@@ -396,6 +433,9 @@ void print_usage(std::ostream& out) {
   out << "\nStill options (--still, --still-gpu):\n";
   item("--no-cfl", {"Disable chroma-from-luma"});
   item("--no-deblock", {"Disable the deblocking filter"});
+  item("--still-deblock", {"Opt in to §7.17 deblocking on the 10-bit format "
+                           "path (off by default so pinned 10-bit streams are "
+                           "unchanged)"});
   item("--still-full-intra", {"Directional/smooth intra search (SSE-only mode",
                               "decision; DC is the default)"});
   item("--still-uv-full", {"Full chroma intra search (DC/CfL is the default;",
@@ -521,6 +561,12 @@ void print_usage(std::ostream& out) {
                                   "layer substream); implies --video-tlayers"});
   item("--video-compound", {"Compound GLOBAL_GLOBALMV/AVERAGE prediction;",
                             "requires --video-refs >= 2"});
+  item("--video-compound-wedge", {"Search §7.13.3.27 wedge masks for compound;",
+                                  "requires --video-compound"});
+  item("--video-compound-diffwtd", {"Search §7.13.3.28 difference-weight masks;",
+                                     "requires --video-compound"});
+  item("--video-compound-interintra", {"Rejected: §5.20.7.14 allows INTERINTRA",
+                                        "only for single-reference blocks"});
   item("--video-refs <N>", {"References per P frame (NumTotalRefs), 1..7",
                             "(default 1); 2..7 selects per block"});
   item("--video-num-ref-frames <N>", {"§5.4.6 NumRefFrames, 4..8 (default: 2",
@@ -538,9 +584,23 @@ void print_usage(std::ostream& out) {
                            "CUDA paths signal §5.18.7.9 and filter pixels"});
   item("--video-gme", {"Estimate and signal §5.18.9 global motion per",
                        "reference; GLOBALMV uses the projected §7.12.2.2 MV"});
+  item("--video-tip", {"Encode 3..8 frames as key + future anchor P +",
+                       "TIP_FRAME_AS_OUTPUT pictures (§7.10, §7.13.3.2);",
+                       "opt-in, CPU reference and --video-gpu"}),
   item("--video-warp", {"Predict GLOBALMV blocks with the §7.13.3.19/.20",
                         "block/extended warp when a global model is accepted",
                         "(implies --video-gme)"});
+  item("--video-bawp", {"Opt-in §7.13.3.25 block adaptive weighted prediction:",
+                        "eligible inter blocks signal use_bawp and adapt the",
+                        "luma prediction from the current/previous template",
+                        "(fitted form, no chroma BAWP)"});
+  item("--video-morph", {"Rejected: morph_pred is only read inside",
+                         "read_intrabc_info(), and the M2 --video keyframe has",
+                         "no IBC mode-info path (component gate only)"});
+  item("--video-opfl", {"Rejected: §7.13.3.8-.12 need a non-GLOBALMV",
+                        "compound block over one past and one future",
+                        "reference; the product compound subset is",
+                        "GLOBAL_GLOBALMV on the flat P chain"});
   item("--video-cdef", {"Enable §7.18 CDEF on the reconstructed frame before",
                         "it becomes the output/reference (single strength set)"});
   item("--video-cdef-strength <N>", {"CdefStrengths 1..8 (default 1: no tile",
@@ -549,12 +609,22 @@ void print_usage(std::ostream& out) {
   item("--video-ccso", {"Enable §7.19 CCSO after CDEF (band-offset only)"});
   item("--video-ccso-bands <N>", {"CcsoMaxBandLog2 0..6 (default 4)"});
   item("--video-wiener", {"Enable §7.20 luma non-separable Wiener restoration"});
+  item("--video-pc-wiener", {"Enable §7.20.4 luma PC-Wiener restoration",
+                             "(RESTORE_PC_WIENER per-unit on/off)"});
   item("--video-chroma-lr", {"Enable §7.20 chroma loop restoration (U/V)"});
   item("--video-gdf", {"Enable §7.20.5 GDF (luma, header-only mode)"});
   item("--video-intra-full", {"Opt-in 61-candidate luma intra search (DC, V, H,",
                               "8 directional modes with angle deltas, SMOOTH,",
                               "SMOOTH_V/H, PAETH); chroma stays DC. Default off",
                               "so the shipped streams stay byte-identical"});
+  item("--video-cfl", {"Opt-in §7.13.5 chroma-from-luma (CfL) decision on intra",
+                       "leaves: {DC, CfL} with derived alpha. Default off so the",
+                       "shipped streams stay byte-identical"});
+  item("--video-mhccp", {"Opt-in §7.13.6-.8 multi-hypothesis CfL (MHCCP): signals",
+                         "enable_mhccp and searches the three CFL_MULTI directions.",
+                         "Implies --video-cfl; default off"});
+  item("--video-qm", {"Opt-in §5.18.6.2 using_qmatrix with the default §9.4",
+                      "matrices (level 0, no user QM OBU)"});
   item("--video-long-term", {"Signal long-term reference ids; tag the key frame",
                              "as LongTermId 0 (at most 16 coded frames)"});
   item("--video-olk", {"Open random access GOP (CLK, open-loop key, P2, P3;",
@@ -1025,6 +1095,10 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       options.still_deblock = false;
       continue;
     }
+    if (argument == "--still-deblock") {
+      options.still_deblock = true;
+      continue;
+    }
 
     if (argument == "--still-single") {
       options.still_single = true;
@@ -1480,6 +1554,21 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-compound-wedge") {
+      options.video_compound_wedge = true;
+      continue;
+    }
+
+    if (argument == "--video-compound-diffwtd") {
+      options.video_compound_diffwtd = true;
+      continue;
+    }
+
+    if (argument == "--video-compound-interintra") {
+      options.video_compound_interintra = true;
+      continue;
+    }
+
     if (argument == "--video-inter-residual") {
       options.video_inter_residual = true;
       continue;
@@ -1518,6 +1607,26 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     if (argument == "--video-warp") {
       options.video_warp = true;
       options.video_gme = true;
+      continue;
+    }
+
+    if (argument == "--video-bawp") {
+      options.video_bawp = true;
+      continue;
+    }
+
+    if (argument == "--video-morph") {
+      options.video_morph = true;
+      continue;
+    }
+
+    if (argument == "--video-opfl") {
+      options.video_opfl = true;
+      continue;
+    }
+
+    if (argument == "--video-tip") {
+      options.video_tip = true;
       continue;
     }
 
@@ -1592,6 +1701,27 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--video-intra-full") {
       options.video_intra_full = true;
+      continue;
+    }
+
+    if (argument == "--video-pc-wiener") {
+      options.video_pc_wiener = true;
+      continue;
+    }
+
+    if (argument == "--video-cfl") {
+      options.video_cfl = true;
+      continue;
+    }
+
+    if (argument == "--video-qm") {
+      options.video_qm = true;
+      continue;
+    }
+
+    if (argument == "--video-mhccp") {
+      options.video_mhccp = true;
+      options.video_cfl = true;
       continue;
     }
 
@@ -2016,8 +2146,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "Set AV2ENC_ENABLE_UNGATED_CDF_CONTINUITY=1 only to reproduce";
       return ParseStatus::kError;
     }
-    if (options.bit_depth != 8 || options.chroma != "420") {
-      error = "--video is 8-bit 4:2:0; --bit-depth/--chroma are still-only";
+    if ((options.bit_depth != 8 || options.chroma != "420") &&
+        !video_format_wired(options.bit_depth, options.chroma)) {
+      error = "--video supports 8-bit 4:2:0 and 10-bit 4:2:0; the remaining "
+              "--bit-depth/--chroma combinations are not verified on the "
+              "video path yet";
       return ParseStatus::kError;
     }
     // Rate-control combination errors are usage errors: name them here so the
@@ -2065,6 +2198,32 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       error = "--video-drl-reorder is not decoder-gated yet: the pinned "
               "decoder disagrees with the encoder MV-stack order on some "
               "sub-64x64 blocks (docs/negative-results.md)";
+      return ParseStatus::kError;
+    }
+    if (options.video_morph) {
+      // The component stream decodes exactly with the pinned dav2d
+      // (src/codec/inter/morph/build_and_test.sh), but morph_pred is read only
+      // inside read_intrabc_info(): it needs an intra frame with
+      // allow_screen_content_tools + allow_intrabc.  The M2 --video keyframe
+      // has no IBC mode-info branch, so no inter product stream can carry it.
+      error = "--video-morph is not wired: morph_pred is only signalled "
+              "inside read_intrabc_info() (§5.20.5.4), and the M2 --video "
+              "keyframe has no IBC mode-info path.  The component gate "
+              "(src/codec/inter/morph/build_and_test.sh) decodes with the "
+              "pinned dav2d; a product carrier needs a video IBC keyframe";
+      return ParseStatus::kError;
+    }
+    if (options.video_opfl) {
+      // The compound component gate carries use_optflow and decodes exactly,
+      // but §7.13.3.8-.12 apply only to a non-GLOBALMV compound block over one
+      // past and one future reference.  The product compound subset is
+      // GLOBAL_GLOBALMV with both references in the past.
+      error = "--video-opfl is not wired: §7.13.3.8-.12 need a non-GLOBALMV "
+              "compound block with one past and one future reference; the "
+              "product compound subset is GLOBAL_GLOBALMV on the flat P "
+              "chain.  The component gate "
+              "(src/codec/inter/compound/build_and_test.sh) decodes with the "
+              "pinned dav2d";
       return ParseStatus::kError;
     }
     if (options.b_frames != 0 && options.b_frames > 6) {
@@ -2149,30 +2308,53 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "reference cannot match it";
       return ParseStatus::kError;
     }
-    if (options.video_tx_search && options.tiles != "1x1") {
-      error = "--video-tx-search does not support --tiles > 1x1: the tile "
-              "writer owns a single tx_mode_select header bit per frame";
+    if ((options.video_wiener || options.video_chroma_lr) &&
+        options.tiles != "1x1") {
+      error = "--video-wiener/--video-chroma-lr do not support --tiles > "
+              "1x1: the pinned decoder's loop-restoration unit and window "
+              "handling at shared tile edges does not match a frame-level "
+              "filter (docs/negative-results.md)";
+      return ParseStatus::kError;
+    }
+    if ((options.video_cdef || options.video_ccso || options.video_wiener ||
+         options.video_chroma_lr || options.video_gdf) &&
+        frame_modes != 0) {
+      error = "video loop filters do not compose with the frame-type wrappers "
+              "(their component header writers do not signal the filter rows)";
       return ParseStatus::kError;
     }
     if (flag_given(options, "--video-tx-lambda") && !options.video_tx_search) {
       error = "--video-tx-lambda requires --video-tx-search";
       return ParseStatus::kError;
     }
-    if (options.video_tx_search && options.video_deblock) {
-      error = "--video-tx-search does not compose with --video-deblock yet: "
-              "the §7.17 grid derives its transform edges from one transform "
-              "per leaf and does not model §5.20.6.3 parts";
+    if (options.video_mhccp && (options.avg_cdf || options.adaptive_cdf)) {
+      error = "--video-mhccp does not compose with --avg-cdf/--adaptive-cdf: "
+              "the §8.2.4 bank does not carry the §5.20.7.32 cfl_mhccp/"
+              "cfl_mh_dir CDFs";
       return ParseStatus::kError;
-    }
-    if (options.video_tx_search && (options.avg_cdf || options.adaptive_cdf)) {
-      error = "--video-tx-search does not compose with --avg-cdf/--adaptive-"
-              "cdf: the §8.2.4 bank does not carry the §5.20.6.3 TX-partition "
-              "CDFs";
-      return ParseStatus::kError;
-    }
-    if (options.video_tx_search && frame_modes != 0) {
+    }    if (options.video_tx_search && frame_modes != 0) {
       error = "--video-tx-search does not compose with the frame-type wrapper "
               "modes (their header writers do not signal tx_mode_select)";
+      return ParseStatus::kError;
+    }
+    if (options.video_pc_wiener && options.video_wiener) {
+      error = "--video-pc-wiener replaces the luma Wiener NS decision; do not "
+              "combine the two luma restoration tools";
+      return ParseStatus::kError;
+    }
+    if (options.video_qm && options.qp != 90) {
+      error = "--video-qm is gated at --qp 90: the shared device QM stage "
+              "builds q2 from the pinned 528 quantizer step";
+      return ParseStatus::kError;
+    }
+    if (options.video_qm && options.video_tx_search) {
+      error = "--video-qm does not compose with --video-tx-search: the device "
+              "TX search module has its own scalar quantizer";
+      return ParseStatus::kError;
+    }
+    if (options.video_mhccp && frame_modes != 0) {
+      error = "--video-mhccp does not compose with the frame-type wrapper "
+              "modes (their sequence headers do not signal enable_mhccp)";
       return ParseStatus::kError;
     }
     if (options.video_tx_search && options.svc_given) {
@@ -2191,19 +2373,47 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       // header form, no per-frame B/temporal plan and no uniform tile grid.
       if (options.b_frames != 0 || options.video_tlayers != 0 ||
           frame_modes != 0 || options.video_compound ||
-          options.video_inter_residual || options.video_drl_reorder ||
-          options.video_refs > 1) {
+          options.video_inter_residual || options.video_drl_reorder) {
         error = "--video-gme/--video-warp are gated on the plain skip-only P "
                 "chain: they cannot be combined with --b-frames, "
                 "--video-tlayers, a frame-type wrapper, --video-compound, "
-                "--video-inter-residual, --video-refs > 1 or "
-                "--video-drl-reorder";
+                "--video-inter-residual or --video-drl-reorder";
         return ParseStatus::kError;
       }
       if (options.tiles != "1x1") {
         error = "--video-gme/--video-warp are gated on a single tile";
         return ParseStatus::kError;
       }
+    }
+    if (options.video_bawp) {
+      // BAWP is a single-prediction luma tool.  The gated product surface is
+      // the plain P chain with no warp/compound/temporal-frame wrapper and a
+      // single tile (the fitted template needs whole-frame coordinates).
+      if (options.b_frames != 0 || options.video_tlayers != 0 ||
+          frame_modes != 0 || options.video_compound ||
+          options.video_gme || options.video_warp ||
+          options.video_switch || options.video_ras || options.video_olk ||
+          options.video_leading != 0 || options.video_sef ||
+          options.video_inter_residual) {
+        error = "--video-bawp is gated on the plain skip-only "
+                "single-prediction P chain: it cannot be combined with "
+                "--b-frames, --video-tlayers, a frame-type wrapper, "
+                "--video-compound, --video-gme/--video-warp or "
+                "--video-inter-residual";
+        return ParseStatus::kError;
+      }
+      if (options.tiles != "1x1") {
+        error = "--video-bawp is gated on a single tile";
+        return ParseStatus::kError;
+      }
+    }
+    if (options.video_compound_interintra) {
+      error = "--video-compound-interintra is not signalable: §5.20.7.14 "
+              "motion_mode_allowed() sets AllowedMotionModes[INTERINTRA] only "
+              "when !isCompound, so a two-reference compound cannot carry "
+              "interintra_mode/wedge_interintra; no --video-gpu or --video "
+              "stream is built (see docs/negative-results.md)";
+      return ParseStatus::kError;
     }
     if (options.video_compound) {
       if (options.b_frames == 0 && options.video_refs != 2) {
@@ -2219,6 +2429,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
                 "DRL-reorder modes";
         return ParseStatus::kError;
       }
+    } else if (options.video_compound_wedge ||
+               options.video_compound_diffwtd) {
+      error = "--video-compound-wedge/--video-compound-diffwtd need "
+              "--video-compound";
+      return ParseStatus::kError;
     }
     if (options.b_frames != 0) {
       if (options.video_tlayers != 0 || frame_modes != 0) {
@@ -2300,6 +2515,9 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
                 " yet; use --video for the CPU reference path";
         return ParseStatus::kError;
       };
+      if (options.video_tip) {
+        return reject_gpu("--video-tip (TIP frame scheduling)");
+      }
       if (options.cdf_continuity) {
         return reject_gpu("--cdf-continuity (cross-frame CDF carry)");
       }
@@ -2320,7 +2538,14 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         flag_given(options, "--video-deblock") ||
         flag_given(options, "--video-gme") ||
         flag_given(options, "--video-warp") ||
+        flag_given(options, "--video-bawp") ||
+        flag_given(options, "--video-morph") ||
+        flag_given(options, "--video-opfl") ||
+        flag_given(options, "--video-tip") ||
         flag_given(options, "--video-intra-full") ||
+        flag_given(options, "--video-cfl") ||
+        flag_given(options, "--video-mhccp") ||
+        flag_given(options, "--video-qm") ||
         flag_given(options, "--video-tlayers") ||
         flag_given(options, "--video-tlayer-drop") ||
         flag_given(options, "--video-compound") ||
@@ -2342,6 +2567,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         flag_given(options, "--video-ccso") ||
         flag_given(options, "--video-ccso-bands") ||
         flag_given(options, "--video-wiener") ||
+        flag_given(options, "--video-pc-wiener") ||
         flag_given(options, "--video-chroma-lr") ||
         flag_given(options, "--video-gdf") ||
         flag_given(options, "--video-trace") ||
@@ -2364,9 +2590,9 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     }
   }
   if (options.lossless) {
-    if (options.m1 || options.still_gpu) {
+    if (options.m1) {
       return reject("--lossless has its own still-picture writer; do not "
-                    "combine it with --still or --still-gpu");
+                    "combine it with --still");
     }
     for (const std::string_view flag : options.specified) {
       if ((flag.starts_with("--still-") && flag != "--still-gpu") ||
@@ -2394,6 +2620,12 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
   }
   if (options.video && options.qp == 0) {
     return reject("--video does not support lossless QP 0");
+  }
+  if (options.video && options.bit_depth == 8 && options.qp > 255) {
+    return reject("--qp > 255 requires 10-bit: MaxQ is 255 at 8-bit");
+  }
+  if (options.video && options.bit_depth == 10 && options.qp > 303) {
+    return reject("--qp > 303 exceeds the 10-bit MaxQ");
   }
   if (!options.video && options.qp == 0 && !options.lossless) {
     return reject("--qp 0 requires --lossless");
@@ -2763,6 +2995,69 @@ bool write_video_recon_y4m(const std::filesystem::path& path,
   return true;
 }
 
+// Multi-frame reconstruction dump for the format video core.  The Y4M body is
+// 16-bit little-endian for 10-bit and 8-bit bytes for the 8-bit formats, and
+// the C tag matches the signalled format.
+bool write_video_recon_y4m_format(
+    const std::filesystem::path& path, const av2enc::fmt::Format& format,
+    std::uint32_t fps_num, std::uint32_t fps_den,
+    const std::vector<av2enc::video::VideoReconFrame>& recon,
+    std::string& error) {
+  std::ofstream out(path, std::ios::binary);
+  if (!out) {
+    error = "cannot open --video-recon output '" + path.string() + "'";
+    return false;
+  }
+  const int bps = format.depth == av2enc::fmt::BitDepth::k8 ? 1 : 2;
+  out << "YUV4MPEG2 W" << format.width << " H" << format.height << " F"
+      << fps_num << ":" << fps_den << " Ip A1:1 "
+      << av2enc::fmt::y4m_colorspace_tag(format.chroma, format.depth) << "\n";
+  const int sub_x = av2enc::fmt::subsampling_x(format.chroma);
+  const int sub_y = av2enc::fmt::subsampling_y(format.chroma);
+  const bool has_chroma = av2enc::fmt::has_chroma(format.chroma);
+  const std::uint32_t widths[3] = {format.width, format.width >> sub_x,
+                                   format.width >> sub_x};
+  const std::uint32_t heights[3] = {format.height, format.height >> sub_y,
+                                    format.height >> sub_y};
+  const int plane_count = av2enc::fmt::num_planes(format.chroma);
+  std::vector<std::uint8_t> row;
+  for (const av2enc::video::VideoReconFrame& frame : recon) {
+    out << "FRAME\n";
+    for (int plane = 0; plane < plane_count; ++plane) {
+      const std::vector<std::uint16_t>& src =
+          plane == 0 ? frame.y16 : (plane == 1 ? frame.u16 : frame.v16);
+      if (src.empty()) {
+        error = "reconstruction plane is empty";
+        return false;
+      }
+      row.resize(static_cast<std::size_t>(widths[plane]) *
+                 static_cast<std::size_t>(bps));
+      for (std::uint32_t y = 0; y < heights[plane]; ++y) {
+        for (std::uint32_t x = 0; x < widths[plane]; ++x) {
+          const std::uint16_t sample =
+              src[static_cast<std::size_t>(y) * widths[plane] + x];
+          if (bps == 1) {
+            row[x] = static_cast<std::uint8_t>(sample);
+          } else {
+            row[static_cast<std::size_t>(x) * 2U] =
+                static_cast<std::uint8_t>(sample & 0xFFU);
+            row[static_cast<std::size_t>(x) * 2U + 1U] =
+                static_cast<std::uint8_t>((sample >> 8) & 0x03U);
+          }
+        }
+        out.write(reinterpret_cast<const char*>(row.data()),
+                  static_cast<std::streamsize>(row.size()));
+      }
+    }
+  }
+  (void)has_chroma;
+  if (!out) {
+    error = "failed while writing --video-recon output";
+    return false;
+  }
+  return true;
+}
+
 // Two-pass calibration hook for --rc vbr: scales the built-in placeholder
 // bitrate model so that its estimate at the pass-1 QP matches the measured
 // pass-1 payload bits. The controller then bisects the calibrated model. This
@@ -3086,6 +3381,258 @@ bool validate_video_sequence_length(const Options& options,
   return true;
 }
 
+// Video path for the non-default pixel formats (10-bit 4:2:0/4:2:2/4:4:4/4:0:0
+// and 8-bit 4:2:2/4:4:4/4:0:0).  The input reader is the strict format Y4M
+// reader; the requested --bit-depth/--chroma must match the stream tag exactly
+// (no implicit resampling or depth conversion).
+int run_video_format_encode(const Options& options) {
+  // Tool flags that are 8-bit 4:2:0 only.  Reject by name instead of silently
+  // ignoring them on the format path.
+  const std::pair<bool, const char*> unsupported[] = {
+      {options.video_deblock, "--video-deblock"},
+      {options.video_cdef, "--video-cdef"},
+      {options.video_ccso, "--video-ccso"},
+      {options.video_wiener, "--video-wiener"},
+      {options.video_chroma_lr, "--video-chroma-lr"},
+      {options.video_gdf, "--video-gdf"},
+      {options.tiles != "1x1", "--tiles"},
+      {options.video_tx_search, "--video-tx-search"},
+      {options.video_intra_full, "--video-intra-full"},
+      {options.video_gme, "--video-gme"},
+      {options.video_warp, "--video-warp"},
+      {options.video_compound, "--video-compound"},
+      {options.video_drl_reorder || options.video_drl_reorder_always,
+       "--video-drl-reorder"},
+      {options.b_frames != 0, "--b-frames"},
+      {options.video_tlayers != 0, "--video-tlayers"},
+      {options.video_long_term, "--video-long-term"},
+      {options.video_olk, "--video-olk"},
+      {options.video_leading != 0, "--video-leading"},
+      {options.video_sef, "--video-sef"},
+      {options.video_switch, "--video-switch"},
+      {options.video_ras, "--video-ras"},
+      {options.avg_cdf, "--avg-cdf"},
+      {options.adaptive_cdf, "--adaptive-cdf"},
+      {options.cdf_continuity, "--cdf-continuity"},
+      {options.video_mfh, "--video-mfh"},
+      {options.video_timing, "--video-timing"},
+      {options.rc_mode != "cqp", "--rc"},
+  };
+  for (const auto& [set, flag] : unsupported) {
+    if (set) {
+      std::cerr << "av2enc: error: " << flag
+                << " is not wired for the --bit-depth/--chroma video formats "
+                   "(8-bit 4:2:0 only)\n";
+      return 2;
+    }
+  }
+
+  av2enc::fmt::Format format;
+  format.chroma = options.chroma == "422"   ? av2enc::fmt::ChromaFormat::k422
+                  : options.chroma == "444" ? av2enc::fmt::ChromaFormat::k444
+                  : options.chroma == "400" ? av2enc::fmt::ChromaFormat::k400
+                                            : av2enc::fmt::ChromaFormat::k420;
+  format.depth = options.bit_depth == 10 ? av2enc::fmt::BitDepth::k10
+                                         : av2enc::fmt::BitDepth::k8;
+
+  std::size_t limit = 0;
+  if (options.max_frames != 0) {
+    limit = static_cast<std::size_t>(options.max_frames);
+  } else if (options.p_frames != 0) {
+    limit = static_cast<std::size_t>(options.p_frames) + 1U;
+  }
+
+  std::vector<av2enc::fmt::Picture> pictures;
+  av2enc::fmt::Y4mFormatInfo info;
+  std::string error;
+  if (!av2enc::fmt::read_y4m_sequence(options.input, &pictures, &info, limit,
+                                      &error)) {
+    std::cerr << "av2enc: error: " << error << "\n";
+    return 1;
+  }
+  if (info.chroma != format.chroma || info.depth != format.depth) {
+    std::cerr << "av2enc: error: --bit-depth/--chroma request "
+              << av2enc::fmt::bit_depth_name(format.depth) << " "
+              << av2enc::fmt::chroma_format_name(format.chroma)
+              << " does not match the input coloursapce "
+              << av2enc::fmt::chroma_format_name(info.chroma) << " "
+              << av2enc::fmt::bit_depth_name(info.depth)
+              << "; the format paths never convert implicitly\n";
+    return 2;
+  }
+  format.width = info.width;
+  format.height = info.height;
+  if (format.width % 8U != 0U || format.height % 8U != 0U) {
+    std::cerr << "av2enc: error: --video requires dimensions divisible by 8, "
+              << "got " << format.width << "x" << format.height << "\n";
+    return 2;
+  }
+  if (!av2enc::fmt::is_signalable(format)) {
+    std::cerr << "av2enc: error: the requested format is not signalable in "
+                 "AV2 v1.0.0\n";
+    return 2;
+  }
+
+  const int sub_x = av2enc::fmt::subsampling_x(format.chroma);
+  const int sub_y = av2enc::fmt::subsampling_y(format.chroma);
+  const bool has_chroma = av2enc::fmt::has_chroma(format.chroma);
+  std::vector<std::vector<std::uint16_t>> owned_y;
+  std::vector<std::vector<std::uint16_t>> owned_u;
+  std::vector<std::vector<std::uint16_t>> owned_v;
+  owned_y.reserve(pictures.size());
+  owned_u.reserve(pictures.size());
+  owned_v.reserve(pictures.size());
+  for (const av2enc::fmt::Picture& picture : pictures) {
+    const std::uint32_t cw = format.width >> sub_x;
+    const std::uint32_t ch = format.height >> sub_y;
+    std::vector<std::uint16_t> y(
+        static_cast<std::size_t>(format.width) * format.height);
+    for (std::uint32_t r = 0; r < format.height; ++r) {
+      std::memcpy(y.data() + static_cast<std::size_t>(r) * format.width,
+                  picture.planes[0].samples.data() +
+                      static_cast<std::size_t>(r) * picture.planes[0].stride,
+                  static_cast<std::size_t>(format.width) *
+                      sizeof(std::uint16_t));
+    }
+    owned_y.push_back(std::move(y));
+    std::vector<std::uint16_t> u;
+    std::vector<std::uint16_t> v;
+    if (has_chroma) {
+      u.assign(static_cast<std::size_t>(cw) * ch, 0);
+      v.assign(static_cast<std::size_t>(cw) * ch, 0);
+      for (std::uint32_t r = 0; r < ch; ++r) {
+        std::memcpy(u.data() + static_cast<std::size_t>(r) * cw,
+                    picture.planes[1].samples.data() +
+                        static_cast<std::size_t>(r) * picture.planes[1].stride,
+                    static_cast<std::size_t>(cw) * sizeof(std::uint16_t));
+        std::memcpy(v.data() + static_cast<std::size_t>(r) * cw,
+                    picture.planes[2].samples.data() +
+                        static_cast<std::size_t>(r) * picture.planes[2].stride,
+                    static_cast<std::size_t>(cw) * sizeof(std::uint16_t));
+      }
+    }
+    owned_u.push_back(std::move(u));
+    owned_v.push_back(std::move(v));
+  }
+
+  std::vector<av2enc::video::VideoInputFrame> inputs;
+  inputs.reserve(pictures.size());
+  for (std::size_t i = 0; i < pictures.size(); ++i) {
+    av2enc::video::VideoInputFrame input;
+    input.width = format.width;
+    input.height = format.height;
+    input.format = format;
+    input.y16 = std::span<const std::uint16_t>(owned_y[i].data(),
+                                               owned_y[i].size());
+    input.u16 = std::span<const std::uint16_t>(owned_u[i].data(),
+                                               owned_u[i].size());
+    input.v16 = std::span<const std::uint16_t>(owned_v[i].data(),
+                                               owned_v[i].size());
+    inputs.push_back(input);
+  }
+
+  if (!validate_video_sequence_length(options, inputs.size(), error)) {
+    std::cerr << "av2enc: error: " << error << "\n";
+    return 2;
+  }
+
+  av2enc::IvfHeader ivf;
+  ivf.width = static_cast<std::uint16_t>(format.width);
+  ivf.height = static_cast<std::uint16_t>(format.height);
+  ivf.fps_num = info.fps_num;
+  ivf.fps_den = info.fps_den;
+  av2enc::IvfWriter writer;
+  if (!writer.open(options.output, ivf, error)) {
+    std::cerr << "av2enc: error: " << error << "\n";
+    return 1;
+  }
+
+  av2enc::video::VideoOptions video_options;
+  video_options.format = format;
+  video_options.base_q_idx = static_cast<std::uint16_t>(options.qp);
+  video_options.num_total_refs = options.video_refs;
+  video_options.num_ref_frames = options.video_num_ref_frames;
+  video_options.enable_inter_residual = options.video_inter_residual;
+  video_options.me_subpel_eighth = options.video_subpel_eighth;
+  video_options.mv_precision = options.video_mv_precision;
+  video_options.force_single_block = options.video_force_single;
+  video_options.min_block_size = options.video_min_block;
+  video_options.max_partition_depth = options.video_max_depth;
+  if (format.chroma == av2enc::fmt::ChromaFormat::k422 &&
+      !flag_given(options, "--video-max-depth")) {
+    // 4:2:2 is gated at 32x32 roots until 16-pixel 4:2:2 chroma leaves are
+    // decoder-gated (see docs/negative-results.md).
+    video_options.max_partition_depth = 2;
+  }
+  video_options.me_range = options.video_me_range;
+  video_options.trace = options.video_trace;
+
+  av2enc::video::VideoSequenceResult result;
+  bool ok = false;
+  if (options.video_gpu) {
+#if AV2ENC_VIDEO_GPU_CALLABLE
+    ok = av2enc::cuda::video::encode_video_sequence_gpu(inputs, video_options,
+                                                        result, error);
+    if (ok) {
+      std::cerr << "av2enc: --video-gpu backend="
+                << av2enc::cuda::video::video_backend_name()
+                << " frame_bytes_from_cpu=0\n";
+    }
+#else
+    error = "--video-gpu is not linked in this build";
+#endif
+  } else {
+    ok = av2enc::video::encode_video_sequence(inputs, video_options, result,
+                                              error);
+  }
+  if (!ok) {
+    std::cerr << "av2enc: error: " << error << "\n";
+    return 1;
+  }
+
+  for (std::size_t i = 0; i < result.units.size(); ++i) {
+    if (!writer.write_frame(result.units[i], static_cast<std::uint64_t>(i),
+                            error)) {
+      std::cerr << "av2enc: error: " << error << "\n";
+      return 1;
+    }
+  }
+  if (!options.video_recon.empty()) {
+    if (!write_video_recon_y4m_format(options.video_recon, format,
+                                      info.fps_num, info.fps_den, result.recon,
+                                      error)) {
+      std::cerr << "av2enc: error: " << error << "\n";
+      return 1;
+    }
+  }
+  if (!writer.close(error)) {
+    std::cerr << "av2enc: error: " << error << "\n";
+    return 1;
+  }
+
+  std::uint64_t total_tile = 0;
+  std::uint64_t total_inter = 0;
+  std::uint64_t total_intra = 0;
+  for (std::size_t i = 0; i < result.tile_bytes.size(); ++i) {
+    total_tile += result.tile_bytes[i];
+    total_inter += result.inter_blocks[i];
+    total_intra += result.intra_blocks[i];
+  }
+  std::cout << "av2enc: Video P-frame encode complete\n"
+            << "  input:   " << options.input.string() << " (" << format.width
+            << "x" << format.height << ", " << info.colorspace << ", "
+            << info.fps_num << "/" << info.fps_den << " fps)\n"
+            << "  output:  " << options.output.string() << " ("
+            << writer.bytes_written() << " bytes IVF)\n"
+            << "  frames:  " << result.units.size() << " temporal unit(s), "
+            << result.tile_bytes.size() << " coded frame(s), "
+            << result.recon.size() << " output frame(s), base_q_idx "
+            << static_cast<int>(video_options.base_q_idx) << ", tile "
+            << total_tile << " bytes, inter blocks " << total_inter
+            << ", intra blocks " << total_intra << "\n";
+  return 0;
+}
+
 int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
                      const av2enc::Y4mHeader& y4m) {
   std::vector<OwnedVideoFrame> owned;
@@ -3166,6 +3713,8 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.num_total_refs = options.video_refs;
   video_options.num_ref_frames = options.video_num_ref_frames;
   video_options.compound = options.video_compound;
+  video_options.compound_wedge = options.video_compound_wedge;
+  video_options.compound_diffwtd = options.video_compound_diffwtd;
   video_options.b_frames = static_cast<int>(options.b_frames);
   video_options.enable_inter_residual = options.video_inter_residual;
   video_options.enable_tx_search = options.video_tx_search;
@@ -3173,7 +3722,12 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_deblock = options.video_deblock;
   video_options.enable_gme = options.video_gme;
   video_options.enable_warp = options.video_warp;
+  video_options.enable_bawp = options.video_bawp;
+  video_options.enable_tip = options.video_tip;
   video_options.enable_intra_full = options.video_intra_full;
+  video_options.enable_cfl = options.video_cfl;
+  video_options.enable_mhccp = options.video_mhccp;
+  video_options.enable_qm = options.video_qm;
   video_options.me_subpel_eighth = options.video_subpel_eighth;
   video_options.mv_precision = options.video_mv_precision;
   video_options.drl_reorder = options.video_drl_reorder;
@@ -3196,6 +3750,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.loop_filters.ccso = options.video_ccso;
   video_options.loop_filters.ccso_bands_log2 = options.video_ccso_bands;
   video_options.loop_filters.wiener = options.video_wiener;
+  video_options.loop_filters.pc_wiener = options.video_pc_wiener;
   video_options.loop_filters.chroma_lr = options.video_chroma_lr;
   video_options.loop_filters.gdf = options.video_gdf;
   video_options.trace = options.video_trace;
@@ -3720,12 +4275,6 @@ int main(int argc, char** argv) {
   }
 #endif
 
-  if (options.lossless && options.still_gpu) {
-    std::cerr << "av2enc: error: --lossless is implemented by the CPU "
-                 "lossless module; it cannot be combined with --still-gpu\n";
-    return 2;
-  }
-
   if (options.still_seg_delta != 8 && !options.still_per_segment_q) {
     std::cerr << "av2enc: error: --still-seg-delta requires "
                  "--still-per-segment-q\n";
@@ -3753,32 +4302,34 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  if (options.still_gpu && options.still_content_interpretation) {
-    std::cerr << "av2enc: error: --still-content-interpretation is CPU-only "
-                 "(--still); the Still GPU path does not emit it\n";
-    return 2;
-  }
-
   if (options.still_gpu) {
     const auto reject_cpu_only = [](const char* flag) {
       std::cerr << "av2enc: error: --still-gpu: " << flag
                 << " is not ported to the GPU pipeline yet; use --still (CPU)\n";
       return 2;
     };
+    const bool still_gpu_format =
+        options.bit_depth != 8 || options.chroma != "420";
+    if (still_gpu_format && (options.still_tcq || options.still_rdoq)) {
+      // The 10-bit / non-4:2:0 product writer runs the `hbd` GPU block stage,
+      // which has no §7.16 decision stage; reject instead of dropping the flag.
+      std::cerr << "av2enc: error: --still-gpu with --bit-depth 10 / "
+                   "--chroma 422|444|400 does not support --still-tcq or "
+                   "--still-rdoq yet; use --still (CPU)\n";
+      return 2;
+    }
     if (options.still_user_qm) return reject_cpu_only("--still-user-qm");
-    if (options.still_tcq) return reject_cpu_only("--still-tcq");
+    // --still-tcq now has a GPU stage (device §7.16 rate model + §5.4.8
+    // trellis); gpu_m3_options_supported() rejects only the combinations the
+    // CPU reference itself refuses.
     if (options.still_tx_partition) {
       return reject_cpu_only("--still-tx-partition");
     }
     if (options.still_ddt) return reject_cpu_only("--still-ddt");
-    // CDEF, CCSO, loop restoration (Wiener NS, chroma LR, PC-Wiener, GDF) and
-    // film-grain signalling now have GPU stages (see
-    // gpu_m3_options_supported() in src/cuda/pipeline/still/still_gpu.h); the
-    // remaining filters have no stage yet and are rejected by name.
-    if (options.still_grain_adaptive) {
-      return reject_cpu_only("--still-grain-adaptive");
-    }
-    if (options.still_rdoq) return reject_cpu_only("--still-rdoq");
+    // CDEF, CCSO, loop restoration (Wiener NS, chroma LR, PC-Wiener, GDF),
+    // film-grain signalling (including the adaptive model), content
+    // interpretation, TCQ and RDOQ now have GPU stages.  The remaining tools
+    // are rejected by name.
     if (options.still_rdo_intra) return reject_cpu_only("--still-rdo-intra");
   }
 
@@ -3849,11 +4400,19 @@ int main(int argc, char** argv) {
       }
     } else {
       if (options.still_gpu) {
-        std::cerr << "av2enc: error: --tiles is CPU-only (--still); the Still "
-                     "GPU pipeline has no tile loop\n";
-        return 2;
+        if (options.qp != 90) {
+          std::cerr << "av2enc: error: multi-tile --still-gpu pins base_q_idx "
+                       "90 (the device quantiser step); use --qp 90 or --still "
+                       "(CPU)\n";
+          return 2;
+        }
+        if (options.metadata_timecode || options.metadata_scan_type) {
+          std::cerr << "av2enc: error: multi-tile --still-gpu does not apply "
+                       "the neutral metadata OBUs\n";
+          return 2;
+        }
       }
-      if (!options.m1) {
+      if (!options.m1 && !options.still_gpu) {
         std::cerr << "av2enc: error: --tiles > 1 requires --still or --video\n";
         return 2;
       }
@@ -3943,10 +4502,15 @@ int main(int argc, char** argv) {
   const bool format_10bit = options.bit_depth == 10;
   const bool format_chroma = options.chroma != "420";
   if ((format_10bit || format_chroma) && options.video) {
-    std::cerr << "av2enc: error: --video is 8-bit 4:2:0 only; high-bit-depth / "
-                 "4:2:2 / 4:4:4 / 4:0:0 inter is not implemented (the M2 "
-                 "video core is uint8)\n";
-    return 2;
+    if (!video_format_wired(options.bit_depth, options.chroma)) {
+      std::cerr << "av2enc: error: --video supports 8-bit 4:2:0 and 10-bit "
+                   "4:2:0; the remaining --bit-depth/--chroma combinations "
+                   "are not verified on the video path yet\n";
+      return 2;
+    }
+    // The format video core reads its own strict Y4M stream and never falls
+    // back to the 8-bit 4:2:0 reader below.
+    return run_video_format_encode(options);
   }
   if (format_10bit || format_chroma) {
     // Product GPU formats with a parity-gated block stage.  Every product
@@ -3984,27 +4548,58 @@ int main(int argc, char** argv) {
                    "--bit-depth/--chroma format still writers\n";
       return 2;
     }
-    if (options.still_single || options.still_dc || options.still_full_intra ||
-        options.still_uv_full || options.still_rdo_intra || options.still_rdoq ||
-        options.still_tx_type || options.still_cdef || options.still_ccso ||
-        options.still_sb128 || options.still_sb256 ||
-        options.still_ext_partitions || options.still_segmentation ||
-        options.still_delta_q || options.still_per_segment_q ||
-        options.still_content_interpretation ||
-        options.still_qm || options.still_user_qm || options.still_ist ||
-        options.still_tcq || options.still_cctx ||
-        options.still_tx_partition || options.still_idtx || options.still_ddt ||
-        options.still_dc_ac_delta_q || options.still_ibp || options.still_mrl ||
-        options.still_sub8 || options.still_sdp ||
-        flag_given(options, "--still-cfl-ds") ||
-        options.still_cfl_explicit || options.still_dip || options.still_palette ||
-        options.still_ibc ||
-        options.still_mhccp || options.still_ccso_edge || options.still_wiener ||
-        options.still_chroma_lr || options.still_pc_wiener || options.still_gdf ||
-        options.still_grain || options.still_depth >= 0) {
-      std::cerr << "av2enc: error: the --bit-depth/--chroma format paths use "
-                   "their own minimal still writer; Still tool flags are not "
-                   "applied there\n";
+    // Name the offending flag: the format writer signals none of these tools,
+    // and 10-bit CDEF/CCSO/LR are not implemented (their cores are 8-bit).
+    const std::pair<bool, const char*> unsupported_by_format[] = {
+        {options.still_single, "--still-single"},
+        {options.still_dc, "--still-dc"},
+        {options.still_full_intra, "--still-full-intra"},
+        {options.still_uv_full, "--still-uv-full"},
+        {options.still_rdo_intra, "--still-rdo-intra"},
+        {options.still_rdoq, "--still-rdoq"},
+        {options.still_tx_type, "--still-tx-type"},
+        {options.still_cdef, "--still-cdef"},
+        {options.still_ccso, "--still-ccso"},
+        {options.still_ccso_edge, "--still-ccso-edge"},
+        {options.still_wiener, "--still-wiener"},
+        {options.still_chroma_lr, "--still-chroma-lr"},
+        {options.still_pc_wiener, "--still-pc-wiener"},
+        {options.still_gdf, "--still-gdf"},
+        {options.still_sb128, "--still-sb128"},
+        {options.still_sb256, "--still-sb256"},
+        {options.still_ext_partitions, "--still-ext-partitions"},
+        {options.still_segmentation, "--still-segmentation"},
+        {options.still_delta_q, "--still-delta-q"},
+        {options.still_per_segment_q, "--still-per-segment-q"},
+        {options.still_content_interpretation, "--still-content-interpretation"},
+        {options.still_qm, "--still-qm"},
+        {options.still_user_qm, "--still-user-qm"},
+        {options.still_ist, "--still-ist"},
+        {options.still_tcq, "--still-tcq"},
+        {options.still_cctx, "--still-cctx"},
+        {options.still_tx_partition, "--still-tx-partition"},
+        {options.still_idtx, "--still-idtx"},
+        {options.still_ddt, "--still-ddt"},
+        {options.still_dc_ac_delta_q, "--still-dc-ac-delta-q"},
+        {options.still_ibp, "--still-ibp"},
+        {options.still_mrl, "--still-mrl"},
+        {options.still_sub8, "--still-sub8"},
+        {options.still_sdp, "--still-sdp"},
+        {flag_given(options, "--still-cfl-ds"), "--still-cfl-ds"},
+        {options.still_cfl_explicit, "--still-cfl-explicit"},
+        {options.still_dip, "--still-dip"},
+        {options.still_palette, "--still-palette"},
+        {options.still_ibc, "--still-ibc"},
+        {options.still_mhccp, "--still-mhccp"},
+        {options.still_grain, "--still-grain"},
+        {options.still_depth >= 0, "--still-depth"},
+    };
+    for (const auto& [set, flag] : unsupported_by_format) {
+      if (!set) continue;
+      std::cerr << "av2enc: error: " << flag
+                << " is not applied by the --bit-depth/--chroma format "
+                   "writer: format paths use their own minimal still writer "
+                   "(CDEF/CCSO/LR at 10-bit are not implemented)\n";
       return 2;
     }
     if (format_10bit && (options.qp < 1 || options.qp > 303)) {
@@ -4033,6 +4628,22 @@ int main(int argc, char** argv) {
     }
     format_options.base_q_idx = static_cast<std::uint16_t>(options.qp);
     format_options.recon_out = options.recon;
+    // §7.17 deblocking is opt-in on this path: existing 10-bit streams signal
+    // it off and must stay byte-identical.
+    if (flag_given(options, "--still-deblock")) {
+      if (!format_10bit) {
+        std::cerr << "av2enc: error: --still-deblock is wired for the 10-bit "
+                     "format path only (the 8-bit chroma writers keep the "
+                     "8-bit deblock core off)\n";
+        return 2;
+      }
+      if (flag_given(options, "--no-deblock")) {
+        std::cerr << "av2enc: error: --still-deblock and --no-deblock are "
+                     "mutually exclusive\n";
+        return 2;
+      }
+      format_options.enable_deblock = true;
+    }
     std::unique_ptr<av2enc::chroma::ChromaGpuExecutor> chroma_gpu;
 #if AV2ENC_STILL_GPU_CALLABLE
     if (options.still_gpu && format_10bit) {
@@ -4216,6 +4827,26 @@ int main(int argc, char** argv) {
                                ? av2enc::lossless::FscMode::kForce
                                : av2enc::lossless::FscMode::kOff;
 
+    // --still-gpu: the DPCM/FSC decision and the reversible transforms run on
+    // the device; the CPU lossless module keeps the §5.20 syntax, the §8.2
+    // entropy writer and the decoder-side exactness check.
+    std::vector<av2enc::lossless::BlockCoding> gpu_blocks;
+#if AV2ENC_STILL_GPU_CALLABLE && AV2ENC_STILL_LOSSLESS_HEADER
+    if (options.still_gpu) {
+      std::string gpu_error;
+      if (!av2enc::cuda::still_lossless::compute_block_coding(
+              picture, lossless_options, &gpu_blocks, gpu_error)) {
+        return fail_encode(gpu_error);
+      }
+      lossless_options.precomputed = gpu_blocks.data();
+    }
+#else
+    if (options.still_gpu) {
+      return fail_encode(
+          "--still-gpu: the lossless DPCM/FSC device stage is not built");
+    }
+#endif
+
     av2enc::lossless::EncodeResult encoded;
     if (!av2enc::lossless::encode_still(picture, lossless_options, encoded,
                                         error)) {
@@ -4239,10 +4870,12 @@ int main(int argc, char** argv) {
     picture.u = frame.u();
     picture.v = frame.v();
 
-    if (options.still_gpu) {
 #if AV2ENC_STILL_GPU_CALLABLE
-      // GpuOptions mirrors StillOptions and adds orchestrator controls; see
-      // src/cuda/pipeline/still/still_gpu.h and docs/m1-gpu.md.
+    // GpuOptions mirrors StillOptions and adds orchestrator controls; see
+    // src/cuda/pipeline/still/still_gpu.h and docs/m1-gpu.md.  One builder is
+    // shared by the single-tile and multi-tile (per-tile) GPU paths so a parsed
+    // flag can never reach one branch and not the other.
+    const auto build_gpu_options = [&]() {
       av2enc::cuda::still_gpu::GpuOptions gpu_options;
       gpu_options.base_q_idx = static_cast<std::uint8_t>(options.qp);
       gpu_options.enable_cfl = options.still_cfl;
@@ -4284,6 +4917,9 @@ int main(int argc, char** argv) {
       gpu_options.enable_pc_wiener = options.still_pc_wiener;
       gpu_options.enable_gdf = options.still_gdf;
       gpu_options.enable_grain = options.still_grain;
+      gpu_options.grain_adaptive = options.still_grain_adaptive;
+      gpu_options.content_interpretation =
+          options.still_content_interpretation;
       gpu_options.delta_q = options.still_dc_ac_delta_q;
       gpu_options.enable_segmentation = options.still_segmentation;
       gpu_options.enable_delta_q = options.still_delta_q;
@@ -4308,7 +4944,13 @@ int main(int argc, char** argv) {
       gpu_options.vram_cap_mb = static_cast<std::uint32_t>(
           std::min<std::uint64_t>(options.vram_cap_mib,
                                   std::numeric_limits<std::uint32_t>::max()));
+      return gpu_options;
+    };
+#endif
 
+    if (options.still_gpu && !multi_tile) {
+#if AV2ENC_STILL_GPU_CALLABLE
+      av2enc::cuda::still_gpu::GpuOptions gpu_options = build_gpu_options();
       av2enc::cuda::still_gpu::GpuResult encoded;
       if (!av2enc::cuda::still_gpu::encode_still_gpu(picture, gpu_options, encoded,
                                               error)) {
@@ -4348,8 +4990,50 @@ int main(int argc, char** argv) {
 
       av2enc::still::tiles_stream::Frame tiled;
       std::string tile_error;
-      if (!av2enc::still::tiles_stream::encode(picture, tile_config, &tiled,
-                                               &tile_error)) {
+      bool tiled_ok = false;
+#if AV2ENC_STILL_GPU_CALLABLE
+      if (options.still_gpu) {
+        // Per-tile plan/search/TX/recon on the device.  The CPU tile-group
+        // writer still owns the tiled headers, the §8.2.2 seed and the §8.2.4
+        // average-CDF bank; this callback only replaces the per-tile encoder.
+        const auto gpu_tile_encoder =
+            [&](const av2enc::still::StillPicture& tile_picture,
+                const av2enc::still::StillOptions& tile_options,
+                std::span<const std::uint16_t> cdf_seed,
+                av2enc::still::tiles_stream::TileEncodeOutput* out,
+                std::string* tile_encode_error) -> bool {
+          av2enc::cuda::still_gpu::GpuOptions gpu_options = build_gpu_options();
+          gpu_options.base_q_idx = tile_options.base_q_idx;
+          gpu_options.enable_cfl = tile_options.enable_cfl;
+          gpu_options.enable_deblock = tile_options.enable_deblock;
+          gpu_options.adaptive_cdf = tile_options.adaptive_cdf;
+          gpu_options.cdf_seed.assign(cdf_seed.begin(), cdf_seed.end());
+          gpu_options.min_block_size = tile_options.min_block_size;
+          gpu_options.max_partition_depth = tile_options.max_partition_depth;
+          gpu_options.luma_dc_only = tile_options.luma_dc_only;
+          gpu_options.verify_against_cpu = true;
+          av2enc::cuda::still_gpu::GpuResult encoded;
+          if (!av2enc::cuda::still_gpu::encode_still_gpu(
+                  tile_picture, gpu_options, encoded, *tile_encode_error)) {
+            return false;
+          }
+          out->tile_bytes = encoded.tile_bytes;
+          out->frame = std::move(encoded.frame);
+          out->recon_y = std::move(encoded.recon_y);
+          out->recon_u = std::move(encoded.recon_u);
+          out->recon_v = std::move(encoded.recon_v);
+          out->cdf_final = std::move(encoded.cdf_final);
+          return true;
+        };
+        tiled_ok = av2enc::still::tiles_stream::encode(
+            picture, tile_config, &tiled, &tile_error, gpu_tile_encoder);
+      } else
+#endif
+      {
+        tiled_ok = av2enc::still::tiles_stream::encode(
+            picture, tile_config, &tiled, &tile_error);
+      }
+      if (!tiled_ok) {
         return fail_encode("--tiles " + options.tiles + ": " + tile_error);
       }
       if (!write_unit(tiled.frame, 0, error)) {

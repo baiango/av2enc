@@ -3743,7 +3743,7 @@ class Encoder {
           mi.lossless = 0;
           // §7.17 deblock strength uses the block's effective qindex, which the
           // per-SB segmentation path changes.
-          mi.qindex = static_cast<std::uint8_t>(current_qindex_);
+          mi.qindex = static_cast<std::uint16_t>(current_qindex_);
           deblock_mi_[0][static_cast<std::size_t>(idx)] = mi;
         }
       }
@@ -3772,7 +3772,7 @@ class Encoder {
         mi.tx_row_base = static_cast<std::uint16_t>(chroma_mi_row);
         // §7.17 deblock strength uses the block's effective qindex, which the
         // per-SB segmentation path changes.
-        mi.qindex = static_cast<std::uint8_t>(current_qindex_);
+        mi.qindex = static_cast<std::uint16_t>(current_qindex_);
         deblock_mi_[1][static_cast<std::size_t>(idx)] = mi;
         deblock_mi_[2][static_cast<std::size_t>(idx)] = mi;
       }

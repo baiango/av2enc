@@ -4,6 +4,8 @@
 #include "pipeline/video/post/bit_depth_checklist.h"
 #include "pipeline/video/post/rc_adapter.h"
 
+#include "codec/filters/gdf/gdf_syntax.h"
+
 #include <algorithm>
 #include <cassert>
 #include <cstring>
@@ -80,9 +82,6 @@ bool validate_sequence_options(const VideoPostSequenceOptions& sequence,
     return fail(error, "m2 tiled: 12-bit is reserved in AV2 v1.0.0");
   }
   const auto& f = sequence.filters;
-  if (f.enable_gdf) {
-    return fail(error, "m2 tiled: GDF is not implemented");
-  }
   if (f.cdef_on_skip_txfm_always_on && f.cdef_on_skip_txfm_disabled) {
     return fail(error,
                 "m2 tiled: CDEF_ON_SKIP_TXFM cannot be both always-on and "
@@ -164,7 +163,7 @@ std::size_t write_sequence_header(const VideoConfig& c,
   writer.put_bit(false);  // enable_mrls
   writer.put_bit(c.enable_cfl_intra);  // enable_cfl_intra
   writer.put_bits(0U, 2U);             // cfl_ds_filter_index
-  writer.put_bit(false);               // enable_mhccp
+  writer.put_bit(c.enable_mhccp);      // enable_mhccp
   writer.put_bit(false);               // enable_ibp
 
   // §5.4.6 sequence_inter_config() for single_picture_header_flag = 0.
@@ -396,11 +395,6 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
                                   std::string* error) {
   if (!validate_sequence_options(sequence, error)) return false;
   if (!validate_layout(config, layout, error)) return false;
-  if (sequence.filters.enable_restoration) {
-    return fail(error,
-                "m2 tiled: loop restoration (Wiener) tile syntax is not "
-                "implemented in this layer");
-  }
 
   const int max_q = video_max_quantizer(sequence.depth);
   const int base_q_idx =
@@ -484,6 +478,46 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
     return fail(error, "m2 tiled: " + deblock_error);
   }
 
+  // gdf_params() (§5.18.7.9): after deblocking_filter_params(), before
+  // cdef_params().  Header-only mode (gdf_per_block = 0).
+  if (sequence.filters.enable_gdf) {
+    ::av2enc::filters::gdf::FrameGdfContext gdf_context;
+    gdf_context.enable_gdf = true;
+    gdf_context.gdf_unit_matches_sb_size =
+        sequence.filters.gdf_unit_matches_sb_size;
+    gdf_context.coded_lossless = false;
+    gdf_context.single_picture_header_flag = false;
+    gdf_context.sb_size = layout.sb_size;
+    gdf_context.width = layout.width;
+    gdf_context.height = layout.height;
+    const int sb_mi = layout.sb_size / 4;
+    gdf_context.mi_cols = 2 * ((layout.width + 7) >> 3);
+    gdf_context.mi_rows = 2 * ((layout.height + 7) >> 3);
+    gdf_context.disable_loopfilters_across_tiles =
+        sequence.filters.disable_loopfilters_across_tiles;
+    gdf_context.tile_cols = layout.cols;
+    gdf_context.tile_rows = layout.rows;
+    gdf_context.mi_col_starts.clear();
+    gdf_context.mi_row_starts.clear();
+    for (int sb : layout.col_starts_sb) {
+      gdf_context.mi_col_starts.push_back(sb * sb_mi);
+    }
+    for (int sb : layout.row_starts_sb) {
+      gdf_context.mi_row_starts.push_back(sb * sb_mi);
+    }
+    ::av2enc::filters::gdf::FrameGdfParams gdf_params;
+    gdf_params.frame_enable = header.gdf.enabled;
+    gdf_params.per_block = false;
+    gdf_params.pic_qc_idx = header.gdf.qc_idx;
+    gdf_params.pic_scale_idx = header.gdf.scale_idx;
+    std::string gdf_error;
+    ::av2enc::filters::gdf::WriteFrameGdfParams(writer, gdf_context,
+                                               &gdf_params, &gdf_error);
+    if (!gdf_error.empty()) {
+      return fail(error, "m2 tiled: gdf_params: " + gdf_error);
+    }
+  }
+
   // cdef_params() (§5.18.7.10).  With single_picture_header_flag = 0 the
   // frame-enable bit is present even for a keyframe.
   if (sequence.filters.enable_cdef) {
@@ -506,7 +540,47 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
     }
   }
 
-  // lr_params() would be here; restoration is rejected above.
+  // lr_params() (§5.18.7.11): between cdef_params() and ccso_params().
+  if (sequence.filters.enable_restoration) {
+    filters_stream::LrParams params;
+    for (int plane = 0; plane < 3; ++plane) {
+      params.frame_type[plane] =
+          header.lr.plane[plane].enabled ? filters_stream::kRestoreWienerNs
+                                         : filters_stream::kRestoreNone;
+      params.frame_filters_on[plane] = false;
+    }
+    params.num_filter_classes = 1;
+    params.num_filter_classes_idx = 0;
+    params.luma_shift = header.lr.luma_shift;
+    params.chroma_shift = header.lr.chroma_shift;
+    filters_stream::LrHeaderContext ctx;
+    ctx.coded_lossless = false;
+    ctx.enable_restoration = true;
+    ctx.single_picture_header_flag = false;
+    ctx.frame_is_intra = key;
+    ctx.sb_size = layout.sb_size;
+    ctx.num_planes = 3;
+    ctx.sub_x = 1;
+    ctx.sub_y = 1;
+    ctx.base_q_idx = base_q_idx;
+    ctx.lr_tools_disable[0][0] = false;
+    ctx.lr_tools_disable[0][1] = true;  // PC-Wiener disabled
+    ctx.lr_tools_disable[0][2] =
+        sequence.filters.lr_disable_luma_wiener_ns;
+    ctx.lr_tools_disable[0][3] = false;
+    ctx.lr_tools_disable[1][0] = false;
+    ctx.lr_tools_disable[1][1] = true;
+    ctx.lr_tools_disable[1][2] =
+        sequence.filters.lr_uv_present
+            ? sequence.filters.lr_disable_chroma_wiener_ns
+            : sequence.filters.lr_disable_luma_wiener_ns;
+    ctx.lr_tools_disable[1][3] = false;
+    std::string lr_error;
+    filters_stream::write_lr_params(writer, params, ctx, &lr_error);
+    if (!lr_error.empty()) {
+      return fail(error, "m2 tiled: lr_params: " + lr_error);
+    }
+  }
 
   // ccso_params() (§5.18.7.12).
   if (sequence.filters.enable_ccso) {
@@ -533,7 +607,7 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
     }
   }
 
-  writer.put_bit(false);  // tx_mode_select = 0 -> TX_MODE_LARGEST
+  writer.put_bit(header.tx_mode_select);  // 0 = LARGEST, 1 = SELECT
   if (!key) {
     writer.put_bit(false);  // reference_select
     writer.put_bit(false);  // skip_mode_present
@@ -543,6 +617,42 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
 
   if (bits != nullptr) *bits = writer.bit_size() - start;
   return true;
+}
+
+filters_stream::CdefParams make_tiled_cdef_params(const VideoCdefPlan& plan) {
+  filters_stream::CdefParams params;
+  params.frame_enable = plan.enabled;
+  params.damping_minus_3 = plan.damping - 3;
+  params.strengths_minus_1 = plan.num_strengths - 1;
+  params.num_strengths = plan.num_strengths;
+  params.on_skip_txfm_frame_enable = plan.on_skip_txfm;
+  for (int i = 0; i < plan.num_strengths && i < 8; ++i) {
+    params.set[i].y_pri = plan.strength[i].y_pri;
+    params.set[i].y_sec = plan.strength[i].y_sec;
+    params.set[i].uv_pri = plan.strength[i].uv_pri;
+    params.set[i].uv_sec = plan.strength[i].uv_sec;
+  }
+  return params;
+}
+
+filters_stream::CcsoParams make_tiled_ccso_params(
+    const VideoCcsoPlan& plan) {
+  filters_stream::CcsoParams params;
+  params.frame_flag = plan.enabled;
+  params.ccso_luma_size_log2 = plan.ccso_luma_size_log2;
+  for (int plane = 0; plane < 3; ++plane) {
+    filters_stream::CcsoPlaneParams& dst = params.plane[plane];
+    const VideoCcsoPlane& src = plan.plane[plane];
+    dst.enabled = src.enabled;
+    dst.bo_only = src.bo_only;
+    dst.scale_idx = src.scale_idx;
+    dst.quant_idx = src.quant_idx;
+    dst.ext_filter = src.ext_filter;
+    dst.edge_clf = src.edge_clf;
+    dst.max_band_log2 = src.max_band_log2;
+    dst.offset_idx = src.offset_idx;
+  }
+  return params;
 }
 
 bool split_video_blocks_for_tile(const tiles::TileLayout& layout, int tile_index,

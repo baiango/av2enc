@@ -9,7 +9,7 @@ Source clip: **[LG QNED 8K MiniLED │Shine 8K HDR 60fps](https://youtu.be/WEwgb
 > **Host: Apple M4 Mac mini, 10 cores, 16 GiB, macOS 26.6.2.**
 > AVM here is a **CPU encoder on the Mac**.
 > **These are not RTX 3060 target-speed numbers.** The product target host is an
-> RTX 3060 enumerating 8192 MiB (`sm_86`, `compat8g`); validate speed there with
+> RTX 3060 12 GB (`sm_86`); production speed is measured on the RTX 3080 Ti and
 > `tools/check_target_host.py`. Use this page only as a quality/bitrate anchor
 > and as a same-machine AVM speed reference.
 
@@ -90,7 +90,7 @@ Speed caveat: **no measured AVM point reaches 1 encode fps at 1080p on this M4.*
 The 10-frame sweep spans 0.349–0.705 fps; the 2-second QP 160 clip reaches
 0.812 fps. `score_tradeoff.py` with `--min-encode-fps 1.0 --source-fps 60`
 therefore reports the budget infeasible (see `qbs_1fps_10f.json`). These Mac
-timings cannot validate the ≥1 fps floor — only the 8192 MiB RTX 3060 can.
+timings cannot validate the ≥1 fps floor — only a real 3060/3080 Ti/5090 can.
 AVM is CPU-only on the Mac, so `peak_vram_mb` is not applicable here; it must be
 reported from our encoder's 3060 run.
 

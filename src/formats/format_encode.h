@@ -39,6 +39,9 @@ struct StillFormatOptions {
   BitDepth depth = BitDepth::k8;
   std::uint16_t base_q_idx = 90;
   std::filesystem::path recon_out;  // empty = do not dump
+  // §7.17 deblocking for the 10-bit product path (`--still-deblock`).  Off by
+  // default keeps every pinned format stream unchanged.
+  bool enable_deblock = false;
   HighBitDepthGpuEncoder high_bitdepth_gpu = nullptr;
   // Optional 8-bit chroma device block executor.  Same rationale: the CPU
   // core never references a CUDA symbol; the CLI installs it.

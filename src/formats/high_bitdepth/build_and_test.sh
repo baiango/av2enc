@@ -38,6 +38,7 @@ COMMON=(
   "${REPO}/src/pipeline/still/high_bitdepth/high_bitdepth_headers.cpp"
   "${REPO}/src/formats/format.cpp"
   "${REPO}/src/codec/transform/variants/tx_variants.cpp"
+  "${REPO}/src/codec/filters/deblock/deblock.cpp"
   "${REPO}/src/cuda/pipeline/still/hbd/hbd_cpu.cpp"
   "${REPO}/src/codec/entropy/av2/av2_entropy.cpp"
   "${REPO}/src/core/bitstream/bitwriter.cpp"

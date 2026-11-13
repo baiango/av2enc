@@ -342,17 +342,29 @@ __global__ void still_tx_kernel(const StillTxJob* __restrict__ jobs,
         // reference's per-coefficient expression order so the level is
         // bit-identical.  `ratio_scale` selects the non-delta-Q CPU order
         // (`qf * (528 / q)`, as apply_qindex_step() builds it) used by the
-        // per-superblock --still-per-segment-q path.
+        // per-superblock --still-per-segment-q path, or the combined order
+        // `(qf * (528 / step)) * step / q` used when that per-SB qindex runs
+        // together with the frame DC/AC deltas.
         const int dc_quant =
             deltaq::core::get_q(job.qindex, job.delta_dc);
         const int ac_quant =
             deltaq::core::get_q(job.qindex, job.delta_ac);
         const double scaled =
             __dmul_rn(p.quant_factor, static_cast<double>(kQuantStep));
+        const double pre =
+            job.ratio_scale == 2 && job.qscale_step > 0
+                ? __dmul_rn(p.quant_factor,
+                            __ddiv_rn(static_cast<double>(kQuantStep),
+                                      static_cast<double>(job.qscale_step)))
+                : 0.0;
         for (int i = 0; i < elems; ++i) {
           const int q = i == 0 ? dc_quant : ac_quant;
           double factor;
-          if (job.ratio_scale != 0) {
+          if (job.ratio_scale == 2 && job.qscale_step > 0) {
+            factor = __ddiv_rn(
+                __dmul_rn(pre, static_cast<double>(job.qscale_step)),
+                static_cast<double>(q));
+          } else if (job.ratio_scale != 0) {
             factor = __dmul_rn(
                 p.quant_factor,
                 __ddiv_rn(static_cast<double>(kQuantStep),

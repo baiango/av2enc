@@ -60,12 +60,14 @@ bool encode_10bit(const Picture& picture,
     // the same tile payload bytes as `av2enc::hbd::encode_still`.
     av2enc::high_bitdepth::HighBitDepthOptions gpu_options;
     gpu_options.base_q_idx = options.base_q_idx;
+    gpu_options.enable_deblock = options.enable_deblock;
     if (!options.high_bitdepth_gpu(picture, gpu_options, result, *error)) {
       return false;
     }
   } else {
     av2enc::hbd::HbdOptions hbd_options;
     hbd_options.base_q_idx = options.base_q_idx;
+    hbd_options.enable_deblock = options.enable_deblock;
     av2enc::hbd::HbdResult cpu_result;
     if (!av2enc::hbd::encode_still(picture, hbd_options, cpu_result, *error)) {
       return false;

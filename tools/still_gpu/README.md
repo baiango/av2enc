@@ -299,13 +299,13 @@ one warmup) because the box is shared with other agents.
 ## Hardware disclaimer
 
 The current box enumerates an **RTX 3060 with 12288 MiB**, compute capability
-8.6. The product target is the **8192 MiB** RTX 3060 (`sm_86`). The 12 GB card
+8.6. The development target is the **12 GB** RTX 3060 (`sm_86`); production is the RTX 3080 Ti.
 with a device-sized arena is a development/proxy configuration, not 8 GB
 validation (`docs/negative-results.md`, "Benchmark / hardware"). `bench.py`
 prints `WARNING: PROXY HARDWARE` whenever the name, memory size or compute
 capability differs from the target, and the gate does **not** claim the 1 fps
 video target — that stays unclaimed until video is wired and measured on an
-8192 MiB 3060.
+RTX 3060 12 GB / 3080 Ti.
 
 Kernel time from `nsys` includes profiler perturbation; use it for relative
 comparison, not as an absolute product number.

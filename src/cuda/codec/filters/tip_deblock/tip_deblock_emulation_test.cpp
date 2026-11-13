@@ -647,7 +647,7 @@ void test_sample_kernels() {
       FrameT<std::uint8_t> kernel_copy = a;
       av2enc::deblock::sample_filtering(
           copy.plane(0), copy.stride[0], x, y, q_thr, dx, dy,
-          std::min(width8, neg), std::min(width8, pos), 0, 0);
+          std::min(width8, neg), std::min(width8, pos), 0, 0, 8);
       ctd::tip_sample_filtering<std::uint8_t, 8>(
           kernel_copy.plane(0), kernel_copy.stride[0], x, y, q_thr, dx, dy,
           std::min(width8, neg), std::min(width8, pos), 0, 0);

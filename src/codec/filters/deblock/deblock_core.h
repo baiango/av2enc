@@ -133,8 +133,9 @@ struct DeblockMi {
   std::uint8_t lossless = 0;
   // Effective deblocking quantizer index for the cell: get_qindex(0, segment),
   // i.e. LumaQIndex / ChromaQIndex.  For M1 (no delta-Q, no segmentation) this
-  // is simply base_q_idx.
-  std::uint8_t qindex = 0;
+  // is simply base_q_idx.  Wider than 8 bits: MaxQ is 303 at 10-bit and 351 at
+  // 12-bit, and §7.17.6 clips against the bit depth's MaxQ.
+  std::uint16_t qindex = 0;
 };
 
 // Frame-level deblocking state.  Defaults are the M1 intra configuration.
@@ -155,16 +156,19 @@ struct DeblockOptions {
   int base_uv_ac_delta_q = 0;
   // DfDeltaQ[0..3]: luma pass 0 / luma pass 1 / U / V.
   int df_delta_q[4] = {0, 0, 0, 0};
-  // BitDepth; this component supports 8 only.
+  // BitDepth: 8, 10 or 12.  The sample storage type must match:
+  // `DeblockCoreFrame` (uint8_t) for 8-bit, `DeblockCoreFrame16` for 10/12-bit.
   int bit_depth = 8;
 };
 
 // Device/host-visible frame description.  All pointers refer to caller-owned
-// memory; the core never allocates or synchronises.
-struct DeblockCoreFrame {
+// memory; the core never allocates or synchronises.  Templated on the sample
+// container so the same §7.17 arithmetic drives 8-bit and 10/12-bit planes.
+template <typename Sample>
+struct DeblockCoreFrameT {
   // Plane sample pointers and strides (samples per row).  For 4:2:0 the chroma
   // planes are (mi_cols*4)>>sub_x wide and (mi_rows*4)>>sub_y high.
-  std::uint8_t* plane[3] = {nullptr, nullptr, nullptr};
+  Sample* plane[3] = {nullptr, nullptr, nullptr};
   int stride[3] = {0, 0, 0};
   // Per-plane metadata grids, each mi_cols*mi_rows entries, row-major.
   const DeblockMi* mi[3] = {nullptr, nullptr, nullptr};
@@ -178,7 +182,13 @@ struct DeblockCoreFrame {
   int num_tile_cols = 0;
   const std::uint16_t* tile_row_starts = nullptr;
   int num_tile_rows = 0;
+  // 3 for a chroma format, 1 for 4:0:0.  Planes at or above this count are
+  // never visited (their pointers may be null).
+  int num_planes = 3;
 };
+
+using DeblockCoreFrame = DeblockCoreFrameT<std::uint8_t>;
+using DeblockCoreFrame16 = DeblockCoreFrameT<std::uint16_t>;
 
 // Diagnostic result for one edge call.  Populated even when the edge is not
 // filtered, so tests and integration code can compare decisions.
@@ -268,6 +278,14 @@ AV2ENC_DEBLOCK_HD constexpr int clip3(int lo, int hi, int v) {
   return v < lo ? lo : (v > hi ? hi : v);
 }
 AV2ENC_DEBLOCK_HD constexpr int clip1_8(int v) { return clip3(0, 255, v); }
+// §4.8 Clip1 depends on BitDepth only.
+AV2ENC_DEBLOCK_HD constexpr int clip1(int v, int bit_depth) {
+  return clip3(0, (1 << bit_depth) - 1, v);
+}
+// §6.4.1 Table 6.3 MaxQ: 255 / 303 / 351 at 8 / 10 / 12-bit.
+AV2ENC_DEBLOCK_HD constexpr int max_q_for(int bit_depth) {
+  return bit_depth <= 8 ? 255 : (bit_depth == 10 ? 303 : 351);
+}
 AV2ENC_DEBLOCK_HD constexpr int round2(int x, int n) {
   return n == 0 ? x : ((x + (1 << (n - 1))) >> n);
 }
@@ -283,19 +301,19 @@ AV2ENC_DEBLOCK_HD int qlookup(int q) {
   return kAcQlookup[((q - 1) % 24) + 1] << ((q - 1) / 24);
 }
 
-AV2ENC_DEBLOCK_HD int get_q(int qindex, int delta) {
+AV2ENC_DEBLOCK_HD int get_q(int qindex, int delta, int max_q = kMaxQ) {
   if (qindex == 0 && delta <= 0) {
     return kAcQlookup[0];
   }
-  const int qc = clip3(1, kMaxQ, qindex + delta);
+  const int qc = clip3(1, max_q, qindex + delta);
   return qlookup(qc);
 }
 
-AV2ENC_DEBLOCK_HD int q_clamped(int qindex, int delta) {
+AV2ENC_DEBLOCK_HD int q_clamped(int qindex, int delta, int max_q = kMaxQ) {
   if (qindex == 0 && delta <= 0) {
     return 0;
   }
-  return clip3(1, kMaxQ, qindex + delta);
+  return clip3(1, max_q, qindex + delta);
 }
 
 // §7.17.6 adaptive filter strength selection.  Returns lvlSeg; also derives the
@@ -310,11 +328,12 @@ AV2ENC_DEBLOCK_HD void adaptive_filter_strength(const DeblockOptions& opts,
   } else if (plane == 2) {
     delta = opts.delta_q_v_ac + opts.base_uv_ac_delta_q;
   }
-  const int qc = q_clamped(qindex, delta);
+  const int max_q = max_q_for(opts.bit_depth);
+  const int qc = q_clamped(qindex, delta, max_q);
   const int i = (plane == 0) ? pass : (plane + 1);
   const int lvl = qc + kDfDeltaScale * opts.df_delta_q[i];
 
-  *q_thr = round2(get_q(lvl, 0), 3) >> 6;
+  *q_thr = round2(get_q(lvl, 0, max_q), 3) >> 6;
   const int q_ind =
       clip3(0, kMaxSideTable - 1, lvl - 24 * (opts.bit_depth - 8));
   *side = imax(kSideThresholds[q_ind] + (1 << (12 - opts.bit_depth)), 0) >>
@@ -378,20 +397,23 @@ AV2ENC_DEBLOCK_HD bool is_tile_start(const std::uint16_t* starts, int n,
 // ---------------------------------------------------------------------------
 // Pixel helpers.
 // ---------------------------------------------------------------------------
-AV2ENC_DEBLOCK_HD int sample_at(const std::uint8_t* plane, int stride, int x,
+template <typename Sample>
+AV2ENC_DEBLOCK_HD int sample_at(const Sample* plane, int stride, int x,
                                 int y) {
   return static_cast<int>(plane[static_cast<std::ptrdiff_t>(y) * stride + x]);
 }
 
-AV2ENC_DEBLOCK_HD void write_sample(std::uint8_t* plane, int stride, int x,
-                                    int y, int value) {
+template <typename Sample>
+AV2ENC_DEBLOCK_HD void write_sample(Sample* plane, int stride, int x, int y,
+                                    int value, int bit_depth) {
   plane[static_cast<std::ptrdiff_t>(y) * stride + x] =
-      static_cast<std::uint8_t>(clip1_8(value));
+      static_cast<Sample>(clip1(value, bit_depth));
 }
 
 // §7.17.7.2 filter choice.  Returns the chosen filter width (samples on each
 // side of the boundary, capped by maxWidthPos/maxWidthNeg), or 0.
-AV2ENC_DEBLOCK_HD int filter_choice(const std::uint8_t* plane, int stride,
+template <typename Sample>
+AV2ENC_DEBLOCK_HD int filter_choice(const Sample* plane, int stride,
                                     int x, int y, int q_thr, int side_thr,
                                     int dx, int dy, int max_width_neg,
                                     int max_width_pos) {
@@ -411,15 +433,15 @@ AV2ENC_DEBLOCK_HD int filter_choice(const std::uint8_t* plane, int stride,
 
   for (int dist = 0; dist < max_samples_pos; ++dist) {
     s[kOff + dist] =
-        sample_at(plane, stride, x + dist * dx, y + dist * dy);
+        sample_at<Sample>(plane, stride, x + dist * dx, y + dist * dy);
     t[kOff + dist] =
-        sample_at(plane, stride, x2 + dist * dx, y2 + dist * dy);
+        sample_at<Sample>(plane, stride, x2 + dist * dx, y2 + dist * dy);
   }
   for (int dist = 0; dist < max_samples_neg; ++dist) {
     s[kOff - dist - 1] =
-        sample_at(plane, stride, x - (dist + 1) * dx, y - (dist + 1) * dy);
+        sample_at<Sample>(plane, stride, x - (dist + 1) * dx, y - (dist + 1) * dy);
     t[kOff - dist - 1] =
-        sample_at(plane, stride, x2 - (dist + 1) * dx, y2 - (dist + 1) * dy);
+        sample_at<Sample>(plane, stride, x2 - (dist + 1) * dx, y2 - (dist + 1) * dy);
   }
 
   int second_deriv[4];  // indices -2..1 stored at second_deriv[dist + 2]
@@ -521,16 +543,17 @@ AV2ENC_DEBLOCK_HD int filter_choice(const std::uint8_t* plane, int stride,
 }
 
 // §7.17.7.1 sample filtering.
-AV2ENC_DEBLOCK_HD void sample_filtering(std::uint8_t* plane, int stride, int x,
+template <typename Sample>
+AV2ENC_DEBLOCK_HD void sample_filtering(Sample* plane, int stride, int x,
                                         int y, int q_thr, int dx, int dy,
                                         int max_width_neg, int max_width_pos,
-                                        int prev_lossless,
-                                        int curr_lossless) {
+                                        int prev_lossless, int curr_lossless,
+                                        int bit_depth) {
   const int width = imax(max_width_neg, max_width_pos);
-  const int q0 = sample_at(plane, stride, x, y);
-  const int q1 = sample_at(plane, stride, x + dx, y + dy);
-  const int p0 = sample_at(plane, stride, x - dx, y - dy);
-  const int p1 = sample_at(plane, stride, x - 2 * dx, y - 2 * dy);
+  const int q0 = sample_at<Sample>(plane, stride, x, y);
+  const int q1 = sample_at<Sample>(plane, stride, x + dx, y + dy);
+  const int p0 = sample_at<Sample>(plane, stride, x - dx, y - dy);
+  const int p1 = sample_at<Sample>(plane, stride, x - 2 * dx, y - 2 * dy);
 
   const int q_thr_clamp = q_thr * kQThreshMults[width - 1];
   int delta_m2 = p1 - q1 + 3 * (q0 - p0);
@@ -548,15 +571,17 @@ AV2ENC_DEBLOCK_HD void sample_filtering(std::uint8_t* plane, int stride, int x,
     const int qy = y + i * dy;
     const int qx = x + i * dx;
     if (!curr_lossless) {
-      write_sample(plane, stride, qx, qy,
-                   sample_at(plane, stride, qx, qy) - diff_pos);
+      write_sample<Sample>(plane, stride, qx, qy,
+                           sample_at<Sample>(plane, stride, qx, qy) - diff_pos,
+                           bit_depth);
     }
     if (i < max_width_neg && !prev_lossless) {
       const int pi = -i - 1;
       const int py = y + pi * dy;
       const int px = x + pi * dx;
-      write_sample(plane, stride, px, py,
-                   sample_at(plane, stride, px, py) + diff_neg);
+      write_sample<Sample>(plane, stride, px, py,
+                           sample_at<Sample>(plane, stride, px, py) + diff_neg,
+                           bit_depth);
     }
   }
 }
@@ -567,10 +592,10 @@ AV2ENC_DEBLOCK_HD void sample_filtering(std::uint8_t* plane, int stride, int x,
 // `Apply` selects between the modifying path and a pure inspection path used
 // by tests.  The function returns the decision metadata either way.
 // ---------------------------------------------------------------------------
-template <bool Apply>
+template <bool Apply, typename Sample>
 AV2ENC_DEBLOCK_HD DeblockEdgeInfo deblock_edge_core(
-    const DeblockCoreFrame& frame, const DeblockOptions& opts, int plane,
-    int pass, int row, int col) {
+    const DeblockCoreFrameT<Sample>& frame, const DeblockOptions& opts,
+    int plane, int pass, int row, int col) {
   DeblockEdgeInfo info{};
 
   const int sub_x = (plane != 0) ? frame.sub_x : 0;
@@ -749,11 +774,11 @@ AV2ENC_DEBLOCK_HD DeblockEdgeInfo deblock_edge_core(
   filter_max_width(plane, filter_size, info.sb_edge, &max_width_pos,
                    &max_width_neg);
 
-  std::uint8_t* data = frame.plane[plane];
+  Sample* data = frame.plane[plane];
   const int stride = frame.stride[plane];
   const int width =
-      filter_choice(data, stride, x_p, y_p, q_thr, side, dx, dy,
-                    max_width_neg, max_width_pos);
+      filter_choice<Sample>(data, stride, x_p, y_p, q_thr, side, dx, dy,
+                            max_width_neg, max_width_pos);
 
   info.filter_size = filter_size;
   info.max_width_pos = max_width_pos;
@@ -769,8 +794,9 @@ AV2ENC_DEBLOCK_HD DeblockEdgeInfo deblock_edge_core(
     const int neg = imin(width, max_width_neg);
     const int pos = imin(width, max_width_pos);
     for (int i = 0; i < kMiSize; ++i) {
-      sample_filtering(data, stride, x_p + dy * i, y_p + dx * i, q_thr, dx, dy,
-                       neg, pos, prev_lossless, curr_lossless);
+      sample_filtering<Sample>(data, stride, x_p + dy * i, y_p + dx * i, q_thr,
+                               dx, dy, neg, pos, prev_lossless, curr_lossless,
+                               opts.bit_depth);
     }
   }
   return info;
@@ -779,9 +805,10 @@ AV2ENC_DEBLOCK_HD DeblockEdgeInfo deblock_edge_core(
 // Full normative traversal for the CPU reference:
 //   for plane, for pass, for row, for col -> edge
 // (vertical boundaries precede horizontal boundaries within each plane).
-AV2ENC_DEBLOCK_HD void deblock_frame_core(const DeblockCoreFrame& frame,
+template <typename Sample>
+AV2ENC_DEBLOCK_HD void deblock_frame_core(const DeblockCoreFrameT<Sample>& frame,
                                           const DeblockOptions& opts) {
-  for (int plane = 0; plane < 3; ++plane) {
+  for (int plane = 0; plane < frame.num_planes; ++plane) {
     const int row_step = (plane == 0) ? 1 : (1 << frame.sub_y);
     const int col_step = (plane == 0) ? 1 : (1 << frame.sub_x);
     for (int pass = 0; pass < 2; ++pass) {
@@ -791,7 +818,8 @@ AV2ENC_DEBLOCK_HD void deblock_frame_core(const DeblockCoreFrame& frame,
       }
       for (int row = 0; row < frame.mi_rows; row += row_step) {
         for (int col = 0; col < frame.mi_cols; col += col_step) {
-          (void)deblock_edge_core<true>(frame, opts, plane, pass, row, col);
+          (void)deblock_edge_core<true, Sample>(frame, opts, plane, pass, row,
+                                                col);
         }
       }
     }

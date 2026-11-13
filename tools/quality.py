@@ -346,10 +346,14 @@ def main() -> int:
         jod, ver = run_cvvdp(ref_n, test_n)
 
         host = host_info()
-        target_mem = 8192
+        target_mem = host.get("gpu_memory_mib")
+        target_cc = str(host.get("gpu_compute_cap", "")).strip()
         is_target = (
-            host.get("gpu_memory_mib") == target_mem
-            and str(host.get("gpu_compute_cap", "")).strip() == "8.6"
+            target_mem == 12288 and target_cc == "8.6"
+        ) or (
+            isinstance(target_mem, int)
+            and target_mem >= 30000
+            and target_cc == "12.0"
         )
 
         report = {
@@ -366,7 +370,7 @@ def main() -> int:
             "host": host,
             "target_host": {
                 "gpu_memory_mib": target_mem,
-                "compute_cap": "8.6",
+                "compute_cap": target_cc,
                 "is_target": is_target,
             },
         }

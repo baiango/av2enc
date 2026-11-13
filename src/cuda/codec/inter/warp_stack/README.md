@@ -2,7 +2,7 @@
 
 CUDA side of `src/encoder/inter/warp_stack/` and the warp half of
 `src/encoder/inter/advanced/`. Product target is Linux + CUDA `sm_86` (8 GB
-Ampere); `sm_89` / `sm_120` are secondary. This directory is component code and
+Ampere); `sm_120` targets the RTX 5090. This directory is component code and
 does not edit the CPU builder, the root CMake build or the encoder path.
 
 ## What is implemented
@@ -203,7 +203,7 @@ Or, explicitly on the Linux box:
 ```sh
 cd /workspace/av2enc/src/cuda/warp_stack
 ./build_gpu_test.sh                 # sm_86
-ARCH=sm_120 ./build_gpu_test.sh     # RTX 5070 smoke
+ARCH=sm_120 ./build_gpu_test.sh     # RTX 5090 smoke
 ```
 
 ## Rules followed

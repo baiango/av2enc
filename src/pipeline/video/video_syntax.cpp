@@ -9,14 +9,18 @@
 #include "codec/inter/mv_precision/mv_precision.h"
 #include "codec/inter/drl_reorder/video_stack_adapter.h"
 #include "codec/filters/stream/filters_stream.h"
+#include "codec/filters/pc_wiener/pc_wiener_stream.h"
 
 #include "pipeline/still/basic_cdf_tables.h"
 #include "pipeline/still/basic_tables.h"
 #include "pipeline/still/still_cdf_tables.h"
 #include "pipeline/still/still_tables.h"
 #include "codec/entropy/qctx/qctx.h"
+#include "codec/intra/cfl/mhccp/mhccp.h"
+#include "codec/intra/cfl/mhccp/mhccp_syntax.h"
 #include "pipeline/video/video_cdf_tables.h"
 #include "codec/inter/multiref/gate/compound_cdf_tables.h"
+#include "codec/inter/multiref/compound_predict.h"
 #include "codec/partition/tree/partition.h"
 #include "codec/transform/inter_residual/inter_tx_type.h"
 #include "codec/transform/tx_partition/tx_partition.h"
@@ -200,6 +204,8 @@ struct CdfState {
   std::uint16_t cfl_index[3];
   std::uint16_t cfl_sign[9];
   std::uint16_t cfl_alpha[6][9];
+  // §5.20.7.32 cfl_mhccp / cfl_mh_dir CDFs (MHCCP).
+  cfl::mhccp::CflCdfs mh_cdfs;
   std::uint16_t txb_skip[2][5][10][3];
   std::uint16_t v_txb_skip[12][3];
   std::uint16_t eob_pt_1024[3][9];
@@ -228,6 +234,11 @@ struct CdfState {
 
   // Inter block layer (§8.3.2 CDF selection).
   std::uint16_t single_mode[5][4];
+  // §5.20.7.6 BAWP symbols (--video-bawp).
+  std::uint16_t use_bawp[3];
+  std::uint16_t use_bawp_chroma[3];
+  std::uint16_t explicit_bawp[3][3];
+  std::uint16_t explicit_bawp_scale[3];
   std::uint16_t skip[6][3];
   std::uint16_t skip_mode[3][3];
   std::uint16_t is_inter[4][3];
@@ -242,11 +253,24 @@ struct CdfState {
   std::uint16_t offset_other[16][3];
   std::uint16_t col_mv_greater[2][3];
   std::uint16_t col_mv_index[4][3];
+  // TIP tile-block layer (§5.20.7.10, §9.3).  Selected only when a block
+  // signals RefFrame[0] == TIP_FRAME (TIP_FRAME_AS_REF); the AS_OUTPUT frames
+  // of --video-tip code no tile, but the state is part of the shared CDF image.
+  std::uint16_t tip_mode[3][3];
+  std::uint16_t tip_drl_mode[3][3];
+  std::uint16_t tip_pred_mode[3];
 
   // Compound block layer (§5.20.7.10 / §5.20.7.6).
   std::uint16_t comp_mode[5][3];
   std::uint16_t is_joint[2][3];
   std::uint16_t compound_mode_non_joint[5][6];
+  // §5.20.7.16 masked compound (enable_masked_compound = 1).
+  std::uint16_t comp_group_idx[12][3];
+  std::uint16_t compound_type[3];
+  std::uint16_t wedge_quad[5];
+  std::uint16_t wedge_angle[4][6];
+  std::uint16_t wedge_dist1[5];
+  std::uint16_t wedge_dist2[4];
 
   // Inter residual luma transform-type symbols (§5.20.8.2).
   std::uint16_t inter_tx_type_set1[3][2][3];
@@ -287,6 +311,7 @@ void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.cfl_index, kCflIndexCdf);
   copy_array(c.cfl_sign, kCflSignCdf);
   copy_array(c.cfl_alpha, kCflAlphaCdf);
+  c.mh_cdfs.init();
   copy_array(c.txb_skip, *q.txb_skip);
   copy_array(c.v_txb_skip, *q.v_txb_skip);
   copy_array(c.eob_pt_1024, *q.eob_pt_1024);
@@ -313,6 +338,10 @@ void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.intra_tx_type_long, kIntraTxTypeLongCdf);
   copy_array(c.is_long_side_dct, kIsLongSideDctCdf);
   copy_array(c.single_mode, kSingleModeCdf);
+  copy_array(c.use_bawp, kUseBawpCdf);
+  copy_array(c.use_bawp_chroma, kUseBawpChromaCdf);
+  copy_array(c.explicit_bawp, kExplicitBawpCdf);
+  copy_array(c.explicit_bawp_scale, kExplicitBawpScaleCdf);
   copy_array(c.skip, kSkipCdf);
   copy_array(c.skip_mode, kSkipModeCdf);
   copy_array(c.is_inter, kIsInterCdf);
@@ -322,6 +351,12 @@ void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.is_joint, multiref::gate::kIsJointCdf);
   copy_array(c.compound_mode_non_joint,
              multiref::gate::kCompoundModeNonJointCdf);
+  copy_array(c.comp_group_idx, multiref::gate::kCompGroupIdxCdf);
+  copy_array(c.compound_type, multiref::gate::kCompoundTypeCdf);
+  copy_array(c.wedge_quad, multiref::gate::kWedgeQuadCdf);
+  copy_array(c.wedge_angle, multiref::gate::kWedgeAngleCdf);
+  copy_array(c.wedge_dist1, multiref::gate::kWedgeDist1Cdf);
+  copy_array(c.wedge_dist2, multiref::gate::kWedgeDist2Cdf);
   copy_array(c.shell_set, kJointShellSetCdf);
   copy_array(c.shell6_class0, kJointShell6Class0Cdf);
   copy_array(c.shell6_class1, kJointShell6Class1Cdf);
@@ -329,6 +364,9 @@ void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.offset_low, kShellOffsetLowClassCdf);
   copy_array(c.offset_class2, kShellOffsetClass2Cdf);
   copy_array(c.offset_other, kShellOffsetOtherClassCdf);
+  copy_array(c.tip_mode, kTipModeCdf);
+  copy_array(c.tip_drl_mode, kTipDrlModeCdf);
+  copy_array(c.tip_pred_mode, kTipPredModeCdf);
   copy_array(c.col_mv_greater, kColMvGreaterCdf);
   copy_array(c.col_mv_index, kColMvIndexCdf);
   copy_array(c.inter_tx_type_set1, kInterTxTypeSet1Cdf);
@@ -412,6 +450,10 @@ const std::vector<CdfArrayDesc>& cdf_arrays() {
     AV2ENC_ADD_CDF(intra_tx_type_long, 4);
     AV2ENC_ADD_CDF(is_long_side_dct, 2);
     AV2ENC_ADD_CDF(single_mode, 3);
+    AV2ENC_ADD_CDF(use_bawp, 2);
+    AV2ENC_ADD_CDF(use_bawp_chroma, 2);
+    AV2ENC_ADD_CDF(explicit_bawp, 2);
+    AV2ENC_ADD_CDF(explicit_bawp_scale, 2);
     AV2ENC_ADD_CDF(skip, 2);
     AV2ENC_ADD_CDF(skip_mode, 2);
     AV2ENC_ADD_CDF(is_inter, 2);
@@ -463,6 +505,14 @@ const std::vector<CdfArrayDesc>& cdf_arrays() {
         sizeof(probe.mv_precision.col_mv_index), 2);
     add(probe.mv_precision.shell_class,
         sizeof(probe.mv_precision.shell_class), 8);
+    // §5.20.6.3 TX-partition CDFs.  They adapt per tile and must ride the
+    // §8.2.4 average-CDF bank like every other tile CDF; omitting them made
+    // --video-tx-search + --avg-cdf/--adaptive-cdf desynchronise the second
+    // tile/frame.
+    AV2ENC_ADD_CDF(tx_partition.tx_do_partition, 2);
+    AV2ENC_ADD_CDF(tx_partition.tx_partition_type, 7);
+    AV2ENC_ADD_CDF(tx_partition.tx_partition_type_reduced, 7);
+    AV2ENC_ADD_CDF(tx_partition.tx_2or3_partition_type, 2);
 #undef AV2ENC_ADD_CDF
     return out;
   }();
@@ -549,11 +599,23 @@ class Writer {
     geometry_.width = plan.width;
     geometry_.height = plan.height;
     geometry_.sb_size = plan.sb_size;
-    geometry_.has_chroma = true;
-    geometry_.chroma_subsampling_x = true;
-    geometry_.chroma_subsampling_y = true;
+    // The M2 8-bit 4:2:0 default keeps the historical geometry.  The format
+    // path (10-bit / 4:2:2 / 4:4:4 / 4:0:0) carries its chroma layout in the
+    // sequence header config.
+    chroma_ = config_.chroma;
+    depth_ = config_.depth;
+    has_chroma_ = fmt::has_chroma(chroma_);
+    sub_x_ = fmt::subsampling_x(chroma_);
+    sub_y_ = fmt::subsampling_y(chroma_);
+    geometry_.has_chroma = has_chroma_;
+    geometry_.chroma_subsampling_x = sub_x_ != 0;
+    geometry_.chroma_subsampling_y = sub_y_ != 0;
     mi_cols_ = partition::mi_cols(geometry_);
     mi_rows_ = partition::mi_rows(geometry_);
+    frame_mi_cols_ = plan_.frame_mi_cols > 0 ? plan_.frame_mi_cols : mi_cols_;
+    frame_mi_rows_ = plan_.frame_mi_rows > 0 ? plan_.frame_mi_rows : mi_rows_;
+    tile_mi_row_ = plan_.tile_mi_row;
+    tile_mi_col_ = plan_.tile_mi_col;
 
     init_cdfs(cdfs_,
               qctx::slice_for_base_q_idx(static_cast<int>(config_.base_q_idx)),
@@ -570,18 +632,19 @@ class Writer {
     intra_joint_.assign(
         static_cast<std::size_t>(mi_rows_) * static_cast<std::size_t>(mi_cols_),
         0);
-    uvcfl_.assign(static_cast<std::size_t>(mi_rows_ / 2) *
-                      static_cast<std::size_t>(mi_cols_ / 2),
+    uvcfl_.assign(static_cast<std::size_t>(chroma_mi_rows()) *
+                      static_cast<std::size_t>(chroma_mi_cols()),
                   0);
     const std::size_t mi_cells = static_cast<std::size_t>(mi_rows_) *
                                  static_cast<std::size_t>(mi_cols_);
     is_inter_grid_.assign(mi_cells, 0);
     skip_grid_.assign(mi_cells, 0);
     ymode_grid_.assign(mi_cells, 0);
+    comp_group_grid_.assign(mi_cells, 0);
     mv_grid_.assign(mi_cells, inter::mc::MiInfo{});
     for (int plane = 0; plane < kPlaneCount; ++plane) {
-      const int n = (plane == 0 ? mi_cols_ : mi_cols_ / 2) + 16;
-      const int m = (plane == 0 ? mi_rows_ : mi_rows_ / 2) + 16;
+      const int n = (plane == 0 ? mi_cols_ : chroma_mi_cols()) + 16;
+      const int m = (plane == 0 ? mi_rows_ : chroma_mi_rows()) + 16;
       above_level_[plane].assign(static_cast<std::size_t>(n), 0);
       left_level_[plane].assign(static_cast<std::size_t>(m), 0);
       above_dc_[plane].assign(static_cast<std::size_t>(n), 0);
@@ -607,7 +670,61 @@ class Writer {
       return false;
     }
     const bool lr_active = filters_ != nullptr && filters_->lr.enabled;
-    if (lr_active) {
+    if (lr_active && filters_->lr.pc_wiener) {
+      // §5.20.10.4 with FrameRestorationType[0] = RESTORE_PC_WIENER: the luma
+      // units code only use_pc_wiener; chroma Wiener NS keeps the shared
+      // filters_stream writer (its plane-0 state is RESTORE_NONE so it codes
+      // no luma bits).
+      namespace pcw = ::av2enc::filters::pc_wiener_stream;
+      pcw::LrParams pc_params;
+      pc_params.frame_type[0] = pcw::kRestorePcWiener;
+      pc_params.frame_type[1] = pcw::kRestoreNone;
+      pc_params.frame_type[2] = pcw::kRestoreNone;
+      pc_params.luma_shift = filters_->lr.plane[0].shift;
+      pc_params.chroma_shift = filters_->lr.chroma_shift;
+      pc_ready_ = pcw::InitTileState(&pc_state_, pc_params, mi_cols_, mi_rows_,
+                                     /*sub_x=*/1, /*sub_y=*/1, &error);
+      if (!pc_ready_) return false;
+      pc_state_.unit_type[0] = filters_->lr.plane[0].unit_type;
+      const bool chroma_lr = filters_->lr.plane[1].enabled ||
+                             filters_->lr.plane[2].enabled;
+      if (chroma_lr) {
+        filters_stream::LrParams params;
+        params.frame_type[0] = filters_stream::kRestoreNone;
+        for (int plane = 1; plane < 3; ++plane) {
+          params.frame_type[plane] = filters_->lr.plane[plane].enabled
+                                         ? filters_stream::kRestoreWienerNs
+                                         : filters_stream::kRestoreNone;
+          params.frame_filters_on[plane] = false;
+        }
+        params.frame_filters_on[0] = false;
+        params.num_filter_classes = 1;
+        params.num_filter_classes_idx = 0;
+        params.luma_shift = filters_->lr.luma_shift;
+        params.chroma_shift = filters_->lr.chroma_shift;
+        if (!filters_stream::lr_state_init(&lr_state_, params, mi_cols_,
+                                           mi_rows_, 1, 1, plan_.sb_size,
+                                           &error)) {
+          return false;
+        }
+        for (int plane = 1; plane < 3; ++plane) {
+          const post::VideoLrPlane& src = filters_->lr.plane[plane];
+          if (!src.enabled) continue;
+          if (static_cast<int>(lr_state_.unit_type[plane].size()) !=
+                  src.unit_rows * src.unit_cols ||
+              static_cast<int>(lr_state_.unit_coeffs[plane].size()) !=
+                  src.unit_rows * src.unit_cols *
+                      static_cast<int>(
+                          ::av2enc::restoration::kWienerNsCoeffStride)) {
+            error = "video LR: unit grid does not match the plan";
+            return false;
+          }
+          lr_state_.unit_type[plane] = src.unit_type;
+          lr_state_.unit_coeffs[plane] = src.unit_coeffs;
+        }
+        lr_chroma_ready_ = true;
+      }
+    } else if (lr_active) {
       filters_stream::LrParams params;
       for (int plane = 0; plane < 3; ++plane) {
         params.frame_type[plane] =
@@ -630,17 +747,49 @@ class Writer {
         const post::VideoLrPlane& src = filters_->lr.plane[plane];
         if (!src.enabled) continue;
         if (static_cast<int>(lr_state_.unit_type[plane].size()) !=
-                src.unit_rows * src.unit_cols ||
+                lr_state_.unit_rows[plane] * lr_state_.unit_cols[plane] ||
             static_cast<int>(lr_state_.unit_coeffs[plane].size()) !=
-                src.unit_rows * src.unit_cols *
+                lr_state_.unit_rows[plane] * lr_state_.unit_cols[plane] *
                     static_cast<int>(
                         ::av2enc::restoration::kWienerNsCoeffStride)) {
-          error = "video LR: unit grid does not match the plan";
+          error = "video LR: unit grid does not match the tile";
           return false;
         }
-        lr_state_.unit_type[plane] = src.unit_type;
-        lr_state_.unit_coeffs[plane] = src.unit_coeffs;
+        // The plan is frame-level; copy the units that overlap this tile into
+        // the tile-local state, translated by the tile's unit origin.
+        const int sub_x = plane == 0 ? 0 : 1;
+        const int sub_y = plane == 0 ? 0 : 1;
+        const int unit_size = lr_state_.unit_size[plane];
+        const int row_off =
+            (tile_mi_row_ * 4 >> sub_y) / std::max(1, unit_size);
+        const int col_off =
+            (tile_mi_col_ * 4 >> sub_x) / std::max(1, unit_size);
+        const int coeff_stride =
+            static_cast<int>(::av2enc::restoration::kWienerNsCoeffStride);
+        for (int r = 0; r < lr_state_.unit_rows[plane]; ++r) {
+          const int fr = r + row_off;
+          if (fr < 0 || fr >= src.unit_rows) continue;
+          for (int c = 0; c < lr_state_.unit_cols[plane]; ++c) {
+            const int fc = c + col_off;
+            if (fc < 0 || fc >= src.unit_cols) continue;
+            const std::size_t dst =
+                static_cast<std::size_t>(r) *
+                    static_cast<std::size_t>(lr_state_.unit_cols[plane]) +
+                static_cast<std::size_t>(c);
+            const std::size_t from =
+                static_cast<std::size_t>(fr) *
+                    static_cast<std::size_t>(src.unit_cols) +
+                static_cast<std::size_t>(fc);
+            lr_state_.unit_type[plane][dst] = src.unit_type[from];
+            std::copy_n(src.unit_coeffs.begin() +
+                            static_cast<std::ptrdiff_t>(from * coeff_stride),
+                        coeff_stride,
+                        lr_state_.unit_coeffs[plane].begin() +
+                            static_cast<std::ptrdiff_t>(dst * coeff_stride));
+          }
+        }
       }
+      lr_chroma_ready_ = true;
     }
     const bool ccso_active = filters_ != nullptr && filters_->ccso.enabled;
     if (ccso_active) {
@@ -1087,9 +1236,9 @@ class Writer {
 
   // is_cfl context: neighbouring chroma CfL flags (§8.3.x).
   int cfl_context() const {
-    const int cr = cur_r_ / 2;
-    const int cc = cur_c_ / 2;
-    const int cmi_cols = mi_cols_ / 2;
+    const int cr = cur_r_ >> sub_y_;
+    const int cc = cur_c_ >> sub_x_;
+    const int cmi_cols = chroma_mi_cols();
     int ctx = 0;
     if (cr > 0 && cc < cmi_cols &&
         uvcfl_[static_cast<std::size_t>(cr - 1) *
@@ -1097,7 +1246,7 @@ class Writer {
                static_cast<std::size_t>(cc)] != 0) {
       ++ctx;
     }
-    if (cc > 0 && cr < mi_rows_ / 2 &&
+    if (cc > 0 && cr < chroma_mi_rows() &&
         uvcfl_[static_cast<std::size_t>(cr) *
                    static_cast<std::size_t>(cmi_cols) +
                static_cast<std::size_t>(cc - 1)] != 0) {
@@ -1106,12 +1255,49 @@ class Writer {
     return ctx;
   }
 
-  bool code_uv_mode(bool is_cfl, int uv_mode, int y_mode) {
+  bool code_uv_mode(const BlockSyntax& node, int cw, int ch) {
+    const bool is_cfl = (node.flags & kFlagIsCfl) != 0;
+    const int uv_mode = node.uv_mode;
+    const int y_mode = node.y_mode;
     if (is_cfl) {
       // is_cfl derives its context from neighbouring chroma CfL flags.
       if (!sym(&cdfs_.is_cfl[cfl_context()][0], 2, 1)) return false;
-      // CFL_DERIVED_ALPHA = 1.
-      return sym(&cdfs_.cfl_index[0], 2, 1);
+      if (config_.enable_mhccp) {
+        // §5.20.7.32 with MHCCP: cfl_mhccp, cfl_index, cfl_mh_dir and the
+        // explicit alpha symbols all live in the gated adapter.
+        const bool mhccp_allowed = cfl::mhccp::allowed(
+            cw, ch, config_.enable_mhccp, /*is_chroma_part=*/false,
+            /*frame_is_intra=*/true, /*cfl_allowed_in_sdp=*/false,
+            /*lossless=*/false);
+        if (node.cfl_index == 2 && !mhccp_allowed) {
+          error_ = "CFL_MULTI signalled for a block where MHCCP is not allowed";
+          return false;
+        }
+        cfl::mhccp::CflSyntax syntax;
+        syntax.cfl_mhccp = node.cfl_index == 2 ? 1 : 0;
+        syntax.cfl_index = node.cfl_index;
+        syntax.cfl_mh_dir = node.cfl_mh_dir;
+        syntax.cfl_alpha_signs = node.cfl_alpha_signs;
+        syntax.cfl_alpha_u = node.cfl_alpha_u;
+        syntax.cfl_alpha_v = node.cfl_alpha_v;
+        std::string alpha_error;
+        // §8.3: TileCflMhDirCdf[Size_Group[MiSize]] uses the coding block.
+        const int mh_size_group =
+            node.bsize < 29 ? cfl::mhccp::kSizeGroup[node.bsize] : -1;
+        if (mh_size_group < 0) {
+          error_ = "invalid block size for the cfl_mh_dir context";
+          return false;
+        }
+        if (!cfl::mhccp::write_cfl_alphas(
+                enc_, cdfs_.mh_cdfs, syntax, config_.enable_cfl_intra,
+                mhccp_allowed, mh_size_group, &alpha_error)) {
+          error_ = "read_cfl_alphas: " + alpha_error;
+          return false;
+        }
+        return true;
+      }
+      // CFL_DERIVED_ALPHA = 1 (the non-MHCCP path).
+      return sym(&cdfs_.cfl_index[0], 2, node.cfl_index);
     }
     const int ctx = y_mode_is_directional(y_mode) ? 1 : 0;
     // is_cfl = 0 is only coded when CfL is allowed.
@@ -1393,12 +1579,12 @@ class Writer {
     }
     const int w4 = coded_w >> 2;
     const int h4 = coded_h >> 2;
-    const int sub_x = plane > 0 ? 1 : 0;
-    const int sub_y = plane > 0 ? 1 : 0;
+    const int sub_x = plane_sub_x(plane);
+    const int sub_y = plane_sub_y(plane);
     const int x4 = view.mi_col >> sub_x;
     const int y4 = view.mi_row >> sub_y;
-    const int max_x4 = plane == 0 ? mi_cols_ : mi_cols_ / 2;
-    const int max_y4 = plane == 0 ? mi_rows_ : mi_rows_ / 2;
+    const int max_x4 = plane == 0 ? mi_cols_ : chroma_mi_cols();
+    const int max_y4 = plane == 0 ? mi_rows_ : chroma_mi_rows();
 
     int ctx = 0;
     if (plane == 0) {
@@ -1736,6 +1922,18 @@ class Writer {
            static_cast<std::size_t>(c);
   }
 
+  // Chroma coded plane extents in 4x4 units.  The 4:2:0 default is exactly
+  // `mi_{cols,rows} / 2`; 4:2:2 halves only columns, 4:4:4 keeps both and
+  // 4:0:0 has no chroma.
+  int chroma_mi_cols() const {
+    return has_chroma_ ? (mi_cols_ >> sub_x_) : 0;
+  }
+  int chroma_mi_rows() const {
+    return has_chroma_ ? (mi_rows_ >> sub_y_) : 0;
+  }
+  int plane_sub_x(int plane) const { return plane == 0 ? 0 : sub_x_; }
+  int plane_sub_y(int plane) const { return plane == 0 ? 0 : sub_y_; }
+
   // add_neighbor() from decode_block(). NPosBuf keeps the first two valid
   // positions in the order below-left, above-right, left, above.
   int neighbor_positions(int pos[2][2]) const {
@@ -1816,6 +2014,42 @@ class Writer {
 
   bool code_single_mode(int ctx, int single_mode) {
     return sym(&cdfs_.single_mode[ctx][0], 3, single_mode);
+  }
+
+  // §5.20.7.6 use_bawp + §7.13.3.25 sub-flags.  The encoder codes the fitted
+  // form (explicit_bawp = 0); `use_bawp_chroma` is always 0 for this path.
+  bool code_bawp(const BlockSyntax& node) {
+    const int single_ctx =
+        node.inter_mode == kInterNearMv
+            ? 0
+            : (node.inter_mode == kInterNewMv ? 2 : 0);
+    if (!sym(&cdfs_.use_bawp[0], 2, node.use_bawp ? 1 : 0)) return false;
+    if (!node.use_bawp) {
+      if (node.explicit_bawp || node.explicit_bawp_scale ||
+          node.use_bawp_chroma) {
+        error_ = "BAWP sub-flags set while use_bawp is 0";
+        return false;
+      }
+      return true;
+    }
+    if (!sym(&cdfs_.explicit_bawp[single_ctx][0], 2,
+             node.explicit_bawp ? 1 : 0)) {
+      return false;
+    }
+    if (node.explicit_bawp) {
+      if (!sym(&cdfs_.explicit_bawp_scale[0], 2,
+               node.explicit_bawp_scale ? 1 : 0)) {
+        return false;
+      }
+    } else if (node.explicit_bawp_scale) {
+      error_ = "explicit_bawp_scale set while explicit_bawp is 0";
+      return false;
+    }
+    // HasChroma is always true in this 4:2:0 product path.
+    if (!sym(&cdfs_.use_bawp_chroma[0], 2, node.use_bawp_chroma ? 1 : 0)) {
+      return false;
+    }
+    return true;
   }
 
   int count_refs(int ref) const {
@@ -2023,6 +2257,45 @@ class Writer {
     return (same_side || d0 != d1) ? 1 : 0;
   }
 
+  // §7.8 FurthestFuture: the future reference (FrameDistance < 0) with the
+  // largest order hint.  With frame_distance = OrderHint - OrderHints[ref] the
+  // largest order hint is the largest (least negative) distance.
+  int furthest_future_ref() const {
+    int best = -1;
+    for (int ref = 0; ref < plan_.num_total_refs; ++ref) {
+      const int dist = plan_.frame_distance[static_cast<std::size_t>(ref)];
+      if (dist >= 0) continue;
+      if (best < 0 ||
+          dist > plan_.frame_distance[static_cast<std::size_t>(best)]) {
+        best = ref;
+      }
+    }
+    return best;
+  }
+
+  // §9.3 comp_group_idx context, matching the decoder's
+  // CompGroupIdxs/RefFrames neighbour scan.
+  int comp_group_context(int ref0, int ref1) const {
+    const int bck = std::abs(plan_.frame_distance[static_cast<std::size_t>(ref1)]);
+    const int fwd = std::abs(plan_.frame_distance[static_cast<std::size_t>(ref0)]);
+    const int offset = (fwd == bck) ? 1 : 0;
+    int pos[2][2] = {};
+    const int n = neighbor_positions(pos);
+    int ctxs[2] = {0, 0};
+    const int furthest = furthest_future_ref();
+    for (int i = 0; i < n && i < 2; ++i) {
+      const std::size_t idx = cell_index(pos[i][0], pos[i][1]);
+      const inter::mc::MiInfo& mi = mv_grid_[idx];
+      if (mi.ref[1] >= 0 && mi.ref[1] < 8) {
+        ctxs[i] = comp_group_grid_[idx] ? 1 : 0;
+      } else if (furthest >= 0 && mi.ref[0] == furthest) {
+        ctxs[i] = 2;
+      }
+    }
+    return ctxs[1] + ctxs[0] +
+           (std::min(ctxs[1], ctxs[0]) > 0 ? 1 : 0) + offset * 6;
+  }
+
   // §5.20.7.10 read_ref_frames() + §5.20.7.6 compound mode for the gated
   // subset: NumTotalRefs == 2 with num_same_ref_compound == 0, so the (0,1)
   // pair is implied and no comp_ref bit is coded.  The only signalled compound
@@ -2086,6 +2359,77 @@ class Writer {
     if (!sym(&cdfs_.compound_mode_non_joint[ctx][0], 5,
              node.compound_mode)) {
       error = error_;
+      return false;
+    }
+    // §5.20.7.16 read_compound_type().  With enable_masked_compound the
+    // comp_group_idx symbol is present for every compound block (0 = AVERAGE);
+    // a masked block then codes compound_type and the mask symbols.
+    if (plan_.enable_masked_compound) {
+      if (node.compound_masked && plan_.num_total_refs != 2) {
+        error = "masked compound is wired for two references";
+        return false;
+      }
+      if (!sym(&cdfs_.comp_group_idx[comp_group_context(0, 1)][0], 2,
+               node.compound_masked ? 1 : 0)) {
+        error = error_;
+        return false;
+      }
+      if (node.compound_masked) {
+        const bool wedge_ok = inter::adv::bsize_has_wedge(
+            static_cast<int>(node.bsize));
+        if (node.compound_type == 0) {
+          if (!wedge_ok) {
+            error = "wedge compound is not available for this block size";
+            return false;
+          }
+          if (!sym(&cdfs_.compound_type[0], 2, 0)) {
+            error = error_;
+            return false;
+          }
+          multiref::WedgeSyntax syntax;
+          if (!multiref::wedge_index_to_syntax(node.wedge_index, syntax)) {
+            error = "wedge index is not signalable";
+            return false;
+          }
+          if (!sym(&cdfs_.wedge_quad[0], 4, syntax.quad) ||
+              !sym(&cdfs_.wedge_angle[syntax.quad][0], 5, syntax.angle)) {
+            error = error_;
+            return false;
+          }
+          const int angle = syntax.quad * 5 + syntax.angle;
+          const bool dist2 = angle >= 10 || angle == 5 || angle == 0;
+          if (dist2) {
+            if (!sym(&cdfs_.wedge_dist2[0], 3, syntax.dist - 1)) {
+              error = error_;
+              return false;
+            }
+          } else if (!sym(&cdfs_.wedge_dist1[0], 4, syntax.dist)) {
+            error = error_;
+            return false;
+          }
+          if (!raw_bit(node.wedge_sign != 0)) {
+            error = error_;
+            return false;
+          }
+        } else if (node.compound_type == 1) {
+          if (!sym(&cdfs_.compound_type[0], 2, 1)) {
+            error = error_;
+            return false;
+          }
+          if (!raw_bit(node.mask_type != 0)) {
+            error = error_;
+            return false;
+          }
+        } else {
+          error = "invalid masked compound type";
+          return false;
+        }
+      } else if (node.compound_type != 0) {
+        error = "masked type without comp_group_idx";
+        return false;
+      }
+    } else if (node.compound_masked) {
+      error = "masked compound requires enable_masked_compound = 1";
       return false;
     }
     return true;
@@ -2239,6 +2583,21 @@ class Writer {
       error = error_;
       return false;
     }
+    // §5.20.7.6: use_bawp follows single_mode for a single-prediction block
+    // that is at least 8x8, not GLOBALMV, and not a switch frame.
+    const bool bawp_available =
+        plan_.allow_bawp && cur_w4_ * 4 >= 8 && cur_h4_ * 4 >= 8 &&
+        node.inter_mode != kInterGlobalMv;
+    if (bawp_available) {
+      if (!code_bawp(node)) {
+        error = error_;
+        return false;
+      }
+    } else if (node.use_bawp || node.explicit_bawp ||
+               node.use_bawp_chroma) {
+      error = "BAWP symbols set outside the §5.20.7.6 gate";
+      return false;
+    }
     if (node.inter_mode == kInterNearMv || node.inter_mode == kInterNewMv) {
       // §5.20.7.6: read_drl_idx() is present for both NEARMV and NEWMV.
       // M2 NEWMV always uses DRL index 0 (the predictor resolve_mode used).
@@ -2314,6 +2673,8 @@ class Writer {
         const std::size_t idx = cell_index(rr, cc);
         is_inter_grid_[idx] = node.is_inter ? 1 : 0;
         skip_grid_[idx] = node.skip_flag ? 1 : 0;
+        comp_group_grid_[idx] =
+            (node.compound && node.compound_masked) ? 1 : 0;
         ymode_grid_[idx] =
             node.is_inter
                 ? static_cast<std::uint8_t>(
@@ -2368,10 +2729,11 @@ class Writer {
       left_level(0, y4 + i) = 0;
       left_dc(0, y4 + i) = 0;
     }
-    const int cx4 = c >> 1;
-    const int cy4 = r >> 1;
-    const int cw4 = w4 >> 1;
-    const int ch4 = h4 >> 1;
+    if (!has_chroma_) return;
+    const int cx4 = c >> sub_x_;
+    const int cy4 = r >> sub_y_;
+    const int cw4 = w4 >> sub_x_;
+    const int ch4 = h4 >> sub_y_;
     for (int plane = 1; plane < kPlaneCount; ++plane) {
       for (int i = 0; i < cw4; ++i) {
         above_level(plane, cx4 + i) = 0;
@@ -2487,7 +2849,8 @@ class Writer {
     // chroma keeps the TX_MODE_LARGEST geometry.
     const int coded_w[kPlaneCount] = {w, cw, cw};
     const int coded_h[kPlaneCount] = {h, ch, ch};
-    for (int plane = plan_.tx_mode_select ? 1 : 0; plane < kPlaneCount;
+    const int plane_count = has_chroma_ ? kPlaneCount : 1;
+    for (int plane = plan_.tx_mode_select ? 1 : 0; plane < plane_count;
          ++plane) {
       const auto params_opt = txv::make_tx_params(
           static_cast<txv::TxSize>(node.tx_size[plane]),
@@ -2506,8 +2869,7 @@ class Writer {
       error = error_;
       return false;
     }
-    if (!code_uv_mode((node.flags & kFlagIsCfl) != 0, node.uv_mode,
-                      node.y_mode)) {
+    if (has_chroma_ && !code_uv_mode(node, cw, ch)) {
       error = error_;
       return false;
     }
@@ -2515,6 +2877,10 @@ class Writer {
     if (!code_luma_residual(node, w, h, levels_end, false, level_base,
                             error)) {
       return false;
+    }
+    if (!has_chroma_) {
+      if (error.empty() && !error_.empty()) error = error_;
+      return true;
     }
     level_base += luma_level_count(node);
     const TxView u_view{node.tx_size[1], node.tx_type[1],
@@ -2544,7 +2910,8 @@ class Writer {
                             int ch, std::string& error) {
     const int coded_w[kPlaneCount] = {w, cw, cw};
     const int coded_h[kPlaneCount] = {h, ch, ch};
-    for (int plane = plan_.tx_mode_select ? 1 : 0; plane < kPlaneCount;
+    const int plane_count = has_chroma_ ? kPlaneCount : 1;
+    for (int plane = plan_.tx_mode_select ? 1 : 0; plane < plane_count;
          ++plane) {
       const auto params_opt = txv::make_tx_params(
           static_cast<txv::TxSize>(node.tx_size[plane]),
@@ -2562,6 +2929,10 @@ class Writer {
     std::size_t level_base = node.levels_offset;
     if (!code_luma_residual(node, w, h, levels_end, true, level_base, error)) {
       return false;
+    }
+    if (!has_chroma_) {
+      if (error.empty() && !error_.empty()) error = error_;
+      return true;
     }
     level_base += luma_level_count(node);
     const TxView u_view{node.tx_size[1], node.tx_type[1],
@@ -2595,6 +2966,54 @@ class Writer {
   // a restoration unit.
   bool write_lr_superblock(const BlockSyntax& node, std::string& error) {
     if (filters_ == nullptr || !filters_->lr.enabled) return true;
+    if (filters_->lr.pc_wiener) {
+      // Luma PC-Wiener units first (plane order 0,1,2 in read_lr()).
+      if (!pc_ready_) return error.empty() ? true : false;
+      namespace pcw = ::av2enc::filters::pc_wiener_stream;
+      const post::VideoLrPlane& cfg = filters_->lr.plane[0];
+      if (cfg.enabled) {
+        const int unit_size = pc_state_.unit_size[0];
+        const int origin_x = node.mi_col * 4;
+        const int origin_y = node.mi_row * 4;
+        if (unit_size > 0 && origin_x % unit_size == 0 &&
+            origin_y % unit_size == 0) {
+          const int unit_row = origin_y / unit_size;
+          const int unit_col = origin_x / unit_size;
+          if (unit_row < cfg.unit_rows && unit_col < cfg.unit_cols) {
+            const std::size_t index =
+                static_cast<std::size_t>(unit_row) *
+                    static_cast<std::size_t>(cfg.unit_cols) +
+                static_cast<std::size_t>(unit_col);
+            if (index >= cfg.unit_type.size()) {
+              error = "PC-Wiener unit decision vector is too small";
+              return false;
+            }
+            pcw::UnitDecision decision;
+            decision.type = cfg.unit_type[index];
+            if (!pcw::WriteUnit(enc_, pc_state_, 0, unit_row, unit_col,
+                                decision, &error)) {
+              return false;
+            }
+          }
+        }
+      }
+      if (lr_chroma_ready_) {
+        std::vector<filters_stream::LrUnitDecision> decisions;
+        if (!filters_stream::lr_build_decisions(
+                lr_state_, node.mi_row, node.mi_col, /*w4=*/16, /*h4=*/16,
+                /*tile_mi_row_start=*/0, /*tile_mi_col_start=*/0, &decisions,
+                &error)) {
+          return false;
+        }
+        if (!filters_stream::lr_write_block(
+                enc_, lr_state_, node.mi_row, node.mi_col, /*w4=*/16,
+                /*h4=*/16, /*tile_mi_row_start=*/0, /*tile_mi_col_start=*/0,
+                decisions, &error)) {
+          return false;
+        }
+      }
+      return true;
+    }
     std::vector<filters_stream::LrUnitDecision> decisions;
     if (!filters_stream::lr_build_decisions(lr_state_, node.mi_row,
                                             node.mi_col, /*w4=*/16, /*h4=*/16,
@@ -2618,8 +3037,8 @@ class Writer {
         !filters_->cdef.on_skip_txfm) {
       return true;
     }
-    const int br = node.mi_row >> 4;
-    const int bc = node.mi_col >> 4;
+    const int br = (node.mi_row + tile_mi_row_) >> 4;
+    const int bc = (node.mi_col + tile_mi_col_) >> 4;
     if (br < 0 || bc < 0 || br >= filters_->cdef.n64_rows ||
         bc >= filters_->cdef.n64_cols) {
       error = "cdef_idx grid does not cover a coding block";
@@ -2646,8 +3065,8 @@ class Writer {
     for (int plane = 0; plane < 3; ++plane) {
       const post::VideoCcsoPlane& src = filters_->ccso.plane[plane];
       if (!src.enabled || shift < 0) continue;
-      const int row = node.mi_row >> shift;
-      const int col = node.mi_col >> shift;
+      const int row = (node.mi_row + tile_mi_row_) >> shift;
+      const int col = (node.mi_col + tile_mi_col_) >> shift;
       if (row < 0 || col < 0 || row >= src.blk_rows || col >= src.blk_cols) {
         continue;
       }
@@ -2675,14 +3094,21 @@ class Writer {
     cur_w4_ = w4;
     cur_h4_ = h4;
 
-    const BlockSize chroma_size =
-        partition::chroma_plane_residual_size(geometry_, size);
-    if (!partition::is_valid_block_size(chroma_size)) {
-      error = "invalid chroma residual size";
-      return false;
+    int cw = 0;
+    int ch = 0;
+    if (has_chroma_) {
+      // §5.20.7.26 get_plane_residual_size() via the Subsampled_Size table.
+      // `fmt::chroma_residual_size()` models 4:2:0/4:2:2/4:4:4; the 4:2:0
+      // values are the historical `block_width/2` pair.
+      const auto chroma_size =
+          fmt::chroma_residual_size(w, h, chroma_);
+      if (!chroma_size.has_value()) {
+        error = "invalid chroma residual size";
+        return false;
+      }
+      cw = fmt::block_width(*chroma_size);
+      ch = fmt::block_height(*chroma_size);
     }
-    const int cw = partition::block_width(chroma_size);
-    const int ch = partition::block_height(chroma_size);
 
     if (plan_.inter_frame) {
       if (!code_is_inter(node.is_inter != 0)) {
@@ -2753,19 +3179,20 @@ class Writer {
       }
     }
 
-    const int cr = r / 2;
-    const int cc0 = c / 2;
+    if (!has_chroma_) return true;
+    const int cr = r >> sub_y_;
+    const int cc0 = c >> sub_x_;
     const int cw4 = cw / 4;
     const int ch4 = ch / 4;
-    const int chroma_mi_rows = mi_rows_ / 2;
-    const int chroma_mi_cols = mi_cols_ / 2;
+    const int chroma_rows = chroma_mi_rows();
+    const int chroma_cols = chroma_mi_cols();
     const bool is_cfl = !node.is_inter && (node.flags & kFlagIsCfl) != 0;
     for (int yy = 0; yy < ch4; ++yy) {
       const int rr = cr + yy;
-      if (rr >= chroma_mi_rows) break;
+      if (rr >= chroma_rows) break;
       for (int xx = 0; xx < cw4; ++xx) {
         const int cc = cc0 + xx;
-        if (cc >= chroma_mi_cols) break;
+        if (cc >= chroma_cols) break;
         uvcfl(rr, cc) = is_cfl ? 1 : 0;
       }
     }
@@ -2782,8 +3209,21 @@ class Writer {
   const post::VideoFilterPlan* filters_ = nullptr;
   filters_stream::CdefTileState cdef_state_{};
   filters_stream::CcsoTileState ccso_state_{};
+  // Frame-level filter-plan geometry for a tile-local block list.
+  int frame_mi_cols_ = 0;
+  int frame_mi_rows_ = 0;
+  int tile_mi_row_ = 0;
+  int tile_mi_col_ = 0;
   filters_stream::LrState lr_state_{};
+  ::av2enc::filters::pc_wiener_stream::TileState pc_state_{};
+  bool pc_ready_ = false;
+  bool lr_chroma_ready_ = false;
   FrameGeometry geometry_;
+  fmt::ChromaFormat chroma_ = fmt::ChromaFormat::k420;
+  fmt::BitDepth depth_ = fmt::BitDepth::k8;
+  bool has_chroma_ = true;
+  int sub_x_ = 1;
+  int sub_y_ = 1;
   int mi_cols_ = 0;
   int mi_rows_ = 0;
 
@@ -2808,6 +3248,7 @@ class Writer {
   std::vector<std::uint8_t> is_inter_grid_;
   std::vector<std::uint8_t> skip_grid_;
   std::vector<std::uint8_t> ymode_grid_;
+  std::vector<std::uint8_t> comp_group_grid_;
   std::vector<inter::mc::MiInfo> mv_grid_;
 
   int cur_r_ = 0;
@@ -2861,10 +3302,6 @@ bool assemble_video_frame(const FramePlan& plan,
   }
   if (plan.width <= 0 || plan.height <= 0) {
     error = "empty frame plan";
-    return false;
-  }
-  if ((plan.width & 1) != 0 || (plan.height & 1) != 0) {
-    error = "M2 4:2:0 requires even dimensions";
     return false;
   }
   if ((plan.width & 7) != 0 || (plan.height & 7) != 0) {

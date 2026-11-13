@@ -497,7 +497,8 @@ bool core_header_parity(const Config& config, std::string* error) {
   return true;
 }
 
-bool encode(const StillPicture& source, const Config& config, Frame* frame, std::string* error) {
+bool encode(const StillPicture& source, const Config& config, Frame* frame,
+            std::string* error, const TileEncoder& tile_encoder) {
   if (frame == nullptr || error == nullptr) return false;
   error->clear();
   *frame = Frame{};
@@ -659,8 +660,27 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame, std:
       options.cdf_seed = tile_image;
     }
 
+    // The CPU reference is the default tile encoder; a caller-supplied encoder
+    // (the GPU orchestrator) must return the same payload and reconstruction.
     StillResult result;
-    if (!av2enc::still::encode_still_picture(picture, options, result, *error)) {
+    TileEncodeOutput external;
+    const bool external_encoder = static_cast<bool>(tile_encoder);
+    if (external_encoder) {
+      if (!tile_encoder(picture, options,
+                        std::span<const std::uint16_t>(options.cdf_seed),
+                        &external, error)) {
+        *error =
+            "tile " + std::to_string(rect.index) + " encode failed: " + *error;
+        return false;
+      }
+      result.tile_bytes = external.tile_bytes;
+      result.frame = std::move(external.frame);
+      result.recon_y = std::move(external.recon_y);
+      result.recon_u = std::move(external.recon_u);
+      result.recon_v = std::move(external.recon_v);
+      result.cdf_final = std::move(external.cdf_final);
+    } else if (!av2enc::still::encode_still_picture(picture, options, result,
+                                                    *error)) {
       *error = "tile " + std::to_string(rect.index) + " encode failed: " + *error;
       return false;
     }

@@ -32,6 +32,13 @@ ARRAYS = [
     ("kShellOffsetLowClassCdf", "Default_Shell_Offset_Low_Class_Cdf"),
     ("kShellOffsetClass2Cdf", "Default_Shell_Offset_Class2_Cdf"),
     ("kShellOffsetOtherClassCdf", "Default_Shell_Offset_Other_Class_Cdf"),
+    # TIP tile-block symbols (§5.20.7.10): installed for the future
+    # TIP_FRAME_AS_REF writer.  TIP_FRAME_AS_OUTPUT frames code no tile and
+    # therefore select none of these, but the §9.3 defaults belong to the
+    # shared inter CDF state.
+    ("kTipModeCdf", "Default_Tip_Mode_Cdf"),
+    ("kTipDrlModeCdf", "Default_Tip_Drl_Mode_Cdf"),
+    ("kTipPredModeCdf", "Default_Tip_Pred_Mode_Cdf"),
     ("kColMvGreaterCdf", "Default_Col_Mv_Greater_Cdf"),
     ("kColMvIndexCdf", "Default_Col_Mv_Index_Cdf"),
     # Inter residual: transform-type symbols.  AV2 codes an inter TX_TYPE for

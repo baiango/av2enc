@@ -214,6 +214,18 @@ integrate later:
 The external gate does not need a core edit: `build_and_test.sh` compiles the
 module and the gate standalone.
 
+### CUDA block stage (`--lossless --still-gpu`)
+
+`Options::precomputed` accepts an array of `BlockCoding` (one per 8×8 luma
+block, raster order) produced by
+`cuda::still_lossless::compute_block_coding()`.  The writer then uses those
+modes and syntax levels instead of running `choose_plan()` and the forward
+transform; prediction, the §8.2 entropy write and the decoder-side inverse
+(and therefore the exactness check) are unchanged.  Note the reference's
+chroma search quirk that the device stage reproduces: its V/H candidates copy
+`best` and change only the DPCM flags, so the cost is evaluated with the
+incumbent `uv_mode` and the candidate mode is assigned after the comparison.
+
 ## Quality exactness
 
 For every gated lossless case the reconstruction is **0 LSB**:

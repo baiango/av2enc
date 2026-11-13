@@ -4,10 +4,12 @@
 
 | Item | Status |
 |---|---|
-| **Primary target** | **8 GB Ampere, sm_86** |
+| **Development target** | **RTX 3060 12 GB, sm_86** |
+| **Production target** | **RTX 3080 Ti 12 GB, sm_86** |
+| **Maximum-speed target** | **RTX 5090 32 GB, sm_120** |
 | **Dev box** | 12 GB RTX 3060, arena sized from the device |
 | 12 GB behaviour | **Not an 8 GB emulation; actual 8 GB hardware pending** |
-| RTX 5070 | Build/smoke only; not a performance target; runtime pending host |
+| RTX 4070 Super / RTX 5070 | Not targets |
 | 4 / 6 / 16 / 24 GB capacity profiles | Estimate-only; the encoder does not select one |
 | Turing sm_75 | Out of scope; not supported by the current sm_86;sm_120 fatbin |
 
@@ -231,5 +233,5 @@ cd /workspace/av2enc/bench/vram_config
 | 12 GB card acts like an 8 GB card | **12 GB emulation, actual 8 GB hardware pending** |
 | 8 GB SKU, 4/6/16/24 GB profiles | **Estimates only**; no such hardware tested |
 | Byte breakdowns / selector estimates | **Model estimates**, not allocations |
-| RTX 5070 | Build/smoke only; runtime pending host |
+| RTX 4070 Super / RTX 5070 | Not targets |
 | sm_75 Turing | Out of scope; unsupported |

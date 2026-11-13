@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "formats/format.h"
 #include "pipeline/video/post/video_loop_filters.h"
 
 namespace av2enc::video {
@@ -36,12 +37,22 @@ inline constexpr int kMaxNumRefFrames = 16;
 // type plans both stop at eight slots).
 inline constexpr int kMaxRefSlots = 8;
 
+// Pixel format of one sequence.  The default is the historical 8-bit 4:2:0
+// stream, which keeps every existing bitstream byte-identical.  Any other
+// format goes through the high-bit-depth / chroma video core
+// (`src/pipeline/video/hbd/`).
 struct VideoInputFrame {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
+  // 8-bit packed planes (used when `format.depth == BitDepth::k8`).
   std::span<const std::uint8_t> y;
   std::span<const std::uint8_t> u;
   std::span<const std::uint8_t> v;
+  // High-depth packed `uint16_t` planes, LSB-aligned, used for 10-bit.
+  std::span<const std::uint16_t> y16;
+  std::span<const std::uint16_t> u16;
+  std::span<const std::uint16_t> v16;
+  fmt::Format format{};
 };
 
 struct VideoReconFrame {
@@ -50,10 +61,20 @@ struct VideoReconFrame {
   std::vector<std::uint8_t> y;
   std::vector<std::uint8_t> u;
   std::vector<std::uint8_t> v;
+  // High-depth reconstruction planes for the format video core.
+  std::vector<std::uint16_t> y16;
+  std::vector<std::uint16_t> u16;
+  std::vector<std::uint16_t> v16;
+  fmt::Format format{};
 };
 
 struct VideoOptions {
-  std::uint8_t base_q_idx = 90;
+  // Pixel format.  `{k420, k8}` is the historical M2 core; every other
+  // combination is served by the format video core (10-bit / 4:2:2 / 4:4:4 /
+  // 4:0:0).  The CLI only sets it for verified formats.
+  fmt::Format format{};
+  // §5.18.6.1 base_q_idx.  MaxQ is 255 at 8-bit and 303 at 10-bit.
+  std::uint16_t base_q_idx = 90;
   // Optional per-frame base_q_idx (one entry per input frame). Empty keeps the
   // fixed `base_q_idx` for every frame, which is the default byte-identical
   // path. Used by the opt-in --rc crf/vbr path; the frame header and the
@@ -70,6 +91,18 @@ struct VideoOptions {
   // 61-candidate SSE search instead of the DC-only fallback.  Off by default so
   // the shipped streams stay byte-identical.  Chroma stays DC_PRED.
   bool enable_intra_full = false;
+  // Opt-in §7.13.5 CfL chroma decision (--video-cfl): the M1 still product's
+  // {DC, CfL} candidate set with derived alpha.  Off by default so every
+  // historical stream stays byte-identical.
+  bool enable_cfl = false;
+  // Opt-in §7.13.6–.8 MHCCP (--video-mhccp): signals enable_mhccp and searches
+  // the three CFL_MULTI directions after the derived-alpha hypothesis.  Needs
+  // enable_cfl; off keeps every historical stream byte-identical.
+  bool enable_mhccp = false;
+  // Opt-in §5.18.6.2 default-matrix QM (--video-qm): using_qmatrix = 1 with
+  // level 0 (the §9.4 default matrices, no user QM OBU).  The transform chain
+  // dequantizes with the per-coefficient q2, so reconstruction stays exact.
+  bool enable_qm = false;
   bool enable_newmv = true;
   bool enable_nearmv = true;
   bool force_global_mv = false;
@@ -122,6 +155,12 @@ struct VideoOptions {
   // Compound prediction (reference_select = 1).  Requires num_total_refs == 2;
   // the gated subset is non-joint GLOBAL_GLOBALMV with the AVERAGE blend.
   bool compound = false;
+  // Masked compound (§5.20.7.16 / §7.13.3.27-.30), gated behind `compound`.
+  // `compound_wedge` searches the 68x2 wedge masks; `compound_diffwtd`
+  // searches both difference-weight mask types.  Both default off so the
+  // historical AVERAGE-only streams stay byte-identical.
+  bool compound_wedge = false;
+  bool compound_diffwtd = false;
   // Frame MV precision: 0 = 1/8 pel, 1 = 1/4 pel, 2 = 1/2 pel.
   int mv_precision = 0;
   // Normative DRL reordering (§7.12.2.19).  Off = DRL_REORDER_DISABLED.
@@ -199,6 +238,17 @@ struct VideoOptions {
   // the projected §7.12.2.2 centre MV drives ordinary translational MC).
   bool enable_gme = false;
   bool enable_warp = false;
+  // §5.20.7.6 / §7.13.3.25 block adaptive weighted prediction (--video-bawp).
+  // Off keeps every historical stream byte-identical; when on, eligible
+  // single-prediction luma blocks evaluate the fitted BAWP predictor and code
+  // use_bawp.  Chroma BAWP is never signalled (use_bawp_chroma = 0).
+  bool enable_bawp = false;
+  // Opt-in TIP sequence (--video-tip, §7.10/§7.13.3.2).  Codes one future
+  // anchor P and the remaining pictures as TIP_FRAME_AS_OUTPUT frames that
+  // reference the anchor plus the previous picture.  Requires 3..8 frames, a
+  // single tile and none of the frame-type/loop-filter/CDF-chain modes; off
+  // keeps every existing stream byte-identical.
+  bool enable_tip = false;
   // Opt-in M2 loop filters (--video-cdef, ...).  All default off, so a default
   // stream is byte-identical.  They run on the reconstructed frame before it
   // becomes the output picture and the reference for later frames.
@@ -232,5 +282,14 @@ int resolved_num_ref_frames(const VideoOptions& options);
 bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                         const VideoOptions& options, VideoSequenceResult& result,
                         std::string& error);
+
+// Format video core dispatch (10-bit 4:2:0/4:2:2/4:4:4/4:0:0 and 8-bit
+// 4:2:2/4:4:4/4:0:0).  `encode_video_sequence()` calls this when
+// `options.format` is not the historical 8-bit 4:2:0.  The CUDA sibling is
+// `encode_video_sequence_gpu()` in the video GPU target.
+bool encode_video_sequence_format(std::span<const VideoInputFrame> frames,
+                                  const VideoOptions& options,
+                                  VideoSequenceResult& result,
+                                  std::string& error);
 
 }  // namespace av2enc::video

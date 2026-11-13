@@ -5,16 +5,21 @@
 #include "frame/mfh/mfh.h"
 #include "pipeline/video/video_frames.h"
 #include "pipeline/video/video_headers.h"
+#include "pipeline/video/video_chroma_search.h"
 #include "pipeline/video/video_intra_search.h"
 #include "pipeline/video/video_syntax.h"
 #include "pipeline/video/video_tx_search.h"
 #include "codec/partition/tree/partition.h"
 #include "codec/rate/rc/rc_tables.h"
 #include "codec/transform/variants/tx_variants.h"
+#include "codec/transform/qm/qm.h"
+#include "pipeline/video/video_bawp.h"
 #include "codec/inter/mc/mc.h"
 #include "codec/inter/me/me.h"
 #include "codec/inter/merge/merge.h"
 #include "codec/inter/drl_reorder/video_stack_adapter.h"
+#include "codec/inter/temporal/motion_field.h"
+#include "codec/inter/tip/tip_build.h"
 #if defined(AV2ENC_VIDEO_FRAMES)
 #include "codec/inter/multiref/compound_predict.h"
 #endif
@@ -29,6 +34,9 @@
 #endif
 #include "pipeline/video/post/tiled_frame.h"
 #include "pipeline/video/post/deblock_grid.h"
+#if defined(AV2ENC_VIDEO_FORMATS)
+#include "pipeline/video/hbd/video_hbd.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -38,6 +46,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <span>
 #include <string>
 #include <utility>
@@ -51,6 +60,8 @@ using partition::FrameGeometry;
 using partition::PartitionNode;
 using partition::PartitionType;
 namespace drl = inter::drl;
+namespace temporal = inter::temporal;
+namespace tip = inter::tip;
 
 // AV2 RefFrame labels used by the merge layer's MI grid.  mc::kRefLast is an
 // internal MC label (1); §6.19.7.9 numbers LAST_FRAME = 0 and
@@ -123,6 +134,11 @@ struct InterCandidate {
   inter::mc::Mv mv{};
   inter::mc::Mv mvd{};
   std::int64_t sse = 0;
+  // §5.20.7.16 masked compound parameters (ignored for AVERAGE).
+  int compound_type = 0;  // 0 = WEDGE, 1 = DIFFWTD
+  int wedge_index = 0;
+  int wedge_sign = 0;
+  int mask_type = 0;
 };
 
 // One decoded picture buffer slot.  The planes are MI-aligned (mi_cols*4 by
@@ -227,13 +243,16 @@ int frame_quant_step(const VideoOptions& options) {
 
 bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, int cw,
                 int ch, const std::vector<std::uint8_t>& pred, int quant_step,
-                TxPlan& plan, std::string& error) {
+                TxPlan& plan, std::string& error,
+                const qm::QmFrameState* qm_state = nullptr) {
   auto params_opt = txv::make_tx_params(cw, ch, txv::TxType::kDctDct);
   if (!params_opt.has_value()) {
     error = "unsupported transform size";
     return false;
   }
-  if (quant_step != txv::kQuantStep) {
+  if (quant_step != txv::kQuantStep && qm_state == nullptr) {
+    // With QM the per-coefficient q2 replaces the scalar step; the forward
+    // expression below uses the unscaled quant_factor.
     params_opt->quant_factor *=
         static_cast<double>(txv::kQuantStep) / static_cast<double>(quant_step);
   }
@@ -264,8 +283,36 @@ bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, int cw,
   std::vector<double> coeff(
       static_cast<std::size_t>(params.w) * static_cast<std::size_t>(params.h));
   plan.levels.assign(coeff.size(), 0);
-  txv::forward_transform(residual_adj.data(), params, coeff.data(),
-                         plan.levels.data());
+  qm::QmDequantParams qp;
+  std::vector<std::int32_t> q2;
+  if (qm_state != nullptr) {
+    // §7.14.4 QM: q2 = Round2(q * m, 5) per coefficient.  The forward target
+    // scales the scalar qf by q / q2 so the returned levels reconstruct to
+    // the same residual under the QM dequantizer (still_encoder.cpp).
+    qp.state = qm_state;
+    qp.tx_size = params.tx_size;
+    qp.plane = plane;
+    qp.tx_type = params.tx_type;
+    qp.segment_id = 0;
+    qp.dc_quant = quant_step;
+    qp.ac_quant = quant_step;
+    qp.bit_depth = 8;
+    q2.assign(coeff.size(), 0);
+    if (!qm::build_q2_matrix(qp, q2.data())) {
+      error = "qm q2 matrix build failed";
+      return false;
+    }
+    txv::forward_block(residual_adj.data(), params, coeff.data());
+    for (std::size_t i = 0; i < coeff.size(); ++i) {
+      const double factor = static_cast<double>(params.quant_factor) *
+                            static_cast<double>(quant_step) /
+                            static_cast<double>(q2[i]);
+      plan.levels[i] = static_cast<std::int32_t>(std::lround(coeff[i] * factor));
+    }
+  } else {
+    txv::forward_transform(residual_adj.data(), params, coeff.data(),
+                           plan.levels.data());
+  }
 
   const int area = params.w * params.h;
   std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
@@ -282,7 +329,21 @@ bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, int cw,
       static_cast<std::size_t>(params.w) * static_cast<std::size_t>(params.h));
   std::vector<std::int16_t> recon_residual(
       static_cast<std::size_t>(coded_pels));
-  if (quant_step == txv::kQuantStep) {
+  if (qm_state != nullptr) {
+    const int n = params.w * params.h;
+    for (int i = 0; i < n; ++i) {
+      const std::int32_t qc = plan.levels[static_cast<std::size_t>(i)];
+      const std::int64_t aq = qc < 0 ? -static_cast<std::int64_t>(qc) : qc;
+      const std::int64_t high = (aq * q2[static_cast<std::size_t>(i)]) & 0xFFFFFF;
+      const std::int32_t dq =
+          txv::round2(static_cast<std::int32_t>(high), txv::kQuantTableBits) /
+          params.dq_denom;
+      const std::int32_t value = qc < 0 ? -dq : dq;
+      dequant[static_cast<std::size_t>(i)] =
+          std::max(-(1 << 15), std::min((1 << 15) - 1, value));
+    }
+    txv::inverse_block(dequant.data(), params, recon_residual.data());
+  } else if (quant_step == txv::kQuantStep) {
     txv::inverse_transform(plan.levels.data(), params, dequant.data(),
                            recon_residual.data());
   } else {
@@ -523,6 +584,8 @@ class InterFrameEncoder {
     // stays global, exactly as the decoder's tile-local walk sees it.
     width_ = tile_w > 0 ? tile_w : static_cast<int>(source.width);
     height_ = tile_h > 0 ? tile_h : static_cast<int>(source.height);
+    tile_mi_row_ = tile_y_ / 4;
+    tile_mi_col_ = tile_x_ / 4;
     chroma_width_ = width_ / 2;
     chroma_height_ = height_ / 2;
 
@@ -545,6 +608,19 @@ class InterFrameEncoder {
     compound_pred_[2].resize(mi_cols_ * 2, mi_rows_ * 2, 0);
 
     quant_step_ = frame_quant_step(options_);
+    // §5.18.6.2 default-matrix QM (--video-qm): one picture-level set, level 0
+    // (the spec-defined default matrices; no user QM OBU).
+    if (options_.enable_qm) {
+      qm_state_.using_qmatrix = true;
+      qm_state_.pic_qm_num_minus_1 = 0;
+      qm_state_.qm_y[0] = 0;
+      qm_state_.qm_u[0] = 0;
+      qm_state_.qm_v[0] = 0;
+      for (int plane = 0; plane < 3; ++plane) {
+        qm_state_.seg_qm_level[plane][0] = 0;
+      }
+      qm_enabled_ = true;
+    }
     mv_grid_.assign(static_cast<std::size_t>(mi_rows_) *
                         static_cast<std::size_t>(mi_cols_),
                     inter::mc::MiInfo{});
@@ -589,9 +665,10 @@ class InterFrameEncoder {
     return static_cast<std::int64_t>(sse);
   }
 
-  bool encode(std::vector<std::uint8_t>& tile_payload,
-              std::vector<syntax::BlockSyntax>& blocks,
-              std::vector<std::int32_t>& levels, std::string& error) {
+  // Decision + reconstruction phase (no syntax, no filters).  Kept
+  // separate so a multi-tile frame can run one frame-level filter pass
+  // after every tile has been reconstructed.
+  bool decide(std::string& error) {
     partition::DecisionOptions poptions;
     poptions.min_block_size_px = options_.min_block_size;
     poptions.max_depth = options_.max_partition_depth;
@@ -632,7 +709,12 @@ class InterFrameEncoder {
     for (const PartitionNode& sb : frame.superblocks) {
       if (!collect_node(sb, error)) return false;
     }
+    return true;
+  }
 
+  // Runs the §7.18-§7.20 decision + pixel stage on this encoder's
+  // reconstruction, filling filter_plan_.  Single-tile path only.
+  bool apply_loop_filters(std::string& error) {
     // Opt-in M2 loop filters (§7.18–§7.20).  They run on the completed
     // reconstruction, before it becomes the output picture and the reference
     // for later frames.  The plan is passed to the tile writer so the
@@ -661,7 +743,7 @@ class InterFrameEncoder {
       // decoder derives the same array, and with CdefOnSkipTxfm DISABLED it
       // leaves a fully-skipped 8x8 block unfiltered.
       std::vector<post::VideoLoopFilterBlock> filter_blocks;
-      if (!keyframe_) {
+      {
         filter_blocks.reserve(blocks_.size());
         for (const syntax::BlockSyntax& leaf : blocks_) {
           if (leaf.partition !=
@@ -680,6 +762,7 @@ class InterFrameEncoder {
                   static_cast<partition::BlockSize>(leaf.bsize)) >>
               2;
           block.skip = leaf.is_inter && leaf.skip_flag != 0;
+          block.luma_eob_zero = leaf.eob[0] == 0;
           filter_blocks.push_back(block);
         }
       }
@@ -700,50 +783,13 @@ class InterFrameEncoder {
       }
     }
 
-    syntax::FramePlan plan;
-    plan.width = width_;
-    plan.height = height_;
-    plan.sb_size = 64;
-    plan.inter_frame = !keyframe_;
-    plan.tx_mode_select = options_.enable_tx_search;
-    plan.reduced_tx_part_set = false;
-    plan.reduced_tx_set = 0;
-    plan.num_total_refs = num_total_refs_;
-    plan.reference_select = options_.compound && num_total_refs_ > 1;
-    plan.mv_precision = options_.mv_precision;
-    plan.drl_reorder = options_.drl_reorder
-                           ? (options_.drl_reorder_always ? 2 : 1)
-                           : 0;
-    plan.frame_distance = frame_distance_;
-#if defined(AV2ENC_VIDEO_GME)
-    if (gm_plan_ != nullptr) {
-      plan.gm_num_refs = gm_plan_->num_refs;
-      plan.gm_params = gm_plan_->params;
-    }
-#endif
-    VideoConfig config;
-    config.max_frame_width = static_cast<std::uint16_t>(width_);
-    config.max_frame_height = static_cast<std::uint16_t>(height_);
-    config.base_q_idx = options_.base_q_idx;
-    config.order_hint_bits = 4;
-    config.num_ref_frames = 2;
-    config.num_total_refs = 1;
-    config.max_drl_bits_minus_1 = 4;
-    config.disable_cdf_update = !options_.adaptive_cdf;
-    config.enable_avg_cdf = options_.avg_cdf;
-    config.avg_cdf_type = true;
-    config.enable_cfl_intra = true;
-    config.enable_deblock = options_.enable_deblock;
-    config.tx_mode_select = options_.enable_tx_search;
+    return true;
+  }
 
-    std::size_t tile_bytes = 0;
-    if (!syntax::assemble_video_frame(plan, blocks_, levels_, config,
-                                   tile_payload, error, &tile_bytes,
-                                   cdf_seed_, cdf_final_,
-                                   filter_plan_.any() ? &filter_plan_ : nullptr)) {
-      return false;
-    }
-    // §7.17: deblock the reconstruction before it is emitted or stored as a
+  // §7.17 deblocking of this encoder's reconstruction.  Runs after decide()
+  // and before the frame-level filter pass / reference update.
+  bool deblock(std::string& error) {
+    if (!options_.enable_deblock) return true;
     // reference.  The metadata comes from the real per-leaf decisions above.
     // Multi-tile deblocking is rejected at the sequence level (the pinned
     // decoder filters across interior tile edges; see docs/negative-results.md).
@@ -770,12 +816,93 @@ class InterFrameEncoder {
         return false;
       }
     }
+    return true;
+  }
+
+  // Syntax phase.  `filters` is the frame-level plan (a single-tile encoder
+  // passes its own); a multi-tile caller passes the shared frame plan so the
+  // per-superblock symbols match the filtered reference.
+  bool write(std::vector<std::uint8_t>& tile_payload,
+             std::vector<syntax::BlockSyntax>& blocks,
+             std::vector<std::int32_t>& levels,
+             const post::VideoFilterPlan* filters, std::string& error) {
+    syntax::FramePlan plan;
+    plan.width = width_;
+    plan.height = height_;
+    plan.sb_size = 64;
+    plan.frame_mi_cols = frame_mi_cols_;
+    plan.frame_mi_rows = frame_mi_rows_;
+    plan.tile_mi_row = tile_mi_row_;
+    plan.tile_mi_col = tile_mi_col_;
+    plan.inter_frame = !keyframe_;
+    plan.tx_mode_select = options_.enable_tx_search;
+    plan.reduced_tx_part_set = false;
+    plan.reduced_tx_set = 0;
+    plan.num_total_refs = num_total_refs_;
+    plan.reference_select = options_.compound && num_total_refs_ > 1;
+    plan.allow_bawp = options_.enable_bawp && !keyframe_;
+    plan.enable_masked_compound =
+        plan.reference_select &&
+        (options_.compound_wedge || options_.compound_diffwtd);    plan.mv_precision = options_.mv_precision;
+    plan.drl_reorder = options_.drl_reorder
+                           ? (options_.drl_reorder_always ? 2 : 1)
+                           : 0;
+    plan.frame_distance = frame_distance_;
+#if defined(AV2ENC_VIDEO_GME)
+    if (gm_plan_ != nullptr) {
+      plan.gm_num_refs = gm_plan_->num_refs;
+      plan.gm_params = gm_plan_->params;
+    }
+#endif
+    VideoConfig config;
+    config.max_frame_width = static_cast<std::uint16_t>(width_);
+    config.max_frame_height = static_cast<std::uint16_t>(height_);
+    config.base_q_idx = options_.base_q_idx;
+    config.order_hint_bits = 4;
+    config.num_ref_frames = 2;
+    config.num_total_refs = 1;
+    config.max_drl_bits_minus_1 = 4;
+    config.disable_cdf_update = !options_.adaptive_cdf;
+    config.enable_avg_cdf = options_.avg_cdf;
+    config.avg_cdf_type = true;
+    config.enable_cfl_intra = true;
+    config.enable_mhccp = options_.enable_mhccp;
+    config.using_qmatrix = options_.enable_qm;
+    config.enable_deblock = options_.enable_deblock;
+    config.tx_mode_select = options_.enable_tx_search;
+    config.enable_bawp = options_.enable_bawp;
+
+    std::size_t tile_bytes = 0;
+    if (!syntax::assemble_video_frame(plan, blocks_, levels_, config,
+                                   tile_payload, error, &tile_bytes,
+                                   cdf_seed_, cdf_final_, filters)) {
+      return false;
+    }
     blocks = std::move(blocks_);
     levels = std::move(levels_);
     return true;
   }
 
+  bool encode(std::vector<std::uint8_t>& tile_payload,
+              std::vector<syntax::BlockSyntax>& blocks,
+              std::vector<std::int32_t>& levels, std::string& error) {
+    if (!decide(error)) return false;
+    if (!deblock(error)) return false;
+    if (!apply_loop_filters(error)) return false;
+    return write(tile_payload, blocks, levels,
+                 filter_plan_.any() ? &filter_plan_ : nullptr, error);
+  }
+
+  const std::vector<syntax::BlockSyntax>& blocks() const {
+    return blocks_;
+  }
+
   const Plane& recon(int plane) const { return recon_[plane]; }
+  // §7.22 motion-field source: the per-4x4 coded mode/MV grid and its extent.
+  // Used by the opt-in TIP path to store a reference frame's SavedMvField.
+  const std::vector<inter::mc::MiInfo>& mv_grid() const { return mv_grid_; }
+  int mv_mi_cols() const { return mi_cols_; }
+  int mv_mi_rows() const { return mi_rows_; }
   int recon_mi_cols() const { return mi_cols_; }
   int recon_mi_rows() const { return mi_rows_; }
   std::uint32_t inter_blocks() const { return inter_blocks_; }
@@ -1240,6 +1367,55 @@ class InterFrameEncoder {
         multiref::CompoundModeParams params;
         params.type = inter::adv::CompoundType::kAverage;
         params.cwp_weight = multiref::kCwpEqual;
+        std::int64_t compound_sse = -1;
+        if (options_.compound_wedge || options_.compound_diffwtd) {
+          // §7.13.3.27-.30 masked compound decision over the block-local 1/16
+          // predictions.  The search order (AVERAGE, wedge sign 0 then 1 over
+          // signalable indices, then DIFFWTD mask_type 0/1) is the same
+          // enumeration the CUDA backend uses, so both paths pick the same
+          // block on an SSE tie.
+          std::vector<std::uint8_t> search_scratch(
+              static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+          inter::adv::CompoundSearchInput in{};
+          in.bsize = static_cast<int>(node.size);
+          in.rect = inter::adv::BlockRect{0, 0, w, h};
+          in.p0 = prediction.pred[0][0].samples.data();
+          in.p0_stride = prediction.pred[0][0].stride;
+          in.p1 = prediction.pred[1][0].samples.data();
+          in.p1_stride = prediction.pred[1][0].stride;
+          in.source = source_.y.data() +
+                      static_cast<std::size_t>(y0) *
+                          static_cast<std::size_t>(source_.width) +
+                      static_cast<std::size_t>(x0);
+          in.source_stride = static_cast<int>(source_.width);
+          in.scratch = search_scratch.data();
+          in.scratch_stride = w;
+          in.enable_average = true;
+          in.enable_cwp = false;
+          in.enable_wedge = options_.compound_wedge;
+          in.enable_diffwtd = options_.compound_diffwtd;
+          in.enable_imp_mask = false;
+          const std::optional<inter::adv::CompoundDecision> decision =
+              inter::adv::search_compound(in);
+          if (!decision.has_value()) {
+            error = "compound search failed";
+            return false;
+          }
+          params.type = decision->type;
+          params.cwp_weight = decision->cwp_weight;
+          params.wedge_index = decision->wedge_index;
+          params.wedge_sign = decision->wedge_sign;
+          params.mask_type = decision->mask_type;
+          compound_sse = decision->sse;
+          if (trace_) {
+            std::cerr << "  cand compound search type="
+                      << static_cast<int>(decision->type)
+                      << " wedge=" << decision->wedge_index
+                      << " sign=" << decision->wedge_sign
+                      << " mask_type=" << decision->mask_type
+                      << " sse=" << decision->sse << "\n";
+          }
+        }
         if (multiref::apply_compound_prediction(prediction, params, dst,
                                                 dst_stride, comp_error)) {
           compound_y_.resize(static_cast<std::size_t>(w) *
@@ -1279,7 +1455,17 @@ class InterFrameEncoder {
           cand.mode = syntax::kInterGlobalMv;
           cand.ref_index = 0;
           cand.mv = inter::mc::Mv{0, 0};
-          cand.sse = sse_against_source(source_, 0, x0, y0, w, h, compound_y_);
+          cand.sse = compound_sse >= 0
+                         ? compound_sse
+                         : sse_against_source(source_, 0, x0, y0, w, h,
+                                              compound_y_);
+          cand.compound_type =
+              params.type == inter::adv::CompoundType::kWedge
+                  ? 0
+                  : (params.type == inter::adv::CompoundType::kDiffWtd ? 1 : 2);
+          cand.wedge_index = params.wedge_index;
+          cand.wedge_sign = params.wedge_sign;
+          cand.mask_type = params.mask_type;
           if (trace_) {
             std::cerr << "  cand compound global-global sse=" << cand.sse
                       << "\n";
@@ -1304,6 +1490,9 @@ class InterFrameEncoder {
     TxPlan intra_v;
     std::uint8_t intra_y_mode = 0;  // AV2 YMode (0 = DC_PRED)
     std::int8_t intra_y_angle_delta = 0;
+    bool intra_is_cfl = false;
+    int intra_cfl_index = 1;
+    int intra_cfl_mh_dir = 0;
     // The reconstruction planes are tile-local, so plain bounds give the
     // decoder's §5.20.9.1 availability at every tile edge.
     const int luma_max_x = recon_[0].width - 1;
@@ -1342,7 +1531,22 @@ class InterFrameEncoder {
                                    luma_above, intra_y_pred);
       }
       if (!luma_ok ||
-          !intra_dc_predict(recon_[1], source_, 1, cx0, cy0, cw, ch,
+          (options_.enable_tx_search
+               ? !search_luma_tx(source_, ax0, ay0, w, h, intra_y_pred,
+                                 options_.base_q_idx,
+                                 txtsearch::Mode::kIntra,
+                                 options_.tx_rd_lambda, intra_y, error)
+               : !compute_tx(source_, 0, ax0, ay0, w, h, intra_y_pred,
+                             quant_step_, intra_y, error,
+                             qm_enabled_ ? &qm_state_ : nullptr))) {
+        error = "intra prediction failed";
+        return false;
+      }
+      // §7.13.5 CfL reads the reconstructed luma of this block, so the luma
+      // reconstruction must be in the plane before the chroma decision.  A
+      // losing intra candidate is overwritten by the inter reconstruction.
+      write_plane_block(recon_[0], x0, y0, w, h, intra_y.recon);
+      if (!intra_dc_predict(recon_[1], source_, 1, cx0, cy0, cw, ch,
                             chroma_max_x, chroma_max_y, chroma_left,
                             chroma_above, intra_u_pred) ||
           !intra_dc_predict(recon_[2], source_, 2, cx0, cy0, cw, ch,
@@ -1351,17 +1555,65 @@ class InterFrameEncoder {
         error = "intra prediction failed";
         return false;
       }
-      if ((options_.enable_tx_search
-               ? !search_luma_tx(source_, ax0, ay0, w, h, intra_y_pred,
-                                 options_.base_q_idx,
-                                 txtsearch::Mode::kIntra,
-                                 options_.tx_rd_lambda, intra_y, error)
-               : !compute_tx(source_, 0, ax0, ay0, w, h, intra_y_pred,
-                             quant_step_, intra_y, error)) ||
-          !compute_tx(source_, 1, acx0, acy0, cw, ch, intra_u_pred, quant_step_,
-                      intra_u, error) ||
+      if (options_.enable_cfl) {
+        // Opt-in CfL chroma decision (§7.13.5).  The candidate set is the M1
+        // still product's default {DC, CfL} with derived alpha.
+        const std::int64_t dc_sse_u =
+            sse_against_source(source_, 1, acx0, acy0, cw, ch, intra_u_pred);
+        const int frame_chroma_width = static_cast<int>((source_.width + 1U) / 2U);
+        const int frame_chroma_height =
+            static_cast<int>((source_.height + 1U) / 2U);
+        chroma_search::PlaneView u_plane;
+        u_plane.recon = recon_[1].samples.data();
+        u_plane.recon_stride = recon_[1].stride;
+        u_plane.recon_width = recon_[1].width;
+        u_plane.recon_height = recon_[1].height;
+        // The helper indexes the source with the block origin, so the pointer
+        // carries the tile origin only (coded coordinates stay tile-local).
+        const int tile_cx = tile_x_ / 2;
+        const int tile_cy = tile_y_ / 2;
+        u_plane.source = source_.u.data() +
+                         static_cast<std::size_t>(tile_cy) *
+                             static_cast<std::size_t>(frame_chroma_width) +
+                         static_cast<std::size_t>(tile_cx);
+        u_plane.source_stride = frame_chroma_width;
+        u_plane.source_max_x = frame_chroma_width - 1 - tile_cx;
+        u_plane.source_max_y = frame_chroma_height - 1 - tile_cy;
+        chroma_search::PlaneView v_plane = u_plane;
+        v_plane.recon = recon_[2].samples.data();
+        v_plane.recon_stride = recon_[2].stride;
+        v_plane.source = source_.v.data() +
+                         static_cast<std::size_t>(tile_cy) *
+                             static_cast<std::size_t>(frame_chroma_width) +
+                         static_cast<std::size_t>(tile_cx);
+        const intra_search::Availability chroma_avail =
+            intra_search::availability(decoded_[1], cx0 / 4, cy0 / 4, cw / 4,
+                                       ch / 4, mi_cols_ / 2, mi_rows_ / 2,
+                                       /*sb_mi=*/8);
+        chroma_search::Options chroma_options;
+        chroma_options.enable_cfl = true;
+        chroma_options.ds_filter = 0;
+        chroma_options.enable_mhccp = options_.enable_mhccp;
+        chroma_search::Choice choice;
+        if (!chroma_search::choose(
+                u_plane, v_plane, recon_[0].samples.data(), recon_[0].stride,
+                mi_cols_ * 4 - 1, mi_rows_ * 4 - 1, (cy0 * 2 / 64) * 64, cx0,
+                cy0, cw, ch, mi_cols_ * 2, mi_rows_ * 2,
+                chroma_avail.num4_above_right, chroma_avail.num4_below_left,
+                intra_u_pred, intra_v_pred, dc_sse_u, chroma_options, choice,
+                error)) {
+          return false;
+        }
+        intra_is_cfl = choice.is_cfl;
+        intra_cfl_index = choice.cfl_index;
+        intra_cfl_mh_dir = choice.cfl_mh_dir;
+        intra_u_pred = choice.u;
+        intra_v_pred = choice.v;
+      }
+      if (!compute_tx(source_, 1, acx0, acy0, cw, ch, intra_u_pred, quant_step_,
+                      intra_u, error, qm_enabled_ ? &qm_state_ : nullptr) ||
           !compute_tx(source_, 2, acx0, acy0, cw, ch, intra_v_pred, quant_step_,
-                      intra_v, error)) {
+                      intra_v, error, qm_enabled_ ? &qm_state_ : nullptr)) {
         return false;
       }
       intra_sse = sse_against_source(source_, 0, ax0, ay0, w, h, intra_y.recon);
@@ -1382,6 +1634,8 @@ class InterFrameEncoder {
     TxPlan res_y;
     TxPlan res_u;
     TxPlan res_v;
+    bool bawp_applied = false;
+    inter::adv::BawpFit bawp_fit{};
     std::int64_t inter_luma_sse = best.sse;
     if (!keyframe_ && best.valid) {
       if (best.compound) {
@@ -1410,6 +1664,38 @@ class InterFrameEncoder {
       }
       inter_luma_sse =
           sse_against_source(source_, 0, ax0, ay0, w, h, inter_y);
+      // §5.20.7.6 / §7.13.3.25: evaluate the fitted BAWP predictor for an
+      // eligible single-prediction block (>= 8x8, not GLOBALMV, no warp).
+      // The decoder applies the same fit before the residual, so a selected
+      // block carries use_bawp = 1 and the adapted prediction.
+      if (options_.enable_bawp && options_.tile_cols == 0 && !best.compound &&
+          !best.use_warp &&
+          best.mode != syntax::kInterGlobalMv && w >= 8 && h >= 8 &&
+          mi_cols_ * 4 == static_cast<int>(source_.width) &&
+          mi_rows_ * 4 == static_cast<int>(source_.height)) {
+        std::vector<std::uint8_t> adapted = inter_y;
+        inter::adv::BawpFit fit{};
+        const inter::mc::PlaneView& ref_y =
+            references_[best.ref_index].plane[0];
+        if (bawp_adapt_luma(recon_[0].samples.data(), recon_[0].stride,
+                            ref_y.data, ref_y.stride, mi_cols_, mi_rows_, r,
+                            c, x0, y0, w, h, best.mv.y, best.mv.x, adapted,
+                            &fit)) {
+          const std::int64_t adapted_sse =
+              sse_against_source(source_, 0, ax0, ay0, w, h, adapted);
+          if (adapted_sse < inter_luma_sse) {
+            bawp_applied = true;
+            bawp_fit = fit;
+            inter_y = adapted;
+            inter_luma_sse = adapted_sse;
+          }
+        }
+        if (trace_) {
+          std::cerr << "  cand bawp alpha=" << bawp_fit.alpha
+                    << " count=" << bawp_fit.count
+                    << " applied=" << (bawp_applied ? 1 : 0) << "\n";
+        }
+      }
       if (options_.enable_inter_residual) {
         const std::int64_t pred_total =
             inter_luma_sse +
@@ -1421,11 +1707,12 @@ class InterFrameEncoder {
                                    txtsearch::Mode::kInter,
                                    options_.tx_rd_lambda, res_y, error)
                  : !compute_tx(source_, 0, ax0, ay0, w, h, inter_y,
-                               quant_step_, res_y, error)) ||
+                               quant_step_, res_y, error,
+                               qm_enabled_ ? &qm_state_ : nullptr)) ||
             !compute_tx(source_, 1, acx0, acy0, cw, ch, inter_u, quant_step_,
-                        res_u, error) ||
+                        res_u, error, qm_enabled_ ? &qm_state_ : nullptr) ||
             !compute_tx(source_, 2, acx0, acy0, cw, ch, inter_v, quant_step_,
-                        res_v, error)) {
+                        res_v, error, qm_enabled_ ? &qm_state_ : nullptr)) {
           return false;
         }
         const std::int64_t res_total =
@@ -1493,7 +1780,12 @@ class InterFrameEncoder {
       entry.skip_flag = 0;
       entry.y_mode = intra_y_mode;
       entry.y_angle_delta = intra_y_angle_delta;
-      entry.uv_mode = 0;  // DC_PRED
+      entry.uv_mode = 0;  // DC_PRED (also the CfL base mode)
+      if (intra_is_cfl) {
+        entry.flags |= syntax::kFlagIsCfl;
+        entry.cfl_index = static_cast<std::uint8_t>(intra_cfl_index);
+        entry.cfl_mh_dir = static_cast<std::uint8_t>(intra_cfl_mh_dir);
+      }
       write_plane_block(recon_[0], x0, y0, w, h, intra_y.recon);
       write_plane_block(recon_[1], cx0, cy0, cw, ch, intra_u.recon);
       write_plane_block(recon_[2], cx0, cy0, cw, ch, intra_v.recon);
@@ -1540,11 +1832,18 @@ class InterFrameEncoder {
         // A compound leaf never carries a residual in the gated subset.
         entry.skip_flag = 1;
         inter_residual = false;
+        entry.compound_masked = best.compound_type != 2 ? 1 : 0;
+        entry.compound_type = static_cast<std::uint8_t>(best.compound_type);
+        entry.wedge_index = static_cast<std::uint8_t>(best.wedge_index);
+        entry.wedge_sign = static_cast<std::uint8_t>(best.wedge_sign);
+        entry.mask_type = static_cast<std::uint8_t>(best.mask_type);
       }
       entry.mv_y = best.mode == syntax::kInterGlobalMv ? 0 : best.mv.y;
       entry.mv_x = best.mode == syntax::kInterGlobalMv ? 0 : best.mv.x;
       entry.mvd_y = best.mvd.y;
       entry.mvd_x = best.mvd.x;
+      entry.use_bawp = bawp_applied ? 1 : 0;
+      entry.bawp_alpha = static_cast<std::int16_t>(bawp_fit.alpha);
       write_plane_block(recon_[0], x0, y0, w, h, inter_y);
       write_plane_block(recon_[1], cx0, cy0, cw, ch, inter_u);
       write_plane_block(recon_[2], cx0, cy0, cw, ch, inter_v);
@@ -1578,7 +1877,11 @@ class InterFrameEncoder {
                   << " ref=" << best.ref_index << " mv=(" << best.mv.y << ","
                   << best.mv.x << ") sse=" << inter_luma_sse
                   << " skip=" << static_cast<int>(entry.skip_flag)
-                  << " comp=" << static_cast<int>(entry.compound) << "\n";
+                  << " comp=" << static_cast<int>(entry.compound)
+                  << " ct=" << static_cast<int>(entry.compound_type)
+                  << " wedge=" << static_cast<int>(entry.wedge_index)
+                  << " sign=" << static_cast<int>(entry.wedge_sign)
+                  << " mask=" << static_cast<int>(entry.mask_type) << "\n";
       }
     }
 
@@ -1629,6 +1932,8 @@ class InterFrameEncoder {
   bool trace_ = false;
   bool keyframe_ = false;
   int tile_x_ = 0;
+  int tile_mi_row_ = 0;
+  int tile_mi_col_ = 0;
   int tile_y_ = 0;
   int tile_w_ = 0;
   int tile_h_ = 0;
@@ -1636,6 +1941,8 @@ class InterFrameEncoder {
   std::vector<std::uint16_t>* cdf_final_ = nullptr;
   const GmFramePlan* gm_plan_ = nullptr;
   int quant_step_ = txv::kQuantStep;  // §7.14.2 qlookup(base_q_idx)
+  qm::QmFrameState qm_state_;
+  bool qm_enabled_ = false;
   int width_ = 0;
   int height_ = 0;
   int frame_mi_cols_ = 0;
@@ -1748,15 +2055,20 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   config.disable_cdf_update = !options.adaptive_cdf;
   config.enable_avg_cdf = options.avg_cdf;
   config.avg_cdf_type = true;
-  config.enable_masked_compound = false;
+  config.enable_masked_compound =
+      options.compound && (options.compound_wedge || options.compound_diffwtd);
   config.enable_cwp = false;
   config.enable_imp_msk_bld = false;
   config.num_same_ref_compound = 0;
   config.disable_drl_reorder = true;
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
+  config.enable_mhccp = options.enable_mhccp;
+  config.using_qmatrix = options.enable_qm;
   config.enable_deblock = options.enable_deblock;
+  apply_video_loop_filter_sequence_config(config, options.loop_filters);
   config.tx_mode_select = options.enable_tx_search;
+  config.enable_bawp = options.enable_bawp;
   config.max_tlayer_id = 0;
   config.monotonic_output_order_flag = false;
 
@@ -1803,10 +2115,15 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
                         plan.order_hint_bits));
     }
 
+    std::array<int, 7> ref_order_hints{};
+    for (int r = 0; r < num_refs; ++r) {
+      ref_order_hints[static_cast<std::size_t>(r)] = fp->ref_order_hint[r];
+    }
     InterFrameEncoder encoder(frames[static_cast<std::size_t>(display)],
                               std::move(references), frame_distance,
                               std::max(1, num_refs), frame_options,
-                              options.trace, fp->is_key);
+                              options.trace, fp->is_key, 0, 0, 0, 0, {}, nullptr,
+                              nullptr, ref_order_hints);
     std::vector<std::uint8_t> tile;
     std::vector<syntax::BlockSyntax> blocks;
     std::vector<std::int32_t> levels;
@@ -1831,6 +2148,7 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
                               hf.num_total_refs > 1;
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
+    apply_video_loop_filter_frame_header(encoder.filter_plan(), header);
 
     std::vector<std::uint8_t> unit;
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
@@ -1955,8 +2273,12 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.disable_drl_reorder = true;
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
+  config.enable_mhccp = options.enable_mhccp;
+  config.using_qmatrix = options.enable_qm;
   config.enable_deblock = options.enable_deblock;
+  apply_video_loop_filter_sequence_config(config, options.loop_filters);
   config.tx_mode_select = options.enable_tx_search;
+  config.enable_bawp = options.enable_bawp;
   config.max_tlayer_id = static_cast<std::uint8_t>(plan.max_tlayer_id);
   config.monotonic_output_order_flag = false;
   config.tlayer_dependency_present_flag = plan.tlayer_dependency_present_flag;
@@ -2012,9 +2334,12 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
           static_cast<int>(pc.order_hint_bits)));
     }
 
+    std::array<int, 7> ref_order_hints{};
+    ref_order_hints[0] = pf.ref_order_hint[0];
     InterFrameEncoder encoder(frames[static_cast<std::size_t>(display)],
                               std::move(references), frame_distance, 1,
-                              frame_options, options.trace, pf.is_key);
+                              frame_options, options.trace, pf.is_key, 0, 0, 0,
+                              0, {}, nullptr, nullptr, ref_order_hints);
     std::vector<std::uint8_t> tile;
     std::vector<syntax::BlockSyntax> blocks;
     std::vector<std::int32_t> levels;
@@ -2038,6 +2363,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
     header.reference_select = false;  // --video-tlayers is single-reference
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
+    apply_video_loop_filter_frame_header(encoder.filter_plan(), header);
 
     std::vector<std::uint8_t> unit;
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
@@ -2088,9 +2414,485 @@ int resolved_num_ref_frames(const VideoOptions& options) {
   return options.num_total_refs > 1 ? kMaxRefSlots : 2;
 }
 
+// ---------------------------------------------------------------------------
+// Opt-in TIP sequence (--video-tip, §7.10 / §7.13.3.2).
+//
+// Coding order is key, one future anchor P, then one TIP_FRAME_AS_OUTPUT per
+// remaining input picture:
+//
+//   key    hint 0            slot 0   (intra)
+//   anchor hint N-1          slot 1   (regular P referencing the key)
+//   tip_i  hint i, i=1..N-2  slot i+1 (past = key or the previous TIP,
+//                                      future = the anchor)
+//
+// The future anchor is decoded before the TIP frames, which is what makes
+// §7.10 possible.  Every frame is immediate-output and the sequence keeps
+// monotonic_output_order_flag = 1, so the decoder emits pictures in decode
+// order (proven by src/codec/inter/tip/gate).  Each reference frame's §7.22
+// field is stored from the real coded MV grid, and each TIP frame stores its
+// own field so the next TIP in the chain can project it.
+// ---------------------------------------------------------------------------
+struct TipSlotState {
+  bool valid = false;
+  int order_hint = 0;
+  int num_saved_refs = 0;
+  int saved_order_hint[7] = {temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint,
+                             temporal::kRestrictedOrderHint};
+  int w8 = 0;
+  int h8 = 0;
+  std::vector<std::int8_t> field_ref;
+  std::vector<std::int16_t> field_mv;
+  Plane plane[3];
+
+  temporal::SavedMvField saved() const {
+    temporal::SavedMvField out;
+    out.w8 = w8;
+    out.h8 = h8;
+    out.ref = field_ref.data();
+    out.mv = field_mv.data();
+    return out;
+  }
+};
+
+// Allocates an empty §7.22 field (intra key / no coded inter blocks).
+void init_empty_field(TipSlotState* slot, int mi_cols, int mi_rows) {
+  slot->w8 = mi_cols / 2;
+  slot->h8 = mi_rows / 2;
+  slot->num_saved_refs = 0;
+  slot->field_ref.assign(static_cast<std::size_t>(slot->w8) *
+                             static_cast<std::size_t>(slot->h8) * 2U,
+                         static_cast<std::int8_t>(temporal::kRefNone));
+  slot->field_mv.assign(static_cast<std::size_t>(slot->w8) *
+                            static_cast<std::size_t>(slot->h8) * 4U,
+                        0);
+}
+
+// Stores one coded frame's §7.22 field from its per-4x4 mode/MV grid.
+bool store_coded_field(const InterFrameEncoder& encoder, int order_hint,
+                       const int* ref_order_hint, int num_refs,
+                       TipSlotState* slot, std::string& error) {
+  const std::vector<inter::mc::MiInfo>& grid = encoder.mv_grid();
+  const int mi_cols = encoder.mv_mi_cols();
+  const int mi_rows = encoder.mv_mi_rows();
+  init_empty_field(slot, mi_cols, mi_rows);
+  temporal::RefMvField view;
+  view.w8 = slot->w8;
+  view.h8 = slot->h8;
+  view.ref = slot->field_ref.data();
+  view.mv = slot->field_mv.data();
+  for (int y8 = 0; y8 < slot->h8; ++y8) {
+    for (int x8 = 0; x8 < slot->w8; ++x8) {
+      const std::size_t index =
+          static_cast<std::size_t>(y8 * 2) *
+              static_cast<std::size_t>(mi_cols) +
+          static_cast<std::size_t>(x8 * 2);
+      const inter::mc::MiInfo& mi = grid[index];
+      temporal::MotionFieldStoreEntry entry;
+      for (int list = 0; list < 2; ++list) {
+        const int ref = mi.ref[list];
+        entry.refs[list] =
+            (ref >= 0 && ref < num_refs) ? ref : temporal::kRefNone;
+        entry.ref_order_hint[list] =
+            entry.refs[list] >= 0
+                ? ref_order_hint[entry.refs[list]]
+                : temporal::kRestrictedOrderHint;
+      }
+      entry.mv[0] = temporal::Mv{mi.mv[0][0], mi.mv[0][1]};
+      entry.mv[1] = temporal::Mv{mi.mv[1][0], mi.mv[1][1]};
+      entry.order_hint = order_hint;
+      entry.i8 = y8 & 1;
+      entry.j8 = x8 & 1;
+      if (temporal::store_motion_field_entry(entry, &view, y8, x8) !=
+          temporal::TemporalStatus::kOk) {
+        error = "§7.22 motion-field store failed";
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Picks the Tip_Weighting_Factor index whose factor is closest to the frame's
+// temporal position between the past and future references.  Index 2 (16, the
+// single-reference weight) is skipped: a two-sided TIP frame needs both lists.
+int choose_tip_weight_index(int past_hint, int future_hint, int hint) {
+  const int span = future_hint - past_hint;
+  const int ideal =
+      span > 0 ? (16 * (future_hint - hint) + span / 2) / span : 8;
+  static constexpr int kIndices[] = {0, 1, 3, 4, 5, 6};
+  int best = 0;
+  int best_diff = 0x7fffffff;
+  for (const int index : kIndices) {
+    const int diff = std::abs(temporal::kTipWeightingFactor[index] - ideal);
+    if (diff < best_diff) {
+      best_diff = diff;
+      best = index;
+    }
+  }
+  return best;
+}
+
+bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
+                         const VideoOptions& options,
+                         VideoSequenceResult& result, std::string& error) {
+  const std::uint32_t width = frames[0].width;
+  const std::uint32_t height = frames[0].height;
+  const int frame_count = static_cast<int>(frames.size());
+  constexpr int kOrderHintBits = 4;
+  const int num_ref_frames = kMaxRefSlots;  // 8 slots: key + anchor + TIPs
+  const int recon_mi_cols = static_cast<int>(2U * ((width + 7U) >> 3U));
+  const int recon_mi_rows = static_cast<int>(2U * ((height + 7U) >> 3U));
+
+  VideoConfig config;
+  config.max_frame_width = static_cast<std::uint16_t>(width);
+  config.max_frame_height = static_cast<std::uint16_t>(height);
+  config.base_q_idx = options.base_q_idx;
+  config.order_hint_bits = static_cast<std::uint8_t>(kOrderHintBits);
+  config.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);
+  config.num_total_refs = 1;
+  config.max_drl_bits_minus_1 = 4;
+  config.disable_cdf_update = true;
+  config.enable_ref_frame_mvs = true;
+  config.enable_tip = true;
+  config.disable_tip_output = false;
+  // §5.4.6 enable_tip_hole_fill = 0.  The component's §7.10.3/.4 path is
+  // exact on the synthetic gate, but on a *coded* reference field the pinned
+  // decoder's post-estimation validity mask differs from the encoder's by the
+  // cells our §7.22 store marks NONE; running the encoder's hole fill then
+  // predicts filled MVs where the decoder keeps the hole (0 MV), which showed
+  // as sparse ±4 samples on TIP frames.  With hole fill off both sides treat
+  // holes as MV 0 and the stream is sample-exact.  See
+  // docs/negative-results.md and docs/tip-decoder-gate.md.
+  config.enable_tip_hole_fill = false;
+  config.enable_cfl_intra = true;
+  config.disable_drl_reorder = true;
+
+  std::array<TipSlotState, kMaxRefSlots> slots;
+
+  // --- Key frame -----------------------------------------------------------
+  VideoFrameHeader key_header;
+  key_header.keyframe = true;
+  key_header.order_hint = 0;
+  key_header.ref_slot = 0;
+  key_header.refresh_frame_flags = (1U << num_ref_frames) - 1U;
+
+  std::vector<inter::mc::RefFrame> no_refs;
+  std::array<int, 7> no_distance{};
+  std::vector<std::uint8_t> key_payload;
+  std::vector<syntax::BlockSyntax> key_blocks;
+  std::vector<std::int32_t> key_levels;
+  InterFrameEncoder key_encoder(frames[0], no_refs, no_distance, 1, options,
+                                options.trace, /*keyframe=*/true);
+  if (!key_encoder.encode(key_payload, key_blocks, key_levels, error)) {
+    error = "TIP keyframe encode failed: " + error;
+    return false;
+  }
+  for (int plane = 0; plane < 3; ++plane) {
+    slots[0].plane[plane] = key_encoder.recon(plane);
+  }
+  slots[0].valid = true;
+  slots[0].order_hint = 0;
+  init_empty_field(&slots[0], recon_mi_cols, recon_mi_rows);
+
+  {
+    const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
+    const std::vector<std::uint8_t> seq = make_sequence_header_obu(config);
+    const std::vector<std::uint8_t> obu =
+        make_frame_obu(config, key_header, key_payload);
+    std::vector<std::uint8_t> unit;
+    unit.reserve(td.size() + seq.size() + obu.size());
+    unit.insert(unit.end(), td.begin(), td.end());
+    unit.insert(unit.end(), seq.begin(), seq.end());
+    unit.insert(unit.end(), obu.begin(), obu.end());
+    result.units.push_back(std::move(unit));
+    result.recon.push_back(to_recon_frame(slots[0].plane[0], slots[0].plane[1],
+                                         slots[0].plane[2], width, height));
+    result.frame_bytes.push_back(
+        static_cast<std::uint32_t>(result.units.back().size()));
+    result.tile_bytes.push_back(
+        static_cast<std::uint32_t>(key_payload.size()));
+    result.inter_blocks.push_back(0);
+    result.intra_blocks.push_back(key_encoder.intra_blocks());
+    result.frame_output_index.push_back(0);
+  }
+
+  // --- Future anchor P frame (hint N-1, slot 1) ----------------------------
+  const int anchor_hint = frame_count - 1;
+  {
+    std::vector<inter::mc::RefFrame> references(1);
+    references[0].plane[0] = inter::mc::PlaneView{
+        slots[0].plane[0].samples.data(), slots[0].plane[0].stride};
+    references[0].plane[1] = inter::mc::PlaneView{
+        slots[0].plane[1].samples.data(), slots[0].plane[1].stride};
+    references[0].plane[2] = inter::mc::PlaneView{
+        slots[0].plane[2].samples.data(), slots[0].plane[2].stride};
+    references[0].mi_cols = recon_mi_cols;
+    references[0].mi_rows = recon_mi_rows;
+    std::array<int, 7> distance{};
+    distance[0] = relative_dist(static_cast<std::uint32_t>(anchor_hint), 0,
+                                kOrderHintBits);
+    std::array<int, 7> ref_order_hints{};
+    ref_order_hints[0] = 0;
+
+    std::vector<std::uint8_t> payload;
+    std::vector<syntax::BlockSyntax> blocks;
+    std::vector<std::int32_t> levels;
+    InterFrameEncoder encoder(frames.back(), references, distance, 1, options,
+                              options.trace, /*keyframe=*/false, 0, 0, 0, 0,
+                              {}, nullptr, nullptr, ref_order_hints);
+    if (!encoder.encode(payload, blocks, levels, error)) {
+      error = "TIP anchor P encode failed: " + error;
+      return false;
+    }
+    TipSlotState& slot = slots[1];
+    for (int plane = 0; plane < 3; ++plane) {
+      slot.plane[plane] = encoder.recon(plane);
+    }
+    slot.valid = true;
+    slot.order_hint = anchor_hint;
+    const int ref_hints[1] = {0};
+    if (!store_coded_field(encoder, anchor_hint, ref_hints, 1, &slot, error)) {
+      return false;
+    }
+    slot.num_saved_refs = 1;
+    slot.saved_order_hint[0] = 0;
+
+    VideoFrameHeader header;
+    header.keyframe = false;
+    header.order_hint = static_cast<std::uint32_t>(anchor_hint);
+    header.num_total_refs = 1;
+    header.ref_frame_idx[0] = 0;
+    header.ref_slot = 0;
+    header.refresh_frame_flags = 1U << 1;
+    header.use_qtr_precision_mv = options.mv_precision == 1;
+    header.allow_high_precision_mv = options.mv_precision != 2;
+    header.use_ref_frame_mvs = false;
+
+    const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
+    const std::vector<std::uint8_t> obu =
+        make_frame_obu(config, header, payload);
+    std::vector<std::uint8_t> unit;
+    unit.reserve(td.size() + obu.size());
+    unit.insert(unit.end(), td.begin(), td.end());
+    unit.insert(unit.end(), obu.begin(), obu.end());
+    result.units.push_back(std::move(unit));
+    result.recon.push_back(to_recon_frame(slot.plane[0], slot.plane[1],
+                                         slot.plane[2], width, height));
+    result.frame_bytes.push_back(
+        static_cast<std::uint32_t>(result.units.back().size()));
+    result.tile_bytes.push_back(static_cast<std::uint32_t>(payload.size()));
+    result.inter_blocks.push_back(encoder.inter_blocks());
+    result.intra_blocks.push_back(encoder.intra_blocks());
+    result.frame_output_index.push_back(1);
+  }
+
+  // --- TIP_FRAME_AS_OUTPUT frames -----------------------------------------
+  std::vector<std::int16_t> pred_scratch(2U * 16U * 16U, 0);
+  std::vector<std::uint8_t> block_scratch(16U * 16U, 0);
+  for (int i = 1; i < frame_count - 1; ++i) {
+    const int past_slot = i == 1 ? 0 : i;          // key, then previous TIP
+    const int future_slot = 1;                     // the anchor
+    TipSlotState& past = slots[static_cast<std::size_t>(past_slot)];
+    TipSlotState& future = slots[future_slot];
+    const int hint = i;
+
+    temporal::MotionFieldConfig mf;
+    mf.mi_cols = recon_mi_cols;
+    mf.mi_rows = recon_mi_rows;
+    mf.proj_step = 1;
+    mf.sb_64x64 = true;
+    mf.enable_tip = true;
+    mf.order_hint = hint;
+    mf.num_total_refs = 2;
+    mf.num_past_refs = 1;
+    mf.num_future_refs = 1;
+    mf.frame_width = static_cast<int>(width);
+    mf.frame_height = static_cast<int>(height);
+    const int ref_slots[2] = {past_slot, future_slot};
+    for (int rf = 0; rf < 2; ++rf) {
+      const TipSlotState& ref = slots[static_cast<std::size_t>(ref_slots[rf])];
+      mf.ref_order_hint[rf] = ref.order_hint;
+      mf.refs[rf].slot = ref_slots[rf];
+      mf.refs[rf].type = (ref_slots[rf] == 0) ? temporal::FrameType::kKey
+                                              : temporal::FrameType::kInter;
+      mf.refs[rf].width = static_cast<int>(width);
+      mf.refs[rf].height = static_cast<int>(height);
+      mf.refs[rf].order_hint = ref.order_hint;
+      mf.refs[rf].num_saved_refs = ref.num_saved_refs;
+      for (int k = 0; k < ref.num_saved_refs; ++k) {
+        mf.refs[rf].saved_order_hint[k] = ref.saved_order_hint[k];
+      }
+      mf.saved[rf] = ref.saved();
+    }
+
+    temporal::TipConfig tip;
+    tip.mode = temporal::TipFrameMode::kAsOutput;
+    tip.tip_global_wtd_index =
+        choose_tip_weight_index(past.order_hint, future.order_hint, hint);
+    tip.tip_global_mv = temporal::Mv{0, 0};
+    tip.interp_filter = temporal::InterpFilter::kEighttapSharp;
+    tip.allow_tip_hole_fill = false;
+    tip.enable_tip_refinemv = false;
+    tip.enable_refinemv = false;
+    tip.opfl_refine_type = temporal::RefineType::kNone;
+    tip.num_past_refs = 1;
+    tip.num_future_refs = 1;
+    tip.order_hint = hint;
+
+    TipSlotState& slot = slots[static_cast<std::size_t>(i + 1)];
+    for (int plane = 0; plane < 3; ++plane) {
+      const int pw = plane == 0 ? recon_mi_cols * 4 : recon_mi_cols * 2;
+      const int ph = plane == 0 ? recon_mi_rows * 4 : recon_mi_rows * 2;
+      slot.plane[plane].resize(pw, ph, 0);
+    }
+
+    std::vector<std::int32_t> field_mv(
+        static_cast<std::size_t>(recon_mi_cols / 2) *
+            static_cast<std::size_t>(recon_mi_rows / 2) * 2U, 0);
+    std::vector<std::uint8_t> field_valid(
+        static_cast<std::size_t>(recon_mi_cols / 2) *
+            static_cast<std::size_t>(recon_mi_rows / 2), 0);
+    std::vector<std::int32_t> field_offset(field_valid.size(), 0);
+    std::vector<std::int32_t> avg_mv(field_mv.size(), 0);
+    std::vector<std::uint8_t> avg_valid(field_valid.size(), 0);
+    temporal::MotionField field;
+    field.w8 = recon_mi_cols / 2;
+    field.h8 = recon_mi_rows / 2;
+    field.mv = field_mv.data();
+    field.valid = field_valid.data();
+    field.offset = field_offset.data();
+    temporal::MotionFieldScratch scratch;
+    scratch.avg_mv = avg_mv.data();
+    scratch.avg_valid = avg_valid.data();
+
+    const int capacity =
+        ((recon_mi_cols + 3) / 4) * ((recon_mi_rows + 3) / 4);
+    std::vector<temporal::TipBlock> blocks(static_cast<std::size_t>(capacity));
+    std::vector<temporal::Mv> grid0(
+        static_cast<std::size_t>(recon_mi_cols) *
+        static_cast<std::size_t>(recon_mi_rows));
+    std::vector<temporal::Mv> grid1(grid0.size());
+    temporal::TipPlan plan;
+    plan.num_blocks = capacity;
+    plan.blocks = blocks.data();
+    plan.mv_grid = grid0.data();
+    plan.mv_grid1 = grid1.data();
+
+    tip::TipBuildInput in;
+    in.config = mf;
+    in.tip = tip;
+    in.field = &field;
+    in.scratch = &scratch;
+    in.plan = &plan;
+    for (int plane = 0; plane < 3; ++plane) {
+      in.ref[plane][0] = temporal::PlaneView{
+          past.plane[plane].samples.data(), past.plane[plane].stride,
+          past.plane[plane].width, past.plane[plane].height};
+      in.ref[plane][1] = temporal::PlaneView{
+          future.plane[plane].samples.data(), future.plane[plane].stride,
+          future.plane[plane].width, future.plane[plane].height};
+      in.dst[plane] = slot.plane[plane].samples.data();
+      in.dst_stride[plane] = slot.plane[plane].stride;
+      in.dst_width[plane] = plane == 0 ? static_cast<int>(width)
+                                       : static_cast<int>(width) / 2;
+      in.dst_height[plane] = plane == 0 ? static_cast<int>(height)
+                                        : static_cast<int>(height) / 2;
+      in.sub_x[plane] = plane == 0 ? 0 : 1;
+      in.sub_y[plane] = plane == 0 ? 0 : 1;
+    }
+    in.pred_scratch = pred_scratch.data();
+    in.block_scratch = block_scratch.data();
+
+    tip::TipBuildOutput out;
+    if (tip::build_tip_frame(in, &out) != temporal::TemporalStatus::kOk) {
+      error = "TIP frame " + std::to_string(i) + ": build TIP failed";
+      return false;
+    }
+    temporal::TipConfig used = tip;
+    tip::fill_tip_closest_refs(mf, out.field_result, &used);
+
+    slot.valid = true;
+    slot.order_hint = hint;
+    init_empty_field(&slot, recon_mi_cols, recon_mi_rows);
+    slot.num_saved_refs = 2;
+    slot.saved_order_hint[0] = past.order_hint;
+    slot.saved_order_hint[1] = future.order_hint;
+    {
+      temporal::RefMvField stored;
+      stored.w8 = slot.w8;
+      stored.h8 = slot.h8;
+      stored.ref = slot.field_ref.data();
+      stored.mv = slot.field_mv.data();
+      tip::TipStoreInput store;
+      store.mi_cols = recon_mi_cols;
+      store.mi_rows = recon_mi_rows;
+      store.order_hint = hint;
+      store.closest_past = out.field_result.closest_past;
+      store.closest_future = out.field_result.closest_future;
+      store.closest_past_order_hint = used.closest_past_order_hint;
+      store.closest_future_order_hint = used.closest_future_order_hint;
+      store.weight16 =
+          temporal::kTipWeightingFactor[tip.tip_global_wtd_index] == 16;
+      if (tip::store_tip_frame_motion_field(plan, store, &stored) !=
+          temporal::TemporalStatus::kOk) {
+        error = "TIP frame " + std::to_string(i) + ": §7.22 store failed";
+        return false;
+      }
+    }
+
+    VideoFrameHeader header;
+    header.keyframe = false;
+    header.tip_frame = true;
+    header.order_hint = static_cast<std::uint32_t>(hint);
+    header.num_total_refs = 2;
+    header.ref_frame_idx[0] = static_cast<std::uint8_t>(past_slot);
+    header.ref_frame_idx[1] = static_cast<std::uint8_t>(future_slot);
+    header.ref_slot = header.ref_frame_idx[0];
+    header.refresh_frame_flags = 1U << (i + 1);
+    header.use_ref_frame_mvs = true;
+    header.tip_global_wtd_index =
+        static_cast<std::uint8_t>(tip.tip_global_wtd_index);
+    header.tip_global_mv_row = 0;
+    header.tip_global_mv_col = 0;
+    header.tip_sharp = true;
+
+    std::vector<std::uint8_t> obu = make_tip_frame_obu(config, header, error);
+    if (obu.empty()) {
+      error = "TIP frame " + std::to_string(i) + ": " + error;
+      return false;
+    }
+    const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
+    std::vector<std::uint8_t> unit;
+    unit.reserve(td.size() + obu.size());
+    unit.insert(unit.end(), td.begin(), td.end());
+    unit.insert(unit.end(), obu.begin(), obu.end());
+    result.units.push_back(std::move(unit));
+    result.recon.push_back(to_recon_frame(slot.plane[0], slot.plane[1],
+                                         slot.plane[2], width, height));
+    result.frame_bytes.push_back(
+        static_cast<std::uint32_t>(result.units.back().size()));
+    result.tile_bytes.push_back(0);
+    result.inter_blocks.push_back(static_cast<std::uint32_t>(out.num_blocks));
+    result.intra_blocks.push_back(0);
+    result.frame_output_index.push_back(i + 1);
+  }
+  return true;
+}
+
 bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                         const VideoOptions& options, VideoSequenceResult& result,
                         std::string& error) {
+  // Non-default formats use the depth/chroma-generic core.  The historical
+  // 8-bit 4:2:0 path below is untouched.
+  if (options.format.chroma != fmt::ChromaFormat::k420 ||
+      options.format.depth != fmt::BitDepth::k8) {
+    return encode_video_sequence_format(frames, options, result, error);
+  }
   error.clear();
   result = VideoSequenceResult{};
   if (frames.empty()) {
@@ -2127,14 +2929,6 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     error = "max_partition_depth must be in [0, 8]";
     return false;
   }
-  if (options.enable_tx_search && options.enable_deblock) {
-    error = "--video-tx-search does not compose with --video-deblock yet";
-    return false;
-  }
-  if (options.enable_tx_search && (options.avg_cdf || options.adaptive_cdf)) {
-    error = "--video-tx-search does not compose with --avg-cdf/--adaptive-cdf";
-    return false;
-  }
   if (!options.frame_base_q_idx.empty() &&
       options.frame_base_q_idx.size() != frames.size()) {
     error = "frame_base_q_idx must be empty or have one entry per frame";
@@ -2152,21 +2946,15 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     return options.frame_base_q_idx.empty() ? options.base_q_idx
                                             : options.frame_base_q_idx[index];
   };
-  // The opt-in loop filters are wired on the flat single-tile key+P chain.  The
-  // frame-type wrappers, B frames and temporal layers rebuild frame headers in
-  // their own loops; enabling a filter there without carrying the per-frame
-  // plan would desynchronise the decoder, so reject by name instead.
+  // The opt-in loop filters run per whole frame.  Multi-tile filtering is not
+  // wired yet, and the frame-type wrapper headers are written by the shared
+  // random-access components which do not signal the filter parameters; both
+  // are named rejections rather than silently unfiltered pictures.
   if (options.loop_filters.any()) {
-    if (options.tile_cols > 1 || options.tile_rows > 1) {
-      error = "video loop filters do not compose with --tiles > 1x1 yet";
-      return false;
-    }
-    if (options.b_frames > 0) {
-      error = "video loop filters do not compose with --b-frames yet";
-      return false;
-    }
-    if (options.temporal_layers > 0) {
-      error = "video loop filters do not compose with --video-tlayers yet";
+    if ((options.loop_filters.wiener || options.loop_filters.chroma_lr) &&
+        (options.tile_cols > 1 || options.tile_rows > 1)) {
+      error = "video loop restoration (Wiener/chroma LR) does not compose "
+              "with --tiles > 1x1 yet";
       return false;
     }
     if (options.long_term || options.olk || options.leading_frames > 0 ||
@@ -2220,6 +3008,58 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     error = "DRL reordering is not decoder-gated yet "
             "(docs/negative-results.md)";
     return false;
+  }
+  if (options.enable_tip) {
+    // TIP_FRAME_AS_OUTPUT is frame-level, so it composes with no per-block
+    // tool.  The schedule needs a future anchor that is decoded before the
+    // TIP frames, which is why the supported surface is 3..8 input pictures
+    // and the 8-slot NumRefFrames pool.
+    if (frames.size() < 3 || frames.size() > 8) {
+      error = "--video-tip supports 3..8 input frames (got " +
+              std::to_string(frames.size()) + ")";
+      return false;
+    }
+    if (options.tile_cols > 0 || options.tile_rows > 0) {
+      error = "--video-tip does not compose with --tiles";
+      return false;
+    }
+    if (options.b_frames > 0 || options.temporal_layers > 0 ||
+        options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras) {
+      error = "--video-tip does not compose with the B/temporal-layer/"
+              "random-access frame schedules";
+      return false;
+    }
+    if (options.loop_filters.any()) {
+      error = "--video-tip does not compose with the loop filters yet";
+      return false;
+    }
+    if (options.avg_cdf || options.adaptive_cdf || options.cdf_continuity) {
+      error = "--video-tip does not compose with the CDF chain";
+      return false;
+    }
+    if (options.compound) {
+      error = "--video-tip does not compose with --video-compound";
+      return false;
+    }
+    if (options.enable_gme || options.enable_warp) {
+      error = "--video-tip does not compose with --video-gme/--video-warp";
+      return false;
+    }
+    if (options.enable_tx_search || options.enable_deblock) {
+      error = "--video-tip does not compose with --video-tx-search/"
+              "--video-deblock";
+      return false;
+    }
+    if (!options.frame_base_q_idx.empty()) {
+      error = "--video-tip requires a fixed base_q_idx";
+      return false;
+    }
+    if (options.mfh || options.video_timing) {
+      error = "--video-tip does not compose with --video-mfh/--video-timing";
+      return false;
+    }
+    return encode_tip_sequence(frames, options, result, error);
   }
   if (options.enable_deblock &&
       (options.long_term || options.olk || options.leading_frames > 0 ||
@@ -2286,7 +3126,29 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   bool tiled = false;
   tiles::TileLayout tile_layout;
   post::VideoPostSequenceOptions tile_sequence;
-  tile_sequence.filters.disable_loopfilters_across_tiles = true;
+  // Filters run on the completed frame, so the decoder must filter the shared
+  // tile edges too (0 = filters may read across tiles).
+  // No filters: keep the historical per-tile independence bit.  With filters
+  // the picture-global pass filters the shared edges, so the decoder must too.
+  tile_sequence.filters.disable_loopfilters_across_tiles =
+      !options.loop_filters.any();
+  tile_sequence.filters.enable_cdef = options.loop_filters.cdef;
+  tile_sequence.filters.enable_gdf = options.loop_filters.gdf;
+  tile_sequence.filters.enable_restoration =
+      options.loop_filters.wiener || options.loop_filters.chroma_lr;
+  tile_sequence.filters.lr_disable_luma_pc_wiener = true;
+  tile_sequence.filters.lr_disable_luma_wiener_ns =
+      !options.loop_filters.wiener;
+  tile_sequence.filters.lr_uv_present = options.loop_filters.chroma_lr;
+  tile_sequence.filters.lr_disable_chroma_wiener_ns =
+      !options.loop_filters.chroma_lr;
+  tile_sequence.filters.enable_ccso = options.loop_filters.ccso;
+  tile_sequence.filters.ccso_unit_matches_sb_size = true;
+  tile_sequence.filters.gdf_unit_matches_sb_size = true;
+  tile_sequence.filters.cdef_on_skip_txfm_always_on =
+      options.loop_filters.cdef_on_skip_txfm_mode == 1;
+  tile_sequence.filters.cdef_on_skip_txfm_disabled =
+      options.loop_filters.cdef_on_skip_txfm_mode == 0;
   // §5.4.8: the tiled frame writer owns its own sequence header, so it must
   // signal the average-CDF flags the per-tile bank below actually runs.
   tile_sequence.enable_avg_cdf = options.avg_cdf;
@@ -2468,7 +3330,8 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   config.num_total_refs = 1;
   config.max_drl_bits_minus_1 = 4;
   config.disable_cdf_update = !options.adaptive_cdf;
-  config.enable_masked_compound = false;
+  config.enable_masked_compound =
+      options.compound && (options.compound_wedge || options.compound_diffwtd);
   config.enable_cwp = false;
   config.enable_imp_msk_bld = false;
   config.num_same_ref_compound = 0;
@@ -2498,8 +3361,11 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   config.disable_drl_reorder = !options.drl_reorder;
   config.constrain_drl_reorder = !options.drl_reorder_always;
   config.enable_cfl_intra = true;
+  config.enable_mhccp = options.enable_mhccp;
+  config.using_qmatrix = options.enable_qm;
   config.enable_deblock = options.enable_deblock;
   config.enable_global_motion = options.enable_gme;
+  config.enable_bawp = options.enable_bawp;
   // §5.4.10 CDEF/CCSO sequence flags for the opt-in M2 loop filters.
   if (options.loop_filters.cdef) {
     config.enable_cdef = true;
@@ -2518,13 +3384,16 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     config.enable_gdf = true;
     config.gdf_unit_matches_sb_size = true;
   }
-  if (options.loop_filters.wiener || options.loop_filters.chroma_lr) {
+  if (options.loop_filters.wiener || options.loop_filters.chroma_lr ||
+      options.loop_filters.pc_wiener) {
     config.enable_restoration = true;
-    config.lr_disable_luma_pc_wiener = true;
+    config.lr_disable_luma_pc_wiener = !options.loop_filters.pc_wiener;
     config.lr_disable_luma_wiener_ns = !options.loop_filters.wiener;
     config.lr_uv_present = options.loop_filters.chroma_lr;
     config.lr_disable_chroma_wiener_ns = !options.loop_filters.chroma_lr;
-  }  config.tx_mode_select = options.enable_tx_search;  config.seq_lcr_id = options.seq_lcr_id;
+  }
+  config.tx_mode_select = options.enable_tx_search;
+  config.seq_lcr_id = options.seq_lcr_id;
   config.max_tlayer_id = options.max_tlayer_id;
   config.max_mlayer_id = options.max_mlayer_id;
   config.seq_max_mlayer_cnt = options.seq_max_mlayer_cnt;
@@ -2541,44 +3410,85 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   std::vector<std::uint16_t> cdf_seed;
   if (cdf_chain) cdf_seed = cdf_tile;  // §8.2.2 FrameCdf seed for every tile
   [[maybe_unused]] std::uint32_t cdf_tile_index = 0;
+  std::vector<std::unique_ptr<InterFrameEncoder>> key_encoders;
+  key_encoders.reserve(tile_sources.size());
   for (CodedTile& tile : tile_sources) {
     if (cdf_chain) cdf_tile = cdf_seed;
-    InterFrameEncoder encoder(
+    auto encoder = std::make_unique<InterFrameEncoder>(
         frames[0], no_refs, no_distance, 1, key_options, options.trace,
         /*keyframe=*/true, tile.x, tile.y, tile.w, tile.h,
         cdf_chain ? std::span<const std::uint16_t>(cdf_tile)
                   : std::span<const std::uint16_t>(),
         cdf_chain ? &cdf_scratch : nullptr);
-    if (!encoder.encode(tile.payload, tile.blocks, tile.levels, error)) {
+    if (!encoder->decide(error) || !encoder->deblock(error)) {
       error = "keyframe encode failed: " + error;
       return false;
     }
-    tile.filter_plan = encoder.filter_plan();
+    paste_tile(encoder->recon(0), frame_recon[0], tile.x, tile.y, tile.w,
+               tile.h);
+    paste_tile(encoder->recon(1), frame_recon[1], tile.x / 2, tile.y / 2,
+               tile.w / 2, tile.h / 2);
+    paste_tile(encoder->recon(2), frame_recon[2], tile.x / 2, tile.y / 2,
+               tile.w / 2, tile.h / 2);
+    key_intra_blocks += encoder->intra_blocks();
+    key_encoders.push_back(std::move(encoder));
+  }
+  post::VideoFilterPlan key_filters;
+  if (options.loop_filters.any()) {
+    // One frame-level pass after every tile is reconstructed: the decisions
+    // (CDEF strengths, LR units, GDF) are picture-global, and the decoder
+    // filters across the shared edges (disable_loopfilters_across_tiles = 0).
+    post::VideoLoopFilterFrame lf;
+    lf.width = static_cast<int>(width);
+    lf.height = static_cast<int>(height);
+    lf.mi_cols = recon_mi_cols;
+    lf.mi_rows = recon_mi_rows;
+    lf.frame_is_intra = true;
+    lf.base_q_idx = options.base_q_idx;
+    lf.num_total_refs = 0;
+    lf.restricted_oh = -1;
+    for (int plane = 0; plane < 3; ++plane) {
+      lf.plane[plane] = frame_recon[plane].samples.data();
+      lf.stride[plane] = frame_recon[plane].stride;
+      lf.source[plane] = plane == 0 ? frames[0].y.data() : (plane == 1 ? frames[0].u.data() : frames[0].v.data());
+      lf.source_stride[plane] =
+          plane == 0 ? static_cast<int>(width) : static_cast<int>(width / 2);
+    }
+    if (!post::run_video_loop_filters(lf, options.loop_filters, &key_filters,
+                                      nullptr, &error)) {
+      return false;
+    }
+  }
+  for (std::size_t t = 0; t < tile_sources.size(); ++t) {
+    CodedTile& tile = tile_sources[t];
+    InterFrameEncoder& encoder = *key_encoders[t];
+    // The syntax writer imports the CDF seed when it is constructed inside
+    // write(); replay the frame seed here because the previous tile's final
+    // CDFs replaced the shared buffer.
+    if (cdf_chain) cdf_tile = cdf_seed;
+    if (!encoder.write(tile.payload, tile.blocks, tile.levels,
+                       key_filters.any() ? &key_filters : nullptr, error)) {
+      error = "keyframe encode failed: " + error;
+      return false;
+    }
+    tile.filter_plan = key_filters;
     if (tile.payload.empty()) {
       error = "keyframe produced an empty tile payload";
       return false;
     }
 #if defined(AV2ENC_VIDEO_CDF_CHAIN)
     if (cdf_chain) {
-      // exit_symbol() -> §8.2.4 Saved* average (§7.5 runs after the last tile).
       std::copy(cdf_scratch.begin(), cdf_scratch.end(), cdf_tile.begin());
       if (!cdf_bank.save_tile_cdfs(
-              cdf_tile_index,
+              static_cast<std::uint32_t>(t),
               static_cast<std::uint32_t>(tile_sources.size()))) {
         error = "average-CDF save_tile_cdfs rejected tile " +
-                std::to_string(cdf_tile_index);
+                std::to_string(t);
         return false;
       }
     }
 #endif
-    ++cdf_tile_index;
     key_payload_bytes += static_cast<std::uint32_t>(tile.payload.size());
-    key_intra_blocks += encoder.intra_blocks();
-    paste_tile(encoder.recon(0), frame_recon[0], tile.x, tile.y, tile.w, tile.h);
-    paste_tile(encoder.recon(1), frame_recon[1], tile.x / 2, tile.y / 2,
-               tile.w / 2, tile.h / 2);
-    paste_tile(encoder.recon(2), frame_recon[2], tile.x / 2, tile.y / 2,
-               tile.w / 2, tile.h / 2);
   }
 #if defined(AV2ENC_VIDEO_CDF_CHAIN)
   if (cdf_chain) {
@@ -2594,10 +3504,8 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   std::vector<std::uint8_t> key_unit;
   {
     config.base_q_idx = frame_qp(0);
-    key_header.cdef = tile_sources[0].filter_plan.cdef;
-    key_header.ccso = tile_sources[0].filter_plan.ccso;
-    key_header.lr = tile_sources[0].filter_plan.lr;
-    key_header.gdf = tile_sources[0].filter_plan.gdf;
+    apply_video_loop_filter_frame_header(tile_sources[0].filter_plan,
+                                         key_header);
     std::vector<std::uint8_t> ci;
 #if defined(AV2ENC_VIDEO_CDF_CHAIN)
     if (options.video_timing) {
@@ -2654,6 +3562,13 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       header.ref_slot = key_header.ref_slot;
       header.refresh_frame_flags = key_header.refresh_frame_flags;
       header.base_q_idx = config.base_q_idx;
+      header.tx_mode_select = options.enable_tx_search;
+      header.cdef = post::make_tiled_cdef_params(key_header.cdef);
+      header.ccso = post::make_tiled_ccso_params(key_header.ccso);
+      header.lr = key_header.lr;
+      header.gdf = key_header.gdf;
+      header.cdef_frame_enable = key_header.cdef.enabled;
+      header.ccso_frame_flag = key_header.ccso.enabled;
       std::vector<std::vector<std::uint8_t>> payloads;
       payloads.reserve(tile_sources.size());
       for (const CodedTile& tile : tile_sources) {
@@ -2787,42 +3702,115 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       ref_order_hints[static_cast<std::size_t>(r)] = static_cast<int>(
           slots[recent_slots[static_cast<std::size_t>(r)]].order_hint);
     }
+    std::vector<std::unique_ptr<InterFrameEncoder>> tile_encoders;
+    tile_encoders.reserve(tile_sources.size());
     for (CodedTile& tile : tile_sources) {
       if (cdf_chain) cdf_tile = cdf_seed;
-      InterFrameEncoder encoder(
+      auto encoder = std::make_unique<InterFrameEncoder>(
           frames[i], references, frame_distance, ref_count, frame_options,
           options.trace, /*keyframe=*/false, tile.x, tile.y, tile.w, tile.h,
           cdf_chain ? std::span<const std::uint16_t>(cdf_tile)
                     : std::span<const std::uint16_t>(),
           cdf_chain ? &cdf_scratch : nullptr, gm_ptr, ref_order_hints);
-      if (!encoder.encode(tile.payload, tile.blocks, tile.levels, error)) {
+      if (!encoder->decide(error) || !encoder->deblock(error)) {
         error = "P-frame " + std::to_string(i) + ": " + error;
         return false;
       }
-      tile.filter_plan = encoder.filter_plan();
+      inter_blocks += encoder->inter_blocks();
+      intra_blocks += encoder->intra_blocks();
+      paste_tile(encoder->recon(0), frame_recon[0], tile.x, tile.y, tile.w,
+                 tile.h);
+      paste_tile(encoder->recon(1), frame_recon[1], tile.x / 2, tile.y / 2,
+                 tile.w / 2, tile.h / 2);
+      paste_tile(encoder->recon(2), frame_recon[2], tile.x / 2, tile.y / 2,
+                 tile.w / 2, tile.h / 2);
+      tile_encoders.push_back(std::move(encoder));
+    }
+    post::VideoFilterPlan frame_filters;
+    if (options.loop_filters.any()) {
+      // One picture-global pass after every tile is reconstructed.  CDEF
+      // strengths, LR units and GDF parameters are frame-level decisions, and
+      // the tiled sequence signals disable_loopfilters_across_tiles = 0 so the
+      // decoder filters the same shared edges.
+      post::VideoLoopFilterFrame lf;
+      lf.width = static_cast<int>(width);
+      lf.height = static_cast<int>(height);
+      lf.mi_cols = recon_mi_cols;
+      lf.mi_rows = recon_mi_rows;
+      lf.frame_is_intra = false;
+      lf.base_q_idx = frame_options.base_q_idx;
+      lf.num_total_refs = ref_count;
+      lf.restricted_oh = -1;
+      for (int r = 0; r < 2; ++r) {
+        lf.ref_order_hints[r] = ref_order_hints[static_cast<std::size_t>(r)];
+        lf.frame_distance[r] = frame_distance[static_cast<std::size_t>(r)];
+      }
+      std::vector<post::VideoLoopFilterBlock> filter_blocks;
+      for (std::size_t t = 0; t < tile_sources.size(); ++t) {
+        const CodedTile& tile = tile_sources[t];
+        const int tile_mi_row = tile.y / 4;
+        const int tile_mi_col = tile.x / 4;
+        for (const syntax::BlockSyntax& leaf : tile_encoders[t]->blocks()) {
+          if (leaf.partition !=
+              static_cast<std::uint8_t>(PartitionType::kNone)) {
+            continue;
+          }
+          post::VideoLoopFilterBlock block;
+          block.mi_row = tile_mi_row + static_cast<int>(leaf.mi_row);
+          block.mi_col = tile_mi_col + static_cast<int>(leaf.mi_col);
+          block.w4 =
+              partition::block_width(
+                  static_cast<partition::BlockSize>(leaf.bsize)) >>
+              2;
+          block.h4 =
+              partition::block_height(
+                  static_cast<partition::BlockSize>(leaf.bsize)) >>
+              2;
+          block.skip = leaf.is_inter && leaf.skip_flag != 0;
+          filter_blocks.push_back(block);
+        }
+      }
+      lf.blocks = filter_blocks;
+      for (int plane = 0; plane < 3; ++plane) {
+        lf.plane[plane] = frame_recon[plane].samples.data();
+        lf.stride[plane] = frame_recon[plane].stride;
+        lf.source[plane] =
+            plane == 0 ? frames[i].y.data()
+                       : (plane == 1 ? frames[i].u.data() : frames[i].v.data());
+        lf.source_stride[plane] =
+            plane == 0 ? static_cast<int>(width)
+                       : static_cast<int>(width / 2);
+      }
+      if (!post::run_video_loop_filters(lf, options.loop_filters,
+                                        &frame_filters, nullptr, &error)) {
+        error = "P-frame " + std::to_string(i) + ": " + error;
+        return false;
+      }
+    }
+    for (std::size_t t = 0; t < tile_sources.size(); ++t) {
+      CodedTile& tile = tile_sources[t];
+      InterFrameEncoder& encoder = *tile_encoders[t];
+      if (cdf_chain) cdf_tile = cdf_seed;
+      if (!encoder.write(tile.payload, tile.blocks, tile.levels,
+                         frame_filters.any() ? &frame_filters : nullptr,
+                         error)) {
+        error = "P-frame " + std::to_string(i) + ": " + error;
+        return false;
+      }
+      tile.filter_plan = frame_filters;
 #if defined(AV2ENC_VIDEO_CDF_CHAIN)
       if (cdf_chain) {
-        // exit_symbol() -> §8.2.4 Saved* average (§7.5 after the last tile).
         std::copy(cdf_scratch.begin(), cdf_scratch.end(), cdf_tile.begin());
         if (!cdf_bank.save_tile_cdfs(
-                cdf_tile_index,
+                static_cast<std::uint32_t>(t),
                 static_cast<std::uint32_t>(tile_sources.size()))) {
           error = "average-CDF save_tile_cdfs rejected tile " +
-                  std::to_string(cdf_tile_index);
+                  std::to_string(t);
           return false;
         }
       }
 #endif
-      ++cdf_tile_index;
       payload_bytes += static_cast<std::uint32_t>(tile.payload.size());
-      inter_blocks += encoder.inter_blocks();
-      intra_blocks += encoder.intra_blocks();
-      paste_tile(encoder.recon(0), frame_recon[0], tile.x, tile.y, tile.w,
-                 tile.h);
-      paste_tile(encoder.recon(1), frame_recon[1], tile.x / 2, tile.y / 2,
-                 tile.w / 2, tile.h / 2);
-      paste_tile(encoder.recon(2), frame_recon[2], tile.x / 2, tile.y / 2,
-                 tile.w / 2, tile.h / 2);
     }
 
     const int write_slot = static_cast<int>(i % num_ref_frames);
@@ -2859,10 +3847,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
         !(options.hide_last_picture && i + 1U == frames.size());
     header.reference_select = options.compound && ref_count > 1;
     header.gm = gm_plan;
-    header.cdef = tile_sources[0].filter_plan.cdef;
-    header.ccso = tile_sources[0].filter_plan.ccso;
-    header.lr = tile_sources[0].filter_plan.lr;
-    header.gdf = tile_sources[0].filter_plan.gdf;
+    apply_video_loop_filter_frame_header(tile_sources[0].filter_plan, header);
 
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     config.base_q_idx = frame_qp(i);
@@ -2874,6 +3859,13 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       tiled_header.ref_slot = header.ref_slot;
       tiled_header.refresh_frame_flags = header.refresh_frame_flags;
       tiled_header.base_q_idx = config.base_q_idx;
+      tiled_header.tx_mode_select = options.enable_tx_search;
+      tiled_header.cdef = post::make_tiled_cdef_params(header.cdef);
+      tiled_header.ccso = post::make_tiled_ccso_params(header.ccso);
+      tiled_header.lr = header.lr;
+      tiled_header.gdf = header.gdf;
+      tiled_header.cdef_frame_enable = header.cdef.enabled;
+      tiled_header.ccso_frame_flag = header.ccso.enabled;
       std::vector<std::vector<std::uint8_t>> payloads;
       payloads.reserve(tile_sources.size());
       for (const CodedTile& tile : tile_sources) {

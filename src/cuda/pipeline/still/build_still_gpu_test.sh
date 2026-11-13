@@ -110,6 +110,8 @@ for optional in \
     "$ROOT/src/cuda/codec/filters/pc_wiener/pc_wiener.cu" \
     "$ROOT/src/cuda/codec/filters/gdf/gdf.cu" \
     "$ROOT/src/cuda/codec/intra/cfl/cfl.cu" \
+    "$ROOT/src/cuda/codec/intra/palette/palette.cu" \
+    "$ROOT/src/cuda/codec/intra/ibc/ibc.cu" \
     "$ROOT/src/cuda/codec/intra/mrl/mrl.cu" \
     "$ROOT/src/cuda/codec/intra/dip/dip.cu" \
     "$ROOT/src/cuda/codec/intra/ibp/ibp.cu" \
@@ -126,6 +128,11 @@ for optional in \
     "$ROOT/src/cuda/pipeline/still/hbd/hbd_tx.cu" \
     "$ROOT/src/cuda/formats/high_bitdepth_gpu.cu" \
     "$ROOT/src/cuda/formats/chroma/chroma_formats.cu" \
+    "$ROOT/src/cuda/codec/transform/tx_type/tx_type.cu" \
+    "$ROOT/src/cuda/codec/transform/secondary/tx_secondary_gpu.cu" \
+    "$ROOT/src/cuda/codec/transform/tcq/tcq.cu" \
+    "$ROOT/src/cuda/codec/transform/qm/qm_gpu.cu" \
+    "$ROOT/src/cuda/codec/transform/delta_q/deltaq_gpu.cu" \
     "$ROOT/src/cuda/codec/transform/variants/tx_variants.cu"; do
     if [ -f "$optional" ]; then
         CUDA_COMPONENT_SOURCES+=("$optional")

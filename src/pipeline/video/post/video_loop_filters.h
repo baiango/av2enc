@@ -51,11 +51,16 @@ struct VideoLoopFilterOptions {
   // §7.20 luma non-separable Wiener and/or chroma loop restoration.
   bool wiener = false;
   bool chroma_lr = false;
+  // §7.20.4 luma PC-Wiener (RESTORE_PC_WIENER).  Replaces luma Wiener NS;
+  // composes with chroma LR.
+  bool pc_wiener = false;
 
   // §7.20.5 guided detail filter (luma, header-only mode).
   bool gdf = false;
 
-  bool any() const { return cdef || ccso || wiener || chroma_lr || gdf; }
+  bool any() const {
+    return cdef || ccso || wiener || chroma_lr || pc_wiener || gdf;
+  }
 };
 
 // One coded leaf, used to build the §7.18.1 Skips[] grid.
@@ -65,6 +70,8 @@ struct VideoLoopFilterBlock {
   int w4 = 1;
   int h4 = 1;
   bool skip = false;
+  // Luma eob == 0 (no coefficients).  §7.20.1 LrTxSkip = skip || eob == 0.
+  bool luma_eob_zero = false;
 };
 
 // MI-aligned reconstruction plus the visible source picture (SSE metric only).

@@ -328,6 +328,10 @@ struct GpuOptions {
   bool enable_pc_wiener = false;   // CPU --still-pc-wiener
   bool enable_gdf = false;         // CPU --still-gdf
   bool enable_grain = false;       // CPU --still-grain
+  // §5.18.10.3 metadata-only tools.  Both are host-side planning outputs the
+  // CPU still writer already signals; the GPU path reuses its config/OBUs.
+  bool grain_adaptive = false;     // CPU --still-grain-adaptive
+  bool content_interpretation = false;  // CPU --still-content-interpretation
   // §5.18.6.1/§7.14.4 DC/AC delta-Q.  The CPU reference plans the frame deltas;
   // the GPU TX stage feeds the resolved per-plane deltas to the device
   // delta-Q quantizer.
@@ -351,6 +355,11 @@ struct GpuOptions {
   double tx_type_sse_scale = 0.125;
   bool rdo_intra = false;
   double rdo_sse_scale = 0.125;
+  // §8.2.2 frame->tile CDF seed for the average-CDF bank.  Empty means the
+  // §9.3 defaults.  The multi-tile GPU loop feeds each tile the bank's current
+  // frame image and reads back the tile's final image (`GpuResult::cdf_final`)
+  // for §8.2.4; a single-tile frame leaves both empty.
+  std::vector<std::uint16_t> cdf_seed;
   // §7.15.3 intra secondary transform (--still-ist).
   bool ist = false;
   double ist_sse_scale = 0.125;
@@ -383,6 +392,7 @@ struct GpuOptions {
 // the host-side option test call this function.
 inline ::av2enc::still::StillOptions gpu_options_to_m1(const GpuOptions& options) {
   ::av2enc::still::StillOptions cpu;
+  cpu.cdf_seed = options.cdf_seed;
   cpu.base_q_idx = options.base_q_idx;
   cpu.enable_cfl = options.enable_cfl;
   cpu.cfl_ds_filter = options.cfl_ds_filter;
@@ -433,6 +443,8 @@ inline ::av2enc::still::StillOptions gpu_options_to_m1(const GpuOptions& options
   cpu.enable_pc_wiener = options.enable_pc_wiener;
   cpu.enable_gdf = options.enable_gdf;
   cpu.enable_grain = options.enable_grain;
+  cpu.grain_adaptive = options.grain_adaptive;
+  cpu.content_interpretation = options.content_interpretation;
   cpu.delta_q = options.delta_q;
   cpu.enable_segmentation = options.enable_segmentation;
   cpu.enable_delta_q = options.enable_delta_q;
@@ -453,21 +465,83 @@ inline ::av2enc::still::StillOptions gpu_options_to_m1(const GpuOptions& options
 // "--still-" plus "not ported" as SKIP-REJECTED).
 inline bool gpu_m3_options_supported(const GpuOptions& options,
                                      std::string* error) {
+  // §7.14.4 full-trellis RDOQ: wired (device trellis + §7.16 rate model).  The
+  // CPU reference rejects the QM / delta-Q combinations itself; mirror them by
+  // name, plus the GPU-only restrictions (the TX-type search patches the block
+  // transform on the device after the eligibility test, and the CCTX stage
+  // replaces the chroma TX/RDOQ path).
   if (options.rdoq) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-rdoq is not ported to the GPU pipeline yet; use --still "
-          "(CPU)";
+    if (options.qm) {
+      if (error != nullptr) {
+        *error = "M1 GPU: --still-qm is not supported with --still-rdoq yet";
+      }
+      return false;
     }
-    return false;
+    if (options.delta_q) {
+      if (error != nullptr) {
+        *error =
+            "M1 GPU: --still-dc-ac-delta-q is not supported with --still-rdoq "
+            "yet";
+      }
+      return false;
+    }
+    if (options.tx_type || options.idtx) {
+      if (error != nullptr) {
+        *error =
+            "M1 GPU: --still-rdoq with --still-tx-type/--still-idtx is not "
+            "ported to the GPU pipeline yet; use --still (CPU)";
+      }
+      return false;
+    }
+    if (options.cctx) {
+      if (error != nullptr) {
+        *error =
+            "M1 GPU: --still-rdoq with --still-cctx is not ported to the GPU "
+            "pipeline yet; use --still (CPU)";
+      }
+      return false;
+    }
   }
+  // §5.4.8 enable_tcq / §7.14.4 TCQ: wired (device trellis + rate model).
+  // The CPU rejects these combinations itself; mirror them by name so the GPU
+  // never runs a configuration whose parity oracle does not exist, and add the
+  // one GPU-only restriction: the TX-type search patches the block transform on
+  // the device after the TCQ eligibility test, so the combination is not wired.
   if (options.tcq) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-tcq is not ported to the GPU pipeline yet; use "
-          "--still (CPU)";
+    if (options.rdoq) {
+      if (error != nullptr) {
+        *error = "M1 GPU: --still-tcq is not supported with --still-rdoq";
+      }
+      return false;
     }
-    return false;
+    if (options.qm) {
+      if (error != nullptr) {
+        *error = "M1 GPU: --still-tcq is not supported with --still-qm yet";
+      }
+      return false;
+    }
+    if (options.delta_q) {
+      if (error != nullptr) {
+        *error =
+            "M1 GPU: --still-tcq is not supported with --still-dc-ac-delta-q "
+            "yet";
+      }
+      return false;
+    }
+    if (options.ist) {
+      if (error != nullptr) {
+        *error = "M1 GPU: --still-tcq is not supported with --still-ist yet";
+      }
+      return false;
+    }
+    if (options.tx_type || options.idtx) {
+      if (error != nullptr) {
+        *error =
+            "M1 GPU: --still-tcq with --still-tx-type/--still-idtx is not "
+            "ported to the GPU pipeline yet; use --still (CPU)";
+      }
+      return false;
+    }
   }
   if (options.tx_partition) {
     if (error != nullptr) {
@@ -489,14 +563,6 @@ inline bool gpu_m3_options_supported(const GpuOptions& options,
   // already mirrors `choose_uv_mode`; the orchestrator fills the luma-mode/
   // AngleDeltaY and UVSmooth neighbour inputs from the device decision state
   // before every chroma job.
-  if (options.per_segment_q && options.delta_q) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-per-segment-q with --still-dc-ac-delta-q is not "
-          "ported to the GPU pipeline yet; use --still (CPU)";
-    }
-    return false;
-  }
   return true;
 }
 
@@ -629,6 +695,10 @@ struct GpuResult {
   std::vector<std::uint8_t> pred_y;
   std::vector<std::uint8_t> pred_u;
   std::vector<std::uint8_t> pred_v;
+
+  // Final §8.2 tile CDFs (packed image) when adaptive CDFs ran.  The
+  // multi-tile tile-group writer feeds them to the §8.2.4 average bank.
+  std::vector<std::uint16_t> cdf_final;
 
   GpuStageStatus stages;
   GpuStats stats;

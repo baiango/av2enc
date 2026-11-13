@@ -148,15 +148,16 @@ assignment and exits without writing a stream.
 
 ## Performance expectations
 
-- **Product target:** Vast.ai Linux instance, RTX 3060, GPU-resident encoder.
-  The host CPU is a weak, shared, downclocked Xeon; it is a launch/control
-  processor, not a pixel engine.
+- **Product target:** Vast.ai Linux instance (RTX 3080 Ti production,
+  RTX 5090 maximum speed), GPU-resident encoder. The host CPU is a weak,
+  shared, downclocked Xeon; it is a launch/control processor, not a pixel
+  engine.
 - **CPU-only mode:** correctness reference and test oracle only. It is not
   optimized, has no SIMD/threading work, and may be far slower than the GPU path.
   Do not benchmark it as the product or use it to judge CUDA design.
 - **macOS:** AVM/CVVDP scoring only; not an encoder target.
-- The 1080p ≥1 fps target is measured on an 8192 MiB RTX 3060, not on CPU or the
-  12 GB dev proxy.
+- The 1080p ≥1 fps floor is measured on the RTX 3060 12 GB development box;
+  production/max-speed runs use the 3080 Ti and 5090.
 
 ## Hard constraint
 
@@ -168,26 +169,19 @@ output, compare pixels). Do not read or copy their encoder-side code.
 
 ## Target
 
-- Primary target: **8 GB Ampere (`sm_86`)** — RTX 3060 8 GB, RTX 3050 8 GB,
-  RTX 3070 8 GB.
-- Secondary target: **RTX 4070 Super (12 GB, Ada `sm_89`)** — usually the best
-  **TFLOP/s per $/hr** on Vast.ai, so it is the cost-efficiency target for
-  longer runs. It is not an 8 GB card; 8 GB compatibility is still validated on
-  an enumerated 8192 MiB 3060.
-- Target validation host: **RTX 3060 enumerating 8192 MiB**. The 12 GB dev box
-  is only a compatibility proxy, not a performance/QBS validation host.
-- RTX 5070 (`sm_120`) is a build/smoke target only. No Blackwell-only code.
+- Development / feature baseline: **RTX 3060 12 GB (`sm_86`)**.
+- Production target: **RTX 3080 Ti 12 GB (`sm_86`)**.
+- Maximum-speed target: **RTX 5090 32 GB (`sm_120`)**.
+- 8 GB cards, RTX 4070 Super and RTX 5070 are **no longer targets**.
 - Multi-GPU development: **N× RTX 3060 12 GB**, each with a device-sized arena.
-  Not actual 8 GB cards. Target validation on an enumerated 8192 MiB card
-  remains separate.
-- Product speed target: **≥1 encoded fps at 1080p on the 8192 MiB 3060**.
-  Surplus compute goes into quality (RDOQ, partitions, modes, search,
-  references), never into more fps.
+- Product speed target: **≥1 encoded fps at 1080p on the RTX 3060 12 GB**.
+  The 3080 Ti and 5090 raise throughput; surplus compute goes into quality
+  (RDOQ, partitions, modes, search, references), never into more fps.
 - Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja**. CPU is a reference/test
   path only, not the product.
-- Fat binary: `sm_86;sm_89;sm_120`. The feature baseline stays `sm_86`; no
-  Ada- or Blackwell-only accelerators are required (no TMA, clusters, FP4,
-  tensor-core paths).
+- Fat binary: `sm_86;sm_120`. The feature baseline stays `sm_86`; the same
+  kernels run on both, with no Blackwell-only instructions required (no TMA,
+  clusters, FP4 or tensor-core paths).
 - VRAM: **no fixed preset**. The arena reserves
   `min(device_total, device_free) - 512 MiB`, optionally bounded by
   `--vram-cap <MiB>`. Extra VRAM scales **precompute**, never compression-tool
@@ -211,9 +205,9 @@ the maximum". If another process takes memory between the query and the
 reservation, the encoder halves the request and retries instead of failing.
 CPU-only builds accept `--vram-cap` as a no-op.
 
-On an 8 GB card this naturally produces a sub-7,500 MB arena; 8 GB validation
-still has to run on an actual 8192 MiB card rather than being emulated on a
-larger one.
+The arena is sized from the device; the RTX 3060 12 GB is the development and
+feature baseline, with the RTX 3080 Ti for production and the RTX 5090 for
+maximum throughput.
 
 ## Remote box
 
@@ -228,7 +222,7 @@ Disk is 16GB: keep test media tiny (<100MB total), prefer 64x64/256x256 frames.
 
 ## Platforms
 
-- **Linux x86_64 + CUDA** — the only supported encoder target (Vast.ai RTX 3060,
+- **Linux x86_64 + CUDA** — the only supported encoder target (Vast.ai RTX 3060/3080 Ti/5090,
   CUDA 12.8).
 - **macOS arm64** — **not an encoder build target.** It is used only for the AVM
   baseline, AVM encoding, and CVVDP/MPS quality scoring. CPU reference tests may
@@ -283,9 +277,9 @@ profile is deferred until quality and encode speed are settled.
 `tools/score_speed.py` reports speed vs CVVDP. `tools/score_tradeoff.py` enforces
 the three-way budget: max CVVDP subject to bitrate <= R_max and speed >= S_min.
 The planned 720p60 gate is CVVDP >= 9.0 at <= 500 kbps, with speed measured
-against AVM on the same machine. The product target is **1080p at >=1 fps on a
-3060 enumerating 8192 MiB**; the 12 GB dev box is only a proxy. Validate with
-`tools/check_target_host.py`.
+against AVM on the same machine. The product target is **1080p at >=1 fps on the
+RTX 3060 12 GB development box**; the 3080 Ti and 5090 are the production and
+maximum-speed hosts. Validate with `tools/check_target_host.py`.
 
 ## Profiling
 

@@ -42,6 +42,7 @@
 #endif
 #if __has_include("cuda/pipeline/still/tx/still_tx.h")
 #include "cuda/pipeline/still/tx/still_tx.h"
+#include "cuda/codec/transform/delta_q/deltaq_device.cuh"
 #endif
 #if __has_include("cuda/codec/transform/tx_type/tx_type.h")
 #include "cuda/codec/transform/tx_type/tx_type.h"
@@ -66,6 +67,16 @@
 #define AV2ENC_STILL_GPU_HAVE_TCQ_CORE 1
 #else
 #define AV2ENC_STILL_GPU_HAVE_TCQ_CORE 0
+#endif
+// Device §7.16 rate model + the RDOQ / TCQ trellises (still decision core).
+// The orchestrator owns the launches; the core is shared with the host parity
+// test in `decide/build_and_test.sh`.
+#if __has_include("cuda/pipeline/still/decide/decide_core.cuh")
+#include "cuda/pipeline/still/decide/decide_core.cuh"
+#include "cuda/pipeline/still/decide/decide_tables.h"
+#define AV2ENC_STILL_GPU_HAVE_DECIDE 1
+#else
+#define AV2ENC_STILL_GPU_HAVE_DECIDE 0
 #endif
 #if __has_include("cuda/pipeline/still/recon/recon.h")
 #include "cuda/pipeline/still/recon/recon.h"
@@ -191,6 +202,7 @@ namespace srch = ::av2enc::cuda::still::search;
 namespace iext = ::av2enc::cuda::still::intra_extra;
 namespace sch = ::av2enc::cuda::still::sched;
 namespace still_stream = ::av2enc::still::stream;
+namespace dec = ::av2enc::cuda::still::decide;
 #endif
 
 constexpr std::uint64_t kMiB = 1024ull * 1024ull;
@@ -732,6 +744,37 @@ struct DeviceBuffers {
   std::int32_t* cctx_types = nullptr;     // per block
   std::size_t cctx_types_bytes = 0;
 #endif
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  // §7.16 device rate model + RDOQ / TCQ decision scratch.  The §8.3.1 CDF
+  // slices and the exact `-log2(p)` table live in the arena (uploaded once per
+  // frame); every per-block buffer is sized for the largest adjusted block.
+  std::uint8_t* dec_cdf = nullptr;
+  std::size_t dec_cdf_bytes = 0;
+  double* dec_log2 = nullptr;
+  std::size_t dec_log2_bytes = 0;
+  dec::DecPosition* dec_positions = nullptr;
+  std::size_t dec_positions_bytes = 0;
+  std::int32_t* dec_level_pre = nullptr;
+  double* dec_original = nullptr;         // scan order
+  std::int32_t* dec_pre_max = nullptr;    // scan order
+  std::int32_t* dec_reference = nullptr;  // scan order
+  std::int32_t* dec_base = nullptr;       // scan order
+  std::int32_t* dec_quant = nullptr;      // scan order
+  std::int32_t* dec_states = nullptr;
+  // Trellis DP scratch (kept off the kernel's local frame).
+  dec::DecTrellisScratch dec_trellis{};
+  double* dec_trellis_f64 = nullptr;   // 3 * (kDecMaxArea + 1)
+  std::int32_t* dec_trellis_i32 = nullptr;  // 2 * kDecMaxArea
+  dec::DecChoice* dec_dp = nullptr;       // area * 8
+  std::int32_t* dec_chosen_level = nullptr;  // area * 3 (RDOQ)
+  std::uint8_t* dec_chosen_mode = nullptr;   // area * 3 (RDOQ)
+  double* dec_coeff = nullptr;            // forward coefficients, raster
+  std::int32_t* dec_dequant = nullptr;    // raster dequant output
+  std::int32_t* dec_status = nullptr;     // one status per block
+  std::size_t dec_status_bytes = 0;
+  TxBlockJob* dec_inverse_jobs = nullptr;  // one inverse descriptor per block
+  std::size_t dec_inverse_jobs_bytes = 0;
+#endif
   cm1::ReconWriteJob* recon_jobs = nullptr;  // 3 * block_count
   std::size_t recon_jobs_bytes = 0;
   cm1::ReconBlockInfo* recon_infos = nullptr;  // block_count
@@ -982,6 +1025,23 @@ std::size_t full_device_bytes(const FramePlan& plan) {
   total += 7u * sizeof(double) + 7u * 2u * sizeof(std::int32_t) +
            7u * 2u * sizeof(TxBlockJob) + n * sizeof(std::int32_t);
 #endif
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  // Persistent CDF blob + exact log2 table, then one block's decision scratch.
+  total += 64u * 1024u;                       // CDF blob (see decide_tables.h)
+  total += static_cast<std::size_t>(dec::kDecLog2Entries) * sizeof(double);
+  total += static_cast<std::size_t>(dec::kDecMaxArea) *
+           (sizeof(dec::DecPosition) + 5u * sizeof(std::int32_t) +
+            sizeof(double) + sizeof(std::int32_t));
+  total += static_cast<std::size_t>(dec::kDecMaxArea) * 8u *
+           sizeof(dec::DecChoice);
+  total += (3u * (static_cast<std::size_t>(dec::kDecMaxArea) + 1u) *
+                sizeof(double) +
+            2u * static_cast<std::size_t>(dec::kDecMaxArea) *
+                sizeof(std::int32_t));
+  total += static_cast<std::size_t>(dec::kDecMaxArea) * 3u *
+           (sizeof(std::int32_t) + 1u);
+  total += n * (3u * sizeof(std::int32_t) + 3u * sizeof(TxBlockJob));
+#endif
   total += srch::luma_search_scratch_bytes(
       kSearchMaxBlocks, kSearchMaxBlockArea, kSearchCandidatesPerChunk);
   total += mi_cells * sizeof(deblock::DeblockMi) * 3u;
@@ -1145,6 +1205,18 @@ bool buffers_fit(const FramePlan& plan, const DeviceBuffers& buffers,
          buffers.ist_set_count != nullptr &&
          buffers.ist_base_sse != nullptr &&
          buffers.ist_primary_type != nullptr
+#endif
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+         && buffers.dec_cdf != nullptr && buffers.dec_log2 != nullptr &&
+         buffers.dec_positions != nullptr && buffers.dec_level_pre != nullptr &&
+         buffers.dec_original != nullptr && buffers.dec_pre_max != nullptr &&
+         buffers.dec_reference != nullptr && buffers.dec_base != nullptr &&
+         buffers.dec_quant != nullptr && buffers.dec_states != nullptr &&
+         buffers.dec_dp != nullptr && buffers.dec_chosen_level != nullptr &&
+         buffers.dec_chosen_mode != nullptr && buffers.dec_coeff != nullptr &&
+         buffers.dec_dequant != nullptr &&
+         buffers.dec_status_bytes >= 3u * n * sizeof(std::int32_t) &&
+         buffers.dec_inverse_jobs != nullptr
 #endif
 #if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
          && buffers.cctx_levels != nullptr && buffers.cctx_dequant != nullptr &&
@@ -1423,6 +1495,87 @@ bool allocate_device_buffers(const FramePlan& plan, bool full,
         bump(out.ist_primary_type_bytes, 256));
 #endif
 #if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+    out.dec_cdf_bytes = 64u * 1024u;
+    out.dec_log2_bytes =
+        static_cast<std::size_t>(dec::kDecLog2Entries) * sizeof(double);
+    out.dec_positions_bytes =
+        static_cast<std::size_t>(dec::kDecMaxArea) * sizeof(dec::DecPosition);
+    out.dec_status_bytes = 3u * n * sizeof(std::int32_t);
+    out.dec_cdf = static_cast<std::uint8_t*>(bump(out.dec_cdf_bytes, 256));
+    out.dec_log2 = static_cast<double*>(bump(out.dec_log2_bytes, 256));
+    out.dec_positions = static_cast<dec::DecPosition*>(
+        bump(out.dec_positions_bytes, 256));
+    out.dec_level_pre = static_cast<std::int32_t*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * sizeof(std::int32_t),
+             256));
+    out.dec_original = static_cast<double*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * sizeof(double), 256));
+    out.dec_pre_max = static_cast<std::int32_t*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * sizeof(std::int32_t),
+             256));
+    out.dec_reference = static_cast<std::int32_t*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * sizeof(std::int32_t),
+             256));
+    out.dec_base = static_cast<std::int32_t*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * sizeof(std::int32_t),
+             256));
+    out.dec_quant = static_cast<std::int32_t*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * sizeof(std::int32_t),
+             256));
+    out.dec_states = static_cast<std::int32_t*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * sizeof(std::int32_t),
+             256));
+    out.dec_trellis_f64 = static_cast<double*>(
+        bump(3u * (static_cast<std::size_t>(dec::kDecMaxArea) + 1u) *
+                 sizeof(double),
+             256));
+    out.dec_trellis_i32 = static_cast<std::int32_t*>(
+        bump(2u * static_cast<std::size_t>(dec::kDecMaxArea) *
+                 sizeof(std::int32_t),
+             256));
+    if (out.dec_trellis_f64 == nullptr || out.dec_trellis_i32 == nullptr) {
+      error = "device buffers: trellis scratch does not fit";
+      return false;
+    }
+    out.dec_trellis.eob_bits = out.dec_trellis_f64;
+    out.dec_trellis.suffix_zero =
+        out.dec_trellis_f64 + (dec::kDecMaxArea + 1);
+    out.dec_trellis.tail = out.dec_trellis_f64 + 2 * (dec::kDecMaxArea + 1);
+    out.dec_trellis.signs = out.dec_trellis_i32;
+    out.dec_trellis.bounds = out.dec_trellis_i32 + dec::kDecMaxArea;
+    out.dec_dp = static_cast<dec::DecChoice*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * 8u *
+                 sizeof(dec::DecChoice),
+             256));
+    out.dec_chosen_level = static_cast<std::int32_t*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * 3u *
+                 sizeof(std::int32_t),
+             256));
+    out.dec_chosen_mode = static_cast<std::uint8_t*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * 3u, 256));
+    out.dec_coeff = static_cast<double*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * sizeof(double), 256));
+    out.dec_dequant = static_cast<std::int32_t*>(
+        bump(static_cast<std::size_t>(dec::kDecMaxArea) * sizeof(std::int32_t),
+             256));
+    out.dec_status = static_cast<std::int32_t*>(bump(out.dec_status_bytes, 256));
+    out.dec_inverse_jobs_bytes = 3u * n * sizeof(TxBlockJob);
+    out.dec_inverse_jobs = static_cast<TxBlockJob*>(
+        bump(out.dec_inverse_jobs_bytes, 256));
+    if (out.dec_cdf == nullptr || out.dec_log2 == nullptr ||
+        out.dec_positions == nullptr || out.dec_level_pre == nullptr ||
+        out.dec_original == nullptr || out.dec_pre_max == nullptr ||
+        out.dec_reference == nullptr || out.dec_base == nullptr ||
+        out.dec_quant == nullptr || out.dec_states == nullptr ||
+        out.dec_dp == nullptr || out.dec_chosen_level == nullptr ||
+        out.dec_chosen_mode == nullptr || out.dec_coeff == nullptr ||
+        out.dec_dequant == nullptr || out.dec_status == nullptr ||
+        out.dec_inverse_jobs == nullptr) {
+      error = "device buffers: coefficient decision scratch does not fit";
+      return false;
+    }
+#endif
     out.cctx_levels_bytes =
         7u * 2u * kTxTypeAdjElems * sizeof(std::int32_t);
     out.cctx_dequant_bytes = out.cctx_levels_bytes;
@@ -2289,6 +2442,12 @@ struct DeviceSegmentState {
   std::int32_t height = 0;
   std::int32_t alt_q[8] = {};
   std::uint8_t alt_q_active[8] = {};
+  // 1 when --still-dc-ac-delta-q also runs.  The CPU reference evaluates its
+  // delta-Q forward/inverse quantiser from the frame's resolved DC/AC totals,
+  // so the per-SB qindex cancels in that path; the TX descriptors keep the
+  // earlier delta-Q patch and only the reconstruction/deblock qindex follows
+  // the segment map.
+  std::int32_t has_delta_q = 0;
 };
 
 // §7.14.2 get_qindex(false, segment_id) for the no-UV-delta still case.
@@ -2375,11 +2534,22 @@ __global__ void derive_segment_map_kernel(
     const int sb = (block.mi_row / sb_mi) * state.sb_cols +
                    block.mi_col / sb_mi;
     StillTxJob& job = tx_jobs[j];
-    job.use_deltaq = 1;
-    job.ratio_scale = 1;  // CPU apply_qindex_step() order
-    job.qindex = qindex[sb];
-    job.delta_dc = 0;
-    job.delta_ac = 0;
+    if (state.has_delta_q == 0) {
+      job.use_deltaq = 1;
+      job.ratio_scale = 1;  // CPU apply_qindex_step() order
+      job.qindex = qindex[sb];
+      job.delta_dc = 0;
+      job.delta_ac = 0;
+    } else {
+      // Combined --still-per-segment-q + --still-dc-ac-delta-q.  The frame
+      // patch already carries the resolved delta quantizers; add the per-SB
+      // qlookup(segment qindex) so the kernel evaluates the CPU product
+      // `(qf * (528 / step)) * step / q` in the same order.  The per-SB
+      // qindex still drives reconstruction metadata and deblocking.
+      job.use_deltaq = 1;
+      job.ratio_scale = 2;
+      job.qscale_step = deltaq::core::qlookup(qindex[sb]);
+    }
     job.plane = j - i * 3;
   }
   for (int i = static_cast<int>(threadIdx.x); i < nblocks;
@@ -2411,6 +2581,9 @@ __global__ void derive_segment_map_kernel(
   config.allow_intrabc = options.ibc;
   config.allow_global_intrabc = options.ibc;
   config.allow_local_intrabc = false;
+  // §7.3.3 content interpretation OBU: host metadata only, written by the
+  // shared CPU assembler (`assemble_still_picture`).
+  config.content_interpretation = options.content_interpretation;
   config.enable_ext_partitions = options.ext_partitions;
   config.enable_uneven_4way_partitions = options.ext_partitions;
   config.enable_sdp = options.sdp;
@@ -3286,6 +3459,115 @@ __global__ void cctx_decide_kernel(
 }
 #endif  // AV2ENC_STILL_GPU_HAVE_TCQ_CORE
 
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+// ---- §7.16 device rate model + still decision stages --------------------
+//
+// The decisions run one block at a time on the frame stream: a prep kernel
+// freezes the §7.16 contexts from the scalar (reference) levels, a one-thread
+// kernel runs the trellis, and an apply kernel writes the syntax levels, the
+// dequantised (Quant-domain) levels and the scan EOB back into the block's
+// coefficient plane.  No host coefficient work, no per-block sync.
+
+__global__ void dec_prepare_kernel(const double* __restrict__ coeff,
+                                   const std::int32_t* __restrict__ levels,
+                                   dec::DecBlockInfo info,
+                                   double* __restrict__ original,
+                                   std::int32_t* __restrict__ reference,
+                                   std::int32_t* __restrict__ pre_max,
+                                   std::int32_t* __restrict__ level_pre,
+                                   dec::DecPosition* __restrict__ positions,
+                                   int tcq) {
+  const int area = info.w * info.h;
+  for (int c = static_cast<int>(threadIdx.x); c < area;
+       c += static_cast<int>(blockDim.x)) {
+    const int pos = dec::dec_scan_pos(c, info.w, info.h);
+    const int row = pos / info.w;
+    const int col = pos % info.w;
+    original[c] = coeff[pos];
+    const std::int32_t scalar = levels[pos];
+    pre_max[c] = (row + col) < 4 ? 8 : 6;
+    // RDOQ freezes the contexts from the scalar level itself; TCQ uses the
+    // half-step base-level reference (`(abs + 1) / 2`), exactly like
+    // still_encoder.cpp builds `reference` for `tcq::av2::Model`.
+    const std::int32_t abs_scalar = scalar < 0 ? -scalar : scalar;
+    const std::int32_t base = (abs_scalar + 1) / 2;
+    reference[c] = tcq != 0 ? (scalar < 0 ? -base : base) : scalar;
+  }
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    dec::dec_build_positions(info, reference, tcq, level_pre, positions);
+  }
+}
+
+__global__ void dec_tcq_kernel(dec::DecTables tables, dec::DecBlockInfo info,
+                               dec::DecTrellisScratch scratch,
+                               const dec::DecPosition* __restrict__ positions,
+                               const double* __restrict__ original,
+                               const std::int32_t* __restrict__ pre_max,
+                               int num_coefficients, dec::DecTcqConfig config,
+                               std::int32_t* __restrict__ base,
+                               std::int32_t* __restrict__ quant,
+                               std::int32_t* __restrict__ states,
+                               dec::DecChoice* __restrict__ dp,
+                               int* __restrict__ status) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  const dec::DecTcqResult result = dec::dec_tcq_quantize(
+      tables, info, positions, original, pre_max, nullptr, num_coefficients,
+      config, scratch, base, quant, states, dp);
+  *status = result.status;
+}
+
+__global__ void dec_rdoq_kernel(dec::DecTables tables, dec::DecBlockInfo info,
+                                dec::DecTrellisScratch scratch,
+                                const dec::DecPosition* __restrict__ positions,
+                                const double* __restrict__ original,
+                                const std::int32_t* __restrict__ reference,
+                                int num_coefficients,
+                                dec::DecRdoqConfig config,
+                                std::int32_t* __restrict__ levels_out,
+                                std::int32_t* __restrict__ chosen_level,
+                                std::uint8_t* __restrict__ chosen_mode,
+                                int* __restrict__ status) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  const dec::DecRdoqResult result = dec::dec_rdoq_quantize(
+      tables, info, positions, original, reference, num_coefficients, config,
+      scratch, levels_out, chosen_level, chosen_mode);
+  *status = result.status;
+}
+
+// Writes the scan-order decision into the block's raster coefficient plane in
+// `levels_out`; `dequant_out` receives the §7.14.4 dequantisation of the
+// Quant levels.  For RDOQ the two are the same array (`dequant_from_levels`).
+__global__ void dec_apply_kernel(dec::DecBlockInfo info,
+                                 const std::int32_t* __restrict__ levels_scan,
+                                 const std::int32_t* __restrict__ quant_scan,
+                                 int dequant_from_levels, std::int32_t denom,
+                                 std::int32_t* __restrict__ levels_out,
+                                 std::int32_t* __restrict__ dequant_out,
+                                 std::int32_t* __restrict__ eob_out) {
+  const int area = info.w * info.h;
+  for (int c = static_cast<int>(threadIdx.x); c < area;
+       c += static_cast<int>(blockDim.x)) {
+    const int pos = dec::dec_scan_pos(c, info.w, info.h);
+    const std::int32_t level = levels_scan[c];
+    const std::int32_t quant = dequant_from_levels != 0 ? level : quant_scan[c];
+    levels_out[pos] = level;
+    dequant_out[pos] = dec::dec_dequant_value(quant, denom);
+  }
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    int eob = 0;
+    for (int c = area - 1; c >= 0; --c) {
+      if (levels_scan[c] != 0) {
+        eob = c + 1;
+        break;
+      }
+    }
+    *eob_out = eob;
+  }
+}
+#endif  // AV2ENC_STILL_GPU_HAVE_DECIDE
+
 // Runs the full GPU frame pipeline in syntax order:
 //
 //   search -> chosen-mode prediction -> luma TX/recon -> chroma decide (DC/CfL)
@@ -3315,6 +3597,14 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   const int chroma_coded_h = mi_rows * 2;
   const int chroma_vis_w = static_cast<int>((picture.width + 1u) / 2u);
   const int chroma_vis_h = static_cast<int>((picture.height + 1u) / 2u);
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  // §8.3.1 slice for the raw frame base_q_idx (0 for the pinned QP 90).
+  const int dec_qctx =
+      ::av2enc::still::qctx::slice_for_base_q_idx(options.base_q_idx);
+  const bool dec_active = options.rdoq || options.tcq;
+#else
+  const bool dec_active = false;
+#endif
   // In-loop filters: the CPU reference plans the decisions/parameters (index
   // grids, offsets, unit grids), the GPU applies the normative pixel kernels to
   // the deblocked reconstruction in §7.18/§7.19 order.
@@ -3517,6 +3807,40 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   const bool cctx_active = false;
 #endif
 
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  // §7.16 device decisions: pack the §8.3.1 CDF slices plus the exact
+  // `-log2(p)` table once per frame.  Both are small (the CDF blob is ~40 KiB)
+  // and are uploaded through the pinned staging buffer with the frame data.
+  dec::DecHostTables dec_host;
+  dec::DecTables dec_tables;
+  std::vector<double> dec_log2_host;
+  std::size_t dec_cdf_upload = 0;
+  std::size_t dec_log2_upload = 0;
+  bool dec_cdf_ok = false;
+  if (dec_active) {
+    if (!dec::build_dec_tables(&dec_host) || dec_host.blob.empty()) {
+      error = "gpu: coefficient decision tables could not be built";
+      return GpuRunStatus::kError;
+    }
+    dec_cdf_upload = dec_host.blob.size();
+    dec_log2_host = dec::build_log2_prob_table();
+    dec_log2_upload = dec_log2_host.size() * sizeof(double);
+    if (dec_cdf_upload > buffers.dec_cdf_bytes ||
+        dec_log2_upload > buffers.dec_log2_bytes) {
+      error = "gpu: coefficient decision tables exceed the arena slot";
+      return GpuRunStatus::kUnsupported;
+    }
+    dec_tables = dec_host.view;
+    dec_tables.base = buffers.dec_cdf;
+    dec_tables.log2p = buffers.dec_log2;
+    dec_cdf_ok = true;
+  }
+#endif
+#if !AV2ENC_STILL_GPU_HAVE_DECIDE
+  const std::size_t dec_cdf_upload = 0;
+  const std::size_t dec_log2_upload = 0;
+#endif
+
   // ---- availability counts (from the frame plan) -------------------------
   // The plan exports the exact superblock-local availability replay for its
   // frame SbSize (64 or 128), including ChromaMi ownership for extended and
@@ -3527,6 +3851,10 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::vector<srch::LumaSearchBlock> luma_blocks(static_cast<std::size_t>(blocks));
   std::vector<im::IntraJob> luma_jobs(static_cast<std::size_t>(blocks));
   std::vector<StillTxJob> tx_jobs(static_cast<std::size_t>(blocks) * 3u);
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  std::vector<TxBlockJob> dec_inverse_jobs(
+      static_cast<std::size_t>(blocks) * 3u);
+#endif
   std::vector<cm1::ReconWriteJob> recon_jobs(static_cast<std::size_t>(blocks) * 3u);
   std::vector<cm1::ReconBlockInfo> recon_infos(static_cast<std::size_t>(blocks));
   std::vector<cm1::StillChromaJob> chroma_jobs(static_cast<std::size_t>(blocks));
@@ -3642,6 +3970,37 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
         return GpuRunStatus::kUnsupported;
       }
     }
+    #if AV2ENC_STILL_GPU_HAVE_DECIDE
+      // §7.16 decisions (RDOQ / TCQ) read the forward coefficients and the
+      // scalar levels of the luma block; `dec_coeff` is one block of scratch.
+      if (options.rdoq || options.tcq) {
+        tx_jobs[static_cast<std::size_t>(i) * 3u].coeff_offset = 0;
+        // One inverse-transform descriptor per block, uploaded with the frame
+        // descriptors.  The dequantised Quant levels live at offset 0 of the
+        // single-block scratch and the coded residual goes to the block's slot
+        // in the packed residual plane.
+        const auto fill_inverse = [&](int plane, int residual_offset) {
+          TxBlockJob& inverse =
+              dec_inverse_jobs[static_cast<std::size_t>(i) * 3u +
+                               static_cast<std::size_t>(plane)];
+          inverse.params = tx_jobs[static_cast<std::size_t>(i) * 3u +
+                                   static_cast<std::size_t>(plane)]
+                               .params;
+          inverse.in_offset = 0;
+          inverse.out_offset = static_cast<std::int32_t>(residual_offset);
+          inverse.quant_step = av2enc::txv::kQuantStep;
+        };
+        fill_inverse(0, static_cast<int>(block.residual_offset_y));
+        if (block.has_chroma != 0) {
+          fill_inverse(1, static_cast<int>(block.residual_offset_u));
+          fill_inverse(2, static_cast<int>(block.residual_offset_v));
+          if (options.rdoq) {
+            tx_jobs[static_cast<std::size_t>(i) * 3u + 1u].coeff_offset = 0;
+            tx_jobs[static_cast<std::size_t>(i) * 3u + 2u].coeff_offset = 0;
+          }
+        }
+      }
+#endif
     if (cpu_plan != nullptr && cpu_plan->delta_q_enabled) {
       for (int plane = 0; plane < 3; ++plane) {
         StillTxJob& job = tx_jobs[static_cast<std::size_t>(i) * 3u +
@@ -3857,6 +4216,12 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   const std::size_t chroma_jobs_bytes =
       chroma_jobs.size() * sizeof(cm1::StillChromaJob);
   const std::size_t tx_jobs_bytes = tx_jobs.size() * sizeof(StillTxJob);
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  const std::size_t dec_inverse_jobs_bytes =
+      dec_active ? dec_inverse_jobs.size() * sizeof(TxBlockJob) : 0u;
+#else
+  const std::size_t dec_inverse_jobs_bytes = 0;
+#endif
   const std::size_t recon_jobs_bytes =
       recon_jobs.size() * sizeof(cm1::ReconWriteJob);
   const std::size_t recon_infos_bytes =
@@ -3938,7 +4303,9 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
                                    ccso_off_bytes[0] + ccso_off_bytes[1] +
                                    ccso_off_bytes[2] + cdef_idx_bytes +
                                    lr_type_bytes[0] + lr_coeff_bytes[0] +
-                                   lr_tx_skip_bytes + q2_upload_bytes;
+                                   lr_tx_skip_bytes + q2_upload_bytes +
+                                   dec_cdf_upload + dec_log2_upload +
+                                   dec_inverse_jobs_bytes;
   auto* upload = static_cast<std::uint8_t*>(gpu.upload.data());
   if (upload == nullptr || gpu.upload.capacity() < upload_total) {
     error = "gpu: pinned upload staging is too small";
@@ -3963,6 +4330,13 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   std::memcpy(upload + up, tx_jobs.data(), tx_jobs_bytes);
   const std::uint8_t* host_tx_jobs = upload + up;
   up += tx_jobs_bytes;
+  const std::uint8_t* host_dec_inverse = nullptr;
+  if (dec_inverse_jobs_bytes != 0) {
+    std::memcpy(upload + up, dec_inverse_jobs.data(),
+                dec_inverse_jobs_bytes);
+    host_dec_inverse = upload + up;
+    up += dec_inverse_jobs_bytes;
+  }
   std::memcpy(upload + up, recon_jobs.data(), recon_jobs_bytes);
   const std::uint8_t* host_recon_jobs = upload + up;
   up += recon_jobs_bytes;
@@ -4026,6 +4400,20 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     host_lr_tx_skip = upload + up;
     up += lr_tx_skip_bytes;
   }
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  const std::uint8_t* host_dec_cdf = nullptr;
+  const double* host_dec_log2 = nullptr;
+  if (dec_cdf_upload != 0) {
+    std::memcpy(upload + up, dec_host.blob.data(), dec_cdf_upload);
+    host_dec_cdf = upload + up;
+    up += dec_cdf_upload;
+  }
+  if (dec_log2_upload != 0) {
+    std::memcpy(upload + up, dec_log2_host.data(), dec_log2_upload);
+    host_dec_log2 = reinterpret_cast<const double*>(upload + up);
+    up += dec_log2_upload;
+  }
+#endif
   const std::int32_t* host_q2 = nullptr;
   if (q2_upload_bytes != 0) {
     std::memcpy(upload + up, q2_host.data(), q2_upload_bytes);
@@ -4067,6 +4455,9 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       !enqueue_upload(buffers.chroma_jobs, host_chroma_jobs,
                       chroma_jobs_bytes) ||
       !enqueue_upload(buffers.tx_jobs, host_tx_jobs, tx_jobs_bytes) ||
+      (dec_inverse_jobs_bytes != 0 &&
+       !enqueue_upload(buffers.dec_inverse_jobs, host_dec_inverse,
+                       dec_inverse_jobs_bytes)) ||
       !enqueue_upload(buffers.recon_jobs, host_recon_jobs, recon_jobs_bytes) ||
       !enqueue_upload(buffers.recon_infos, host_recon_infos,
                       recon_infos_bytes) ||
@@ -4144,6 +4535,18 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     error = "gpu: QM q2 matrix upload failed";
     return GpuRunStatus::kError;
   }
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  if (dec_cdf_upload != 0 &&
+      !enqueue_upload(buffers.dec_cdf, host_dec_cdf, dec_cdf_upload)) {
+    error = "gpu: coefficient CDF upload failed";
+    return GpuRunStatus::kError;
+  }
+  if (dec_log2_upload != 0 &&
+      !enqueue_upload(buffers.dec_log2, host_dec_log2, dec_log2_upload)) {
+    error = "gpu: coefficient log2 table upload failed";
+    return GpuRunStatus::kError;
+  }
+#endif
   if (cudaMemsetAsync(buffers.intra_choices, 0,
                       static_cast<std::size_t>(blocks) *
                           sizeof(iext::Choice),
@@ -4171,6 +4574,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     // Segment 1 carries the signalled SEG_LVL_ALT_Q; segment 0 is base_q_idx.
     seg_state.alt_q[1] = options.per_segment_q_delta;
     seg_state.alt_q_active[1] = 1;
+    seg_state.has_delta_q = options.delta_q ? 1 : 0;
     derive_segment_map_kernel<<<1, 256, 0, stream>>>(
         buffers.src.y, seg_state, buffers.sb_variance, buffers.sb_segment,
         buffers.sb_qindex, buffers.blocks, buffers.tx_jobs,
@@ -4268,6 +4672,79 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   // ---- ordered block loop ----------------------------------------------
   int last_sb_row = -1;
   int last_sb_col = -1;
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  // Shared §7.16 decision + reconstruction for one plane block.  Runs on the
+  // frame stream: context prep -> trellis -> level/dequant apply -> inverse
+  // transform into the plane's packed residual.  TCQ applies to luma 2-D
+  // classes only; every other (plane, tool) case is the RDOQ trellis.
+  const auto run_coefficient_decision =
+      [&](int plane, const StillTxJob& job, int block_index,
+          std::int32_t* levels_out, std::int16_t* residual_plane,
+          const TxBlockJob* inverse_job, std::int32_t* status) -> bool {
+    const int area = job.params.w * job.params.h;
+    if (area <= 0 || area > dec::kDecMaxArea) {
+      error = "gpu: coefficient decision geometry is unsupported";
+      return false;
+    }
+    dec::DecBlockInfo info;
+    info.plane = plane;
+    info.coded_w = job.params.coded_w;
+    info.coded_h = job.params.coded_h;
+    info.w = job.params.w;
+    info.h = job.params.h;
+    info.tx_size = job.params.tx_size;
+    info.txb_skip_context = 0;
+    info.dc_sign_context = 0;
+    info.qctx = dec_qctx;
+    info.is_inter = 0;
+    const bool tcq_plane = options.tcq && plane == 0;
+    const double quant_step = 1.0 / job.params.quant_factor;
+    dec_prepare_kernel<<<1, 256, 0, stream>>>(
+        buffers.dec_coeff, levels_out, info, buffers.dec_original,
+        buffers.dec_reference, buffers.dec_pre_max, buffers.dec_level_pre,
+        buffers.dec_positions, tcq_plane ? 1 : 0);
+    if (tcq_plane) {
+      dec::DecTcqConfig config;
+      config.quant_step = quant_step;
+      config.lambda = ::av2enc::rdo::lambda_sse_from_quant_step(
+          quant_step, options.tcq_sse_scale);
+      dec_tcq_kernel<<<1, 1, 0, stream>>>(
+          dec_tables, info, buffers.dec_trellis, buffers.dec_positions,
+          buffers.dec_original,
+          buffers.dec_pre_max, area, config, buffers.dec_base,
+          buffers.dec_quant, buffers.dec_states, buffers.dec_dp, status);
+    } else {
+      dec::DecRdoqConfig config;
+      config.quant_step = quant_step;
+      config.lambda = ::av2enc::rdo::lambda_sse_from_quant_step(
+          quant_step, options.rdoq_sse_scale);
+      dec_rdoq_kernel<<<1, 1, 0, stream>>>(
+          dec_tables, info, buffers.dec_trellis, buffers.dec_positions,
+          buffers.dec_original,
+          buffers.dec_reference, area, config, buffers.dec_base,
+          buffers.dec_chosen_level, buffers.dec_chosen_mode, status);
+    }
+    std::int32_t denom = job.params.dq_denom;
+    if (tcq_plane) denom <<= 1;  // §7.14.4 extra shift
+    dec_apply_kernel<<<1, 256, 0, stream>>>(
+        info, buffers.dec_base, buffers.dec_quant, tcq_plane ? 0 : 1, denom,
+        levels_out, buffers.dec_dequant,
+        buffers.eob + static_cast<std::size_t>(block_index) * 3u +
+            static_cast<std::size_t>(plane));
+    const cudaError_t inverse_error =
+        txv_inverse_block_multi(buffers.dec_dequant, residual_plane,
+                                inverse_job, 1, stream);
+    if (inverse_error != cudaSuccess || cudaGetLastError() != cudaSuccess) {
+      error = std::string("gpu: coefficient decision reconstruction failed (") +
+              cudaGetErrorName(inverse_error != cudaSuccess ? inverse_error
+                                                            : cudaGetLastError()) +
+              ")";
+      return false;
+    }
+    return true;
+  };
+#endif
+
   for (int i = 0; i < blocks; ++i) {
     const BlockPlan& block = plan.blocks[static_cast<std::size_t>(i)];
     const int x0 = block.mi_col * 4;
@@ -4574,11 +5051,27 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     tx_buffers.levels = buffers.coeff.y;
     tx_buffers.residual_out = buffers.residual_packed[0];
     tx_buffers.eob = buffers.eob;
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+    tx_buffers.coeff = dec_active ? buffers.dec_coeff : nullptr;
+#endif
     if (still_tx_batch(buffers.tx_jobs + static_cast<std::size_t>(i) * 3u, 1,
                     tx_buffers, 0, stream) != cudaSuccess) {
       error = "gpu: luma TX failed";
       return GpuRunStatus::kError;
     }
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+    tx_buffers.coeff = nullptr;
+    if (dec_active) {
+      if (!run_coefficient_decision(
+              0, tx_jobs[static_cast<std::size_t>(i) * 3u], i,
+              buffers.coeff.y + block.coeff_offset_y,
+              buffers.residual_packed[0],
+              buffers.dec_inverse_jobs + static_cast<std::size_t>(i) * 3u,
+              buffers.dec_status + static_cast<std::size_t>(i) * 3u)) {
+        return GpuRunStatus::kError;
+      }
+    }
+#endif
 #if AV2ENC_STILL_GPU_HAVE_SECONDARY
     if (ist_active) {
       const int size_idx = txv::tx_size_index(block.luma_w, block.luma_h);
@@ -4751,12 +5244,34 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
           continue;
         }
 #endif
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+        // TCQ is luma-only; chroma coefficients are only needed for RDOQ.
+        tx_buffers.coeff = options.rdoq ? buffers.dec_coeff : nullptr;
+#endif
         if (still_tx_batch(
                 buffers.tx_jobs + static_cast<std::size_t>(i) * 3u + p, 1,
                 tx_buffers, 0, stream) != cudaSuccess) {
           error = "gpu: chroma TX failed";
           return GpuRunStatus::kError;
         }
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+        tx_buffers.coeff = nullptr;
+        if (options.rdoq &&
+            !run_coefficient_decision(
+                p,
+                tx_jobs[static_cast<std::size_t>(i) * 3u +
+                        static_cast<std::size_t>(p)],
+                i,
+                (p == 1 ? buffers.coeff.u : buffers.coeff.v) +
+                    (p == 1 ? block.coeff_offset_u : block.coeff_offset_v),
+                buffers.residual_packed[p],
+                buffers.dec_inverse_jobs + static_cast<std::size_t>(i) * 3u +
+                    static_cast<std::size_t>(p),
+                buffers.dec_status + static_cast<std::size_t>(i) * 3u +
+                    static_cast<std::size_t>(p))) {
+          return GpuRunStatus::kError;
+        }
+#endif
       }
 #if AV2ENC_STILL_GPU_HAVE_TCQ_CORE
       if (cctx_active) {
@@ -5370,11 +5885,19 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
 #else
   const std::size_t cctx_bytes = 0;
 #endif
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  const std::size_t dec_status_bytes =
+      (options.rdoq || options.tcq)
+          ? 3u * static_cast<std::size_t>(blocks) * sizeof(std::int32_t)
+          : 0u;
+#else
+  const std::size_t dec_status_bytes = 0;
+#endif
   const std::size_t download_total =
       recon_y_bytes + recon_c_bytes * 2u + coeff_y_bytes + coeff_u_bytes +
       coeff_v_bytes + eob_bytes + luma_result_bytes + chroma_result_bytes +
       choice_bytes + sb_seg_bytes + tx_types_bytes + 2u * ist_bytes +
-      cctx_bytes + sizeof(int);
+      cctx_bytes + dec_status_bytes + sizeof(int);
   auto* download = static_cast<std::uint8_t*>(gpu.download.data());
   if (download == nullptr || gpu.download.capacity() < download_total) {
     error = "gpu: pinned download staging is too small";
@@ -5411,6 +5934,8 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
        !enqueue_download(buffers.ist_sets, ist_bytes)) ||
       (cctx_bytes != 0 &&
        !enqueue_download(buffers.cctx_types, cctx_bytes)) ||
+      (dec_status_bytes != 0 &&
+       !enqueue_download(buffers.dec_status, dec_status_bytes)) ||
       !enqueue_download(buffers.tx_errors, sizeof(int))) {
     error = "gpu: result download failed";
     return GpuRunStatus::kError;
@@ -5426,13 +5951,31 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
                      coeff_u_bytes + coeff_v_bytes + eob_bytes +
                      luma_result_bytes + chroma_result_bytes + choice_bytes +
                      sb_seg_bytes + tx_types_bytes + 2u * ist_bytes +
-                     cctx_bytes;
+                     cctx_bytes + dec_status_bytes;
   std::memcpy(&tx_errors, download + read, sizeof(int));
   if (tx_errors != 0) {
     error = "unsupported: TX rejected " + std::to_string(tx_errors) +
             " job(s)";
     return GpuRunStatus::kUnsupported;
   }
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  if (dec_status_bytes != 0) {
+    std::vector<std::int32_t> dec_status(
+        static_cast<std::size_t>(blocks) * 3u);
+    // The status block is staged just before the trailing tx_errors slot.
+    std::memcpy(dec_status.data(), download + read - dec_status_bytes,
+                dec_status_bytes);
+    int rejected = 0;
+    for (std::int32_t value : dec_status) {
+      if (value != 0) ++rejected;
+    }
+    if (rejected != 0) {
+      error = "unsupported: coefficient decision rejected " +
+              std::to_string(rejected) + " block(s)";
+      return GpuRunStatus::kUnsupported;
+    }
+  }
+#endif
 
   read = 0;
   std::memcpy(host.recon_y.data(), download + read, recon_y_bytes);
@@ -5707,7 +6250,10 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   if (!still_stream::assemble_gpu_frame(result.plan, tree, result.blocks, decisions,
                                     coeffs, config, frame, error,
                                     &tile_bytes, grids,
-                                    palette_side)) {
+                                    palette_side,
+                                    std::span<const std::uint16_t>(
+                                        options.cdf_seed),
+                                    &result.cdf_final)) {
     error = "gpu: entropy assembly failed: " + error;
     return GpuRunStatus::kError;
   }
@@ -6231,6 +6777,17 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
   std::uint64_t need_device =
       src_bytes + recon_total + coeff_total + decision_bytes + block_bytes;
   std::uint64_t need_upload = src_bytes;
+#if AV2ENC_STILL_GPU_HAVE_DECIDE
+  if (options.rdoq || options.tcq) {
+    // §8.3.1 CDF blob + the exact `-log2(p)` table (see decide_tables.h) and
+    // the per-block inverse-transform descriptors.
+    need_upload += 64u * 1024u;
+    need_upload +=
+        static_cast<std::uint64_t>(dec::kDecLog2Entries) * sizeof(double);
+    need_upload += 3u * static_cast<std::uint64_t>(result.plan.block_count) *
+                   sizeof(TxBlockJob);
+  }
+#endif
   std::uint64_t need_download = recon_total + coeff_total + decision_bytes;
   if (filter_tools) {
     // CDEF index grid + CCSO unit grids/offset tables are staged through the
@@ -6289,6 +6846,10 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
     }
     if (options.cctx) {
       need_download += n * sizeof(std::int32_t);
+    }
+    if (options.rdoq || options.tcq) {
+      // One trellis status per (block, plane).
+      need_download += 3u * n * sizeof(std::int32_t);
     }
   }
 #endif
@@ -6457,6 +7018,7 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
       result.frame = std::move(cpu.frame);
       result.frame_bytes = cpu.frame_bytes;
       result.tile_bytes = cpu.tile_bytes;
+      result.cdf_final = std::move(cpu.cdf_final);
       result.frame_bytes_from_cpu = true;
       result.stats.leaf_count = cpu.leaves;
       result.stats.block_count = static_cast<int>(result.plan.block_count);

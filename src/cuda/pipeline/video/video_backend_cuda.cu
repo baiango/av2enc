@@ -39,6 +39,7 @@
 #include "cuda/codec/filters/cdef/cdef.h"
 #include "cuda/codec/filters/loop_restoration/ccso.h"
 #include "cuda/codec/filters/loop_restoration/wiener.h"
+#include "cuda/codec/filters/pc_wiener/pc_wiener.h"
 #include "cuda/codec/filters/gdf/gdf.h"
 #include "cuda/codec/inter/mc/mc.h"
 #include "cuda/codec/inter/me/me.h"
@@ -49,10 +50,13 @@
 #include "cuda/codec/transform/variants/tx_variants.h"
 #include "codec/rate/rc/rc_tables.h"
 #include "cuda/pipeline/video/tx/video_tx.h"
+#include "cuda/pipeline/still/tx/still_tx.h"
+#include "codec/transform/qm/qm.h"
 #include "codec/transform/tx_partition/tx_scan.h"
 #include "pipeline/video/video_frame.h"
 #include "pipeline/video/post/video_loop_filters.h"
 #include "cuda/pipeline/video/intra/video_intra.h"
+#include "cuda/pipeline/still/chroma/still_chroma.h"
 #include "pipeline/video/video_frame.h"
 #include "pipeline/video/video_intra_search.h"
 
@@ -66,6 +70,7 @@ namespace cf = ::av2enc::cuda::compound_full;
 namespace vi = ::av2enc::cuda::video::intra;
 namespace vintra = ::av2enc::video::intra_search;
 namespace videotx = ::av2enc::cuda::videotx;
+namespace still = ::av2enc::cuda::still;
 
 // One residual block at a time: the module's plan builder caps a job at 8 plans
 // and 16 candidates per leaf; every M2 coding block resolves to <= 4 plans.
@@ -214,6 +219,35 @@ __global__ void video_residual_kernel(const std::uint8_t* __restrict__ src,
                          static_cast<std::size_t>(pred_stride) +
                      static_cast<std::size_t>(x)];
   out[i] = device::residual_sample(s, p);
+}
+
+__global__ void video_u8_to_u16_kernel(const std::uint8_t* __restrict__ in,
+                                      int in_stride,
+                                      std::uint16_t* __restrict__ out,
+                                      int out_stride, int w, int h) {
+  const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  if (i >= w * h) return;
+  const int x = i % w;
+  const int y = i / w;
+  out[static_cast<std::size_t>(y) * static_cast<std::size_t>(out_stride) +
+      static_cast<std::size_t>(x)] =
+      static_cast<std::uint16_t>(in[static_cast<std::size_t>(y) *
+                                        static_cast<std::size_t>(in_stride) +
+                                    static_cast<std::size_t>(x)]);
+}
+
+__global__ void video_u16_to_u8_kernel(const std::uint16_t* __restrict__ in,
+                                      int in_stride,
+                                      std::uint8_t* __restrict__ out,
+                                      int out_stride, int w, int h) {
+  const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  if (i >= w * h) return;
+  const int x = i % w;
+  const int y = i / w;
+  out[static_cast<std::size_t>(y) * static_cast<std::size_t>(out_stride) +
+      static_cast<std::size_t>(x)] = static_cast<std::uint8_t>(
+      in[static_cast<std::size_t>(y) * static_cast<std::size_t>(in_stride) +
+         static_cast<std::size_t>(x)]);
 }
 
 __global__ void video_recon_kernel(const ReconJob* __restrict__ jobs, int count) {
@@ -411,6 +445,12 @@ std::uint64_t required_device_bytes_impl(const VideoDeviceConfig& config) {
   add(3ull * lr_units_max, 1);
   add(3ull * lr_units_max * av2enc::restoration::kWienerNsCoeffStride,
       sizeof(std::int16_t));
+  // §7.20.4 PC-Wiener: u16 CurrFrame/CdefFrame/LrFrame luma planes and the
+  // §7.20.1 LrTxSkip grid.
+  add(mi_luma, sizeof(std::uint16_t));
+  add(mi_luma, sizeof(std::uint16_t));
+  add(mi_luma, sizeof(std::uint16_t));
+  add(mi_luma, 1);
   // §7.20.5 GDF: three 16-bit luma planes plus the reference-order arrays.
   add(3ull * mi_luma, sizeof(std::uint16_t));
   add(mi_luma, 1);
@@ -432,7 +472,9 @@ std::uint64_t required_device_bytes_impl(const VideoDeviceConfig& config) {
   add(3 * kMaxPlaneTx, sizeof(std::int32_t));
   add(3 * kMaxCodedPixels, sizeof(std::int16_t));
   add(3 * kMaxCodedPixels, 1);
+  add(3 * kMaxPlaneTx, sizeof(std::int32_t));  // QM q2 matrices
   add(3, sizeof(av2enc::cuda::TxBlockJob));
+  add(1, sizeof(still::StillChromaResult));
   add(3, sizeof(ReconJob));
   // Deblock metadata scratch: one MI grid per plane plus the tile-start lists.
   add(3 * mi_cols * mi_rows, sizeof(deblock::DeblockMi));
@@ -461,6 +503,17 @@ std::uint64_t required_device_bytes_impl(const VideoDeviceConfig& config) {
   add(3, sizeof(intra_modes::IntraJob));
   // Opt-in luma TX search: one device workspace (persistent, one job at a time).
   bytes += videotx::required_device_bytes(kTxSearchWorkspaceConfig);
+  // §7.20.4 PC-Wiener workspace (class map + unit-active scratch).
+  {
+    av2enc::cuda::pc_wiener::PcWienerConfig pcw_config;
+    pcw_config.width = static_cast<int>(mi_cols * 4);
+    pcw_config.height = static_cast<int>(mi_rows * 4);
+    pcw_config.bit_depth = 8;
+    pcw_config.unit_size = 64;
+    bytes += align_up_u64(
+        av2enc::cuda::pc_wiener::pc_wiener_required_device_bytes(pcw_config),
+        Arena::kAlignment);
+  }
 
   // §7.13.3.19/.20 warp batch + §5.18.9 estimator.  Both modules report their
   // own arena footprint; the int16 prediction pool and job tables are owned by
@@ -504,6 +557,8 @@ class CudaBackend final : public Backend {
   }
 
   const char* name() const override { return "cuda"; }
+
+  void set_qm(bool enabled) override { qm_enabled_ = enabled; }
 
   bool begin_frame(
       const av2enc::video::VideoInputFrame& source, int frame_mi_cols,
@@ -914,21 +969,24 @@ class CudaBackend final : public Backend {
     cf::SkipJob* d_jobs = nullptr;
     SseJob* d_sse_jobs = nullptr;
     std::int64_t* d_sse_out = nullptr;
+    std::uint8_t* d_pred = nullptr;
+    constexpr int kPredStride = cf::kMaxBlockDim;
+    constexpr std::size_t kPredBytes =
+        static_cast<std::size_t>(cf::kMaxBlockDim) * cf::kMaxBlockDim;
     if (!arena_alloc_array(arena_, jobs.size(), &d_jobs, "compound jobs",
                            alloc, error) ||
         !arena_alloc_array(arena_, jobs.size(), &d_sse_jobs, "compound SSE jobs",
                            alloc, error) ||
         !arena_alloc_array(arena_, jobs.size(), &d_sse_out, "compound SSE out",
-                           alloc, error)) {
+                           alloc, error) ||
+        !arena_alloc_array(arena_, jobs.size() * kPredBytes, &d_pred,
+                           "compound SSE prediction", alloc, error)) {
       return record_arena_failure(alloc);
     }
     std::vector<cf::SkipJob> host_jobs(jobs.size());
     std::vector<SseJob> sse_jobs(jobs.size());
     for (std::size_t i = 0; i < jobs.size(); ++i) {
       const InterJob& job = jobs[i];
-      std::uint8_t* luma = recon_planes_[0];
-      std::uint8_t* u = recon_planes_[1];
-      std::uint8_t* v = recon_planes_[2];
       cf::SkipJob& out = host_jobs[i];
       out = cf::SkipJob{};
       out.bit_depth = 8;
@@ -940,17 +998,20 @@ class CudaBackend final : public Backend {
       out.y = job.y;
       out.w = job.w;
       out.h = job.h;
-      out.bsize = 0;
+      out.bsize = job.bsize;
       out.mv_row = job.mv_y;
       out.mv_col = job.mv_x;
       out.filter = static_cast<int>(inter::mc::InterpFilter::kEighttap);
       out.cwp_weight = 8;
+      out.type = job.compound_type;
+      out.wedge_index = job.wedge_index;
+      out.wedge_sign = job.wedge_sign;
+      out.mask_type = job.mask_type;
+      out.dst_local = 1;
       const int ref_w[3] = {frame_width_, frame_chroma_w_, frame_chroma_w_};
       const int ref_h[3] = {frame_height_, frame_chroma_h_, frame_chroma_h_};
       const int ref_stride[3] = {frame_width_, frame_chroma_w_,
                                  frame_chroma_w_};
-      const int dst_stride[3] = {luma_w_, chroma_mi_w_, chroma_mi_w_};
-      std::uint8_t* dsts[3] = {luma, u, v};
       for (int plane = 0; plane < 3; ++plane) {
         for (int list = 0; list < 2; ++list) {
           cf::RefPlane& ref = out.ref[list][plane];
@@ -960,19 +1021,19 @@ class CudaBackend final : public Backend {
           ref.height = ref_h[plane];
           ref.is_16bit = 0;
         }
-        out.dst[plane] = dsts[plane];
-        out.dst_stride[plane] = dst_stride[plane];
+        // Each candidate gets its own luma prediction buffer: a batch holds
+        // many blends of the same block and they must not race.  Chroma is
+        // irrelevant for the SSE decision.
+        out.dst[plane] = plane == 0 ? d_pred + i * kPredBytes : nullptr;
+        out.dst_stride[plane] = plane == 0 ? kPredStride : 0;
         out.dst_16bit[plane] = 0;
       }
       sse_jobs[i].src = src_planes_[0];
       sse_jobs[i].src_stride = frame_width_;
       sse_jobs[i].frame_w = frame_width_;
       sse_jobs[i].frame_h = frame_height_;
-      sse_jobs[i].pred = recon_planes_[0] +
-                         static_cast<std::size_t>(job.y) *
-                             static_cast<std::size_t>(luma_w_) +
-                         static_cast<std::size_t>(job.x);
-      sse_jobs[i].pred_stride = luma_w_;
+      sse_jobs[i].pred = d_pred + i * kPredBytes;
+      sse_jobs[i].pred_stride = kPredStride;
       sse_jobs[i].x = job.x;
       sse_jobs[i].y = job.y;
       sse_jobs[i].w = job.w;
@@ -1032,11 +1093,15 @@ class CudaBackend final : public Backend {
     job.y = luma_job.y;
     job.w = w;
     job.h = h;
-    job.bsize = 0;
+    job.bsize = luma_job.bsize;
     job.mv_row = luma_job.mv_y;
     job.mv_col = luma_job.mv_x;
     job.filter = static_cast<int>(inter::mc::InterpFilter::kEighttap);
     job.cwp_weight = 8;
+    job.type = luma_job.compound_type;
+    job.wedge_index = luma_job.wedge_index;
+    job.wedge_sign = luma_job.wedge_sign;
+    job.mask_type = luma_job.mask_type;
     const int ref_w[3] = {frame_width_, frame_chroma_w_, frame_chroma_w_};
     const int ref_h[3] = {frame_height_, frame_chroma_h_, frame_chroma_h_};
     const int ref_stride[3] = {frame_width_, frame_chroma_w_,
@@ -1638,6 +1703,15 @@ class CudaBackend final : public Backend {
   // levels + recon.  Used by the intra candidate and the inter residual path.
   bool tx_and_recon_420(const int coded_w[3], const int coded_h[3],
                         std::array<PlaneTx, 3>& planes, std::string& error) {
+    return tx_and_recon_planes(0, 3, coded_w, coded_h, planes.data(), error);
+  }
+
+  // Transform + inverse + reconstruction for a contiguous plane subset.
+  // `first_plane` indexes the persistent per-plane slots (0 = luma); `out`
+  // receives `plane_count` host results in the same order.
+  bool tx_and_recon_planes(int first_plane, int plane_count,
+                           const int* coded_w, const int* coded_h,
+                           PlaneTx* out, std::string& error) {
     if (!persistent_ready_ || d_levels_ == nullptr || d_recon_out_ == nullptr ||
         d_recon_residual_ == nullptr || d_residual_adj_ == nullptr ||
         d_coeff_ == nullptr || d_pred_ == nullptr || d_tx_jobs_ == nullptr ||
@@ -1645,78 +1719,165 @@ class CudaBackend final : public Backend {
       error = "M2 TX scratch is not allocated";
       return false;
     }
-    std::vector<av2enc::cuda::TxBlockJob> tx_jobs(3);
-    for (int plane = 0; plane < 3; ++plane) {
-      const auto params_opt = av2enc::txv::make_tx_params(
-          coded_w[plane], coded_h[plane], av2enc::txv::TxType::kDctDct);
-      if (!params_opt.has_value()) {
-        error = "unsupported transform size";
+    if (qm_enabled_) {
+      // §5.18.6.2 default-matrix QM: the per-coefficient q2 replaces the
+      // scalar quantizer, so use the shared still_tx stage (the device mirror
+      // of the CPU compute_tx QM arithmetic).
+      if (d_q2_ == nullptr) {
+        error = "M2 CUDA: QM q2 buffer is not allocated";
         return false;
       }
-      const av2enc::txv::TxParams& params = *params_opt;
-      const std::int16_t* coded = d_residual_ + plane * kMaxCodedPixels;
-      std::int16_t* adjusted = d_residual_adj_ + plane * kMaxPlaneTx;
-      const int coded_elems = coded_w[plane] * coded_h[plane];
-      if (params.w == coded_w[plane] && params.h == coded_h[plane]) {
-        if (!check(cudaMemcpyAsync(adjusted, coded,
-                                   static_cast<std::size_t>(coded_elems) *
-                                       sizeof(std::int16_t),
-                                   cudaMemcpyDeviceToDevice, stream_),
-                   "residual copy", error)) {
+      std::vector<StillTxJob> jobs(static_cast<std::size_t>(plane_count));
+      std::vector<std::int32_t> q2_host(3 * kMaxPlaneTx, 0);
+      for (int j = 0; j < plane_count; ++j) {
+        const int plane = first_plane + j;
+        StillTxJob& job = jobs[static_cast<std::size_t>(j)];
+        if (!still_tx_init_job(&job, coded_w[plane], coded_h[plane],
+                                       av2enc::txv::TxType::kDctDct)) {
+          error = "unsupported transform size";
           return false;
         }
-      } else if (!check(av2enc::cuda::txv_downsample_residual(
-                            coded, adjusted, params, 1, stream_),
-                        "txv_downsample_residual", error)) {
+        av2enc::qm::QmFrameState qm_state;
+        qm_state.using_qmatrix = true;
+        qm_state.pic_qm_num_minus_1 = 0;
+        qm_state.qm_y[0] = 0;
+        qm_state.qm_u[0] = 0;
+        qm_state.qm_v[0] = 0;
+        for (int p = 0; p < 3; ++p) qm_state.seg_qm_level[p][0] = 0;
+        av2enc::qm::QmDequantParams qp;
+        qp.state = &qm_state;
+        qp.tx_size = job.params.tx_size;
+        qp.plane = plane;
+        qp.tx_type = job.params.tx_type;
+        qp.segment_id = 0;
+        qp.dc_quant = quant_step_;
+        qp.ac_quant = quant_step_;
+        qp.bit_depth = 8;
+        const std::size_t area =
+            static_cast<std::size_t>(job.params.w) *
+            static_cast<std::size_t>(job.params.h);
+        if (plane * kMaxPlaneTx + static_cast<int>(area) > 3 * kMaxPlaneTx ||
+            !av2enc::qm::build_q2_matrix(
+                qp, q2_host.data() + static_cast<std::size_t>(plane) *
+                                         kMaxPlaneTx)) {
+          error = "M2 CUDA: QM q2 matrix build failed";
+          return false;
+        }
+        // The shared device stage reaches the q2 quantizer through its
+        // delta-Q branch; the matrix itself carries the per-coefficient
+        // quantizer, so qindex is only the fallback.
+        job.use_deltaq = 1;
+        job.qindex = static_cast<std::int32_t>(quant_step_);
+        job.q2_offset = plane * kMaxPlaneTx;
+        job.input = static_cast<std::uint8_t>(StillTxInput::kResidual);
+        job.residual_in_offset = plane * kMaxCodedPixels;
+        job.residual_adj_offset = plane * kMaxPlaneTx;
+        job.coeff_offset = plane * kMaxPlaneTx;
+        job.levels_offset = plane * kMaxPlaneTx;
+        job.residual_out_offset = plane * kMaxCodedPixels;
+        job.eob_offset = 0;
+      }
+      upload(d_q2_, q2_host.data(),
+             q2_host.size() * sizeof(std::int32_t));
+      ScratchScope scratch(arena_);
+      ArenaAllocation alloc;
+      StillTxJob* d_jobs = nullptr;
+      if (!arena_alloc_array(arena_, jobs.size(), &d_jobs, "qm tx jobs",
+                             alloc, error)) {
+        return record_arena_failure(alloc);
+      }
+      upload(d_jobs, jobs.data(), jobs.size() * sizeof(StillTxJob));
+      StillTxBuffers buffers;
+      buffers.residual_in = d_residual_;
+      buffers.residual_adj = d_residual_adj_;
+      buffers.coeff = d_coeff_;
+      buffers.levels = d_levels_;
+      buffers.residual_out = d_recon_residual_;
+      buffers.q2 = d_q2_;
+      if (!check(still_tx_batch(d_jobs, plane_count, buffers, 0,
+                                        stream_),
+                 "still_tx_batch", error)) {
         return false;
       }
-      tx_jobs[static_cast<std::size_t>(plane)].params = params;
-      if (quant_step_ != av2enc::txv::kQuantStep) {
-        // CPU compute_tx(): scale the forward quant_factor by 528/qstep; the
-        // inverse dequantizes with qlookup(base_q_idx) instead of 528.
-        tx_jobs[static_cast<std::size_t>(plane)].params.quant_factor *=
-            static_cast<double>(av2enc::txv::kQuantStep) /
-            static_cast<double>(quant_step_);
+      ++stats_.tx_launches;
+    } else {
+      std::vector<av2enc::cuda::TxBlockJob> tx_jobs(
+          static_cast<std::size_t>(plane_count));
+      for (int j = 0; j < plane_count; ++j) {
+        const int plane = first_plane + j;
+        const auto params_opt = av2enc::txv::make_tx_params(
+            coded_w[plane], coded_h[plane], av2enc::txv::TxType::kDctDct);
+        if (!params_opt.has_value()) {
+          error = "unsupported transform size";
+          return false;
+        }
+        const av2enc::txv::TxParams& params = *params_opt;
+        const std::int16_t* coded = d_residual_ + plane * kMaxCodedPixels;
+        std::int16_t* adjusted = d_residual_adj_ + plane * kMaxPlaneTx;
+        const int coded_elems = coded_w[plane] * coded_h[plane];
+        if (params.w == coded_w[plane] && params.h == coded_h[plane]) {
+          if (!check(cudaMemcpyAsync(adjusted, coded,
+                                     static_cast<std::size_t>(coded_elems) *
+                                         sizeof(std::int16_t),
+                                     cudaMemcpyDeviceToDevice, stream_),
+                     "residual copy", error)) {
+            return false;
+          }
+        } else if (!check(av2enc::cuda::txv_downsample_residual(
+                              coded, adjusted, params, 1, stream_),
+                          "txv_downsample_residual", error)) {
+          return false;
+        }
+        tx_jobs[static_cast<std::size_t>(j)].params = params;
+        if (quant_step_ != av2enc::txv::kQuantStep) {
+          // CPU compute_tx(): scale the forward quant_factor by 528/qstep; the
+          // inverse dequantizes with qlookup(base_q_idx) instead of 528.
+          tx_jobs[static_cast<std::size_t>(j)].params.quant_factor *=
+              static_cast<double>(av2enc::txv::kQuantStep) /
+              static_cast<double>(quant_step_);
+        }
+        tx_jobs[static_cast<std::size_t>(j)].quant_step = quant_step_;
+        tx_jobs[static_cast<std::size_t>(j)].in_offset = plane * kMaxPlaneTx;
+        tx_jobs[static_cast<std::size_t>(j)].out_offset =
+            plane * kMaxCodedPixels;
       }
-      tx_jobs[static_cast<std::size_t>(plane)].quant_step = quant_step_;
-      tx_jobs[static_cast<std::size_t>(plane)].in_offset =
-          plane * kMaxPlaneTx;
-      tx_jobs[static_cast<std::size_t>(plane)].out_offset =
-          plane * kMaxCodedPixels;
+      upload(d_tx_jobs_, tx_jobs.data(),
+             tx_jobs.size() * sizeof(av2enc::cuda::TxBlockJob));
+      if (!check(av2enc::cuda::txv_forward_transform_multi(
+                     d_residual_adj_, d_coeff_, d_levels_, d_tx_jobs_,
+                     plane_count, stream_),
+                 "txv_forward_transform_multi", error)) {
+        return false;
+      }
+      if (!check(av2enc::cuda::txv_inverse_transform_multi(
+                     d_levels_, d_recon_residual_, d_tx_jobs_, plane_count,
+                     stream_),
+                 "txv_inverse_transform_multi", error)) {
+        return false;
+      }
+      stats_.tx_launches += 2;
     }
-    upload(d_tx_jobs_, tx_jobs.data(),
-           tx_jobs.size() * sizeof(av2enc::cuda::TxBlockJob));
-    if (!check(av2enc::cuda::txv_forward_transform_multi(
-                   d_residual_adj_, d_coeff_, d_levels_, d_tx_jobs_, 3,
-                   stream_),
-               "txv_forward_transform_multi", error)) {
-      return false;
-    }
-    if (!check(av2enc::cuda::txv_inverse_transform_multi(
-                   d_levels_, d_recon_residual_, d_tx_jobs_, 3, stream_),
-               "txv_inverse_transform_multi", error)) {
-      return false;
-    }
-    stats_.tx_launches += 2;
 
     // d_tx_jobs_, d_recon_jobs_ and d_recon_out_ are persistent and were
     // allocated by begin_frame().
-    std::vector<ReconJob> recon_jobs(3);
-    for (int plane = 0; plane < 3; ++plane) {
-      recon_jobs[static_cast<std::size_t>(plane)].pred =
+    std::vector<ReconJob> recon_jobs(static_cast<std::size_t>(plane_count));
+    for (int j = 0; j < plane_count; ++j) {
+      const int plane = first_plane + j;
+      recon_jobs[static_cast<std::size_t>(j)].pred =
           d_pred_ + static_cast<std::size_t>(plane) * kMaxBlockPixels;
-      recon_jobs[static_cast<std::size_t>(plane)].residual =
+      recon_jobs[static_cast<std::size_t>(j)].residual =
           d_recon_residual_ + static_cast<std::size_t>(plane) * kMaxCodedPixels;
-      recon_jobs[static_cast<std::size_t>(plane)].out =
+      recon_jobs[static_cast<std::size_t>(j)].out =
           d_recon_out_ + static_cast<std::size_t>(plane) * kMaxCodedPixels;
-      recon_jobs[static_cast<std::size_t>(plane)].w = coded_w[plane];
-      recon_jobs[static_cast<std::size_t>(plane)].h = coded_h[plane];
-      recon_jobs[static_cast<std::size_t>(plane)].pred_stride = coded_w[plane];
+      recon_jobs[static_cast<std::size_t>(j)].w = coded_w[plane];
+      recon_jobs[static_cast<std::size_t>(j)].h = coded_h[plane];
+      recon_jobs[static_cast<std::size_t>(j)].pred_stride = coded_w[plane];
     }
     upload(d_recon_jobs_, recon_jobs.data(),
            recon_jobs.size() * sizeof(ReconJob));
     constexpr int kReconThreads = 256;
-    video_recon_kernel<<<3, kReconThreads, 0, stream_>>>(d_recon_jobs_, 3);
+    video_recon_kernel<<<plane_count, kReconThreads, 0, stream_>>>(
+        d_recon_jobs_, plane_count);
     if (!check(cudaGetLastError(), "video_recon_kernel", error)) return false;
     ++stats_.recon_launches;
 
@@ -1731,20 +1892,36 @@ class CudaBackend final : public Backend {
       return false;
     }
 
-    for (int plane = 0; plane < 3; ++plane) {
+    for (int j = 0; j < plane_count; ++j) {
+      const int plane = first_plane + j;
       const auto params_opt = av2enc::txv::make_tx_params(
           coded_w[plane], coded_h[plane], av2enc::txv::TxType::kDctDct);
       const av2enc::txv::TxParams& params = *params_opt;
       const int corners = params.w * params.h;
-      planes[static_cast<std::size_t>(plane)].levels.assign(
-          host_levels.begin() + plane * kMaxPlaneTx,
-          host_levels.begin() + plane * kMaxPlaneTx + corners);
+      out[j].levels.assign(host_levels.begin() + plane * kMaxPlaneTx,
+                           host_levels.begin() + plane * kMaxPlaneTx + corners);
       const int coded_elems = coded_w[plane] * coded_h[plane];
-      planes[static_cast<std::size_t>(plane)].recon.assign(
-          host_recon.begin() + plane * kMaxCodedPixels,
-          host_recon.begin() + plane * kMaxCodedPixels + coded_elems);
+      out[j].recon.assign(host_recon.begin() + plane * kMaxCodedPixels,
+                          host_recon.begin() + plane * kMaxCodedPixels +
+                              coded_elems);
     }
     return true;
+  }
+
+  // Clip a block write to the allocated plane, mirroring write_plane_block() in
+  // src/pipeline/video/video_frame.cpp.
+  bool upload_block(std::uint8_t* plane, int plane_stride, int plane_w,
+                    int plane_h, int x0, int y0, int w, int h,
+                    const std::uint8_t* src, int src_row_stride,
+                    std::string& error) {
+    if (x0 < 0 || y0 < 0 || x0 >= plane_w || y0 >= plane_h) return true;
+    const int cols = std::min(w, plane_w - x0);
+    const int rows = std::min(h, plane_h - y0);
+    if (cols <= 0 || rows <= 0) return true;
+    return upload_2d(plane + static_cast<std::size_t>(y0) *
+                                 static_cast<std::size_t>(plane_stride) +
+                         static_cast<std::size_t>(x0),
+                     plane_stride, src, src_row_stride, cols, rows, error);
   }
 
   bool write_recon_420(int x0, int y0, int w, int h,
@@ -1752,21 +1929,18 @@ class CudaBackend final : public Backend {
                        const std::vector<std::uint8_t>& u,
                        const std::vector<std::uint8_t>& v,
                        std::string& error) override {
-    if (!upload_2d(recon_planes_[0] +
-                       static_cast<std::size_t>(y0) *
-                           static_cast<std::size_t>(luma_w_) +
-                       static_cast<std::size_t>(x0),
-                   luma_w_, y.data(), w, w, h, error) ||
-        !upload_2d(recon_planes_[1] +
-                       static_cast<std::size_t>(y0 / 2) *
-                           static_cast<std::size_t>(chroma_mi_w_) +
-                       static_cast<std::size_t>(x0 / 2),
-                   chroma_mi_w_, u.data(), w / 2, w / 2, h / 2, error) ||
-        !upload_2d(recon_planes_[2] +
-                       static_cast<std::size_t>(y0 / 2) *
-                           static_cast<std::size_t>(chroma_mi_w_) +
-                       static_cast<std::size_t>(x0 / 2),
-                   chroma_mi_w_, v.data(), w / 2, w / 2, h / 2, error)) {
+    // A bottom/right-edge block may extend past the coded MI-aligned plane
+    // (PARTITION_NONE is legal while has_rows is true).  The CPU reference
+    // clips the write; do the same on the device instead of uploading past the
+    // arena allocation.
+    if (!upload_block(recon_planes_[0], luma_w_, luma_w_, luma_h_, x0, y0, w,
+                      h, y.data(), w, error) ||
+        !upload_block(recon_planes_[1], chroma_mi_w_, chroma_mi_w_,
+                      chroma_mi_h_, x0 / 2, y0 / 2, w / 2, h / 2, u.data(),
+                      w / 2, error) ||
+        !upload_block(recon_planes_[2], chroma_mi_w_, chroma_mi_w_,
+                      chroma_mi_h_, x0 / 2, y0 / 2, w / 2, h / 2, v.data(),
+                      w / 2, error)) {
       return false;
     }
     // The caller's host vectors die at the end of the block decision, so the
@@ -1778,6 +1952,120 @@ class CudaBackend final : public Backend {
     ++stats_.syncs;
     ++stats_.recon_launches;
     return true;
+  }
+
+  bool write_recon_luma(int x0, int y0, int w, int h,
+                        const std::vector<std::uint8_t>& y,
+                        std::string& error) override {
+    if (!upload_block(recon_planes_[0], luma_w_, luma_w_, luma_h_, x0, y0, w,
+                      h, y.data(), w, error)) {
+      return false;
+    }
+    if (!check(cudaStreamSynchronize(stream_), "cudaStreamSynchronize",
+               error)) {
+      return false;
+    }
+    ++stats_.syncs;
+    ++stats_.recon_launches;
+    return true;
+  }
+
+  // §7.13.5 CfL chroma decision (--video-cfl).  The device module
+  // `still::chroma_decide()` is bit-exact against the CPU `{DC, CfL}` policy the
+  // CPU reference and the emulation backend share (`video::chroma_search`).
+  bool chroma_cfl_candidate(int x0, int y0, int w, int h,
+                            int num4_above_right, int num4_below_left,
+                            bool enable_mhccp, std::array<PlaneTx, 2>& planes,
+                            int& is_cfl, int& cfl_index, int& cfl_mh_dir,
+                            std::string& error) override {
+    if (!persistent_ready_ || d_chroma_result_ == nullptr) {
+      error = "M2 CUDA: begin_frame() has not allocated the chroma workspace";
+      return false;
+    }
+    const int cw = w / 2;
+    const int ch = h / 2;
+    const int cx = x0 / 2;
+    const int cy = y0 / 2;
+    still::StillChromaJob job;
+    job.luma = recon_planes_[0];
+    job.luma_stride = luma_w_;
+    job.luma_max_x = luma_w_ - 1;
+    job.luma_max_y = luma_h_ - 1;
+    job.sb_top_y = (cy * 2 / 64) * 64;
+    job.chroma_u = recon_planes_[1];
+    job.chroma_v = recon_planes_[2];
+    job.chroma_stride = chroma_mi_w_;
+    job.pred_u = d_pred_ + static_cast<std::size_t>(1) * kMaxBlockPixels;
+    job.pred_v = d_pred_ + static_cast<std::size_t>(2) * kMaxBlockPixels;
+    job.pred_stride = cw;
+    // The still module indexes its source plane with the block origin, so the
+    // pointer carries the tile origin only; `job.x` stays tile-local.
+    const int tile_cx = tile_x_ / 2;
+    const int tile_cy = tile_y_ / 2;
+    job.src_u = src_planes_[1] +
+                static_cast<std::size_t>(tile_cy) *
+                    static_cast<std::size_t>(frame_chroma_w_) +
+                static_cast<std::size_t>(tile_cx);
+    job.src_v = src_planes_[2] +
+                static_cast<std::size_t>(tile_cy) *
+                    static_cast<std::size_t>(frame_chroma_w_) +
+                static_cast<std::size_t>(tile_cx);
+    job.src_stride_u = frame_chroma_w_;
+    job.src_stride_v = frame_chroma_w_;
+    job.src_max_x = frame_chroma_w_ - 1 - tile_cx;
+    job.src_max_y = frame_chroma_h_ - 1 - tile_cy;
+    job.x = cx;
+    job.y = cy;
+    job.w = cw;
+    job.h = ch;
+    job.coded_width = chroma_mi_w_;
+    job.coded_height = chroma_mi_h_;
+    job.num4_above_right = num4_above_right;
+    job.num4_below_left = num4_below_left;
+    job.y_mode = 0;
+    job.y_angle_delta = 0;
+    job.filter_type_above = 0;
+    job.filter_type_left = 0;
+    job.enable_edge_filter = 0;
+
+    still::StillChromaOptions options;
+    options.enable_cfl = 1;
+    options.enable_uv_directional = 0;
+    options.enable_uv_full = 0;
+    options.ds_filter = 0;
+    options.enable_ibp = 0;
+    options.cfl_explicit = 0;
+    options.enable_mhccp = enable_mhccp ? 1 : 0;
+    if (!check(still::chroma_decide(job, options, d_chroma_result_, stream_),
+               "chroma_decide", error)) {
+      return false;
+    }
+    ++stats_.intra_launches;
+    still::StillChromaResult host{};
+    if (!check(download(&host, d_chroma_result_, sizeof(host)),
+               "chroma result download", error)) {
+      return false;
+    }
+    is_cfl = host.is_cfl != 0 ? 1 : 0;
+    cfl_index = host.cfl_index;
+    cfl_mh_dir = host.cfl_mh_dir;
+    // residual = source - winning prediction for both chroma planes.
+    const int coded[3] = {w, cw, cw};
+    const int coded_h[3] = {h, ch, ch};
+    const int blocks = (cw * ch + 255) / 256;
+    for (int plane = 1; plane < 3; ++plane) {
+      video_residual_kernel<<<blocks, 256, 0, stream_>>>(
+          src_planes_[plane], frame_chroma_w_, frame_chroma_w_, frame_chroma_h_,
+          cx + tile_cx, cy + tile_cy,
+          d_pred_ + static_cast<std::size_t>(plane) * kMaxBlockPixels, cw,
+          d_residual_ + static_cast<std::size_t>(plane) * kMaxCodedPixels, cw,
+          ch);
+      if (!check(cudaGetLastError(), "video_residual_kernel", error)) {
+        return false;
+      }
+    }
+    ++stats_.residual_launches;
+    return tx_and_recon_planes(1, 2, coded, coded_h, planes.data(), error);
   }
 
   bool loop_filter_stage(
@@ -1795,11 +2083,11 @@ class CudaBackend final : public Backend {
       return false;
     }
     const std::size_t luma =
-        static_cast<std::size_t>(luma_w_) * static_cast<std::size_t>(luma_h_);
-    const std::size_t chroma = static_cast<std::size_t>(chroma_mi_w_) *
-                               static_cast<std::size_t>(chroma_mi_h_);
+        static_cast<std::size_t>(frame_width_) * static_cast<std::size_t>(frame_height_);
+    const std::size_t chroma = static_cast<std::size_t>(frame_chroma_w_) *
+                               static_cast<std::size_t>(frame_chroma_h_);
     for (int plane = 0; plane < 3; ++plane) {
-      const int width = plane == 0 ? luma_w_ : chroma_mi_w_;
+      const int width = plane == 0 ? frame_width_ : frame_chroma_w_;
       if (frame.in_stride[plane] < width ||
           frame.out_stride[plane] < width) {
         error = "M2 CUDA loop filter: short plane stride";
@@ -1809,8 +2097,8 @@ class CudaBackend final : public Backend {
 
     // Stage input: upload the host planes into the device staging buffer.
     for (int plane = 0; plane < 3; ++plane) {
-      const int width = plane == 0 ? luma_w_ : chroma_mi_w_;
-      const int rows = plane == 0 ? luma_h_ : chroma_mi_h_;
+      const int width = plane == 0 ? frame_width_ : frame_chroma_w_;
+      const int rows = plane == 0 ? frame_height_ : frame_chroma_h_;
       if (!upload_2d(filter_in_planes_[plane], width, frame.in[plane],
                      frame.in_stride[plane], width, rows, error)) {
         return false;
@@ -1819,8 +2107,8 @@ class CudaBackend final : public Backend {
 
     switch (stage) {
       case VideoFilterStage::kCdef: {
-        const std::size_t mi_luma = static_cast<std::size_t>(mi_cols_) *
-                                    static_cast<std::size_t>(mi_rows_);
+        const std::size_t mi_luma = static_cast<std::size_t>(frame_mi_cols_) *
+                                    static_cast<std::size_t>(frame_mi_rows_);
         if (plan.cdef.skip.size() != mi_luma ||
             plan.cdef.index.size() !=
                 static_cast<std::size_t>(d_cdef_idx_count_)) {
@@ -1834,18 +2122,18 @@ class CudaBackend final : public Backend {
         for (int plane = 0; plane < 3; ++plane) {
           cdef.src[plane] = filter_in_planes_[plane];
           cdef.dst[plane] = filter_planes_[plane];
-          cdef.stride[plane] = plane == 0 ? luma_w_ : chroma_mi_w_;
+          cdef.stride[plane] = plane == 0 ? frame_width_ : frame_chroma_w_;
         }
-        cdef.mi_cols = mi_cols_;
-        cdef.mi_rows = mi_rows_;
+        cdef.mi_cols = frame_mi_cols_;
+        cdef.mi_rows = frame_mi_rows_;
         cdef.subsampling_x = 1;
         cdef.subsampling_y = 1;
         cdef.skip = d_filter_skip_;
         cdef.lossless = d_filter_lossless_;
         cdef.lossless_chroma = d_filter_lossless_chroma_;
         cdef.cdef_idx = d_cdef_idx_;
-        cdef.n64_cols = (mi_cols_ + 15) / 16;
-        cdef.n64_rows = (mi_rows_ + 15) / 16;
+        cdef.n64_cols = (frame_mi_cols_ + 15) / 16;
+        cdef.n64_rows = (frame_mi_rows_ + 15) / 16;
         const av2enc::video::post::CdefFilterOptions derived =
             av2enc::video::post::cdef_filter_options(plan.cdef);
         av2enc::cdef::CdefOptions options;
@@ -1881,8 +2169,8 @@ class CudaBackend final : public Backend {
         }
         const std::uint8_t* curr_luma = filter_in_planes_[0];
         if (frame.curr[0] != nullptr) {
-          if (!upload_2d(d_filter_curr_luma_, luma_w_, frame.curr[0],
-                         frame.curr_stride[0], luma_w_, luma_h_, error)) {
+          if (!upload_2d(d_filter_curr_luma_, frame_width_, frame.curr[0],
+                         frame.curr_stride[0], frame_width_, frame_height_, error)) {
             return false;
           }
           curr_luma = d_filter_curr_luma_;
@@ -1909,9 +2197,9 @@ class CudaBackend final : public Backend {
           av2enc::restoration::CcsoCorePlane& dst = ccso.plane[plane];
           dst.enabled = derived.plane[plane].enabled;
           dst.curr_luma = curr_luma;
-          dst.curr_luma_stride = luma_w_;
+          dst.curr_luma_stride = frame_width_;
           dst.dst = filter_planes_[plane];
-          dst.dst_stride = plane == 0 ? luma_w_ : chroma_mi_w_;
+          dst.dst_stride = plane == 0 ? frame_width_ : frame_chroma_w_;
           dst.blks = d_ccso_blks_[plane];
           dst.blk_cols = src.blk_cols;
           dst.blk_rows = src.blk_rows;
@@ -1926,8 +2214,8 @@ class CudaBackend final : public Backend {
               static_cast<std::size_t>(plane) *
                   av2enc::restoration::kCcsoOffsetEntries;
         }
-        ccso.mi_cols = mi_cols_;
-        ccso.mi_rows = mi_rows_;
+        ccso.mi_cols = frame_mi_cols_;
+        ccso.mi_rows = frame_mi_rows_;
         ccso.sub_x = 1;
         ccso.sub_y = 1;
         ccso.bit_depth = 8;
@@ -1948,8 +2236,8 @@ class CudaBackend final : public Backend {
             error = "M2 CUDA loop filter: LR needs the pre-CDEF frame";
             return false;
           }
-          const int width = plane == 0 ? luma_w_ : chroma_mi_w_;
-          const int rows = plane == 0 ? luma_h_ : chroma_mi_h_;
+          const int width = plane == 0 ? frame_width_ : frame_chroma_w_;
+          const int rows = plane == 0 ? frame_height_ : frame_chroma_h_;
           if (!upload_2d(d_filter_curr_[plane], width, frame.curr[plane],
                          frame.curr_stride[plane], width, rows, error)) {
             return false;
@@ -1963,42 +2251,155 @@ class CudaBackend final : public Backend {
               static_cast<std::size_t>(plan.lr.plane[plane].unit_rows) *
               static_cast<std::size_t>(plan.lr.plane[plane].unit_cols);
           upload(d_lr_unit_type_[plane], derived.unit_type[plane], units);
+          if (plane == 0 && plan.lr.pc_wiener) continue;
           upload(d_lr_unit_coeffs_[plane], derived.unit_coeffs[plane],
                  units * av2enc::restoration::kWienerNsCoeffStride *
                      sizeof(std::int16_t));
         }
+        if (plan.lr.pc_wiener) {
+          // §7.20.4 luma PC-Wiener through the verified device module.
+          if (!pc_wiener_.initialized()) {
+            error = "M2 CUDA: PC-Wiener workspace is not initialized";
+            return false;
+          }
+          if (frame.curr[0] == nullptr) {
+            error = "M2 CUDA loop filter: PC-Wiener needs the pre-CDEF frame";
+            return false;
+          }
+          const std::size_t mi_cells =
+              static_cast<std::size_t>(mi_cols_) *
+              static_cast<std::size_t>(mi_rows_);
+          if (plan.lr.tx_skip.size() != mi_cells) {
+            error = "M2 CUDA loop filter: PC-Wiener LrTxSkip grid is missing";
+            return false;
+          }
+          upload(d_lr_tx_skip_, plan.lr.tx_skip.data(), mi_cells);
+          const int luma_pixels = luma_w_ * luma_h_;
+          const int conv_blocks = (luma_pixels + 255) / 256;
+          video_u8_to_u16_kernel<<<conv_blocks, 256, 0, stream_>>>(
+              d_filter_curr_[0], luma_w_, d_lr_curr16_, luma_w_, luma_w_,
+              luma_h_);
+          video_u8_to_u16_kernel<<<conv_blocks, 256, 0, stream_>>>(
+              filter_in_planes_[0], luma_w_, d_lr_cdef16_, luma_w_, luma_w_,
+              luma_h_);
+          pc_wiener::PcWienerSource src{};
+          src.curr = d_lr_curr16_;
+          src.curr_stride = luma_w_;
+          src.cdef = d_lr_cdef16_;
+          src.cdef_stride = luma_w_;
+          src.luma_start_x = 0;
+          src.luma_end_x = luma_w_ - 1;
+          src.luma_start_y = 0;
+          src.luma_end_y = luma_h_ - 1;
+          src.stripe_start_y = 0;
+          src.stripe_end_y = luma_h_ - 1;
+          pc_wiener::PcWienerParams params{};
+          params.base_q_idx = plan.lr.base_q_idx;
+          params.bit_depth = 8;
+          params.mi_col_end = mi_cols_;
+          params.mi_row_start = 0;
+          params.mi_row_end = mi_rows_;
+          params.lr_tx_skip = d_lr_tx_skip_;
+          params.lr_tx_skip_stride = mi_cols_;
+          if (!is_ok(pc_wiener::pc_wiener_classify(pc_wiener_, src, params,
+                                                   stream_))) {
+            error = "M2 CUDA: PC-Wiener classify failed";
+            return false;
+          }
+          if (!is_ok(pc_wiener::pc_wiener_filter_units(
+                  pc_wiener_, src, params, nullptr, d_lr_unit_type_[0],
+                  d_lr_out16_, luma_w_, stream_))) {
+            error = "M2 CUDA: PC-Wiener filter failed";
+            return false;
+          }
+          video_u16_to_u8_kernel<<<conv_blocks, 256, 0, stream_>>>(
+              d_lr_out16_, luma_w_, filter_planes_[0], luma_w_, luma_w_,
+              luma_h_);
+          if (!check(cudaGetLastError(), "PC-Wiener copy", error)) {
+            return false;
+          }
+        }
+        bool any_wns = false;
         av2enc::restoration::RestorationFrame lr_frame{};
         for (int plane = 0; plane < 3; ++plane) {
           lr_frame.curr[plane].data = d_filter_curr_[plane];
-          lr_frame.curr[plane].stride = plane == 0 ? luma_w_ : chroma_mi_w_;
+          lr_frame.curr[plane].stride = plane == 0 ? frame_width_ : frame_chroma_w_;
           lr_frame.cdef[plane].data = filter_in_planes_[plane];
-          lr_frame.cdef[plane].stride = plane == 0 ? luma_w_ : chroma_mi_w_;
+          lr_frame.cdef[plane].stride = plane == 0 ? frame_width_ : frame_chroma_w_;
           lr_frame.lr[plane].data = filter_planes_[plane];
-          lr_frame.lr[plane].stride = plane == 0 ? luma_w_ : chroma_mi_w_;
+          lr_frame.lr[plane].stride = plane == 0 ? frame_width_ : frame_chroma_w_;
         }
-        lr_frame.mi_cols = mi_cols_;
-        lr_frame.mi_rows = mi_rows_;
+        lr_frame.mi_cols = frame_mi_cols_;
+        lr_frame.mi_rows = frame_mi_rows_;
         lr_frame.subsampling_x = 1;
         lr_frame.subsampling_y = 1;
         lr_frame.bit_depth = 8;
         lr_frame.sb_width = 64;
         lr_frame.sb_height = 64;
         lr_frame.sb_shift = 4;
-        av2enc::restoration::LoopRestorationParams params;
-        for (int plane = 0; plane < 3; ++plane) {
-          params.frame_type[plane] = static_cast<
-              av2enc::restoration::RestorationType>(derived.frame_type[plane]);
-          params.unit_size[plane] = derived.unit_size[plane];
-          params.unit_type[plane] = d_lr_unit_type_[plane];
-          params.unit_rows[plane] = derived.unit_rows[plane];
-          params.unit_cols[plane] = derived.unit_cols[plane];
-          params.unit_coeffs[plane] = d_lr_unit_coeffs_[plane];
-          params.frame_filters_on[plane] = 0;
+        av2enc::restoration::LoopRestorationParams params;        for (int plane = 0; plane < 3; ++plane) {
+          if (derived.frame_type[plane] ==
+              static_cast<int>(av2enc::restoration::kRestoreWienerNs)) {
+            any_wns = true;
+          }
         }
-        if (!check(av2enc::cuda::loop_restoration_frame(lr_frame, params,
-                                                        stream_),
-                   "loop_restoration_frame", error)) {
-          return false;
+        if (any_wns) {
+          av2enc::restoration::RestorationFrame lr_frame{};
+          for (int plane = 0; plane < 3; ++plane) {
+            lr_frame.curr[plane].data = d_filter_curr_[plane];
+            lr_frame.curr[plane].stride = plane == 0 ? luma_w_ : chroma_mi_w_;
+            lr_frame.cdef[plane].data = filter_in_planes_[plane];
+            lr_frame.cdef[plane].stride = plane == 0 ? luma_w_ : chroma_mi_w_;
+            lr_frame.lr[plane].data = filter_planes_[plane];
+            lr_frame.lr[plane].stride = plane == 0 ? luma_w_ : chroma_mi_w_;
+          }
+          lr_frame.mi_cols = mi_cols_;
+          lr_frame.mi_rows = mi_rows_;
+          lr_frame.subsampling_x = 1;
+          lr_frame.subsampling_y = 1;
+          lr_frame.bit_depth = 8;
+          lr_frame.sb_width = 64;
+          lr_frame.sb_height = 64;
+          lr_frame.sb_shift = 4;
+          av2enc::restoration::LoopRestorationParams params;
+          for (int plane = 0; plane < 3; ++plane) {
+            const bool wns =
+                derived.frame_type[plane] ==
+                static_cast<int>(av2enc::restoration::kRestoreWienerNs);
+            params.frame_type[plane] =
+                wns ? av2enc::restoration::kRestoreWienerNs
+                    : av2enc::restoration::kRestoreNone;
+            params.unit_size[plane] = derived.unit_size[plane];
+            params.unit_type[plane] = d_lr_unit_type_[plane];
+            params.unit_rows[plane] = derived.unit_rows[plane];
+            params.unit_cols[plane] = derived.unit_cols[plane];
+            params.unit_coeffs[plane] = d_lr_unit_coeffs_[plane];
+            params.frame_filters_on[plane] = 0;
+          }
+          if (!check(av2enc::cuda::loop_restoration_frame(lr_frame, params,
+                                                          stream_),
+                     "loop_restoration_frame", error)) {
+            return false;
+          }
+        }
+        // Planes that neither the PC-Wiener stage nor Wiener NS filtered are
+        // copied through: the final download reads all three planes.
+        for (int plane = 0; plane < 3; ++plane) {
+          const bool filtered =
+              (plane == 0 && plan.lr.pc_wiener) ||
+              (derived.frame_type[plane] ==
+               static_cast<int>(av2enc::restoration::kRestoreWienerNs));
+          if (filtered) continue;
+          const int width = plane == 0 ? luma_w_ : chroma_mi_w_;
+          const int rows = plane == 0 ? luma_h_ : chroma_mi_h_;
+          if (!check(cudaMemcpyAsync(
+                         filter_planes_[plane], filter_in_planes_[plane],
+                         static_cast<std::size_t>(width) *
+                             static_cast<std::size_t>(rows),
+                         cudaMemcpyDeviceToDevice, stream_),
+                     "cudaMemcpyAsync lr passthrough", error)) {
+            return false;
+          }
         }
         break;
       }
@@ -2009,12 +2410,12 @@ class CudaBackend final : public Backend {
           return false;
         }
         const dim3 threads(16, 16);
-        const dim3 blocks(static_cast<unsigned>((luma_w_ + 15) / 16),
-                          static_cast<unsigned>((luma_h_ + 15) / 16));
+        const dim3 blocks(static_cast<unsigned>((frame_width_ + 15) / 16),
+                          static_cast<unsigned>((frame_height_ + 15) / 16));
         // CurrFrame (pre-CDEF) -> device u8, then widen to u16.
         if (frame.curr[0] != nullptr) {
-          if (!upload_2d(d_filter_curr_[0], luma_w_, frame.curr[0],
-                         frame.curr_stride[0], luma_w_, luma_h_, error)) {
+          if (!upload_2d(d_filter_curr_[0], frame_width_, frame.curr[0],
+                         frame.curr_stride[0], frame_width_, frame_height_, error)) {
             return false;
           }
         } else {
@@ -2026,8 +2427,8 @@ class CudaBackend final : public Backend {
         }
         // CdefFrame (post-CCSO, pre-LR) -> device u8.
         if (frame.cdef[0] != nullptr) {
-          if (!upload_2d(d_gdf_cdef_u8_, luma_w_, frame.cdef[0],
-                         frame.cdef_stride[0], luma_w_, luma_h_, error)) {
+          if (!upload_2d(d_gdf_cdef_u8_, frame_width_, frame.cdef[0],
+                         frame.cdef_stride[0], frame_width_, frame_height_, error)) {
             return false;
           }
         } else {
@@ -2038,13 +2439,13 @@ class CudaBackend final : public Backend {
           }
         }
         u8_to_u16_kernel<<<blocks, threads, 0, stream_>>>(
-            d_filter_curr_[0], luma_w_, d_gdf_curr_, luma_w_, luma_w_,
-            luma_h_);
+            d_filter_curr_[0], frame_width_, d_gdf_curr_, frame_width_, frame_width_,
+            frame_height_);
         u8_to_u16_kernel<<<blocks, threads, 0, stream_>>>(
-            d_gdf_cdef_u8_, luma_w_, d_gdf_cdef_, luma_w_, luma_w_, luma_h_);
+            d_gdf_cdef_u8_, frame_width_, d_gdf_cdef_, frame_width_, frame_width_, frame_height_);
         u8_to_u16_kernel<<<blocks, threads, 0, stream_>>>(
-            filter_in_planes_[0], luma_w_, d_gdf_lr_, luma_w_, luma_w_,
-            luma_h_);
+            filter_in_planes_[0], frame_width_, d_gdf_lr_, frame_width_, frame_width_,
+            frame_height_);
         if (!check(cudaGetLastError(), "gdf u8->u16", error)) return false;
 
         // §7.20.1 reference order hints / distances (device arrays).
@@ -2053,8 +2454,8 @@ class CudaBackend final : public Backend {
         upload(d_gdf_frame_distance_, plan.gdf.frame_distance,
                sizeof(plan.gdf.frame_distance));
 
-        const int gdf_cols = (luma_w_ + 63) / 64;
-        const int gdf_rows = (luma_h_ + 63) / 64;
+        const int gdf_cols = (frame_width_ + 63) / 64;
+        const int gdf_rows = (frame_height_ + 63) / 64;
         const int units = gdf_cols * gdf_rows;
         std::vector<std::uint8_t> use_gdf(static_cast<std::size_t>(units), 1);
         if (!is_ok(gdf::gdf_upload_use_gdf(gdf_, use_gdf.data(), units,
@@ -2063,25 +2464,25 @@ class CudaBackend final : public Backend {
         }
         gdf::GdfFrameGrid grid{};
         grid.src.curr = d_gdf_curr_;
-        grid.src.curr_stride = luma_w_;
+        grid.src.curr_stride = frame_width_;
         grid.src.cdef = d_gdf_cdef_;
-        grid.src.cdef_stride = luma_w_;
+        grid.src.cdef_stride = frame_width_;
         grid.src.start_x = 0;
-        grid.src.end_x = luma_w_ - 1;
+        grid.src.end_x = frame_width_ - 1;
         grid.src.start_y = 0;
-        grid.src.end_y = luma_h_ - 1;
+        grid.src.end_y = frame_height_ - 1;
         grid.src.stripe_start_y = 0;
-        grid.src.stripe_end_y = luma_h_ - 1;
+        grid.src.stripe_end_y = frame_height_ - 1;
         grid.lr = d_gdf_lr_;
-        grid.lr_stride = luma_w_;
+        grid.lr_stride = frame_width_;
         grid.bit_depth = 8;
         grid.pix_scale = 1 + plan.gdf.scale_idx;
         grid.unit_size = 64;
         grid.cols = gdf_cols;
         grid.rows = gdf_rows;
-        grid.width = luma_w_;
-        grid.height = luma_h_;
-        grid.mi_rows = mi_rows_;
+        grid.width = frame_width_;
+        grid.height = frame_height_;
+        grid.mi_rows = frame_mi_rows_;
         grid.index.frame_is_intra = plan.gdf.frame_is_intra ? 1 : 0;
         grid.index.base_q_idx = plan.gdf.base_q_idx;
         grid.index.bit_depth = 8;
@@ -2094,7 +2495,7 @@ class CudaBackend final : public Backend {
           return false;
         }
         u16_to_u8_kernel<<<blocks, threads, 0, stream_>>>(
-            d_gdf_lr_, luma_w_, filter_planes_[0], luma_w_, luma_w_, luma_h_);
+            d_gdf_lr_, frame_width_, filter_planes_[0], frame_width_, frame_width_, frame_height_);
         if (!check(cudaGetLastError(), "gdf u16->u8", error)) return false;
         // Chroma is untouched by GDF.
         for (int plane = 1; plane < 3; ++plane) {
@@ -2110,8 +2511,8 @@ class CudaBackend final : public Backend {
     }
 
     for (int plane = 0; plane < 3; ++plane) {
-      const int width = plane == 0 ? luma_w_ : chroma_mi_w_;
-      const int rows = plane == 0 ? luma_h_ : chroma_mi_h_;
+      const int width = plane == 0 ? frame_width_ : frame_chroma_w_;
+      const int rows = plane == 0 ? frame_height_ : frame_chroma_h_;
       if (!download_2d(frame.out[plane], frame.out_stride[plane],
                        filter_planes_[plane], width, width, rows, error)) {
         return false;
@@ -2232,9 +2633,11 @@ class CudaBackend final : public Backend {
       }
       ++stats_.mc_launches;
       const int pixels = w * h;
+      // The source planes are frame-wide (a tile-local reconstruction does
+      // not change the input); x0/y0 are absolute frame coordinates.
       video_residual_kernel<<<div_up(pixels, 256), 256, 0, stream_>>>(
-          src_planes_[0], width_, width_, height_, x0, y0, d_pred_, w,
-          d_residual_, w, h);
+          src_planes_[0], frame_width_, frame_width_, frame_height_, x0, y0,
+          d_pred_, w, d_residual_, w, h);
       if (!check(cudaGetLastError(), "video_residual_kernel tx search", error)) {
         return false;
       }
@@ -2267,8 +2670,13 @@ class CudaBackend final : public Backend {
       block.filter_type_above = 0;
       block.filter_type_left = 0;
       block.enable_edge_filter = 0;
-      block.source_plane = src_planes_[0];
-      block.source_stride = width_;
+      // The reconstruction plane is tile-local, so x0/y0 index it directly.
+      // Offset the frame-wide source plane by the tile origin instead of
+      // re-indexing the block: the predictor reads both at the same (x0,y0).
+      block.source_plane = src_planes_[0] +
+                           static_cast<std::ptrdiff_t>(tile_y_) * frame_width_ +
+                           tile_x_;
+      block.source_stride = frame_width_;
       block.source_max_x = width_ - 1;
       block.source_max_y = height_ - 1;
       intra_job.pred = d_pred_;
@@ -2780,9 +3188,11 @@ class CudaBackend final : public Backend {
     d_residual_adj_ = nullptr;
     d_coeff_ = nullptr;
     d_levels_ = nullptr;
+    d_q2_ = nullptr;
     d_recon_residual_ = nullptr;
     d_recon_out_ = nullptr;
     d_tx_jobs_ = nullptr;
+    d_chroma_result_ = nullptr;
     d_recon_jobs_ = nullptr;
     d_warp_pred_ = nullptr;
     d_warp_sse_jobs_ = nullptr;
@@ -2798,6 +3208,11 @@ class CudaBackend final : public Backend {
       d_lr_unit_type_[plane] = nullptr;
       d_lr_unit_coeffs_[plane] = nullptr;
     }
+    d_lr_curr16_ = nullptr;
+    d_lr_cdef16_ = nullptr;
+    d_lr_out16_ = nullptr;
+    d_lr_tx_skip_ = nullptr;
+    pc_wiener_.reset();
     d_filter_curr_luma_ = nullptr;
     d_filter_skip_ = nullptr;
     d_filter_lossless_ = nullptr;
@@ -2869,7 +3284,7 @@ class CudaBackend final : public Backend {
     }
     if (ok) {
       d_cdef_idx_count_ =
-          ((mi_cols_ + 15) / 16) * ((mi_rows_ + 15) / 16);
+          ((frame_mi_cols_ + 15) / 16) * ((frame_mi_rows_ + 15) / 16);
       ok = arena_alloc_array(arena_, mi_luma, &d_filter_curr_luma_,
                              "filter curr luma", alloc, error) &&
            arena_alloc_array(arena_, mi_luma, &d_filter_skip_,
@@ -2884,8 +3299,8 @@ class CudaBackend final : public Backend {
                arena_, 3ull * av2enc::restoration::kCcsoOffsetEntries,
                &d_ccso_offsets_, "ccso offsets", alloc, error);
       const std::size_t lr_units_max =
-          static_cast<std::size_t>(mi_cols_ / 8 + 2) *
-          static_cast<std::size_t>(mi_rows_ / 8 + 2);
+          static_cast<std::size_t>(frame_mi_cols_ / 8 + 2) *
+          static_cast<std::size_t>(frame_mi_rows_ / 8 + 2);
       for (int plane = 0; plane < 3 && ok; ++plane) {
         const std::size_t mi_count = plane == 0 ? mi_luma : mi_chroma;
         ok = arena_alloc_array(arena_, mi_luma, &d_ccso_blks_[plane],
@@ -2900,6 +3315,15 @@ class CudaBackend final : public Backend {
                  &d_lr_unit_coeffs_[plane], "lr unit coeffs", alloc, error);
       }
       ok = ok &&
+           arena_alloc_array(arena_, mi_luma, &d_lr_curr16_, "lr curr16",
+                             alloc, error) &&
+           arena_alloc_array(arena_, mi_luma, &d_lr_cdef16_, "lr cdef16",
+                             alloc, error) &&
+           arena_alloc_array(arena_, mi_luma, &d_lr_out16_, "lr out16", alloc,
+                             error) &&
+           arena_alloc_array(arena_, mi_luma, &d_lr_tx_skip_, "lr tx skip",
+                             alloc, error);
+      ok = ok &&
            arena_alloc_array(arena_, mi_luma, &d_gdf_cdef_u8_, "gdf cdef8",
                              alloc, error) &&
            arena_alloc_array(arena_, mi_luma, &d_gdf_curr_, "gdf curr16",
@@ -2913,8 +3337,10 @@ class CudaBackend final : public Backend {
            arena_alloc_array(arena_, 2, &d_gdf_frame_distance_,
                              "gdf frame distance", alloc, error);
       if (ok) {
-        const int gdf_cols = static_cast<int>((mi_cols_ * 4 + 63) / 64);
-        const int gdf_rows = static_cast<int>((mi_rows_ * 4 + 63) / 64);
+        const int gdf_cols =
+            static_cast<int>((frame_width_ + 63) / 64);
+        const int gdf_rows =
+            static_cast<int>((frame_height_ + 63) / 64);
         gdf::GdfConfig gdf_config;
         gdf_config.max_units = gdf::gdf_grid_slots(gdf_cols, gdf_rows);
         std::string gdf_detail;
@@ -2951,10 +3377,14 @@ class CudaBackend final : public Backend {
          arena_alloc_array(arena_, 3 * kMaxCodedPixels, &d_recon_residual_,
                            "recon residual", alloc, error) &&
          arena_alloc_array(arena_, 3, &d_tx_jobs_, "tx jobs", alloc, error) &&
+         arena_alloc_array(arena_, 1, &d_chroma_result_, "chroma result",
+                           alloc, error) &&
          arena_alloc_array(arena_, 3, &d_recon_jobs_, "recon jobs", alloc,
                            error) &&
          arena_alloc_array(arena_, 3 * kMaxCodedPixels, &d_recon_out_,
                            "recon output", alloc, error) &&
+         arena_alloc_array(arena_, 3 * kMaxPlaneTx, &d_q2_, "qm q2", alloc,
+                           error) &&
          arena_alloc_array(arena_,
                            static_cast<std::size_t>(kWarpBatchJobs) *
                                kMaxBlockPixels,
@@ -3029,7 +3459,23 @@ class CudaBackend final : public Backend {
               (tx_error.empty() ? av2enc::cuda::status_name(tx_status)
                                 : tx_error);
       return false;
-    }    persistent_ready_ = true;
+    }
+    // §7.20.4 PC-Wiener workspace, from the same frame-boundary mark.
+    pc_wiener::PcWienerConfig pcw_config;
+    pcw_config.width = luma_w_;
+    pcw_config.height = luma_h_;
+    pcw_config.bit_depth = 8;
+    pcw_config.unit_size = 64;
+    std::string pcw_error;
+    if (pc_wiener_.create(arena_, pcw_config, &pcw_error) != Status::kOk) {
+      arena_.rewind(persistent_mark_);
+      clear_persistent();
+      last_arena_required_ = required_device_bytes_;
+      last_arena_status_ = ArenaStatus::kArenaTooSmall;
+      error = "M2 CUDA: PC-Wiener workspace init failed: " + pcw_error;
+      return false;
+    }
+    persistent_ready_ = true;
     persistent_width_ = frame_width_;
     persistent_height_ = frame_height_;
     persistent_mi_cols_ = frame_mi_cols_;
@@ -3161,6 +3607,11 @@ class CudaBackend final : public Backend {
   std::uint8_t* d_filter_curr_[3] = {nullptr, nullptr, nullptr};
   std::uint8_t* d_lr_unit_type_[3] = {nullptr, nullptr, nullptr};
   std::int16_t* d_lr_unit_coeffs_[3] = {nullptr, nullptr, nullptr};
+  std::uint16_t* d_lr_curr16_ = nullptr;
+  std::uint16_t* d_lr_cdef16_ = nullptr;
+  std::uint16_t* d_lr_out16_ = nullptr;
+  std::uint8_t* d_lr_tx_skip_ = nullptr;
+  av2enc::cuda::pc_wiener::PcWienerWorkspace pc_wiener_;
   std::uint8_t* d_gdf_cdef_u8_ = nullptr;
   std::uint16_t* d_gdf_curr_ = nullptr;
   std::uint16_t* d_gdf_cdef_ = nullptr;
@@ -3175,9 +3626,12 @@ class CudaBackend final : public Backend {
   std::int16_t* d_residual_adj_ = nullptr;
   double* d_coeff_ = nullptr;
   std::int32_t* d_levels_ = nullptr;
+  std::int32_t* d_q2_ = nullptr;
+  bool qm_enabled_ = false;
   std::int16_t* d_recon_residual_ = nullptr;
   std::uint8_t* d_recon_out_ = nullptr;
   av2enc::cuda::TxBlockJob* d_tx_jobs_ = nullptr;
+  still::StillChromaResult* d_chroma_result_ = nullptr;
   videotx::VideoTxWorkspace tx_ws_;
   ReconJob* d_recon_jobs_ = nullptr;
   vi::Workspace intra_ws_;

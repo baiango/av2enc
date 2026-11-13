@@ -53,6 +53,17 @@ CORE=(
   "$ROOT/src/pipeline/video/video_frame.cpp"
 )
 
+# The M2 writer keeps growing optional modules (TIP/temporal motion field,
+# TX search, filters, RC).  Take the canonical av2enc_core host source list
+# instead of chasing undefined references by hand.
+source "$ROOT/src/cuda/pipeline/cpu_reference_sources.sh"
+CORE_RELATIVE=()
+for src in "${CORE[@]}"; do
+  CORE_RELATIVE+=("${src#"$ROOT"/}")
+done
+av2enc_cpu_core_append CORE "$ROOT/" \
+  "${CORE_RELATIVE[@]+"${CORE_RELATIVE[@]}"}"
+
 "${CXX}" "${FLAGS[@]}" \
   "$ROOT/src/pipeline/video/video_gate.cpp" \
   "${CORE[@]}" \
@@ -78,6 +89,11 @@ fi
 # short-clip decode/recon comparison.
 STATUS=0
 "${OUT}" --frames 2 --out "${TMPDIR:-/tmp}/video_gate_2f.ivf" || STATUS=1
+# TIP (§7.10) product case: key + future anchor P + TIP_FRAME_AS_OUTPUT
+# pictures at 4 and 8 pictures.  Uses the synthetic clip unless an input is
+# supplied; each phase decodes with dav2d --strict 1 and compares the recon.
+"${OUT}" --frames 4 --tip --out "${TMPDIR:-/tmp}/video_gate_tip4.ivf" || STATUS=1
+"${OUT}" --frames 8 --tip --out "${TMPDIR:-/tmp}/video_gate_tip8.ivf" || STATUS=1
 if [[ -f "$ROOT/testdata/shine_1280x720_60f.y4m" ]]; then
   "${OUT}" --input "$ROOT/testdata/shine_1280x720_60f.y4m" --frames 8 \
     --single-block --out "${TMPDIR:-/tmp}/video_gate_720p.ivf" || STATUS=1

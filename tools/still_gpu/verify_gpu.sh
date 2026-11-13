@@ -92,7 +92,7 @@
 #                         dip,mrl,mrl-dip,ibp,ibp-full,
 #                         cfl-explicit,mhccp,mhccp-explicit,uv-full,
 #                         palette,ibc,palette-ibc,
-#                         tx-type,idtx,ist,cctx,tx-type-ist,ist-cctx
+#                         tx-type,idtx,ist,cctx,tcq,rdoq,tx-type-ist,ist-cctx
 #                         (default: all)
 #   --seed N              random-size seed (default 20261111)
 #   --random-count N      number of random even sizes (default 3)
@@ -427,7 +427,7 @@ PY
         sb128 sb256 sb128-filters sb256-filters segmentation neutral-delta-q \
         per-segment-q ext ext-sb128 sdp sdp-full sub8 sub8-full dip mrl mrl-dip \
         ibp ibp-full cfl-explicit mhccp mhccp-explicit uv-full \
-        palette ibc palette-ibc tx-type idtx ist cctx tx-type-ist ist-cctx)
+        palette ibc palette-ibc tx-type idtx ist cctx tcq rdoq tx-type-ist ist-cctx)
     local -a all_args=("" "--still-full-intra" "--no-cfl" "--no-deblock" \
         "--still-depth 0" "--still-depth 1" "--still-depth 2" "--still-depth 3" \
         "--still-depth 4" "--still-depth 8" "--still-single" "--still-dc" \
@@ -450,6 +450,7 @@ PY
         "--still-uv-full" "--still-palette" "--still-ibc" \
         "--still-palette --still-ibc" \
         "--still-tx-type" "--still-idtx" "--still-ist" "--still-cctx" \
+        "--still-tcq" "--still-rdoq" \
         "--still-tx-type --still-ist" "--still-ist --still-cctx")
     local -a mode_names=() mode_args=()
     if [ "$MATRIX_MODES" = "all" ]; then

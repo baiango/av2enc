@@ -30,6 +30,11 @@ struct HighBitDepthOptions {
   // product hbd path passes the slice for a qindex whose header it writes
   // itself, so the reused M10 header can stay pinned at q=90.
   int qctx = -1;
+  // §7.17 deblocking at the 10-bit sample depth.  Off by default so every
+  // pinned 10-bit stream is unchanged; the CLI's opt-in `--still-deblock`
+  // sets it.  The filter is applied after the whole tile, using the same
+  // pre-filter reconstruction the decoder predicts from.
+  bool enable_deblock = false;
 };
 
 // One leaf coding block.  `luma_size` is 32 or 64 (square).  Coefficient

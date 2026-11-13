@@ -206,6 +206,49 @@ inline bool add_video_deblock_blocks(
         }
       }
     }
+    // §5.20.6.3 TX_MODE_SELECT: the decoder stores every transform part's own
+    // origin in TxColBase/TxRowBase, so the §7.17 grid must carry each part and
+    // filter the interior part edges too.  Chroma follows the historical
+    // single-transform-per-plane rule (the luma search does not partition UV).
+    if (block.tx_part_count > 1) {
+      for (int i = 0; i < static_cast<int>(block.tx_part_count); ++i) {
+        const int part_tx = static_cast<int>(block.tx_part_tx_size[i]);
+        if (part_tx < 0 || part_tx >= deblock::kTxSizesAll) {
+          if (error != nullptr) {
+            *error = "video deblock: invalid TX-part size";
+          }
+          return false;
+        }
+        const int part_r = r + static_cast<int>(block.tx_part_mi_row[i]);
+        const int part_c = c + static_cast<int>(block.tx_part_mi_col[i]);
+        if (part_r < 0 || part_c < 0 || part_r >= grid->mi_rows ||
+            part_c >= grid->mi_cols) {
+          if (error != nullptr) {
+            *error = "video deblock: TX part outside the MI grid";
+          }
+          return false;
+        }
+        const int pw4 =
+            std::max(1, deblock::tx_width(static_cast<deblock::TxSize>(
+                            part_tx)) /
+                             4);
+        const int ph4 =
+            std::max(1, deblock::tx_height(static_cast<deblock::TxSize>(
+                            part_tx)) /
+                             4);
+        for (int yy = 0; yy < ph4 && part_r + yy < grid->mi_rows; ++yy) {
+          for (int xx = 0; xx < pw4 && part_c + xx < grid->mi_cols; ++xx) {
+            deblock::DeblockMi& mi =
+                grid->mi[0][static_cast<std::size_t>(part_r + yy) *
+                                static_cast<std::size_t>(grid->mi_cols) +
+                            static_cast<std::size_t>(part_c + xx)];
+            mi.tx_size = static_cast<deblock::TxSize>(part_tx);
+            mi.tx_col_base = static_cast<std::uint16_t>(part_c);
+            mi.tx_row_base = static_cast<std::uint16_t>(part_r);
+          }
+        }
+      }
+    }
   }
   return true;
 }

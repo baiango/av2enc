@@ -1,7 +1,8 @@
 # CUDA M0 interface contract
 
-Primary target: 8 GB Ampere (`sm_86`), **CUDA 13.0** (verified 2026-11-13 on
-driver 580.178.04); CUDA 12.8 still builds. Secondary build: `sm_120`.
+Targets: RTX 3060 12 GB dev and RTX 3080 Ti production (`sm_86`), RTX 5090 (`sm_120`), **CUDA 13.0** (verified 2026-11-13 on
+driver 580.178.04); CUDA 12.8 still builds. Production: RTX 3080 Ti (`sm_86`);
+maximum-speed build: RTX 5090 (`sm_120`).
 No Blackwell-only instructions. No root `CMakeLists.txt` edits by component
 agents; put CUDA build fragments under `src/cuda/`.
 

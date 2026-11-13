@@ -338,10 +338,18 @@ needs no tile, but a `TIP_FRAME_AS_REF` frame does):
 ## The decoder gate
 
 ```sh
-./src/encoder/inter/tip_stream/build_and_test.sh            # tests + gate
+./src/codec/inter/tip/build_and_test.sh                     # tests + gate
 DAV2D=tools/bin/dav2d-macos ./build_and_test.sh            # explicit decoder
+./build_and_test.sh --allow-control-drift                  # decoder repro
 ./build_and_test.sh --no-gate                              # tests only
 SANITIZE=1 ./build_and_test.sh                             # ASan/UBSan
+
+The test binary and the gate take the canonical `av2enc_core` host source list
+(`src/cuda/pipeline/cpu_reference_sources.sh`); the M2 writer now pulls in the
+TIP/temporal modules, so the old hand-maintained subset no longer links.
+`--allow-control-drift` keeps the decoder/reconstruction check but tolerates a
+one-bit drift between the gate's control header and the current M2 writer
+(documented in `docs/tip-decoder-gate.md`); the default still fails on it.
 ```
 
 Gate structure (all 8-bit 4:2:0, one tile, 64x64 superblocks, filters off):

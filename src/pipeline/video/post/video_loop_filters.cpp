@@ -12,6 +12,7 @@
 #include "codec/filters/loop_restoration/restoration_common.h"
 #include "codec/filters/stream/filters_stream.h"
 #include "codec/filters/loop_restoration/classes/wiener_decision.h"
+#include "codec/filters/pc_wiener/pc_wiener_stream.h"
 #include "codec/filters/gdf/gdf_decision.h"
 
 namespace av2enc::video::post {
@@ -472,11 +473,97 @@ bool apply_ccso_cpu(const VideoLoopFilterFrame& frame,
 // Loop restoration (§7.20 luma Wiener NS and chroma LR)
 // ---------------------------------------------------------------------------
 
+// §7.20.1 LrTxSkip = skip_flag || eob == 0 on the luma MI grid.  The decision
+// and the filter application must use the identical grid the decoder derives.
+std::vector<std::uint8_t> build_lr_tx_skip(const VideoLoopFilterFrame& frame) {
+  std::vector<std::uint8_t> lr_tx_skip(
+      static_cast<std::size_t>(frame.mi_cols) *
+          static_cast<std::size_t>(frame.mi_rows),
+      0);
+  for (const VideoLoopFilterBlock& block : frame.blocks) {
+    const bool tx_skip = block.skip || block.luma_eob_zero;
+    for (int yy = 0; yy < block.h4; ++yy) {
+      for (int xx = 0; xx < block.w4; ++xx) {
+        const int rr = block.mi_row + yy;
+        const int cc = block.mi_col + xx;
+        if (rr < 0 || cc < 0 || rr >= frame.mi_rows || cc >= frame.mi_cols) {
+          continue;
+        }
+        lr_tx_skip[static_cast<std::size_t>(rr) *
+                       static_cast<std::size_t>(frame.mi_cols) +
+                   static_cast<std::size_t>(cc)] = tx_skip ? 1 : 0;
+      }
+    }
+  }
+  return lr_tx_skip;
+}
+
 bool prepare_lr(const VideoLoopFilterFrame& frame,
                 const VideoLoopFilterOptions& options, VideoLrPlan* plan,
                 std::string* error) {
   *plan = VideoLrPlan{};
-  if (!options.wiener && !options.chroma_lr) return true;
+  if (!options.wiener && !options.chroma_lr && !options.pc_wiener) return true;
+  if (options.pc_wiener && options.wiener) {
+    return fail(error,
+                "video LR: --video-pc-wiener replaces the luma Wiener NS "
+                "decision; do not combine the two luma tools");
+  }
+
+  plan->base_q_idx = frame.base_q_idx;
+  // §7.20.4 luma PC-Wiener: its own decision and §5.18.7.11 dispatch.
+  if (options.pc_wiener) {
+    namespace pcw = ::av2enc::filters::pc_wiener_stream;
+    const int luma_w = frame.mi_cols * 4;
+    const int luma_h = frame.mi_rows * 4;
+    pcw::DecisionPlanes planes;
+    planes.width = luma_w;
+    planes.height = luma_h;
+    planes.bit_depth = 8;
+    planes.base_q_idx = frame.base_q_idx;
+    planes.sub_x = 1;
+    planes.sub_y = 1;
+    planes.luma_shift = 3;
+    planes.chroma_shift = 3;
+    for (int plane = 0; plane < 3; ++plane) {
+      planes.curr[plane] =
+          frame.curr[plane] != nullptr ? frame.curr[plane] : frame.plane[plane];
+      planes.curr_stride[plane] = frame.curr[plane] != nullptr
+                                      ? frame.curr_stride[plane]
+                                      : frame.stride[plane];
+      planes.cdef[plane] = frame.plane[plane];
+      planes.cdef_stride[plane] = frame.stride[plane];
+      planes.target[plane] = frame.source[plane];
+      planes.target_stride[plane] = frame.source_stride[plane];
+    }
+    std::vector<std::uint8_t> lr_tx_skip = build_lr_tx_skip(frame);
+    planes.lr_tx_skip = lr_tx_skip.data();
+    planes.lr_tx_skip_stride = frame.mi_cols;
+    plan->tx_skip = lr_tx_skip;
+    plan->tx_skip_cols = frame.mi_cols;
+    plan->tx_skip_rows = frame.mi_rows;
+    pcw::DecisionResult result;
+    std::string pc_error;
+    if (!pcw::DecidePerUnitPcWiener(planes, 0.0, &result, &pc_error)) {
+      return fail(error, "video PC-Wiener decision failed: " + pc_error);
+    }
+    // The sequence header is emitted before the frame is coded, so the tool
+    // is signalled up front.  Every unit then codes its use_pc_wiener symbol;
+    // an all-off frame is a valid (identity) PC-Wiener plan.
+    const int unit_size =
+        pcw::kRestorationTileSizeMax >> result.params.luma_shift;
+    VideoLrPlane& dst = plan->plane[0];
+    dst.enabled = true;
+    dst.restore_type = static_cast<std::uint8_t>(pcw::kRestorePcWiener);
+    dst.unit_size = unit_size;
+    dst.shift = result.params.luma_shift;
+    dst.unit_rows = pcw::CountUnits(unit_size, luma_h);
+    dst.unit_cols = pcw::CountUnits(unit_size, luma_w);
+    dst.unit_type = result.unit_type[0];
+    plan->pc_wiener = true;
+    plan->luma_shift = result.params.luma_shift;
+    plan->enabled = true;
+  }
+  if (!options.wiener && !options.chroma_lr && !plan->enabled) return true;
 
   namespace classes = ::av2enc::restoration::classes;
   classes::WienerDecisionInput input;
@@ -501,7 +588,7 @@ bool prepare_lr(const VideoLoopFilterFrame& frame,
   input.base_q_idx = frame.base_q_idx;
 
   classes::WienerDecisionOptions lr_options;
-  lr_options.allow_luma = options.wiener;
+  lr_options.allow_luma = options.wiener && !options.pc_wiener;
   lr_options.allow_chroma = options.chroma_lr;
   lr_options.allow_per_unit = true;
   // Frame-level filters need an intra frame and a §7.20.4 class map; the
@@ -522,7 +609,7 @@ bool prepare_lr(const VideoLoopFilterFrame& frame,
                            classes::wiener_decision_status_string(status));
   }
 
-  plan->luma_shift = decision.params.luma_shift;
+  if (!plan->pc_wiener) plan->luma_shift = decision.params.luma_shift;
   plan->chroma_shift = decision.params.chroma_shift;
   bool any_plane = false;
   for (int plane = 0; plane < 3; ++plane) {
@@ -535,6 +622,7 @@ bool prepare_lr(const VideoLoopFilterFrame& frame,
                   "is a separate tool)");
     }
     dst.enabled = true;
+    dst.restore_type = static_cast<std::uint8_t>(rest::kRestoreWienerNs);
     dst.unit_size = decision.unit_size[plane];
     dst.shift = plane == 0 ? plan->luma_shift : plan->chroma_shift;
     dst.unit_rows = decision.unit_rows[plane];
@@ -559,57 +647,101 @@ bool prepare_lr(const VideoLoopFilterFrame& frame,
     }
     any_plane = true;
   }
-  plan->enabled = any_plane;
+  plan->enabled = any_plane || plan->enabled;
   return true;
 }
 
 bool apply_lr_cpu(const VideoLoopFilterFrame& frame, const VideoLrPlan& plan,
                   std::string* error) {
   if (!plan.enabled) return true;
-  rest::LoopRestorationParams params;
-  for (int plane = 0; plane < 3; ++plane) {
-    const VideoLrPlane& src = plan.plane[plane];
-    params.frame_type[plane] =
-        src.enabled ? rest::kRestoreWienerNs : rest::kRestoreNone;
-    params.unit_size[plane] = src.unit_size;
-    params.unit_type[plane] = src.enabled ? src.unit_type.data() : nullptr;
-    params.unit_rows[plane] = src.unit_rows;
-    params.unit_cols[plane] = src.unit_cols;
-    params.unit_coeffs[plane] = src.enabled ? src.unit_coeffs.data() : nullptr;
-    params.frame_filters_on[plane] = 0;
-  }
-
-  rest::RestorationFrame rf{};
   std::vector<std::uint8_t> lr_storage[3];
   for (int plane = 0; plane < 3; ++plane) {
     const int w = plane_width(frame, plane);
     const int h = plane_height(frame, plane);
     lr_storage[plane].assign(
         static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
-    rf.curr[plane].data = const_cast<std::uint8_t*>(
-        frame.curr[plane] != nullptr ? frame.curr[plane] : frame.plane[plane]);
-    rf.curr[plane].stride = frame.curr[plane] != nullptr
-                                ? frame.curr_stride[plane]
-                                : frame.stride[plane];
-    rf.cdef[plane].data = frame.plane[plane];
-    rf.cdef[plane].stride = frame.stride[plane];
-    rf.lr[plane].data = lr_storage[plane].data();
-    rf.lr[plane].stride = w;
   }
-  rf.mi_cols = frame.mi_cols;
-  rf.mi_rows = frame.mi_rows;
-  rf.subsampling_x = 1;
-  rf.subsampling_y = 1;
-  rf.bit_depth = 8;
-  rf.sb_width = 64;
-  rf.sb_height = 64;
-  rf.sb_shift = 4;
-  const rest::RestorationStatus status = rest::loop_restoration_frame(rf, params);
-  if (status != rest::RestorationStatus::kOk) {
-    return fail(error, std::string("video LR failed: ") +
-                           rest::restoration_status_string(status));
+
+  // §7.20.4 luma PC-Wiener (RESTORE_PC_WIENER): per-unit on/off from the plan.
+  if (plan.pc_wiener) {
+    namespace pcw = ::av2enc::filters::pc_wiener_stream;
+    const int luma_w = frame.mi_cols * 4;
+    const int luma_h = frame.mi_rows * 4;
+    pcw::DecisionPlanes planes;
+    planes.width = luma_w;
+    planes.height = luma_h;
+    planes.bit_depth = 8;
+    planes.base_q_idx = frame.base_q_idx;
+    planes.sub_x = 1;
+    planes.sub_y = 1;
+    for (int plane = 0; plane < 3; ++plane) {
+      planes.curr[plane] =
+          frame.curr[plane] != nullptr ? frame.curr[plane] : frame.plane[plane];
+      planes.curr_stride[plane] = frame.curr[plane] != nullptr
+                                      ? frame.curr_stride[plane]
+                                      : frame.stride[plane];
+      planes.cdef[plane] = frame.plane[plane];
+      planes.cdef_stride[plane] = frame.stride[plane];
+    }
+    const std::vector<std::uint8_t> lr_tx_skip = build_lr_tx_skip(frame);
+    planes.lr_tx_skip = lr_tx_skip.data();
+    planes.lr_tx_skip_stride = frame.mi_cols;
+    const int filtered = pcw::ApplyPerUnitPcWiener(
+        planes, plan.plane[0].unit_type, plan.plane[0].unit_size,
+        lr_storage[0].data(), luma_w);
+    if (filtered < 0) {
+      return fail(error, "video PC-Wiener application failed");
+    }
+  }
+
+  bool any_wns = false;
+  rest::LoopRestorationParams params;
+  for (int plane = 0; plane < 3; ++plane) {
+    const VideoLrPlane& src = plan.plane[plane];
+    const bool wns = src.enabled &&
+                     src.restore_type ==
+                         static_cast<std::uint8_t>(rest::kRestoreWienerNs);
+    params.frame_type[plane] = wns ? rest::kRestoreWienerNs : rest::kRestoreNone;
+    params.unit_size[plane] = src.unit_size;
+    params.unit_type[plane] = wns ? src.unit_type.data() : nullptr;
+    params.unit_rows[plane] = src.unit_rows;
+    params.unit_cols[plane] = src.unit_cols;
+    params.unit_coeffs[plane] = wns ? src.unit_coeffs.data() : nullptr;
+    params.frame_filters_on[plane] = 0;
+    any_wns = any_wns || wns;
+  }
+
+  if (any_wns) {
+    rest::RestorationFrame rf{};
+    for (int plane = 0; plane < 3; ++plane) {
+      const int w = plane_width(frame, plane);
+      rf.curr[plane].data = const_cast<std::uint8_t*>(
+          frame.curr[plane] != nullptr ? frame.curr[plane] : frame.plane[plane]);
+      rf.curr[plane].stride = frame.curr[plane] != nullptr
+                                  ? frame.curr_stride[plane]
+                                  : frame.stride[plane];
+      rf.cdef[plane].data = frame.plane[plane];
+      rf.cdef[plane].stride = frame.stride[plane];
+      rf.lr[plane].data = lr_storage[plane].data();
+      rf.lr[plane].stride = w;
+    }
+    rf.mi_cols = frame.mi_cols;
+    rf.mi_rows = frame.mi_rows;
+    rf.subsampling_x = 1;
+    rf.subsampling_y = 1;
+    rf.bit_depth = 8;
+    rf.sb_width = 64;
+    rf.sb_height = 64;
+    rf.sb_shift = 4;
+    const rest::RestorationStatus status =
+        rest::loop_restoration_frame(rf, params);
+    if (status != rest::RestorationStatus::kOk) {
+      return fail(error, std::string("video LR failed: ") +
+                             rest::restoration_status_string(status));
+    }
   }
   for (int plane = 0; plane < 3; ++plane) {
+    if (!plan.plane[plane].enabled) continue;
     copy_plane(lr_storage[plane].data(), plane_width(frame, plane),
                frame.plane[plane], frame.stride[plane],
                plane_width(frame, plane), plane_height(frame, plane));
@@ -892,7 +1024,8 @@ LrFilterOptions lr_filter_options(const VideoLrPlan& plan) {
   for (int plane = 0; plane < 3; ++plane) {
     const VideoLrPlane& src = plan.plane[plane];
     options.frame_type[plane] =
-        src.enabled ? rest::kRestoreWienerNs : rest::kRestoreNone;
+        src.enabled ? static_cast<rest::RestorationType>(src.restore_type)
+                    : rest::kRestoreNone;
     options.unit_size[plane] = src.unit_size;
     options.unit_rows[plane] = src.unit_rows;
     options.unit_cols[plane] = src.unit_cols;
@@ -952,7 +1085,7 @@ bool run_video_loop_filters(VideoLoopFilterFrame& frame,
   // §7.19/§7.20 read the post-deblock (pre-CDEF) frame.  Keep a copy whenever a
   // later stage needs it, before CDEF overwrites the reconstruction.
   const bool need_curr = options.ccso || options.wiener || options.chroma_lr ||
-                         options.gdf;
+                         options.pc_wiener || options.gdf;
   std::vector<std::uint8_t> curr_storage[3];
   if (need_curr) {
     for (int plane = 0; plane < 3; ++plane) {
@@ -994,7 +1127,7 @@ bool run_video_loop_filters(VideoLoopFilterFrame& frame,
       frame.cdef_stride[plane] = w;
     }
   }
-  if (options.wiener || options.chroma_lr) {
+  if (options.wiener || options.chroma_lr || options.pc_wiener) {
     if (!prepare_lr(frame, options, &plan->lr, error)) return false;
     if (!apply_stage(VideoFilterStage::kLr, frame, *plan, hooks, error)) {
       return false;

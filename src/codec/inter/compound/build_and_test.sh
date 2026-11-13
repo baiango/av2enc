@@ -33,28 +33,40 @@ if [[ "${WERROR}" == "1" ]]; then
   FLAGS+=(-Werror -Wno-sign-conversion)
 fi
 
-CORE=(
-  "$ROOT/src/core/io/y4m.cpp"
-  "$ROOT/src/core/io/ivf.cpp"
-  "$ROOT/src/core/bitstream/bitwriter.cpp"
-  "$ROOT/src/core/bitstream/obu.cpp"
-  "$ROOT/src/core/bitstream/basic_headers.cpp"
-  "$ROOT/src/codec/partition/tree/partition.cpp"
-  "$ROOT/src/codec/intra/modes/intra_modes.cpp"
-  "$ROOT/src/codec/transform/variants/tx_variants.cpp"
-  "$ROOT/src/codec/transform/variants/tx_select.cpp"
-  "$ROOT/src/codec/entropy/av2/av2_entropy.cpp"
-  "$ROOT/src/codec/inter/me/me.cpp"
-  "$ROOT/src/codec/inter/mc/mc.cpp"
-  "$ROOT/src/codec/inter/advanced/compound.cpp"
+# The product core source list lives in CMakeLists.txt.  Deriving it keeps this
+# standalone gate linkable as the shared core grows (a stale explicit list fails
+# with undefined symbols long before the gate itself is wrong).
+CORE=()
+while IFS= read -r src; do
+  CORE+=("$ROOT/$src")
+done < <(python3 - "$ROOT/CMakeLists.txt" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1]).read()
+start = text.index("add_library(av2enc_core STATIC")
+end = text.index("target_include_directories(av2enc_core PUBLIC", start)
+for path in re.findall(r"^\s*(src/[^\s)]+\.cpp)", text[start:end], re.M):
+    print(path)
+PY
+)
+# Sources added by the later `target_sources(av2enc_core ...)` blocks and the
+# multi-reference/compound components the gate links directly.  Keep this list
+# to the modules a standalone `encode_video_sequence()` consumer needs.
+CORE+=(
+  "$ROOT/src/codec/inter/multiref/ref_map.cpp"
   "$ROOT/src/codec/inter/temporal/opfl.cpp"
   "$ROOT/src/codec/inter/temporal/temporal_common.cpp"
-  "$ROOT/src/codec/inter/merge/merge.cpp"
-  "$ROOT/src/pipeline/video/video_headers.cpp"
-  "$ROOT/src/pipeline/video/video_syntax.cpp"
-  "$ROOT/src/pipeline/video/video_frame.cpp"
-  "$ROOT/src/codec/inter/multiref/ref_map.cpp"
-  "$ROOT/src/codec/inter/multiref/compound_predict.cpp"
+  "$ROOT/src/formats/format.cpp"
+  "$ROOT/src/pipeline/tiles/tile_layout.cpp"
+  "$ROOT/src/pipeline/tiles/tile_group.cpp"
+  "$ROOT/src/pipeline/tiles/stream/tiles_stream.cpp"
+  "$ROOT/src/pipeline/video/post/rc_adapter.cpp"
+  "$ROOT/src/codec/filters/stream/filters_stream.cpp"
+  "$ROOT/src/pipeline/video/post/bit_depth_checklist.cpp"
+  "$ROOT/src/pipeline/video/post/loop_filters.cpp"
+  "$ROOT/src/pipeline/video/post/tiled_frame.cpp"
+  "$ROOT/src/pipeline/video/post/video_loop_filters.cpp"
 )
 
 COMPONENT=(
@@ -94,6 +106,10 @@ fi
 
 echo "== gate: synthetic 320x128 =="
 "${OUT_DIR}/compound_gate" --out "${OUT_DIR}/compound_gate.ivf"
+echo "== gate: wedge-only 320x128 =="
+"${OUT_DIR}/compound_gate" --mode wedge --out "${OUT_DIR}/compound_gate_wedge.ivf"
+echo "== gate: diffwtd-only 320x128 =="
+"${OUT_DIR}/compound_gate" --mode diffwtd --out "${OUT_DIR}/compound_gate_diffwtd.ivf"
 
 SRC="${ROOT}/testdata/shine_1280x720_60f.y4m"
 if [[ "${1:-}" == "--720p" && -f "$SRC" ]]; then

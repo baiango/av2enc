@@ -229,5 +229,5 @@ be fixed before those features can pass:
 
 ## Hardware / build note
 
-The target is Linux + CUDA, 8 GB Ampere `sm_86`. The dev box is a 12 GB 3060
+The targets are Linux + CUDA: RTX 3060 12 GB (dev) and RTX 3080 Ti (production) on `sm_86`, RTX 5090 on `sm_120`.
 proxy; see `docs/remote-env.md`. Do not claim 8 GB validation from the proxy.

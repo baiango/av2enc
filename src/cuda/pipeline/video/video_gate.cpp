@@ -556,6 +556,12 @@ int main(int argc, char** argv) {
       hd_options.compound = true;
       if (options.num_total_refs < 2) options.num_total_refs = 2;
       if (hd_options.num_total_refs < 2) hd_options.num_total_refs = 2;
+    } else if (arg == "--compound-wedge") {
+      options.compound_wedge = true;
+      hd_options.compound_wedge = true;
+    } else if (arg == "--compound-diffwtd") {
+      options.compound_diffwtd = true;
+      hd_options.compound_diffwtd = true;
     } else if (arg == "--gme") {
       options.enable_gme = true;
       hd_options.enable_gme = true;
@@ -627,7 +633,7 @@ int main(int argc, char** argv) {
                    "[--force-global] [--gme] [--warp] [--trace] [--no-hd] "
                    "[--inter-residual] [--force-inter-residual] "
                    "[--drl-reorder N] [--refs N] [--num-ref-frames N] "
-                   "[--compound] [--mfh] "
+                   "[--compound] [--compound-wedge] [--compound-diffwtd] [--mfh] "
                    "[--intra-full] "
                    "[--drl-reorder N] [--refs N] [--compound] [--mfh] "                   "[--timing] [--avg-cdf] [--adaptive-cdf] "
                    "[--b-frames N] [--tlayers N] [--long-term] [--olk] "

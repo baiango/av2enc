@@ -70,6 +70,14 @@ struct InterJob {
   int mv_y = 0;
   int mv_x = 0;
   int ref_index = 0;
+  // §5.20.7.16 compound blend parameters.  The compound path always predicts
+  // both references at `mv_y`/`mv_x` (zero in the gated subset) and blends
+  // with this type.  0 = WEDGE, 1 = DIFFWTD, 2 = AVERAGE (default).
+  int compound_type = 2;
+  int bsize = 0;  // partition::BlockSize, selects the wedge mask geometry
+  int wedge_index = 0;
+  int wedge_sign = 0;
+  int mask_type = 0;
 };
 
 // One ME job: luma origin and block size in the current (source) frame.
@@ -241,6 +249,29 @@ class Backend {
                                const std::vector<std::uint8_t>& v,
                                std::string& error) = 0;
 
+  // Luma-only reconstruction write.  §7.13.5 CfL reads the reconstructed luma
+  // of the current block, so the intra candidate must publish luma before the
+  // chroma decision.
+  virtual bool write_recon_luma(int x0, int y0, int w, int h,
+                                const std::vector<std::uint8_t>& y,
+                                std::string& error) = 0;
+
+  // §7.13.5 CfL chroma decision (--video-cfl): the M1 still product's
+  // {DC, CfL} candidate set with derived alpha.  The device backend runs
+  // `still::chroma_decide()` (bit-exact to the CPU policy) and the CPU
+  // emulation runs the shared `video::chroma_search::choose()`.  The luma
+  // reconstruction of the current block must already be written.  Returns the
+  // winner's U/V transform plan and `is_cfl`/`cfl_index` for the syntax writer.
+  // `num4_above_right`/`num4_below_left` are the §7.13.6 MHCCP neighbour
+  // availability counts at chroma 4x4 granularity (the orchestrator owns the
+  // §6.19.2.3 BlockDecoded map).  `enable_mhccp` also scores CFL_MULTI.
+  virtual bool chroma_cfl_candidate(int x0, int y0, int w, int h,
+                                    int num4_above_right,
+                                    int num4_below_left, bool enable_mhccp,
+                                    std::array<PlaneTx, 2>& planes, int& is_cfl,
+                                    int& cfl_index, int& cfl_mh_dir,
+                                    std::string& error) = 0;
+
   // Inter residual chain (MC -> residual -> TX/quant/inverse -> recon) for one
   // plane.  Not selected by the M2 baseline decisions; used by the selftest.
   virtual bool inter_residual_candidate(const InterJob& job,
@@ -290,6 +321,10 @@ class Backend {
       const av2enc::video::post::VideoFilterPlan& plan,
       const av2enc::video::post::VideoLoopFilterDeviceFrame& frame,
       std::string& error) = 0;
+  // §5.18.6.2 default-matrix QM (--video-qm).  Called once before the first
+  // frame; the transform chain then dequantizes with the per-coefficient q2.
+  virtual void set_qm(bool enabled) = 0;
+
   virtual const VideoGpuStats& stats() const = 0;
   virtual void reset_stats() = 0;
 

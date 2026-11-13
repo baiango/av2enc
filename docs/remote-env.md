@@ -3,10 +3,12 @@
 Status of the Vast.ai RTX 3060 box and the `bench/` baseline. Measured
 2026-11-11.
 
-**Focus:** the primary target is **8 GB Ampere (sm_86)** with a **7500 MiB**
+**Focus:** the development target is **RTX 3060 12 GB (sm_86)**; production is
+**RTX 3080 Ti (sm_86)** and maximum speed is **RTX 5090 (sm_120)**. The old 8 GB
+focus is retired. The historical **7500 MiB**
 VRAM cap. This 12 GB box is the development machine, run under the same 7500 MiB
 cap. The 8 GB claim is **12 GB emulation, actual 8 GB hardware pending**.
-RTX 5070 is build/smoke only. 4/6/16/24 GB and Turing are out of scope.
+4/6/8/16/24 GB and Turing are out of scope.
 
 ## Instance
 
@@ -53,7 +55,7 @@ CUDA_DISABLE_PTX_JIT=1 ./build/hello_cuda_bench
 ```
 
 Default architectures are `86;120`. The 3060 selects `sm_86`; the sm_120 slice
-is present for the 5070 build/smoke target. Override with
+is present for the RTX 5090 (sm_120) target. Override with
 `-DCMAKE_CUDA_ARCHITECTURES=86` for 3060-only iteration.
 
 ### VRAM / profile checks
@@ -118,7 +120,7 @@ ALL CHECKS PASSED
 ```
 
 With PTX JIT disabled, a successful run proves the `sm_86` SASS executed. The
-`sm_120` slice is compiled and inspected only; no RTX 5070 host is available.
+`sm_120` slice targets the RTX 5090; the 3060/3080 Ti use `sm_86`.
 
 ## Correctness
 
@@ -210,7 +212,7 @@ would leave ~823 MiB on an 8 GB card; that margin has not been tested on real
    event-timed suite; detailed occupancy/stall metrics are unavailable.
 2. **Actual 8 GB hardware pending.** All 8 GB statements are 12 GB emulation
    under the 7500 MiB cap.
-3. **RTX 5070 runtime pending host.** sm_120 SASS is present but never executed.
+3. **RTX 5090 is the maximum-speed target.** sm_120 SASS is built for it.
 4. **Pageable H2D is slow and erratic**; use pinned buffers and batch per frame.
 5. **PCIe Gen3 ×16**; avoid per-block host transfers.
 6. Driver and CUDA were **not** modified. Do not install drivers or upgrade
@@ -225,5 +227,5 @@ would leave ~823 MiB on an 8 GB card; that margin has not been tested on real
   and releases all VRAM cleanly.
 - All `hello_cuda` checks are bit-exact, and the 3060 executes `sm_86` with PTX
   JIT disabled.
-- Actual 8 GB and RTX 5070 validation remain pending hardware. See
+- 8 GB cards and the 4070 Super/5070 are out of scope. See
   `docs/portability.md` and `docs/vram.md`.

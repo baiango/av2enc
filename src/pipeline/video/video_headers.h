@@ -1,7 +1,9 @@
 #pragma once
 
 #include "core/bitstream/bitwriter.h"
+#include "formats/format.h"
 #include "pipeline/video/post/video_filter_plan.h"
+#include "pipeline/video/post/video_loop_filters.h"
 #include "pipeline/video/video_gm_types.h"
 
 #include <cstdint>
@@ -24,7 +26,12 @@ struct VideoConfig {
   std::uint16_t max_frame_width = 64;
   std::uint16_t max_frame_height = 64;
   std::uint8_t seq_level_idx = 7;  // level 5.1
-  std::uint8_t base_q_idx = 90;    // §8.3.1 qctx slice from raw base_q_idx
+  // §6.4.1 Table 6.2 / 6.3.  The defaults are the historical 8-bit 4:2:0
+  // header (`chroma_format_idc = 0`, `bit_depth_idc = 1`).
+  fmt::ChromaFormat chroma = fmt::ChromaFormat::k420;
+  fmt::BitDepth depth = fmt::BitDepth::k8;
+  // §5.18.6.1 base_q_idx: f(8) at 8-bit, f(9) at 10-bit.
+  std::uint16_t base_q_idx = 90;   // §8.3.1 qctx slice from raw base_q_idx
   // §5.4.6 order_hint_bits_minus_1 + 1. Four bits covers a 16-frame GOP.
   std::uint8_t order_hint_bits = 4;
   // §5.4.6 explicit_num_ref_frames / num_ref_frames_minus_1.
@@ -53,6 +60,10 @@ struct VideoConfig {
   bool enable_masked_compound = false;
   bool enable_cwp = false;
   bool enable_imp_msk_bld = false;
+  // §5.4.6 enable_bawp (opt-in --video-bawp).  Off keeps the historical
+  // sequence header.  When on, every inter frame codes allow_bawp and eligible
+  // single-prediction blocks code use_bawp (§5.20.7.6).
+  bool enable_bawp = false;
   std::uint8_t num_same_ref_compound = 0;
   bool disable_cdf_update = true;
   // §5.18.7.9 deblocking_filter_params(): when enabled the frame header codes
@@ -85,6 +96,10 @@ struct VideoConfig {
   // Sequence-level intra tool used by the M1 keyframe tile payload and by the
   // M2 intra fallback blocks.
   bool enable_cfl_intra = true;
+  // §5.4.5 enable_mhccp (--video-mhccp): CFL_MULTI hypotheses (cfl_index 2).
+  bool enable_mhccp = false;
+  // §5.18.6.2 using_qmatrix (--video-qm) with the §9.4 default matrices.
+  bool using_qmatrix = false;
   // §5.4.10 sequence_filter_config() flags for the opt-in M2 loop filters.
   // All default to the historical values, so a default stream keeps its bytes.
   bool enable_cdef = false;
@@ -117,6 +132,15 @@ struct VideoConfig {
   // §5.4.6 enable_global_motion (opt-in --video-gme).  Off keeps the
   // historical sequence header and makes global_motion_params() a no-op.
   bool enable_global_motion = false;
+  // §5.4.6 temporal-inter flags for the opt-in TIP path (--video-tip).  Off
+  // keeps the historical sequence header bit-for-bit (both bits were already
+  // written as 0, and the conditional TIP fields are absent when disabled).
+  // enable_ref_frame_mvs gates the per-frame use_ref_frame_mvs bit; enable_tip
+  // enables OBU_REGULAR_TIP frames and the TipFrameMode syntax slice.
+  bool enable_ref_frame_mvs = false;
+  bool enable_tip = false;
+  bool disable_tip_output = false;
+  bool enable_tip_hole_fill = false;
 };
 
 struct VideoFrameHeader {
@@ -129,6 +153,18 @@ struct VideoFrameHeader {
   // listed newest first; every block then selects one with single_ref syntax.
   std::uint8_t num_total_refs = 1;
   std::uint8_t ref_frame_idx[7] = {0, 0, 0, 0, 0, 0, 0};
+  // §5.18.2 use_ref_frame_mvs.  Only coded when the sequence enables
+  // enable_ref_frame_mvs; a TIP frame requires it (and the TIP motion-field
+  // estimation, §7.9).  Absent (inferred 0) otherwise, so every historical
+  // header keeps its bytes.
+  bool use_ref_frame_mvs = false;
+  // TIP-as-output frame (OBU_REGULAR_TIP).  The TIP block is written in place
+  // of the tile-coded tail (§7.10.1); there is no tile payload.
+  bool tip_frame = false;
+  std::uint8_t tip_global_wtd_index = 2;  // Tip_Weighting_Factor index
+  std::int16_t tip_global_mv_row = 0;     // TipGlobalMv, 1/8 luma samples
+  std::int16_t tip_global_mv_col = 0;
+  bool tip_sharp = true;                   // TipInterpFilter
   // §5.18.2 frame MV precision.  Defaults are the M2 1/8-pel pair.
   bool use_qtr_precision_mv = false;
   bool allow_high_precision_mv = true;
@@ -162,6 +198,17 @@ struct VideoFrameHeader {
   post::VideoGdfPlan gdf;
 };
 
+// §5.4.10 filter sequence flags for the opt-in M2 loop-filter chain.  Every
+// key+P path (plain, B frames, temporal layers) must signal exactly the tools
+// its per-frame plans use; the helper keeps those headers identical.
+void apply_video_loop_filter_sequence_config(
+    VideoConfig& config, const post::VideoLoopFilterOptions& loop_filters);
+
+// Copies one frame's filter plan into the frame header (cdef_params(),
+// ccso_params(), lr_params(), gdf_params()).
+void apply_video_loop_filter_frame_header(const post::VideoFilterPlan& plan,
+                                          VideoFrameHeader& header);
+
 // sequence_header_obu() for single_picture_header_flag = 0, wrapped as an
 // Annex B length-delimited OBU. The sequence enables only the tools the M1
 // still tile payload and the M2 inter tile payload use.
@@ -192,5 +239,13 @@ std::vector<std::uint8_t> make_frame_obu(const VideoConfig& config,
 
 // Empty temporal delimiter OBU.
 std::vector<std::uint8_t> make_temporal_delimiter_obu();
+
+// Complete OBU_REGULAR_TIP payload (§6.2.2 type 14): frame_header(isFirst = 0)
+// followed by §5.2.3 trailing bits.  There is no is_first_tile_group bit and
+// no tile payload; §5.18.2 runs decode_frame_wrapup() directly.  `header`
+// must have `tip_frame = true`.  Returns an empty vector on error.
+std::vector<std::uint8_t> make_tip_frame_obu(const VideoConfig& config,
+                                             const VideoFrameHeader& header,
+                                             std::string& error);
 
 }  // namespace av2enc::video

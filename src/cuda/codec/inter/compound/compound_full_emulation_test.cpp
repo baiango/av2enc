@@ -622,7 +622,8 @@ void test_skip() {
         job.dst[p] = dst0[p];
         job.dst_stride[p] = strides[p];
       }
-      cf::detail::run_skip_job_device(job, 0, 1);
+      std::vector<int> skip_mask(cf::kMaxMaskSamples, 0);
+      cf::detail::run_skip_job_device(job, 0, 1, skip_mask.data());
 
       av2enc::video::multiref::CompoundPrediction prediction;
       std::string error;
@@ -665,7 +666,7 @@ void test_skip() {
         job16.dst_stride[p] = dim;
         job16.dst_16bit[p] = 1;
       }
-      cf::detail::run_skip_job_device(job16, 0, 1);
+      cf::detail::run_skip_job_device(job16, 0, 1, skip_mask.data());
       cf::SkipJob ref_job = job16;
       for (int p = 0; p < 3; ++p) {
         ref_job.dst[p] = dst16_ref[p];

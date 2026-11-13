@@ -43,6 +43,7 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/codec/entropy/deltaq/still/deltaq.cpp
   src/codec/entropy/lossless/lossless.cpp
   src/codec/filters/cdef/cdef.cpp
+  src/codec/filters/cdef/syntax/video_cdef.cpp
   src/codec/filters/deblock/deblock.cpp
   src/codec/filters/gdf/gdf_decision.cpp
   src/codec/filters/gdf/gdf_syntax.cpp
@@ -72,6 +73,15 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/codec/inter/mc/mc.cpp
   src/codec/inter/me/me.cpp
   src/codec/inter/merge/merge.cpp
+  src/codec/inter/temporal/motion_field.cpp
+  src/codec/inter/temporal/temporal_common.cpp
+  src/codec/inter/temporal/tip.cpp
+  src/codec/inter/temporal/temporal_syntax.cpp
+  src/codec/inter/temporal/refinemv.cpp
+  src/codec/inter/tip/tip_signalling.cpp
+  src/codec/inter/tip/tip_candidates.cpp
+  src/codec/inter/tip/tip_build.cpp
+  src/codec/inter/tip/tip_output.cpp
   src/codec/inter/multiref/compound_predict.cpp
   src/codec/inter/mv_precision/mv_precision.cpp
   src/codec/inter/random_access/random_access.cpp
@@ -165,8 +175,12 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/pipeline/tiles/tile_layout.cpp
   src/pipeline/video/post/bit_depth_checklist.cpp
   src/pipeline/video/post/loop_filters.cpp
+  src/pipeline/video/post/video_loop_filters.cpp
   src/pipeline/video/post/rc_adapter.cpp
   src/pipeline/video/post/tiled_frame.cpp
+  src/pipeline/video/hbd/video_hbd.cpp
+  src/pipeline/video/video_chroma_search.cpp
+  src/codec/inter/advanced/bawp.cpp
   src/pipeline/video/video_frame.cpp
   src/pipeline/video/video_frames.cpp
   src/pipeline/video/video_gme.cpp

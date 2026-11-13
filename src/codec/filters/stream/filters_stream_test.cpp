@@ -106,12 +106,25 @@ void test_sequence_filter_config() {
     CHECK(back.ccso_unit_matches_sb_size);
   }
   {
+    // GDF is supported by the M2 video path; the SB64 form codes the
+    // gdf_unit_matches_sb_size bit between enable_gdf and enable_restoration.
     SequenceFilterConfig c;
     c.enable_gdf = true;
+    c.gdf_unit_matches_sb_size = true;
     BitWriter w;
     std::string error;
-    CHECK(write_sequence_filter_config(w, c, true, &error) == 0U);
-    CHECK(!error.empty());
+    const std::size_t bits =
+        write_sequence_filter_config(w, c, true, &error);
+    CHECK(error.empty());
+    CHECK(bits == 8U);
+    CHECK(bit_string(w) == "00110000");
+    SequenceFilterConfig back;
+    BitReader r = reader_for(w);
+    CHECK(read_sequence_filter_config(r, true, true, &back, &error));
+    CHECK(error.empty());
+    CHECK(back.enable_gdf);
+    CHECK(back.gdf_unit_matches_sb_size);
+    CHECK(r.bits_left() == 0U);
   }
 }
 

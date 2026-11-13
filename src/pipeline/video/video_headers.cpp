@@ -5,7 +5,10 @@
 #include "codec/inter/gme/gme_syntax.h"
 #endif
 #include "codec/filters/stream/filters_stream.h"
+#include "codec/filters/pc_wiener/pc_wiener_stream.h"
+#include "codec/transform/qm/qm.h"
 #include "codec/filters/gdf/gdf_syntax.h"
+#include "codec/inter/tip/tip_signalling.h"
 #include "pipeline/video/post/loop_filters.h"
 
 #include <cassert>
@@ -16,6 +19,7 @@ namespace {
 
 namespace filters_stream = av2enc::still::filters_stream;
 namespace gdf = ::av2enc::filters::gdf;
+namespace tip = ::av2enc::inter::tip;
 
 using av2enc::basic::ObuHeader;
 using av2enc::basic::ObuType;
@@ -108,13 +112,25 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   assert(c.seq_max_mlayer_cnt >= 1U &&
          c.seq_max_mlayer_cnt <= c.max_mlayer_id + 1U);
 
+  const int chroma_idc = fmt::chroma_format_idc(c.chroma);
+  const int depth_idc = fmt::bit_depth_idc(c.depth);
+  const fmt::Format header_format{c.max_frame_width, c.max_frame_height,
+                                  c.chroma, c.depth};
+  const int profile = fmt::profile_idc(header_format);
+  assert(chroma_idc >= 0);
+  assert(depth_idc >= 0);  // 12-bit is not signalable
+  assert(profile >= 0);
+  const bool monochrome = !fmt::has_chroma(c.chroma);
+
   put_uvlc(writer, 0);                 // seq_header_id
-  writer.put_bits(0U, 5U);             // seq_profile_idc
+  writer.put_bits(static_cast<std::uint64_t>(profile), 5U);  // seq_profile_idc
   writer.put_bit(false);               // single_picture_header_flag = 0
   writer.put_bits(c.seq_level_idx, 5U);  // seq_level_idx
   writer.put_bit(false);               // seq_tier (level > 3)
-  put_uvlc(writer, 0);                 // chroma_format_idc = 4:2:0
-  put_uvlc(writer, 1);                 // bit_depth_idc = 1 => 8-bit
+  // §6.4.1 Table 6.2: 0 = 4:2:0, 1 = 4:0:0, 2 = 4:4:4, 3 = 4:2:2.
+  put_uvlc(writer, static_cast<std::uint32_t>(chroma_idc));
+  // §6.4.1 Table 6.3: bit_depth_idc is one bit, 0 = 10-bit, 1 = 8-bit.
+  put_uvlc(writer, static_cast<std::uint32_t>(depth_idc));
 
   // §5.4.1 non-single-picture header.
   writer.put_bits(c.seq_lcr_id, 3U);  // seq_lcr_id
@@ -187,7 +203,9 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   // §5.4.3 sequence_partition_config(): 64x64 superblocks, no SDP.
   writer.put_bit(false);  // use_256x256_superblock
   writer.put_bit(false);  // use_128x128_superblock
-  writer.put_bit(false);  // enable_sdp
+  if (!monochrome) {
+    writer.put_bit(false);  // enable_sdp
+  }
   writer.put_bit(false);  // enable_ext_partitions
   writer.put_bit(false);  // reduce_pb_aspect_ratio
 
@@ -200,8 +218,10 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(true);   // enable_intra_edge_filter
   writer.put_bit(false);  // enable_mrls
   writer.put_bit(true);   // enable_cfl_intra
-  writer.put_bits(0U, 2U);  // cfl_ds_filter_index
-  writer.put_bit(false);  // enable_mhccp
+  if (!monochrome) {
+    writer.put_bits(0U, 2U);  // cfl_ds_filter_index
+  }
+  writer.put_bit(c.enable_mhccp);  // enable_mhccp
   writer.put_bit(false);  // enable_ibp
 
   // §5.4.6 sequence_inter_config() for single_picture_header_flag = 0.
@@ -210,7 +230,10 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   }
   // motionModeEnabled == 0 -> seq_frame_motion_modes_present_flag = 0.
   writer.put_bit(c.enable_masked_compound);
-  writer.put_bit(false);  // enable_ref_frame_mvs
+  writer.put_bit(c.enable_ref_frame_mvs);
+  if (c.enable_ref_frame_mvs) {
+    writer.put_bit(false);  // reduced_ref_frame_mvs_mode
+  }
   // reduced_ref_frame_mvs_mode = 0.
   writer.put_bits(static_cast<std::uint64_t>(c.order_hint_bits) - 1U, 4U);
   writer.put_bit(false);  // enable_refmvbank
@@ -227,9 +250,13 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   put_ns(writer, 3U, 0U);  // seq_max_bvp_drl_bits_minus_1 (MAX_REF_BV_STACK_SIZE - 1)
   writer.put_bit(false);   // allow_frame_max_bvp_drl_bits
   writer.put_bits(c.num_same_ref_compound, 2U);  // num_same_ref_compound
-  writer.put_bit(false);   // enable_tip
+  writer.put_bit(c.enable_tip);  // enable_tip
+  if (c.enable_tip) {
+    writer.put_bit(c.disable_tip_output);     // disable_tip_output
+    writer.put_bit(c.enable_tip_hole_fill);   // enable_tip_hole_fill
+  }
   writer.put_bit(false);   // enable_mv_traj
-  writer.put_bit(false);   // enable_bawp
+  writer.put_bit(c.enable_bawp);  // enable_bawp (§5.4.6)
   writer.put_bit(c.enable_cwp);
   writer.put_bit(c.enable_imp_msk_bld);
   writer.put_bit(false);   // enable_df_sub_pu
@@ -252,20 +279,28 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(false);  // enable_idtx_intra
   writer.put_bit(false);  // enable_intra_ist
   writer.put_bit(false);  // enable_inter_ist
-  writer.put_bit(true);   // enable_chroma_dctonly
+  if (!monochrome) {
+    writer.put_bit(true);   // enable_chroma_dctonly
+  }
   writer.put_bit(false);  // enable_inter_ddt
   writer.put_bit(false);  // reduced_tx_part_set
-  writer.put_bit(false);  // enable_cctx
+  if (!monochrome) {
+    writer.put_bit(false);  // enable_cctx
+  }
   writer.put_bit(false);  // enable_tcq
   writer.put_bit(false);  // enable_parity_hiding
   writer.put_bit(c.enable_avg_cdf);  // enable_avg_cdf
   if (c.enable_avg_cdf) {
     writer.put_bit(c.avg_cdf_type);  // avg_cdf_type: 1 = average across tiles
   }
-  writer.put_bit(false);  // separate_uv_delta_q
+  if (!monochrome) {
+    writer.put_bit(false);  // separate_uv_delta_q
+  }
   writer.put_bit(true);   // equal_ac_dc_q
-  writer.put_bits(23U, 5U);  // base_uv_ac_delta_q => BaseUVAcDeltaQ = 0
-  writer.put_bit(false);     // uv_ac_delta_q_enabled
+  if (!monochrome) {
+    writer.put_bits(23U, 5U);  // base_uv_ac_delta_q => BaseUVAcDeltaQ = 0
+    writer.put_bit(false);     // uv_ac_delta_q_enabled
+  }
 
   // §5.4.10 sequence_filter_config().
   writer.put_bit(false);  // disable_loopfilters_across_tiles
@@ -307,13 +342,17 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
                                       const VideoFrameHeader& h) {
   const std::size_t start = writer.bit_size();
   assert(c.base_q_idx >= 1U);
+  assert(c.base_q_idx <=
+         static_cast<unsigned>(fmt::max_quantizer(c.depth)));
   put_uvlc(writer, c.cur_mfh_id);  // cur_mfh_id
   if (c.cur_mfh_id == 0U) {
     put_uvlc(writer, 0);  // seq_header_id_in_frame_header
   }
 
   const bool key = h.keyframe;
-  if (!key) {
+  if (!key && !h.tip_frame) {
+    // §5.18.2: frame_is_inter is absent for a TIP OBU (FrameType comes from
+    // the OBU type).
     writer.put_bit(true);  // frame_is_inter = 1 -> INTER_FRAME
   }
   // long_term_id_plus_1 is absent (long_term_frame_id_bits == 0).
@@ -338,7 +377,10 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     writer.put_bit(false);  // allow_intrabc
   } else {
     writer.put_bit(h.signal_primary_ref_frame);
-    writer.put_bit(h.disable_cross_frame_cdf_init);
+    // §5.18.2: disable_cross_frame_cdf_init is absent for a TIP frame.
+    if (!h.tip_frame) {
+      writer.put_bit(h.disable_cross_frame_cdf_init);
+    }
     if (h.signal_primary_ref_frame) {
       writer.put_bits(h.primary_ref_frame, 3U);  // primary_ref_frame
     }
@@ -361,8 +403,44 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     }
     // frame_size_override_flag == 0 -> frame_size() codes no bits.
     // get_ref_frames(1) is skipped because the map is explicit.
+    if (c.enable_ref_frame_mvs) {
+      // §5.18.2: present only when the sequence enables the tool.  SbSize is
+      // BLOCK_64X64 on the M2 path, so tmvp_sample_step_minus_1 is absent.
+      writer.put_bit(h.use_ref_frame_mvs);
+    }
+    if (c.enable_tip) {
+      tip::TipFrameSyntax ts;
+      ts.use_ref_frame_mvs = h.use_ref_frame_mvs;
+      ts.num_total_refs = num_refs;
+      ts.sb_64x64 = true;
+      ts.enable_tip = true;
+      ts.enable_tip_output = !c.disable_tip_output;
+      ts.enable_tip_refinemv = false;
+      ts.enable_opfl_refine = tip::RefineType::kNone;
+      ts.enable_tip_hole_fill = c.enable_tip_hole_fill;
+      ts.is_tip_frame = h.tip_frame;
+      ts.requested_mode = h.tip_frame ? tip::TipFrameMode::kAsOutput
+                                      : tip::TipFrameMode::kDisabled;
+      ts.num_past_refs = h.tip_frame ? 1 : 0;
+      ts.num_future_refs = h.tip_frame ? 1 : 0;
+      ts.tip_global_wtd_index = h.tip_global_wtd_index;
+      ts.tip_global_mv =
+          tip::Mv{h.tip_global_mv_row, h.tip_global_mv_col};
+      ts.tip_sharp = h.tip_sharp;
+      ts.tip_regular = false;
+      if (tip::write_tip_frame_syntax(writer, ts) !=
+          tip::TemporalStatus::kOk) {
+        // The header writer has no error channel; every value above is
+        // validated by the frame planner, so a failure is a programming error.
+        assert(false && "invalid TIP frame syntax");
+      }
+    }
+    if (h.tip_frame) {
+      // §5.18.2 runs decode_frame_wrapup() right after the TIP block: no
+      // disable_cdf_update / tile_info / quantization / tail syntax.
+      return writer.bit_size() - start;
+    }
     // use_ref_frame_mvs = 0, TipFrameMode = TIP_FRAME_DISABLED.
-    // frame_opfl_refine_type(): enable_opfl_refine == REFINE_NONE, no bits.
     // screen_content_params(): seq_force_screen_content_tools == 0, no bit.
     writer.put_bit(false);  // allow_intrabc
     // max_drl_bits_minus_1 = seq_max_drl_bits_minus_1, no bits.
@@ -378,9 +456,26 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
 
   write_tile_info(writer, c);
 
-  writer.put_bits(c.base_q_idx, 8U);  // base_q_idx
+  // §5.18.6.1: f(8) at 8-bit, f(9) at 10-bit.
+  writer.put_bits(c.base_q_idx,
+                  static_cast<unsigned>(fmt::base_q_idx_bits(c.depth)));
   writer.put_bit(false);              // segmentation_enabled
-  writer.put_bit(false);              // using_qmatrix
+  // §5.18.6.2 setup_qm_params(): default-matrix QM only (level 0).  No
+  // quantizer-matrix OBU is emitted, so the decoder uses the §9.4 defaults.
+  {
+    qm::QmFrameState qm_state;
+    if (c.using_qmatrix) {
+      qm_state.using_qmatrix = true;
+      qm_state.pic_qm_num_minus_1 = 0;
+      qm_state.qm_y[0] = 0;
+      qm_state.qm_u[0] = 0;
+      qm_state.qm_v[0] = 0;
+    }
+    std::string qm_error;
+    qm::write_setup_qm_params(writer, qm_state, /*num_planes=*/3,
+                              /*segmentation_enabled=*/false, &qm_error);
+    assert(qm_error.empty());
+  }
   writer.put_bit(false);              // delta_q_present (base_q_idx > 0)
   if (c.enable_deblock) {
     // §5.18.7.9 deblocking_filter_params(): all four planes enabled, no
@@ -454,7 +549,42 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
   }
   // §5.18.7.11 lr_params(): between cdef_params() and ccso_params().  Only the
   // per-unit Wiener NS form is wired (no frame filters, no PC-Wiener yet).
-  if (c.enable_restoration) {
+  if (c.enable_restoration && h.lr.pc_wiener) {
+    // §5.18.7.11 with FrameRestorationType[0] = RESTORE_PC_WIENER.  The
+    // PC-Wiener tool list codes no frame_filters_on bit and no coefficients;
+    // chroma Wiener NS is signalled independently.
+    namespace pcw = ::av2enc::filters::pc_wiener_stream;
+    pcw::LrHeaderContext context;
+    context.coded_lossless = false;
+    context.enable_restoration = true;
+    context.single_picture_header_flag = false;
+    context.frame_is_intra = key;
+    context.sb_size = 64;
+    context.num_planes = 3;
+    context.sub_x = 1;
+    context.sub_y = 1;
+    context.base_q_idx = c.base_q_idx;
+    context.lr_tools_disable[0][pcw::kRestorePcWiener] = false;
+    context.lr_tools_disable[0][pcw::kRestoreWienerNs] = true;
+    context.lr_tools_disable[1][pcw::kRestorePcWiener] = true;
+    const bool chroma_lr =
+        h.lr.plane[1].enabled || h.lr.plane[2].enabled;
+    context.lr_tools_disable[1][pcw::kRestoreWienerNs] = !chroma_lr;
+    pcw::LrParams params;
+    params.frame_type[0] = pcw::kRestorePcWiener;
+    params.frame_type[1] =
+        h.lr.plane[1].enabled ? pcw::kRestoreWienerNs : pcw::kRestoreNone;
+    params.frame_type[2] =
+        h.lr.plane[2].enabled ? pcw::kRestoreWienerNs : pcw::kRestoreNone;
+    params.luma_shift = h.lr.plane[0].shift;
+    params.chroma_shift = h.lr.plane[1].enabled ? h.lr.plane[1].shift
+                                                : h.lr.plane[2].shift;
+    std::string lr_error;
+    const std::size_t bits =
+        pcw::WriteLrParams(writer, &params, context, &lr_error);
+    assert(lr_error.empty());
+    (void)bits;
+  } else if (c.enable_restoration) {
     filters_stream::LrParams params;
     for (int plane = 0; plane < 3; ++plane) {
       params.frame_type[plane] =
@@ -523,8 +653,10 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
   if (!key) {
     writer.put_bit(h.reference_select);
     writer.put_bit(false);  // skip_mode_present
+    // §5.18.2 allow_bawp == enable_bawp && !FrameIsIntra.  allow_warpmv_mode
+    // stays absent because every seq_enabled_motion_modes bit is 0.
+    if (c.enable_bawp) writer.put_bit(true);  // allow_bawp
   }
-  // allow_bawp / allow_warpmv_mode are disabled at sequence level.
   writer.put_bits(0U, 2U);  // reduced_tx_set
 #if defined(AV2ENC_VIDEO_GME)
   // §5.18.9.1 global_motion_params(): absent for an intra frame or when the
@@ -563,6 +695,41 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
 
 }  // namespace
 
+void apply_video_loop_filter_sequence_config(
+    VideoConfig& config, const post::VideoLoopFilterOptions& loop_filters) {
+  if (loop_filters.cdef) {
+    config.enable_cdef = true;
+    config.cdef_on_skip_txfm_mode = loop_filters.cdef_on_skip_txfm_mode;
+    config.cdef_on_skip_txfm_always_on =
+        loop_filters.cdef_on_skip_txfm_mode == 1;
+    config.cdef_on_skip_txfm_disabled =
+        loop_filters.cdef_on_skip_txfm_mode == 0;
+  }
+  if (loop_filters.ccso) {
+    config.enable_ccso = true;
+    config.ccso_unit_matches_sb_size = true;
+  }
+  if (loop_filters.gdf) {
+    config.enable_gdf = true;
+    config.gdf_unit_matches_sb_size = true;
+  }
+  if (loop_filters.wiener || loop_filters.chroma_lr) {
+    config.enable_restoration = true;
+    config.lr_disable_luma_pc_wiener = true;
+    config.lr_disable_luma_wiener_ns = !loop_filters.wiener;
+    config.lr_uv_present = loop_filters.chroma_lr;
+    config.lr_disable_chroma_wiener_ns = !loop_filters.chroma_lr;
+  }
+}
+
+void apply_video_loop_filter_frame_header(const post::VideoFilterPlan& plan,
+                                          VideoFrameHeader& header) {
+  header.cdef = plan.cdef;
+  header.ccso = plan.ccso;
+  header.lr = plan.lr;
+  header.gdf = plan.gdf;
+}
+
 std::vector<std::uint8_t> make_sequence_header_obu(const VideoConfig& config) {
   BitWriter writer;
   write_sequence_header(writer, config);
@@ -600,6 +767,36 @@ std::vector<std::uint8_t> make_frame_obu(const VideoConfig& config,
   ObuHeader obu{type};
   obu.tlayer_id = obu_tlayer_id;
   return av2enc::basic::make_obu(obu, payload);
+}
+
+std::vector<std::uint8_t> make_tip_frame_obu(const VideoConfig& config,
+                                             const VideoFrameHeader& header,
+                                             std::string& error) {
+  error.clear();
+  if (!header.tip_frame) {
+    error = "TIP OBU requested for a non-TIP frame header";
+    return {};
+  }
+  if (!config.enable_tip || !config.enable_ref_frame_mvs) {
+    error = "TIP OBU requested without sequence enable_tip/"
+            "enable_ref_frame_mvs";
+    return {};
+  }
+  if (!header.use_ref_frame_mvs) {
+    error = "TIP frame requires use_ref_frame_mvs = 1 (§7.10.1)";
+    return {};
+  }
+  BitWriter writer;
+  // No is_first_tile_group bit for a TIP OBU: the frame header is the whole
+  // payload before the §5.2.3 trailing bits.
+  write_frame_header_syntax(writer, config, header);
+  std::vector<std::uint8_t> obu = tip::make_tip_frame_obu(
+      tip::TipObuType::kRegularTip, &writer);
+  if (obu.empty()) {
+    error = "TIP OBU payload assembly failed";
+    return {};
+  }
+  return obu;
 }
 
 std::vector<std::uint8_t> make_temporal_delimiter_obu() {

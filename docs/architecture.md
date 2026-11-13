@@ -112,15 +112,13 @@ target at the chosen QBS budget. Do not silently disable tools to claim it.
 This is not implemented yet. `tools/quality.py` records decode speed now so the
 baseline exists.
 
-## GPU target: 8 GB Ampere primary
+## GPU targets
 
-The baseline is **8 GB Ampere (`sm_86`)**: RTX 3060 8 GB, RTX 3050 8 GB, RTX 3070
-8 GB. The dev box is an RTX 3060 12 GB; it sizes the arena from the device
-(`min(total, free) - 512 MiB`), so 8 GB behavior must be validated on an actual
-8192 MiB card, not emulated. The **RTX 4070 Super (12 GB, `sm_89`)** is the
-secondary target: its TFLOP/s per dollar-hour is usually the best on Vast.ai,
-so it is the cost-efficiency choice for longer runs. The RTX 5070 (`sm_120`) is
-a build/smoke target only.
+Development and feature baseline: **RTX 3060 12 GB (`sm_86`)**. Production:
+**RTX 3080 Ti 12 GB (`sm_86`)**. Maximum speed: **RTX 5090 32 GB (`sm_120`)**.
+The arena is sized from the device (`min(total, free) - 512 MiB`); there is no
+fixed VRAM preset. RTX 4070 Super, RTX 5070 and 8 GB cards are no longer
+targets.
 
 There are no fixed "compat" presets. Extra VRAM only changes how much precompute
 fits; it never changes the encoded tool set.
@@ -141,12 +139,12 @@ Do **not** require:
 - `wgmma`, `tcgen05`, `setmaxnreg`, `griddepcontrol`
 - Hopper/Blackwell-only PTX or architecture-specific fast paths
 
-Build fat binaries for all three architectures:
+Build fat binaries for both target architectures:
 
 ```sh
 cmake -S . -B build-cuda -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DAV2ENC_ENABLE_CUDA=ON \
-  -DCMAKE_CUDA_ARCHITECTURES="86;89;120"
+  -DCMAKE_CUDA_ARCHITECTURES="86;120"
 ```
 
 The runtime selects native SASS; no JIT. Verify with:
@@ -156,13 +154,13 @@ cuobjdump -lelf build-cuda/av2enc
 ```
 
 Query SM count, shared memory, and compute capability at runtime. Never hardcode
-28 SMs or 3060-specific launch geometry. The 4070 Super and 5070 have more SMs
+28 SMs or 3060-specific launch geometry. The 3080 Ti and 5090 have more SMs
 and bandwidth; the same kernels should scale, with launch-config tuning only if
 profiling shows it.
 
 ## VRAM budget: 8 GB target
 
-**8 GB Ampere is the primary target.** There is no fixed VRAM ceiling. The
+**RTX 3060 12 GB is the development baseline; the 3080 Ti is production.** There is no fixed VRAM ceiling. The
 runtime reserves the largest block the device can serve, minus a 512 MiB
 headroom, and an optional `--vram-cap <MiB>` bounds it. On an 8 GB card this
 lands below the physical limit automatically.
@@ -215,7 +213,7 @@ remain only as precompute sizing examples):
 
 `auto` picks by capacity (4/6/8/12/16/24 GB) and memory bandwidth. A 4 GB
 GTX 1650 and a 4 GB RTX 3050 are not the same target: the former is Turing
-(`sm_75`), the latter Ampere (`sm_86`). The current fatbin is `sm_86;sm_89;sm_120`.
+(`sm_75`), the latter Ampere (`sm_86`). The current fatbin is `sm_86;sm_120`.
 Supporting Turing requires a separate `sm_75` build and a synchronous-load
 fallback for code that assumes `cp.async`; that is not enabled yet.
 
@@ -234,7 +232,7 @@ Rules:
   preset switch.
 - Estimate `frame_bytes × (refs + lookahead + 2) + scratch + candidate cache`
   before allocating. Keep at least 512 MB headroom.
-- 8 GB cards have less bandwidth; extra precompute may not pay off. The 5070’s
+- 8 GB cards have less bandwidth; extra precompute may not pay off. The 5090’s
   higher bandwidth makes aggressive precompute more attractive.
 - Log `precompute_profile`, `precompute_level`, `vram_limit_mb`, and
   `peak_vram_mb`. Compare QBS only at the same profile.
@@ -243,12 +241,11 @@ Rules:
 
 ## Speed target: 1080p at 1 fps, quality governor
 
-Product target: **at least 1 encoded frame per second at 1080p on an RTX 3060
-enumerating 8192 MiB**. This is not 1× realtime; at 1080p60 it is 1/60 realtime.
-The 12 GB dev box with the 7,500 MB cap is a compatibility proxy only; its
-192-bit/360 GB/s memory is faster than the 8 GB card's 128-bit/240 GB/s, so its
-speed is optimistic. The encoder is allowed to be slow; it is not allowed to
-miss 1 fps on the target 8 GB card.
+Product target: **at least 1 encoded frame per second at 1080p on the RTX 3060
+12 GB development box**. This is not 1× realtime; at 1080p60 it is 1/60
+realtime. The RTX 3080 Ti is the production host and the RTX 5090 the
+maximum-speed host; the encoder is allowed to be slow, but must not miss 1 fps
+on the 3060 baseline.
 
 If a frame finishes faster than 1 s, the surplus time is spent on quality, in
 this order:

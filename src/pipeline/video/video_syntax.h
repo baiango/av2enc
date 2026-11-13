@@ -81,6 +81,14 @@ struct BlockSyntax {
   std::uint8_t ref_index1 = 0;
   std::uint8_t compound_joint = 0;
   std::uint8_t compound_mode = 3;  // 3 = GLOBAL_GLOBALMV
+  // §5.20.7.16 masked compound (enable_masked_compound = 1).  `compound_masked`
+  // is comp_group_idx; when set, `compound_type` selects the mask
+  // (0 = WEDGE, 1 = DIFFWTD) and the matching symbols follow.
+  std::uint8_t compound_masked = 0;
+  std::uint8_t compound_type = 0;
+  std::uint8_t wedge_index = 0;
+  std::uint8_t wedge_sign = 0;
+  std::uint8_t mask_type = 0;
   std::int32_t mv_y = 0;   // resolved MV, 1/8 luma samples
   std::int32_t mv_x = 0;
   std::int32_t mvd_y = 0;  // signalled MVD for NEWMV, 1/8 luma samples
@@ -89,6 +97,24 @@ struct BlockSyntax {
   std::uint8_t y_mode = 0;
   std::int8_t y_angle_delta = 0;
   std::uint8_t uv_mode = 0;
+  // §5.20.7.32 cfl_index when kFlagIsCfl is set (1 = CFL_DERIVED_ALPHA,
+  // 2 = CFL_MULTI/MHCCP).
+  std::uint8_t cfl_index = 1;
+  std::uint8_t cfl_mh_dir = 0;
+  std::uint8_t cfl_alpha_signs = 0;
+  std::uint8_t cfl_alpha_u = 0;
+  std::uint8_t cfl_alpha_v = 0;
+
+  // --- §5.20.7.6 / §7.13.3.25 BAWP (--video-bawp) -------------------------
+  // `use_bawp` is coded after single_mode for a single-prediction block that
+  // passes the §5.20.7.6 gate.  The encoder uses the fitted (not explicit)
+  // form; `bawp_alpha` is the luma alpha the decoder derives, and chroma BAWP
+  // is never signalled (use_bawp_chroma = 0).
+  std::uint8_t use_bawp = 0;
+  std::uint8_t explicit_bawp = 0;
+  std::uint8_t explicit_bawp_scale = 0;
+  std::uint8_t use_bawp_chroma = 0;
+  std::int16_t bawp_alpha = 256;
 
   // --- leaf residual ---
   std::uint8_t tx_size[kPlaneCount] = {0, 0, 0};
@@ -119,10 +145,17 @@ struct FramePlan {
   // false for the intra keyframe (intra_frame_mode_info), true for P frames
   // (inter_frame_mode_info, which codes is_inter/skip).
   bool inter_frame = true;
+  // §5.18.2 allow_bawp: code use_bawp after single_mode for every eligible
+  // single-prediction block.  Off keeps every historical stream byte-identical.
+  bool allow_bawp = false;
   // §5.18.2 per-frame reference map.  num_total_refs > 1 lists the explicit
   // map; reference_select enables per-block comp_mode (compound).
   int num_total_refs = 1;
   bool reference_select = false;
+  // §5.4.6 / §5.20.7.16 masked compound.  When on, every compound leaf codes
+  // comp_group_idx and (when set) compound_type with the wedge/diffwtd
+  // symbols.  Off keeps the historical AVERAGE-only byte stream.
+  bool enable_masked_compound = false;
   // Frame MV precision: 0 = 1/8, 1 = 1/4, 2 = 1/2 pel.
   int mv_precision = 0;
   // FrameDistance[ref] for the MV stack's derived candidates.
@@ -143,6 +176,14 @@ struct FramePlan {
   bool reduced_tx_part_set = false;
   // §5.18.2 frame-header reduced_tx_set (0 keeps the full TX-type sets).
   int reduced_tx_set = 0;
+  // Multi-tile view: `width`/`height` and the block list are tile-local, while
+  // the filter plan is frame-level.  `frame_mi_cols`/`frame_mi_rows` default to
+  // this tile's grid (single-tile streams), and `tile_mi_row`/`tile_mi_col` are
+  // the tile origin in frame MI coordinates.
+  int frame_mi_cols = 0;
+  int frame_mi_rows = 0;
+  int tile_mi_row = 0;
+  int tile_mi_col = 0;
 
   int sb_cols() const;
   int sb_rows() const;

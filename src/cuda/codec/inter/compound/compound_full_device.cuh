@@ -722,9 +722,50 @@ AV2ENC_CF_HD void run_blend_job_device(const BlendJob& job, int tid,
 // ---------------------------------------------------------------------------
 
 AV2ENC_CF_HD void run_skip_job_device(const SkipJob& job, int tid,
-                                             int nthr) {
+                                             int nthr, int* mask_scratch) {
   const int mv_pair[2] = {job.mv_row, job.mv_col};
   (void)mv_pair;
+
+  // §7.13.3.27/.28 luma mask.  Chroma wedge/diffwtd subsamples the plane-0
+  // mask (§7.13.3.30), so build it once into the caller's scratch.
+  const bool masked = job.type == kCompoundWedge || job.type == kCompoundDiffWtd;
+  const int luma_w = job.w;
+  const int luma_h = job.h;
+  if (masked && mask_scratch != nullptr && luma_w > 0 && luma_h > 0) {
+    const SampleLoc luma_loc =
+        location_unscaled(job.x, job.y, job.mv_row, job.mv_col, 0, 0);
+    const mc::InterpFilter luma_filter =
+        mc::mc_pass_filter(static_cast<mc::InterpFilter>(job.filter),
+                           luma_w <= 4);
+    const std::int16_t* luma_taps =
+        &mc::kSubpelFilters[static_cast<int>(luma_filter)][0][0];
+    const int luma_total = luma_w * luma_h;
+    for (int index = tid; index < luma_total; index += nthr) {
+      const int r = index / luma_w;
+      const int c = index - r * luma_w;
+      int m = 32;
+      if (job.type == kCompoundWedge) {
+        m = adv::wedge_mask_value(job.bsize, job.wedge_sign, job.wedge_index,
+                                  r, c);
+      } else {
+        const int p0 = filter_sample(job.ref[0][0], 0, 0,
+                                     job.ref[0][0].width - 1,
+                                     job.ref[0][0].height - 1, luma_loc,
+                                     luma_taps, luma_taps, r, c,
+                                     kCfInterRound1Compound);
+        const int p1 = filter_sample(job.ref[1][0], 0, 0,
+                                     job.ref[1][0].width - 1,
+                                     job.ref[1][0].height - 1, luma_loc,
+                                     luma_taps, luma_taps, r, c,
+                                     kCfInterRound1Compound);
+        m = adv::diffwtd_mask_value(p0, p1, job.mask_type, kCompoundPostRound,
+                                    job.bit_depth);
+      }
+      mask_scratch[index] = m;
+    }
+    AV2ENC_CF_SYNC();
+  }
+
   for (int plane = 0; plane < 3; ++plane) {
     const int sub_x = plane > 0 ? 1 : 0;
     const int sub_y = plane > 0 ? 1 : 0;
@@ -748,6 +789,8 @@ AV2ENC_CF_HD void run_skip_job_device(const SkipJob& job, int tid,
     const std::int16_t* taps_v =
         &mc::kSubpelFilters[static_cast<int>(filter_v)][0][0];
     const int total = pw * ph;
+    const int store_x = job.dst_local ? 0 : px;
+    const int store_y = job.dst_local ? 0 : py;
     for (int index = tid; index < total; index += nthr) {
       const int r = index / pw;
       const int c = index - r * pw;
@@ -759,14 +802,37 @@ AV2ENC_CF_HD void run_skip_job_device(const SkipJob& job, int tid,
                                    job.ref[1][plane].width - 1,
                                    job.ref[1][plane].height - 1, loc, taps_h,
                                    taps_v, r, c, kCfInterRound1Compound);
-      const int cw = job.cwp_weight;
-      const int value = clip1_bd(
-          round2(cw * p0 + (16 - cw) * p1, 4 + kCompoundPostRound),
-          job.bit_depth);
+      int value = 0;
+      if (masked && mask_scratch != nullptr) {
+        int m = 32;
+        if (plane == 0) {
+          m = mask_scratch[r * luma_w + c];
+        } else if (!sub_x) {
+          m = mask_scratch[r * luma_w + c];
+        } else if (!sub_y) {
+          m = adv::mask_subsample(mask_scratch[r * luma_w + 2 * c],
+                                  mask_scratch[r * luma_w + 2 * c + 1], 0, 0,
+                                  sub_x, sub_y);
+        } else {
+          m = adv::mask_subsample(mask_scratch[(2 * r) * luma_w + 2 * c],
+                                  mask_scratch[(2 * r) * luma_w + 2 * c + 1],
+                                  mask_scratch[(2 * r + 1) * luma_w + 2 * c],
+                                  mask_scratch[(2 * r + 1) * luma_w + 2 * c + 1],
+                                  sub_x, sub_y);
+        }
+        value = clip1_bd(
+            round2(m * p0 + (64 - m) * p1, 6 + kCompoundPostRound),
+            job.bit_depth);
+      } else {
+        const int cw = job.cwp_weight;
+        value = clip1_bd(
+            round2(cw * p0 + (16 - cw) * p1, 4 + kCompoundPostRound),
+            job.bit_depth);
+      }
       store_sample(job.dst[plane],
-                   static_cast<std::size_t>(py + r) *
+                   static_cast<std::size_t>(store_y + r) *
                            static_cast<std::size_t>(job.dst_stride[plane]) +
-                       static_cast<std::size_t>(px + c),
+                       static_cast<std::size_t>(store_x + c),
                    job.dst_16bit[plane], value);
     }
   }

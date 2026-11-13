@@ -50,6 +50,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -201,10 +202,33 @@ bool make_tile_group_payload(const tiles::TileLayout& layout, const Config& conf
 // can never silently desynchronise the tiled stream.
 bool core_header_parity(const Config& config, std::string* error);
 
+// Per-tile output for a caller-supplied tile encoder.
+struct TileEncodeOutput {
+  std::uint32_t tile_bytes = 0;  // §8.2 payload bytes inside `frame`
+  std::vector<std::uint8_t> frame;  // complete TD+SEQ+CLK temporal unit
+  std::vector<std::uint8_t> recon_y;
+  std::vector<std::uint8_t> recon_u;
+  std::vector<std::uint8_t> recon_v;
+  // Final §8.2 tile CDFs (packed image) when the tile used adaptive CDFs.
+  std::vector<std::uint16_t> cdf_final;
+};
+
+// Optional per-tile encoder.  When set, `encode()` calls it instead of the CPU
+// reference for every tile; the header/tile-group assembly and the §8.2.4
+// average-CDF bank stay in this module.  The callback must produce the same
+// payload as `encode_still_picture(picture, options)` for the given seed (the
+// GPU orchestrator uses this to keep the CPU tile-group writer while running
+// per-tile plan/search/TX/recon on the device).
+using TileEncoder = std::function<bool(
+    const StillPicture&, const StillOptions&,
+    std::span<const std::uint16_t> cdf_seed, TileEncodeOutput* out,
+    std::string* error)>;
+
 // Encode a tiled still picture: plan, crop, encode every tile with the public
-// M1 reference, assemble the tile group, and return the OBU stream plus the
-// per-tile visible reconstructions.
-bool encode(const StillPicture& source, const Config& config, Frame* frame, std::string* error);
+// M1 reference (or `tile_encoder` when supplied), assemble the tile group, and
+// return the OBU stream plus the per-tile visible reconstructions.
+bool encode(const StillPicture& source, const Config& config, Frame* frame,
+            std::string* error, const TileEncoder& tile_encoder = {});
 
 // Paste the per-tile visible reconstructions into one full frame. Validates
 // coverage and plane sizes; used by the gate and by any caller that wants the

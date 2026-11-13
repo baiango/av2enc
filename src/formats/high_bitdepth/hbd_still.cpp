@@ -6,7 +6,9 @@
 #include <string>
 #include <vector>
 
+#include "codec/filters/deblock/deblock.h"
 #include "cuda/pipeline/still/hbd/hbd_cpu.h"
+#include "formats/high_bitdepth/hbd_deblock.h"
 #include "formats/high_bitdepth/hbd_depth.h"
 #include "formats/high_bitdepth/hbd_headers.h"
 #include "formats/high_bitdepth/hbd_reader.h"
@@ -329,6 +331,20 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
     blocks.push_back(block);
   }
 
+  // §7.17 deblocking at the 10-bit sample depth (opt-in, so every pinned
+  // 10-bit stream stays byte-identical).  The MI metadata comes from the fixed
+  // M10 block plan: one transform per block, no skips in an intra still.  The
+  // filter runs after every block, on the same pre-filter reconstruction the
+  // decoder predicted from.
+  if (options.enable_deblock) {
+    DeblockGrids grids;
+    if (!build_deblock_grids(picture.format, blocks, options.base_q_idx, &grids,
+                             &error)) {
+      return false;
+    }
+    if (!apply_deblock_16(grids, recon, &error)) return false;
+  }
+
   // Reuse the verified M10 entropy writer for the tile payload.  The payload
   // depends on the coefficient-CDF slice, not on the header, so pass the slice
   // for the real qindex while keeping the M10 header config pinned at q=90
@@ -352,6 +368,12 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
   config.chroma = picture.format.chroma;
   config.base_q_idx = options.base_q_idx;
   config.disable_cdf_update = options.disable_cdf_update;
+  config.apply_deblock_y_vert = options.enable_deblock;
+  config.apply_deblock_y_horz = options.enable_deblock;
+  config.apply_deblock_u =
+      options.enable_deblock && num_planes > 1;
+  config.apply_deblock_v =
+      options.enable_deblock && num_planes > 2;
   if (!validate_config(config, &error)) return false;
 
   result.frame = assemble_still_picture(config, payload);

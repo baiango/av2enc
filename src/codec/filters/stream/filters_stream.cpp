@@ -314,10 +314,6 @@ std::size_t write_sequence_filter_config(BitWriter& writer,
                                          const SequenceFilterConfig& config,
                                          bool single_picture_header_flag,
                                          std::string* error) {
-  if (config.enable_gdf) {
-    fail(error, "M1 does not support GDF");
-    return 0;
-  }
   if (!single_picture_header_flag && config.cdef_on_skip_txfm_always_on &&
       config.cdef_on_skip_txfm_disabled) {
     fail(error, "invalid cdef_on_skip_txfm flags");
@@ -327,6 +323,10 @@ std::size_t write_sequence_filter_config(BitWriter& writer,
   writer.put_bit(config.disable_loopfilters_across_tiles);
   writer.put_bit(config.enable_cdef);
   writer.put_bit(config.enable_gdf);
+  if (config.enable_gdf) {
+    // sb_64x64 is the only superblock size the M2 video path signals.
+    writer.put_bit(config.gdf_unit_matches_sb_size);
+  }
   writer.put_bit(config.enable_restoration);
   if (config.enable_restoration) {
     writer.put_bit(config.lr_disable_luma_pc_wiener);
@@ -368,13 +368,11 @@ bool read_sequence_filter_config(BitReader& reader,
   if (!reader.read_bit(&config->enable_gdf)) {
     return fail(error, "truncated enable_gdf");
   }
+  config->gdf_unit_matches_sb_size = true;
   if (config->enable_gdf && sb_64x64) {
-    if (!reader.read_bit(&gdf_unit_matches)) {
+    if (!reader.read_bit(&config->gdf_unit_matches_sb_size)) {
       return fail(error, "truncated gdf_unit_matches_sb_size");
     }
-  }
-  if (config->enable_gdf) {
-    return fail(error, "M1 does not support GDF");
   }
   if (!reader.read_bit(&config->enable_restoration)) {
     return fail(error, "truncated enable_restoration");

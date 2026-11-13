@@ -67,6 +67,9 @@ struct SequenceFilterConfig {
   bool lr_disable_chroma_wiener_ns = false;
   bool enable_ccso = false;
   bool ccso_unit_matches_sb_size = true;
+  // §5.4.10 gdf_unit_matches_sb_size: coded only for a 64x64 sequence SB when
+  // enable_gdf is set.  The M2 video path uses SB64 and sets it.
+  bool gdf_unit_matches_sb_size = true;
   // Only coded when single_picture_header_flag is false.
   bool cdef_on_skip_txfm_always_on = false;
   bool cdef_on_skip_txfm_disabled = false;

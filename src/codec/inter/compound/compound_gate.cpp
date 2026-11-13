@@ -341,11 +341,34 @@ std::vector<CompoundBlockPlan> make_leaves(int sb_cols, int sb_rows) {
   return plans;
 }
 
+std::vector<CompoundBlockPlan> make_mode_leaves(int sb_cols, int sb_rows,
+                                                const std::string& mode) {
+  using namespace av2enc::video::compound;
+  std::vector<CompoundBlockPlan> plans;
+  const int count = sb_cols * sb_rows;
+  for (int sb = 0; sb < count; ++sb) {
+    CompoundBlockPlan plan = base_plan(sb, sb_cols);
+    plan.ref_frame[1] = 1;
+    plan.y_mode = av2enc::video::compound::kGlobalGlobalMv;
+    if (mode == "wedge") {
+      plan.compound.type = adv::CompoundType::kWedge;
+      plan.compound.wedge_index = 22;
+      plan.compound.wedge_sign = 0;
+    } else if (mode == "diffwtd") {
+      plan.compound.type = adv::CompoundType::kDiffWtd;
+      plan.compound.mask_type = 1;
+    }
+    plans.push_back(plan);
+  }
+  return plans;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   std::string input;
   std::string out_path = "compound_stream_gate.ivf";
+  std::string mode = "mixed";
   bool run_decoder = true;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -353,11 +376,19 @@ int main(int argc, char** argv) {
       input = argv[++i];
     } else if (arg == "--out" && i + 1 < argc) {
       out_path = argv[++i];
+    } else if (arg == "--mode" && i + 1 < argc) {
+      mode = argv[++i];
+      if (mode != "mixed" && mode != "average" && mode != "wedge" &&
+          mode != "diffwtd") {
+        std::cerr << "unknown --mode (mixed|average|wedge|diffwtd)\n";
+        return 2;
+      }
     } else if (arg == "--no-decode") {
       run_decoder = false;
     } else {
       std::cerr << "usage: compound_stream_gate [--input clip.y4m] "
-                   "[--out out.ivf] [--no-decode]\n";
+                   "[--out out.ivf] [--mode mixed|average|wedge|diffwtd] "
+                   "[--no-decode]\n";
       return 2;
     }
   }
@@ -444,6 +475,11 @@ int main(int argc, char** argv) {
   cfg.enable_cwp = true;
   cfg.enable_imp_msk_bld = false;
   stream.leaves = make_leaves(width / 64, height / 64);
+  if (mode != "mixed") {
+    stream.leaves =
+        make_mode_leaves(width / 64, height / 64, mode);
+    std::cout << "  mode:    " << mode << " (all superblocks)\n";
+  }
   // Diagnostic switches used while bringing the gate up.  Each letter turns one
   // exercised feature into a plain GLOBALMV single-reference block.
   if (const char* drop = std::getenv("CS_DROP")) {

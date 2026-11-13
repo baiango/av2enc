@@ -23,11 +23,16 @@ BUILD_DIR="${BUILD_DIR:-build-cpu}"
 SANITIZE="${SANITIZE:-0}"
 RUN=1
 GATE=1
+# Diagnostic: pass --allow-control-drift to the gate when the pinned M2 writer
+# changed a header bit since the control stream was recorded.  The gate still
+# requires an exact decode/reconstruction match.
+GATE_ARGS=()
 
 for arg in "$@"; do
   case "$arg" in
     --no-run) RUN=0 ;;
     --no-gate) GATE=0 ;;
+    --allow-control-drift) GATE_ARGS+=(--allow-control-drift) ;;
     -h|--help)
       sed -n '2,16p' "$0"
       exit 0
@@ -95,11 +100,28 @@ GATE_DEPS=(
   "$ROOT/src/pipeline/video/video_headers.cpp"
   "$ROOT/src/pipeline/video/video_syntax.cpp"
   "$ROOT/src/pipeline/video/video_frame.cpp"
+  "$ROOT/src/codec/inter/temporal/motion_field.cpp"
+  "$ROOT/src/codec/inter/temporal/temporal_common.cpp"
+  "$ROOT/src/codec/inter/temporal/tip.cpp"
+  "$ROOT/src/codec/inter/temporal/temporal_syntax.cpp"
+  "$ROOT/src/codec/inter/temporal/refinemv.cpp"
+  "$ROOT/src/codec/inter/tip/tip_signalling.cpp"
+  "$ROOT/src/codec/inter/tip/tip_candidates.cpp"
+  "$ROOT/src/codec/inter/tip/tip_build.cpp"
+  "$ROOT/src/codec/inter/tip/tip_output.cpp"
 )
+# The M2 writer keeps growing optional modules; take the canonical
+# av2enc_core host source list instead of chasing undefined references.
+source "$ROOT/src/cuda/pipeline/cpu_reference_sources.sh"
+GATE_DEPS_RELATIVE=()
+for src in "${GATE_DEPS[@]}"; do
+  GATE_DEPS_RELATIVE+=("${src#"$ROOT"/}")
+done
+av2enc_cpu_core_append GATE_DEPS "$ROOT/" \
+  "${GATE_DEPS_RELATIVE[@]+"${GATE_DEPS_RELATIVE[@]}"}"
 
 echo "build: $BUILD_DIR/tip_gate"
-"$CXX" "${FLAGS[@]}" gate/tip_gate.cpp tip_signalling.cpp tip_candidates.cpp \
-  tip_build.cpp tip_output.cpp "${TEMPORAL[@]}" "${GATE_DEPS[@]}" \
+"$CXX" "${FLAGS[@]}" gate/tip_gate.cpp "${GATE_DEPS[@]}" \
   -o "$BUILD_DIR/tip_gate"
 
 if [[ -z "${DAV2D:-}" ]]; then
@@ -119,17 +141,20 @@ export DAV2D
 if [[ "$RUN" -eq 1 ]]; then
   echo "gate: 64x64 TIP-as-output + enable_tip=0 control"
   "$BUILD_DIR/tip_gate" --width 64 --height 64 \
+    "${GATE_ARGS[@]+"${GATE_ARGS[@]}"}" \
     --out "$BUILD_DIR/tip_gate_64.ivf" \
     --decoded "$BUILD_DIR/tip_gate_64.y4m" \
     --control "$BUILD_DIR/tip_gate_64_control.ivf"
   echo "gate: 640x360 TIP-as-output + enable_tip=0 control"
   "$BUILD_DIR/tip_gate" --width 640 --height 360 \
+    "${GATE_ARGS[@]+"${GATE_ARGS[@]}"}" \
     --out "$BUILD_DIR/tip_gate_360.ivf" \
     --decoded "$BUILD_DIR/tip_gate_360.y4m" \
     --control "$BUILD_DIR/tip_gate_360_control.ivf"
   if [[ -f "$ROOT/testdata/shine_1280x720_60f.y4m" ]]; then
     echo "gate: 640x360 real content (720p clip cropped)"
     "$BUILD_DIR/tip_gate" --width 640 --height 360 \
+    "${GATE_ARGS[@]+"${GATE_ARGS[@]}"}" \
       --input "$ROOT/testdata/shine_1280x720_60f.y4m" \
       --out "$BUILD_DIR/tip_gate_real.ivf" \
       --decoded "$BUILD_DIR/tip_gate_real.y4m" \

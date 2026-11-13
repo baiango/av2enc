@@ -1,10 +1,10 @@
 # Hardware identity
 
-**Primary target: 8 GB Ampere (`sm_86`).** Target validation requires an RTX
-3060 that **enumerates 8192 MiB** in `nvidia-smi`. The development box is a
-12 GB RTX 3060 running the `compat8g` 7,500 MB cap; it is a compatibility proxy
-only, not a performance/QBS validation host. Its 192-bit/360 GB/s memory is
-faster than the 8 GB card's 128-bit/240 GB/s.
+**Targets: RTX 3060 12 GB (development and feature baseline, `sm_86`),
+RTX 3080 Ti 12 GB (production, `sm_86`), RTX 5090 32 GB (maximum speed,
+`sm_120`).** 8 GB cards, the 4070 Super and the 5070 are no longer targets.
+The 3060 dev box is the feature/QBS baseline; the 3080 Ti is the production
+host and the 5090 is the throughput host.
 
 CSS/CVVDP speed scores are hardware-specific. Every `quality.py` report records
 the CPU model, physical/logical cores, RAM, OS, and GPU. `score_speed.py` refuses
@@ -33,7 +33,7 @@ matters for encoder orchestration, mode decision, and entropy coding.
 
 | | |
 |---|---|
-| Role | Dev box; must run `compat8g` (7,500 MB) to emulate 8 GB Ampere |
+| Role | Development/feature-baseline box (RTX 3060 12 GB) |
 | CPU | **2× Intel Xeon E5-2690 v4 @ 2.60 GHz** |
 | Topology | 14 cores/socket, 2 threads/core, 2 sockets = **28C / 56T** |
 | Observed scaling | `CPU(s) scaling MHz: 38–43%` (effective clock is well below 2.6 GHz; varies by run) |

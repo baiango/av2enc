@@ -49,6 +49,28 @@ cudaError_t deblock_frame(const DeblockDeviceFrame& frame,
                           const deblock::DeblockOptions& options,
                           cudaStream_t stream = nullptr);
 
+// 10/12-bit planes (`uint16_t` container, `options.bit_depth` 10 or 12).  The
+// plane extents follow the coded MI grid and the requested chroma subsampling;
+// `num_planes` is 1 for 4:0:0.
+struct DeblockDeviceFrame16 {
+  std::uint16_t* plane[3] = {nullptr, nullptr, nullptr};
+  int stride[3] = {0, 0, 0};
+  const deblock::DeblockMi* mi[3] = {nullptr, nullptr, nullptr};
+  int mi_cols = 0;
+  int mi_rows = 0;
+  int subsampling_x = 1;
+  int subsampling_y = 1;
+  int num_planes = 3;
+  const std::uint16_t* tile_col_starts = nullptr;
+  int num_tile_cols = 0;
+  const std::uint16_t* tile_row_starts = nullptr;
+  int num_tile_rows = 0;
+};
+
+cudaError_t deblock16_frame(const DeblockDeviceFrame16& frame,
+                            const deblock::DeblockOptions& options,
+                            cudaStream_t stream = nullptr);
+
 }  // namespace av2enc::cuda
 
 #endif  // AV2ENC_CUDA_DEBLOCK_DEBLOCK_H_

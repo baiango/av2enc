@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "formats/format.h"
 
@@ -34,6 +35,14 @@ struct Y4mFormatInfo {
 // [0, (1<<depth)-1], or a malformed header.
 bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
                       Y4mFormatInfo* info, std::string* error);
+
+// Reads up to `max_frames` frames (0 = all) from a multi-frame Y4M stream.
+// Every frame must have the same size and coloursapce; `info` reports the
+// sequence format.  Each Picture is allocated with coded-size planes and
+// edge-replicated padding, exactly like `read_y4m_picture()`.
+bool read_y4m_sequence(const std::filesystem::path& path,
+                       std::vector<Picture>* pictures, Y4mFormatInfo* info,
+                       std::uint64_t max_frames, std::string* error);
 
 // Writes one frame using the visible rectangle of `picture`.  The coloursapce
 // tag is derived from the format (C420/C422/C444/Cmono and the *p10 variants).

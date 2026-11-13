@@ -20,7 +20,7 @@ Hardware assumption for the development target:
 - No NVLink. GeForce peer-to-peer is restricted, so all inter-GPU data is
   **host-mediated** through pinned memory.
 - Final single-GPU performance/QBS validation still requires an RTX 3060
-  enumerating **8192 MiB**. The 12 GB cards are a compatibility proxy and a
+  with **12 GB**. The 12 GB cards are the development baseline and a
   multi-GPU development target only.
 
 The two modes share one rule: **each GPU owns its own `compat8g` arena**. VRAM is
@@ -662,7 +662,7 @@ Semantics and validation:
   cannot fit the arena plus headroom, fail with the device ID. Never silently
   reduce the cap on one GPU.
 - Mixed GPU models/compute capabilities: warn. The scaling target assumes
-  homogeneous 3060s; a 5070 in the pool changes the slowest-GPU calculus and
+  homogeneous 3060s; a 5090 in the pool changes the slowest-GPU calculus and
   the fatbin path. Do not mix 8 GB and 12 GB cards for target validation.
 - `--gpus` order is the assignment order for ties. It does not affect the
   bitstream, only which physical GPU gets which tile set.
@@ -963,6 +963,6 @@ a measured multi-GPU result.
 7. **PCIe lane split.** The planner accepts gen/width, but the real board's
    bifurcation is unknown. Use `nvidia-smi topo -m` / `lspci` and model the
    actual ×8/×4 case.
-8. **Mixed GPUs.** The target is homogeneous 3060s. A 5070 in the pool would
+8. **Mixed GPUs.** The target is homogeneous 3060s. A 5090 in the pool would
    change clocks, bandwidth, and the slowest-GPU calculus; do not mix for target
    validation.

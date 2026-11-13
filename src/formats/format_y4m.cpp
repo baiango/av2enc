@@ -130,6 +130,168 @@ std::string y4m_colorspace_tag(ChromaFormat chroma, BitDepth depth) {
   return "C" + tag;
 }
 
+bool read_y4m_sequence(const std::filesystem::path& path,
+                       std::vector<Picture>* pictures, Y4mFormatInfo* info,
+                       std::uint64_t max_frames, std::string* error) {
+  if (error != nullptr) error->clear();
+  if (pictures == nullptr) {
+    if (error != nullptr) *error = "null picture list";
+    return false;
+  }
+  pictures->clear();
+  std::ifstream file(path, std::ios::binary);
+  if (!file) {
+    if (error != nullptr) *error = "cannot open " + path.string();
+    return false;
+  }
+  std::string header;
+  if (!read_line(file, &header)) {
+    if (error != nullptr) *error = "truncated Y4M header";
+    return false;
+  }
+  std::istringstream tokens(header);
+  std::string token;
+  if (!(tokens >> token) || token != "YUV4MPEG2") {
+    if (error != nullptr) *error = "not a Y4M file (expected YUV4MPEG2)";
+    return false;
+  }
+  bool have_width = false;
+  bool have_height = false;
+  bool have_fps = false;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::uint32_t fps_num = 1;
+  std::uint32_t fps_den = 1;
+  Colorspace colorspace;
+  while (tokens >> token) {
+    if (token.empty()) continue;
+    const char key = token.front();
+    const std::string_view rest(token.data() + 1, token.size() - 1);
+    if (key == 'W') {
+      if (!parse_uint(rest, &width)) {
+        if (error != nullptr) *error = "invalid Y4M width";
+        return false;
+      }
+      have_width = true;
+    } else if (key == 'H') {
+      if (!parse_uint(rest, &height)) {
+        if (error != nullptr) *error = "invalid Y4M height";
+        return false;
+      }
+      have_height = true;
+    } else if (key == 'F') {
+      const std::size_t colon = rest.find(':');
+      if (colon == std::string_view::npos ||
+          !parse_uint(rest.substr(0, colon), &fps_num) ||
+          !parse_uint(rest.substr(colon + 1), &fps_den) || fps_num == 0 ||
+          fps_den == 0) {
+        if (error != nullptr) *error = "invalid Y4M frame rate";
+        return false;
+      }
+      have_fps = true;
+    } else if (key == 'C') {
+      if (!parse_colorspace(rest, &colorspace)) {
+        if (error != nullptr) {
+          *error = "unsupported Y4M colorspace C" + std::string(rest);
+        }
+        return false;
+      }
+    }
+  }
+  if (!have_width || !have_height || width == 0 || height == 0) {
+    if (error != nullptr) *error = "Y4M header is missing W/H";
+    return false;
+  }
+  if (!have_fps) {
+    if (error != nullptr) *error = "Y4M header is missing F";
+    return false;
+  }
+  if (width > kMaxDimension || height > kMaxDimension) {
+    if (error != nullptr) *error = "Y4M dimensions exceed the implementation limit";
+    return false;
+  }
+
+  Format format;
+  format.width = width;
+  format.height = height;
+  format.chroma = colorspace.chroma;
+  format.depth = colorspace.depth;
+  const int bps = bytes_per_sample(colorspace.depth);
+  const int sx = subsampling_x(colorspace.chroma);
+  const int sy = subsampling_y(colorspace.chroma);
+  const std::uint32_t visible[3] = {width, ceil_shift(width, sx),
+                                    ceil_shift(width, sx)};
+  const std::uint32_t visible_h[3] = {height, ceil_shift(height, sy),
+                                      ceil_shift(height, sy)};
+  const int plane_count = num_planes(colorspace.chroma);
+  std::size_t total_samples =
+      static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+  for (int plane = 1; plane < plane_count; ++plane) {
+    total_samples += static_cast<std::size_t>(visible[plane]) *
+                     static_cast<std::size_t>(visible_h[plane]);
+  }
+  std::vector<std::uint8_t> raw(total_samples * static_cast<std::size_t>(bps));
+
+  while (max_frames == 0 || pictures->size() < max_frames) {
+    std::string frame_tag;
+    if (!read_line(file, &frame_tag)) break;
+    if (frame_tag.empty()) break;
+    if (frame_tag.rfind("FRAME", 0) != 0) {
+      if (error != nullptr) *error = "Y4M is missing the FRAME tag";
+      return false;
+    }
+    file.read(reinterpret_cast<char*>(raw.data()),
+              static_cast<std::streamsize>(raw.size()));
+    if (static_cast<std::size_t>(file.gcount()) != raw.size()) {
+      if (error != nullptr) *error = "truncated Y4M frame";
+      return false;
+    }
+    Picture picture;
+    if (!allocate_picture(format, picture, *error)) return false;
+    std::size_t cursor = 0;
+    for (int plane = 0; plane < plane_count; ++plane) {
+      PlaneBuffer& dst = picture.planes[plane];
+      for (std::uint32_t y = 0; y < visible_h[plane]; ++y) {
+        for (std::uint32_t x = 0; x < visible[plane]; ++x) {
+          std::uint16_t sample = 0;
+          if (bps == 1) {
+            sample = raw[cursor++];
+          } else {
+            sample = static_cast<std::uint16_t>(
+                raw[cursor] |
+                (static_cast<std::uint16_t>(raw[cursor + 1]) << 8));
+            cursor += 2;
+          }
+          if (colorspace.depth == BitDepth::k10 && sample > 1023) {
+            if (error != nullptr) *error = "10-bit Y4M sample exceeds 1023";
+            return false;
+          }
+          dst.at(x, y) = sample;
+        }
+      }
+    }
+    for (int plane = 0; plane < plane_count; ++plane) {
+      replicate_borders(picture.planes[plane]);
+    }
+    pictures->push_back(std::move(picture));
+  }
+  if (pictures->empty()) {
+    if (error != nullptr) *error = "Y4M file has no frames";
+    return false;
+  }
+  if (info != nullptr) {
+    info->width = width;
+    info->height = height;
+    info->fps_num = fps_num;
+    info->fps_den = fps_den;
+    info->chroma = colorspace.chroma;
+    info->depth = colorspace.depth;
+    info->colorspace =
+        y4m_colorspace_tag(colorspace.chroma, colorspace.depth).substr(1);
+  }
+  return true;
+}
+
 bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
                       Y4mFormatInfo* info, std::string* error) {
   if (error != nullptr) {

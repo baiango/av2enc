@@ -41,6 +41,9 @@ struct HighBitDepthGpuConfig {
   // 4:2:0 frame of `width x height` (the historical M10 call shape).
   av2enc::fmt::Format format{};
   int bit_depth = 10;
+  // §7.17 deblocking after the block stage (opt-in; adds three per-plane MI
+  // grids to the arena plan).
+  bool enable_deblock = false;
 };
 
 // Includes arena alignment padding, so `Arena::init(required_device_bytes(c))`

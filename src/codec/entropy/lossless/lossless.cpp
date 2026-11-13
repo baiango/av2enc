@@ -2064,11 +2064,30 @@ class TileWriter {
   }
 
   bool write_block(int r, int c, std::string* error) {
-    const BlockPlan plan = choose_plan(r, c);
+    // External block stage (CUDA `still_lossless`): use its per-block modes and
+    // levels instead of the host DPCM/FSC search and forward transform.  The
+    // prediction below still reads the reconstruction, whose decoded samples
+    // equal the source for a lossless frame, so the GPU computed the same
+    // residual from the source plane.
+    const BlockCoding* pre = nullptr;
+    BlockPlan plan;
+    if (opt_.precomputed != nullptr) {
+      const int blocks_x = g_.mi_cols / 2;
+      const int index = (r / 2) * blocks_x + (c / 2);
+      pre = &opt_.precomputed[index];
+      plan.y_mode = pre->y_mode;
+      plan.use_dpcm_y = pre->use_dpcm_y != 0;
+      plan.dpcm_y_vertical = pre->dpcm_y_vertical != 0;
+      plan.fsc = pre->fsc != 0;
+      plan.uv_mode = pre->uv_mode;
+      plan.use_dpcm_uv = pre->use_dpcm_uv != 0;
+      plan.dpcm_uv_vertical = pre->dpcm_uv_vertical != 0;
+    } else {
+      plan = choose_plan(r, c);
+    }
     const int w4 = 2;
     const int h4 = 2;
     const int sb_mi = 16;
-
     // --- mode info ---
     // Luma: lossless use_dpcm_y syntax, then optional fsc_mode.
     if (plan.use_dpcm_y) {
@@ -2166,13 +2185,13 @@ class TileWriter {
 
     // --- luma residual ---
     if (plan.fsc) {
-      if (!write_luma_fsc(r, c, plan, error)) return false;
+      if (!write_luma_fsc(r, c, plan, pre, error)) return false;
     } else {
-      if (!write_luma_4x4(r, c, plan, error)) return false;
+      if (!write_luma_4x4(r, c, plan, pre, error)) return false;
     }
 
     // --- chroma residual ---
-    if (!write_chroma(r, c, plan, error)) return false;
+    if (!write_chroma(r, c, plan, pre, error)) return false;
 
     ++stats_->luma_blocks;
     if (plan.fsc) ++stats_->fsc_blocks;
@@ -2182,7 +2201,7 @@ class TileWriter {
   }
 
   bool write_luma_4x4(int r, int c, const BlockPlan& plan,
-                      std::string* error) {
+                      const BlockCoding* pre, std::string* error) {
     PredictionScratch s;
     const Plane& srcp = *src_[0];
     const Plane& predp = *recon_[0];
@@ -2204,12 +2223,16 @@ class TileWriter {
                                         srcp.w + (x + i % 4)];
           s.residual[i] = src - s.pred[i];
         }
-        if (plan.use_dpcm_y) {
-          dpcm_difference(s.residual, 4, 4, plan.dpcm_y_vertical, s.tmp);
+        if (pre != nullptr) {
+          std::memcpy(s.levels, pre->luma[ty * 2 + tx], sizeof(s.levels));
         } else {
-          std::memcpy(s.tmp, s.residual, sizeof(s.tmp));
+          if (plan.use_dpcm_y) {
+            dpcm_difference(s.residual, 4, 4, plan.dpcm_y_vertical, s.tmp);
+          } else {
+            std::memcpy(s.tmp, s.residual, sizeof(s.tmp));
+          }
+          forward_lossless_4x4(s.tmp, s.levels);
         }
-        forward_lossless_4x4(s.tmp, s.levels);
         const int x4 = (x >> 2);
         const int y4 = (y >> 2);
         write_coeff_normal(cdfs_, w_, ctx_, 0, x4, y4, 1, 1, 8, 8, 4, 4,
@@ -2230,7 +2253,7 @@ class TileWriter {
   }
 
   bool write_luma_fsc(int r, int c, const BlockPlan& plan,
-                      std::string* error) {
+                      const BlockCoding* pre, std::string* error) {
     PredictionScratch s;
     const Plane& srcp = *src_[0];
     const Plane& predp = *recon_[0];
@@ -2247,7 +2270,9 @@ class TileWriter {
       s.residual[i] = src - s.pred[i];
     }
     // FSC blocks use IDTX: levels are the residual (or its DPCM difference).
-    if (plan.use_dpcm_y) {
+    if (pre != nullptr) {
+      std::memcpy(s.levels, pre->luma_fsc, sizeof(s.levels));
+    } else if (plan.use_dpcm_y) {
       dpcm_difference(s.residual, 8, 8, plan.dpcm_y_vertical, s.levels);
     } else {
       std::memcpy(s.levels, s.residual, sizeof(s.levels));
@@ -2270,7 +2295,8 @@ class TileWriter {
     return true;
   }
 
-  bool write_chroma(int r, int c, const BlockPlan& plan, std::string* error) {
+  bool write_chroma(int r, int c, const BlockPlan& plan,
+                    const BlockCoding* pre, std::string* error) {
     const int cx = c * 2;
     const int cy = r * 2;
     int eob1 = 0;
@@ -2288,15 +2314,19 @@ class TileWriter {
                                       srcp.w + (cx + i % 4)];
         s.residual[i] = src - s.pred[i];
       }
-      if (plan.use_dpcm_uv) {
-        dpcm_difference(s.residual, 4, 4, plan.dpcm_uv_vertical, s.tmp);
+      if (pre != nullptr) {
+        std::memcpy(s.levels, pre->chroma[plane - 1], sizeof(s.levels));
       } else {
-        std::memcpy(s.tmp, s.residual, sizeof(s.tmp));
-      }
-      if (plan.fsc) {
-        std::memcpy(s.levels, s.tmp, sizeof(s.levels));
-      } else {
-        forward_lossless_4x4(s.tmp, s.levels);
+        if (plan.use_dpcm_uv) {
+          dpcm_difference(s.residual, 4, 4, plan.dpcm_uv_vertical, s.tmp);
+        } else {
+          std::memcpy(s.tmp, s.residual, sizeof(s.tmp));
+        }
+        if (plan.fsc) {
+          std::memcpy(s.levels, s.tmp, sizeof(s.levels));
+        } else {
+          forward_lossless_4x4(s.tmp, s.levels);
+        }
       }
       const int x4 = cx >> 2;
       const int y4 = cy >> 2;

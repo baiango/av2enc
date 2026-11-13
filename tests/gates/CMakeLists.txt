@@ -141,4 +141,61 @@ if(TARGET av2enc_video_gpu)
     SKIP_RETURN_CODE 77
     TIMEOUT 1800
     LABELS "gate;gate-video;gate-gpu;gate-tx")
+  # Opt-in §5.20.7.6/§7.13.3.25 BAWP (--video-bawp): the fitted predictor must
+  # produce byte-identical temporal units and recon on CPU and the CUDA
+  # backend at 360p, 4 and 8 frames, and the stream must decode with
+  # dav2d --strict 1.
+  add_test(NAME gate_video_bawp
+    COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_gpu.sh"
+            --bin $<TARGET_FILE:av2enc> --bawp-only)
+  set_tests_properties(gate_video_bawp PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1800
+    LABELS "gate;gate-video;gate-gpu;gate-bawp")
+  # Opt-in §7.13.5 CfL chroma decision (--video-cfl): the CPU {DC, CfL} policy
+  # vs the device `still::chroma_decide()` module, byte-identical at 4 and 8
+  # frames with a dav2d --strict 1 decode.
+  add_test(NAME gate_video_cfl
+    COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_gpu.sh"
+            --bin $<TARGET_FILE:av2enc> --frames 4 --cfl-only)
+  set_tests_properties(gate_video_cfl PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1800
+    LABELS "gate;gate-video;gate-gpu;gate-cfl")
+  # Opt-in §7.13.6-.8 MHCCP (--video-mhccp): enable_mhccp signalling plus the
+  # three CFL_MULTI directions, CPU vs the device chroma decision module.
+  add_test(NAME gate_video_mhccp
+    COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_gpu.sh"
+            --bin $<TARGET_FILE:av2enc> --frames 4 --mhccp-only)
+  set_tests_properties(gate_video_mhccp PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1800
+    LABELS "gate;gate-video;gate-gpu;gate-mhccp")
+  # Opt-in §7.20.4 luma PC-Wiener (--video-pc-wiener): its own lr_params()/
+  # read_lr() dispatch plus the device pc_wiener workspace.
+  add_test(NAME gate_video_pc_wiener
+    COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_gpu.sh"
+            --bin $<TARGET_FILE:av2enc> --frames 4 --pcw-only)
+  set_tests_properties(gate_video_pc_wiener PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1800
+    LABELS "gate;gate-video;gate-gpu;gate-pcw")
+  # Opt-in §5.18.6.2 default-matrix QM (--video-qm).
+  add_test(NAME gate_video_qm
+    COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_gpu.sh"
+            --bin $<TARGET_FILE:av2enc> --frames 4 --qm-only)
+  set_tests_properties(gate_video_qm PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1800
+    LABELS "gate;gate-video;gate-gpu;gate-qm")
+  # Format video core: 10-bit 4:2:0/4:2:2/4:4:4/4:0:0 and 8-bit
+  # 4:2:2/4:4:4/4:0:0, CPU vs CUDA byte-identical at 360p / 4 frames with a
+  # dav2d --strict 1 decode and the expected picture count.
+  add_test(NAME gate_video_formats
+    COMMAND bash "${PROJECT_SOURCE_DIR}/src/cuda/pipeline/video/gate_video_formats.sh"
+            --bin $<TARGET_FILE:av2enc> --frames 4)
+  set_tests_properties(gate_video_formats PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 3600
+    LABELS "gate;gate-video;gate-gpu;gate-formats")
 endif()

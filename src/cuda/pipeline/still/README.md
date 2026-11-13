@@ -88,10 +88,14 @@ applies the derived-alpha CfL prediction for the winning candidate.
 stage is not ported.  `gpu_options_to_m1()` (in `still_gpu.h`) is the single
 mapping used by the internal CPU parity encode, so a parsed flag can never be
 missing from the comparison.  `gpu_m3_options_supported()` accepts the wired
-in-loop filters and screen-content tools and rejects each unported tool
-(`--still-rdoq`, `--still-tx-partition`, `--still-tcq`,
-`--still-rdo-intra`) by name with a "not ported" message; the M3 gate reports
-those as `SKIP-REJECTED`.  Additional CPU-only flags (`--still-user-qm`,
+in-loop filters, screen-content tools and the §7.14.4 / §5.4.8 quantisers and
+rejects each unported tool (`--still-tx-partition`, `--still-rdo-intra`) by name
+with a "not ported" message; the M3 gate reports those as `SKIP-REJECTED`.
+`--still-tcq` and `--still-rdoq` are accepted; the CPU-rejected combinations
+(`--still-qm`, `--still-dc-ac-delta-q`, `--still-rdoq` with `--still-tcq`, TCQ
+with `--still-ist`) and the GPU-only restrictions (the TX-type/IDTX search, and
+`--still-rdoq` with `--still-cctx`) are rejected by name (see "Wired transform
+decisions").  Additional CPU-only flags (`--still-user-qm`,
 `--still-grain-adaptive`, content interpretation) are rejected
 before the GPU stage. `--still-ibp`, `--still-mrl`, `--still-dip`,
 `--still-cfl-explicit`, `--still-mhccp`, `--still-uv-full`, `--still-palette`
@@ -148,6 +152,7 @@ arrive with the frame plan and the single per-frame sync is unchanged.
 | `--still-ext-partitions` | plan's extended/uneven 4-way solver; the bridge writes the spec `partition` (0..9) and 10-bit `allowed_mask` into the syntax entry | 64×64 / 640×360, also with `--still-sb128`, `--still-full-intra`, `--still-dip` |
 | `--still-sdp` | plan's SDP luma/chroma trees; `kFlagSdpSplit`/`tree_type` reach the writer, chroma-only leaves skip luma search/TX/recon and read the co-located luma mode for uv_mode_index | 64×64 / 640×360, also with `--still-full-intra`, `--still-dip`, `--still-mrl` |
 | `--still-sub8` | plan's 4x4/4x8/8x4 leaves with ChromaMi ownership; non-owning leaves skip U/V TX/recon and code luma only | 64×64 / 640×360, also with `--still-full-intra`, `--still-dip`, `--still-mrl`, `--still-sb128` |
+| `--tiles CxR` | per-tile cropped `encode_still_gpu`: tile-local plan/search/TX/recon and tile-local §5.20.2.1 CDF/availability reset; the CPU `tiles_stream` writer owns the tiled headers and the tile group.  With `--avg-cdf` each tile is seeded with the §8.2.2 frame CDF image and exports its final image for the §8.2.4 average bank | 640×360 and 256×256, 2x1/2x2/4x2/8x2 (frozen and `--avg-cdf`); deblock stays off (interior tile edges are not sample-exact with the pinned decoder) |
 
 The plan's `allowed_mask`/`partition` fields drive the bridge for these modes;
 the SPLIT root is legal only at 128. Availability counts come from the plan's
@@ -156,6 +161,27 @@ a hard-coded 64. CDEF/CCSO/loop restoration now derive their unit grids from
 `plan.sb_size`, so `--still-sb128`/`--still-sb256` compose with every wired
 filter (CCSO `CcsoLumaSizeLog2` 6/7, LR `sb_shift` 4/5 and the 128-sample
 PC-Wiener/chroma-LR units, GDF `GdfBlkSize` 128).
+
+### Lossless block stage (`--lossless --still-gpu`)
+
+`--lossless` keeps `av2enc::lossless::encode_still()` as the writer (its own
+§5.20 syntax, §8.2 coder and decoder-side exactness check).  With
+`--still-gpu`, `cuda::still_lossless::compute_block_coding()` computes the
+reconstructible part on the device: the DC / V-DPCM / H-DPCM choice and FSC
+decision (sum of absolute reversible-WHT levels, same candidate order and
+`<` tie-break as `choose_plan()`), the §7.15.2.2 forward WHT, and the §7.15.4
+DPCM first difference.  The CPU writer consumes the resulting
+`lossless::BlockCoding` array (`Options::precomputed`) and still runs the
+decoder-side inverse, so a bad level fails the existing exactness check.
+
+Blocks are independent because a lossless reconstruction equals the source;
+the kernel therefore predicts from the source plane, which is exactly the
+reference the CPU cost functions already use.  One arena, one source upload,
+one kernel, one download per picture.
+
+Verified: 64×64 and 640×360, FSC off/force, CPU vs GPU IVF bytes identical
+(`7fc9bb16…`, `c14a7dc9…`, `8a66fa2c…`, `3b033b52…`), every stream decodes
+with `dav2d --strict 1`, and the decoded I420 bytes equal the source exactly.
 
 ### Wired transform decisions
 
@@ -168,6 +194,8 @@ CPU reference keeps the same candidate order, cost model and tie-breaks.
 | `--still-idtx` | the same device search with §5.4.8 `enable_idtx_intra`: pure IDTX joins the sets that can signal it (mixed identity types stay out); the sequence bit and §5.20.5.5 `fsc_mode` come from `StillConfig` | 64×64 / 640×360 |
 | `--still-ist` | §7.15.3 device candidate search: each `(most_probable_stx_set, sec_tx_type)` projects the quantised luma levels (`project_ist_levels` arithmetic), dequantises, applies the normative secondary inverse and the primary inverse, and scores serial `SSE + lambda * §9.3 bits`; the winner replaces the block levels/EOB/residual | 64×64 / 640×360 |
 | `--still-cctx` | §7.14.6 chroma search: the seven rotations are quantised on device from the forward U/V coefficients, dequantised, rotated by the normative `cctx_dequant_pair`, inverse-transformed and scored with serial `SSE(U)+SSE(V) + lambda * cctx_type bits`; non-NONE rotations with U eob ≤ 1 are rejected like the CPU | 64×64 / 640×360 |
+| `--still-tcq` | §5.4.8/§7.14.4 luma 2-D trellis: `decide/decide_core.cuh` builds the §7.16 frozen contexts from the scalar levels on device, runs `tcq::quantize`'s DP port with the exact `-log2(p)` rate model, and writes the syntax base levels plus the Quant-domain levels; the §7.14.4 `dqDenom` shift then reconstructs the block from those levels | 64×64 / 640×360 |
+| `--still-rdoq` | §7.14.4 full-trellis RDOQ on every plane: the same device §7.16 model and the `rdoq::quantize` DP port pick the levels (cost `SSE + lambda * bits`, same tie-breaks), then the block is dequantised (normal `dqDenom`) and inverse-transformed | 64×64 / 640×360 |
 
 ### Wired in-loop filters
 
@@ -185,6 +213,8 @@ pixel kernels and the syntax bridge replays the planned symbols.
 | `--still-pc-wiener` | §7.20.4 `pc_wiener_classify` + `filter_units` | 64×64 / 256×256 / 640×360, ±chroma LR |
 | `--still-gdf` | §7.20.5 `gdf_apply_grid`, last in the §7.20 block | 64×64 / 256×256 / 640×360, ±Wiener/PC-Wiener/CCSO |
 | `--still-grain` | metadata only (decoder-side synthesis) | 64×64 / 640×360 |
+| `--still-grain-adaptive` | host `GrainStreamPlanner` estimate over the CPU reference reconstruction; the GPU frame reuses that `StillConfig` (model OBU + header), so only metadata differs | 64×64 / 640×360 |
+| `--still-content-interpretation` | metadata-only §7.3.3 OBU emitted by the shared CPU assembler from `StillConfig` | 64×64 / 640×360 |
 
 Every combination above produces frame bytes identical to the CPU reference
 (`--still` with the same flags) and decodes with `dav2d --strict 1`.  Without
@@ -211,9 +241,17 @@ The CPU reference's segment table and per-SB qindex derivation are reproduced
 on the device (`derive_segment_map_kernel`); the resulting segment id reaches
 `BlockSyntax::segment_id` through `BlockDecision`, and the shared
 `cuda/codec/transform/delta_q` core performs the quantize/dequantize with the
-CPU `apply_qindex_step()` expression order.  `--still-per-segment-q` with
-`--still-dc-ac-delta-q` stays rejected by name (the separate DC/AC plane
-quantizers are not combined with the per-SB map yet).
+CPU `apply_qindex_step()` expression order.
+
+`--still-per-segment-q --still-dc-ac-delta-q` composes: the TX descriptors keep
+the frame's resolved DC/AC deltas and add `qlookup(segment qindex)` as the CPU
+`quant_step_` pre-scale, so the kernel evaluates
+`(quant_factor * (528 / step)) * step / q` (bit-identical to the CPU; the
+algebraically equal `qf * 528 / q` double-rounds differently and flips a
+level at 640×360).  The segment qindex still drives the reconstruction
+metadata and the §7.17 deblock grid.  Verified at 64×64 and 640×360 with
+`--still-seg-delta` 0/8/16/24, plus the delta-Q-only and segment-only forms,
+with `dav2d --strict 1` on every stream.
 
 `src/cuda/pipeline/still/still_gpu_options_test.cpp` (built by `build_options_test.sh`, host
 only) pins the full mapping and the rejection set.
@@ -369,7 +407,10 @@ links the same set (`tools/sync_remote.sh` excludes `build-*`).
    compare encoder-side recon instead of the decoded-frame fallback.
 3. Update the two forced-directional CPU cases in `run_matrix.sh` (F6/F11 at
    1080p) if the CPU forced-mode path is expected to be exact at the proxy.
-4. Wire video frames / multiple stills; this path is one still per call.
+4. Wire video frames / multiple stills; the multi-tile `--tiles` path runs one
+   `encode_still_gpu` per tile with tile-local geometry, but each invocation is
+   still one picture and one tile.  A 64×64 frame has one superblock, so no
+   multi-tile layout exists there (the geometry planner rejects 2x1).
 5. 10-bit / 4:2:2 / 4:4:4 / 4:0:0 product streams.  10-bit now dispatches
    through `cuda::still_gpu::encode_format_gpu()` to
    `cuda::high_bitdepth::encode_high_bitdepth_gpu`, which runs the DC/TX/recon
@@ -378,6 +419,7 @@ links the same set (`tools/sync_remote.sh` excludes `build-*`).
    `ChromaGpuExecutor` seam (`make_chroma_gpu_executor()`) and the CPU §8.2
    writer; 8-bit 4:4:4 and 4:0:0 are wired too.  Every product format the CPU
    format writers support now has a GPU block stage.
-6. TX-type, IDTX, IST and CCTX decisions are wired.  RDOQ, TX-partition and
-   RDO-intra still need device rate-model/decision stages that reproduce the
-   CPU trials and tie-breaks.
+6. TX-type, IDTX, IST, CCTX, TCQ and RDOQ decisions are wired.  TX-partition
+   and RDO-intra still need device decision stages that reproduce the CPU
+   trials and tie-breaks; `decide/decide_core.cuh` already carries the §7.16
+   rate model for them.

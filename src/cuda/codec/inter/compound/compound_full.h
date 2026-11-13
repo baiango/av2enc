@@ -184,10 +184,22 @@ struct SkipJob {
   int mv_col = 0;
   int filter = static_cast<int>(mc::InterpFilter::kEighttap);
   int cwp_weight = 8;  // CWP_EQUAL
+  // §5.20.7.16 / §7.13.3.27-.30 masked blend.  `type` is one of the
+  // kCompound* constants above; AVERAGE keeps the historical CWP blend.
+  // WEDGE/DIFFWTD build the luma mask from `bsize`/`wedge_*`/`mask_type` and
+  // subsample it for chroma exactly like `adv::compound_mask_sample()`.
+  int type = kCompoundAverage;
+  int wedge_index = 0;
+  int wedge_sign = 0;
+  int mask_type = 0;
 
   void* dst[3] = {nullptr, nullptr, nullptr};
   int dst_stride[3] = {0, 0, 0};
   int dst_16bit[3] = {0, 0, 0};
+  // When set, `dst` is a block-local buffer and the store index is
+  // `r * dst_stride + c` instead of the frame-absolute `(y + r) * stride + x`.
+  // The candidate-SSE batch uses this so many blends of one block do not race.
+  int dst_local = 0;
 };
 
 // ---------------------------------------------------------------------------

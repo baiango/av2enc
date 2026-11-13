@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 
-# Match the encoder targets: RTX 3060 (sm_86) primary, RTX 5070 (sm_120)
+# Match the encoder targets: RTX 3060/3080 Ti (sm_86), RTX 5090 (sm_120)
 # secondary. An explicit -DCMAKE_CUDA_ARCHITECTURES=... overrides this default.
 set(CMAKE_CUDA_ARCHITECTURES "86;120" CACHE STRING
-    "CUDA architectures (default: RTX 3060 sm_86 + RTX 5070 sm_120)")
+    "CUDA architectures (default: RTX 3060/3080 Ti sm_86 + RTX 5090 sm_120)")
 
 project(vram_config LANGUAGES CXX CUDA)
 

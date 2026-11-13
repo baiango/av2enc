@@ -81,6 +81,8 @@ void test_mapping_matches_cli() {
   gpu.enable_pc_wiener = true;
   gpu.enable_gdf = true;
   gpu.enable_grain = true;
+  gpu.grain_adaptive = true;
+  gpu.content_interpretation = true;
   gpu.delta_q = true;
   gpu.enable_segmentation = true;
   gpu.enable_delta_q = true;
@@ -138,6 +140,8 @@ void test_mapping_matches_cli() {
   check(cpu.enable_pc_wiener == true, "enable_pc_wiener");
   check(cpu.enable_gdf == true, "enable_gdf");
   check(cpu.enable_grain == true, "enable_grain");
+  check(cpu.grain_adaptive == true, "grain_adaptive");
+  check(cpu.content_interpretation == true, "content_interpretation");
   check(cpu.delta_q == true, "delta_q");
   check(cpu.enable_segmentation == true, "enable_segmentation");
   check(cpu.enable_delta_q == true, "enable_delta_q");
@@ -184,7 +188,10 @@ void expect_rejected(const av2enc::cuda::still_gpu::GpuOptions& gpu,
                  error.c_str());
     ++failures;
   }
-  if (error.find("not ported") == std::string::npos) {
+  // "not ported" is the GPU-stage rejection; "not supported" mirrors a CPU
+  // validation rule (a combination the reference itself refuses).
+  if (error.find("not ported") == std::string::npos &&
+      error.find("not supported") == std::string::npos) {
     std::fprintf(stderr,
                  "FAIL: %s error is not classified as a rejection: %s\n",
                  what, error.c_str());
@@ -212,6 +219,17 @@ void test_wired_filters_accepted() {
   check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
         "--still-grain is supported on the GPU path (metadata only)");
   check(error.empty(), "--still-grain reports no rejection");
+
+  // Adaptive film grain estimates the model on the host from the CPU
+  // reference's reconstruction; content interpretation is a metadata OBU.
+  gpu = GpuOptions{};
+  gpu.enable_grain = true;
+  gpu.grain_adaptive = true;
+  gpu.content_interpretation = true;
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-grain-adaptive and --still-content-interpretation are wired");
+  check(error.empty(), "metadata-only tools report no rejection");
 
   // CCSO (both the band-offset-only and the edge-classified form) applies the
   // §7.19 kernel on device.
@@ -327,9 +345,35 @@ void test_every_m3_flag_rejected_by_name() {
 
   GpuOptions gpu;
   std::string error;
+  // §7.14.4 full-trellis RDOQ: the device trellis + rate model are wired.
   gpu = GpuOptions{};
   gpu.rdoq = true;
-  expect_rejected(gpu, "--still-rdoq", "--still-rdoq");
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-rdoq is wired into the GPU pipeline");
+  check(error.empty(), "--still-rdoq reports no rejection");
+
+  gpu = GpuOptions{};
+  gpu.rdoq = true;
+  gpu.qm = true;
+  expect_rejected(gpu, "--still-qm", "--still-rdoq with --still-qm");
+
+  gpu = GpuOptions{};
+  gpu.rdoq = true;
+  gpu.delta_q = true;
+  expect_rejected(gpu, "--still-dc-ac-delta-q",
+                  "--still-rdoq with --still-dc-ac-delta-q");
+
+  gpu = GpuOptions{};
+  gpu.rdoq = true;
+  gpu.tx_type = true;
+  expect_rejected(gpu, "--still-tx-type",
+                  "--still-rdoq with the TX-type search");
+
+  gpu = GpuOptions{};
+  gpu.rdoq = true;
+  gpu.cctx = true;
+  expect_rejected(gpu, "--still-cctx", "--still-rdoq with --still-cctx");
 
   gpu = GpuOptions{};
   gpu.tx_type = true;
@@ -346,9 +390,45 @@ void test_every_m3_flag_rejected_by_name() {
   check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
         "--still-ist is wired into the GPU pipeline");
 
+  // §5.4.8 enable_tcq / §7.14.4: the device trellis + rate model are wired.
   gpu = GpuOptions{};
   gpu.tcq = true;
-  expect_rejected(gpu, "--still-tcq", "--still-tcq");
+  error.clear();
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+        "--still-tcq is wired into the GPU pipeline");
+  check(error.empty(), "--still-tcq reports no rejection");
+
+  // The CPU rejects these TCQ combinations itself; the GPU mirrors them.
+  gpu = GpuOptions{};
+  gpu.tcq = true;
+  gpu.rdoq = true;
+  // `--still-rdoq` is still an unported stage, so its own rejection wins.
+  expect_rejected(gpu, "--still-rdoq",
+                  "--still-tcq with --still-rdoq");
+
+  gpu = GpuOptions{};
+  gpu.tcq = true;
+  gpu.qm = true;
+  expect_rejected(gpu, "--still-qm",
+                  "--still-tcq is not supported with --still-qm");
+
+  gpu = GpuOptions{};
+  gpu.tcq = true;
+  gpu.delta_q = true;
+  expect_rejected(gpu, "--still-dc-ac-delta-q",
+                  "--still-tcq is not supported with --still-dc-ac-delta-q");
+
+  gpu = GpuOptions{};
+  gpu.tcq = true;
+  gpu.ist = true;
+  expect_rejected(gpu, "--still-ist",
+                  "--still-tcq is not supported with --still-ist");
+
+  gpu = GpuOptions{};
+  gpu.tcq = true;
+  gpu.tx_type = true;
+  expect_rejected(gpu, "--still-tx-type",
+                  "--still-tcq with the TX-type search");
 
   gpu = GpuOptions{};
   gpu.cctx = true;
@@ -363,13 +443,16 @@ void test_every_m3_flag_rejected_by_name() {
   gpu.rdo_intra = true;
   expect_rejected(gpu, "--still-rdo-intra", "--still-rdo-intra");
 
-  // The per-SB segmentation path does not carry the separate DC/AC delta-Q
-  // plane quantizers yet.
+  // The per-SB segmentation path composes with the separate DC/AC delta-Q
+  // plane quantizers through the device ratio-scale order.
   gpu = GpuOptions{};
   gpu.per_segment_q = true;
   gpu.delta_q = true;
-  expect_rejected(gpu, "--still-per-segment-q",
-                  "--still-per-segment-q with --still-dc-ac-delta-q");
+  std::string combined_error;
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu,
+                                                          &combined_error),
+        "--still-per-segment-q composes with --still-dc-ac-delta-q");
+  check(combined_error.empty(), "combined delta-Q reports no rejection");
 }
 
 }  // namespace

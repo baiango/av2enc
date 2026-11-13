@@ -210,7 +210,29 @@ expect_reject() {
     fail "$label: rejection did not name the video flag"
   echo "PASS video-filters reject $label"
 }
-expect_reject tiles --video-cdef --tiles 2x1 --no-deblock
-expect_reject tlayers --video-cdef --video-tlayers 4
+# §5.19 tiles: one picture-level filter pass over the assembled reconstruction.
+run_case tiles-cdef --video-cdef --tiles 2x1
+run_case tiles-gdf --video-gdf --tiles 2x2
+# B frames / temporal layers carry the per-frame plan in their headers.
+run_case_bframes() {
+  local label="$1"
+  shift
+  local out="$TMP/${label}.ivf"
+  local recon="$TMP/${label}.recon.y4m"
+  local dec="$TMP/${label}.dec.y4m"
+  "$BIN" "$CLIP" -o "$out" --video --frames 4 --video-recon "$recon" "$@"     >/dev/null 2>"$TMP/${label}.err" ||
+    fail "$label: encode failed ($(cat "$TMP/${label}.err"))"
+  "$DAV2D" --strict 1 -q -i "$out" -o "$dec" >/dev/null 2>&1 ||
+    fail "$label: dav2d --strict 1 rejected the stream"
+  compare_recon "$recon" "$dec" "$label" ||
+    fail "$label: encoder reconstruction differs from the decoded output"
+  echo "PASS video-filters $label ($(md5_of "$out"))"
+}
+run_case_bframes bframes2-cdef --b-frames 2 --video-cdef
+run_case_bframes tlayers4-cdef --video-tlayers 4 --video-cdef
+# Loop restoration keeps its tile rejection; the frame-type wrapper header
+# writers still hard-code the filter rows off.
+expect_reject lr-tiles --video-wiener --tiles 2x1
+expect_reject wrappers --video-cdef --video-long-term
 
 echo "gate_video_filters: PASS"

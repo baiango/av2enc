@@ -40,6 +40,9 @@ struct HbdOptions {
   // 1..303 (§8.3.1 slice selected from base_q_idx).
   std::uint16_t base_q_idx = 90;
   bool disable_cdf_update = true;
+  // §7.17 deblocking at the 10-bit sample depth.  Off by default so the pinned
+  // 10-bit streams are unchanged; `--still-deblock` opts in.
+  bool enable_deblock = false;
 };
 
 struct HbdResult {

@@ -179,7 +179,9 @@ bool assemble_gpu_frame(const cuda::still_gpu::FramePlan& plan,
                         std::string& error, std::size_t* tile_bytes = nullptr,
                         const FilterGrids& grids = {},
                         std::span<const palette::PaletteResult> palette_results =
-                            {});
+                            {},
+                        std::span<const std::uint16_t> cdf_seed = {},
+                        std::vector<std::uint16_t>* cdf_final = nullptr);
 
 bool assemble_gpu_raster_frame(
     const cuda::still_gpu::FramePlan& plan,

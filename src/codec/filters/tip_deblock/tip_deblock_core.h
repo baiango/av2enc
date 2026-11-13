@@ -279,7 +279,7 @@ TipDeblockEdgeInfo tip_edge_core(const TipDeblockCoreFrame& frame,
       const int sx = x + dy * i;
       const int sy = y + dx * i;
       deblock::sample_filtering(data, stride, sx, sy, info.q_thr, dx, dy, neg,
-                                pos, 0, 0);
+                                pos, 0, 0, 8);
     }
   }
   return info;

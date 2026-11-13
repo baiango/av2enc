@@ -48,7 +48,7 @@ compromise if the integration wants to halve FP64 work without any guard.
 
 | Item | Value |
 |---|---|
-| GPU | NVIDIA GeForce RTX 3060, 12,288 MiB physical (dev-box proxy; target remains 8 GB `compat8g`) |
+| GPU | NVIDIA GeForce RTX 3060, 12,288 MiB (development target) |
 | Compute capability | 8.6 (`sm_86`), 28 SMs |
 | Max SM / memory clock | 2100 MHz / 7501 MHz |
 | Power limit | 110 W |
@@ -58,7 +58,7 @@ compromise if the integration wants to halve FP64 work without any guard.
 | Loaded SASS | `binaryVersion: 86` (sm_86 cubin executed) |
 | During run | 100 % util, 1695–1942 MHz SM (mostly 1935–1942), 62–102 W, 50–55 °C |
 
-The target is still **8 GB Ampere / `compat8g` / 7,500 MB**. This benchmark is
+Targets are the **RTX 3060 12 GB (dev)**, **RTX 3080 Ti (production)** and **RTX 5090 (max speed)**. This benchmark is
 compute-bound and allocates <250 MB, so the 12 GB dev box is a valid compute
 proxy for this kernel; no 12 GB-specific tuning is used. The 8 GB 3060 has the
 same 28 SMs and FP64 rate (its memory bus is narrower, but the DCT is not

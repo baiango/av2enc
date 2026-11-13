@@ -204,6 +204,14 @@ writer and tile writer share `NumTotalRefs`, `NumSameRefCompound`,
 SANITIZE=1 ./src/encoder/m2/compound_stream/build_and_test.sh
 ```
 
+The gate now runs three 320x128 streams: the mixed-feature stream and one
+`--mode wedge` / `--mode diffwtd` stream whose ten superblocks all use that
+masked type. Both per-mode streams decode with
+`dav2d f9dafbc --strict 1` as 3 pictures and match the encoder reconstruction
+sample for sample; the pinned IVF MD5s are
+`0128f64719b173369146e52b65a295b0` (wedge) and
+`ae2aea57ce43b43366761cd5abf20d0b` (diffwtd) on the synthetic clip.
+
 The gate encodes a three-frame 320x128 stream.  Frame 2 has ten superblocks:
 compound AVERAGE, `skip_mode`, same-reference compound, `use_optflow`,
 `single_ref` selecting reference 0, `single_ref` selecting reference 1, WEDGE,

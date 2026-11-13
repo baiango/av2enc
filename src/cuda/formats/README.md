@@ -100,6 +100,14 @@ implementation used by the CPU §8.2 writer: the entropy/syntax loop stays on
 the host, while DC prediction, forward transform/quantisation, dequantisation,
 inverse transform and reconstruction run in `cuda::chroma`.
 
-Remaining integration work: extend the deblock kernel from 8-bit 4:2:0 to
-`FilterGeometry` + `sample_bytes` (geometry is ready; the filter arithmetic
-still clips at 8 bits) and add the 8-bit chroma product block stage.
+10-bit deblocking now has a `uint16_t` core and CUDA kernel
+(`deblock16_frame`, `DeblockCoreFrame16`): §4.8 Clip1 and the §7.17.6 MaxQ
+clip follow `bit_depth` (303 at 10-bit), and the §7.17 qindex offset is 48.
+The product hbd writer and the GPU block stage share one MI-grid builder
+(`hbd_deblock.h`) and are gated at 10-bit 4:2:0/4:2:2/4:4:4/4:0:0 with
+`dav2d` (decoded samples equal the encoder reconstruction).  It is opt-in
+(`--still-deblock`) so the pinned 10-bit streams are unchanged.
+
+Remaining integration work: 10-bit CDEF/CCSO/LR arithmetic (those cores still
+read `uint8_t` planes and clip at 8 bits) and the 8-bit chroma product block
+stage.

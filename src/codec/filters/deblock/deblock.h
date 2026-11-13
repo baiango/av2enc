@@ -57,6 +57,28 @@ struct DeblockFrame {
   int num_tile_rows = 0;
 };
 
+// 10/12-bit planes use the same public description with a uint16_t container.
+// `options.bit_depth` selects the §4.8 Clip1 range and the §7.17 qindex offset;
+// `num_planes` is 1 for 4:0:0 and 3 for a chroma format.
+struct DeblockPlane16 {
+  std::uint16_t* data = nullptr;
+  int stride = 0;
+};
+
+struct DeblockFrame16 {
+  DeblockPlane16 planes[3];
+  const DeblockMi* mi[3] = {nullptr, nullptr, nullptr};
+  int mi_cols = 0;
+  int mi_rows = 0;
+  int subsampling_x = 1;
+  int subsampling_y = 1;
+  int num_planes = 3;
+  const std::uint16_t* tile_col_starts = nullptr;
+  int num_tile_cols = 0;
+  const std::uint16_t* tile_row_starts = nullptr;
+  int num_tile_rows = 0;
+};
+
 enum class DeblockStatus {
   kOk = 0,
   kInvalidArgument,
@@ -72,6 +94,16 @@ int deblock_plane_height(const DeblockFrame& frame, int plane);
 
 // Validates the frame/options and applies the filter in place.
 DeblockStatus deblock_frame(DeblockFrame& frame, const DeblockOptions& options);
+
+// 10/12-bit variant (uint16_t sample container).  Supports 4:2:0, 4:2:2,
+// 4:4:4 and 4:0:0; `options.bit_depth` must be 10 or 12.
+bool deblock_supported16(const DeblockFrame16& frame,
+                         const DeblockOptions& options, DeblockStatus* status);
+DeblockCoreFrame16 deblock_to_core16(const DeblockFrame16& frame);
+DeblockStatus deblock_frame16(DeblockFrame16& frame,
+                              const DeblockOptions& options);
+int deblock_plane_width16(const DeblockFrame16& frame, int plane);
+int deblock_plane_height16(const DeblockFrame16& frame, int plane);
 
 // Runs the edge decision/sample-filter arithmetic for one edge without
 // modifying pixels.  Useful for integration diagnostics and for tests that

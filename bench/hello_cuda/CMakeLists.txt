@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.24)
 
-# Default to the primary (RTX 3060, sm_86) and secondary (RTX 5070, sm_120)
+# Default to the primary (RTX 3060, sm_86) and secondary (RTX 5090, sm_120)
 # targets. This must be set before project() so CMake's CUDA detection does not
 # seed the cache with its own default (sm_52 on this box). An explicit
 # -DCMAKE_CUDA_ARCHITECTURES=... still overrides it.
 # The source is baseline CUDA only; sm_120 is compiled from the same code and
 # enables no Blackwell-specific features.
 set(CMAKE_CUDA_ARCHITECTURES "86;120" CACHE STRING
-    "CUDA architectures (default: RTX 3060 sm_86 + RTX 5070 sm_120)")
+    "CUDA architectures (default: RTX 3060/3080 Ti sm_86 + RTX 5090 sm_120)")
 
 project(hello_cuda LANGUAGES CXX CUDA)
 

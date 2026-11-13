@@ -80,6 +80,21 @@ inline constexpr unsigned short kShellOffsetOtherClassCdf[16][3] = {
     0, 0,
 };
 
+// Default_Tip_Mode_Cdf [3, 3]
+inline constexpr unsigned short kTipModeCdf[3][3] = {
+    30898, 93, 0, 19665, 0, 0, 9477, 15, 0,
+};
+
+// Default_Tip_Drl_Mode_Cdf [3, 3]
+inline constexpr unsigned short kTipDrlModeCdf[3][3] = {
+    30662, 0, 0, 23823, 6, 0, 21676, 6, 0,
+};
+
+// Default_Tip_Pred_Mode_Cdf [3]
+inline constexpr unsigned short kTipPredModeCdf[3] = {
+    22129, 31, 0,
+};
+
 // Default_Col_Mv_Greater_Cdf [2, 3]
 inline constexpr unsigned short kColMvGreaterCdf[2][3] = {
     5663, 25, 0, 4856, 90, 0,
@@ -88,6 +103,26 @@ inline constexpr unsigned short kColMvGreaterCdf[2][3] = {
 // Default_Col_Mv_Index_Cdf [4, 3]
 inline constexpr unsigned short kColMvIndexCdf[4][3] = {
     13445, 1, 0, 13541, 1, 0, 14045, 1, 0, 12888, 31, 0,
+};
+
+// Default_Use_Bawp_Cdf [3]
+inline constexpr unsigned short kUseBawpCdf[3] = {
+    26456, 31, 0,
+};
+
+// Default_Use_Bawp_Chroma_Cdf [3]
+inline constexpr unsigned short kUseBawpChromaCdf[3] = {
+    5121, 31, 0,
+};
+
+// Default_Explicit_Bawp_Cdf [3, 3]
+inline constexpr unsigned short kExplicitBawpCdf[3][3] = {
+    26966, 31, 0, 15275, 6, 0, 14613, 31, 0,
+};
+
+// Default_Explicit_Bawp_Scale_Cdf [3]
+inline constexpr unsigned short kExplicitBawpScaleCdf[3] = {
+    21998, 32, 0,
 };
 
 // Default_Inter_Tx_Type_Set1_Cdf [3, 2, 3]

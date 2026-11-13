@@ -37,6 +37,7 @@
 #include "core/bitstream/bitwriter.h"
 #include "formats/format.h"
 #include "codec/filters/stream/filters_stream.h"
+#include "pipeline/video/post/video_filter_plan.h"
 #include "pipeline/video/video_headers.h"
 #include "pipeline/video/video_syntax.h"
 #include "pipeline/video/post/loop_filters.h"
@@ -101,6 +102,11 @@ struct VideoTiledFrameHeader {
   std::uint32_t refresh_frame_flags = 1;
   int base_q_idx = -1;
 
+  // §5.18.8.1 tx_mode_select (0 = TX_MODE_LARGEST, 1 = TX_MODE_SELECT).  The
+  // bit is frame-level, so every tile payload in the group must have been
+  // coded under the same mode.
+  bool tx_mode_select = false;
+
   bool apply_deblocking_filter[4] = {false, false, false, false};
   bool df_delta_q_present[4] = {false, false, false, false};
   // §5.18.7.9 DfDeltaQ[i]; coded only for a present plane.  The range is
@@ -113,7 +119,17 @@ struct VideoTiledFrameHeader {
 
   bool ccso_frame_flag = false;
   filters_stream::CcsoParams ccso{};
+
+  // §5.18.7.11 lr_params() / §5.18.7.9 gdf_params().  The frame header carries
+  // the frame-level parameters; the per-unit symbols stay in the tile payload.
+  VideoLrPlan lr{};
+  VideoGdfPlan gdf{};
 };
+
+// Converts a per-frame filter decision into the header-parameter form the
+// §5.18.7.10/§5.18.7.12 writers take.
+filters_stream::CdefParams make_tiled_cdef_params(const VideoCdefPlan& plan);
+filters_stream::CcsoParams make_tiled_ccso_params(const VideoCcsoPlan& plan);
 
 // tile_info() + the §5.18.7.2 tail.  Exposed for unit tests and for callers
 // that want the exact bit count.  `context_update_present` is false when
