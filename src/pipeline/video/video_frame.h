@@ -107,6 +107,13 @@ struct VideoOptions {
   // level 0 (the §9.4 default matrices, no user QM OBU).  The transform chain
   // dequantizes with the per-coefficient q2, so reconstruction stays exact.
   bool enable_qm = false;
+  // Opt-in §5.4.8 / §5.20.7.27 trellis-coded quantisation (--video-tcq).  The
+  // sequence selects choose_tcq_per_frame = 1 (so every frame codes allow_tcq)
+  // and enable_parity_hiding = 0.  Luma TX_CLASS_2D blocks only.
+  bool enable_tcq = false;
+  // Opt-in §5.4.8 / §7.14.6 cross-component transform (--video-cctx).  U/V are
+  // quantised jointly and plane 1 codes cctx_type.
+  bool enable_cctx = false;
   // §5.13 user-defined QM carrier (--video-user-qm): implies enable_qm and
   // emits one quantizer_matrix_obu() with an identity (all-32) user matrix for
   // level 0 before the key frame.  §7.14.4 then reads UserQm[0] for every
@@ -162,6 +169,20 @@ struct VideoOptions {
   double tx_rd_lambda = 256.0;
   int min_block_size = 16;
   int max_partition_depth = 4;
+  // §5.4.3 sequence_partition_config() superblock size (--video-sb128 /
+  // --video-sb256).  `sb256` implies a 128x128 SbSize for intra frames and
+  // 256x256 for inter frames; the encoder keeps every leaf <= 64x64 under both
+  // flags so the existing leaf coder is untouched.  Both false keeps the
+  // historical 64x64 stream byte-identical.
+  bool sb128 = false;
+  bool sb256 = false;
+  // §5.4.3 enable_ext_partitions + enable_uneven_4way_partitions
+  // (--video-ext-partitions).  The search may use HORZ_3 / VERT_3 and the
+  // uneven 4-way families; leaves still own their chroma and stay >= 8x8.
+  bool ext_partitions = false;
+  int superblock_pixels() const {
+    return sb256 ? 256 : (sb128 ? 128 : 64);
+  }
   // ME integer search radius in luma samples.
   int me_range = 16;
   // Opt-in ME refinement: add the normative 1/8-pel subpel stage.
@@ -296,6 +317,16 @@ struct VideoOptions {
   // template fit.  Requires enable_bawp (the sequence bit that makes
   // `morph_pred` signallable); off keeps every historical stream unchanged.
   bool enable_morph = false;
+  // §5.20.8 luma palette selection on the intra keyframe (--video-palette).
+  // Signals the §5.4.7 per-frame screen-content form and codes
+  // palette_mode_info()/palette_tokens() for every leaf the analysis selects
+  // (palette leaves are DC + eob=0).  Off keeps every historical stream
+  // byte-identical.
+  bool enable_palette = false;
+  // §5.20.5.3/.4 general intra block copy on the intra keyframe (--video-ibc).
+  // Same mode-info path as the morph carrier without morph_pred.  Off keeps
+  // every historical stream byte-identical.
+  bool enable_ibc = false;
   // §5.20.7.14/.15 / §7.13.3.29/.30 inter-intra (--video-compound-interintra).
   // Codes seq_enabled_motion_modes[INTERINTRA], the single-reference
   // motion-mode/interintra_mode/wedge_interintra syntax, and blends the inter
@@ -308,6 +339,12 @@ struct VideoOptions {
   // single tile and none of the frame-type/loop-filter/CDF-chain modes; off
   // keeps every existing stream byte-identical.
   bool enable_tip = false;
+  // §5.4.6 enable_tip_hole_fill plus the per-frame allow_tip_hole_fill bit
+  // (§5.18.2).  On for the product TIP stream: the encoder's §7.10.3/.4 setup
+  // and the pinned decoder's post-estimation validity mask agree cell for cell
+  // on a coded anchor field, so both sides fill the same holes.  The
+  // --video-tip-no-hole-fill control keeps the pre-fix stream for A/B gates.
+  bool tip_hole_fill = true;
   // Opt-in §5.14/§5.18.10 film grain signalling (--video-grain): sequence
   // header film_grain_params_present = 1, a film grain model OBU before a
   // frame whose model is new, and per-frame film_grain_config().  Off keeps
@@ -317,7 +354,23 @@ struct VideoOptions {
   // the intra TX-type search.  Off keeps the sequence bit 0 and the historical
   // candidate filter, so --video-tx-search streams are unchanged.
   bool enable_idtx_intra = false;
-  // Opt-in M2 loop filters (--video-cdef, ...).  All default off, so a default
+  // §5.4.5 enable_mrls (--video-mrl): directional intra luma searches
+  // mrl_index 1..3 with the §7.13.2.1 extra reference lines.  Off keeps every
+  // historical stream byte-identical.
+  bool enable_mrl = false;
+  // §5.4.8 enable_intra_ist (--video-ist): luma intra residuals code
+  // sec_tx_type / most_probable_stx_set and the encoder applies the §7.15.3
+  // inverse during reconstruction.  Off keeps every historical stream
+  // byte-identical.
+  bool enable_ist = false;
+  // §5.4.3 enable_sdp (--video-sdp): the intra keyframe codes a luma tree and a
+  // chroma tree for every 64x64 superblock.  Off keeps the historical SHARED
+  // tree and the enable_sdp = 0 sequence bit.
+  bool enable_sdp = false;
+  // §5.4.8 enable_inter_ddt (--video-ddt): the decoder reconstructs an inter
+  // ADST/FDST 1-D component at length 8/16 with the DDTX/FDDT kernel, so the
+  // encoder must select and apply the same transform.  Off keeps the bit 0.
+  bool enable_inter_ddt = false;  // Opt-in M2 loop filters (--video-cdef, ...).  All default off, so a default
   // stream is byte-identical.  They run on the reconstructed frame before it
   // becomes the output picture and the reference for later frames.
   post::VideoLoopFilterOptions loop_filters;

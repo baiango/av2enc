@@ -169,8 +169,8 @@ unreachable in the CLI.
 | `enable_imp_msk_bld` | §5.4.6 p62 / §6.4.6 p268 | `put_bit(false)` | WIRED | `src/encoder/m2/video_headers.cpp:173` | 1 only in the compound gate (`src/encoder/m2/multiref/gate/compound_stream.cpp:150`). |
 | `enable_df_sub_pu` | §5.4.6 p62 / §6.4.6 p268 | `put_bit(false)` | COMPONENT | `src/encoder/m2/video_headers.cpp:174` | No stream; the temporal helper writes it at `temporal_syntax.cpp:73`. |
 | `enable_tip_explicit_qp` | §5.4.6 p63 / §6.4.6 p268 | absent (0) | COMPONENT | `src/encoder/inter/temporal/temporal_syntax.cpp:80-83` | Requires TIP output + df_sub_pu; unreachable. |
-| `enable_opfl_refine` | §5.4.6 p63 / §6.4.6 p269 | `put_bits(0U, 2U)` = `REFINE_NONE` | COMPONENT | `src/encoder/m2/video_headers.cpp:175` | OPFL is implemented but no stream sets SWITCHABLE/ALL/AUTO; the temporal helper writes it at `temporal_syntax.cpp:84`. |
-| `enable_refinemv` | §5.4.6 p63 / §6.4.6 p269 | `put_bit(false)` | COMPONENT | `src/encoder/m2/video_headers.cpp:176` | No stream; the temporal helper writes it at `temporal_syntax.cpp:85`. |
+| `enable_opfl_refine` | §5.4.6 p63 / §6.4.6 p269 | `put_bits(0U, 2U)` = `REFINE_NONE` | WIRED | `src/encoder/m2/video_headers.cpp:175` | The M2 core pins `REFINE_NONE`; the CPU video path codes `REFINE_SWITCHABLE` for `--video-opfl` (G-OPFL-RMV), and `temporal_syntax.cpp:84` writes the field. |
+| `enable_refinemv` | §5.4.6 p63 / §6.4.6 p269 | `put_bit(false)` | WIRED | `src/encoder/m2/video_headers.cpp:176` | The M2 core pins 0; the CPU video path sets 1 for `--video-refine-mv` (G-OPFL-RMV); `temporal_syntax.cpp:85` writes it. |
 | `enable_tip_refinemv` | §5.4.6 p63 / §6.4.6 p269 | absent (0) | COMPONENT | `src/encoder/inter/temporal/temporal_syntax.cpp:86-89` | Requires TIP + OPFL/refine-MV; unreachable. |
 | `enable_bru` | §5.4.6 p63 / §6.4.6 p269 | `put_bit(false)` | ABSENT | `src/encoder/m2/video_headers.cpp:177` | Every writer pins 0; no writer sets 1. Backwards reference update unreachable. |
 | `enable_adaptive_mvd` | §5.4.6 p63 / §6.4.6 p269 | `put_bit(false)` | ABSENT | `src/encoder/m2/video_headers.cpp:178` | No writer sets 1. |

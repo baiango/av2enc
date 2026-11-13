@@ -203,8 +203,8 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 | `enable_imp_msk_bld f(1)` | p62; p268 | **COMPONENT** | `advanced_syntax.cpp:1167`; compound gate writes 1 (`compound_stream.cpp:150`); `compound_predict.cpp:240` | Not reachable. |
 | `enable_df_sub_pu f(1)` | p62; p268 | **PARTIAL** | `temporal_syntax.cpp:73` writes the bit; no frame-level `allow_df_sub_pu` / DF-sub-PU process | Syntax only; enabling it would desynchronise the frame header. |
 | `enable_tip_explicit_qp f(1)` | p63; p268 | **PARTIAL** | `temporal_syntax.cpp:80-83` writes the conditional bit | TIP QP signalling not implemented; no stream. |
-| `enable_opfl_refine f(2)` | p63; p269 Table 6.5 | **COMPONENT** | `temporal_syntax.cpp:84`; `temporal/opfl.cpp`; tests | No stream sets non-zero. |
-| `enable_refinemv f(1)` | p63; p269 | **COMPONENT** | `temporal_syntax.cpp:85`; `temporal/refinemv.cpp`; tests | No stream sets 1. |
+| `enable_opfl_refine f(2)` | p63; p269 Table 6.5 | **WIRED** | `temporal_syntax.cpp:84`; `temporal/opfl.cpp`; CPU video `--video-opfl` (`video_headers.cpp`); G-OPFL-RMV | M2 core still pins `REFINE_NONE`; the CPU video path codes `REFINE_SWITCHABLE` on the NEAR_NEARMV carrier. |
+| `enable_refinemv f(1)` | p63; p269 | **WIRED** | `temporal_syntax.cpp:85`; `temporal/refinemv.cpp`; CPU video `--video-refine-mv` (`video_headers.cpp`); G-OPFL-RMV | M2 core pins 0; the CPU video path sets 1. |
 | `enable_tip_refinemv f(1)` | p63; p269 | **COMPONENT** | `temporal_syntax.cpp:86-89`; `tip.h:19-43` gating; tests | No stream. |
 | `enable_bru f(1)` | p63; p269 | **ABSENT** | every writer writes 0; no encoder `use_bru` producer (only restoration read-side skip `restoration.cpp:346`) | No BRU update tool; bit can never be 1. |
 | `enable_adaptive_mvd f(1)` | p63; p269 | **ABSENT** | every writer 0; no implementation anywhere | — |

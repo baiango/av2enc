@@ -123,7 +123,10 @@ Implemented details:
 - luma `Wiener_Ns_Config_Y` (32 taps) and chroma `Wiener_Ns_Config_Uv`
   (12 taps) plus the six chroma-from-luma coefficient groups;
 - `cfl_ds_filter_index` including the `Wiener_Filters_420` 2×2 downsampling
-  (index 3 aliases 0);
+  (index 3 aliases 0).  For a chroma plane with `SubsamplingY == 0` the CfL
+  luma fetch reproduces the pinned decoder: every above-stripe request reads
+  `LumaStripeStartY - 2`, so the two lines above the stripe alias.  4:2:0
+  never requests the first of them, so its samples are unaffected;
 - per-unit coefficients (`frame_filters_on = 0`) and per-class frame
   coefficients (`frame_filters_on = 1`, class map supplied);
 - `LrFrame := CdefFrame` copy, so `RESTORE_NONE` units and planes pass through

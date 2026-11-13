@@ -121,11 +121,11 @@ implement SPLIT at 64x64.
 |---|---|---|---|---|---|---|
 | Recursive square partition tree (`PARTITION_NONE` / `PARTITION_SPLIT`) | §5.20.3.1, §5.20.3.2, §6.19.3.1, §6.19.3.2 | B | M; needs block bookkeeping and neighbor availability | 10–20% BD-rate vs fixed 32x32; the base for every later tool | M1 | U1 — unverified |
 | Rectangular splits (`PARTITION_HORZ` / `PARTITION_VERT`, 2:1) | §5.20.3.1, §5.20.3.2, §6.19.3.1 | B | M; depends on square tree | 2–5% incremental on edges, text, and mixed content | M1 | U1 — unverified |
-| Extended partitions: 3-way (`HORZ_3`/`VERT_3`) and uneven 4-way (`HORZ_4A/4B`, `VERT_4A/4B`) | §5.4.3 (`enable_ext_partitions`, `enable_uneven_4way_partitions`), §5.20.3.2, §6.4.3 | B | L; depends on rectangular tree; more partition contexts and edge cases | 1–4% incremental | M4 | U2 — unverified |
+| Extended partitions: 3-way (`HORZ_3`/`VERT_3`) and uneven 4-way (`HORZ_4A/4B`, `VERT_4A/4B`) | §5.4.3 (`enable_ext_partitions`, `enable_uneven_4way_partitions`), §5.20.3.2, §6.4.3 | B | L; depends on rectangular tree; more partition contexts and edge cases | 1–4% incremental | M4 | U2 — CPU `--video-ext-partitions` gated (`src/pipeline/video/gate_video_partitions.sh`) |
 | Semi-decoupled partitioning (SDP; luma/chroma use different trees) | §5.4.3 (`enable_sdp`, `enable_extended_sdp`), §5.20.3.1, §6.4.3 | B | L; depends on partition tree and chroma reconstruction | 1–4%, mostly 4:2:0 mixed/detail content | M4 | U2 — unverified |
 | Block-size range 4x4 through 64x64 (and larger blocks under 128/256 superblocks) | §5.20.3, §5.20.4.1, §6.19.3 | B | M; same tree, more size cases | Enables the partition gains above; small blocks help detail, large blocks help flat areas. No separate BD-rate claim. | M1 (8x8–64 first; 4x4 after its own gate) | U1 — unverified |
-| 128x128 superblocks (`use_128x128_superblock`) | §5.4.3, §5.18.7.6, §6.4.3 | B | M; larger context arrays, more neighbors, memory | 0.5–2%; fewer partition symbols and better large-block coding on flat content | M4 | U2 — unverified |
-| 256x256 superblocks (`use_256x256_superblock`, inter only; intra is capped at 128x128) | §5.4.3, §5.18.7.6, §6.4.3 | B | L; larger trees, motion-field and filter interactions | 0.3–1.5%; mostly flat/high-resolution content | M4 (optional) | U2 — unverified |
+| 128x128 superblocks (`use_128x128_superblock`) | §5.4.3, §5.18.7.6, §6.4.3 | B | M; larger context arrays, more neighbors, memory | 0.5–2%; fewer partition symbols and better large-block coding on flat content | M4 | U2 — CPU `--video-sb128` gated (`gate_video_partitions.sh`) |
+| 256x256 superblocks (`use_256x256_superblock`, inter only; intra is capped at 128x128) | §5.4.3, §5.18.7.6, §6.4.3 | B | L; larger trees, motion-field and filter interactions | 0.3–1.5%; mostly flat/high-resolution content | M4 (optional) | U2 — CPU `--video-sb256` gated (inter roots; keys clamp to 128) |
 
 **Notes.**
 

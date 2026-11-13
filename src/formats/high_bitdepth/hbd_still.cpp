@@ -184,18 +184,26 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
   const int sub_x = fmt::subsampling_x(picture.format.chroma);
   const int sub_y = fmt::subsampling_y(picture.format.chroma);
 
-  // §7.20 chroma LR is gated at 4:2:0.  At 4:2:2/4:4:4 the decoded chroma
-  // differs from the encoder reconstruction by 1 LSB on a handful of samples
-  // at 64-line stripe boundaries (the CfL luma-tap source path); keep the
-  // combination rejected by name instead of shipping a non-exact stream.
+  // §7.20 chroma LR is bit-exact at 4:2:0 for every filter combination, and at
+  // 4:2:2/4:4:4 for every combination that does not run §7.17 deblocking.
+  // With deblocking, pinned dav2d (f9dafbc) reads `lossless_mask_uv` past its
+  // 64-row extent in the chroma stripe that starts at luma row 248
+  // (`y4 = (y & 255) >> 2 == 62`, `end_y = 16` for SubsamplingY == 0); the
+  // aliased words are the next 256x256 entry's deblock column masks, so a few
+  // 4x4 chroma blocks are spuriously treated as lossless and left unfiltered.
+  // The aliased rows are decoder-internal state that no encoder can predict,
+  // so reject the combination by name instead of shipping a non-exact stream.
+  // Chroma-from-luma taps are separately constrained in `hbd_lr.h`.
   // Reproducer: av2enc C444p10.y4m -o x.ivf --still --bit-depth 10
-  //   --chroma 444 --still-chroma-lr --qp 303 --recon r.y4m
-  if (options.enable_chroma_lr && num_planes > 1 &&
-      !(sub_x == 1 && sub_y == 1)) {
+  //   --chroma 444 --still-deblock --still-chroma-lr --qp 303
+  if (options.enable_chroma_lr && options.enable_deblock && num_planes > 1 &&
+      sub_y == 0) {
     error =
-        "chroma loop restoration is only decoder-exact at 10-bit 4:2:0; "
-        "4:2:2/4:4:4 chroma LR differs from the decoder at stripe "
-        "boundaries.  Use --chroma 420 or omit --still-chroma-lr";
+        "chroma loop restoration and --still-deblock do not decode exactly at "
+        "4:2:2/4:4:4 with pinned dav2d: the decoder's chroma lossless mask "
+        "read runs past its extent for the stripe at luma row 248 and skips "
+        "restoration of the aliased blocks.  Omit --still-deblock or use "
+        "--chroma 420";
     return false;
   }
 

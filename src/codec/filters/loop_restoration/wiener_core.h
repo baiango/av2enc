@@ -333,6 +333,43 @@ AV2ENC_LR_HD int lr_get_source_sample(const LrCoreFrame& f, const LrBlock& b,
   return lr_get_source_sample_t(f, b, plane, x, y);
 }
 
+// §7.20.3 get_luma_source_sample() — the §7.20.2 source fetch for the luma
+// plane, used only by the chroma-from-luma taps.
+//
+// One pinned-decoder detail is load-bearing here.  §7.20.2 clamps an
+// above-stripe request with Max(LumaStripeStartY - 2, y), so the first line
+// above the stripe is returned unchanged.  dav2d f9dafbc instead reads
+// LumaStripeStartY - 2 for *every* above-stripe luma request when the chroma
+// plane is not vertically subsampled (SubsamplingY == 0, i.e. 4:2:2 and
+// 4:4:4): its CfL row loop backs up both "lines above" through a helper that
+// ignores the source stride for that layout, so both rows alias the same
+// line.  The two forms only differ for the first line above the stripe, and a
+// 4:2:0 chroma plane never asks for it (its vertical downsampling pins the
+// taps to the stripe start), which is why 4:2:0 was already bit-exact.
+// Matching the decoder here keeps the CfL tap set exact at 4:2:2/4:4:4.
+template <typename Sample>
+AV2ENC_LR_HD int lr_get_luma_source_sample_t(const LrCoreFrameT<Sample>& f,
+                                             const LrBlock& b, int x, int y) {
+  const LrCorePlaneT<Sample>& p = f.plane[0];
+  x = clip3(b.luma_start_x, b.luma_end_x, x);
+  y = clip3(b.luma_start_y, b.luma_end_y, y);
+  if (y < b.stripe_start_y) {
+    int yy = b.stripe_start_y - 2;
+    if (f.sub_y == 0) {
+      // Both lines above the stripe alias the second one.
+      if (yy < b.luma_start_y) yy = b.luma_start_y;
+    } else if (yy < y) {
+      yy = y;
+    }
+    return static_cast<int>(p.curr[yy * p.curr_stride + x]);
+  }
+  if (y > b.stripe_end_y) {
+    const int yy = (b.stripe_end_y + 2 < y) ? b.stripe_end_y + 2 : y;
+    return static_cast<int>(p.curr[yy * p.curr_stride + x]);
+  }
+  return static_cast<int>(p.cdef[y * p.cdef_stride + x]);
+}
+
 // §7.20.3 get_luma_sample() — subsampled luma fetch with the CfL downsampling
 // filter selected by cfl_ds_filter_index (3 aliases to 0).
 template <typename Sample>
@@ -355,12 +392,12 @@ AV2ENC_LR_HD int lr_get_luma_sample_t(const LrCoreFrameT<Sample>& f,
     for (int dy = 0; dy < 2; ++dy) {
       for (int dx = 0; dx < 2; ++dx) {
         t += static_cast<int>(kWienerFilters420[filter_idx][dy][dx]) *
-             lr_get_source_sample_t(f, b, 0, x + dx, y + dy);
+             lr_get_luma_source_sample_t(f, b, x + dx, y + dy);
       }
     }
     return t >> 2;
   }
-  return lr_get_source_sample_t(f, b, 0, x, y);
+  return lr_get_luma_source_sample_t(f, b, x, y);
 }
 
 AV2ENC_LR_HD int lr_get_luma_sample(const LrCoreFrame& f, const LrBlock& b,

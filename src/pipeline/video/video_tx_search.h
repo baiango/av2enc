@@ -69,6 +69,12 @@ struct Options {
   double coefficient_bits = 1.0;
   double skip_bits = 1.2;
   bool use_type_bits = true;
+  // §5.20.7.27 TCQ (--video-tcq).  The luma candidate quantiser runs the TCQ
+  // trellis at half the scalar step and the reconstruction uses the mapped
+  // Quant[] values with the extra dqDenom shift.  `tcq_qctx` is the §8.3.1
+  // COEFF_CDF_Q_CTXS slice from the frame base_q_idx.
+  bool tcq = false;
+  std::int32_t tcq_qctx = 0;
 };
 
 // One winning transform block.

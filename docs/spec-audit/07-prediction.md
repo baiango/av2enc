@@ -37,8 +37,9 @@ bitstreams, but it is not the shipped CLI.
 | **G-IBC** | `src/encoder/m1/ibc_stream/build_and_test.sh` — 4 streams, recon exact. |
 | **G-M2** | `src/encoder/m2/build_and_test.sh` — 2-frame and 8-frame 1280×720, `dav2d`, Y/U/V exact. |
 | **G-M2-COMPOUND** | `src/encoder/m2/multiref/gate` — 3-frame 128×128 and 1280×704, compound P, recon exact. |
-| **G-NN** | `src/pipeline/video/gate_video_near_near.sh` — 640×360 3/5-frame B GOPs, `--video-compound-near-near` (NEAR_NEARMV over past+future), pinned IVF MD5s + picture count + `dav2d --strict 1` recon exact. The `--video-opfl`/`--video-refine-mv` refinement overlay is **rejected** (see the rows below). |
-| *(none)* | DIP, IBP, MHCCP, warp, BAWP, inter-intra, TIP, optimizer-only OPFL/refine-MV — no decoder-gated *tool* stream exists. |
+| **G-NN** | `src/pipeline/video/gate_video_near_near.sh` — 640×360 3/5-frame B GOPs, `--video-compound-near-near` (NEAR_NEARMV over past+future), pinned IVF MD5s + picture count + `dav2d --strict 1` recon exact |
+| **G-OPFL-RMV** | `src/pipeline/video/gate_video_opfl_refine.sh` — the same fixture with `--video-opfl` and `--video-refine-mv` (both flags × pan3 depth 3 / pan5 depth 3 / pan3 depth 5 + min-block 8, so the non-16-aligned sub-block split is covered): pinned fixture+IVF MD5s, picture count, `dav2d --strict 1` recon exact, and `--video-gpu` still rejecting both |
+| *(none)* | DIP, IBP, MHCCP, warp, BAWP, inter-intra, TIP — no decoder-gated *tool* stream exists. |
 
 ---
 
@@ -90,12 +91,12 @@ bitstreams, but it is not the shipped CLI.
 | N6 | Reference-area clipping (`RefFirst/RefLast`, `useRefArea`) | §7.13.3.4-.5 / p471-472 | **PARTIAL** | Base clip to the MI-aligned plane in `mc.cpp`; `compute_ref_area` in `src/encoder/inter/temporal/refinemv.cpp`; candidate-ref-area in `multiref` | Only the temporal/refinemv components use `useRefArea`; wired MC always clips to the full plane. |
 | N7 | TIP `refFrames` selection + `Tip_Weighting_Factor` | §7.13.3.1 / p465-468 | **COMPONENT** | `src/encoder/inter/temporal/tip.cpp`; 8,980 checks; table pinned | `enable_tip=0`; M2 has no TIP syntax. |
 | N8 | Predict TIP (subblock loop, `tipSize` 8×8/16×16, `RefineMvs` fill) | §7.13.3.2 / p468-469 | **COMPONENT** | `temporal/tip.cpp`, `motion_field.cpp` (`build_tip_plan`) | No stream. |
-| N9 | Predict refine MV + `offset_refinemv` | §7.13.3.3 / p469-471 | **PARTIAL** | `temporal/refinemv.cpp` (`offset_refinemv`, `refine_mv_syntax`); product: `video_frame.cpp predict_compound_refinemv()` + §5.4.6 `enable_refinemv`; G-NN carrier | The product stream parses and uses the tool but the refined recon differs on 16,149 luma / 32,268 chroma samples of the 640x360 B frame, so `--video-refine-mv` is rejected by name (`docs/negative-results.md`). |
-| N10 | Search refine MV (24 neighbours, SAD gating, RefArea) | §7.13.3.6 / p472-473 | **PARTIAL** | `temporal/refinemv.cpp`; search/gating tests; product `search_refinemv()` call on the G-NN carrier | Same mismatch as N9; the search itself is component-tested but no decoder-exact product stream exists. |
-| N11 | Predict block orchestration (optflow / warp / ref-area dispatch) | §7.13.3.7 / p473-475 | **COMPONENT** | `temporal/opfl.cpp`, `refinemv.cpp` | M2 uses a direct `predict_plane`, not this dispatcher. |
-| N12 | Predict optflow block (subblock size, SAD shortcut, OpflMvs) | §7.13.3.8 / p475-476 | **PARTIAL** | `temporal/opfl.cpp`; product `video_frame.cpp predict_compound_optflow()` + §5.20.7.6 `use_optflow` (`REFINE_SWITCHABLE`); G-NN carrier | Luma is bit-exact; the chroma subblocks differ by 1 LSB on 2 samples, so `--video-opfl` is rejected by name. |
-| N13 | Get optflow based MV + distance reduction | §7.13.3.9 / p476-477 | **PARTIAL** | `temporal/opfl.cpp`, `temporal_math.h` (`opfl_scale_distances`); product call | Same chroma mismatch as N12. |
-| N14 | Optflow difference / gradient / `compute_opfl_mv` (LS solve, ±16 clamp) | §7.13.3.10-.12 / p477-480 | **PARTIAL** | `temporal/opfl.cpp`; zero-diff + solve tests; product `opfl_compute()` | Same chroma mismatch as N12. |
+| N9 | Predict refine MV + `offset_refinemv` | §7.13.3.3 / p469-471 | **WIRED** | `temporal/refinemv.cpp` (`offset_refinemv`, `refine_mv_syntax`); product `video_frame.cpp predict_compound_refinemv()` + §5.4.6 `enable_refinemv` on the G-NN carrier; `gate_video_opfl_refine.sh` pins 6 streams with `dav2d --strict 1` and exact recon | Search/prediction run per §7.13.3.1 sub-block (`Min(.,16)` luma, `Min(.,8)` chroma); chroma reuses the colocated luma MV |
+| N10 | Search refine MV (24 neighbours, SAD gating, RefArea) | §7.13.3.6 / p472-473 | **WIRED** | `temporal/refinemv.cpp` `search_refinemv()`; per-sub-block product call; G-NN + `gate_video_opfl_refine.sh` | — |
+| N11 | Predict block orchestration (optflow / warp / ref-area dispatch) | §7.13.3.7 / p473-475 | **PARTIAL** | `temporal/opfl.cpp`, `refinemv.cpp` | M2 uses direct per-tool paths, not this dispatcher. |
+| N12 | Predict optflow block (subblock size, SAD shortcut, OpflMvs) | §7.13.3.8 / p475-476 | **WIRED** | `temporal/opfl.cpp`; product `video_frame.cpp predict_compound_optflow()` + §5.20.7.6 `use_optflow`; G-NN, `gate_video_opfl_refine.sh` | The §7.13.3.8 `sad < 6` early exit is deliberately **not** taken: the pinned decoder applies it to TIP only (see `docs/negative-results.md`). |
+| N13 | Get optflow based MV + distance reduction | §7.13.3.9 / p476-477 | **WIRED** | `temporal/opfl.cpp`, `temporal_math.h` (`opfl_scale_distances`) | — |
+| N14 | Optflow difference / gradient / `compute_opfl_mv` (LS solve, ±16 clamp) | §7.13.3.10-.12 / p477-480 | **WIRED** | `temporal/opfl.cpp` (+ zero-diff/solve unit tests); product call | — |
 | N15 | Predict subblock (per-list loop, warp dispatch `useWarp` 1/2, interp selection) | §7.13.3.14 / p481-482 | **COMPONENT** | `temporal/*` orchestration; `multiref/compound_predict.cpp` for the compound subset | Not the wired M2 path. |
 | N16 | Compound AVERAGE + CWP (`Cwp_Weighting_Factor`, `(cw*p0+(16-cw)*p1)`) | §7.13.3.14 / p483 | **PARTIAL** | `src/encoder/inter/advanced/advanced_common.h:123-125`, `compound_common.h`, `multiref/compound_predict.cpp`; **G-M2-COMPOUND** (AVERAGE + CWP forced) | Only via the 3-frame gate writer; `reference_select=0` and `enable_cwp=0` in the M2 core (`video_headers.cpp:172`). |
 | N17 | Implicit mask blend `get_mask` (ref on/off-screen weights 0/1/2) | §7.13.3.14 / p483-484 | **PARTIAL** | `multiref/compound_predict.cpp` (`implicit_mask_eligible`), `advanced_common.h`; unit-tested | The gate forces `GLOBAL_GLOBALMV`, which **disqualifies** the implicit mask, so no decoded stream exercises `get_mask`. |
@@ -244,7 +245,7 @@ streams, M2 single-ref, M2 compound gate) all compare byte-exact against
    DC chroma.
 
 Non-prediction mismatches already known and disabled (not counted above):
-DRL reordering (`disable_drl_reorder=1`, `video_headers.cpp:159`), `skip_mode`
+`skip_mode`
 (needs `reference_select`), scaled references, and tiled deblocking
 (`docs/negative-results.md:54`).
 

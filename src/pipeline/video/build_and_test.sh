@@ -99,8 +99,14 @@ STATUS=0
 # TIP (§7.10) product case: key + future anchor P + TIP_FRAME_AS_OUTPUT
 # pictures at 4 and 8 pictures.  Uses the synthetic clip unless an input is
 # supplied; each phase decodes with dav2d --strict 1 and compares the recon.
+# Hole fill (§7.10.3/.4) is on for the product stream and the
+# --tip-no-hole-fill control keeps the pre-fix A/B stream exact too.
 "${OUT}" --frames 4 --tip --out "${TMPDIR:-/tmp}/video_gate_tip4.ivf" || STATUS=1
 "${OUT}" --frames 8 --tip --out "${TMPDIR:-/tmp}/video_gate_tip8.ivf" || STATUS=1
+"${OUT}" --frames 4 --tip --tip-no-hole-fill \
+  --out "${TMPDIR:-/tmp}/video_gate_tip4_noholes.ivf" || STATUS=1
+"${OUT}" --frames 8 --tip --tip-no-hole-fill \
+  --out "${TMPDIR:-/tmp}/video_gate_tip8_noholes.ivf" || STATUS=1
 if [[ -f "$ROOT/testdata/shine_1280x720_60f.y4m" ]]; then
   "${OUT}" --input "$ROOT/testdata/shine_1280x720_60f.y4m" --frames 8 \
     --single-block --out "${TMPDIR:-/tmp}/video_gate_720p.ivf" || STATUS=1

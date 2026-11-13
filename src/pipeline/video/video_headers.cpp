@@ -15,6 +15,7 @@
 #include "pipeline/grain/film_grain_syntax.h"
 #include "pipeline/video/post/loop_filters.h"
 
+#include <algorithm>
 #include <cassert>
 #include <string>
 
@@ -92,15 +93,87 @@ std::uint32_t mi_rows(const VideoConfig& c) {
   return 2U * ((static_cast<std::uint32_t>(c.max_frame_height) + 7U) >> 3U);
 }
 
-void write_tile_info(BitWriter& writer, const VideoConfig& c) {
-  const std::uint32_t sb_cols = (mi_cols(c) + 15U) >> 4U;
-  const std::uint32_t sb_rows = (mi_rows(c) + 15U) >> 4U;
+// §5.18.7.6 SbSize: the coding root size.  An intra frame with the 256 flag is
+// clamped to 128 (§5.18.1).
+std::uint32_t superblock_mi(const VideoConfig& c, bool frame_is_intra) {
+  if (c.use_256x256_superblock) return frame_is_intra ? 32U : 64U;
+  return c.use_128x128_superblock ? 32U : 16U;
+}
+
+int tile_log2(int blk_size, int target) {
+  int k = 0;
+  while ((blk_size << k) < target) ++k;
+  return k;
+}
+
+// §5.18.7.3 tile_params() increment-bit count.  The video writer emits exactly
+// one tile, so every increment bit is 0; the number of bits still depends on
+// the frame SbSize (not the sequence SB size) and the level limits.
+struct TileIncrementBits {
+  int cols = 0;
+  int rows = 0;
+  bool one_tile_legal = false;
+};
+
+TileIncrementBits tile_increment_bits(const VideoConfig& c,
+                                      int sb_mi, int sb_cols, int sb_rows) {
+  TileIncrementBits out;
+  int width_scaling = 4;
+  int area_scaling = 4;
+  if (c.seq_level_idx == 31) {
+    width_scaling = 1;
+    area_scaling = 1;
+  } else if (c.seq_level_idx >= 0 && c.seq_level_idx <= 21) {
+    if (c.seq_level_idx <= 13) {
+      width_scaling = 4;
+      area_scaling = 4;
+    } else if (c.seq_level_idx <= 17) {
+      width_scaling = 8;
+      area_scaling = 8;
+    } else {
+      width_scaling = 8;
+      area_scaling = 16;
+    }
+  }
+  const int sb_shift = sb_mi == 64 ? 6 : (sb_mi == 32 ? 5 : 4);
+  const int max_tile_width_sb =
+      (width_scaling * 4096) >> (sb_shift + 4);
+  const int max_tile_area_sb =
+      (area_scaling * 4096 * 2304) >> (2 * (sb_shift + 2) + 2);
+  const int min_cols = c.seq_level_idx == 31
+                           ? 0
+                           : tile_log2(max_tile_width_sb, sb_cols);
+  const int max_cols = tile_log2(1, std::min(sb_cols, 64));
+  const int min_tiles =
+      std::max(min_cols, c.seq_level_idx == 31
+                             ? 0
+                             : tile_log2(max_tile_area_sb, sb_cols * sb_rows));
+  const int min_rows = std::max(min_tiles - min_cols, 0);
+  const int max_rows = tile_log2(1, std::min(sb_rows, 64));
+  out.cols = min_cols < max_cols ? 1 : 0;
+  out.rows = min_rows < max_rows ? 1 : 0;
+  out.one_tile_legal = min_cols == 0 && min_rows == 0;
+  return out;
+}
+
+void write_tile_info(BitWriter& writer, const VideoConfig& c,
+                     bool frame_is_intra) {
+  const std::uint32_t sb_mi = superblock_mi(c, frame_is_intra);
+  const std::uint32_t sb_cols = (mi_cols(c) + sb_mi - 1U) / sb_mi;
+  const std::uint32_t sb_rows = (mi_rows(c) + sb_mi - 1U) / sb_mi;
   assert(sb_cols >= 1U && sb_rows >= 1U);
   writer.put_bit(true);  // uniform_tile_spacing_flag
-  if (sb_cols > 1U) {
+  const TileIncrementBits bits = tile_increment_bits(
+      c, static_cast<int>(sb_mi), static_cast<int>(sb_cols),
+      static_cast<int>(sb_rows));
+  // The tile group writer emits one tile; a frame/level combination that
+  // requires more must be rejected by the caller instead of writing a
+  // truncated tile_info().
+  assert(bits.one_tile_legal);
+  for (int i = 0; i < bits.cols; ++i) {
     writer.put_bit(false);  // increment_tile_cols_log2 = 0
   }
-  if (sb_rows > 1U) {
+  for (int i = 0; i < bits.rows; ++i) {
     writer.put_bit(false);  // increment_tile_rows_log2 = 0
   }
 }
@@ -212,13 +285,23 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
     }
   }
 
-  // §5.4.3 sequence_partition_config(): 64x64 superblocks, no SDP.
-  writer.put_bit(false);  // use_256x256_superblock
-  writer.put_bit(false);  // use_128x128_superblock
-  if (!monochrome) {
-    writer.put_bit(false);  // enable_sdp
+  // §5.4.3 sequence_partition_config().  use_128x128_superblock is absent when
+  // use_256x256_superblock is 1, so the default (both 0) keeps the historical
+  // byte sequence.  enable_uneven_4way_partitions is present only when
+  // enable_ext_partitions is 1.
+  writer.put_bit(c.use_256x256_superblock);
+  if (!c.use_256x256_superblock) {
+    writer.put_bit(c.use_128x128_superblock);
+  }  if (!monochrome) {
+    writer.put_bit(c.enable_sdp);  // enable_sdp
+    if (c.enable_sdp) {
+      writer.put_bit(c.enable_extended_sdp);  // enable_extended_sdp
+    }
   }
-  writer.put_bit(false);  // enable_ext_partitions
+  writer.put_bit(c.enable_ext_partitions);
+  if (c.enable_ext_partitions) {
+    writer.put_bit(c.enable_uneven_4way_partitions);
+  }
   writer.put_bit(false);  // reduce_pb_aspect_ratio
 
   // §5.4.4 sequence_segment_config().
@@ -228,7 +311,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   // §5.4.5 sequence_intra_config().
   writer.put_bit(false);  // enable_dip
   writer.put_bit(true);   // enable_intra_edge_filter
-  writer.put_bit(false);  // enable_mrls
+  writer.put_bit(c.enable_mrls);  // enable_mrls
   writer.put_bit(true);   // enable_cfl_intra
   if (!monochrome) {
     writer.put_bits(0U, 2U);  // cfl_ds_filter_index
@@ -303,18 +386,26 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   // §5.4.8 sequence_transform_quant_entropy_config().
   writer.put_bit(false);  // enable_fsc
   writer.put_bit(c.enable_idtx_intra);  // enable_idtx_intra
-  writer.put_bit(false);  // enable_intra_ist
-  writer.put_bit(false);  // enable_inter_ist
+  writer.put_bit(c.enable_intra_ist);   // enable_intra_ist
+  writer.put_bit(c.enable_inter_ist);   // enable_inter_ist
   if (!monochrome) {
     writer.put_bit(true);   // enable_chroma_dctonly
   }
-  writer.put_bit(false);  // enable_inter_ddt
+  writer.put_bit(c.enable_inter_ddt);  // enable_inter_ddt
   writer.put_bit(false);  // reduced_tx_part_set
   if (!monochrome) {
-    writer.put_bit(false);  // enable_cctx
+    writer.put_bit(c.enable_cctx);  // enable_cctx (§5.4.8)
   }
-  writer.put_bit(false);  // enable_tcq
-  writer.put_bit(false);  // enable_parity_hiding
+  writer.put_bit(c.enable_tcq);  // enable_tcq (§5.4.8)
+  // choose_tcq_per_frame is present only for a non-single-picture stream with
+  // enable_tcq = 1.  When it is 0, enable_parity_hiding is inferred 0 and its
+  // bit is absent; otherwise the historical zero bit keeps parity hiding off.
+  if (c.enable_tcq) {
+    writer.put_bit(c.choose_tcq_per_frame);  // choose_tcq_per_frame
+  }
+  if (!(c.enable_tcq && !c.choose_tcq_per_frame)) {
+    writer.put_bit(c.enable_parity_hiding);  // enable_parity_hiding
+  }
   writer.put_bit(c.enable_avg_cdf);  // enable_avg_cdf
   if (c.enable_avg_cdf) {
     writer.put_bit(c.avg_cdf_type);  // avg_cdf_type: 1 = average across tiles
@@ -461,12 +552,16 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
       tip::TipFrameSyntax ts;
       ts.use_ref_frame_mvs = h.use_ref_frame_mvs;
       ts.num_total_refs = num_refs;
-      ts.sb_64x64 = true;
+      ts.sb_64x64 = superblock_mi(c, key) == 16U;
       ts.enable_tip = true;
       ts.enable_tip_output = !c.disable_tip_output;
       ts.enable_tip_refinemv = false;
       ts.enable_opfl_refine = tip::RefineType::kNone;
       ts.enable_tip_hole_fill = c.enable_tip_hole_fill;
+      // The per-frame §5.18.2 bit is what turns the decoder's §7.10.3/.4
+      // setup on; the sequence bit alone leaves the decoder predicting holes
+      // with MV 0.
+      ts.allow_tip_hole_fill = h.allow_tip_hole_fill;
       ts.is_tip_frame = h.tip_frame;
       ts.requested_mode = h.tip_frame ? tip::TipFrameMode::kAsOutput
                                       : tip::TipFrameMode::kDisabled;
@@ -513,7 +608,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
 
   writer.put_bit(c.disable_cdf_update);  // disable_cdf_update
 
-  write_tile_info(writer, c);
+  write_tile_info(writer, c, key);
 
   // §5.18.6.1: f(8) at 8-bit, f(9) at 10-bit.
   writer.put_bits(c.base_q_idx,
@@ -558,6 +653,15 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
       assert(qm_error.empty());
     }
     writer.put_bit(false);              // delta_q_present (base_q_idx > 0)
+  }
+  // §5.18.2 allow_tcq / allow_parity_hiding, after the segmentation/QM/delta-Q
+  // block and before deblocking_filter_params().  choose_tcq_per_frame = 0
+  // infers allow_tcq = enable_tcq and codes no bit; this writer selects the
+  // per-frame form (--video-tcq), so every non-lossless frame codes the bit.
+  // allow_parity_hiding is forced 0 when allow_tcq = 1 (and this encoder never
+  // signals parity hiding), so no frame bit is written for it.
+  if (c.enable_tcq && c.choose_tcq_per_frame) {
+    writer.put_bit(h.allow_tcq && c.base_q_idx != 0);
   }
   if (c.enable_deblock) {
     // §5.18.7.9 deblocking_filter_params(): all four planes enabled, no

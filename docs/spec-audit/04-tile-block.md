@@ -153,7 +153,7 @@ that is not the block size, and `still_headers.cpp:258` writes
 | `compound_mode_same_refs S()` | §5.20.7.6 p191 | ABSENT | `compound_tile.cpp:462` explicitly rejects same-reference compound | CDF exists, writer refuses. |
 | `is_joint S()` | §5.20.7.6 p191 | COMPONENT | `compound_tile.cpp:447`; compound gate | Gate picks non-joint. |
 | `compound_mode_non_joint S()` | §5.20.7.6 p191 | COMPONENT | `compound_tile.cpp:452`; compound gate | Gate covers AVERAGE/WEDGE/DIFFWTD types. |
-| `use_optflow S()` | §5.20.7.6 p191 | ABSENT | No per-block writer; `temporal_syntax.h:64` only writes `opfl_refine_type` header bits | OPFL prediction exists in `inter/temporal/opfl.cpp`, but its block symbol cannot be emitted. |
+| `use_optflow S()` | §5.20.7.6 p191 | WIRED | `src/pipeline/video/video_syntax.cpp` (compound mode info) + `inter/temporal/opfl.cpp`; CPU `--video-opfl` on the NEAR_NEARMV carrier | Gated by G-OPFL-RMV; the M2 core writer still cannot emit it. |
 | `use_amvd S()` | §5.20.7.6 p191 | ABSENT | No writer; only decision helper `advanced_decision.cpp:320` | Adaptive MVD not signallable. |
 | `is_warp S()` / `warp_mv S()` | §5.20.7.6 p192 | COMPONENT | `src/encoder/m2/advanced/advanced_syntax.cpp:409`; `advanced_test.cpp` | Writer/reader + decision; no frame gate. |
 | `single_mode S()` | §5.20.7.6 p192 | WIRED | `video_syntax.cpp:1518`, `:1690` | NEARMV/GLOBALMV/NEWMV only. |
@@ -161,7 +161,7 @@ that is not the block size, and `still_headers.cpp:258` writes
 | `warp_idx S()` | §5.20.7.6 p193 | COMPONENT | `advanced_syntax.cpp:455` (`write_warp_idx`) | No decoder gate. |
 | `warpmv_with_mvd S()` | §5.20.7.6 p194 | COMPONENT | `advanced_syntax.cpp` staged writer; `advanced_test.cpp` | No decoder gate. |
 | `jmvd_scale_mode S()` | §5.20.7.6 p194 | ABSENT | No writer; `JOINT_NEWMV` never produced | Joint MVD unsupported. |
-| `drl_mode S()` | §5.20.7.8 p198 | WIRED | `video_syntax.cpp:1522`, `:1705`; `m2/merge` stack | DRL reorder disabled (`video_syntax.cpp:1660`). |
+| `drl_mode S()` | §5.20.7.8 p198 | WIRED | `video_syntax.cpp` (`code_drl_index`); `merge` stack | Sequence header keeps `disable_drl_reorder = 1` unless `--video-drl-reorder[-always]`; the reorder itself is decoder-gated by `gate_video_drl_reorder.sh`. |
 | `use_most_probable_precision S()` / `pb_mv_precision S()` | §5.20.7.6 p194 | ABSENT | `src/encoder/inter/me2/me2_precision.h` maps the values, but README says "No bitstream syntax is written here" | Frame precision fixed to 1/8 pel. |
 | `warp_delta_precision S()` / `warp_delta_param_low S()` / `_high S()` / `_sign S()` | §5.20.7.7 p197–198 | COMPONENT | `advanced_syntax.cpp:477-520`; `advanced_test.cpp` | No decoder gate. |
 | `use_dip S()` / `dip_transpose L(1)` / `dip_mode S()` | §5.20.7.9 p199 | COMPONENT | `src/encoder/dip/dip_syntax.cpp:32`; `dip_test.cpp` | No decoder gate. |
@@ -169,7 +169,7 @@ that is not the block size, and `still_headers.cpp:258` writes
 | `inter_intra S()` / `warp_inter_intra S()` / `interintra_mode S()` / `wedge_interintra S()` | §5.20.7.15 p207–208 | COMPONENT | `advanced_syntax.cpp:352-410`; `advanced_test.cpp`; prediction in `inter/advanced/compound.cpp` | No decoder gate. |
 | `comp_group_idx S()` / `compound_type S()` | §5.20.7.16 p208–209 | COMPONENT | `compound_tile.cpp:475-490`; compound gate | Only in the gate writer. |
 | `wedge_quad S()` / `wedge_angle S()` / `wedge_dist1 S()` / `wedge_dist2 S()` / `wedge_sign L(1)` / `mask_type L(1)` | §5.20.7.18 p210; §5.20.7.16 p209 | COMPONENT | `compound_tile.cpp:496-526`; `advanced_syntax.cpp:269`; wedge tables | Gate covers wedge/diffwtd on 64×64. |
-| `use_refinemv S()` | §5.20.7.17 p209 | COMPONENT | `temporal_syntax.cpp:476`; `temporal_test.cpp`; prediction in `refinemv.cpp` | No decoder gate. |
+| `use_refinemv S()` | §5.20.7.17 p209 | WIRED | `temporal_syntax.cpp:476`; CPU `--video-refine-mv` derives it for every eligible NEAR_NEARMV block (§5.20.7.17 makes it non-switchable, so no bit is coded) | Gated by G-OPFL-RMV. |
 | `interp_filter S()` | §5.20.7.6 p196 | ABSENT | `video_headers.cpp:273-274` fixes `is_filter_switchable = 0` and `EIGHTTAP`; no block writer | No switchable per-block filter. |
 | `mv_joint S()` | §5.20.7.20 p212 | ABSENT | Adaptive MVD disabled; no writer | Shell coding only. |
 | `shell_set S()` / `shell_class S()` / `joint_shell_last_two_classes S()` | §5.20.7.20 p212 | WIRED | `video_syntax.cpp:1548-1566` | Shell classes 0..17+; no adaptive-MVD alternative. |

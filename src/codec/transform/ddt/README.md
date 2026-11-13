@@ -1,11 +1,13 @@
 # M2 inter DDT (Data Dependent Transform)
 
-Status: **component + inter gate; rejected in the still CLI.** DDT/DDTX/FDDT
-is inter-only: §5.4.8 omits `enable_inter_ddt` for a single-picture header and
-§7.15.4.1 substitutes the kernel only when `is_inter = 1`. There is no frame or
-block DDT syntax. The completion-wave still path therefore rejects
-`--still-ddt` by name (`src/codec/transform/ddt/still_ddt_gate.sh` checks the
-diagnostic and the pinned still streams). The real proof is
+Status: **component + still/inter gates; wired into the CPU `--video` writer as
+`--video-ddt`; still rejected.** DDT/DDTX/FDDT is inter-only: §5.4.8 omits
+`enable_inter_ddt` for a single-picture header and §7.15.4.1 substitutes the
+kernel only when `is_inter = 1`. There is no frame or block DDT syntax. The
+completion-wave still path therefore rejects `--still-ddt` by name
+(`src/codec/transform/ddt/still_ddt_gate.sh` checks the diagnostic and the
+pinned still streams). The real proof is the video product gate
+(`src/pipeline/video/gate_video_sdp_ddt.sh`) plus the component gate
 `gate/build_gate.sh`: a 3-frame M2 inter stream with `enable_inter_ddt = 1`,
 decoded by the pinned `dav2d`, with DDTX and FDDT reconstruction
 sample-for-sample exact. The completion wave also updated the gate's source
@@ -352,7 +354,42 @@ Run:
 SANITIZE=1 ./src/encoder/m2/ddt/build_and_test.sh
 ```
 
-## 10. Specification gaps
+## 10. Product integration: `--video-ddt`
+
+The CPU `--video` writer now signals `enable_inter_ddt` and applies the
+§7.15.4.1 kernels:
+
+* `VideoConfig::enable_inter_ddt` writes the §5.4.8 bit (non-single-picture
+  header).  Off keeps it 0 and every historical stream byte-identical.
+* `VideoOptions::enable_inter_ddt` (`--video-ddt`) drives a per-block inter
+  transform-set selection.  Inter luma residual leaves run the existing luma
+  TX search (`video_tx_search.cpp`) even when `--video-tx-search` is off:
+  `Options::search_partition` stays false (TX_MODE_LARGEST codes no partition
+  syntax) while the TX-type candidates run with the DDT-aware forward /
+  inverse pair.  `--video-tx-search` composes and searches the partition too.
+* `video_tx_search.cpp::evaluate_candidate()` uses
+  `ddt::forward_block()`/`ddt::inverse_block()` exactly when
+  `ddt::plan_has_ddt()` is true; otherwise it keeps the historical `txv` path,
+  so non-DDT candidates and every `enable_inter_ddt = 0` stream are unchanged.
+  `ddt::quant_factor()` replaces the scalar factor for those leaves.
+* The encoder no longer runs the old `inter_tx_type_is_ddt()` candidate
+  filter (README §7.1): DDT changes kernels, not the legal TX-type set.
+* Coefficient coding is unchanged: the signalled type is still the ordinary
+  §5.20.8.2 `inter_tx_type` symbol, and `inter_tx_symbol()` accepts every legal
+  type.  Chroma is DCT-only (`enable_chroma_dctonly = 1`), so no chroma DDT.
+
+Evidence: `src/pipeline/video/gate_video_sdp_ddt.sh` encodes 64x64 and 640x360
+two-frame streams, decodes with `dav2d --strict 1`, requires the exact picture
+count and sample-exact `--video-recon`, and (via `--video-trace`) requires at
+least one *coded* DDT leaf for the `--video-inter-residual` /
+`--video-tx-search` cases.  It also composes `--video-sdp` with `--video-ddt`.
+Local result: 63 coded DDT leaves at 640x360/QP105 and 115 with the TX search,
+all sample-exact.
+
+Constraint list: CPU-only 8-bit 4:2:0, not with `--video-lossless`, `--video-tip`
+or `--svc-layers` (those header writers do not signal the bit).
+
+## 11. Specification gaps
 
 Nothing required for the decoder was missing.  Two points are worth recording:
 

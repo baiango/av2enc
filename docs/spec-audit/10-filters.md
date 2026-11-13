@@ -234,8 +234,14 @@ match; the all-off stream is byte-stable across runs.
 
 Remaining gaps kept **rejected by name**:
 
-* §7.20 chroma LR at 4:2:2/4:4:4 (1-LSB stripe-boundary diffs; repro in
-  `docs/negative-results.md`).  Luma Wiener, PC-Wiener and GDF are exact.
+* §7.20 chroma-from-luma taps at 4:2:2/4:4:4: the writer signals the
+  chroma-only Wiener subset there (pinned `dav2d` restores `f->cur.p` in place
+  per 64-column block, so a CfL tap crossing into the previous block reads the
+  restored luma; see `docs/negative-results.md`).  `--still-chroma-lr
+  --still-deblock` is also rejected at those formats: the decoder reads
+  `lossless_mask_uv` past its 64-row extent in the stripe at luma row 248 and
+  skips the aliased blocks.  4:2:0 keeps the full CfL set.  Luma Wiener,
+  PC-Wiener and GDF are exact on every format.
 * The `--video --bit-depth 10` / `--video --chroma` writer still rejects every
   loop-filter flag: its own header/tile writer has no filter plan or syntax
   hooks.  The 8-bit 4:2:0 M2 video chain is unchanged.

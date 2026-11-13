@@ -284,20 +284,35 @@ struct Options {
   // through their component gates, but neither is reachable from the M2
   // inter product path (see the parse errors).
   bool video_morph = false;
-  bool video_opfl = false;        // §7.13.3.8-.12 optical-flow refinement
-  bool video_refine_mv = false;   // §7.13.3.3-.6 refine-MV
+  // §7.13.3.8-.12 / §7.13.3.3-.6 temporal refinement on the NEAR_NEARMV
+  // compound carrier (CPU 8-bit 4:2:0; gate_video_opfl_refine.sh).
+  bool video_opfl = false;
+  bool video_refine_mv = false;
+  // Opt-in screen-content tools on the CPU `--video` intra keyframe.  Both
+  // default off so every historical stream is byte-identical.
+  bool video_palette = false;     // §5.20.8 luma palette selection
+  bool video_ibc = false;         // §5.20.5.3/.4 general intra block copy
   bool video_compound_near_near = false;  // §5.20.7.6 NEAR_NEARMV carrier
   bool video_tip = false;
+  // A/B control for the §5.4.6 enable_tip_hole_fill bring-up: keeps the
+  // pre-fix sequence header (hole fill off) so a gate can compare both masks.
+  bool video_tip_no_hole_fill = false;
   bool video_intra_full = false;  // opt-in 61-candidate luma intra search
   bool video_cfl = false;         // opt-in §7.13.5 CfL chroma decision
   bool video_mhccp = false;       // opt-in §7.13.6-.8 MHCCP (implies CfL)
   bool video_qm = false;          // opt-in default-matrix QM
   bool video_user_qm = false;     // opt-in user-defined QM OBU (implies QM)
+  bool video_tcq = false;         // opt-in §5.20.7.27 trellis TCQ
+  bool video_cctx = false;        // opt-in §7.14.6 cross-component transform
   bool video_grain = false;       // opt-in §5.14/§5.18.10 film grain signalling
   bool video_lossless = false;    // opt-in Q=0 lossless P-frame writer
   int video_lossless_intra_period = 0;  // 1/N blocks intra (0 = all inter)
   bool video_idtx = false;        // §5.4.8 enable_idtx_intra (2-D IDTX)
+  bool video_mrl = false;         // §5.4.5 enable_mrls (directional luma)
+  bool video_ist = false;         // §5.4.8 enable_intra_ist (luma intra)
   bool video_idtx_1d = false;     // documented rejected 1-D intra carrier
+  bool video_sdp = false;         // §5.4.3 enable_sdp intra luma/chroma trees
+  bool video_ddt = false;         // §5.4.8 enable_inter_ddt
   bool video_subpel_eighth = false;
   int video_mv_precision = 0;  // 0 = 1/8, 1 = 1/4, 2 = 1/2 pel
   bool video_drl_reorder = false;
@@ -311,6 +326,9 @@ struct Options {
   int video_tlayers = 0;   // 0 = off; N = one closed hierarchical-P GOP
   int video_tlayer_drop = -1;  // -1 = keep every layer
   bool video_force_single = false;
+  bool video_sb128 = false;
+  bool video_sb256 = false;
+  bool video_ext_partitions = false;
   int video_min_block = 16;
   int video_max_depth = 4;
   int video_me_range = 16;
@@ -771,6 +789,12 @@ void print_usage(std::ostream& out) {
                                 "partition search (changes the bitstream)"});
   item("--video-tx-lambda <S>", {"SSE-per-bit weight for --video-tx-search",
                                   "(default 256)"});
+  item("--video-sdp", {"Opt-in §5.4.3 enable_sdp: the intra keyframe codes",
+                       "per-64x64 luma and chroma partition trees",
+                       "(CPU-only, 8-bit 4:2:0, single tile)"});
+  item("--video-ddt", {"Opt-in §5.4.8 enable_inter_ddt: inter ADST/FDST",
+                       "transforms use the DDTX/FDDT kernels selected per",
+                       "block (CPU-only, 8-bit 4:2:0)"});
   item("--video-deblock", {"Deblock every reconstructed frame (§7.17) before",
                            "it is emitted or stored as a reference; CPU and",
                            "CUDA paths signal §5.18.7.9 and filter pixels"});
@@ -790,7 +814,10 @@ void print_usage(std::ostream& out) {
                        "reference; GLOBALMV uses the projected §7.12.2.2 MV"});
   item("--video-tip", {"Encode 3..8 frames as key + future anchor P +",
                        "TIP_FRAME_AS_OUTPUT pictures (§7.10, §7.13.3.2);",
-                       "opt-in, CPU reference and --video-gpu"}),
+                       "hole fill (§7.10.3/.4) on; opt-in, CPU reference"}),
+  item("--video-tip-no-hole-fill", {"Gate control: signal",
+                                    "enable_tip_hole_fill = 0 on the TIP",
+                                    "sequence (pre-fix A/B stream)"}),
   item("--video-warp", {"Predict GLOBALMV blocks with the §7.13.3.19/.20",
                         "block/extended warp when a global model is accepted",
                         "(implies --video-gme)"});
@@ -802,6 +829,13 @@ void print_usage(std::ostream& out) {
                          "intra keyframe codes screen-content + IBC mode info",
                          "and morph_pred, and the IBC copy is adapted with the",
                          "§7.13.3.25 BAWP template fit (CPU, single tile)"});
+  item("--video-palette", {"Opt-in §5.20.8 luma palette on the intra keyframe:",
+                           "signals the per-frame screen-content form and codes",
+                           "real palette_mode_info()/tokens for selected blocks",
+                           "(CPU, single tile)"});
+  item("--video-ibc", {"Opt-in §5.20.5.3/.4 general intra block copy on the",
+                       "intra keyframe: use_intrabc + BV stack/DRL search",
+                       "(CPU, single tile)"});
   item("--video-ref-mvs-stress", {"Gate stress mode for --video-ref-mvs:",
                                   "always prefer a temporal NEARMV candidate",
                                   "when one exists (proves the coded stream",
@@ -817,14 +851,13 @@ void print_usage(std::ostream& out) {
                                       "on a two-reference B frame (shifted MVs",
                                       "from the per-list merge stacks); needs",
                                       "--video-compound and --b-frames"});
-  item("--video-opfl", {"Rejected: §7.13.3.8-.12 OPFL on NEAR_NEARMV compound",
-                        "is implemented but not decoder-exact (2 chroma",
-                        "samples differ by 1 LSB); see",
-                        "docs/negative-results.md"});
-  item("--video-refine-mv", {"Rejected: §7.13.3.3-.6 refine-MV on NEAR_NEARMV",
-                             "compound is implemented but not decoder-exact",
-                             "(sparse luma +-1..3); see",
-                             "docs/negative-results.md"});
+  item("--video-opfl", {"CPU §7.13.3.8-.12 optical-flow refinement on a",
+                        "NEAR_NEARMV compound block (codes use_optflow);",
+                        "needs --video-compound-near-near and --b-frames"});
+  item("--video-refine-mv", {"CPU §7.13.3.3-.6 refine-MV on a NEAR_NEARMV",
+                             "compound block (derived, no bit: §5.20.7.17",
+                             "makes it non-switchable); needs",
+                             "--video-compound-near-near and --b-frames"});
   item("--video-cdef", {"Enable §7.18 CDEF on the reconstructed frame before",
                         "it becomes the output/reference (single strength set)"});
   item("--video-cdef-strength <N>", {"CdefStrengths 1..8 (default 1: no tile",
@@ -854,6 +887,13 @@ void print_usage(std::ostream& out) {
                            "matrix for level 0 before the key frame (implies",
                            "--video-qm).  Pinned dav2d rejects QM OBUs; gate",
                            "with avmdec"});
+  item("--video-tcq", {"Opt-in §5.4.8/§5.20.7.27 trellis-coded quantisation:",
+                       "enable_tcq = 1 with choose_tcq_per_frame = 1, a per-frame",
+                       "allow_tcq bit, luma TX_CLASS_2D trellis levels and the",
+                       "§7.14.4 extra dequant shift.  Default off"});
+  item("--video-cctx", {"Opt-in §5.4.8/§7.14.6 cross-component transform:",
+                        "enable_cctx = 1, per-block cctx_type on plane 1 and",
+                        "the joint U/V dequant rotation.  Default off"});
   item("--video-grain", {"Opt-in §5.14 film grain signalling: sequence header",
                          "film_grain_params_present = 1, a film grain OBU per",
                          "changed model, and §5.18.10.1 per-frame config",
@@ -867,6 +907,13 @@ void print_usage(std::ostream& out) {
   item("--video-idtx", {"Opt-in §5.4.8 enable_idtx_intra with the 2-D",
                         "identity TX type (9) in the --video-tx-search",
                         "candidate set"});
+  item("--video-mrl", {"Opt-in §5.4.5 enable_mrls: directional luma intra",
+                       "searches mrl_index 1..3 (and the secondary line) with",
+                       "the §7.13.2.1 extra reference rows/columns.  Needs",
+                       "--video-intra-full for a non-zero mrl_index; CPU only"});
+  item("--video-ist", {"Opt-in §5.4.8 enable_intra_ist: luma intra residuals",
+                       "code sec_tx_type and the §7.15.3 secondary transform",
+                       "(inter IST stays unsignalled).  CPU only"});
   item("--video-idtx-1d", {"Rejected: the one-axis V/H_DCT..V/H_FLIPADST",
                            "types need dc_sign_horz_vert and the",
                            "class-specific scans, and pinned dav2d rejects",
@@ -887,10 +934,12 @@ void print_usage(std::ostream& out) {
                                     "NumTotalRefs/ref_frame_idx derived from",
                                     "the slot state (flat P, B frames,",
                                     "--video-tlayers)"});
-  item("--video-drl-reorder", {"Rejected: not decoder-gated yet",
-                               "(docs/negative-results.md)"});
+  item("--video-drl-reorder", {"§5.4.6 DRL_REORDER_CONSTRAINT: enable the",
+                               "§7.12.2.19 MV-stack reorder (see",
+                               "--video-drl-reorder-always)"});
   item("--video-drl-reorder-always", {"DRL_REORDER_ALWAYS; implies the reorder",
-                                      "flag and is rejected for the same reason"});
+                                      "flag and sorts every block with at",
+                                      "least two nearest candidates"});
   item("--rc <mode>", {"Per-frame rate control: cqp|crf|vbr (default cqp, the",
                        "fixed --qp stream)"});
   item("--crf <V>", {"--rc crf quality 0..63 (default 32); owns base_q_idx",
@@ -940,6 +989,13 @@ void print_usage(std::ostream& out) {
                           "compare against it)"});
   item("--video-recon <file>", {"Video: write the encoder reconstruction Y4M"});
   item("--video-force-single", {"Video: one 64x64 leaf per superblock"});
+  item("--video-sb128", {"Video: 128x128 superblocks (§5.4.3",
+                         "use_128x128_superblock); leaves stay <= 64x64"});
+  item("--video-sb256", {"Video: 256x256 superblocks (§5.4.3",
+                         "use_256x256_superblock); leaves stay <= 64x64"});
+  item("--video-ext-partitions", {"Video: extended/uneven 4-way partitions",
+                                  "(§5.4.3 enable_ext_partitions); leaves",
+                                  "stay >= 8x8 and own their chroma"});
   item("--video-min-block <N>",
        {"Video: minimum partition block size, 8..64 (default 16); sub-8 leaves",
         "need shared-chroma prediction, which this path does not implement"});
@@ -2104,6 +2160,16 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-sdp") {
+      options.video_sdp = true;
+      continue;
+    }
+
+    if (argument == "--video-ddt") {
+      options.video_ddt = true;
+      continue;
+    }
+
     if (argument == "--video-tx-lambda") {
       if (i + 1 >= argc) {
         error = "missing value after '--video-tx-lambda'";
@@ -2195,6 +2261,16 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-palette") {
+      options.video_palette = true;
+      continue;
+    }
+
+    if (argument == "--video-ibc") {
+      options.video_ibc = true;
+      continue;
+    }
+
     if (argument == "--video-opfl") {
       options.video_opfl = true;
       continue;
@@ -2212,6 +2288,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--video-tip") {
       options.video_tip = true;
+      continue;
+    }
+
+    if (argument == "--video-tip-no-hole-fill") {
+      options.video_tip_no_hole_fill = true;
       continue;
     }
 
@@ -2310,6 +2391,16 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-tcq") {
+      options.video_tcq = true;
+      continue;
+    }
+
+    if (argument == "--video-cctx") {
+      options.video_cctx = true;
+      continue;
+    }
+
     if (argument == "--video-grain") {
       options.video_grain = true;
       continue;
@@ -2337,6 +2428,16 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--video-idtx") {
       options.video_idtx = true;
+      continue;
+    }
+
+    if (argument == "--video-mrl") {
+      options.video_mrl = true;
+      continue;
+    }
+
+    if (argument == "--video-ist") {
+      options.video_ist = true;
       continue;
     }
 
@@ -2441,6 +2542,21 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--video-force-single") {
       options.video_force_single = true;
+      continue;
+    }
+
+    if (argument == "--video-sb128") {
+      options.video_sb128 = true;
+      continue;
+    }
+
+    if (argument == "--video-sb256") {
+      options.video_sb256 = true;
+      continue;
+    }
+
+    if (argument == "--video-ext-partitions") {
+      options.video_ext_partitions = true;
       continue;
     }
 
@@ -2832,12 +2948,13 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "vbr (where --qp is the statistics-pass anchor)";
       return ParseStatus::kError;
     }
-    if (options.video_drl_reorder) {
-      error = "--video-drl-reorder is not decoder-gated yet: the pinned "
-              "decoder disagrees with the encoder MV-stack order on some "
-              "sub-64x64 blocks (docs/negative-results.md)";
-      return ParseStatus::kError;
-    }
+    // --video-drl-reorder is decoder-gated: the sequence header codes
+    // disable_drl_reorder = 0 / constrain_drl_reorder = 1.  The pinned dav2d
+    // suppresses the §7.12.2.19 sort for a single reference within two POCs
+    // (its high-priority-TMVP term is not gated by use_ref_frame_mvs), so the
+    // CONSTRAINT mode is bit-exact but inert on the low-delay P surface;
+    // --video-drl-reorder-always exercises the transform.  Both are pinned by
+    // src/pipeline/video/gate_video_drl_reorder.sh.
     if (options.video_morph) {
       // §5.20.5.4/§7.13.3.26: the morph carrier signals the screen-content +
       // IBC mode-info path on the intra keyframe, so it needs a single-tile
@@ -2875,33 +2992,83 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
                 "not wired with --avg-cdf/--cdf-continuity";
         return ParseStatus::kError;
       }
+      if (options.video_drl_reorder_always) {
+        error = "--video-morph codes use_intrabc and §7.12.2.19 "
+                "DRL_REORDER_ALWAYS reorders the decoder's BV stack, which "
+                "the IBC stack builder does not implement (CONSTRAINT is "
+                "exact)";
+        return ParseStatus::kError;
+      }
+      if (options.video_segmentation || options.video_per_segment_q) {
+        error = "--video-morph is not wired with "
+                "--video-segmentation/--video-per-segment-q";
+        return ParseStatus::kError;
+      }
     }
-    // Ungated reproducers for the two rejected temporal modes (same convention
-    // as AV2ENC_ENABLE_UNGATED_CDF_CONTINUITY).
-    const bool ungated_opfl =
-        std::getenv("AV2ENC_ENABLE_UNGATED_OPFL") != nullptr;
-    const bool ungated_refinemv =
-        std::getenv("AV2ENC_ENABLE_UNGATED_REFINEMV") != nullptr;
-    if (ungated_opfl) {
-      options.video_opfl = true;
-    }
-    if (ungated_refinemv) {
-      options.video_refine_mv = true;
-    }
-    if (options.video_opfl && !ungated_opfl) {
-      // The syntax and §7.13.3.8-.12 application are implemented (see
-      // src/pipeline/video/video_frame.cpp), but the refined chroma
-      // prediction differs from pinned dav2d on 2 samples (1 LSB) of the
-      // 640x360 pan clip.  Keep it rejected by name; the env override above
-      // reproduces the mismatch.
-      error = "--video-opfl is not decoder-exact yet: the §7.13.3.8-.12 "
-              "chroma prediction differs from pinned dav2d by 2 samples "
-              "(1 LSB) on 640x360.  Reproducer: "
-              "AV2ENC_ENABLE_UNGATED_OPFL=1 av2enc pan.y4m --video "
-              "--b-frames 1 --video-compound --video-opfl --video-recon "
-              "recon.y4m, then dav2d --strict 1 (recon != decoded).  See "
-              "docs/negative-results.md";
-      return ParseStatus::kError;
+    // §5.20.8 palette / §5.20.5.3-.4 general IBC on the intra keyframe.  Both
+    // share the single-tile screen-content carrier and are rejected by name on
+    // surfaces where their cache/ring or CDF state would not match the
+    // decoder.
+    if (options.video_palette || options.video_ibc) {
+      const char* tool = options.video_palette ? "--video-palette"
+                                               : "--video-ibc";
+      if (options.video_gpu) {
+        error = std::string(tool) +
+                " is CPU-only: the CUDA M2 backend has no screen-content "
+                "mode-info path";
+        return ParseStatus::kError;
+      }
+      if (options.video_lossless) {
+        error = std::string(tool) +
+                " is not applied by the --video-lossless writer";
+        return ParseStatus::kError;
+      }
+      if (options.tiles != "1x1") {
+        error = std::string(tool) + " is gated on a single tile";
+        return ParseStatus::kError;
+      }
+      if (options.b_frames != 0 || options.video_tlayers != 0 ||
+          options.video_tip || options.video_long_term || options.video_olk ||
+          options.video_leading != 0 || options.video_sef ||
+          options.video_switch || options.video_ras) {
+        error = std::string(tool) +
+                " is gated on the plain key+P chain: it cannot be combined "
+                "with --b-frames, --video-tlayers, --video-tip or the "
+                "frame-type wrapper modes";
+        return ParseStatus::kError;
+      }
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = std::string(tool) +
+                " is gated on 8-bit 4:2:0 (the format video core has no "
+                "screen-content syntax)";
+        return ParseStatus::kError;
+      }
+      if (options.avg_cdf || options.cdf_continuity) {
+        error = std::string(tool) +
+                " uses per-frame §9.3 palette/IBC CDFs; it is not wired with "
+                "--avg-cdf/--cdf-continuity";
+        return ParseStatus::kError;
+      }
+      if (options.video_palette && options.video_tx_search) {
+        error = "--video-palette codes eob=0 palette leaves and is not wired "
+                "with --video-tx-search (TX_MODE_SELECT needs a real luma TX "
+                "partition per leaf)";
+        return ParseStatus::kError;
+      }
+      if (options.video_ibc && options.video_drl_reorder_always) {
+        error = "--video-ibc codes use_intrabc and §7.12.2.19 "
+                "DRL_REORDER_ALWAYS also reorders the decoder's BV stack, "
+                "which the IBC stack builder does not implement "
+                "(--video-drl-reorder CONSTRAINT is exact)";
+        return ParseStatus::kError;
+      }
+      if (options.video_ibc &&
+          (options.video_segmentation || options.video_per_segment_q)) {
+        error = "--video-ibc is not wired with "
+                "--video-segmentation/--video-per-segment-q (the per-SB "
+                "delta-Q state and the IBC skip block disagree)";
+        return ParseStatus::kError;
+      }
     }
     if (options.video_bru) {
       // §7.12.2/§7.22 BRU needs enable_bru/use_bru and the BRU tile mode.
@@ -2951,16 +3118,6 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         error = "--video-ref-mvs is gated on 8-bit 4:2:0";        return ParseStatus::kError;
       }
     }
-    if (options.video_refine_mv && !ungated_refinemv) {
-      error = "--video-refine-mv is not decoder-exact yet: the §7.13.3.3-.6 "
-              "refined luma prediction differs from pinned dav2d on sparse "
-              "samples (1..3 LSB) even though every block parses.  "
-              "Reproducer: AV2ENC_ENABLE_UNGATED_REFINEMV=1 av2enc pan.y4m "
-              "--video --b-frames 1 --video-compound --video-refine-mv "
-              "--video-recon recon.y4m, then dav2d --strict 1.  See "
-              "docs/negative-results.md";
-      return ParseStatus::kError;
-    }
     if (options.video_compound_near_near) {
       if (!options.video_compound) {
         error = "--video-compound-near-near needs --video-compound";
@@ -2976,6 +3133,17 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         error = "--video-compound-near-near is CPU-only: the CUDA compound "
                 "backend implements the GLOBAL_GLOBALMV subset";        return ParseStatus::kError;
       }
+    }
+    if ((options.video_opfl || options.video_refine_mv) &&
+        !options.video_compound_near_near && !options.video_gpu) {
+      // Both tools predict from a non-GLOBALMV compound block
+      // (§5.20.7.6 use_optflow, §5.20.7.17 refine-MV), which only the
+      // NEAR_NEARMV carrier codes.  --video-gpu reports its own by-name
+      // rejection below instead.
+      error = "--video-opfl/--video-refine-mv need --video-compound-near-near: "
+              "the temporal refinement tools only run on a NEAR_NEARMV "
+              "compound block";
+      return ParseStatus::kError;
     }
     if (options.b_frames != 0 && options.b_frames > 6) {
       error = "--b-frames supports 1..6 B frames per GOP";
@@ -3216,6 +3384,87 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
     }
+    if (options.video_mrl || options.video_ist) {
+      if (options.video_gpu) {
+        error = "--video-mrl/--video-ist are CPU-only: the CUDA video backend "
+                "does not signal the sequence bits or the per-block syntax";
+        return ParseStatus::kError;
+      }
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = "--video-mrl/--video-ist are wired for 8-bit 4:2:0";
+        return ParseStatus::kError;
+      }
+      if (options.tiles != "1x1") {
+        error = "--video-mrl/--video-ist do not compose with --tiles: the "
+                "tiled sequence-header writer is a separate copy";
+        return ParseStatus::kError;
+      }
+      if (options.svc_given) {
+        error = "--video-mrl/--video-ist do not compose with --svc-layers";
+        return ParseStatus::kError;
+      }
+    }
+    if (options.video_ist && options.video_qm) {
+      error = "--video-ist does not compose with --video-qm: the §7.15.3 "
+              "inverse needs the per-coefficient q2 dequantizer";
+      return ParseStatus::kError;
+    }
+    if (options.video_sdp) {
+      if (options.video_gpu) {
+        error = "--video-sdp is CPU-only: the CUDA video backend does not "
+                "emit the SDP luma/chroma trees";
+        return ParseStatus::kError;
+      }
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = "--video-sdp is wired for 8-bit 4:2:0";
+        return ParseStatus::kError;
+      }
+      if (options.tiles != "1x1") {
+        error = "--video-sdp is wired for a single tile";
+        return ParseStatus::kError;
+      }
+      if (options.b_frames != 0 || options.video_tlayers != 0 ||
+          options.video_long_term || options.video_olk ||
+          options.video_leading != 0 || options.video_sef ||
+          options.video_switch || options.video_ras || options.video_tip ||
+          options.svc_given) {
+        error = "--video-sdp does not compose with the B/temporal-layer/"
+                "random-access/TIP/SVC frame schedules";
+        return ParseStatus::kError;
+      }
+      if (options.video_morph || options.video_cfl || options.video_mhccp) {
+        error = "--video-sdp does not compose with --video-morph/--video-cfl/"
+                "--video-mhccp: the SDP keyframe chroma tree has its own mode "
+                "and CflAllowedInSdp gating";
+        return ParseStatus::kError;
+      }
+      if (options.video_segmentation || options.video_delta_q ||
+          options.video_per_segment_q) {
+        error = "--video-sdp does not compose with segmentation/delta-Q";
+        return ParseStatus::kError;
+      }
+    }
+    if (options.video_ddt) {
+      if (options.video_gpu) {
+        error = "--video-ddt is CPU-only: the CUDA video backend does not "
+                "apply the DDTX/FDDT kernels";
+        return ParseStatus::kError;
+      }
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = "--video-ddt is wired for 8-bit 4:2:0";
+        return ParseStatus::kError;
+      }
+      if (options.video_lossless) {
+        error = "--video-ddt does not compose with --video-lossless: a "
+                "lossless block never signals ADST/FDST";
+        return ParseStatus::kError;
+      }
+      if (options.video_tip || options.svc_given) {
+        error = "--video-ddt does not compose with --video-tip or "
+                "--svc-layers: those header writers do not signal "
+                "enable_inter_ddt";
+        return ParseStatus::kError;
+      }    }
     if (options.video_lossless) {
       if (options.video_gpu) {
         error = "--video-lossless is CPU-only";
@@ -3240,6 +3489,8 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       const std::pair<bool, const char*> not_applied[] = {
           {options.video_qm, "--video-qm"},
           {options.video_user_qm, "--video-user-qm"},
+          {options.video_tcq, "--video-tcq"},
+          {options.video_cctx, "--video-cctx"},
           {options.video_grain, "--video-grain"},
           {options.video_tx_search, "--video-tx-search"},
           {options.video_intra_full, "--video-intra-full"},
@@ -3256,6 +3507,9 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
           {options.video_warp, "--video-warp"},
           {options.video_bawp, "--video-bawp"},
           {options.video_tip, "--video-tip"},
+          {options.video_mrl, "--video-mrl"},
+          {options.video_ist, "--video-ist"},
+          {options.video_tip_no_hole_fill, "--video-tip-no-hole-fill"},
           {options.video_compound, "--video-compound"},
           {options.video_inter_residual, "--video-inter-residual"},
           {options.video_subpel_eighth, "--video-subpel-eighth"},
@@ -3275,6 +3529,55 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         if (!set) continue;
         error = std::string(flag) +
                 " is not applied by the --video-lossless writer";
+        return ParseStatus::kError;
+      }
+    }
+    if (options.video_tcq || options.video_cctx) {
+      const char* tool = options.video_tcq ? "--video-tcq" : "--video-cctx";
+      if (options.video_gpu) {
+        error = std::string(tool) + " is CPU-only: the CUDA video backend has "
+                "no TCQ/CCTX entropy path";
+        return ParseStatus::kError;
+      }
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = std::string(tool) + " is wired for the 8-bit 4:2:0 video core "
+                "only; the --bit-depth/--chroma format cores keep the "
+                "historical sequence header";
+        return ParseStatus::kError;
+      }
+      if (options.video_qm || options.video_user_qm) {
+        error = std::string(tool) + " does not compose with --video-qm: the "
+                "per-coefficient QM quantiser is not the scalar step the "
+                "TCQ/CCTX search reconstructs with";
+        return ParseStatus::kError;
+      }
+      if (options.video_segmentation || options.video_delta_q ||
+          options.video_per_segment_q) {
+        error = std::string(tool) + " does not compose with segmentation/"
+                "delta-Q: the per-block quantiser differs from the frame "
+                "base_q_idx the TCQ/CCTX decision uses";
+        return ParseStatus::kError;
+      }
+      if (options.video_lossless || options.qp == 0) {
+        error = std::string(tool) + " does not compose with lossless "
+                "quantisation (CodedLossless forces allow_tcq = 0 and "
+                "is_cctx_allowed() = 0)";
+        return ParseStatus::kError;
+      }
+      if (options.tiles != "1x1") {
+        error = std::string(tool) + " does not compose with --tiles > 1x1: "
+                "the tiled sequence/frame header writer does not signal the "
+                "TCQ/CCTX flags";
+        return ParseStatus::kError;
+      }
+      if (frame_modes != 0 || options.video_tip) {
+        error = std::string(tool) + " does not compose with the frame-type "
+                "wrapper modes: their header writers do not signal allow_tcq "
+                "or the CCTX sequence bit";
+        return ParseStatus::kError;
+      }
+      if (options.svc_given) {
+        error = std::string(tool) + " does not compose with --svc-layers";
         return ParseStatus::kError;
       }
     }
@@ -3467,6 +3770,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       return ParseStatus::kError;
     }
 
+    if (options.video_tip_no_hole_fill && !options.video_tip) {
+      error = "--video-tip-no-hole-fill is the A/B control for --video-tip";
+      return ParseStatus::kError;
+    }
+
     if (options.video_gpu) {
       // The CUDA M2 backend mirrors the flat one-reference P chain.  Every
       // option that builds a different ref/header model is rejected by name
@@ -3518,6 +3826,12 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       if (options.video_morph) {
         return reject_gpu("--video-morph (IBC keyframe mode info)");
       }
+      if (options.video_palette) {
+        return reject_gpu("--video-palette (palette keyframe mode info)");
+      }
+      if (options.video_ibc) {
+        return reject_gpu("--video-ibc (IBC keyframe mode info)");
+      }
       if (options.video_compound_interintra) {
         return reject_gpu("--video-compound-interintra (§5.20.7.14 motion "
                           "mode)");
@@ -3534,6 +3848,8 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         flag_given(options, "--video-mv-precision") ||
         flag_given(options, "--video-inter-residual") ||
         flag_given(options, "--video-tx-search") ||
+        flag_given(options, "--video-sdp") ||
+        flag_given(options, "--video-ddt") ||
         flag_given(options, "--video-tx-lambda") ||
         flag_given(options, "--video-deblock") ||
         flag_given(options, "--video-segmentation") ||
@@ -3545,12 +3861,17 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         flag_given(options, "--video-warp") ||
         flag_given(options, "--video-bawp") ||
         flag_given(options, "--video-morph") ||
+        flag_given(options, "--video-palette") ||
+        flag_given(options, "--video-ibc") ||
         flag_given(options, "--video-opfl") ||
         flag_given(options, "--video-refine-mv") ||
         flag_given(options, "--video-compound-near-near") ||
         flag_given(options, "--video-tip") ||
+        flag_given(options, "--video-tip-no-hole-fill") ||
         flag_given(options, "--video-intra-full") ||
         flag_given(options, "--video-cfl") ||
+        flag_given(options, "--video-mrl") ||
+        flag_given(options, "--video-ist") ||
         flag_given(options, "--video-mhccp") ||
         flag_given(options, "--video-qm") ||
         flag_given(options, "--video-tlayers") ||
@@ -3565,6 +3886,9 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         flag_given(options, "--video-switch") ||
         flag_given(options, "--video-ras") ||
         flag_given(options, "--video-force-single") ||
+        flag_given(options, "--video-sb128") ||
+        flag_given(options, "--video-sb256") ||
+        flag_given(options, "--video-ext-partitions") ||
         flag_given(options, "--video-min-block") ||
         flag_given(options, "--video-max-depth") ||
         flag_given(options, "--video-me-range") ||
@@ -3911,6 +4235,37 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     if (options.still_depth == 0) {
       error = "--still-depth 0 cannot be combined with a 128x128 superblock "
               "(the 128 root must split)";
+      return ParseStatus::kError;
+    }
+  }
+  if (options.video_sb128 || options.video_sb256) {
+    if (options.video_sb128 && options.video_sb256) {
+      error = "--video-sb128 and --video-sb256 are mutually exclusive";
+      return ParseStatus::kError;
+    }
+    if (options.video_gpu) {
+      error = "--video-sb128/--video-sb256 are CPU-only; --video-gpu keeps "
+              "64x64 superblocks";
+      return ParseStatus::kError;
+    }
+    if (options.svc_given) {
+      error = "--video-sb128/--video-sb256 do not compose with SVC layers";
+      return ParseStatus::kError;
+    }
+  }
+  if (options.video_ext_partitions) {
+    if (options.video_gpu) {
+      error = "--video-ext-partitions is CPU-only; --video-gpu keeps the "
+              "base partition set";
+      return ParseStatus::kError;
+    }
+    if (options.svc_given) {
+      error = "--video-ext-partitions does not compose with SVC layers";
+      return ParseStatus::kError;
+    }
+    if (options.video_sb256) {
+      error = "--video-ext-partitions does not compose with "
+              "--video-sb256 (use --video-sb128)";
       return ParseStatus::kError;
     }
   }
@@ -4402,6 +4757,8 @@ int run_video_format_encode(const Options& options) {
       {options.video_gdf, "--video-gdf"},
       {options.tiles != "1x1", "--tiles"},
       {options.video_tx_search, "--video-tx-search"},
+      {options.video_tcq, "--video-tcq"},
+      {options.video_cctx, "--video-cctx"},
       {options.video_intra_full, "--video-intra-full"},
       {options.video_gme, "--video-gme"},
       {options.video_warp, "--video-warp"},
@@ -4578,6 +4935,9 @@ int run_video_format_encode(const Options& options) {
   video_options.enable_ref_frame_mvs = options.video_ref_mvs;
   video_options.ref_mvs_stress = options.video_ref_mvs_stress;
   video_options.force_single_block = options.video_force_single;
+  video_options.sb128 = options.video_sb128;
+  video_options.sb256 = options.video_sb256;
+  video_options.ext_partitions = options.video_ext_partitions;
   video_options.min_block_size = options.video_min_block;
   video_options.max_partition_depth = options.video_max_depth;
   if (format.chroma == av2enc::fmt::ChromaFormat::k422 &&
@@ -4856,6 +5216,8 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_refinemv = options.video_refine_mv;
   video_options.b_frames = static_cast<int>(options.b_frames);
   video_options.enable_inter_residual = options.video_inter_residual;
+  video_options.enable_sdp = options.video_sdp;
+  video_options.enable_inter_ddt = options.video_ddt;
   video_options.enable_tx_search = options.video_tx_search;
   video_options.tx_rd_lambda = options.video_tx_lambda;
   video_options.enable_deblock = options.video_deblock;
@@ -4868,16 +5230,24 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_warp = options.video_warp;
   video_options.enable_bawp = options.video_bawp;
   video_options.enable_morph = options.video_morph;
+  video_options.enable_palette = options.video_palette;
+  video_options.enable_ibc = options.video_ibc;
   video_options.enable_interintra = options.video_compound_interintra;
   video_options.enable_ref_frame_mvs = options.video_ref_mvs;
-  video_options.ref_mvs_stress = options.video_ref_mvs_stress;  video_options.enable_tip = options.video_tip;
+  video_options.ref_mvs_stress = options.video_ref_mvs_stress;
+  video_options.enable_tip = options.video_tip;
+  video_options.tip_hole_fill = !options.video_tip_no_hole_fill;
   video_options.enable_intra_full = options.video_intra_full;
   video_options.enable_cfl = options.video_cfl;
   video_options.enable_mhccp = options.video_mhccp;
   video_options.enable_qm = options.video_qm;
   video_options.user_qm = options.video_user_qm;
+  video_options.enable_tcq = options.video_tcq;
+  video_options.enable_cctx = options.video_cctx;
   video_options.film_grain = options.video_grain;
   video_options.enable_idtx_intra = options.video_idtx;
+  video_options.enable_mrl = options.video_mrl;
+  video_options.enable_ist = options.video_ist;
   video_options.me_subpel_eighth = options.video_subpel_eighth;
   video_options.mv_precision = options.video_mv_precision;
   video_options.drl_reorder = options.video_drl_reorder;
@@ -4891,6 +5261,9 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.temporal_layers = options.video_tlayers;
   video_options.tlayer_drop = options.video_tlayer_drop;
   video_options.force_single_block = options.video_force_single;
+  video_options.sb128 = options.video_sb128;
+  video_options.sb256 = options.video_sb256;
+  video_options.ext_partitions = options.video_ext_partitions;
   video_options.min_block_size = options.video_min_block;
   video_options.max_partition_depth = options.video_max_depth;
   video_options.me_range = options.video_me_range;

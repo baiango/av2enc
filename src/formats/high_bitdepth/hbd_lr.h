@@ -193,6 +193,18 @@ inline bool plan_lr_plane(const HbdLrFrame16& frame,
       plane == 0 ? kWienerNsConfigY : kWienerNsConfigUv;
   const int n_taps = plane == 0 ? kWienerNsTapsY : kWienerNsTapsUv;
   const int subset = plane == 0 ? 3 : 2;
+  // Chroma-from-luma taps.  4:2:0 keeps the full §7.20.3 tap set.  The pinned
+  // dav2d's CfL luma sampling for a chroma plane with `SubsamplingY == 0`
+  // (4:2:2 and 4:4:4) diverges from §7.20.3 in two ways that a conforming
+  // encoder cannot infer from the spec: both above-stripe luma lines collapse
+  // onto `LumaStripeStartY - 2` (matched in `wiener_core.h`), and the luma
+  // taps of the first column of each 64-sample block column read the
+  // already-restored luma.  The second one has no spec-side equivalent, and a
+  // third divergence appears when deblocking precedes the restoration.  Signal
+  // the chroma-only subset (0) so the filter itself stays bit-exact; the
+  // chroma coefficients are then fitted without the luma terms.
+  const bool use_cfl = plane == 0 || (frame.sub_x == 1 && frame.sub_y == 1);
+  const int max_cols = use_cfl ? n_cols : kWienerNsShortCoeffs;
 
   plane_cfg->frame_type = 0;
   plane_cfg->unit_type.assign(
@@ -215,7 +227,6 @@ inline bool plan_lr_plane(const HbdLrFrame16& frame,
       double b[lr_detail::kMaxCols] = {};
       int samples = 0;
       std::int64_t identity_sse = 0;
-      const int max_cols = n_cols;
       for (int row = 0; row < core.mi_rows; ++row) {
         for (int col = 0; col < core.mi_cols; ++col) {
           LrBlock blk;
@@ -242,7 +253,7 @@ inline bool plan_lr_plane(const HbdLrFrame16& frame,
                               m;
                 diff[config[i][2]] += static_cast<double>(d);
               }
-              if (plane > 0) {
+              if (plane > 0 && use_cfl) {
                 const int m_luma = lr_get_luma_sample_t(core, blk, sx, sy);
                 for (int i = 0; i < n_taps; ++i) {
                   const int dy = config[i][0];
@@ -275,7 +286,7 @@ inline bool plan_lr_plane(const HbdLrFrame16& frame,
         coeffs[j] = static_cast<std::int16_t>(
             wiener_ns_clip_coeff(plane > 0, j, lr_detail::quantize(x[j])));
       }
-      if (plane > 0) {
+      if (plane > 0 && use_cfl) {
         // §5.20.10.6 signals one value per mirrored pair for j >= 6.
         for (int j = kWienerNsShortCoeffs; j + 1 < kWienerNsCoeffStride;
              j += 2) {
@@ -303,8 +314,9 @@ inline bool plan_lr_plane(const HbdLrFrame16& frame,
                                          kWienerNsCoeffStride) +
                                  static_cast<std::size_t>(j)] = coeffs[j];
         }
-        plane_cfg->unit_subset[index] = static_cast<std::uint8_t>(subset);
-        plane_cfg->unit_uv_sym[index] = plane > 0 ? 1 : 0;
+        plane_cfg->unit_subset[index] =
+            static_cast<std::uint8_t>(use_cfl ? subset : 0);
+        plane_cfg->unit_uv_sym[index] = (plane > 0 && use_cfl) ? 1 : 0;
       }
     }
   }

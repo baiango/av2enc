@@ -240,6 +240,88 @@ void test_chroma_from_luma_and_cfl() {
   std::cout << "  chroma from luma: cfl_ds_filter_index 0..3\n";
 }
 
+void test_cfl_stripe_start_422() {
+  // 64x128 luma in 4:2:2 (SubsamplingY == 0), run through the shared core
+  // directly: `restoration_frame()` is the 4:2:0-only wrapper.  The chroma
+  // stripe starting at row 56 has its first line above at row 55; the pinned
+  // decoder's CfL row buffer aliases that line onto row 54, so a luma tap
+  // above the stripe must read row 54.  Distinct row values make a wrong
+  // choice visible.
+  TestFrame f = make_frame(16, 32);
+  f.sub_x = 1;
+  f.sub_y = 0;
+  f.allocate();
+  for (int p = 0; p < 3; ++p) {
+    for (int y = 0; y < f.height[p]; ++y) {
+      for (int x = 0; x < f.width[p]; ++x) {
+        int v = 60;
+        if (p == 0) {
+          if (y == 54) v = 10;
+          else if (y == 55) v = 30;
+          else if (y == 56) v = 50;
+          else if (y == 57) v = 90;
+          else if (y > 57) v = 120;
+        }
+        f.at(f.cdef[p], p, y, x) = static_cast<std::uint8_t>(v);
+        f.at(f.curr[p], p, y, x) = static_cast<std::uint8_t>(v + 100);
+      }
+    }
+  }
+  LoopRestorationParams params;
+  LrTest tst;
+  setup_params(f, 64, kRestoreWienerNs, &params, &tst);
+  // Chroma units are per plane samples, not 4:2:0 samples.
+  for (int pl = 1; pl < 3; ++pl) {
+    const int rows = units_for(64, f.height[pl]);
+    const int cols = units_for(64, f.width[pl]);
+    params.unit_rows[pl] = rows;
+    params.unit_cols[pl] = cols;
+    tst.type[pl].assign(static_cast<std::size_t>(rows * cols),
+                        static_cast<std::uint8_t>(kRestoreWienerNs));
+    tst.coeffs[pl].assign(
+        static_cast<std::size_t>(rows * cols) * kWienerNsCoeffStride, 0);
+    params.unit_type[pl] = tst.type[pl].data();
+    params.unit_coeffs[pl] = tst.coeffs[pl].data();
+  }
+  for (int pl = 1; pl < 3; ++pl) {
+    std::int16_t* c = tst.coeffs[pl].data();
+    c[6 + 0] = 64;   // luma tap (1,0)
+    c[6 + 1] = 64;   // luma tap (-1,0)
+    c[6 + 6] = 64;   // luma tap (-1,1)
+    c[6 + 7] = 64;   // luma tap (1,-1)
+  }
+
+  LrCoreFrame core{};
+  for (int p = 0; p < 3; ++p) {
+    core.plane[p].curr = f.curr[p].data();
+    core.plane[p].curr_stride = f.stride[p];
+    core.plane[p].cdef = f.cdef[p].data();
+    core.plane[p].cdef_stride = f.stride[p];
+    core.plane[p].dst = f.lr[p].data();
+    core.plane[p].dst_stride = f.stride[p];
+    core.plane[p].unit_type = params.unit_type[p];
+    core.plane[p].unit_cols = params.unit_cols[p];
+    core.plane[p].unit_rows = params.unit_rows[p];
+    core.plane[p].unit_coeffs = params.unit_coeffs[p];
+    core.unit_size[p] = params.unit_size[p];
+    core.frame_type[p] = params.frame_type[p];
+  }
+  core.mi_cols = f.mi_cols;
+  core.mi_rows = f.mi_rows;
+  core.sub_x = f.sub_x;
+  core.sub_y = f.sub_y;
+  core.bit_depth = 8;
+  for (int p = 0; p < 3; ++p) lr_copy_plane_t(core, p);
+  for (int p = 0; p < 3; ++p) lr_plane_t(core, p);
+
+  TestFrame want;
+  NaiveLrFrame n;
+  run_naive(f, params, n, &want);
+  CHECK(compare_all(f, want, "4:2:2 CfL stripe start matches the oracle"),
+        "4:2:2 CfL stripe start matches the oracle");
+  std::cout << "  chroma from luma: 4:2:2 above-stripe line aliases row ss-2\n";
+}
+
 void test_stripe_sourcing() {
   // 64x128 luma: two 64-line stripes (stripe 0 covers rows 0..55).
   TestFrame f = make_frame(16, 32);
@@ -736,6 +818,7 @@ int main() {
   test_identity_copy();
   test_per_unit_filters();
   test_chroma_from_luma_and_cfl();
+  test_cfl_stripe_start_422();
   test_stripe_sourcing();
   test_frame_filters_and_subclass();
   test_class_grid_and_lookup();

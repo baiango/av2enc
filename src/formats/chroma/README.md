@@ -247,6 +247,18 @@ cores should call it rather than re-deriving these values.
 | `gate.sh` | dav2d `--strict 1` + 0-diff + golden gate |
 | `goldens/chroma_goldens.txt` | pinned IVF/decoded MD5s |
 
+## In-loop filter gap (8-bit non-4:2:0)
+
+This writer has no filter stage at all: it emits no `read_deblocking_filter()`,
+`cdef_params()`, `ccso_params()`, `lr_params()` or per-superblock filter
+syntax, and every `--still-deblock/--still-cdef/--still-ccso/--still-wiener/
+--still-chroma-lr/--still-gdf` request is rejected by name for the 8-bit
+format paths.  The 10-bit format writer (`src/formats/high_bitdepth/`) is the
+one that carries the §7.17-§7.20 chain; its chroma LR covers 4:2:2/4:4:4 (see
+`gate_10bit_filters.sh`).  Wiring the 8-bit writer means porting that plan,
+the header rows and the per-superblock hooks (the 10-bit chain is 10-bit
+sample-typed, so the 8-bit core is a separate, smaller port).
+
 ## Limitations
 
 * Streams are minimal format/gate streams, not a new production mode. They use

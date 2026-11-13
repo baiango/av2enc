@@ -12,8 +12,11 @@
 #   3. with every filter flag off the IVF MD5 is stable across runs.
 #
 # §7.18 CDEF, §7.19 CCSO, §7.20 Wiener NS / PC-Wiener and §7.20.5 GDF are
-# covered.  Chroma LR is exercised only at 4:2:0 (the 4:2:2/4:4:4 form is
-# rejected by the writer, see docs/negative-results.md).
+# covered.  Chroma LR is exercised at every chroma format.  At 4:2:2/4:4:4 the
+# writer signals the chroma-only Wiener subset (the CfL luma taps are not
+# decoder-exact there) and rejects `--still-chroma-lr --still-deblock`, so the
+# 4:2:2/4:4:4 "all" row is the deblock-free chain and a separate case asserts
+# the rejection.
 #
 # Env: AV2ENC_BIN, DAV2D, KEEP=1
 # Exit codes: 0 pass, 1 failure, 2 usage, 77 missing prerequisite.
@@ -145,14 +148,33 @@ for pair in 64x64 640x360; do
             run "$base"_wiener "$w" "$h" "$chroma" "$q" --still-wiener
             run "$base"_pcw "$w" "$h" "$chroma" "$q" --still-pc-wiener
             run "$base"_gdf "$w" "$h" "$chroma" "$q" --still-gdf
+            run "$base"_chroma_lr "$w" "$h" "$chroma" "$q" --still-chroma-lr
+            run "$base"_chroma_lr_cdef "$w" "$h" "$chroma" "$q" \
+                --still-cdef --still-ccso --still-chroma-lr
             if [ "$chroma" = "420" ]; then
-                run "$base"_chroma_lr "$w" "$h" "$chroma" "$q" --still-chroma-lr
                 run "$base"_all "$w" "$h" "$chroma" "$q" --still-deblock \
                     --still-cdef --still-ccso --still-wiener --still-gdf \
                     --still-chroma-lr
             else
-                run "$base"_all "$w" "$h" "$chroma" "$q" --still-deblock \
-                    --still-cdef --still-ccso --still-wiener --still-gdf
+                # Deblocking plus chroma LR is rejected at 4:2:2/4:4:4: the
+                # pinned decoder reads its chroma lossless mask out of bounds
+                # for the stripe at luma row 248 and skips the aliased blocks.
+                run "$base"_all "$w" "$h" "$chroma" "$q" \
+                    --still-cdef --still-ccso --still-wiener --still-gdf \
+                    --still-chroma-lr
+                if [ "$chroma" != "400" ]; then
+                    if "$BIN" "$TMP/src_${w}x${h}_${chroma}.y4m" \
+                            -o "$TMP/x.ivf" --still --bit-depth 10 \
+                            --chroma "$chroma" --qp "$q" \
+                            --still-deblock --still-chroma-lr \
+                            >/dev/null 2>&1; then
+                        echo "FAIL ${base}_deblock_chroma_lr: accepted" >&2
+                        failures=$((failures + 1))
+                    else
+                        printf 'PASS %-34s rejected\n' \
+                            "${base}_deblock_chroma_lr"
+                    fi
+                fi
             fi
         done
     done

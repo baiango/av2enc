@@ -101,7 +101,7 @@ not the §7.9 motion-field process and are not counted below.
 | §7.12.2.16 Single add derived (`FrameDistance` projection, `MAX_DR_PR_NUM`) | 7.12.2.16 / p437–438 | Projection-only subset | **WIRED** | `merge.cpp:301`, `project_mv` at `:61` | Trajectory branch (`use_ref_frame_mvs && enable_mv_traj` → `TrajMv` difference) missing, and `make_stack_params()` never sets `frame_distance`/`num_refs` (`video_frame.cpp:455-476`), so the process returns at `merge.cpp:307-309`. With one total reference every neighbour matches `RefFrame[0]` and takes the `search_stack` path anyway — so today this is a safe no-op, not a working projection. |
 | §7.12.2.17 Derive single ref MV candidate from TIP mode | 7.12.2.17 / p438 | none | **ABSENT** | — | — |
 | §7.12.2.18 TIP add derived (`SubMvs` linear MV, `get_tip_offsets`) | 7.12.2.18 / p438–439 | none | **ABSENT** | — | — |
-| §7.12.2.19 Sorting process (one move-to-front over `[0, numNearest)`, whole-record swap) | 7.12.2.19 / p439–440 | Normative transform exists and is gated; the wired sort is the **wrong** full selection sort | **COMPONENT** | `inter/drl_reorder/drl_reorder.cpp:116` (`reorder_stack`), `:72` (`use_sort`), gate 3 streams / 0 recon diffs incl. negative control; wired path `merge.cpp:455` (`sort_nearest`) | (a) never invoked: `video_headers.cpp:159` writes `disable_drl_reorder = 1`, `video_frame.cpp:473` and `video_syntax.cpp:1656` hard-code `DrlReorder::kDisabled`; (b) the wired implementation is a full selection sort, i.e. the historical desync (see below). |
+| §7.12.2.19 Sorting process (one move-to-front over `[0, numNearest)`, whole-record swap) | 7.12.2.19 / p439–440 | **WIRED** in `merge::build_mv_stack()` at step 17; the product path enables it with `--video-drl-reorder[-always]` | **WIRED** | `inter/merge/merge.cpp` (`sort_nearest`), `inter/drl_reorder/` (reference transform + unit pins), `gate_video_drl_reorder.sh` (360p depth 3: 18 swaps / depth 4: 74 swaps, 0 recon diffs, pinned MD5s) | The sort must run inside the stack build: the step-20 MVP-combination candidates are derived from the sorted prefix. The pinned dav2d also suppresses CONSTRAINT when the single reference is within two POCs (its high-priority-TMVP term omits the `use_ref_frame_mvs` guard); `drl_constraint_sort_suppressed()` mirrors that, so CONSTRAINT is exact but inert on low-delay P frames |
 | §7.12.2.20 Extra search process (clamp, global candidate, `>32` MVP combinations, warp bank, IBC candidates) | 7.12.2.20 / p440–442 | Global candidate + gated MVP combinations | **PARTIAL** | `merge.cpp:200-235` (global), `:508` (`insert_mvp_candidate`), gate in `mvp_combinations_allowed()` (`merge.cpp:760`) | Warp candidates (`WarpBankParams[ref]`, `gm_params[ref]`, two `Default_Warp_Params`) and the `use_intrabc` `add_to_ref_bv()` candidates are absent. Encoder additionally caps NEARMV indices at `min(count, 2)` for blocks with a dimension ≤ 32 (`video_frame.cpp:613-614`) — safe but leaves candidates unused. |
 | §7.12.2.21 Fill MVP from ref MV bank (`get_rmb_list_index`, key match, `check_rmb_cand`, out-of-frame rejection) | 7.12.2.21 / p442–443 | Full incl. `MAX_RMB_SB_HITS` bookkeeping | **COMPONENT** | `inter/temporal/ref_mv_bank.cpp:209` (`fill_mvp_from_ref_mv_bank`), `:56` (`get_rmb_list_index`), `:105` (`update_ref_mv_bank`), `:169` (`reset_ref_mv_bank`) | `enable_refmvbank = 0`; no caller; no per-SB bank reset/maintenance in the M2 frame loop. `MAX_REF_MV_STACK_SIZE` clamp documented as a deliberate deviation (6 vs `max_drl_bits_minus_1 + 2`). |
 | §7.12.2.22 Fill MVP from derived SMVP (`stack_match`, `max_drl_bits_minus_1 + 2` cap) | 7.12.2.22 / p443–444 | Exact | **WIRED** | `merge.cpp:474` (`fill_derived`) | Effectively empty in the baseline because no derived candidates are produced (`frame_distance == nullptr`). |
@@ -134,18 +134,17 @@ diffs). These are the places where flipping one flag in
 `video_headers.cpp:155-182` produces a stream the decoder parses but reconstructs
 differently.
 
-1. **DRL reorder — already proven.** `merge.cpp:455` `sort_nearest()` runs a full
-   selection sort over `[0, numNearest)`; §7.12.2.19 is a *single* move-to-front
-   (only `start == 0` is ever invoked). For weights `{1,2,3,4}` the encoder order
-   is `{4,3,2,1}` but the decoder's is `{4,2,3,1}`, so signalled index 2 means MV
-   `30` to the decoder and MV `20` to us. `src/encoder/m2/README.md`
-   ("Feature 2 status") records exactly this: `DRL_REORDER_CONSTRAINT` desyncs at
-   frame 2 of the 8×720p clip (first diff at (768,129)), `DRL_REORDER_ALWAYS`
-   desyncs at frame 7 with inter residual. The correct transform exists
-   (`drl_reorder.cpp:116`) and is `dav2d`-gated, but no M2 path calls it, and
-   `merge::choose_drl_index_for_mv()` (`merge.cpp:1436`) searches the
-   **pre**-reorder stack — with reordering on, the pre→post index mapping
-   (`drl::signal_index_for_pre`) is mandatory.
+1. **DRL reorder — fixed.** `merge::sort_nearest()` used to run a full
+   selection sort over `[0, numNearest)`; §7.12.2.19 is a *single* move-to-front.
+   For weights `{1,2,3,4}` the full sort produced `{4,3,2,1}` instead of
+   `{4,2,3,1}`, so signalled index 2 meant MV `30` to the decoder and MV `20` to
+   us. That transform now runs at step 17 inside `merge::build_mv_stack()` (a
+   post-build transform left the step-20 MVP-combination candidates in pre-sort
+   order, a second desync fixed at the same time) and is decoder-gated by
+   `gate_video_drl_reorder.sh`. The pinned dav2d additionally suppresses
+   `DRL_REORDER_CONSTRAINT` for a single reference within two POCs; the encoder
+   mirrors it, so `--video-drl-reorder` is exact-but-inert and
+   `--video-drl-reorder-always` exercises the sort.
 2. **Warp stack / warp samples.** `seq_enabled_motion_modes[LOCALWARP] = 1` or any
    `DeriveWrl = 1` path makes the decoder run §7.11.4, §7.12.2.3/.4/.9/.11 and
    §7.12.3. We implement none of them, so `WarpMvCount` (the `TileIsWarpCdf`

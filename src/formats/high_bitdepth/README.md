@@ -39,7 +39,7 @@ predictor uses the full §7.13.3.22 `Div_Lut` (4:2:2 chroma blocks such as
 | §7.17 deblock | `--still-deblock`, 10-bit 4:2:0/4:2:2/4:4:4/4:0:0 | `format_gate.sh` |
 | §7.18 CDEF | `--still-cdef[=strengths]`; strength search over the shared candidate ladder at 10-bit, per-64x64 `cdef_idx` when strengths >= 2 | `format_gate.sh` `10bit_*_cdef_*` (0-LSB recon) |
 | §7.19 CCSO | `--still-ccso` (band-offset and edge-classified fit) and `--still-ccso-edge` (force the edge table); per-plane offsets + per-unit `CcsoBlks` | `format_gate.sh` `10bit_*_ccso_*` (0-LSB recon) |
-| §7.20 Wiener NS | `--still-wiener` (luma, all product formats) and `--still-chroma-lr` (4:2:0 only) | `format_gate.sh` `10bit_*_wiener*` / `10bit_420_chroma_lr*` |
+| §7.20 Wiener NS | `--still-wiener` (luma, all product formats) and `--still-chroma-lr` (chroma, all product formats; 4:2:2/4:4:4 use the chroma-only subset and reject `--still-deblock`) | `format_gate.sh` `10bit_*_wiener*` / `10bit_*_chroma_lr*`, `gate_10bit_filters.sh` |
 | §7.20 PC-Wiener | `--still-pc-wiener` (luma, all product formats) | `format_gate.sh` `10bit_*_pc_wiener*` |
 | §7.20.5 GDF | `--still-gdf` (luma, header-only mode) | `format_gate.sh` `10bit_*_gdf*` |
 
@@ -59,10 +59,26 @@ Loop restoration keeps `CdefFrame` and `LrFrame` separate.  Luma Wiener NS is
 fitted per unit with a least-squares solve over the shared stripe-aware source
 sampler and re-evaluated with the exact integer filter; PC-Wiener uses the
 recovered §7.20.4 bank with a per-unit on/off decision; GDF runs after LR and
-reads `CdefFrame` (§7.20.1).  Chroma LR is gated at 4:2:0: the 4:2:2/4:4:4
-CfL path differs from `dav2d` by 1 LSB on a few stripe-boundary samples, so
-the writer rejects `--still-chroma-lr` there by name (repro in
-`docs/negative-results.md`).
+reads `CdefFrame` (§7.20.1).
+
+Chroma LR runs at every product format.  At 4:2:0 it signals the full §7.20.3
+chroma-from-luma tap set.  At 4:2:2/4:4:4 the writer signals the chroma-only
+Wiener subset and fits only the six chroma coefficients: pinned `dav2d`
+f9dafbc's CfL luma sourcing diverges from §7.20.3 in ways an encoder cannot
+infer (see the two `docs/negative-results.md` rows).  Two related constraints
+hold for that pair of formats:
+
+* the CfL above-stripe alias (`LumaStripeStartY - 2` for both lines above the
+  stripe) is reproduced in the shared core, so a full CfL unit would still be
+  exact without deblocking, but the in-place-restored 64-column boundary is
+  not;
+* `--still-chroma-lr --still-deblock` is rejected by name: the decoder reads
+  `lossless_mask_uv` 14 rows past its extent in the stripe at luma row 248
+  and skips the aliased chroma blocks.
+
+`--still-deblock`, `--still-cdef`, `--still-ccso`, `--still-wiener` and
+`--still-gdf` all compose with chroma LR at 4:2:2/4:4:4 in a deblock-free
+chain; `gate_10bit_filters.sh` pins each combination (0-LSB recon).
 
 ## What this owns
 

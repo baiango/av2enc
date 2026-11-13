@@ -3095,7 +3095,9 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
     return false;
   }
   if (opt_drl_reorder(options) != 0) {
-    error = "GPU M2 baseline keeps DRL reordering off (not decoder-gated)";
+    error = "GPU M2 baseline keeps DRL reordering off: the device backend has "
+            "no DRL-reorder stack builder (CPU-only, see "
+            "gate_video_drl_reorder.sh)";
     return false;
   }
   if (options.mv_precision < 0 || options.mv_precision > 2) {

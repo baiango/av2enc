@@ -90,15 +90,20 @@ merge::Status build_reordered_stack(const merge::StackParams& params,
     return merge::Status::kInvalidArgument;
   }
   merge::StackParams build = params;
-  // Never let the M2 layer apply its selection sort; only this module's
-  // normative transform may reorder RefStackMv.
-  build.reorder = merge::DrlReorder::kDisabled;
-  const merge::Status status = merge::build_mv_stack(build, stack);
-  if (status != merge::Status::kOk) {
-    return status;
-  }
-  reorder_video_stack(stack, mode, use_temporal_first);
-  return merge::Status::kOk;
+  // §7.12.2 step 17 runs *inside* the stack build, before the step-20 extra
+  // search derives the MVP-combination candidates from the sorted
+  // [0, numNearest) prefix.  Applying the transform after merge::
+  // build_mv_stack would derive those combinations from the pre-sort order and
+  // shift every index past numNearest, so the requested mode is passed through
+  // and merge::build_mv_stack performs the normative single swap in place.
+  //
+  // `use_temporal_first` is the caller's §7.12.2 step-16 "do not sort" term.
+  // The product path passes the pinned decoder's high-priority-TMVP decision,
+  // which is not gated by use_ref_frame_mvs (see video_frame.cpp).
+  const bool suppress_sort =
+      mode == Mode::kConstraint && use_temporal_first;
+  build.reorder = mode_to_m2(suppress_sort ? Mode::kDisabled : mode);
+  return merge::build_mv_stack(build, stack);
 }
 
 int signal_index_for_pre(const merge::MvStack& stack, Mode mode,

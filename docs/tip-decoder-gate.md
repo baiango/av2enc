@@ -74,33 +74,49 @@ frames; the anchor P keeps `use_ref_frame_mvs = 0` because its only reference
 is the intra key (an empty field).  `Tip_Weighting_Factor` is chosen from the
 temporal position, never index 2 (the single-list weight 16).
 
-**Hole fill is off** (`enable_tip_hole_fill = 0`).  The encoder's §7.10.3 hole
-fill is spec-exact on the component gate's field, but on a coded reference
-field the pinned decoder's post-estimation validity mask differs by the cells
-our §7.22 store marks NONE: the encoder fills them and the decoder keeps the
-hole (MV 0), producing sparse luma diffs (max 4) on TIP frames.  With hole
-fill off both sides treat holes as MV 0 and the stream is sample-exact.  See
-`docs/negative-results.md`.
+**Hole fill is on** (`enable_tip_hole_fill = 1` plus the per-frame
+`allow_tip_hole_fill` bit).  Both bits matter: an earlier revision signalled
+only the sequence bit, so every TIP frame header coded
+`allow_tip_hole_fill = 0`, the pinned decoder skipped §7.10.3/.4 and predicted
+each hole with MV 0 while the encoder used the neighbour-filled MV.  That
+produced sparse luma diffs (max 4).  Dumping the decoder's `rp_proj` (the
+§7.9/§7.10 field it predicts from) against the encoder's `MotionField` shows
+the two are now cell-identical at every stage: 640x360/4 pictures has 2,406
+valid entries after §7.10.2 and 2,776 after §7.10.3/.4 on both sides, and
+720p/8 pictures has 11,448 after estimation (hint 1) and 14,400 for hints
+2..6, with every MV equal after the §7.22 store/quantisation.  The §7.22 store
+of a TIP frame (`store_tip_frame_motion_field`) and the decoder's
+`update_temporal()` agree entry for entry.
 
-### Gate result (640x360, `testdata/shine_1280x720_60f.y4m` cropped)
+`VideoOptions::tip_hole_fill` (default on) drives both the sequence bit and
+`VideoFrameHeader::allow_tip_hole_fill`.  `--video-tip-no-hole-fill` is the
+gate-only A/B control that reproduces the pre-fix stream (both sides then use
+MV 0 in holes).
+
+### Gate result
 
 `dav2d -q -i <ivf> -o <dec.y4m> --strict 1 --threads 1`, then byte-compare the
 decoded and encoder-recon Y4M (the Y4M MD5s are equal, so the raw frames are
-equal):
+equal).  4 pictures: `testdata/shine_640x360_4f.y4m`.  8 pictures:
+`testdata/shine_1280x720_60f.y4m`.  Both fixtures are gitignored, so the
+absolute MD5s pin this checkout's clips, not the code alone.
 
-| stream | frames | IVF bytes | IVF MD5 | decoded Y4M MD5 = recon MD5 |
-|---|---|---:|---|---|
-| `--video-tip` 4 pictures | 4 | 16385 | `3b4a123e8a83fdf45f3cd9338c501a13` | `6d2ba7193cb85e04c5ed88eff3d19092` |
-| `--video-tip` 8 pictures | 8 | 17957 | `3c7170d2bcefe7390b2916a1fc582454` | `aea77d1c2366d78ccaf94ca782073b8d` |
+| stream | frames | IVF bytes | IVF MD5 | decoded Y4M MD5 = recon MD5 | raw-plane MD5 |
+|---|---|---:|---|---|---|
+| `--video-tip` 4 pictures | 4 | 28229 | `c907f690b73bbf7d63c3d6437bd8f41b` | `58d4a963737ee3f4ab1c26f9ad3ac784` | `4bdc4ad7d571844e59f379b7e71f7d64` |
+| `--video-tip` 8 pictures | 8 | 79332 | `8014663a31b0468dfa60208d7aeecca5` | `79917ce55bb60cd19e46e48c108540ff` | `b752727abb74ee70adb5213f59a45142` |
+| 4 pictures, `--video-tip-no-hole-fill` (control) | 4 | 28229 | `9dceb124c01d9833706ccf169d4f63cc` | `1561203806a7ee6e4864b1342866be00` | `1630adbfc5c77226af3f3bafbd8ad6b6` |
+| 8 pictures, `--video-tip-no-hole-fill` (control) | 8 | 79332 | `e627ef22eca1ac96d76955d63bce0ce5` | `a191ea39fb376ab37d14758f84333064` | `52eebf1b85dc2cf4b064a7bbf2733def` |
 
-Raw-plane MD5s (without the Y4M header): 4 pictures
-`cfbee4f61c3d352c1479050ed3fe73b3`, 8 pictures
-`969955f00770978faf9e4e8d05df1b8f`.
+The in-tree gates are:
 
-The in-tree gate case is `src/pipeline/video/build_and_test.sh`, which runs
-`video_gate --tip` at 4 and 8 pictures (synthetic 64x64 clip by default) and
-requires `dav2d --strict 1`, exact recon and exact display order.  The same
-phases at 640x360 pass with the real clip.
+- `src/pipeline/video/video_tip_gate.sh` (registered as `gate_video_tip` in
+  `tools/run_gates.sh`): the product CLI at 4 and 8 pictures with hole fill on
+  and off, `dav2d --strict 1`, exact recon, exact picture count, and the two
+  modes must differ in both stream and reconstruction (an inert fill fails).
+- `src/pipeline/video/build_and_test.sh`: `video_gate --tip` at 4 and 8
+  pictures with `--tip-no-hole-fill` controls (synthetic 64x64 clip by
+  default), requiring `dav2d --strict 1`, exact recon and exact display order.
 
 Default streams are unchanged: `--video-tip` is off, and the sequence/frame
 header writers only add fields inside `if (config.enable_tip)` /
@@ -127,7 +143,6 @@ header writers only add fields inside `if (config.enable_tip)` /
    open is **TIP as a reference inside a tile-coded frame**: `RefFrame[0] ==
    TIP_FRAME` needs the `TIP_FRAME_AS_REF` tile symbols and a following
    tile-coded frame, which the product TIP schedule does not build.
-4. **TIP hole fill** as described above.
-5. **OPFL/refine-MV inside TIP** (`enable_tip_refinemv`,
+4. **OPFL/refine-MV inside TIP** (`enable_tip_refinemv`,
    `enable_opfl_refine`) stays `REFINE_NONE`; the component supports it but
    the product path does not build those statistics.

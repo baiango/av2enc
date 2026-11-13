@@ -58,7 +58,7 @@ interpretation, and the full 10-bit/chroma still formats.
 | Spec | Tool | State |
 |---|---|---|
 | §7.10, §7.13.3.2 | TIP | CPU `--video-tip` is dav2d-exact; `--video-gpu` rejected |
-| §7.13.3.3–.12 | OPFL / refine-MV | component gate decodes; `--video-opfl` rejected (needs non-GLOBALMV compound) |
+| §7.13.3.3–.12 | OPFL / refine-MV | CPU `--video-opfl` / `--video-refine-mv` are dav2d-exact on the NEAR_NEARMV carrier (G-OPFL-RMV); `--video-gpu` rejects both |
 | §7.13.3.26 | morphological prediction | component gate decodes; `--video-morph` rejected (needs a video IBC keyframe path) |
 | §7.13.3.15 | save sub-PU | kernel + parity; not wired |
 | §7.22 | temporal MV / motion-field scan | storage driven by CPU TIP; §7.12.2 temporal scan not in the merge stack |

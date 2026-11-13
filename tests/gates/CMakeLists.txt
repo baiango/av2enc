@@ -97,6 +97,18 @@ set_tests_properties(gate_video_filters PROPERTIES
   TIMEOUT 600
   LABELS "gate;gate-video")
 
+# Video partition tools: 128x128 / 256x256 superblocks and extended/uneven
+# 4-way partitions.  Each case decodes with dav2d --strict 1 and compares the
+# encoder reconstruction sample-for-sample; the default 64x64 stream MD5s are
+# part of the same gate.
+add_test(NAME gate_video_partitions
+  COMMAND bash "${PROJECT_SOURCE_DIR}/src/pipeline/video/gate_video_partitions.sh"
+          --bin $<TARGET_FILE:av2enc>)
+set_tests_properties(gate_video_partitions PROPERTIES
+  SKIP_RETURN_CODE 77
+  TIMEOUT 900
+  LABELS "gate;gate-video")
+
 # Opt-in CUDA M2 path: CPU --video vs --video-gpu on one deterministic 360p
 # source, byte-identical temporal units/recon and a dav2d --strict 1 decode,
 # plus named rejections for every unported combination.  Registered only when

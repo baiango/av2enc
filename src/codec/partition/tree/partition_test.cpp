@@ -1050,7 +1050,7 @@ void test_decision_errors() {
 
   // Unsupported geometry.
   p::FrameGeometry bad = geometry;
-  bad.sb_size = 256;
+  bad.sb_size = 32;
   frame = p::decide_frame(bad, none_only_cost(1.0), options);
   CHECK(frame.status == p::DecisionStatus::kInvalidGeometry);
 }

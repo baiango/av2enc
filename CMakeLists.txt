@@ -102,6 +102,11 @@ add_library(av2enc_core STATIC
   src/codec/transform/tx_type/tx_type.cpp
   src/codec/transform/variants/tx_variants.cpp
   src/codec/transform/variants/tx_select.cpp
+  # §5.4.8/§7.15.4.1 inter DDT (DDTX/FDDT) kernels, shared by the M2 CPU
+  # reference and the opt-in TX search.
+  src/codec/transform/ddt/ddt_transform.cpp
+  src/codec/transform/ddt/ddt_constraints.cpp
+  src/codec/transform/ddt/ddt_syntax.cpp
   # §5.20.8.2 inter TX-type sets/symbols, shared by the M2 CPU reference and
   # the opt-in TX search (the module under src/cuda/pipeline/video/tx/ links
   # the same component).
@@ -283,6 +288,10 @@ target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_FORMATS=1)
 # component gates compile the video writer without the deltaq adapter and keep
 # the historical (0,0,0) quantization tail.
 target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_DELTAQ=1)
+# Opt-in §5.4.3 extended/uneven 4-way partitions on --video.  Standalone
+# component gates compile video_syntax.cpp/video_frame.cpp without the
+# partition_ext adapter and keep the base partition set.
+target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_EXT_PARTITIONS=1)
 av2enc_apply_warnings(av2enc_core)
 # The CPU reference must be bit-identical across compilers and platforms. The
 # M0/M1 forward transforms use binary64; FMA contraction changes coefficients

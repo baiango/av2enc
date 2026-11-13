@@ -514,22 +514,29 @@ class StackBuilder {
     }
   }
 
+  // §7.12.2.19 Sorting process: one selection step.  The decoder moves the
+  // single highest-weight entry in [0, numNearest) to the front by swapping
+  // the complete record (weight, CWP, offsets, both MV lists).  A full
+  // selection sort is observably different whenever more than one
+  // non-maximum entry is out of weight order (weights {1,2,3,4} give
+  // {4,2,3,1} here, {4,3,2,1} for a full sort), so it must not be used.
   void sort_nearest() {
     const int end = stack_->num_nearest;
-    for (int start = 0; start + 1 < end; ++start) {
-      int max_weight = stack_->cand[start].weight;
-      int max_idx = start;
-      for (int idx = start + 1; idx < end; ++idx) {
-        if (max_weight < stack_->cand[idx].weight) {
-          max_weight = stack_->cand[idx].weight;
-          max_idx = idx;
-        }
+    if (end <= 1) {
+      return;
+    }
+    int max_weight = stack_->cand[0].weight;
+    int max_idx = 0;
+    for (int idx = 1; idx < end; ++idx) {
+      if (max_weight < stack_->cand[idx].weight) {
+        max_weight = stack_->cand[idx].weight;
+        max_idx = idx;
       }
-      if (max_idx != start) {
-        const StackCandidate tmp = stack_->cand[start];
-        stack_->cand[start] = stack_->cand[max_idx];
-        stack_->cand[max_idx] = tmp;
-      }
+    }
+    if (max_idx != 0) {
+      const StackCandidate tmp = stack_->cand[0];
+      stack_->cand[0] = stack_->cand[max_idx];
+      stack_->cand[max_idx] = tmp;
     }
   }
 

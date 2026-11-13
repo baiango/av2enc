@@ -33,8 +33,9 @@ CXX=clang++ ./src/encoder/partition/build_and_test.sh
   `PARTITION_VERT`.
 - Block sizes 4x4 through 64x64, plus the rectangular sizes those splits
   produce (4x8, 8x4, ... 64x8).
-- Superblock sizes 64x64 and 128x128. 256x256 requires the sequence-header
-  flag and is deliberately rejected (`kInvalidGeometry`).
+- Superblock sizes 64x64, 128x128 and 256x256.  A 256 root requires the
+  `use_256x256_superblock` sequence flag and is only coded on inter frames;
+  intra frames clamp SbSize to 128 (§5.18.1).
 - 8-bit 4:2:0 geometry by default; monochrome / 4:4:4 flags exist, 4:2:2 is
   not modelled.
 - One tile. `is_inside()` is frame-relative; a tile implementation narrows it.
@@ -73,7 +74,7 @@ using namespace av2enc::partition;
 FrameGeometry geometry;
 geometry.width = 640;
 geometry.height = 360;
-geometry.sb_size = 64;           // 64 or 128
+geometry.sb_size = 64;           // 64, 128 or 256
 // has_chroma = true, 4:2:0 subsampling, MaxPbAspectRatio = 8 by default
 
 mi_cols(geometry);               // 160
@@ -246,5 +247,5 @@ two failure modes most likely to reach `dav2d`.
   of node costs.
 - No exact rate accounting: `NodeCosts` are caller-supplied estimates. The
   module only guarantees geometry and deterministic choice.
-- 256x256 superblocks, extended partitions, SDP, BRU, and 4:2:2 are rejected
-  or not modelled rather than guessed.
+- Extended partitions, SDP, BRU, and 4:2:2 are rejected or not modelled rather
+  than guessed.

@@ -9,6 +9,30 @@ Status: **component + integrated still path.** The CPU `--still-tcq` path
 2-D blocks. The rest of this document describes the standalone component,
 which remains the CPU oracle.
 
+Video integration status (`src/pipeline/video/video_tcq_gate.sh`): the CPU
+`--video-tcq` writer enables §5.4.8 TCQ with a non-single-picture sequence
+(`enable_tcq = 1`, `choose_tcq_per_frame = 1`, `enable_parity_hiding = 0`) and
+codes `allow_tcq = 1` in every frame header.  The luma quantiser runs the same
+trellis in both video paths: `compute_tx()` for the single-DCT path and the
+`--video-tx-search` candidate evaluator.  The coefficient writer uses the
+`(tcqState >> 1) & 1` CDF selectors, `syntax_level_for()`, the `read_quant`
+escape and the doubled `dqDenom` reconstruction.  The gate decodes 64x64 and
+360p streams at QP 60/90/120 with `dav2d --strict 1` and pins the encoder recon
+exactly.  TCQ is rejected by name with `--video-qm`, segmentation/delta-Q,
+lossless, `--tiles > 1x1`, the frame-type wrappers, `--svc-layers` and the GPU
+backend.
+
+Video integration status for CCTX (`src/pipeline/video/video_cctx_gate.sh`):
+the CPU `--video-cctx` writer sets §5.4.8 `enable_cctx = 1`, quantises the
+chroma pair jointly with the seven-type search, codes `cctx_type` on plane 1
+after the U EOB (including the inter `eob == 1` form), and reconstructs with
+the §7.14.6 joint dequant rotation.  It composes with `--video-tcq` and
+`--video-tx-search`; the gate decodes 64x64 and 360p streams at QP 60/90/120
+with `dav2d --strict 1`, pins the encoder recon exactly, and asserts at least
+one non-zero rotation is coded.  CCTX is rejected by name with `--video-qm`,
+segmentation/delta-Q, lossless, `--tiles > 1x1`, the frame-type wrappers,
+`--svc-layers` and the GPU backend.
+
 Integration status (`src/codec/transform/tcq/still_tcq_gate.sh`):
 
 * `--still-tcq` is default-off; the pinned 64x64 and 640x360 `--still`

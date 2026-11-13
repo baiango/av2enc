@@ -301,6 +301,8 @@ run_case 10bit_420_pc_wiener_640x360 10 420 "$TMP/src_10_640x360.y4m" 303 --stil
 run_case 10bit_420_gdf_640x360     10 420 "$TMP/src_10_640x360.y4m" 303 --still-gdf
 run_case 10bit_420_wiener_gdf_640x360 10 420 "$TMP/src_10_640x360.y4m" 303 --still-wiener --still-gdf
 run_case 10bit_420_all_filters_640x360 10 420 "$TMP/src_10_640x360.y4m" 303 --still-deblock --still-cdef --still-ccso --still-wiener --still-gdf
+run_case 10bit_422_chroma_lr_640x360 10 422 "$TMP/src_10_422_640x360.y4m" 303 --still-chroma-lr
+run_case 10bit_444_chroma_lr_640x360 10 444 "$TMP/src_10_444_640x360.y4m" 303 --still-chroma-lr
 run_case 10bit_422_wiener_640x360  10 422 "$TMP/src_10_422_640x360.y4m" 303 --still-wiener
 run_case 10bit_422_pc_wiener_640x360 10 422 "$TMP/src_10_422_640x360.y4m" 303 --still-pc-wiener
 run_case 10bit_422_gdf_640x360     10 422 "$TMP/src_10_422_640x360.y4m" 303 --still-gdf
@@ -350,11 +352,13 @@ expect_reject 10bit_444_as420 "$TMP/bad_10bit_444_as420.y4m" \
     "oversized Y4M frame" --still --bit-depth 10 --qp 90
 expect_reject trailing_bytes "$TMP/bad_trailing.y4m" \
     "oversized Y4M frame" --still --bit-depth 10 --qp 90
-# §7.20 chroma LR is gated at 4:2:0: the 4:2:2/4:4:4 stripe-boundary path is
-# not decoder-exact yet, so the writer must reject it by name.
-expect_reject 10bit_444_chroma_lr "$TMP/src_10_444_640x360.y4m" \
-    "chroma loop restoration is only decoder-exact" --still --bit-depth 10 \
-    --chroma 444 --still-chroma-lr --qp 303
+# §7.20 chroma LR composes with §7.17 deblocking only at 4:2:0: at
+# 4:2:2/4:4:4 pinned dav2d reads its chroma lossless mask past its extent for
+# the stripe at luma row 248 and skips the aliased blocks, so the writer must
+# reject the combination by name.
+expect_reject 10bit_444_deblock_chroma_lr "$TMP/src_10_444_640x360.y4m" \
+    "do not decode exactly at 4:2:2/4:4:4 with pinned dav2d" --still \
+    --bit-depth 10 --chroma 444 --still-deblock --still-chroma-lr --qp 303
 
 # Accepted-and-ignored Still tree flags: the format paths use their own minimal
 # writer, so a flag that they cannot apply must be a usage error, not a

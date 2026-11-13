@@ -127,8 +127,11 @@ including compound (two-list) blocks:
 
 * setup global MV, steps 6-13 scan, `numNearest` snapshot, col scan at -3;
 * `useSort = DrlReorder == ALWAYS || (DrlReorder == CONSTRAINT &&
-  !useTemporalFirst && numNearest >= 4)`; selection sort over
-  `[0, numNearest)` with strict `<` (the first maximum wins a tie);
+  !useTemporalFirst && numNearest >= 4)`; §7.12.2.19 is one move-to-front
+  over `[0, numNearest)` — the complete record at the first strict maximum is
+  swapped with slot 0, nothing else moves. It runs at step 17, before the
+  step-20 extra search derives the MVP-combination candidates from the sorted
+  prefix;
 * `DRL_REORDER_DISABLED` leaves insertion order intact;
 * derived-SMVP fill (§7.12.2.16/.22) for multi-reference single blocks,
   including the `max_drl_bits_minus_1 + 2` cap and §7.9.4 projection;
@@ -244,11 +247,18 @@ parameters `mc_supported = false`.
    restricted-order-hint sign rule). This enables the §7.12.2.16 projection.
    With one reference it can stay `nullptr`.
 
-5. **DRL reordering.** When `disable_drl_reorder = 1` (current M2 header), pass
-   `DrlReorder::kDisabled`. To enable reordering, write
-   `disable_drl_reorder = 0` and `constrain_drl_reorder` in the sequence
-   header, and pass `kConstraint` / `kAlways` to both the encoder and the
-   decoder side. The `useTemporalFirst` term is false for M2.
+5. **DRL reordering.** When `disable_drl_reorder = 1` (the default), pass
+   `DrlReorder::kDisabled`. `--video-drl-reorder[-always]` writes
+   `disable_drl_reorder = 0` plus `constrain_drl_reorder` and passes
+   `kConstraint` / `kAlways` to the same builder on the decision and writer
+   sides. Two details are normative for the pinned decoder:
+   * the sort runs at step 17, so the step-20 MVP-combination candidates must
+     be derived from the sorted `[0, numNearest)` prefix — do not reorder
+     after the build;
+   * the pinned dav2d suppresses CONSTRAINT when the block has one reference
+     within two POCs (its high-priority-TMVP term is not gated by
+     `use_ref_frame_mvs`); the product path mirrors it by passing
+     `kDisabled` for those blocks.
 
 6. **Enabling `skip_mode`.** This is not a syntax-only change:
    * write `skip_mode_present = 1` only after

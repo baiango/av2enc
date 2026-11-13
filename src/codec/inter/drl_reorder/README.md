@@ -55,9 +55,11 @@ int reorder_video_stack(merge::MvStack*, Mode, bool use_temporal_first);
 int signal_index_for_pre(const merge::MvStack&, Mode, bool, int pre_index);
 ```
 
-`build_reordered_stack()` copies the parameters, forces
-`merge::DrlReorder::kDisabled`, calls `merge::build_mv_stack()` and then applies
-the normative transform. It never calls the shared component's selection sort.
+`build_reordered_stack()` copies the parameters, passes the requested mode
+into `merge::build_mv_stack()` (which applies §7.12.2.19 at step 17, before the
+step-20 extra search), and never sorts a second time. `use_temporal_first` is
+the caller's step-16 "do not sort" term; the product path passes the pinned
+decoder's high-priority-TMVP decision (see below).
 
 ## Normative behaviour
 
@@ -82,27 +84,51 @@ the normative transform. It never calls the shared component's selection sort.
   `TileTipDrlModeCdf[Min(idx, 2)]` for TIP. The default tables are the §9.3
   values; `NewMvContext` is §7.11.2.
 
-## The previous desync
+## The previous desync (resolved)
 
-The earlier implementation (still present in `av2enc::video::merge::build_mv_stack` and
-`inter::mc::build_mv_stack`) calls a **full selection sort** over
-`[0, numNearest)`. For weights `{1,2,3,4}`:
+The first product integration looked exact with zero swaps but desynchronised
+from frame 2 as soon as a swap moved a candidate. Two independent causes were
+found against the pinned decoder (`dav2d` `f9dafbc`, `src/refmvs.c`):
+
+1. **The transform ran after the whole stack was built.** `merge::
+   build_mv_stack()` runs the §7.12.2.19 sort at step 17, *before* the
+   §7.12.2.20 extra search derives the MVP-combination candidates from the
+   sorted `[0, numNearest)` prefix. Building with the sort disabled and
+   applying the transform to the finished stack leaves those tail candidates
+   in pre-sort order, so every signalled index past `numNearest` names a
+   different MV. Measured case: 64x64 at `mi(144,176)` on the 720p clip, post
+   index 4 is `(−2,−2)` with the late transform and `(0,6)` in the decoder.
+   The fix passes the mode into `merge::build_mv_stack()`; `merge::
+   sort_nearest()` was the historical **full selection sort** and now performs
+   the normative single move-to-front.
+2. **The pinned decoder suppresses CONSTRAINT for close references.** dav2d
+   computes its step-16 "high-priority TMVP" term as
+   `drl_reorder != ALWAYS && !has_bothside_refs && |POC diff| <= 2` for a
+   single-reference block, **without** the spec's `use_ref_frame_mvs` guard.
+   For a low-delay P frame the reference is one POC away, so
+   `DRL_REORDER_CONSTRAINT` never sorts. The encoder mirrors that condition
+   (`drl_constraint_sort_suppressed()` in `video_frame.cpp`), which makes the
+   CONSTRAINT stream bit-exact but inert; `DRL_REORDER_ALWAYS` exercises the
+   sort. Reproducer for the first cause before the fix:
+   `--video-drl-reorder-always --video-max-depth 3` (3 frames, 720p) differed
+   from frame 2 at `(704,576)`.
+
+The legacy full-selection-sort divergence is still pinned for the record. For
+weights `{1,2,3,4}`:
 
 | transform | post order | pre=1 maps to | decoder index 2 is |
 |---|---|---|---|
 | normative single swap | `{4,2,3,1}` | post 1 | MV 20 |
 | legacy selection sort | `{4,3,2,1}` | post 2 | MV 30 |
 
-The encoder believes index 2 is MV 20; the decoder's index 2 is MV 30. Both
-streams parse, so the failure appears as a reconstruction/MV mismatch —
-exactly the historical `DRL_REORDER_CONSTRAINT` desync. `drl_reorder_test`
-pins this case (`test_legacy_desync`) and the shared `merge` test's
-`{1,1,1,2,1,0}` fixture is also covered
+The shared `merge` module now performs the normative single swap, so these
+two transforms agree. `drl_reorder_test` still pins the legacy case
+(`test_legacy_desync`) and the `{1,1,1,2,1,0}` fixture
 (`test_real_video_scan_fixture`).
 
-With `DRL_REORDER_CONSTRAINT` the same bug also fires for every stack where
-more than one non-maximum weight is out of order; `numNearest >= 4` is the
-gate, so only larger inter blocks were affected.
+`inter::mc::build_mv_stack` (`src/codec/inter/mc/mc.cpp`) is a separate
+audit-only stack builder and still uses the full selection sort; the wired
+video path uses `merge`.
 
 ## Tests
 
@@ -125,7 +151,7 @@ gate, so only larger inter blocks were affected.
 * `test_goldens` — parses `goldens/drl_reorder_goldens.txt`.
 * `test_invalid_ranges` — `m > 5`, `start > m`, uninitialized reader.
 
-81,720 checks, 0 failures; ASan/UBSan clean.
+81,728 checks, 0 failures; ASan/UBSan clean.
 
 ## Decoder gate
 
@@ -165,41 +191,44 @@ Notes:
   index rather than `--mode legacy`. The exact old-logic failing case is
   pinned by `test_legacy_desync` and `goldens/drl_reorder_goldens.txt`.
 
-## M2 integration sites (not applied)
+## Product integration (applied)
 
-1. `src/encoder/m2/video_headers.cpp:159`
-   `writer.put_bit(true); // disable_drl_reorder`
-   → write `Flags.disable_drl_reorder`; when 0 write
-   `Flags.constrain_drl_reorder`. Add both to `VideoConfig`.
-2. `src/encoder/m2/video_frame.cpp:473`
-   `params.reorder = merge::DrlReorder::kDisabled;`
-   → `drl::build_reordered_stack(params, mode, /*use_temporal_first=*/false,
-   &stack)` (or keep `kDisabled` and call `drl::reorder_video_stack()` after
-   `merge::build_stack_checked`). `useTemporalFirst` is false while
-   `enable_ref_frame_mvs = 0`.
-3. `src/encoder/m2/video_syntax.cpp:1657` — same replacement in
-   `write_inter_mode_info()`; it is the writer-side mirror of (2).
-4. `src/encoder/m2/merge/merge.cpp:455` — replace `sort_nearest()`'s full
-   selection sort with the single move-to-front (or never enable the merge
-   module's sort and use `drl::reorder_video_stack`). This is the actual bug.
-5. `src/encoder/m2/merge/merge.cpp:1436` (`choose_drl_index_for_mv`,
-declared in `merge.h:415`)
-   — search the **post-reorder** stack; the signalled index is
-   `perm[pre_index]` (`drl::signal_index_for_pre`). Candidates whose post
-   index is `>= m` are not signalable.
-6. `src/encoder/m2/video_syntax.cpp:1521` (`code_drl_index`) — already uses
-   `Min(idx,2)` × `NewMvContext`; route it through
-   `drl::write_drl_index()` so writer and reader share the §5.20.7.8 loop.
-7. Frame header `max_drl_bits_minus_1`: use
-   `drl::derive_frame_max_drl_bits()` and `drl::drl_index_count()`; clamp
-   `change_drl` to `ns(MAX_REF_MV_STACK_SIZE - 2)`.
-8. `src/encoder/m2/README.md` feature status: replace
-   "DRL reordering ... BLOCKED / stays DISABLED" with the mode/flag pair and
-   the `merge::build_mv_stack` replacement above.
+The CPU video path (`src/pipeline/video/`) now carries the pair:
 
-`inter::mc::build_mv_stack` (`src/encoder/inter/mc/mc.cpp:389-393`) has the same
-full-sort bug and is used by `merge::audit_mc_stack`; it must not be used with
-reordering enabled until it calls this module.
+1. `video_headers.cpp` writes `disable_drl_reorder` and, when it is 0,
+   `constrain_drl_reorder` from `VideoConfig`.
+2. `video_frame.cpp::load_stack()` calls `drl::build_reordered_stack()` with
+   the requested mode and the pinned decoder's step-16 suppression term
+   (`drl_constraint_sort_suppressed()`).
+3. `video_syntax.cpp` builds the same stack when it validates a block's
+   signalled index (the writer-side mirror).
+4. `merge::sort_nearest()` performs the normative single move-to-front at
+   step 17, so the step-20 MVP-combination candidates are derived from the
+   sorted prefix.
+5. `--video-drl-reorder` / `--video-drl-reorder-always` select CONSTRAINT /
+   ALWAYS; the CLI composition rules still reject DRL with `--b-frames`,
+   `--video-compound`, `--video-gme`, SVC and multi-tile streams.
+
+`--video-trace` prints one `drl reorder mi=(row,col) WxH ref=N nn=M pre=...
+post=...` line per block whose `[0, numNearest)` prefix the transform changed;
+`gate_video_drl_reorder.sh` counts those lines to prove the transform is
+exercised.
+
+`inter::mc::build_mv_stack` (`src/codec/inter/mc/mc.cpp`) is a separate
+audit-only stack builder, still uses the full selection sort, and must not be
+used with reordering enabled until it calls this module.
+
+## Product gate
+
+`src/pipeline/video/gate_video_drl_reorder.sh` (registered as
+`gate_video_drl_reorder` in `tools/run_gates.sh`) generates a deterministic
+640x360 pan fixture and pins:
+
+| case | swaps | pictures | recon |
+|---|---|---|---|
+| depth 3, CONSTRAINT | 0 | 6/6 | exact |
+| depth 3, ALWAYS | 18 | 6/6 | exact |
+| depth 4 min-block 8, ALWAYS | 74 | 6/6 | exact |
 
 ## Files
 

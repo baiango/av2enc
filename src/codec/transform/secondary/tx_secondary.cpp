@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 namespace av2enc::txsec {
 namespace {
@@ -403,6 +404,78 @@ bool forward_secondary_coeffs_kernel(const TxParams& params,
     value = std::max<std::int64_t>(int32_low,
                                    std::min<std::int64_t>(int32_high, value));
     coeff[scan_in[j]] = static_cast<std::int32_t>(value);
+  }
+  return true;
+}
+
+bool project_ist_levels(const TxParams& params, TxType plane_tx_type,
+                        int kernel, int sec_tx_type, bool transpose,
+                        std::int32_t* levels, std::size_t levels_len) {
+  SecondarySizeInfo info;
+  if (!secondary_size_info(params, plane_tx_type, &info)) return false;
+  if (sec_tx_type < 1 || sec_tx_type >= kStxTypes) return false;
+  if (kernel < 0 || kernel >= info.kernel_count) return false;
+  if (levels == nullptr) return false;
+  const std::size_t elems =
+      static_cast<std::size_t>(info.w) * static_cast<std::size_t>(info.h);
+  if (levels_len < elems) return false;
+
+  const int kernel_width = info.large ? kIst8x8Width : kIst4x4Width;
+  const std::int8_t* matrix =
+      info.large ? &kIst8x8Kernel[kernel][sec_tx_type - 1][0][0]
+                 : &kIst4x4Kernel[kernel][sec_tx_type - 1][0][0];
+  const int scan_bwl = info.large ? 3 : 2;
+  const int scan_mask = (1 << scan_bwl) - 1;
+
+  std::vector<std::uint16_t> scan(elems);
+  diagonal_scan(info.w, info.h, scan.data());
+
+  std::int32_t x[kMaxOutCoeffs];
+  std::size_t out_pos[kMaxOutCoeffs];
+  for (int i = 0; i < info.n2; ++i) {
+    const int pos =
+        info.large ? kStxScanOrder8x8[kStxScanMap[kernel][sec_tx_type - 1][i]]
+                   : kStxScanOrder4x4[i];
+    const int sx = pos & scan_mask;
+    const int sy = pos >> scan_bwl;
+    const int index = transpose ? sx * info.w + sy : sy * info.w + sx;
+    if (index < 0 || static_cast<std::size_t>(index) >= elems) return false;
+    out_pos[i] = static_cast<std::size_t>(index);
+    x[i] = levels[out_pos[i]];
+  }
+
+  std::int32_t sec[kMaxSecCoeffs];
+  const std::int32_t int32_high = 0x7fffffff;
+  const std::int32_t int32_low = -int32_high - 1;
+  for (int j = 0; j < info.n; ++j) {
+    std::int64_t sum = 0;
+    for (int i = 0; i < info.n2; ++i) {
+      sum += static_cast<std::int64_t>(x[i]) *
+             static_cast<std::int64_t>(matrix[j * kernel_width + i]);
+    }
+    std::int64_t value = round2_signed(sum, 7);
+    value = std::max<std::int64_t>(int32_low,
+                                   std::min<std::int64_t>(int32_high, value));
+    sec[j] = static_cast<std::int32_t>(value);
+  }
+
+  // The decoder reads the first n scan positions, zeroes them, and writes the
+  // n2 output positions.  Positions it overwrites must not be coded again.
+  const auto in_first_n = [&](std::size_t index) {
+    for (int j = 0; j < info.n; ++j) {
+      if (static_cast<std::size_t>(scan[static_cast<std::size_t>(j)]) == index) {
+        return true;
+      }
+    }
+    return false;
+  };
+  for (int i = 0; i < info.n2; ++i) {
+    if (!in_first_n(out_pos[i])) {
+      levels[out_pos[i]] = 0;
+    }
+  }
+  for (int j = 0; j < info.n; ++j) {
+    levels[scan[static_cast<std::size_t>(j)]] = sec[j];
   }
   return true;
 }

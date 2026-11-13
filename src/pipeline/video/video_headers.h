@@ -89,6 +89,14 @@ struct VideoConfig {
   // inherits the sequence value and codes no extra bit; each eligible
   // single-reference block then codes the §5.20.7.14 motion-mode symbol.
   bool enable_interintra = false;
+  // §5.4.3 sequence_partition_config() superblock size.  `use_128x128_superblock`
+  // is only coded when `use_256x256_superblock` is 0.  The defaults are the
+  // historical 64x64 stream.
+  bool use_128x128_superblock = false;
+  bool use_256x256_superblock = false;
+  // §5.4.3 extended-partition tools (--video-ext-partitions).
+  bool enable_ext_partitions = false;
+  bool enable_uneven_4way_partitions = false;
   // §5.4.7 screen-content config.  `seq_screen_content_tools_present` writes
   // seq_choose_screen_content_tools = seq_choose_integer_mv = 1, so the frame
   // header decides allow_screen_content_tools / force_integer_mv.  Off keeps
@@ -190,7 +198,34 @@ struct VideoConfig {
   // (type 9) in the intra TX-type search.  The one-axis 1-D types (10..15)
   // remain unsignalled (pinned dav2d rejects negative H/V_DCT coefficients).
   bool enable_idtx_intra = false;
-};
+  // §5.4.5 enable_mrls (--video-mrl): multiple reference line selection for
+  // directional intra luma.  Off keeps the historical sequence bit and every
+  // block codes no mrl_index (the bit is absent).
+  bool enable_mrls = false;
+  // §5.4.8 enable_intra_ist / enable_inter_ist (--video-ist).  The CPU video
+  // writer codes the intra secondary transform on luma blocks; inter IST stays
+  // unsignalled because the inter residual path has no sec_tx_type search.
+  bool enable_intra_ist = false;
+  bool enable_inter_ist = false;
+  // §5.4.8 enable_cctx (--video-cctx): enables §7.14.6 chroma CCTX.
+  bool enable_cctx = false;
+  // §5.4.8 enable_tcq / choose_tcq_per_frame (--video-tcq).  The non-single
+  // picture writer selects choose_tcq_per_frame = 1, so every frame header
+  // codes allow_tcq (VideoFrameHeader::allow_tcq).  Parity hiding stays 0:
+  // §5.4.8 forces it off when choose_tcq_per_frame is 0 and this encoder never
+  // codes the hidden-parity coefficient symbols.
+  bool enable_tcq = false;
+  bool choose_tcq_per_frame = false;
+  bool enable_parity_hiding = false;
+  // §5.4.3 enable_sdp / enable_extended_sdp (--video-sdp).  The intra keyframe
+  // codes each 64x64 SHARED node as a luma tree followed by a chroma tree.
+  // enable_extended_sdp is 0: the encoder does not drive inter region_type.
+  bool enable_sdp = false;
+  bool enable_extended_sdp = false;
+  // §5.4.8 enable_inter_ddt (--video-ddt): the decoder swaps ADST/FDST 1-D
+  // kernels for DDTX/FDDT on inter blocks (length != 4).  There is no frame or
+  // block syntax; the flag changes the transform the encoder must use.
+  bool enable_inter_ddt = false;};
 
 // §5.18.7.1 segmentation_params() / §5.18.7.8 delta_q_params() state for one
 // frame.  Every field defaults to the historical disabled stream, so the bit
@@ -233,6 +268,9 @@ struct VideoFrameHeader {
   std::int16_t tip_global_mv_row = 0;     // TipGlobalMv, 1/8 luma samples
   std::int16_t tip_global_mv_col = 0;
   bool tip_sharp = true;                   // TipInterpFilter
+  // §5.18.2 allow_tip_hole_fill: written only for a non-disabled
+  // TipFrameMode when the sequence enables §5.4.6 enable_tip_hole_fill.
+  bool allow_tip_hole_fill = false;
   // §5.18.2 frame MV precision.  Defaults are the M2 1/8-pel pair.
   bool use_qtr_precision_mv = false;
   bool allow_high_precision_mv = true;
@@ -253,6 +291,10 @@ struct VideoFrameHeader {
   bool implicit_output_frame = false;
   // §5.18.2 reference_select: 1 lets a block code comp_mode and two refs.
   bool reference_select = false;
+  // §5.18.2 allow_tcq.  Coded only when the sequence sets enable_tcq with
+  // choose_tcq_per_frame = 1 (--video-tcq).  The encoder enables TCQ on every
+  // frame, so the default is 1; with the sequence bit off the field is inert.
+  bool allow_tcq = true;
   // §5.18.2 cross-frame CDF initialisation.  The defaults reproduce the
   // historical inter header (signal off, reset on).  The continuity path
   // signals primary_ref_frame = 0 (ref_frame_idx[0]) and clears the reset bit.

@@ -79,7 +79,8 @@ constexpr int kSentinelLog2 = 6;  // BLOCK_256X256: never smaller than current
 
 bool geometry_ready(const FrameGeometry& geometry) {
   return geometry.width > 0 && geometry.height > 0 &&
-         (geometry.sb_size == 64 || geometry.sb_size == 128) &&
+         (geometry.sb_size == 64 || geometry.sb_size == 128 ||
+          geometry.sb_size == 256) &&
          geometry.max_pb_aspect_ratio >= 1;
 }
 
@@ -661,6 +662,9 @@ BlockSize superblock_size(int sb_size_pixels) {
   if (sb_size_pixels == 128) {
     return BlockSize::k128x128;
   }
+  if (sb_size_pixels == 256) {
+    return BlockSize::k256x256;
+  }
   return BlockSize::kInvalid;
 }
 
@@ -762,8 +766,9 @@ bool validate_geometry(const FrameGeometry& geometry, std::string& error) {
   if (geometry.width <= 0 || geometry.height <= 0) {
     return fail(error, "frame width and height must be positive");
   }
-  if (geometry.sb_size != 64 && geometry.sb_size != 128) {
-    return fail(error, "superblock size must be 64 or 128");
+  if (geometry.sb_size != 64 && geometry.sb_size != 128 &&
+      geometry.sb_size != 256) {
+    return fail(error, "superblock size must be 64, 128 or 256");
   }
   if (geometry.max_pb_aspect_ratio < 1) {
     return fail(error, "max_pb_aspect_ratio must be at least 1");

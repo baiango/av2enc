@@ -325,6 +325,33 @@ inline int naive_source_sample(const NaiveLrFrame& n, const NaiveRegion& r,
   return f.at(f.cdef[plane], plane, y, x);
 }
 
+// §7.20.2 source fetch restricted to the luma plane, as used by the CfL taps.
+// A 4:2:2/4:4:4 chroma plane (SubsamplingY == 0) is special: the pinned
+// decoder's CfL row buffer collapses both lines above the stripe onto
+// LumaStripeStartY - 2, so every above-stripe request returns that line.
+// 4:2:0 never requests the first line above the stripe, so its path is the
+// plain §7.20.2 form.
+inline int naive_luma_source_sample(const NaiveLrFrame& n,
+                                    const NaiveRegion& r, int x, int y) {
+  const TestFrame& f = *n.src;
+  x = clip3i(r.LumaStartX, r.LumaEndX, x);
+  y = clip3i(r.LumaStartY, r.LumaEndY, y);
+  if (y < r.LumaStripeStartY) {
+    int yy = r.LumaStripeStartY - 2;
+    if (!f.sub_y) {
+      if (yy < r.LumaStartY) yy = r.LumaStartY;
+    } else if (yy < y) {
+      yy = y;
+    }
+    return f.at(f.curr[0], 0, yy, x);
+  }
+  if (y > r.LumaStripeEndY) {
+    const int yy = std::min(r.LumaStripeEndY + 2, y);
+    return f.at(f.curr[0], 0, yy, x);
+  }
+  return f.at(f.cdef[0], 0, y, x);
+}
+
 inline int naive_luma_sample(const NaiveLrFrame& n, const NaiveRegion& r,
                              int x, int y) {
   const TestFrame& f = *n.src;
@@ -343,12 +370,12 @@ inline int naive_luma_sample(const NaiveLrFrame& n, const NaiveRegion& r,
     for (int dy = 0; dy < 2; ++dy) {
       for (int dx = 0; dx < 2; ++dx) {
         t += static_cast<int>(kWienerFilters420[idx][dy][dx]) *
-             naive_source_sample(n, r, 0, x + dx, y + dy);
+             naive_luma_source_sample(n, r, x + dx, y + dy);
       }
     }
     return t >> 2;
   }
-  return naive_source_sample(n, r, 0, x, y);
+  return naive_luma_source_sample(n, r, x, y);
 }
 
 // Output is written into out[plane] (same stride as src).

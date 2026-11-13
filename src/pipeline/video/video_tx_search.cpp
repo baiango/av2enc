@@ -8,8 +8,12 @@
 #include <vector>
 
 #include "codec/rate/rc/rc_tables.h"
+#include "codec/rate/rdo/rdo.h"
+#include "codec/transform/tcq/tcq.h"
+#include "codec/transform/tcq/tcq_av2_model.h"
 #include "codec/transform/inter_residual/inter_tx_type.h"
 #include "codec/transform/inter_residual/video_residual_cdf.h"
+#include "codec/transform/ddt/ddt.h"
 #include "codec/transform/tx_partition/tx_partition.h"
 #include "codec/transform/tx_partition/tx_scan.h"
 #include "codec/transform/tx_type/tx_type.h"
@@ -22,6 +26,7 @@ namespace txv = av2enc::txv;
 namespace txtype = av2enc::txtype;
 namespace txpart = av2enc::video::txpartition;
 namespace residual = av2enc::video::residual;
+namespace ddt = av2enc::video::ddt;
 
 // Partition bit indices, identical to VideoTxPartitionBit.
 constexpr std::int32_t kPartBitNone = 1 << 0;
@@ -247,10 +252,10 @@ bool inter_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
 
   for (std::int32_t type : canonical) {
     if (!options.include_1d_types && type >= 10) continue;
-    if (options.enable_inter_ddt &&
-        residual::inter_tx_type_is_ddt(static_cast<txv::TxType>(type))) {
-      continue;
-    }
+    // §7.15.4.1: enable_inter_ddt does not remove or add candidates; it only
+    // swaps the ADST/FDST 1-D kernels at reconstruction time.  The historical
+    // `inter_tx_type_is_ddt()` filter (which also removed the identity types)
+    // must not run: the encoder applies the DDT kernels instead.
     if (!residual::inter_tx_type_in_set(set,
                                         static_cast<txv::TxType>(type))) {
       continue;
@@ -374,37 +379,40 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   }
   std::vector<std::int16_t> adj(static_cast<std::size_t>(area));
   txv::downsample_residual(coded.data(), params, adj.data());
-  std::vector<double> coeff(static_cast<std::size_t>(area));
-  txv::forward_block(adj.data(), params, coeff.data());
+  // §7.15.4.1: when enable_inter_ddt derives DDTX/FDDT for this block, the
+  // decoder reconstructs with the DDT kernels, so the search must forward and
+  // inverse-transform with the same kernels.  Non-DDT candidates keep the
+  // historical txv path byte-for-byte.
+  ddt::Context ddt_ctx;
+  ddt_ctx.enable_inter_ddt = options.enable_inter_ddt;
+  ddt_ctx.is_inter = is_inter;
+  ddt_ctx.use_intrabc = false;
+  ddt_ctx.bit_depth = 8;
+  const bool use_ddt = ddt::plan_has_ddt(params, ddt_ctx);
+  std::vector<std::int32_t> coeff_i;
+  std::vector<double> coeff;
+  double scaled = params.quant_factor * 528.0;
+  if (use_ddt) {
+    coeff_i.assign(static_cast<std::size_t>(area), 0);
+    ddt::forward_block(adj.data(), params, ddt_ctx, coeff_i.data());
+    scaled = ddt::quant_factor(params) * 528.0;
+  } else {
+    coeff.assign(static_cast<std::size_t>(area), 0.0);
+    txv::forward_block(adj.data(), params, coeff.data());
+  }
 
   const int dcq = get_q(qindex, delta_dc);
   const int acq = get_q(qindex, delta_ac);
-  const double scaled = params.quant_factor * 528.0;
   std::vector<std::int32_t> levels(static_cast<std::size_t>(area));
-  std::vector<std::int32_t> dequant(static_cast<std::size_t>(area));
   for (int i = 0; i < area; ++i) {
     const int q = i == 0 ? dcq : acq;
     const double factor = scaled / static_cast<double>(q);
+    const double source =
+        use_ddt ? static_cast<double>(coeff_i[static_cast<std::size_t>(i)])
+                : coeff[static_cast<std::size_t>(i)];
     const std::int32_t level = static_cast<std::int32_t>(
-        std::lround(coeff[static_cast<std::size_t>(i)] * factor));
+        std::lround(source * factor));
     levels[static_cast<std::size_t>(i)] = level;
-    const std::int32_t aq = level < 0 ? -level : level;
-    const std::int32_t high = (aq * q) & 0xFFFFFF;
-    const std::int32_t dq =
-        txv::round2(high, txv::kQuantTableBits) / params.dq_denom;
-    dequant[static_cast<std::size_t>(i)] =
-        std::max(-(1 << 15),
-                 std::min((1 << 15) - 1, level < 0 ? -dq : dq));
-  }
-  std::vector<std::int16_t> recon(static_cast<std::size_t>(coded_n));
-  txv::inverse_block(dequant.data(), params, recon.data());
-
-  std::int64_t sse_i = 0;
-  for (int i = 0; i < coded_n; ++i) {
-    const std::int64_t d =
-        static_cast<std::int64_t>(recon[static_cast<std::size_t>(i)]) -
-        coded[static_cast<std::size_t>(i)];
-    sse_i += d * d;
   }
 
   const txpart::TxScanClass cls =
@@ -414,6 +422,94 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     if (error != nullptr) *error = "scan table generation failed";
     return false;
   }
+
+  // §5.20.7.27 TCQ.  Luma-only (the search is luma-only), no FSC/lossless, and
+  // TX_CLASS_2D only.  The trellis replaces the scalar levels with the site
+  // syntax base levels and returns the mapped Quant[] the dequant consumes.
+  std::vector<std::int32_t> dequant_levels;
+  const bool use_tcq = options.tcq && dcq == acq && tx_type <= 9;
+  if (use_tcq) {
+    std::vector<av2enc::tcq::Coefficient> input(
+        static_cast<std::size_t>(area));
+    std::vector<std::int32_t> reference(static_cast<std::size_t>(area));
+    for (int c = 0; c < area; ++c) {
+      const int pos = scan[static_cast<std::size_t>(c)];
+      const int row = pos / params.w;
+      const int col = pos % params.w;
+      input[static_cast<std::size_t>(c)].original =
+          use_ddt ? static_cast<double>(coeff_i[static_cast<std::size_t>(pos)])
+                  : coeff[static_cast<std::size_t>(pos)];
+      input[static_cast<std::size_t>(c)].level_context = 0;
+      input[static_cast<std::size_t>(c)].pre_max = (row + col) < 4 ? 8 : 6;
+      const std::int32_t scalar = levels[static_cast<std::size_t>(pos)];
+      const std::int32_t magnitude = std::abs(scalar);
+      const std::int32_t base = (magnitude + 1) / 2;
+      reference[static_cast<std::size_t>(c)] = scalar < 0 ? -base : base;
+    }
+    av2enc::tcq::av2::BlockInfo info;
+    info.plane = 0;
+    info.params = params;
+    info.txb_skip_context = 0;
+    info.dc_sign_context = 0;
+    info.qctx = options.tcq_qctx;
+    info.is_inter = is_inter;
+    info.tx_class_2d = true;
+    av2enc::tcq::av2::Model model;
+    std::string tcq_error;
+    if (!model.init(info, reference, &tcq_error)) {
+      if (error != nullptr) *error = "tcq model init failed: " + tcq_error;
+      return false;
+    }
+    av2enc::tcq::Config config;
+    config.quant_step = static_cast<double>(acq) / scaled;
+    config.lambda = av2enc::rdo::lambda_sse_from_quant_step(
+        config.quant_step, /*sse_scale=*/0.125);
+    config.max_coefficients = area;
+    av2enc::tcq::Result result;
+    if (!av2enc::tcq::quantize(input, config, model.rate_model(), result,
+                               &tcq_error)) {
+      if (error != nullptr) *error = "tcq quantize failed: " + tcq_error;
+      return false;
+    }
+    std::fill(levels.begin(), levels.end(), 0);
+    dequant_levels.assign(static_cast<std::size_t>(area), 0);
+    for (int c = 0; c < result.eob; ++c) {
+      const int pos = scan[static_cast<std::size_t>(c)];
+      levels[static_cast<std::size_t>(pos)] =
+          result.base_levels[static_cast<std::size_t>(c)];
+      dequant_levels[static_cast<std::size_t>(pos)] =
+          result.quant_levels[static_cast<std::size_t>(c)];
+    }
+  }
+
+  std::vector<std::int32_t> dequant(static_cast<std::size_t>(area));
+  const int dq_denom = use_tcq ? (params.dq_denom << 1) : params.dq_denom;
+  for (int i = 0; i < area; ++i) {
+    const int q = i == 0 ? dcq : acq;
+    const std::int32_t level =
+        use_tcq ? dequant_levels[static_cast<std::size_t>(i)]
+                : levels[static_cast<std::size_t>(i)];    const std::int32_t aq = level < 0 ? -level : level;
+    const std::int32_t high = (aq * q) & 0xFFFFFF;
+    const std::int32_t dq = txv::round2(high, txv::kQuantTableBits) / dq_denom;
+    dequant[static_cast<std::size_t>(i)] =
+        std::max(-(1 << 15),
+                 std::min((1 << 15) - 1, level < 0 ? -dq : dq));
+  }
+  std::vector<std::int16_t> recon(static_cast<std::size_t>(coded_n));
+  if (use_ddt) {
+    ddt::inverse_block(dequant.data(), params, ddt_ctx, recon.data());
+  } else {
+    txv::inverse_block(dequant.data(), params, recon.data());
+  }
+
+  std::int64_t sse_i = 0;
+  for (int i = 0; i < coded_n; ++i) {
+    const std::int64_t d =
+        static_cast<std::int64_t>(recon[static_cast<std::size_t>(i)]) -
+        coded[static_cast<std::size_t>(i)];
+    sse_i += d * d;
+  }
+
   int eob = 0;
   int nonzero = 0;
   for (int c = 0; c < area; ++c) {

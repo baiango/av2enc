@@ -142,8 +142,8 @@ PASSED=0
 SKIPPED=0
 FAILED=0
 INDEX=0
-TOTAL=9
-[ "$QUICK" -eq 1 ] && TOTAL=5
+TOTAL=17
+[ "$QUICK" -eq 1 ] && TOTAL=6
 declare -a RESULTS=()
 
 now() { date +%s; }
@@ -220,6 +220,7 @@ TILES_ARGS=()
 run_gate gate_tiles src/pipeline/tiles/stream/gate_cli_tiles.sh \
     ${TILES_ARGS[@]+"${TILES_ARGS[@]}"}
 run_gate gate_host_plan src/pipeline/dispatch/gate_host_plan.sh
+run_gate gate_10bit_filters src/formats/high_bitdepth/gate_10bit_filters.sh
 if [ "$QUICK" -eq 0 ]; then
     run_gate gate_rc src/pipeline/video/post/gate_cli_rc.sh
     run_gate gate_video_cli src/pipeline/video/video_cli_gate.sh --frames 4
@@ -227,8 +228,13 @@ if [ "$QUICK" -eq 0 ]; then
     run_gate gate_video_inter_residual src/pipeline/video/video_cli_gate.sh \
         --frames 4 --illumination-shift --expect-inter-residual \
         -- --video-inter-residual
+    run_gate gate_video_tcq src/pipeline/video/video_tcq_gate.sh
+    run_gate gate_video_cctx src/pipeline/video/video_cctx_gate.sh
     run_gate gate_implicit_ref_map src/pipeline/video/gate_implicit_ref_map.sh
     run_gate gate_video_near_near src/pipeline/video/gate_video_near_near.sh
+    run_gate gate_video_tip src/pipeline/video/video_tip_gate.sh
+    run_gate gate_video_drl_reorder src/pipeline/video/gate_video_drl_reorder.sh
+    run_gate gate_video_opfl_refine src/pipeline/video/gate_video_opfl_refine.sh
 fi
 
 echo

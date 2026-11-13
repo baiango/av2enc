@@ -4,14 +4,13 @@
 # This is the decoder-gated carrier for the temporal refinement tools
 # (§7.13.3.3-.12): a B picture has one past and one future reference, so
 # opfl_allowed_for_refs() is true and a NEAR_NEARMV block can request
-# use_optflow / derive use_refinemv.  The refinement itself is NOT gated here:
-# --video-opfl and --video-refine-mv stay rejected by name (see
-# docs/negative-results.md); --verify-rejections re-runs the env-gated
-# reproducers and requires the recon mismatch to still exist.
+# use_optflow / derive use_refinemv.  The carrier itself is gated here; the
+# refinement overlays (--video-opfl, --video-refine-mv) have their own gate in
+# gate_video_opfl_refine.sh.
 #
 # Usage:
 #   src/pipeline/video/gate_video_near_near.sh --bin build/av2enc \
-#       [--dav2d /path/to/dav2d] [--verify-rejections]
+#       [--dav2d /path/to/dav2d]
 #
 # Exit codes: 0 pass, 1 failure, 2 usage, 77 missing fixture/decoder.
 set -euo pipefail
@@ -19,14 +18,12 @@ set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
 BIN=""
 DAV2D="${DAV2D:-}"
-VERIFY_REJECTIONS=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --bin) BIN=$2; shift 2 ;;
     --dav2d) DAV2D=$2; shift 2 ;;
-    --verify-rejections) VERIFY_REJECTIONS=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "gate_video_near_near: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -119,43 +116,5 @@ for spec in "${CASES[@]}"; do
   cmp -s "$dec" "$recon" || fail "$name: recon is not byte-exact"
   echo "PASS $name: $nn NEAR_NEARMV block(s), $decoded pictures, recon exact"
 done
-
-# Named rejections stay rejected (the refinement tools are implemented but not
-# decoder-exact).
-reject() {
-  local label=$1 needle=$2
-  shift 2
-  if "$BIN" "$TMP/pan3.y4m" -o "$TMP/reject.ivf" "$@" \
-      >/dev/null 2>"$TMP/reject.err"; then
-    fail "$label: expected a rejection"
-  fi
-  grep -qF -e "$needle" "$TMP/reject.err" || {
-    cat "$TMP/reject.err" >&2
-    fail "$label: error does not mention '$needle'"
-  }
-  echo "PASS $label rejected by name"
-}
-reject "video-opfl" "not decoder-exact" --video --b-frames 1 --video-compound \
-  --video-opfl
-reject "video-refine-mv" "not decoder-exact" --video --b-frames 1 \
-  --video-compound --video-refine-mv
-
-if [ "$VERIFY_REJECTIONS" -eq 1 ]; then
-  # The documented repro: the ungated stream parses but the recon differs.
-  for pair in "OPFL|--video-opfl" "REFINEMV|--video-refine-mv"; do
-    IFS='|' read -r tag flag <<<"$pair"
-    env "AV2ENC_ENABLE_UNGATED_${tag}=1" \
-      "$BIN" "$TMP/pan3.y4m" -o "$TMP/$tag.ivf" --video --b-frames 1 \
-      --video-compound "$flag" --video-max-depth 3 \
-      --video-recon "$TMP/$tag.recon.y4m" >/dev/null 2>&1 || \
-        fail "$tag: ungated encode failed"
-    "$DAV2D" --strict 1 --threads 1 -i "$TMP/$tag.ivf" -o "$TMP/$tag.dec.y4m" \
-      >/dev/null 2>&1 || fail "$tag: ungated stream does not parse"
-    if cmp -s "$TMP/$tag.dec.y4m" "$TMP/$tag.recon.y4m"; then
-      fail "$tag: recon is now exact; re-gate the flag instead of rejecting it"
-    fi
-    echo "PASS $tag rejection repro still differs (as documented)"
-  done
-fi
 
 echo "PASS gate_video_near_near"

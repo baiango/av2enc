@@ -136,8 +136,10 @@ The gate therefore asserts insertion and, through the stress mode, selection.
 4. **Warp / GME and wedge compounds** are rejected with the flag: §7.22 stores
    per-8×8 warped MVs and applies a wedge allow-list, neither of which the flat
    MI grid carries.
-5. **TIP hole fill** is unrelated and remains off (see
-   `docs/negative-results.md`).
+5. **TIP hole fill** is on in the product TIP stream (§7.10.3/.4 with the
+   per-frame `allow_tip_hole_fill` bit); the encoder's and the pinned
+   decoder's validity masks are cell-identical, see
+   `docs/tip-decoder-gate.md`.
 
 ## 6. BRU (feature 3)
 

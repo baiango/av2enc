@@ -1,6 +1,9 @@
 #include "pipeline/video/video_frame.h"
 
 #include "codec/intra/modes/intra_modes.h"
+#include "codec/intra/mrl/core/mrl.h"
+#include "codec/intra/mrl/stream/mrl_interaction.h"
+#include "codec/transform/secondary/tx_secondary.h"
 #include "frame/metadata/content_interpretation/content_interpretation.h"
 #include "frame/mfh/mfh.h"
 #include "pipeline/video/video_frames.h"
@@ -11,13 +14,24 @@
 #include "pipeline/video/video_temporal.h"
 #include "pipeline/video/video_tx_search.h"
 #include "codec/partition/tree/partition.h"
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+#include "codec/partition/ext/partition_ext.h"
+#endif
+#include "codec/partition/sdp/sdp.h"
 #include "codec/rate/rc/rc_tables.h"
 #if defined(AV2ENC_VIDEO_DELTAQ)
 #include "codec/entropy/deltaq/still/deltaq.h"
 #include "codec/rate/rc/rc.h"
 #endif
 #include "codec/transform/variants/tx_variants.h"
+#include "codec/rate/rdo/rdo.h"
+#include "codec/transform/ddt/ddt.h"
 #include "codec/transform/qm/qm.h"
+#include "codec/transform/tcq/cctx.h"
+#include "codec/transform/tcq/tcq.h"
+#include "codec/transform/tcq/tcq_av2_model.h"
+#include "codec/entropy/qctx/qctx.h"
+#include "codec/rate/rdo/rdo.h"
 #include "pipeline/video/video_bawp.h"
 #include "codec/inter/mc/mc.h"
 #include "codec/inter/me/me.h"
@@ -27,6 +41,8 @@
 #include "codec/intra/ibc/core/ibc.h"
 #include "codec/intra/ibc/stream/ibc_stack.h"
 #include "codec/intra/ibc/stream/still_ibc_stream.h"
+#include "codec/intra/palette/core/palette.h"
+#include "codec/intra/palette/stream/palette_stream.h"
 #include "codec/inter/drl_reorder/video_stack_adapter.h"
 #include "codec/inter/temporal/motion_field.h"
 #include "codec/inter/temporal/opfl.h"
@@ -57,6 +73,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -75,10 +92,17 @@ using partition::FrameGeometry;
 using partition::PartitionNode;
 using partition::PartitionType;
 namespace drl = inter::drl;
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+namespace pe = partition_ext;
+#endif
 namespace temporal = inter::temporal;
 namespace tip = inter::tip;
+namespace sdpp = av2enc::sdp;
 namespace ibcs = still::ibc_stream;
+namespace mrl_stream = still::mrl_stream;
+namespace txsec = ::av2enc::txsec;
 namespace morph = inter::morph;
+namespace pals = still::palette_stream;
 
 // AV2 RefFrame labels used by the merge layer's MI grid.  mc::kRefLast is an
 // internal MC label (1); §6.19.7.9 numbers LAST_FRAME = 0 and
@@ -158,7 +182,15 @@ struct TxPlan {
   int adj_h = 0;
   int eob = 0;
   std::vector<std::int32_t> levels;  // adjusted-size coefficient array
+  // §5.20.7.27 TCQ: the adjusted-size Quant[] values (base levels mapped by
+  // Quant = 2*base - q0) that the §7.14.4 dequant consumes.  Empty when TCQ
+  // did not run on this plan.
+  std::vector<std::int32_t> dequant_levels;
   std::vector<std::uint8_t> recon;   // final coded-size samples
+  // §5.20.8.2 intra IST decision (--video-ist).  0 = no secondary transform.
+  int tx_type = 0;       // txv::TxType of the single (non-searched) block
+  int sec_tx_type = 0;
+  int stx_set = 0;
 
   // Opt-in luma TX search (--video-tx-search).  When `searched` is true the
   // per-part list below is authoritative: `parts[i].levels` are in §5.20.7.30
@@ -177,6 +209,8 @@ struct TxPlan {
     int mi_col = 0;
     int eob = 0;
     std::vector<std::int32_t> levels;  // scan order
+    int sec_tx_type = 0;
+    int stx_set = 0;
   };
   std::vector<Part> parts;
 };
@@ -424,7 +458,9 @@ bool build_video_frame_qp(const VideoOptions& options, int base_q_idx,
 bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, int cw,
                 int ch, const std::vector<std::uint8_t>& pred, int quant_step,
                 TxPlan& plan, std::string& error,
-                const qm::QmFrameState* qm_state = nullptr) {
+                const qm::QmFrameState* qm_state = nullptr,
+                bool allow_tcq = false, int qctx_slice = 0,
+                bool is_inter = false) {
   auto params_opt = txv::make_tx_params(cw, ch, txv::TxType::kDctDct);
   if (!params_opt.has_value()) {
     error = "unsupported transform size";
@@ -497,6 +533,71 @@ bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, int cw,
   const int area = params.w * params.h;
   std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
   syntax::build_scan(params.w, params.h, scan);
+
+  // §5.20.7.27 trellis-coded quantisation.  Luma-only and TX_CLASS_2D-only;
+  // QM changes the per-coefficient quantiser and is rejected with TCQ before
+  // this point.  The DP returns the syntax base levels (what coeff_base/br and
+  // the read_quant escape code) and the mapped Quant values §7.14.4
+  // dequantises after the extra dqDenom shift.
+  const bool use_tcq =
+      allow_tcq && plane == 0 && params.tx_type <= 9 && qm_state == nullptr;
+  if (use_tcq) {
+    std::vector<av2enc::tcq::Coefficient> input(
+        static_cast<std::size_t>(area));
+    std::vector<std::int32_t> reference(static_cast<std::size_t>(area));
+    for (int c = 0; c < area; ++c) {
+      const int pos = scan[static_cast<std::size_t>(c)];
+      const int row = pos / params.w;
+      const int col = pos % params.w;
+      input[static_cast<std::size_t>(c)].original =
+          coeff[static_cast<std::size_t>(pos)];
+      input[static_cast<std::size_t>(c)].level_context = 0;
+      input[static_cast<std::size_t>(c)].pre_max = (row + col) < 4 ? 8 : 6;
+      // Frozen neighbour/escape reference: the scalar level at half the
+      // syntax step (the same approximation the still TCQ path uses).
+      const std::int32_t scalar = plan.levels[static_cast<std::size_t>(pos)];
+      const std::int32_t magnitude = std::abs(scalar);
+      const std::int32_t base = (magnitude + 1) / 2;
+      reference[static_cast<std::size_t>(c)] = scalar < 0 ? -base : base;
+    }
+    av2enc::tcq::av2::BlockInfo info;
+    info.plane = 0;
+    info.params = params;
+    info.txb_skip_context = 0;
+    info.dc_sign_context = 0;
+    info.qctx = qctx_slice;
+    info.is_inter = is_inter;
+    info.tx_class_2d = true;
+    av2enc::tcq::av2::Model model;
+    std::string tcq_error;
+    if (!model.init(info, reference, &tcq_error)) {
+      error = "tcq model init failed: " + tcq_error;
+      return false;
+    }
+    av2enc::tcq::Config tcq_config;
+    tcq_config.quant_step = 1.0 / params.quant_factor;
+    tcq_config.lambda = av2enc::rdo::lambda_sse_from_quant_step(
+        tcq_config.quant_step, /*sse_scale=*/0.125);
+    tcq_config.max_coefficients = area;
+    av2enc::tcq::Result tcq_result;
+    if (!av2enc::tcq::quantize(input, tcq_config, model.rate_model(),
+                               tcq_result, &tcq_error)) {
+      error = "tcq quantize failed: " + tcq_error;
+      return false;
+    }
+    std::fill(plan.levels.begin(), plan.levels.end(), 0);
+    plan.dequant_levels.assign(static_cast<std::size_t>(area), 0);
+    for (int c = 0; c < tcq_result.eob; ++c) {
+      const int pos = scan[static_cast<std::size_t>(c)];
+      plan.levels[static_cast<std::size_t>(pos)] =
+          tcq_result.base_levels[static_cast<std::size_t>(c)];
+      plan.dequant_levels[static_cast<std::size_t>(pos)] =
+          tcq_result.quant_levels[static_cast<std::size_t>(c)];
+    }
+  } else {
+    plan.dequant_levels.clear();
+  }
+
   plan.eob = 0;
   for (int c = area - 1; c >= 0; --c) {
     if (plan.levels[scan[static_cast<std::size_t>(c)]] != 0) {
@@ -518,6 +619,23 @@ bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, int cw,
       const std::int32_t dq =
           txv::round2(static_cast<std::int32_t>(high), txv::kQuantTableBits) /
           params.dq_denom;
+      const std::int32_t value = qc < 0 ? -dq : dq;
+      dequant[static_cast<std::size_t>(i)] =
+          std::max(-(1 << 15), std::min((1 << 15) - 1, value));
+    }
+    txv::inverse_block(dequant.data(), params, recon_residual.data());
+  } else if (!plan.dequant_levels.empty()) {
+    // §7.14.4 TCQ: dequantise the mapped Quant[] values with the extra
+    // dqDenom shift (`shift += 1` for luma TX_CLASS_2D), then inverse.
+    const int n = params.w * params.h;
+    for (int i = 0; i < n; ++i) {
+      const std::int32_t qc =
+          plan.dequant_levels[static_cast<std::size_t>(i)];
+      const std::int64_t aq = qc < 0 ? -static_cast<std::int64_t>(qc) : qc;
+      const std::int64_t high = (aq * quant_step) & 0xFFFFFF;
+      const std::int32_t dq =
+          txv::round2(static_cast<std::int32_t>(high), txv::kQuantTableBits) /
+          (params.dq_denom << 1);
       const std::int32_t value = qc < 0 ? -dq : dq;
       dequant[static_cast<std::size_t>(i)] =
           std::max(-(1 << 15), std::min((1 << 15) - 1, value));
@@ -619,6 +737,9 @@ bool luma_plan_all_zero(const TxPlan& plan) {
 void write_luma_plan(syntax::BlockSyntax& entry, const TxPlan& plan,
                      std::vector<std::int32_t>& levels) {
   entry.tx_type[0] = 0;
+  entry.sec_tx_type[0] = static_cast<std::uint8_t>(plan.sec_tx_type);
+  entry.most_probable_stx_set[0] =
+      static_cast<std::uint8_t>(plan.stx_set);
   if (!plan.searched) {
     entry.tx_size[0] = static_cast<std::uint8_t>(plan.tx_size);
     entry.eob[0] = static_cast<std::uint32_t>(plan.eob);
@@ -639,6 +760,9 @@ void write_luma_plan(syntax::BlockSyntax& entry, const TxPlan& plan,
     const TxPlan::Part& part = plan.parts[static_cast<std::size_t>(i)];
     entry.tx_part_tx_size[i] = static_cast<std::uint8_t>(part.tx_size);
     entry.tx_part_tx_type[i] = static_cast<std::uint8_t>(part.tx_type);
+    entry.tx_part_sec_tx_type[i] =
+        static_cast<std::uint8_t>(part.sec_tx_type);
+    entry.tx_part_stx_set[i] = static_cast<std::uint8_t>(part.stx_set);
     entry.tx_part_mi_row[i] = static_cast<std::int16_t>(part.mi_row);
     entry.tx_part_mi_col[i] = static_cast<std::int16_t>(part.mi_col);
     entry.tx_part_eob[i] = static_cast<std::uint32_t>(part.eob);
@@ -660,7 +784,9 @@ void write_luma_plan(syntax::BlockSyntax& entry, const TxPlan& plan,
 bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
                     int ch, const std::vector<std::uint8_t>& pred, int qindex,
                     txtsearch::Mode mode, double lambda, bool allow_idtx,
-                    bool trace, TxPlan& plan, std::string& error) {
+                    int intra_mapped_mode, bool allow_tcq, int qctx_slice,
+                    bool enable_inter_ddt, bool search_partition, bool trace,
+                    TxPlan& plan, std::string& error) {
   std::vector<std::int16_t> residual(
       static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
   for (int y = 0; y < ch; ++y) {
@@ -674,6 +800,10 @@ bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   txtsearch::Options options;
   options.lambda = lambda;
   options.allow_idtx = allow_idtx;
+  options.intra_mapped_mode = intra_mapped_mode;
+  options.tcq = allow_tcq;
+  options.tcq_qctx = qctx_slice;
+  options.enable_inter_ddt = enable_inter_ddt;
   // §5.20.7.24 predicts per *transform block*, in decode order, and each part's
   // reconstruction feeds the next part's prediction.  A fixed block prediction
   // is only equivalent when the transform block covers the coding block, so the
@@ -682,7 +812,9 @@ bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   // coordinates.  Intra keeps TX_PARTITION_NONE and searches the TX type only;
   // the full intra partition search needs the per-part prediction/recon
   // feedback the device module's fixed-predictor contract does not carry.
-  options.search_partition = mode == txtsearch::Mode::kInter;
+  // Under TX_MODE_LARGEST the bitstream codes no partition, so the DDT type
+  // search must also restrict itself to TX_PARTITION_NONE.
+  options.search_partition = search_partition;
   txtsearch::Result result;
   if (!txtsearch::search(residual.data(), cw, ch, mode, qindex, 0, 0,
                          pred.data(), options, &result, &error)) {
@@ -707,10 +839,32 @@ bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
     part.mi_col = leaf.mi_col;
     part.eob = leaf.eob;
     part.levels = leaf.levels;
+    part.sec_tx_type = 0;
+    part.stx_set = 0;
+    if (trace) {
+      std::cerr << "  video tx: leaf " << leaf.coded_w << "x" << leaf.coded_h
+                << " type=" << leaf.tx_type << " at " << x0 + leaf.x << ","
+                << y0 + leaf.y << "\n";
+    }
     if (trace && leaf.tx_type == 9) {
       std::cerr << "  video tx: idtx leaf " << leaf.coded_w << "x"
                 << leaf.coded_h << " at " << x0 + leaf.x << ","
                 << y0 + leaf.y << "\n";
+    }
+    if (trace && enable_inter_ddt) {
+      const auto tx_params = txv::make_tx_params(
+          static_cast<txv::TxSize>(leaf.tx_size),
+          static_cast<txv::TxType>(leaf.tx_type));
+      if (tx_params.has_value()) {
+        av2enc::video::ddt::Context ddt_ctx;
+        ddt_ctx.enable_inter_ddt = true;
+        ddt_ctx.is_inter = true;
+        if (av2enc::video::ddt::plan_has_ddt(*tx_params, ddt_ctx)) {
+          std::cerr << "  video tx: ddt leaf " << leaf.coded_w << "x"
+                    << leaf.coded_h << " type=" << leaf.tx_type << " at "
+                    << x0 + leaf.x << "," << y0 + leaf.y << "\n";
+        }
+      }
     }
     plan.parts.push_back(std::move(part));
   }
@@ -720,6 +874,231 @@ bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   }
   plan.tx_size = plan.parts[0].tx_size;
   plan.eob = plan.parts[0].eob;
+  return true;
+}
+
+// §7.13.2.1/.7/.8 MRL prediction for a directional luma candidate.  The M1
+// still encoder's predict_luma_mrl() is the reference; the availability inputs
+// come from the shared intra search.
+bool predict_luma_mrl(const Plane& recon,
+                      const intra_search::Availability& avail, int x0, int y0,
+                      int w, int h, bool above_smooth, bool left_smooth,
+                      int y_mode, int angle_delta, int mrl_index,
+                      bool mrl_sec_index, int sb_height,
+                      std::vector<std::uint8_t>& out, std::string& error) {
+  mrl::Params params;
+  if (!mrl_stream::make_predict_params(
+          y_mode, angle_delta, mrl_index, mrl_sec_index,
+          /*sequence_enable_edge_filter=*/true, above_smooth, left_smooth,
+          &params, w, h)) {
+    error = "MRL prediction parameters rejected";
+    return false;
+  }
+  mrl::Block block;
+  block.recon = intra::PlaneView{recon.samples.data(), recon.stride};
+  block.x = x0;
+  block.y = y0;
+  block.w = w;
+  block.h = h;
+  block.max_x = avail.max_x;
+  block.max_y = avail.max_y;
+  block.have_left = avail.have_left != 0;
+  block.have_above = avail.have_above != 0;
+  block.num4_above_right = avail.num4_above_right;
+  block.num4_below_left = avail.num4_below_left;
+  block.plane = 0;
+  block.sb_height = sb_height;
+  out.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+  if (mrl::predict_block(block, 8, params, out.data(),
+                         static_cast<std::size_t>(w)) !=
+      mrl::MrlStatus::kOk) {
+    error = "mrl::predict_block failed";
+    return false;
+  }
+  return true;
+}
+
+// §7.15.3 luma IST decision for one intra leaf.  Mirrors the M1 still
+// encoder's compute_tx() block: the projection is encoder-side analysis, and
+// the cost is reconstructed SSE + lambda * §9.3 symbol bits.  Only a single
+// transform block is considered; with a TX partition the search plan wins.
+bool refine_luma_ist(const VideoInputFrame& frame, int ax0, int ay0, int cw,
+                     int ch, const std::vector<std::uint8_t>& pred,
+                     int quant_step, int y_mode, int angle_delta,
+                     int mrl_index, TxPlan& plan, std::string& error) {
+  int tx_size = plan.tx_size;
+  int tx_type = plan.tx_type;
+  int coded_w = cw;
+  int coded_h = ch;
+  int eob = plan.eob;
+  std::vector<std::int32_t> full;
+  TxPlan::Part* part = nullptr;
+  if (plan.searched) {
+    if (plan.parts.size() != 1) return true;
+    part = &plan.parts[0];
+    if (part->coded_w != cw || part->coded_h != ch) return true;
+    tx_size = part->tx_size;
+    tx_type = part->tx_type;
+    eob = part->eob;
+    const auto params_opt =
+        txv::make_tx_params(static_cast<txv::TxSize>(tx_size),
+                            static_cast<txv::TxType>(tx_type));
+    if (!params_opt.has_value()) return true;
+    const int area = params_opt->w * params_opt->h;
+    std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
+    syntax::build_scan(params_opt->w, params_opt->h, scan);
+    full.assign(static_cast<std::size_t>(area), 0);
+    for (int c = 0; c < eob; ++c) {
+      full[scan[static_cast<std::size_t>(c)]] = part->levels[c];
+    }
+    plan.tx_size = tx_size;
+  } else {
+    full = plan.levels;
+  }
+
+  const auto params_opt =
+      txv::make_tx_params(static_cast<txv::TxSize>(tx_size),
+                          static_cast<txv::TxType>(tx_type));
+  if (!params_opt.has_value()) return true;
+  const txv::TxParams& params = *params_opt;
+  if (params.coded_w != coded_w || params.coded_h != coded_h) return true;
+  const int area = params.w * params.h;
+  if (static_cast<int>(full.size()) < area) {
+    error = "IST: coefficient array is smaller than the transform area";
+    return false;
+  }
+  std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
+  syntax::build_scan(params.w, params.h, scan);
+  const auto eob_of = [&](const std::vector<std::int32_t>& lv) {
+    for (int c = area - 1; c >= 0; --c) {
+      if (lv[scan[static_cast<std::size_t>(c)]] != 0) return c + 1;
+    }
+    return 0;
+  };
+
+  txsec::SecondaryTransformConfig ist_cfg;
+  ist_cfg.enable_intra_ist = true;
+  txsec::SecondarySyntax stx;
+  stx.plane_tx_type = static_cast<txv::TxType>(tx_type);
+  stx.coded_w = coded_w;
+  stx.coded_h = coded_h;
+  stx.y_mode = y_mode;
+  stx.angle_delta = angle_delta;
+  stx.mrl_index = mrl_index;
+  stx.is_inter = false;
+  stx.lossless = false;
+  stx.bit_depth = 8;
+  if (eob < 2 || !txsec::secondary_syntax_applicable(0, eob, stx, ist_cfg)) {
+    return true;
+  }
+  txsec::SecondaryCandidate candidates[32];
+  const int count =
+      txsec::enumerate_secondary_candidates(stx, ist_cfg, eob, candidates, 32);
+  if (count <= 0) return true;
+
+  const auto reconstruct = [&](const std::vector<std::int32_t>& lv, int ev,
+                               int sec, int set, std::vector<std::int16_t>* rr,
+                               bool* ok) -> bool {
+    txsec::SecondarySyntax cs = stx;
+    cs.sec_tx_type = sec;
+    cs.most_probable_stx_set = set;
+    if (!txsec::secondary_syntax_valid(0, ev, cs, ist_cfg)) return false;
+    std::vector<std::int32_t> dequant(static_cast<std::size_t>(area));
+    for (int i = 0; i < area; ++i) {
+      const std::int32_t qc = lv[static_cast<std::size_t>(i)];
+      const std::int64_t aq = qc < 0 ? -static_cast<std::int64_t>(qc) : qc;
+      const std::int64_t high = (aq * quant_step) & 0xFFFFFF;
+      const std::int32_t dq =
+          txv::round2(static_cast<std::int32_t>(high), txv::kQuantTableBits) /
+          params.dq_denom;
+      dequant[static_cast<std::size_t>(i)] =
+          std::max(-(1 << 15), std::min((1 << 15) - 1, qc < 0 ? -dq : dq));
+    }
+    const txsec::SecondaryStatus status = txsec::apply_inverse_secondary(
+        params, 0, ev, cs, ist_cfg, dequant.data(), dequant.size());
+    if (status != txsec::SecondaryStatus::kApplied) return false;
+    rr->assign(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch), 0);
+    txv::inverse_block(dequant.data(), params, rr->data());
+    *ok = true;
+    return true;
+  };
+  const auto recon_of = [&](const std::vector<std::int16_t>& rr) {
+    std::vector<std::uint8_t> recon(
+        static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
+    for (int y = 0; y < ch; ++y) {
+      for (int x = 0; x < cw; ++x) {
+        const int p = pred[static_cast<std::size_t>(y) * cw + x];
+        const int r = rr[static_cast<std::size_t>(y) * cw + x];
+        recon[static_cast<std::size_t>(y) * cw + x] =
+            static_cast<std::uint8_t>(clip1(p + r));
+      }
+    }
+    return recon;
+  };
+
+  double best_cost = static_cast<double>(
+      sse_against_source(frame, 0, ax0, ay0, cw, ch, plan.recon));
+  std::vector<std::int32_t> best_levels;
+  std::vector<std::uint8_t> best_recon;
+  int best_eob = eob;
+  int best_sec = 0;
+  int best_set = 0;
+  const double lambda =
+      av2enc::rdo::lambda_sse_from_quant_step(1.0 / params.quant_factor, 0.125);
+  for (int i = 0; i < count; ++i) {
+    const txsec::SecondaryCandidate& candidate = candidates[i];
+    std::vector<std::int32_t> lv = full;
+    if (!txsec::project_ist_levels(params, stx.plane_tx_type, candidate.kernel,
+                                   candidate.sec_tx_type, candidate.transpose,
+                                   lv.data(), lv.size())) {
+      continue;
+    }
+    const int ev = eob_of(lv);
+    if (ev < 2) continue;
+    bool ok = false;
+    std::vector<std::int16_t> rr;
+    if (!reconstruct(lv, ev, candidate.sec_tx_type,
+                     candidate.most_probable_stx_set, &rr, &ok) ||
+        !ok) {
+      continue;
+    }
+    std::vector<std::uint8_t> recon = recon_of(rr);
+    const double sse = static_cast<double>(
+        sse_against_source(frame, 0, ax0, ay0, cw, ch, recon));
+    const double bits =
+        txsec::sec_tx_type_bits(candidate.sec_tx_type, params.tx_size, false) +
+        txsec::most_probable_stx_set_bits(candidate.most_probable_stx_set,
+                                          stx.plane_tx_type, coded_w, coded_h);
+    const double cost = sse + lambda * bits;
+    if (cost < best_cost) {
+      best_cost = cost;
+      best_levels = std::move(lv);
+      best_recon = std::move(recon);
+      best_eob = ev;
+      best_sec = candidate.sec_tx_type;
+      best_set = candidate.most_probable_stx_set;
+    }
+  }
+  if (best_sec == 0) return true;
+
+  if (part != nullptr) {
+    part->eob = best_eob;
+    part->sec_tx_type = best_sec;
+    part->stx_set = best_set;
+    part->levels.resize(static_cast<std::size_t>(best_eob));
+    for (int c = 0; c < best_eob; ++c) {
+      part->levels[static_cast<std::size_t>(c)] =
+          best_levels[scan[static_cast<std::size_t>(c)]];
+    }
+    plan.eob = best_eob;
+    plan.tx_type = tx_type;
+  } else {
+    plan.levels = std::move(best_levels);
+    plan.eob = best_eob;
+    plan.sec_tx_type = best_sec;
+    plan.stx_set = best_set;
+  }
+  plan.recon = std::move(best_recon);
   return true;
 }
 
@@ -736,6 +1115,214 @@ void write_plane_block(Plane& plane, int x0, int y0, int w, int h,
                   static_cast<std::size_t>(x)];
     }
   }
+}
+
+// §5.4.8 enable_cctx / §7.14.6.  Chroma U/V are quantised jointly: each of the
+// seven rotation types is enumerated, and the exact decoder reconstruction
+// (integer §7.14.4 dequant, §7.14.6 rotation, inverse transform) picks the
+// winner by SSE + lambda * cctx_type bits.  Mirrors the still path
+// (still_encoder.cpp compute_chroma_cctx) without RDOQ.
+bool compute_chroma_cctx(const VideoInputFrame& frame, int x0, int y0, int cw,
+                         int ch, const std::vector<std::uint8_t>& u_pred,
+                         const std::vector<std::uint8_t>& v_pred,
+                         int quant_step, bool is_inter, TxPlan& u_plan,
+                         TxPlan& v_plan, int* cctx_type_out,
+                         std::string& error) {
+  auto params_opt = txv::make_tx_params(cw, ch, txv::TxType::kDctDct);
+  if (!params_opt.has_value()) {
+    error = "unsupported chroma transform size for CCTX";
+    return false;
+  }
+  if (quant_step != txv::kQuantStep) {
+    params_opt->quant_factor *=
+        static_cast<double>(txv::kQuantStep) / static_cast<double>(quant_step);
+  }
+  const txv::TxParams params = *params_opt;
+  const int area = params.w * params.h;
+  const int coded_pels = cw * ch;
+
+  const auto residual_adj = [&](int plane,
+                                const std::vector<std::uint8_t>& pred) {
+    std::vector<std::int16_t> coded(static_cast<std::size_t>(coded_pels));
+    for (int y = 0; y < ch; ++y) {
+      for (int x = 0; x < cw; ++x) {
+        const int src = source_sample(frame, plane, x0 + x, y0 + y);
+        const int p =
+            pred[static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+                 static_cast<std::size_t>(x)];
+        coded[static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+              static_cast<std::size_t>(x)] =
+            static_cast<std::int16_t>(src - p);
+      }
+    }
+    std::vector<std::int16_t> adj(static_cast<std::size_t>(area));
+    txv::downsample_residual(coded.data(), params, adj.data());
+    return adj;
+  };
+  const std::vector<std::int16_t> u_adj = residual_adj(1, u_pred);
+  const std::vector<std::int16_t> v_adj = residual_adj(2, v_pred);
+  std::vector<double> u_coeff(static_cast<std::size_t>(area));
+  std::vector<double> v_coeff(static_cast<std::size_t>(area));
+  txv::forward_block(u_adj.data(), params, u_coeff.data());
+  txv::forward_block(v_adj.data(), params, v_coeff.data());
+
+  av2enc::tcq::CctxConfig config;
+  config.enabled = true;
+  config.quant_step_u = 1.0 / params.quant_factor;
+  config.quant_step_v = config.quant_step_u;
+  config.bitdepth = 8;
+  std::vector<av2enc::tcq::CctxResult> candidates;
+  std::string cctx_error;
+  if (!av2enc::tcq::cctx_enumerate_scalar(u_coeff, v_coeff, params.w,
+                                          params.h, config, &candidates,
+                                          &cctx_error)) {
+    error = "cctx enumerate failed: " + cctx_error;
+    return false;
+  }
+
+  // §7.14.4 dequant for one chroma plane (no QM/delta-Q/TCQ shift).
+  const auto dequant_plane = [&](const std::vector<std::int32_t>& levels,
+                                 std::vector<std::int32_t>& dequant) {
+    dequant.assign(static_cast<std::size_t>(area), 0);
+    for (int i = 0; i < area; ++i) {
+      const std::int32_t qc = levels[static_cast<std::size_t>(i)];
+      const std::int64_t aq = qc < 0 ? -static_cast<std::int64_t>(qc) : qc;
+      const std::int64_t high = (aq * quant_step) & 0xFFFFFF;
+      const std::int32_t dq = txv::round2(static_cast<std::int32_t>(high),
+                                          txv::kQuantTableBits) /
+                              params.dq_denom;
+      dequant[static_cast<std::size_t>(i)] = std::max(
+          -(1 << 15), std::min((1 << 15) - 1, qc < 0 ? -dq : dq));
+    }
+  };
+  const auto reconstruct = [&](const av2enc::tcq::CctxResult& candidate,
+                               std::vector<std::int16_t>& u_res,
+                               std::vector<std::int16_t>& v_res) {
+    std::vector<std::int32_t> du;
+    std::vector<std::int32_t> dv;
+    dequant_plane(candidate.u_levels, du);
+    dequant_plane(candidate.v_levels, dv);
+    std::vector<std::int32_t> pu(static_cast<std::size_t>(area));
+    std::vector<std::int32_t> pv(static_cast<std::size_t>(area));
+    for (int i = 0; i < area; ++i) {
+      const av2enc::tcq::CctxPair pair = av2enc::tcq::cctx_dequant_pair(
+          du[static_cast<std::size_t>(i)], dv[static_cast<std::size_t>(i)],
+          candidate.type, 8);
+      pu[static_cast<std::size_t>(i)] = pair.u;
+      pv[static_cast<std::size_t>(i)] = pair.v;
+    }
+    u_res.assign(static_cast<std::size_t>(coded_pels), 0);
+    v_res.assign(static_cast<std::size_t>(coded_pels), 0);
+    txv::inverse_block(pu.data(), params, u_res.data());
+    txv::inverse_block(pv.data(), params, v_res.data());
+  };
+  const auto distortion = [&](const std::vector<std::int16_t>& u_res,
+                              const std::vector<std::int16_t>& v_res) {
+    double sse = 0.0;
+    for (int plane = 1; plane <= 2; ++plane) {
+      const std::vector<std::uint8_t>& pred = plane == 1 ? u_pred : v_pred;
+      const std::vector<std::int16_t>& res = plane == 1 ? u_res : v_res;
+      for (int y = 0; y < ch; ++y) {
+        for (int x = 0; x < cw; ++x) {
+          const std::size_t index =
+              static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+              static_cast<std::size_t>(x);
+          const int value = clip1(static_cast<int>(pred[index]) +
+                                  static_cast<int>(res[index]));
+          const double d =
+              static_cast<double>(source_sample(frame, plane, x0 + x, y0 + y)) -
+              static_cast<double>(value);
+          sse += d * d;
+        }
+      }
+    }
+    return sse;
+  };
+
+  const double lambda = av2enc::rdo::lambda_sse_from_quant_step(
+      1.0 / params.quant_factor, /*sse_scale=*/0.125);
+  std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
+  syntax::build_scan(params.w, params.h, scan);
+  const auto scan_eob = [&](const std::vector<std::int32_t>& levels) {
+    for (int c = area - 1; c >= 0; --c) {
+      if (levels[static_cast<std::size_t>(
+              scan[static_cast<std::size_t>(c)])] != 0) {
+        return c + 1;
+      }
+    }
+    return 0;
+  };
+
+  int best = -1;
+  double best_cost = std::numeric_limits<double>::infinity();
+  int best_eob_u = 0;
+  int best_eob_v = 0;
+  std::vector<std::int16_t> best_u_res;
+  std::vector<std::int16_t> best_v_res;
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    const av2enc::tcq::CctxResult& candidate = candidates[i];
+    const int eob_u = scan_eob(candidate.u_levels);
+    // The decoder takes the all_zero branch (cctx_type inferred 0, no symbol)
+    // when U eob is 0; an intra block with U eob == 1 also infers 0.
+    if (candidate.type != av2enc::tcq::CctxType::kNone) {
+      if (eob_u == 0) continue;
+      if (!is_inter && eob_u == 1) continue;
+    }
+    std::vector<std::int16_t> u_res;
+    std::vector<std::int16_t> v_res;
+    reconstruct(candidate, u_res, v_res);
+    const double sse = distortion(u_res, v_res);
+    // The symbol is present for every non-zero U block except an intra block
+    // with eob == 1; CCTX_NONE pays it too (the decoder always reads the
+    // symbol for an eligible block).
+    const double bits =
+        (eob_u > 0 && (is_inter || eob_u != 1))
+            ? av2enc::tcq::cctx_type_bits(candidate.type)
+            : 0.0;
+    const double cost = sse + lambda * bits;
+    if (cost < best_cost) {
+      best_cost = cost;
+      best = static_cast<int>(i);
+      best_eob_u = eob_u;
+      best_eob_v = scan_eob(candidate.v_levels);
+      best_u_res = std::move(u_res);
+      best_v_res = std::move(v_res);
+    }
+  }
+  if (best < 0) {
+    error = "no signallable CCTX candidate";
+    return false;
+  }
+  const av2enc::tcq::CctxResult& chosen =
+      candidates[static_cast<std::size_t>(best)];
+
+  const auto fill_plan = [&](TxPlan& plan, const std::vector<std::int32_t>& levels,
+                             int eob, const std::vector<std::uint8_t>& pred,
+                             const std::vector<std::int16_t>& res) {
+    plan.tx_size = params.tx_size;
+    plan.adj_w = params.w;
+    plan.adj_h = params.h;
+    plan.eob = eob;
+    plan.levels = levels;
+    plan.dequant_levels.clear();
+    plan.recon.resize(static_cast<std::size_t>(coded_pels));
+    for (int y = 0; y < ch; ++y) {
+      for (int x = 0; x < cw; ++x) {
+        const std::size_t index =
+            static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+            static_cast<std::size_t>(x);
+        plan.recon[index] = static_cast<std::uint8_t>(
+            clip1(static_cast<int>(pred[index]) +
+                  static_cast<int>(res[index])));
+      }
+    }
+  };
+  fill_plan(u_plan, chosen.u_levels, best_eob_u, u_pred, best_u_res);
+  fill_plan(v_plan, chosen.v_levels, best_eob_v, v_pred, best_v_res);
+  if (cctx_type_out != nullptr) {
+    *cctx_type_out = static_cast<int>(chosen.type);
+  }
+  return true;
 }
 
 struct TemporalFrameContext {
@@ -795,7 +1382,12 @@ class InterFrameEncoder {
 
     geometry_.width = width_;
     geometry_.height = height_;
-    geometry_.sb_size = 64;
+    // §5.18.1: use_256x256_superblock clamps an intra frame's coding SbSize to
+    // 128x128; only inter frames get 256x256 roots.
+    sb_size_ = (keyframe_ && options_.sb256)
+                   ? 128
+                   : options_.superblock_pixels();
+    geometry_.sb_size = sb_size_;
     geometry_.has_chroma = true;
     geometry_.chroma_subsampling_x = true;
     geometry_.chroma_subsampling_y = true;
@@ -848,9 +1440,12 @@ class InterFrameEncoder {
     decoded_[2].reset(mi_cols_ / 2, mi_rows_ / 2);
     // §5.20.5.3/.4 IBC + §7.13.3.26 morph: only the intra keyframe carries
     // the screen-content mode-info path.  The BV ring/neighbour map is
-    // advanced for every leaf, IBC or not.
+    // advanced for every leaf, IBC or not.  `--video-ibc` enables the same IBC
+    // mode-info path without morph_pred; `--video-palette` enables palette
+    // selection on the same keyframe.
     plan_morph_ = keyframe_ && options_.enable_morph;
-    ibc_enabled_ = plan_morph_;
+    ibc_enabled_ = keyframe_ && (options_.enable_morph || options_.enable_ibc);
+    palette_enabled_ = keyframe_ && options_.enable_palette;
     if (ibc_enabled_) {
       ibc_buffer_.reset(mi_cols_, mi_rows_);
       ibc_neighbours_.reset(mi_cols_, mi_rows_);
@@ -859,6 +1454,9 @@ class InterFrameEncoder {
       ibc_config_.allow_global = true;
       ibc_config_.allow_local = false;
       ibc_config_.max_bvp_drl_bits_minus_1 = 0;
+    }
+    if (palette_enabled_) {
+      palette_state_.reset(mi_cols_, mi_rows_);
     }
   }
 
@@ -891,12 +1489,14 @@ class InterFrameEncoder {
     return static_cast<std::int64_t>(sse);
   }
 
+
 #if defined(AV2ENC_VIDEO_DELTAQ)
   // ---------------------------------------------------------------------
   // §5.18.7.1/.8 per-superblock segmentation / delta-Q planning.
   // ---------------------------------------------------------------------
-  int qp_sb_cols() const { return (mi_cols_ + 15) / 16; }
-  int qp_sb_rows() const { return (mi_rows_ + 15) / 16; }
+  int qp_sb_mi() const { return partition::sb_size_mi(geometry_); }
+  int qp_sb_cols() const { return (mi_cols_ + qp_sb_mi() - 1) / qp_sb_mi(); }
+  int qp_sb_rows() const { return (mi_rows_ + qp_sb_mi() - 1) / qp_sb_mi(); }
   int qp_sb_count() const { return qp_sb_cols() * qp_sb_rows(); }
   int base_q_index() const { return static_cast<int>(options_.base_q_idx); }
   bool qp_tools_active() const {
@@ -922,10 +1522,10 @@ class InterFrameEncoder {
     std::uint64_t total = 0;
     for (int sby = 0; sby < rows; ++sby) {
       for (int sbx = 0; sbx < cols; ++sbx) {
-        const int x0 = sbx * 64;
-        const int y0 = sby * 64;
-        const int w = std::min(64, width_ - x0);
-        const int h = std::min(64, height_ - y0);
+        const int x0 = sbx * sb_size_;
+        const int y0 = sby * sb_size_;
+        const int w = std::min(sb_size_, width_ - x0);
+        const int h = std::min(sb_size_, height_ - y0);
         std::uint64_t sum = 0;
         std::uint64_t sumsq = 0;
         for (int y = 0; y < h; ++y) {
@@ -1055,8 +1655,8 @@ class InterFrameEncoder {
     std::vector<char> codable(static_cast<std::size_t>(count), 1);
     for (const syntax::BlockSyntax& block : blocks_) {
       if ((block.flags & syntax::kFlagSbRoot) == 0) continue;
-      const int index = (static_cast<int>(block.mi_row) / 16) * cols +
-                        static_cast<int>(block.mi_col) / 16;
+      const int index = (static_cast<int>(block.mi_row) / qp_sb_mi()) * cols +
+                        static_cast<int>(block.mi_col) / qp_sb_mi();
       if (index < 0 || index >= count) continue;
       const bool leaf =
           block.partition ==
@@ -1119,17 +1719,108 @@ class InterFrameEncoder {
   }
 #endif  // AV2ENC_VIDEO_DELTAQ
 
+  // §5.4.3 enable_sdp: decide the intra keyframe as per-64x64 luma and chroma
+  // partition trees.  The luma tree uses the same --video-min-block /
+  // --video-max-depth controls and rect-only family as the shared tree.  The
+  // chroma tree is pinned to a single PARTITION_NONE block: the reference
+  // model can search it and the writer can signal it, but the pinned dav2d
+  // disagrees with the model's chroma-plane partition contexts inside a
+  // decoded chroma tree, so no product stream produces one.
+  bool decide_sdp(std::string& error) {
+    sdpp::Tools tools;
+    tools.enable_sdp = true;
+    tools.enable_extended_sdp = false;
+    tools.frame_is_intra = true;
+    tools.single_picture_header_flag = false;
+
+    sdpp::DecisionOptions sopt;
+    sopt.min_block_size_px = options_.min_block_size;
+    sopt.max_depth = options_.max_partition_depth;
+    sopt.allow_rect = true;
+    sopt.allow_split = false;
+    sopt.allow_3way = false;
+    sopt.allow_uneven4 = false;
+    sopt.allow_sdp = true;
+    sopt.allow_extended_sdp = false;
+
+    const double lambda =
+        0.85 * std::pow(2.0, (options_.base_q_idx - 12) / 6.0);
+    const double signal_cost = lambda * 2.0;
+    const auto sdp_cost = [this, signal_cost](const sdpp::NodeInfo& info) {
+      sdpp::NodeCosts costs;
+      if (info.tree_type == sdpp::TreeType::kChromaPart) {
+        // Decoder-gated policy: one chroma PARTITION_NONE block per SB.
+        costs.leaf = 0.0;
+      } else {
+        partition::PartitionNodeInfo pinfo;
+        pinfo.mi_row = info.mi_row;
+        pinfo.mi_col = info.mi_col;
+        pinfo.size = info.size;
+        pinfo.depth = info.depth;
+        pinfo.has_chroma = info.has_chroma;
+        pinfo.chroma_offset = info.chroma_offset;
+        costs.leaf = static_cast<double>(block_variance_cost_at(pinfo));
+      }
+      costs.none_signal = 0.0;
+      costs.split_signal = sdpp::kInfiniteCost;
+      costs.horz_signal = signal_cost;
+      costs.vert_signal = signal_cost;
+      costs.horz3_signal = sdpp::kInfiniteCost;
+      costs.vert3_signal = sdpp::kInfiniteCost;
+      costs.horz4a_signal = sdpp::kInfiniteCost;
+      costs.horz4b_signal = sdpp::kInfiniteCost;
+      costs.vert4a_signal = sdpp::kInfiniteCost;
+      costs.vert4b_signal = sdpp::kInfiniteCost;
+      costs.region_type[0] = sdpp::kInfiniteCost;
+      costs.region_type[1] = sdpp::kInfiniteCost;
+      return costs;
+    };
+
+    sdp_frame_ = sdpp::decide_frame(geometry_, tools, sdp_cost, sopt);
+    if (sdp_frame_.status != sdpp::DecisionStatus::kOk) {
+      error = "SDP partition decision failed: " + sdp_frame_.error;
+      return false;
+    }
+    if (!sdpp::validate_frame(geometry_, tools, sdp_frame_, error)) {
+      error = "SDP partition tree invalid: " + error;
+      return false;
+    }
+
+    blocks_.clear();
+    levels_.clear();
+    sdp_luma_sizes_.reset(geometry_);
+    sdp_chroma_sizes_.reset(geometry_);
+    mv_grid_.assign(mv_grid_.size(), inter::mc::MiInfo{});
+    intra_joint_.assign(intra_joint_.size(), 0);
+    for (int plane = 0; plane < 3; ++plane) {
+      std::fill(recon_[plane].samples.begin(), recon_[plane].samples.end(),
+                static_cast<std::uint8_t>(0));
+    }
+    inter_blocks_ = 0;
+    intra_blocks_ = 0;
+    for (const sdpp::Node& sb : sdp_frame_.superblocks) {
+      if (!collect_sdp_node(sb, error)) return false;
+    }
+    return true;
+  }
+
   // Decision + reconstruction phase (no syntax, no filters).  Kept
   // separate so a multi-tile frame can run one frame-level filter pass
   // after every tile has been reconstructed.
   bool decide(std::string& error) {
+    if (keyframe_ && options_.enable_sdp) {
+      return decide_sdp(error);
+    }
     partition::DecisionOptions poptions;
     poptions.min_block_size_px = options_.min_block_size;
     poptions.max_depth = options_.max_partition_depth;
     poptions.allow_rect = true;
-    poptions.allow_split = false;
+    // PARTITION_SPLIT only exists at a 128x128 (or 256x256) node.
+    poptions.allow_split = sb_size_ > 64;
     if (options_.force_single_block) {
-      poptions.max_depth = 0;
+      // One 64x64 leaf per superblock: allow the root split chain but stop any
+      // optional split that would create a block below 64x64.
+      poptions.max_depth = 8;
       poptions.min_block_size_px = 64;
     }
 
@@ -1139,7 +1830,14 @@ class InterFrameEncoder {
     const auto cost_fn = [this, signal_cost](
                              const partition::PartitionNodeInfo& info) {
       partition::NodeCosts costs;
-      costs.leaf = static_cast<double>(block_variance_cost_at(info));
+      // The leaf coder handles coding blocks up to 64x64.  A larger node must
+      // split (the 128/256 root and its rectangular children); the spec never
+      // implies NONE at those sizes, so the solver always has a partition.
+      const int bw = partition::block_width(info.size);
+      const int bh = partition::block_height(info.size);
+      costs.leaf = (bw <= 64 && bh <= 64)
+                       ? static_cast<double>(block_variance_cost_at(info))
+                       : partition::kInfiniteCost;
       costs.none_signal = 0.0;
       costs.split_signal = signal_cost;
       costs.horz_signal = signal_cost;
@@ -1147,22 +1845,116 @@ class InterFrameEncoder {
       return costs;
     };
 
-    const partition::FrameDecision frame =
-        partition::decide_frame(geometry_, cost_fn, poptions);
-    if (frame.status != partition::DecisionStatus::kOk) {
-      error = "partition decision failed: " + frame.error;
-      return false;
+    std::vector<PartitionNode> base_superblocks;
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+    std::vector<pe::PartitionNode> ext_superblocks;
+    if (options_.ext_partitions) {
+      pe::Tools tools;
+      tools.enable_ext_partitions = true;
+      tools.enable_uneven_4way_partitions = true;
+      pe::DecisionOptions eopt;
+      eopt.min_block_size_px = options_.min_block_size;
+      eopt.max_depth = options_.max_partition_depth;
+      eopt.allow_rect = true;
+      eopt.allow_split = sb_size_ > 64;
+      eopt.allow_3way = true;
+      eopt.allow_uneven4 = true;
+      eopt.tie_break = pe::TieBreakOrder::kRectCompatOrder;
+      if (options_.force_single_block) {
+        eopt.max_depth = 8;
+        eopt.min_block_size_px = 64;
+      }
+      const auto ext_cost_fn = [this, signal_cost](
+                                   const pe::NodeInfo& info) {
+        pe::NodeCosts costs;
+        const int bw = partition::block_width(info.size);
+        const int bh = partition::block_height(info.size);
+        partition::PartitionNodeInfo binfo;
+        binfo.mi_row = info.mi_row;
+        binfo.mi_col = info.mi_col;
+        binfo.size = static_cast<partition::BlockSize>(info.size);
+        costs.leaf = (bw <= 64 && bh <= 64)
+                         ? static_cast<double>(block_variance_cost_at(binfo))
+                         : pe::kInfiniteCost;
+        costs.none_signal = 0.0;
+        costs.split_signal = signal_cost;
+        costs.horz_signal = signal_cost;
+        costs.vert_signal = signal_cost;
+        // Keep every child >= 8x8 so the video leaf coder keeps owning its
+        // chroma block (no shared ChromaMi).  HORZ_4A/B and VERT_4A/B emit an
+        // 8x16 / 16x8 minimum slice, so they need the 64-pixel axis.
+        costs.horz3_signal =
+            (bh >= 32 && bw >= 8 && !(bw == 8 && bh == 32) &&
+             !pe::chroma_offset_for_partition(
+                 geometry_, pe::PartitionType::kHorz3, info.size))
+                ? signal_cost
+                : pe::kInfiniteCost;
+        costs.vert3_signal =
+            (bw >= 32 && bh >= 8 && !(bw == 32 && bh == 8) &&
+             !pe::chroma_offset_for_partition(
+                 geometry_, pe::PartitionType::kVert3, info.size))
+                ? signal_cost
+                : pe::kInfiniteCost;
+        const double h4 = (bh >= 64 && bw >= 8) ? signal_cost
+                                                : pe::kInfiniteCost;
+        const double v4 = (bw >= 64 && bh >= 8) ? signal_cost
+                                                : pe::kInfiniteCost;
+        costs.horz4a_signal = h4;
+        costs.horz4b_signal = h4;
+        costs.vert4a_signal = v4;
+        costs.vert4b_signal = v4;
+        return costs;
+      };
+      const pe::FrameDecision frame =
+          pe::decide_frame(geometry_, ext_cost_fn, tools, eopt);
+      if (frame.status != pe::DecisionStatus::kOk) {
+        error = "extended partition decision failed: " + frame.error;
+        return false;
+      }
+      if (!pe::validate_frame(geometry_, tools, frame, error)) {
+        error = "extended partition tree invalid: " + error;
+        return false;
+      }
+      ext_superblocks = frame.superblocks;
+    } else
+#endif
+    {
+      const partition::FrameDecision frame =
+          partition::decide_frame(geometry_, cost_fn, poptions);
+      if (frame.status != partition::DecisionStatus::kOk) {
+        error = "partition decision failed: " + frame.error;
+        return false;
+      }
+      if (!partition::validate_frame(geometry_, frame, error)) {
+        error = "partition tree invalid: " + error;
+        return false;
+      }
+      base_superblocks = frame.superblocks;
     }
-    if (!partition::validate_frame(geometry_, frame, error)) {
-      error = "partition tree invalid: " + error;
-      return false;
-    }
+
+    const auto collect_superblocks = [&]() -> bool {
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+      if (options_.ext_partitions) {
+        for (const pe::PartitionNode& sb : ext_superblocks) {
+          if (!collect_node_ext(sb, error)) return false;
+        }
+      } else
+#endif
+      {
+        for (const PartitionNode& sb : base_superblocks) {
+          if (!collect_node(sb, error)) return false;
+        }
+      }
+      return true;
+    };
 
 #if defined(AV2ENC_VIDEO_DELTAQ)
     if (!prepare_qp_plan(error)) return false;
     const auto collect_frame = [&]() -> bool {
       blocks_.clear();
       levels_.clear();
+      palettes_.clear();
+      if (palette_enabled_) palette_state_.reset(mi_cols_, mi_rows_);
       // A delta-Q fixpoint runs this walk more than once.  The merge stack
       // reads the above-right / below-left MI grid, so stale entries from the
       // previous pass would make the encoder's stack differ from the writer's.
@@ -1179,10 +1971,7 @@ class InterFrameEncoder {
         deltaq::clear_above_context(enc_seg_grid_);
         deltaq::clear_left_context(enc_seg_grid_);
       }
-      for (const PartitionNode& sb : frame.superblocks) {
-        if (!collect_node(sb, error)) return false;
-      }
-      return true;
+      return collect_superblocks();
     };
     if (qp_tools_active()) {
       if (delta_q_enabled_) {
@@ -1227,10 +2016,9 @@ class InterFrameEncoder {
 #else
     blocks_.clear();
     levels_.clear();
-    for (const PartitionNode& sb : frame.superblocks) {
-      if (!collect_node(sb, error)) return false;
-    }
-    return true;
+    palettes_.clear();
+    if (palette_enabled_) palette_state_.reset(mi_cols_, mi_rows_);
+    return collect_superblocks();
 #endif
   }
 
@@ -1283,7 +2071,11 @@ class InterFrameEncoder {
               partition::block_height(
                   static_cast<partition::BlockSize>(leaf.bsize)) >>
               2;
-          block.skip = leaf.is_inter && leaf.skip_flag != 0;
+          // §7.18.1 Skips[]: an inter skip leaf and an IBC skip leaf both code
+          // skip_flag = 1; with CdefOnSkipTxfm DISABLED the decoder leaves a
+          // fully skipped 8x8 block unfiltered.
+          block.skip = (leaf.is_inter && leaf.skip_flag != 0) ||
+                       (leaf.flags & syntax::kFlagIsIbc) != 0;
           block.luma_eob_zero = leaf.eob[0] == 0;
           filter_blocks.push_back(block);
         }
@@ -1351,25 +2143,41 @@ class InterFrameEncoder {
     syntax::FramePlan plan;
     plan.width = width_;
     plan.height = height_;
-    plan.sb_size = 64;
+    plan.sb_size = sb_size_;
     plan.frame_mi_cols = frame_mi_cols_;
     plan.frame_mi_rows = frame_mi_rows_;
     plan.tile_mi_row = tile_mi_row_;
     plan.tile_mi_col = tile_mi_col_;
     plan.inter_frame = !keyframe_;
+    plan.enable_sdp = options_.enable_sdp;
+    plan.frame_sdp = keyframe_ && options_.enable_sdp;
     plan.tx_mode_select = options_.enable_tx_search;
     plan.reduced_tx_part_set = false;
     plan.reduced_tx_set = 0;
+    plan.allow_tcq = options_.enable_tcq;
+    plan.enable_cctx = options_.enable_cctx;
     plan.num_total_refs = num_total_refs_;
     plan.reference_select = options_.compound && num_total_refs_ > 1;
     plan.allow_bawp = (options_.enable_bawp || options_.enable_morph) &&
                       !keyframe_;
+    // §5.4.7/§5.18.3.3/.4 screen-content tools.  Only the intra keyframe and
+    // only the single-tile writer: the palette above/left cache and the IBC
+    // BV ring are tile-local, and a tile boundary would change both.
+    const bool scc_carrier = keyframe_ && options_.tile_cols == 0 &&
+                             options_.tile_rows == 0;
     plan.allow_screen_content_tools =
-        keyframe_ && options_.enable_morph && options_.tile_cols == 0 &&
-        options_.tile_rows == 0 && num_total_refs_ >= 1;
-    plan.allow_intrabc = plan.allow_screen_content_tools;
+        scc_carrier && (options_.enable_morph || options_.enable_palette ||
+                        options_.enable_ibc);
+    plan.allow_intrabc =
+        scc_carrier && (options_.enable_morph || options_.enable_ibc);
     plan.force_integer_mv = true;
-    plan.morph_pred_present = plan.allow_intrabc;
+    // §5.20.5.4 reads morph_pred inside read_intrabc_info() whenever
+    // allow_screen_content_tools && enable_bawp, independent of --video-morph.
+    // So any IBC carrier on a BAWP sequence codes the symbol; without the
+    // morph fit it is always 0.
+    plan.morph_pred_present =
+        plan.allow_intrabc && (options_.enable_bawp || options_.enable_morph);
+    plan.palettes = std::move(palettes_);
     plan.enable_interintra = !keyframe_ && options_.enable_interintra;
     plan.enable_masked_compound =
         plan.reference_select &&
@@ -1407,6 +2215,10 @@ class InterFrameEncoder {
     VideoConfig config;
     config.max_frame_width = static_cast<std::uint16_t>(width_);
     config.max_frame_height = static_cast<std::uint16_t>(height_);
+    config.use_128x128_superblock = options_.sb128;
+    config.use_256x256_superblock = options_.sb256;
+    config.enable_ext_partitions = options_.ext_partitions;
+    config.enable_uneven_4way_partitions = options_.ext_partitions;
     config.base_q_idx = options_.base_q_idx;
     config.order_hint_bits = 4;
     config.num_ref_frames = 2;
@@ -1418,13 +2230,23 @@ class InterFrameEncoder {
     config.enable_cfl_intra = true;
     config.enable_mhccp = options_.enable_mhccp;
     config.enable_idtx_intra = options_.enable_idtx_intra;
+    config.enable_mrls = options_.enable_mrl;
+    config.enable_intra_ist = options_.enable_ist;
+    config.enable_inter_ist = false;
+    config.enable_tcq = options_.enable_tcq;
+    config.choose_tcq_per_frame = options_.enable_tcq;
+    config.enable_cctx = options_.enable_cctx;
+    config.enable_sdp = options_.enable_sdp;
+    config.enable_extended_sdp = false;
+    config.enable_inter_ddt = options_.enable_inter_ddt;
     config.using_qmatrix = options_.enable_qm;
     config.qm_user_data = options_.user_qm;
     config.enable_deblock = options_.enable_deblock;
     config.tx_mode_select = options_.enable_tx_search;
     config.enable_bawp = options_.enable_bawp || options_.enable_morph;
     config.seq_screen_content_tools_present =
-        options_.enable_morph && keyframe_;
+        keyframe_ && (options_.enable_morph || options_.enable_palette ||
+                      options_.enable_ibc);
     config.enable_interintra = options_.enable_interintra;
 
     std::size_t tile_bytes = 0;
@@ -1467,6 +2289,135 @@ class InterFrameEncoder {
   const post::VideoFilterPlan& filter_plan() const { return filter_plan_; }
 
  private:
+  // §5.20.3.2 symbol plan for one SDP node, derived by the reference planner
+  // with the authoritative boundary/allowed set the solver stored.  The
+  // writer emits exactly these symbols.
+  bool plan_sdp_symbols(const sdpp::Node& node, syntax::BlockSyntax& entry,
+                        std::string& error) {
+    sdpp::Node info;
+    info.mi_row = node.mi_row;
+    info.mi_col = node.mi_col;
+    info.size = node.size;
+    info.tree_type = node.tree_type;
+    info.partition = node.partition;
+    info.has_chroma = node.has_chroma;
+    info.chroma_offset = node.chroma_offset;
+    info.chroma_partition_known = node.chroma_partition_known;
+    info.implied_luma_partition = node.implied_luma_partition;
+    sdpp::SymbolContexts contexts;
+    const sdpp::MiSizeGrid& grid =
+        node.tree_type == sdpp::TreeType::kChromaPart ? sdp_chroma_sizes_
+                                                      : sdp_luma_sizes_;
+    contexts = sdpp::node_contexts(geometry_, info, grid);
+    const sdpp::SymbolPlan plan = sdpp::plan_partition_symbols(
+        node.boundary, node.allowed, node.size, node.tree_type, node.partition,
+        contexts, /*bru_active=*/true);
+    if (!plan.ok) {
+      error = "SDP symbol plan at " + std::to_string(node.mi_row) + "," +
+              std::to_string(node.mi_col) + ": " + plan.error;
+      return false;
+    }
+    if (plan.symbols.size() > 4) {
+      error = "SDP node codes more than four partition symbols";
+      return false;
+    }
+    entry.sdp_symbol_count = static_cast<std::uint8_t>(plan.symbols.size());
+    for (std::size_t i = 0; i < plan.symbols.size(); ++i) {
+      const sdpp::Symbol& symbol = plan.symbols[i];
+      entry.sdp_symbols[i].kind = static_cast<std::uint8_t>(symbol.kind);
+      entry.sdp_symbols[i].plane = static_cast<std::uint8_t>(symbol.plane);
+      entry.sdp_symbols[i].context =
+          static_cast<std::uint8_t>(symbol.context);
+      entry.sdp_symbols[i].value = static_cast<std::uint8_t>(symbol.value);
+    }
+    return true;
+  }
+
+  // §5.20.3.1 SDP intra tree walk.  A split node carries no partition syntax
+  // and its two children are the luma root and then the chroma root.  Leaves
+  // are encoded with the tree-type/chroma-ownership arguments so a CHROMA_PART
+  // leaf codes chroma only and a LUMA_PART leaf codes luma only.
+  bool collect_sdp_node(const sdpp::Node& node, std::string& error) {
+    if (node.depth == 0) {
+      // §6.19.2.3 clear_block_decoded_flags(): superblock-local.
+      decoded_[0].reset(mi_cols_, mi_rows_);
+      decoded_[1].reset(mi_cols_ / 2, mi_rows_ / 2);
+      decoded_[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+    }
+    const std::size_t index = blocks_.size();
+    blocks_.emplace_back();
+    syntax::BlockSyntax& entry = blocks_.back();
+    entry.mi_row = static_cast<std::uint16_t>(node.mi_row);
+    entry.mi_col = static_cast<std::uint16_t>(node.mi_col);
+    entry.bsize = static_cast<std::uint8_t>(node.size);
+    entry.partition = static_cast<std::uint8_t>(node.partition);
+    entry.tree_type = static_cast<std::uint8_t>(node.tree_type);
+    entry.has_chroma = node.codes_chroma ? 1 : 0;
+    entry.chroma_offset = node.chroma_offset ? 1 : 0;
+    entry.chroma_bsize = static_cast<std::uint8_t>(node.chroma.size);
+    entry.chroma_mi_row = static_cast<std::uint16_t>(node.chroma.mi_row);
+    entry.chroma_mi_col = static_cast<std::uint16_t>(node.chroma.mi_col);
+    entry.chroma_partition_known = node.chroma_partition_known ? 1 : 0;
+    entry.implied_luma_partition =
+        static_cast<std::uint8_t>(node.implied_luma_partition);
+    entry.flags |= syntax::kFlagHasChromaInfo;
+    std::uint16_t mask = 0;
+    for (int p = 0; p < sdpp::kPartitionCount; ++p) {
+      if (node.allowed.allowed[p]) {
+        mask = static_cast<std::uint16_t>(mask | (1U << p));
+      }
+    }
+    entry.allowed_mask = mask;
+    if (node.forced) entry.flags |= syntax::kFlagForced;
+    if (node.depth == 0) entry.flags |= syntax::kFlagSbRoot;
+    if (node.sdp_split) entry.flags |= syntax::kFlagSdpSplit;
+
+    if (node.sdp_split) {
+      if (node.children.size() != 2) {
+        error = "SDP split node does not have exactly two tree children";
+        return false;
+      }
+      for (const sdpp::Node& child : node.children) {
+        if (!collect_sdp_node(child, error)) return false;
+      }
+    } else if (node.partition == sdpp::PartitionType::kNone) {
+      if (!plan_sdp_symbols(node, entry, error)) return false;
+      PartitionNode pnode;
+      pnode.mi_row = node.mi_row;
+      pnode.mi_col = node.mi_col;
+      pnode.size = node.size;
+      pnode.partition = PartitionType::kNone;
+      pnode.depth = node.depth;
+      pnode.has_chroma = node.has_chroma;
+      pnode.chroma_offset = node.chroma_offset;
+      if (!encode_leaf(pnode, index, error,
+                       static_cast<int>(node.tree_type),
+                       node.codes_chroma, node.chroma.mi_row,
+                       node.chroma.mi_col, static_cast<int>(node.chroma.size))) {
+        return false;
+      }
+      if (node.tree_type != sdpp::TreeType::kChromaPart) {
+        sdp_luma_sizes_.fill_block(node.mi_row, node.mi_col, node.size);
+      }
+      if (node.codes_chroma) {
+        sdp_chroma_sizes_.fill_block(node.chroma.mi_row, node.chroma.mi_col,
+                                     node.chroma.size);
+      }
+    } else {
+      if (!plan_sdp_symbols(node, entry, error)) return false;
+      for (const sdpp::Node& child : node.children) {
+        if (!collect_sdp_node(child, error)) return false;
+      }
+    }
+    const std::size_t subtree = blocks_.size() - index - 1;
+    if (subtree > 0xFFFFU) {
+      error = "partition subtree too large";
+      return false;
+    }
+    blocks_[index].subtree = static_cast<std::uint16_t>(subtree);
+    return true;
+  }
+
   bool collect_node(const PartitionNode& node, std::string& error) {
     if (node.depth == 0) {
       // §6.19.2.3 clear_block_decoded_flags(): the map is superblock-local.
@@ -1478,7 +2429,8 @@ class InterFrameEncoder {
       // this encoder: the syntax writer signals the same id and the delta at
       // the first leaf of the superblock.
       if (qp_tools_active()) {
-        const int sb = (node.mi_row / 16) * qp_sb_cols() + node.mi_col / 16;
+        const int sb = (node.mi_row / qp_sb_mi()) * qp_sb_cols() +
+                       node.mi_col / qp_sb_mi();
         if (sb < 0 || static_cast<std::size_t>(sb) >= sb_qindex_.size()) {
           error = "delta-Q: superblock index outside the plan";
           return false;
@@ -1532,6 +2484,64 @@ class InterFrameEncoder {
     blocks_[index].subtree = static_cast<std::uint16_t>(subtree);
     return true;
   }
+
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+  // Extended-partition variant of collect_node().  The video leaf coder always
+  // uses the leaf's own chroma block, so a tree that needs shared-chroma
+  // ownership (chromaOffset = 1) is rejected instead of coding a
+  // desynchronised stream.
+  bool collect_node_ext(const pe::PartitionNode& node, std::string& error) {
+    if (node.chroma_offset) {
+      error = "extended partition tree needs shared chroma at mi (" +
+              std::to_string(node.mi_row) + "," +
+              std::to_string(node.mi_col) + ") size " +
+              std::to_string(static_cast<int>(node.size)) + " partition " +
+              std::to_string(static_cast<int>(node.partition));
+      return false;
+    }
+    if (node.depth == 0) {
+      decoded_[0].reset(mi_cols_, mi_rows_);
+      decoded_[1].reset(mi_cols_ / 2, mi_rows_ / 2);
+      decoded_[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+    }
+    const std::size_t index = blocks_.size();
+    blocks_.emplace_back();
+    syntax::BlockSyntax& entry = blocks_.back();
+    entry.mi_row = static_cast<std::uint16_t>(node.mi_row);
+    entry.mi_col = static_cast<std::uint16_t>(node.mi_col);
+    entry.bsize = static_cast<std::uint8_t>(node.size);
+    entry.partition = static_cast<std::uint8_t>(node.partition);
+    std::uint16_t mask = 0;
+    for (int p = 0; p < pe::kPartitionCount; ++p) {
+      if (node.allowed.allowed[p]) {
+        mask = static_cast<std::uint16_t>(mask | (1U << p));
+      }
+    }
+    entry.allowed_mask = mask;
+    if (node.forced) entry.flags |= syntax::kFlagForced;
+    if (node.depth == 0) entry.flags |= syntax::kFlagSbRoot;
+
+    if (node.partition == pe::PartitionType::kNone) {
+      // encode_leaf() only reads the origin/size, so a stack view is enough.
+      PartitionNode leaf;
+      leaf.mi_row = node.mi_row;
+      leaf.mi_col = node.mi_col;
+      leaf.size = static_cast<partition::BlockSize>(node.size);
+      if (!encode_leaf(leaf, index, error)) return false;
+    } else {
+      for (const pe::PartitionNode& child : node.children) {
+        if (!collect_node_ext(child, error)) return false;
+      }
+    }
+    const std::size_t subtree = blocks_.size() - index - 1;
+    if (subtree > 0xFFFFU) {
+      error = "partition subtree too large";
+      return false;
+    }
+    blocks_[index].subtree = static_cast<std::uint16_t>(subtree);
+    return true;
+  }
+#endif  // AV2ENC_VIDEO_EXT_PARTITIONS
 
   // §7.12.2.2 GLOBALMV projection for this block.  A non-identity model may be
   // predicted with the warped predictor (`use_warp`); otherwise the projected
@@ -1621,6 +2631,23 @@ class InterFrameEncoder {
     return params;
   }
 
+  bool drl_constraint_sort_suppressed(int ref_index) const {
+    if (ref_index < 0 || ref_index > 6) return false;
+    bool past = false;
+    bool future = false;
+    for (int r = 0; r < num_total_refs_ && r < 7; ++r) {
+      const int d = frame_distance_[static_cast<std::size_t>(r)];
+      if (d > 0) {
+        past = true;
+      } else if (d < 0) {
+        future = true;
+      }
+    }
+    if (past && future) return false;  // has_bothside_refs (§5.18.2)
+    const int d = frame_distance_[static_cast<std::size_t>(ref_index)];
+    return (d < 0 ? -d : d) <= 2;
+  }
+
   bool load_stack(int mi_row, int mi_col, int w4, int h4, int ref_index,
                   merge::StackParams& params, merge::MvStack& stack) const {
     params = make_stack_params(mi_row, mi_col, w4, h4, ref_index);
@@ -1633,8 +2660,50 @@ class InterFrameEncoder {
       return merge::build_stack_checked(params, &stack) ==
              merge::Status::kOk;
     }
-    return drl::build_reordered_stack(params, mode, /*use_temporal_first=*/false,
-                                      &stack) == merge::Status::kOk;
+    const bool suppress =
+        mode == drl::Mode::kConstraint &&
+        !params.is_compound && drl_constraint_sort_suppressed(ref_index);
+    if (!trace_) {
+      return drl::build_reordered_stack(params, mode, suppress, &stack) ==
+             merge::Status::kOk;
+    }
+    // --video-trace: the transform is one move-to-front over
+    // [0, numNearest), so report the blocks it actually reorders.  The gate
+    // counts these lines to prove the reorder is exercised rather than merely
+    // enabled in the sequence header.
+    merge::MvStack pre;
+    if (merge::build_stack_checked(params, &pre) != merge::Status::kOk) {
+      return false;
+    }
+    if (drl::build_reordered_stack(params, mode, suppress, &stack) !=
+        merge::Status::kOk) {
+      return false;
+    }
+    bool swapped = false;
+    for (int i = 0; i < stack.count && i < pre.count; ++i) {
+      if (pre.cand[i].mv[0].y != stack.cand[i].mv[0].y ||
+          pre.cand[i].mv[0].x != stack.cand[i].mv[0].x) {
+        swapped = true;
+        break;
+      }
+    }
+    if (swapped) {
+      std::cerr << "  drl reorder mi=(" << mi_row << "," << mi_col << ") "
+                << (w4 * 4) << "x" << (h4 * 4) << " ref=" << ref_index
+                << " nn=" << stack.num_nearest << " pre=";
+      for (int i = 0; i < pre.count; ++i) {
+        std::cerr << (i ? " " : "") << "w" << pre.cand[i].weight << "("
+                  << pre.cand[i].mv[0].y << "," << pre.cand[i].mv[0].x << ")";
+      }
+      std::cerr << " post=";
+      for (int i = 0; i < stack.count; ++i) {
+        std::cerr << (i ? " " : "") << "w" << stack.cand[i].weight << "("
+                  << stack.cand[i].mv[0].y << "," << stack.cand[i].mv[0].x
+                  << ")";
+      }
+      std::cerr << "\n";
+    }
+    return true;
   }
 
   bool predict_luma(int ref_index, inter::mc::Mv mv, int x0, int y0, int w,
@@ -1928,6 +2997,89 @@ class InterFrameEncoder {
     return w % 2 == 0 && h % 2 == 0 && w / 2 >= 4 && h / 2 >= 4;
   }
 
+  // ---------------------------------------------------------------------
+  // §5.20.8 luma palette (--video-palette)
+  // ---------------------------------------------------------------------
+  struct PaletteChoice {
+    bool found = false;
+    palette::PaletteResult result;
+    std::vector<std::uint8_t> luma;
+    std::int64_t sse = 0;
+  };
+
+  bool palette_available_for_leaf(int bsize, int w, int h) const {
+    if (!palette_enabled_) return false;
+    pals::ScreenContentFlags flags;
+    flags.single_picture_header = false;
+    flags.allow_screen_content_tools = true;
+    flags.allow_palette = true;
+    flags.force_integer_mv = true;
+    return pals::palette_allowed_for_block(flags, bsize, w, h);
+  }
+
+  // Builds the §5.20.8 palette for one keyframe leaf from the same above/left
+  // cache the decoder's get_palette_cache() sees.  The palette prediction is
+  // scored against `intra_pred_sse`, the SSE of the ordinary intra prediction
+  // (the palette codes eob=0 on all planes, so a residual-coded intra leaf is
+  // not the right comparison).  The caller stores a winning palette in the
+  // frame PaletteState only after the IBC decision, so the following blocks'
+  // cache matches the writer.
+  bool choose_palette_leaf(int r, int c, int bsize, int w, int h,
+                           std::int64_t intra_pred_sse, PaletteChoice& out,
+                           std::string& error) {
+    out = PaletteChoice{};
+    if (!palette_available_for_leaf(bsize, w, h)) {
+      return true;
+    }
+    const int x0 = c * 4;
+    const int y0 = r * 4;
+    const int visible_w = std::min(w, mi_cols_ * 4 - x0);
+    const int visible_h = std::min(h, mi_rows_ * 4 - y0);
+    if (visible_w <= 0 || visible_h <= 0) return true;
+    std::uint8_t cache[16] = {};
+    const int cache_n = palette::get_palette_cache(palette_state_, r, c,
+                                                   c > 0, cache);
+    std::vector<std::uint8_t> src(static_cast<std::size_t>(w) *
+                                  static_cast<std::size_t>(h));
+    for (int yy = 0; yy < h; ++yy) {
+      for (int xx = 0; xx < w; ++xx) {
+        src[static_cast<std::size_t>(yy) * static_cast<std::size_t>(w) +
+            static_cast<std::size_t>(xx)] =
+            static_cast<std::uint8_t>(source_sample(
+                source_, 0, tile_x_ + x0 + xx, tile_y_ + y0 + yy));
+      }
+    }
+    palette::PaletteParams params;
+    params.max_colors = 8;
+    params.exact_when_possible = true;
+    params.choose_direction = true;
+    palette::PaletteResult result;
+    std::string palette_error;
+    if (!palette::analyze_palette(src.data(), w, w, h, visible_w, visible_h,
+                                  cache, cache_n, params, result,
+                                  palette_error)) {
+      error = "analyze_palette failed: " + palette_error;
+      return false;
+    }
+    // §5.20.8.1 delta-codes a strictly increasing palette.
+    bool representable = result.has_palette;
+    for (int i = 1; i < result.size && representable; ++i) {
+      if (result.colors[static_cast<std::size_t>(i)] <=
+          result.colors[static_cast<std::size_t>(i - 1)]) {
+        representable = false;
+      }
+    }
+    if (!representable) result.has_palette = false;
+    if (!result.has_palette || result.sse >= intra_pred_sse) return true;
+    out.luma.resize(static_cast<std::size_t>(w) *
+                    static_cast<std::size_t>(h));
+    palette::predict_palette_block(result, w, h, out.luma.data(), w);
+    out.sse = result.sse;
+    out.result = std::move(result);
+    out.found = true;
+    return true;
+  }
+
   // §7.13.2 single-mode prediction for the inter-intra candidates.  The
   // neighbour counts come from the same §6.19.2.3 replay the intra search uses;
   // chroma smooth flags are always false in this encoder (UVMode is DC/CfL).
@@ -1935,7 +3087,7 @@ class InterFrameEncoder {
                                 intra::Mode mode, bool above_smooth,
                                 bool left_smooth,
                                 std::vector<std::uint8_t>& out) const {
-    const int sb_mi = plane == 0 ? 16 : 8;
+    const int sb_mi = plane == 0 ? sb_size_ / 4 : sb_size_ / 8;
     const int mi_c = plane == 0 ? mi_cols_ : mi_cols_ / 2;
     const int mi_r = plane == 0 ? mi_rows_ : mi_rows_ / 2;
     const intra_search::Availability avail = intra_search::availability(
@@ -2217,11 +3369,9 @@ class InterFrameEncoder {
     return true;
   }
 
-  // §7.13.3.8-.12 optical-flow refinement, writing compound_y_/u_/v_.  When
-  // the §7.13.3.8 SAD shortcut fires the plain coded-MV compound prediction is
-  // used instead, exactly like the decoder.
-  bool predict_compound_optflow(const inter::mc::Mv mvs[2], int bsize, int x0,
-                                int y0, int w, int h, std::string& error) {
+  // §7.13.3.8-.12 optical-flow refinement, writing compound_y_/u_/v_.
+  bool predict_compound_optflow(const inter::mc::Mv mvs[2], int x0, int y0,
+                                int w, int h, std::string& error) {
     const int fw = static_cast<int>(source_.width);
     const int fh = static_cast<int>(source_.height);
     const temporal::PlaneView l0 = temporal_plane(references_[0], 0);
@@ -2241,15 +3391,14 @@ class InterFrameEncoder {
       error = "optflow initial prediction failed";
       return false;
     }
-    std::int64_t sad = 0;
-    for (std::size_t i = 0; i < ip0.size(); ++i) {
-      sad += std::abs(static_cast<int>(ip0[i]) - static_cast<int>(ip1[i]));
-    }
-    if (sad < 6) {
-      // §7.13.3.8: no refinement; predict_subblock() with the coded MVs.
-      return compound_plain(mvs, bsize, x0, y0, w, h, compound_y_, compound_u_,
-                            compound_v_, error);
-    }
+    // NOTE: §7.13.3.8 has a `sad < sadThresh` shortcut that skips the
+    // refinement and predicts with the coded MVs.  The pinned decoder
+    // implements that check only for TIP blocks (`skip_opfl_refine_with_tip`);
+    // for an ordinary B-frame compound block it always refines.  Taking the
+    // shortcut here is observable: on the 640x360 pan fixture the coded MVs
+    // are integer in luma (a refined block's luma is identical either way) but
+    // half/quarter pel in chroma, where the plain EIGHTTAP prediction differs
+    // from the 4-tap refined subblock prediction by 1 LSB.  Do not shortcut.
     const int n = (w <= 8 && h <= 8) ? 4 : 8;
     const int w4 = w / 4;
     const int h4 = h / 4;
@@ -2376,61 +3525,46 @@ class InterFrameEncoder {
     return true;
   }
 
-  // §7.13.3.3-.6 refine-MV, writing compound_y_/u_/v_ with EIGHTTAP_SHARP and
-  // the compound average over §7.13.3.4 ref areas.
+  // §7.13.3.3-.6 refine-MV, writing compound_y_/u_/v_ with EIGHTTAP_SHARP.
+  //
+  // §7.13.3.1 predicts a refine-MV block in 16x16 (plane) sub-blocks:
+  //   tw = Min(w, 16 >> subX), th = Min(h, 16 >> subY)
+  // and invokes predict_refinemv() per sub-block.  The §7.13.3.6 search, the
+  // §7.13.3.4 ref area and the prediction are therefore all sub-block sized;
+  // only the luma pass searches, and chroma reuses the luma RefineMvs entry
+  // for the colocated sub-block (predict_refinemv, plane > 0).
   bool predict_compound_refinemv(const inter::mc::Mv mvs[2], int x0, int y0,
                                  int w, int h, std::string& error) {
     const int fw = static_cast<int>(source_.width);
     const int fh = static_cast<int>(source_.height);
     const temporal::PlaneView l0 = temporal_plane(references_[0], 0);
     const temporal::PlaneView l1 = temporal_plane(references_[1], 0);
-    temporal::RefArea area[2];
-    if (!temporal_ref_area(0, 0, x0, y0, w, h, mvs, area)) {
-      error = "refine-MV ref area failed";
-      return false;
-    }
-    const int sw = w + 4;
-    const int sh = h + 4;
-    std::vector<std::uint8_t> s0(static_cast<std::size_t>(sw) * sh);
+    const temporal::PlaneView u0 = temporal_plane(references_[0], 1);
+    const temporal::PlaneView u1 = temporal_plane(references_[1], 1);
+    const temporal::PlaneView v0 = temporal_plane(references_[0], 2);
+    const temporal::PlaneView v1 = temporal_plane(references_[1], 2);
+    const int tw = std::min(w, 16);
+    const int th = std::min(h, 16);
+    const int cols = (w + tw - 1) / tw;
+    const int rows = (h + th - 1) / th;
+    const int cw = w / 2;
+    const int ch = h / 2;
+    const int twc = tw / 2;
+    const int thc = th / 2;
+
+    std::vector<temporal::MvPair> sb_mvs(static_cast<std::size_t>(rows) * cols);
+    std::vector<std::uint8_t> s0(static_cast<std::size_t>(tw + 4) * (th + 4));
     std::vector<std::uint8_t> s1(s0.size());
-    temporal::RefineSearchInput search;
-    search.x = x0;
-    search.y = y0;
-    search.w = w;
-    search.h = h;
-    search.frame_w = fw;
-    search.frame_h = fh;
-    for (int list = 0; list < 2; ++list) {
-      search.ref_mi_cols[list] = references_[list].mi_cols;
-      search.ref_mi_rows[list] = references_[list].mi_rows;
-      search.ref_luma_w[list] = fw;
-      search.ref_luma_h[list] = fh;
-      search.cand_mvs[list] = temporal::Mv{mvs[list].y, mvs[list].x};
-    }
-    search.ref[0] = l0;
-    search.ref[1] = l1;
-    search.num_refs = 2;
-    search.tip_pred = false;
-    search.switchable = false;  // §5.20.7.17: NEAR_NEARMV is not switchable
-    search.use_ref_area = true;
-    search.area[0] = area[0];
-    search.area[1] = area[1];
-    search.scratch0 = s0.data();
-    search.scratch1 = s1.data();
-    search.scratch_stride = sw;
-    temporal::RefineSearchResult result;
-    if (temporal::search_refinemv(search, &result) !=
-        temporal::TemporalStatus::kOk) {
-      error = "search_refinemv failed";
-      return false;
-    }
-    std::vector<std::int16_t> r0(static_cast<std::size_t>(w) * h);
+    std::vector<std::int16_t> r0(static_cast<std::size_t>(tw) * th);
     std::vector<std::int16_t> r1(r0.size());
-    compound_y_.resize(r0.size());
-    auto predict_plane_refine = [&](int sub_x, int sub_y, const temporal::PlaneView& p0,
-                                    const temporal::PlaneView& p1, int px, int py,
-                                    int pw, int ph, const temporal::RefArea a[2],
-                                    std::uint8_t* dst, int dst_stride) {
+    const auto predict_plane_refine = [&](int sub_x, int sub_y,
+                                          const temporal::PlaneView& p0,
+                                          const temporal::PlaneView& p1, int px,
+                                          int py, int pw, int ph,
+                                          const temporal::RefArea a[2],
+                                          const temporal::MvPair& mvs_off,
+                                          std::uint8_t* dst,
+                                          int dst_stride) {
       temporal::RefinePredictInput in;
       in.ref[0] = p0;
       in.ref[1] = p1;
@@ -2447,7 +3581,7 @@ class InterFrameEncoder {
         in.ref_luma_w[list] = fw;
         in.ref_luma_h[list] = fh;
       }
-      in.offset_mvs = result.offset_mvs;
+      in.offset_mvs = mvs_off;
       in.cwp_weight = multiref::kCwpEqual;
       in.use_ref_area = true;
       in.area[0] = a[0];
@@ -2460,35 +3594,96 @@ class InterFrameEncoder {
       return temporal::refine_predict_block(in) ==
              temporal::TemporalStatus::kOk;
     };
-    if (!predict_plane_refine(0, 0, l0, l1, x0, y0, w, h, area,
-                              compound_y_.data(), w)) {
-      error = "refine-MV luma prediction failed";
-      return false;
+
+    compound_y_.assign(static_cast<std::size_t>(w) * h, 0);
+    for (int r = 0; r < rows; ++r) {
+      for (int c = 0; c < cols; ++c) {
+        const int x = x0 + c * tw;
+        const int y = y0 + r * th;
+        temporal::RefArea area[2];
+        if (!temporal_ref_area(0, 0, x, y, tw, th, mvs, area)) {
+          error = "refine-MV ref area failed";
+          return false;
+        }
+        temporal::RefineSearchInput search;
+        search.x = x;
+        search.y = y;
+        search.w = tw;
+        search.h = th;
+        search.frame_w = fw;
+        search.frame_h = fh;
+        for (int list = 0; list < 2; ++list) {
+          search.ref_mi_cols[list] = references_[list].mi_cols;
+          search.ref_mi_rows[list] = references_[list].mi_rows;
+          search.ref_luma_w[list] = fw;
+          search.ref_luma_h[list] = fh;
+          search.cand_mvs[list] = temporal::Mv{mvs[list].y, mvs[list].x};
+        }
+        search.ref[0] = l0;
+        search.ref[1] = l1;
+        search.num_refs = 2;
+        search.tip_pred = false;
+        // §5.20.7.17: NEAR_NEARMV is not switchable.
+        search.switchable = false;
+        search.use_ref_area = true;
+        search.area[0] = area[0];
+        search.area[1] = area[1];
+        search.scratch0 = s0.data();
+        search.scratch1 = s1.data();
+        search.scratch_stride = tw + 4;
+        temporal::RefineSearchResult result;
+        if (temporal::search_refinemv(search, &result) !=
+            temporal::TemporalStatus::kOk) {
+          error = "search_refinemv failed";
+          return false;
+        }
+        sb_mvs[static_cast<std::size_t>(r) * cols + c] = result.offset_mvs;
+        if (!predict_plane_refine(
+                0, 0, l0, l1, x, y, tw, th, area, result.offset_mvs,
+                compound_y_.data() +
+                    static_cast<std::size_t>(r * th) * w + c * tw,
+                w)) {
+          error = "refine-MV luma prediction failed";
+          return false;
+        }
+      }
     }
-    const temporal::PlaneView c0 = temporal_plane(references_[0], 1);
-    const temporal::PlaneView c1 = temporal_plane(references_[1], 1);
-    const int cw = w / 2;
-    const int ch = h / 2;
-    temporal::RefArea carea[2];
-    if (!temporal_ref_area(1, 1, x0 / 2, y0 / 2, cw, ch, mvs, carea)) {
-      error = "refine-MV chroma ref area failed";
-      return false;
-    }
-    compound_u_.resize(static_cast<std::size_t>(cw) * ch);
+
+    compound_u_.assign(static_cast<std::size_t>(cw) * ch, 0);
     compound_v_.resize(compound_u_.size());
-    if (!predict_plane_refine(1, 1, c0, c1, x0 / 2, y0 / 2, cw, ch, carea,
-                              compound_u_.data(), cw) ||
-        !predict_plane_refine(1, 1, c0, c1, x0 / 2, y0 / 2, cw, ch, carea,
-                              compound_v_.data(), cw)) {
-      error = "refine-MV chroma prediction failed";
-      return false;
+    for (int r = 0; r < rows; ++r) {
+      for (int c = 0; c < cols; ++c) {
+        const int x = c * twc;
+        const int y = r * thc;
+        temporal::RefArea carea[2];
+        if (!temporal_ref_area(1, 1, x0 / 2 + x, y0 / 2 + y, twc, thc, mvs,
+                               carea)) {
+          error = "refine-MV chroma ref area failed";
+          return false;
+        }
+        const temporal::MvPair& mvs_off =
+            sb_mvs[static_cast<std::size_t>(r) * cols + c];
+        if (!predict_plane_refine(
+                1, 1, u0, u1, x0 / 2 + x, y0 / 2 + y, twc, thc, carea, mvs_off,
+                compound_u_.data() + static_cast<std::size_t>(y) * cw + x,
+                cw) ||
+            !predict_plane_refine(
+                1, 1, v0, v1, x0 / 2 + x, y0 / 2 + y, twc, thc, carea, mvs_off,
+                compound_v_.data() + static_cast<std::size_t>(y) * cw + x,
+                cw)) {
+          error = "refine-MV chroma prediction failed";
+          return false;
+        }
+      }
     }
     return true;
   }
 
 #endif  // AV2ENC_VIDEO_FRAMES
   bool encode_leaf(const PartitionNode& node, std::size_t index,
-                   std::string& error) {
+                   std::string& error, int tree_type = 0,
+                   bool leaf_has_chroma = true, int chroma_mi_row = -1,
+                   int chroma_mi_col = -1, int chroma_bsize = -1) {
     const int r = node.mi_row;
     const int c = node.mi_col;
     const int w = partition::block_width(node.size);
@@ -2497,10 +3692,29 @@ class InterFrameEncoder {
     const int h4 = h >> 2;
     const int x0 = c * 4;
     const int y0 = r * 4;
-    const int cw = w / 2;
-    const int ch = h / 2;
-    const int cx0 = x0 / 2;
-    const int cy0 = y0 / 2;
+    // §5.20.3.1 chroma ownership: an SDP leaf carries the decoded HasChroma
+    // and the ChromaMi block it owns.  A CHROMA_PART leaf codes no luma; a
+    // LUMA_PART leaf codes no chroma.
+    const bool chroma_part = tree_type == 2;
+    const bool luma_part = tree_type == 1;
+    const bool owns_chroma = leaf_has_chroma && !luma_part;
+    BlockSize chroma_size = node.size;
+    if (chroma_bsize >= 0) {
+      chroma_size = static_cast<BlockSize>(chroma_bsize);
+    }
+    int cw = 0;
+    int ch = 0;
+    if (chroma_bsize >= 0) {
+      const BlockSize chroma_residual =
+          partition::chroma_plane_residual_size(geometry_, chroma_size);
+      cw = partition::block_width(chroma_residual);
+      ch = partition::block_height(chroma_residual);
+    } else {
+      cw = w / 2;
+      ch = h / 2;
+    }
+    const int cx0 = chroma_bsize >= 0 ? (chroma_mi_col * 4) / 2 : x0 / 2;
+    const int cy0 = chroma_bsize >= 0 ? (chroma_mi_row * 4) / 2 : y0 / 2;
     // Absolute luma/chroma coordinates for source reads and MC.  The coded
     // geometry and reconstruction stay tile-local.
     const int ax0 = x0 + tile_x_;
@@ -2877,8 +4091,7 @@ class InterFrameEncoder {
         bool ok = false;
         const inter::mc::Mv mvs[2] = {mv0, mv1};
         if (use_optflow) {
-          ok = predict_compound_optflow(mvs, static_cast<int>(node.size), ax0,
-                                        ay0, w, h, error);
+          ok = predict_compound_optflow(mvs, ax0, ay0, w, h, error);
         } else if (block_refine) {
           ok = predict_compound_refinemv(mvs, ax0, ay0, w, h, error);
         } else {
@@ -2962,8 +4175,11 @@ class InterFrameEncoder {
     TxPlan intra_y;
     TxPlan intra_u;
     TxPlan intra_v;
+    int intra_cctx_type = 0;
     std::uint8_t intra_y_mode = 0;  // AV2 YMode (0 = DC_PRED)
     std::int8_t intra_y_angle_delta = 0;
+    std::uint8_t intra_mrl_index = 0;
+    bool intra_mrl_sec_index = false;
     bool intra_is_cfl = false;
     int intra_cfl_index = 1;
     int intra_cfl_mh_dir = 0;
@@ -2978,14 +4194,15 @@ class InterFrameEncoder {
     const bool chroma_left = cx0 > 0;
     const bool chroma_above = cy0 > 0;
     if (keyframe_ || options_.enable_intra_fallback || options_.force_intra) {
-      bool luma_ok = false;
+      bool luma_ok = chroma_part;
+      if (!chroma_part) {
       if (options_.enable_intra_full) {
         bool above_smooth = false;
         bool left_smooth = false;
         luma_neighbor_smooth(r, c, above_smooth, left_smooth);
         const intra_search::Availability avail = intra_search::availability(
             decoded_[0], x0 / 4, y0 / 4, w / 4, h / 4, mi_cols_, mi_rows_,
-            /*sb_mi=*/16);
+            /*sb_mi=*/sb_size_ / 4);
         intra_search::LumaChoice choice;
         intra_y_pred.resize(static_cast<std::size_t>(w) *
                             static_cast<std::size_t>(h));
@@ -2998,6 +4215,48 @@ class InterFrameEncoder {
         if (luma_ok) {
           intra_y_mode = static_cast<std::uint8_t>(choice.mode);
           intra_y_angle_delta = static_cast<std::int8_t>(choice.angle_delta);
+          if (options_.enable_mrl) {
+            // §5.20.5.5 MRL: only directional candidates can signal
+            // mrl_index.  Re-use the still encoder's candidate order and
+            // strict `<` tie-break; the baseline search already holds the
+            // mrl_index 0 winner.
+            const int sec_allowed = !(w == 4 && h == 4);
+            std::int64_t best_sse = choice.sse;
+            std::array<intra::ModeCandidate, intra::kMaxModeCandidates>
+                candidates;
+            const int count = intra::build_mode_candidates(candidates, true);
+            for (int i = 0; i < count; ++i) {
+              const intra::ModeCandidate& candidate =
+                  candidates[static_cast<std::size_t>(i)];
+              if (!intra::is_directional(candidate.mode)) continue;
+              for (int mrl_index = 1; mrl_index <= mrl::kMaxMrlIndex;
+                   ++mrl_index) {
+                for (int sec = 0; sec <= (sec_allowed ? 1 : 0); ++sec) {
+                  std::vector<std::uint8_t> mrl_pred;
+                  if (!predict_luma_mrl(
+                          recon_[0], avail, x0, y0, w, h, above_smooth,
+                          left_smooth, static_cast<int>(candidate.mode),
+                          candidate.angle_delta, mrl_index, sec != 0,
+                          /*sb_height=*/64, mrl_pred, error)) {
+                    return false;
+                  }
+                  const std::int64_t mrl_sse = sse_against_source(
+                      source_, 0, x0, y0, w, h, mrl_pred);
+                  if (mrl_sse < best_sse) {
+                    best_sse = mrl_sse;
+                    intra_y_mode =
+                        static_cast<std::uint8_t>(candidate.mode);
+                    intra_y_angle_delta =
+                        static_cast<std::int8_t>(candidate.angle_delta);
+                    intra_mrl_index = static_cast<std::uint8_t>(mrl_index);
+                    intra_mrl_sec_index = sec != 0;
+                    intra_y_pred = std::move(mrl_pred);
+                  }
+                }
+              }
+            }
+            if (intra_mrl_index == 0) intra_mrl_sec_index = false;
+          }
         }
       } else {
         luma_ok = intra_dc_predict(recon_[0], source_, 0, x0, y0, w, h,
@@ -3006,22 +4265,42 @@ class InterFrameEncoder {
       }
       if (!luma_ok ||
           (options_.enable_tx_search
-               ? !search_luma_tx(source_, ax0, ay0, w, h, intra_y_pred,
-                                 current_qindex_,
-                                 txtsearch::Mode::kIntra,
-                                 options_.tx_rd_lambda,
-                                 options_.enable_idtx_intra, options_.trace,
-                                 intra_y, error)
+               ? !search_luma_tx(
+                     source_, ax0, ay0, w, h, intra_y_pred, current_qindex_,
+                     txtsearch::Mode::kIntra, options_.tx_rd_lambda,
+                     options_.enable_idtx_intra,
+                     std::max(0, mrl_stream::mapped_intra_mode_for_mrl(
+                                     intra_y_mode, intra_y_angle_delta,
+                                     intra_mrl_index, w, h)),
+                     options_.enable_tcq,
+                     ::av2enc::still::qctx::slice_for_base_q_idx(
+                         current_qindex_),
+                     /*enable_inter_ddt=*/false, /*search_partition=*/false,
+                     options_.trace, intra_y, error)
                : !compute_tx(source_, 0, ax0, ay0, w, h, intra_y_pred,
                              quant_step_, intra_y, error,
-                             qm_enabled_ ? &qm_state_ : nullptr))) {
+                             qm_enabled_ ? &qm_state_ : nullptr,
+                             options_.enable_tcq,
+                             ::av2enc::still::qctx::slice_for_base_q_idx(current_qindex_),
+                             /*is_inter=*/false))) {
         error = "intra prediction failed";
+        return false;
+      }
+      // §7.15.3 luma IST refinement (--video-ist).  Applies the still
+      // encoder's analysis projection to the quantised luma levels and keeps
+      // the candidate that minimises SSE + lambda * symbol bits.
+      if (options_.enable_ist &&
+          !refine_luma_ist(source_, ax0, ay0, w, h, intra_y_pred,
+                           quant_step_, intra_y_mode, intra_y_angle_delta,
+                           intra_mrl_index, intra_y, error)) {
         return false;
       }
       // §7.13.5 CfL reads the reconstructed luma of this block, so the luma
       // reconstruction must be in the plane before the chroma decision.  A
       // losing intra candidate is overwritten by the inter reconstruction.
       write_plane_block(recon_[0], x0, y0, w, h, intra_y.recon);
+      }  // !chroma_part
+      if (owns_chroma) {
       if (!intra_dc_predict(recon_[1], source_, 1, cx0, cy0, cw, ch,
                             chroma_max_x, chroma_max_y, chroma_left,
                             chroma_above, intra_u_pred) ||
@@ -3065,7 +4344,7 @@ class InterFrameEncoder {
         const intra_search::Availability chroma_avail =
             intra_search::availability(decoded_[1], cx0 / 4, cy0 / 4, cw / 4,
                                        ch / 4, mi_cols_ / 2, mi_rows_ / 2,
-                                       /*sb_mi=*/8);
+                                       /*sb_mi=*/sb_size_ / 8);
         chroma_search::Options chroma_options;
         chroma_options.enable_cfl = true;
         chroma_options.ds_filter = 0;
@@ -3086,17 +4365,56 @@ class InterFrameEncoder {
         intra_u_pred = choice.u;
         intra_v_pred = choice.v;
       }
-      if (!compute_tx(source_, 1, acx0, acy0, cw, ch, intra_u_pred, quant_step_,
-                      intra_u, error, qm_enabled_ ? &qm_state_ : nullptr) ||
-          !compute_tx(source_, 2, acx0, acy0, cw, ch, intra_v_pred, quant_step_,
-                      intra_v, error, qm_enabled_ ? &qm_state_ : nullptr)) {
+      if (options_.enable_cctx) {
+        // §5.4.8 enable_cctx / §7.14.6: joint U/V search.  is_cctx_allowed()
+        // is true for 4:2:0; the CLI rejects the other formats with CCTX.
+        if (!compute_chroma_cctx(source_, acx0, acy0, cw, ch, intra_u_pred,
+                                 intra_v_pred, quant_step_, /*is_inter=*/false,
+                                 intra_u, intra_v, &intra_cctx_type, error)) {
+          return false;
+        }
+      } else if (!compute_tx(source_, 1, acx0, acy0, cw, ch, intra_u_pred,
+                             quant_step_, intra_u, error,
+                             qm_enabled_ ? &qm_state_ : nullptr) ||
+                 !compute_tx(source_, 2, acx0, acy0, cw, ch, intra_v_pred,
+                             quant_step_, intra_v, error,
+                             qm_enabled_ ? &qm_state_ : nullptr)) {
         return false;
       }
-      intra_sse = sse_against_source(source_, 0, ax0, ay0, w, h, intra_y.recon);
+      }  // owns_chroma
+      intra_sse = chroma_part
+                      ? 0
+                      : sse_against_source(source_, 0, ax0, ay0, w, h,
+                                           intra_y.recon);
       if (trace_) {
-        std::cerr << "  cand intra sse=" << intra_sse << "\n";
+        std::cerr << "  cand intra sse=" << intra_sse;
+        if (options_.enable_cctx) {
+          std::cerr << " cctx=" << intra_cctx_type;
+        }
+        std::cerr << "\n";
       }
       have_intra = true;
+    }
+
+    // §5.20.8 luma palette (--video-palette).  The palette codes eob=0 on all
+    // three planes, so its prediction is compared with the SSE of the ordinary
+    // intra *prediction*, not the residual-coded reconstruction.
+    PaletteChoice palette_choice;
+    bool use_palette = false;
+    std::int64_t intra_pred_sse = intra_sse;
+    if (keyframe_ && palette_enabled_ && have_intra) {
+      intra_pred_sse =
+          sse_against_source(source_, 0, ax0, ay0, w, h, intra_y_pred);
+      if (!choose_palette_leaf(r, c, static_cast<int>(node.size), w, h,
+                               intra_pred_sse, palette_choice, error)) {
+        return false;
+      }
+      use_palette = palette_choice.found;
+      if (trace_) {
+        std::cerr << "  cand palette applied=" << (use_palette ? 1 : 0)
+                  << " pred_sse=" << intra_pred_sse
+                  << " palette_sse=" << palette_choice.sse << "\n";
+      }
     }
 
     // Inter residual (feature 1).  The predictor comes from the winner of the
@@ -3110,6 +4428,7 @@ class InterFrameEncoder {
     TxPlan res_y;
     TxPlan res_u;
     TxPlan res_v;
+    int inter_cctx_type = 0;
     bool bawp_applied = false;
     inter::adv::BawpFit bawp_fit{};
     bool inter_intra_applied = false;
@@ -3126,8 +4445,7 @@ class InterFrameEncoder {
         const inter::mc::Mv mvs[2] = {best.mv, best.mv1};
         bool predicted = false;
         if (best.use_optflow) {
-          predicted = predict_compound_optflow(mvs, static_cast<int>(node.size),
-                                               ax0, ay0, w, h, error);
+          predicted = predict_compound_optflow(mvs, ax0, ay0, w, h, error);
         } else if (best.use_refinemv) {
           predicted = predict_compound_refinemv(mvs, ax0, ay0, w, h, error);
         } else {
@@ -3251,21 +4569,40 @@ class InterFrameEncoder {
             inter_luma_sse +
             sse_against_source(source_, 1, acx0, acy0, cw, ch, inter_u) +
             sse_against_source(source_, 2, acx0, acy0, cw, ch, inter_v);
-        if ((options_.enable_tx_search
+        if (((options_.enable_tx_search || options_.enable_inter_ddt)
                  ? !search_luma_tx(source_, ax0, ay0, w, h, inter_y,
                                    current_qindex_,
                                    txtsearch::Mode::kInter,
                                    options_.tx_rd_lambda,
-                                   /*allow_idtx=*/false, options_.trace,
+                                   /*allow_idtx=*/false,
+                                   /*intra_mapped_mode=*/0,
+                                   options_.enable_tcq,
+                                   ::av2enc::still::qctx::slice_for_base_q_idx(
+                                       current_qindex_),
+                                   options_.enable_inter_ddt,
+                                   /*search_partition=*/
+                                   options_.enable_tx_search, options_.trace,
                                    res_y, error)
                  : !compute_tx(source_, 0, ax0, ay0, w, h, inter_y,
                                quant_step_, res_y, error,
-                               qm_enabled_ ? &qm_state_ : nullptr)) ||
-            !compute_tx(source_, 1, acx0, acy0, cw, ch, inter_u, quant_step_,
-                        res_u, error, qm_enabled_ ? &qm_state_ : nullptr) ||
-            !compute_tx(source_, 2, acx0, acy0, cw, ch, inter_v, quant_step_,
-                        res_v, error, qm_enabled_ ? &qm_state_ : nullptr)) {
+                               qm_enabled_ ? &qm_state_ : nullptr,
+                               options_.enable_tcq,
+                               ::av2enc::still::qctx::slice_for_base_q_idx(current_qindex_),
+                               /*is_inter=*/true)) ||
+            (options_.enable_cctx
+                 ? !compute_chroma_cctx(source_, acx0, acy0, cw, ch, inter_u,
+                                        inter_v, quant_step_, /*is_inter=*/true,
+                                        res_u, res_v, &inter_cctx_type, error)
+                 : (!compute_tx(source_, 1, acx0, acy0, cw, ch, inter_u,
+                                quant_step_, res_u, error,
+                                qm_enabled_ ? &qm_state_ : nullptr) ||
+                    !compute_tx(source_, 2, acx0, acy0, cw, ch, inter_v,
+                                quant_step_, res_v, error,
+                                qm_enabled_ ? &qm_state_ : nullptr)))) {
           return false;
+        }
+        if (trace_ && options_.enable_cctx) {
+          std::cerr << "  cand inter cctx=" << inter_cctx_type << "\n";
         }
         const std::int64_t res_total =
             sse_against_source(source_, 0, ax0, ay0, w, h, res_y.recon) +
@@ -3291,6 +4628,22 @@ class InterFrameEncoder {
           inter_v = res_v.recon;
           inter_luma_sse =
               sse_against_source(source_, 0, ax0, ay0, w, h, inter_y);
+          if (trace_ && options_.enable_inter_ddt) {
+            for (const TxPlan::Part& part : res_y.parts) {
+              const auto part_params = txv::make_tx_params(
+                  static_cast<txv::TxSize>(part.tx_size),
+                  static_cast<txv::TxType>(part.tx_type));
+              av2enc::video::ddt::Context ddt_ctx;
+              ddt_ctx.enable_inter_ddt = true;
+              ddt_ctx.is_inter = true;
+              if (part_params.has_value() &&
+                  av2enc::video::ddt::plan_has_ddt(*part_params, ddt_ctx)) {
+                std::cerr << "m2 inter ddt residual r=" << r << " c=" << c
+                          << " size=" << part.coded_w << "x" << part.coded_h
+                          << " type=" << part.tx_type << "\n";
+              }
+            }
+          }
         }
       }
       if (trace_) {
@@ -3301,18 +4654,24 @@ class InterFrameEncoder {
 
     bool use_intra = keyframe_ || options_.force_intra || !best.valid;
     // §5.20.5.3/.4 IBC + §7.13.3.26 morph on the intra keyframe.  The copy is
-    // compared with the ordinary intra leaf by luma SSE; a win selects the
-    // IBC skip block (no residual) and, when it helps, morph_pred = 1.
+    // compared with the ordinary intra leaf (or a winning palette leaf) by
+    // luma SSE; a win selects the IBC skip block (no residual) and, when it
+    // helps, morph_pred = 1.
     IbcChoice ibc_choice;
     bool use_ibc = false;
     if (keyframe_ && ibc_enabled_ && have_intra) {
-      if (!choose_ibc_leaf(r, c, static_cast<int>(node.size), intra_sse,
-                           ibc_choice, error)) {
+      const std::int64_t intra_distortion =
+          use_palette ? palette_choice.sse : intra_sse;
+      if (!choose_ibc_leaf(r, c, static_cast<int>(node.size),
+                           intra_distortion, ibc_choice, error)) {
         return false;
       }
       use_ibc = ibc_choice.found;
     }
-    if (use_ibc) use_intra = false;
+    if (use_ibc) {
+      use_intra = false;
+      use_palette = false;
+    }
     if (!use_intra && have_intra) {
       if (options_.enable_inter_residual) {
         // Rate-aware decision on the opt-in residual path.  The historical
@@ -3363,22 +4722,55 @@ class InterFrameEncoder {
                   << " morph=" << static_cast<int>(entry.morph_pred)
                   << " sse=" << ibc_choice.sse << "\n";
       }
-    } else if (use_intra) {
+    } else if (use_palette) {
       if (!have_intra) {
-        error = "intra fallback unavailable";
+        error = "palette fallback unavailable";
         return false;
       }
+      // §5.20.8: palette is luma only and forces YMode = DC_PRED.  The block
+      // codes eob=0 on all three planes, so the reconstruction is exactly the
+      // palette prediction plus the ordinary (recomputed) chroma path.  CfL is
+      // not signalled: its derived alpha would read the palette-predicted
+      // luma, so recompute chroma DC from the palette reconstruction.
       entry.is_inter = 0;
       entry.skip_flag = 0;
-      entry.y_mode = intra_y_mode;
-      entry.y_angle_delta = intra_y_angle_delta;
-      entry.uv_mode = 0;  // DC_PRED (also the CfL base mode)
-      if (intra_is_cfl) {
-        entry.flags |= syntax::kFlagIsCfl;
-        entry.cfl_index = static_cast<std::uint8_t>(intra_cfl_index);
-        entry.cfl_mh_dir = static_cast<std::uint8_t>(intra_cfl_mh_dir);
+      entry.y_mode = 0;
+      entry.y_angle_delta = 0;
+      entry.uv_mode = 0;
+      entry.palette_index = static_cast<std::uint32_t>(palettes_.size());
+      palettes_.push_back(std::move(palette_choice.result));
+      // Update the encoder-side §5.20.8.2 cache source only now: an IBC leaf
+      // also seen this block would have cleared the palette decision.
+      palette::store_palette_state(palette_state_, r, c, w, h,
+                                   palettes_.back());
+      const std::optional<txv::TxParams> params_opt =
+          txv::make_tx_params(w, h, txv::TxType::kDctDct);
+      if (!params_opt.has_value()) {
+        error = "unsupported palette block transform size";
+        return false;
       }
+      intra_y = TxPlan{};
+      intra_y.tx_size = params_opt->tx_size;
+      intra_y.adj_w = params_opt->w;
+      intra_y.adj_h = params_opt->h;
+      intra_y.eob = 0;
+      intra_y.recon = palette_choice.luma;
       write_plane_block(recon_[0], x0, y0, w, h, intra_y.recon);
+      if (!intra_dc_predict(recon_[1], source_, 1, cx0, cy0, cw, ch,
+                            chroma_max_x, chroma_max_y, chroma_left,
+                            chroma_above, intra_u_pred) ||
+          !intra_dc_predict(recon_[2], source_, 2, cx0, cy0, cw, ch,
+                            chroma_max_x, chroma_max_y, chroma_left,
+                            chroma_above, intra_v_pred) ||
+          !compute_tx(source_, 1, acx0, acy0, cw, ch, intra_u_pred,
+                      quant_step_, intra_u, error,
+                      qm_enabled_ ? &qm_state_ : nullptr) ||
+          !compute_tx(source_, 2, acx0, acy0, cw, ch, intra_v_pred,
+                      quant_step_, intra_v, error,
+                      qm_enabled_ ? &qm_state_ : nullptr)) {
+        error = "palette chroma prediction failed";
+        return false;
+      }
       write_plane_block(recon_[1], cx0, cy0, cw, ch, intra_u.recon);
       write_plane_block(recon_[2], cx0, cy0, cw, ch, intra_v.recon);
       entry.levels_offset = static_cast<std::uint32_t>(levels_.size());
@@ -3400,14 +4792,75 @@ class InterFrameEncoder {
         }
       }
       update_mv_grid(r, c, w4, h4, 0, 0, inter::mc::Mv{0, 0});
-      set_intra_joint(r, c, w4, h4,
-                      syntax::intra_joint_mode(intra_y_mode,
-                                               intra_y_angle_delta));
+      set_intra_joint(r, c, w4, h4, 0);
       ++intra_blocks_;
       if (trace_) {
+        std::cerr << "m2 palette r=" << r << " c=" << c << " " << w << "x" << h
+                  << " size=" << palettes_.back().size
+                  << " direction=" << palettes_.back().direction
+                  << " sse=" << palette_choice.sse << "\n";
+      }
+    } else if (use_intra) {
+      if (!have_intra) {
+        error = "intra fallback unavailable";
+        return false;
+      }
+      entry.is_inter = 0;
+      entry.skip_flag = 0;
+      entry.y_mode = chroma_part ? 0 : intra_y_mode;
+      entry.y_angle_delta = intra_y_angle_delta;
+      entry.mrl_index = intra_mrl_index;
+      entry.mrl_sec_index = intra_mrl_sec_index ? 1 : 0;
+      entry.uv_mode = 0;  // DC_PRED (also the CfL base mode)
+      if (intra_is_cfl) {
+        entry.flags |= syntax::kFlagIsCfl;
+        entry.cfl_index = static_cast<std::uint8_t>(intra_cfl_index);
+        entry.cfl_mh_dir = static_cast<std::uint8_t>(intra_cfl_mh_dir);
+      }
+      entry.levels_offset = static_cast<std::uint32_t>(levels_.size());
+      if (!chroma_part) {
+        write_plane_block(recon_[0], x0, y0, w, h, intra_y.recon);
+        write_luma_plan(entry, intra_y, levels_);
+      }
+      entry.cctx_type = static_cast<std::uint8_t>(intra_cctx_type);
+      if (owns_chroma) {
+        write_plane_block(recon_[1], cx0, cy0, cw, ch, intra_u.recon);
+        write_plane_block(recon_[2], cx0, cy0, cw, ch, intra_v.recon);
+        const TxPlan* plans[2] = {&intra_u, &intra_v};
+        for (int plane = 1; plane < 3; ++plane) {
+          entry.tx_size[plane] =
+              static_cast<std::uint8_t>(plans[plane - 1]->tx_size);
+          entry.eob[plane] = static_cast<std::uint32_t>(plans[plane - 1]->eob);
+          const int area = plans[plane - 1]->adj_w * plans[plane - 1]->adj_h;
+          std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
+          syntax::build_scan(plans[plane - 1]->adj_w, plans[plane - 1]->adj_h,
+                             scan);
+          for (int c2 = 0; c2 < plans[plane - 1]->eob; ++c2) {
+            levels_.push_back(plans[plane - 1]->levels[scan[
+                static_cast<std::size_t>(c2)]]);
+          }
+        }
+      }
+      if (!chroma_part) {
+        update_mv_grid(r, c, w4, h4, 0, 0, inter::mc::Mv{0, 0});
+        set_intra_joint(r, c, w4, h4,
+                        syntax::intra_joint_mode(intra_y_mode,
+                                                 intra_y_angle_delta));
+      }
+      ++intra_blocks_;
+      if (trace_) {
+        int trace_ist_sec = intra_y.sec_tx_type;
+        int trace_ist_set = intra_y.stx_set;
+        if (intra_y.searched && intra_y.parts.size() == 1) {
+          trace_ist_sec = intra_y.parts[0].sec_tx_type;
+          trace_ist_set = intra_y.parts[0].stx_set;
+        }
         std::cerr << "m2 intra r=" << r << " c=" << c << " " << w << "x" << h
                   << " mode=" << static_cast<int>(intra_y_mode)
                   << " delta=" << static_cast<int>(intra_y_angle_delta)
+                  << " mrl=" << static_cast<int>(intra_mrl_index)
+                  << " sec=" << (intra_mrl_sec_index ? 1 : 0)
+                  << " ist=" << trace_ist_sec << "/" << trace_ist_set
                   << " sse=" << intra_sse << "\n";
       }
     } else {
@@ -3467,6 +4920,7 @@ class InterFrameEncoder {
       if (inter_residual) {
         entry.levels_offset = static_cast<std::uint32_t>(levels_.size());
         write_luma_plan(entry, res_y, levels_);
+        entry.cctx_type = static_cast<std::uint8_t>(inter_cctx_type);
         const TxPlan* plans[2] = {&res_u, &res_v};
         for (int plane = 1; plane < 3; ++plane) {
           entry.tx_size[plane] =
@@ -3559,9 +5013,11 @@ class InterFrameEncoder {
 
     // §6.19.2.3: this leaf's cells are now decoded for the availability of the
     // following leaves in this superblock.
-    decoded_[0].fill(c, r, w4, h4);
-    decoded_[1].fill(c / 2, r / 2, cw / 4, ch / 4);
-    decoded_[2].fill(c / 2, r / 2, cw / 4, ch / 4);
+    if (!chroma_part) decoded_[0].fill(c, r, w4, h4);
+    if (owns_chroma) {
+      decoded_[1].fill(cx0 / 4, cy0 / 4, cw / 4, ch / 4);
+      decoded_[2].fill(cx0 / 4, cy0 / 4, cw / 4, ch / 4);
+    }
     if (ibc_enabled_) {
       ibcs::finish_ibc_block(ibc_buffer_, ibc_neighbours_, r, c,
                              static_cast<int>(node.size), use_ibc,
@@ -3661,13 +5117,26 @@ class InterFrameEncoder {
   ibc::IbcBufferState ibc_buffer_;
   ibcs::BvNeighbourMap ibc_neighbours_;
   ibc::IbcConfig ibc_config_{};
+  // §5.20.8 palette state (intra keyframe only).  The state is the same MI
+  // cache source the writer's PaletteSyntaxWriter maintains, and the results
+  // are handed to the writer through FramePlan::palettes.
+  bool palette_enabled_ = false;
+  palette::PaletteState palette_state_;
+  std::vector<palette::PaletteResult> palettes_;
   std::array<intra_search::BlockDecoded, 3> decoded_;
   std::vector<syntax::BlockSyntax> blocks_;
+  // §5.4.3 enable_sdp: the decided luma/chroma trees for the intra keyframe.
+  sdpp::FrameDecision sdp_frame_;
+  // §8.3.2 SDP plane grids, maintained in decode order while the trees are
+  // collected.  Contexts for each node's partition symbols come from these.
+  sdpp::MiSizeGrid sdp_luma_sizes_;
+  sdpp::MiSizeGrid sdp_chroma_sizes_;
   std::array<int, 7> ref_order_hints_{};
   TemporalFrameContext temporal_ctx_;
   std::vector<std::int32_t> levels_;
   std::uint32_t inter_blocks_ = 0;
   std::uint32_t intra_blocks_ = 0;
+  int sb_size_ = 64;
   mutable int temporal_added_ = 0;
   int temporal_selected_ = 0;
 };
@@ -3978,6 +5447,15 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   config.enable_cfl_intra = true;
   config.enable_mhccp = options.enable_mhccp;
   config.enable_idtx_intra = options.enable_idtx_intra;
+  config.enable_mrls = options.enable_mrl;
+  config.enable_intra_ist = options.enable_ist;
+  config.enable_inter_ist = false;
+  config.enable_tcq = options.enable_tcq;
+  config.choose_tcq_per_frame = options.enable_tcq;
+  config.enable_cctx = options.enable_cctx;
+  config.enable_sdp = options.enable_sdp;
+  config.enable_extended_sdp = false;
+  config.enable_inter_ddt = options.enable_inter_ddt;
   config.using_qmatrix = options.enable_qm;
   config.qm_user_data = options.user_qm;
   config.enable_deblock = options.enable_deblock;
@@ -4346,6 +5824,15 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.enable_cfl_intra = true;
   config.enable_mhccp = options.enable_mhccp;
   config.enable_idtx_intra = options.enable_idtx_intra;
+  config.enable_mrls = options.enable_mrl;
+  config.enable_intra_ist = options.enable_ist;
+  config.enable_inter_ist = false;
+  config.enable_tcq = options.enable_tcq;
+  config.choose_tcq_per_frame = options.enable_tcq;
+  config.enable_cctx = options.enable_cctx;
+  config.enable_sdp = options.enable_sdp;
+  config.enable_extended_sdp = false;
+  config.enable_inter_ddt = options.enable_inter_ddt;
   config.using_qmatrix = options.enable_qm;
   config.qm_user_data = options.user_qm;
   config.enable_deblock = options.enable_deblock;
@@ -4718,6 +6205,9 @@ bool encode_video_refinement_sequence(
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
   config.enable_mhccp = options.enable_mhccp;
+  config.enable_tcq = options.enable_tcq;
+  config.choose_tcq_per_frame = options.enable_tcq;
+  config.enable_cctx = options.enable_cctx;
   config.using_qmatrix = options.enable_qm;
   config.enable_deblock = options.enable_deblock;
   config.enable_bawp = options.enable_bawp;
@@ -4965,16 +6455,18 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
   config.enable_ref_frame_mvs = true;
   config.enable_tip = true;
   config.disable_tip_output = false;
-  // §5.4.6 enable_tip_hole_fill = 0.  The component's §7.10.3/.4 path is
-  // exact on the synthetic gate, but on a *coded* reference field the pinned
-  // decoder's post-estimation validity mask differs from the encoder's by the
-  // cells our §7.22 store marks NONE; running the encoder's hole fill then
-  // predicts filled MVs where the decoder keeps the hole (0 MV), which showed
-  // as sparse ±4 samples on TIP frames.  With hole fill off both sides treat
-  // holes as MV 0 and the stream is sample-exact.  See
-  // docs/negative-results.md and docs/tip-decoder-gate.md.
-  config.enable_tip_hole_fill = false;
+  // §5.4.6 enable_tip_hole_fill.  The sequence bit and the per-frame
+  // allow_tip_hole_fill bit must agree with the §7.10.3/.4 setup the encoder
+  // runs for this frame: signalling 0 makes the decoder predict a hole with
+  // MV 0 while the encoder uses the neighbour-filled MV (sparse ±4 samples on
+  // TIP frames).  Both masks are cell-identical on a coded anchor field when
+  // the frame bit is written, so the product stream enables it.  See
+  // docs/tip-decoder-gate.md.
+  config.enable_tip_hole_fill = options.tip_hole_fill;
   config.enable_cfl_intra = true;
+  config.enable_tcq = options.enable_tcq;
+  config.choose_tcq_per_frame = options.enable_tcq;
+  config.enable_cctx = options.enable_cctx;
   config.disable_drl_reorder = true;
 
   std::array<TipSlotState, kMaxRefSlots> slots;
@@ -5141,7 +6633,7 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
         choose_tip_weight_index(past.order_hint, future.order_hint, hint);
     tip.tip_global_mv = temporal::Mv{0, 0};
     tip.interp_filter = temporal::InterpFilter::kEighttapSharp;
-    tip.allow_tip_hole_fill = false;
+    tip.allow_tip_hole_fill = options.tip_hole_fill;
     tip.enable_tip_refinemv = false;
     tip.enable_refinemv = false;
     tip.opfl_refine_type = temporal::RefineType::kNone;
@@ -5265,6 +6757,7 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
     header.tip_global_mv_row = 0;
     header.tip_global_mv_col = 0;
     header.tip_sharp = true;
+    header.allow_tip_hole_fill = tip.allow_tip_hole_fill;
 
     std::vector<std::uint8_t> obu = make_tip_frame_obu(config, header, error);
     if (obu.empty()) {
@@ -5292,8 +6785,154 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
 bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                         const VideoOptions& options, VideoSequenceResult& result,
                         std::string& error) {
-  // Non-default formats use the depth/chroma-generic core.  The historical
-  // 8-bit 4:2:0 path below is untouched.
+  if (options.sb128 && options.sb256) {
+    error = "sb128 and sb256 are mutually exclusive";
+    return false;
+  }
+  if (options.sb128 || options.sb256) {
+    if (options.format.chroma != fmt::ChromaFormat::k420 ||
+        options.format.depth != fmt::BitDepth::k8) {
+      error = "--video-sb128/--video-sb256 are wired for 8-bit 4:2:0 only";
+      return false;
+    }
+    if (options.tile_cols != 0 || options.tile_rows != 0) {
+      error = "--video-sb128/--video-sb256 do not compose with --tiles yet";
+      return false;
+    }
+    if (options.b_frames > 0 || options.temporal_layers > 0 ||
+        options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras ||
+        options.enable_tip) {
+      error = "--video-sb128/--video-sb256 do not compose with the B/temporal/"
+              "random-access/TIP frame schedules yet";
+      return false;
+    }
+    if (options.loop_filters.any()) {
+      error = "--video-sb128/--video-sb256 do not compose with the loop "
+              "filters yet (the CDEF/CCSO/GDF/LR unit grids are 64-based); "
+              "deblocking is supported";
+      return false;
+    }
+    if (options.enable_segmentation || options.enable_delta_q ||
+        options.per_segment_q) {
+      error = "--video-sb128/--video-sb256 do not compose with "
+              "segmentation/delta-Q yet";
+      return false;
+    }
+    if (options.enable_ref_frame_mvs) {
+      error = "--video-sb128/--video-sb256 do not compose with "
+              "--video-ref-mvs yet";
+      return false;
+    }
+  }
+  if (options.ext_partitions) {
+#if !defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+    error = "--video-ext-partitions needs the full build (partition_ext "
+            "adapter)";
+    return false;
+#else
+    if (options.format.chroma != fmt::ChromaFormat::k420 ||
+        options.format.depth != fmt::BitDepth::k8) {
+      error = "--video-ext-partitions is wired for 8-bit 4:2:0 only";
+      return false;
+    }
+    if (options.tile_cols != 0 || options.tile_rows != 0) {
+      error = "--video-ext-partitions does not compose with --tiles yet";
+      return false;
+    }
+    if (options.b_frames > 0 || options.temporal_layers > 0 ||
+        options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras ||
+        options.enable_tip) {
+      error = "--video-ext-partitions does not compose with the B/temporal/"
+              "random-access/TIP frame schedules yet";
+      return false;
+    }
+    if (options.sb256) {
+      error = "--video-ext-partitions does not compose with --video-sb256 "
+              "(the extended solver is wired for 64x64/128x128 roots)";
+      return false;
+    }
+    if (options.adaptive_cdf || options.avg_cdf || options.cdf_continuity) {
+      error = "--video-ext-partitions does not compose with the CDF "
+              "image/continuity tools yet";
+      return false;
+    }
+    if (options.loop_filters.any()) {
+      error = "--video-ext-partitions does not compose with the loop filters "
+              "yet; deblocking is supported";
+      return false;
+    }
+    if (options.enable_segmentation || options.enable_delta_q ||
+        options.per_segment_q) {
+      error = "--video-ext-partitions does not compose with "
+              "segmentation/delta-Q yet";
+      return false;
+    }
+    if (options.enable_ref_frame_mvs) {
+      error = "--video-ext-partitions does not compose with --video-ref-mvs "
+              "yet";
+      return false;
+    }
+#endif  // AV2ENC_VIDEO_EXT_PARTITIONS
+  }
+  // §5.20.8 palette / §5.20.5.3-.4 general IBC are keyframe mode-info tools.
+  // Keep them on the plain key+P chain (like the morph carrier): the frame-type
+  // wrappers write their own sequence/key headers and would omit the
+  // screen-content bits the tile payload depends on.
+  if (options.enable_palette || options.enable_ibc) {
+    const char* tool = options.enable_palette ? "palette" : "IBC";
+    if (options.format.chroma != fmt::ChromaFormat::k420 ||
+        options.format.depth != fmt::BitDepth::k8) {
+      error = std::string("--video-") + tool +
+              " is gated on 8-bit 4:2:0; the format video core has no "
+              "screen-content syntax";
+      return false;
+    }
+    if (options.b_frames != 0 || options.temporal_layers != 0 ||
+        options.enable_tip || options.long_term || options.olk ||
+        options.leading_frames != 0 || options.sef || options.ra_switch ||
+        options.ras) {
+      error = std::string("--video-") + tool +
+              " is gated on the plain key+P chain: it cannot be combined with "
+              "B frames, temporal layers, TIP, SEF or the frame-type wrappers";
+      return false;
+    }
+    if (options.tile_cols != 0 || options.tile_rows != 0) {
+      error = std::string("--video-") + tool +
+              " is gated on a single tile (the palette cache and IBC ring are "
+              "tile-local)";
+      return false;
+    }
+    if (options.enable_palette && options.enable_tx_search) {
+      error = "--video-palette is not wired with --video-tx-search";
+      return false;
+    }
+    if (options.enable_ibc && options.drl_reorder_always) {
+      error = "--video-ibc codes use_intrabc and §7.12.2.19 "
+              "DRL_REORDER_ALWAYS reorders the decoder's BV stack, which the "
+              "IBC stack builder does not implement";
+      return false;
+    }
+    if (options.enable_ibc &&
+        (options.enable_segmentation || options.per_segment_q)) {
+      error = "--video-ibc is not wired with "
+              "--video-segmentation/--video-per-segment-q";
+      return false;
+    }
+    if (options.avg_cdf || options.cdf_continuity) {
+      error = std::string("--video-") + tool +
+              " is not wired with --avg-cdf/--cdf-continuity";
+      return false;
+    }
+  }  // Non-default formats use the depth/chroma-generic core.  The historical
+  if ((options.enable_sdp || options.enable_inter_ddt) &&
+      (options.format.chroma != fmt::ChromaFormat::k420 ||
+       options.format.depth != fmt::BitDepth::k8)) {
+    error = "--video-sdp/--video-ddt are wired for 8-bit 4:2:0";
+    return false;
+  }
+  // Non-default formats use the depth/chroma-generic core.  The historical  // 8-bit 4:2:0 path below is untouched.
   if (options.format.chroma != fmt::ChromaFormat::k420 ||
       options.format.depth != fmt::BitDepth::k8) {
     if (options.implicit_ref_map) {
@@ -5323,6 +6962,26 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // quantiser below uses qlookup(base_q_idx).  0 (lossless) is not implemented.
   if (options.base_q_idx == 0) {
     error = "M2 does not support lossless base_q_idx = 0";
+    return false;
+  }
+  if (options.enable_sdp) {
+    if (options.tile_cols > 1 || options.tile_rows > 1) {
+      error = "--video-sdp is wired for a single tile";
+      return false;
+    }
+    if (options.b_frames > 0 || options.temporal_layers > 0 ||
+        options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras ||
+        options.enable_tip || options.enable_morph || options.enable_cfl ||
+        options.enable_mhccp || options.enable_segmentation ||
+        options.enable_delta_q || options.per_segment_q) {
+      error = "--video-sdp does not compose with the frame-type wrappers, "
+              "morph/CfL/MHCCP or segmentation/delta-Q";
+      return false;
+    }
+  }
+  if (options.enable_inter_ddt && options.enable_tip) {
+    error = "--video-ddt does not compose with the TIP header writer";
     return false;
   }
   // The video leaf coder derives 4:2:0 chroma as w/2, h/2 and the intra
@@ -5480,11 +7139,6 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   }
   if (options.mv_precision < 0 || options.mv_precision > 2) {
     error = "mv_precision must be 0 (1/8), 1 (1/4) or 2 (1/2) pel";
-    return false;
-  }
-  if (options.drl_reorder) {
-    error = "DRL reordering is not decoder-gated yet "
-            "(docs/negative-results.md)";
     return false;
   }
   if (options.enable_tip) {
@@ -5865,6 +7519,10 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   VideoConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
+  config.use_128x128_superblock = options.sb128;
+  config.use_256x256_superblock = options.sb256;
+  config.enable_ext_partitions = options.ext_partitions;
+  config.enable_uneven_4way_partitions = options.ext_partitions;
   config.base_q_idx = options.base_q_idx;
   config.order_hint_bits = order_hint_bits;
   config.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);
@@ -5910,14 +7568,24 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   config.enable_cfl_intra = true;
   config.enable_mhccp = options.enable_mhccp;
   config.enable_idtx_intra = options.enable_idtx_intra;
+  config.enable_mrls = options.enable_mrl;
+  config.enable_intra_ist = options.enable_ist;
+  config.enable_inter_ist = false;
+  config.enable_tcq = options.enable_tcq;
+  config.choose_tcq_per_frame = options.enable_tcq;
+  config.enable_cctx = options.enable_cctx;
+  config.enable_sdp = options.enable_sdp;
+  config.enable_extended_sdp = false;
+  config.enable_inter_ddt = options.enable_inter_ddt;
   config.using_qmatrix = options.enable_qm;
   config.qm_user_data = options.user_qm;
   config.enable_deblock = options.enable_deblock;
   config.enable_global_motion = options.enable_gme;
   config.enable_bawp = options.enable_bawp || options.enable_morph;
-  // §5.4.7/§5.20.5.4: the morph carrier selects the per-frame screen-content
-  // form and codes the IBC mode-info path on the intra keyframe.
-  config.seq_screen_content_tools_present = options.enable_morph;
+  // §5.4.7/§5.20.5.4: the screen-content carriers select the per-frame form
+  // and code the IBC/palette mode-info path on the intra keyframe.
+  config.seq_screen_content_tools_present =
+      options.enable_morph || options.enable_palette || options.enable_ibc;
   config.enable_interintra = options.enable_interintra;
   config.enable_ref_frame_mvs = options.enable_ref_frame_mvs;  // §5.4.10 CDEF/CCSO sequence flags for the opt-in M2 loop filters.
   if (options.loop_filters.cdef) {
@@ -6001,12 +7669,14 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     key_header.grain_seed = key_grain.grain_seed;
   }
   if (config.seq_screen_content_tools_present) {
-    // §5.18.3.3/.4: the morph carrier's keyframe allows screen-content tools
-    // and global IBC, with integer block vectors.
+    // §5.18.3.3/.4: the keyframe allows screen-content tools; IBC (and the
+    // morph carrier) additionally allow global intra block copy with integer
+    // block vectors.  Palette-only streams code allow_intrabc = 0.
+    const bool intrabc = options.enable_morph || options.enable_ibc;
     key_header.allow_screen_content_tools = true;
     key_header.force_integer_mv = true;
-    key_header.allow_intrabc = true;
-    key_header.allow_global_intrabc = true;
+    key_header.allow_intrabc = intrabc;
+    key_header.allow_global_intrabc = intrabc;
     key_header.allow_local_intrabc = false;
   }
 
@@ -6059,6 +7729,40 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       lf.source[plane] = plane == 0 ? frames[0].y.data() : (plane == 1 ? frames[0].u.data() : frames[0].v.data());
       lf.source_stride[plane] =
           plane == 0 ? static_cast<int>(width) : static_cast<int>(width / 2);
+    }
+    // §7.18.1 Skips[] / §7.20.1 LrTxSkip for the screen-content keyframe.  An
+    // IBC skip leaf codes skip_flag = 1, and the real decoder leaves such a
+    // block out of CDEF and LR; ordinary intra leaves (including palette
+    // leaves, which code eob = 0) contribute nothing to Skips[].  Only build
+    // the list on a screen-content carrier so every historical keyframe keeps
+    // the previous all-zero grid.
+    if (config.seq_screen_content_tools_present) {
+      std::vector<post::VideoLoopFilterBlock> key_blocks;
+      for (std::size_t t = 0; t < tile_sources.size(); ++t) {
+        const CodedTile& tile = tile_sources[t];
+        const int tile_mi_row = tile.y / 4;
+        const int tile_mi_col = tile.x / 4;
+        for (const syntax::BlockSyntax& leaf : key_encoders[t]->blocks()) {
+          if (leaf.partition !=
+              static_cast<std::uint8_t>(PartitionType::kNone)) {
+            continue;
+          }
+          post::VideoLoopFilterBlock block;
+          block.mi_row = tile_mi_row + static_cast<int>(leaf.mi_row);
+          block.mi_col = tile_mi_col + static_cast<int>(leaf.mi_col);
+          block.w4 = partition::block_width(
+                         static_cast<partition::BlockSize>(leaf.bsize)) >>
+                     2;
+          block.h4 = partition::block_height(
+                         static_cast<partition::BlockSize>(leaf.bsize)) >>
+                     2;
+          block.skip = (leaf.flags & syntax::kFlagIsIbc) != 0;
+          // Palette / ordinary intra leaves keep LrTxSkip = 0 even at eob 0.
+          block.luma_eob_zero = false;
+          key_blocks.push_back(block);
+        }
+      }
+      lf.blocks = key_blocks;
     }
     if (!post::run_video_loop_filters(lf, options.loop_filters, &key_filters,
                                       nullptr, &error)) {
@@ -6476,7 +8180,11 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
               partition::block_height(
                   static_cast<partition::BlockSize>(leaf.bsize)) >>
               2;
-          block.skip = leaf.is_inter && leaf.skip_flag != 0;
+          // §7.18.1 Skips[]: an inter skip leaf and an IBC skip leaf both code
+          // skip_flag = 1; with CdefOnSkipTxfm DISABLED the decoder leaves a
+          // fully skipped 8x8 block unfiltered.
+          block.skip = (leaf.is_inter && leaf.skip_flag != 0) ||
+                       (leaf.flags & syntax::kFlagIsIbc) != 0;
           filter_blocks.push_back(block);
         }
       }

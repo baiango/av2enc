@@ -81,6 +81,7 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/codec/inter/temporal/tip.cpp
   src/codec/inter/temporal/temporal_syntax.cpp
   src/codec/inter/temporal/refinemv.cpp
+  src/codec/inter/temporal/opfl.cpp
   src/codec/inter/tip/tip_signalling.cpp
   src/codec/inter/tip/tip_candidates.cpp
   src/codec/inter/tip/tip_build.cpp

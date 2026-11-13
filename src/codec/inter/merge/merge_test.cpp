@@ -865,8 +865,10 @@ void test_stack_scan_and_sort(Test& t) {
 
   params.reorder = merge::DrlReorder::kConstraint;
   merge::build_mv_stack(params, &stack);
-  // Weight sort is a selection sort: moving the weight-2 base candidate into
-  // slot 0 displaces A to slot 3; B and C keep their relative order.
+  // Weight sort is the §7.12.2.19 single move-to-front: moving the weight-2
+  // base candidate into slot 0 displaces A to slot 3; B and C keep their
+  // relative order.  (A full selection sort would also reorder B/C here; see
+  // src/codec/inter/drl_reorder/README.md for the pinned divergence.)
   const mc::Mv sorted[6] = {{-100, -100}, {20, 20}, {30, 30},
                             {10, 10},    {50, 50}, {40, 40}};
   for (int i = 0; i < 6; ++i) {

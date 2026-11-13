@@ -403,18 +403,15 @@ array and must match `tree_signature()` for identical costs.
   `tools/validate_dav2d.sh out.ivf source.y4m` wraps the same invocation and
   performs the pixel comparison.
 
-- **Verification status:** block-level SDP decoding is **not yet gated**,
-  because no writer emits an SDP stream (see the call sites above). The
-  sequence-header bits are spec-standard and are already parsed by the
-  repository's own gates (`src/encoder/m1/partition_stream/gate_dav2d.py:128-131`
-  and `src/encoder/partition_ext/gate_dav2d.py:137-139`), but those gates do
-  not exercise dav2d's SDP block path. Do not call SDP "working" until a
-  block-level stream passes `tools/validate_dav2d.sh`.
+- **Verification status:** block-level SDP decoding **is gated** for the
+  integrated product paths: `--still-sdp` (forced NONE luma/chroma trees) and
+  the video `--video-sdp` keyframe (searched luma tree, pinned NONE chroma
+  tree).  See the two gate sections below.  Chroma sub-trees inside a decoded
+  chroma tree are still not decoder-gated.
 - The partition-tree layer (`partition_ext`) remains `SHARED_PART`-only. This
   module is the SDP-aware layer; the two are intentionally separate.
 
 ## Integrated product path (`--still-sdp`)
-
 The M1 writer now has an SDP branch:
 
 - `StillConfig::enable_sdp` writes the §5.4.3 `enable_sdp` bit
@@ -456,6 +453,56 @@ src/codec/partition/sdp/product_gate.sh build-int
 
 Local result: PASS for all 20 cases (`dav2d` f9dafbc, `--strict 1`).  Default
 `--still` streams are unchanged (pinned baseline still passes).
+
+## Video path (`--video-sdp`)
+
+The CPU `--video` writer signals §5.4.3 `enable_sdp = 1` (and
+`enable_extended_sdp = 0`; the video sequence header has
+`single_picture_header_flag = 0`) and codes the intra keyframe with the SDP
+two-tree walk.  P frames are not intra, so §5.20.3.1 does not trigger there;
+they keep the shared rect tree.
+
+- `InterFrameEncoder::decide_sdp()` builds `sdp::Tools{enable_sdp=true,
+  frame_is_intra=true}` and `sdp::DecisionOptions` from the normal
+  `--video-min-block` / `--video-max-depth` controls, rect-only (`allow_split`,
+  `allow_3way`, `allow_uneven4` are off because the sequence header disables
+  those syntax families).
+- `collect_sdp_node()` emits the no-syntax split node, then the luma root, then
+  the chroma root.  The reference planner
+  (`sdp::node_contexts` + `sdp::plan_partition_symbols`) produces the exact
+  per-node symbols from the authoritative boundary/allowed set and the
+  luma/chroma `MiSize` grids the walk maintains; `video_syntax.cpp` stores and
+  emits them (`BlockSyntax::sdp_symbols`), so the writer cannot re-derive
+  contexts differently from the solver.
+- Leaf coding passes `TreeType`, `HasChroma` and the owned `ChromaMi` block
+  through `BlockSyntax` (`kFlagHasChromaInfo`).  A `CHROMA_PART` leaf codes no
+  Y mode, TX size, CDEF/CCSO/delta-Q or luma residual, and only codes UV when
+  it owns chroma; a `LUMA_PART` leaf codes no chroma.
+
+**Decoder-gated policy.**  The luma tree is searched.  The chroma tree is
+pinned to one `PARTITION_NONE` block per superblock (its `NodeCosts::leaf` is
+0): the pinned `dav2d` f9dafbc and the reference model disagree on the
+`PlaneStart == 1` partition contexts once a decoded chroma tree spans more
+than a forced level (the still gate only ever exercised `ChromaPartitionKnown`
+=> NONE).  The writer supports and signals chroma sub-trees, but the product
+decision never produces one.  Residual proof: a stream with a searched luma
+tree and a split chroma tree decodes in the first superblock row and
+desynchronises at the first chroma node whose context reads a previously
+decoded chroma leaf; the model's `sdp_chroma_sizes_` values, the luma grid, a
+chroma-coordinate grid, and an all-sentinel context variant all fail the same
+way, while `CHROMA_NONE` is exact at every geometry tried (64x64, 320x360,
+640x360, 640x384).
+
+Gate: `src/pipeline/video/gate_video_sdp_ddt.sh` (64x64 and 640x360; default
+controls, depth 0/64, depth 3/8, `--video-inter-residual`, `--video-tx-search`,
+and SDP+DDT together).  It requires `dav2d --strict 1`, the exact picture
+count, sample-exact `--video-recon`, and proves the luma search moves the
+stream by comparing depth 0/64 against the default depths.
+
+Constraint list: CPU-only 8-bit 4:2:0, one tile, no frame-type wrappers
+(B/temporal/random-access/TIP/SVC), no morph/CfL/MHCCP, no
+segmentation/delta-Q.  The video sequence bit alone is byte-identical when the
+flag is off.
 
 ## Deliberate limitations
 

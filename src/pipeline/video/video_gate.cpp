@@ -554,6 +554,8 @@ int main(int argc, char** argv) {
       options.ras = true;
     } else if (arg == "--tip") {
       options.enable_tip = true;
+    } else if (arg == "--tip-no-hole-fill") {
+      options.tip_hole_fill = false;
     } else if (arg == "--ref-mvs") {
       options.enable_ref_frame_mvs = true;
     } else if (arg == "--b-frames" && i + 1 < argc) {
@@ -579,7 +581,8 @@ int main(int argc, char** argv) {
                    "[--num-ref-frames N] "
                    "[--subpel-eighth] [--mv-precision eighth|quarter|half] "
                    "[--drl-reorder] [--long-term] [--olk] [--leading N] "
-                   "[--sef] [--switch] [--ras] [--tip] [--trace]\n";
+                   "[--sef] [--switch] [--ras] [--tip] "
+                   "[--tip-no-hole-fill] [--trace]\n";
       return 0;
     } else {
       std::cerr << "unknown argument: " << arg << "\n";

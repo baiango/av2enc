@@ -197,6 +197,18 @@ bool forward_secondary_coeffs_kernel(const TxParams& params,
                                      int bit_depth, std::int32_t* coeff,
                                      std::size_t coeff_len);
 
+// Encoder-side analysis projection for one block already quantised under a
+// primary TX_TYPE.  Unlike forward_secondary_coeffs_kernel() this keeps every
+// primary coefficient outside the n2 output positions: the normative inverse
+// only overwrites those positions, so the coded block is the projected first n
+// scan coefficients plus the untouched tail.  `levels` is the adjusted
+// (Min(32,W) x Min(32,H)) raster level array; it is rewritten in place.
+// This is the M1 still encoder's project_ist_levels(), moved here so the video
+// writer can share it.
+bool project_ist_levels(const TxParams& params, TxType plane_tx_type,
+                        int kernel, int sec_tx_type, bool transpose,
+                        std::int32_t* levels, std::size_t levels_len);
+
 // ---------------------------------------------------------------------------
 // CDFs and static symbol costs (§9.3)
 // ---------------------------------------------------------------------------

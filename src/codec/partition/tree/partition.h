@@ -19,7 +19,7 @@
 // Deliberately not here
 // ---------------------
 //   * entropy coding / CDF assembly / bitstream writing
-//   * extended 3-way and 4-way partitions, SDP, BRU, 256x256 superblocks
+//   * extended 3-way and 4-way partitions, SDP, BRU
 //   * chroma prediction or chroma-only partition trees
 //
 // Spec fact that surprises most readers: in AV2 v1.0.0, Table 9.x
@@ -52,10 +52,10 @@ inline constexpr double kInfiniteCost =
 // never below 4.
 inline constexpr int kMinBlockPixels = 4;
 
-// AV2 superblock sizes in scope.  256x256 needs a separate sequence-header
-// flag and is deliberately unsupported here.
+// AV2 superblock sizes in scope.  256x256 uses the sequence-header flag and is
+// coded as a 256 root only on inter frames (§5.18.1 clamps intra SbSize to 128).
 inline constexpr int kMinSuperblockPixels = 64;
-inline constexpr int kMaxSuperblockPixels = 128;
+inline constexpr int kMaxSuperblockPixels = 256;
 
 // AV2 Table 6.22 (enum_block_size).  The numeric values are the spec's enum
 // values, so spec tables can be indexed directly.  They are NOT a compact
@@ -139,7 +139,7 @@ int partition_size_adjust(BlockSize size);
 int partition_size_adjust_rect_type(BlockSize size);
 
 // One 8-bit 4:2:0 still picture, one tile.  Width/height are luma samples and
-// are not padded.  `sb_size` is 64 or 128.  The default 4:2:0 subsampling and
+// are not padded.  `sb_size` is 64, 128 or 256.  The default 4:2:0 subsampling and
 // has_chroma=true are the M1 configuration; monochrome and 4:4:4 callers can
 // flip the flags, but 4:2:2 is not modelled.
 struct FrameGeometry {
