@@ -663,6 +663,9 @@ bool apply_lr_cpu(const VideoLoopFilterFrame& frame, const VideoLrPlan& plan,
   }
 
   // §7.20.4 luma PC-Wiener (RESTORE_PC_WIENER): per-unit on/off from the plan.
+  // loop_restoration_frame() begins with LrFrame := CdefFrame for every plane;
+  // keep the PC-Wiener luma so a chroma-only WNS pass cannot replace it.
+  std::vector<std::uint8_t> pc_wiener_luma;
   if (plan.pc_wiener) {
     namespace pcw = ::av2enc::filters::pc_wiener_stream;
     const int luma_w = frame.mi_cols * 4;
@@ -693,6 +696,8 @@ bool apply_lr_cpu(const VideoLoopFilterFrame& frame, const VideoLrPlan& plan,
       return fail(error, "video PC-Wiener application failed");
     }
   }
+
+  if (plan.pc_wiener) pc_wiener_luma = lr_storage[0];
 
   bool any_wns = false;
   rest::LoopRestorationParams params;
@@ -739,6 +744,9 @@ bool apply_lr_cpu(const VideoLoopFilterFrame& frame, const VideoLrPlan& plan,
       return fail(error, std::string("video LR failed: ") +
                              rest::restoration_status_string(status));
     }
+  }
+  if (plan.pc_wiener) {
+    lr_storage[0] = std::move(pc_wiener_luma);
   }
   for (int plane = 0; plane < 3; ++plane) {
     if (!plan.plane[plane].enabled) continue;

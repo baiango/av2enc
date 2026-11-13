@@ -2314,7 +2314,7 @@ class CudaBackend final : public Backend {
                  units * av2enc::restoration::kWienerNsCoeffStride *
                      sizeof(std::int16_t));
         }
-        if (plan.lr.pc_wiener) {
+        const auto apply_pc_wiener = [&]() -> bool {
           // §7.20.4 luma PC-Wiener through the verified device module.
           if (!pc_wiener_.initialized()) {
             error = "M2 CUDA: PC-Wiener workspace is not initialized";
@@ -2376,7 +2376,9 @@ class CudaBackend final : public Backend {
           if (!check(cudaGetLastError(), "PC-Wiener copy", error)) {
             return false;
           }
-        }
+          return true;
+        };
+        if (plan.lr.pc_wiener && !apply_pc_wiener()) return false;
         bool any_wns = false;
         av2enc::restoration::RestorationFrame lr_frame{};
         for (int plane = 0; plane < 3; ++plane) {
@@ -2440,6 +2442,11 @@ class CudaBackend final : public Backend {
             return false;
           }
         }
+        // loop_restoration_frame() starts with LrFrame := CdefFrame for every
+        // plane, so a chroma-only WNS pass overwrites the PC-Wiener luma.
+        // Re-apply it after that pass (device module is deterministic).
+        if (any_wns && plan.lr.pc_wiener && !apply_pc_wiener()) return false;
+
         // Planes that neither the PC-Wiener stage nor Wiener NS filtered are
         // copied through: the final download reads all three planes.
         for (int plane = 0; plane < 3; ++plane) {
