@@ -9,7 +9,7 @@ Normative source: **AV2 Bitstream & Decoding Process Specification v1.0.0**
 ## Files
 
 ```text
-src/encoder/ibp/
+src/codec/intra/ibp/
   ibp.h                 public API, decision API, §5.4.5 syntax helpers
   ibp.cpp               CPU reference implementation
   ibp_tables.h          normative tables, shared with the CUDA device code
@@ -19,7 +19,7 @@ src/encoder/ibp/
 ```
 
 Nothing outside this directory is modified. The module reads
-`src/encoder/intra_modes/` for §7.13.2.1 edge preparation and the ordinary
+`src/codec/intra/modes/` for §7.13.2.1 edge preparation and the ordinary
 (non-IBP) predictors; it never writes there.
 
 ## Important: which "IBP weights"?
@@ -173,7 +173,7 @@ it is the last of 6. There is no block-level IBP element.
 ## Build and test
 
 ```sh
-cd src/encoder/ibp
+cd src/codec/intra/ibp
 ./build_test.sh                 # -O2, build + run
 SANITIZE=1 ./build_test.sh      # ASan + UBSan
 WERROR=1 ./build_test.sh        # warnings as errors
@@ -224,29 +224,58 @@ reconstructed-neighbour feedback is modelled.
 
 ## Bitstream / decoder gate
 
-No minimal IBP stream was emitted. Emitting one requires changes outside this
-component's ownership; there is no IBP-specific entropy syntax to add, so the
-integration is small but not zero:
+IBP has no per-block syntax: the only new bit is §5.4.5 `enable_ibp` (the last
+`f(1)` of `sequence_intra_config`).  Both integrated writers emit it and the
+pinned decoder (`dav2d f9dafbc --strict 1`) is the gate.
 
-1. **Header bit.** Flip the existing `enable_ibp` write from `false` to `true`
-   in the sequence header: `src/encoder/m1/still_headers.cpp:120`,
-   `src/encoder/m2/video_headers.cpp:147`,
-   `src/encoder/m2/post/tiled_frame.cpp:157`,
-   `src/bitstream/basic_headers.cpp:224` (M0 would also need the M1 intra path).
-2. **Luma mode decision.** Replace `intra::predict_intra()` with
-   `ibp::predict()` and pass `enable_ibp = true` in
-   `src/encoder/m1/still_encoder.cpp` (`predict_block()` around line 579 and
-   `choose_luma_mode()` around line 666). Every candidate must use the IBP
-   semantics, because the decoder derives `applyIbp` for all non-4×4
-   directional blocks.
-3. **Chroma.** `src/encoder/m2/video_frame.cpp:133` and the M1 GPU chroma path
-   need the same substitution (chroma does not blend, but edge filtering and
-   DC change).
-4. **CPU/CUDA reconstruction.** The chosen mode must be reconstructed with the
-   same predictor as the search; otherwise the decoder diverges.
-5. **No CDF change.** `enable_ibp` is the only new bit; `mode` and
-   `angle_delta` are already coded.
+### Still (`--still --still-ibp`, M1)
 
-The CPU test's syntax round-trip is the available gate today. A true decoder
-gate needs an M1/M2 header edit and a full stream encode, which this subagent
-was not allowed to make.
+`src/pipeline/still/still_headers.cpp` writes `c.enable_ibp`; the luma search
+and the reconstruction path use `ibp::predict`/`ibp::predict_block` when the
+option is set.  The gate is `tools/still_verify/intra_gate.sh --only ibp`
+(`--bin build-int/av2enc --dump build-int/still_recon_dump`):
+
+```text
+PASS ibp_64 (938 B, recon exact)
+PASS ibp_360 (13294 B, recon exact)
+PASS ibp_fullintra_64 (974 B, recon exact)
+PASS ibp_fullintra_360 (13216 B, recon exact)
+PASS ibp_rdoq_64 (819 B, recon exact)
+PASS ibp_cdef_360 (13314 B, recon exact)
+PASS dip_ibp_360 (13205 B, recon exact)
+```
+
+The bytes prove the bit is live: at `tests/data/basic_64x64_1f.y4m` the
+`--still` stream is `0ef98250…` and `--still --still-ibp` is `b57b3e4b…`; at
+`tests/data/basic_640x360_1f.y4m` they are `e61de628…` and `36e07364…`.
+Both decoded Y4Ms equal `still_recon_dump` sample for sample.
+
+The CPU test's syntax round-trip remains the component-level gate; this stream
+gate is the decoder-level proof.
+
+### Video (`--video --video-ibp`, CPU keyframe)
+
+`src/pipeline/video/` signals `config.enable_ibp`, routes the §7.13.2 luma
+search (`video_intra_search.h::search_luma`) and the DC/chroma predictor
+(`intra_dc_predict`) through this component, and reports the derived
+`ibp_apply`/`ibp_blend` decision on `--video-trace`.  The gate is
+`src/pipeline/video/video_ibp_gate.sh`:
+
+```text
+PASS default_64 (1080 B, exact)          PASS ibp_64 (1083 B, exact)
+PASS default_360 (52363 B, exact)        PASS ibp_360 (50742 B, exact)
+PASS ibp_full_64 (1083 B, blend=1)       PASS ibp_full_360 (51003 B, blend=108)
+PASS dc_live_64 (3251 samples differ)    PASS dc_live_360 (267989 differ)
++ 5 named rejections
+```
+
+`--video-intra-full` off exercises the §7.13.2.12 DC post-filter; on, the
+61-candidate search selects the two-angle blend (`ibp_blend=1`).  Both are
+recon-exact at 64x64 and 640x360.  The default `--video` MD5s are unchanged
+(the feature is default-off).  The writer rejects, by name, combinations that
+predict through a different path: CfL/MHCCP chroma, MRL (`MrlIndex` is 0),
+palette/IBC/morph screen content, inter-intra, tiles, SVC, the CUDA backend
+and the B/temporal/TIP/random-access schedules.
+
+The CPU test's syntax round-trip remains the component-level gate; the two
+stream gates above are the decoder-level proof.

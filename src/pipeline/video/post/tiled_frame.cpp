@@ -157,7 +157,8 @@ std::size_t write_sequence_header(const VideoConfig& c,
   writer.put_bit(false);  // enable_ext_seg
   writer.put_bit(false);  // seq_seg_info_present_flag
 
-  // §5.4.5 sequence_intra_config().
+  // §5.4.5 sequence_intra_config().  The tiled sequence-header copy does not
+  // carry --video-dip (the CLI rejects the combination by name).
   writer.put_bit(false);  // enable_dip
   writer.put_bit(true);   // enable_intra_edge_filter
   writer.put_bit(false);  // enable_mrls

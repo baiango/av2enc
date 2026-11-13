@@ -138,6 +138,16 @@ struct VideoOptions {
   bool compound_near_near = false;
   int opfl_refine_type = 0;
   bool enable_refinemv = false;
+  // §5.4.6 / §5.20.7.6 / §7.13.3.14 compound prediction-surface overlays on
+  // the NEAR_NEARMV carrier.  `enable_cwp_weighted` signals enable_cwp and
+  // searches the non-equal Cwp_Weighting_Factor rows; `enable_imp_msk_bld`
+  // signals enable_imp_msk_bld and derives the §7.13.3.14 implicit mask.
+  // Both default off, so every historical stream is byte-identical.
+  bool enable_cwp_weighted = false;
+  bool enable_imp_msk_bld = false;
+  // §5.4.6 enable_df_sub_pu / §5.18.2 allow_df_sub_pu: code the frame-level
+  // sub-PU deblocking bit and feed the §7.13.3.15 sub-PU grid to §7.17.
+  bool enable_df_sub_pu = false;
   bool force_global_mv = false;
   bool force_intra = false;
   bool force_single_block = false;
@@ -358,6 +368,16 @@ struct VideoOptions {
   // mrl_index 1..3 with the §7.13.2.1 extra reference lines.  Off keeps every
   // historical stream byte-identical.
   bool enable_mrl = false;
+  // §5.4.5 enable_ibp (--video-ibp): every intra leaf is predicted with the
+  // §7.13.2 IBP semantics (modified edge filtering, two-angle blend, DC
+  // post-filter).  There is no per-block IBP syntax bit; the decoder derives
+  // the decision from the sequence flag, mode and angle_delta.  Off keeps the
+  // historical bit 0 and every stream byte-identical.
+  bool enable_ibp = false;
+  // §5.4.5 enable_dip (--video-dip): a luma DC_PRED keyframe block may signal
+  // §5.20.7.9 use_dip/dip_transpose/dip_mode and reconstruct with §7.13.2.3.
+  // Off keeps every historical stream byte-identical.
+  bool enable_dip = false;
   // §5.4.8 enable_intra_ist (--video-ist): luma intra residuals code
   // sec_tx_type / most_probable_stx_set and the encoder applies the §7.15.3
   // inverse during reconstruction.  Off keeps every historical stream

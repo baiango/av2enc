@@ -70,6 +70,10 @@ struct VideoConfig {
   bool enable_masked_compound = false;
   bool enable_cwp = false;
   bool enable_imp_msk_bld = false;
+  // §5.4.6 enable_df_sub_pu: when set, every inter frame header codes
+  // allow_df_sub_pu inside deblocking_filter_params() (§5.18.7.9).  Off keeps
+  // the historical inferred 0 and every existing header byte-identical.
+  bool enable_df_sub_pu = false;
   // §5.4.6 enable_bawp (opt-in --video-bawp).  Off keeps the historical
   // sequence header.  When on, every inter frame codes allow_bawp and eligible
   // single-prediction blocks code use_bawp (§5.20.7.6).
@@ -142,6 +146,10 @@ struct VideoConfig {
   bool enable_cfl_intra = true;
   // §5.4.5 enable_mhccp (--video-mhccp): CFL_MULTI hypotheses (cfl_index 2).
   bool enable_mhccp = false;
+  // §5.4.5 enable_ibp (--video-ibp): the intra keyframe and every intra leaf
+  // use the IBP predictor (modified edge filtering, the two-angle blend and
+  // the §7.13.2.12 DC post-filter).  Off keeps the historical bit 0.
+  bool enable_ibp = false;
   // §5.18.6.2 using_qmatrix (--video-qm) with the §9.4 default matrices.
   bool using_qmatrix = false;
   // §5.13 user-defined QM carrier (--video-user-qm): a
@@ -202,6 +210,10 @@ struct VideoConfig {
   // directional intra luma.  Off keeps the historical sequence bit and every
   // block codes no mrl_index (the bit is absent).
   bool enable_mrls = false;
+  // §5.4.5 enable_dip (--video-dip): data-driven intra prediction as a luma
+  // DC_PRED alternative on the intra keyframe.  Off keeps the historical
+  // sequence bit and codes no dip_mode_info().
+  bool enable_dip = false;
   // §5.4.8 enable_intra_ist / enable_inter_ist (--video-ist).  The CPU video
   // writer codes the intra secondary transform on luma blocks; inter IST stays
   // unsignalled because the inter residual path has no sec_tx_type search.
@@ -291,6 +303,9 @@ struct VideoFrameHeader {
   bool implicit_output_frame = false;
   // §5.18.2 reference_select: 1 lets a block code comp_mode and two refs.
   bool reference_select = false;
+  // §5.18.7.9 allow_df_sub_pu: coded only for an inter frame when the sequence
+  // sets enable_df_sub_pu.  It makes §7.17 filter the §7.13.3.15 sub-PU edges.
+  bool allow_df_sub_pu = false;
   // §5.18.2 allow_tcq.  Coded only when the sequence sets enable_tcq with
   // choose_tcq_per_frame = 1 (--video-tcq).  The encoder enables TCQ on every
   // frame, so the default is 1; with the sequence bit off the field is inert.

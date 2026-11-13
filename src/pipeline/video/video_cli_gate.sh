@@ -127,10 +127,8 @@ reject() {
   fi
   echo "PASS: $label rejected by name"
 }
-reject "sub-8 min block" "shared-chroma" \
-  --video --frames 1 --video-min-block 4 --video-max-depth 5
-reject "sub-8 min block (depth 4)" "shared-chroma" \
-  --video --frames 1 --video-min-block 4 --video-max-depth 4
+# --video-min-block 4 (sub-8 leaves) is a product case now; it is gated by
+# src/pipeline/video/gate_video_sub8.sh at 64x64 and 640x360.
 
 ENCODE_INPUT=$INPUT
 if [ "$ILLUMINATION_SHIFT" -eq 1 ]; then

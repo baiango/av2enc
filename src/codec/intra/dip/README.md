@@ -152,9 +152,16 @@ never uses the production implementation to generate expectations. Coverage:
 
 Result on this host (Apple clang 21, arm64): `3082063 checks, 0 failures`; ASan+UBSan also pass.
 
-## Integration call sites (no core edits in this work)
+## Integration call sites (component boundary)
 
-This module deliberately does not edit M1/M2 core. To wire DIP into a stream:
+Status: the M1 still writer and the M2 video keyframe are integrated and
+decoder-gated (see "Decoder gate").  The other sequence-header writers listed
+below still hardcode `enable_dip = 0`; the list is kept as the checklist for
+the remaining carriers.
+
+The `dip` component itself only exports the reference pipeline, the syntax
+codec and the `decide()` hook; the carrier edits live in the still/video
+writers. To wire DIP into another stream:
 
 1. **Sequence header bit.** Replace the hardcoded `enable_dip = 0` at:
    - `src/bitstream/basic_headers.cpp:218`
@@ -199,14 +206,20 @@ This module deliberately does not edit M1/M2 core. To wire DIP into a stream:
 
 ## Decoder gate
 
-A minimal DIP stream **cannot be emitted without core edits**. In this tree
-every sequence-header writer hardcodes `enable_dip = 0` (call sites above) and
-`av2enc::still::syntax` has no `dip_mode_info` writer or `use_dip`/`dip_mode` fields.
-Producing a conforming stream also requires the luma prediction path to emit
-DIP samples, which is the `still_encoder.cpp` dispatch above. Therefore no
-`dav2d` gate was attempted; a gate would require at least the sequence-header,
-block-syntax, decision, and prediction edits listed here. The syntax codec is
-tested locally (encoder -> decoder roundtrip), but that is not a decoder gate.
+The still and video carriers are now integrated, so the pinned decoder gate
+exists and passes:
+
+| Carrier | Command | Result |
+|---|---|---|
+| Still | `--still-dip` (`intra_gate.sh` cases `dip_64`, `dip_360`, `dip_cdef_64`, `dip_ibp_360`, `palette_scc128_dip`) | `dav2d f9dafbc --strict 1` decodes; recon exact |
+| Video keyframe | `--video-dip` (`src/pipeline/video/video_dip_gate.sh`) | `dav2d f9dafbc --strict 1` decodes 64x64 and 640x360, 1 and 4 pictures; recon exact with `--video-intra-full` on/off and with `--video-tx-search` |
+
+The video path writes §5.4.5 `enable_dip = 1`, codes §5.20.7.9
+`dip_mode_info()` per eligible luma DC block, keeps the §8.3.1 `UseDip`
+neighbour grid, and reuses this module's `prepare_edges`/`predict_block8`.
+See `src/pipeline/video/README.md` for the decision and the by-name
+rejections (`--tiles`, `--video-sdp`, `--video-lossless`, alternate frame
+schedules, `--video-gpu`, non-8-bit/4:2:0).
 
 ## Known limits
 

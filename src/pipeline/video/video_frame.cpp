@@ -1,6 +1,7 @@
 #include "pipeline/video/video_frame.h"
 
 #include "codec/intra/modes/intra_modes.h"
+#include "codec/intra/dip/dip.h"
 #include "codec/intra/mrl/core/mrl.h"
 #include "codec/intra/mrl/stream/mrl_interaction.h"
 #include "codec/transform/secondary/tx_secondary.h"
@@ -41,6 +42,7 @@
 #include "codec/intra/ibc/core/ibc.h"
 #include "codec/intra/ibc/stream/ibc_stack.h"
 #include "codec/intra/ibc/stream/still_ibc_stream.h"
+#include "codec/intra/ibp/ibp.h"
 #include "codec/intra/palette/core/palette.h"
 #include "codec/intra/palette/stream/palette_stream.h"
 #include "codec/inter/drl_reorder/video_stack_adapter.h"
@@ -231,6 +233,10 @@ struct InterCandidate {
   int wedge_index = 0;
   int wedge_sign = 0;
   int mask_type = 0;
+  // §5.20.7.6 / §7.13.3.14 CWP + implicit-mask decision (NEAR_NEARMV only).
+  int cwp_index = 0;
+  int cwp_weight = 8;  // CWP_EQUAL
+  bool use_imp_mask = false;
   // This candidate's MV/DRL index came from a §7.12.2.7/.8 temporal entry
   // (instrumentation for the gate; never coded).
   bool from_temporal = false;
@@ -369,7 +375,7 @@ std::int64_t sse_against_source(const VideoInputFrame& frame, int plane, int x0,
 
 bool intra_dc_predict(const Plane& recon, const VideoInputFrame& frame, int plane,
                       int x0, int y0, int w, int h, int max_x, int max_y,
-                      bool have_left, bool have_above,
+                      bool have_left, bool have_above, bool enable_ibp,
                       std::vector<std::uint8_t>& out) {
   intra::NeighborRequest request;
   request.recon = intra::PlaneView{recon.samples.data(), recon.stride};
@@ -384,14 +390,27 @@ bool intra_dc_predict(const Plane& recon, const VideoInputFrame& frame, int plan
   request.num4_above_right = 0;
   request.num4_below_left = 0;
   request.color_plane = plane;
-  intra::PredictParams params;
-  params.mode = intra::Mode::kDc;
-  params.angle_delta = 0;
-  params.enable_edge_filter = false;
   out.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
-  const intra::IntraStatus status =
-      intra::predict_block(request, 8, params, out.data(),
-                           static_cast<std::size_t>(w));
+  intra::IntraStatus status = intra::IntraStatus::kInvalidArgument;
+  if (enable_ibp) {
+    // §7.13.2.12: enable_ibp changes DC via the Ibp_Weights post-filter for
+    // every non-4x4 block.  The decoder applies it whenever YMode is DC_PRED,
+    // so the encoder's DC predictor must use the same path.
+    ibp::PredictParams params;
+    params.mode = intra::Mode::kDc;
+    params.angle_delta = 0;
+    params.enable_ibp = true;
+    params.enable_edge_filter = false;
+    status = ibp::predict_block(request, 8, params, out.data(),
+                                static_cast<std::size_t>(w));
+  } else {
+    intra::PredictParams params;
+    params.mode = intra::Mode::kDc;
+    params.angle_delta = 0;
+    params.enable_edge_filter = false;
+    status = intra::predict_block(request, 8, params, out.data(),
+                                  static_cast<std::size_t>(w));
+  }
   (void)frame;
   return status == intra::IntraStatus::kOk;
 }
@@ -1325,6 +1344,17 @@ bool compute_chroma_cctx(const VideoInputFrame& frame, int x0, int y0, int cw,
   return true;
 }
 
+// §5.20.3.1 ChromaMi bookkeeping for a sub-8 luma leaf.  `size` is the
+// ChromaMiSize in luma 4x4 units; `mi_row`/`mi_col` its luma MI origin.  The
+// first leaf (in decode order) whose incoming HasChroma is still 1 codes the
+// whole inherited chroma block; its siblings code luma only.
+struct ChromaInfo {
+  bool valid = false;
+  int mi_row = 0;
+  int mi_col = 0;
+  BlockSize size = BlockSize::kInvalid;
+};
+
 struct TemporalFrameContext {
   bool use_ref_frame_mvs = false;
   int order_hint = 0;
@@ -1811,8 +1841,14 @@ class InterFrameEncoder {
     if (keyframe_ && options_.enable_sdp) {
       return decide_sdp(error);
     }
+    // §5.20.3.1 sub-8 leaves keep the intra keyframe only.  A P frame's inter
+    // leaves must own a leaf-sized chroma block, so its search floor stays at
+    // 8x8 even when --video-min-block 4 lowers the keyframe floor.
+    const int search_min_block =
+        keyframe_ ? options_.min_block_size
+                  : std::max(8, options_.min_block_size);
     partition::DecisionOptions poptions;
-    poptions.min_block_size_px = options_.min_block_size;
+    poptions.min_block_size_px = search_min_block;
     poptions.max_depth = options_.max_partition_depth;
     poptions.allow_rect = true;
     // PARTITION_SPLIT only exists at a 128x128 (or 256x256) node.
@@ -1853,7 +1889,8 @@ class InterFrameEncoder {
       tools.enable_ext_partitions = true;
       tools.enable_uneven_4way_partitions = true;
       pe::DecisionOptions eopt;
-      eopt.min_block_size_px = options_.min_block_size;
+      eopt.min_block_size_px = keyframe_ ? options_.min_block_size
+                                         : std::max(8, options_.min_block_size);
       eopt.max_depth = options_.max_partition_depth;
       eopt.allow_rect = true;
       eopt.allow_split = sb_size_ > 64;
@@ -2118,9 +2155,14 @@ class InterFrameEncoder {
       post::VideoDeblockGrid grid;
       if (!post::build_video_deblock_grid(blocks_, mi_cols_, mi_rows_,
                                           options_.base_q_idx, keyframe_, &grid,
-                                          &error)) {
+                                          &error, sub_pus_.data(),
+                                          static_cast<int>(sub_pus_.size()))) {
         return false;
       }
+      // §5.18.2 / §7.17.2: when the frame codes allow_df_sub_pu = 1 the
+      // deblocker filters the §7.13.3.15 sub-PU edges.  The grid already
+      // carries SubPuSize/SubPuColBase/SubPuRowBase for every leaf.
+      grid.options.allow_df_sub_pu = options_.enable_df_sub_pu;
       std::uint8_t* data[3] = {recon_[0].samples.data(),
                                recon_[1].samples.data(),
                                recon_[2].samples.data()};
@@ -2158,6 +2200,7 @@ class InterFrameEncoder {
     plan.enable_cctx = options_.enable_cctx;
     plan.num_total_refs = num_total_refs_;
     plan.reference_select = options_.compound && num_total_refs_ > 1;
+    plan.enable_cwp = options_.enable_cwp_weighted;
     plan.allow_bawp = (options_.enable_bawp || options_.enable_morph) &&
                       !keyframe_;
     // §5.4.7/§5.18.3.3/.4 screen-content tools.  Only the intra keyframe and
@@ -2229,8 +2272,10 @@ class InterFrameEncoder {
     config.avg_cdf_type = true;
     config.enable_cfl_intra = true;
     config.enable_mhccp = options_.enable_mhccp;
+    config.enable_ibp = options_.enable_ibp;
     config.enable_idtx_intra = options_.enable_idtx_intra;
     config.enable_mrls = options_.enable_mrl;
+    config.enable_dip = options_.enable_dip;
     config.enable_intra_ist = options_.enable_ist;
     config.enable_inter_ist = false;
     config.enable_tcq = options_.enable_tcq;
@@ -2354,7 +2399,10 @@ class InterFrameEncoder {
     entry.tree_type = static_cast<std::uint8_t>(node.tree_type);
     entry.has_chroma = node.codes_chroma ? 1 : 0;
     entry.chroma_offset = node.chroma_offset ? 1 : 0;
-    entry.chroma_bsize = static_cast<std::uint8_t>(node.chroma.size);
+    entry.chroma_bsize =
+        node.chroma.size == BlockSize::kInvalid
+            ? 0
+            : static_cast<std::uint8_t>(node.chroma.size);
     entry.chroma_mi_row = static_cast<std::uint16_t>(node.chroma.mi_row);
     entry.chroma_mi_col = static_cast<std::uint16_t>(node.chroma.mi_col);
     entry.chroma_partition_known = node.chroma_partition_known ? 1 : 0;
@@ -2390,10 +2438,12 @@ class InterFrameEncoder {
       pnode.depth = node.depth;
       pnode.has_chroma = node.has_chroma;
       pnode.chroma_offset = node.chroma_offset;
-      if (!encode_leaf(pnode, index, error,
-                       static_cast<int>(node.tree_type),
-                       node.codes_chroma, node.chroma.mi_row,
-                       node.chroma.mi_col, static_cast<int>(node.chroma.size))) {
+      if (!encode_leaf(
+              pnode, index, error, static_cast<int>(node.tree_type),
+              node.codes_chroma, node.chroma.mi_row, node.chroma.mi_col,
+              node.chroma.size == BlockSize::kInvalid
+                  ? -1
+                  : static_cast<int>(node.chroma.size))) {
         return false;
       }
       if (node.tree_type != sdpp::TreeType::kChromaPart) {
@@ -2418,7 +2468,21 @@ class InterFrameEncoder {
     return true;
   }
 
-  bool collect_node(const PartitionNode& node, std::string& error) {
+  // §5.20.3.1: a node with HasChroma and chromaOffset == 0 captures the
+  // inherited chroma block before its children are decoded.  ChromaMi* is the
+  // last such node on the path, so a sub-8 split hands the same ChromaMi block
+  // to the child that keeps HasChroma.
+  static ChromaInfo chroma_step(const PartitionNode& node,
+                                const ChromaInfo& inherited) {
+    if (node.has_chroma && !node.chroma_offset) {
+      return ChromaInfo{true, node.mi_row, node.mi_col, node.size};
+    }
+    return inherited;
+  }
+
+  bool collect_node(const PartitionNode& node, std::string& error,
+                    const ChromaInfo& inherited_chroma = ChromaInfo{}) {
+    const ChromaInfo chroma = chroma_step(node, inherited_chroma);
     if (node.depth == 0) {
       // §6.19.2.3 clear_block_decoded_flags(): the map is superblock-local.
       decoded_[0].reset(mi_cols_, mi_rows_);
@@ -2468,12 +2532,27 @@ class InterFrameEncoder {
     entry.allowed_mask = mask;
     if (node.forced) entry.flags |= syntax::kFlagForced;
     if (node.depth == 0) entry.flags |= syntax::kFlagSbRoot;
+    // Carry the decoded ownership arguments and the inherited ChromaMi block
+    // so the writer codes chroma exactly once for a sub-8 group.  Every leaf
+    // at 8x8 or above has ChromaMi == itself, which reproduces the historical
+    // leaf-derived path.
+    entry.flags |= syntax::kFlagHasChromaInfo;
+    entry.has_chroma = node.has_chroma ? 1 : 0;
+    entry.chroma_offset = node.chroma_offset ? 1 : 0;
+    entry.chroma_bsize =
+        chroma.valid ? static_cast<std::uint8_t>(chroma.size) : 0;
+    entry.chroma_mi_row = static_cast<std::uint16_t>(chroma.mi_row);
+    entry.chroma_mi_col = static_cast<std::uint16_t>(chroma.mi_col);
 
     if (node.partition == PartitionType::kNone) {
-      if (!encode_leaf(node, index, error)) return false;
+      if (!encode_leaf(node, index, error, /*tree_type=*/0,
+                       node.has_chroma, chroma.mi_row, chroma.mi_col,
+                       chroma.valid ? static_cast<int>(chroma.size) : -1)) {
+        return false;
+      }
     } else {
       for (const PartitionNode& child : node.children) {
-        if (!collect_node(child, error)) return false;
+        if (!collect_node(child, error, chroma)) return false;
       }
     }
     const std::size_t subtree = blocks_.size() - index - 1;
@@ -2486,19 +2565,11 @@ class InterFrameEncoder {
   }
 
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
-  // Extended-partition variant of collect_node().  The video leaf coder always
-  // uses the leaf's own chroma block, so a tree that needs shared-chroma
-  // ownership (chromaOffset = 1) is rejected instead of coding a
-  // desynchronised stream.
+  // Extended-partition variant of collect_node().  The solver already resolved
+  // §5.20.3.1 ChromaMi* for every node (including the HORZ_3/VERT_3 middle
+  // pair and the 1/8 subsizes), so the leaf coder receives exactly the
+  // ownership arguments the decoder will derive.
   bool collect_node_ext(const pe::PartitionNode& node, std::string& error) {
-    if (node.chroma_offset) {
-      error = "extended partition tree needs shared chroma at mi (" +
-              std::to_string(node.mi_row) + "," +
-              std::to_string(node.mi_col) + ") size " +
-              std::to_string(static_cast<int>(node.size)) + " partition " +
-              std::to_string(static_cast<int>(node.partition));
-      return false;
-    }
     if (node.depth == 0) {
       decoded_[0].reset(mi_cols_, mi_rows_);
       decoded_[1].reset(mi_cols_ / 2, mi_rows_ / 2);
@@ -2520,6 +2591,15 @@ class InterFrameEncoder {
     entry.allowed_mask = mask;
     if (node.forced) entry.flags |= syntax::kFlagForced;
     if (node.depth == 0) entry.flags |= syntax::kFlagSbRoot;
+    entry.flags |= syntax::kFlagHasChromaInfo;
+    entry.has_chroma = node.has_chroma ? 1 : 0;
+    entry.chroma_offset = node.chroma_offset ? 1 : 0;
+    entry.chroma_bsize =
+        node.chroma.size == BlockSize::kInvalid
+            ? 0
+            : static_cast<std::uint8_t>(node.chroma.size);
+    entry.chroma_mi_row = static_cast<std::uint16_t>(node.chroma.mi_row);
+    entry.chroma_mi_col = static_cast<std::uint16_t>(node.chroma.mi_col);
 
     if (node.partition == pe::PartitionType::kNone) {
       // encode_leaf() only reads the origin/size, so a stack view is enough.
@@ -2527,7 +2607,14 @@ class InterFrameEncoder {
       leaf.mi_row = node.mi_row;
       leaf.mi_col = node.mi_col;
       leaf.size = static_cast<partition::BlockSize>(node.size);
-      if (!encode_leaf(leaf, index, error)) return false;
+      if (!encode_leaf(
+              leaf, index, error, /*tree_type=*/0, node.has_chroma,
+              node.chroma.mi_row, node.chroma.mi_col,
+              node.chroma.size == BlockSize::kInvalid
+                  ? -1
+                  : static_cast<int>(node.chroma.size))) {
+        return false;
+      }
     } else {
       for (const pe::PartitionNode& child : node.children) {
         if (!collect_node_ext(child, error)) return false;
@@ -3309,28 +3396,28 @@ class InterFrameEncoder {
            temporal::TemporalStatus::kOk;
   }
 
-  // Plain COMPOUND_AVERAGE prediction at the coded MVs.
-  bool compound_plain(const inter::mc::Mv mvs[2], int bsize, int x0, int y0,
-                      int w, int h, std::vector<std::uint8_t>& y,
-                      std::vector<std::uint8_t>& u,
-                      std::vector<std::uint8_t>& v, std::string& error,
-                      const multiref::CompoundModeParams* mode_params =
-                          nullptr) {
-    multiref::CompoundPrediction prediction;
-    if (!multiref::build_compound_prediction(
-            references_[0], references_[1],
-            inter::mc::BlockRect{x0, y0, w, h}, bsize, mvs[0], mvs[1],
-            inter::mc::InterpFilter::kEighttap, references_[0].mi_cols,
-            references_[0].mi_rows, prediction, error)) {
-      return false;
-    }
-    multiref::CompoundModeParams params;
-    if (mode_params != nullptr) {
-      params = *mode_params;
-    } else {
-      params.type = inter::adv::CompoundType::kAverage;
-      params.cwp_weight = multiref::kCwpEqual;
-    }
+  // Builds the two 1/16-sample predictions for one compound block.  Shared by
+  // the plain path and the CWP / implicit-mask decision, which evaluates
+  // several blend modes over the same pair of predictions.
+  bool build_compound_block(const inter::mc::Mv mvs[2], int bsize, int x0,
+                            int y0, int w, int h,
+                            multiref::CompoundPrediction& prediction,
+                            std::string& error) {
+    return multiref::build_compound_prediction(
+        references_[0], references_[1], inter::mc::BlockRect{x0, y0, w, h},
+        bsize, mvs[0], mvs[1], inter::mc::InterpFilter::kEighttap,
+        references_[0].mi_cols, references_[0].mi_rows, prediction, error);
+  }
+
+  // Applies one blend mode and copies the block out of the frame-sized
+  // scratch planes.  `params.use_imp_mask` is taken as given (the caller
+  // derives it with multiref::implicit_mask_eligible()).
+  bool store_compound_block(const multiref::CompoundPrediction& prediction,
+                            const multiref::CompoundModeParams& params,
+                            int x0, int y0, int w, int h,
+                            std::vector<std::uint8_t>& y,
+                            std::vector<std::uint8_t>& u,
+                            std::vector<std::uint8_t>& v, std::string& error) {
     std::uint8_t* dst[3] = {compound_pred_[0].samples.data(),
                             compound_pred_[1].samples.data(),
                             compound_pred_[2].samples.data()};
@@ -3369,7 +3456,211 @@ class InterFrameEncoder {
     return true;
   }
 
-  // §7.13.3.8-.12 optical-flow refinement, writing compound_y_/u_/v_.
+  // Plain COMPOUND_AVERAGE prediction at the coded MVs.
+  bool compound_plain(const inter::mc::Mv mvs[2], int bsize, int x0, int y0,
+                      int w, int h, std::vector<std::uint8_t>& y,
+                      std::vector<std::uint8_t>& u,
+                      std::vector<std::uint8_t>& v, std::string& error,
+                      const multiref::CompoundModeParams* mode_params =
+                          nullptr) {
+    multiref::CompoundPrediction prediction;
+    if (!build_compound_block(mvs, bsize, x0, y0, w, h, prediction, error)) {
+      return false;
+    }
+    multiref::CompoundModeParams params;
+    if (mode_params != nullptr) {
+      params = *mode_params;
+    } else {
+      params.type = inter::adv::CompoundType::kAverage;
+      params.cwp_weight = multiref::kCwpEqual;
+    }
+    return store_compound_block(prediction, params, x0, y0, w, h, y, u, v,
+                                error);
+  }
+
+  // §5.20.7.6 / §7.13.3.14: choose the AVERAGE blend for a NEAR_NEARMV
+  // compound block.  With `enable_cwp_weighted` the non-equal
+  // Cwp_Weighting_Factor row is searched; with `enable_imp_msk_bld` the
+  // derived implicit mask is evaluated first.  Both are off by default and the
+  // caller falls back to compound_plain(), keeping historical streams exact.
+  bool compound_search_average(const inter::mc::Mv mvs[2], int bsize, int x0,
+                               int y0, int w, int h,
+                               std::vector<std::uint8_t>& y,
+                               std::vector<std::uint8_t>& u,
+                               std::vector<std::uint8_t>& v,
+                               multiref::CompoundModeParams& chosen,
+                               std::int64_t& chosen_sse, std::string& error) {
+    multiref::CompoundPrediction prediction;
+    if (!build_compound_block(mvs, bsize, x0, y0, w, h, prediction, error)) {
+      return false;
+    }
+    const bool same_side = (frame_distance_[0] >= 0) ==
+                           (frame_distance_[1] >= 0);
+    std::vector<std::uint8_t> scratch(
+        static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    inter::adv::CompoundSearchInput in{};
+    in.bsize = bsize;
+    in.rect = inter::adv::BlockRect{0, 0, w, h};
+    in.p0 = prediction.pred[0][0].samples.data();
+    in.p0_stride = prediction.pred[0][0].stride;
+    in.p1 = prediction.pred[1][0].samples.data();
+    in.p1_stride = prediction.pred[1][0].stride;
+    in.source = source_.y.data() +
+                static_cast<std::size_t>(y0) *
+                    static_cast<std::size_t>(source_.width) +
+                static_cast<std::size_t>(x0);
+    in.source_stride = static_cast<int>(source_.width);
+    in.scratch = scratch.data();
+    in.scratch_stride = w;
+    in.enable_average = true;
+    in.enable_cwp = options_.enable_cwp_weighted;
+    in.enable_wedge = false;
+    in.enable_diffwtd = false;
+    in.enable_imp_mask = options_.enable_imp_msk_bld;
+    in.imp_mask_eligible = options_.enable_imp_msk_bld;
+    in.mi_cols = prediction.mi_cols;
+    in.mi_rows = prediction.mi_rows;
+    in.ref_start_x[0] = prediction.ref_start_x[0][0];
+    in.ref_start_x[1] = prediction.ref_start_x[1][0];
+    in.ref_start_y[0] = prediction.ref_start_y[0][0];
+    in.ref_start_y[1] = prediction.ref_start_y[1][0];
+    // The CWP rows are §5.20.7.6 Cwp_Weighting_Factor[is_same_side]; index 0
+    // is CWP_EQUAL in both.  search_compound() takes the weight values.
+    static const int kOppositeCwp[multiref::kMaxCwpNum] = {8, 12, 4, 10, 6};
+    static const int kSameCwp[multiref::kMaxCwpNum] = {8, 12, 4, 20, -4};
+    const int* weights = same_side ? kSameCwp : kOppositeCwp;
+    for (int i = 0; i < multiref::kMaxCwpNum; ++i) {
+      in.cwp_candidates[i] = weights[i];
+    }
+    in.cwp_count = options_.enable_cwp_weighted ? multiref::kMaxCwpNum : 0;
+    // §7.13.3.14: when the implicit mask is eligible and CWP is off, the
+    // decoder derives get_mask() for the CWP_EQUAL average and can never
+    // produce the plain equal-weight blend.  search_compound() would still
+    // evaluate that impossible candidate, so it is handled explicitly instead
+    // (the same guard multiref::decide_compound() uses).
+    std::optional<inter::adv::CompoundDecision> decision;
+    if (options_.enable_imp_msk_bld && !options_.enable_cwp_weighted) {
+      inter::adv::CompoundJob job{};
+      job.plane = 0;
+      job.bsize = bsize;
+      job.bit_depth = 8;
+      job.rect = inter::adv::BlockRect{0, 0, w, h};
+      job.p0 = prediction.pred[0][0].samples.data();
+      job.p0_stride = prediction.pred[0][0].stride;
+      job.p1 = prediction.pred[1][0].samples.data();
+      job.p1_stride = prediction.pred[1][0].stride;
+      job.dst = scratch.data();
+      job.dst_stride = w;
+      job.type = inter::adv::CompoundType::kAverage;
+      job.cwp_weight = multiref::kCwpEqual;
+      job.imp_mask_eligible = 1;
+      job.mi_cols = prediction.mi_cols;
+      job.mi_rows = prediction.mi_rows;
+      job.ref_start_x[0] = prediction.ref_start_x[0][0];
+      job.ref_start_x[1] = prediction.ref_start_x[1][0];
+      job.ref_start_y[0] = prediction.ref_start_y[0][0];
+      job.ref_start_y[1] = prediction.ref_start_y[1][0];
+      if (!inter::adv::apply_compound(job)) {
+        error = "compound implicit-mask prediction failed";
+        return false;
+      }
+      inter::adv::CompoundDecision d{};
+      d.type = inter::adv::CompoundType::kAverage;
+      d.cwp_weight = multiref::kCwpEqual;
+      d.use_imp_mask = true;
+      d.sse = inter::adv::block_sse(
+          scratch.data(), w, 0, 0, in.source, in.source_stride, 0, 0, w, h);
+      decision = d;
+    } else {
+      decision = inter::adv::search_compound(in);
+    }
+    if (!decision.has_value()) {
+      error = "compound CWP/implicit-mask search failed";
+      return false;
+    }
+    chosen = multiref::CompoundModeParams{};
+    chosen.type = inter::adv::CompoundType::kAverage;
+    chosen.cwp_weight = decision->cwp_weight;
+    chosen.use_imp_mask = decision->use_imp_mask;
+    if (!decision->use_imp_mask && decision->cwp_weight != multiref::kCwpEqual) {
+      chosen.cwp_index =
+          multiref::cwp_index_from_weight(decision->cwp_weight, same_side);
+      if (chosen.cwp_index < 0) {
+        error = "CWP weight is not signallable for this reference side";
+        return false;
+      }
+    } else {
+      chosen.cwp_index = 0;
+    }
+    chosen_sse = decision->sse;
+    return store_compound_block(prediction, chosen, x0, y0, w, h, y, u, v,
+                                error);
+  }
+
+  // §7.13.3.15 save_subpu for the §7.13.3.8 OPFL / §7.13.3.1 refine-MV
+  // subblocks.  The two tools split luma and chroma independently, so each
+  // plane contributes its own rect at the same plane coordinates the predictor
+  // used.  Called only when --video-df-sub-pu is on.
+  void collect_sub_pus(int x0, int y0, int w, int h, bool optflow,
+                       bool refine) {
+    const int cw = w / 2;
+    const int ch = h / 2;
+    const int cx0 = x0 / 2;
+    const int cy0 = y0 / 2;
+    const auto add = [&](int plane, int px, int py, int pw, int ph,
+                         int pu_w, int pu_h) {
+      post::VideoSubPuRect rect;
+      rect.x = px;
+      rect.y = py;
+      rect.w = pw;
+      rect.h = ph;
+      rect.pu_w = pu_w;
+      rect.pu_h = pu_h;
+      rect.plane = plane;
+      sub_pus_.push_back(rect);
+    };
+    if (optflow) {
+      // §7.13.3.8: n = 4 for a <=8x8 block, else 8; chroma uses 4x4.
+      const int n = (w <= 8 && h <= 8) ? 4 : 8;
+      for (int i = 0; i < h; i += n) {
+        for (int j = 0; j < w; j += n) {
+          add(0, x0 + j, y0 + i, std::min(n, w - j), std::min(n, h - i), w,
+              h);
+        }
+      }
+      const int csub = 4;
+      for (int plane = 1; plane < 3; ++plane) {
+        for (int i = 0; i < ch; i += csub) {
+          for (int j = 0; j < cw; j += csub) {
+            add(plane, cx0 + j, cy0 + i, std::min(csub, cw - j),
+                std::min(csub, ch - i), cw, ch);
+          }
+        }
+      }
+      return;
+    }
+    if (!refine) return;
+    // §7.13.3.1: tw = Min(w, 16), th = Min(h, 16); chroma halves both.
+    const int tw = std::min(w, 16);
+    const int th = std::min(h, 16);
+    const int twc = tw / 2;
+    const int thc = th / 2;
+    for (int i = 0; i < h; i += th) {
+      for (int j = 0; j < w; j += tw) {
+        add(0, x0 + j, y0 + i, std::min(tw, w - j), std::min(th, h - i), w,
+            h);
+      }
+    }
+    for (int plane = 1; plane < 3; ++plane) {
+      for (int i = 0; i < ch; i += thc) {
+        for (int j = 0; j < cw; j += twc) {
+          add(plane, cx0 + j, cy0 + i, std::min(twc, cw - j),
+              std::min(thc, ch - i), cw, ch);
+        }
+      }
+    }
+  }
+
   bool predict_compound_optflow(const inter::mc::Mv mvs[2], int x0, int y0,
                                 int w, int h, std::string& error) {
     const int fw = static_cast<int>(source_.width);
@@ -3702,6 +3993,15 @@ class InterFrameEncoder {
     if (chroma_bsize >= 0) {
       chroma_size = static_cast<BlockSize>(chroma_bsize);
     }
+    // §5.20.3.1: a sub-8 leaf group shares one inherited ChromaMi block.  Its
+    // chroma plane lives at the ChromaMi origin, not at this leaf's origin,
+    // and is larger than leaf_w/2 x leaf_h/2.  Inter prediction (which derives
+    // chroma from the luma leaf) and the screen-content tools are not wired
+    // for that geometry, so such leaves stay intra.
+    const bool shared_chroma =
+        owns_chroma &&
+        (chroma_mi_row != r || chroma_mi_col != c ||
+         chroma_size != node.size);
     int cw = 0;
     int ch = 0;
     if (chroma_bsize >= 0) {
@@ -3745,7 +4045,13 @@ class InterFrameEncoder {
       if (!best.valid || cand.sse < best.sse) best = cand;
     };
 
-    if (!keyframe_ && inter_fits) {
+    // §5.20.3.1 sub-8 luma leaves and shared-ChromaMi owners keep the intra
+    // path: inter MC derives chroma from the leaf rectangle, which is not the
+    // owned chroma block.  Leaves at 8x8 and above keep the historical inter
+    // search, so every inter leaf still owns a leaf-sized chroma block.
+    const bool inter_allowed =
+        !shared_chroma && w >= 8 && h >= 8;
+    if (!keyframe_ && inter_fits && inter_allowed) {
       for (int ref_index = 0; ref_index < num_total_refs_; ++ref_index) {
         merge::StackParams stack_params;
         merge::MvStack stack;
@@ -4090,10 +4396,17 @@ class InterFrameEncoder {
         if (already(mv0, mv1)) return;
         bool ok = false;
         const inter::mc::Mv mvs[2] = {mv0, mv1};
+        multiref::CompoundModeParams chosen_params;
+        std::int64_t chosen_sse = -1;
         if (use_optflow) {
           ok = predict_compound_optflow(mvs, ax0, ay0, w, h, error);
         } else if (block_refine) {
           ok = predict_compound_refinemv(mvs, ax0, ay0, w, h, error);
+        } else if (options_.enable_cwp_weighted ||
+                   options_.enable_imp_msk_bld) {
+          ok = compound_search_average(
+              mvs, static_cast<int>(node.size), ax0, ay0, w, h, compound_y_,
+              compound_u_, compound_v_, chosen_params, chosen_sse, error);
         } else {
           ok = compound_plain(mvs, static_cast<int>(node.size), ax0, ay0, w, h,
                               compound_y_, compound_u_, compound_v_, error);
@@ -4111,13 +4424,21 @@ class InterFrameEncoder {
         cand.compound_mode = 0;  // NEAR_NEARMV
         cand.use_optflow = use_optflow;
         cand.use_refinemv = block_refine && !use_optflow;
-        cand.sse = sse_against_source(source_, 0, ax0, ay0, w, h, compound_y_);
+        cand.cwp_index = chosen_params.cwp_index;
+        cand.cwp_weight = chosen_params.cwp_weight;
+        cand.use_imp_mask = chosen_params.use_imp_mask;
+        cand.sse = chosen_sse >= 0
+                       ? chosen_sse
+                       : sse_against_source(source_, 0, ax0, ay0, w, h,
+                                            compound_y_);
         if (trace_) {
           std::cerr << "  cand compound near-near mv0=(" << mv0.y << ","
                     << mv0.x << ") mv1=(" << mv1.y << "," << mv1.x
                     << ") drl=(" << drl0 << "," << drl1 << ") optflow="
                     << (use_optflow ? 1 : 0) << " refinemv="
-                    << (cand.use_refinemv ? 1 : 0) << " sse=" << cand.sse
+                    << (cand.use_refinemv ? 1 : 0) << " cwp="
+                    << cand.cwp_index << " imp="
+                    << (cand.use_imp_mask ? 1 : 0) << " sse=" << cand.sse
                     << "\n";
         }
         consider(cand);
@@ -4180,6 +4501,9 @@ class InterFrameEncoder {
     std::int8_t intra_y_angle_delta = 0;
     std::uint8_t intra_mrl_index = 0;
     bool intra_mrl_sec_index = false;
+    bool intra_use_dip = false;
+    int intra_dip_mode = 0;
+    bool intra_dip_transpose = false;
     bool intra_is_cfl = false;
     int intra_cfl_index = 1;
     int intra_cfl_mh_dir = 0;
@@ -4196,22 +4520,24 @@ class InterFrameEncoder {
     if (keyframe_ || options_.enable_intra_fallback || options_.force_intra) {
       bool luma_ok = chroma_part;
       if (!chroma_part) {
+      const intra_search::Availability luma_avail = intra_search::availability(
+          decoded_[0], x0 / 4, y0 / 4, w / 4, h / 4, mi_cols_, mi_rows_,
+          /*sb_mi=*/sb_size_ / 4);
       if (options_.enable_intra_full) {
         bool above_smooth = false;
         bool left_smooth = false;
         luma_neighbor_smooth(r, c, above_smooth, left_smooth);
-        const intra_search::Availability avail = intra_search::availability(
-            decoded_[0], x0 / 4, y0 / 4, w / 4, h / 4, mi_cols_, mi_rows_,
-            /*sb_mi=*/sb_size_ / 4);
         intra_search::LumaChoice choice;
         intra_y_pred.resize(static_cast<std::size_t>(w) *
                             static_cast<std::size_t>(h));
         luma_ok = intra_search::search_luma(
-            recon_[0].samples.data(), recon_[0].stride, x0, y0, w, h, avail,
+            recon_[0].samples.data(), recon_[0].stride, x0, y0, w, h,
+            luma_avail,
             above_smooth, left_smooth, /*enable_edge_filter=*/true,
             source_.y.data(), static_cast<int>(source_.width),
             static_cast<int>(source_.width) - 1,
-            static_cast<int>(source_.height) - 1, intra_y_pred.data(), choice);
+            static_cast<int>(source_.height) - 1, intra_y_pred.data(), choice,
+            options_.enable_ibp);
         if (luma_ok) {
           intra_y_mode = static_cast<std::uint8_t>(choice.mode);
           intra_y_angle_delta = static_cast<std::int8_t>(choice.angle_delta);
@@ -4234,7 +4560,7 @@ class InterFrameEncoder {
                 for (int sec = 0; sec <= (sec_allowed ? 1 : 0); ++sec) {
                   std::vector<std::uint8_t> mrl_pred;
                   if (!predict_luma_mrl(
-                          recon_[0], avail, x0, y0, w, h, above_smooth,
+                          recon_[0], luma_avail, x0, y0, w, h, above_smooth,
                           left_smooth, static_cast<int>(candidate.mode),
                           candidate.angle_delta, mrl_index, sec != 0,
                           /*sb_height=*/64, mrl_pred, error)) {
@@ -4261,7 +4587,83 @@ class InterFrameEncoder {
       } else {
         luma_ok = intra_dc_predict(recon_[0], source_, 0, x0, y0, w, h,
                                    luma_max_x, luma_max_y, luma_left,
-                                   luma_above, intra_y_pred);
+                                   luma_above, options_.enable_ibp,
+                                   intra_y_pred);
+      }
+      // §5.20.7.9/§7.13.2.3: DIP is an alternative to ordinary DC at the same
+      // YMode on the intra keyframe, not a new mode.  Evaluate the normative
+      // candidate set and keep it only when its prediction SSE beats the
+      // incumbent.
+      if (options_.enable_dip && keyframe_ && luma_ok &&
+          dip::dip_block_available(w, h)) {
+        dip::Block dip_block;
+        dip_block.recon = dip::PlaneView::from_u8(
+            recon_[0].samples.data(), recon_[0].width);
+        dip_block.x = x0;
+        dip_block.y = y0;
+        dip_block.w = w;
+        dip_block.h = h;
+        dip_block.max_x = luma_max_x;
+        dip_block.max_y = luma_max_y;
+        dip_block.have_left = luma_left;
+        dip_block.have_above = luma_above;
+        dip_block.num4_above_right = luma_avail.num4_above_right;
+        dip_block.num4_below_left = luma_avail.num4_below_left;
+        dip::Edges dip_edges;
+        if (dip::prepare_edges(dip_block, 8, dip_edges) != dip::Status::kOk) {
+          error = "dip::prepare_edges failed";
+          return false;
+        }
+        std::vector<std::uint8_t> dip_src(
+            static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+        for (int yy = 0; yy < h; ++yy) {
+          for (int xx = 0; xx < w; ++xx) {
+            dip_src[static_cast<std::size_t>(yy) *
+                        static_cast<std::size_t>(w) +
+                    static_cast<std::size_t>(xx)] =
+                static_cast<std::uint8_t>(
+                    source_sample(source_, 0, ax0 + xx, ay0 + yy));
+          }
+        }
+        dip::DecisionParams dip_params;
+        dip_params.enable_dip = true;
+        dip_params.y_mode = 0;  // DC_PRED
+        dip_params.palette_size_y = 0;
+        dip_params.tree_is_chroma_part = false;
+        dip_params.metric = dip::CostMetric::kSse;
+        dip::Decision dip_decision;
+        if (dip::decide(dip_edges, dip_src.data(),
+                        static_cast<std::size_t>(w), dip_params,
+                        dip_decision) != dip::Status::kOk ||
+            !dip_decision.available) {
+          error = "dip::decide failed";
+          return false;
+        }
+        const std::int64_t incumbent_sse =
+            sse_against_source(source_, 0, ax0, ay0, w, h, intra_y_pred);
+        if (static_cast<std::int64_t>(dip_decision.cost.sse) <
+            incumbent_sse) {
+          dip::Params dip_pred_params;
+          dip_pred_params.mode = dip_decision.mode;
+          dip_pred_params.transpose = dip_decision.transpose;
+          std::vector<std::uint8_t> dip_pred(
+              static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+          if (dip::predict_block8(dip_block, 8, dip_pred_params,
+                                  dip_pred.data(),
+                                  static_cast<std::size_t>(w)) !=
+              dip::Status::kOk) {
+            error = "dip::predict_block8 failed";
+            return false;
+          }
+          intra_y_pred = std::move(dip_pred);
+          intra_y_mode = 0;
+          intra_y_angle_delta = 0;
+          intra_mrl_index = 0;
+          intra_mrl_sec_index = false;
+          intra_use_dip = true;
+          intra_dip_mode = dip_decision.mode;
+          intra_dip_transpose = dip_decision.transpose;
+        }
       }
       if (!luma_ok ||
           (options_.enable_tx_search
@@ -4303,10 +4705,12 @@ class InterFrameEncoder {
       if (owns_chroma) {
       if (!intra_dc_predict(recon_[1], source_, 1, cx0, cy0, cw, ch,
                             chroma_max_x, chroma_max_y, chroma_left,
-                            chroma_above, intra_u_pred) ||
+                            chroma_above, options_.enable_ibp,
+                            intra_u_pred) ||
           !intra_dc_predict(recon_[2], source_, 2, cx0, cy0, cw, ch,
                             chroma_max_x, chroma_max_y, chroma_left,
-                            chroma_above, intra_v_pred)) {
+                            chroma_above, options_.enable_ibp,
+                            intra_v_pred)) {
         error = "intra prediction failed";
         return false;
       }
@@ -4450,19 +4854,23 @@ class InterFrameEncoder {
           predicted = predict_compound_refinemv(mvs, ax0, ay0, w, h, error);
         } else {
           multiref::CompoundModeParams wparams;
-          wparams.cwp_weight = multiref::kCwpEqual;
+          wparams.cwp_weight = best.cwp_weight;
+          wparams.cwp_index = static_cast<int>(best.cwp_index);
+          wparams.use_imp_mask = best.use_imp_mask;
           wparams.type = best.compound_type == 0
                              ? inter::adv::CompoundType::kWedge
                              : (best.compound_type == 1
                                     ? inter::adv::CompoundType::kDiffWtd
                                     : inter::adv::CompoundType::kAverage);
+          if (best.compound_mode == 0) {
+            wparams.type = inter::adv::CompoundType::kAverage;
+          }
           wparams.wedge_index = best.wedge_index;
           wparams.wedge_sign = best.wedge_sign;
           wparams.mask_type = best.mask_type;
           predicted = compound_plain(
               mvs, static_cast<int>(node.size), ax0, ay0, w, h, compound_y_,
-              compound_u_, compound_v_, error,
-              best.compound_mode == 3 ? &wparams : nullptr);
+              compound_u_, compound_v_, error, &wparams);
         }
         if (!predicted) {
           error = "compound prediction failed";
@@ -4659,7 +5067,8 @@ class InterFrameEncoder {
     // helps, morph_pred = 1.
     IbcChoice ibc_choice;
     bool use_ibc = false;
-    if (keyframe_ && ibc_enabled_ && have_intra) {
+    if (keyframe_ && ibc_enabled_ && have_intra && !shared_chroma &&
+        w >= 8 && h >= 8) {
       const std::int64_t intra_distortion =
           use_palette ? palette_choice.sse : intra_sse;
       if (!choose_ibc_leaf(r, c, static_cast<int>(node.size),
@@ -4758,10 +5167,12 @@ class InterFrameEncoder {
       write_plane_block(recon_[0], x0, y0, w, h, intra_y.recon);
       if (!intra_dc_predict(recon_[1], source_, 1, cx0, cy0, cw, ch,
                             chroma_max_x, chroma_max_y, chroma_left,
-                            chroma_above, intra_u_pred) ||
+                            chroma_above, options_.enable_ibp,
+                            intra_u_pred) ||
           !intra_dc_predict(recon_[2], source_, 2, cx0, cy0, cw, ch,
                             chroma_max_x, chroma_max_y, chroma_left,
-                            chroma_above, intra_v_pred) ||
+                            chroma_above, options_.enable_ibp,
+                            intra_v_pred) ||
           !compute_tx(source_, 1, acx0, acy0, cw, ch, intra_u_pred,
                       quant_step_, intra_u, error,
                       qm_enabled_ ? &qm_state_ : nullptr) ||
@@ -4811,6 +5222,9 @@ class InterFrameEncoder {
       entry.y_angle_delta = intra_y_angle_delta;
       entry.mrl_index = intra_mrl_index;
       entry.mrl_sec_index = intra_mrl_sec_index ? 1 : 0;
+      entry.use_dip = intra_use_dip ? 1 : 0;
+      entry.dip_transpose = intra_dip_transpose ? 1 : 0;
+      entry.dip_mode = static_cast<std::uint8_t>(intra_dip_mode);
       entry.uv_mode = 0;  // DC_PRED (also the CfL base mode)
       if (intra_is_cfl) {
         entry.flags |= syntax::kFlagIsCfl;
@@ -4860,7 +5274,27 @@ class InterFrameEncoder {
                   << " delta=" << static_cast<int>(intra_y_angle_delta)
                   << " mrl=" << static_cast<int>(intra_mrl_index)
                   << " sec=" << (intra_mrl_sec_index ? 1 : 0)
-                  << " ist=" << trace_ist_sec << "/" << trace_ist_set
+                  << (intra_use_dip
+                          ? " dip=" + std::to_string(intra_dip_mode) + "/" +
+                                std::to_string(intra_dip_transpose ? 1 : 0)
+                          : std::string());
+        if (options_.enable_ibp && !chroma_part) {
+          // §5.4.5/§7.13.2: report the decision the decoder derives from the
+          // signalled (mode, angle_delta).  The gate greps ibp_blend=1 to
+          // prove the two-angle path is live.
+          ibp::DecisionParams dp;
+          dp.enable_ibp = true;
+          dp.mode = static_cast<intra::Mode>(intra_y_mode);
+          dp.angle_delta = intra_y_angle_delta;
+          dp.w = w;
+          dp.h = h;
+          dp.plane = 0;
+          dp.mrl_index = intra_mrl_index;
+          const ibp::Decision dec = ibp::decide(dp);
+          std::cerr << " ibp_apply=" << (dec.apply_ibp_edge_rules ? 1 : 0)
+                    << " ibp_blend=" << (dec.use_ibp ? 1 : 0);
+        }
+        std::cerr << " ist=" << trace_ist_sec << "/" << trace_ist_set
                   << " sse=" << intra_sse << "\n";
       }
     } else {
@@ -4886,8 +5320,14 @@ class InterFrameEncoder {
         entry.wedge_index = static_cast<std::uint8_t>(best.wedge_index);
         entry.wedge_sign = static_cast<std::uint8_t>(best.wedge_sign);
         entry.mask_type = static_cast<std::uint8_t>(best.mask_type);
+        entry.cwp_index = static_cast<std::uint8_t>(best.cwp_index);
+        entry.cwp_weight = static_cast<std::int8_t>(best.cwp_weight);
         entry.use_optflow = best.use_optflow ? 1 : 0;
         entry.use_refinemv = best.use_refinemv ? 1 : 0;
+        if (options_.enable_df_sub_pu &&
+            (best.use_optflow || best.use_refinemv)) {
+          collect_sub_pus(x0, y0, w, h, best.use_optflow, best.use_refinemv);
+        }
       }
       if (best.compound && best.compound_mode == 0) {
         entry.mv_y = best.mv.y;
@@ -5108,6 +5548,10 @@ class InterFrameEncoder {
   std::vector<std::uint8_t> compound_y_;
   std::vector<std::uint8_t> compound_u_;
   std::vector<std::uint8_t> compound_v_;
+  // §7.13.3.15 sub-PU rectangles from OPFL/refine-MV prediction.  Only used
+  // when --video-df-sub-pu is on; ordinary whole-PU leaves take the normative
+  // early return and leave the deblock grid's Max_Tx_Size_Rect values.
+  std::vector<post::VideoSubPuRect> sub_pus_;
   inter::mc::RefFrame ref_frame_;
   std::vector<inter::mc::MiInfo> mv_grid_;
   std::vector<std::uint8_t> intra_joint_;
@@ -5437,8 +5881,9 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   config.avg_cdf_type = true;
   config.enable_masked_compound =
       options.compound && (options.compound_wedge || options.compound_diffwtd);
-  config.enable_cwp = false;
-  config.enable_imp_msk_bld = false;
+  config.enable_cwp = options.enable_cwp_weighted;
+  config.enable_imp_msk_bld = options.enable_imp_msk_bld;
+  config.enable_df_sub_pu = options.enable_df_sub_pu;
   config.num_same_ref_compound = 0;
   config.enable_opfl_refine = options.compound ? options.opfl_refine_type : 0;
   config.enable_refinemv = options.compound && options.enable_refinemv;
@@ -5446,8 +5891,10 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
   config.enable_mhccp = options.enable_mhccp;
+  config.enable_ibp = options.enable_ibp;
   config.enable_idtx_intra = options.enable_idtx_intra;
   config.enable_mrls = options.enable_mrl;
+  config.enable_dip = options.enable_dip;
   config.enable_intra_ist = options.enable_ist;
   config.enable_inter_ist = false;
   config.enable_tcq = options.enable_tcq;
@@ -5629,6 +6076,7 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
     header.implicit_output_frame = hf.implicit_output_frame;
     header.reference_select = hf.reference_select && options.compound &&
                               num_refs > 1;
+    header.allow_df_sub_pu = options.enable_df_sub_pu && !hf.keyframe;
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
     header.use_ref_frame_mvs =
@@ -5823,8 +6271,10 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
   config.enable_mhccp = options.enable_mhccp;
+  config.enable_ibp = options.enable_ibp;
   config.enable_idtx_intra = options.enable_idtx_intra;
   config.enable_mrls = options.enable_mrl;
+  config.enable_dip = options.enable_dip;
   config.enable_intra_ist = options.enable_ist;
   config.enable_inter_ist = false;
   config.enable_tcq = options.enable_tcq;
@@ -6205,6 +6655,7 @@ bool encode_video_refinement_sequence(
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
   config.enable_mhccp = options.enable_mhccp;
+  config.enable_ibp = options.enable_ibp;
   config.enable_tcq = options.enable_tcq;
   config.choose_tcq_per_frame = options.enable_tcq;
   config.enable_cctx = options.enable_cctx;
@@ -6932,6 +7383,40 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     error = "--video-sdp/--video-ddt are wired for 8-bit 4:2:0";
     return false;
   }
+  // §5.20.3.1 sub-8 luma leaves.  The rect tree carries ChromaMi ownership
+  // (has_chroma/chroma_offset) and every leaf whose chroma residual would be
+  // smaller than 4x4 shares the inherited ChromaMi block with the next leaf,
+  // so the intra keyframe can code 4x4/4x8/8x4/... leaves.  Inter leaves stay
+  // at 8x8 or above (the P-frame search floor is raised in decide()).
+  if (options.min_block_size < 4 || options.min_block_size > 64) {
+    error = "min_block_size must be in [4, 64]";
+    return false;
+  }
+  if (options.min_block_size < 8 &&
+      (options.format.chroma != fmt::ChromaFormat::k420 ||
+       options.format.depth != fmt::BitDepth::k8)) {
+    error = "--video-min-block 4 (shared-chroma sub-8 leaves) is wired for "
+            "8-bit 4:2:0 only";
+    return false;
+  }
+  // Pinned dav2d rejects the first P frame ("Invalid argument") when
+  // enable_idtx_intra is 1 and the keyframe search reaches the sub-8/deep
+  // leaves; the same failure appears at --video-min-block 8 --video-max-depth
+  // 5, so it is a pre-existing idtx/small-leaf interaction rather than the
+  // shared-chroma ownership.  Keep the named rejection for the new depth until
+  // it is isolated.
+  if (options.min_block_size < 8 && options.enable_idtx_intra) {
+    error = "--video-min-block 4 does not compose with --video-idtx yet "
+            "(the key+P chain is not decoder-exact at the sub-8 search depths)";
+    return false;
+  }
+  // The SDP luma tree codes YMode through the same §5.20.5.5 dynamic list but
+  // `--video-intra-full` streams from it are not decoder-exact at any
+  // --video-min-block (pre-existing; `--video-sdp --video-mrl` is exact).
+  if (options.enable_sdp && options.enable_intra_full) {
+    error = "--video-sdp does not compose with --video-intra-full yet";
+    return false;
+  }
   // Non-default formats use the depth/chroma-generic core.  The historical  // 8-bit 4:2:0 path below is untouched.
   if (options.format.chroma != fmt::ChromaFormat::k420 ||
       options.format.depth != fmt::BitDepth::k8) {
@@ -6982,16 +7467,6 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   }
   if (options.enable_inter_ddt && options.enable_tip) {
     error = "--video-ddt does not compose with the TIP header writer";
-    return false;
-  }
-  // The video leaf coder derives 4:2:0 chroma as w/2, h/2 and the intra
-  // predictor requires both dimensions >= 4. A sub-8 luma leaf (4x4, 4x8,
-  // 32x4, ...) would need §5.20.3.1 shared-chroma ownership; until that is
-  // implemented, reject it instead of aborting inside the keyframe with
-  // "intra DC prediction failed".
-  if (options.min_block_size < 8) {
-    error = "min_block_size must be at least 8: the video path does not "
-            "implement shared-chroma prediction for sub-8 luma leaves";
     return false;
   }
   if (options.max_partition_depth < 0 || options.max_partition_depth > 8) {
@@ -7532,8 +8007,9 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   config.disable_cdf_update = !options.adaptive_cdf;
   config.enable_masked_compound =
       options.compound && (options.compound_wedge || options.compound_diffwtd);
-  config.enable_cwp = false;
-  config.enable_imp_msk_bld = false;
+  config.enable_cwp = options.enable_cwp_weighted;
+  config.enable_imp_msk_bld = options.enable_imp_msk_bld;
+  config.enable_df_sub_pu = options.enable_df_sub_pu;
   config.num_same_ref_compound = 0;
   config.enable_avg_cdf = options.avg_cdf;
   config.avg_cdf_type = true;
@@ -7567,8 +8043,10 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   config.constrain_drl_reorder = !options.drl_reorder_always;
   config.enable_cfl_intra = true;
   config.enable_mhccp = options.enable_mhccp;
+  config.enable_ibp = options.enable_ibp;
   config.enable_idtx_intra = options.enable_idtx_intra;
   config.enable_mrls = options.enable_mrl;
+  config.enable_dip = options.enable_dip;
   config.enable_intra_ist = options.enable_ist;
   config.enable_inter_ist = false;
   config.enable_tcq = options.enable_tcq;
@@ -8268,6 +8746,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     header.immediate_output_frame =
         !(options.hide_last_picture && i + 1U == frames.size());
     header.reference_select = options.compound && ref_count > 1;
+    header.allow_df_sub_pu = options.enable_df_sub_pu;
     header.gm = gm_plan;
     if (options.film_grain) {
       header.apply_grain = grain_plan.apply_grain;

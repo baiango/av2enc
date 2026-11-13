@@ -309,15 +309,15 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(false);  // seq_seg_info_present_flag
 
   // §5.4.5 sequence_intra_config().
-  writer.put_bit(false);  // enable_dip
-  writer.put_bit(true);   // enable_intra_edge_filter
+  writer.put_bit(c.enable_dip);  // enable_dip
+  writer.put_bit(true);          // enable_intra_edge_filter
   writer.put_bit(c.enable_mrls);  // enable_mrls
   writer.put_bit(true);   // enable_cfl_intra
   if (!monochrome) {
     writer.put_bits(0U, 2U);  // cfl_ds_filter_index
   }
   writer.put_bit(c.enable_mhccp);  // enable_mhccp
-  writer.put_bit(false);  // enable_ibp
+  writer.put_bit(c.enable_ibp);    // enable_ibp
 
   // §5.4.6 sequence_inter_config() for single_picture_header_flag = 0.
   bool motion_mode_enabled = false;
@@ -361,7 +361,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(c.enable_bawp);  // enable_bawp (§5.4.6)
   writer.put_bit(c.enable_cwp);
   writer.put_bit(c.enable_imp_msk_bld);
-  writer.put_bit(false);   // enable_df_sub_pu
+  writer.put_bit(c.enable_df_sub_pu);
   writer.put_bits(static_cast<std::uint64_t>(c.enable_opfl_refine), 2U);
   writer.put_bit(c.enable_refinemv);
   writer.put_bit(false);   // enable_bru
@@ -662,6 +662,12 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
   // signals parity hiding), so no frame bit is written for it.
   if (c.enable_tcq && c.choose_tcq_per_frame) {
     writer.put_bit(h.allow_tcq && c.base_q_idx != 0);
+  }
+  if (c.enable_df_sub_pu && !key) {
+    // §5.18.7.9: allow_df_sub_pu is present only for an INTER_FRAME when the
+    // sequence enables the tool.  It precedes the apply_deblocking_filter
+    // row.
+    writer.put_bit(h.allow_df_sub_pu);
   }
   if (c.enable_deblock) {
     // §5.18.7.9 deblocking_filter_params(): all four planes enabled, no

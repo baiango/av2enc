@@ -169,12 +169,16 @@ inline void init_video_deblock_grid(int mi_cols, int mi_rows, int base_q_idx,
 
 // A predicted subblock (§7.13.3.14 predict_subblock) for §7.13.3.15.
 struct VideoSubPuRect {
-  int x = 0;      // luma sample origin
+  int x = 0;      // origin in samples of `plane` (-1 = luma/all planes)
   int y = 0;
   int w = 0;
   int h = 0;
-  int pu_w = 0;   // whole prediction unit extent
+  int pu_w = 0;   // whole prediction unit extent, same plane
   int pu_h = 0;
+  // Plane this rect belongs to (-1 = apply to all three, the historical
+  // whole-PU form).  OPFL/refine-MV split luma and chroma differently, so
+  // each plane's predict_subblock() call contributes its own rect.
+  int plane = -1;
 };
 
 // Applies the leaves of one coded tile (tile-local MI coordinates) to the
@@ -216,6 +220,39 @@ inline bool add_video_deblock_blocks(
     }
     const int clamped_w = std::min(w4, grid->mi_cols - c);
     const int clamped_h = std::min(h4, grid->mi_rows - r);
+    // §5.20.3.1: chroma metadata belongs to the owned ChromaMi block, not to
+    // the luma leaf.  A sub-8 leaf group shares one chroma block at the
+    // ChromaMi origin, so the U/V grids are replicated over the ChromaMi luma
+    // extent (the decoder's bottom-right mode-info rule) and only the owning
+    // leaf writes them.  Without kFlagHasChromaInfo the historical leaf-sized
+    // chroma block is used.
+    const bool chroma_info = (block.flags & syntax::kFlagHasChromaInfo) != 0;
+    const bool owns_chroma = !chroma_info || block.has_chroma != 0;
+    int chroma_r = r;
+    int chroma_c = c;
+    int chroma_w4 = clamped_w;
+    int chroma_h4 = clamped_h;
+    int chroma_bsize = bsize;
+    if (chroma_info && owns_chroma) {
+      chroma_r = tile_mi_row + static_cast<int>(block.chroma_mi_row);
+      chroma_c = tile_mi_col + static_cast<int>(block.chroma_mi_col);
+      chroma_bsize = static_cast<int>(block.chroma_bsize);
+      if (!partition::is_valid_block_size(
+              static_cast<partition::BlockSize>(chroma_bsize))) {
+        if (error != nullptr) {
+          *error = "video deblock: invalid ChromaMi size";
+        }
+        return false;
+      }
+      chroma_w4 = std::min(
+          partition::num_4x4_blocks_wide(
+              static_cast<partition::BlockSize>(chroma_bsize)),
+          grid->mi_cols - chroma_c);
+      chroma_h4 = std::min(
+          partition::num_4x4_blocks_high(
+              static_cast<partition::BlockSize>(chroma_bsize)),
+          grid->mi_rows - chroma_r);
+    }
     // §7.14.2 effective qindex for this leaf.  The producer fills it when the
     // frame codes segmentation / delta-Q; -1 keeps the frame base_q_idx.
     const int leaf_q =
@@ -230,21 +267,31 @@ inline bool add_video_deblock_blocks(
       return false;
     }
     int tx_size[3];
+    const partition::BlockSize chroma_tx_bsize =
+        video_deblock_chroma_size(bsize);
+    const int chroma_max_tx =
+        partition::is_valid_block_size(chroma_tx_bsize)
+            ? video_deblock_max_tx(static_cast<int>(chroma_tx_bsize))
+            : luma_max_tx;
     if (!inter_skip) {
       for (int plane = 0; plane < 3; ++plane) {
         tx_size[plane] = static_cast<int>(block.tx_size[plane]);
       }
     } else {
-      const partition::BlockSize chroma_bsize =
-          video_deblock_chroma_size(bsize);
-      const int chroma_max_tx =
-          partition::is_valid_block_size(chroma_bsize)
-              ? video_deblock_max_tx(static_cast<int>(chroma_bsize))
+      const partition::BlockSize chroma_residual =
+          video_deblock_chroma_size(chroma_bsize);
+      const int chroma_skip_max_tx =
+          partition::is_valid_block_size(chroma_residual)
+              ? video_deblock_max_tx(static_cast<int>(chroma_residual))
               : luma_max_tx;
       tx_size[0] = luma_max_tx;
-      tx_size[1] = chroma_max_tx;
-      tx_size[2] = chroma_max_tx;
+      tx_size[1] = chroma_skip_max_tx;
+      tx_size[2] = chroma_skip_max_tx;
     }
+    // §7.13.3.15 / page 163: SubPuSize[plane] is Max_Tx_Size_Rect[MiSize] on
+    // luma and Max_Tx_Size_Rect[ChromaMiSize] on chroma, independent of the
+    // actual DeblockingTxSize.  allow_df_sub_pu = 0 leaves it inert.
+    const int sub_pu_size[3] = {luma_max_tx, chroma_max_tx, chroma_max_tx};
     for (int plane = 0; plane < 3; ++plane) {
       if (tx_size[plane] < 0 || tx_size[plane] >= deblock::kTxSizesAll) {
         if (error != nullptr) {
@@ -255,23 +302,30 @@ inline bool add_video_deblock_blocks(
       }
     }
     for (int plane = 0; plane < 3; ++plane) {
-      for (int yy = 0; yy < clamped_h; ++yy) {
-        for (int xx = 0; xx < clamped_w; ++xx) {
+      // A non-owning sub-8 leaf codes no chroma; the owner filled the shared
+      // ChromaMi rectangle (it follows the sibling in decode order).
+      if (plane > 0 && !owns_chroma) continue;
+      const int fill_r = plane == 0 ? r : chroma_r;
+      const int fill_c = plane == 0 ? c : chroma_c;
+      const int fill_w = plane == 0 ? clamped_w : chroma_w4;
+      const int fill_h = plane == 0 ? clamped_h : chroma_h4;
+      for (int yy = 0; yy < fill_h; ++yy) {
+        for (int xx = 0; xx < fill_w; ++xx) {
           deblock::DeblockMi& mi =
-              grid->mi[plane][static_cast<std::size_t>(r + yy) *
+              grid->mi[plane][static_cast<std::size_t>(fill_r + yy) *
                                   static_cast<std::size_t>(grid->mi_cols) +
-                              static_cast<std::size_t>(c + xx)];
-          mi.block_col_base = static_cast<std::uint16_t>(c);
-          mi.block_row_base = static_cast<std::uint16_t>(r);
-          mi.block_w4 = static_cast<std::uint8_t>(clamped_w);
-          mi.block_h4 = static_cast<std::uint8_t>(clamped_h);
+                              static_cast<std::size_t>(fill_c + xx)];
+          mi.block_col_base = static_cast<std::uint16_t>(fill_c);
+          mi.block_row_base = static_cast<std::uint16_t>(fill_r);
+          mi.block_w4 = static_cast<std::uint8_t>(fill_w);
+          mi.block_h4 = static_cast<std::uint8_t>(fill_h);
           mi.sub_pu_size =
-              static_cast<deblock::TxSize>(luma_max_tx);
+              static_cast<deblock::TxSize>(sub_pu_size[plane]);
           mi.tx_size = static_cast<deblock::TxSize>(tx_size[plane]);
-          mi.tx_col_base = static_cast<std::uint16_t>(c);
-          mi.tx_row_base = static_cast<std::uint16_t>(r);
-          mi.sub_pu_col_base = static_cast<std::uint16_t>(c);
-          mi.sub_pu_row_base = static_cast<std::uint16_t>(r);
+          mi.tx_col_base = static_cast<std::uint16_t>(fill_c);
+          mi.tx_row_base = static_cast<std::uint16_t>(fill_r);
+          mi.sub_pu_col_base = static_cast<std::uint16_t>(fill_c);
+          mi.sub_pu_row_base = static_cast<std::uint16_t>(fill_r);
           mi.skip = inter_skip ? 1 : 0;
           mi.region_intra = frame_is_intra ? 1 : 0;
           mi.lossless = 0;
@@ -329,6 +383,7 @@ inline bool add_video_deblock_blocks(
   if (sub_pus != nullptr) {
     for (int i = 0; i < num_sub_pus; ++i) {
       for (int plane = 0; plane < 3; ++plane) {
+        if (sub_pus[i].plane >= 0 && sub_pus[i].plane != plane) continue;
         if (!video_save_subpu(plane, sub_pus[i].x, sub_pus[i].y, sub_pus[i].w,
                               sub_pus[i].h, sub_pus[i].pu_w, sub_pus[i].pu_h,
                               grid, error)) {
@@ -402,10 +457,11 @@ inline bool video_save_subpu_selftest(std::string* error) {
 // Convenience wrapper for a single-tile frame.
 inline bool build_video_deblock_grid(    const std::vector<syntax::BlockSyntax>& blocks, int mi_cols, int mi_rows,
     int base_q_idx, bool frame_is_intra, VideoDeblockGrid* grid,
-    std::string* error) {
+    std::string* error,
+    const VideoSubPuRect* sub_pus = nullptr, int num_sub_pus = 0) {
   init_video_deblock_grid(mi_cols, mi_rows, base_q_idx, frame_is_intra, grid);
   return add_video_deblock_blocks(blocks, 0, 0, base_q_idx, frame_is_intra,
-                                  grid, error);
+                                  grid, error, sub_pus, num_sub_pus);
 }
 
 // Runs the CPU reference deblock over caller-owned MI-aligned planes.  The

@@ -91,6 +91,32 @@ and is gated sample-by-sample against the pinned `dav2d`.
   `--video-inter-residual` and `--video-tx-search`.  Gate as above; it
   requires at least one coded DDT leaf and sample-exact recon.
 
+### Sub-8 luma leaves (`--video-min-block 4`)
+
+`--video-min-block 4` lowers the intra keyframe partition floor to four
+samples.  A leaf whose chroma residual would be smaller than 4x4 (4x4, 4x8,
+8x4, 4x16, 16x4, ...) does not own its chroma: §5.20.3.1 gives
+`HasChroma = hasChroma && !chromaOffset` to the first child of the split and
+the next leaf codes the whole inherited ChromaMi block.  The rect, extended and
+SDP callers carry `has_chroma` / `chroma_offset` / `chroma_bsize` /
+`chroma_mi_row` / `chroma_mi_col` in `BlockSyntax` (behind
+`kFlagHasChromaInfo`), the leaf coder predicts/transforms chroma once at the
+ChromaMi origin, and the §7.17 deblock grid replicates the chroma metadata over
+the ChromaMi luma extent.  The §5.20.5.5 directional-mode list is gated on
+`MiSize >= BLOCK_8X8`, so rectangular 32x4/4x32 leaves keep the dynamic list
+even though one dimension is four samples.
+
+P frames raise their search floor to 8x8 (`decide()`); a sub-8 or
+shared-ChromaMi leaf stays intra because MC derives chroma from the luma leaf.
+The sub-8 syntax path composes with `--video-intra-full`, `--video-mrl`,
+`--video-tx-search`, `--video-deblock`, `--video-ext-partitions`,
+`--video-sdp`, `--video-sb128` and `--tiles`.  `--video-sdp` with
+`--video-intra-full` is rejected by name (the SDP luma tree's dynamic mode list
+is not decoder-exact at any min-block).  Gate:
+`src/pipeline/video/gate_video_sub8.sh` (picture counts, actual 4xN/Nx4 leaf
+selection, `dav2d --strict 1` and sample-exact `--video-recon` at 64x64 and
+640x360, depths 5 and 6; `--video-min-block 8` controls select no sub-8 leaf).
+
 ## Files
 
 ```text
@@ -147,7 +173,7 @@ without changing the M2 syntax writer.
 | `enable_mrls` | 0 |
 | `enable_cfl_intra` | 1 |
 | `cfl_ds_filter_index` | 0 |
-| `enable_mhccp` / `enable_ibp` | 0 / 0 |
+| `enable_mhccp` / `enable_ibp` | 0 / 0; `enable_ibp` 1 only with `--video-ibp` |
 | `seq_enabled_motion_modes[INTERINTRA..EXTENDWARP]` | all 0 |
 | `enable_masked_compound` / `enable_ref_frame_mvs` | 0 / 0 |
 | `order_hint_bits_minus_1` | 3 (`OrderHintBits = 4`) |
@@ -161,9 +187,9 @@ without changing the M2 syntax writer.
 | `seq_max_bvp_drl_bits_minus_1` | ns(3) = 0 |
 | `allow_frame_max_bvp_drl_bits` | 0 |
 | `num_same_ref_compound` | 0 |
-| `enable_tip` / `enable_mv_traj` / `enable_cwp` | 0 |
+| `enable_tip` / `enable_mv_traj` / `enable_cwp` | 0; `enable_cwp` 1 only with `--video-cwp-weighted` |
 | `enable_bawp` | 0; 1 only with `--video-bawp` |
-| `enable_imp_msk_bld` / `enable_df_sub_pu` | 0 / 0 |
+| `enable_imp_msk_bld` / `enable_df_sub_pu` | 0; enabled by `--video-imp-mask` / `--video-df-sub-pu` |
 | `enable_opfl_refine` | 0 (REFINE_NONE) |
 | `enable_refinemv` / `enable_bru` / `enable_adaptive_mvd` | 0 |
 | `enable_mvd_sign_derive` / `enable_flex_mvres` | 0 |
@@ -172,6 +198,7 @@ without changing the M2 syntax writer.
 | `seq_choose_screen_content_tools` / `seq_force_screen_content_tools` | 0 / 0 |
 | `enable_fsc` / `enable_idtx_intra` | 0; `enable_idtx_intra` 1 only with `--video-idtx` |
 | `enable_mrls` | 0; 1 only with `--video-mrl` |
+| `enable_dip` | 0; 1 only with `--video-dip` |
 | `enable_intra_ist` / `enable_inter_ist` | 0; `enable_intra_ist` 1 only with `--video-ist` (inter IST is never signalled) |
 | `enable_chroma_dctonly` | 1 |
 | `enable_inter_ddt` / `reduced_tx_part_set` / `enable_cctx` / `enable_tcq` | 0 |
@@ -512,13 +539,18 @@ av2enc clip.y4m --video --video-subpel-eighth --video-mv-precision quarter -o cl
 | `--video-refine-mv` | off | §7.13.3.3-.6 refine-MV on a NEAR_NEARMV compound block (derived, no bit: §5.20.7.17 makes it non-switchable); search/prediction run per 16x16 luma sub-block with the colocated MV reused for chroma; see `docs/video-opfl-refine.md` |
 | `--video-compound-wedge` | off | §7.13.3.27 wedge-mask compound candidate search (needs `--video-compound`) |
 | `--video-compound-diffwtd` | off | §7.13.3.28 difference-weight compound candidate search (needs `--video-compound`) |
+| `--video-cwp-weighted` | off | §5.4.6 `enable_cwp` + §5.20.7.6 `cwp_idx`: searches the non-equal `Cwp_Weighting_Factor` rows on a NEAR_NEARMV `COMPOUND_AVERAGE` block (needs `--video-compound-near-near` + `--b-frames`); decoder-gated by `gate_video_pred_surface.sh` |
+| `--video-imp-mask` | off | §5.4.6 `enable_imp_msk_bld` + §7.13.3.14 `get_mask()` on the eligible CWP_EQUAL NEAR_NEARMV average; the mask is decoder-derived, so the encoder never compares the plain equal-weight blend |
+| `--video-df-sub-pu` | off | §5.4.6 `enable_df_sub_pu` + §5.18.7.9 `allow_df_sub_pu` and the §7.13.3.15 sub-PU grid in §7.17 deblocking; OPFL subblocks are projected per plane, so `--video-opfl --video-deblock` exercises real sub-PU edges |
 | `--video-compound-interintra` | off | single-reference §7.13.3.29/.30 inter-intra (`--video-refs 1`): codes `seq_enabled_motion_modes[INTERINTRA]`, §5.20.7.14 motion mode/interintra_mode/wedge_interintra and blends the inter prediction with an intra prediction (CPU, single tile) |
 | `--video-inter-residual` | off | code a quantised inter residual |
 | `--video-intra-full` | off | still product's 61-candidate luma intra search (DC, V, H, 8 directional modes with angle deltas, SMOOTH*, PAETH) instead of the DC-only fallback; chroma stays DC. Default off so the shipped streams stay byte-identical; measured +4.9% rate / −0.016 dB PSNR-Y at QP 90 (SSE-only decision) |
 | `--video-tx-search` | off | §5.18.8 `TX_MODE_SELECT`: luma TX size/type/partition search (inter partition + intra/inter type); `--video-tx-lambda` (256) tunes plan selection; see `src/cuda/pipeline/video/tx/README.md` |
 | `--video-idtx` | off | §5.4.8 `enable_idtx_intra = 1` + the §5.20.5.5 `fsc_mode` symbol, letting `--video-tx-search` select the 2-D identity type (9); requires `--video-tx-search`; decoder-gated (`video_idtx_gate.sh`) |
 | `--video-mrl` | off | §5.4.5 `enable_mrls = 1`: directional luma intra searches `mrl_index` 1..3 and `mrl_sec_index` with the §7.13.2.1 extra reference lines; the §5.20.5.5 symbols are coded and the §7.13.2.7 edge filter is forced off for `mrl_index > 0`. `--video-intra-full` is needed for a non-zero index; decoder-gated (`video_mrl_ist_gate.sh`) |
+| `--video-dip` | off | §5.4.5 `enable_dip = 1`: §5.20.7.9 `use_dip`/`dip_transpose`/`dip_mode` on luma DC_PRED keyframe blocks with `W > 4`, `H > 4`, `W*H >= 128`, reconstructed with §7.13.2.3-.6. Runs on the DC-only path and composes with `--video-intra-full`, `--video-mrl`, `--video-ist` and `--video-tx-search`; decoder-gated (`video_dip_gate.sh`) |
 | `--video-ist` | off | §5.4.8 `enable_intra_ist = 1`: luma intra residuals code §5.20.8.2 `sec_tx_type` + `most_probable_stx_set` and the reconstruction applies the §7.15.3 inverse; the encoder projection is the still product's analysis tool. Inter IST stays unsignalled; decoder-gated (`video_mrl_ist_gate.sh`) |
+| `--video-ibp` | off | §5.4.5 `enable_ibp = 1`: the intra keyframe and every intra leaf use §7.13.2 intra bi-prediction (IBP). No per-block bit: the decoder derives `applyIbp`/`useIBP` from `YMode` + `angle_delta`, so the luma search evaluates every candidate with `ibp::predict` and the DC/chroma path uses `ibp::predict_block` (the §7.13.2.12 `Ibp_Weights` post-filter). `--video-intra-full` exercises the two-angle §7.13.2.9 blend; DC-only exercises the DC filter. CPU, 8-bit 4:2:0, single tile, plain key+P chain; decoder-gated (`video_ibp_gate.sh`) |
 | `--video-idtx-1d` | rejected | the one-axis V/H_DCT/A/FLIPADST types need the class scans + `dc_sign_horz_vert`, and pinned dav2d rejects negative H_DCT/V_DCT under `--strict 1`; see `docs/video-1d-intra.md` |
 | `--video-cfl` | off | §7.13.5 CfL chroma decision `{DC, CfL}` with derived alpha, shared with `--still-gpu` (`still::chroma_decide`) |
 | `--video-mhccp` | off | §7.13.6-.8 MHCCP: signals `enable_mhccp` and searches the three `CFL_MULTI` directions; implies `--video-cfl` |
@@ -529,7 +561,7 @@ av2enc clip.y4m --video --video-subpel-eighth --video-mv-precision quarter -o cl
 | `--video-cctx` | off | §5.4.8/§7.14.6 cross-component transform: `enable_cctx = 1`, per-block `cctx_type` on plane 1 (after the U EOB) and the joint U/V dequant rotation; composes with `--video-tcq` and `--video-tx-search`; `video_cctx_gate.sh` decodes at QP 60/90/120 with `dav2d --strict 1` and compares the recon exactly |
 | `--video-grain` | off | §5.14/§5.18.10 film grain: sequence `film_grain_params_present = 1`, one model OBU (type 23) before each coded-frame OBU, per-frame `film_grain_config()`; CPU-only plain P chain; `video_grain_gate.sh` decodes with dav2d `--filmgrain 0` (recon exact) and `--filmgrain 1` (synthesis) |
 | `--video-lossless` | off | Q=0 lossless P frame sequence via `src/codec/entropy/lossless/inter/`: its own headers (`CodedLossless = 1`, `base_q_idx = 0`, `ONLY_4X4`), DPCM/reversible WHT/IDTX and FSC; `--video-lossless-intra-period N` forces one intra block per N; `--lossless-fsc` forces the FSC coefficient path; `video_lossless_gate.sh` pins 4/8-frame streams and compares dav2d recon exactly |
-| `--video-max-depth D` / `--video-min-block N` / `--video-force-single` | 4 / 16 / off | partition controls; `N` must be 8..64 (sub-8 leaves would need shared-chroma prediction) |
+| `--video-max-depth D` / `--video-min-block N` / `--video-force-single` | 4 / 16 / off | partition controls; `N` is 4..64.  `N = 4` enables §5.20.3.1 sub-8 intra keyframe leaves with shared-chroma ownership (see "Sub-8 luma leaves"); P-frame leaves stay >= 8x8 |
 | `--video-recon FILE` | off | dump the encoder reconstruction Y4M (gate use) |
 | `--video-tlayers N` | off | one hierarchical-P GOP of N (4/8) frames with temporal layers |
 | `--video-tlayer-drop L` | off | emit only temporal layers `<= L` |
@@ -980,8 +1012,11 @@ Prediction uses the shared 1/16-sample compound path
 (`multiref::build_compound_prediction` → `apply_compound_prediction`,
 §7.13.3.18 `InterRound1 = 7`), so the encoder and decoder agree on the AVERAGE
 blend. `enable_masked_compound`, `enable_cwp` and `enable_imp_msk_bld` stay 0 in
-the sequence header: CWP, wedge/diffwtd masks and the implicit mask are not
-exercised yet.
+the sequence header unless the corresponding opt-in flags are on:
+`--video-compound-wedge`/`--video-compound-diffwtd` (masked types),
+`--video-cwp-weighted` (non-equal CWP) and `--video-imp-mask` (implicit mask).
+CWP and the implicit mask ride the NEAR_NEARMV carrier below; the historical
+GLOBAL_GLOBALMV subset keeps CWP_EQUAL.
 
 The compound candidate competes against GLOBALMV / NEARMV / NEWMV on luma SSE;
 `--video-refs 2 --video-compound` on `shine` 720p picks compound on ~22 of 512
@@ -1328,6 +1363,54 @@ recon).  The flag defaults off, so `--video-compound` and every default
 CPU/GPU stream keep their pinned bytes.  `--video-gpu` rejects the flag by
 name (the CUDA compound backend implements only the GLOBAL subset).
 
+## Weighted CWP and the implicit mask (opt-in, CPU)
+
+`--video-cwp-weighted` and `--video-imp-mask` extend the NEAR_NEARMV
+`COMPOUND_AVERAGE` decision; both require `--video-compound
+--video-compound-near-near --b-frames` and are CPU-only.
+
+| element | value |
+|---|---|
+| `enable_cwp` | 1 with `--video-cwp-weighted` |
+| `cwp_idx` | coded for every `COMPOUND_AVERAGE`, `SIMPLE`-motion NEAR_NEARMV block that is not `use_optflow`/`use_refinemv`; 0 = `CWP_EQUAL` |
+| weights | `Cwp_Weighting_Factor[is_same_side()]`; a B frame with one past + one future reference uses the opposite-side row `{8, 12, 4, 10, 6}` |
+| `enable_imp_msk_bld` | 1 with `--video-imp-mask` |
+| `get_mask()` | §7.13.3.14, applied by the decoder whenever `COMPOUND_AVERAGE && CWP_EQUAL && YMode != GLOBAL_GLOBALMV` and both references are unscaled |
+
+The search order follows `multiref::decide_compound()`: the derived
+implicit-mask average first, then the five CWP weights, all SSE-only.  A
+critical detail is that when the implicit mask is eligible and
+`--video-cwp-weighted` is off, the plain equal-weight blend is **not** a legal
+decoder output; `search_compound()` is therefore bypassed for that one family
+and only the mask blend is evaluated.  Comparing the two would let the encoder
+pick a prediction the decoder cannot derive.
+
+Gate: `src/pipeline/video/gate_video_pred_surface.sh` (64x64 3-frame and
+640x360 5-frame pan fixtures).  Every stream decodes `dav2d --strict 1` with
+the expected picture count and byte-exact recon; the implicit-mask stream's
+reconstruction is asserted different from the equal-weight carrier, so the
+mask path is exercised rather than merely signalled.
+
+## DF sub-PU (opt-in, CPU)
+
+`--video-df-sub-pu` signals sequence `enable_df_sub_pu = 1` and frame
+`allow_df_sub_pu = 1` for every inter frame (§5.18.7.9).  The deblock grid
+already stores `SubPuSize = Max_Tx_Size_Rect[MiSize]`,
+`Max_Tx_Size_Rect[ChromaMiSize]` and the per-4x4 `SubPuColBase/RowBase`.
+
+For an ordinary whole-PU leaf the §7.13.3.15 process early-returns, so
+`allow_df_sub_pu` changes no filtered edge.  The flag becomes observable on the
+OPFL/refine-MV carriers, whose prediction splits the block into §7.13.3.8 or
+§7.13.3.1 subblocks: the encoder collects those rects per plane and feeds them
+to `video_save_subpu()`.  The gate runs `--video-opfl --video-deblock
+--video-df-sub-pu`, verifies byte-exact recon, and asserts the reconstruction
+differs from the same stream with `allow_df_sub_pu = 0`.
+
+Tiles and the frame-type wrappers (TIP/BRU/SWITCH/RAS/LTR/OLK/leading/SEF) are
+rejected by name: their frame headers code `allow_df_sub_pu` in a different
+branch.  Lossless is rejected because `deblocking_filter_params()` returns
+before the bit.
+
 ---
 
 # Codec-tools wave: CfL / MHCCP / PC-Wiener / QM (opt-in)
@@ -1477,3 +1560,38 @@ pinned stream above are unchanged.
   decoder-gated yet.
 * Gate: `src/cuda/pipeline/video/gate_video_formats.sh` (CTest
   `gate_video_formats`) at 640x360 / 4 frames, all seven formats.
+## Data-driven intra prediction (opt-in, CPU)
+
+`--video-dip` writes §5.4.5 `enable_dip = 1` in the non-tiled sequence header
+and codes §5.20.7.9 `dip_mode_info()` after `uv_mode`/palette and before the
+residual for every luma `DC_PRED` block that satisfies
+
+```
+Block_Width > 4 && Block_Height > 4 && Block_Width * Block_Height >= 128
+```
+
+`use_dip` is coded for both key and P-frame intra leaves (the symbol is present
+for every eligible block), but the mode decision only runs on the intra
+keyframe: `dip::decide()` scores the twelve normative `(dip_mode, transpose)`
+candidates by SSE against the incumbent prediction and replaces it only on a
+strict win.  When it wins the leaf keeps `YMode = DC_PRED` and codes
+`use_dip = 1`; MRL and palette state are cleared because both are incompatible
+with a DIP block.  Prediction uses `dip::prepare_edges()` (the `w + w/4` /
+`h + h/4` sample counts), never the ordinary `intra::prepare_edges()`.
+
+`video_syntax.cpp` keeps a per-MI `UseDip` grid and derives the §8.3.1
+`TileUseDipCdf` context from the same §5.20.4.1 `collect_npos()` set the
+decoder uses; the two DIP CDF arrays ride the tile CDF bank, so
+`--avg-cdf/--adaptive-cdf` streams stay exact.
+
+Gate: `src/pipeline/video/video_dip_gate.sh` (registered as `gate_video_dip`).
+It pins 64x64 and 640x360 streams with and without `--video-intra-full` and
+`--video-tx-search`, checks that each case codes at least one DIP block, and
+compares the encode-side `--video-recon` to `dav2d f9dafbc --strict 1` output
+sample for sample.  Default `--video` cases keep their IVF MD5 and code no DIP
+block.
+
+Rejected by name: `--tiles` (the tiled sequence-header writer is a separate
+copy), `--video-sdp` (the SDP tree path is not DIP-gated), `--video-lossless`
+(its own writer) and the B/temporal-layer/random-access/TIP/SVC frame
+schedules.  Non-8-bit/4:2:0 formats and `--video-gpu` are rejected too.

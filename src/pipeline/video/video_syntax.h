@@ -143,6 +143,11 @@ struct BlockSyntax {
   std::uint8_t wedge_index = 0;
   std::uint8_t wedge_sign = 0;
   std::uint8_t mask_type = 0;
+  // §5.20.7.6 CwpIdx (enable_cwp = 1).  `cwp_index` is the coded index; 0 is
+  // CWP_EQUAL.  The weight is derived by the decoder from is_same_side().
+  // `cwp_weight` is carried for the prediction and is never coded directly.
+  std::uint8_t cwp_index = 0;
+  std::int8_t cwp_weight = 8;
   std::int32_t mv_y = 0;   // resolved MV, 1/8 luma samples
   std::int32_t mv_x = 0;
   std::int32_t mvd_y = 0;  // signalled MVD for NEWMV, 1/8 luma samples
@@ -154,6 +159,11 @@ struct BlockSyntax {
   // is disabled or the block is non-directional.
   std::uint8_t mrl_index = 0;
   std::uint8_t mrl_sec_index = 0;
+  // §5.20.7.9 dip_mode_info() (--video-dip).  Signalled only for luma DC_PRED
+  // keyframe blocks that satisfy the size predicate; `use_dip = 0` otherwise.
+  std::uint8_t use_dip = 0;
+  std::uint8_t dip_transpose = 0;
+  std::uint8_t dip_mode = 0;  // 0..5
   std::uint8_t uv_mode = 0;
   // §5.20.5.7/.8, §5.20.7.2 segment id signalled for this leaf.  A skipped
   // inter leaf does not code the symbol; the encoder replays the decoder's
@@ -297,6 +307,9 @@ struct FramePlan {
   // comp_group_idx and (when set) compound_type with the wedge/diffwtd
   // symbols.  Off keeps the historical AVERAGE-only byte stream.
   bool enable_masked_compound = false;
+  // §5.4.6 enable_cwp / §5.20.7.6 cwp_idx.  When on, every eligible
+  // NEAR_NEARMV COMPOUND_AVERAGE block codes cwp_idx after the compound type.
+  bool enable_cwp = false;
   // Frame MV precision: 0 = 1/8, 1 = 1/4, 2 = 1/2 pel.
   int mv_precision = 0;
   // FrameDistance[ref] for the MV stack's derived candidates.

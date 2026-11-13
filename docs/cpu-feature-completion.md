@@ -2,7 +2,7 @@
 
 Scope: every AV2 encoder feature that the pinned `dav2d` is **not known to hard-reject**, including the
 parity bugs (decodes but reconstructs differently), the tools `dav2d` already accepts on a still/component
-carrier, the decoder-unproven tools (DIP/IBP), and the composition/schedule/format limits.
+carrier, the still/video-gated DIP carrier, the decoder-unproven IBP tool, and the composition/schedule/format limits.
 
 Rules: CPU-only builds, `dav2d-macos` (`f9dafbc`) `--strict 1` gates, one commit per stage, no push/merge by
 agents, defaults and pins unchanged when a flag is off.
@@ -39,12 +39,12 @@ repro and kept rejected.
 
 | # | Feature | Status |
 |---|---|---|
-| 16 | DIP (needs a passing `dav2d --strict 1` gate first) | QUEUE |
-| 17 | IBP (needs a passing `dav2d --strict 1` gate first) | QUEUE |
-| 18 | Sub-8 leaves + shared chroma | QUEUE |
-| 19 | Weighted CWP (non-equal) | QUEUE |
-| 20 | Implicit mask blending (`enable_imp_msk_bld`) | QUEUE |
-| 21 | DF sub-PU | QUEUE |
+| 16 | DIP (`--still-dip`, `--video-dip`) | DONE `integration/cpu-dip` (still gate + `video_dip_gate.sh`) |
+| 17 | IBP (`--video-ibp`) | DONE `1491868` |
+| 18 | Sub-8 leaves + shared chroma (`--video-min-block 4`) | DONE `1491868`..`851774c` |
+| 19 | Weighted CWP (non-equal) | DONE (`--video-cwp-weighted`; `gate_video_pred_surface.sh`) |
+| 20 | Implicit mask blending (`enable_imp_msk_bld`) | DONE (`--video-imp-mask`; `gate_video_pred_surface.sh`) |
+| 21 | DF sub-PU | DONE (`--video-df-sub-pu`; sub-PU grid exact with `--video-opfl --video-deblock`) |
 | 22 | Adaptive MVD / MVD sign derivation / flexible MV resolution | QUEUE |
 | 23 | `num_same_ref_compound > 0`, refmvbank, short refresh, `mv_traj` | QUEUE |
 | 24 | TIP-as-reference in tile frames, warp/wedge temporal fields | QUEUE |

@@ -22,6 +22,7 @@
 #include "codec/entropy/lossless/lossless_cdf_tables.h"
 #include "codec/intra/cfl/mhccp/mhccp.h"
 #include "codec/intra/cfl/mhccp/mhccp_syntax.h"
+#include "codec/intra/dip/dip_syntax.h"
 #include "codec/intra/mrl/stream/mrl_interaction.h"
 #include "codec/intra/mrl/stream/mrl_syntax.h"
 #include "codec/transform/secondary/tx_secondary.h"
@@ -278,6 +279,8 @@ struct CdfState {
   std::uint16_t is_long_side_dct[2][3];
   // §5.20.5.5 mrl_index / mrl_sec_index (--video-mrl).
   still::mrl_stream::MrlCdfs mrl;
+  // §5.20.7.9 dip_mode_info() (--video-dip).
+  ::av2enc::dip::DipCdfState dip_cdfs;
   // §5.20.8.2 IST symbols (--video-ist).
   std::uint16_t sec_tx_type[2][5][5];
   std::uint16_t most_probable_stx_set[8];
@@ -320,6 +323,8 @@ struct CdfState {
   // §5.20.7.16 masked compound (enable_masked_compound = 1).
   std::uint16_t comp_group_idx[12][3];
   std::uint16_t compound_type[3];
+  // §5.20.7.6 cwp_idx (enable_cwp = 1; NEAR_NEARMV + COMPOUND_AVERAGE).
+  std::uint16_t cwp_idx[4][3];
   std::uint16_t wedge_quad[5];
   std::uint16_t wedge_angle[4][6];
   std::uint16_t wedge_dist1[5];
@@ -398,6 +403,7 @@ void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.intra_tx_type_long, kIntraTxTypeLongCdf);
   copy_array(c.is_long_side_dct, kIsLongSideDctCdf);
   mrl_stream::init_mrl_cdfs(c.mrl);
+  c.dip_cdfs.reset();
   for (int is_inter = 0; is_inter < 2; ++is_inter) {
     for (int sqr = 0; sqr < 5; ++sqr) {
       copy_array(c.sec_tx_type[is_inter][sqr],
@@ -428,6 +434,7 @@ void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.use_optflow, kUseOptflowCdf);
   copy_array(c.comp_group_idx, multiref::gate::kCompGroupIdxCdf);
   copy_array(c.compound_type, multiref::gate::kCompoundTypeCdf);
+  copy_array(c.cwp_idx, multiref::gate::kCwpIdxCdf);
   copy_array(c.wedge_quad, multiref::gate::kWedgeQuadCdf);
   copy_array(c.wedge_angle, multiref::gate::kWedgeAngleCdf);
   copy_array(c.wedge_dist1, multiref::gate::kWedgeDist1Cdf);
@@ -532,6 +539,8 @@ const std::vector<CdfArrayDesc>& cdf_arrays() {
     AV2ENC_ADD_CDF(most_probable_stx_set_adst, 4);
     add(probe.mrl.index, sizeof(probe.mrl.index), 4);
     add(probe.mrl.sec, sizeof(probe.mrl.sec), 2);
+    add(probe.dip_cdfs.use_dip.data(), sizeof(probe.dip_cdfs.use_dip), 2);
+    add(probe.dip_cdfs.dip_mode.data(), sizeof(probe.dip_cdfs.dip_mode), 6);
     AV2ENC_ADD_CDF(single_mode, 3);
     AV2ENC_ADD_CDF(use_bawp, 2);
     AV2ENC_ADD_CDF(use_bawp_chroma, 2);
@@ -704,6 +713,11 @@ class Writer {
               qctx::slice_for_base_q_idx(static_cast<int>(config_.base_q_idx)),
               plan_.reduced_tx_part_set);
     mrl_context_.reset(mi_rows_, mi_cols_, partition::sb_size_mi(geometry_));
+    if (config_.enable_dip) {
+      usedip_.assign(static_cast<std::size_t>(mi_rows_) *
+                         static_cast<std::size_t>(mi_cols_),
+                     0);
+    }
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
     ps::init_tile_partition_cdfs(ext_cdfs_);
     tools_.enable_ext_partitions = config_.enable_ext_partitions;
@@ -1609,7 +1623,7 @@ class Writer {
   // and finally filled from Default_Mode_List_Y.  The encoder must invert that
   // list; writing the static-list position makes dependent blocks decode a
   // different direction.
-  int y_mode_index_for(int joint) const {
+  int y_mode_index_for(int joint, bool sub8_leaf) const {
     if (joint < 5) {
       return joint;
     }
@@ -1620,7 +1634,10 @@ class Writer {
     int count = 0;
     const int w = cur_w4_ * 4;
     const int h = cur_h4_ * 4;
-    if (w >= 8 && h >= 8) {
+    // §5.20.5.5 gates the neighbour-derived list on `MiSize >= BLOCK_8X8`,
+    // not on the pixel dimensions: rectangular sizes such as 32x4/4x32 are
+    // >= BLOCK_8X8 in the size enum and therefore use the dynamic list.
+    if (!sub8_leaf) {
       for (int dir = 0; dir < 2; ++dir) {
         int mode = get_joint_mode(cur_r_, cur_c_, cur_w4_, cur_h4_, dir);
         if (mode >= 5) {
@@ -1668,8 +1685,11 @@ class Writer {
         y_mode_code(node.y_mode, node.y_angle_delta);
     // Directional modes use the dynamic set; non-directional indices are the
     // reordered mode itself and are unaffected by neighbours.
+    const bool sub8_leaf =
+        static_cast<BlockSize>(node.bsize) < BlockSize::k8x8;
     const int mode_index =
-        code.joint < 5 ? code.mode_index : y_mode_index_for(code.joint);
+        code.joint < 5 ? code.mode_index
+                       : y_mode_index_for(code.joint, sub8_leaf);
     const int ctx = joint_context();
     if (mode_index < kIntraModesCount) {
       if (!sym(&cdfs_.y_mode_set[0], 4, 0)) return false;
@@ -3164,6 +3184,32 @@ class Writer {
       error = "masked compound requires enable_masked_compound = 1";
       return false;
     }
+    // §5.20.7.6 CwpIdx.  enable_cwp=1 codes cwp_idx for a compound
+    // COMPOUND_AVERAGE SIMPLE-motion block that neither uses optflow nor
+    // refine-MV, and only when YMode == NEAR_NEARMV (or joint MVD coding).
+    // The writer only produces the NEAR_NEARMV form.  With enable_cwp=0 the
+    // decoder infers CWP_EQUAL and no bit is coded.
+    const bool cwp_eligible = near_near && !node.use_optflow &&
+                              !node.use_refinemv && !node.compound_masked;
+    if (!plan_.enable_cwp) {
+      if (node.cwp_index != 0) {
+        error = "cwp_idx cannot be signalled when enable_cwp = 0";
+        return false;
+      }
+    } else if (cwp_eligible) {
+      if (node.cwp_index >= multiref::kMaxCwpNum) {
+        error = "cwp_idx outside 0..MAX_CWP_NUM-1";
+        return false;
+      }
+      for (int idx = 0; idx < multiref::kMaxCwpNum - 1; ++idx) {
+        const int bit = idx < static_cast<int>(node.cwp_index) ? 1 : 0;
+        if (!sym(&cdfs_.cwp_idx[idx][0], 2, bit)) {
+          error = error_;
+          return false;
+        }
+        if (bit == 0) break;
+      }
+    }
     return true;
   }
 
@@ -3799,6 +3845,77 @@ class Writer {
     return true;
   }
 
+  // §5.20.7.9 dip_mode_info(): after the intra Y/UV mode and palette syntax,
+  // before the residual.  Only luma DC blocks that satisfy the size predicate
+  // can signal it.  The context is the number of §5.20.4.1 neighbours whose
+  // UseDip flag is 1 (DIP_CTXS = 3), so the writer keeps the same per-MI grid
+  // the decoder's decode_block() maintains.
+  bool write_dip(const BlockSyntax& node, int w, int h, std::string& error) {
+    const bool palette = node.palette_index != BlockSyntax::kNoPalette;
+    const bool present = config_.enable_dip && node.y_mode == kDcPred &&
+                         !palette && w > 4 && h > 4 && w * h >= 128;
+    if (!present) {
+      if (node.use_dip != 0) {
+        error = "use_dip is not signalable for this block";
+        return false;
+      }
+      return true;
+    }
+    if (usedip_.empty()) {
+      error = "DIP use-dip grid is not initialised";
+      return false;
+    }
+    const int r = node.mi_row;
+    const int c = node.mi_col;
+    const mrl_stream::MrlBlockSyntax mrl_block{r, c, w >> 2, h >> 2};
+    mrl_stream::NeighborPos npos[2];
+    const int nnum = mrl_stream::collect_npos(
+        mrl_block, mi_rows_, mi_cols_, partition::sb_size_mi(geometry_), npos);
+    int use_dip_ctx = 0;
+    for (int i = 0; i < nnum; ++i) {
+      if (usedip_[static_cast<std::size_t>(npos[i].row) *
+                      static_cast<std::size_t>(mi_cols_) +
+                  static_cast<std::size_t>(npos[i].col)] != 0) {
+        ++use_dip_ctx;
+      }
+    }
+    ::av2enc::dip::SyntaxContext context;
+    context.enable_dip = true;
+    context.y_mode = node.y_mode;
+    context.palette_size_y = 0;
+    context.tree_is_chroma_part = false;
+    context.w = w;
+    context.h = h;
+    context.use_dip_ctx = use_dip_ctx;
+    ::av2enc::dip::DipModeInfo info;
+    info.use_dip = node.use_dip != 0;
+    info.dip_transpose = node.dip_transpose != 0;
+    info.dip_mode = node.dip_mode;
+    std::string dip_error;
+    if (!::av2enc::dip::write_dip_mode_info(context, info, enc_, cdfs_.dip_cdfs,
+                                            &dip_error)) {
+      error = "dip_mode_info: " + dip_error;
+      return false;
+    }
+    return true;
+  }
+
+  void update_usedip(const BlockSyntax& node, int w4, int h4) {
+    if (!config_.enable_dip || usedip_.empty()) return;
+    const std::uint8_t value = node.use_dip != 0 ? 1 : 0;
+    for (int yy = 0; yy < h4; ++yy) {
+      const int rr = node.mi_row + yy;
+      if (rr >= mi_rows_) break;
+      for (int xx = 0; xx < w4; ++xx) {
+        const int cc = node.mi_col + xx;
+        if (cc >= mi_cols_) break;
+        usedip_[static_cast<std::size_t>(rr) *
+                    static_cast<std::size_t>(mi_cols_) +
+                static_cast<std::size_t>(cc)] = value;
+      }
+    }
+  }
+
   bool write_intra_leaf(const BlockSyntax& node, int w, int h, int cw, int ch,
                         std::string& error) {
     const int tree_type = node.tree_type;
@@ -3881,6 +3998,7 @@ class Writer {
       return false;
     }
     if (!chroma_part && !write_palette(node, w, h, error)) return false;
+    if (!chroma_part && !write_dip(node, w, h, error)) return false;
     if (!chroma_part) {
       if (!code_luma_residual(node, w, h, levels_end, false, level_base,
                               error)) {
@@ -4325,6 +4443,7 @@ class Writer {
     }
 
     if (!chroma_part) update_mode_grids(node);
+    if (!chroma_part) update_usedip(node, w4, h4);
 
     if (!chroma_part) {
       if (!node.is_inter) {
@@ -4437,6 +4556,8 @@ class Writer {
   CdfState cdfs_{};
   // §5.20.5.5 UsesMrls grid for the current tile (decoder clears it per tile).
   mrl_stream::MrlContext mrl_context_;
+  // §8.3.1 UseDip flag per MI cell (--video-dip only).
+  std::vector<std::uint8_t> usedip_;
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
   ps::TilePartitionCdfs ext_cdfs_{};
   pe::Tools tools_{};

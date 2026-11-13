@@ -256,6 +256,12 @@ struct Options {
   // §7.13.3.27/.28 masked compound, opt-in behind --video-compound.
   bool video_compound_wedge = false;
   bool video_compound_diffwtd = false;
+  // §5.4.6 / §5.20.7.6 / §7.13.3.14 compound prediction-surface overlays on the
+  // NEAR_NEARMV carrier: non-equal CWP weights, the derived implicit mask blend
+  // and the §7.13.3.15 / §7.17 sub-PU deblock syntax.  All off by default.
+  bool video_cwp_weighted = false;
+  bool video_imp_mask = false;
+  bool video_df_sub_pu = false;
   // Rejected carrier: §7.13.3.29-.30 inter-intra is a single-reference motion
   // mode (§5.20.7.14 motion_mode_allowed() requires !isCompound).
   bool video_compound_interintra = false;
@@ -309,6 +315,8 @@ struct Options {
   int video_lossless_intra_period = 0;  // 1/N blocks intra (0 = all inter)
   bool video_idtx = false;        // §5.4.8 enable_idtx_intra (2-D IDTX)
   bool video_mrl = false;         // §5.4.5 enable_mrls (directional luma)
+  bool video_ibp = false;         // §5.4.5 enable_ibp (intra bi-prediction)
+  bool video_dip = false;         // §5.4.5 enable_dip (luma DC alternative)
   bool video_ist = false;         // §5.4.8 enable_intra_ist (luma intra)
   bool video_idtx_1d = false;     // documented rejected 1-D intra carrier
   bool video_sdp = false;         // §5.4.3 enable_sdp intra luma/chroma trees
@@ -851,6 +859,17 @@ void print_usage(std::ostream& out) {
                                       "on a two-reference B frame (shifted MVs",
                                       "from the per-list merge stacks); needs",
                                       "--video-compound and --b-frames"});
+  item("--video-cwp-weighted", {"Search non-equal §5.20.7.6 CWP weights",
+                                 "(enable_cwp + cwp_idx) for NEAR_NEARMV",
+                                 "compound blocks; needs",
+                                 "--video-compound-near-near and --b-frames"});
+  item("--video-imp-mask", {"Enable §5.4.6 enable_imp_msk_bld and apply the",
+                             "derived §7.13.3.14 get_mask() blend on eligible",
+                             "NEAR_NEARMV compound blocks; needs",
+                             "--video-compound-near-near and --b-frames"});
+  item("--video-df-sub-pu", {"Code the §5.18.2 allow_df_sub_pu bit and use",
+                              "§7.13.3.15 sub-PU edges in §7.17 deblocking;",
+                              "CPU --video only, off by default"});
   item("--video-opfl", {"CPU §7.13.3.8-.12 optical-flow refinement on a",
                         "NEAR_NEARMV compound block (codes use_optflow);",
                         "needs --video-compound-near-near and --b-frames"});
@@ -911,6 +930,16 @@ void print_usage(std::ostream& out) {
                        "searches mrl_index 1..3 (and the secondary line) with",
                        "the §7.13.2.1 extra reference rows/columns.  Needs",
                        "--video-intra-full for a non-zero mrl_index; CPU only"});
+  item("--video-ibp", {"Opt-in §5.4.5 enable_ibp: the intra keyframe and every",
+                       "intra leaf use §7.13.2 intra bi-prediction (modified",
+                       "edge filtering, the two-angle blend and the",
+                       "§7.13.2.12 DC post-filter).  There is no per-block",
+                       "IBP bit; the decoder derives the decision from mode",
+                       "and angle_delta.  CPU only; default off"});
+  item("--video-dip", {"Opt-in §5.4.5 enable_dip: luma DC_PRED intra",
+                       "keyframe blocks code §5.20.7.9 use_dip /",
+                       "dip_transpose / dip_mode and use §7.13.2.3 data-driven",
+                       "prediction.  CPU only, 8-bit 4:2:0"});
   item("--video-ist", {"Opt-in §5.4.8 enable_intra_ist: luma intra residuals",
                        "code sec_tx_type and the §7.15.3 secondary transform",
                        "(inter IST stays unsignalled).  CPU only"});
@@ -997,8 +1026,8 @@ void print_usage(std::ostream& out) {
                                   "(§5.4.3 enable_ext_partitions); leaves",
                                   "stay >= 8x8 and own their chroma"});
   item("--video-min-block <N>",
-       {"Video: minimum partition block size, 8..64 (default 16); sub-8 leaves",
-        "need shared-chroma prediction, which this path does not implement"});
+       {"Video: minimum partition block size, 4..64 (default 16); 4 enables",
+        "§5.20.3.1 sub-8 keyframe leaves with shared-chroma ownership"});
   item("--video-max-depth <D>", {"Video: partition depth cap [0, 8] (default 4)"});
   item("--video-me-range <R>", {"Video: integer ME search radius (default 16)"});
   item("--video-trace", {"Video: trace block decisions to stderr"});
@@ -2145,6 +2174,21 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-cwp-weighted") {
+      options.video_cwp_weighted = true;
+      continue;
+    }
+
+    if (argument == "--video-imp-mask") {
+      options.video_imp_mask = true;
+      continue;
+    }
+
+    if (argument == "--video-df-sub-pu") {
+      options.video_df_sub_pu = true;
+      continue;
+    }
+
     if (argument == "--video-compound-interintra") {
       options.video_compound_interintra = true;
       continue;
@@ -2436,6 +2480,16 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-ibp") {
+      options.video_ibp = true;
+      continue;
+    }
+
+    if (argument == "--video-dip") {
+      options.video_dip = true;
+      continue;
+    }
+
     if (argument == "--video-ist") {
       options.video_ist = true;
       continue;
@@ -2714,9 +2768,8 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
       int value = 0;
-      if (!parse_int(argv[++i], value) || value < 8 || value > 64) {
-        error = "--video-min-block must be an integer in [8, 64]: the video "
-                "path has no shared-chroma prediction for sub-8 luma leaves";
+      if (!parse_int(argv[++i], value) || value < 4 || value > 64) {
+        error = "--video-min-block must be an integer in [4, 64]";
         return ParseStatus::kError;
       }
       options.video_min_block = value;
@@ -3134,6 +3187,72 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
                 "backend implements the GLOBAL_GLOBALMV subset";        return ParseStatus::kError;
       }
     }
+    if (options.video_cwp_weighted || options.video_imp_mask) {
+      // Both derive from the NEAR_NEARMV compound carrier: §5.20.7.6 codes
+      // cwp_idx only for a NEAR_NEARMV AVERAGE block, and the §7.13.3.14
+      // implicit mask excludes GLOBAL_GLOBALMV.
+      if (!options.video_compound || !options.video_compound_near_near) {
+        error = "--video-cwp-weighted/--video-imp-mask need "
+                "--video-compound --video-compound-near-near (the "
+                "NEAR_NEARMV AVERAGE carrier)";
+        return ParseStatus::kError;
+      }
+      if (options.video_opfl || options.video_refine_mv) {
+        // §5.20.7.6 skips cwp_idx for use_optflow/use_refinemv, and the
+        // refinement predictors hard-code CWP_EQUAL.  Keep the overlays apart.
+        error = "--video-cwp-weighted/--video-imp-mask do not compose with "
+                "--video-opfl/--video-refine-mv";
+        return ParseStatus::kError;
+      }
+      if (options.video_gpu) {
+        error = "--video-cwp-weighted/--video-imp-mask are CPU-only";
+        return ParseStatus::kError;
+      }
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = "--video-cwp-weighted/--video-imp-mask are gated on 8-bit "
+                "4:2:0";
+        return ParseStatus::kError;
+      }
+    }
+    if (options.video_df_sub_pu) {
+      // §5.18.2 allow_df_sub_pu exists only for an inter frame; every other
+      // frame type leaves it inferred 0.  The TIP output branch codes its own
+      // allow_df_sub_pu/apply_deblocking_filter_tip pair, so keep the carrier
+      // on the ordinary P/B tile path.
+      if (options.video_gpu) {
+        error = "--video-df-sub-pu is CPU-only";
+        return ParseStatus::kError;
+      }
+      if (options.video_tip || options.video_bru) {
+        error = "--video-df-sub-pu does not compose with --video-tip/"
+                "--video-bru: those TIP output frames code their own "
+                "allow_df_sub_pu pair";
+        return ParseStatus::kError;
+      }
+      if (options.video_long_term || options.video_olk ||
+          options.video_leading != 0 || options.video_sef ||
+          options.video_switch || options.video_ras ||
+          options.video_tlayers != 0) {
+        error = "--video-df-sub-pu is gated on the plain key+P/B chain: the "
+                "frame-type wrappers and --video-tlayers need their own "
+                "allow_df_sub_pu handling";
+        return ParseStatus::kError;
+      }
+      if (options.video_lossless) {
+        // deblocking_filter_params() returns before allow_df_sub_pu when
+        // CodedLossless is set.
+        error = "--video-df-sub-pu does not compose with --video-lossless";
+        return ParseStatus::kError;
+      }
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = "--video-df-sub-pu is gated on 8-bit 4:2:0";
+        return ParseStatus::kError;
+      }
+      if (options.tiles != "1x1") {
+        error = "--video-df-sub-pu is gated on a single tile";
+        return ParseStatus::kError;
+      }
+    }
     if ((options.video_opfl || options.video_refine_mv) &&
         !options.video_compound_near_near && !options.video_gpu) {
       // Both tools predict from a non-GLOBALMV compound block
@@ -3409,6 +3528,102 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "inverse needs the per-coefficient q2 dequantizer";
       return ParseStatus::kError;
     }
+    if (options.video_ibp) {
+      // §5.4.5 enable_ibp changes the prediction of every intra leaf, not
+      // only the keyframe: the decoder derives applyIbp/useIBP from the
+      // sequence flag, YMode and angle_delta.  The CPU writer uses the
+      // verified src/codec/intra/ibp component on both the luma search and
+      // the DC/chroma paths; combinations that predict through a different
+      // path are rejected by name instead of emitting a diverging stream.
+      if (options.video_gpu) {
+        error = "--video-ibp is CPU-only: the CUDA video backend does not "
+                "apply the §7.13.2 IBP predictor";
+        return ParseStatus::kError;
+      }
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = "--video-ibp is wired for 8-bit 4:2:0";
+        return ParseStatus::kError;
+      }
+      if (options.tiles != "1x1") {
+        error = "--video-ibp does not compose with --tiles: the tiled "
+                "sequence-header writer is a separate copy";
+        return ParseStatus::kError;
+      }
+      if (options.svc_given) {
+        error = "--video-ibp does not compose with --svc-layers";
+        return ParseStatus::kError;
+      }
+      if (options.video_cfl || options.video_mhccp) {
+        error = "--video-ibp requires the plain DC chroma path: "
+                "--video-cfl/--video-mhccp do not apply the §7.13.2.12 IBP "
+                "DC post-filter";
+        return ParseStatus::kError;
+      }
+      if (options.video_mrl) {
+        error = "--video-ibp does not compose with --video-mrl: the IBP "
+                "component implements MrlIndex = 0 only";
+        return ParseStatus::kError;
+      }
+      if (options.video_palette || options.video_ibc || options.video_morph) {
+        const char* tool = options.video_palette
+                               ? "--video-palette"
+                               : (options.video_ibc ? "--video-ibc"
+                                                   : "--video-morph");
+        error = std::string(tool) +
+                " is not wired with --video-ibp: the screen-content keyframe "
+                "mode-info path does not run the §7.13.2 IBP prediction";
+        return ParseStatus::kError;
+      }
+      if (options.video_compound_interintra) {
+        error = "--video-ibp does not compose with "
+                "--video-compound-interintra: the §7.13.3.29 inter-intra "
+                "predictor does not run the IBP edge-filter/blend path";
+        return ParseStatus::kError;
+      }
+      if (options.b_frames != 0 || options.video_tlayers != 0 ||
+          options.video_tip || options.video_long_term || options.video_olk ||
+          options.video_leading != 0 || options.video_sef ||
+          options.video_switch || options.video_ras) {
+        error = "--video-ibp is gated on the plain key+P chain: it cannot be "
+                "combined with --b-frames, --video-tlayers, --video-tip or "
+                "the frame-type wrapper modes";
+        return ParseStatus::kError;
+      }
+    }
+    if (options.video_dip) {
+      if (options.video_gpu) {
+        error = "--video-dip is CPU-only: the CUDA video backend does not "
+                "signal enable_dip or the per-block dip_mode_info()";
+        return ParseStatus::kError;
+      }
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = "--video-dip is wired for 8-bit 4:2:0";
+        return ParseStatus::kError;
+      }
+      if (options.tiles != "1x1") {
+        error = "--video-dip does not compose with --tiles: the tiled "
+                "sequence-header writer is a separate copy";
+        return ParseStatus::kError;
+      }
+      if (options.b_frames != 0 || options.video_tlayers != 0 ||
+          options.video_long_term || options.video_olk ||
+          options.video_leading != 0 || options.video_sef ||
+          options.video_switch || options.video_ras || options.video_tip ||
+          options.svc_given) {
+        error = "--video-dip does not compose with the B/temporal-layer/"
+                "random-access/TIP/SVC frame schedules";
+        return ParseStatus::kError;
+      }
+      if (options.video_lossless) {
+        error = "--video-dip does not compose with --video-lossless: the "
+                "lossless writer has its own keyframe mode-info path";
+        return ParseStatus::kError;
+      }
+      if (options.video_sdp) {
+        error = "--video-dip does not compose with --video-sdp: the SDP "
+                "luma/chroma tree mode-info path is not gated with DIP";        return ParseStatus::kError;
+      }
+    }
     if (options.video_sdp) {
       if (options.video_gpu) {
         error = "--video-sdp is CPU-only: the CUDA video backend does not "
@@ -3508,6 +3723,8 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
           {options.video_bawp, "--video-bawp"},
           {options.video_tip, "--video-tip"},
           {options.video_mrl, "--video-mrl"},
+          {options.video_ibp, "--video-ibp"},
+          {options.video_dip, "--video-dip"},
           {options.video_ist, "--video-ist"},
           {options.video_tip_no_hole_fill, "--video-tip-no-hole-fill"},
           {options.video_compound, "--video-compound"},
@@ -3832,6 +4049,9 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       if (options.video_ibc) {
         return reject_gpu("--video-ibc (IBC keyframe mode info)");
       }
+      if (options.video_ibp) {
+        return reject_gpu("--video-ibp (§7.13.2 intra bi-prediction)");
+      }
       if (options.video_compound_interintra) {
         return reject_gpu("--video-compound-interintra (§5.20.7.14 motion "
                           "mode)");
@@ -3871,6 +4091,8 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         flag_given(options, "--video-intra-full") ||
         flag_given(options, "--video-cfl") ||
         flag_given(options, "--video-mrl") ||
+        flag_given(options, "--video-ibp") ||
+        flag_given(options, "--video-dip") ||
         flag_given(options, "--video-ist") ||
         flag_given(options, "--video-mhccp") ||
         flag_given(options, "--video-qm") ||
@@ -4760,12 +4982,16 @@ int run_video_format_encode(const Options& options) {
       {options.video_tcq, "--video-tcq"},
       {options.video_cctx, "--video-cctx"},
       {options.video_intra_full, "--video-intra-full"},
+      {options.video_ibp, "--video-ibp"},
       {options.video_gme, "--video-gme"},
       {options.video_warp, "--video-warp"},
       {options.video_compound, "--video-compound"},
       {options.video_compound_near_near, "--video-compound-near-near"},
       {options.video_opfl, "--video-opfl"},
       {options.video_refine_mv, "--video-refine-mv"},
+      {options.video_cwp_weighted, "--video-cwp-weighted"},
+      {options.video_imp_mask, "--video-imp-mask"},
+      {options.video_df_sub_pu, "--video-df-sub-pu"},
       {options.video_drl_reorder || options.video_drl_reorder_always,
        "--video-drl-reorder"},
       {options.b_frames != 0, "--b-frames"},
@@ -5214,6 +5440,9 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
                                      options.video_opfl || options.video_refine_mv;
   video_options.opfl_refine_type = options.video_opfl ? 1 : 0;
   video_options.enable_refinemv = options.video_refine_mv;
+  video_options.enable_cwp_weighted = options.video_cwp_weighted;
+  video_options.enable_imp_msk_bld = options.video_imp_mask;
+  video_options.enable_df_sub_pu = options.video_df_sub_pu;
   video_options.b_frames = static_cast<int>(options.b_frames);
   video_options.enable_inter_residual = options.video_inter_residual;
   video_options.enable_sdp = options.video_sdp;
@@ -5247,6 +5476,8 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.film_grain = options.video_grain;
   video_options.enable_idtx_intra = options.video_idtx;
   video_options.enable_mrl = options.video_mrl;
+  video_options.enable_ibp = options.video_ibp;
+  video_options.enable_dip = options.video_dip;
   video_options.enable_ist = options.video_ist;
   video_options.me_subpel_eighth = options.video_subpel_eighth;
   video_options.mv_precision = options.video_mv_precision;

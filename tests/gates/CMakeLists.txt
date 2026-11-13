@@ -109,6 +109,19 @@ set_tests_properties(gate_video_partitions PROPERTIES
   TIMEOUT 900
   LABELS "gate;gate-video")
 
+# §5.20.3.1 sub-8 luma leaves: --video-min-block 4 on the rect, ext, SDP,
+# full-intra, deblock, sb128 and tiled writers.  Each case checks the coded
+# picture count, that a 4xN/Nx4 leaf was actually selected, a dav2d --strict 1
+# decode and a sample-exact --video-recon.  --video-min-block 8 controls prove
+# the historical floor still selects no sub-8 leaf.
+add_test(NAME gate_video_sub8
+  COMMAND bash "${PROJECT_SOURCE_DIR}/src/pipeline/video/gate_video_sub8.sh"
+          --bin $<TARGET_FILE:av2enc>)
+set_tests_properties(gate_video_sub8 PROPERTIES
+  SKIP_RETURN_CODE 77
+  TIMEOUT 900
+  LABELS "gate;gate-video")
+
 # Opt-in CUDA M2 path: CPU --video vs --video-gpu on one deterministic 360p
 # source, byte-identical temporal units/recon and a dav2d --strict 1 decode,
 # plus named rejections for every unported combination.  Registered only when

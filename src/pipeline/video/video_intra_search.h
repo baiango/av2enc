@@ -37,6 +37,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "codec/intra/ibp/ibp.h"
 #include "codec/intra/modes/intra_modes.h"
 
 namespace av2enc::video::intra_search {
@@ -201,13 +202,20 @@ inline std::int64_t sse_against_source(const std::uint8_t* source, int stride,
 // Runs the 61-candidate luma search.  `pred` receives the winning w*h
 // predictor (stride w).  Returns false only when the component rejects the
 // geometry or a mode (it should not for a legal leaf).
+//
+// With `enable_ibp` every candidate is evaluated with the §7.13.2 IBP
+// predictor (`ibp::predict`).  The decoder derives applyIbp/useIBP from the
+// sequence flag and the signalled (mode, angle_delta), so the search cannot
+// mix IBP and non-IBP candidates: the whole candidate set must agree with the
+// reconstruction path.  The 61 candidates already contain every pair that
+// triggers the two-angle blend for a non-4x4 luma block.
 inline bool search_luma(const std::uint8_t* recon, int recon_stride, int x0,
                         int y0, int w, int h,
                         const Availability& avail, bool above_smooth,
                         bool left_smooth, bool enable_edge_filter,
                         const std::uint8_t* source, int source_stride,
                         int source_max_x, int source_max_y, std::uint8_t* pred,
-                        LumaChoice& choice) noexcept {
+                        LumaChoice& choice, bool enable_ibp = false) noexcept {
   if (recon == nullptr || source == nullptr || pred == nullptr || w <= 0 ||
       h <= 0 || w > intra::kMaxBlockDim || h > intra::kMaxBlockDim) {
     return false;
@@ -234,19 +242,36 @@ inline bool search_luma(const std::uint8_t* recon, int recon_stride, int x0,
   int count = intra::build_mode_candidates(candidates, true);
   if (count <= 0) return false;
 
-  choice.sse = 0;
-  bool have_best = false;
-  for (int i = 0; i < count; ++i) {
+  auto predict_with = [&](intra::Mode mode, int angle_delta,
+                          std::uint8_t* dst) noexcept -> bool {
+    if (enable_ibp) {
+      ibp::PredictParams params;
+      params.mode = mode;
+      params.angle_delta = angle_delta;
+      params.enable_ibp = true;
+      params.enable_edge_filter = enable_edge_filter;
+      params.above_neighbor_is_smooth = above_smooth;
+      params.left_neighbor_is_smooth = left_smooth;
+      return ibp::predict(edges, params, dst, static_cast<std::size_t>(w)) ==
+             intra::IntraStatus::kOk;
+    }
     intra::PredictParams params;
-    params.mode = candidates[static_cast<std::size_t>(i)].mode;
-    params.angle_delta =
-        candidates[static_cast<std::size_t>(i)].angle_delta;
+    params.mode = mode;
+    params.angle_delta = angle_delta;
     params.enable_edge_filter = enable_edge_filter;
     params.above_neighbor_is_smooth = above_smooth;
     params.left_neighbor_is_smooth = left_smooth;
-    if (intra::predict_intra(edges, params, pred,
-                             static_cast<std::size_t>(w)) !=
-        intra::IntraStatus::kOk) {
+    return intra::predict_intra(edges, params, dst,
+                                static_cast<std::size_t>(w)) ==
+           intra::IntraStatus::kOk;
+  };
+
+  choice.sse = 0;
+  bool have_best = false;
+  for (int i = 0; i < count; ++i) {
+    const intra::ModeCandidate& candidate =
+        candidates[static_cast<std::size_t>(i)];
+    if (!predict_with(candidate.mode, candidate.angle_delta, pred)) {
       return false;
     }
     const std::int64_t sse = detail::sse_against_source(
@@ -254,22 +279,15 @@ inline bool search_luma(const std::uint8_t* recon, int recon_stride, int x0,
     if (!have_best || sse < choice.sse) {
       have_best = true;
       choice.sse = sse;
-      choice.mode = static_cast<int>(params.mode);
-      choice.angle_delta = params.angle_delta;
+      choice.mode = static_cast<int>(candidate.mode);
+      choice.angle_delta = candidate.angle_delta;
     }
   }
   if (!have_best) return false;
   // `pred` currently holds the last evaluated candidate; write the winner so
   // the caller transforms the prediction that was actually selected.
-  intra::PredictParams winner;
-  winner.mode = static_cast<intra::Mode>(choice.mode);
-  winner.angle_delta = choice.angle_delta;
-  winner.enable_edge_filter = enable_edge_filter;
-  winner.above_neighbor_is_smooth = above_smooth;
-  winner.left_neighbor_is_smooth = left_smooth;
-  if (intra::predict_intra(edges, winner, pred,
-                           static_cast<std::size_t>(w)) !=
-      intra::IntraStatus::kOk) {
+  if (!predict_with(static_cast<intra::Mode>(choice.mode), choice.angle_delta,
+                    pred)) {
     return false;
   }
   return true;
