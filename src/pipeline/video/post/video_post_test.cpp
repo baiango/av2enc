@@ -243,7 +243,8 @@ void test_tiles_and_headers() {
   CHECK_EQ(plan.layout.rows_log2, 1);
 
   CHECK(!plan_video_tiles(64, 64, 2, 1).ok);   // too small for 2 tiles
-  CHECK(!plan_video_tiles(130, 64, 1, 1).ok);  // not divisible by 8
+  CHECK(!plan_video_tiles(130, 65, 1, 1).ok);  // odd 4:2:0 dimensions
+  CHECK(plan_video_tiles(130, 64, 1, 1).ok);   // MI-aligned coded picture
   CHECK(!plan_video_tiles(128, 64, 3, 1).ok);  // non-power-of-two grid
 
   const auto layout_result = plan_video_tiles(128, 64, 2, 1);
@@ -634,7 +635,8 @@ void test_bit_depth_checklist() {
   CHECK(!bad_q.ok_for_header());
 
   std::string reason;
-  CHECK(!video_geometry_supported(130, 64, 64, &reason));
+  CHECK(video_geometry_supported(130, 64, 64, &reason));
+  CHECK(!video_geometry_supported(130, 65, 64, &reason));
   CHECK(!video_geometry_supported(64, 64, 32, &reason));
   CHECK(video_geometry_supported(1920, 1080, 64, &reason));
 }

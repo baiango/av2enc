@@ -201,6 +201,9 @@ Picture make_picture(int w, int h, ChromaFormat format, int frame,
 }
 
 bool picture_equal(const Picture& a, const Picture& b) {
+  if (a.format == ChromaFormat::k400 || b.format == ChromaFormat::k400) {
+    return a.format == b.format && a.y == b.y;
+  }
   return a.y == b.y && a.u == b.u && a.v == b.v;
 }
 
@@ -358,6 +361,7 @@ struct RoundTripCase {
   bool force_intra_fsc = false;
   int bit_depth = 8;
   int temporal_layers = 0;
+  bool b_schedule = false;
 };
 
 void test_roundtrip(const RoundTripCase& c, bool golden) {
@@ -376,6 +380,7 @@ void test_roundtrip(const RoundTripCase& c, bool golden) {
   opt.force_intra_fsc = c.force_intra_fsc;
   opt.bit_depth = c.bit_depth;
   opt.temporal_layers = c.temporal_layers;
+  opt.b_schedule = c.b_schedule;
   EncodeResult enc;
   std::string error;
   CHECK_MSG(encode_video(frames, opt, &enc, &error), error);
@@ -398,18 +403,16 @@ void test_roundtrip(const RoundTripCase& c, bool golden) {
   CHECK_MSG(decode_video(enc.units, &dec, &error), error);
   CHECK(dec.frames.size() == static_cast<std::size_t>(count));
   if (dec.frames.size() == static_cast<std::size_t>(count)) {
-    // The independent reader validates the flat chain and the format cores.
-    // It does not yet reconstruct the reordered hierarchical-P schedule (the
-    // chroma residual path diverges there); those streams are gated with
-    // pinned dav2d by `lossless_inter_gate` and `video_lossless_gate.sh`.
-    if (c.temporal_layers == 0) {
-      for (int f = 0; f < count; ++f) {
-        CHECK_MSG(picture_equal(dec.frames[static_cast<std::size_t>(f)],
-                                frames[static_cast<std::size_t>(f)]),
-                  "reader unit " + std::to_string(f) + " " +
-                      std::to_string(c.w) + "x" + std::to_string(c.h) +
-                      " bd" + std::to_string(c.bit_depth));
-      }
+    // The reader walks the reference slots and outputs pictures by order hint,
+    // so the flat chain, hierarchical P and hierarchical B schedules all
+    // reconstruct in display order.
+    for (int f = 0; f < count; ++f) {
+      CHECK_MSG(picture_equal(dec.frames[static_cast<std::size_t>(f)],
+                              frames[static_cast<std::size_t>(f)]),
+                "reader unit " + std::to_string(f) + " " +
+                    std::to_string(c.w) + "x" + std::to_string(c.h) +
+                    " bd" + std::to_string(c.bit_depth) + " tl" +
+                    std::to_string(c.temporal_layers));
     }
   }
   const std::string md5 = units_md5(enc.units);
@@ -465,6 +468,21 @@ int main() {
       {320, 184, ChromaFormat::k420, 16, 4, true, false, true, false, 10},
       {64, 64, ChromaFormat::k444, 16, 4, true, false, true, false, 10},
       {64, 64, ChromaFormat::k422, 16, 4, true, false, true, false, 10},
+      // 4:0:0 (Monochrome) 8-bit and 10-bit.
+      {64, 64, ChromaFormat::k400, 16, 4, true},
+      {640, 360, ChromaFormat::k400, 16, 4, true, false, true, false, 8},
+      {64, 64, ChromaFormat::k400, 16, 4, true, false, true, false, 10},
+      // Hierarchical-B: two references and COMPOUND_AVERAGE interior frames.
+      {64, 64, ChromaFormat::k420, 16, 4, true, false, true, false, 8, 8,
+       true},
+      {64, 64, ChromaFormat::k420, 16, 4, true, false, true, false, 8, 4,
+       true},
+      {640, 360, ChromaFormat::k420, 16, 4, true, false, true, false, 8, 8,
+       true},
+      {64, 64, ChromaFormat::k420, 16, 4, true, false, true, false, 10, 8,
+       true},
+      {64, 64, ChromaFormat::k400, 16, 4, true, false, true, false, 8, 8,
+       true},
             {64, 64, ChromaFormat::k420, 16, 4, true, false, true, false, 10, 4},
   };
   for (const auto& c : cases) test_roundtrip(c, true);

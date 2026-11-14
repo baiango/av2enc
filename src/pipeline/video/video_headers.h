@@ -361,6 +361,12 @@ struct VideoFrameHeader {
   // TIP-as-output frame (OBU_REGULAR_TIP).  The TIP block is written in place
   // of the tile-coded tail (§7.10.1); there is no tile payload.
   bool tip_frame = false;
+  // §5.18.2 TipFrameMode == TIP_FRAME_AS_REF for a tile-coded inter frame
+  // (--video-tip-block-ref).  The header codes the mode bit, the optional
+  // allow_tip_hole_fill bit and tip_global_wtd_index; the tile then may code
+  // RefFrame[0] == TIP_FRAME leaves.  Off keeps the historical
+  // TIP_FRAME_DISABLED bit for every non-TIP frame.
+  bool tip_as_ref = false;
   std::uint8_t tip_global_wtd_index = 2;  // Tip_Weighting_Factor index
   std::int16_t tip_global_mv_row = 0;     // TipGlobalMv, 1/8 luma samples
   std::int16_t tip_global_mv_col = 0;

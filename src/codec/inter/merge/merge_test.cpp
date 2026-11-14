@@ -1235,6 +1235,51 @@ void test_invalid_stack_params(Test& t) {
 
 }  // namespace
 
+void test_tip_ref_stack(Test& t) {
+  Grid grid;
+  grid.init(16, 16);
+  // Every neighbour is a plain single-reference inter block on ref 0.
+  for (int row = 0; row < 8; ++row) {
+    for (int col = 0; col < 8; ++col) {
+      grid.set(row, col, 0, merge::kRefNone, mc::Mv{16, 16}, mc::Mv{16, 16});
+    }
+  }
+  merge::StackParams p = make_params(grid, 4, 4, 2, 2, merge::kTipFrame, merge::kRefNone);
+  merge::MvStack stack;
+  // A TIP block's ordinary single-reference neighbours contribute no
+  // candidate; §7.12.2 step 21 always adds the zero GlobalMvs[0].
+  t.eq_int(static_cast<int>(merge::build_stack_checked(p, &stack)),
+           static_cast<int>(merge::Status::kOk), "TIP-ref stack builds");
+  t.eq_int(stack.count, 1, "TIP-ref stack holds only the GlobalMvs candidate");
+  if (stack.count == 1) {
+    t.eq_mv(stack.cand[0].mv[0], (mc::Mv{0, 0}), "TIP-ref GlobalMvs[0] is zero");
+    t.eq_mv(stack.cand[0].mv[1], (mc::Mv{0, 0}), "TIP single list 1 matches");
+  }
+
+  // A compound neighbour with the frame's TIP pair needs §7.12.2.18, which
+  // this builder does not synthesize: report it instead of a short stack.
+  Grid compound_grid;
+  compound_grid.init(16, 16);
+  compound_grid.set(3, 3, 0, 1, mc::Mv{24, 8}, mc::Mv{-24, -8});
+  merge::StackParams cp = make_params(compound_grid, 4, 4, 2, 2, merge::kTipFrame, merge::kRefNone);
+  cp.closest_past = 0;
+  cp.closest_future = 1;
+  t.eq_int(static_cast<int>(merge::build_stack_checked(cp, &stack)),
+           static_cast<int>(merge::Status::kUnsupportedFeature),
+           "TIP-ref §7.12.2.18 candidate reported, not dropped");
+
+  // A TIP neighbour of an ordinary block needs §7.12.2.17.
+  Grid tip_neighbour;
+  tip_neighbour.init(16, 16);
+  tip_neighbour.set(3, 3, merge::kTipFrame, merge::kRefNone, mc::Mv{8, 8}, mc::Mv{8, 8});
+  merge::StackParams np = make_params(tip_neighbour, 4, 4, 2, 2, 0, merge::kRefNone);
+  np.closest_past = 0;
+  np.closest_future = 1;
+  t.eq_int(static_cast<int>(merge::build_stack_checked(np, &stack)),
+           static_cast<int>(merge::Status::kUnsupportedFeature),
+           "§7.12.2.17 TIP neighbour reported, not dropped");
+}
+
 int main() {
   Test t;
   std::printf("AV2 M2 merge / skip / DRL tests\n");
@@ -1252,6 +1297,7 @@ int main() {
   test_compound_stack(t);
   test_derived_projection(t);
   test_invalid_stack_params(t);
+  test_tip_ref_stack(t);
 
   std::printf("%d checks, %d failures\n", t.checks, t.failures);
   return t.failures == 0 ? 0 : 1;

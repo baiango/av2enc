@@ -1,11 +1,14 @@
 # TIP decoder gate and `--video-tip` product stream
 
 Status: **decoder support proven; CPU reference wired; the TIP display frame
-is a gated reference for a later tile-coded P; GPU path and the
-`RefFrame[0] == TIP_FRAME` block symbols remain open.**
+is a gated reference for a later tile-coded P; the `RefFrame[0] == TIP_FRAME`
+block symbols are implemented and gated for the TIP-referencing tail P; the
+GPU path remains open.**
 
 Normative reference: AV2 Bitstream & Decoding Process Specification v1.0.0
 (commit `38f28e7`), §5.4.6, §5.18.2, §6.20, §7.9, §7.10, §7.13.3.2, §7.22.
+TIP block syntax: §5.20.7.6 (`tip_pred_mode`), §5.20.7.8 (`tip_drl_mode`),
+§5.20.7.10 (`tip_mode`), §7.12.2.15/.17/.18.
 
 Pinned decoder: `dav2d f9dafbc` (macOS arm64 `tools/bin/dav2d-macos`, Linux
 `/workspace/av2enc/tools/bin/dav2d`), always with `--strict 1 --threads 1`.
@@ -156,14 +159,126 @@ rejected by name because no TIP display picture would precede the tail P.
 
 This is **not** the `RefFrame[0] == TIP_FRAME` block form: the tail P references
 the TIP picture through a slot, so its `tip_frame_mode` is
-`TIP_FRAME_DISABLED`.  §5.20.7.10 `tip_mode`/`tip_pred_mode` symbols (a block
-that predicts from the current frame's own §7.10 field) remain unimplemented.
+`TIP_FRAME_DISABLED`.  §2c adds the block form as an opt-in variant of this
+same tail P.
 
 While wiring this, the §5.18.2 TIP slice writer was fixed: `TipInterpFilter`
 (the `tip_sharp`/`tip_regular` bits) is present only for
 `TIP_FRAME_AS_OUTPUT`.  A `TIP_FRAME_AS_REF`/disabled TIP block previously
 wrote one extra bit, which desynchronised the decoder for every frame with
 `num_total_refs >= 2` in an `enable_tip` sequence.
+
+## 2c. `RefFrame[0] == TIP_FRAME` block reference (`--video-tip-block-ref`)
+
+`--video-tip-block-ref` (CPU, requires `--video-tip --video-ref-mvs
+--video-force-single`) turns the tail P of §2b into `TipFrameMode =
+TIP_FRAME_AS_REF` and codes one leaf as a real TIP block:
+
+| unit | frame | mode | refs |
+|---|---|---|---|
+| 0 | key | — | — |
+| 1 | future anchor P | tile P | key |
+| 2..N-3 | `TIP_FRAME_AS_OUTPUT` | TIP | past, future |
+| N-2 (tail P) | tile P | `TIP_FRAME_AS_REF` | [TIP display, anchor] |
+| — | one leaf of the tail P | `RefFrame[0] = TIP_FRAME` | — |
+
+The last picture is still the tile-coded P of §2b, so the frame's explicit
+reference map supplies the §7.8 nearest past (`ref_frame_idx[0]`, the final
+TIP display frame) and future (`ref_frame_idx[1]`, the anchor).  The decoder
+picks those two labels for `tip_ref.ref_frame[0/1]` (§7.8 /
+`find_tip_ref_frames()`), so the block form needs no new slot; `TIP_FRAME` is
+a virtual reference over that pair.
+
+### Frame header
+
+For a non-TIP OBU in an `enable_tip` sequence with `use_ref_frame_mvs = 1` and
+two references, §5.18.2 codes `TipFrameMode`.  With the flag the tail P writes
+`TIP_FRAME_AS_REF` (one bit, then `frame_opfl_refine_type()` is absent because
+the sequence sets `enable_opfl_refine = REFINE_NONE`), the
+`allow_tip_hole_fill` bit (when `enable_tip_hole_fill = 1`) and the 3-bit
+`tip_global_wtd_index`.  `TipGlobalMv` and `TipInterpFilter` are
+`TIP_FRAME_AS_OUTPUT`-only and are not coded.
+
+### Block syntax
+
+For every eligible leaf of the frame (not skip_mode, `Min(bw4,bh4) >= 2`,
+`MiSize == ChromaMiSize`) `read_ref_frames()` codes `tip_mode` with
+`TileTipModeCdf[get_tip_ctx()]` (context = 0..2 neighbours whose
+`RefFrame[0]` is `TIP_FRAME`) **before** comp_mode/single_ref/single_mode.  On
+1 the block signals:
+
+```text
+tip_mode                       S()        // TileTipModeCdf[ctx]
+tip_pred_mode                  S()        // TileTipPredModeCdf: 0 NEARMV, 1 NEWMV
+read_drl_idx()                 S()        // TileTipDrlModeCdf[Min(idx, 2)], both modes
+read_mv() (NEWMV only)         shell MVD  // 1/8 pel, against stack[RefMvIdx]
+```
+
+No comp_mode, single_ref, single_mode, use_bawp/motion-mode,
+switchable-interp-filter or use_refinemv symbol is coded for a TIP block.
+`--video-tip-block-ref` uses NEWMV with DRL index 0; the stack's zero
+`GlobalMvs[0]` is the predictor, so the coded MVD is the block MV itself.
+The leaf is `skip_flag = 1`, so its reconstruction is exactly the TIP
+prediction.
+
+### Field and prediction
+
+The encoder estimates the frame's §7.9 field with `enable_tip = 1` and then
+runs `setup_tip_motion_field()` (`§7.10.2` temporal scale to the
+`ClosestPast`/`ClosestFuture` distance, §7.10.3 hole fill, §7.10.4 block
+average), the same mutation the decoder performs in
+`av2_setup_tip_motion_field()` before any tile is decoded.  The mutated field
+feeds **both** the TIP leaf and the ordinary §7.12.2.7/.8 temporal candidates
+(the decoder uses the same `tpl_mvs`), and the block-ref streams do select
+temporal candidates (70/6 at 640x360, 304/15 at 720p).
+
+Per prediction unit (16x16 for `TIP_FRAME_AS_REF` without
+`enable_tip_refinemv`) the encoder derives
+`tip_mv[list] = Project(field_mv, tip_ref.ref_offset[list],
+ref_frames_offset) + block_mv`, exactly the decoder's `get_tip_mv()`, and
+predicts each unit with `tip_predict_block()` (EIGHTTAP_SHARP, the frame's
+`Tip_Weighting_Factor`, 4:2:0 chroma at half size).  The §7.22 store mirrors
+`copy_frame_mvs_tip_frame_mode()`: per 8x8, `RefFrame[0]/[1]` = the TIP pair
+and the derived per-list MVs.
+
+### Carrier restriction
+
+The producer converts the **last coded inter leaf**, and every block decoded
+after it must be intra (an intra block never builds a §7.12.2 stack).  The
+TIP-ref stack for that leaf must be reproducible: this builder synthesizes
+the spatial search and the zero `GlobalMvs[0]` fallback, but not
+§7.12.2.15/.17/.18.  `merge::build_stack_checked()` therefore returns
+`kUnsupportedFeature` when such a candidate would be needed, and the producer
+refuses to code the leaf.  Consequences:
+
+* one TIP leaf per frame, with a skip/NEWMV/DRL-0 form;
+* §7.12.2.17 (a TIP neighbour of a later inter block) and §7.12.2.18 (a
+  compound neighbour of a TIP block) are **not** produced by this carrier;
+* a frame whose last inter leaf does not exist or is < 8x8 is rejected by
+  name instead of silently keeping the disabled form.
+
+### Gate result
+
+`dav2d f9dafbc --strict 1 --threads 1`, picture count exact, decoded Y4M MD5 =
+encoder recon MD5.  Fixtures are the gitignored `testdata/` clips; the 64x64
+cases are cropped at gate time (`src/pipeline/video/crop_y4m_fixture.py`).
+
+| stream | pictures | IVF MD5 | recon MD5 | trace |
+|---|---:|---|---|---|
+| 360p tail P | 4 | `df692781d2e4202de510b1ae3c69cf02` | `709d911c0b1e9472b7e64852712b316b` | 1 TIP block, field MV (0,0) |
+| 360p, `--video-tip-no-hole-fill` | 4 | `dff518906fdb5f5c6473e248d7e06d91` | `709d911c0b1e9472b7e64852712b316b` | 1 TIP block |
+| 720p tail P | 8 | `c8412d3a47ca24ebe356c5f5f4cd3496` | `34f9640c73a21a221556ede7fa467e40` | 1 TIP block (64x16 leaf) |
+| 64x64 flat crop | 4 | `e6bcc4669e84d48c27afcf05817b95b7` | `f8b644646844e96276bd0218c18becfd` | 1 TIP block |
+| 64x64 moving crop (offset 256,128) | 4 | `f1976a0e53717d8759a730c8969c8b94` | `78abd22dfd88b8a019e50a685edaec74` | 1 TIP block, `tipmv0=(-1,-1)/(-3,-3)` |
+
+The trace assertion is `m2 tip_block ... ref=TIP` plus
+`tip_block_ref ... blocks=1`; the moving 64x64 case additionally requires a
+nonzero field-derived TIP MV, so the gate cannot pass with a disabled form or
+with an inert zero field.  `src/pipeline/video/video_tip_gate.sh` runs all of
+these plus a byte-difference assertion against the §2b
+`TIP_FRAME_DISABLED` stream; `video_gate --tip --ref-mvs --tip-block-ref`
+covers the synthetic 64x64 clip (`--no-intra-fallback` keeps the single leaf
+inter).
 
 ## 3. Remaining gaps
 
@@ -174,10 +289,14 @@ wrote one extra bit, which desynchronised the decoder for every frame with
    (`tip_setup_motion_field`, `tip_build_plan`, `tip_predict_plan`) and the
    CUDA §7.9 motion-field estimation.  CPU↔GPU parity is not claimed.
 2. **TIP_FRAME_AS_REF tile blocks.** §5.20.7.10 `tip_mode`, `tip_drl_mode`
-   and `tip_pred_mode` symbols are not written, so `RefFrame[0] == TIP_FRAME`
-   cannot appear in a tile.  The §9.3 CDFs are now installed in the M2 CDF
-   state (`kTipModeCdf` / `kTipDrlModeCdf` / `kTipPredModeCdf` in
-   `video_cdf_tables.h`) and the §7.12.2.15/.17/.18 candidate helpers exist in
+   and `tip_pred_mode` are now written for one trailing leaf of the
+   TIP-referencing tail P (`--video-tip-block-ref`, §2c), decoder-exact at
+   64x64 and 640x360/720p.  Still open: multiple TIP leaves / a TIP leaf that
+   is not last, which needs the §7.12.2.15/.17/.18 TIP-derived merge-stack
+   candidates (`merge::build_stack_checked()` returns
+   `kUnsupportedFeature` today rather than dropping them), and a TIP leaf with
+   OPFL/refine-MV.  The §9.3 CDFs live in `video_cdf_tables.h` /
+   `video_syntax.cpp`; the candidate helpers exist in
    `src/codec/inter/tip/tip_candidates.cpp`.
 3. **§7.22 feed into the merge stack.** Wired for the ordinary P and B chains
    and for GME/warp and wedge-compound carriers (`--video-ref-mvs`,
@@ -185,9 +304,9 @@ wrote one extra bit, which desynchronised the decoder for every frame with
    estimation runs at frame start and the §7.12.2.7/.8 scan is spliced at
    steps 5/12 in both the decision and syntax stacks.  The TIP display frame is
    also a gated reference for the tail P of `--video-tip --video-ref-mvs`
-   (§2b).  What remains open is the `RefFrame[0] == TIP_FRAME` block form,
-   which needs the §5.20.7.10 `tip_mode`/`tip_drl_mode`/`tip_pred_mode`
-   symbols.
+   (§2b), and the tail P's own field is the §7.10-scaled field when the block
+   form is on (§2c).  The `RefFrame[0] == TIP_FRAME`-specific derived candidate
+   arms (§7.12.2.15/.17/.18) remain open for non-trailing TIP leaves.
 4. **OPFL/refine-MV inside TIP** (`enable_tip_refinemv`,
    `enable_opfl_refine`) stays `REFINE_NONE`; the component supports it but
    the product path does not build those statistics.

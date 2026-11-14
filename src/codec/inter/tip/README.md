@@ -320,6 +320,14 @@ per frame.
 
 ### 5. Mode decision / tile writer — `src/encoder/m2/video_syntax.cpp`
 
+**Status (2026-11-14):** implemented for one trailing leaf of the
+`--video-tip --video-ref-mvs` tail P (`--video-tip-block-ref`).  The
+`tip_mode` bit is coded in `write_inter_mode_info()` before
+comp_mode/single_ref, `tip_pred_mode` and the `tip_drl_mode` DRL index follow,
+and the leaf is predicted per 16x16 with `get_tip_cand()` +
+`tip_predict_block()`.  `docs/tip-decoder-gate.md` §2c has the gate MD5s.
+The `find_mv_stack()` TIP arms below remain unimplemented for other leaves.
+
 For blocks with `RefFrame[0] == TIP_FRAME` (§7.10.6 `TIP_FRAME_AS_OUTPUT`
 needs no tile, but a `TIP_FRAME_AS_REF` frame does):
 
@@ -453,9 +461,14 @@ floating point, fixed iteration order.
   uses `BLOCK_16X16`.  `TipConfig`/`predict_tip_plan` do not consume OPFL
   deltas; §7.13.3.8–.12 exists in `inter/temporal/opfl.*` but is not part of
   this build path.
-* `TIP_FRAME_AS_REF` **blocks** are only covered by the syntax and candidate
-  helpers; the gate emits AS_OUTPUT frames.  A tile-coded TIP block needs the
-  M2 tile writer (integration item 5).
+* `TIP_FRAME_AS_REF` **blocks** are wired in the M2 tile writer for one
+  trailing leaf of the `--video-tip --video-ref-mvs` tail P
+  (`--video-tip-block-ref`, `docs/tip-decoder-gate.md` §2c): `tip_mode`,
+  `tip_pred_mode`, `tip_drl_mode`, the field-derived per-16x16 MVs and the
+  §7.22 store are decoder-exact at 64x64 and 640x360/720p.  Multiple TIP
+  leaves (or a TIP leaf followed by an inter leaf) need the
+  §7.12.2.15/.17/.18 derived candidates, which `merge::build_stack_checked()`
+  reports as `kUnsupportedFeature` instead of dropping.
 * 8-bit 4:2:0 only, single tile, one embedded layer.  No scaled references
   (the gate's references are unscaled; `predict_plane_*` passes the luma
   dimensions to §7.13.3.17, but no scaled-ref test exists).

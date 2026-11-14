@@ -376,7 +376,7 @@ std::size_t write_sequence_header_bits(BitWriter& writer,
   // §5.4.2 sequence_tile_config().
   writer.put_bit(false);  // seq_tile_info_present_flag
 
-  writer.put_bit(false);  // film_grain_params_present
+  writer.put_bit(c.film_grain_params_present);  // §5.4.2 film grain models
 
   return writer.bit_size() - start;
 }
@@ -663,7 +663,8 @@ bool read_sequence_header_bits(std::span<const std::uint8_t> payload,
   }
   // §5.4.2 tile config, §5.4.1 film grain.
   if (!expect_flag(reader, false, "seq_tile_info_present_flag", supported) ||
-      !expect_flag(reader, false, "film_grain_params_present", supported)) {
+      !read_flag(reader, out.film_grain_params_present,
+                 "film_grain_params_present")) {
     error = reader.error();
     return false;
   }
@@ -839,6 +840,18 @@ std::size_t write_frame_header_bits(BitWriter& writer,
     }
   }
   writer.put_bits(0U, 2U);  // reduced_tx_set = TX_SET_DCTONLY
+
+  // §5.18.10.1 film_grain_config(). monotonic_output_order_flag = 1 here, so
+  // implicit_output_frame is always 0.
+  if (c.film_grain_params_present) {
+    filters::grain::FilmGrainConfigContext context;
+    context.film_grain_params_present = true;
+    context.immediate_output_frame = h.immediate_output_frame;
+    std::string grain_error;
+    filters::grain::WriteFilmGrainConfig(writer, h.grain, context,
+                                         &grain_error);
+    assert(grain_error.empty());
+  }
 
   return writer.bit_size() - start;
 }
@@ -1669,6 +1682,28 @@ bool read_frame_header(std::span<const std::uint8_t> payload, ObuType obu_type,
   if (!read_bits_u32(reader, 2, reduced_tx_set)) {
     error = reader.error();
     return false;
+  }
+  // §5.18.10.1 film_grain_config(). The reader has no single_picture_header
+  // form (this profile always codes 0) and monotonic_output_order_flag = 1, so
+  // implicit_output_frame stays 0.
+  if (sequence.film_grain_params_present) {
+    filters::grain::FilmGrainConfigContext context;
+    context.film_grain_params_present = true;
+    context.immediate_output_frame = out.immediate_output_frame;
+    std::size_t position = reader.bits_read();
+    std::string grain_error;
+    if (!filters::grain::ReadFilmGrainConfig(payload, &position, context,
+                                             &out.grain, &grain_error)) {
+      error = "film_grain_config: " + grain_error;
+      return false;
+    }
+    while (reader.bits_read() < position) {
+      bool bit = false;
+      if (!reader.read_bit(bit)) {
+        error = reader.error();
+        return false;
+      }
+    }
   }
   if (error.empty()) error = reader.error();
   if (!error.empty()) return false;

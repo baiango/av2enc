@@ -420,16 +420,34 @@ void test_reference_validation_errors() {
     check(error == sef::SefError::kOrderHintMismatch, "dav2d hint mismatch");
   }
   {
+    // §5.18.10.1: an SEF with film_grain_params_present = 1 codes
+    // apply_grain/fgm_id/grain_seed in its own header. Round-trip it.
     sef::SefParams params = video_params();
     params.film_grain_params_present = true;
     sef::SefHeader header;
-    const std::vector<std::uint8_t> obu = sef::make_sef_obu(video_params(), header);
+    header.grain.apply_grain = true;
+    header.grain.fgm_id = 5;
+    header.grain.grain_seed = 0x1234;
+    const std::vector<std::uint8_t> obu = sef::make_sef_obu(params, header);
     sef::SefHeader parsed;
     std::size_t consumed = 0;
-    check(!sef::parse_sef_obu(obu, params, parsed, consumed, &error),
-          "film grain SEF rejected by the reader");
-    check(error == sef::SefError::kUnsupportedFilmGrain,
-          "film grain reader error");
+    check(sef::parse_sef_obu(obu, params, parsed, consumed, &error),
+          "film grain SEF accepted by the reader");
+    check(parsed.grain.apply_grain && parsed.grain.fgm_id == 5 &&
+              parsed.grain.grain_seed == 0x1234,
+          "film grain SEF config round-trips");
+    check(sef::sef_frame_header_bits(params, header) ==
+              sef::sef_frame_header_bits(video_params(), sef::SefHeader{}) + 1 + 3 + 16,
+          "film grain SEF header bits include apply_grain/fgm_id/seed");
+    // A disabled grain config costs exactly the apply_grain bit.
+    sef::SefHeader off;
+    check(sef::sef_frame_header_bits(params, off) ==
+              sef::sef_frame_header_bits(video_params(), off) + 1,
+          "apply_grain = 0 costs one bit");
+    // film_grain_params_present = 0 keeps the historical zero-bit tail.
+    check(sef::sef_frame_header_bits(video_params(), header) ==
+              sef::sef_frame_header_bits(video_params(), sef::SefHeader{}),
+          "default sequence codes no film grain bits");
   }
 }
 

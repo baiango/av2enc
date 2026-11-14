@@ -337,6 +337,8 @@ struct Options {
   // A/B control for the §5.4.6 enable_tip_hole_fill bring-up: keeps the
   // pre-fix sequence header (hole fill off) so a gate can compare both masks.
   bool video_tip_no_hole_fill = false;
+  // §5.20.7.10 block-level TIP reference carrier.
+  bool video_tip_block_ref = false;
   bool video_intra_full = false;  // opt-in 61-candidate luma intra search
   bool video_cfl = false;         // opt-in §7.13.5 CfL chroma decision
   bool video_mhccp = false;       // opt-in §7.13.6-.8 MHCCP (implies CfL)
@@ -369,6 +371,7 @@ struct Options {
   bool video_switch = false;
   bool video_ras = false;
   int video_tlayers = 0;   // 0 = off; N = one closed hierarchical-P GOP
+  bool video_lossless_b = false;  // --video-lossless: use the B schedule
   int video_tlayer_drop = -1;  // -1 = keep every layer
   int video_gops = 1;      // consecutive closed B-frame GOPs (default 1)
   bool video_force_single = false;
@@ -899,6 +902,10 @@ void print_usage(std::ostream& out) {
   item("--video-tip", {"Encode 3..8 frames as key + future anchor P +",
                        "TIP_FRAME_AS_OUTPUT pictures (§7.10, §7.13.3.2);",
                        "hole fill (§7.10.3/.4) on; opt-in, CPU reference"}),
+      item("--video-tip-block-ref",
+           {"§5.20.7.10 TipFrameMode =", "TIP_FRAME_AS_REF: the TIP-referencing tail",
+            "P codes RefFrame[0] == TIP_FRAME blocks", "(needs --video-ref-mvs",
+            "--video-force-single)"}),
   item("--video-tip-no-hole-fill", {"Gate control: signal",
                                     "enable_tip_hole_fill = 0 on the TIP",
                                     "sequence (pre-fix A/B stream)"}),
@@ -1039,9 +1046,14 @@ void print_usage(std::ostream& out) {
   item("--video-lossless", {"Opt-in Q=0 lossless P-frame sequence (implies",
                             "--video): its own sequence/frame headers,",
                             "CodedLossless quantization, DPCM, reversible WHT",
-                            "and FSC coefficient syntax (CPU, 8-bit 4:2:0)"});
+                            "and FSC coefficient syntax (CPU, 8/10-bit",
+                            "4:0:0/4:2:0/4:2:2/4:4:4)"});
+  item("--video-lossless-b", {"--video-lossless with the hierarchical-B",
+                              "schedule: two references and two-sided",
+                              "COMPOUND_AVERAGE prediction on interior",
+                              "frames (needs --video-tlayers 4 or 8)"});
   item("--video-lossless-intra-period <N>", {"Force one intra block per N in",
-                                             "every P frame (0 = all inter)"});
+                                             "every P/B frame (0 = all inter)"});
   item("--video-idtx", {"Opt-in §5.4.8 enable_idtx_intra with the 2-D",
                         "identity TX type (9) in the --video-tx-search",
                         "candidate set"});
@@ -2609,6 +2621,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-tip-block-ref") {
+      options.video_tip_block_ref = true;
+      continue;
+    }
+
     if (argument == "--video-cdef") {
       options.video_cdef = true;
       continue;
@@ -2736,6 +2753,13 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     if (argument == "--video-lossless") {
       options.video = true;
       options.video_lossless = true;
+      continue;
+    }
+
+    if (argument == "--video-lossless-b") {
+      options.video = true;
+      options.video_lossless = true;
+      options.video_lossless_b = true;
       continue;
     }
 
@@ -4180,8 +4204,10 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
                 "signalable in AV2 v1.0.0)";
         return ParseStatus::kError;
       }
-      if (options.chroma == "400") {
-        error = "--video-lossless does not code 4:0:0 yet";
+      if (options.video_lossless_b &&
+          options.video_tlayers != 4 && options.video_tlayers != 8) {
+        error = "--video-lossless-b codes one closed B GOP: pass "
+                "--video-tlayers 4 or 8 (GOP size in pictures)";
         return ParseStatus::kError;
       }
       if (flag_given(options, "--video-min-block")) {
@@ -4483,6 +4509,17 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (options.video_tip_no_hole_fill && !options.video_tip) {
       error = "--video-tip-no-hole-fill is the A/B control for --video-tip";
+      return ParseStatus::kError;
+    }
+
+    if (options.video_tip_block_ref && !options.video_tip) {
+      error =
+          "--video-tip-block-ref is the §5.20.7.10 RefFrame[0] == "
+          "TIP_FRAME carrier for --video-tip --video-ref-mvs";
+      return ParseStatus::kError;
+    }
+    if (options.video_tip_block_ref && !options.video_ref_mvs) {
+      error = "--video-tip-block-ref requires --video-ref-mvs";
       return ParseStatus::kError;
     }
 
@@ -5673,9 +5710,19 @@ int run_video_format_encode(const Options& options) {
   }
   format.width = info.width;
   format.height = info.height;
-  if (format.width % 8U != 0U || format.height % 8U != 0U) {
-    std::cerr << "av2enc: error: --video requires dimensions divisible by 8, "
-              << "got " << format.width << "x" << format.height << "\n";
+  // The format core codes the §5.18.4.4 MI-aligned picture (MiCols x MiRows
+  // rounded up to 8 pixels) and crops the output back to the real size.  Only
+  // the chroma layout constrains the input: 4:2:0 needs even width/height,
+  // 4:2:2 needs an even width, and 4:4:4/4:0:0 accept any size.
+  if (av2enc::fmt::has_chroma(format.chroma) &&
+      ((av2enc::fmt::subsampling_x(format.chroma) != 0 &&
+        (format.width & 1U) != 0) ||
+       (av2enc::fmt::subsampling_y(format.chroma) != 0 &&
+        (format.height & 1U) != 0))) {
+    std::cerr << "av2enc: error: "
+              << av2enc::fmt::chroma_format_name(format.chroma)
+              << " cannot represent " << format.width << "x" << format.height
+              << " (chroma subsampling requires even coded dimensions)\n";
     return 2;
   }
   if (!av2enc::fmt::is_signalable(format)) {
@@ -5801,6 +5848,14 @@ int run_video_format_encode(const Options& options) {
   video_options.film_grain = options.video_grain;
 
   if (options.video_gpu &&
+      (format.width % 8U != 0U || format.height % 8U != 0U)) {
+    std::cerr << "av2enc: error: --video-gpu is CPU-only for dimensions not "
+                 "divisible by 8 (the CUDA kernels assume an MI-aligned "
+                 "picture); rerun without --video-gpu, got "
+              << format.width << "x" << format.height << "\n";
+    return 2;
+  }
+  if (options.video_gpu &&
       (video_options.enable_deblock || video_options.loop_filters.any())) {
     std::cerr << "av2enc: error: the format video loop-filter stage is CPU-only; "
                  "use --video (the 8-bit 4:2:0 --video-gpu path has its own "
@@ -5910,6 +5965,7 @@ int run_video_lossless_encode(const Options& options,
   av2enc::lossless::inter::Options lossless;
   lossless.bit_depth = 8;
   lossless.temporal_layers = options.video_tlayers;
+  lossless.b_schedule = options.video_lossless_b;
   lossless.adaptive_cdf = options.adaptive_cdf;
   lossless.enable_fsc = true;
   lossless.enable_dpcm = true;
@@ -6027,8 +6083,10 @@ int run_video_lossless_any(const Options& options) {
   format.width = info.width;
   format.height = info.height;
   if (format.width % 8U != 0U || format.height % 8U != 0U) {
-    std::cerr << "av2enc: error: --video requires dimensions divisible by 8, "
-              << "got " << format.width << "x" << format.height << "\n";
+    std::cerr << "av2enc: error: --video-lossless requires dimensions "
+                 "divisible by 8 (the lossless tile writer codes whole "
+                 "superblocks), got "
+              << format.width << "x" << format.height << "\n";
     return 2;
   }
   if (!av2enc::fmt::is_signalable(format)) {
@@ -6051,8 +6109,8 @@ int run_video_lossless_format_encode(
   const int sub_x = av2enc::fmt::subsampling_x(format.chroma);
   const int sub_y = av2enc::fmt::subsampling_y(format.chroma);
   const bool has_chroma = av2enc::fmt::has_chroma(format.chroma);
-  const std::uint32_t cw = format.width >> sub_x;
-  const std::uint32_t ch = format.height >> sub_y;
+  const std::uint32_t cw = has_chroma ? (format.width >> sub_x) : 0;
+  const std::uint32_t ch = has_chroma ? (format.height >> sub_y) : 0;
 
   av2enc::lossless::inter::ChromaFormat chroma =
       av2enc::lossless::inter::ChromaFormat::k420;
@@ -6061,11 +6119,11 @@ int run_video_lossless_format_encode(
   } else if (format.chroma == av2enc::fmt::ChromaFormat::k444) {
     chroma = av2enc::lossless::inter::ChromaFormat::k444;
   } else if (format.chroma == av2enc::fmt::ChromaFormat::k400) {
-    std::cerr << "av2enc: error: --video-lossless does not code 4:0:0 yet\n";
-    return 2;
+    chroma = av2enc::lossless::inter::ChromaFormat::k400;
   }
-  if (!has_chroma) {
-    std::cerr << "av2enc: error: --video-lossless does not code 4:0:0 yet\n";
+  if (!has_chroma && format.chroma != av2enc::fmt::ChromaFormat::k400) {
+    std::cerr << "av2enc: error: --video-lossless: inconsistent monochrome "
+                 "format\n";
     return 2;
   }
 
@@ -6087,15 +6145,17 @@ int run_video_lossless_format_encode(
     }
     out.u.assign(static_cast<std::size_t>(cw) * ch, 0);
     out.v.assign(static_cast<std::size_t>(cw) * ch, 0);
-    for (std::uint32_t r = 0; r < ch; ++r) {
-      std::memcpy(out.u.data() + static_cast<std::size_t>(r) * cw,
-                  picture.planes[1].samples.data() +
-                      static_cast<std::size_t>(r) * picture.planes[1].stride,
-                  static_cast<std::size_t>(cw) * sizeof(std::uint16_t));
-      std::memcpy(out.v.data() + static_cast<std::size_t>(r) * cw,
-                  picture.planes[2].samples.data() +
-                      static_cast<std::size_t>(r) * picture.planes[2].stride,
-                  static_cast<std::size_t>(cw) * sizeof(std::uint16_t));
+    if (has_chroma) {
+      for (std::uint32_t r = 0; r < ch; ++r) {
+        std::memcpy(out.u.data() + static_cast<std::size_t>(r) * cw,
+                    picture.planes[1].samples.data() +
+                        static_cast<std::size_t>(r) * picture.planes[1].stride,
+                    static_cast<std::size_t>(cw) * sizeof(std::uint16_t));
+        std::memcpy(out.v.data() + static_cast<std::size_t>(r) * cw,
+                    picture.planes[2].samples.data() +
+                        static_cast<std::size_t>(r) * picture.planes[2].stride,
+                    static_cast<std::size_t>(cw) * sizeof(std::uint16_t));
+      }
     }
     lossless_pictures.push_back(std::move(out));
   }
@@ -6103,6 +6163,7 @@ int run_video_lossless_format_encode(
   av2enc::lossless::inter::Options lossless;
   lossless.bit_depth = format.depth == av2enc::fmt::BitDepth::k10 ? 10 : 8;
   lossless.temporal_layers = options.video_tlayers;
+  lossless.b_schedule = options.video_lossless_b;
   lossless.adaptive_cdf = options.adaptive_cdf;
   lossless.enable_fsc = true;
   lossless.enable_dpcm = true;
@@ -6347,6 +6408,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.same_ref_compound = options.video_same_ref_compound;
   video_options.enable_tip = options.video_tip;
   video_options.tip_hole_fill = !options.video_tip_no_hole_fill;
+  video_options.tip_block_ref = options.video_tip_block_ref;
   video_options.enable_intra_full = options.video_intra_full;
   video_options.enable_cfl = options.video_cfl;
   video_options.enable_mhccp = options.video_mhccp;
@@ -7640,9 +7702,20 @@ int main(int argc, char** argv) {
   // Geometry constraints of the selected mode are usage errors: report them
   // before the output file is opened.
   if (options.video) {
-    if (y4m.width % 8U != 0U || y4m.height % 8U != 0U) {
-      std::cerr << "av2enc: error: --video requires dimensions divisible by 8, "
-                << "got " << y4m.width << "x" << y4m.height << "\n";
+    // The video path codes the §5.18.4.4 MI-aligned picture and crops the
+    // output/reconstruction back to the input size.  This reader supplies
+    // 8-bit 4:2:0, so only the chroma layout is a hard dimension constraint.
+    if ((y4m.width & 1U) != 0 || (y4m.height & 1U) != 0) {
+      std::cerr << "av2enc: error: 4:2:0 video requires even dimensions, got "
+                << y4m.width << "x" << y4m.height << "\n";
+      return 2;
+    }
+    if (options.video_gpu &&
+        (y4m.width % 8U != 0U || y4m.height % 8U != 0U)) {
+      std::cerr << "av2enc: error: --video-gpu is CPU-only for dimensions not "
+                   "divisible by 8 (the CUDA kernels assume an MI-aligned "
+                   "picture); rerun without --video-gpu, got "
+                << y4m.width << "x" << y4m.height << "\n";
       return 2;
     }
     if (options.metadata_frame_hash) {

@@ -123,8 +123,6 @@ const char* sef_error_name(SefError error) {
       return "explicit sef_order_hint does not match the reference OrderHint";
     case SefError::kHintOutOfRange:
       return "derived OrderHint is out of range";
-    case SefError::kUnsupportedFilmGrain:
-      return "film grain parameters are not supported by this writer";
     case SefError::kUnsupportedMfh:
       return "multi-frame-header SEF (cur_mfh_id != 0) is not supported";
     case SefError::kTruncated:
@@ -175,6 +173,10 @@ std::size_t sef_frame_header_bits(const SefParams& params,
   if (!header.derive_sef_order_hint) {
     bits += params.order_hint_bits;
   }
+  filters::grain::FilmGrainConfigContext context;
+  context.film_grain_params_present = params.film_grain_params_present;
+  context.immediate_output_frame = true;
+  bits += filters::grain::FilmGrainConfigBits(header.grain, context);
   return bits;
 }
 
@@ -185,7 +187,6 @@ std::size_t write_sef_frame_header(BitWriter& writer, const SefParams& params,
          params.num_ref_frames <= kNumRefFramesMax);
   assert(params.order_hint_bits >= 1U && params.order_hint_bits <= 16U);
   assert(header.frame_to_show_map_idx < params.num_ref_frames);
-  assert(!params.film_grain_params_present);
 
   put_uvlc(writer, header.cur_mfh_id);  // cur_mfh_id
   put_uvlc(writer, header.seq_header_id);  // seq_header_id_in_frame_header
@@ -198,14 +199,21 @@ std::size_t write_sef_frame_header(BitWriter& writer, const SefParams& params,
     writer.put_bits(header.sef_order_hint, params.order_hint_bits);
   }
   // §5.18.2 returns here: refresh_frame_flags = 0 and
-  // immediate_output_frame = 1 are inferred, and film_grain_config() codes
-  // nothing when film_grain_params_present == 0.
+  // immediate_output_frame = 1 are inferred, and film_grain_config() follows
+  // (§5.18.10.1). It codes zero bits when film_grain_params_present == 0 or
+  // apply_grain == 0, so a default stream is unchanged.
+  filters::grain::FilmGrainConfigContext context;
+  context.film_grain_params_present = params.film_grain_params_present;
+  context.immediate_output_frame = true;
+  std::string grain_error;
+  filters::grain::WriteFilmGrainConfig(writer, header.grain, context,
+                                       &grain_error);
+  assert(grain_error.empty());
   return writer.bit_size() - start;
 }
 
 std::vector<std::uint8_t> make_sef_obu(const SefParams& params,
                                        const SefHeader& header) {
-  assert(!params.film_grain_params_present);
   BitWriter writer;
   write_sef_frame_header(writer, params, header);
   writer.put_bit(true);  // §5.2.3 trailing_one_bit
@@ -240,9 +248,6 @@ bool parse_sef_frame_header(std::span<const std::uint8_t> payload,
   if (params.order_hint_bits < 1U || params.order_hint_bits > 16U) {
     return fail(error, SefError::kBadOrderHintBits);
   }
-  if (params.film_grain_params_present) {
-    return fail(error, SefError::kUnsupportedFilmGrain);
-  }
   if (payload.empty()) return fail(error, SefError::kTruncated);
 
   BitReader reader(payload);
@@ -270,6 +275,27 @@ bool parse_sef_frame_header(std::span<const std::uint8_t> payload,
       return fail(error, SefError::kTruncated);
     }
     header.sef_order_hint = value;
+  }
+
+  // §5.18.10.1 film_grain_config() (immediate_output_frame = 1 for the SEF
+  // path). The reader shares the payload bit position with the grain parser so
+  // the trailing-bits check below still sees the exact end of the syntax.
+  header.grain = filters::grain::FilmGrainConfig{};
+  if (params.film_grain_params_present) {
+    filters::grain::FilmGrainConfigContext context;
+    context.film_grain_params_present = true;
+    context.immediate_output_frame = true;
+    std::size_t grain_position = reader.bit_position();
+    std::string grain_error;
+    if (!filters::grain::ReadFilmGrainConfig(
+            payload, &grain_position, context, &header.grain, &grain_error)) {
+      return fail(error, SefError::kTruncated);
+    }
+    // Advance the local reader past the config bits.
+    while (reader.bit_position() < grain_position) {
+      bool bit = false;
+      if (!reader.read_bit(bit)) return fail(error, SefError::kTruncated);
+    }
   }
 
   bits_consumed = reader.bit_position();

@@ -49,6 +49,9 @@ struct ParsedFrameHeader {
   bool disable_cdf_update = true;
   std::uint8_t num_total_refs = 0;
   std::array<std::uint8_t, 8> ref_frame_idx{};
+  // §5.18.10.1 film_grain_config(), present when the sequence sets
+  // film_grain_params_present.
+  filters::grain::FilmGrainConfig grain;
   // Number of bytes occupied by is_first_tile_group + frame_header +
   // byte_alignment.  The tile payload starts at this offset in the OBU payload.
   std::size_t header_bytes = 0;

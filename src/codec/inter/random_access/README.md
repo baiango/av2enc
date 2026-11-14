@@ -43,6 +43,7 @@ Normative reference: AV2 Bitstream & Decoding Process Specification v1.0.0
 | Unit tests | 142 checks, pass |
 | `dav2d --strict 1 --threads 1` gate, synthetic 128x128 | pass, 0 recon diffs |
 | `dav2d --strict 1 --threads 1` gate, real 720p | pass, 0 recon diffs |
+| §5.4.2 `film_grain_params_present` + §5.18.10.1 `film_grain_config()` | complete (default 0 keeps the historical bits; `--video-grain` gates SWITCH/RAS) |
 | M2 runtime wiring | not wired (sites in `VIDEO_INTEGRATION.md`) |
 
 ## Files

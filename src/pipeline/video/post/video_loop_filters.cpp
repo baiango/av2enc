@@ -33,10 +33,6 @@ bool validate_frame(const VideoLoopFilterFrame& frame, bool need_source,
       frame.mi_rows <= 0) {
     return fail(error, "video loop filters: invalid frame geometry");
   }
-  if ((frame.width & 7) != 0 || (frame.height & 7) != 0) {
-    return fail(error,
-                "video loop filters: dimensions must be divisible by 8");
-  }
   if ((frame.mi_cols & 1) != 0 || (frame.mi_rows & 1) != 0) {
     return fail(error, "video loop filters: the 4:2:0 MI grid must be even");
   }
@@ -615,6 +611,14 @@ bool prepare_lr(const VideoLoopFilterFrame& frame,
   for (int plane = 0; plane < 3; ++plane) {
     VideoLrPlane& dst = plan->plane[plane];
     const int type = decision.params.frame_type[plane];
+    // §5.18.7.11 codes one LoopRestorationSize per chroma plane pair even when
+    // a plane's FrameRestorationType is RESTORE_NONE; keep the derived unit
+    // size on every plane so params.unit_size[1] == params.unit_size[2] and the
+    // tile walk matches the plan vectors.
+    dst.unit_size = decision.unit_size[plane];
+    dst.shift = plane == 0 ? plan->luma_shift : plan->chroma_shift;
+    dst.unit_rows = decision.unit_rows[plane];
+    dst.unit_cols = decision.unit_cols[plane];
     if (type == rest::kRestoreNone) continue;
     if (type != rest::kRestoreWienerNs) {
       return fail(error,
@@ -623,10 +627,6 @@ bool prepare_lr(const VideoLoopFilterFrame& frame,
     }
     dst.enabled = true;
     dst.restore_type = static_cast<std::uint8_t>(rest::kRestoreWienerNs);
-    dst.unit_size = decision.unit_size[plane];
-    dst.shift = plane == 0 ? plan->luma_shift : plan->chroma_shift;
-    dst.unit_rows = decision.unit_rows[plane];
-    dst.unit_cols = decision.unit_cols[plane];
     dst.unit_type = decision.unit_type[plane];
     dst.unit_coeffs = decision.unit_coeffs[plane];
     if (plane > 0) {
@@ -824,8 +824,8 @@ void make_gdf_planes(const VideoLoopFilterFrame& frame,
   context.coded_lossless = false;
   context.single_picture_header_flag = false;
   context.sb_size = 64;
-  context.width = frame.width;
-  context.height = frame.height;
+  context.width = frame.mi_cols * 4;
+  context.height = frame.mi_rows * 4;
   context.mi_cols = frame.mi_cols;
   context.mi_rows = frame.mi_rows;
   context.disable_loopfilters_across_tiles = false;
@@ -857,6 +857,8 @@ bool prepare_gdf(const VideoLoopFilterFrame& frame, VideoGdfPlan* plan,
   source.stride = w;
   gdf::GdfPlane original;
   original.data = original16.data();
+  // §7.20.1 runs over the coded (MI-aligned) picture, so the last unit's
+  // stripe region is bounded by MiCols*4/MiRows*4, not the visible size.
   original.width = w;
   original.height = h;
   original.stride = w;

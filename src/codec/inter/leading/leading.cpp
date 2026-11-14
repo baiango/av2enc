@@ -208,7 +208,7 @@ std::size_t write_sequence_header(BitWriter& writer,
   // §5.4.2 sequence_tile_config().
   writer.put_bit(false);  // seq_tile_info_present_flag
 
-  writer.put_bit(false);  // film_grain_params_present
+  writer.put_bit(c.film_grain_params_present);  // §5.4.2 film grain models
 
   return writer.bit_size() - start;
 }
@@ -326,6 +326,20 @@ std::size_t write_frame_header_syntax(BitWriter& writer,
     writer.put_bit(false);  // skip_mode_present
   }
   writer.put_bits(0U, 2U);  // reduced_tx_set
+
+  // §5.18.10.1 film_grain_config(). A non-output picture (leading frame) gets
+  // apply_grain inferred 0 and codes nothing.
+  if (c.film_grain_params_present) {
+    const OutputFlags outputs = output_flags(c, h);
+    filters::grain::FilmGrainConfigContext context;
+    context.film_grain_params_present = true;
+    context.immediate_output_frame = outputs.immediate;
+    context.implicit_output_frame = outputs.implicit;
+    std::string grain_error;
+    filters::grain::WriteFilmGrainConfig(writer, h.grain, context,
+                                         &grain_error);
+    assert(grain_error.empty());
+  }
 
   return writer.bit_size() - start;
 }

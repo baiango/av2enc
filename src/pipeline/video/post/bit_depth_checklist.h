@@ -60,8 +60,10 @@ struct VideoBitDepthChecklist {
   bool ok_for_8bit_video_tile_path() const noexcept;
 };
 
-// §5.18.4.4 geometry: mi_cols = 2 * ((width + 7) >> 3), same for rows.
-// M2's baseline syntax additionally requires even dimensions divisible by 8.
+// §5.18.4.4 geometry: mi_cols = 2 * ((width + 7) >> 3), same for rows, so the
+// coded picture is rounded up to 8 pixels per axis.  This 8-bit 4:2:0 writer
+// only requires even dimensions; the MI-aligned padded region is reconstructed
+// and cropped back to the visible size on output.
 // Returns false with `reason` on a geometry the current writer cannot code.
 bool video_geometry_supported(int width, int height, int sb_size,
                            std::string* reason = nullptr);

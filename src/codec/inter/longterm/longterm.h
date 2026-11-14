@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "core/bitstream/bitwriter.h"
+#include "pipeline/grain/film_grain_syntax.h"
 
 namespace av2enc::inter::longterm {
 
@@ -85,6 +86,9 @@ struct SequenceConfig {
   bool enable_cfl_intra = true;
   // Layout of the OLK long-term list (§5.18.2). See LongTermListSyntax.
   LongTermListSyntax olk_long_term_list = LongTermListSyntax::kSpecV1;
+  // §5.4.2 film_grain_params_present. When set, every frame header codes
+  // §5.18.10.1 film_grain_config() after reduced_tx_set.
+  bool film_grain_params_present = false;
 
   // Tool switches this module always writes (frozen, matching M2).
   bool explicit_ref_frame_map = true;
@@ -164,6 +168,11 @@ struct FrameHeader {
   // OLK (§5.18.2). implicit_output_frame is 0 because
   // monotonic_output_order_flag == 1.
   bool immediate_output_frame = true;
+
+  // §5.18.10.1 film_grain_config(), coded last when the sequence sets
+  // film_grain_params_present. A hidden frame (immediate 0 / implicit 0) codes
+  // no bits, so the field is ignored there.
+  filters::grain::FilmGrainConfig grain;
 };
 
 // ---------------------------------------------------------------------------

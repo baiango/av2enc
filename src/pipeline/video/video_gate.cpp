@@ -380,7 +380,13 @@ bool run_phase(const char* name, const std::vector<OwnedFrame>& frames,
   std::cout << "  units=" << sequence.units.size()
             << " coded=" << sequence.frame_bytes.size()
             << " output=" << sequence.recon.size()
-            << " temporal_candidates=" << sequence.temporal_candidates << "\n";
+            << " temporal_candidates=" << sequence.temporal_candidates
+            << " tip_block_refs=" << sequence.tip_block_refs << "\n";
+  if (options.tip_block_ref && sequence.tip_block_refs == 0) {
+    std::cerr << "TIP-BLOCK FAIL: --tip-block-ref coded no "
+                 "RefFrame[0] == TIP_FRAME leaf\n";
+    return false;
+  }
   if (options.enable_ref_frame_mvs && options.num_total_refs > 1 &&
       sequence.frame_bytes.size() > 2 && sequence.temporal_candidates == 0) {
     std::cerr << "TEMPORAL-MV FAIL: --ref-mvs coded no §7.12.2.7/.8 candidate "
@@ -557,6 +563,9 @@ int main(int argc, char** argv) {
       options.enable_tip = true;
     } else if (arg == "--tip-no-hole-fill") {
       options.tip_hole_fill = false;
+    } else if (arg == "--tip-block-ref") {
+      options.tip_block_ref = true;
+      options.force_single_block = true;
     } else if (arg == "--ref-mvs") {
       options.enable_ref_frame_mvs = true;
     } else if (arg == "--b-frames" && i + 1 < argc) {
@@ -591,7 +600,8 @@ int main(int argc, char** argv) {
                    "[--subpel-eighth] [--mv-precision eighth|quarter|half] "
                    "[--drl-reorder] [--long-term] [--olk] [--leading N] "
                    "[--sef] [--switch] [--ras] [--tip] "
-                   "[--tip-no-hole-fill] [--ref-mvs-field-selftest] "
+                   "[--tip-no-hole-fill] [--tip-block-ref] "
+                   "[--ref-mvs-field-selftest] "
                    "[--trace]\n";
       return 0;
     } else {
@@ -628,6 +638,11 @@ int main(int argc, char** argv) {
     bool tip_ok = true;
     if (frames_owned.size() < 3) {
       std::cerr << "--tip needs at least 3 input frames\n";
+      return 2;
+    }
+    if (options.tip_block_ref && !options.enable_ref_frame_mvs) {
+      std::cerr << "--tip-block-ref needs --ref-mvs (the TIP block lives in "
+                   "the TIP-referencing tail P)\n";
       return 2;
     }
     const std::size_t four = std::min<std::size_t>(4, frames_owned.size());

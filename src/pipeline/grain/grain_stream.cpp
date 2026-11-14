@@ -475,22 +475,37 @@ bool ParseTemporalUnit(std::span<const std::uint8_t> unit,
 bool InsertFilmGrainObu(std::span<const std::uint8_t> unit,
                         std::span<const std::uint8_t> obu_bytes,
                         std::vector<std::uint8_t>* out, std::string* error) {
+  return InsertFilmGrainObuBeforeFrame(unit, 0, obu_bytes, out, error);
+}
+
+bool InsertFilmGrainObuBeforeFrame(std::span<const std::uint8_t> unit,
+                                   std::size_t frame_ordinal,
+                                   std::span<const std::uint8_t> obu_bytes,
+                                   std::vector<std::uint8_t>* out,
+                                   std::string* error) {
   if (out == nullptr) return Fail(error, "null stream output");
   std::vector<GrainObuView> obus;
   if (!ParseTemporalUnit(unit, &obus, error)) return false;
-  std::size_t frame_index = obus.size();
+  std::size_t seen_frames = 0;
+  std::size_t insert_at = unit.size();
   for (std::size_t i = 0; i < obus.size(); ++i) {
     if (obus[i].type == kFilmGrainObuType) {
       return Fail(error, "unit already has a film grain OBU");
     }
-    if (IsFrameObuType(obus[i].type) && frame_index == obus.size()) {
-      frame_index = i;
+    if (!IsFrameObuType(obus[i].type)) continue;
+    if (seen_frames == frame_ordinal) {
+      insert_at = obus[i].offset;
+      break;
     }
+    ++seen_frames;
   }
-  if (frame_index == obus.size()) {
-    return Fail(error, "unit has no coded-frame OBU");
+  if (insert_at == unit.size()) {
+    if (error != nullptr) {
+      *error = "unit has no coded-frame OBU at index " +
+               std::to_string(frame_ordinal);
+    }
+    return false;
   }
-  const std::size_t insert_at = obus[frame_index].offset;
   const auto split = static_cast<std::ptrdiff_t>(insert_at);
   out->clear();
   out->reserve(unit.size() + obu_bytes.size());

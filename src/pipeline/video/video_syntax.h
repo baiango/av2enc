@@ -113,6 +113,14 @@ struct BlockSyntax {
   // --- leaf mode info ---
   std::uint8_t is_inter = 0;
   std::uint8_t skip_flag = 0;   // inter only; 1 means no residual
+  // §5.20.7.10 tip_mode: RefFrame[0] == TIP_FRAME for this leaf.  Coded only
+  // when the frame's TipFrameMode != TIP_FRAME_DISABLED (the --video-tip
+  // RefFrame[0]==TIP_FRAME carrier); `tip_pred_mode` is §5.20.7.6's
+  // Tip_Pred_Mode symbol (0 = NEARMV, 1 = NEWMV).  Both are inert on every
+  // FramePlan that does not set tip_as_ref, so default streams keep their
+  // bits.
+  std::uint8_t tip_mode = 0;
+  std::uint8_t tip_pred_mode = 0;
   std::uint8_t inter_mode = kInterGlobalMv;
   std::uint8_t drl_index = 0;
   // §5.18.2/§5.20.7.10 RefFrame[0] index into ref_frame_idx[] (0..6).
@@ -321,6 +329,18 @@ struct FramePlan {
   // non-GLOBALMV form is not switchable).
   int opfl_refine_type = 0;
   bool enable_refinemv = false;
+  // §5.18.2 TipFrameMode == TIP_FRAME_AS_REF for a tile-coded inter frame.
+  // When set, every eligible inter leaf (not skip_mode, >= 8x8, owns chroma)
+  // codes the §5.20.7.10 tip_mode bit first; a TIP leaf then codes
+  // §5.20.7.6 tip_pred_mode and a §5.20.7.8 tip_drl_mode DRL index instead of
+  // comp_mode/single_ref/single_mode.  Off keeps every historical stream
+  // byte-identical (the bit is absent).
+  bool tip_as_ref = false;
+  // §5.18.2 Tip_Weighting_Factor signalled by this frame (index into
+  // kTipWeightingFactor).  The TIP block prediction uses it as the §7.13.3.1
+  // blend weight.  Inert when tip_as_ref is false.
+  int tip_weight_index = 0;
+  bool tip_allow_hole_fill = false;
   // §5.18.2 FrameType == SWITCH_FRAME (refine-MV/OPFL are disabled on it).
   bool frame_is_switch = false;
   // §5.18.2 per-frame reference map.  num_total_refs > 1 lists the explicit

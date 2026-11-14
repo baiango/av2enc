@@ -53,6 +53,17 @@ and is gated sample-by-sample against the pinned `dav2d`.
   `docs/ref-frame-mvs.md`.
 - Reference reconstruction: the current frame's MI-aligned reconstruction
   (`mi_cols*4 x mi_rows*4` luma) becomes slot 0 for the next P frame.
+- Arbitrary frame dimensions: the sequence/frame header signals the real
+  `max_frame_width/height`, the coded picture is the §5.18.4.4 MI-aligned
+  extent (`MiCols = 2*((W+7)>>3)`, `MiRows = 2*((H+7)>>3)`), and every tile
+  encoder's padded reconstruction is pasted into the frame reference before the
+  loop-filter pass.  The reconstructed output and `--video-recon` are cropped
+  to W x H.  Each format keeps only its true constraint (4:2:0 even W/H, 4:2:2
+  even W, 4:4:4/4:0:0 any W/H); the CUDA `--video-gpu` path keeps a named
+  CPU-only rejection for sizes that are not multiples of 8.  Gate:
+  `gate_video_any_dims.sh` (100x70/130x74/424x240/640x362 at 4:2:0 and 4:4:4,
+  plus odd 101x71 at 4:4:4, 4-frame key+P with every loop-filter composition,
+  `dav2d --strict 1` and byte-exact recon).
 - Global motion / warped prediction (`--video-gme`, `--video-warp`):
   `src/pipeline/video/video_gme.cpp` builds a deterministic 16x16 integer-ME
   grid for every explicit reference, fits the §5.18.9 model with the
@@ -124,13 +135,14 @@ and is gated sample-by-sample against the pinned `dav2d`.
     `video_same_ref_compound_gate.sh` (64x64/640x360, counts the same-ref
     leaves and checks recon).
   - `--video-mv-traj` (§5.4.6 `enable_mv_traj`, §7.9.2 trajectory fill,
-    §7.12.2.14/.16 `TrajMv` derived candidates): requires
-    `--video-ref-mvs` and exactly two references.  Gate: `video_mv_traj_gate.sh`
-    (64x64/640x360, counts trajectory-derived candidates).  Three references
-    are rejected by name; see `docs/negative-results.md`.
-  - `--video-refmvbank` (§7.12.2.21) is implemented but **rejected by name**:
-    the pinned decoder agrees for one superblock row but diverges at the third
-    row.  Residual and repro are in `docs/negative-results.md`.
+    §7.12.2.8 temporal-scan substitution and §7.12.2.14/.16 `TrajMv` derived
+    candidates): requires `--video-ref-mvs`; any `NumTotalRefs >= 2` is gated.
+    Gate: `video_mv_traj_gate.sh` (64x64/640x360 plus the three-reference case,
+    counts trajectory-derived candidates).
+  - `--video-refmvbank` (§7.12.2.21): the §5.20.2.2 per-superblock reset and
+    row-above seeding, plus the §6.19.2.1 per-superblock-row size/start clear,
+    replay the pinned decoder's bank.  Gate: `video_mv_traj_gate.sh`
+    (64x64/640x360, with and without `--video-ref-mvs`).
 
 ### Sub-8 luma leaves (`--video-min-block 4`)
 
@@ -218,7 +230,7 @@ without changing the M2 syntax writer.
 | `seq_enabled_motion_modes[INTERINTRA..EXTENDWARP]` | all 0 |
 | `enable_masked_compound` / `enable_ref_frame_mvs` | 0 / 0 |
 | `order_hint_bits_minus_1` | 3 (`OrderHintBits = 4`) |
-| `enable_refmvbank` | 0 (the `--video-refmvbank` flag is rejected by name) |
+| `enable_refmvbank` | 0; 1 only with `--video-refmvbank` |
 | `disable_drl_reorder` | 1 (`DRL_REORDER_DISABLED`); 0 with `--video-drl-reorder[-always]` |
 | `explicit_ref_frame_map` | 1 |
 | `explicit_num_ref_frames` | 1, `num_ref_frames_minus_1 = 1` (`NumRefFrames = 2`) |
@@ -618,7 +630,7 @@ av2enc clip.y4m --video --video-subpel-eighth --video-mv-precision quarter -o cl
 | `--video-tcq` | off | §5.4.8/§5.20.7.27 trellis-coded quantisation: `enable_tcq = 1`, `choose_tcq_per_frame = 1`, a per-frame `allow_tcq` bit and luma TX_CLASS_2D trellis levels with the §7.14.4 extra `dqDenom` shift; composes with `--video-tx-search` and `--video-inter-residual`; `video_tcq_gate.sh` decodes at QP 60/90/120 with `dav2d --strict 1` and compares the recon exactly |
 | `--video-cctx` | off | §5.4.8/§7.14.6 cross-component transform: `enable_cctx = 1`, per-block `cctx_type` on plane 1 (after the U EOB) and the joint U/V dequant rotation; composes with `--video-tcq` and `--video-tx-search`; `video_cctx_gate.sh` decodes at QP 60/90/120 with `dav2d --strict 1` and compares the recon exactly |
 | `--video-grain` | off | §5.14/§5.18.10 film grain: sequence `film_grain_params_present = 1`, at most one model OBU (type 23) per temporal unit immediately before the coded-frame OBU, per-frame `film_grain_config()`; CPU-only; composes with the flat P chain, `--tiles`, `--b-frames`, `--video-tlayers`, `--video-tip`, the format cores (10-bit / non-4:2:0) and the loop filters / `--avg-cdf --adaptive-cdf` chain; the SEF/SWITCH/RAS/OLK/leading/long-term wrappers stay rejected by name; `video_grain_gate.sh` decodes every composition at 640x360 and 64x64 with dav2d `--filmgrain 0` (recon exact) and `--filmgrain 1` (synthesis), 118 checks |
-| `--video-lossless` | off | Q=0 lossless sequence via `src/codec/entropy/lossless/inter/`: its own headers (`CodedLossless = 1`, `base_q_idx = 0`, `ONLY_4X4`), DPCM/reversible WHT/IDTX and FSC; `--video-lossless-intra-period N` forces one intra block per N; `--lossless-fsc` forces the FSC coefficient path; supports 8/10-bit 4:2:0/4:2:2/4:4:4 and the hierarchical-P schedule (`--video-tlayers 4/8/16`); `video_lossless_gate.sh` pins the plain 4/8-frame streams plus the format and temporal-layer cases and compares dav2d recon exactly |
+| `--video-lossless` | off | Q=0 lossless sequence via `src/codec/entropy/lossless/inter/`: its own headers (`CodedLossless = 1`, `base_q_idx = 0`, `ONLY_4X4`), DPCM/reversible WHT/IDTX and FSC; `--video-lossless-intra-period N` forces one intra block per N; `--lossless-fsc` forces the FSC coefficient path; supports 8/10-bit 4:0:0/4:2:0/4:2:2/4:4:4, the hierarchical-P schedule (`--video-tlayers 4/8/16`) and the two-reference hierarchical-B schedule (`--video-lossless-b --video-tlayers 4/8`, COMPOUND_AVERAGE); `video_lossless_gate.sh` pins the plain 4/8-frame streams plus the format, temporal-layer and B cases and compares dav2d recon exactly |
 | `--video-max-depth D` / `--video-min-block N` / `--video-force-single` | 4 / 16 / off | partition controls; `N` is 4..64.  `N = 4` enables §5.20.3.1 sub-8 intra keyframe leaves with shared-chroma ownership (see "Sub-8 luma leaves"); P-frame leaves stay >= 8x8 |
 | `--video-recon FILE` | off | dump the encoder reconstruction Y4M (gate use) |
 | `--video-tlayers N` | off | one hierarchical-P GOP of N (4/8) frames with temporal layers |

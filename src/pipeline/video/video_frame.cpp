@@ -41,6 +41,7 @@
 #include "codec/inter/merge/merge.h"
 #include "codec/inter/morph/morph_common.h"
 #include "codec/inter/mv_stack/ref_map.h"
+#include "codec/inter/temporal/tip.h"
 #include "codec/inter/mv_precision/mv_precision.h"
 #include "codec/intra/ibc/core/ibc.h"
 #include "codec/intra/ibc/stream/ibc_stack.h"
@@ -408,6 +409,61 @@ int source_sample(const VideoInputFrame& frame, int plane, int x, int y) {
   const int stride = w;
   return data[static_cast<std::size_t>(cy) * static_cast<std::size_t>(stride) +
                static_cast<std::size_t>(cx)];
+}
+
+// Edge-replicated 8-bit 4:2:0 source picture at the MI-aligned coded size.
+// The §7.18-§7.20 decision stages read the source over the padded plane, so a
+// visible size that is not a multiple of 8 needs the clamp on every row/column.
+// An aligned frame keeps pointing at the caller's planes (no copy).
+struct PaddedSourcePlanes {
+  std::vector<std::uint8_t> storage[3];
+  const std::uint8_t* data[3] = {nullptr, nullptr, nullptr};
+  int stride[3] = {0, 0, 0};
+};
+
+void pad_source_420(const VideoInputFrame& frame, int mi_cols, int mi_rows,
+                    PaddedSourcePlanes* out) {
+  const int vis_w = static_cast<int>(frame.width);
+  const int vis_h = static_cast<int>(frame.height);
+  const int vis_cw = vis_w / 2;
+  const int vis_ch = vis_h / 2;
+  const int pad_w = mi_cols * 4;
+  const int pad_h = mi_rows * 4;
+  const int pad_cw = mi_cols * 2;
+  const int pad_ch = mi_rows * 2;
+  const std::uint8_t* src[3] = {frame.y.data(), frame.u.data(),
+                                frame.v.data()};
+  const int vis_plane_w[3] = {vis_w, vis_cw, vis_cw};
+  const int vis_plane_h[3] = {vis_h, vis_ch, vis_ch};
+  const int pad_plane_w[3] = {pad_w, pad_cw, pad_cw};
+  const int pad_plane_h[3] = {pad_h, pad_ch, pad_ch};
+  for (int plane = 0; plane < 3; ++plane) {
+    out->storage[plane].clear();
+    if (pad_plane_w[plane] == vis_plane_w[plane] &&
+        pad_plane_h[plane] == vis_plane_h[plane]) {
+      out->data[plane] = src[plane];
+      out->stride[plane] = vis_plane_w[plane];
+      continue;
+    }
+    const int w = pad_plane_w[plane];
+    const int h = pad_plane_h[plane];
+    const int vw = vis_plane_w[plane];
+    const int vh = vis_plane_h[plane];
+    out->storage[plane].assign(static_cast<std::size_t>(w) *
+                                   static_cast<std::size_t>(h), 0);
+    std::uint8_t* dst = out->storage[plane].data();
+    for (int y = 0; y < h; ++y) {
+      const int sy = std::min(y, vh - 1);
+      const std::uint8_t* row =
+          src[plane] + static_cast<std::size_t>(sy) * static_cast<std::size_t>(vw);
+      std::uint8_t* dst_row = dst + static_cast<std::size_t>(y) *
+                                        static_cast<std::size_t>(w);
+      std::memcpy(dst_row, row, static_cast<std::size_t>(vw));
+      for (int x = vw; x < w; ++x) dst_row[x] = row[vw - 1];
+    }
+    out->data[plane] = dst;
+    out->stride[plane] = w;
+  }
 }
 
 std::int64_t sse_against_source(const VideoInputFrame& frame, int plane, int x0,
@@ -1540,6 +1596,15 @@ struct TemporalFrameContext {
   int closest_future = -1;
   const temporal::MotionField* field = nullptr;
   const temporal::TrajectoryField* mv_traj = nullptr;
+  // §5.18.2 TipFrameMode == TIP_FRAME_AS_REF plus the frame's TIP parameters.
+  // `field` above is already §7.10.2-.4 scaled (the decoder mutates tpl_mvs the
+  // same way before any tile is decoded).  The order hints are
+  // OrderHints[ClosestPast/ClosestFuture] and drive §7.10.5 get_tip_offsets().
+  bool tip_as_ref = false;
+  int tip_weight_index = 0;
+  int tip_closest_past_order_hint = temporal::kRestrictedOrderHint;
+  int tip_closest_future_order_hint = temporal::kRestrictedOrderHint;
+  bool tip_allow_hole_fill = false;
 };
 
 class InterFrameEncoder {
@@ -2343,15 +2408,13 @@ class InterFrameEncoder {
         }
       }
       lf.blocks = filter_blocks;
-      const std::span<const std::uint8_t> src[3] = {source_.y, source_.u,
-                                                    source_.v};
+      PaddedSourcePlanes padded;
+      pad_source_420(source_, mi_cols_, mi_rows_, &padded);
       for (int plane = 0; plane < 3; ++plane) {
         lf.plane[plane] = recon_[plane].samples.data();
         lf.stride[plane] = recon_[plane].width;
-        lf.source[plane] = src[plane].data();
-        lf.source_stride[plane] =
-            plane == 0 ? static_cast<int>(source_.width)
-                       : static_cast<int>(source_.width / 2);
+        lf.source[plane] = padded.data[plane];
+        lf.source_stride[plane] = padded.stride[plane];
       }
       if (!post::run_video_loop_filters(lf, options_.loop_filters,
                                         &filter_plan_, nullptr, &error)) {
@@ -2522,6 +2585,9 @@ class InterFrameEncoder {
     plan.temporal.scan = temporal_ctx_.use_ref_frame_mvs
                              ? &video_temporal_scan
                              : nullptr;
+    plan.tip_as_ref = temporal_ctx_.tip_as_ref;
+    plan.tip_weight_index = temporal_ctx_.tip_weight_index;
+    plan.tip_allow_hole_fill = temporal_ctx_.tip_allow_hole_fill;
 #if defined(AV2ENC_VIDEO_GME)
     if (gm_plan_ != nullptr) {
       plan.gm_num_refs = gm_plan_->num_refs;
@@ -2595,6 +2661,7 @@ class InterFrameEncoder {
               std::vector<syntax::BlockSyntax>& blocks,
               std::vector<std::int32_t>& levels, std::string& error) {
     if (!decide(error)) return false;
+    if (!apply_tip_block_ref(error)) return false;
     if (!deblock(error)) return false;
     if (!apply_loop_filters(error)) return false;
     return write(tile_payload, blocks, levels,
@@ -2635,6 +2702,7 @@ class InterFrameEncoder {
   int amvd_selected() const { return amvd_selected_; }
   int flex_precision_selected() const { return flex_precision_selected_; }
   int derived_sign_selected() const { return derived_sign_selected_; }
+  int tip_blocks() const { return tip_blocks_; }
   const post::VideoFilterPlan& filter_plan() const { return filter_plan_; }
 
  private:
@@ -2794,6 +2862,7 @@ class InterFrameEncoder {
       decoded_[0].reset(mi_cols_, mi_rows_);
       decoded_[1].reset(mi_cols_ / 2, mi_rows_ / 2);
       decoded_[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+      reset_refmvbank_for_sb(node.mi_row, node.mi_col);
 #if defined(AV2ENC_VIDEO_DELTAQ)
       // §7.14.2 get_qindex() and §5.20.5.7 SegmentIds are superblock state for
       // this encoder: the syntax writer signals the same id and the delta at
@@ -3118,8 +3187,10 @@ class InterFrameEncoder {
     if (!options_.refmvbank || keyframe_) return;
     // §6.19.2.1 clear_left_context() runs once per superblock row and clears
     // the bank sizes/starts.  The bank entries themselves are re-seeded from
-    // the coded row above at each superblock.
-    if (false) {
+    // the coded row above at each superblock; the pinned decoder also keeps
+    // the size/start rings empty across the row boundary, so the clear must
+    // happen here rather than only at the frame head.
+    if (mi_row % (sb_size_ / 4) == 0 && mi_col == tile_mi_col_) {
       for (int ref = 0; ref < inter::temporal::kBankRefsPerFrame; ++ref) {
         refmv_bank_.size[ref] = 0;
         refmv_bank_.start[ref] = 0;
@@ -3130,7 +3201,7 @@ class InterFrameEncoder {
     inter::temporal::RefMvBankRow row;
     row.mi_cols = mi_cols_;
     row.sources = sources.data();
-    const bool top_row = true;
+    const bool top_row = (mi_row == tile_mi_row_);
     if (!top_row && mi_row > 0) {
       const int cand_row = mi_row - 1;
       for (int col = 0; col < mi_cols_; ++col) {
@@ -4383,6 +4454,9 @@ class InterFrameEncoder {
                    int chroma_mi_col = -1, int chroma_bsize = -1) {
     const int r = node.mi_row;
     const int c = node.mi_col;
+    if (tip_leaf_armed_ && tree_type == 0 && r == tip_leaf_r_ && c == tip_leaf_c_) {
+      return encode_tip_leaf(node, index, error);
+    }
     const int w = partition::block_width(node.size);
     const int h = partition::block_height(node.size);
     const int w4 = w >> 2;
@@ -6065,6 +6139,366 @@ class InterFrameEncoder {
     return true;
   }
 
+  // ---------------------------------------------------------------------
+  // §5.20.7.10 / §5.20.7.6 block-level TIP reference
+  // (--video-tip-block-ref).  The tail P of the TIP schedule is signalled
+  // TipFrameMode = TIP_FRAME_AS_REF; its last coded inter leaf is coded as a
+  // single-list TIP block predicted from the frame's own §7.10 field.
+  // ---------------------------------------------------------------------
+  bool tip_block_ref_active() const {
+    return options_.tip_block_ref && !keyframe_ && temporal_ctx_.tip_as_ref;
+  }
+
+  // §5.20.7.10 get_tip_mv() per prediction unit: the §7.10 field MV at the
+  // unit's top-left 8x8 cell, projected to each TIP reference and added to the
+  // block MV.
+  temporal::MvPair tip_unit_mvs(int unit_mi_row, int unit_mi_col, inter::mc::Mv block_mv,
+                                const temporal::TipConfig& tip) const {
+    temporal::TipCandInput in;
+    in.cand_row = unit_mi_row;
+    in.cand_col = unit_mi_col;
+    in.base_row = unit_mi_row;
+    in.base_col = unit_mi_col;
+    in.is_16x16 = false;
+    in.base_mv = temporal::Mv{block_mv.y, block_mv.x};
+    in.field = temporal_ctx_.field;
+    return temporal::get_tip_cand(in, tip);
+  }
+
+  // Predicts one TIP leaf into recon_[] and returns the per-unit list MVs (so
+  // the caller can build the §7.22 field).  `unit_mvs` is indexed
+  // [unit_row][unit_col][list] over the block's unit grid.
+  bool predict_tip_leaf(int x0, int y0, int w, int h, int unit, inter::mc::Mv block_mv,
+                        const temporal::TipConfig& tip, std::vector<temporal::MvPair>* unit_mvs,
+                        std::string& error) {
+    const int units_x = (w + unit - 1) / unit;
+    const int units_y = (h + unit - 1) / unit;
+    unit_mvs->assign(static_cast<std::size_t>(units_x) * units_y, temporal::MvPair{});
+    std::vector<std::int16_t> scratch(2U * 16U * 16U, 0);
+    std::vector<std::uint8_t> block(16U * 16U, 0);
+    const int frame_w = mi_cols_ * 4;
+    const int frame_h = mi_rows_ * 4;
+    for (int uy = 0; uy < units_y; ++uy) {
+      for (int ux = 0; ux < units_x; ++ux) {
+        const int px = x0 + ux * unit;
+        const int py = y0 + uy * unit;
+        const int unit_mi_row = py / 4;
+        const int unit_mi_col = px / 4;
+        const temporal::MvPair mvs = tip_unit_mvs(unit_mi_row, unit_mi_col, block_mv, tip);
+        (*unit_mvs)[static_cast<std::size_t>(uy) * units_x + ux] = mvs;
+        for (int plane = 0; plane < 3; ++plane) {
+          const int sub_x = plane == 0 ? 0 : 1;
+          const int sub_y = plane == 0 ? 0 : 1;
+          const int bw = unit >> sub_x;
+          const int bh = unit >> sub_y;
+          const int bx = px >> sub_x;
+          const int by = py >> sub_y;
+          // §7.13.3.2: the decoder skips a prediction unit whose top-left is
+          // outside the frame.
+          if (bx >= recon_[plane].width || by >= recon_[plane].height) continue;
+          temporal::TipPredictInput in;
+          in.ref[0] = temporal_plane(references_[0], plane);
+          in.ref[1] = temporal_plane(references_[1], plane);
+          in.num_refs = 2;
+          in.x = bx;
+          in.y = by;
+          in.w = bw;
+          in.h = bh;
+          in.sub_x = sub_x;
+          in.sub_y = sub_y;
+          in.frame_w = frame_w;
+          in.frame_h = frame_h;
+          in.mv[0] = mvs.mv[0];
+          in.mv[1] = mvs.mv[1];
+          in.cwp_weight = temporal::kTipWeightingFactor[tip.tip_global_wtd_index];
+          in.filter = tip.interp_filter;
+          in.use_ref_area = false;
+          in.dst = block.data();
+          in.dst_stride = bw;
+          in.scratch0 = scratch.data();
+          in.scratch1 = scratch.data() + 16 * 16;
+          in.scratch_stride = bw;
+          if (temporal::tip_predict_block(in) != temporal::TemporalStatus::kOk) {
+            error = "TIP block prediction failed";
+            return false;
+          }
+          const int vis_w = std::min(bw, recon_[plane].width - bx);
+          const int vis_h = std::min(bh, recon_[plane].height - by);
+          for (int r = 0; r < vis_h; ++r) {
+            std::copy_n(block.data() + static_cast<std::size_t>(r) * bw, vis_w,
+                        recon_[plane].samples.data() +
+                            static_cast<std::ptrdiff_t>(by + r) * recon_[plane].stride + bx);
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  // §5.18.2 TIP parameters of this frame for the block form.
+  temporal::TipConfig tip_block_config() const {
+    temporal::TipConfig tip;
+    tip.mode = temporal::TipFrameMode::kAsReference;
+    tip.tip_global_wtd_index = temporal_ctx_.tip_weight_index;
+    tip.tip_global_mv = temporal::Mv{0, 0};
+    tip.interp_filter = temporal::InterpFilter::kEighttapSharp;
+    tip.enable_tip_refinemv = false;
+    tip.enable_refinemv = false;
+    tip.opfl_refine_type = temporal::RefineType::kNone;
+    tip.allow_tip_hole_fill = temporal_ctx_.tip_allow_hole_fill;
+    tip.num_past_refs = temporal_ctx_.num_past_refs;
+    tip.num_future_refs = temporal_ctx_.num_future_refs;
+    tip.order_hint = temporal_ctx_.order_hint;
+    tip.closest_past_order_hint = temporal_ctx_.tip_closest_past_order_hint;
+    tip.closest_future_order_hint = temporal_ctx_.tip_closest_future_order_hint;
+    return tip;
+  }
+
+  // §5.20.7.10 stack check for a TIP-ref leaf: the merge builder must
+  // reproduce the decoder's stack exactly, otherwise the leaf cannot be coded
+  // as TIP.
+  bool tip_ref_stack_ok(int r, int c, int w4, int h4, std::string& error) const {
+    merge::StackParams params;
+    params.mi_row = r;
+    params.mi_col = c;
+    params.bw4 = w4;
+    params.bh4 = h4;
+    params.sb_h4 = 16;
+    params.mi_cols = mi_cols_;
+    params.mi_rows = mi_rows_;
+    params.mi = mv_grid_.data();
+    params.ref_frame[0] = merge::kTipFrame;
+    params.ref_frame[1] = merge::kRefNone;
+    params.is_compound = false;
+    params.global_mv[0] = inter::mc::Mv{0, 0};
+    params.global_mv[1] = inter::mc::Mv{0, 0};
+    params.reorder = merge::DrlReorder::kDisabled;
+    params.max_drl_bits_minus_1 = 4;
+    params.num_refs = num_total_refs_;
+    params.frame_distance = frame_distance_.data();
+    params.closest_past = temporal_ctx_.closest_past;
+    params.closest_future = temporal_ctx_.closest_future;
+    merge::MvStack stack;
+    if (merge::build_stack_checked(params, &stack) != merge::Status::kOk) {
+      error =
+          "TIP block reference: TIP-ref MV stack needs an unimplemented "
+          "§7.12.2.15/.17/.18 candidate";
+      return false;
+    }
+    if (stack.count != 1 || stack.cand[0].mv[0].y != 0 || stack.cand[0].mv[0].x != 0) {
+      error =
+          "TIP block reference: expected the single zero GlobalMvs "
+          "candidate";
+      return false;
+    }
+    return true;
+  }
+
+  // Locates the leaf the carrier will convert: the last coded inter leaf,
+  // which every later block must be intra (an intra block never builds a
+  // §7.12.2 stack, so no §7.12.2.15/.17 TIP candidate is needed).  Runs on the
+  // probe pass; the leaf's block MV becomes the coded MVD.
+  bool locate_tip_leaf(std::string& error) {
+    tip_leaf_r_ = -1;
+    tip_leaf_c_ = -1;
+    tip_leaf_mv_ = inter::mc::Mv{0, 0};
+    const std::uint8_t leaf_partition = static_cast<std::uint8_t>(partition::PartitionType::kNone);
+    int last_inter = -1;
+    for (int i = static_cast<int>(blocks_.size()) - 1; i >= 0; --i) {
+      if (blocks_[static_cast<std::size_t>(i)].is_inter != 0) {
+        last_inter = i;
+        break;
+      }
+    }
+    if (last_inter < 0) {
+      error = "TIP block reference: no trailing inter leaf is TIP-eligible";
+      return false;
+    }
+    for (int i = last_inter + 1; i < static_cast<int>(blocks_.size()); ++i) {
+      if (blocks_[static_cast<std::size_t>(i)].is_inter != 0) {
+        error =
+            "TIP block reference: an inter leaf is decoded after the "
+            "candidate TIP leaf";
+        return false;
+      }
+    }
+    const syntax::BlockSyntax& node = blocks_[static_cast<std::size_t>(last_inter)];
+    if (node.partition != leaf_partition || node.tree_type != 0) {
+      error = "TIP block reference: no trailing inter leaf is TIP-eligible";
+      return false;
+    }
+    const int w = partition::block_width(static_cast<partition::BlockSize>(node.bsize));
+    const int h = partition::block_height(static_cast<partition::BlockSize>(node.bsize));
+    if (w < 8 || h < 8) {
+      error = "TIP block reference: last leaf is smaller than 8x8";
+      return false;
+    }
+    if (!tip_ref_stack_ok(node.mi_row, node.mi_col, w / 4, h / 4, error)) {
+      return false;
+    }
+    inter::mc::Mv mv{0, 0};
+    if (node.inter_mode != syntax::kInterGlobalMv) {
+      mv = inter::mc::Mv{node.mv_y, node.mv_x};
+    }
+    if (mv.y <= inter::mc::kMvLow + 8 || mv.y >= inter::mc::kMvUpp - 8 ||
+        mv.x <= inter::mc::kMvLow + 8 || mv.x >= inter::mc::kMvUpp - 8) {
+      mv = inter::mc::Mv{0, 0};
+    }
+    tip_leaf_r_ = node.mi_row;
+    tip_leaf_c_ = node.mi_col;
+    tip_leaf_mv_ = mv;
+    return true;
+  }
+
+  // Second-pass leaf coder for the target ring: predicts and reconstructs the
+  // TIP leaf in decode order, so every later block (intra only) sees the same
+  // reference samples as the decoder.
+  bool encode_tip_leaf(const PartitionNode& node, std::size_t index, std::string& error) {
+    const int r = node.mi_row;
+    const int c = node.mi_col;
+    const int w = partition::block_width(node.size);
+    const int h = partition::block_height(node.size);
+    const int w4 = w / 4;
+    const int h4 = h / 4;
+    const int x0 = c * 4;
+    const int y0 = r * 4;
+    if (w < 8 || h < 8) {
+      error = "TIP block reference: target leaf is smaller than 8x8";
+      return false;
+    }
+    if (!tip_ref_stack_ok(r, c, w4, h4, error)) return false;
+    const int unit = (w >= 16 && h >= 16) ? 16 : 8;
+    const temporal::TipConfig tip = tip_block_config();
+    std::vector<temporal::MvPair> unit_mvs;
+    if (!predict_tip_leaf(x0, y0, w, h, unit, tip_leaf_mv_, tip, &unit_mvs, error)) {
+      return false;
+    }
+    std::int64_t sse = 0;
+    {
+      const int vis_w = std::min(w, static_cast<int>(source_.width) - x0);
+      const int vis_h = std::min(h, static_cast<int>(source_.height) - y0);
+      for (int yy = 0; yy < vis_h; ++yy) {
+        for (int xx = 0; xx < vis_w; ++xx) {
+          const int d = static_cast<int>(recon_[0].at(x0 + xx, y0 + yy)) -
+                        static_cast<int>(
+                            source_.y[static_cast<std::size_t>(y0 + yy) * source_.width + x0 + xx]);
+          sse += d * d;
+        }
+      }
+    }
+
+    syntax::BlockSyntax& entry = blocks_[index];
+    entry.is_inter = 1;
+    entry.skip_flag = 1;
+    entry.tip_mode = 1;
+    entry.tip_pred_mode = 1;  // NEWMV
+    entry.inter_mode = syntax::kInterNewMv;
+    entry.drl_index = 0;
+    entry.ref_index = 0;
+    entry.ref_index1 = 1;
+    entry.compound = 0;
+    entry.motion_mode = 0;
+    entry.use_bawp = 0;
+    entry.explicit_bawp = 0;
+    entry.explicit_bawp_scale = 0;
+    entry.use_bawp_chroma = 0;
+    entry.mv_y = tip_leaf_mv_.y;
+    entry.mv_x = tip_leaf_mv_.x;
+    entry.mv1_y = 0;
+    entry.mv1_x = 0;
+    entry.mvd_y = tip_leaf_mv_.y;
+    entry.mvd_x = tip_leaf_mv_.x;
+    entry.use_amvd = 0;
+    entry.block_mv_precision = -1;
+    entry.mvd_sign_derived = 0;
+    entry.levels_offset = 0;
+    entry.tx_part_count = 0;
+    entry.cctx_type = 0;
+    for (int plane = 0; plane < 3; ++plane) {
+      entry.eob[plane] = 0;
+    }
+
+    // §7.22 field: the decoder stores the per-8x8 get_tip_mv() pair with
+    // RefFrame[0]/[1] = the TIP pair, so mirror it in the MI grid.
+    const int units_x = (w + unit - 1) / unit;
+    for (int yy = 0; yy < h4 && r + yy < mi_rows_; ++yy) {
+      for (int xx = 0; xx < w4 && c + xx < mi_cols_; ++xx) {
+        const int ux = (xx * 4) / unit;
+        const int uy = (yy * 4) / unit;
+        const temporal::MvPair& mvs = unit_mvs[static_cast<std::size_t>(uy) * units_x + ux];
+        inter::mc::MiInfo& mi =
+            mv_grid_[static_cast<std::size_t>(r + yy) * static_cast<std::size_t>(mi_cols_) +
+                     static_cast<std::size_t>(c + xx)];
+        mi = inter::mc::MiInfo{};
+        mi.ref[0] = temporal_ctx_.closest_past >= 0
+                        ? static_cast<std::int8_t>(temporal_ctx_.closest_past)
+                        : merge::kRefNone;
+        mi.ref[1] = temporal_ctx_.closest_future >= 0
+                        ? static_cast<std::int8_t>(temporal_ctx_.closest_future)
+                        : merge::kRefNone;
+        mi.mv[0][0] = mvs.mv[0].row;
+        mi.mv[0][1] = mvs.mv[0].col;
+        mi.mv[1][0] = mvs.mv[1].row;
+        mi.mv[1][1] = mvs.mv[1].col;
+        mi.is_inter = 1;
+        mi.w4 = static_cast<std::int8_t>(w4);
+        mi.h4 = static_cast<std::int8_t>(h4);
+        mi.col_base = static_cast<std::int16_t>(c);
+        mi.row_base = static_cast<std::int16_t>(r);
+        mi.bsize = static_cast<std::int16_t>(node.size);
+      }
+    }
+    set_intra_joint(r, c, w4, h4, 0);  // inter_block_mode_info(): DC
+    // §6.19.2.3: the leaf is now decoded for the availability of later leaves.
+    decoded_[0].fill(c, r, w4, h4);
+    decoded_[1].fill(c / 2, r / 2, w4 / 2, h4 / 2);
+    decoded_[2].fill(c / 2, r / 2, w4 / 2, h4 / 2);
+    ++inter_blocks_;
+    ++tip_blocks_;
+    if (trace_) {
+      const temporal::MvPair first = unit_mvs.empty() ? temporal::MvPair{} : unit_mvs.front();
+      std::cerr << "m2 tip_block r=" << r << " c=" << c << " " << w << "x" << h
+                << " ref=TIP pred=NEWMV drl=0 mv=(" << tip_leaf_mv_.y << "," << tip_leaf_mv_.x
+                << ") unit=" << unit << " tipmv0=(" << first.mv[0].row << "," << first.mv[0].col
+                << ")/(" << first.mv[1].row << "," << first.mv[1].col
+                << ") weight=" << temporal::kTipWeightingFactor[tip.tip_global_wtd_index]
+                << " holefill=" << (tip.allow_tip_hole_fill ? 1 : 0) << " sse=" << sse << "\n";
+    }
+    return true;
+  }
+
+  // Runs the probe pass, locates the TIP leaf, then re-decides the frame with
+  // the target leaf forced to TIP.  The second pass is required for recon
+  // coherence: blocks decoded after the TIP leaf (intra only) predict from its
+  // reconstructed samples, so converting a leaf after the fact would leave
+  // them coded against different neighbours than the decoder sees.
+  bool apply_tip_block_ref(std::string& error) {
+    if (!tip_block_ref_active()) return true;
+    if (blocks_.empty()) {
+      error = "TIP block reference: frame has no coded leaves";
+      return false;
+    }
+    if (!locate_tip_leaf(error)) return false;
+    if (tip_leaf_r_ < 0 || tip_leaf_c_ < 0) {
+      error = "TIP block reference: no TIP-eligible trailing inter leaf";
+      return false;
+    }
+    tip_blocks_ = 0;
+    tip_leaf_armed_ = true;
+    if (!decide(error)) {
+      tip_leaf_armed_ = false;
+      return false;
+    }
+    tip_leaf_armed_ = false;
+    if (tip_blocks_ != 1) {
+      error =
+          "TIP block reference: the second decision pass coded no TIP "
+          "leaf";
+      return false;
+    }
+    return true;
+  }
+
   void update_mv_grid(int r, int c, int w4, int h4, int is_inter,
                       int ref_index, inter::mc::Mv mv,
                       int ref_index1 = merge::kRefNone,
@@ -6209,6 +6643,12 @@ class InterFrameEncoder {
   int amvd_selected_ = 0;
   int flex_precision_selected_ = 0;
   int derived_sign_selected_ = 0;
+  int tip_blocks_ = 0;
+  // §5.20.7.10 block-form target (second decision pass).
+  int tip_leaf_r_ = -1;
+  int tip_leaf_c_ = -1;
+  inter::mc::Mv tip_leaf_mv_{};
+  bool tip_leaf_armed_ = false;
 };
 
 VideoReconFrame to_recon_frame(const Plane& y, const Plane& u, const Plane& v,
@@ -6464,8 +6904,8 @@ bool estimate_motion_field(const SavedFieldRef* ref_fields,
                            int num_total_refs, int order_hint, int frame_width,
                            int frame_height, int mi_cols, int mi_rows,
                            int proj_step, bool enable_mv_traj,
-                           MotionFieldFrame* out,
-                           std::string& error) {
+                           MotionFieldFrame* out, std::string& error,
+                           bool enable_tip = false) {
   out->mi_cols = mi_cols;
   out->mi_rows = mi_rows;
   out->ready = false;
@@ -6503,7 +6943,7 @@ bool estimate_motion_field(const SavedFieldRef* ref_fields,
   cfg.mi_rows = mi_rows;
   cfg.proj_step = proj_step;
   cfg.sb_64x64 = proj_step == 1;
-  cfg.enable_tip = false;
+  cfg.enable_tip = enable_tip;
   cfg.enable_mv_traj = enable_mv_traj;
   cfg.reduced_ref_frame_mvs_mode = false;
   cfg.use_bru = false;
@@ -8212,14 +8652,11 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
     int ref_slot_ids[kRefsPerFrame] = {tip_slot, anchor_slot};
     std::uint8_t ref_is_key[kRefsPerFrame] = {0, 0};
     MotionFieldFrame motion_field;
-    if (!estimate_motion_field(ref_fields, ref_slot_ids,
-                               ref_order_hints.data(), ref_is_key,
-                               /*ref_valid=*/true, 2, hint,
-                               static_cast<int>(width),
-                               static_cast<int>(height), recon_mi_cols,
-                               recon_mi_rows, /*proj_step=*/1,
-                               /*enable_mv_traj=*/false, &motion_field,
-                               error)) {
+    if (!estimate_motion_field(
+            ref_fields, ref_slot_ids, ref_order_hints.data(), ref_is_key,
+            /*ref_valid=*/true, 2, hint, static_cast<int>(width), static_cast<int>(height),
+            recon_mi_cols, recon_mi_rows, /*proj_step=*/1,
+            /*enable_mv_traj=*/false, &motion_field, error, options.tip_block_ref)) {
       error = "TIP tail P: " + error;
       return false;
     }
@@ -8231,6 +8668,59 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
     temporal_ctx.closest_past = motion_field.result.closest_past;
     temporal_ctx.closest_future = motion_field.result.closest_future;
     temporal_ctx.field = &motion_field.field;
+    if (options.tip_block_ref) {
+      // §5.18.2 TipFrameMode = TIP_FRAME_AS_REF.  The decoder runs the §7.10.2
+      // temporal scale, hole fill and block-average filter on this frame's
+      // own §7.9 field before decoding any tile, so the encoder must mutate
+      // the same field before its block decisions.
+      if (motion_field.result.closest_past < 0 || motion_field.result.closest_future < 0) {
+        error = "TIP tail P: TIP block reference needs both closest refs";
+        return false;
+      }
+      temporal::TipConfig tip;
+      tip.mode = temporal::TipFrameMode::kAsReference;
+      tip.tip_global_wtd_index = choose_tip_weight_index(past.order_hint, future.order_hint, hint);
+      tip.interp_filter = temporal::InterpFilter::kEighttapSharp;
+      tip.enable_tip_refinemv = false;
+      tip.enable_refinemv = false;
+      tip.opfl_refine_type = temporal::RefineType::kNone;
+      tip.allow_tip_hole_fill = options.tip_hole_fill;
+      tip.num_past_refs = motion_field.config.num_past_refs;
+      tip.num_future_refs = motion_field.config.num_future_refs;
+      tip.order_hint = hint;
+      tip.closest_past_order_hint = ref_order_hints[motion_field.result.closest_past];
+      tip.closest_future_order_hint = ref_order_hints[motion_field.result.closest_future];
+      const std::size_t cells = static_cast<std::size_t>(motion_field.mi_cols / 2) *
+                                static_cast<std::size_t>(motion_field.mi_rows / 2);
+      std::vector<std::int32_t> avg_mv(cells * 2, 0);
+      std::vector<std::uint8_t> avg_valid(cells, 0);
+      temporal::MotionFieldScratch scratch;
+      scratch.avg_mv = avg_mv.data();
+      scratch.avg_valid = avg_valid.data();
+      if (temporal::setup_tip_motion_field(motion_field.config, tip, &motion_field.field, nullptr,
+                                           &scratch,
+                                           &motion_field.result) != temporal::TemporalStatus::kOk) {
+        error = "TIP tail P: §7.10.2-.4 setup failed";
+        return false;
+      }
+      if (options.trace) {
+        int valid = 0;
+        int nonzero = 0;
+        for (std::size_t i = 0; i < cells; ++i) {
+          if (motion_field.valid[i] == 0) continue;
+          ++valid;
+          if (motion_field.mv[i * 2 + 0] != 0 || motion_field.mv[i * 2 + 1] != 0) ++nonzero;
+        }
+        std::cerr << "tip_block_ref field valid=" << valid << " nonzero=" << nonzero << " of "
+                  << cells << " offsets=(" << tip.closest_past_order_hint << ","
+                  << tip.closest_future_order_hint << ")\n";
+      }
+      temporal_ctx.tip_as_ref = true;
+      temporal_ctx.tip_weight_index = tip.tip_global_wtd_index;
+      temporal_ctx.tip_allow_hole_fill = tip.allow_tip_hole_fill;
+      temporal_ctx.tip_closest_past_order_hint = tip.closest_past_order_hint;
+      temporal_ctx.tip_closest_future_order_hint = tip.closest_future_order_hint;
+    }
 
     std::vector<std::uint8_t> payload;
     std::vector<syntax::BlockSyntax> blocks;
@@ -8274,6 +8764,18 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
     header.use_ref_frame_mvs = true;
+    if (options.tip_block_ref) {
+      header.tip_as_ref = true;
+      header.tip_global_wtd_index = static_cast<std::uint8_t>(temporal_ctx.tip_weight_index);
+      header.allow_tip_hole_fill = temporal_ctx.tip_allow_hole_fill;
+      result.tip_block_refs += static_cast<std::uint64_t>(encoder.tip_blocks());
+      if (options.trace) {
+        std::cerr << "tip_block_ref pictures=" << frame_count << " blocks=" << encoder.tip_blocks()
+                  << " weight=" << temporal::kTipWeightingFactor[temporal_ctx.tip_weight_index]
+                  << " order_hint=" << hint << " ref=(" << static_cast<int>(header.ref_frame_idx[0])
+                  << "," << static_cast<int>(header.ref_frame_idx[1]) << ")\n";
+      }
+    }
 
     grain::GrainFramePlan tail_grain;
     if (options.film_grain &&
@@ -8531,8 +9033,17 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   }
   const std::uint32_t width = frames[0].width;
   const std::uint32_t height = frames[0].height;
-  if (width == 0 || height == 0 || (width & 7U) != 0 || (height & 7U) != 0) {
-    error = "M2 requires non-zero width/height divisible by 8";
+  // §5.18.4.4 codes MiCols x MiRows = 2*((W+7)>>3) x 2*((H+7)>>3) 4x4 units,
+  // so any non-zero size is codable; only the 4:2:0 chroma layout constrains
+  // the input.  The MI-aligned padded region is reconstructed and the output
+  // picture is cropped back to width x height.
+  if (width == 0 || height == 0) {
+    error = "video requires non-zero width/height";
+    return false;
+  }
+  if ((width & 1U) != 0 || (height & 1U) != 0) {
+    error = "4:2:0 video requires even width/height, got " +
+            std::to_string(width) + "x" + std::to_string(height);
     return false;
   }
   if (width > 0xFFFFU || height > 0xFFFFU) {
@@ -8607,23 +9118,8 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
             "is only built by the §7.9 estimation path)";
     return false;
   }
-  if (options.refmvbank) {
-    // Known residual: the bank candidates agree with the pinned decoder for a
-    // single superblock row (64x64 and 128x64/64x128 decode exactly), but the
-    // first block of the third superblock row decodes with a different MV once
-    // a bank candidate is selected.  Repro and analysis:
-    // docs/negative-results.md.  Kept off rather than shipping a parity bug.
-    error = "--video-refmvbank is not decoder-exact on the pinned dav2d "
-            "(first mismatch at the third superblock row; see "
-            "docs/negative-results.md)";
-    return false;
-  }
-  if (options.mv_traj && options.num_total_refs > 2) {
-    error = "--video-mv-traj is wired for NumTotalRefs <= 2: the 3-reference "
-            "trajectory stream differs in one 16x16 leaf "
-            "(docs/negative-results.md)";
-    return false;
-  }
+  // The §7.9.2 trajectory field feeds both the §7.12.2.8 temporal scan and the
+  // §7.12.2.14/.16 derived candidates for any reference count.
   // The syntax writer selects the §8.3.1 qctx slice from base_q_idx and the
   // quantiser below uses qlookup(base_q_idx).  0 (lossless) is not implemented.
   if (options.base_q_idx == 0) {
@@ -8719,21 +9215,11 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     }
   }
   // §5.14 film grain is planned per output picture and inserted into the
-  // temporal unit of every supported schedule (plain, tiles, B frames,
-  // temporal layers, TIP).  The random-access frame-type wrappers own their
-  // §5.18.2 writers through separate components that code neither
-  // film_grain_config() nor film_grain_params_present; they stay rejected by
-  // name instead of silently dropping the config.
-  if (options.film_grain) {
-    if (options.long_term || options.olk || options.leading_frames > 0 ||
-        options.sef || options.ra_switch || options.ras) {
-      error = "--video-grain does not compose with the long-term/OLK/"
-              "leading/SEF/SWITCH/RAS frame-type wrappers: their sequence and "
-              "frame headers code no film_grain_params_present/"
-              "film_grain_config()";
-      return false;
-    }
-  }
+  // temporal unit of every schedule.  The random-access frame-type wrappers
+  // carry the sequence bit, the per-frame film_grain_config() and one type-23
+  // model OBU through their own component writers (src/codec/inter/{sef,
+  // random_access,longterm,leading}); the shared planner lives in
+  // video_frames.cpp.
   for (std::size_t i = 0; i < frames.size(); ++i) {
     const VideoInputFrame& f = frames[i];
     if (f.width != width || f.height != height) {
@@ -8816,6 +9302,60 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
               "frames: the last picture is coded as a tile-coded P that "
               "references the TIP display frame";
       return false;
+    }
+    if (options.tip_block_ref) {
+      // §5.20.7.10 block form.  The carrier needs the TIP-referencing tail P
+      // (so the frame has two nearest refs and allow_ref_frame_mvs), a
+      // deterministic last leaf (one 64x64 leaf per superblock) and the plain
+      // 1/8-pel NEWMV MVD syntax.
+      if (!options.enable_ref_frame_mvs) {
+        error =
+            "--video-tip-block-ref requires --video-ref-mvs: the "
+            "RefFrame[0] == TIP_FRAME block lives in the TIP-referencing "
+            "tail P and needs use_ref_frame_mvs = 1";
+        return false;
+      }
+      if (!options.force_single_block) {
+        error =
+            "--video-tip-block-ref requires --video-force-single: the "
+            "carrier converts the frame's last coded leaf, and only the "
+            "single-64x64-leaf partition guarantees it is >= 8x8";
+        return false;
+      }
+      if (options.mv_precision != 0 || options.seq_force_integer_mv) {
+        error =
+            "--video-tip-block-ref is wired for the 1/8-pel frame MV "
+            "precision";
+        return false;
+      }
+      if (options.enable_adaptive_mvd || options.enable_flex_mvres ||
+          options.enable_mvd_sign_derive) {
+        error =
+            "--video-tip-block-ref does not compose with "
+            "--video-adaptive-mvd/--video-flex-mvres/"
+            "--video-mvd-sign-derive";
+        return false;
+      }
+      if (options.enable_bawp || options.enable_morph || options.enable_interintra ||
+          options.compound) {
+        error =
+            "--video-tip-block-ref does not compose with the BAWP/morph/"
+            "inter-intra/compound carriers";
+        return false;
+      }
+      if (options.refmvbank || options.mv_traj) {
+        error =
+            "--video-tip-block-ref does not compose with "
+            "--video-refmvbank/--video-mv-traj: the tail P's TIP-scaled "
+            "field and TIP block only model the plain §7.9 chain";
+        return false;
+      }
+      if (options.enable_segmentation || options.enable_delta_q) {
+        error =
+            "--video-tip-block-ref does not compose with §5.18.7 "
+            "segmentation/delta-Q";
+        return false;
+      }
     }
     if (options.tile_cols > 0 || options.tile_rows > 0) {
       error = "--video-tip does not compose with --tiles";
@@ -9088,9 +9628,16 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   frame_recon[1].resize(recon_mi_cols * 2, recon_mi_rows * 2, 0);
   frame_recon[2].resize(recon_mi_cols * 2, recon_mi_rows * 2, 0);
 
+  // Copies a tile encoder's MI-aligned reconstruction into the frame buffer.
+  // The coded tile extent is rounded up to MiCols/MiRows (§5.18.4.4), so the
+  // copy may extend past the visible width/height at the bottom/right edge;
+  // those padded samples are what the in-loop filters read and the decoder
+  // reconstructs.  The destination is clipped to its padded extent.
   const auto paste_tile = [](const Plane& src, Plane& dst, int x0, int y0,
                              int w, int h) {
-    for (int y = 0; y < h; ++y) {
+    const int copy_w = std::min(w, dst.stride - x0);
+    const int copy_h = std::min(h, dst.height - y0);
+    for (int y = 0; y < copy_h; ++y) {
       std::memcpy(dst.samples.data() +
                       static_cast<std::size_t>(y0 + y) *
                           static_cast<std::size_t>(dst.stride) +
@@ -9098,7 +9645,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                   src.samples.data() +
                       static_cast<std::size_t>(y) *
                           static_cast<std::size_t>(src.stride),
-                  static_cast<std::size_t>(w));
+                  static_cast<std::size_t>(copy_w));
     }
   };
 
@@ -9444,12 +9991,12 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       error = "keyframe encode failed: " + error;
       return false;
     }
-    paste_tile(encoder->recon(0), frame_recon[0], tile.x, tile.y, tile.w,
-               tile.h);
+    paste_tile(encoder->recon(0), frame_recon[0], tile.x, tile.y,
+               encoder->recon(0).width, encoder->recon(0).height);
     paste_tile(encoder->recon(1), frame_recon[1], tile.x / 2, tile.y / 2,
-               tile.w / 2, tile.h / 2);
+               encoder->recon(1).width, encoder->recon(1).height);
     paste_tile(encoder->recon(2), frame_recon[2], tile.x / 2, tile.y / 2,
-               tile.w / 2, tile.h / 2);
+               encoder->recon(2).width, encoder->recon(2).height);
     key_intra_blocks += encoder->intra_blocks();
     key_encoders.push_back(std::move(encoder));
   }
@@ -9467,12 +10014,13 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     lf.base_q_idx = options.base_q_idx;
     lf.num_total_refs = 0;
     lf.restricted_oh = -1;
+    PaddedSourcePlanes key_source;
+    pad_source_420(frames[0], recon_mi_cols, recon_mi_rows, &key_source);
     for (int plane = 0; plane < 3; ++plane) {
       lf.plane[plane] = frame_recon[plane].samples.data();
       lf.stride[plane] = frame_recon[plane].stride;
-      lf.source[plane] = plane == 0 ? frames[0].y.data() : (plane == 1 ? frames[0].u.data() : frames[0].v.data());
-      lf.source_stride[plane] =
-          plane == 0 ? static_cast<int>(width) : static_cast<int>(width / 2);
+      lf.source[plane] = key_source.data[plane];
+      lf.source_stride[plane] = key_source.stride[plane];
     }
     // §7.18.1 Skips[] / §7.20.1 LrTxSkip for the screen-content keyframe.  An
     // IBC skip leaf codes skip_flag = 1, and the real decoder leaves such a
@@ -9777,12 +10325,24 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     const VideoOptions frame_options = options_for_frame(i);
     // §5.14: plan this picture's grain model in coding order before the frame
     // header is written; a changed model emits one film grain OBU.
+    //
+    // A hidden picture (the SEF wrapper codes the last picture with
+    // immediate_output_frame = 0) is not output, so §5.18.10.1 infers
+    // apply_grain = 0 and codes no config bits.  Cancelling here also keeps the
+    // planner's slot state free of models the decoder would never load.
+    const bool grain_output =
+        !(options.hide_last_picture && i + 1U == frames.size());
     grain::GrainFramePlan grain_plan;
-    if (options.film_grain &&
-        !plan_grain_frame(frames[i], static_cast<std::uint32_t>(i),
-                          grain_planner, grain_plan, error)) {
-      error = "P-frame " + std::to_string(i) + " film grain: " + error;
-      return false;
+    if (options.film_grain) {
+      if (grain_output &&
+          !plan_grain_frame(frames[i], static_cast<std::uint32_t>(i),
+                            grain_planner, grain_plan, error)) {
+        error = "P-frame " + std::to_string(i) + " film grain: " + error;
+        return false;
+      }
+      if (!grain_output) {
+        grain_plan = grain_planner.CancelFrame(static_cast<std::uint32_t>(i));
+      }
     }
     // §5.18.9 global motion: estimate one model per explicit reference before
     // the block decisions so GLOBALMV and the header use the same parameters.
@@ -9891,12 +10451,12 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       }
       inter_blocks += encoder->inter_blocks();
       intra_blocks += encoder->intra_blocks();
-      paste_tile(encoder->recon(0), frame_recon[0], tile.x, tile.y, tile.w,
-                 tile.h);
+      paste_tile(encoder->recon(0), frame_recon[0], tile.x, tile.y,
+                 encoder->recon(0).width, encoder->recon(0).height);
       paste_tile(encoder->recon(1), frame_recon[1], tile.x / 2, tile.y / 2,
-                 tile.w / 2, tile.h / 2);
+                 encoder->recon(1).width, encoder->recon(1).height);
       paste_tile(encoder->recon(2), frame_recon[2], tile.x / 2, tile.y / 2,
-                 tile.w / 2, tile.h / 2);
+                 encoder->recon(2).width, encoder->recon(2).height);
       tile_encoders.push_back(std::move(encoder));
     }
     for (const std::unique_ptr<InterFrameEncoder>& encoder : tile_encoders) {
@@ -9976,15 +10536,13 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
         }
       }
       lf.blocks = filter_blocks;
+      PaddedSourcePlanes frame_source;
+      pad_source_420(frames[i], recon_mi_cols, recon_mi_rows, &frame_source);
       for (int plane = 0; plane < 3; ++plane) {
         lf.plane[plane] = frame_recon[plane].samples.data();
         lf.stride[plane] = frame_recon[plane].stride;
-        lf.source[plane] =
-            plane == 0 ? frames[i].y.data()
-                       : (plane == 1 ? frames[i].u.data() : frames[i].v.data());
-        lf.source_stride[plane] =
-            plane == 0 ? static_cast<int>(width)
-                       : static_cast<int>(width / 2);
+        lf.source[plane] = frame_source.data[plane];
+        lf.source_stride[plane] = frame_source.stride[plane];
       }
       if (!post::run_video_loop_filters(lf, options.loop_filters,
                                         &frame_filters, nullptr, &error)) {

@@ -81,7 +81,9 @@ struct VideoTilePlan {
 struct VideoTiledFrameHeader;
 
 // Validated wrapper around tiles::plan_tile_layout() plus the M2 geometry
-// constraints (dimensions divisible by 8, superblock 64/128).
+// constraints (even 4:2:0 dimensions, superblock 64/128).  The coded picture
+// is the §5.18.4.4 MI-aligned extent, so a non-multiple-of-8 input is valid;
+// the tile grid itself is superblock-aligned.
 VideoTilePlan plan_video_tiles(int width, int height, int cols, int rows,
                          int sb_size = 64, int seq_level_idx = 7,
                          int seq_tier = 0);

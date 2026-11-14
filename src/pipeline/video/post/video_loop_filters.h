@@ -17,8 +17,10 @@
 // passes `VideoLoopFilterHooks` that runs the matching device kernel instead.
 // The decisions are shared, which is what keeps the two streams byte-identical.
 //
-// Scope: 8-bit 4:2:0, dimensions divisible by 8 (the M2 core requires that),
-// single tile.  All tools default off.
+// Scope: 8-bit 4:2:0, single tile.  The planes are MI-aligned (§5.18.4.4
+// MiCols/MiRows rounded to 8 pixels), so any even input size is supported; the
+// visible width/height may be smaller than the padded plane.  All tools default
+// off.
 #ifndef AV2ENC_PIPELINE_VIDEO_POST_VIDEO_LOOP_FILTERS_H_
 #define AV2ENC_PIPELINE_VIDEO_POST_VIDEO_LOOP_FILTERS_H_
 
@@ -78,8 +80,8 @@ struct VideoLoopFilterBlock {
 };
 
 // MI-aligned reconstruction plus the visible source picture (SSE metric only).
-// `source_stride` may be the visible width: the M2 core requires dimensions
-// divisible by 8, so the MI-aligned plane equals the visible plane.
+// `source` is edge-replicated to the MI-aligned width/height, so its stride is
+// `source_stride` and the visible area is `width` x `height`.
 struct VideoLoopFilterFrame {
   int width = 0;
   int height = 0;

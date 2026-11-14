@@ -646,9 +646,11 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
       ts.allow_tip_hole_fill = h.allow_tip_hole_fill;
       ts.is_tip_frame = h.tip_frame;
       ts.requested_mode = h.tip_frame ? tip::TipFrameMode::kAsOutput
-                                      : tip::TipFrameMode::kDisabled;
-      ts.num_past_refs = h.tip_frame ? 1 : 0;
-      ts.num_future_refs = h.tip_frame ? 1 : 0;
+                                      : (h.tip_as_ref ? tip::TipFrameMode::kAsReference
+                                                      : tip::TipFrameMode::kDisabled);
+      const bool tip_two_sided = h.tip_frame || h.tip_as_ref;
+      ts.num_past_refs = tip_two_sided ? 1 : 0;
+      ts.num_future_refs = tip_two_sided ? 1 : 0;
       ts.tip_global_wtd_index = h.tip_global_wtd_index;
       ts.tip_global_mv =
           tip::Mv{h.tip_global_mv_row, h.tip_global_mv_col};
@@ -934,7 +936,11 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     context.sub_y = fmt::subsampling_y(c.chroma);
     context.base_q_idx = c.base_q_idx;
     context.lr_tools_disable[0][0] = false;
-    context.lr_tools_disable[0][1] = true;   // PC-Wiener disabled
+    // The frame tool list must match the sequence list (§5.4.10) even when
+    // the frame leaves every unit NONE: the decoder derives FrameRestorationType
+    // from the sequence's disable mask, so excluding an enabled tool here codes
+    // a shorter symbol than the decoder reads.
+    context.lr_tools_disable[0][1] = c.lr_disable_luma_pc_wiener;
     context.lr_tools_disable[0][2] = c.lr_disable_luma_wiener_ns;
     context.lr_tools_disable[0][3] = false;
     context.lr_tools_disable[1][0] = false;

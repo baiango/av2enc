@@ -13,12 +13,11 @@
 //                / `idtx_sign`) coefficient syntax at 4x4..32x32
 //   * §6.4.2     lossless 4:2:0, 4:2:2 and 4:4:4 chroma geometries
 //
-// Scope: 8-bit, 64x64 superblocks, one tile, one key frame followed by one or
-// more P frames, single reference (zero-motion GLOBALMV inter prediction).
-// There is no motion search: the point of this module is the lossless residual
-// and transform syntax, not RD.  The reader is an independent syntax reader:
-// it parses the OBUs, both frame headers, the partition tree, inter/intra mode
-// info, transform sizes, coefficients and reconstructs every frame.
+// Scope: 8/10-bit, 64x64 superblocks, one tile, one key frame followed by P
+// frames or a closed hierarchical-P/B GOP with up to two references per frame.
+// Prediction uses zero-motion GLOBALMV (single) or GLOBAL_GLOBALMV
+// COMPOUND_AVERAGE (B); there is no motion search.  The independent reader
+// tracks reference slots and returns pictures in order-hint order.
 //
 // Normative references: AV2 Bitstream & Decoding Process Specification v1.0.0
 // (2026-05-28, commit 38f28e7).
@@ -98,6 +97,9 @@ struct Geometry {
   int sb_rows = 0;
   int sub_x = 1;
   int sub_y = 1;
+  // 0 for 4:0:0 (§6.4.2 Table 6.2: Monochrome).  Chroma planes are not coded
+  // and chroma_w/chroma_h are zero.
+  bool has_chroma = true;
   ChromaFormat format = ChromaFormat::k420;
 };
 
@@ -203,6 +205,12 @@ struct Options {
   // tlayers plan's coding order, one single reference per frame, implicit
   // output pictures and per-OBU obu_tlayer_id.
   int temporal_layers = 0;
+  // When true (with temporal_layers = 4 or 8) use the tlayers hierarchical-B
+  // schedule instead of hierarchical-P.  Interior frames carry two references
+  // (one past, one future) and every inter block codes a two-sided
+  // COMPOUND_AVERAGE prediction (GLOBAL_GLOBALMV).  Frame 7 of an 8-frame GOP
+  // is the B anchor with a single reference.
+  bool b_schedule = false;
 };
 
 struct FrameStats {

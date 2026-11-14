@@ -194,11 +194,13 @@ The gate therefore asserts insertion and, through the stress mode, selection.
 1. **GPU.** `--video-gpu --video-ref-mvs` is rejected by name.  The CUDA M2
    path has no §7.9 estimator, no §7.22 store and no temporal stack hook.
 2. **TIP block form (`RefFrame[0] == TIP_FRAME`).** The TIP *display frame* is
-   now a valid reference slot for a tile-coded P (`--video-tip
-   --video-ref-mvs`, `docs/tip-decoder-gate.md` §2b), with its §7.22 field
-   feeding §7.9.  The §5.20.7.10 `tip_mode`/`tip_drl_mode`/`tip_pred_mode`
-   block symbols are still not written, so a block cannot predict from the
-   current frame's own §7.10 field.
+   a valid reference slot for a tile-coded P (`--video-tip --video-ref-mvs`,
+   `docs/tip-decoder-gate.md` §2b), with its §7.22 field feeding §7.9.  The
+   §5.20.7.10 `tip_mode`/`tip_drl_mode`/`tip_pred_mode` block symbols are now
+   written by `--video-tip-block-ref` for one trailing leaf of that tail P
+   (`docs/tip-decoder-gate.md` §2c), decoder-exact at 64x64/640x360/720p.
+   Several TIP leaves, or a TIP leaf followed by an inter leaf, still need the
+   §7.12.2.15/.17/.18 TIP-derived merge-stack candidates.
 3. **Temporal layers.** `--video-tlayers` is single-reference by construction
    (`plan.num_refs = 1`), and §7.9 returns an empty field for one reference.
    The flag is accepted, `use_ref_frame_mvs = 1` is signalled, both sides

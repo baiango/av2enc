@@ -26,11 +26,14 @@
 #   * the format video cores: 10-bit 4:2:0/4:2:2/4:4:4/4:0:0 and 8-bit
 #     4:2:2/4:4:4/4:0:0 (--bit-depth/--chroma),
 #   * the §7.17-§7.20.5 loop filters and the §5.4.8 average-CDF chain
-#     (--avg-cdf/--adaptive-cdf) on the 8-bit 4:2:0 core.
-#
-# The frame-type wrappers (SEF/SWITCH/RAS/OLK/leading/long-term) stay rejected
-# by name: their component writers code no film_grain_params_present or
-# film_grain_config(), so a model OBU alone would be inert.
+#     (--avg-cdf/--adaptive-cdf) on the 8-bit 4:2:0 core,
+#   * the frame-type wrappers --video-long-term, --video-olk, --video-leading,
+#     --video-sef, --video-switch and --video-ras.  Their component
+#     sequence/frame header writers code film_grain_params_present and
+#     film_grain_config(), and one model OBU sits immediately before each
+#     output picture's frame OBU (the hidden last picture of SEF, the
+#     non-output leading pictures and the OLK carry none).
+
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "$0")/../../.." && pwd)"
@@ -177,16 +180,27 @@ pos = collections.defaultdict(list)
 for line in sys.stdin:
     frame, kind, _ = line.strip().split(":")
     pos[int(frame)].append(int(kind))
+frame_types = (4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 19, 21)
 bad = []
 for frame, kinds in pos.items():
-    grain = [i for i, k in enumerate(kinds) if k == 23]
-    frame_obus = [i for i, k in enumerate(kinds)
-                  if k in (4, 6, 7, 8, 10, 11, 12, 13, 14, 19, 21)]
-    if len(grain) > 1 or len(frame_obus) != 1:
+    grains = [i for i, k in enumerate(kinds) if k == 23]
+    frames = [i for i, k in enumerate(kinds) if k in frame_types]
+    if not frames:
         bad.append((frame, kinds))
         continue
-    if grain and grain[0] != frame_obus[0] - 1:
-        bad.append((frame, kinds))
+    # Every model OBU must sit immediately before the frame OBU it applies to
+    # (§7.3.3/.4).  A unit may carry more than one coded frame (the OLK
+    # schedule puts the hidden OLK and its P in one unit), but never two model
+    # OBUs for one frame.
+    last_frame = -1
+    for g in grains:
+        if g + 1 >= len(kinds) or kinds[g + 1] not in frame_types:
+            bad.append((frame, kinds))
+            break
+        if g <= last_frame:
+            bad.append((frame, kinds))
+            break
+        last_frame = g
 if bad:
     print(bad, file=sys.stderr)
     sys.exit(1)
@@ -197,7 +211,7 @@ print(frames)
 '; then
     fail_case "${name}_order" "film grain OBU placement/model count"
   else
-    pass_case "${name}_order (<=1 type-23 OBU per unit, before the frame OBU)"
+    pass_case "${name}_order (model OBUs sit before a frame OBU)"
   fi
   if ! "$DAV2D" -q -i "$out" -o "$pre" --threads 1 --strict 1 --filmgrain 0 \
         >"$TMP/$name.dav2d0.log" 2>&1; then
@@ -378,14 +392,43 @@ fmt_case_filters 420p10 10 420 4 640 360
 fmt_case_filters 444 8 444 4 640 360
 fmt_case_filters 420p10 10 420 4 64 64
 
+# ---------------------------------------------------- frame-type wrappers ---
+# The wrapper component writers rebuild the sequence and frame headers.  Each
+# composition must carry the §5.4.2 bit, the per-frame §5.18.10.1 config and
+# exactly one model OBU per output picture.
+run_case wrapper_longterm "" 4 "$INPUT" --video-long-term
+run_case wrapper_olk "" 4 "$INPUT" --video-olk
+run_case wrapper_leading1 "" 4 "$INPUT" --video-leading 1
+run_case wrapper_leading2 "" 5 "$INPUT" --video-leading 2
+run_case wrapper_sef "" 4 "$INPUT" --video-sef
+run_case wrapper_switch "" 2 "$INPUT" --video-switch
+run_case wrapper_ras "" 3 "$INPUT" --video-ras
+run_case wrapper_longterm8 "" 8 "$INPUT" --video-long-term
+run_case wrapper_longterm64 "" 4 "$CLIP64" --video-long-term
+run_case wrapper_sef64 "" 4 "$CLIP64" --video-sef
+run_case wrapper_olk64 "" 4 "$CLIP64" --video-olk
+# The wrapper headers also carry the §5.4.8 average-CDF state, so grain must
+# compose with it.
+run_case wrapper_longterm_avgcdf "" 4 "$INPUT" --video-long-term \
+  --avg-cdf --adaptive-cdf
+run_case wrapper_sef_avgcdf "" 4 "$INPUT" --video-sef --avg-cdf --adaptive-cdf
+run_case wrapper_olk_avgcdf "" 4 "$INPUT" --video-olk --avg-cdf --adaptive-cdf
+run_case wrapper_switch_avgcdf "" 2 "$INPUT" --video-switch \
+  --avg-cdf --adaptive-cdf
+run_case wrapper_ras_avgcdf "" 3 "$INPUT" --video-ras --avg-cdf --adaptive-cdf
+run_case wrapper_leading_avgcdf "" 4 "$INPUT" --video-leading 1 \
+  --avg-cdf --adaptive-cdf
+
 # ------------------------------------------------------------ rejections -----
+# The loop filters still have no wrapper header syntax; keep the named
+# rejection (and prove the grain flag did not start silently dropping it).
 if "$AV2ENC_BIN" "$INPUT" -o "$TMP/reject.ivf" --frames 4 --video \
-      --video-grain --video-sef >/dev/null 2>"$TMP/reject.err"; then
-  fail_case sef_reject "expected --video-grain --video-sef to be rejected"
-elif grep -q "frame-type wrappers" "$TMP/reject.err"; then
-  pass_case "sef_reject (named rejection)"
+      --video-grain --video-sef --video-deblock >/dev/null 2>"$TMP/reject.err"; then
+  fail_case deblock_reject "expected --video-grain --video-sef --video-deblock to be rejected"
+elif grep -q "does not compose with --video-long-term" "$TMP/reject.err"; then
+  pass_case "deblock_reject (named rejection)"
 else
-  fail_case sef_reject "rejection message changed"
+  fail_case deblock_reject "rejection message changed"
   cat "$TMP/reject.err" >&2
 fi
 

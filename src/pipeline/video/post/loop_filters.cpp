@@ -43,20 +43,13 @@ bool VideoPostFilterFrame::init_from_recon(const VideoReconFrame& recon,
   if (recon.width == 0 || recon.height == 0) {
     return fail(error, "m2 post: empty reconstruction");
   }
-  if ((recon.width & 7U) != 0 || (recon.height & 7U) != 0) {
-    return fail(error,
-                "m2 post: reconstruction dimensions must be divisible by 8");
-  }
-  const std::size_t luma = static_cast<std::size_t>(recon.width) * recon.height;
-  const std::size_t chroma =
-      static_cast<std::size_t>(recon.width / 2) * (recon.height / 2);
-  if (recon.y.size() != luma || recon.u.size() != chroma ||
-      recon.v.size() != chroma) {
-    return fail(error, "m2 post: reconstruction plane size mismatch");
-  }
-
-  mi_cols_ = static_cast<int>(recon.width) / 4;
-  mi_rows_ = static_cast<int>(recon.height) / 4;
+  // §5.18.4.4: the coded picture is MiCols x MiRows 4x4 units, rounded up to
+  // 8 pixels per axis.  Expand the visible reconstruction to that padded plane
+  // (edge-replicating the visible border) and run the filters there.
+  mi_cols_ = 2 * (static_cast<int>(recon.width + 7U) >> 3);
+  mi_rows_ = 2 * (static_cast<int>(recon.height + 7U) >> 3);
+  visible_width_ = static_cast<int>(recon.width);
+  visible_height_ = static_cast<int>(recon.height);
   sub_x_ = 1;
   sub_y_ = 1;
   bit_depth_ = 8;
@@ -64,23 +57,40 @@ bool VideoPostFilterFrame::init_from_recon(const VideoReconFrame& recon,
   frame_is_intra_ = frame_is_intra;
   sb_size_ = 64;
 
+  const int vis_luma_w = static_cast<int>(recon.width);
+  const int vis_luma_h = static_cast<int>(recon.height);
+  const int vis_chroma_w = vis_luma_w / 2;
+  const int vis_chroma_h = vis_luma_h / 2;
+  const std::size_t vis_luma =
+      static_cast<std::size_t>(vis_luma_w) * vis_luma_h;
+  const std::size_t vis_chroma =
+      static_cast<std::size_t>(vis_chroma_w) * vis_chroma_h;
+  if (recon.y.size() != vis_luma || recon.u.size() != vis_chroma ||
+      recon.v.size() != vis_chroma) {
+    return fail(error, "m2 post: reconstruction plane size mismatch");
+  }
+
   for (int plane = 0; plane < 3; ++plane) {
     const int w = plane_width(plane);
     const int h = plane_height(plane);
+    const int vw = plane == 0 ? vis_luma_w : vis_chroma_w;
+    const int vh = plane == 0 ? vis_luma_h : vis_chroma_h;
     stride_[plane] = w;
     plane_[plane].assign(static_cast<std::size_t>(w) *
                             static_cast<std::size_t>(h), 0);
     const std::vector<std::uint8_t>& src =
         plane == 0 ? recon.y : (plane == 1 ? recon.u : recon.v);
-    const int src_stride =
-        plane == 0 ? static_cast<int>(recon.width)
-                   : static_cast<int>(recon.width / 2);
+    const int src_stride = vw;
     for (int y = 0; y < h; ++y) {
-      std::memcpy(plane_[plane].data() +
-                      static_cast<std::size_t>(y) * static_cast<std::size_t>(w),
-                  src.data() + static_cast<std::size_t>(y) *
-                      static_cast<std::size_t>(src_stride),
-                  static_cast<std::size_t>(w));
+      const int sy = y < vh ? y : vh - 1;
+      std::uint8_t* dst_row =
+          plane_[plane].data() +
+          static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
+      const std::uint8_t* src_row =
+          src.data() + static_cast<std::size_t>(sy) *
+                           static_cast<std::size_t>(src_stride);
+      std::memcpy(dst_row, src_row, static_cast<std::size_t>(vw));
+      for (int x = vw; x < w; ++x) dst_row[x] = src_row[vw - 1];
     }
     output_[plane].clear();
     cdef_out_[plane].clear();
@@ -150,7 +160,7 @@ bool VideoPostFilterFrame::set_tile_layout(const tiles::TileLayout& layout,
   if (mi_cols_ == 0 || mi_rows_ == 0) {
     return fail(error, "m2 post: frame is not initialised");
   }
-  if (layout.width != mi_cols_ * 4 || layout.height != mi_rows_ * 4) {
+  if (layout.width != visible_width_ || layout.height != visible_height_) {
     return fail(error, "m2 post: tile layout geometry does not match the frame");
   }
   if (layout.col_starts_sb.empty() || layout.row_starts_sb.empty()) {

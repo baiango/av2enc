@@ -140,13 +140,21 @@ calibration caveat are in `docs/effort.md`.
 Formats: Basic, Still and Video are 8-bit 4:2:0 by default. `--still` also
 selects `--bit-depth 10` (`C420p10`/`C422p10`/`C444p10`/`Cmono10`,
 `--qp 1..303`) or an 8-bit 4:2:2/4:4:4/4:0:0 `--chroma` input (pins `--qp 90`);
-the input must already have that format. Video requires dimensions divisible by 8.
+the input must already have that format. Video accepts every size the selected
+chroma layout can represent: 4:2:0 needs even width/height, 4:2:2 needs an even
+width, and 4:4:4/4:0:0 accept any size. The coded picture is the §5.18.4.4
+MI-aligned extent (`MiCols = 2*((W+7)>>3)`), the encoder reconstructs that
+padded frame and the output/`--video-recon` picture is cropped to the real
+W x H. `--video-gpu` keeps a named CPU-only rejection for sizes that are not
+multiples of 8 (the CUDA kernels assume an MI-aligned picture); use `--video`
+for every arbitrary size.
 
 Video options: `--p-frames`, `--b-frames`, `--video-refs 1..7`,
 `--video-num-ref-frames`, `--video-mv-precision`, `--video-subpel-eighth`,
 `--video-inter-residual`, `--video-tlayers`, `--video-compound`,
 `--video-compound-wedge`, `--video-compound-diffwtd`, `--video-gme`,
-`--video-warp`, `--video-tip` (CPU), `--video-bawp`, `--video-cfl`,
+`--video-warp`, `--video-tip` (CPU), `--video-tip-block-ref` (CPU),
+`--video-bawp`, `--video-cfl`,
 `--video-mhccp`, `--video-pc-wiener`, `--video-qm`, `--video-deblock`,
 `--video-cdef`, `--video-ccso`, `--video-wiener`, `--video-chroma-lr`,
 `--video-gdf`, `--video-intra-full`, `--video-tx-search`, `--tiles CxR`,

@@ -71,6 +71,7 @@ TEST_BIN="$OUT/sef_test"
   "$HERE/sef.cpp" "$HERE/sef_test.cpp" \
   "$ROOT/src/core/bitstream/bitwriter.cpp" \
   "$ROOT/src/core/bitstream/basic_headers.cpp" \
+  "$ROOT/src/pipeline/grain/film_grain_syntax.cpp" \
   -o "$TEST_BIN"
 if [[ "$RUN_TEST" == "1" ]]; then
   "$TEST_BIN"
@@ -93,6 +94,7 @@ if [[ "$RUN_TEST" == "0" || "$RUN_GATE" == "1" ]]; then
     "$ROOT/src/core/bitstream/bitwriter.cpp" \
     "$ROOT/src/core/bitstream/obu.cpp" \
     "$ROOT/src/core/bitstream/basic_headers.cpp" \
+    "$ROOT/src/pipeline/grain/film_grain_syntax.cpp" \
     "$ROOT/src/codec/partition/tree/partition.cpp" \
     "$ROOT/src/codec/intra/modes/intra_modes.cpp" \
     "$ROOT/src/codec/transform/variants/tx_variants.cpp" \

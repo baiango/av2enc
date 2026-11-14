@@ -2540,6 +2540,27 @@ class Writer {
 
   bool has_newmv_mode(int ymode) const { return ymode == 16; }
 
+  // §5.20.7.10 syntax gate for tip_mode: TipFrameMode != DISABLED, !skip_mode,
+  // Min(bw4, bh4) >= 2 and MiSize == ChromaMiSize.  This writer has no
+  // skip_mode and every inter leaf in a P frame owns its chroma block (SDP is
+  // keyframe-only), so the size predicate is the whole gate.
+  bool tip_mode_present() const { return plan_.tip_as_ref && cur_w4_ >= 2 && cur_h4_ >= 2; }
+
+  // §5.20.7.10 get_tip_ctx(): 0..2 = number of available neighbours (decoder
+  // line-buffer order: bottom-left, above-right, left, above) whose
+  // RefFrame[0] is TIP_FRAME.  Selects TileTipModeCdf[ctx].
+  int tip_context() const {
+    int pos[2][2] = {};
+    const int n = neighbor_positions(pos);
+    int ctx = 0;
+    for (int i = 0; i < n; ++i) {
+      if (mv_grid_[cell_index(pos[i][0], pos[i][1])].ref[0] == merge::kTipFrame) {
+        ++ctx;
+      }
+    }
+    return ctx;
+  }
+
   // find_mode_ctx() §7.11.2 for single prediction.
   int new_mv_context() const {
     int new_mv_count = 0;
@@ -2750,6 +2771,22 @@ class Writer {
     for (int idx = start; idx < m; ++idx) {
       const int mode = idx < index ? 1 : 0;
       if (!sym(&cdfs_.drl_mode[std::min(idx, 2)][ctx][0], 2, mode)) {
+        return false;
+      }
+      if (mode == 0) break;
+    }
+    return true;
+  }
+
+  // §5.20.7.8 read_drl_idx() with the §5.20.7.10 TIP CDF selection
+  // (TileTipDrlModeCdf[Min(idx, 2)]).  Used for a RefFrame[0] == TIP_FRAME
+  // leaf with either tip_pred_mode (NEARMV and NEWMV both code the index).
+  bool code_tip_drl_index(int index, int start = 0) {
+    const int m = static_cast<int>(config_.max_drl_bits_minus_1) + 1;
+    if (index < start || index > m) return false;
+    for (int idx = start; idx < m; ++idx) {
+      const int mode = idx < index ? 1 : 0;
+      if (!sym(&cdfs_.tip_drl_mode[std::min(idx, 2)][0], 2, mode)) {
         return false;
       }
       if (mode == 0) break;
@@ -3331,7 +3368,121 @@ class Writer {
     return true;
   }
 
+  // §5.20.7.6 / §5.20.7.8 for a leaf whose §5.20.7.10 tip_mode decoded as 1:
+  // Tip_Pred_Index_To_Mode -> {NEARMV, NEWMV}, then read_drl_idx() with the
+  // TileTipDrlModeCdf and (NEWMV only) the shell-coded MVD against the
+  // TIP-ref stack.  No comp_mode/single_ref/single_mode/use_bawp/motion-mode
+  // symbol follows a TIP reference.
+  bool write_tip_block_mode_info(const BlockSyntax& node, std::string& error) {
+    if (node.compound) {
+      error = "TIP block cannot be compound";
+      return false;
+    }
+    if (node.tip_pred_mode > 1) {
+      error = "invalid tip_pred_mode";
+      return false;
+    }
+    if (plan_.mv_precision != 0 || plan_.frame_force_integer_mv || plan_.enable_adaptive_mvd ||
+        plan_.enable_flex_mvres || plan_.enable_mvd_sign_derive) {
+      // The MVD path is the historical 1/8-pel read_mv(); AMVD / flexible
+      // resolution / derived sign change the symbol set for a NEWMV leaf.
+      error = "TIP block syntax is wired for the plain 1/8-pel MVD path";
+      return false;
+    }
+    // Rebuild the §7.12.2 single-list stack with RefFrame[0] == TIP_FRAME.
+    // The builder reports kUnsupportedFeature when a TIP-derived candidate
+    // (§7.12.2.15/.17/.18) would be needed; the producer only codes a TIP
+    // leaf whose stack is reproducible.
+    merge::StackParams params;
+    params.mi_row = node.mi_row;
+    params.mi_col = node.mi_col;
+    params.bw4 = cur_w4_;
+    params.bh4 = cur_h4_;
+    params.sb_h4 = 16;
+    params.mi_cols = mi_cols_;
+    params.mi_rows = mi_rows_;
+    params.mi = mv_grid_.data();
+    params.ref_frame[0] = merge::kTipFrame;
+    params.ref_frame[1] = merge::kRefNone;
+    params.is_compound = false;
+    // §7.12.2.2: GlobalMvs = {0, 0} when RefFrame[0] == TIP_FRAME.
+    params.global_mv[0] = inter::mc::Mv{0, 0};
+    params.global_mv[1] = params.global_mv[0];
+    params.reorder = merge::DrlReorder::kDisabled;
+    params.max_drl_bits_minus_1 = static_cast<int>(config_.max_drl_bits_minus_1);
+    params.num_refs = plan_.num_total_refs;
+    params.frame_distance = plan_.frame_distance.data();
+    params.closest_past = plan_.temporal.closest_past;
+    params.closest_future = plan_.temporal.closest_future;
+    merge::MvStack stack;
+    if (merge::build_stack_checked(params, &stack) != merge::Status::kOk) {
+      error = "build_mv_stack (TIP) failed";
+      return false;
+    }
+    if (stack.count <= 0) {
+      error = "empty TIP MV stack";
+      return false;
+    }
+    if (node.drl_index >= stack.count) {
+      error = "TIP DRL index outside the MV stack";
+      return false;
+    }
+    // §5.20.7.6 tip_pred_mode: 0 = NEARMV, 1 = NEWMV.
+    if (!sym(&cdfs_.tip_pred_mode[0], 2, node.tip_pred_mode)) {
+      error = error_;
+      return false;
+    }
+    // §5.20.7.8 read_drl_idx() with TipDrlModeCdf.  Both TIP modes code it.
+    if (!code_tip_drl_index(node.drl_index)) {
+      error = error_;
+      return false;
+    }
+    const merge::SingleMode mode =
+        node.tip_pred_mode == 0 ? merge::SingleMode::kNearMv : merge::SingleMode::kNewMv;
+    merge::ResolvedMode resolved;
+    if (merge::resolve_single_mode(stack, params, mode, node.drl_index,
+                                   inter::mc::Mv{node.mvd_y, node.mvd_x},
+                                   &resolved) != merge::Status::kOk) {
+      error = "TIP resolve_single_mode failed";
+      return false;
+    }
+    if (resolved.mv[0].y != node.mv_y || resolved.mv[0].x != node.mv_x) {
+      error = "TIP block MV does not match the signalled mode";
+      return false;
+    }
+    if (node.tip_pred_mode == 1) {
+      if (!write_mv(node.mvd_y, node.mvd_x)) {
+        error = error_;
+        return false;
+      }
+    } else if (node.mvd_y != 0 || node.mvd_x != 0) {
+      error = "NEARMV TIP block carries an MVD";
+      return false;
+    }
+    return true;
+  }
+
   bool write_inter_mode_info(const BlockSyntax& node, std::string& error) {
+    // §5.20.7.10 read_ref_frames() codes tip_mode before every other
+    // reference/mode symbol, for every eligible inter leaf of a
+    // TIP_FRAME_AS_REF frame.
+    if (tip_mode_present()) {
+      const int ctx = tip_context();
+      if (ctx < 0 || ctx > 2) {
+        error = "tip_mode context out of range";
+        return false;
+      }
+      if (!sym(&cdfs_.tip_mode[ctx][0], 2, node.tip_mode ? 1 : 0)) {
+        error = error_;
+        return false;
+      }
+      if (node.tip_mode) {
+        return write_tip_block_mode_info(node, error);
+      }
+    } else if (node.tip_mode) {
+      error = "tip_mode set outside the §5.20.7.10 gate";
+      return false;
+    }
     if (node.compound) {
       return write_compound_mode_info(node, error);
     }
@@ -3762,6 +3913,7 @@ class Writer {
         const int cc = cur_c_ + xx;
         if (cc >= mi_cols_) break;
         const std::size_t idx = cell_index(rr, cc);
+        const bool tip = node.is_inter && node.tip_mode != 0;
         is_inter_grid_[idx] = node.is_inter ? 1 : 0;
         skip_grid_[idx] = node.skip_flag ? 1 : 0;
         comp_group_grid_[idx] =
@@ -3769,30 +3921,32 @@ class Writer {
         ymode_grid_[idx] =
             node.is_inter
                 ? static_cast<std::uint8_t>(
-                      node.compound
-                          ? 19 + node.compound_mode
-                          : (node.inter_mode == kInterGlobalMv
-                                 ? 15
-                                 : (node.inter_mode == kInterNearMv ? 14
-                                                                    : 16)))
+                      tip ? (node.tip_pred_mode ? 16 : 14)
+                          : (node.compound ? 19 + node.compound_mode
+                                           : (node.inter_mode == kInterGlobalMv
+                                                  ? 15
+                                                  : (node.inter_mode == kInterNearMv ? 14 : 16))))
                 : node.y_mode;
         inter::mc::MiInfo& mi = mv_grid_[idx];
         mi = inter::mc::MiInfo{};
+        // A TIP leaf stores RefFrame[0] == TIP_FRAME so later §7.12.2 scans
+        // apply the §7.12.2.15/.17 arms (the builder reports
+        // kUnsupportedFeature when one is needed).
         mi.ref[0] = node.is_inter
-                        ? static_cast<std::int8_t>(node.ref_index)
+                        ? (tip ? merge::kTipFrame : static_cast<std::int8_t>(node.ref_index))
                         : kRefIntraAv2;
-        mi.ref[1] = node.compound
-                        ? static_cast<std::int8_t>(node.ref_index1)
-                        : (node.is_inter && node.motion_mode == 1
-                               ? kRefIntraAv2
-                               : merge::kRefNone);
+        mi.ref[1] =
+            tip ? merge::kRefNone
+                : (node.compound
+                       ? static_cast<std::int8_t>(node.ref_index1)
+                       : (node.is_inter && node.motion_mode == 1 ? kRefIntraAv2 : merge::kRefNone));
         // A GLOBALMV block stores GlobalMvs[0]; every other mode stores its
         // coded MV.  A compound block stores the per-list MVs.  This mirrors
         // decode_block() and keeps later merge-stack candidates identical to
         // the decoder's.
         inter::mc::Mv mv0 = inter::mc::Mv{node.mv_y, node.mv_x};
         inter::mc::Mv mv1 = inter::mc::Mv{node.mv1_y, node.mv1_x};
-        if (node.is_inter && node.inter_mode == kInterGlobalMv) {
+        if (!tip && node.is_inter && node.inter_mode == kInterGlobalMv) {
           mv0 = block_global_mv_for_ref(node, node.ref_index);
           mv1 = node.compound ? block_global_mv_for_ref(node, node.ref_index1)
                               : mv0;
@@ -3816,9 +3970,8 @@ class Writer {
         prec.ref[0] = mi.ref[0];
         prec.ref[1] = mi.ref[1];
         prec.y_mode = ymode_grid_[idx];
-        const bool newmv_leaf =
-            node.is_inter && !node.compound &&
-            node.inter_mode == kInterNewMv;
+        const bool newmv_leaf = node.is_inter && !node.compound &&
+                                (tip ? node.tip_pred_mode == 1 : node.inter_mode == kInterNewMv);
         prec.uses_amvd = newmv_leaf && node.use_amvd != 0;
         prec.mv_precision =
             node.is_inter ? block_mv_precision(node)
@@ -4992,10 +5145,9 @@ bool assemble_video_frame(const FramePlan& plan,
     return false;
   }
 #endif
-  if ((plan.width & 7) != 0 || (plan.height & 7) != 0) {
-    error = "M2 baseline requires width and height divisible by 8";
-    return false;
-  }
+  // The writer derives MiCols/MiRows from plan.width/height with
+  // §5.18.4.4, so any non-zero size is codable; the caller reconstructs the
+  // MI-aligned padded frame and crops the output picture.
   if (plan.sb_size != 64 && plan.sb_size != 128 && plan.sb_size != 256) {
     error = "M2 supports 64x64, 128x128 or 256x256 superblocks";
     return false;

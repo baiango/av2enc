@@ -49,8 +49,9 @@ inline void video_temporal_scan(const merge::StackParams& p,
   in.ref1 = p.ref_frame[1];
   in.order_hint = p.order_hint;
   in.is_compound = p.is_compound;
-  in.use_traj = false;
+  in.use_traj = p.mv_traj != nullptr;
   in.field = p.motion_field;
+  in.traj = p.mv_traj;
   in.num_refs = p.num_refs;
   if (p.order_hints != nullptr) {
     if (in.ref0 >= 0 && in.ref0 < p.num_refs) {

@@ -17,6 +17,7 @@ Normative reference: `spec/AV2_Spec_v1.0.0.pdf` (2026-05-28, commit `38f28e7`).
 | §7.4.3 | closed random access: a CLK invalidates every reference buffer |
 | §7.4.4 | open random access: only `OlkRefresh` and the named long-term references survive |
 | §7.23 | `RefValid` / `RefLongTermId` / `RefOrderHint` update, including the `first` rule for KEY_FRAME |
+| §5.4.2/§5.18.10.1 | `film_grain_params_present` sequence bit and the per-frame `film_grain_config()` tail (default off; `--video-grain` gates long-term/OLK) |
 
 Nothing here is copied from an encoder implementation; the bit layout is read
 from the spec syntax tables and the reader is an independent parser.

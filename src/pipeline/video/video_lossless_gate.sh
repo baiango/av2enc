@@ -17,9 +17,13 @@
 #   3. Four and eight frame streams are IVF-pinned.
 #   4. A `--video` stream is unchanged (this is an independent writer) and the
 #      video tools the lossless writer does not implement are rejected by name.
-#   5. The format cores (10-bit 4:2:0/4:2:2/4:4:4 and 8-bit 4:2:2/4:4:4) decode
-#      exactly at 640x360 and 64x64, and the hierarchical-P schedule
-#      (--video-tlayers 4/8) decodes exactly, including 10-bit.
+#   5. The format cores (10-bit 4:0:0/4:2:0/4:2:2/4:4:4 and 8-bit
+#      4:0:0/4:2:2/4:4:4) decode exactly at 640x360 and 64x64, and the
+#      hierarchical-P schedule (--video-tlayers 4/8) decodes exactly, including
+#      10-bit.
+#   6. The hierarchical-B schedule (--video-lossless-b --video-tlayers 4/8)
+#      codes two references and COMPOUND_AVERAGE interior frames, and decodes
+#      exactly at 640x360 in 8/10-bit 4:2:0, 4:4:4 and 4:0:0.
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "$0")/../../.." && pwd)"
@@ -199,6 +203,35 @@ run_case all_inter_8 8 19c4b81811692127c108fad1c6ec7f47
 run_case tlayers_4 4 f0a2ce304b609a2312822838ab4f7125 --video-tlayers 4
 run_case tlayers_8 8 1b02c94e0c0b044157e86e973261ac36 --video-tlayers 8
 
+# ------------------------------------------------- hierarchical B schedule --
+# Two references per interior frame with COMPOUND_AVERAGE prediction; the
+# 8-frame GOP includes the single-reference B anchor (display index 7).
+b8_case() {
+  local tag=$1 depth=$2 chroma=$3 frames=$4 pin=$5
+  local bw=${6:-640} bh=${7:-360}
+  local cs
+  if [ "$chroma" = "400" ]; then
+    cs="400"
+  elif [ "$depth" = "10" ]; then
+    cs="${chroma}p10"
+  else
+    cs="$chroma"
+  fi
+  local clip="$TMP/b_${tag}.y4m"
+  generate_clip "$cs" "$depth" "$chroma" "$clip" "$frames" "$bw" "$bh"
+  run_input_case "b_${tag}_${bw}x${bh}" "$clip" "$frames" "$pin" \
+    --bit-depth "$depth" --chroma "$chroma" --video-lossless-b \
+    --video-tlayers "$frames"
+}
+b8_case gop4_420 8 420 4 "b9b324b0624372c67d2c4e73bda36785"
+b8_case gop8_420 8 420 8 "c61cd6d197e7c3d68edbe87e09e16dd3"
+b8_case gop8_420_64 8 420 8 "6a24a8f4c88c3737f29e224f2d6433ff" 64 64
+b8_case gop8_420p10 10 420 8 "659dd57b40c6f67f6f4dca591ba4ef64"
+b8_case gop8_420p10_64 10 420 8 "6670c5a4489eb2a8c50a87f288dab57c" 64 64
+b8_case gop8_422p10 10 422 8 "97e6eba8db7cc88e13fe8e04a520475f"
+b8_case gop8_400 8 400 8 "fbf6d94f2a26bafce98f614bb6dbad2d"
+b8_case gop8_444 8 444 8 "a23334f1b623d65f0ec9109f9df3b9f8"
+
 # ------------------------------------------------------- format video cores --
 # Pinned MD5s for the format cases (646x360 / 64x64 4-frame noise clips).
 fmt_pin() {
@@ -210,11 +243,15 @@ fmt_pin() {
     422:640) echo 34304fc9f5dd82347bf60dd548fd670e ;;
     444:640) echo ea09a31d9544d4eaf476a6c1461b0df1 ;;
     444:64) echo b8bdea194e12ea3eac2d23c11f8073bc ;;
+    400:640) echo 2cac09117589e436fc1d77204a119aa3 ;;
+    400:64) echo 7b94105c4d17f653a55dfa6e49fd9d37 ;;
+    400p10:640) echo c6dba17c4b9e882278205cb7f88c7ca2 ;;
+    400p10:64) echo 376b32cb3676e6cf6344eb4b97cc273b ;;
     *) echo "" ;;
   esac
 }
 for spec in "420p10 10 420" "422p10 10 422" "444p10 10 444" \
-            "422 8 422" "444 8 444"; do
+            "422 8 422" "444 8 444" "400p10 10 400" "400 8 400"; do
   # shellcheck disable=SC2086
   set -- $spec
   tag=$1 depth=$2 chroma=$3
@@ -222,7 +259,8 @@ for spec in "420p10 10 420" "422p10 10 422" "444p10 10 444" \
   generate_clip "$tag" "$depth" "$chroma" "$clip" 4 640 360
   run_input_case "fmt_${tag}_640x360" "$clip" 4 "$(fmt_pin "$tag" 640)" \
     --bit-depth "$depth" --chroma "$chroma"
-  if [ "$tag" = "420p10" ] || [ "$tag" = "444" ]; then
+  if [ "$tag" = "420p10" ] || [ "$tag" = "444" ] || \
+     [ "$tag" = "400p10" ] || [ "$tag" = "400" ]; then
     clip="$TMP/f_${tag}_64.y4m"
     generate_clip "$tag" "$depth" "$chroma" "$clip" 4 64 64
     run_input_case "fmt_${tag}_64x64" "$clip" 4 "$(fmt_pin "$tag" 64)" \

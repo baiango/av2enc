@@ -162,6 +162,8 @@ class VideoPostFilterFrame {
 
   int mi_cols_ = 0;
   int mi_rows_ = 0;
+  int visible_width_ = 0;
+  int visible_height_ = 0;
   int sub_x_ = 1;
   int sub_y_ = 1;
   int bit_depth_ = 8;

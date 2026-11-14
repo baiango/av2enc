@@ -118,12 +118,15 @@ struct SefHeader {
   uint8_t frame_to_show_map_idx = 0;
   bool derive_sef_order_hint = true;
   uint32_t sef_order_hint = 0;    // only when derive == false
+  filters::grain::FilmGrainConfig grain;  // §5.18.10.1
 };
 
 struct SefParams {
   uint8_t num_ref_frames = 2;     // M2
   uint8_t order_hint_bits = 4;    // M2
-  bool film_grain_params_present = false;  // non-zero is rejected
+  // §5.4.2. When true the SEF codes §5.18.10.1 film_grain_config() with
+  // immediate_output_frame = 1 (apply_grain f(1), then fgm_id + grain_seed).
+  bool film_grain_params_present = false;
 };
 
 size_t sef_frame_header_bits(const SefParams&, const SefHeader&);
@@ -213,6 +216,8 @@ DAV2D=/path/to/dav2d ./src/encoder/inter/sef/build_and_test.sh
 * truncation, non-SEF OBU, and bad trailing-bit rejection;
 * §7.23 key-frame retention (`RefValid = first`) and P-frame overwrite;
 * §6.17.2 derive = 1 rejection for shown / non-hidden frames;
+* §5.18.10.1 film-grain round-trip (apply_grain/fgm_id/grain_seed) and the
+  exact 20-bit / 1-bit tail sizes;
 * explicit-hint reconstruction (`disp_order_hint`) including the window wrap,
   and the pinned-dav2d hint-equality rule;
 * naming helpers.
@@ -302,8 +307,11 @@ Ordering rules for that integration:
 
 * Only one embedded layer (`max_mlayer_id = 0`), one extended layer, and
   `cur_mfh_id = 0`. Non-zero ids are rejected.
-* Film grain parameters are rejected rather than guessed; M2 sets
-  `film_grain_params_present = 0`.
+* Film grain: `film_grain_params_present = 1` codes the §5.18.10.1
+  `film_grain_config()` (apply_grain, fgm_id, grain_seed) with
+  `immediate_output_frame = 1`.  The caller emits one type-23 model OBU
+  immediately before the SEF OBU when it plans a new model
+  (`--video-grain --video-sef`).
 * No switch/bridge/TIP frames, no multistream, no long-term references.
 * The reader validates the SEF header/trailing bits only; it does not parse
   reference frame state from a full stream.

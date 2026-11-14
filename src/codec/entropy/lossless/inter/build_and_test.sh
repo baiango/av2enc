@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Standalone build + test + decoder gate for the AV2 lossless inter module.
 #
-# The module owns only src/codec/entropy/lossless/inter/.  It is deliberately not
-# wired into CMakeLists.txt or the CLI by this workstream.
+# The module is also compiled into av2enc_core (CMakeLists.txt); this script
+# builds it with the host compiler so the test and gate do not need a full
+# build tree.
 #
 # Usage:
 #   ./build_and_test.sh

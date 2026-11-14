@@ -22,6 +22,7 @@
 //   derive_sef_order_hint       f(1)
 //   if (!derive_sef_order_hint)
 //     sef_order_hint            f(OrderHintBits)
+//   film_grain_config()                §5.18.10.1 (immediate_output_frame = 1)
 //   /* return; refresh_frame_flags = 0, immediate_output_frame = 1 */
 //   trailing_bits()                   §5.2.3
 //
@@ -58,6 +59,7 @@
 // not modify M1/M2 core.
 
 #include "core/bitstream/bitwriter.h"
+#include "pipeline/grain/film_grain_syntax.h"
 
 #include <array>
 #include <cstddef>
@@ -94,7 +96,6 @@ enum class SefError : std::uint8_t {
   kOrderHintNotSignalable,   // derive=0: no LSBs reconstruct the target hint
   kOrderHintMismatch,        // derive=0: hint != referenced frame's OrderHint
   kHintOutOfRange,           // get_disp_order_hint() >= 1<<15
-  kUnsupportedFilmGrain,     // film_grain_params_present == 1 (not coded here)
   kUnsupportedMfh,           // cur_mfh_id != 0 (needs multi-frame-header state)
   kTruncated,                // reader ran past the payload
   kBadTrailingBits,          // missing trailing_one_bit / non-zero tail
@@ -125,6 +126,13 @@ struct SefHeader {
   // Only present/coded when derive_sef_order_hint == false. This is the
   // OrderHintBits-wide LSB value, not necessarily the absolute OrderHint.
   std::uint32_t sef_order_hint = 0;
+  // §5.18.10.1 film_grain_config(). The SEF path sets
+  // immediate_output_frame = 1 before the call, so a sequence with
+  // film_grain_params_present = 1 codes apply_grain f(1) here and, when it is
+  // set, fgm_id f(3) + grain_seed f(16). The model itself must already be
+  // present in the decoder's slots (the caller emits one type-23 OBU before
+  // this OBU when it plans a new model).
+  filters::grain::FilmGrainConfig grain;
 };
 
 // Sequence-level values the SEF header depends on. M2 uses
@@ -132,9 +140,7 @@ struct SefHeader {
 struct SefParams {
   std::uint8_t num_ref_frames = 2;
   std::uint8_t order_hint_bits = 4;
-  // M2 writes film_grain_params_present = 0. When true, film_grain_config()
-  // would emit bits after immediate_output_frame; this module deliberately
-  // rejects that case instead of guessing the film-grain model.
+  // §5.4.2 sequence bit. When false film_grain_config() codes nothing.
   bool film_grain_params_present = false;
 };
 

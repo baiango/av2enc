@@ -115,6 +115,15 @@ STATUS=0
   --out "${TMPDIR:-/tmp}/video_gate_tipref4.ivf" || STATUS=1
 "${OUT}" --frames 8 --tip --ref-mvs \
   --out "${TMPDIR:-/tmp}/video_gate_tipref8.ivf" || STATUS=1
+# §5.20.7.10 block-level TIP reference: RefFrame[0] == TIP_FRAME in the
+# TIP-referencing tail P.  Needs the deterministic single-64x64-leaf
+# partition; run_phase fails if the stream codes no TIP leaf.  The synthetic
+# 64x64 clip's intra SSE beats inter for its only leaf, so --no-intra-fallback
+# keeps the leaf inter (the product CLI gate uses real content).
+"${OUT}" --frames 4 --tip --ref-mvs --tip-block-ref --no-intra-fallback \
+  --out "${TMPDIR:-/tmp}/video_gate_tipblock4.ivf" || STATUS=1
+"${OUT}" --frames 8 --tip --ref-mvs --tip-block-ref --no-intra-fallback \
+  --out "${TMPDIR:-/tmp}/video_gate_tipblock8.ivf" || STATUS=1
 # The §7.22 warp store projection self-test (model classification + per-8x8
 # affine arithmetic, §7.22 / §7.13.3.20).
 "${OUT}" --ref-mvs-field-selftest || STATUS=1

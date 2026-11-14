@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # CPU gate for --video-mv-traj (§5.4.6 enable_mv_traj, §7.9.2 trajectory fill,
-# §7.12.2.14/.16 TrajMv derived candidates).
+# §7.12.2.14/.16 TrajMv derived candidates) and the §7.12.2.21 reference-MV
+# bank (--video-refmvbank).
 #
-# The gated surface is the flat key+P chain with two references and
-# --video-ref-mvs (the trajectory is only consumed by the derived-candidate
-# projection).  Every case must report at least one trajectory-derived
-# candidate, decode with pinned dav2d --strict 1, carry the expected picture
-# count, and match the encoder reconstruction sample-for-sample.  The flag has
-# no effect at NumTotalRefs == 1, so the off-identity check uses the same
-# --video-ref-mvs command.
+# The gated surface is the flat key+P chain with --video-ref-mvs.  Every case
+# must report at least one trajectory-derived or bank candidate, decode with
+# pinned dav2d --strict 1, carry the expected picture count, and match the
+# encoder reconstruction sample-for-sample.  The trajectory applies to any
+# NumTotalRefs >= 2; the cases include the 3-reference composition and the
+# bank + derived-candidate ordering.  The mv-trajectory flag has no effect at
+# NumTotalRefs == 1, so the off-identity check uses the same --video-ref-mvs
+# command.
 #
 # Usage:
 #   src/pipeline/video/video_mv_traj_gate.sh --bin build/av2enc \
@@ -96,6 +98,51 @@ run_case() {
 run_case traj_64 "$FIX64" 8
 run_case traj_360 "$FIX360" 4
 
+# Generic reference-tool case: `marker` is the log field that must be > 0,
+# proving the tool was actually exercised on this clip.
+run_ref_case() {
+  local label=$1 input=$2 frames=$3 marker=$4
+  shift 4
+  local ivf="$OUT/$label.ivf" recon="$OUT/$label.recon.y4m"
+  local dec="$OUT/$label.dec.y4m" log="$OUT/$label.log"
+  echo "== $label: $*"
+  if ! "$BIN" "$input" -o "$ivf" --video --frames "$frames" \
+      --video-recon "$recon" "$@" >"$log" 2>&1; then
+    echo "FAIL($label): encode failed"; tail -5 "$log"; FAIL=1; return
+  fi
+  local got
+  got=$(sed -n "s/.*$marker \\([0-9]*\\).*/\\1/p" "$log" | tail -1)
+  got=${got:-0}
+  if [ "$got" -le 0 ]; then
+    echo "FAIL($label): no $marker (inert carrier)"; FAIL=1; return
+  fi
+  if ! "$DAV2D" -q -i "$ivf" -o "$dec" --strict 1 --threads 1; then
+    echo "FAIL($label): dav2d --strict 1 rejected the stream"; FAIL=1; return
+  fi
+  local recon_md5 dec_md5
+  recon_md5=$(md5 "$recon"); dec_md5=$(md5 "$dec")
+  if [ "$recon_md5" != "$dec_md5" ]; then
+    echo "FAIL($label): recon mismatch (encoder $recon_md5 decoder $dec_md5)"
+    FAIL=1; return
+  fi
+  local dec_frames
+  dec_frames=$(LC_ALL=C grep -a -o 'FRAME' "$dec" | wc -l | tr -d ' ')
+  if [ "$dec_frames" -ne "$frames" ]; then
+    echo "FAIL($label): decoded $dec_frames of $frames picture(s)"; FAIL=1; return
+  fi
+  echo "  PASS: $frames picture(s), $marker $got, md5=$recon_md5"
+  CASES=$((CASES + 1))
+}
+
+# Three-reference trajectory (§7.9.2 field into the §7.12.2.8 scan) and the
+# §7.12.2.21 reference-MV bank, including the bank + derived-candidate order.
+run_ref_case traj_360_r3 "$FIX360" 4 "mv-traj derived candidates" \
+  --video-refs 3 --video-ref-mvs --video-mv-traj
+run_ref_case bank_64 "$FIX64" 8 "refmvbank candidates" --video-refmvbank
+run_ref_case bank_360 "$FIX360" 4 "refmvbank candidates" --video-refmvbank
+run_ref_case bank_360_r3 "$FIX360" 4 "refmvbank candidates" \
+  --video-refs 3 --video-ref-mvs --video-refmvbank
+
 # The flag must change the bitstream compared with the same ref-mvs stream.
 "$BIN" "$FIX360" -o "$OUT/flag_on.ivf" --video --frames 4 --video-refs 2 \
   --video-ref-mvs --video-mv-traj >/dev/null 2>&1
@@ -105,30 +152,6 @@ if cmp -s "$OUT/flag_on.ivf" "$OUT/flag_off.ivf"; then
   echo "FAIL: --video-mv-traj left the stream byte-identical"; FAIL=1
 else
   echo "  PASS(marker): --video-mv-traj changes the stream"
-fi
-
-# Named blockers: the 3-reference trajectory composition and the ref-MV bank
-# are not decoder-exact; both must be rejected by name.
-if "$BIN" "$FIX360" -o "$OUT/reject_r3.ivf" --video --frames 4 --video-refs 3 \
-    --video-ref-mvs --video-mv-traj >"$OUT/reject_r3.log" 2>&1; then
-  echo "FAIL: --video-mv-traj accepted NumTotalRefs == 3 (known residual)"
-  FAIL=1
-elif ! grep -q "wired for NumTotalRefs <= 2" "$OUT/reject_r3.log"; then
-  echo "FAIL: --video-mv-traj refs=3 rejection lacks the named reason"
-  tail -3 "$OUT/reject_r3.log"; FAIL=1
-else
-  echo "  PASS(reject): refs=3 trajectory is rejected by name"
-fi
-
-if "$BIN" "$FIX360" -o "$OUT/reject_bank.ivf" --video --frames 4 \
-    --video-refmvbank >"$OUT/reject_bank.log" 2>&1; then
-  echo "FAIL: --video-refmvbank accepted despite the known parity residual"
-  FAIL=1
-elif ! grep -q "not decoder-exact" "$OUT/reject_bank.log"; then
-  echo "FAIL: --video-refmvbank rejection lacks the named reason"
-  tail -3 "$OUT/reject_bank.log"; FAIL=1
-else
-  echo "  PASS(reject): --video-refmvbank is rejected by name"
 fi
 
 if [ -n "$BASE_BIN" ] && [ -x "$BASE_BIN" ]; then

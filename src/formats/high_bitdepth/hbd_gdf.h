@@ -65,8 +65,11 @@ inline gdf::FrameGdfContext make_gdf_context(const HbdGdfFrame16& frame,
   context.coded_lossless = false;
   context.single_picture_header_flag = true;
   context.sb_size = 64;
-  context.width = frame.width;
-  context.height = frame.height;
+  // §7.20.1 runs over the coded (MI-aligned) picture: the last GDF unit's
+  // stripe region is bounded by MiCols*4/MiRows*4, so the context size must be
+  // the padded extent, not the visible width/height.
+  context.width = frame.mi_cols * 4;
+  context.height = frame.mi_rows * 4;
   context.mi_cols = frame.mi_cols;
   context.mi_rows = frame.mi_rows;
   context.disable_loopfilters_across_tiles = false;
@@ -74,8 +77,8 @@ inline gdf::FrameGdfContext make_gdf_context(const HbdGdfFrame16& frame,
   context.tile_rows = 1;
   context.mi_col_starts.assign(1, 0);
   context.mi_row_starts.assign(1, 0);
-  if ((frame.width & 1) != 0 || (frame.height & 1) != 0) {
-    if (error != nullptr) *error = "gdf: luma dimensions must be even";
+  if (context.width <= 0 || context.height <= 0) {
+    if (error != nullptr) *error = "gdf: invalid MI-aligned geometry";
   }
   return context;
 }
@@ -94,9 +97,6 @@ inline bool plan_gdf(const HbdGdfFrame16& frame, HbdGdfPlan* plan,
     return fail("gdf plan: invalid geometry");
   }
   plan->context = make_gdf_context(frame, error);
-  if ((frame.width & 1) != 0 || (frame.height & 1) != 0) {
-    return fail("gdf plan: odd luma dimensions");
-  }
   gdf::GdfSourceFrame source;
   source.curr = frame.curr;
   source.cdef = frame.cdef;

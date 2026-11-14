@@ -18,6 +18,7 @@ Process Specification v1.0.0 (2026-05-28, commit `38f28e7`).
 | Open random access, leading frames discarded | §7.4.4 |
 | Output frame buffers | §7.21.5, §7.21.6 |
 | Leading refresh restriction | §6.17.2 |
+| `film_grain_params_present`, `film_grain_config()` (non-output leading pictures code nothing) | §5.4.2, §5.18.10.1 |
 
 ## Files
 

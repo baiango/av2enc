@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/bitstream/bitwriter.h"
+#include "pipeline/grain/film_grain_syntax.h"
 
 #include <array>
 #include <cstddef>
@@ -79,6 +80,9 @@ struct SequenceConfig {
   // tile CDFs at frame end, which is the single-tile form for this writer.
   bool enable_avg_cdf = false;
   bool avg_cdf_type = true;
+  // §5.4.2 film_grain_params_present. When set, every frame header codes
+  // §5.18.10.1 film_grain_config() after reduced_tx_set.
+  bool film_grain_params_present = false;
 };
 
 // §5.18.2 output flags actually written/derived for a frame.
@@ -100,6 +104,10 @@ struct FrameHeader {
   //   false: coded non-output frame unit (immediate=0, implicit=0).
   //   true : leading frame queued immediately when decoded (immediate=1).
   bool leading_output_frame = false;
+
+  // §5.18.10.1 film_grain_config(), coded last when the sequence sets
+  // film_grain_params_present. Non-output frames code nothing.
+  filters::grain::FilmGrainConfig grain;
 };
 
 // Derives immediate_output_frame / implicit_output_frame exactly as §5.18.2

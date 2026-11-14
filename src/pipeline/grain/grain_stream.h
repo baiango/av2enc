@@ -144,6 +144,17 @@ bool InsertFilmGrainObu(std::span<const std::uint8_t> unit,
                         std::span<const std::uint8_t> obu_bytes,
                         std::vector<std::uint8_t>* out, std::string* error);
 
+// Same, but targets the `frame_ordinal`-th coded-frame OBU of the unit (0 =
+// the first).  A temporal unit may carry more than one coded frame (the OLK
+// schedule puts the hidden OLK and its leading P in one unit); the model OBU
+// belongs immediately before the frame OBU it applies to, and §7.3.8.8 only
+// requires the model to be available before that header is parsed.
+bool InsertFilmGrainObuBeforeFrame(std::span<const std::uint8_t> unit,
+                                   std::size_t frame_ordinal,
+                                   std::span<const std::uint8_t> obu_bytes,
+                                   std::vector<std::uint8_t>* out,
+                                   std::string* error);
+
 // Reads/writes the sequence-level film_grain_params_present bit in place.
 //
 // Layout assumption (documented, and checked): the repo's sequence-header

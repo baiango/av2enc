@@ -9,12 +9,16 @@ flat P chain, `--tiles`, `--b-frames`, `--video-tlayers`, `--video-tip`, the
 loop filters / `--avg-cdf --adaptive-cdf` chain and the
 `--bit-depth/--chroma` format cores (10-bit 4:2:0/4:2:2/4:4:4/4:0:0 and 8-bit
 4:2:2/4:4:4/4:0:0); `video_grain_gate.sh` gates every composition at 640x360
-and 64x64 (`--filmgrain 0` recon-exact, `--filmgrain 1` synthesis, 118
+and 64x64 (`--filmgrain 0` recon-exact, `--filmgrain 1` synthesis, 169
 checks).  The
 estimator accepts a packed `uint16_t` view (`GrainFrameView::y16/u16/v16` +
 `bit_depth`) and normalises it to the 8-bit domain, so one model syntax serves
-every depth.  The random-access frame-type wrappers stay rejected by name
-(their components code neither the sequence bit nor the config).  The still
+every depth.  The random-access frame-type wrappers (long-term/OLK/leading/
+SEF/SWITCH/RAS) compose too: their component sequence/frame header writers
+code `film_grain_params_present` and `film_grain_config()`, and
+`pipeline/video/video_frames.cpp` plans one model per output picture and
+inserts the type-23 OBU immediately before that picture's frame OBU (OLK units
+carry two frames, so the model goes between them).  The still
 composition root wires this module behind `--still-grain`: `film_grain_params_present = 1`, one
 `film_grain_obu()` before the coded-frame OBU, and `film_grain_config()` as the
 last frame-header field.  `--still-grain` keeps the fixed two-point 4:2:0 model;
@@ -296,7 +300,11 @@ because `src/encoder/m2/video_syntax.cpp` has pre-existing
   `tlayer_id`.
 * `fgm_chroma_idc` follows the frame format: the video gates exercise 4:2:0,
   4:2:2, 4:4:4 and 4:0:0 at 8 and 10-bit.
-* The random-access frame-type wrappers (SEF/SWITCH/RAS/OLK/leading/long-term)
-  keep `--video-grain` rejected by name: their sequence/frame header components
-  have no film-grain syntax.
+* The frame-type wrappers are 8-bit 4:2:0 only (their component sequence
+  headers hard-code chroma_format_idc = 0 / bit_depth_idc = 1), so the wrapper
+  grain cases are gated on that core.
+* SEF re-showing codes its own `film_grain_config()` and one model OBU before
+  the SEF OBU (a fresh planner per SEF unit; the OBU overwrites a slot before
+  the SEF header is parsed, so the model is self-contained).  The base
+  pictures of the SEF schedule use the plain-path planner.
 

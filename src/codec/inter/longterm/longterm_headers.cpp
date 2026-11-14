@@ -363,7 +363,7 @@ std::size_t write_sequence_header(BitWriter& writer,
   // §5.4.2 sequence_tile_config().
   writer.put_bit(false);  // seq_tile_info_present_flag
 
-  writer.put_bit(false);  // film_grain_params_present
+  writer.put_bit(c.film_grain_params_present);  // §5.4.2 film grain models
 
   return writer.bit_size() - start;
 }
@@ -483,7 +483,18 @@ std::size_t write_frame_header(BitWriter& writer, const SequenceConfig& c,
   }
   // allow_bawp / allow_warpmv_mode disabled at sequence level.
   writer.put_bits(0U, 2U);  // reduced_tx_set
-  // global_motion_params() / film_grain_config() code no bits.
+  // §5.18.10.1 film_grain_config(). implicit_output_frame is 0 because
+  // monotonic_output_order_flag == 1 and the writer codes it as 0 above.
+  if (c.film_grain_params_present) {
+    filters::grain::FilmGrainConfigContext context;
+    context.film_grain_params_present = true;
+    context.immediate_output_frame =
+        h.role == FrameRole::kOpenLoopKey ? false : h.immediate_output_frame;
+    std::string grain_error;
+    filters::grain::WriteFilmGrainConfig(writer, h.grain, context,
+                                         &grain_error);
+    assert(grain_error.empty());
+  }
 
   return writer.bit_size() - start;
 }
@@ -783,6 +794,26 @@ bool read_tile_group_header(std::span<const std::uint8_t> payload,
   if (!read_bits(reader, 2U, &reduced_tx_set) || reduced_tx_set != 0U) {
     return set_error(error, "unexpected reduced_tx_set");
   }
+  // §5.18.10.1 film_grain_config().
+  if (c.film_grain_params_present) {
+    filters::grain::FilmGrainConfigContext context;
+    context.film_grain_params_present = true;
+    context.immediate_output_frame =
+        h.role == FrameRole::kOpenLoopKey ? false : h.immediate_output_frame;
+    std::size_t position = reader.bit_pos();
+    std::string grain_error;
+    if (!filters::grain::ReadFilmGrainConfig(payload, &position, context,
+                                             &h.grain, &grain_error)) {
+      if (error != nullptr) error->assign("film_grain_config: " + grain_error);
+      return false;
+    }
+    while (reader.bit_pos() < position) {
+      std::uint64_t bit = 0;
+      if (!read_bits(reader, 1U, &bit)) {
+        return set_error(error, "truncated film_grain_config");
+      }
+    }
+  }
 
   out->header_bits = reader.bit_pos();
   reader.align_to_byte();
@@ -1019,7 +1050,8 @@ bool read_sequence_header(std::span<const std::uint8_t> payload,
   if (!expect_flag(reader, false, "seq_tile_info_present_flag", error)) {
     return false;
   }
-  if (!expect_flag(reader, false, "film_grain_params_present", error)) {
+  if (!expect_flag(reader, c.film_grain_params_present,
+                   "film_grain_params_present", error)) {
     return false;
   }
   if (bits != nullptr) *bits = reader.bit_pos();

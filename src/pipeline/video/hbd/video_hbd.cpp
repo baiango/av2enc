@@ -1272,20 +1272,6 @@ bool validate_options(const Options& options, std::size_t frame_count,
   // Same pinned-decoder constraint as the still writer: at 4:2:2/4:4:4 the
   // chroma lossless-mask read runs past its extent in the stripe at luma row
   // 248, so chroma LR + deblock cannot be decoder-exact.
-  if (!fmt::has_chroma(format.chroma) &&
-      format.depth == fmt::BitDepth::k8 && options.loop_filters.pc_wiener &&
-      frame_count > 1) {
-    // The pinned dav2d rejects the second frame of an 8-bit monochrome
-    // PC-Wiener sequence (the key frame decodes bit-exactly).  The same plan
-    // at 10-bit monochrome and at 8-bit 4:2:2/4:4:4 is gated exact, so this is
-    // a depth/plane-count interaction in the decoder's inter-frame LR path.
-    // Reproducer: av2enc Cmono.y4m -o x.ivf --video --chroma 400
-    //   --video-pc-wiener --frames 2
-    error =
-        "--video-pc-wiener on 8-bit 4:0:0 does not decode past the key frame "
-        "with pinned dav2d; use 10-bit monochrome or a chroma format";
-    return false;
-  }
   if (options.enable_deblock && options.loop_filters.chroma_lr &&
       fmt::has_chroma(format.chroma) &&
       fmt::subsampling_y(format.chroma) == 0) {
@@ -1379,9 +1365,22 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
   const fmt::Format format = options.format;
   const std::uint32_t width = frames[0].width;
   const std::uint32_t height = frames[0].height;
-  if (width == 0 || height == 0 || (width & 7U) != 0 || (height & 7U) != 0) {
-    error = "the format video core requires non-zero width/height divisible by "
-            "8";
+  if (width == 0 || height == 0) {
+    error = "the format video core requires non-zero width/height";
+    return false;
+  }
+  // The chroma layout is the only dimension constraint: 4:2:0 needs even
+  // width and height, 4:2:2 needs an even width, and 4:4:4/4:0:0 accept any
+  // size.  §5.18.4.4 rounds the coded grid up to MiCols/MiRows 4x4 units and
+  // the output picture is cropped back to width x height.
+  if ((fmt::has_chroma(format.chroma) &&
+       fmt::subsampling_x(format.chroma) != 0 && (width & 1U) != 0) ||
+      (fmt::has_chroma(format.chroma) &&
+       fmt::subsampling_y(format.chroma) != 0 && (height & 1U) != 0)) {
+    error = "the format video core cannot represent " +
+            std::to_string(width) + "x" + std::to_string(height) +
+            " in " + fmt::chroma_format_name(format.chroma) +
+            " (chroma subsampling requires even coded dimensions)";
     return false;
   }
   if (width > 0xFFFFU || height > 0xFFFFU) {

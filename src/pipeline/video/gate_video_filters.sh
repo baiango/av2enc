@@ -349,14 +349,7 @@ for spec in "${FORMAT_CASES[@]}"; do
   run_format_case "$tag" "$depth" "$chroma" cdef --video-cdef
   run_format_case "$tag" "$depth" "$chroma" ccso --video-ccso
   run_format_case "$tag" "$depth" "$chroma" wiener --video-wiener
-  if [[ "$depth" == "8" && "$chroma" == "400" ]]; then
-    # Named rejection: the pinned decoder rejects the second frame of an
-    # 8-bit monochrome PC-Wiener sequence (see validate_options()).
-    run_format_reject "$tag" "$depth" "$chroma" pc-wiener-p-frame \
-      --video-pc-wiener
-  else
-    run_format_case "$tag" "$depth" "$chroma" pc-wiener --video-pc-wiener
-  fi
+  run_format_case "$tag" "$depth" "$chroma" pc-wiener --video-pc-wiener
   run_format_case "$tag" "$depth" "$chroma" gdf --video-gdf
   run_format_case "$tag" "$depth" "$chroma" chain \
     --video-deblock --video-cdef --video-ccso --video-wiener --video-gdf

@@ -1,4 +1,4 @@
-# encoder/lossless/inter — AV2 lossless P frames
+# encoder/lossless/inter — AV2 lossless P and B frames
 
 From-scratch CPU reference for the lossless inter paths that
 `docs/spec-audit/08-transform.md` and `04-tile-block.md` list as missing:
@@ -11,8 +11,10 @@ From-scratch CPU reference for the lossless inter paths that
 | inter residual WHT / IDTX / DPCM reconstruction (§7.15.4, p525–528) | **WIRED** |
 | FSC coefficient syntax beyond 4×4/8×8 (§5.20.7.27 `coeff_base_bob` / `coeff_base_idtx` / `coeff_br_idtx` / `idtx_sign`) | **WIRED** for 4×4…32×32 rectangular luma transforms; unit-tested at 8×16/16×8/16×32/32×16/32×32 |
 | lossless 4:4:4 / 4:2:2 | **WIRED** and decoder-gated (spec §6.4.2 Table 6.2 allows both; no lossless restriction) |
+| lossless 4:0:0 (Monochrome) | **WIRED** and decoder-gated (Table 6.2 `chroma_format_idc = 1`; no chroma mode or residual syntax, `HasChroma = 0`) |
 | 10-bit lossless | **WIRED** and decoder-gated (`bit_depth_idc = 0`, f(9) `base_q_idx`, Clip1(10)) |
 | hierarchical-P schedule | **WIRED** and decoder-gated (`--video-tlayers 4/8`; see "CLI wiring") |
+| hierarchical-B schedule (two-sided prediction) | **WIRED** and decoder-gated (`--video-lossless-b --video-tlayers 4/8`): two references, `reference_select = 1`, `COMPOUND_AVERAGE` interior blocks |
 
 Normative source: `spec/AV2_Spec_v1.0.0.pdf` (v1.0.0, commit `38f28e7`).
 `dav2d` is a black-box validator only.
@@ -23,14 +25,15 @@ Normative source: `spec/AV2_Spec_v1.0.0.pdf` (v1.0.0, commit `38f28e7`).
 module's sequence/frame headers, `CodedLossless` quantization, DPCM/WHT/IDTX
 reconstruction and FSC syntax are used unchanged.  Supported surface:
 
-* 8-bit and 10-bit, 4:2:0/4:2:2/4:4:4 (`--bit-depth 8|10 --chroma 420|422|444`);
-  4:0:0 is not coded yet.
-* the flat key+P chain and the hierarchical-P temporal-layer schedule
-  (`--video-tlayers 4|8|16`).  The schedule comes from
-  `src/codec/inter/tlayers/` (`kHierarchicalP`, single reference, implicit
-  output pictures); the sequence header raises `max_tlayer_id`/NumRefFrames,
-  clears `monotonic_output_order_flag`, and the frame OBU carries
-  `obu_tlayer_id`.
+* 8-bit and 10-bit, 4:0:0/4:2:0/4:2:2/4:4:4 (`--bit-depth 8|10 --chroma 400|420|422|444`).
+* the flat key+P chain and the hierarchical-P/B temporal-layer schedules
+  (`--video-tlayers 4|8|16` for P, `--video-lossless-b --video-tlayers 4|8`
+  for B).  The schedules come from `src/codec/inter/tlayers/`; the sequence
+  header raises `max_tlayer_id`/NumRefFrames, clears
+  `monotonic_output_order_flag`, and the frame OBU carries `obu_tlayer_id`.
+  A hierarchical-B interior frame carries two references (one past, one
+  future) and codes two-sided `COMPOUND_AVERAGE` prediction; the layer-0 B
+  anchor (display index 7 of an 8-frame GOP) keeps one reference.
 * `--video-lossless-intra-period N` sets `Options::intra_period` (0 = all
   inter), `--video-min-block 8|16|32` selects the coding block size, and
   `--lossless-fsc` forces `force_intra_fsc`.
@@ -43,20 +46,27 @@ for rectangular leaves).  The module's sequence/frame headers carry
 `max_tlayer_id > 0`, the `tlayer_dependency_present_flag`.
 
 The decoder gates are `src/pipeline/video/video_lossless_gate.sh` (720p plain
-4/8-frame streams, `--video-tlayers 4/8`, and every supported format at
-640x360 plus 64x64, all `dav2d --strict 1` with 0-diff recon) and this
-module's own `build_and_test.sh`, whose gate now covers 10-bit 4:2:0/4:4:4 and
-a 4-frame temporal-layer GOP.
+4/8-frame streams, `--video-tlayers 4/8`, `--video-lossless-b --video-tlayers
+4/8`, and every supported format including 4:0:0 at 640x360 plus 64x64, all
+`dav2d --strict 1` with 0-diff recon) and this module's own
+`build_and_test.sh`, whose gate now covers 10-bit 4:2:0/4:4:4, 4:0:0 and the
+hierarchical-P/B schedules.
 
 ## What is encoded
 
-* 8-bit, one tile, 64×64 superblocks.
-* One key frame (`OBU_CLOSED_LOOP_KEY`) followed by one or more P frames
-  (`OBU_REGULAR_TILE_GROUP`), `NumRefFrames = 2`, a single total reference.
-* Every P-frame block is an inter block using `single_mode = GLOBALMV` with
-  identity global motion (zero MV), or an intra block whose frequency is set by
-  `Options::intra_period`.  There is no motion search — the purpose is the
-  lossless transform / coefficient syntax, not RD.
+* 8/10-bit, one tile, 64×64 superblocks.
+* One key frame (`OBU_CLOSED_LOOP_KEY`) followed by P frames
+  (`OBU_REGULAR_TILE_GROUP`).  The flat chain keeps `NumRefFrames = 2` and a
+  single total reference; the hierarchical plans use one slot per picture and
+  up to two total references.  Every non-key block is inter or intra according
+  to `Options::intra_period`.
+* A hierarchical-P inter block uses `single_mode = GLOBALMV` with identity
+  global motion (zero MV).  In a hierarchical-B frame every inter leaf codes
+  `comp_mode = COMPOUND_REFERENCE`, the implied `(0, 1)` reference pair, and
+  non-joint `compound_mode_non_joint = 3` (`GLOBAL_GLOBALMV`); the prediction is
+  §7.13.3.14 `COMPOUND_AVERAGE` at `CWP_EQUAL`, i.e.
+  `Clip1(Round2(ref0 + ref1, 1))` at zero MV.  There is no motion search — the
+  purpose is the lossless transform / coefficient syntax, not RD.
 * Lossless `read_tx_size`:
   * intra non-FSC → `TX_4X4`;
   * intra FSC or inter → one `lossless_tx_size` symbol; `1` selects
@@ -72,13 +82,14 @@ a 4-frame temporal-layer GOP.
   transforms; `segEob = min(32,w)*min(32,h)` and the §5.20.7.30 2-D scan are
   generated, not specialised to 4×4/8×8.
 
-Scope limits: 4:0:0 (monochrome), 12-bit, SDP/CHROMA_PART, multiple tiles,
-real motion search, and lossy quantisation are not encoded.  The independent
-reader (`decode_video()`) validates the flat chain and the format cores; the
-reordered hierarchical-P schedule is gated by pinned `dav2d` instead, because
-the reader's chroma residual path is not wired for that coding order.  The FSC coefficient
-syntax is lossless-level only here; the same syntax with lossy levels is
-exercised by `fsc_coeff_roundtrip()`.
+Scope limits: 12-bit, SDP/CHROMA_PART, multiple tiles, real motion search,
+compound modes other than `COMPOUND_AVERAGE`/`GLOBAL_GLOBALMV`, and lossy
+quantisation are not encoded.  The independent reader (`decode_video()`) walks
+the reference slots (including a key frame's all-slots refresh) and returns
+pictures in order-hint (display) order, so the flat chain and both hierarchical
+schedules are checked against the source, not only against the encoder's
+recon.  The FSC coefficient syntax is lossless-level only here; the same syntax
+with lossy levels is exercised by `fsc_coeff_roundtrip()`.
 
 ## API (`lossless_inter.h`)
 
@@ -117,17 +128,21 @@ std::span<const GoldenCase> golden_cases();
 ```
 
 `EncodeResult::units` holds one Annex-B temporal unit per frame.  Unit 0 is
-`TD + sequence header + CLK`; later units are `TD + P`.  `EncodeResult::recon`
-is the encoder's decoder-path reconstruction and `stats[i].exact` is true only
+`TD + sequence header + CLK`; later units are `TD + P` or `TD + B` (the OBU is
+always `OBU_REGULAR_TILE_GROUP`).  `EncodeResult::recon` is the encoder's
+decoder-path reconstruction in display order and `stats[i].exact` is true only
 when every sample matches the source.
 
-`decode_video()` parses the OBUs, sequence header, both frame headers, the
-partition tree, inter/intra mode info, transform sizes and coefficients, and
-reconstructs every frame.  It does not reuse the encoder's decisions.
+`decode_video()` parses the OBUs, sequence header, every frame header, the
+partition tree, inter/intra mode info, transform sizes and coefficients,
+reconstructs every frame through the reference slots, and returns pictures in
+order-hint order.  It does not reuse the encoder's decisions.
 
 `Options::block_size` is the target coding-block size (8/16/32; boundary blocks
 split down to 8).  `Options::intra_period` forces one intra block per N in a P
-frame; `0` means all inter, `1` means all intra.  `inter_4x4_only` +
+or B frame; `0` means all inter, `1` means all intra.  `Options::temporal_layers`
+selects a closed hierarchical GOP and `Options::b_schedule` switches it from
+the single-reference P plan to the two-reference B plan.  `inter_4x4_only` +
 `inter_4x4_idtx` pin the §5.20.8.2 branch for tests, and `force_intra_fsc`
 pins `fsc_mode = 1`.
 
@@ -158,13 +173,24 @@ pins `fsc_mode = 1`.
 7. **`frame_size_override_flag` and `order_hint` precede the primary-ref
    fields** in a P frame header (§5.18.2, p98), and `refresh_frame_flags`
    follows them.
+8. **An all-zero luma block infers `DCT_DCT`.**  `lossless_inter_tx_type` is
+   only present when `eob > 0`; §5.20.7.27 sets `TxTypes = DCT_DCT` for
+   `all_zero`.  The encoder and the reader must both store that effective type
+   for the chroma `compute_tx_type()` derivation, otherwise a chroma block
+   mapped to an all-zero luma cell uses IDTX on one side and DCT_DCT on the
+   other (the residual is identical in levels, the reconstruction is not).
+9. **`read_compound_ref()` is bitless for the (0, 1) pair.**  With
+   `NumTotalRefs == 2` and `NumSameRefCompound == 0`, the
+   `ref + 1 == NumTotalRefs - 1` branch infers `comp_ref = 1`; coding a
+   `comp_ref` symbol shifts the whole tile.  Only `comp_mode`, `is_joint` and
+   `compound_mode_non_joint` are coded for a two-reference B leaf.
 
 ## Tests
 
 ```sh
-./src/encoder/lossless/inter/build_and_test.sh
-SANITIZE=1 WERROR=1 ./src/encoder/lossless/inter/build_and_test.sh
-GATE_REQUIRED=1 ./src/encoder/lossless/inter/build_and_test.sh
+./src/codec/entropy/lossless/inter/build_and_test.sh
+SANITIZE=1 WERROR=1 ./src/codec/entropy/lossless/inter/build_and_test.sh
+GATE_REQUIRED=1 ./src/codec/entropy/lossless/inter/build_and_test.sh
 ```
 
 `lossless_inter_test.cpp` covers:
@@ -177,14 +203,16 @@ GATE_REQUIRED=1 ./src/encoder/lossless/inter/build_and_test.sh
 * `fsc_coeff_roundtrip()` at 4×4, 8×8, 8×16, 16×8, 16×16, 16×32, 32×16,
   32×32, the all-zero block, and a ±2047 (lossy-magnitude) 16×16 block;
 * full key + P round trips at 64×64, 136×88 and 640×360, block sizes 8/16/32,
-  all-inter / mixed / all-intra P frames, FSC on/off, and 4:2:0/4:2:2/4:4:4;
+  all-inter / mixed / all-intra P frames, FSC on/off, 4:2:0/4:2:2/4:4:4 and
+  4:0:0, 8/10-bit, hierarchical-P and hierarchical-B (gop 4/8);
 * every round trip checks the encoder reconstruction and the independent
   reader against the source (0-LSB), not just the two reconstructions against
   each other;
 * a pinned MD5 for each stream in `golden_cases()`, checked by the test.
 
-`lossless_inter_gate.cpp` writes a 2-frame IVF and runs
-`dav2d --strict 1 --threads 1`.  Passed cases (dev host, `dav2d f9dafbc`):
+`lossless_inter_gate.cpp` writes one IVF per case (2 frames, or 4/8 for the
+temporal-layer schedules) and runs `dav2d --strict 1 --threads 1`.  Passed
+cases (dev host, `dav2d f9dafbc`):
 
 ```
 ok   64x64_420_b8_p0
@@ -200,32 +228,29 @@ ok   64x64_444p10_b16_p4
 ok   640x360_420p10_b16_p4
 ok   64x64_420_tl4
 ok   64x64_420p10_tl4
-lossless_inter_gate: 26 checks passed
+ok   64x64_400_b16_p4
+ok   640x360_400_b16_p4
+ok   64x64_400p10_b16_p4
+ok   64x64_420_b8_gop4
+ok   64x64_420_b8_gop8
+ok   640x360_420_b8_gop8
+ok   64x64_420p10_b8_gop8
+ok   64x64_400_b8_gop8
+lossless_inter_gate: 42 checks passed
 ```
 
-The dev-host test run reports `lossless_inter_test: 6268 checks, 0 failures`.
+The dev-host test run reports `lossless_inter_test: 6391 checks, 0 failures`.
 
-Each case proves two things: the module's reader reproduces both frames, and
-`dav2d` outputs exactly the 2-frame source I420 (all Y/U/V samples, both
-frames).  A truncated P frame (one-frame output) is a failure even when the
-decoder exits 0.
+Each case proves two things: the module's reader reproduces every frame in
+display order, and `dav2d` outputs exactly the source samples for the same
+frames (all Y/U/V samples; luma only for 4:0:0).  A truncated frame is a
+failure even when the decoder exits 0.
 
 ## Integration / call sites
 
-This workstream owns only `src/encoder/lossless/inter/`; no core file was
-edited and no commits were made.  There are currently **no call sites** in the
-shipped CLI or in M1/M2.  To wire it later:
-
-* add `lossless_inter.cpp` to `av2enc_core` (dependencies are already in the
-  archive: `bitstream/bitwriter.cpp`, `entropy/av2/av2_entropy.cpp`,
-  `encoder/intra_modes/intra_modes.cpp`, `encoder/partition/partition.cpp`);
-* expose `encode_video()` behind a CLI flag such as `--lossless-inter` and
-  write `EncodeResult::units` through `IvfWriter` (one `write_frame` per
-  temporal unit);
-* use `decode_video()` as the CPU oracle, or compare its recon to the source;
-* use `derive_lossless()` wherever an inter frame's `CodedLossless` /
-  `LosslessArray` must be derived from segmentation `ALT_Q` (the block-level
-  `segment_id` writer is still out of scope, as in the still module).
-
-The external gate needs no core edit: `build_and_test.sh` compiles the module
-and gate standalone.
+The module is part of `av2enc_core` (`CMakeLists.txt`) and is the writer behind
+`av2enc --video-lossless` / `--video-lossless-b` (`src/main.cpp`):
+`run_video_lossless_encode()` supplies the 8-bit 4:2:0 pictures, and
+`run_video_lossless_format_encode()` supplies 10-bit and the 4:0:0/4:2:2/4:4:4
+Y4M cores.  `EncodeResult::units` is written one temporal unit per IVF frame,
+and `EncodeResult::recon` goes to `--video-recon`.

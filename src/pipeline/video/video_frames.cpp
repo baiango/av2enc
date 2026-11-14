@@ -5,6 +5,7 @@
 #include "codec/inter/longterm/longterm_stream.h"
 #include "codec/inter/random_access/random_access.h"
 #include "codec/inter/sef/sef.h"
+#include "pipeline/grain/grain_stream.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,99 @@ namespace ra = inter::random_access;
 namespace sef = inter::sef;
 
 namespace lt = inter::longterm;
+
+namespace gr = filters::grain;
+
+// §5.14 film grain: the wrappers rebuild sequence/frame headers, so they plan
+// one model per *output* picture (coding order) and insert the type-23 OBU
+// immediately before that picture's frame OBU.  Non-output pictures (the
+// hidden last picture of --video-sef, leading pictures, the OLK) code no
+// film_grain_config() and carry no model OBU.
+gr::GrainChromaIdc grain_chroma_idc_of(fmt::ChromaFormat chroma) {
+  switch (chroma) {
+    case fmt::ChromaFormat::k400:
+      return gr::GrainChromaIdc::k400;
+    case fmt::ChromaFormat::k422:
+      return gr::GrainChromaIdc::k422;
+    case fmt::ChromaFormat::k444:
+      return gr::GrainChromaIdc::k444;
+    case fmt::ChromaFormat::k420:
+    default:
+      return gr::GrainChromaIdc::k420;
+  }
+}
+
+gr::GrainFrameView make_grain_view(const VideoInputFrame& frame) {
+  gr::GrainFrameView view;
+  const bool packed16 = !frame.y16.empty();
+  const int sub_x = fmt::subsampling_x(frame.format.chroma);
+  const bool has_chroma = fmt::has_chroma(frame.format.chroma);
+  if (packed16) {
+    view.y16 = frame.y16.data();
+    if (has_chroma) {
+      view.u16 = frame.u16.data();
+      view.v16 = frame.v16.data();
+    }
+    view.bit_depth = frame.format.depth == fmt::BitDepth::k10 ? 10 : 8;
+  } else {
+    view.y = frame.y.data();
+    if (has_chroma) {
+      view.u = frame.u.data();
+      view.v = frame.v.data();
+    }
+    view.bit_depth = 8;
+  }
+  view.width = static_cast<int>(frame.width);
+  view.height = static_cast<int>(frame.height);
+  view.y_stride = static_cast<int>(frame.width);
+  view.c_stride = static_cast<int>(frame.width >> sub_x);
+  return view;
+}
+
+// One planner per wrapper sequence, with the grain chroma idc of the coded
+// format (§6.17.10.1 compares fgm_chroma_idc against chroma_format_idc).
+gr::GrainStreamPlanner make_grain_planner(const VideoOptions& options) {
+  gr::GrainPlanOptions grain_options;
+  grain_options.chroma_idc = grain_chroma_idc_of(options.format.chroma);
+  return gr::GrainStreamPlanner(grain_options);
+}
+
+bool plan_grain(const VideoInputFrame& frame, std::uint32_t index,
+                gr::GrainStreamPlanner& planner, gr::GrainFramePlan& plan,
+                std::string& error) {
+  return planner.PlanFrame(make_grain_view(frame), index, /*tlayer_id=*/0,
+                           /*mlayer_id=*/0, &plan, &error);
+}
+
+// Copies `grain` into a wrapper header's film_grain_config() fields.
+template <typename Header>
+void set_grain(Header& header, const gr::GrainFramePlan& plan) {
+  header.grain.apply_grain = plan.apply_grain;
+  header.grain.fgm_id = plan.fgm_id;
+  header.grain.grain_seed = plan.grain_seed;
+}
+
+// Emits this picture's model OBU (if the planner allocated a new slot) before
+// the `frame_ordinal`-th coded-frame OBU of `unit`.
+bool insert_grain_obu(const gr::GrainFramePlan& plan, std::size_t frame_ordinal,
+                      std::vector<std::uint8_t>& unit, std::string& error) {
+  if (!plan.emit_model) return true;
+  std::string grain_error;
+  const std::vector<std::uint8_t> obu =
+      gr::MakeFilmGrainObu(plan.obu, &grain_error);
+  if (obu.empty()) {
+    error = "film grain OBU: " + grain_error;
+    return false;
+  }
+  std::vector<std::uint8_t> with_grain;
+  if (!gr::InsertFilmGrainObuBeforeFrame(unit, frame_ordinal, obu, &with_grain,
+                                         &grain_error)) {
+    error = "film grain OBU: " + grain_error;
+    return false;
+  }
+  unit.swap(with_grain);
+  return true;
+}
 
 // One plain (flag-free) sub-encode: tile payloads in decode order plus the
 // reconstruction of every picture the sub-stream would output.
@@ -39,6 +133,12 @@ VideoOptions plain_options(const VideoOptions& options) {
   plain.ra_switch = false;
   plain.ras = false;
   plain.hide_last_picture = false;
+  // The wrappers keep only the tile payloads from these sub-encodes: their
+  // sequence/frame headers are rebuilt by the component writers, which code
+  // film_grain_params_present and film_grain_config() themselves.  Running the
+  // §5.14 planner inside the sub-encode would emit OBUs that are immediately
+  // discarded (and plan models for pictures the wrapper never outputs).
+  plain.film_grain = false;
   return plain;
 }
 
@@ -85,6 +185,7 @@ lt::SequenceConfig long_term_config(const VideoOptions& options,
   config.enable_avg_cdf = options.avg_cdf;
   config.avg_cdf_type = true;
   config.enable_cfl_intra = true;
+  config.film_grain_params_present = options.film_grain;
   // Pinned dav2d f9dafbc does not parse the §5.18.2 OLK long-term list; the
   // retained slot still survives because §5.18.2 only invalidates slots whose
   // RefLongTermId == -1.  See docs/negative-results.md.
@@ -136,10 +237,17 @@ bool encode_long_term_closed(std::span<const VideoInputFrame> frames,
                        /*num_ref_frames=*/2);
   std::vector<lt::TemporalUnitPlan> units;
   units.reserve(frames.size());
+  gr::GrainStreamPlanner grain_planner = make_grain_planner(options);
+  std::vector<gr::GrainFramePlan> grain_plans(frames.size());
   lt::FrameHeader key;
   if (!lt::plan_closed_loop_key(config, 0, /*long_term_id=*/0, &key, &error)) {
     return false;
   }
+  if (options.film_grain &&
+      !plan_grain(frames[0], 0, grain_planner, grain_plans[0], error)) {
+    return false;
+  }
+  if (options.film_grain) set_grain(key, grain_plans[0]);
   units.emplace_back();
   units.back().frames.push_back(lt::PlannedFrame{key, plain.tiles[0]});
   for (std::size_t i = 1; i < frames.size(); ++i) {
@@ -153,11 +261,25 @@ bool encode_long_term_closed(std::span<const VideoInputFrame> frames,
                               refresh_slot, true, &header, &error)) {
       return false;
     }
+    if (options.film_grain &&
+        !plan_grain(frames[i], static_cast<std::uint32_t>(i), grain_planner,
+                    grain_plans[i], error)) {
+      return false;
+    }
+    if (options.film_grain) set_grain(header, grain_plans[i]);
     units.emplace_back();
     units.back().frames.push_back(lt::PlannedFrame{header, plain.tiles[i]});
   }
   lt::AssembledSequence assembled;
   if (!lt::assemble_sequence(config, units, &assembled, &error)) return false;
+  if (options.film_grain) {
+    // One coded frame per unit, so each model OBU goes immediately before it.
+    for (std::size_t i = 0; i < assembled.units.size(); ++i) {
+      if (!insert_grain_obu(grain_plans[i], 0, assembled.units[i], error)) {
+        return false;
+      }
+    }
+  }
   std::vector<std::int32_t> output_index;
   output_index.reserve(frames.size());
   for (std::size_t i = 0; i < frames.size(); ++i) {
@@ -206,11 +328,20 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
   lt::PoolState pool;
   lt::reset_pool(config, &pool);
 
+  gr::GrainStreamPlanner grain_planner = make_grain_planner(options);
+  gr::GrainFramePlan grain_clk;
+  gr::GrainFramePlan grain_p2;
+  gr::GrainFramePlan grain_p3;
   lt::FrameHeader clk;
   if (!lt::plan_closed_loop_key(config, 0, /*long_term_id=*/0, &clk,
                                 &error)) {
     return false;
   }
+  if (options.film_grain &&
+      !plan_grain(frames[0], 0, grain_planner, grain_clk, error)) {
+    return false;
+  }
+  if (options.film_grain) set_grain(clk, grain_clk);
   lt::PoolEvents events;
   if (!lt::apply_frame(config, clk, /*first_picture_in_tu=*/true, &pool,
                        &events, &error)) {
@@ -221,6 +352,11 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
                               /*olk_long_term_id=*/-1, {}, &olk, &error)) {
     return false;
   }
+  // §7.3.8.2: the OLK is a random access point, so a decoder that starts there
+  // cannot rely on a film grain model first sent in the CLK unit.  Plan the
+  // post-RAP pictures with a fresh planner so P2 always re-emits its model in
+  // the OLK temporal unit (the OLK itself is non-output and codes no config).
+  gr::GrainStreamPlanner rap_grain_planner = make_grain_planner(options);
   lt::FrameHeader p2;
   {
     const std::vector<std::uint8_t> refs{1};
@@ -229,6 +365,13 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
                               true, &p2, &error)) {
       return false;
     }
+    // Coding order is CLK, OLK (hidden), P2, P3: the planner sees the output
+    // pictures in that order.  The OLK is not output, so it codes no config.
+    if (options.film_grain &&
+        !plan_grain(frames[2], 2, rap_grain_planner, grain_p2, error)) {
+      return false;
+    }
+    if (options.film_grain) set_grain(p2, grain_p2);
   }
   lt::FrameHeader p3_header;
   {
@@ -238,6 +381,11 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
                               true, &p3_header, &error)) {
       return false;
     }
+    if (options.film_grain &&
+        !plan_grain(frames[3], 3, rap_grain_planner, grain_p3, error)) {
+      return false;
+    }
+    if (options.film_grain) set_grain(p3_header, grain_p3);
   }
   std::vector<lt::TemporalUnitPlan> units(3);
   units[0].frames.push_back(lt::PlannedFrame{clk, key0.tiles[0]});
@@ -246,6 +394,18 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
   units[2].frames.push_back(lt::PlannedFrame{p3_header, p3.tiles[1]});
   lt::AssembledSequence assembled;
   if (!lt::assemble_sequence(config, units, &assembled, &error)) return false;
+  if (options.film_grain) {
+    if (assembled.units.size() != 3U) {
+      error = "OLK sequence assembled an unexpected unit count";
+      return false;
+    }
+    // Unit 1 carries the hidden OLK first and P2 second (§7.3.3/.4).
+    if (!insert_grain_obu(grain_clk, 0, assembled.units[0], error) ||
+        !insert_grain_obu(grain_p2, 1, assembled.units[1], error) ||
+        !insert_grain_obu(grain_p3, 0, assembled.units[2], error)) {
+      return false;
+    }
+  }
 
   // Coded order: CLK, OLK (hidden), P2, P3.  Output order: f0, f2, f3.
   std::vector<std::int32_t> output_index{0, -1, 1, 2};
@@ -347,6 +507,7 @@ bool encode_leading_sequence(std::span<const VideoInputFrame> frames,
   config.disable_cdf_update = !options.adaptive_cdf;
   config.enable_avg_cdf = options.avg_cdf;
   config.avg_cdf_type = true;
+  config.film_grain_params_present = options.film_grain;
 
   ld::Plan plan;
   ld::FrameHeader header;
@@ -379,6 +540,39 @@ bool encode_leading_sequence(std::span<const VideoInputFrame> frames,
     header.ref_frame_idx[0] = 0;
     plan.frames.push_back(header);
   }
+  // §5.14 film grain: the CLK, the OLK (implicit output) and every regular
+  // frame are output pictures; the leading pictures are coded non-output and
+  // code no film_grain_config().  Plan in coding order so the fgm_id slots the
+  // decoder sees match the encoder's planner state.  §7.3.8.2 makes the OLK a
+  // random access point: restart the planner there so the OLK always re-emits
+  // its model in its own unit (models first sent with the CLK are not
+  // available to a decoder that starts at the OLK).
+  std::vector<gr::GrainFramePlan> grain_plans(plan.frames.size());
+  gr::GrainStreamPlanner clk_grain_planner = make_grain_planner(options);
+  gr::GrainStreamPlanner rap_grain_planner = make_grain_planner(options);
+  if (options.film_grain) {
+    if (!plan_grain(frames[0], 0, clk_grain_planner, grain_plans[0], error) ||
+        !plan_grain(frames[olk_index],
+                    static_cast<std::uint32_t>(olk_index),
+                    rap_grain_planner, grain_plans[1], error)) {
+      return false;
+    }
+    for (std::size_t r = 0; r < regular; ++r) {
+      const std::size_t plan_index = lead + 2U + r;
+      const std::size_t input_index = lead + 2U + r;
+      if (!plan_grain(frames[input_index],
+                      static_cast<std::uint32_t>(input_index),
+                      rap_grain_planner, grain_plans[plan_index], error)) {
+        return false;
+      }
+    }
+    set_grain(plan.frames[0], grain_plans[0]);
+    set_grain(plan.frames[1], grain_plans[1]);
+    for (std::size_t r = 0; r < regular; ++r) {
+      const std::size_t plan_index = lead + 2U + r;
+      set_grain(plan.frames[plan_index], grain_plans[plan_index]);
+    }
+  }
   if (!ld::validate_plan(config, plan, error)) return false;
 
   std::vector<std::vector<std::uint8_t>> tiles;
@@ -389,6 +583,17 @@ bool encode_leading_sequence(std::span<const VideoInputFrame> frames,
   for (std::size_t r = 0; r < regular; ++r) tiles.push_back(regular_enc[r].tiles[1]);
 
   result.units = ld::assemble_temporal_units(config, plan, tiles);
+  if (options.film_grain) {
+    if (result.units.size() != plan.frames.size()) {
+      error = "leading plan assembled an unexpected unit count";
+      return false;
+    }
+    for (std::size_t i = 0; i < result.units.size(); ++i) {
+      if (!insert_grain_obu(grain_plans[i], 0, result.units[i], error)) {
+        return false;
+      }
+    }
+  }
   result.frame_output_index.clear();
   result.recon.clear();
   result.recon.push_back(std::move(clk.recon[0]));
@@ -452,6 +657,7 @@ ra::SequenceConfig random_access_config(const VideoOptions& options,
   config.enable_cfl_intra = true;
   // Pinned dav2d f9dafbc reads explicit refresh bits for OBU_RAS_FRAME.
   config.ras_codes_refresh_frame_flags = ras_codes_refresh;
+  config.film_grain_params_present = options.film_grain;
   return config;
 }
 
@@ -497,6 +703,14 @@ bool encode_switch_sequence(std::span<const VideoInputFrame> frames,
   key.order_hint = 0;
   key.long_term_id_plus_1 = 0;
   key.immediate_output_frame = true;
+  gr::GrainStreamPlanner grain_planner = make_grain_planner(options);
+  gr::GrainFramePlan grain_key;
+  gr::GrainFramePlan grain_switch;
+  if (options.film_grain && !plan_grain(frames[0], 0, grain_planner,
+                                        grain_key, error)) {
+    return false;
+  }
+  if (options.film_grain) set_grain(key, grain_key);
   ra::ValidationResult check = ra::validate_header(config, key, refs, 0);
   if (!check.ok) {
     error = "SWITCH key header: " + check.violations.front().message;
@@ -518,6 +732,11 @@ bool encode_switch_sequence(std::span<const VideoInputFrame> frames,
     return false;
   }
   ra::FrameHeader switch_header = plan.header;
+  if (options.film_grain &&
+      !plan_grain(frames[1], 1, grain_planner, grain_switch, error)) {
+    return false;
+  }
+  if (options.film_grain) set_grain(switch_header, grain_switch);
   check = ra::validate_header(config, switch_header, refs, 0);
   if (!check.ok) {
     error = "SWITCH header: " + check.violations.front().message;
@@ -540,6 +759,12 @@ bool encode_switch_sequence(std::span<const VideoInputFrame> frames,
   append(units[0], key_obu);
   append(units[1], td);
   append(units[1], switch_obu);
+  if (options.film_grain) {
+    if (!insert_grain_obu(grain_key, 0, units[0], error) ||
+        !insert_grain_obu(grain_switch, 0, units[1], error)) {
+      return false;
+    }
+  }
 
   std::vector<VideoReconFrame> recon;
   recon.push_back(std::move(plain.recon[0]));
@@ -583,6 +808,15 @@ bool encode_ras_sequence(std::span<const VideoInputFrame> frames,
   key.order_hint = 0;
   key.long_term_id_plus_1 = 1;  // LongTermId 0
   key.immediate_output_frame = true;
+  gr::GrainStreamPlanner grain_planner = make_grain_planner(options);
+  gr::GrainFramePlan grain_key;
+  gr::GrainFramePlan grain_switch;
+  gr::GrainFramePlan grain_ras;
+  if (options.film_grain && !plan_grain(frames[0], 0, grain_planner,
+                                        grain_key, error)) {
+    return false;
+  }
+  if (options.film_grain) set_grain(key, grain_key);
   ra::ValidationResult check = ra::validate_header(config, key, refs, 0);
   if (!check.ok) {
     error = "RAS key header: " + check.violations.front().message;
@@ -604,6 +838,11 @@ bool encode_ras_sequence(std::span<const VideoInputFrame> frames,
     return false;
   }
   ra::FrameHeader switch_header = switch_plan.header;
+  if (options.film_grain &&
+      !plan_grain(frames[1], 1, grain_planner, grain_switch, error)) {
+    return false;
+  }
+  if (options.film_grain) set_grain(switch_header, grain_switch);
   check = ra::validate_header(config, switch_header, refs, 0);
   if (!check.ok) {
     error = "RAS/SWITCH header: " + check.violations.front().message;
@@ -625,6 +864,11 @@ bool encode_ras_sequence(std::span<const VideoInputFrame> frames,
     return false;
   }
   ra::FrameHeader ras_header = ras_plan.header;
+  if (options.film_grain &&
+      !plan_grain(frames[2], 2, grain_planner, grain_ras, error)) {
+    return false;
+  }
+  if (options.film_grain) set_grain(ras_header, grain_ras);
   check = ra::validate_header(config, ras_header, refs, 0);
   if (!check.ok) {
     error = "RAS header: " + check.violations.front().message;
@@ -651,6 +895,13 @@ bool encode_ras_sequence(std::span<const VideoInputFrame> frames,
   append(units[1], switch_obu);
   append(units[2], td);
   append(units[2], ras_obu);
+  if (options.film_grain) {
+    if (!insert_grain_obu(grain_key, 0, units[0], error) ||
+        !insert_grain_obu(grain_switch, 0, units[1], error) ||
+        !insert_grain_obu(grain_ras, 0, units[2], error)) {
+      return false;
+    }
+  }
 
   std::vector<VideoReconFrame> recon;
   recon.push_back(std::move(all.recon[0]));
@@ -679,15 +930,32 @@ bool encode_sef_sequence(std::span<const VideoInputFrame> frames,
   }
   VideoOptions plain = plain_options(options);
   plain.hide_last_picture = true;
+  // Unlike the other wrappers this function keeps the plain temporal units
+  // verbatim (only the SEF unit is appended), so the base pictures must carry
+  // the §5.14 sequence bit / config / model OBUs themselves.
+  plain.film_grain = options.film_grain;
   VideoSequenceResult base;
   if (!encode_video_sequence(frames, plain, base, error)) return false;
 
   const int num_ref_frames = resolved_num_ref_frames(options);
   const int last_slot = static_cast<int>((frames.size() - 1U) %
                                          static_cast<std::size_t>(num_ref_frames));
+  // §5.14: the SEF is an output picture with its own film_grain_config() and
+  // (when the model is new) one model OBU immediately before its OBU.  A
+  // dedicated planner is safe: the OBU overwrites whichever slot it names
+  // before the SEF header is parsed, so the referenced model is self-contained
+  // (§7.3.8.8).
+  gr::GrainStreamPlanner grain_planner = make_grain_planner(options);
+  gr::GrainFramePlan grain_plan;
+  if (options.film_grain &&
+      !plan_grain(frames.back(), static_cast<std::uint32_t>(frames.size() - 1U),
+                  grain_planner, grain_plan, error)) {
+    return false;
+  }
   sef::SefParams params;
   params.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);
   params.order_hint_bits = 4;
+  params.film_grain_params_present = options.film_grain;
   sef::SlotMap slots_map;
   slots_map.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);
   sef::RefSlotState& shown =
@@ -706,12 +974,17 @@ bool encode_sef_sequence(std::span<const VideoInputFrame> frames,
     error = std::string("SEF header: ") + sef::sef_error_name(sef_error);
     return false;
   }
+  if (options.film_grain) set_grain(sef_header, grain_plan);
   if (!sef::validate_dav2d_compat(slots_map, params, sef_header, &sef_error)) {
     error = std::string("SEF pinned-decoder check: ") +
             sef::sef_error_name(sef_error);
     return false;
   }
   std::vector<std::uint8_t> unit = sef::make_sef_temporal_unit(params, sef_header);
+  if (options.film_grain &&
+      !insert_grain_obu(grain_plan, 0, unit, error)) {
+    return false;
+  }
   base.units.push_back(std::move(unit));
   base.frame_bytes.push_back(
       static_cast<std::uint32_t>(base.units.back().size()));

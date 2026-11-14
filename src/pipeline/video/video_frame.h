@@ -417,10 +417,18 @@ struct VideoOptions {
   // on a coded anchor field, so both sides fill the same holes.  The
   // --video-tip-no-hole-fill control keeps the pre-fix stream for A/B gates.
   bool tip_hole_fill = true;
+  // §5.20.7.10 block-level TIP reference (--video-tip-block-ref): the tail P
+  // of the --video-tip --video-ref-mvs schedule is coded with TipFrameMode =
+  // TIP_FRAME_AS_REF and its last leaf as RefFrame[0] == TIP_FRAME.  Requires
+  // the single-64x64-leaf partition so the block is deterministic.  Off keeps
+  // the shipped TIP stream byte-identical.
+  bool tip_block_ref = false;
   // Opt-in §5.14/§5.18.10 film grain signalling (--video-grain): sequence
   // header film_grain_params_present = 1, a film grain model OBU before a
-  // frame whose model is new, and per-frame film_grain_config().  Off keeps
-  // every historical stream byte-identical.
+  // frame whose model is new, and per-frame film_grain_config().  Composes
+  // with the plain/B/temporal/TIP/tiled schedules and the frame-type wrappers
+  // (long-term/OLK/leading/SEF/SWITCH/RAS).  Off keeps every historical
+  // stream byte-identical.
   bool film_grain = false;
   // §5.4.8 enable_idtx_intra (--video-idtx): opt-in 2-D identity TX type in
   // the intra TX-type search.  Off keeps the sequence bit 0 and the historical
@@ -551,6 +559,9 @@ struct VideoSequenceResult {
   // projection, and wedge cells where the allow-list dropped a list.
   std::uint64_t ref_mvs_warp_cells = 0;
   std::uint64_t ref_mvs_wedge_dropped = 0;
+  // Coded leaves with RefFrame[0] == TIP_FRAME (§5.20.7.10 block form, gate
+  // evidence for --video-tip-block-ref).
+  std::uint64_t tip_block_refs = 0;
 };
 
 // §5.4.6 NumRefFrames actually signalled for these options: the explicit

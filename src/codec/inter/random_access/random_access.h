@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "core/bitstream/bitwriter.h"
+#include "pipeline/grain/film_grain_syntax.h"
 
 namespace av2enc::inter::random_access {
 
@@ -130,6 +131,10 @@ struct SequenceConfig {
   // true so the pinned decoder and this writer agree; streams then also match
   // the derived mask the spec would produce.
   bool ras_codes_refresh_frame_flags = false;
+  // §5.4.2 sequence bit: when set, every frame header codes §5.18.10.1
+  // film_grain_config() after reduced_tx_set.  Off keeps the historical
+  // zero-bit tail.
+  bool film_grain_params_present = false;
 
   std::uint32_t frame_width_bits() const;
   std::uint32_t frame_height_bits() const;
@@ -160,6 +165,7 @@ struct SequenceHeaderView {
   bool enable_avg_cdf = false;
   bool avg_cdf_type = true;
   bool disable_cross_frame_cdf_init_supported = true;
+  bool film_grain_params_present = false;
   bool supported_profile = false;
 };
 
@@ -194,6 +200,10 @@ struct FrameHeader {
   // because frame_size_override_flag is forced to 1.
   std::uint16_t frame_width = 0;
   std::uint16_t frame_height = 0;
+  // §5.18.10.1 film_grain_config(), coded last when the sequence sets
+  // film_grain_params_present. monotonic_output_order_flag = 1 here, so
+  // implicit_output_frame is always 0.
+  filters::grain::FilmGrainConfig grain;
 };
 
 // ---------------------------------------------------------------------------

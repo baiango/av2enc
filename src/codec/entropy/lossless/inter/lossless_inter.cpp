@@ -15,6 +15,7 @@
 #include "pipeline/video/video_cdf_tables.h"
 #include "codec/partition/tree/partition.h"
 #include "codec/entropy/av2/av2_entropy.h"
+#include "codec/inter/multiref/gate/compound_cdf_tables.h"
 #include "codec/inter/tlayers/tlayers.h"
 
 #include <algorithm>
@@ -292,15 +293,19 @@ bool make_geometry(int width, int height, ChromaFormat format, Geometry* out,
       g.sub_y = 0;
       break;
     case ChromaFormat::k400:
-      *error = "monochrome lossless inter is not encoded by this module";
-      return false;
+      // §6.4.2 Table 6.2: CHROMA_FORMAT_400 derives SubsamplingX/Y = 1/1 but
+      // has no chroma planes.
+      g.sub_x = 1;
+      g.sub_y = 1;
+      g.has_chroma = false;
+      break;
   }
   g.mi_cols = 2 * ((width + 7) >> 3);
   g.mi_rows = 2 * ((height + 7) >> 3);
-  g.chroma_w = width >> g.sub_x;
-  g.chroma_h = height >> g.sub_y;
-  g.chroma_mi_cols = g.mi_cols >> g.sub_x;
-  g.chroma_mi_rows = g.mi_rows >> g.sub_y;
+  g.chroma_w = g.has_chroma ? (width >> g.sub_x) : 0;
+  g.chroma_h = g.has_chroma ? (height >> g.sub_y) : 0;
+  g.chroma_mi_cols = g.has_chroma ? (g.mi_cols >> g.sub_x) : 0;
+  g.chroma_mi_rows = g.has_chroma ? (g.mi_rows >> g.sub_y) : 0;
   g.sb_cols = (g.mi_cols + 15) >> 4;
   g.sb_rows = (g.mi_rows + 15) >> 4;
   *out = g;
@@ -392,6 +397,12 @@ struct CdfState {
   std::uint16_t is_inter[4][3];
   std::uint16_t skip[6][3];
   std::uint16_t single_mode[5][4];
+  // §5.20.7.10-.12 two-reference syntax (B frames).
+  std::uint16_t comp_mode[5][3];
+  std::uint16_t comp_ref0[3][6][3];
+  std::uint16_t single_ref[3][6][3];
+  std::uint16_t is_joint[2][3];
+  std::uint16_t compound_mode_non_joint[5][6];
   CoeffCdfs coeff;
 };
 
@@ -411,6 +422,12 @@ void init_cdfs(CdfState& c) {
   copy_array(c.is_inter, av2enc::video::kIsInterCdf);
   copy_array(c.skip, av2enc::video::kSkipCdf);
   copy_array(c.single_mode, av2enc::video::kSingleModeCdf);
+  copy_array(c.comp_mode, av2enc::video::multiref::gate::kCompModeCdf);
+  copy_array(c.comp_ref0, av2enc::video::multiref::gate::kCompRef0Cdf);
+  copy_array(c.single_ref, av2enc::video::kSingleRefCdf);
+  copy_array(c.is_joint, av2enc::video::multiref::gate::kIsJointCdf);
+  copy_array(c.compound_mode_non_joint,
+             av2enc::video::multiref::gate::kCompoundModeNonJointCdf);
 
   const auto& q = av2enc::still::qctx::tables_for_slice(0);
   copy_array(c.coeff.txb_skip, *q.txb_skip);
@@ -730,6 +747,28 @@ void predict_inter_zero(const Plane& ref, int x, int y, int w, int h,
   }
 }
 
+// §7.13.3.14 COMPOUND_AVERAGE at CWP_EQUAL with two zero-MV EIGHTTAP
+// predictions: InterRound1 = 7 makes each Preds[] entry a 1/16-precision
+// sample, and the blend is Round2(8 * p0 + 8 * p1, 4 + InterPostRound) with
+// InterPostRound = 4, i.e. Round2(ref0 + ref1, 1) after Clip1.
+void predict_inter_compound(const Plane& ref0, const Plane& ref1, int x,
+                            int y, int w, int h, int bit_depth,
+                            std::uint16_t* dst, std::size_t dst_stride) {
+  for (int i = 0; i < h; ++i) {
+    const std::uint16_t* a = ref0.data.data() +
+                             static_cast<std::size_t>(y + i) * ref0.w + x;
+    const std::uint16_t* b = ref1.data.data() +
+                             static_cast<std::size_t>(y + i) * ref1.w + x;
+    std::uint16_t* d = dst + static_cast<std::size_t>(i) * dst_stride;
+    for (int j = 0; j < w; ++j) {
+      d[j] = static_cast<std::uint16_t>(
+          clip1_depth((static_cast<int>(a[j]) + static_cast<int>(b[j]) + 1) >>
+                          1,
+                      bit_depth));
+    }
+  }
+}
+
 void reconstruct_block(const int* levels, int w, int h, bool dct_dct, bool dpcm,
                        bool vertical, const std::uint16_t* pred,
                        std::size_t pred_stride, std::uint16_t* recon,
@@ -770,7 +809,15 @@ struct TileContext {
   std::vector<std::uint8_t> is_inter;
   std::vector<std::uint8_t> ymode;
   std::vector<std::uint8_t> skip;
+  // §5.20.7.10 ref state per mi cell for the comp_mode context.  0xff marks
+  // "no reference list entry" (intra or single prediction list 1).
+  std::vector<std::uint8_t> ref0;
+  std::vector<std::uint8_t> ref1;
   int eob_u = 0;
+  // Frame distances of the current reference list (list 0 / list 1), used by
+  // the §5.20.7.6 is_joint context and §5.20.7.10 comp_mode backward test.
+  int frame_distance[2] = {1, 0};
+  int num_total_refs = 1;
 
   void reset(const Geometry& geo) {
     g = &geo;
@@ -791,6 +838,8 @@ struct TileContext {
     is_inter.assign(cells, 0);
     ymode.assign(cells, 0);
     skip.assign(cells, 0);
+    ref0.assign(cells, 0xff);
+    ref1.assign(cells, 0xff);
     eob_u = 0;
     clear_above();
   }
@@ -887,6 +936,72 @@ struct TileContext {
     const int nearest = ((above_a || above_b) ? 1 : 0) +
                         ((left_a || left_b) ? 1 : 0);
     return nearest + (new_mv_count > 0 ? 2 : 0);
+  }
+
+  // §8.3.2 check_backward().
+  bool ref_backward(int ref) const {
+    return ref >= 0 && ref < num_total_refs && frame_distance[ref] < 0;
+  }
+
+  // §8.3.2 comp_mode context (p595).
+  int comp_mode_context(int r, int c, int w4, int h4) const {
+    int pos[2][2] = {};
+    const int n = neighbor_positions(pos, r, c, w4, h4);
+    auto single_at = [&](int i) {
+      return ref1[cell(pos[i][0], pos[i][1])] == 0xff;
+    };
+    auto intra_at = [&](int i) {
+      return is_inter[cell(pos[i][0], pos[i][1])] == 0;
+    };
+    auto ref0_at = [&](int i) {
+      return static_cast<int>(ref0[cell(pos[i][0], pos[i][1])]);
+    };
+    if (n == 2) {
+      if (single_at(0) && single_at(1)) {
+        return (ref_backward(ref0_at(0)) ? 1 : 0) ^
+               (ref_backward(ref0_at(1)) ? 1 : 0);
+      }
+      if (single_at(0)) {
+        return 2 + ((ref_backward(ref0_at(0)) || intra_at(0)) ? 1 : 0);
+      }
+      if (single_at(1)) {
+        return 2 + ((ref_backward(ref0_at(1)) || intra_at(1)) ? 1 : 0);
+      }
+      return 4;
+    }
+    if (n == 1) {
+      if (single_at(0)) return ref_backward(ref0_at(0)) ? 1 : 0;
+      return 3;
+    }
+    return 1;
+  }
+
+  // §8.3.2 comp_ref / single_ref context (count_refs comparison).  With
+  // NumTotalRefs == 2 it compares count_refs(0) against count_refs(1) over
+  // the two neighbour cells.
+  int ref_count_context(int r, int c, int w4, int h4) const {
+    int pos[2][2] = {};
+    const int n = neighbor_positions(pos, r, c, w4, h4);
+    int this_ref = 0;
+    int next_ref = 0;
+    for (int i = 0; i < n; ++i) {
+      const std::size_t idx = cell(pos[i][0], pos[i][1]);
+      if (is_inter[idx] == 0) continue;
+      if (ref0[idx] == 0) ++this_ref;
+      if (ref1[idx] == 0) ++this_ref;
+      if (ref0[idx] == 1) ++next_ref;
+      if (ref1[idx] == 1) ++next_ref;
+    }
+    if (this_ref == next_ref) return 1;
+    return this_ref < next_ref ? 0 : 2;
+  }
+
+  // §8.3.2 is_joint context (p597).
+  int is_joint_context(int d0, int d1) const {
+    const int first = abs_int(d0);
+    const int second = abs_int(d1);
+    const bool same_side = (d0 < 0 && d1 < 0) || (d0 > 0 && d1 > 0);
+    return (same_side || first != second) ? 1 : 0;
   }
 };
 
@@ -2045,6 +2160,9 @@ bool read_coeff_block(CdfState& c, SymReader& r, TileContext& ctx, int plane,
 
 struct BlockPlan {
   bool is_inter = false;
+  // Two-reference B block: codes comp_mode = COMPOUND_REFERENCE and blends
+  // ref0/ref1 with COMPOUND_AVERAGE (GLOBAL_GLOBALMV, zero MVs).
+  bool compound = false;
   int y_mode = kDcPred;
   bool use_dpcm_y = false;
   bool dpcm_y_vertical = false;
@@ -2070,14 +2188,19 @@ class TileWriter {
  public:
   TileWriter(const Geometry& g, const Options& opt, bool keyframe,
              CdfState& cdfs, TileContext& ctx, Plane* src[3], Plane* recon[3],
-             const Plane* ref[3], FrameStats* stats)
+             const Plane* ref[3], const Plane* ref1[3], int num_refs,
+             const int frame_distance[2], FrameStats* stats)
       : g_(g), opt_(opt), keyframe_(keyframe), cdfs_(cdfs), ctx_(ctx),
-        stats_(stats) {
+        stats_(stats), num_refs_(num_refs) {
     for (int p = 0; p < 3; ++p) {
       src_[p] = src[p];
       recon_[p] = recon[p];
       ref_[p] = ref[p];
+      ref1_[p] = ref1[p];
     }
+    ctx_.num_total_refs = num_refs;
+    ctx_.frame_distance[0] = frame_distance[0];
+    ctx_.frame_distance[1] = frame_distance[1];
   }
 
   bool encode_tile(std::uint8_t* out, std::size_t capacity,
@@ -2209,6 +2332,11 @@ class TileWriter {
     plan.is_inter =
         !keyframe_ && (opt_.intra_period <= 0 ||
                        (block_index_ % opt_.intra_period) != 0);
+    // A two-reference B frame blends both sides on every inter leaf.  Blocks
+    // smaller than 8x8 cannot signal comp_mode (§5.20.5.9
+    // is_comp_ref_allowed) and stay single-reference; this writer's minimum
+    // leaf is 8x8.
+    plan.compound = plan.is_inter && num_refs_ > 1 && bw >= 8 && bh >= 8;
     if (!plan.is_inter) {
       const int m = block_index_ % 3;
       if (opt_.enable_dpcm && m == 1) {
@@ -2300,35 +2428,38 @@ class TileWriter {
         return false;
       }
     }
-    if (plan.use_dpcm_uv) {
-      if (!w_.sym(&cdfs_.use_dpcm_uv[0], 2, 1)) {
-        *error = w_.error();
-        return false;
-      }
-      if (!w_.sym(&cdfs_.dpcm_mode_uv[0], 2, plan.dpcm_uv_vertical ? 0 : 1)) {
-        *error = w_.error();
-        return false;
-      }
-    } else {
-      if (!w_.sym(&cdfs_.use_dpcm_uv[0], 2, 0)) {
-        *error = w_.error();
-        return false;
-      }
-      const int uv_ctx = y_mode_is_directional(plan.y_mode) ? 1 : 0;
-      const int idx = uv_mode_index(kDcPred, plan.y_mode);
-      if (idx <= 6) {
-        if (!w_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, idx)) {
+    if (g_.has_chroma) {
+      if (plan.use_dpcm_uv) {
+        if (!w_.sym(&cdfs_.use_dpcm_uv[0], 2, 1)) {
+          *error = w_.error();
+          return false;
+        }
+        if (!w_.sym(&cdfs_.dpcm_mode_uv[0], 2,
+                    plan.dpcm_uv_vertical ? 0 : 1)) {
           *error = w_.error();
           return false;
         }
       } else {
-        if (!w_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, 7)) {
+        if (!w_.sym(&cdfs_.use_dpcm_uv[0], 2, 0)) {
           *error = w_.error();
           return false;
         }
-        if (!w_.literal(3, static_cast<std::uint32_t>(idx - 7))) {
-          *error = w_.error();
-          return false;
+        const int uv_ctx = y_mode_is_directional(plan.y_mode) ? 1 : 0;
+        const int idx = uv_mode_index(kDcPred, plan.y_mode);
+        if (idx <= 6) {
+          if (!w_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, idx)) {
+            *error = w_.error();
+            return false;
+          }
+        } else {
+          if (!w_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, 7)) {
+            *error = w_.error();
+            return false;
+          }
+          if (!w_.literal(3, static_cast<std::uint32_t>(idx - 7))) {
+            *error = w_.error();
+            return false;
+          }
         }
       }
     }
@@ -2352,10 +2483,55 @@ class TileWriter {
       *error = w_.error();
       return false;
     }
-    const int mctx = ctx_.new_mv_context(r, c, w4, h4);
-    if (!w_.sym(&cdfs_.single_mode[mctx][0], 3, 1)) {  // GLOBALMV
-      *error = w_.error();
-      return false;
+    const int bw = partition::block_width(bsize);
+    const int bh = partition::block_height(bsize);
+    if (num_refs_ > 1) {
+      // §5.20.7.10 read_ref_frames(): NumTotalRefs == 2.  comp_mode is coded
+      // only when is_comp_ref_allowed() (8x8 or thin 4xN/Nx4).
+      if (bw >= 8 && bh >= 8) {
+        const int cmctx = ctx_.comp_mode_context(r, c, w4, h4);
+        if (!w_.sym(&cdfs_.comp_mode[cmctx][0], 2,
+                    plan.compound ? 1 : 0)) {
+          *error = w_.error();
+          return false;
+        }
+      }
+      const int rctx = ctx_.ref_count_context(r, c, w4, h4);
+      if (plan.compound) {
+        // §5.20.7.11: NumTotalRefs == 2 and NumSameRefCompound == 0 hit the
+        // `ref + 1 == NumTotalRefs - 1` branch, which infers comp_ref = 1 for
+        // the (0, 1) pair and codes no symbol.
+        (void)rctx;
+        // §5.20.7.6: non-joint GLOBAL_GLOBALMV (compound_mode_non_joint = 3).
+        const int jctx = ctx_.is_joint_context(ctx_.frame_distance[0],
+                                               ctx_.frame_distance[1]);
+        if (!w_.sym(&cdfs_.is_joint[jctx][0], 2, 0)) {
+          *error = w_.error();
+          return false;
+        }
+        const int mctx = ctx_.new_mv_context(r, c, w4, h4);
+        if (!w_.sym(&cdfs_.compound_mode_non_joint[mctx][0], 5, 3)) {
+          *error = w_.error();
+          return false;
+        }
+      } else {
+        // §5.20.7.12 read_single_ref(): one symbol selects list 0.
+        if (!w_.sym(&cdfs_.single_ref[rctx][0][0], 2, 1)) {
+          *error = w_.error();
+          return false;
+        }
+        const int mctx = ctx_.new_mv_context(r, c, w4, h4);
+        if (!w_.sym(&cdfs_.single_mode[mctx][0], 3, 1)) {  // GLOBALMV
+          *error = w_.error();
+          return false;
+        }
+      }
+    } else {
+      const int mctx = ctx_.new_mv_context(r, c, w4, h4);
+      if (!w_.sym(&cdfs_.single_mode[mctx][0], 3, 1)) {  // GLOBALMV
+        *error = w_.error();
+        return false;
+      }
     }
     if (plan.signal_tx) {
       const int group = kSizeGroup[static_cast<int>(bsize)];
@@ -2394,8 +2570,12 @@ class TileWriter {
         ctx_.intra_joint[idx] = static_cast<std::uint8_t>(joint);
         ctx_.fsc_modes[idx] = static_cast<std::uint8_t>(plan.fsc ? 1 : 0);
         ctx_.is_inter[idx] = static_cast<std::uint8_t>(plan.is_inter ? 1 : 0);
-        ctx_.ymode[idx] =
-            static_cast<std::uint8_t>(plan.is_inter ? 15 : plan.y_mode);
+        ctx_.ymode[idx] = static_cast<std::uint8_t>(
+            plan.is_inter ? (plan.compound ? 22 : 15) : plan.y_mode);
+        ctx_.ref0[idx] =
+            static_cast<std::uint8_t>(plan.is_inter ? 0 : 0xff);
+        ctx_.ref1[idx] = static_cast<std::uint8_t>(
+            plan.is_inter && plan.compound ? 1 : 0xff);
         ctx_.skip[idx] = 0;
         ctx_.left_mi[r + y] = static_cast<int>(bsize);
         ctx_.above_mi[c + x] = static_cast<int>(bsize);
@@ -2435,7 +2615,12 @@ class TileWriter {
       const int px = x + tx;
       const int py = y + ty;
       if (plan.is_inter) {
-        predict_inter_zero(*ref_[0], px, py, w, h, s.pred.data(), w);
+        if (plan.compound) {
+          predict_inter_compound(*ref_[0], *ref1_[0], px, py, w, h,
+                                 opt_.bit_depth, s.pred.data(), w);
+        } else {
+          predict_inter_zero(*ref_[0], px, py, w, h, s.pred.data(), w);
+        }
       } else if (!predict_intra_block(*recon_[0], px, py, w, h, plan.y_mode,
                                       px > 0, py > 0, opt_.bit_depth, s.pred.data(), w)) {
         *error = "luma intra prediction failed";
@@ -2490,9 +2675,15 @@ class TileWriter {
                                        ? (((sub + block_index_) & 1) != 0)
                                        : true);
           if (!code_one(tx, ty, 4, 4, idtx, false, false)) return false;
+          // §5.20.7.27: an all-zero luma block codes no lossless_inter_tx_type
+          // symbol and the decoder infers TxTypes = DCT_DCT.  Store the
+          // effective type so the chroma tx type derivation matches.
+          bool nonzero = false;
+          for (int q = 0; q < 16; ++q) nonzero |= s.levels[q] != 0;
+          const bool effective_idtx = nonzero && idtx;
           (*luma_idtx)[static_cast<std::size_t>(ty / 4) * tw4 + tx / 4] =
-              idtx ? 1 : 0;
-          if (idtx) ++stats_->idtx_4x4;
+              effective_idtx ? 1 : 0;
+          if (effective_idtx) ++stats_->idtx_4x4;
           else ++stats_->dct_dct_4x4;
           ++sub;
         }
@@ -2529,6 +2720,7 @@ class TileWriter {
   bool write_chroma(int r, int c, BlockSize bsize, const BlockPlan& plan,
                     const std::vector<std::uint8_t>& luma_idtx,
                     std::string* error) {
+    if (!g_.has_chroma) return true;
     const int bw = partition::block_width(bsize);
     const int bh = partition::block_height(bsize);
     const int cw = bw >> g_.sub_x;
@@ -2558,7 +2750,12 @@ class TileWriter {
             idtx = plan.fsc;
           }
           if (plan.is_inter) {
-            predict_inter_zero(*ref_[plane], px, py, 4, 4, s.pred.data(), 4);
+            if (plan.compound) {
+              predict_inter_compound(*ref_[plane], *ref1_[plane], px, py, 4, 4,
+                                     opt_.bit_depth, s.pred.data(), 4);
+            } else {
+              predict_inter_zero(*ref_[plane], px, py, 4, 4, s.pred.data(), 4);
+            }
           } else if (!predict_intra_block(*recon_[plane], px, py, 4, 4,
                                           plan.uv_mode, px > 0, py > 0,
                                           opt_.bit_depth, s.pred.data(), 4)) {
@@ -2616,6 +2813,8 @@ class TileWriter {
   Plane* src_[3] = {};
   Plane* recon_[3] = {};
   const Plane* ref_[3] = {};
+  const Plane* ref1_[3] = {};
+  int num_refs_ = 1;
   int block_index_ = 0;
   SymWriter w_{};
 };
@@ -2628,13 +2827,18 @@ class TileReader {
  public:
   TileReader(const Geometry& g, const Options& opt, bool keyframe,
              CdfState& cdfs, TileContext& ctx, Plane* recon[3],
-             const Plane* ref[3], FrameStats* stats)
+             const Plane* ref[3], const Plane* ref1[3], int num_refs,
+             const int frame_distance[2], FrameStats* stats)
       : g_(g), opt_(opt), keyframe_(keyframe), cdfs_(cdfs), ctx_(ctx),
-        stats_(stats) {
+        stats_(stats), num_refs_(num_refs) {
     for (int p = 0; p < 3; ++p) {
       recon_[p] = recon[p];
       ref_[p] = ref[p];
+      ref1_[p] = ref1[p];
     }
+    ctx_.num_total_refs = num_refs;
+    ctx_.frame_distance[0] = frame_distance[0];
+    ctx_.frame_distance[1] = frame_distance[1];
   }
 
   bool decode_tile(const std::uint8_t* data, std::size_t size, std::size_t sz,
@@ -2785,36 +2989,38 @@ class TileReader {
       }
       plan->fsc = symbol != 0;
     }
-    int use_dpcm_uv = 0;
-    if (!r_.sym(&cdfs_.use_dpcm_uv[0], 2, &use_dpcm_uv)) {
-      *error = r_.error();
-      return false;
-    }
-    if (use_dpcm_uv) {
-      int mode = 0;
-      if (!r_.sym(&cdfs_.dpcm_mode_uv[0], 2, &mode)) {
+    if (g_.has_chroma) {
+      int use_dpcm_uv = 0;
+      if (!r_.sym(&cdfs_.use_dpcm_uv[0], 2, &use_dpcm_uv)) {
         *error = r_.error();
         return false;
       }
-      plan->use_dpcm_uv = true;
-      plan->dpcm_uv_vertical = mode == 0;
-      plan->uv_mode = plan->dpcm_uv_vertical ? kV : kH;
-    } else {
-      const int uv_ctx = y_mode_is_directional(plan->y_mode) ? 1 : 0;
-      int idx = 0;
-      if (!r_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, &idx)) {
-        *error = r_.error();
-        return false;
-      }
-      if (idx == 7) {
-        std::uint32_t extra = 0;
-        if (!r_.literal(3, &extra)) {
+      if (use_dpcm_uv) {
+        int mode = 0;
+        if (!r_.sym(&cdfs_.dpcm_mode_uv[0], 2, &mode)) {
           *error = r_.error();
           return false;
         }
-        idx += static_cast<int>(extra);
+        plan->use_dpcm_uv = true;
+        plan->dpcm_uv_vertical = mode == 0;
+        plan->uv_mode = plan->dpcm_uv_vertical ? kV : kH;
+      } else {
+        const int uv_ctx = y_mode_is_directional(plan->y_mode) ? 1 : 0;
+        int idx = 0;
+        if (!r_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, &idx)) {
+          *error = r_.error();
+          return false;
+        }
+        if (idx == 7) {
+          std::uint32_t extra = 0;
+          if (!r_.literal(3, &extra)) {
+            *error = r_.error();
+            return false;
+          }
+          idx += static_cast<int>(extra);
+        }
+        plan->uv_mode = uv_mode_from_index(idx, plan->y_mode);
       }
-      plan->uv_mode = uv_mode_from_index(idx, plan->y_mode);
     }
     if (plan->fsc) {
       const int group = kSizeGroup[static_cast<int>(bsize)];
@@ -2868,17 +3074,69 @@ class TileReader {
           *error = "lossless inter reader: skip_flag=1 not supported";
           return false;
         }
-        const int mctx = ctx_.new_mv_context(r, c, w4, h4);
-        int single_mode = 0;
-        if (!r_.sym(&cdfs_.single_mode[mctx][0], 3, &single_mode)) {
-          *error = r_.error();
-          return false;
-        }
-        if (single_mode != 1) {
-          *error = "lossless inter reader: only GLOBALMV is supported (r=" +
-                   std::to_string(r) + " c=" + std::to_string(c) +
-                   " mode=" + std::to_string(single_mode) + ")";
-          return false;
+        const int bw = partition::block_width(bsize);
+        const int bh = partition::block_height(bsize);
+        if (num_refs_ > 1) {
+          int comp_mode = 0;
+          if (bw >= 8 && bh >= 8) {
+            const int cmctx = ctx_.comp_mode_context(r, c, w4, h4);
+            if (!r_.sym(&cdfs_.comp_mode[cmctx][0], 2, &comp_mode)) {
+              *error = r_.error();
+              return false;
+            }
+          }
+          const int rctx = ctx_.ref_count_context(r, c, w4, h4);
+          if (comp_mode) {
+            plan.compound = true;
+            // §5.20.7.11 with NumTotalRefs == 2, NumSameRefCompound == 0: the
+            // (0, 1) pair is implied by the `ref + 1 == NumTotalRefs - 1`
+            // branch and no comp_ref symbol is present.
+            const int jctx = ctx_.is_joint_context(ctx_.frame_distance[0],
+                                                   ctx_.frame_distance[1]);
+            int is_joint = 0;
+            if (!r_.sym(&cdfs_.is_joint[jctx][0], 2, &is_joint) ||
+                is_joint != 0) {
+              *error = "lossless inter reader: joint compound is not supported";
+              return false;
+            }
+            const int mctx = ctx_.new_mv_context(r, c, w4, h4);
+            int compound_mode = 0;
+            if (!r_.sym(&cdfs_.compound_mode_non_joint[mctx][0], 5,
+                        &compound_mode) ||
+                compound_mode != 3) {
+              *error = "lossless inter reader: only GLOBAL_GLOBALMV compound "
+                       "is supported";
+              return false;
+            }
+          } else {
+            int single_ref = 0;
+            if (!r_.sym(&cdfs_.single_ref[rctx][0][0], 2, &single_ref) ||
+                single_ref != 1) {
+              *error = "lossless inter reader: only reference list 0 is "
+                       "supported for single prediction";
+              return false;
+            }
+            const int mctx = ctx_.new_mv_context(r, c, w4, h4);
+            int single_mode = 0;
+            if (!r_.sym(&cdfs_.single_mode[mctx][0], 3, &single_mode) ||
+                single_mode != 1) {
+              *error = "lossless inter reader: only GLOBALMV is supported";
+              return false;
+            }
+          }
+        } else {
+          const int mctx = ctx_.new_mv_context(r, c, w4, h4);
+          int single_mode = 0;
+          if (!r_.sym(&cdfs_.single_mode[mctx][0], 3, &single_mode)) {
+            *error = r_.error();
+            return false;
+          }
+          if (single_mode != 1) {
+            *error = "lossless inter reader: only GLOBALMV is supported (r=" +
+                     std::to_string(r) + " c=" + std::to_string(c) +
+                     " mode=" + std::to_string(single_mode) + ")";
+            return false;
+          }
         }
         plan.signal_tx = partition::block_width(bsize) > 4 ||
                          partition::block_height(bsize) > 4;
@@ -2919,8 +3177,12 @@ class TileReader {
         ctx_.intra_joint[idx] = static_cast<std::uint8_t>(joint);
         ctx_.fsc_modes[idx] = static_cast<std::uint8_t>(plan.fsc ? 1 : 0);
         ctx_.is_inter[idx] = static_cast<std::uint8_t>(plan.is_inter ? 1 : 0);
-        ctx_.ymode[idx] =
-            static_cast<std::uint8_t>(plan.is_inter ? 15 : plan.y_mode);
+        ctx_.ymode[idx] = static_cast<std::uint8_t>(
+            plan.is_inter ? (plan.compound ? 22 : 15) : plan.y_mode);
+        ctx_.ref0[idx] =
+            static_cast<std::uint8_t>(plan.is_inter ? 0 : 0xff);
+        ctx_.ref1[idx] = static_cast<std::uint8_t>(
+            plan.is_inter && plan.compound ? 1 : 0xff);
         ctx_.skip[idx] = 0;
         ctx_.left_mi[r + y] = static_cast<int>(bsize);
         ctx_.above_mi[c + x] = static_cast<int>(bsize);
@@ -2961,7 +3223,12 @@ class TileReader {
       const int px = x + tx;
       const int py = y + ty;
       if (plan.is_inter) {
-        predict_inter_zero(*ref_[0], px, py, w, h, s.pred.data(), w);
+        if (plan.compound) {
+          predict_inter_compound(*ref_[0], *ref1_[0], px, py, w, h,
+                                 opt_.bit_depth, s.pred.data(), w);
+        } else {
+          predict_inter_zero(*ref_[0], px, py, w, h, s.pred.data(), w);
+        }
       } else if (!predict_intra_block(*recon_[0], px, py, w, h, plan.y_mode,
                                       px > 0, py > 0, opt_.bit_depth, s.pred.data(), w)) {
         *error = "luma intra prediction failed";
@@ -2974,6 +3241,9 @@ class TileReader {
         *error = r_.error();
         return false;
       }
+      // §5.20.7.27: all_zero leaves TxTypes at DCT_DCT; the inter tx-type
+      // symbol is only present for a non-zero block.
+      if (cr.eob == 0) *idtx = false;
       reconstruct_block(levels.data(), w, h, !*idtx, dpcm, vertical,
                         s.pred.data(), w,
                         recon_[0]->data.data() +
@@ -3023,6 +3293,7 @@ class TileReader {
   bool read_chroma(int r, int c, BlockSize bsize, const BlockPlan& plan,
                    const std::vector<std::uint8_t>& luma_idtx,
                    std::string* error) {
+    if (!g_.has_chroma) return true;
     const int bw = partition::block_width(bsize);
     const int bh = partition::block_height(bsize);
     const int cw = bw >> g_.sub_x;
@@ -3052,7 +3323,12 @@ class TileReader {
             idtx = plan.fsc;
           }
           if (plan.is_inter) {
-            predict_inter_zero(*ref_[plane], px, py, 4, 4, s.pred.data(), 4);
+            if (plan.compound) {
+              predict_inter_compound(*ref_[plane], *ref1_[plane], px, py, 4, 4,
+                                     opt_.bit_depth, s.pred.data(), 4);
+            } else {
+              predict_inter_zero(*ref_[plane], px, py, 4, 4, s.pred.data(), 4);
+            }
           } else if (!predict_intra_block(*recon_[plane], px, py, 4, 4,
                                           plan.uv_mode, px > 0, py > 0,
                                           opt_.bit_depth, s.pred.data(), 4)) {
@@ -3092,6 +3368,8 @@ class TileReader {
   FrameStats* stats_;
   Plane* recon_[3] = {};
   const Plane* ref_[3] = {};
+  const Plane* ref1_[3] = {};
+  int num_refs_ = 1;
   int block_index_ = 0;
   SymReader r_{};
 };
@@ -3287,7 +3565,9 @@ void write_sequence_header(av2enc::BitWriter& w, const Options& opt,
   // §5.4.3 sequence_partition_config()
   w.put_bit(false);  // use_256x256_superblock
   w.put_bit(false);  // use_128x128_superblock
-  w.put_bit(false);  // enable_sdp
+  if (g.has_chroma) {
+    w.put_bit(false);  // enable_sdp (inferred 0 for Monochrome)
+  }
   w.put_bit(false);  // enable_ext_partitions
   w.put_bit(false);  // reduce_pb_aspect_ratio
 
@@ -3300,7 +3580,9 @@ void write_sequence_header(av2enc::BitWriter& w, const Options& opt,
   w.put_bit(false);  // enable_intra_edge_filter
   w.put_bit(false);  // enable_mrls
   w.put_bit(false);  // enable_cfl_intra
-  w.put_bits(0, 2);  // cfl_ds_filter_index
+  if (g.has_chroma) {
+    w.put_bits(0, 2);  // cfl_ds_filter_index (not coded for Monochrome)
+  }
   w.put_bit(false);  // enable_mhccp
   w.put_bit(false);  // enable_ibp
 
@@ -3344,17 +3626,19 @@ void write_sequence_header(av2enc::BitWriter& w, const Options& opt,
   if (!opt.enable_fsc) w.put_bit(false);  // enable_idtx_intra
   w.put_bit(false);  // enable_intra_ist
   w.put_bit(false);  // enable_inter_ist
-  w.put_bit(false);  // enable_chroma_dctonly
+  if (g.has_chroma) w.put_bit(false);  // enable_chroma_dctonly
   w.put_bit(false);  // enable_inter_ddt
   w.put_bit(false);  // reduced_tx_part_set
-  w.put_bit(false);  // enable_cctx
+  if (g.has_chroma) w.put_bit(false);  // enable_cctx
   w.put_bit(false);  // enable_tcq
   w.put_bit(false);  // enable_parity_hiding
   w.put_bit(false);  // enable_avg_cdf
-  w.put_bit(false);  // separate_uv_delta_q
+  if (g.has_chroma) w.put_bit(false);  // separate_uv_delta_q
   w.put_bit(true);   // equal_ac_dc_q
-  w.put_bits(23, 5); // base_uv_ac_delta_q -> 0
-  w.put_bit(false);  // uv_ac_delta_q_enabled
+  if (g.has_chroma) {
+    w.put_bits(23, 5); // base_uv_ac_delta_q -> 0
+    w.put_bit(false);  // uv_ac_delta_q_enabled
+  }
 
   // §5.4.10 sequence_filter_config()
   w.put_bit(false);  // disable_loopfilters_across_tiles
@@ -3475,6 +3759,7 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
     return false;
   }
   info->format = static_cast<ChromaFormat>(chroma);
+  const bool monochrome = info->format == ChromaFormat::k400;
   std::uint32_t depth = 0;
   if (!r.uvlc(&depth) || depth > 1) {
     *error = "sequence header: bit_depth_idc";
@@ -3525,8 +3810,13 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   }
   bool b256 = false, b128 = false, sdp = false, extpart = false,
        aspect = false;
-  if (!r.read_bit(&b256) || !r.read_bit(&b128) || !r.read_bit(&sdp) ||
-      !r.read_bit(&extpart) || !r.read_bit(&aspect)) {
+  if (!r.read_bit(&b256) || !r.read_bit(&b128)) {
+    return false;
+  }
+  if (!monochrome) {
+    if (!r.read_bit(&sdp)) return false;
+  }
+  if (!r.read_bit(&extpart) || !r.read_bit(&aspect)) {
     return false;
   }
   if (b256 || b128 || sdp || extpart || aspect) {
@@ -3542,8 +3832,13 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   bool dip = false, edge = false, mrls = false, cfl = false, mhccp = false,
        ibp = false;
   if (!r.read_bit(&dip) || !r.read_bit(&edge) || !r.read_bit(&mrls) ||
-      !r.read_bit(&cfl) || !r.read_bits(2, &v) || !r.read_bit(&mhccp) ||
-      !r.read_bit(&ibp)) {
+      !r.read_bit(&cfl)) {
+    return false;
+  }
+  if (!monochrome) {
+    if (!r.read_bits(2, &v)) return false;  // cfl_ds_filter_index
+  }
+  if (!r.read_bit(&mhccp) || !r.read_bit(&ibp)) {
     return false;
   }
   for (int i = 0; i < 4; ++i) {
@@ -3618,9 +3913,15 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   }
   bool ist_i = false, ist_e = false, chroma_dct = false, ddt = false,
        reduced_part = false, cctx = false, tcq = false;
-  if (!r.read_bit(&ist_i) || !r.read_bit(&ist_e) || !r.read_bit(&chroma_dct) ||
-      !r.read_bit(&ddt) || !r.read_bit(&reduced_part) || !r.read_bit(&cctx) ||
-      !r.read_bit(&tcq)) {
+  if (!r.read_bit(&ist_i) || !r.read_bit(&ist_e)) return false;
+  if (!monochrome) {
+    if (!r.read_bit(&chroma_dct)) return false;
+  }
+  if (!r.read_bit(&ddt) || !r.read_bit(&reduced_part)) return false;
+  if (!monochrome) {
+    if (!r.read_bit(&cctx)) return false;
+  }
+  if (!r.read_bit(&tcq)) {
     return false;
   }
   bool parity = false;
@@ -3632,20 +3933,26 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
     if (!r.read_bit(&avgtype)) return false;
   }
   bool sep = false;
-  if (!r.read_bit(&sep)) return false;
+  if (!monochrome) {
+    if (!r.read_bit(&sep)) return false;  // separate_uv_delta_q
+  }
   bool equal = false;
   if (!r.read_bit(&equal)) return false;
   if (!equal) {
     if (!r.read_bits(5, &v)) return false;
     bool ydc = false;
     if (!r.read_bit(&ydc)) return false;
-    if (!r.read_bits(5, &v)) return false;
-    bool udc = false;
-    if (!r.read_bit(&udc)) return false;
+    if (!monochrome) {
+      if (!r.read_bits(5, &v)) return false;
+      bool udc = false;
+      if (!r.read_bit(&udc)) return false;
+    }
   }
-  if (!r.read_bits(5, &v)) return false;  // base_uv_ac_delta_q
-  bool uvac = false;
-  if (!r.read_bit(&uvac)) return false;
+  if (!monochrome) {
+    if (!r.read_bits(5, &v)) return false;  // base_uv_ac_delta_q
+    bool uvac = false;
+    if (!r.read_bit(&uvac)) return false;
+  }
   bool noloop = false, cdef = false, gdf = false;
   if (!r.read_bit(&noloop) || !r.read_bit(&cdef) || !r.read_bit(&gdf)) {
     return false;
@@ -3684,8 +3991,9 @@ struct FrameHeaderInfo {
   bool keyframe = false;
   std::uint32_t order_hint = 0;
   std::uint32_t refresh_flags = 0;
-  std::uint32_t num_total_refs = 0;
-  std::uint32_t ref_idx = 0;
+  std::uint32_t num_total_refs = 1;
+  std::uint32_t ref_idx[2] = {0, 0};
+  bool reference_select = false;
   bool disable_cdf_update = true;
   std::uint32_t base_q_idx = 0;
   bool segmentation_enabled = false;
@@ -3719,8 +4027,11 @@ void write_frame_header(av2enc::BitWriter& w, const Options& opt,
     w.put_bits(h.refresh_flags, static_cast<unsigned>(num_ref_frames));
     w.put_bit(true);                  // frame_explicit_ref_frame_map
     w.put_bits(h.num_total_refs, 3);  // num_total_refs
-    w.put_bits(h.ref_idx, ceil_log2(static_cast<unsigned>(num_ref_frames)));
-    // ref_frame_idx[0]
+    const unsigned ref_bits =
+        ceil_log2(static_cast<unsigned>(num_ref_frames));
+    for (std::uint32_t i = 0; i < h.num_total_refs && i < 2; ++i) {
+      w.put_bits(h.ref_idx[i], ref_bits);  // ref_frame_idx[i]
+    }
   }
   if (h.keyframe) {
     w.put_bit(false);  // allow_intrabc
@@ -3741,8 +4052,8 @@ void write_frame_header(av2enc::BitWriter& w, const Options& opt,
   w.put_bit(h.segmentation_enabled);
   w.put_bit(h.using_qmatrix);
   if (!h.keyframe) {
-    w.put_bit(false);  // reference_select
-    w.put_bit(false);  // skip_mode_present
+    w.put_bit(h.reference_select);  // reference_select
+    w.put_bit(false);               // skip_mode_present
   }
   w.put_bits(h.reduced_tx_set, 2);
 }
@@ -3815,13 +4126,14 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
     }
     if (!r.read_bits(3, &v)) return false;
     out->num_total_refs = v;
-    if (out->num_total_refs != 1) {
-      *error = "frame header: only one total ref is supported";
+    if (out->num_total_refs != 1 && out->num_total_refs != 2) {
+      *error = "frame header: only one or two total refs are supported";
       return false;
     }
-    if (!r.read_bits(ceil_log2(static_cast<unsigned>(seq.num_ref_frames)),
-                     &out->ref_idx)) {
-      return false;
+    const unsigned ref_bits =
+        ceil_log2(static_cast<unsigned>(seq.num_ref_frames));
+    for (std::uint32_t i = 0; i < out->num_total_refs; ++i) {
+      if (!r.read_bits(ref_bits, &out->ref_idx[i])) return false;
     }
   }
   if (keyframe) {
@@ -3898,10 +4210,11 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
   }
   if (!keyframe) {
     bool reference_select = false;
-    if (!r.read_bit(&reference_select) || reference_select) {
+    if (!r.read_bit(&reference_select)) {
       *error = "frame header: reference_select";
       return false;
     }
+    out->reference_select = reference_select;
     bool skip_mode = false;
     if (!r.read_bit(&skip_mode) || skip_mode) {
       *error = "frame header: skip_mode_present";
@@ -3919,13 +4232,25 @@ bool planes_from_picture(const Picture& p, const Geometry& g, Plane* out,
   const std::size_t y_size = static_cast<std::size_t>(g.width) * g.height;
   const std::size_t c_size =
       static_cast<std::size_t>(g.chroma_w) * g.chroma_h;
-  if (p.y.size() < y_size || p.u.size() < c_size || p.v.size() < c_size) {
+  if (p.y.size() < y_size) {
     *error = "picture plane spans are smaller than the geometry";
     return false;
   }
   out[0].w = g.width;
   out[0].h = g.height;
   out[0].data.assign(p.y.begin(), p.y.begin() + y_size);
+  if (!g.has_chroma) {
+    for (int plane = 1; plane < 3; ++plane) {
+      out[plane].w = 0;
+      out[plane].h = 0;
+      out[plane].data.clear();
+    }
+    return true;
+  }
+  if (p.u.size() < c_size || p.v.size() < c_size) {
+    *error = "picture chroma spans are smaller than the geometry";
+    return false;
+  }
   out[1].w = g.chroma_w;
   out[1].h = g.chroma_h;
   out[1].data.assign(p.u.begin(), p.u.begin() + c_size);
@@ -3943,8 +4268,10 @@ Picture picture_from_planes(const Geometry& g, const Plane planes[3],
   p.format = g.format;
   p.bit_depth = bit_depth;
   p.y = planes[0].data;
-  p.u = planes[1].data;
-  p.v = planes[2].data;
+  if (g.has_chroma) {
+    p.u = planes[1].data;
+    p.v = planes[2].data;
+  }
   return p;
 }
 
@@ -3978,7 +4305,8 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
   const Picture& first = pictures.front();
   if (first.format != ChromaFormat::k420 &&
       first.format != ChromaFormat::k422 &&
-      first.format != ChromaFormat::k444) {
+      first.format != ChromaFormat::k444 &&
+      first.format != ChromaFormat::k400) {
     *error = "unsupported chroma format";
     return false;
   }
@@ -4005,7 +4333,12 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
   if (layered) {
     tl::PlanConfig pc;
     pc.gop_size = options.temporal_layers;
-    pc.schedule = tl::Schedule::kHierarchicalP;
+    pc.schedule = options.b_schedule ? tl::Schedule::kHierarchicalB
+                                     : tl::Schedule::kHierarchicalP;
+    if (options.b_schedule && options.temporal_layers > 8) {
+      *error = "lossless B schedule supports a GOP of 4 or 8 pictures";
+      return false;
+    }
     pc.dependency = tl::DependencyMode::kAllLower;
     pc.explicit_dependency_map = false;  // pinned dav2d default map
     pc.order_hint_bits = options.temporal_layers >= 16 ? 5 : 4;
@@ -4073,23 +4406,43 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
     recon[1].resize(g.chroma_w, g.chroma_h);
     recon[2].resize(g.chroma_w, g.chroma_h);
 
-    Plane ref_storage[3];
+    Plane ref_storage[2][3];
     const Plane* ref[3] = {nullptr, nullptr, nullptr};
+    const Plane* ref1[3] = {nullptr, nullptr, nullptr};
+    int num_refs = 1;
+    int frame_distance[2] = {1, 0};
     if (!keyframe) {
-      int ref_display = coding_order[ci - 1];
-      if (pf != nullptr && pf->num_refs > 0) ref_display = pf->ref_display[0];
-      const Picture& ref_picture =
-          recon_by_display[static_cast<std::size_t>(ref_display)];
-      if (ref_picture.y.empty()) {
-        *error = "lossless reference picture was not coded";
-        return false;
+      num_refs = pf != nullptr ? pf->num_refs : 1;
+      for (int r = 0; r < num_refs && r < 2; ++r) {
+        const int ref_display =
+            pf != nullptr ? pf->ref_display[r] : coding_order[ci - 1];
+        const Picture& ref_picture =
+            recon_by_display[static_cast<std::size_t>(ref_display)];
+        if (ref_picture.y.empty()) {
+          *error = "lossless reference picture was not coded";
+          return false;
+        }
+        if (!planes_from_picture(ref_picture, g, ref_storage[r], error)) {
+          return false;
+        }
+        if (r == 0) {
+          ref[0] = &ref_storage[0][0];
+          ref[1] = &ref_storage[0][1];
+          ref[2] = &ref_storage[0][2];
+        } else {
+          ref1[0] = &ref_storage[1][0];
+          ref1[1] = &ref_storage[1][1];
+          ref1[2] = &ref_storage[1][2];
+        }
+        if (pf != nullptr) {
+          frame_distance[r] = clip3(
+              -127, 127,
+              static_cast<int>(pf->display_order_hint) -
+                  static_cast<int>(pf->ref_order_hint[r]));
+        } else {
+          frame_distance[r] = 1;
+        }
       }
-      if (!planes_from_picture(ref_picture, g, ref_storage, error)) {
-        return false;
-      }
-      ref[0] = &ref_storage[0];
-      ref[1] = &ref_storage[1];
-      ref[2] = &ref_storage[2];
     }
 
     CdfState cdfs;
@@ -4102,7 +4455,7 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
     std::vector<std::uint8_t> tile(16U * 1024U * 1024U);
     std::size_t tile_bytes = 0;
     TileWriter writer(g, options, keyframe, cdfs, ctx, src_ptr, recon_ptr, ref,
-                      &stats);
+                      ref1, num_refs, frame_distance, &stats);
     if (!writer.encode_tile(tile.data(), tile.size(), &tile_bytes, *error)) {
       return false;
     }
@@ -4110,7 +4463,8 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
 
     FrameHeaderInfo header;
     header.keyframe = keyframe;
-    header.num_total_refs = 1;
+    header.num_total_refs = static_cast<std::uint32_t>(num_refs);
+    header.reference_select = num_refs > 1;
     header.base_q_idx = 0;
     header.reduced_tx_set = 0;
     header.disable_cdf_update = !options.adaptive_cdf;
@@ -4118,14 +4472,16 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
     if (pf != nullptr) {
       header.order_hint = pf->order_hint_lsbs;
       header.refresh_flags = pf->refresh_frame_flags;
-      header.ref_idx = static_cast<std::uint32_t>(pf->ref_slot[0] < 0
-                                                     ? 0
-                                                     : pf->ref_slot[0]);
+      for (int r = 0; r < num_refs && r < 2; ++r) {
+        header.ref_idx[r] = static_cast<std::uint32_t>(
+            pf->ref_slot[r] < 0 ? 0 : pf->ref_slot[r]);
+      }
       header.immediate_output_frame = pf->immediate_output_frame;
       header.implicit_output_frame = pf->implicit_output_frame;
     } else {
       header.order_hint = static_cast<std::uint32_t>(display);
       header.refresh_flags = 1;
+      header.ref_idx[0] = 0;
       header.immediate_output_frame = true;
       header.implicit_output_frame = false;
     }
@@ -4178,8 +4534,11 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
   *result = {};
   SeqInfo seq;
   bool have_seq = false;
-  std::vector<Picture> frames;
   std::vector<FrameStats> stats_out;
+  std::vector<Picture> slots;
+  std::vector<bool> slot_valid;
+  std::vector<std::uint32_t> slot_order_hint;
+  std::vector<std::pair<std::uint32_t, Picture>> display_order;
 
   for (const auto& unit : units) {
     std::vector<ObuView> obus;
@@ -4193,6 +4552,11 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
     if (!have_seq) {
       *error = "temporal unit is missing a sequence header";
       return false;
+    }
+    if (slots.size() != static_cast<std::size_t>(seq.num_ref_frames)) {
+      slots.assign(static_cast<std::size_t>(seq.num_ref_frames), Picture{});
+      slot_valid.assign(static_cast<std::size_t>(seq.num_ref_frames), false);
+      slot_order_hint.assign(static_cast<std::size_t>(seq.num_ref_frames), 0);
     }
     Geometry g;
     if (!make_geometry(seq.width, seq.height, seq.format, &g, error)) {
@@ -4226,19 +4590,36 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
     const std::uint8_t* tile = frame_obu->payload + header_bytes;
     const std::size_t tile_size = frame_obu->size - header_bytes;
 
-    Plane ref_storage[3];
+    Plane ref_storage[2][3];
     const Plane* ref[3] = {nullptr, nullptr, nullptr};
+    const Plane* ref1[3] = {nullptr, nullptr, nullptr};
+    int num_refs = 1;
+    int frame_distance[2] = {1, 0};
     if (!keyframe) {
-      if (frames.empty()) {
-        *error = "P frame without a reference";
-        return false;
+      num_refs = static_cast<int>(header.num_total_refs);
+      for (int r = 0; r < num_refs && r < 2; ++r) {
+        const std::uint32_t slot = header.ref_idx[r];
+        if (slot >= slots.size() || !slot_valid[slot]) {
+          *error = "frame header references an invalid slot";
+          return false;
+        }
+        if (!planes_from_picture(slots[slot], g, ref_storage[r], error)) {
+          return false;
+        }
+        if (r == 0) {
+          ref[0] = &ref_storage[0][0];
+          ref[1] = &ref_storage[0][1];
+          ref[2] = &ref_storage[0][2];
+        } else {
+          ref1[0] = &ref_storage[1][0];
+          ref1[1] = &ref_storage[1][1];
+          ref1[2] = &ref_storage[1][2];
+        }
+        frame_distance[r] = clip3(
+            -127, 127,
+            static_cast<int>(header.order_hint) -
+                static_cast<int>(slot_order_hint[slot]));
       }
-      if (!planes_from_picture(frames.back(), g, ref_storage, error)) {
-        return false;
-      }
-      ref[0] = &ref_storage[0];
-      ref[1] = &ref_storage[1];
-      ref[2] = &ref_storage[2];
     }
 
     Plane recon[3];
@@ -4255,14 +4636,37 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
     ctx.reset(g);
     FrameStats stats;
     Plane* recon_ptr[3] = {&recon[0], &recon[1], &recon[2]};
-    TileReader reader(g, opt, keyframe, cdfs, ctx, recon_ptr, ref, &stats);
+    TileReader reader(g, opt, keyframe, cdfs, ctx, recon_ptr, ref, ref1,
+                      num_refs, frame_distance, &stats);
     if (!reader.decode_tile(tile, tile_size, tile_size, *error)) return false;
 
     Picture pic = picture_from_planes(g, recon, seq.bit_depth);
     stats_out.push_back(stats);
-    frames.push_back(std::move(pic));
+    // §7.23 refresh.  A CLK frame refreshes every slot (refresh_frame_flags is
+    // inferred allFrames); later frames refresh the slots in the header.
+    if (keyframe) {
+      for (std::uint32_t s = 0; s < slots.size(); ++s) {
+        slots[s] = pic;
+        slot_valid[s] = true;
+        slot_order_hint[s] = header.order_hint;
+      }
+    } else {
+      for (std::uint32_t s = 0; s < slots.size(); ++s) {
+        if ((header.refresh_flags & (1U << s)) == 0) continue;
+        slots[s] = pic;
+        slot_valid[s] = true;
+        slot_order_hint[s] = header.order_hint;
+      }
+    }
+    display_order.emplace_back(header.order_hint, std::move(pic));
   }
 
+  // §7.21 output order follows the order hints, not coding order.
+  std::sort(display_order.begin(), display_order.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+  std::vector<Picture> frames;
+  frames.reserve(display_order.size());
+  for (auto& entry : display_order) frames.push_back(std::move(entry.second));
   result->frames = std::move(frames);
   result->stats = std::move(stats_out);
   return true;

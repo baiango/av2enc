@@ -39,9 +39,6 @@ bool validate_view(const FrameView& frame, bool need_source,
       frame.mi_rows <= 0) {
     return fail(error, "invalid frame geometry");
   }
-  if ((frame.width & 7) != 0 || (frame.height & 7) != 0) {
-    return fail(error, "M2 CDEF needs dimensions divisible by 8");
-  }
   if ((frame.mi_cols & 1) != 0 || (frame.mi_rows & 1) != 0) {
     return fail(error, "odd MI grid");
   }

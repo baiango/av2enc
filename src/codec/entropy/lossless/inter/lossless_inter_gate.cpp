@@ -1,9 +1,10 @@
 // External decoder gate for the AV2 lossless inter module.
 //
-// Each case encodes a 2-frame sequence (key + P), writes both temporal units to
-// an IVF, runs the pinned `dav2d --strict 1 --threads 1` decoder, and requires
-// the decoded I420 samples of both frames to equal the source exactly.  The
-// module's independent reader is also required to reproduce both frames.
+// Each case encodes a short sequence (2 frames, or 4/8 for the hierarchical
+// schedules), writes one temporal unit per IVF frame in coding order, runs the
+// pinned `dav2d --strict 1 --threads 1` decoder, and requires the decoded
+// samples in display order to equal the source exactly.  The module's
+// independent reader is also required to reproduce every frame.
 //
 // Usage: lossless_inter_gate [--dav2d PATH] [--tmpdir DIR] [--keep]
 // Exit codes: 0 pass, 1 failure, 77 skip (no decoder).
@@ -47,8 +48,9 @@ Picture make_picture(int w, int h, ChromaFormat format, int frame,
   };
   const int sub_x = format == ChromaFormat::k444 ? 0 : 1;
   const int sub_y = format == ChromaFormat::k420 ? 1 : 0;
-  const int cw = w >> sub_x;
-  const int ch = h >> sub_y;
+  const bool has_chroma = format != ChromaFormat::k400;
+  const int cw = has_chroma ? (w >> sub_x) : 0;
+  const int ch = has_chroma ? (h >> sub_y) : 0;
   p.y.resize(static_cast<std::size_t>(w) * h);
   p.u.resize(static_cast<std::size_t>(cw) * ch);
   p.v.resize(static_cast<std::size_t>(cw) * ch);
@@ -128,6 +130,7 @@ struct GateCase {
   const char* name;
   int bit_depth = 8;
   int temporal_layers = 0;
+  bool b_schedule = false;
 };
 
 bool check_case(const GateCase& c, const std::string& dav2d,
@@ -144,6 +147,7 @@ bool check_case(const GateCase& c, const std::string& dav2d,
   opt.enable_fsc = c.fsc;
   opt.bit_depth = c.bit_depth;
   opt.temporal_layers = c.temporal_layers;
+  opt.b_schedule = c.b_schedule;
   av2enc::lossless::inter::EncodeResult enc;
   if (!av2enc::lossless::inter::encode_video(frames, opt, &enc, error)) {
     *error = "encode: " + *error;
@@ -155,10 +159,10 @@ bool check_case(const GateCase& c, const std::string& dav2d,
     return false;
   }
 
-  // The module's own reader must reproduce every frame of the flat chain and
-  // the format cores.  Reordered hierarchical-P pictures are gated by dav2d
-  // only (the reader's chroma residual path is not wired for that order).
-  if (c.temporal_layers == 0) {
+  // The module's own reader walks the reference slots and outputs pictures by
+  // order hint, so it must reproduce every frame in display order for the flat
+  // chain, hierarchical P and hierarchical B.
+  {
     av2enc::lossless::inter::DecodeResult dec;
     if (!av2enc::lossless::inter::decode_video(enc.units, &dec, error)) {
       *error = "reader: " + *error;
@@ -169,9 +173,14 @@ bool check_case(const GateCase& c, const std::string& dav2d,
       return false;
     }
     for (int i = 0; i < frame_count; ++i) {
-      if (dec.frames[i].y != frames[i].y || dec.frames[i].u != frames[i].u ||
-          dec.frames[i].v != frames[i].v) {
+      if (dec.frames[i].y != frames[i].y) {
         *error = "reader reconstruction differs at frame " + std::to_string(i);
+        return false;
+      }
+      if (c.format != ChromaFormat::k400 &&
+          (dec.frames[i].u != frames[i].u ||
+           dec.frames[i].v != frames[i].v)) {
+        *error = "reader chroma differs at frame " + std::to_string(i);
         return false;
       }
     }
@@ -198,8 +207,10 @@ bool check_case(const GateCase& c, const std::string& dav2d,
   std::vector<std::uint8_t> expected;
   for (const Picture& p : frames) {
     append_plane(expected, p.y, c.bit_depth);
-    append_plane(expected, p.u, c.bit_depth);
-    append_plane(expected, p.v, c.bit_depth);
+    if (c.format != ChromaFormat::k400) {
+      append_plane(expected, p.u, c.bit_depth);
+      append_plane(expected, p.v, c.bit_depth);
+    }
   }
 
   const std::filesystem::path decoded = work / (std::string(c.name) + ".yuv");
@@ -284,6 +295,21 @@ int main(int argc, char** argv) {
       {640, 360, ChromaFormat::k420, 16, 4, true, "640x360_420p10_b16_p4", 10},
       {64, 64, ChromaFormat::k420, 16, 4, true, "64x64_420_tl4", 8, 4},
       {64, 64, ChromaFormat::k420, 16, 4, true, "64x64_420p10_tl4", 10, 4},
+      // 4:0:0 (Monochrome): no chroma mode/residual syntax.
+      {64, 64, ChromaFormat::k400, 16, 4, true, "64x64_400_b16_p4"},
+      {640, 360, ChromaFormat::k400, 16, 4, true, "640x360_400_b16_p4"},
+      {64, 64, ChromaFormat::k400, 16, 4, true, "64x64_400p10_b16_p4", 10},
+      // Hierarchical-B two-reference schedule (gop 4 and 8).
+      {64, 64, ChromaFormat::k420, 16, 4, true, "64x64_420_b8_gop4", 8, 4,
+       true},
+      {64, 64, ChromaFormat::k420, 16, 4, true, "64x64_420_b8_gop8", 8, 8,
+       true},
+      {640, 360, ChromaFormat::k420, 16, 4, true, "640x360_420_b8_gop8", 8, 8,
+       true},
+      {64, 64, ChromaFormat::k420, 16, 4, true, "64x64_420p10_b8_gop8", 10, 8,
+       true},
+      {64, 64, ChromaFormat::k400, 16, 4, true, "64x64_400_b8_gop8", 8, 8,
+       true},
   };
 
   int checks = 0;

@@ -46,8 +46,8 @@ repro and kept rejected.
 | 20 | Implicit mask blending (`enable_imp_msk_bld`) | DONE (`--video-imp-mask`; `gate_video_pred_surface.sh`) |
 | 21 | DF sub-PU | DONE (`--video-df-sub-pu`; sub-PU grid exact with `--video-opfl --video-deblock`) |
 | 22 | Adaptive MVD / MVD sign derivation / flexible MV resolution | DONE `f838a9a` |
-| 23 | `num_same_ref_compound > 0`, short refresh, `mv_traj` (refs 2); `refmvbank` rejected | DONE three tools: `--video-same-ref-compound`, `--video-short-refresh`, `--video-mv-traj` (64x64 + 640x360, dav2d exact). `--video-refmvbank` is wired but **rejected by name**: decoder diverges at the third superblock row (docs/negative-results.md). `mv_traj` refs>=3 also rejected |
-| 24 | TIP-as-reference, warp/wedge §7.22 fields | DONE (`ec7fcf6`); `RefFrame[0] == TIP_FRAME` block symbols remain |
+| 23 | `num_same_ref_compound > 0`, short refresh, `mv_traj` (refs 2); `refmvbank` rejected | DONE four tools: `--video-same-ref-compound`, `--video-short-refresh`, `--video-mv-traj` (any refs >= 2) and `--video-refmvbank`, all dav2d `--strict 1` exact at 64x64/640x360. The ref-MV bank now replays the §5.20.2.2 per-SB reset/seeding and §6.19.2.1 per-row clear; the mv-traj scan consumes the §7.9.2 field |
+| 24 | TIP-as-reference, warp/wedge §7.22 fields | DONE (`ec7fcf6`); `RefFrame[0] == TIP_FRAME` block symbols DONE (`--video-tip-block-ref`, one trailing TIP leaf; `docs/tip-decoder-gate.md` §2c) |
 
 ## Wave 4 — headers, formats, rates, schedules
 
@@ -55,15 +55,16 @@ repro and kept rejected.
 |---|---|---|
 | 25 | High tier, `seq_header_id` bank / multi-sequence, full LCR/OPS fields | DONE (`--video-tier high`, `--video-multi-sequence`, `--video-lcr-full`; `gate_video_headers.sh`) |
 | 26 | Separate UV/DC delta-Q (`separate_uv_delta_q`, `equal_ac_dc_q`) | DONE (`--video-uv-delta-q`; `gate_video_deltaq.sh`) |
-| 27 | 10-bit / non-4:2:0 video in-loop filters | DONE `610e92b` (4:2:2 16-px and 8-bit 4:0:0 PC-Wiener rejected) |
+| 27 | 10-bit / non-4:2:0 video in-loop filters | DONE `610e92b` (4:2:2 16-px fixed; 8-bit 4:0:0 PC-Wiener now exact after the §5.18.7.11 tool-list fix) |
 | 28 | CRF/VBR with B frames, temporal layers, SVC | DONE `73a84c8` (`gate_video_schedule_rc.sh`) |
 | 29 | Multi-GOP B frames, multi-reference hierarchical P | DONE `73a84c8` (`--video-gops`, two-ref t-layers) |
 | 30 | `SEG_LVL_SKIP`/`SEG_LVL_GLOBALMV`, temporal segmentation, 16 segments | DONE (`--video-seg-skip/--video-seg-globalmv/--video-seg-temporal/--video-segments`; `gate_video_deltaq.sh`); `seq_seg_info_present_flag` with the sequence table via `--video-seq-seg-info[-frozen]` (`gate_video_seq_surface.sh`) |
-| 31 | Film grain / lossless on the other schedules and formats | DONE `02aa18e` (SEF/SWITCH/RAS/OLK/LTR and lossless+B stay rejected) |
+| 31 | Film grain / lossless on the other schedules and formats | DONE (grain: plain/B/temporal/TIP/tiles/formats plus long-term/OLK/leading/SEF/SWITCH/RAS; lossless: 8/10-bit formats, hierarchical-P and hierarchical-B; lossless 4:0:0) |
 | 32 | 8-bit non-4:2:0 still writer filter stage | DONE `610e92b` |
 | 33 | 4:2:2 16-pixel leaves | DONE `gate_video_422_depth.sh` (partition 4:2:2 chroma geometry; depths 3/4 exact) |
 | 34 | `cfl_ds_filter_index` 1..3 | DONE `610e92b` (format video core; M2 8-bit 4:2:0 rejects) |
 | 35 | Screen-content force-on, `reduce_pb_aspect_ratio` | DONE (`--video-scc-force`, `--video-force-integer-mv`, `--video-reduce-pb-aspect`; `gate_video_seq_surface.sh`) |
+| 36 | Arbitrary frame dimensions | DONE `8042ff2` (`gate_video_any_dims.sh`; 4:2:0 even W/H, 4:2:2 even W, 4:4:4 any; GPU non-/8 rejected) |
 
 ## Hard dav2d rejections (out of scope; stay documented)
 

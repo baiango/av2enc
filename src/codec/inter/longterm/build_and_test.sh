@@ -58,6 +58,7 @@ LONGTERM_CORE=(
   "$ROOT/src/core/bitstream/bitwriter.cpp"
   "$ROOT/src/core/bitstream/obu.cpp"
   "$ROOT/src/core/bitstream/basic_headers.cpp"
+  "$ROOT/src/pipeline/grain/film_grain_syntax.cpp"
 )
 
 VIDEO_CORE=(

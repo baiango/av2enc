@@ -215,9 +215,118 @@ check_tail_temporal() {
 if [ -f "$INPUT_360" ]; then
   run_case tipref_p4 "$INPUT_360" 4 --video-ref-mvs
   check_tail_temporal tipref_p4
+  TIPREF4_STREAM=$LAST_STREAM_MD5
+  TIPREF4_RECON=$LAST_RECON_MD5
 fi
 run_case tipref_p8 "$INPUT" 8 --video-ref-mvs
 check_tail_temporal tipref_p8
+
+# --- §5.20.7.10 block-level TIP reference ----------------------------------
+#
+# --video-tip-block-ref turns the tail P into TipFrameMode = TIP_FRAME_AS_REF
+# and converts its last coded inter leaf into RefFrame[0] == TIP_FRAME (a
+# NEWMV/DRL-0 leaf predicted from the frame's own §7.10 field).  The trace must
+# show the leaf, and the decoder must reconstruct it exactly.
+run_block_case() {
+  local label=$1 input=$2 frames=$3
+  shift 3
+  local ivf="$OUT/$label.ivf" recon="$OUT/$label.recon.y4m"
+  local dec="$OUT/$label.dec.y4m" log="$OUT/$label.log"
+  echo "== $label: $frames picture(s), TIP block reference${*:+ ($*)}"
+  if ! "$BIN" "$input" -o "$ivf" --video --frames "$frames" --video-tip \
+      --video-ref-mvs --video-tip-block-ref --video-force-single \
+      --video-recon "$recon" --video-trace "$@" >"$log" 2>&1; then
+    echo "FAIL($label): encode failed"; tail -3 "$log"; FAIL=1; return
+  fi
+  if ! grep -q "m2 tip_block .*ref=TIP" "$log"; then
+    echo "FAIL($label): trace shows no RefFrame[0] == TIP_FRAME leaf"
+    FAIL=1; return
+  fi
+  local blocks
+  blocks=$(sed -n 's/.*tip_block_ref .*blocks=\([0-9]*\).*/\1/p' "$log" \
+      | tail -1)
+  if [ -z "$blocks" ] || [ "$blocks" -lt 1 ]; then
+    echo "FAIL($label): trace reports no coded TIP block"
+    FAIL=1; return
+  fi
+  if ! "$DAV2D" -q -i "$ivf" -o "$dec" --strict 1 --threads 1; then
+    echo "FAIL($label): dav2d --strict 1 rejected the stream"; FAIL=1; return
+  fi
+  local recon_md5 dec_md5
+  recon_md5=$(md5 "$recon"); dec_md5=$(md5 "$dec")
+  if [ "$recon_md5" != "$dec_md5" ]; then
+    echo "FAIL($label): recon mismatch (encoder $recon_md5 decoder $dec_md5)"
+    FAIL=1; return
+  fi
+  local dec_frames
+  dec_frames=$(LC_ALL=C grep -a -o 'FRAME' "$dec" | wc -l | tr -d ' ')
+  if [ "$dec_frames" -ne "$frames" ]; then
+    echo "FAIL($label): decoded $dec_frames of $frames picture(s)"
+    FAIL=1; return
+  fi
+  LAST_STREAM_MD5=$(md5 "$ivf")
+  LAST_RECON_MD5=$recon_md5
+  CASES=$((CASES + 1))
+  echo "  PASS: $frames picture(s), $blocks TIP block(s), stream"
+  echo "        $LAST_STREAM_MD5, recon $recon_md5"
+}
+if [ -f "$INPUT_360" ]; then
+  run_block_case tipblock_p4 "$INPUT_360" 4
+  if [ -n "${TIPREF4_STREAM:-}" ] && \
+     [ "$LAST_STREAM_MD5" = "$TIPREF4_STREAM" ]; then
+    echo "FAIL(tipblock_p4): the TIP-block stream is byte-identical to the"
+    echo "                   TIP_FRAME_DISABLED tail P (the block form is inert)"
+    FAIL=1
+  fi
+  if [ -n "${TIPREF4_RECON:-}" ] && [ "$LAST_RECON_MD5" = "$TIPREF4_RECON" ]; then
+    echo "FAIL(tipblock_p4): the TIP-block reconstruction equals the"
+    echo "                   TIP_FRAME_DISABLED tail P (prediction is inert)"
+    FAIL=1
+  fi
+  run_block_case tipblock_p4_noholes "$INPUT_360" 4 --video-tip-no-hole-fill
+fi
+run_block_case tipblock_p8 "$INPUT" 8
+
+# 64x64: the synthetic-clip path in video_gate covers this too, but the product
+# CLI carrier must be gated at the same size.  Crop 4-picture 64x64 fixtures at
+# run time (test media is never committed): one from the flat top-left corner
+# and one from the moving window, so the field-derived TIP MVs are nonzero.
+check_tip_field_mv() {
+  local label=$1
+  local line
+  line=$(grep "m2 tip_block" "$OUT/$label.log" | tail -1)
+  if [ -z "$line" ]; then
+    echo "FAIL($label): no TIP block trace line"
+    FAIL=1
+    return
+  fi
+  case "$line" in
+    *"tipmv0=(0,0)/(0,0)"*)
+      echo "FAIL($label): the TIP block predicted with a zero field MV"
+      FAIL=1 ;;
+    *)
+      echo "  PASS($label): field-derived TIP MV is nonzero" ;;
+  esac
+}
+if [ -f "$INPUT_360" ] && command -v python3 >/dev/null 2>&1; then
+  CROP_FLAT="$OUT/tipblock_64x64_flat.y4m"
+  CROP_MOVE="$OUT/tipblock_64x64_move.y4m"
+  if python3 "$ROOT/src/pipeline/video/crop_y4m_fixture.py" \
+      --input "$INPUT_360" --width 64 --height 64 --frames 4 \
+      --out "$CROP_FLAT" >/dev/null 2>&1; then
+    run_block_case tipblock_64_flat "$CROP_FLAT" 4
+  else
+    echo "video_tip_gate: could not crop the flat 64x64 fixture" >&2
+  fi
+  if python3 "$ROOT/src/pipeline/video/crop_y4m_fixture.py" \
+      --input "$INPUT_360" --width 64 --height 64 --frames 4 \
+      --offset-x 256 --offset-y 128 --out "$CROP_MOVE" >/dev/null 2>&1; then
+    run_block_case tipblock_64_move "$CROP_MOVE" 4
+    check_tip_field_mv tipblock_64_move
+  else
+    echo "video_tip_gate: could not crop the moving 64x64 fixture" >&2
+  fi
+fi
 
 # The schedule needs a TIP display frame to reference: 3 pictures must be
 # rejected by name rather than silently coding no P.
@@ -228,6 +337,29 @@ if "$BIN" "$INPUT_360" -o "$OUT/reject3.ivf" --video --frames 3 \
 else
   grep -q "at least 4 input" "$OUT/reject3.log" || {
     echo "FAIL: 3-picture TIP+ref-mvs rejection does not name the limit"
+    FAIL=1
+  }
+fi
+
+# The block carrier requires its two prerequisites by name.
+if "$BIN" "$INPUT" -o "$OUT/reject-block.ivf" --video --frames 4 \
+    --video-tip --video-ref-mvs --video-tip-block-ref \
+    >"$OUT/reject-block.log" 2>&1; then
+  echo "FAIL: --video-tip-block-ref accepted without --video-force-single"
+  FAIL=1
+else
+  grep -q "requires --video-force-single" "$OUT/reject-block.log" || {
+    echo "FAIL: missing --video-force-single rejection does not name the flag"
+    FAIL=1
+  }
+fi
+if "$BIN" "$INPUT" -o "$OUT/reject-block2.ivf" --video --frames 4 \
+    --video-tip --video-tip-block-ref >"$OUT/reject-block2.log" 2>&1; then
+  echo "FAIL: --video-tip-block-ref accepted without --video-ref-mvs"
+  FAIL=1
+else
+  grep -q "requires --video-ref-mvs" "$OUT/reject-block2.log" || {
+    echo "FAIL: missing --video-ref-mvs rejection does not name the flag"
     FAIL=1
   }
 fi
@@ -244,4 +376,4 @@ if [ "$FAIL" -ne 0 ]; then
   echo "video_tip_gate: FAIL"
   exit 1
 fi
-echo "video_tip_gate: PASS ($CASES TIP stream(s), hole fill on and off)"
+echo "video_tip_gate: PASS ($CASES TIP streams, incl. RefFrame[0] == TIP_FRAME)"

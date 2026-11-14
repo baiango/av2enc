@@ -190,15 +190,24 @@ class StackBuilder {
       sort_nearest();
     }
 
-    // Steps 18 and 20: fill mvp from derived smvp.  Temporal tools are off in
+    // Steps 18-20: fill mvp from derived smvp.  Temporal tools are off in
     // M2; the derived stack can still be non-empty for multi-reference blocks
     // because §7.12.2.16 projects a neighbour MV onto the current reference.
+    // §7.12.2/.21 orders step 18 (compound derived), step 19 (ref MV bank) and
+    // step 20 (single-reference derived).  The pinned decoder appends the bank
+    // before the derived candidates for a single reference and after them for
+    // a compound block; keeping the historical derived-then-bank order shifted
+    // every later DRL index once a bank candidate was selected.
+    const bool have_bank = p_.refmv_bank_scan != nullptr;
     if (options_.include_derived) {
+      if (!p_.is_compound && have_bank) {
+        p_.refmv_bank_scan(p_, stack_, &prune_count_);
+      }
       fill_derived();
-    }
-
-    // Step 19: §7.12.2.21 fill mvp from the reference MV bank.
-    if (p_.refmv_bank_scan != nullptr) {
+      if (p_.is_compound && have_bank) {
+        p_.refmv_bank_scan(p_, stack_, &prune_count_);
+      }
+    } else if (have_bank) {
       p_.refmv_bank_scan(p_, stack_, &prune_count_);
     }
 
@@ -529,11 +538,26 @@ class StackBuilder {
     if (!m.is_inter) {
       return;
     }
+    const bool cur_is_tip = p_.ref_frame[0] == kTipFrame;
     if (!p_.is_compound) {
       for (int list = 0; list < 2; ++list) {
         if (m.ref[list] == p_.ref_frame[0]) {
           const inter::mc::Mv mv = get_mv(m, list);
           search_stack(mv, mv, mv_row, mv_col, weight);
+        } else if (cur_is_tip) {
+          // A TIP block’s candidates are §7.12.2.17 (TIP neighbour, other
+          // side) and §7.12.2.18 (compound neighbour with the TIP pair).  The
+          // builder implements neither here, so refuse to fabricate a
+          // candidate: a producer that needs one must not code this block.
+          if (m.ref[0] == kTipFrame ||
+              (p_.closest_past != kRefNone && p_.closest_future != kRefNone &&
+               m.ref[0] == p_.closest_past && m.ref[1] == p_.closest_future)) {
+            unsupported_tip_candidate_ = true;
+          }
+        } else if (m.ref[0] == kTipFrame) {
+          // §7.12.2.17: a TIP neighbour contributes a candidate derived from
+          // the §7.10 field.  Not implemented in this builder.
+          unsupported_tip_candidate_ = true;
         } else if (is_inter_ref(m.ref[list])) {
           single_add_derived(mv_row, mv_col, list);
         }
@@ -542,7 +566,10 @@ class StackBuilder {
     }
 
     if (m.ref[0] == kTipFrame || m.ref[1] == kTipFrame) {
-      return;  // TIP is disabled in M2.
+      // §7.12.2.15: a compound block may derive a candidate from a TIP
+      // neighbour.  Not implemented in this builder.
+      unsupported_tip_candidate_ = true;
+      return;
     }
     if (m.ref[0] == p_.ref_frame[0] && m.ref[1] == p_.ref_frame[1]) {
       compound_search_stack(mv_row, mv_col, weight);
@@ -736,6 +763,16 @@ class StackBuilder {
   SingleCandidate single_[kMaxDrStackSize]{};
   int single_count_ = 0;
   int single_prune_count_ = 0;
+
+ public:
+  // True when the block needed a §7.12.2.15/.17/.18 TIP-derived candidate the
+  // builder does not synthesize.  A coded block that hits this would desync
+  // the decoder, so build_impl() reports it instead of returning a short
+  // stack.
+  bool unsupported_tip_candidate() const { return unsupported_tip_candidate_; }
+
+ private:
+  bool unsupported_tip_candidate_ = false;
 };
 
 Status validate_stack_params(const StackParams& p, bool allow_compound) {
@@ -772,7 +809,15 @@ Status validate_stack_params(const StackParams& p, bool allow_compound) {
       return Status::kInvalidArgument;
     }
   } else {
-    if (!is_inter_ref(p.ref_frame[0]) || p.ref_frame[0] == kTipFrame) {
+    // §5.20.7.10/§7.12.2: a TIP block (RefFrame[0] == TIP_FRAME, RefFrame[1]
+    // == NONE) builds the same single-list stack with rf[0] = TIP_FRAME.  Its
+    // only codable entries are TIP neighbours (§7.12.2.15/.17 on the other
+    // side), §7.12.2.18 derived candidates from a compound neighbour, and the
+    // zero GlobalMvs[0] fallback.  `validate_stack_params` accepts the form so
+    // the producer and the syntax writer can rebuild the stack; any candidate
+    // arm this builder cannot reproduce is reported by the builder instead of
+    // being silently dropped (see add_reference_mv()).
+    if (!is_inter_ref(p.ref_frame[0])) {
       return Status::kInvalidArgument;
     }
     if (p.ref_frame[1] != kRefNone) {
@@ -794,6 +839,9 @@ Status build_impl(const StackParams& params, const BuildOptions& options,
   *stack = MvStack{};
   StackBuilder builder(params, stack, options);
   builder.run();
+  if (builder.unsupported_tip_candidate()) {
+    return Status::kUnsupportedFeature;
+  }
   return Status::kOk;
 }
 
@@ -1251,6 +1299,12 @@ Status audit_mc_stack(const StackParams& params, McStackAudit* audit) {
   }
   *audit = McStackAudit{};
   if (params.is_compound) {
+    audit->mc_supported = false;
+    return Status::kOk;
+  }
+  if (params.ref_frame[0] == kTipFrame) {
+    // The shared inter::mc component has no TIP arm; the audit is only defined
+    // for ordinary reference lists.
     audit->mc_supported = false;
     return Status::kOk;
   }

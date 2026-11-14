@@ -47,6 +47,7 @@ CORE=(
   "$ROOT/src/core/bitstream/bitwriter.cpp"
   "$ROOT/src/core/bitstream/obu.cpp"
   "$ROOT/src/core/bitstream/basic_headers.cpp"
+  "$ROOT/src/pipeline/grain/film_grain_syntax.cpp"
   "$ROOT/src/codec/partition/tree/partition.cpp"
   "$ROOT/src/codec/intra/modes/intra_modes.cpp"
   "$ROOT/src/codec/transform/variants/tx_variants.cpp"
@@ -71,6 +72,7 @@ CORE=(
   "$HERE/random_access.cpp" \
   "$ROOT/src/core/bitstream/bitwriter.cpp" \
   "$ROOT/src/core/bitstream/basic_headers.cpp" \
+  "$ROOT/src/pipeline/grain/film_grain_syntax.cpp" \
   "$ROOT/src/pipeline/video/video_headers.cpp" \
   -o "$OUT/random_access_test"
 

@@ -65,9 +65,6 @@ bool video_geometry_supported(int width, int height, int sb_size,
   if ((width & 1) != 0 || (height & 1) != 0) {
     return fail("M2 4:2:0 requires even dimensions");
   }
-  if ((width & 7) != 0 || (height & 7) != 0) {
-    return fail("M2 baseline requires dimensions divisible by 8");
-  }
   if (reason != nullptr) reason->clear();
   return true;
 }

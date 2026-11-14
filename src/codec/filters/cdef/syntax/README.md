@@ -47,8 +47,8 @@ namespace av2enc::video::cdef_adapter {
 struct PlaneView { const uint8_t* data; int stride; };
 
 struct FrameView {
-  int width, height;                 // visible, both divisible by 8
-  int mi_cols, mi_rows;              // 2*((dim+7)>>3)
+  int width, height;                 // visible width/height (<= MI extent)
+  int mi_cols, mi_rows;              // 2*((dim+7)>>3), §5.18.4.4
   PlaneView recon[3];                // post-deblock, MI-aligned stride
   PlaneView source[3];               // original picture (search only)
   const uint8_t* skip;               // MI grids, required (FrameGrids::zero)
@@ -345,7 +345,8 @@ standalone and deliberately not part of CMake.
 
 ## Limitations
 
-- 8-bit 4:2:0 only; dimensions divisible by 8; MI grids even.
+- 8-bit 4:2:0 only; visible dimensions may be any even size up to the MI
+  aligned extent; MI grids even.
 - One stride for source and destination.
 - `CdefStrengths >= 2` needs the M2 tile-symbol hook; the header writer, the
   context and the index stream are implemented and tested.

@@ -436,6 +436,27 @@ bool parse_frame_header(std::span<const std::uint8_t> payload, ObuType type,
     return false;
   }
 
+  // §5.18.10.1 film_grain_config().
+  if (config.film_grain_params_present) {
+    filters::grain::FilmGrainConfigContext context;
+    context.film_grain_params_present = true;
+    context.immediate_output_frame = header.immediate_output_frame;
+    context.implicit_output_frame = header.implicit_output_frame;
+    std::size_t position = reader.bit_pos();
+    std::string grain_error;
+    if (!filters::grain::ReadFilmGrainConfig(payload, &position, context,
+                                             &header.grain, &grain_error)) {
+      error = "film_grain_config: " + grain_error;
+      return false;
+    }
+    std::uint64_t skipped = 0;
+    if (!reader.read_bits(static_cast<unsigned>(position - reader.bit_pos()),
+                          skipped)) {
+      error = "truncated film_grain_config";
+      return false;
+    }
+  }
+
   if (!reader.align_to_byte(error, "tile_group_obu")) return false;
   header.header_bytes = reader.bytes_consumed();
   if (header.header_bytes == 0U || header.header_bytes > payload.size()) {
@@ -710,9 +731,12 @@ bool parse_sequence_header(std::span<const std::uint8_t> payload,
   if (!read_expect_bit(reader, false, "seq_tile_info_present_flag", error)) {
     return false;
   }
-  if (!read_expect_bit(reader, false, "film_grain_params_present", error)) {
+  bool grain_present = false;
+  if (!reader.read_bit(grain_present)) {
+    error = "truncated film_grain_params_present";
     return false;
   }
+  config.film_grain_params_present = grain_present;
 
   // §5.2.1: extensible OBU payloads end with obu_extension_flag then
   // trailing_bits().  The first trailing bit is 1 and every later bit is 0.
