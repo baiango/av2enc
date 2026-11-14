@@ -164,7 +164,8 @@ Video options: `--p-frames`, `--b-frames`, `--video-refs 1..7`,
 `--video-bawp`, `--video-cfl`,
 `--video-mhccp`, `--video-pc-wiener`, `--video-qm`, `--video-deblock`,
 `--video-cdef`, `--video-ccso`, `--video-wiener`, `--video-chroma-lr`,
-`--video-gdf`, `--video-intra-full`, `--video-tx-search`, `--video-rd-preset quality`, `--tiles CxR`,
+`--video-gdf`, `--video-intra-full`, `--video-tx-search`,
+`--video-partition-rd`, `--video-rd-preset quality`, `--nightly`, `--tiles CxR`,
 `--video-mfh`, `--video-timing`, `--avg-cdf`/`--adaptive-cdf`, and
 `--rc cqp|crf|vbr` with `--crf` / `--bitrate`. `--video-gpu` supports the same
 surface except the explicitly named CPU-only/decoder-gated modes (TIP block
@@ -405,12 +406,19 @@ Current gates:
 
 - **CPU quality:** 480x240 (240p, 2:1) @ 30 fps at **100 kbps**, maximize CVVDP.
   NASA baseline: 4.802 JOD at 100.0 kbps, PSNR-Y 24.47 dB (QP 189).
-  Opt-in RD preset: `--video-rd-preset quality` measures **6.302 JOD
-  (+1.50 JOD), PSNR-Y 27.58 dB (+3.11 dB)** at QP 190 / 100.56 kbps; the
-  interpolated point at 100.04 kbps is **6.273 JOD (+1.47 JOD), 27.51 dB
-  (+3.04 dB)**. The per-tool table, exact flags and rejected compositions are
-  in `docs/video-rd-preset.md`; a separate algorithmic-RD track is in progress.
-  The default stream is unchanged (`a1d0dba1...`, 25,009 B).
+  Stable opt-in preset: `--video-rd-preset quality` measures **6.302 JOD
+  (+1.50 JOD), PSNR-Y 27.58 dB (+3.11 dB)** at QP190 / 100.56 kbps; the
+  interpolated 100.04 kbps point is 6.273 JOD. The per-tool table and exact
+  flags are in `docs/video-rd-preset.md`.
+  Algorithmic nightly aggregate: **`--nightly` combines rate-aware CCSO and
+  bottom-edge inter; it measures 8.746 JOD / 35.38 dB PSNR-Y at 100.25 kbps
+  (QP142)** — +3.94 JOD over the default and +2.44 JOD over the stable preset
+  at essentially the same rate. It is CPU-only and rejects `--video-gpu`, so
+  the default and GPU streams keep the historical CPU decisions
+  (`a1d0dba1...`, 25,009 B). The TX context rate and rate-aware partition tree
+  are separate opt-ins; they measured positive alone but did not stack with
+  the edge path. The measured table and exact flags are in
+  `docs/video-nightly.md`.
 - **GPU calibration:** same 240p30 decisions at QP 189; CVVDP ±0.05 JOD,
   bitrate ±2%, PSNR-Y ±0.1 dB drift. The QP189 stream is byte-identical on both
   GPU hosts and the CPU (`a1d0dba1...`).

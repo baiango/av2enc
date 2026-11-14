@@ -52,6 +52,13 @@ struct VideoLoopFilterOptions {
   bool ccso = false;
   // CcsoMaxBandLog2 for the band-offset-only form (0..6).
   int ccso_bands_log2 = 4;
+  // Rate-aware CCSO decision (--video-ccso-rd).  Prices the tu(7) offset
+  // table, sweeps scale_idx and prunes per-unit ccso_blk symbols; the default
+  // distortion-only fit is untouched when this is false.
+  bool ccso_rd = false;
+  // SSE-per-bit weight for ccso_rd.  Distortion is summed YUV SSE; the table
+  // step model uses one lambda for every plane.
+  double ccso_lambda = 64.0;
 
   // §7.20 luma non-separable Wiener and/or chroma loop restoration.
   bool wiener = false;

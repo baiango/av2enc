@@ -611,6 +611,21 @@ void test_av2_model() {
   const double scalar = model.scalar_bits();
   check(std::isfinite(scalar) && scalar > 0.0, "AV2 model bits are positive");
 
+  // §8.3.2: an inter luma block selects txb_skip[1] and EOB context 1, so its
+  // rate must not be the intra rate.  The intra default keeps every existing
+  // caller unchanged.
+  av2::BlockInfo inter_info = info;
+  inter_info.is_inter = true;
+  av2::Model inter_model;
+  check(inter_model.init(inter_info, levels, &error),
+        "AV2 inter model initialises");
+  const double inter_scalar = inter_model.scalar_bits();
+  check(std::isfinite(inter_scalar) && inter_scalar > 0.0,
+        "AV2 inter bits are positive");
+  check(inter_scalar != scalar || av2::Model::eob_rate(&inter_model, 0, 64) !=
+                                      av2::Model::eob_rate(&model, 0, 64),
+        "inter mode selects the inter coefficient CDFs");
+
   // Spot-check monotonicity at DC.  The trellis does not rely on it (it uses a
   // distortion-based stop rule), but a monotone cost here is a useful sanity
   // check of the CDF lookup.

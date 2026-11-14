@@ -57,6 +57,10 @@ struct BlockInfo {
   // §8.3.1 COEFF_CDF_Q_CTXS slice for the raw frame base_q_idx (0..3).
   // 0 reproduces the historical base_q_idx <= 90 model.
   int qctx = 0;
+  // §8.3.2 luma CDF select: txb_skip uses txb_skip[is_inter], and the EOB
+  // plane context is `plane > 0 ? 2 : (is_inter ? 1 : 0)`.  False keeps the
+  // intra tables, so every still/single-picture caller is unchanged.
+  bool is_inter = false;
 };
 
 // Static, per-block coefficient cost model.  Build it from the scalar levels,

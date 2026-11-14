@@ -364,7 +364,8 @@ const std::uint16_t* Model::txb_skip_cdf() const {
   const std::int32_t tsc =
       (av2enc::still::kTxSizeSqr[info_.params.tx_size] +
        av2enc::still::kTxSizeSqrUp[info_.params.tx_size] + 1) >> 1;
-  return &(*q.txb_skip)[0][tsc][info_.txb_skip_context][0];
+  return &(*q.txb_skip)[info_.is_inter ? 1 : 0][tsc]
+                       [info_.txb_skip_context][0];
 }
 
 double Model::coefficient_rate(void* context,
@@ -569,8 +570,9 @@ double Model::eob_bits(std::int32_t eob) const {
       escape_raw_bits = 2;
       break;
   }
-  // The eob plane context is 2 for chroma and 0 for an intra luma block.
-  const std::int32_t eob_ctx = info_.plane > 0 ? 2 : 0;
+  // The eob plane context is 2 for chroma and 0/1 for intra/inter luma.
+  const std::int32_t eob_ctx =
+      info_.plane > 0 ? 2 : (info_.is_inter ? 1 : 0);
   cdf += static_cast<std::ptrdiff_t>(eob_ctx) * (n + 1);
 
   std::int32_t symbol = 0;

@@ -274,13 +274,28 @@ struct Options {
   // mode (§5.20.7.14 motion_mode_allowed() requires !isCompound).
   bool video_compound_interintra = false;
   bool video_inter_residual = false;
+  // Opt-in bottom-edge inter (--video-edge-inter).  CPU single-tile P chain
+  // only; off keeps every historical stream byte-identical.
+  bool video_edge_inter = false;
+  // --nightly: the latest measured CPU-only algorithmic RD aggregate.  It is
+  // deliberately not the default and is rejected on --video-gpu, so the GPU
+  // path keeps the historical CPU decisions and stream bytes.
+  bool nightly = false;
   // Opt-in measured CPU RD preset (--video-rd-preset <name>).  Empty means no
   // expansion, so the default stream stays byte-identical.  The expansion only
   // sets existing CLI options and then the normal validation runs.
   std::string video_rd_preset;
   // Opt-in §5.18.8.1 TX_MODE_SELECT luma TX size/type/partition search.
   bool video_tx_search = false;
+  // Price TX-search candidates with the §8.3.2 coefficient-context model.
+  // The measured RD preset turns this on; standalone --video-tx-search keeps
+  // the historical heuristic so the CUDA device TX module (which has no
+  // context model yet) still matches the CPU reference byte for byte.
+  bool video_tx_context_rate = false;
   double video_tx_lambda = 256.0;
+  // Opt-in rate-aware §5.20.3.1 partition decision (CPU reference).  See
+  // VideoOptions::partition_rd; the measured RD preset enables it.
+  bool video_partition_rd = false;
   // Opt-in §7.17 deblocking of every reconstructed video frame.
   bool video_deblock = false;
   // Opt-in §5.18.7.1/.8 segmentation + per-superblock delta-Q (CPU --video).
@@ -390,6 +405,10 @@ struct Options {
   int video_cdef_damping = 3;   // CdefDamping 3..6
   bool video_ccso = false;
   int video_ccso_bands = 4;  // CcsoMaxBandLog2 (band-offset-only form)
+  // Rate-aware §7.19 CCSO decision (opt-in; the distortion-only fit used by
+  // --video-ccso is untouched when this is false).
+  bool video_ccso_rd = false;
+  double video_ccso_lambda = 64.0;
   // §5.4.5 cfl_ds_filter_index (0..3; 3 aliases 0).  Drives the chroma-from-
   // luma taps of the chroma loop restoration.
   int video_cfl_ds_filter = 0;
@@ -872,16 +891,34 @@ void print_usage(std::ostream& out) {
                                "block may select a coarser MV precision than",
                                "the frame value (§5.20.7.6)"});
   item("--video-inter-residual", {"Code a quantised inter residual"});
+  item("--video-edge-inter", {"Opt-in bottom-edge inter: a leaf whose coded",
+                                "extent runs past MiRows*4 is reconstructed",
+                                "into a padded plane and may use inter",
+                                "prediction on its visible rows. CPU only"});
+  item("--nightly", {"Latest CPU-only algorithmic RD mode: the measured",
+                       "quality preset plus rate-aware CCSO and bottom-edge",
+                       "inter.  --video-gpu is rejected; the default and GPU",
+                       "paths keep the historical CPU decisions and",
+                       "byte-identical streams"});
   item("--video-rd-preset <name>", {"Expand a measured CPU RD preset:",
                                      "'quality' = --video-inter-residual",
                                      "--video-deblock --video-ccso",
-                                     "--video-tx-search --video-intra-full",
+                                     "--video-tx-search",
+                                     "--video-tx-context-rate",
+                                     "--video-intra-full",
                                      "(default off; the flags stay",
                                      "individually available)"});
   item("--video-tx-search", {"Opt-in §5.18.8 TX_MODE_SELECT luma TX size/type/",
                                 "partition search (changes the bitstream)"});
+  item("--video-tx-context-rate", {"Price TX-search candidates with the",
+                                    "§8.3.2 coefficient-context model (the",
+                                    "measured preset behavior; CPU-only, needs",
+                                    "--video-tx-search)"});
   item("--video-tx-lambda <S>", {"SSE-per-bit weight for --video-tx-search",
                                   "(default 256)"});
+  item("--video-partition-rd", {"Opt-in rate-aware §5.20.3.1 partition tree:",
+                                "SSE-domain leaf cost with a calibrated",
+                                "rate term plus per-leaf syntax bits (CPU-only)"});
   item("--video-sdp", {"Opt-in §5.4.3 enable_sdp: the intra keyframe codes",
                        "per-64x64 luma and chroma partition trees",
                        "(CPU-only, 8-bit 4:2:0, single tile)"});
@@ -1027,6 +1064,10 @@ void print_usage(std::ostream& out) {
   item("--video-cdef-damping <N>", {"CdefDamping 3..6 (default 3)"});
   item("--video-ccso", {"Enable §7.19 CCSO after CDEF (band-offset only)"});
   item("--video-ccso-bands <N>", {"CcsoMaxBandLog2 0..6 (default 4)"});
+  item("--video-ccso-rd", {"Rate-aware CCSO: price the tu(7) offset table,",
+                           "sweep the free scale_idx and prune ccso_blk units"});
+  item("--video-ccso-lambda <S>", {"SSE-per-bit weight for --video-ccso-rd",
+                                   "(default 64; implies --video-ccso-rd)"});
   item("--video-wiener", {"Enable §7.20 luma non-separable Wiener restoration"});
   item("--video-pc-wiener", {"Enable §7.20.4 luma PC-Wiener restoration",
                              "(RESTORE_PC_WIENER per-unit on/off)"});
@@ -1392,6 +1433,39 @@ bool apply_video_rd_preset(Options& options, std::string& error) {
   options.video_ccso = true;
   options.video_tx_search = true;
   options.video_intra_full = true;
+  return true;
+}
+
+// --nightly expands the measured CPU-only algorithmic aggregate.  It is the
+// only place the new decision models are enabled together; the default path,
+// --video-rd-preset quality and every GPU path keep the historical decisions.
+bool apply_video_nightly(Options& options, std::string& error) {
+  if (!options.nightly) return true;
+  if (options.m1 || options.still_gpu) {
+    error = "--nightly is a CPU --video mode; drop --still/--still-gpu";
+    return false;
+  }
+  if (options.video_gpu) {
+    error = "--nightly is CPU-only: the CUDA backend keeps the historical "
+            "decisions so its streams stay CPU-reference exact (drop "
+            "--video-gpu)";
+    return false;
+  }
+  options.video = true;
+  if (options.video_rd_preset.empty()) {
+    options.video_rd_preset = "quality";
+  } else if (options.video_rd_preset != "quality") {
+    error = "--nightly wraps the measured 'quality' preset; drop the other "
+            "--video-rd-preset value";
+    return false;
+  }
+  if (!apply_video_rd_preset(options, error)) return false;
+  // Only the decisions that measured positive in combination on the CPU
+  // benchmark.  The TX context rate and partition RD are separate opt-ins:
+  // each helps the old 64x64 tree, but both measured negative when stacked on
+  // the bottom-edge path (see docs/video-nightly.md).
+  options.video_ccso_rd = true;
+  options.video_edge_inter = true;
   return true;
 }
 
@@ -2453,6 +2527,16 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-edge-inter") {
+      options.video_edge_inter = true;
+      continue;
+    }
+
+    if (argument == "--nightly") {
+      options.nightly = true;
+      continue;
+    }
+
     if (argument == "--video-rd-preset") {
       if (i + 1 >= argc) {
         error = "missing value after '--video-rd-preset'";
@@ -2464,6 +2548,16 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--video-tx-search") {
       options.video_tx_search = true;
+      continue;
+    }
+
+    if (argument == "--video-tx-context-rate") {
+      options.video_tx_context_rate = true;
+      continue;
+    }
+
+    if (argument == "--video-partition-rd") {
+      options.video_partition_rd = true;
       continue;
     }
 
@@ -2767,6 +2861,28 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
       options.video_ccso_bands = bands;
+      options.video_ccso = true;
+      continue;
+    }
+
+    if (argument == "--video-ccso-rd") {
+      options.video_ccso_rd = true;
+      options.video_ccso = true;
+      continue;
+    }
+
+    if (argument == "--video-ccso-lambda") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-ccso-lambda'";
+        return ParseStatus::kError;
+      }
+      double lambda = 0.0;
+      if (!parse_double(argv[++i], lambda) || !(lambda > 0.0)) {
+        error = "--video-ccso-lambda needs a positive SSE-per-bit number";
+        return ParseStatus::kError;
+      }
+      options.video_ccso_lambda = lambda;
+      options.video_ccso_rd = true;
       options.video_ccso = true;
       continue;
     }
@@ -3262,7 +3378,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     }
   }
 
-  if (!apply_video_rd_preset(options, error)) {
+  if (options.nightly) {
+    if (!apply_video_nightly(options, error)) {
+      return ParseStatus::kError;
+    }
+  } else if (!apply_video_rd_preset(options, error)) {
     return ParseStatus::kError;
   }
 
@@ -3279,6 +3399,37 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     error = std::move(message);
     return ParseStatus::kError;
   };
+
+  if (options.video_edge_inter) {
+    if (!options.video) {
+      error = "--video-edge-inter applies to the CPU --video encoder; pass "
+              "--video";
+      return ParseStatus::kError;
+    }
+    if (options.video_gpu) {
+      error = "--video-edge-inter is CPU-only: the CUDA M2 backend has no "
+              "padded bottom-edge reference path";
+      return ParseStatus::kError;
+    }
+    if (options.tiles != "1x1") {
+      error = "--video-edge-inter needs the single-tile writer; the tiled "
+              "path keeps its tile-local reconstruction";
+      return ParseStatus::kError;
+    }
+    if (options.b_frames != 0 || options.video_tlayers != 0 ||
+        options.video_long_term || options.video_olk ||
+        options.video_leading != 0 || options.video_sef ||
+        options.video_switch || options.video_ras || options.video_tip) {
+      error = "--video-edge-inter is measured on the low-delay P chain; drop "
+              "the B-frame / reorder / temporal-layer mode";
+      return ParseStatus::kError;
+    }
+    if (options.video_ref_mvs) {
+      error = "--video-edge-inter cannot carry the temporal MV field: the "
+              "bottom SVB rows have no coded MI grid";
+      return ParseStatus::kError;
+    }
+  }
 
   if (options.cpu_threads_given) {
     if (!options.video) {
@@ -4052,6 +4203,21 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       error = "--video-tx-lambda requires --video-tx-search";
       return ParseStatus::kError;
     }
+    if (options.video_tx_context_rate && !options.video_tx_search) {
+      error = "--video-tx-context-rate requires --video-tx-search";
+      return ParseStatus::kError;
+    }
+    if (options.video_tx_context_rate && options.video_gpu) {
+      error = "--video-tx-context-rate is CPU-only: the CUDA TX module still "
+              "uses the historical rate model, so --video-gpu parity would "
+              "break (use --video)";
+      return ParseStatus::kError;
+    }
+    if (options.video_ccso_rd &&
+        (options.bit_depth != 8 || options.chroma != "420")) {
+      error = "--video-ccso-rd is wired for the 8-bit 4:2:0 CPU CCSO planner";
+      return ParseStatus::kError;
+    }
     if (options.video_mhccp && (options.avg_cdf || options.adaptive_cdf)) {
       error = "--video-mhccp does not compose with --avg-cdf/--adaptive-cdf: "
               "the §8.2.4 bank does not carry the §5.20.7.32 cfl_mhccp/"
@@ -4317,6 +4483,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
           {options.video_cctx, "--video-cctx"},
           {options.video_grain, "--video-grain"},
           {options.video_tx_search, "--video-tx-search"},
+          {options.video_partition_rd, "--video-partition-rd"},
           {options.video_intra_full, "--video-intra-full"},
           {options.video_cfl, "--video-cfl"},
           {options.video_mhccp, "--video-mhccp"},
@@ -5117,6 +5284,37 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       return ParseStatus::kError;
     }
   }
+  if (options.video_partition_rd) {
+    if (!options.video) {
+      error = "--video-partition-rd is the CPU --video partition decision; "
+              "pass --video (the --still tree has its own cost)";
+      return ParseStatus::kError;
+    }
+    if (options.video_gpu) {
+      error = "--video-partition-rd is the CPU reference decision; --video-gpu "
+              "has its own calibration";
+      return ParseStatus::kError;
+    }
+    if (options.video_ext_partitions) {
+      error = "--video-partition-rd does not compose with "
+              "--video-ext-partitions (that tree has a separate cost model)";
+      return ParseStatus::kError;
+    }
+    if (options.video_sdp) {
+      error = "--video-partition-rd does not compose with --video-sdp (the SDP "
+              "tree has a separate cost model)";
+      return ParseStatus::kError;
+    }
+    if (options.svc_given) {
+      error = "--video-partition-rd does not compose with --svc-layers";
+      return ParseStatus::kError;
+    }
+    if (options.video_lossless) {
+      error = "--video-partition-rd needs the lossy quantiser; the lossless "
+              "path codes a fixed block size";
+      return ParseStatus::kError;
+    }
+  }
   if (options.still_cdef_on_skip_txfm) {
     if (!options.m1 && !options.still_gpu) {
       error = "--still-cdef-on-skip-txfm requires --still";
@@ -5717,6 +5915,7 @@ int run_video_format_encode(const Options& options) {
   const std::pair<bool, const char*> unsupported[] = {
       {options.tiles != "1x1", "--tiles"},
       {options.video_tx_search, "--video-tx-search"},
+      {options.video_partition_rd, "--video-partition-rd"},
       {options.video_tcq, "--video-tcq"},
       {options.video_cctx, "--video-cctx"},
       {options.video_intra_full, "--video-intra-full"},
@@ -5904,6 +6103,7 @@ int run_video_format_encode(const Options& options) {
   video_options.num_ref_frames = options.video_num_ref_frames;
   video_options.implicit_ref_map = options.video_implicit_ref_map;
   video_options.enable_inter_residual = options.video_inter_residual;
+  video_options.enable_edge_inter = options.video_edge_inter;
   video_options.me_subpel_eighth = options.video_subpel_eighth;
   video_options.mv_precision = options.video_mv_precision;
   video_options.enable_adaptive_mvd = options.video_adaptive_mvd;
@@ -5932,6 +6132,8 @@ int run_video_format_encode(const Options& options) {
   video_options.loop_filters.cdef_damping = options.video_cdef_damping;
   video_options.loop_filters.ccso = options.video_ccso;
   video_options.loop_filters.ccso_bands_log2 = options.video_ccso_bands;
+  video_options.loop_filters.ccso_rd = options.video_ccso_rd;
+  video_options.loop_filters.ccso_lambda = options.video_ccso_lambda;
   video_options.loop_filters.cfl_ds_filter_index = options.video_cfl_ds_filter;
   video_options.loop_filters.wiener = options.video_wiener;
   video_options.loop_filters.pc_wiener = options.video_pc_wiener;
@@ -6442,10 +6644,13 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.b_frames = static_cast<int>(options.b_frames);
   video_options.video_gops = options.video_gops;
   video_options.enable_inter_residual = options.video_inter_residual;
+  video_options.enable_edge_inter = options.video_edge_inter;
   video_options.enable_sdp = options.video_sdp;
   video_options.enable_inter_ddt = options.video_ddt;
   video_options.enable_tx_search = options.video_tx_search;
+  video_options.tx_context_rate = options.video_tx_context_rate;
   video_options.tx_rd_lambda = options.video_tx_lambda;
+  video_options.partition_rd = options.video_partition_rd;
   video_options.enable_deblock = options.video_deblock;
   video_options.enable_segmentation = options.video_segmentation;
   video_options.enable_delta_q = options.video_delta_q;
@@ -6541,6 +6746,8 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.loop_filters.cdef_damping = options.video_cdef_damping;
   video_options.loop_filters.ccso = options.video_ccso;
   video_options.loop_filters.ccso_bands_log2 = options.video_ccso_bands;
+  video_options.loop_filters.ccso_rd = options.video_ccso_rd;
+  video_options.loop_filters.ccso_lambda = options.video_ccso_lambda;
   video_options.loop_filters.wiener = options.video_wiener;
   video_options.loop_filters.pc_wiener = options.video_pc_wiener;
   video_options.loop_filters.chroma_lr = options.video_chroma_lr;

@@ -142,7 +142,7 @@ PASSED=0
 SKIPPED=0
 FAILED=0
 INDEX=0
-TOTAL=33
+TOTAL=34
 [ "$QUICK" -eq 1 ] && TOTAL=6
 declare -a RESULTS=()
 
@@ -251,6 +251,8 @@ if [ "$QUICK" -eq 0 ]; then
     run_gate gate_video_dip src/pipeline/video/video_dip_gate.sh
     run_gate gate_video_headers src/pipeline/video/gate_video_headers.sh
     run_gate gate_video_rd_preset tools/gate_video_rd_preset.sh
+    run_gate gate_video_nightly tools/gate_video_nightly.sh
+    run_gate gate_video_edge_inter tools/gate_video_edge_inter.sh
 fi
 
 echo

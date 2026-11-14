@@ -71,6 +71,22 @@ fi
 grep -q "video-rd-preset expects 'quality'" "$TMP/reject1.err" ||
     fail "unknown preset name did not report the accepted value"
 
+# The rate-aware partition decision is CPU --video only and owns the base
+# tree; reject the carriers whose trees it does not model.
+if "$BIN" "$SHINE" -o "$TMP/reject.ivf" --still --video-partition-rd \
+        >/dev/null 2>"$TMP/rejectp1.err"; then
+    fail "--video-partition-rd was accepted on the --still writer"
+fi
+grep -q "pass --video" "$TMP/rejectp1.err" ||
+    fail "--still did not report the --video-only partition rejection"
+
+if "$BIN" "$SHINE" -o "$TMP/reject.ivf" --video --frames 1 \
+        --video-partition-rd --video-sdp >/dev/null 2>"$TMP/rejectp2.err"; then
+    fail "--video-partition-rd composed with --video-sdp"
+fi
+grep -q "does not compose with --video-sdp" "$TMP/rejectp2.err" ||
+    fail "--video-sdp did not report the partition-cost rejection"
+
 if "$BIN" "$SHINE" -o "$TMP/reject.ivf" --still --video-rd-preset quality \
         >/dev/null 2>"$TMP/reject2.err"; then
     fail "--video-rd-preset was accepted on the --still writer"

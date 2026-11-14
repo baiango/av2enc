@@ -9,6 +9,7 @@
 
 #include "codec/rate/rc/rc_tables.h"
 #include "codec/rate/rdo/rdo.h"
+#include "codec/rate/rdoq/rdoq_av2_model.h"
 #include "codec/transform/tcq/tcq.h"
 #include "codec/transform/tcq/tcq_av2_model.h"
 #include "codec/transform/inter_residual/inter_tx_type.h"
@@ -347,6 +348,62 @@ struct LeafCandidate {
   std::vector<std::int16_t> residual; // coded size
 };
 
+// §8.3.2 coefficient syntax cost for one candidate leaf, from the static
+// §9.3 CDF slice.  This is the same syntax the writer emits (`txb_skip`, the
+// EOB prefix/extra bits, `coeff_base`/`coeff_base_eob`, `coeff_br`, the
+// `read_quant` escape and the sign), so candidate comparison stops pretending
+// every nonzero costs one bit.  `levels_raster` is the quantised candidate in
+// raster order and `scan` is its §5.20.7.30 scan; `tcq` selects the TCQ
+// syntax variant (escape at maxLevel - 1) whose base levels this candidate
+// carries.  Contexts that depend on neighbouring coded blocks are not
+// available inside the search: `txb_skip_ctx`/`dc_sign_ctx` are fixed
+// estimates (0 is the writer's "same size as the coding block" context).
+// Returns false when the static model rejects the block; the caller then
+// keeps the historical heuristic.
+bool block_syntax_bits(const txv::TxParams& params,
+                       const std::vector<std::int32_t>& levels_raster,
+                       const std::vector<std::uint16_t>& scan, int qctx,
+                       bool is_inter, bool tcq, int txb_skip_ctx,
+                       int dc_sign_ctx, double* out_bits) {
+  const int area = params.w * params.h;
+  if (area <= 0 ||
+      levels_raster.size() < static_cast<std::size_t>(area) ||
+      scan.size() < static_cast<std::size_t>(area)) {
+    return false;
+  }
+  std::vector<std::int32_t> scan_levels(static_cast<std::size_t>(area));
+  for (int c = 0; c < area; ++c) {
+    scan_levels[static_cast<std::size_t>(c)] =
+        levels_raster[scan[static_cast<std::size_t>(c)]];
+  }
+  std::string error;
+  if (tcq) {
+    av2enc::tcq::av2::BlockInfo info;
+    info.plane = 0;
+    info.params = params;
+    info.txb_skip_context = std::clamp(txb_skip_ctx, 0, 9);
+    info.dc_sign_context = std::clamp(dc_sign_ctx, 0, 2);
+    info.qctx = qctx;
+    info.is_inter = is_inter;
+    info.tx_class_2d = true;
+    av2enc::tcq::av2::Model model;
+    if (!model.init(info, scan_levels, &error)) return false;
+    *out_bits = model.reference_bits();
+    return true;
+  }
+  av2enc::rdoq::av2::BlockInfo info;
+  info.plane = 0;
+  info.params = params;
+  info.txb_skip_context = std::clamp(txb_skip_ctx, 0, 9);
+  info.dc_sign_context = std::clamp(dc_sign_ctx, 0, 2);
+  info.qctx = qctx;
+  info.is_inter = is_inter;
+  av2enc::rdoq::av2::Model model;
+  if (!model.init(info, scan_levels, &error)) return false;
+  *out_bits = model.scalar_bits();
+  return true;
+}
+
 // Full forward -> quantise -> dequantise -> inverse path for one candidate,
 // with the same coded-domain SSE and rate model as the device kernel.
 bool evaluate_candidate(const std::int16_t* residual, int block_w,
@@ -522,10 +579,20 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
       options.use_type_bits && type.codes_type != 0
           ? type.bits[is_inter ? inter_ctx(eob, leaf_w, leaf_h) : 0]
           : 0.0;
-  const double rate =
-      eob == 0
-          ? options.skip_bits
-          : type_bits + options.coefficient_bits * static_cast<double>(nonzero);
+  double rate = eob == 0
+                    ? options.skip_bits
+                    : type_bits + options.coefficient_bits *
+                                      static_cast<double>(nonzero);
+  if (options.use_context_rate &&
+      txpart::tx_class_of(static_cast<int>(tx_type)) ==
+          txpart::TxScanClass::k2D) {
+    double syntax_bits = 0.0;
+    if (block_syntax_bits(params, levels, scan, options.tcq_qctx, is_inter,
+                          use_tcq, /*txb_skip_ctx=*/0, /*dc_sign_ctx=*/0,
+                          &syntax_bits)) {
+      rate = syntax_bits + type_bits;
+    }
+  }
 
   out->valid = true;
   out->tx_size = tx_size;

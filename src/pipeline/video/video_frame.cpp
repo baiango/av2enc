@@ -1038,8 +1038,9 @@ bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
                     int ch, const std::vector<std::uint8_t>& pred, int qindex,
                     txtsearch::Mode mode, double lambda, bool allow_idtx,
                     int intra_mapped_mode, bool allow_tcq, int qctx_slice,
-                    bool enable_inter_ddt, bool search_partition, bool trace,
-                    TxPlan& plan, std::string& error) {
+                    bool enable_inter_ddt, bool search_partition,
+                    bool context_rate, bool trace, TxPlan& plan,
+                    std::string& error) {
   std::vector<std::int16_t> residual(
       static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
   for (int y = 0; y < ch; ++y) {
@@ -1057,6 +1058,11 @@ bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   options.tcq = allow_tcq;
   options.tcq_qctx = qctx_slice;
   options.enable_inter_ddt = enable_inter_ddt;
+  // The exact §8.3.2 model is the measured preset behavior
+  // (--video-tx-context-rate).  Standalone --video-tx-search and the DDT-only
+  // search keep the historical heuristic rate, byte-identical to the CUDA
+  // device TX module.
+  options.use_context_rate = context_rate;
   // §5.20.7.24 predicts per *transform block*, in decode order, and each part's
   // reconstruction feeds the next part's prediction.  A fixed block prediction
   // is only equivalent when the transform block covers the coding block, so the
@@ -1680,12 +1686,28 @@ class InterFrameEncoder {
     frame_mi_cols_ = static_cast<int>(2U * ((source.width + 7U) >> 3U));
     frame_mi_rows_ = static_cast<int>(2U * ((source.height + 7U) >> 3U));
 
-    recon_[0].resize(mi_cols_ * 4, mi_rows_ * 4, 0);
-    recon_[1].resize(mi_cols_ * 2, mi_rows_ * 2, 0);
-    recon_[2].resize(mi_cols_ * 2, mi_rows_ * 2, 0);
-    compound_pred_[0].resize(mi_cols_ * 4, mi_rows_ * 4, 0);
-    compound_pred_[1].resize(mi_cols_ * 2, mi_rows_ * 2, 0);
-    compound_pred_[2].resize(mi_cols_ * 2, mi_rows_ * 2, 0);
+    // Opt-in bottom-edge inter (--video-edge-inter).  A bottom leaf may code a
+    // block whose coded extent runs past MiRows*4 (the partition rule only
+    // requires its midpoint to be inside the picture).  The decoder
+    // reconstructs the full block into its SB-aligned picture buffer and pads
+    // the reference from the visible edge, so the encoder reconstructs into a
+    // plane extended to the next superblock row.  Tiled coding keeps the
+    // historical tile-local path.
+    if (options_.enable_edge_inter &&
+        width_ == static_cast<int>(source.width) &&
+        height_ == static_cast<int>(source.height)) {
+      const int base = mi_rows_ * 4;
+      edge_pad_rows_ =
+          ((base + sb_size_ - 1) / sb_size_) * sb_size_;
+    }
+    const int recon_rows =
+        edge_pad_rows_ > 0 ? edge_pad_rows_ : mi_rows_ * 4;
+    recon_[0].resize(mi_cols_ * 4, recon_rows, 0);
+    recon_[1].resize(mi_cols_ * 2, recon_rows / 2, 0);
+    recon_[2].resize(mi_cols_ * 2, recon_rows / 2, 0);
+    compound_pred_[0].resize(mi_cols_ * 4, recon_rows, 0);
+    compound_pred_[1].resize(mi_cols_ * 2, recon_rows / 2, 0);
+    compound_pred_[2].resize(mi_cols_ * 2, recon_rows / 2, 0);
 
     quant_step_ = frame_quant_step(options_);
     current_qindex_ = static_cast<int>(options_.base_q_idx);
@@ -2152,10 +2174,38 @@ class InterFrameEncoder {
       poptions.min_block_size_px = 64;
     }
 
-    const double lambda =
+    // Historical partition cost, kept byte-identical when the opt-in rate-aware
+    // tree is off: a source-variance leaf distortion (SSE units) plus a
+    // SAD-domain signal cost.  The two do not share a scale, which is the
+    // reason the default tree never takes an optional split at high QP.
+    const double legacy_lambda =
         0.85 * std::pow(2.0, (options_.base_q_idx - 12) / 6.0);
-    const double signal_cost = lambda * 2.0;
-    const auto cost_fn = [this, signal_cost](
+    // Opt-in rate-aware partition tree.  The leaf distortion stays the source
+    // variance (a QP-independent proxy for the energy a leaf cannot predict),
+    // but every candidate now also pays a rate term in the same SSE units:
+    //   leaf  = variance + price * leaf_bits       (mode/MV/skip syntax)
+    //   split = price * 2.0                        (partition symbol bits)
+    // `price` is one estimated syntax bit in SSE units; the 10-bit leaf term
+    // plus the 2-bit partition symbol give a ~8,400-SSE penalty per split,
+    // calibrated from the measured local RD slope of this clip at the
+    // ~100 kbps operating point (4,000-6,300 SSE/bit over QP 168..190; see
+    // docs/video-rd-preset.md).  The per-leaf syntax estimates are the average
+    // non-coefficient cost of an inter leaf (skip + is_inter + mode + MVD) and
+    // an intra leaf (YMode + angle), so a split that creates an inter leaf is
+    // priced about 1.7x an intra leaf.
+    constexpr double kPartitionSsePerSyntaxBit = 700.0;
+    constexpr double kPartitionSignalBits = 2.0;
+    constexpr double kPartitionLeafBitsInter = 10.0;
+    constexpr double kPartitionLeafBitsIntra = 6.0;
+    const double syntax_bit_price =
+        options_.partition_rd ? kPartitionSsePerSyntaxBit : legacy_lambda;
+    const double signal_bits = kPartitionSignalBits;
+    const double leaf_bits = options_.partition_rd
+                                 ? (keyframe_ ? kPartitionLeafBitsIntra
+                                              : kPartitionLeafBitsInter)
+                                 : 0.0;
+    const double signal_cost = syntax_bit_price * signal_bits;
+    const auto cost_fn = [this, signal_cost, syntax_bit_price, leaf_bits](
                              const partition::PartitionNodeInfo& info) {
       partition::NodeCosts costs;
       // The leaf coder handles coding blocks up to 64x64.  A larger node must
@@ -2164,7 +2214,8 @@ class InterFrameEncoder {
       const int bw = partition::block_width(info.size);
       const int bh = partition::block_height(info.size);
       costs.leaf = (bw <= 64 && bh <= 64)
-                       ? static_cast<double>(block_variance_cost_at(info))
+                       ? static_cast<double>(block_variance_cost_at(info)) +
+                             syntax_bit_price * leaf_bits
                        : partition::kInfiniteCost;
       costs.none_signal = 0.0;
       costs.split_signal = signal_cost;
@@ -3777,7 +3828,10 @@ class InterFrameEncoder {
     request.w = w;
     request.h = h;
     request.max_x = recon_[plane].width - 1;
-    request.max_y = recon_[plane].height - 1;
+    // §7.13.2 availability stops at the coded MI extent (MiRows/MiCols), not
+    // at the SB-aligned reconstruction buffer used by --video-edge-inter.
+    request.max_y =
+        (plane == 0 ? mi_rows_ * 4 : mi_rows_ * 2) - 1;
     request.have_left = x0 > 0;
     request.have_above = y0 > 0;
     request.num4_above_right = avail.num4_above_right;
@@ -4632,10 +4686,17 @@ class InterFrameEncoder {
     // can straddle the MI-aligned plane; both paths must make the same choice,
     // so the whole-frame CPU reference applies the same test.  Tiled coding has
     // its own clipped geometry and keeps the historical path.
+    //
+    // With --video-edge-inter the bottom edge is reconstructed into the
+    // SB-aligned padded plane and the reference carries the same edge-extended
+    // rows the decoder pads, so a leaf whose visible part is inside the picture
+    // keeps the inter search.
     const bool inter_fits =
         width_ != static_cast<int>(source_.width) ||
         height_ != static_cast<int>(source_.height) ||
-        (x0 + w <= mi_cols_ * 4 && y0 + h <= mi_rows_ * 4);
+        (x0 + w <= mi_cols_ * 4 &&
+         (y0 + h <= mi_rows_ * 4 ||
+          (edge_pad_rows_ > 0 && y0 < mi_rows_ * 4)));
 
     InterCandidate best;
     InterCandidate same_ref_best;
@@ -5264,13 +5325,14 @@ class InterFrameEncoder {
     int intra_cfl_index = 1;
     int intra_cfl_mh_dir = 0;
     // The reconstruction planes are tile-local, so plain bounds give the
-    // decoder's §5.20.9.1 availability at every tile edge.
+    // decoder's §5.20.9.1 availability at every tile edge.  The bottom bound
+    // is the coded MI extent, not the SB-aligned --video-edge-inter buffer.
     const int luma_max_x = recon_[0].width - 1;
-    const int luma_max_y = recon_[0].height - 1;
+    const int luma_max_y = mi_rows_ * 4 - 1;
     const bool luma_left = x0 > 0;
     const bool luma_above = y0 > 0;
     const int chroma_max_x = recon_[1].width - 1;
-    const int chroma_max_y = recon_[1].height - 1;
+    const int chroma_max_y = mi_rows_ * 2 - 1;
     const bool chroma_left = cx0 > 0;
     const bool chroma_above = cy0 > 0;
     if (keyframe_ || options_.enable_intra_fallback || options_.force_intra) {
@@ -5432,9 +5494,11 @@ class InterFrameEncoder {
                                      intra_mrl_index, w, h)),
                      options_.enable_tcq,
                      ::av2enc::still::qctx::slice_for_base_q_idx(
-                         current_qindex_),
+                         options_.tx_context_rate ? base_q_index()
+                                                  : current_qindex_),
                      /*enable_inter_ddt=*/false, /*search_partition=*/false,
-                     options_.trace, intra_y, error)
+                     /*context_rate=*/options_.tx_context_rate, options_.trace,
+                     intra_y, error)
                : !compute_tx(source_, 0, ax0, ay0, w, h, intra_y_pred,
                              plane_quant_[0], intra_y, error,
                              qm_enabled_ ? &qm_state_ : nullptr,
@@ -5482,7 +5546,7 @@ class InterFrameEncoder {
         u_plane.recon = recon_[1].samples.data();
         u_plane.recon_stride = recon_[1].stride;
         u_plane.recon_width = recon_[1].width;
-        u_plane.recon_height = recon_[1].height;
+        u_plane.recon_height = mi_rows_ * 2;
         // The helper indexes the source with the block origin, so the pointer
         // carries the tile origin only (coded coordinates stay tile-local).
         const int tile_cx = tile_x_ / 2;
@@ -5749,11 +5813,14 @@ class InterFrameEncoder {
                                    /*intra_mapped_mode=*/0,
                                    options_.enable_tcq,
                                    ::av2enc::still::qctx::slice_for_base_q_idx(
-                                       current_qindex_),
+                                       options_.tx_context_rate
+                                           ? base_q_index()
+                                           : current_qindex_),
                                    options_.enable_inter_ddt,
                                    /*search_partition=*/
-                                   options_.enable_tx_search, options_.trace,
-                                   res_y, error)
+                                   options_.enable_tx_search,
+                                   /*context_rate=*/options_.tx_context_rate,
+                                   options_.trace, res_y, error)
                  : !compute_tx(source_, 0, ax0, ay0, w, h, inter_y,
                                plane_quant_[0], res_y, error,
                                qm_enabled_ ? &qm_state_ : nullptr,
@@ -6712,6 +6779,10 @@ class InterFrameEncoder {
   int chroma_height_ = 0;
   int mi_cols_ = 0;
   int mi_rows_ = 0;
+  // SB-aligned reconstruction height for --video-edge-inter (0 = disabled).
+  // The visible picture is still mi_rows_*4 rows; the extra rows exist only so
+  // a bottom leaf and its neighbours reconstruct the full coded block.
+  int edge_pad_rows_ = 0;
   FrameGeometry geometry_;
   Plane recon_[3];
   Plane compound_pred_[3];
@@ -9745,10 +9816,24 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       static_cast<int>(2U * ((width + 7U) >> 3U));
   const int recon_mi_rows =
       static_cast<int>(2U * ((height + 7U) >> 3U));
+  // --video-edge-inter: the decoder keeps the SB-aligned reconstruction and
+  // pads the reference past the visible bottom edge, so the frame buffer and
+  // the reference extent include those rows.  The emitted/output picture is
+  // still cropped to width x height.
+  int recon_rows = recon_mi_rows * 4;
+  int ref_mi_rows = recon_mi_rows;
+  if (options.enable_edge_inter) {
+    const int sb = options.superblock_pixels();
+    const int aligned = ((recon_rows + sb - 1) / sb) * sb;
+    if (aligned > recon_rows) {
+      recon_rows = aligned;
+      ref_mi_rows = aligned / 4;
+    }
+  }
   Plane frame_recon[3];
-  frame_recon[0].resize(recon_mi_cols * 4, recon_mi_rows * 4, 0);
-  frame_recon[1].resize(recon_mi_cols * 2, recon_mi_rows * 2, 0);
-  frame_recon[2].resize(recon_mi_cols * 2, recon_mi_rows * 2, 0);
+  frame_recon[0].resize(recon_mi_cols * 4, recon_rows, 0);
+  frame_recon[1].resize(recon_mi_cols * 2, recon_rows / 2, 0);
+  frame_recon[2].resize(recon_mi_cols * 2, recon_rows / 2, 0);
 
   // Copies a tile encoder's MI-aligned reconstruction into the frame buffer.
   // The coded tile extent is rounded up to MiCols/MiRows (§5.18.4.4), so the
@@ -9768,6 +9853,32 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                       static_cast<std::size_t>(y) *
                           static_cast<std::size_t>(src.stride),
                   static_cast<std::size_t>(copy_w));
+    }
+  };
+
+  // --video-edge-inter: the decoder reconstructs the full bottom block but
+  // extends the reference from the visible picture edge (§7.20-style edge
+  // replication) before the frame becomes a reference.  Mirror that here so
+  // the next frame's MC reads the same padded samples.  Runs after the
+  // in-loop filters, which is where the decoder extends.
+  const auto pad_recon_bottom = [&]() {
+    if (recon_rows <= static_cast<int>(height)) return;
+    for (int plane = 0; plane < 3; ++plane) {
+      Plane& dst = frame_recon[plane];
+      const int vis_h =
+          plane == 0 ? static_cast<int>(height)
+                     : static_cast<int>((height + 1U) / 2U);
+      if (vis_h <= 0 || vis_h > dst.height) continue;
+      const std::uint8_t* src_row =
+          dst.samples.data() +
+          static_cast<std::size_t>(vis_h - 1) *
+              static_cast<std::size_t>(dst.stride);
+      for (int y = vis_h; y < dst.height; ++y) {
+        std::memcpy(dst.samples.data() +
+                        static_cast<std::size_t>(y) *
+                            static_cast<std::size_t>(dst.stride),
+                    src_row, static_cast<std::size_t>(dst.stride));
+      }
     }
   };
 
@@ -10204,6 +10315,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       return false;
     }
   }
+  pad_recon_bottom();
   for (std::size_t t = 0; t < tile_sources.size(); ++t) {
     CodedTile& tile = tile_sources[t];
     InterFrameEncoder& encoder = *key_encoders[t];
@@ -10411,7 +10523,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     ref.plane[2] = inter::mc::PlaneView{slots[slot].plane[2].samples.data(),
                                         slots[slot].plane[2].stride};
     ref.mi_cols = recon_mi_cols;
-    ref.mi_rows = recon_mi_rows;
+    ref.mi_rows = ref_mi_rows;
     return ref;
   };
 
@@ -10706,6 +10818,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
         return false;
       }
     }
+    pad_recon_bottom();
     for (std::size_t t = 0; t < tile_sources.size(); ++t) {
       CodedTile& tile = tile_sources[t];
       InterFrameEncoder& encoder = *tile_encoders[t];

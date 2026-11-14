@@ -182,6 +182,10 @@ run_case ccso-bands6 --video-ccso --video-ccso-bands 6
 run_case cdef-ccso --video-cdef --video-ccso
 run_case cdef-index4-ccso2 --video-cdef-strength 4 --video-ccso \
   --video-ccso-bands 2
+# Rate-aware CCSO: the tu(7) table is priced, scale_idx is swept and
+# ccso_blk units/planes can be switched off; both sides must skip them.
+run_case ccso-rd --video-ccso --video-ccso-rd
+run_case ccso-rd-l256 --video-ccso-rd --video-ccso-lambda 256
 
 # 5. §7.20 loop restoration: luma Wiener NS, chroma LR, then the full
 #    CDEF -> CCSO -> LR chain.

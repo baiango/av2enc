@@ -16,8 +16,11 @@
 //     the product `lround(coeff * (qfactor*528) / q)` quantiser -> §7.14.4
 //     dequantise -> `txv::inverse_block`, SSE in the coded domain;
 //   * rate: `eob == 0 ? skip_bits : type_bits[ctx] + coefficient_bits*nonzero`
-//     plus the plan's estimated §5.20.6.3 partition bits; cost is
-//     `sse + lambda * rate`;
+//     plus the plan's estimated §5.20.6.3 partition bits by default; with
+//     `use_context_rate` (`--video-tx-context-rate`, the RD preset behavior)
+//     the §8.3.2 coefficient syntax cost from the static §9.3 CDF slice
+//     (`txb_skip`, EOB, coeff_base/br, escape and sign) replaces the flat
+//     per-nonzero heuristic.  Cost is `sse + lambda * rate`.
 //   * tie-breaks: leaf `cost`, then `sse`, then lower TX_TYPE; plan `cost`,
 //     then `sse`.
 //
@@ -69,6 +72,14 @@ struct Options {
   double coefficient_bits = 1.0;
   double skip_bits = 1.2;
   bool use_type_bits = true;
+  // Price every candidate leaf with the real §8.3.2 coefficient syntax
+  // (txb_skip, EOB prefix/extra, coeff_base/coeff_base_eob, coeff_br, the
+  // read_quant escape and the sign) from the static §9.3 CDF slice, instead
+  // of `coefficient_bits * nonzero`.  The measured RD preset
+  // (`--video-tx-context-rate`) turns this on; standalone `--video-tx-search`
+  // keeps the historical heuristic so the CUDA device TX module still matches
+  // the CPU reference.  `tcq_qctx` selects the §8.3.1 slice.
+  bool use_context_rate = false;
   // §5.20.7.27 TCQ (--video-tcq).  The luma candidate quantiser runs the TCQ
   // trellis at half the scalar step and the reconstruction uses the mapped
   // Quant[] values with the extra dqDenom shift.  `tcq_qctx` is the §8.3.1

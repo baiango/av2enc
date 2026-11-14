@@ -349,6 +349,106 @@ bool prepare_ccso(const VideoLoopFilterFrame& frame,
     plane_plan.edge_clf = 0;
     plane_plan.max_band_log2 = bands_log2;
     plane_plan.offset_idx.assign(static_cast<std::size_t>(bands), 0);
+    if (options.ccso_rd) {
+      // Rate-aware fit.  §5.18.7.12 codes each ccso_offset_idx as tu(7), so
+      // index i costs i extra bits over the index-0 "off" symbol (index 7 is
+      // the tu(7) escape and costs 6).  Pick the offset per band by
+      // SSE + lambda * table bits, sweep the free 2-bit scale_idx and then do
+      // one exact clamped pass per plane to decide the per-unit ccso_blk
+      // symbol.  A disabled unit/plane is left untouched by both sides.
+      const double lambda = options.ccso_lambda;
+      auto unary_extra_bits = [](int idx) { return idx < 7 ? idx : 6; };
+      double best_cost = std::numeric_limits<double>::infinity();
+      int best_scale = 0;
+      std::vector<std::uint8_t> best_idx(static_cast<std::size_t>(bands), 0);
+      for (int scale_idx = 0; scale_idx < 4; ++scale_idx) {
+        const int scale = scale_idx + 1;
+        double cost = 0.0;
+        std::vector<std::uint8_t> idx(static_cast<std::size_t>(bands), 0);
+        for (int band = 0; band < bands; ++band) {
+          int band_idx = 0;
+          double band_cost = sum_e2[static_cast<std::size_t>(band)];
+          for (int i = 0; i < 8; ++i) {
+            const double off =
+                static_cast<double>(rest::kCcsoOffset[i] * scale);
+            const double sse =
+                sum_e2[static_cast<std::size_t>(band)] -
+                2.0 * off * sum_e[static_cast<std::size_t>(band)] +
+                off * off * count[static_cast<std::size_t>(band)];
+            const double c = sse + lambda * unary_extra_bits(i);
+            if (c < band_cost - 1e-9) {
+              band_cost = c;
+              band_idx = i;
+            }
+          }
+          cost += band_cost;
+          idx[static_cast<std::size_t>(band)] =
+              static_cast<std::uint8_t>(band_idx);
+        }
+        if (cost < best_cost - 1e-9) {
+          best_cost = cost;
+          best_scale = scale_idx;
+          best_idx = std::move(idx);
+        }
+      }
+      plane_plan.scale_idx = best_scale;
+      plane_plan.offset_idx = best_idx;
+
+      int pcols = 0;
+      int prows = 0;
+      rest::ccso_blk_grid_size(pw, ph, ccso_luma_log2, sub, sub, &pcols,
+                               &prows);
+      const int shift = ccso_luma_log2 - sub;
+      std::vector<double> unit_off(
+          static_cast<std::size_t>(pcols) * static_cast<std::size_t>(prows),
+          0.0);
+      std::vector<double> unit_on(unit_off.size(), 0.0);
+      const int scale = best_scale + 1;
+      for (int y = 0; y < ph; ++y) {
+        const int lx_row = (y << sub) * curr_luma_stride;
+        for (int x = 0; x < pw; ++x) {
+          const int lx = x << sub;
+          const int band = curr_luma[lx_row + lx] >> band_shift;
+          const int off =
+              rest::kCcsoOffset[best_idx[static_cast<std::size_t>(band)]] *
+              scale;
+          const int base =
+              rec[static_cast<std::size_t>(y) *
+                      static_cast<std::size_t>(rec_stride) +
+                  static_cast<std::size_t>(x)];
+          const int src_value =
+              src[static_cast<std::size_t>(y) *
+                      static_cast<std::size_t>(src_stride) +
+                  static_cast<std::size_t>(x)];
+          const int filtered = std::clamp(base + off, 0, 255);
+          const std::size_t unit =
+              static_cast<std::size_t>(y >> shift) *
+                  static_cast<std::size_t>(pcols) +
+              static_cast<std::size_t>(x >> shift);
+          const double d_off = static_cast<double>(src_value - base);
+          const double d_on = static_cast<double>(src_value - filtered);
+          unit_off[unit] += d_off * d_off;
+          unit_on[unit] += d_on * d_on;
+        }
+      }
+      // The ccso_blk symbol is a 2-symbol adaptive CDF symbol, ~0.5-1 bit.
+      constexpr double kUnitSymbolBits = 1.0;
+      plane_plan.blk_cols = pcols;
+      plane_plan.blk_rows = prows;
+      plane_plan.blks.assign(unit_on.size(), 0);
+      std::size_t enabled_units = 0;
+      for (std::size_t u = 0; u < unit_on.size(); ++u) {
+        if (unit_off[u] - unit_on[u] > lambda * kUnitSymbolBits) {
+          plane_plan.blks[u] = 1;
+          ++enabled_units;
+        }
+      }
+      if (enabled_units == 0) {
+        plane_plan.enabled = false;
+        plane_plan.blks.clear();
+      }
+      continue;
+    }
     int nonzero = 0;
     for (int band = 0; band < bands; ++band) {
       int best_idx = 0;

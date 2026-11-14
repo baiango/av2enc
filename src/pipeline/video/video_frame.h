@@ -96,6 +96,12 @@ struct VideoOptions {
   // 61-candidate SSE search instead of the DC-only fallback.  Off by default so
   // the shipped streams stay byte-identical.  Chroma stays DC_PRED.
   bool enable_intra_full = false;
+  // Opt-in bottom-edge inter (--video-edge-inter): reconstruct a bottom leaf
+  // whose coded extent runs past MiRows*4 into a padded reconstruction, and
+  // allow inter prediction for the visible part.  The decoder's reference is
+  // edge-extended past the visible picture, so MC reads the same padded
+  // samples.  Off keeps every historical stream byte-identical.
+  bool enable_edge_inter = false;
   // Opt-in §7.13.5 CfL chroma decision (--video-cfl): the M1 still product's
   // {DC, CfL} candidate set with derived alpha.  Off by default so every
   // historical stream stays byte-identical.
@@ -186,6 +192,12 @@ struct VideoOptions {
   // when on, each coded luma residual evaluates the §5.20.6/§5.20.8 candidate
   // sets and signals the RD-best partition/type through the existing writer.
   bool enable_tx_search = false;
+  // Price TX-search candidates with the §8.3.2 coefficient-context model.
+  // Set by --video-rd-preset quality (or its explicit
+  // --video-tx-context-rate spelling).  Off keeps the historical
+  // `1 bit per nonzero` rate for standalone --video-tx-search, which is what
+  // the CUDA device TX module still implements, so CPU/GPU parity holds.
+  bool tx_context_rate = false;
   // SSE-per-bit weight for the TX search (Cost = SSE + lambda * rate_bits).
   // The module's rate is a real bit count, so this is much larger than
   // inter_rd_lambda (which weights the historical estimate_tx_bits heuristic).
@@ -193,6 +205,17 @@ struct VideoOptions {
   // tool it lowers rate and raises PSNR slightly; the default skip-only path
   // is rate-neutral because it has no inter residual leaves to search.
   double tx_rd_lambda = 256.0;
+  // Opt-in rate-aware §5.20.3.1 partition tree (--video-partition-rd, also set
+  // by --video-rd-preset quality).  Off keeps the historical cost, which mixes
+  // a source-variance leaf distortion with a SAD-domain signal cost; that
+  // signal cost exceeds the maximum 64x64 variance reduction above q≈163, so
+  // every optional split is unaffordable and the P-frame tree collapses to one
+  // 64x64 leaf per superblock.  When on, every candidate is costed in the SSE
+  // domain and each leaf also pays an estimated mode/MV/skip syntax rate:
+  //   leaf = variance + lambda_sse * leaf_bits,  split = lambda_sse * 2 bits
+  // with lambda_sse calibrated to the measured local RD slope at the ~100 kbps
+  // operating point.  All pinned default streams keep the historical path.
+  bool partition_rd = false;
   int min_block_size = 16;
   int max_partition_depth = 4;
   // §5.4.3 sequence_partition_config() superblock size (--video-sb128 /
