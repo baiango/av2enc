@@ -14,6 +14,7 @@
 
 #include "codec/inter/merge/merge.h"
 #include "codec/inter/temporal/motion_field.h"
+#include "codec/inter/temporal/ref_mv_bank.h"
 
 namespace av2enc::video {
 
@@ -86,6 +87,53 @@ inline void video_temporal_scan(const merge::StackParams& p,
 inline void attach_video_temporal_scan(merge::StackParams* params) {
   if (params != nullptr && params->use_ref_frame_mvs) {
     params->temporal_scan = &video_temporal_scan;
+  }
+}
+
+// §7.12.2.21 Fill mvp from ref mv bank adapter.
+inline void video_refmvbank_scan(const merge::StackParams& p,
+                                 merge::MvStack* stack, int* prune_count) {
+  if (stack == nullptr || prune_count == nullptr || p.refmv_bank == nullptr) {
+    return;
+  }
+  inter::temporal::StackMv view[merge::kMaxRefMvStackSize];
+  const int before = stack->count;
+  for (int i = 0; i < before; ++i) {
+    view[i].mv[0] = inter::temporal::Mv{stack->cand[i].mv[0].y,
+                                        stack->cand[i].mv[0].x};
+    view[i].mv[1] = inter::temporal::Mv{stack->cand[i].mv[1].y,
+                                        stack->cand[i].mv[1].x};
+    view[i].cwp = stack->cand[i].cwp;
+  }
+  int num_found = stack->count;
+  const int ref_frames[2] = {
+      static_cast<int>(p.ref_frame[0]),
+      p.is_compound ? static_cast<int>(p.ref_frame[1])
+                    : static_cast<int>(merge::kRefNone)};
+  inter::temporal::fill_mvp_from_ref_mv_bank(
+      *p.refmv_bank, ref_frames, p.is_compound, p.use_intrabc,
+      p.max_drl_bits_minus_1, p.mi_row, p.mi_col, p.mi_cols, p.mi_rows,
+      p.bw4 * 4, p.bh4 * 4, merge::kMaxRefMvStackSize, view, &num_found,
+      prune_count);
+  for (int i = before; i < num_found; ++i) {
+    merge::StackCandidate& c = stack->cand[i];
+    c.mv[0] = inter::mc::Mv{view[i].mv[0].row, view[i].mv[0].col};
+    c.mv[1] = inter::mc::Mv{view[i].mv[1].row, view[i].mv[1].col};
+    c.weight = 1;
+    c.row_offset = 0;
+    c.col_offset = 0;
+    c.cwp = static_cast<std::int8_t>(view[i].cwp);
+    c.from_refmvbank = true;
+    ++stack->count;
+  }
+  if (p.refmvbank_added != nullptr) {
+    *p.refmvbank_added += stack->count - before;
+  }
+}
+
+inline void attach_video_refmvbank(merge::StackParams* params) {
+  if (params != nullptr && params->refmv_bank != nullptr) {
+    params->refmv_bank_scan = &video_refmvbank_scan;
   }
 }
 

@@ -143,6 +143,12 @@ struct Options {
   bool video_timing = false;
   // §5.7 multi-frame header on --video.
   bool video_mfh = false;
+  // §5.4.1 high tier on --video (--video-tier high).
+  bool video_tier_high = false;
+  // §5.4.1/§5.18.2 multi-sequence bank on --video.
+  bool video_multi_sequence = false;
+  // §5.8/§5.10 full LCR/OPS carrier on --video.
+  bool video_lcr_full = false;
   bool m1 = false;
   bool still_gpu = false;
   bool still_cfl = true;
@@ -277,12 +283,26 @@ struct Options {
   int video_delta_q_res = 0;
   bool video_per_segment_q = false;
   int video_seg_delta = 8;
+  // Opt-in §5.4.8/§5.18.6.1 separate UV/DC delta-Q (--video-uv-delta-q D).
+  bool video_uv_delta_q = false;
+  int video_uv_delta_q_value = 4;
+  // Opt-in segmentation extensions (--video-seg-skip/--video-seg-globalmv/
+  // --video-seg-temporal/--video-segments N).  All default off.
+  bool video_seg_skip = false;
+  bool video_seg_globalmv = false;
+  bool video_seg_temporal = false;
+  int video_segments = 0;  // 0 = historical two-segment planner
   bool video_gme = false;
   bool video_warp = false;
   bool video_bawp = false;  // opt-in §7.13.3.25 block adaptive weighted pred
   // Opt-in §5.4.6 enable_ref_frame_mvs + §7.9/§7.12.2.7/.8 temporal MVs.
   bool video_ref_mvs = false;
   bool video_ref_mvs_stress = false;
+  // Opt-in §5.4.6 reference-management tools on the CPU --video writer.
+  bool video_short_refresh = false;
+  bool video_refmvbank = false;
+  bool video_mv_traj = false;
+  bool video_same_ref_compound = false;
   // Documented rejected carrier: §7.12.2/§7.22 BRU (pinned dav2d does not
   // parse enable_bru/use_bru).
   bool video_bru = false;
@@ -323,6 +343,9 @@ struct Options {
   bool video_ddt = false;         // §5.4.8 enable_inter_ddt
   bool video_subpel_eighth = false;
   int video_mv_precision = 0;  // 0 = 1/8, 1 = 1/4, 2 = 1/2 pel
+  bool video_adaptive_mvd = false;    // §5.4.6 enable_adaptive_mvd
+  bool video_mvd_sign_derive = false;  // §5.4.6 enable_mvd_sign_derive
+  bool video_flex_mvres = false;       // §5.4.6 enable_flex_mvres
   bool video_drl_reorder = false;
   bool video_drl_reorder_always = false;
   bool video_long_term = false;
@@ -345,6 +368,9 @@ struct Options {
   int video_cdef_damping = 3;   // CdefDamping 3..6
   bool video_ccso = false;
   int video_ccso_bands = 4;  // CcsoMaxBandLog2 (band-offset-only form)
+  // §5.4.5 cfl_ds_filter_index (0..3; 3 aliases 0).  Drives the chroma-from-
+  // luma taps of the chroma loop restoration.
+  int video_cfl_ds_filter = 0;
   bool video_wiener = false;
   bool video_pc_wiener = false;
   bool video_chroma_lr = false;
@@ -622,9 +648,9 @@ void print_usage(std::ostream& out) {
   out << "\nStill options (--still, --still-gpu):\n";
   item("--no-cfl", {"Disable chroma-from-luma"});
   item("--no-deblock", {"Disable the deblocking filter"});
-  item("--still-deblock", {"Opt in to §7.17 deblocking on the 10-bit format "
-                           "path (off by default so pinned 10-bit streams are "
-                           "unchanged)"});
+  item("--still-deblock", {"Opt in to §7.17 deblocking on the format "
+                           "(--bit-depth/--chroma) paths (off by default so "
+                           "pinned streams are unchanged)"});
   item("--still-full-intra", {"Directional/smooth intra search (SSE-only mode",
                               "decision; DC is the default)"});
   item("--still-uv-full", {"Full chroma intra search (DC/CfL is the default;",
@@ -632,7 +658,8 @@ void print_usage(std::ostream& out) {
   item("--still-rdo-intra", {"Rate-aware luma intra mode decision (CPU-only)"});
   item("--still-rdoq", {"Full-trellis coefficient RDOQ (CPU-only)"});
   item("--still-tx-type", {"Intra luma TX_TYPE search (CPU-only)"});
-  item("--still-cdef", {"CDEF, after deblock (CPU; runs on --still-gpu)"});
+  item("--still-cdef", {"CDEF, after deblock (CPU; runs on --still-gpu; the "
+                        "8-bit chroma format path is CPU-only)"});
   item("--still-ccso", {"Band-offset-only CCSO, after CDEF (CPU; runs on",
                        "--still-gpu)"});
   item("--still-ccso-edge", {"Edge-classified CCSO + per-unit skip (CPU; runs",
@@ -764,6 +791,15 @@ void print_usage(std::ostream& out) {
                           "timing_info() from the Y4M frame rate"});
   item("--video-mfh", {"Emit a multi-frame header (§5.7) and reference it",
                        "from every frame header"});
+  item("--video-tier high", {"Signal §5.4.1 seq_tier = 1 (high tier);",
+                             "requires level 4.0+, i.e. seq_level_idx > 3"});
+  item("--video-multi-sequence", {"Carry a second §5.4.1 sequence header",
+                                  "(seq_header_id 1) and select it with",
+                                  "seq_header_id_in_frame_header from the key",
+                                  "frame onward"});
+  item("--video-lcr-full", {"Activate and emit a full §5.8 global/local LCR",
+                            "and §5.10/§5.11 global/local OPS before the key",
+                            "frame (--video; default: no LCR/OPS)"});
   item("--p-frames <N>", {"Number of P frames (default: all frames after the",
                           "keyframe)"});
   item("--b-frames <N>", {"B frames in one closed IPBB GOP, 0..6 (default 0)"});
@@ -792,6 +828,16 @@ void print_usage(std::ostream& out) {
   item("--video-subpel-eighth", {"Add the 1/8-pel ME refinement stage"});
   item("--video-mv-precision P", {"eighth (default), quarter or half frame MV",
                                   "precision"});
+  item("--video-adaptive-mvd", {"Opt-in §5.4.6 enable_adaptive_mvd: NEWMV",
+                                 "blocks may code the §5.20.7.20/.21",
+                                 "mv_joint/amvd_index MVD form"});
+  item("--video-mvd-sign-derive", {"Opt-in §5.4.6 enable_mvd_sign_derive:",
+                                    "eligible NEWMV blocks derive the last",
+                                    "MVD sign (§5.20.7.13); needs a frame",
+                                    "precision of quarter or half pel"});
+  item("--video-flex-mvres", {"Opt-in §5.4.6 enable_flex_mvres: each NEWMV",
+                               "block may select a coarser MV precision than",
+                               "the frame value (§5.20.7.6)"});
   item("--video-inter-residual", {"Code a quantised inter residual"});
   item("--video-tx-search", {"Opt-in §5.18.8 TX_MODE_SELECT luma TX size/type/",
                                 "partition search (changes the bitstream)"});
@@ -818,6 +864,19 @@ void print_usage(std::ostream& out) {
   item("--video-seg-delta <D>", {"Per-segment qindex delta for",
                                  "--video-per-segment-q and --video-delta-q",
                                  "(default 8)"});
+  item("--video-uv-delta-q <D>", {"Opt-in §5.4.8/§5.18.6.1 separate UV/DC",
+                                  "delta-Q: U uses +D and V uses -D for both DC",
+                                  "and AC (separate_uv_delta_q=1,",
+                                  "equal_ac_dc_q=0, diff_uv_delta=1)"});
+  item("--video-seg-skip", {"Opt-in SEG_LVL_SKIP on the lowest-variance",
+                            "segment (implies --video-segmentation)"});
+  item("--video-seg-globalmv", {"Opt-in SEG_LVL_GLOBALMV on a segment",
+                                "(implies --video-segmentation)"});
+  item("--video-seg-temporal", {"Opt-in segmentation_temporal_update on",
+                                "P frames whose primary reference is a P frame"});
+  item("--video-segments <N>", {"Number of segments, 1..16 (default 2 when",
+                                "segmentation is enabled); N > 8 signals",
+                                "enable_ext_seg = 1"});
   item("--video-gme", {"Estimate and signal §5.18.9 global motion per",
                        "reference; GLOBALMV uses the projected §7.12.2.2 MV"});
   item("--video-tip", {"Encode 3..8 frames as key + future anchor P +",
@@ -855,6 +914,20 @@ void print_usage(std::ostream& out) {
                            "reference's §7.22 motion field and add the §7.9 /",
                            "§7.12.2.7-.8 temporal MV candidates (P refs >= 2,",
                            "B frames); off keeps the historical bitstream"});
+  item("--video-short-refresh", {"Opt-in §5.4.6 enable_short_refresh_frame_flags:",
+                                  "every P frame codes has_refresh_frame_flags",
+                                  "and one frame_to_refresh index instead of the",
+                                  "full refresh mask"});
+  item("--video-refmvbank", {"Opt-in §5.4.6 enable_refmvbank: insert the",
+                             "§7.12.2.21 reference-MV bank candidates at",
+                             "step 19 (flat P chain, explicit ref map)"});
+  item("--video-mv-traj", {"Opt-in §5.4.6 enable_mv_traj: run the §7.9.2",
+                           "trajectory fill and use TrajMv in the derived",
+                           "candidates; requires --video-ref-mvs"});
+  item("--video-same-ref-compound", {"Opt-in §5.4.6 num_same_ref_compound = 1:",
+                                     "compound blocks may use the same",
+                                     "reference in both lists; requires",
+                                     "--video-compound and two references"});
   item("--video-compound-near-near", {"Opt-in §5.20.7.6 NEAR_NEARMV compound",
                                       "on a two-reference B frame (shifted MVs",
                                       "from the per-list merge stacks); needs",
@@ -889,6 +962,8 @@ void print_usage(std::ostream& out) {
                              "(RESTORE_PC_WIENER per-unit on/off)"});
   item("--video-chroma-lr", {"Enable §7.20 chroma loop restoration (U/V)"});
   item("--video-gdf", {"Enable §7.20.5 GDF (luma, header-only mode)"});
+  item("--video-cfl-ds-filter <N>", {"§5.4.5 cfl_ds_filter_index 0..3 for the",
+                                     "chroma-LR CfL taps (default 0)"});
   item("--video-intra-full", {"Opt-in 61-candidate luma intra search (DC, V, H,",
                               "8 directional modes with angle deltas, SMOOTH,",
                               "SMOOTH_V/H, PAETH); chroma stays DC. Default off",
@@ -1347,6 +1422,33 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--video-mfh") {
       options.video_mfh = true;
+      continue;
+    }
+
+    if (argument == "--video-tier") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-tier'";
+        return ParseStatus::kError;
+      }
+      const std::string_view value = argv[++i];
+      if (value == "high") {
+        options.video_tier_high = true;
+      } else if (value == "main" || value == "0") {
+        options.video_tier_high = false;
+      } else {
+        error = "--video-tier expects 'high' or 'main'";
+        return ParseStatus::kError;
+      }
+      continue;
+    }
+
+    if (argument == "--video-multi-sequence") {
+      options.video_multi_sequence = true;
+      continue;
+    }
+
+    if (argument == "--video-lcr-full") {
+      options.video_lcr_full = true;
       continue;
     }
 
@@ -2159,6 +2261,21 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-adaptive-mvd") {
+      options.video_adaptive_mvd = true;
+      continue;
+    }
+
+    if (argument == "--video-mvd-sign-derive") {
+      options.video_mvd_sign_derive = true;
+      continue;
+    }
+
+    if (argument == "--video-flex-mvres") {
+      options.video_flex_mvres = true;
+      continue;
+    }
+
     if (argument == "--video-compound") {
       options.video_compound = true;
       continue;
@@ -2268,6 +2385,46 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-uv-delta-q") {
+      if (i + 1 >= argc ||
+          !parse_int(argv[++i], options.video_uv_delta_q_value) ||
+          options.video_uv_delta_q_value < -63 ||
+          options.video_uv_delta_q_value > 63) {
+        error = "--video-uv-delta-q must be an integer in [-63, 63]";
+        return ParseStatus::kError;
+      }
+      options.video_uv_delta_q = true;
+      continue;
+    }
+
+    if (argument == "--video-seg-skip") {
+      options.video_seg_skip = true;
+      options.video_segmentation = true;
+      continue;
+    }
+
+    if (argument == "--video-seg-globalmv") {
+      options.video_seg_globalmv = true;
+      options.video_segmentation = true;
+      continue;
+    }
+
+    if (argument == "--video-seg-temporal") {
+      options.video_seg_temporal = true;
+      options.video_segmentation = true;
+      continue;
+    }
+
+    if (argument == "--video-segments") {
+      if (i + 1 >= argc || !parse_int(argv[++i], options.video_segments) ||
+          options.video_segments < 1 || options.video_segments > 16) {
+        error = "--video-segments must be an integer in [1, 16]";
+        return ParseStatus::kError;
+      }
+      if (options.video_segments > 1) options.video_segmentation = true;
+      continue;
+    }
+
     if (argument == "--video-gme") {
       options.video_gme = true;
       continue;
@@ -2292,6 +2449,26 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     if (argument == "--video-ref-mvs-stress") {
       options.video_ref_mvs = true;
       options.video_ref_mvs_stress = true;
+      continue;
+    }
+
+    if (argument == "--video-short-refresh") {
+      options.video_short_refresh = true;
+      continue;
+    }
+
+    if (argument == "--video-refmvbank") {
+      options.video_refmvbank = true;
+      continue;
+    }
+
+    if (argument == "--video-mv-traj") {
+      options.video_mv_traj = true;
+      continue;
+    }
+
+    if (argument == "--video-same-ref-compound") {
+      options.video_same_ref_compound = true;
       continue;
     }
 
@@ -2416,6 +2593,20 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--video-pc-wiener") {
       options.video_pc_wiener = true;
+      continue;
+    }
+
+    if (argument == "--video-cfl-ds-filter") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-cfl-ds-filter'";
+        return ParseStatus::kError;
+      }
+      int index = 0;
+      if (!parse_int(argv[++i], index) || index < 0 || index > 3) {
+        error = "--video-cfl-ds-filter must be an integer in [0, 3]";
+        return ParseStatus::kError;
+      }
+      options.video_cfl_ds_filter = index;
       continue;
     }
 
@@ -3052,9 +3243,10 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
                 "exact)";
         return ParseStatus::kError;
       }
-      if (options.video_segmentation || options.video_per_segment_q) {
+      if (options.video_segmentation || options.video_per_segment_q ||
+          options.video_uv_delta_q) {
         error = "--video-morph is not wired with "
-                "--video-segmentation/--video-per-segment-q";
+                "--video-segmentation/--video-per-segment-q/--video-uv-delta-q";
         return ParseStatus::kError;
       }
     }
@@ -3142,25 +3334,6 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       if (options.tiles != "1x1") {
         error = "--video-ref-mvs is gated on a single tile: the §7.22 field "
                 "is built from one whole-frame MI grid";
-        return ParseStatus::kError;
-      }
-      if (options.video_gme || options.video_warp) {
-        // §7.22 stores per-8x8 warp MVs for a non-identity model, not the
-        // block MV the flat grid carries.
-        error = "--video-ref-mvs does not compose with --video-gme/"
-                "--video-warp yet: §7.22 stores per-8x8 warped MVs";
-        return ParseStatus::kError;
-      }
-      if (options.video_compound && options.video_compound_wedge) {
-        // §7.22's wedge allow-list can drop a list per 8x8; the field built
-        // from the flat MI grid does not carry the mask.
-        error = "--video-ref-mvs does not compose with "
-                "--video-compound-wedge yet (§7.22 wedge allow-list)";
-        return ParseStatus::kError;
-      }
-      if (options.video_tip) {
-        error = "--video-ref-mvs is the ordinary P/B carrier; --video-tip "
-                "owns its own §7.22 field";
         return ParseStatus::kError;
       }
       if (options.video_mv_precision != 0) {
@@ -3373,6 +3546,85 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "reference cannot match it";
       return ParseStatus::kError;
     }
+    // §5.4.6 adaptive MVD / MVD sign derivation / flexible MV resolution.
+    // The three tools share the §5.20.7.6 block path and are gated only on the
+    // flat CPU key+P carrier; every other composition is rejected by name so
+    // the sequence header never advertises a tool the tile writer cannot code
+    // exactly.
+    const bool mv_res_tools = options.video_adaptive_mvd ||
+                              options.video_mvd_sign_derive ||
+                              options.video_flex_mvres;
+    if (mv_res_tools) {
+      const char* tool = options.video_adaptive_mvd
+                             ? "--video-adaptive-mvd"
+                             : (options.video_mvd_sign_derive
+                                    ? "--video-mvd-sign-derive"
+                                    : "--video-flex-mvres");
+      if (!options.video) {
+        error = std::string(tool) + " requires --video";
+        return ParseStatus::kError;
+      }
+      if (options.video_gpu) {
+        error = std::string(tool) +
+                " is CPU-only: the CUDA M2 backend has no per-block MV "
+                "precision/AMVD syntax path";
+        return ParseStatus::kError;
+      }
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = std::string(tool) + " is gated on 8-bit 4:2:0 inter coding";
+        return ParseStatus::kError;
+      }
+      if (options.tiles != "1x1") {
+        error = std::string(tool) +
+                " is gated on a single tile (the §8.3 MV-precision contexts "
+                "are tile-local)";
+        return ParseStatus::kError;
+      }
+      if (options.video_lossless) {
+        error = std::string(tool) +
+                " is not wired into the --video-lossless writer";
+        return ParseStatus::kError;
+      }
+      if (options.b_frames != 0 || options.video_tlayers != 0 ||
+          options.video_tip) {
+        error = std::string(tool) +
+                " is gated on the flat key+P chain (no --b-frames, "
+                "--video-tlayers or --video-tip)";
+        return ParseStatus::kError;
+      }
+      if (frame_modes != 0) {
+        error = std::string(tool) +
+                " does not compose with the frame-type modes "
+                "(--video-long-term/--video-olk, --video-leading, --video-sef, "
+                "--video-switch, --video-ras)";
+        return ParseStatus::kError;
+      }
+      if (options.video_compound || options.video_compound_interintra ||
+          options.video_bawp || options.video_gme || options.video_warp ||
+          options.video_opfl || options.video_refine_mv) {
+        // §5.20.7.6 places use_amvd relative to use_bawp/motion_mode/compound
+        // modes this writer does not code, so the combined order is not gated.
+        error = std::string(tool) +
+                " does not compose with --video-compound, "
+                "--video-compound-interintra, --video-bawp, --video-gme/"
+                "--video-warp or --video-opfl/--video-refine-mv yet "
+                "(§5.20.7.6 symbol order)";
+        return ParseStatus::kError;
+      }
+      if (options.video_mvd_sign_derive && options.video_mv_precision == 0) {
+        error = "--video-mvd-sign-derive needs --video-mv-precision quarter "
+                "or half: §5.20.7.13 derives a sign only when "
+                "FrameMvPrecision <= QUARTER and MvPrecision < QUARTER";
+        return ParseStatus::kError;
+      }
+      if (options.video_mvd_sign_derive && options.video_mv_precision == 1 &&
+          !options.video_flex_mvres) {
+        error = "--video-mvd-sign-derive with quarter-pel frames needs "
+                "--video-flex-mvres so a block can select half-pel "
+                "(MvPrecision < QUARTER); a quarter-pel block derives no sign";
+        return ParseStatus::kError;
+      }
+    }
     if ((options.video_wiener || options.video_chroma_lr) &&
         options.tiles != "1x1") {
       error = "--video-wiener/--video-chroma-lr do not support --tiles > "
@@ -3381,8 +3633,75 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "filter (docs/negative-results.md)";
       return ParseStatus::kError;
     }
+    // Every §5.18.7/§5.4.8 segmentation or delta-Q surface shares the same
+    // header/decision restrictions (single tile, fixed CQP, no CDF chain,
+    // no frame-schedule wrappers, no QM).
+    const bool video_qp_tools =
+        options.video_segmentation || options.video_delta_q ||
+        options.video_per_segment_q || options.video_uv_delta_q ||
+        options.video_seg_skip || options.video_seg_globalmv ||
+        options.video_seg_temporal || options.video_segments != 0;
     if (flag_given(options, "--video-delta-q-res") && !options.video_delta_q) {
       error = "--video-delta-q-res requires --video-delta-q";
+      return ParseStatus::kError;
+    }
+    if (options.video_uv_delta_q &&
+        (options.bit_depth != 8 || options.chroma != "420")) {
+      error = "--video-uv-delta-q is only wired on the 8-bit 4:2:0 video core";
+      return ParseStatus::kError;
+    }
+    if (options.video_uv_delta_q && options.video_tcq) {
+      error = "--video-uv-delta-q does not compose with --video-tcq: the "
+              "per-block plane quantiser differs from the scalar TCQ step";
+      return ParseStatus::kError;
+    }
+    if (options.video_uv_delta_q && options.video_cctx) {
+      error = "--video-uv-delta-q does not compose with --video-cctx: the "
+              "joint U/V search uses one scalar chroma step";
+      return ParseStatus::kError;
+    }
+    if (options.video_uv_delta_q && options.video_qm) {
+      error = "--video-uv-delta-q does not compose with --video-qm: the "
+              "per-coefficient QM quantiser is not the scalar DC/AC step";
+      return ParseStatus::kError;
+    }
+    if ((options.video_seg_skip || options.video_seg_globalmv) &&
+        options.video_segments == 1) {
+      error = "--video-seg-skip/--video-seg-globalmv need at least two "
+              "segments";
+      return ParseStatus::kError;
+    }
+    if (options.video_seg_skip && options.video_seg_globalmv &&
+        options.video_segments != 0 && options.video_segments < 3) {
+      error = "--video-seg-skip and --video-seg-globalmv need --video-segments "
+              ">= 3 so the features occupy distinct segment ids";
+      return ParseStatus::kError;
+    }
+    if (options.video_seg_globalmv && options.video_per_segment_q) {
+      error = "--video-seg-globalmv does not compose with "
+              "--video-per-segment-q: an intra leaf cannot stay in the forced "
+              "GLOBALMV segment, and reassigning it would change the "
+              "quantizer the block was decided with";
+      return ParseStatus::kError;
+    }
+    if (options.video_seg_temporal && options.b_frames != 0) {
+      error = "--video-seg-temporal does not compose with --b-frames";
+      return ParseStatus::kError;
+    }
+    if ((options.video_segmentation || options.video_per_segment_q ||
+         options.video_seg_skip || options.video_seg_globalmv ||
+         options.video_seg_temporal) &&
+        options.video_refs != 1) {
+      error = "segmentation needs a single reference: PrevSegmentIds and "
+              "SkipSegFrame are replayed from ref 0";
+      return ParseStatus::kError;
+    }
+    if ((options.video_seg_skip || options.video_seg_globalmv) &&
+        (options.video_compound || options.video_compound_wedge ||
+         options.video_compound_diffwtd || options.video_compound_interintra ||
+         options.video_cwp_weighted || options.video_imp_mask)) {
+      error = "--video-seg-skip/--video-seg-globalmv do not compose with the "
+              "compound prediction surfaces (forced GLOBALMV is single-ref)";
       return ParseStatus::kError;
     }
     if (flag_given(options, "--video-seg-delta") && !options.video_per_segment_q &&
@@ -3403,38 +3722,30 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
     }
-    if ((options.video_segmentation || options.video_delta_q ||
-         options.video_per_segment_q) &&
-        options.rc_mode != "cqp") {
+    if (video_qp_tools && options.rc_mode != "cqp") {
       error = "segmentation/delta-Q requires a fixed base_q_idx (--rc cqp); "
               "the CRF/VBR per-frame QP plan is not composed with these tools";
       return ParseStatus::kError;
     }
-    if ((options.video_segmentation || options.video_delta_q ||
-         options.video_per_segment_q) &&
-        options.video_qm) {
+    if (video_qp_tools && options.video_qm) {
       error = "segmentation/delta-Q does not compose with --video-qm: the "
               "frame-header writer owns the using_qmatrix bit";
       return ParseStatus::kError;
     }
-    if ((options.video_segmentation || options.video_delta_q ||
-         options.video_per_segment_q) &&
+    if (video_qp_tools &&
         (options.avg_cdf || options.adaptive_cdf || options.cdf_continuity)) {
       error = "segmentation/delta-Q does not compose with the CDF chain: the "
               "per-tile delta/segment CDFs are not part of the §8.2.4 image";
       return ParseStatus::kError;
     }
-    if ((options.video_segmentation || options.video_delta_q ||
-         options.video_per_segment_q) &&
+    if (video_qp_tools &&
         (frame_modes != 0 || options.b_frames > 0 ||
          options.video_tlayers > 0 || options.video_tip)) {
       error = "segmentation/delta-Q does not compose with the B/temporal-"
               "layer/random-access/TIP frame schedules";
       return ParseStatus::kError;
     }
-    if ((options.video_segmentation || options.video_delta_q ||
-         options.video_per_segment_q) &&
-        options.tiles != "1x1") {
+    if (video_qp_tools && options.tiles != "1x1") {
       error = "segmentation/delta-Q does not support --tiles > 1x1 yet: the "
               "tiled frame-header writer does not signal §5.18.7";
       return ParseStatus::kError;
@@ -3654,7 +3965,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
       if (options.video_segmentation || options.video_delta_q ||
-          options.video_per_segment_q) {
+          options.video_per_segment_q || options.video_uv_delta_q) {
         error = "--video-sdp does not compose with segmentation/delta-Q";
         return ParseStatus::kError;
       }
@@ -3726,6 +4037,14 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
           {options.video_ibp, "--video-ibp"},
           {options.video_dip, "--video-dip"},
           {options.video_ist, "--video-ist"},
+          {options.video_uv_delta_q, "--video-uv-delta-q"},
+          {options.video_segmentation, "--video-segmentation"},
+          {options.video_delta_q, "--video-delta-q"},
+          {options.video_per_segment_q, "--video-per-segment-q"},
+          {options.video_seg_skip, "--video-seg-skip"},
+          {options.video_seg_globalmv, "--video-seg-globalmv"},
+          {options.video_seg_temporal, "--video-seg-temporal"},
+          {options.video_segments != 0, "--video-segments"},
           {options.video_tip_no_hole_fill, "--video-tip-no-hole-fill"},
           {options.video_compound, "--video-compound"},
           {options.video_inter_residual, "--video-inter-residual"},
@@ -3769,7 +4088,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
       if (options.video_segmentation || options.video_delta_q ||
-          options.video_per_segment_q) {
+          options.video_per_segment_q || options.video_uv_delta_q) {
         error = std::string(tool) + " does not compose with segmentation/"
                 "delta-Q: the per-block quantiser differs from the frame "
                 "base_q_idx the TCQ/CCTX decision uses";
@@ -4032,9 +4351,12 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return reject_gpu("--cdf-continuity (cross-frame CDF carry)");
       }
       if (options.video_segmentation || options.video_delta_q ||
-          options.video_per_segment_q) {
+          options.video_per_segment_q || options.video_uv_delta_q ||
+          options.video_seg_skip || options.video_seg_globalmv ||
+          options.video_seg_temporal || options.video_segments != 0) {
         return reject_gpu("--video-segmentation/--video-delta-q/"
-                          "--video-per-segment-q (CPU reference only)");
+                          "--video-per-segment-q/--video-uv-delta-q "
+                          "(CPU reference only)");
       }
       if (options.svc_given) return reject_gpu("--svc-layers");
       if (options.video_implicit_ref_map) {
@@ -4077,6 +4399,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         flag_given(options, "--video-delta-q-res") ||
         flag_given(options, "--video-per-segment-q") ||
         flag_given(options, "--video-seg-delta") ||
+        flag_given(options, "--video-uv-delta-q") ||
+        flag_given(options, "--video-seg-skip") ||
+        flag_given(options, "--video-seg-globalmv") ||
+        flag_given(options, "--video-seg-temporal") ||
+        flag_given(options, "--video-segments") ||
         flag_given(options, "--video-gme") ||
         flag_given(options, "--video-warp") ||
         flag_given(options, "--video-bawp") ||
@@ -4971,12 +5298,6 @@ int run_video_format_encode(const Options& options) {
   // Tool flags that are 8-bit 4:2:0 only.  Reject by name instead of silently
   // ignoring them on the format path.
   const std::pair<bool, const char*> unsupported[] = {
-      {options.video_deblock, "--video-deblock"},
-      {options.video_cdef, "--video-cdef"},
-      {options.video_ccso, "--video-ccso"},
-      {options.video_wiener, "--video-wiener"},
-      {options.video_chroma_lr, "--video-chroma-lr"},
-      {options.video_gdf, "--video-gdf"},
       {options.tiles != "1x1", "--tiles"},
       {options.video_tx_search, "--video-tx-search"},
       {options.video_tcq, "--video-tcq"},
@@ -5158,6 +5479,9 @@ int run_video_format_encode(const Options& options) {
   video_options.enable_inter_residual = options.video_inter_residual;
   video_options.me_subpel_eighth = options.video_subpel_eighth;
   video_options.mv_precision = options.video_mv_precision;
+  video_options.enable_adaptive_mvd = options.video_adaptive_mvd;
+  video_options.enable_mvd_sign_derive = options.video_mvd_sign_derive;
+  video_options.enable_flex_mvres = options.video_flex_mvres;
   video_options.enable_ref_frame_mvs = options.video_ref_mvs;
   video_options.ref_mvs_stress = options.video_ref_mvs_stress;
   video_options.force_single_block = options.video_force_single;
@@ -5168,13 +5492,31 @@ int run_video_format_encode(const Options& options) {
   video_options.max_partition_depth = options.video_max_depth;
   if (format.chroma == av2enc::fmt::ChromaFormat::k422 &&
       !flag_given(options, "--video-max-depth")) {
-    // 4:2:2 is gated at 32x32 roots until 16-pixel 4:2:2 chroma leaves are
-    // decoder-gated (see docs/negative-results.md).
+    // 4:2:2 is gated at 32x32 roots: 16-pixel 4:2:2 leaves still fail the
+    // pinned decoder's frame-header parse (docs/negative-results.md).
     video_options.max_partition_depth = 2;
   }
   video_options.me_range = options.video_me_range;
   video_options.trace = options.video_trace;
+  video_options.enable_deblock = options.video_deblock;
+  video_options.loop_filters.cdef = options.video_cdef;
+  video_options.loop_filters.cdef_num_strengths = options.video_cdef_strength;
+  video_options.loop_filters.cdef_damping = options.video_cdef_damping;
+  video_options.loop_filters.ccso = options.video_ccso;
+  video_options.loop_filters.ccso_bands_log2 = options.video_ccso_bands;
+  video_options.loop_filters.cfl_ds_filter_index = options.video_cfl_ds_filter;
+  video_options.loop_filters.wiener = options.video_wiener;
+  video_options.loop_filters.pc_wiener = options.video_pc_wiener;
+  video_options.loop_filters.chroma_lr = options.video_chroma_lr;
+  video_options.loop_filters.gdf = options.video_gdf;
 
+  if (options.video_gpu &&
+      (video_options.enable_deblock || video_options.loop_filters.any())) {
+    std::cerr << "av2enc: error: the format video loop-filter stage is CPU-only; "
+                 "use --video (the 8-bit 4:2:0 --video-gpu path has its own "
+                 "device filters)\n";
+    return 2;
+  }
   av2enc::video::VideoSequenceResult result;
   bool ok = false;
   if (options.video_gpu) {
@@ -5416,6 +5758,9 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.adaptive_cdf = options.adaptive_cdf;
   video_options.cdf_continuity = options.cdf_continuity;
   video_options.mfh = options.video_mfh;
+  video_options.high_tier = options.video_tier_high;
+  video_options.multi_sequence = options.video_multi_sequence;
+  video_options.lcr_full = options.video_lcr_full;
   if (options.video_timing) {
     if (y4m.fps_num == 0 || y4m.fps_den == 0) {
       std::cerr << "av2enc: error: --video-timing needs a non-zero Y4M frame "
@@ -5455,6 +5800,32 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.delta_q_res = options.video_delta_q_res;
   video_options.per_segment_q = options.video_per_segment_q;
   video_options.seg_q_delta = options.video_seg_delta;
+  video_options.enable_uv_delta_q = options.video_uv_delta_q;
+  video_options.uv_delta_q = options.video_uv_delta_q_value;
+  if (options.video_uv_delta_q) {
+    // §5.4.8: separate U/V deltas with the DC fields enabled.  equal_ac_dc_q=0
+    // is required to code base_uv_dc_delta_q / uv_dc_delta_q_enabled.  U uses
+    // +D and V uses -D so diff_uv_delta=1 exercises both chroma planes.
+    video_options.seq_delta_q = av2enc::dcdeltaq::SequenceDeltaQ{};
+    video_options.seq_delta_q.equal_ac_dc_q = false;
+    video_options.seq_delta_q.separate_uv_delta_q = true;
+    video_options.seq_delta_q.uv_dc_delta_q_enabled = true;
+    video_options.seq_delta_q.uv_ac_delta_q_enabled = true;
+    video_options.seq_delta_q.base_uv_dc_delta_q = 0;
+    video_options.seq_delta_q.base_uv_ac_delta_q = 0;
+    video_options.frame_delta_q = av2enc::dcdeltaq::FrameDeltaQ{};
+    video_options.frame_delta_q.delta_q_u_dc = options.video_uv_delta_q_value;
+    video_options.frame_delta_q.delta_q_v_dc = -options.video_uv_delta_q_value;
+    video_options.frame_delta_q.delta_q_u_ac = options.video_uv_delta_q_value;
+    video_options.frame_delta_q.delta_q_v_ac = -options.video_uv_delta_q_value;
+  }
+  video_options.enable_ext_seg =
+      options.video_segments > 8;
+  video_options.num_segments =
+      options.video_segments == 0 ? 2 : options.video_segments;
+  video_options.enable_seg_skip = options.video_seg_skip;
+  video_options.enable_seg_globalmv = options.video_seg_globalmv;
+  video_options.enable_seg_temporal = options.video_seg_temporal;
   video_options.enable_gme = options.video_gme;
   video_options.enable_warp = options.video_warp;
   video_options.enable_bawp = options.video_bawp;
@@ -5464,6 +5835,10 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_interintra = options.video_compound_interintra;
   video_options.enable_ref_frame_mvs = options.video_ref_mvs;
   video_options.ref_mvs_stress = options.video_ref_mvs_stress;
+  video_options.short_refresh = options.video_short_refresh;
+  video_options.refmvbank = options.video_refmvbank;
+  video_options.mv_traj = options.video_mv_traj;
+  video_options.same_ref_compound = options.video_same_ref_compound;
   video_options.enable_tip = options.video_tip;
   video_options.tip_hole_fill = !options.video_tip_no_hole_fill;
   video_options.enable_intra_full = options.video_intra_full;
@@ -5481,6 +5856,9 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_ist = options.video_ist;
   video_options.me_subpel_eighth = options.video_subpel_eighth;
   video_options.mv_precision = options.video_mv_precision;
+  video_options.enable_adaptive_mvd = options.video_adaptive_mvd;
+  video_options.enable_mvd_sign_derive = options.video_mvd_sign_derive;
+  video_options.enable_flex_mvres = options.video_flex_mvres;
   video_options.drl_reorder = options.video_drl_reorder;
   video_options.drl_reorder_always = options.video_drl_reorder_always;
   video_options.long_term = options.video_long_term;
@@ -5731,6 +6109,37 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   }
   if (result.temporal_selected != 0) {
     std::cout << ", temporal-selected leaves " << result.temporal_selected;
+  }
+  if (result.same_ref_blocks != 0) {
+    std::cout << ", same-ref compound blocks " << result.same_ref_blocks;
+  }
+  if (result.refmvbank_candidates != 0) {
+    std::cout << ", refmvbank candidates " << result.refmvbank_candidates;
+  }
+  if (result.refmvbank_selected != 0) {
+    std::cout << ", refmvbank-selected leaves " << result.refmvbank_selected;
+  }
+  if (result.mv_traj_derived != 0) {
+    std::cout << ", mv-traj derived candidates " << result.mv_traj_derived;
+  }
+  if (result.short_refresh_frames != 0) {
+    std::cout << ", short refresh frames " << result.short_refresh_frames;
+  }
+  if (result.amvd_selected != 0) {
+    std::cout << ", AMVD leaves " << result.amvd_selected;
+  }
+  if (result.flex_precision_selected != 0) {
+    std::cout << ", flex-precision leaves " << result.flex_precision_selected;
+  }
+  if (result.derived_sign_selected != 0) {
+    std::cout << ", derived-sign leaves " << result.derived_sign_selected;
+  }
+  if (result.ref_mvs_warp_cells != 0) {
+    std::cout << ", §7.22 warp 8x8 cells " << result.ref_mvs_warp_cells;
+  }
+  if (result.ref_mvs_wedge_dropped != 0) {
+    std::cout << ", §7.22 wedge allow-list cells "
+              << result.ref_mvs_wedge_dropped;
   }
   std::cout << "\n";
   if (!frame_qp.empty()) {
@@ -6164,6 +6573,47 @@ int main(int argc, char** argv) {
                  "(docs/negative-results.md)\n";
     return 2;
   }
+  if ((options.video_tier_high || options.video_multi_sequence ||
+       options.video_lcr_full) &&
+      !options.video) {
+    std::cerr << "av2enc: error: --video-tier/--video-multi-sequence/"
+                 "--video-lcr-full are wired into the non-single-picture "
+                 "--video sequence header only\n";
+    return 2;
+  }
+  if (options.video_multi_sequence &&
+      (options.video_mfh || options.video_timing)) {
+    std::cerr << "av2enc: error: --video-multi-sequence needs the direct "
+                 "seq_header_id_in_frame_header field; --video-mfh and "
+                 "--video-timing take the single-header form\n";
+    return 2;
+  }
+  if ((options.video_multi_sequence || options.video_lcr_full) &&
+      (options.b_frames > 0 || options.video_tlayers > 0 || options.video_tip ||
+       options.video_long_term || options.video_olk ||
+       options.video_leading > 0 || options.video_sef || options.video_switch ||
+       options.video_ras || options.tiles != "1x1" ||
+       options.video_lossless || options.bit_depth != 8 ||
+       options.chroma != "420")) {
+    std::cerr << "av2enc: error: --video-multi-sequence/--video-lcr-full are "
+                 "wired into the plain 8-bit 4:2:0 single-tile --video chain; "
+                 "the B/temporal/TIP/random-access schedules and the format "
+                 "video core write their own headers\n";
+    return 2;
+  }
+  if (options.video_tier_high &&
+      (options.b_frames > 0 || options.video_tlayers > 0 || options.video_tip ||
+       options.video_long_term || options.video_olk ||
+       options.video_leading > 0 || options.video_sef || options.video_switch ||
+       options.video_ras || options.tiles != "1x1" ||
+       options.video_lossless || options.bit_depth != 8 ||
+       options.chroma != "420")) {
+    std::cerr << "av2enc: error: --video-tier high is wired into the plain "
+                 "8-bit 4:2:0 --video sequence header only; the B/temporal/"
+                 "TIP/random-access schedules, --tiles and the format video "
+                 "core write their own sequence headers\n";
+    return 2;
+  }
   if (options.avg_cdf) {
     if (options.lossless) {
       std::cerr << "av2enc: error: --avg-cdf is not implemented by the "
@@ -6335,7 +6785,7 @@ int main(int argc, char** argv) {
       return 2;
     }
     if (options.video_segmentation || options.video_delta_q ||
-        options.video_per_segment_q) {
+        options.video_per_segment_q || options.video_uv_delta_q) {
       std::cerr << "av2enc: error: segmentation/delta-Q is only wired on the "
                    "8-bit 4:2:0 video core; use --bit-depth 8 --chroma 420\n";
       return 2;
@@ -6467,12 +6917,6 @@ int main(int argc, char** argv) {
     // §7.17 deblocking is opt-in on this path: existing 10-bit streams signal
     // it off and must stay byte-identical.
     if (flag_given(options, "--still-deblock")) {
-      if (!format_10bit) {
-        std::cerr << "av2enc: error: --still-deblock is wired for the 10-bit "
-                     "format path only (the 8-bit chroma writers keep the "
-                     "8-bit deblock core off)\n";
-        return 2;
-      }
       if (flag_given(options, "--no-deblock")) {
         std::cerr << "av2enc: error: --still-deblock and --no-deblock are "
                      "mutually exclusive\n";
@@ -6480,37 +6924,20 @@ int main(int argc, char** argv) {
       }
       format_options.enable_deblock = true;
     }
-    // §7.18 CDEF is wired on the 10-bit product writer.  The 8-bit chroma
-    // writers have no filter stage, so keep that combination rejected by name.
+    // §7.18 CDEF is wired on both format writers.
     if (options.still_cdef) {
-      if (!format_10bit) {
-        std::cerr << "av2enc: error: --still-cdef is wired for the 10-bit "
-                     "format path only\n";
-        return 2;
-      }
       format_options.enable_cdef = true;
       format_options.cdef_num_strengths = options.still_cdef_strengths;
     }
-    // §7.19 CCSO is wired on the 10-bit product writer (band-offset and
-    // edge-classified forms are both searched).  The 8-bit chroma writers have
-    // no filter stage.
+    // §7.19 CCSO is wired on both format writers (band-offset and
+    // edge-classified forms are both searched).
     if (options.still_ccso) {
-      if (!format_10bit) {
-        std::cerr << "av2enc: error: --still-ccso is wired for the 10-bit "
-                     "format path only\n";
-        return 2;
-      }
       format_options.enable_ccso = true;
       format_options.ccso_edge_only = options.still_ccso_edge;
     }
-    // §7.20 loop restoration and §7.20.5 GDF on the 10-bit product writer.
+    // §7.20 loop restoration and §7.20.5 GDF on both format writers.
     if (options.still_wiener || options.still_chroma_lr ||
         options.still_pc_wiener || options.still_gdf) {
-      if (!format_10bit) {
-        std::cerr << "av2enc: error: loop restoration/GDF are wired for the "
-                     "10-bit format path only\n";
-        return 2;
-      }
       if (options.still_pc_wiener && options.still_wiener) {
         std::cerr << "av2enc: error: --still-pc-wiener and --still-wiener "
                      "select two luma restoration filters\n";

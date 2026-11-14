@@ -201,11 +201,15 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   assert(profile >= 0);
   const bool monochrome = !fmt::has_chroma(c.chroma);
 
-  put_uvlc(writer, 0);                 // seq_header_id
+  put_uvlc(writer, c.seq_header_id);  // seq_header_id
   writer.put_bits(static_cast<std::uint64_t>(profile), 5U);  // seq_profile_idc
   writer.put_bit(false);               // single_picture_header_flag = 0
   writer.put_bits(c.seq_level_idx, 5U);  // seq_level_idx
-  writer.put_bit(false);               // seq_tier (level > 3)
+  if (c.seq_level_idx > 3U) {
+    writer.put_bit(c.seq_tier);        // seq_tier (level > 3)
+  } else {
+    assert(!c.seq_tier);
+  }
   // §6.4.1 Table 6.2: 0 = 4:2:0, 1 = 4:0:0, 2 = 4:4:4, 3 = 4:2:2.
   put_uvlc(writer, static_cast<std::uint32_t>(chroma_idc));
   // §6.4.1 Table 6.3: bit_depth_idc is one bit, 0 = 10-bit, 1 = 8-bit.
@@ -305,7 +309,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(false);  // reduce_pb_aspect_ratio
 
   // §5.4.4 sequence_segment_config().
-  writer.put_bit(false);  // enable_ext_seg
+  writer.put_bit(c.enable_ext_seg);  // enable_ext_seg
   writer.put_bit(false);  // seq_seg_info_present_flag
 
   // §5.4.5 sequence_intra_config().
@@ -314,7 +318,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bit(c.enable_mrls);  // enable_mrls
   writer.put_bit(true);   // enable_cfl_intra
   if (!monochrome) {
-    writer.put_bits(0U, 2U);  // cfl_ds_filter_index
+    writer.put_bits(static_cast<std::uint64_t>(c.cfl_ds_filter_index & 3), 2U);
   }
   writer.put_bit(c.enable_mhccp);  // enable_mhccp
   writer.put_bit(c.enable_ibp);    // enable_ibp
@@ -338,7 +342,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   }
   // reduced_ref_frame_mvs_mode = 0.
   writer.put_bits(static_cast<std::uint64_t>(c.order_hint_bits) - 1U, 4U);
-  writer.put_bit(false);  // enable_refmvbank
+  writer.put_bit(c.enable_refmvbank);  // enable_refmvbank (§5.4.6)
   writer.put_bit(c.disable_drl_reorder);  // disable_drl_reorder
   if (!c.disable_drl_reorder) {
     writer.put_bit(c.constrain_drl_reorder);  // constrain_drl_reorder
@@ -357,7 +361,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
     writer.put_bit(c.disable_tip_output);     // disable_tip_output
     writer.put_bit(c.enable_tip_hole_fill);   // enable_tip_hole_fill
   }
-  writer.put_bit(false);   // enable_mv_traj
+  writer.put_bit(c.enable_mv_traj);  // enable_mv_traj (§5.4.6)
   writer.put_bit(c.enable_bawp);  // enable_bawp (§5.4.6)
   writer.put_bit(c.enable_cwp);
   writer.put_bit(c.enable_imp_msk_bld);
@@ -365,11 +369,11 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   writer.put_bits(static_cast<std::uint64_t>(c.enable_opfl_refine), 2U);
   writer.put_bit(c.enable_refinemv);
   writer.put_bit(false);   // enable_bru
-  writer.put_bit(false);   // enable_adaptive_mvd
-  writer.put_bit(false);   // enable_mvd_sign_derive
-  writer.put_bit(false);   // enable_flex_mvres
+  writer.put_bit(c.enable_adaptive_mvd);     // enable_adaptive_mvd
+  writer.put_bit(c.enable_mvd_sign_derive);  // enable_mvd_sign_derive
+  writer.put_bit(c.enable_flex_mvres);       // enable_flex_mvres
   writer.put_bit(c.enable_global_motion);  // enable_global_motion (§5.4.6)
-  writer.put_bit(false);   // enable_short_refresh_frame_flags
+  writer.put_bit(c.enable_short_refresh_frame_flags);  // §5.4.6
 
   // §5.4.7 sequence_scc_config().  The historical stream writes two zeros
   // (no screen-content tools).  The morph carrier selects the per-frame form:
@@ -410,13 +414,28 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   if (c.enable_avg_cdf) {
     writer.put_bit(c.avg_cdf_type);  // avg_cdf_type: 1 = average across tiles
   }
-  if (!monochrome) {
-    writer.put_bit(false);  // separate_uv_delta_q
-  }
-  writer.put_bit(true);   // equal_ac_dc_q
-  if (!monochrome) {
-    writer.put_bits(23U, 5U);  // base_uv_ac_delta_q => BaseUVAcDeltaQ = 0
-    writer.put_bit(false);     // uv_ac_delta_q_enabled
+  // §5.4.8 sequence delta-Q group.  The historical four bits are written
+  // byte-for-byte when no UV/DC delta is signalled; --video-uv-delta-q turns on
+  // separate_uv_delta_q plus the DC/AC base fields and enables through the
+  // shared component writer.
+  if (c.seq_delta_q.equal_ac_dc_q && !c.seq_delta_q.separate_uv_delta_q &&
+      !c.seq_delta_q.y_dc_delta_q_enabled &&
+      !c.seq_delta_q.uv_dc_delta_q_enabled &&
+      !c.seq_delta_q.uv_ac_delta_q_enabled) {
+    if (!monochrome) {
+      writer.put_bit(false);  // separate_uv_delta_q
+    }
+    writer.put_bit(true);   // equal_ac_dc_q
+    if (!monochrome) {
+      writer.put_bits(23U, 5U);  // base_uv_ac_delta_q => BaseUVAcDeltaQ = 0
+      writer.put_bit(false);     // uv_ac_delta_q_enabled
+    }
+  } else {
+    std::string delta_error;
+    if (dcdeltaq::write_sequence_delta_q_fields(writer, c.seq_delta_q,
+                                                &delta_error) == 0) {
+      assert(false && "invalid §5.4.8 delta-Q sequence fields");
+    }
   }
 
   // §5.4.10 sequence_filter_config().
@@ -463,7 +482,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
          static_cast<unsigned>(fmt::max_quantizer(c.depth)));
   put_uvlc(writer, c.cur_mfh_id);  // cur_mfh_id
   if (c.cur_mfh_id == 0U) {
-    put_uvlc(writer, 0);  // seq_header_id_in_frame_header
+    put_uvlc(writer, h.seq_header_id);  // seq_header_id_in_frame_header
   }
 
   const bool key = h.keyframe;
@@ -518,8 +537,18 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
       writer.put_bits(h.primary_ref_frame, 3U);  // primary_ref_frame
     }
     // refresh_frame_flags is coded after the primary-ref block
-    // (§5.18.2). enable_short_refresh_frame_flags == 0.
-    writer.put_bits(h.refresh_frame_flags, c.num_ref_frames);
+    // (§5.18.2).  The compact form replaces the full mask with
+    // has_refresh_frame_flags + one frame_to_refresh index; 0 refreshes no
+    // slot.  The long form is the historical f(NumRefFrames) mask.
+    if (c.enable_short_refresh_frame_flags) {
+      writer.put_bit(h.has_refresh_frame_flags);
+      if (h.has_refresh_frame_flags) {
+        writer.put_bits(h.frame_to_refresh,
+                        static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
+      }
+    } else {
+      writer.put_bits(h.refresh_frame_flags, c.num_ref_frames);
+    }
     // §5.18.2 reference map.  The frame_explicit_ref_frame_map bit is only
     // coded when the sequence header enables the choice; with
     // explicit_ref_frame_map = 0 the §7.7 derivation supplies the map and no
@@ -610,9 +639,26 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
 
   write_tile_info(writer, c, key);
 
-  // §5.18.6.1: f(8) at 8-bit, f(9) at 10-bit.
-  writer.put_bits(c.base_q_idx,
-                  static_cast<unsigned>(fmt::base_q_idx_bits(c.depth)));
+  // §5.18.6.1: f(8) at 8-bit, f(9) at 10-bit.  With a UV/DC delta enabled the
+  // shared writer emits base_q_idx plus the DeltaQ fields; otherwise the
+  // historical single field is written unchanged.
+  if (c.seq_delta_q.equal_ac_dc_q && !c.seq_delta_q.separate_uv_delta_q &&
+      !c.seq_delta_q.y_dc_delta_q_enabled &&
+      !c.seq_delta_q.uv_dc_delta_q_enabled &&
+      !c.seq_delta_q.uv_ac_delta_q_enabled) {
+    writer.put_bits(c.base_q_idx,
+                    static_cast<unsigned>(fmt::base_q_idx_bits(c.depth)));
+  } else {
+    assert(c.depth == fmt::BitDepth::k8 &&
+           "DC/AC delta-Q is wired for the 8-bit qindex domain");
+    std::string delta_error;
+    if (dcdeltaq::write_quantization_params(writer, c.base_q_idx,
+                                            c.seq_delta_q,
+                                            h.qp.frame_delta_q,
+                                            &delta_error) == 0) {
+      assert(false && "invalid §5.18.6.1 quantization_params()");
+    }
+  }
 #if defined(AV2ENC_VIDEO_DELTAQ)
   // §5.18.7.1 segmentation_params(), §5.18.7.2 setup_qm_params() and
   // §5.18.7.8 delta_q_params().  The adapter emits exactly the historical
@@ -626,6 +672,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     plan.segmentation = h.qp.segmentation;
     plan.delta_q = h.qp.delta_q;
     plan.primary_ref_is_none = h.qp.primary_ref_is_none;
+    plan.enable_ext_seg = h.qp.enable_ext_seg;
     std::string qp_error;
     if (deltaq::write_frame_qp_syntax(writer, plan, h, &qp_error) == 0) {
       // The header writer has no error channel; the planner validates the
@@ -670,17 +717,26 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     writer.put_bit(h.allow_df_sub_pu);
   }
   if (c.enable_deblock) {
-    // §5.18.7.9 deblocking_filter_params(): all four planes enabled, no
+    // §5.18.7.9 deblocking_filter_params(): every present plane enabled, no
     // df_delta_q.  df_par_bits_minus_2 is 0 in the sequence header, so the
-    // dfParBits = 2 domain only matters if a delta is ever signalled.
-    const bool apply[4] = {true, true, true, true};
-    const bool present[4] = {false, false, false, false};
-    std::string deblock_error;
-    const std::size_t deblock_bits = post::write_video_deblock_params(
-        writer, apply, present, &deblock_error);
-    assert(deblock_error.empty());
-    assert(deblock_bits == 8U);  // 4 apply flags + 4 df_delta_q_present
-    (void)deblock_bits;
+    // dfParBits = 2 domain only matters if a delta is ever signalled.  A
+    // monochrome stream codes no apply_deblocking_filter[2..3] and no chroma
+    // df_delta_q_present bit.
+    if (fmt::has_chroma(c.chroma)) {
+      const bool apply[4] = {true, true, true, true};
+      const bool present[4] = {false, false, false, false};
+      std::string deblock_error;
+      const std::size_t deblock_bits = post::write_video_deblock_params(
+          writer, apply, present, &deblock_error);
+      assert(deblock_error.empty());
+      assert(deblock_bits == 8U);  // 4 apply flags + 4 df_delta_q_present
+      (void)deblock_bits;
+    } else {
+      writer.put_bit(true);   // apply_deblocking_filter[0]
+      writer.put_bit(true);   // apply_deblocking_filter[1]
+      writer.put_bit(false);  // df_delta_q_present[0]
+      writer.put_bit(false);  // df_delta_q_present[1]
+    }
   } else {
     writer.put_bit(false);            // apply_deblocking_filter[0]
     writer.put_bit(false);            // apply_deblocking_filter[1]
@@ -734,7 +790,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     context.enable_cdef = true;
     context.single_picture_header_flag = false;
     context.cdef_on_skip_txfm = c.cdef_on_skip_txfm_mode;
-    context.num_planes = 3;
+    context.num_planes = fmt::has_chroma(c.chroma) ? 3 : 1;
     std::string cdef_error;
     filters_stream::write_cdef_params(writer, params, context, &cdef_error);
     assert(cdef_error.empty());
@@ -752,16 +808,19 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     context.single_picture_header_flag = false;
     context.frame_is_intra = key;
     context.sb_size = 64;
-    context.num_planes = 3;
-    context.sub_x = 1;
-    context.sub_y = 1;
+    context.num_planes = fmt::has_chroma(c.chroma) ? 3 : 1;
+    context.sub_x = fmt::subsampling_x(c.chroma);
+    context.sub_y = fmt::subsampling_y(c.chroma);
     context.base_q_idx = c.base_q_idx;
-    context.lr_tools_disable[0][pcw::kRestorePcWiener] = false;
-    context.lr_tools_disable[0][pcw::kRestoreWienerNs] = true;
+    // The frame tool list must be exactly the sequence list (§5.4.10), even
+    // when this frame leaves every unit unfiltered.
+    context.lr_tools_disable[0][pcw::kRestorePcWiener] =
+        c.lr_disable_luma_pc_wiener;
+    context.lr_tools_disable[0][pcw::kRestoreWienerNs] =
+        c.lr_disable_luma_wiener_ns;
     context.lr_tools_disable[1][pcw::kRestorePcWiener] = true;
-    const bool chroma_lr =
-        h.lr.plane[1].enabled || h.lr.plane[2].enabled;
-    context.lr_tools_disable[1][pcw::kRestoreWienerNs] = !chroma_lr;
+    context.lr_tools_disable[1][pcw::kRestoreWienerNs] =
+        !c.lr_uv_present || c.lr_disable_chroma_wiener_ns;
     pcw::LrParams params;
     params.frame_type[0] = pcw::kRestorePcWiener;
     params.frame_type[1] =
@@ -794,9 +853,9 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     context.single_picture_header_flag = false;
     context.frame_is_intra = key;
     context.sb_size = 64;
-    context.num_planes = 3;
-    context.sub_x = 1;
-    context.sub_y = 1;
+    context.num_planes = fmt::has_chroma(c.chroma) ? 3 : 1;
+    context.sub_x = fmt::subsampling_x(c.chroma);
+    context.sub_y = fmt::subsampling_y(c.chroma);
     context.base_q_idx = c.base_q_idx;
     context.lr_tools_disable[0][0] = false;
     context.lr_tools_disable[0][1] = true;   // PC-Wiener disabled
@@ -834,7 +893,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     context.enable_ccso = true;
     context.single_picture_header_flag = false;
     context.frame_is_intra = key;
-    context.num_planes = 3;
+    context.num_planes = fmt::has_chroma(c.chroma) ? 3 : 1;
     context.sb_size = 64;
     context.ccso_unit_matches_sb_size = c.ccso_unit_matches_sb_size;
     context.tile_start_or = 0;

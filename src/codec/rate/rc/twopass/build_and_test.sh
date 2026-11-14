@@ -102,6 +102,7 @@ echo "building: real 720p M2 encode tests"
   "$ROOT/src/pipeline/video/video_headers.cpp" \
   "$ROOT/src/pipeline/video/video_syntax.cpp" \
   "$ROOT/src/pipeline/video/video_frame.cpp" \
+  "$ROOT/src/codec/inter/temporal/ref_mv_bank.cpp"
   -o "${real}"
 
 echo

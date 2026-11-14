@@ -17,7 +17,9 @@
 #pragma once
 
 #include "core/bitstream/bitwriter.h"
+#include "codec/filters/cdef/cdef.h"
 #include "formats/chroma/chroma_format.h"
+#include "formats/high_bitdepth/hbd_filter_config.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +29,36 @@
 #include <vector>
 
 namespace av2enc::chroma {
+
+// §5.18.5.2 / §5.18.7.9-§5.18.7.12 loop-filter rows for the 8-bit format still
+// writer.  The encoder fills it from `ChromaFilterPlan`; a null pointer means
+// "all filters off", which is byte-identical to the historical writer.
+struct ChromaFilterHeaderConfig {
+  // §5.18.5.2 deblocking_filter_params().  DfDeltaQ is always 0.
+  bool apply_deblock_y_vert = false;
+  bool apply_deblock_y_horz = false;
+  bool apply_deblock_u = false;
+  bool apply_deblock_v = false;
+
+  // §5.18.7.10 cdef_params().  Strengths are in the decoded (8-bit) domain.
+  bool enable_cdef = false;
+  int cdef_damping = 3;
+  int cdef_num_strengths = 1;
+  cdef::CdefStrength cdef_strengths[cdef::kMaxStrengths] = {};
+
+  // §5.18.7.9 gdf_params() (header-only mode).
+  bool enable_gdf = false;
+  int gdf_pic_qc_idx = 0;
+  int gdf_pic_scale_idx = 0;
+
+  // §5.18.7.11 lr_params().
+  bool enable_restoration = false;
+  av2enc::hbd::HbdLrConfig lr;
+
+  // §5.18.7.12 ccso_params().
+  bool enable_ccso = false;
+  av2enc::hbd::HbdCcsoConfig ccso;
+};
 
 struct ChromaSeqConfig {
   std::uint16_t max_frame_width = 64;
@@ -80,8 +112,17 @@ struct ChromaSeqConfig {
   bool disable_loopfilters_across_tiles = false;
   bool enable_cdef = false;
   bool enable_gdf = false;
+  bool gdf_unit_matches_sb_size = true;
   bool enable_restoration = false;
+  // §5.4.10 loop-restoration tool list.  Only meaningful when
+  // enable_restoration is set; the writer derives the per-plane frame types
+  // from `ChromaFilterHeaderConfig::lr`.
+  bool lr_luma_pc = false;
+  bool lr_luma_ns = false;
+  bool lr_chroma_ns = false;
+  bool lr_tools_uv_present = false;
   bool enable_ccso = false;
+  bool ccso_unit_matches_sb_size = true;
   std::uint8_t df_par_bits_minus_2 = 0;
 
   // Both flags are syntax-only in this writer and are rejected when set:
@@ -139,6 +180,10 @@ struct SequenceHeaderInfo {
   bool separate_uv_delta_q = false;
   bool enable_cdef = false;
   bool enable_restoration = false;
+  bool lr_tools_disable_pc = true;
+  bool lr_tools_disable_ns = true;
+  bool lr_tools_uv_present = false;
+  bool lr_tools_disable_uv_ns = true;
   bool enable_ccso = false;
   bool film_grain_params_present = false;
 };
@@ -166,5 +211,12 @@ bool find_sequence_header(std::span<const std::uint8_t> temporal_unit,
 // chroma-format independent when all optional tools are disabled.
 std::vector<std::uint8_t> assemble_chroma_still(
     const ChromaSeqConfig& config, std::span<const std::uint8_t> tile_payload);
+
+// Filter-aware variant: writes the §5.18.5.2 / §5.18.7.9-§5.18.7.12 rows when
+// `filters` is non-null.  A null pointer is byte-identical to the two-argument
+// overload.
+std::vector<std::uint8_t> assemble_chroma_still(
+    const ChromaSeqConfig& config, std::span<const std::uint8_t> tile_payload,
+    const ChromaFilterHeaderConfig* filters);
 
 }  // namespace av2enc::chroma

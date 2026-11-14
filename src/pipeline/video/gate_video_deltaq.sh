@@ -6,6 +6,11 @@
 #                            variance split (SEG_LVL_ALT_Q = 0)
 #   --video-delta-q          per-superblock CurrentQIndex updates
 #   --video-per-segment-q    real SEG_LVL_ALT_Q driving the block quantizer
+#   --video-uv-delta-q D     separate UV/DC deltas and per-plane quantizers
+#   --video-seg-skip         SEG_LVL_SKIP on the low-variance bucket
+#   --video-seg-globalmv     SEG_LVL_GLOBALMV on a segment
+#   --video-seg-temporal     temporal segmentation prediction
+#   --video-segments N       up to 16 segments (enable_ext_seg when N > 8)
 #
 # Every case is encoded through the product CLI, decoded with the pinned
 # dav2d --strict 1, and compared sample-for-sample against --video-recon.
@@ -102,6 +107,36 @@ with open(sys.argv[1], "wb") as f:
         f.write(bytes([128]) * (cw * ch))
 PY
 
+# A deterministic mixed-variance 64x64 clip for the small-frame matrix.
+SMALL="${OUT}.mixed_64x64_4f.y4m"
+python3 - "$SMALL" <<'PY'
+import random
+import sys
+
+w, h, n = 64, 64, 4
+cw, ch = w // 2, h // 2
+random.seed(11)
+base = bytearray(w * h)
+for y in range(h):
+    for x in range(w):
+        if x < w // 2:
+            v = 80 + (x * 60) // (w // 2) + (y * 15) // h
+        else:
+            v = 100 + random.randint(0, 90)
+        base[y * w + x] = max(0, min(255, v))
+with open(sys.argv[1], "wb") as f:
+    f.write(f"YUV4MPEG2 W{w} H{h} F30:1 Ip A1:1 C420jpeg\n".encode())
+    for _ in range(n):
+        f.write(b"FRAME\n")
+        f.write(bytes(base))
+        f.write(bytes([128]) * (cw * ch))
+        f.write(bytes([128]) * (cw * ch))
+PY
+
+# 640x360 fixture: the repository's 4-frame clip (skipped when absent).
+INPUT_360="${ROOT}/testdata/shine_640x360_4f.y4m"
+[ -f "$INPUT_360" ] || INPUT_360="$MIXED"
+
 # Case table: name | input | expected pictures | expected IVF MD5 | args...
 #
 # MD5s are the gated bytes of this tree.  The default (no new flag) row must
@@ -119,6 +154,23 @@ CASES=(
   "b_psq_deb|$MIXED|4|63ab06a9300fc8d840edf0ee5006d3a0|--video --frames 4 --video-per-segment-q --video-deblock"
   "b_psq_ir|$MIXED|4|399e3b33432cb81a319a43cc2834e140|--video --frames 4 --video-per-segment-q --video-inter-residual --video-tx-search --video-deblock"
   "b_dq_ir|$MIXED|4|7147a17f0095cbd1874cb41ed3a7ba14|--video --frames 4 --video-delta-q --video-inter-residual"
+  # --- 64x64 UV/DC delta + segmentation extension matrix ---
+  "c_base|$SMALL|4|01cb55bdcb332aedbffba5374b2286f6|--video --frames 4"
+  "c_uv|$SMALL|4|0859b32923a26dec9c40dd9c19794031|--video --frames 4 --video-uv-delta-q 6"
+  "c_uv_deb|$SMALL|4|3d9ccbc59f12e1a15682c381f4af8129|--video --frames 4 --video-uv-delta-q 6 --video-deblock"
+  "c_skip|$SMALL|4|7cb13eb4d2edf4b67b60db6bc261476a|--video --frames 4 --video-seg-skip"
+  "c_gmv|$SMALL|4|489615866df1ff32cc42f0e841deab38|--video --frames 4 --video-seg-globalmv"
+  "c_temporal|$SMALL|4|ba31c1f094c7c9014e63d08f690c8c40|--video --frames 4 --video-seg-temporal"
+  "c_seg16|$SMALL|4|39ccc68c1fe912952b64ac592a36c757|--video --frames 4 --video-segmentation --video-segments 16"
+  "c_all|$SMALL|4|5227e113f091383c217646a81a897477|--video --frames 4 --video-uv-delta-q 6 --video-seg-skip --video-seg-globalmv --video-seg-temporal --video-segments 16 --video-deblock"
+  # --- 640x360 UV/DC delta + segmentation extension matrix ---
+  "d_uv|$INPUT_360|4|c8b5a11a5a8c759a30f595708d8f4524|--video --frames 4 --video-uv-delta-q 6"
+  "d_uv_ir_deb|$INPUT_360|4|b5a5266c61479d2ad1ba8b441492e72b|--video --frames 4 --video-uv-delta-q 6 --video-inter-residual --video-deblock"
+  "d_skip|$INPUT_360|4|522dffd778f29255277e009ca7f3f5f3|--video --frames 4 --video-seg-skip"
+  "d_gmv|$INPUT_360|4|c162e5a6b56164e747211103d47cdcda|--video --frames 4 --video-seg-globalmv"
+  "d_temporal|$INPUT_360|4|e1784a99061078e1bf36d1bf4c56080d|--video --frames 4 --video-seg-temporal"
+  "d_seg16|$INPUT_360|4|0cd12535516759e6b3e91170c47ed1ed|--video --frames 4 --video-segmentation --video-segments 16"
+  "d_all|$INPUT_360|4|d3a7e390540604d7ca1f208219a2e25e|--video --frames 4 --video-uv-delta-q 6 --video-seg-skip --video-seg-globalmv --video-seg-temporal --video-segments 16 --video-inter-residual --video-deblock"
 )
 
 echo "== video delta-Q/segmentation gate =="
@@ -251,6 +303,36 @@ else
   fail "no skipped leaf exercised the inferred segment id"
 fi
 
+# UV/DC delta-Q really resolves distinct per-plane §7.14.2 quantizers.
+"$BIN" "$SMALL" --video --frames 2 --video-uv-delta-q 6 --video-trace \
+  -o "${OUT}.trace_uv.ivf" 2>"${OUT}.trace_uv.log" >/dev/null
+UVQ=$(grep -c 'uvdq ' "${OUT}.trace_uv.log" || true)
+UVSPLIT=$(awk '/uvdq / { for (i=1;i<=NF;i++) { if ($i ~ /^u_ac_q=/) { split($i,a,"="); u=a[2] } if ($i ~ /^v_ac_q=/) { split($i,a,"="); v=a[2] } } if (u != v) n++ } END { print n+0 }' "${OUT}.trace_uv.log")
+if [ "${UVQ:-0}" -gt 0 ] && [ "${UVSPLIT:-0}" -gt 0 ]; then
+  echo "PASS UV/DC delta-Q resolved $UVSPLIT distinct U/V quantizer pair(s)"
+  PASS=$((PASS + 1))
+else
+  fail "UV/DC delta-Q did not resolve distinct per-plane quantizers"
+fi
+
+# The extension flags actually reach the writer: SEG_LVL_SKIP/GLOBALMV,
+# temporal_update and segment ids above 7.
+AV2ENC_VIDEO_TRACE=1 "$BIN" "$INPUT_360" --video --frames 4 \
+  --video-uv-delta-q 6 --video-seg-skip --video-seg-globalmv \
+  --video-seg-temporal --video-segments 16 \
+  -o "${OUT}.trace_ext.ivf" 2>"${OUT}.trace_ext.log" >/dev/null
+EXT_SKIP=$(grep -c 'skp=1' "${OUT}.trace_ext.log" || true)
+EXT_GMV=$(grep -c 'gmv=1' "${OUT}.trace_ext.log" || true)
+EXT_TEMPORAL=$(grep -c 'temporal=1' "${OUT}.trace_ext.log" || true)
+EXT_MAX=$(grep -o 'seg=[0-9]*' "${OUT}.trace_ext.log" | cut -d= -f2 | sort -n | tail -1)
+if [ "${EXT_SKIP:-0}" -gt 0 ] && [ "${EXT_GMV:-0}" -gt 0 ] &&
+   [ "${EXT_TEMPORAL:-0}" -gt 0 ] && [ "${EXT_MAX:-0}" -ge 8 ]; then
+  echo "PASS extensions: skip=$EXT_SKIP gmv=$EXT_GMV temporal=$EXT_TEMPORAL max_seg=$EXT_MAX"
+  PASS=$((PASS + 1))
+else
+  fail "extension trace incomplete (skip=$EXT_SKIP gmv=$EXT_GMV temporal=$EXT_TEMPORAL max_seg=$EXT_MAX)"
+fi
+
 # --- usage rejections (exit 2 before the output file is opened) ------------
 reject() {
   local label=$1 needle=$2
@@ -306,6 +388,36 @@ reject "delta-q 10-bit" "only wired on the 8-bit 4:2:0" \
 reject "per-segment-q lossless segment" "lossless" \
   "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 1 --qp 8 \
   --video-per-segment-q --video-seg-delta -8
+reject "uv-delta-q + qm" "does not compose with --video-qm" \
+  "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 4 \
+  --video-uv-delta-q 6 --video-qm
+reject "uv-delta-q + tcq" "does not compose with --video-tcq" \
+  "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 4 \
+  --video-uv-delta-q 6 --video-tcq
+reject "uv-delta-q + cctx" "does not compose with --video-cctx" \
+  "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 4 \
+  --video-uv-delta-q 6 --video-cctx
+reject "uv-delta-q + tiles" "does not support --tiles > 1x1" \
+  "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 4 \
+  --video-uv-delta-q 6 --tiles 2x1
+reject "uv-delta-q 10-bit" "only wired on the 8-bit 4:2:0" \
+  "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 4 \
+  --bit-depth 10 --video-uv-delta-q 6
+reject "seg-skip with one segment" "need at least two segments" \
+  "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 4 \
+  --video-seg-skip --video-segments 1
+reject "seg-skip + globalmv need three ids" "need --video-segments >= 3" \
+  "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 4 \
+  --video-seg-skip --video-seg-globalmv --video-segments 2
+reject "seg-globalmv + per-segment-q" "does not compose with --video-per-segment-q" \
+  "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 4 \
+  --video-seg-globalmv --video-per-segment-q
+reject "seg-temporal + b frames" "does not compose with --b-frames" \
+  "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 6 \
+  --video-seg-temporal --b-frames 2
+reject "segmentation + multi-ref" "needs a single reference" \
+  "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 4 \
+  --video-segmentation --video-refs 2
 
 echo
 if [ "$FAIL" -ne 0 ]; then

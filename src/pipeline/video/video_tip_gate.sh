@@ -193,6 +193,45 @@ fi
 # --- 8 pictures (six chained TIP frames) ----------------------------------
 run_pair p8 "$INPUT" 8
 
+# --- TIP-as-reference (§7.9 over a TIP display frame) ---------------------
+#
+# With --video-ref-mvs the last input picture is coded as a tile-coded P whose
+# reference list is [final TIP display frame, anchor].  The anchor P has a
+# single reference and the TIP frames never build the temporal stack, so any
+# §7.12.2.7/.8 temporal candidate in the log comes from that tail P.
+check_tail_temporal() {
+  local label=$1
+  local candidates
+  candidates=$(sed -n 's/.*temporal MV candidates \([0-9]*\).*/\1/p' \
+      "$OUT/$label.log" | tail -1)
+  candidates=${candidates:-0}
+  if [ "$candidates" -le 0 ]; then
+    echo "FAIL($label): no §7.9 candidates from the TIP-referencing P"
+    FAIL=1
+  else
+    echo "  PASS($label): $candidates temporal candidates from the TIP slot"
+  fi
+}
+if [ -f "$INPUT_360" ]; then
+  run_case tipref_p4 "$INPUT_360" 4 --video-ref-mvs
+  check_tail_temporal tipref_p4
+fi
+run_case tipref_p8 "$INPUT" 8 --video-ref-mvs
+check_tail_temporal tipref_p8
+
+# The schedule needs a TIP display frame to reference: 3 pictures must be
+# rejected by name rather than silently coding no P.
+if "$BIN" "$INPUT_360" -o "$OUT/reject3.ivf" --video --frames 3 \
+    --video-tip --video-ref-mvs >"$OUT/reject3.log" 2>&1; then
+  echo "FAIL: --video-tip --video-ref-mvs accepted only 3 pictures"
+  FAIL=1
+else
+  grep -q "at least 4 input" "$OUT/reject3.log" || {
+    echo "FAIL: 3-picture TIP+ref-mvs rejection does not name the limit"
+    FAIL=1
+  }
+fi
+
 # The A/B control is not a product surface: using it without --video-tip must
 # be rejected by name, not silently change a default stream.
 if "$BIN" "$INPUT" -o "$OUT/reject.ivf" --video --frames 3 \

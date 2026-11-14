@@ -91,9 +91,9 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 | 13 — `OBU_LEADING_TIP` | p256 | **ABSENT** | TIP decision/syntax exists (`inter/temporal/tip.cpp`, `temporal_syntax.cpp`) but nothing wraps a TIP frame in OBU type 13 | No OBU writer for TIP frames; `is_tip_frame()` only recognized in readers (`content_interpretation.cpp:943-946`). |
 | 14 — `OBU_REGULAR_TIP` | p256 | **ABSENT** | same | same. |
 | 15 — `OBU_BUFFER_REMOVAL_TIMING` | p256 | **COMPONENT** | `brt:473-489,941-949`; `hrd_test`; `hrd_stream_gate` PASS (self-parse; pinned dav2d rejects type 15) | No CLI path; decoder never consumes it. |
-| 16 — `OBU_LAYER_CONFIGURATION_RECORD` | p256 | **COMPONENT** | `lcr/ops:393-511`; `svc_test`; `svc/gate_dav2d.sh` (dav2d ignores LCR; avmdec validates OPS selection) | Writer is field-incomplete (§5.8 below). |
+| 16 — `OBU_LAYER_CONFIGURATION_RECORD` | p256 | **WIRED** (CPU `--video`, opt-in) | `pipeline/svc/ops_full` + `pipeline/video/video_lcr_ops.cpp`; `gate_video_headers.sh` (avmdec parses the global/local LCR) | Field-complete global and local LCR (§5.8). Default stream emits none (`seq_lcr_id = 0`). |
 | 17 — `OBU_ATLAS_SEGMENT` | p256 | **OUT-OF-SCOPE** | No writer; only enum + ordering knowledge (`svc_framing.h:47`, `svc_framing.cpp:228-231`) | No `atlas_segment_info_obu()` implementation anywhere. |
-| 18 — `OBU_OPERATING_POINT_SET` | p256 | **COMPONENT** | `lcr/ops:516-604`; `svc_test`; `svc/gate_dav2d.sh` (avmdec `--select-ops`) | Field-incomplete (§5.10/§5.11 below). |
+| 18 — `OBU_OPERATING_POINT_SET` | p256 | **WIRED** (CPU `--video`, opt-in) | `pipeline/svc/ops_full` + `pipeline/video/video_lcr_ops.cpp`; `gate_video_headers.sh` (avmdec parses the global/local OPS) | Field-complete global and local OPS (§5.10/§5.11). Default stream emits none. |
 | 19 — `OBU_BRIDGE_FRAME` | p256 | **OUT-OF-SCOPE** | `random_access` derivations mention bridge only; no OBU writer | No bridge frame header, no `bridge_frame_ref_idx`. |
 | 20 — `OBU_MSDO` | p256 | **OUT-OF-SCOPE** | No writer; enum + `GLOBAL_XLAYER_ID` special case only (`svc_framing.cpp:196-205`) | No `multistream_decoder_operation_obu()`. |
 | 21 — `OBU_RAS_FRAME` | p256 | **COMPONENT** | `random_access.cpp:1227,1314-1321`; `random_access` gate | No CLI path; RAS requires `long_term_frame_id_bits > 0` from a component header. |
@@ -109,15 +109,15 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 
 | Item | §/page | Status | Evidence | Gap |
 |---|---|---|---|---|
-| `seq_header_id uvlc()` | §5.4.1 p55; §6.4.1 p258 | **PARTIAL** | `m0:176` (`0`); `m1:80`; `m2:96`; `chroma_headers.cpp:336` | Only id 0. Reader rejects anything else (`chroma_headers.cpp:503-508`); no `MAX_SEQ_NUM`-wide header bank, so `seq_header_id_in_frame_header` can only select 0. |
+| `seq_header_id uvlc()` | §5.4.1 p55; §6.4.1 p258 | **WIRED** (CPU `--video`) | `m0:176` (`0`); `m1:80`; `m2:96`; `chroma_headers.cpp:336`; `video_headers.cpp` writes `config.seq_header_id` | Default id 0. `--video-multi-sequence` carries a second header with id 1 and selects it with `seq_header_id_in_frame_header` (decoder-gated: `gate_video_headers.sh`). |
 | `seq_profile_idc f(5)` | p55; p258 | **COMPONENT** | CLI writes 0 (`m0:177`); profiles 3/4 via `chroma_format.cpp:44-60`; `chroma/gate.sh` decodes 4:2:2/4:4:4 | CLI is profile 0 only. Profile 1/2 never emitted. |
 | `single_picture_header_flag f(1)` | p55; p258-259 | **WIRED** | `m0:178` (1); `m2:98` (0) | Non-single-picture form exists only in components (M2/prediction gates). |
 | `seq_level_idx f(5)` | p55; p258 | **WIRED** | `m0:179` (config, default 7 = level 5.1); `m1:83` | Levels other than 7 not exposed by CLI. |
-| `seq_tier f(1)` (only when `seq_level_idx > 3 && !single_picture`) | p55; p258 | **PARTIAL** | `m2:100`, `tlayers_syntax.cpp:110`, `random_access.cpp:270` all write `0` | High tier (1) is never emitted; only main-tier streams exist although tile-limit code accepts tier 1 (`tiles/tile_layout.cpp:100-120`). |
+| `seq_tier f(1)` (only when `seq_level_idx > 3 && !single_picture`) | p55; p258 | **WIRED** (CPU `--video`) | `m2:100`, `tlayers_syntax.cpp:110`, `random_access.cpp:270` write 0; `--video-tier high` writes 1 | Main tier is the default; high tier is decoder-gated by `gate_video_headers.sh`. Tile-limit code accepts tier 1 (`tiles/tile_layout.cpp:100-120`). |
 | `chroma_format_idc uvlc()` | p55; p259 Table 6.2 | **COMPONENT** | CLI 0 (`m0:181`); 0/1/2/3 writer + decoder gate `chroma_headers.cpp:329-376`, `chroma_format.cpp:35-65`, `chroma/gate.sh` | CLI cannot encode 4:0:0/4:2:2/4:4:4. |
 | `bit_depth_idc uvlc()` | p55; p259-260 Table 6.3 | **COMPONENT** | CLI 1 = 8-bit (`m0:182`); 0 = 10-bit in `hbd_headers.cpp:99`, `high_bitdepth_headers.cpp:98`, gates `build-hdr`/`build-m10` | Spec allows only 0/1 (10/8-bit); 12-bit is not representable by the syntax and is not emitted. |
 | `set_chroma_format_and_bit_depth()` (SubsamplingX/Y, Monochrome, NumPlanes, BitDepth, MaxQ) | §6.4.1 p259-260 | **DECODER-ONLY** | Encoder mirror: `chroma_format.cpp:35-65`, `format/format.cpp:330-350` | Encoder can produce all four chroma idcs and both bit depths (components), so the inference is exercisable. |
-| `seq_lcr_id f(3)` | p56; p260-261 | **PARTIAL** | `m2:105` writes 0; `svc_mux.cpp:225` sets plan id 1 but never rewrites the sequence header | No stream association: composed SVC streams keep `seq_lcr_id = 0`, so the emitted LCR is not referenced by any sequence header. §6.4.1's LCR-association rules cannot be satisfied by an emitted stream. |
+| `seq_lcr_id f(3)` | p56; p260-261 | **WIRED** (CPU `--video`, opt-in) | `m2:105` writes 0; `--video-lcr-full` writes 1 and emits the global/local LCR + OPS | `seq_lcr_id = 1` activates the global LCR (`config_record_id = 1`); avmdec parses and validates the records (`gate_video_headers.sh`). The default stays 0 with no LCR/OPS. |
 | `still_picture f(1)` | p56; p260 | **WIRED** | M0/M1 single-picture infers 1; `m2:106` writes 0 | — |
 | `max_tlayer_id f(2)` | p56; p261 | **COMPONENT** | single-picture infers 0; `tlayers_syntax.cpp:117` writes 1..3; TLayers gate decodes hierarchical GOP | No CLI path. `max_tlayer_id > 0` requires non-single-picture headers. |
 | `max_mlayer_id f(3)` | p56; p261 | **PARTIAL** | `m2:108` writes 0; `tlayers_syntax.cpp:118` writes 0 | No writer emits >0; inter-layer prediction/embedded layers are out of scope, but then the syntax branch is dead. |
@@ -133,7 +133,7 @@ checks), `film_grain_test` (611 checks), `qm_test` (258,446), `mfh_test`
 | `mlayer_dependency_present_flag f(1)` + `mlayer_dependency_map f(1)` | p57; p264 | **ABSENT** | no writer (grep: only `svc_layers.h` data model) | Dead branch because `max_mlayer_id` is never >0. |
 | `tlayer_dependency_present_flag f(1)` + `tlayer_dependency_map f(1)` | p57-58; p264 | **COMPONENT** | `tlayers_syntax.cpp:143-154`; TLayers gate PASS | Gate uses the spec-default map (flag 0) because the pinned dav2d expects a different later syntax (`tlayers.h:70-78`). Explicit-map streams are spec-only, not decoder-verified. |
 | `multi_tlayer_dependency_map_present_flag f(1)` | p57; p264 | **ABSENT** | no writer | Requires `max_mlayer_id > 0`. |
-| `save_sequence_header()` / header bank | p58; p264 | **PARTIAL** | Writers serialize a header; no id-indexed store (only id 0) | Multi-sequence streams impossible. |
+| `save_sequence_header()` / header bank | p58; p264 | **WIRED** (CPU `--video`, opt-in) | `--video-multi-sequence` writes ids 0 and 1 and every frame selects id 1 | The single-header default keeps id 0; the gate proves the decoder resolves the id-1 bank entry. |
 
 ### 3.2 §5.4.2 sequence tile config (p59; §6.4.2 p264)
 

@@ -76,6 +76,7 @@ echo "building: M2 decoder gate"
   "$ROOT/src/pipeline/video/video_headers.cpp" \
   "$ROOT/src/pipeline/video/video_syntax.cpp" \
   "$ROOT/src/pipeline/video/video_frame.cpp" \
+  "$ROOT/src/codec/inter/temporal/ref_mv_bank.cpp"
   -o "${build_dir}/hrd_stream_gate"
 
 if [[ -z "${DAV2D:-}" ]]; then

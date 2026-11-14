@@ -26,8 +26,14 @@ namespace av2enc::basic {
 enum class ObuType : std::uint8_t {
   kSequenceHeader = 1,
   kTemporalDelimiter = 2,
+  kMultiFrameHeader = 3,
   kClosedLoopKey = 4,
   kRegularTileGroup = 7,
+  // §6.2.2 config OBUs the plain --video writer can carry.  The SVC module has
+  // its own enum; these values keep basic::make_obu usable for the header
+  // surface (--video-lcr-full).
+  kLayerConfigurationRecord = 16,
+  kOperatingPointSet = 18,
 };
 
 // obu_header() fields (§5.2.2). With `extension_flag == false`, `mlayer_id`

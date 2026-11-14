@@ -43,12 +43,22 @@
 #include "codec/inter/temporal/temporal_types.h"
 #include "codec/partition/tree/partition.h"
 
+namespace av2enc::inter::temporal {
+struct RefMvBank;
+struct TrajectoryField;
+}
+
 namespace av2enc::video::merge {
 
 using partition::BlockSize;
 
 struct StackParams;
 struct MvStack;
+// §7.12.2.21 injection point.  The pipeline supplies the adapter that owns the
+// temporal component's bank; keeping it a callback lets `merge` stay linkable
+// without ref_mv_bank.cpp.
+using RefMvBankFn = void (*)(const StackParams& params, MvStack* stack,
+                             int* prune_count);
 // §7.12.2.7/.8 injection point.  The builder calls this at the normative step
 // with its own params (so the callback reads the §7.9 field and order hints)
 // and the current stack.  Keeping it a callback lets `merge` stay linkable
@@ -348,6 +358,20 @@ struct StackParams {
   // is possible, so nullptr is fine.
   const int* frame_distance = nullptr;
   int num_refs = 0;
+
+  // §7.12.2 step 19 (§7.12.2.21): when non-null, the caller-managed
+  // per-reference MV bank contributes candidates.  Null keeps the historical
+  // stack (enable_refmvbank = 0).
+  const inter::temporal::RefMvBank* refmv_bank = nullptr;
+  RefMvBankFn refmv_bank_scan = nullptr;
+  // Optional instrumentation: counts candidates inserted by step 19.
+  int* refmvbank_added = nullptr;
+
+  // §7.9.2/§7.12.2.14/.16 trajectory field.  Non-null enables the TrajMv
+  // derived candidates (enable_mv_traj = 1).
+  const inter::temporal::TrajectoryField* mv_traj = nullptr;
+  // Optional instrumentation: counts trajectory-derived candidates.
+  int* mv_traj_derived = nullptr;
 };
 
 struct StackCandidate {
@@ -360,6 +384,8 @@ struct StackCandidate {
   // scan.  Instrumentation only (never coded); lets a gate prove the stream
   // actually selected a temporal candidate.
   bool from_temporal = false;
+  // True when this entry came from §7.12.2.21 step 19 (instrumentation only).
+  bool from_refmvbank = false;
 };
 
 struct MvStack {

@@ -275,7 +275,7 @@ inline bool apply_cdef16(const HbdCdefPlan& plan, const fmt::Format& format,
   frame.n64_cols = plan.n64_cols;
   frame.n64_rows = plan.n64_rows;
   cdef::CdefOptions options = plan.options;
-  options.bit_depth = 10;
+  options.bit_depth = plan.options.bit_depth;
   const cdef::CdefStatus status = cdef::cdef_frame16(frame, options);
   if (status != cdef::CdefStatus::kOk) {
     if (error != nullptr) {

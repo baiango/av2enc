@@ -6,6 +6,7 @@
 
 #include "codec/inter/merge/merge.h"
 
+#include "codec/inter/temporal/motion_field.h"
 
 #include <algorithm>
 #include <array>
@@ -196,6 +197,11 @@ class StackBuilder {
       fill_derived();
     }
 
+    // Step 19: §7.12.2.21 fill mvp from the reference MV bank.
+    if (p_.refmv_bank_scan != nullptr) {
+      p_.refmv_bank_scan(p_, stack_, &prune_count_);
+    }
+
     // Step 21: pre-clamp existing candidates.
     clamp_all();
 
@@ -359,7 +365,28 @@ class StackBuilder {
     return false;
   }
 
-  // §7.12.2.16 Single add derived process (non-temporal subset).
+  // §7.9.2 TrajMv lookup for one reference at the current block's 8x8 cell.
+  bool traj_mv_at(int ref, int y8, int x8, inter::mc::Mv* out) const {
+    const inter::temporal::TrajectoryField* t = p_.mv_traj;
+    if (t == nullptr || t->mv == nullptr || t->valid == nullptr ||
+        t->w8 <= 0 || t->h8 <= 0 || ref < 0 || ref >= t->num_refs ||
+        y8 < 0 || y8 >= t->h8 || x8 < 0 || x8 >= t->w8) {
+      return false;
+    }
+    const std::size_t cell =
+        static_cast<std::size_t>(ref) *
+            static_cast<std::size_t>(t->h8) * static_cast<std::size_t>(t->w8) +
+        static_cast<std::size_t>(y8) * static_cast<std::size_t>(t->w8) +
+        static_cast<std::size_t>(x8);
+    if (t->valid[cell] == 0) return false;
+    const std::size_t idx = inter::temporal::traj_mv_index(
+        t->w8, t->h8, t->num_refs, ref, y8, x8, 0);
+    out->y = t->mv[idx];
+    out->x = t->mv[idx + 1];
+    return true;
+  }
+
+  // §7.12.2.16 Single add derived process.
   void single_add_derived(int mv_row, int mv_col, int cand_list) {
     const inter::mc::MiInfo& m = mi_at(p_, mv_row, mv_col);
     const std::int8_t cand_ref = m.ref[cand_list];
@@ -375,21 +402,78 @@ class StackBuilder {
     }
     const int cur_dist = p_.frame_distance[cur_ref];
     const int cand_dist = p_.frame_distance[cand_ref];
-    if (!((cur_dist > 0 && cand_dist > 0) ||
-          (cur_dist < 0 && cand_dist < 0))) {
-      return;
-    }
     const inter::mc::Mv cand_mv = get_mv(m, cand_list);
-    const inter::mc::Mv projected =
-        project_mv(cand_mv, std::abs(cur_dist), std::abs(cand_dist));
-    if (!comp_mv_in_derived(projected, projected)) {
+    inter::mc::Mv projected{};
+    bool have_proj = false;
+    if (p_.mv_traj != nullptr) {
+      const int y8 = p_.mi_row >> 1;
+      const int x8 = p_.mi_col >> 1;
+      inter::mc::Mv cur_traj{};
+      inter::mc::Mv cand_traj{};
+      if (traj_mv_at(cur_ref, y8, x8, &cur_traj) &&
+          traj_mv_at(cand_ref, y8, x8, &cand_traj)) {
+        projected.y = clip3(inter::temporal::kMvLow + 1,
+                            inter::temporal::kMvUpp - 1,
+                            cand_mv.y + cur_traj.y - cand_traj.y);
+        projected.x = clip3(inter::temporal::kMvLow + 1,
+                            inter::temporal::kMvUpp - 1,
+                            cand_mv.x + cur_traj.x - cand_traj.x);
+        have_proj = true;
+        if (p_.mv_traj_derived != nullptr) ++*p_.mv_traj_derived;
+      }
+    }
+    if (!have_proj &&
+        ((cur_dist > 0 && cand_dist > 0) ||
+         (cur_dist < 0 && cand_dist < 0))) {
+      projected =
+          project_mv(cand_mv, std::abs(cur_dist), std::abs(cand_dist));
+      have_proj = true;
+    }
+    if (have_proj && !comp_mv_in_derived(projected, projected)) {
       add_derived(projected, projected);
     }
   }
 
-  // §7.12.2.14 Compound add derived process (non-temporal subset).
+  // §7.12.2.14 Compound add derived process.
   void compound_add_derived(int mv_row, int mv_col) {
     const inter::mc::MiInfo& m = mi_at(p_, mv_row, mv_col);
+    // §7.12.2.14 trajectory block (enable_mv_traj).
+    if (p_.mv_traj != nullptr && p_.num_refs > 1 &&
+        p_.ref_frame[0] != p_.ref_frame[1]) {
+      const int y8 = p_.mi_row >> 1;
+      const int x8 = p_.mi_col >> 1;
+      inter::mc::Mv traj0{};
+      inter::mc::Mv traj1{};
+      const bool ref0_valid = traj_mv_at(p_.ref_frame[0], y8, x8, &traj0);
+      const bool ref1_valid = traj_mv_at(p_.ref_frame[1], y8, x8, &traj1);
+      if (ref0_valid && ref1_valid) {
+        for (int list = 0; list < 2; ++list) {
+          const std::int8_t cand_ref = m.ref[list];
+          if (!is_inter_ref(cand_ref) || cand_ref == kTipFrame) continue;
+          inter::mc::Mv cand_traj{};
+          if (!traj_mv_at(cand_ref, y8, x8, &cand_traj)) continue;
+          const inter::mc::Mv cand_mv = get_mv(m, list);
+          inter::mc::Mv cand_mvs[2];
+          cand_mvs[0].y = clip3(inter::temporal::kMvLow + 1,
+                                inter::temporal::kMvUpp - 1,
+                                cand_mv.y + traj0.y - cand_traj.y);
+          cand_mvs[0].x = clip3(inter::temporal::kMvLow + 1,
+                                inter::temporal::kMvUpp - 1,
+                                cand_mv.x + traj0.x - cand_traj.x);
+          cand_mvs[1].y = clip3(inter::temporal::kMvLow + 1,
+                                inter::temporal::kMvUpp - 1,
+                                cand_mv.y + traj1.y - cand_traj.y);
+          cand_mvs[1].x = clip3(inter::temporal::kMvLow + 1,
+                                inter::temporal::kMvUpp - 1,
+                                cand_mv.x + traj1.x - cand_traj.x);
+          if (derived_count_ < kMaxDrStackSize &&
+              !comp_mv_in_derived(cand_mvs[0], cand_mvs[1])) {
+            add_derived(cand_mvs[0], cand_mvs[1]);
+            if (p_.mv_traj_derived != nullptr) ++*p_.mv_traj_derived;
+          }
+        }
+      }
+    }
     int cand_ref_idx0 = 0;
     int cand_ref_idx1 = 1;
     if (m.ref[0] == p_.ref_frame[0] || m.ref[1] == p_.ref_frame[0]) {

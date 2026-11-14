@@ -45,24 +45,24 @@ repro and kept rejected.
 | 19 | Weighted CWP (non-equal) | DONE (`--video-cwp-weighted`; `gate_video_pred_surface.sh`) |
 | 20 | Implicit mask blending (`enable_imp_msk_bld`) | DONE (`--video-imp-mask`; `gate_video_pred_surface.sh`) |
 | 21 | DF sub-PU | DONE (`--video-df-sub-pu`; sub-PU grid exact with `--video-opfl --video-deblock`) |
-| 22 | Adaptive MVD / MVD sign derivation / flexible MV resolution | QUEUE |
-| 23 | `num_same_ref_compound > 0`, refmvbank, short refresh, `mv_traj` | QUEUE |
-| 24 | TIP-as-reference in tile frames, warp/wedge temporal fields | QUEUE |
+| 22 | Adaptive MVD / MVD sign derivation / flexible MV resolution | DONE `f838a9a` |
+| 23 | `num_same_ref_compound > 0`, short refresh, `mv_traj` (refs 2); `refmvbank` rejected | DONE three tools: `--video-same-ref-compound`, `--video-short-refresh`, `--video-mv-traj` (64x64 + 640x360, dav2d exact). `--video-refmvbank` is wired but **rejected by name**: decoder diverges at the third superblock row (docs/negative-results.md). `mv_traj` refs>=3 also rejected |
+| 24 | TIP-as-reference, warp/wedge §7.22 fields | DONE (`ec7fcf6`); `RefFrame[0] == TIP_FRAME` block symbols remain |
 
 ## Wave 4 — headers, formats, rates, schedules
 
 | # | Feature | Status |
 |---|---|---|
-| 25 | High tier, `seq_header_id` bank / multi-sequence, full LCR/OPS fields | QUEUE |
-| 26 | Separate UV/DC delta-Q (`separate_uv_delta_q`, `equal_ac_dc_q`) | QUEUE |
-| 27 | 10-bit / non-4:2:0 video in-loop filters | QUEUE |
+| 25 | High tier, `seq_header_id` bank / multi-sequence, full LCR/OPS fields | DONE (`--video-tier high`, `--video-multi-sequence`, `--video-lcr-full`; `gate_video_headers.sh`) |
+| 26 | Separate UV/DC delta-Q (`separate_uv_delta_q`, `equal_ac_dc_q`) | DONE (`--video-uv-delta-q`; `gate_video_deltaq.sh`) |
+| 27 | 10-bit / non-4:2:0 video in-loop filters | DONE `610e92b` (4:2:2 16-px and 8-bit 4:0:0 PC-Wiener rejected) |
 | 28 | CRF/VBR with B frames, temporal layers, SVC | QUEUE |
 | 29 | Multi-GOP B frames, multi-reference hierarchical P | QUEUE |
-| 30 | `SEG_LVL_SKIP`/`SEG_LVL_GLOBALMV`, temporal segmentation, 16 segments | QUEUE |
+| 30 | `SEG_LVL_SKIP`/`SEG_LVL_GLOBALMV`, temporal segmentation, 16 segments | DONE (`--video-seg-skip/--video-seg-globalmv/--video-seg-temporal/--video-segments`; `gate_video_deltaq.sh`) |
 | 31 | Film grain / lossless on the other schedules and formats | QUEUE |
-| 32 | 8-bit non-4:2:0 still writer filter stage | QUEUE |
-| 33 | 4:2:2 16-pixel leaves | QUEUE |
-| 34 | `cfl_ds_filter_index` 1..3 on video | QUEUE |
+| 32 | 8-bit non-4:2:0 still writer filter stage | DONE `610e92b` |
+| 33 | 4:2:2 16-pixel leaves | BLOCKED: pinned dav2d frame-header parse error; rejection retained |
+| 34 | `cfl_ds_filter_index` 1..3 | DONE `610e92b` (format video core; M2 8-bit 4:2:0 rejects) |
 | 35 | Screen-content force-on, `reduce_pb_aspect_ratio` | QUEUE |
 
 ## Hard dav2d rejections (out of scope; stay documented)

@@ -21,6 +21,7 @@
 #include "codec/transform/variants/tx_variants.h"
 #include "cuda/pipeline/still/hbd/hbd_cpu.h"
 #include "formats/high_bitdepth/hbd_depth.h"
+#include "pipeline/video/hbd/video_hbd_filters.h"
 #include "pipeline/video/hbd/video_hbd_ops.h"
 #include "pipeline/video/video_headers.h"
 #include "pipeline/video/video_syntax.h"
@@ -574,7 +575,10 @@ class FrameEncoder {
 
   bool encode(std::vector<std::uint8_t>& tile_payload,
               std::vector<syntax::BlockSyntax>& blocks,
-              std::vector<std::int32_t>& levels, std::string& error) {
+              std::vector<std::int32_t>& levels,
+              post::VideoFilterPlan* filters,
+              std::uint16_t* const recon_samples[3],
+              const int recon_strides[3], std::string& error) {
     partition::DecisionOptions poptions;
     poptions.min_block_size_px = options_.min_block_size;
     poptions.max_depth = options_.max_partition_depth;
@@ -614,6 +618,39 @@ class FrameEncoder {
       if (!collect_node(sb, error)) return false;
     }
 
+    // §7.17-§7.20.5 loop filters run on the completed reconstruction, before
+    // it becomes the output picture / reference.  Deblock is enabled for
+    // every frame; the remaining tools are planned on the intra key frame.
+    *filters = post::VideoFilterPlan{};
+    if (options_.enable_deblock ||
+        (keyframe_ && options_.loop_filters.any())) {
+      int visible_w[3] = {width_, width_, width_};
+      int visible_h[3] = {height_, height_, height_};
+      const int sub_x = fmt::subsampling_x(format_.chroma);
+      const int sub_y = fmt::subsampling_y(format_.chroma);
+      visible_w[1] = visible_w[2] = static_cast<int>(width_) >> sub_x;
+      visible_h[1] = visible_h[2] = static_cast<int>(height_) >> sub_y;
+      std::uint16_t* const* recon_ptr = recon_samples;
+      const int* recon_stride = recon_strides;
+      FramePlanes source;
+      source.plane[0] = PlaneView{source_.y16.data(), width_, width_, height_};
+      if (fmt::has_chroma(format_.chroma)) {
+        source.plane[1] =
+            PlaneView{source_.u16.data(), visible_w[1], visible_w[1],
+                      visible_h[1]};
+        source.plane[2] =
+            PlaneView{source_.v16.data(), visible_w[2], visible_w[2],
+                      visible_h[2]};
+      }
+      if (!apply_frame_filters(
+              format_, mi_cols_, mi_rows_, visible_w, visible_h, recon_ptr,
+              recon_stride, source, blocks_, options_.base_q_idx, keyframe_,
+              options_.enable_deblock, options_.loop_filters, filters,
+              error)) {
+        return false;
+      }
+    }
+
     syntax::FramePlan plan;
     plan.width = width_;
     plan.height = height_;
@@ -644,12 +681,16 @@ class FrameEncoder {
     config.disable_cdf_update = true;
     config.enable_avg_cdf = false;
     config.enable_cfl_intra = true;
-    config.enable_deblock = false;
+    config.cfl_ds_filter_index = options_.loop_filters.cfl_ds_filter_index;
+    config.enable_deblock = options_.enable_deblock;
     config.tx_mode_select = false;
 
     std::size_t tile_bytes = 0;
+    const post::VideoFilterPlan* filter_plan =
+        filters->any() ? filters : nullptr;
     if (!syntax::assemble_video_frame(plan, blocks_, levels_, config,
-                                      tile_payload, error, &tile_bytes)) {
+                                      tile_payload, error, &tile_bytes, {},
+                                      nullptr, filter_plan)) {
       return false;
     }
     blocks = std::move(blocks_);
@@ -1223,15 +1264,47 @@ bool validate_options(const Options& options, std::size_t frame_count,
   }
   if (format.chroma == fmt::ChromaFormat::k422 &&
       options.max_partition_depth > 2) {
-    // 16-px 4:2:2 leaves (16x32/32x16 and the chroma sizes they imply) are
-    // not decoder-gated yet; 32x32 roots are.  Reject the depth by name
-    // instead of producing a stream the pinned decoder rejects.
+    // 16-pixel 4:2:2 leaves are still not decoder-exact: a 16x32/32x16 leaf
+    // makes pinned dav2d fail while parsing the frame header (not the tile
+    // payload), and 32x32 roots decode exactly.  Reject the depth by name
+    // instead of producing an invalid stream.
     error = "4:2:2 video supports --video-max-depth <= 2 (16-pixel 4:2:2 "
-            "leaves are not gated yet)";
+            "leaves are not decoder-exact yet)";
     return false;
   }
   if (options.max_partition_depth < 0 || options.max_partition_depth > 8) {
     error = "max_partition_depth must be in [0, 8]";
+    return false;
+  }
+  if (options.loop_filters.pc_wiener && options.loop_filters.wiener) {
+    error = "--video-pc-wiener replaces the luma Wiener NS decision; do not "
+            "combine the two luma tools";
+    return false;
+  }
+  // Same pinned-decoder constraint as the still writer: at 4:2:2/4:4:4 the
+  // chroma lossless-mask read runs past its extent in the stripe at luma row
+  // 248, so chroma LR + deblock cannot be decoder-exact.
+  if (!fmt::has_chroma(format.chroma) &&
+      format.depth == fmt::BitDepth::k8 && options.loop_filters.pc_wiener &&
+      frame_count > 1) {
+    // The pinned dav2d rejects the second frame of an 8-bit monochrome
+    // PC-Wiener sequence (the key frame decodes bit-exactly).  The same plan
+    // at 10-bit monochrome and at 8-bit 4:2:2/4:4:4 is gated exact, so this is
+    // a depth/plane-count interaction in the decoder's inter-frame LR path.
+    // Reproducer: av2enc Cmono.y4m -o x.ivf --video --chroma 400
+    //   --video-pc-wiener --frames 2
+    error =
+        "--video-pc-wiener on 8-bit 4:0:0 does not decode past the key frame "
+        "with pinned dav2d; use 10-bit monochrome or a chroma format";
+    return false;
+  }
+  if (options.enable_deblock && options.loop_filters.chroma_lr &&
+      fmt::has_chroma(format.chroma) &&
+      fmt::subsampling_y(format.chroma) == 0) {
+    error =
+        "--video-chroma-lr with --video-deblock does not decode exactly at "
+        "4:2:2/4:4:4 with pinned dav2d (chroma lossless-mask aliasing); omit "
+        "one of the two";
     return false;
   }
   return true;
@@ -1320,7 +1393,32 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
   config.max_drl_bits_minus_1 = 4;
   config.disable_cdf_update = true;
   config.enable_cfl_intra = true;
-  config.enable_deblock = false;
+  config.cfl_ds_filter_index = options.loop_filters.cfl_ds_filter_index;
+  config.enable_deblock = options.enable_deblock;
+  apply_video_loop_filter_sequence_config(config, options.loop_filters);
+  if (!fmt::has_chroma(format.chroma)) {
+    // §5.4.10: monochrome codes no chroma loop-restoration tool list.
+    config.lr_uv_present = false;
+    config.lr_disable_chroma_wiener_ns = true;
+  }
+  if (options.loop_filters.pc_wiener) {
+    // §5.4.10 tool list for RESTORE_PC_WIENER (the shared helper keeps the
+    // historical luma-Wiener default).
+    config.enable_restoration = true;
+    config.lr_disable_luma_pc_wiener = false;
+    // Chroma formats signal the PC-only list.  Monochrome keeps the NS tool
+    // advertised as well: the pinned dav2d rejects an inter frame whose luma
+    // loop-restoration tool list contains PC-Wiener alone, and an unused tool
+    // in the list is harmless (§5.18.7.11 selects per frame).
+    config.lr_disable_luma_wiener_ns = fmt::has_chroma(format.chroma);
+    if (fmt::has_chroma(format.chroma)) {
+      // A PC-only luma list leaves the inferred chroma list empty, and the
+      // §5.18.7.11 frame row cannot code a chroma FrameRestorationType from an
+      // empty list.  Signal a chroma NS tool that every frame leaves NONE.
+      config.lr_uv_present = true;
+      config.lr_disable_chroma_wiener_ns = false;
+    }
+  }
 
   const auto begin_frame = [&](const VideoInputFrame& source,
                                const std::vector<RefSlot>& refs,
@@ -1383,11 +1481,29 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
     std::vector<std::uint8_t> payload;
     std::vector<syntax::BlockSyntax> blocks;
     std::vector<std::int32_t> levels;
-    if (!encoder.encode(payload, blocks, levels, error)) {
+    post::VideoFilterPlan filter_plan;
+    std::uint16_t* recon_ptr[3] = {frame_recon[0].samples.data(),
+                                   frame_recon[1].samples.data(),
+                                   frame_recon[2].samples.data()};
+    const int recon_stride[3] = {frame_recon[0].stride, frame_recon[1].stride,
+                                 frame_recon[2].stride};
+    if (!encoder.encode(payload, blocks, levels, &filter_plan, recon_ptr,
+                        recon_stride, error)) {
       error = "keyframe encode failed: " + error;
       return false;
     }
     if (!backend.end_frame(error)) return false;
+    // A PC-Wiener request that won no unit is a no-op for this stream.  The
+    // pinned decoder rejects a sequence that advertises PC-Wiener when the
+    // frame's FrameRestorationType is NONE, so drop the tool instead of
+    // signalling an empty plan.
+    if (options.loop_filters.pc_wiener && !filter_plan.lr.enabled) {
+      config.enable_restoration = false;
+      config.lr_disable_luma_pc_wiener = true;
+      config.lr_disable_luma_wiener_ns = true;
+      config.lr_uv_present = false;
+      config.lr_disable_chroma_wiener_ns = true;
+    }
     std::vector<std::uint8_t> unit;
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> seq = make_sequence_header_obu(config);
@@ -1396,6 +1512,7 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
     header.order_hint = 0;
     header.ref_slot = 0;
     header.refresh_frame_flags = (1U << config.num_ref_frames) - 1U;
+    apply_video_loop_filter_frame_header(filter_plan, header);
     const std::vector<std::uint8_t> obu = make_frame_obu(config, header, payload);
     unit.insert(unit.end(), td.begin(), td.end());
     unit.insert(unit.end(), seq.begin(), seq.end());
@@ -1474,7 +1591,14 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
     std::vector<std::uint8_t> payload;
     std::vector<syntax::BlockSyntax> blocks;
     std::vector<std::int32_t> levels;
-    if (!encoder.encode(payload, blocks, levels, error)) {
+    post::VideoFilterPlan filter_plan;
+    std::uint16_t* recon_ptr[3] = {frame_recon[0].samples.data(),
+                                   frame_recon[1].samples.data(),
+                                   frame_recon[2].samples.data()};
+    const int recon_stride[3] = {frame_recon[0].stride, frame_recon[1].stride,
+                                 frame_recon[2].stride};
+    if (!encoder.encode(payload, blocks, levels, &filter_plan, recon_ptr,
+                        recon_stride, error)) {
       error = "P-frame " + std::to_string(i) + ": " + error;
       return false;
     }
@@ -1493,6 +1617,7 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
     header.refresh_frame_flags = 1U << write_slot;
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
+    apply_video_loop_filter_frame_header(filter_plan, header);
 
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> obu = make_frame_obu(config, header, payload);
@@ -1582,11 +1707,14 @@ bool encode_video_sequence_format(std::span<const VideoInputFrame> frames,
   format_options.force_inter_residual = options.force_inter_residual;
   format_options.inter_rd_lambda = options.inter_rd_lambda;
   format_options.trace = options.trace;
+  format_options.enable_deblock = options.enable_deblock;
+  format_options.loop_filters = options.loop_filters;
 
   // Only the flat key + P chain is wired.  Reject every other M2 feature by
   // name instead of silently dropping it.
-  if (options.enable_deblock || options.loop_filters.any()) {
-    error = "deblock/CDEF/CCSO/loop restoration are 8-bit 4:2:0 only";
+  if (options.loop_filters.pc_wiener && options.loop_filters.wiener) {
+    error = "--video-pc-wiener replaces the luma Wiener NS decision; do not "
+            "combine the two luma tools";
     return false;
   }
   if (options.tile_cols > 1 || options.tile_rows > 1) {

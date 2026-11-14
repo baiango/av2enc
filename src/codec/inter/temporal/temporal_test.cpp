@@ -1023,8 +1023,9 @@ void test_frame_syntax() {
   CHECK_EQ(static_cast<int>(write_frame_temporal_syntax(bits.writer, base)), 0,
            "frame write as-ref ok");
   finish(&bits);
-  // tmvp(1) + tip_mode(1) + hole(1) + weight(3) + sharp(1) = 7, no opfl bits.
-  CHECK_EQ(bits.bit_count, 7, "frame as-ref bit count");
+  // tmvp(1) + tip_mode(1) + hole(1) + weight(3) = 6, no opfl bits and no
+  // TipInterpFilter (that field is present only for TIP_FRAME_AS_OUTPUT).
+  CHECK_EQ(bits.bit_count, 6, "frame as-ref bit count");
   TemporalFrameConfig decoded = base;
   decoded.tip = TipConfig{};
   BitReader reader(bits.bytes.data(), bits.bytes.size());
@@ -1085,7 +1086,7 @@ void test_frame_syntax() {
   CHECK(disabled_decoded.opfl_refine_type == RefineType::kAll,
         "frame auto all");
 
-  // enable_tip with TipFrameMode == DISABLED still codes tip_sharp.
+  // enable_tip with TipFrameMode == DISABLED codes only the mode bit.
   TemporalFrameConfig tip_off = base;
   tip_off.tip.mode = TipFrameMode::kDisabled;
   tip_off.tip_sharp = true;
@@ -1094,7 +1095,7 @@ void test_frame_syntax() {
                                                         tip_off)),
            0, "frame write tip-off ok");
   finish(&off_bits);
-  CHECK_EQ(off_bits.bit_count, 3, "frame tip-off bit count");
+  CHECK_EQ(off_bits.bit_count, 2, "frame tip-off bit count");
   TemporalFrameConfig off_decoded = tip_off;
   off_decoded.tip = TipConfig{};
   BitReader off_reader(off_bits.bytes.data(), off_bits.bytes.size());
@@ -1103,9 +1104,13 @@ void test_frame_syntax() {
            0, "frame read tip-off ok");
   CHECK(off_decoded.tip.mode == TipFrameMode::kDisabled,
         "frame tip-off mode");
+  CHECK(off_decoded.tip_sharp, "frame tip-off keeps the sharp default");
 
-  // TIP_SMOOTH branch: tip_sharp = 0, tip_regular = 0.
+  // TIP_SMOOTH branch: TIP_FRAME_AS_OUTPUT with tip_sharp = 0/regular = 0.
   TemporalFrameConfig smooth = base;
+  smooth.is_tip_frame = true;
+  smooth.tip.mode = TipFrameMode::kAsOutput;
+  smooth.tip.tip_global_wtd_index = 5;
   smooth.tip_sharp = false;
   smooth.tip_regular = false;
   Bits smooth_bits;

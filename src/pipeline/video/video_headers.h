@@ -2,6 +2,7 @@
 
 #include "core/bitstream/bitwriter.h"
 #include "codec/rate/rc/rc.h"
+#include "codec/transform/delta_q/dcdeltaq.h"
 #include "formats/format.h"
 #include "pipeline/video/post/video_filter_plan.h"
 #include "pipeline/video/post/video_loop_filters.h"
@@ -27,6 +28,13 @@ struct VideoConfig {
   std::uint16_t max_frame_width = 64;
   std::uint16_t max_frame_height = 64;
   std::uint8_t seq_level_idx = 7;  // level 5.1
+  // §5.4.1 seq_tier (present only when seq_level_idx > 3 and
+  // single_picture_header_flag == 0).  Off is main tier, the historical value;
+  // --video-tier high selects the high tier for levels >= 4.0.
+  bool seq_tier = false;
+  // §5.4.1 seq_header_id.  The default 0 is the historical single sequence
+  // header; --video-multi-sequence carries a second header with id 1.
+  std::uint32_t seq_header_id = 0;
   // §5.4.1 seq_profile_idc override. -1 derives the profile from the pixel
   // format (the historical path). The SVC embedded-layer ladder raises it
   // because Annex A caps seq_max_mlayer_cnt per profile (0 -> 1 embedded
@@ -38,6 +46,14 @@ struct VideoConfig {
   fmt::BitDepth depth = fmt::BitDepth::k8;
   // §5.18.6.1 base_q_idx: f(8) at 8-bit, f(9) at 10-bit.
   std::uint16_t base_q_idx = 90;   // §8.3.1 qctx slice from raw base_q_idx
+  // §5.4.8 sequence delta-Q fields (--video-uv-delta-q).  The default is the
+  // historical group: separate_uv_delta_q = 0, equal_ac_dc_q = 1,
+  // base_uv_ac_delta_q = 0 (raw 23) and uv_ac_delta_q_enabled = 0.  A non-zero
+  // UV/DC delta enables the full §5.4.8 group and §5.18.6.1 frame fields.
+  dcdeltaq::SequenceDeltaQ seq_delta_q{};
+  // §5.4.4 sequence_segment_config().  enable_ext_seg raises MaxSegments from
+  // 8 to 16 (--video-segments 9..16).  Off keeps the historical zero bit.
+  bool enable_ext_seg = false;
   // §5.4.6 order_hint_bits_minus_1 + 1. Four bits covers a 16-frame GOP.
   std::uint8_t order_hint_bits = 4;
   // §5.4.6 explicit_num_ref_frames / num_ref_frames_minus_1.
@@ -78,6 +94,13 @@ struct VideoConfig {
   // sequence header.  When on, every inter frame codes allow_bawp and eligible
   // single-prediction blocks code use_bawp (§5.20.7.6).
   bool enable_bawp = false;
+  // §5.4.6 motion-vector resolution tool set.  Each bit is off by default, so
+  // the historical header writes the same three zero bits.  The block-level
+  // syntax lives in mv_precision (§5.20.7.6); enable_flex_mvres additionally
+  // makes the frame-header derivation set UsePerBlockMvPrecision = 1.
+  bool enable_adaptive_mvd = false;
+  bool enable_mvd_sign_derive = false;
+  bool enable_flex_mvres = false;
   // §5.4.6 enable_opfl_refine: 0 = REFINE_NONE, 1 = REFINE_SWITCHABLE,
   // 2 = REFINE_ALL.  A non-AUTO sequence value means the frame header codes no
   // frame_opfl_refine_type() bits (§5.18.3.2).  --video-opfl signals
@@ -88,6 +111,14 @@ struct VideoConfig {
   // NEAR_NEARMV block uses §7.13.3.3 refine-MV.
   bool enable_refinemv = false;
   std::uint8_t num_same_ref_compound = 0;
+  // §5.4.6 enable_refmvbank (--video-refmvbank): §7.12.2.21 bank candidates
+  // are inserted at step 19 and the per-superblock bank is maintained from the
+  // coded mode info.  Off keeps the historical sequence bit and stack.
+  bool enable_refmvbank = false;
+  // §5.4.6 enable_mv_traj (--video-mv-traj): §7.9.2 fills the trajectory MV
+  // gaps and §7.12.2.14/.16 use TrajMv for derived candidates.  Off keeps the
+  // historical sequence bit and the projection-only derived subset.
+  bool enable_mv_traj = false;
   // §5.4.6 seq_enabled_motion_modes[INTERINTRA] (--video-compound-interintra).
   // When set, seq_frame_motion_modes_present_flag = 0, so every inter frame
   // inherits the sequence value and codes no extra bit; each eligible
@@ -144,6 +175,9 @@ struct VideoConfig {
   // Sequence-level intra tool used by the M1 keyframe tile payload and by the
   // M2 intra fallback blocks.
   bool enable_cfl_intra = true;
+  // §5.4.5 cfl_ds_filter_index (f(2), non-monochrome only).  Only the
+  // chroma-from-luma loop-restoration taps read it on the format video core.
+  int cfl_ds_filter_index = 0;
   // §5.4.5 enable_mhccp (--video-mhccp): CFL_MULTI hypotheses (cfl_index 2).
   bool enable_mhccp = false;
   // §5.4.5 enable_ibp (--video-ibp): the intra keyframe and every intra leaf
@@ -185,6 +219,10 @@ struct VideoConfig {
   // Dependency-present flags.  The maps written are the spec defaults
   // (ref <= curr), so the bits are explicit but semantically inert.
   bool mlayer_dependency_present = true;
+  // §5.4.6 enable_short_refresh_frame_flags (--video-short-refresh).  When
+  // set, every non-key/non-switch frame codes has_refresh_frame_flags and, if
+  // set, one `frame_to_refresh` slot index instead of the full mask.
+  bool enable_short_refresh_frame_flags = false;
   // §5.4.6 enable_global_motion (opt-in --video-gme).  Off keeps the
   // historical sequence header and makes global_motion_params() a no-op.
   bool enable_global_motion = false;
@@ -245,16 +283,26 @@ struct VideoConfig {
 struct VideoFrameQp {
   rc::SegmentationParams segmentation{};
   rc::DeltaQParams delta_q{};
+  // §5.18.6.1 frame-level DC/AC deltas (--video-uv-delta-q).  The default
+  // FrameDeltaQ codes no fields because SequenceDeltaQ enables none.
+  dcdeltaq::FrameDeltaQ frame_delta_q{};
   // DerivedPrimaryRefFrame == PRIMARY_REF_NONE for this frame.  This is NOT
   // `keyframe`: a P frame whose only reference is an INTRA/key frame also
   // derives PRIMARY_REF_NONE, so segmentation_update_map /
   // segmentation_temporal_update are not coded for it (see
   // src/codec/entropy/deltaq/video/README.md).
   bool primary_ref_is_none = true;
+  // §5.4.4 enable_ext_seg for this sequence: 1 raises MaxSegments to 16
+  // (--video-segments 9..16).  It is not a frame-level bit; the frame header
+  // writer uses it only to size seg_info().
+  bool enable_ext_seg = false;
 };
 
 struct VideoFrameHeader {
   bool keyframe = false;
+  // §5.18.2 seq_header_id_in_frame_header (uvlc).  Always 0 unless
+  // --video-multi-sequence selects the second bank entry.
+  std::uint32_t seq_header_id = 0;
   // Coded order_hint. The key frame is 0; P frames increment by one.
   std::uint32_t order_hint = 0;
   // Reference slot used by every block in this frame (single reference).
@@ -288,6 +336,13 @@ struct VideoFrameHeader {
   bool allow_high_precision_mv = true;
   // §5.18.2 refresh_frame_flags. The key frame refreshes all slots.
   std::uint32_t refresh_frame_flags = 1;
+  // §5.18.2 compact refresh signalling, coded only when the sequence sets
+  // enable_short_refresh_frame_flags and the frame is neither SWITCH nor KEY.
+  // `has_refresh_frame_flags = 1` codes one `frame_to_refresh` slot index;
+  // 0 refreshes nothing.  Both fields are inert when the sequence bit is off,
+  // so every historical header keeps the full f(NumRefFrames) mask.
+  bool has_refresh_frame_flags = true;
+  std::uint8_t frame_to_refresh = 0;
   // §5.18.3.3/.4 screen-content and IBC bits.  Only coded when the sequence
   // selected the per-frame form (VideoConfig::seq_screen_content_tools_present).
   // The morph carrier sets all of them on the intra keyframe.

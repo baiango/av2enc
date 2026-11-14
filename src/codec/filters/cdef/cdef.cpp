@@ -226,7 +226,11 @@ bool core_supported(const CoreFrame<Sample>& frame, const CdefOptions& options,
   };
 
   if (wide) {
-    if (options.bit_depth != 10 && options.bit_depth != 12) {
+    // The 16-bit container is also the generic entry for 8-bit samples with
+    // 4:2:2 / 4:4:4 / 4:0:0 geometry (the uint8_t entry is the 4:2:0 M2 path).
+    // The core arithmetic is depth-parameterised; only the container differs.
+    if (options.bit_depth != 8 && options.bit_depth != 10 &&
+        options.bit_depth != 12) {
       return fail(CdefStatus::kUnsupportedBitDepth);
     }
   } else if (options.bit_depth != 8) {

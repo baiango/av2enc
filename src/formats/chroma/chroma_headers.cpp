@@ -1,6 +1,8 @@
 #include "formats/chroma/chroma_headers.h"
 
 #include "core/bitstream/basic_headers.h"
+#include "codec/filters/gdf/gdf_syntax.h"
+#include "formats/high_bitdepth/hbd_lr_syntax.h"
 
 #include <algorithm>
 #include <cassert>
@@ -187,6 +189,178 @@ bool read_flag(BitReader& reader, bool& value, const char* name,
   return true;
 }
 
+std::uint32_t chroma_mi_cols(const ChromaSeqConfig& c) {
+  return 2U * ((static_cast<std::uint32_t>(c.max_frame_width) + 7U) >> 3U);
+}
+std::uint32_t chroma_mi_rows(const ChromaSeqConfig& c) {
+  return 2U * ((static_cast<std::uint32_t>(c.max_frame_height) + 7U) >> 3U);
+}
+
+// tile_info() for one 64x64-superblock tile (§5.18.7.2, §5.18.7.3).  This is
+// the same row the M0 frame-header writer emits.
+void write_chroma_tile_info(BitWriter& writer, const ChromaSeqConfig& c) {
+  const std::uint32_t sb_cols = (chroma_mi_cols(c) + 15U) >> 4U;
+  const std::uint32_t sb_rows = (chroma_mi_rows(c) + 15U) >> 4U;
+  assert(sb_cols >= 1U && sb_rows >= 1U);
+  writer.put_bit(true);  // uniform_tile_spacing_flag
+  if (sb_cols > 1U) writer.put_bit(false);  // increment_tile_cols_log2 = 0
+  if (sb_rows > 1U) writer.put_bit(false);  // increment_tile_rows_log2 = 0
+}
+
+// §5.19 tile group header + §5.18 frame header for the filter-enabled 8-bit
+// format still.  With every filter flag off this is byte-identical to
+// `basic::make_closed_loop_key_obu`.
+std::vector<std::uint8_t> make_chroma_filtered_key_obu(
+    const ChromaSeqConfig& c, const ChromaFilterHeaderConfig& f,
+    std::span<const std::uint8_t> tile_payload) {
+  BitWriter writer;
+  writer.put_bit(true);  // is_first_tile_group
+
+  // §5.18.2 frame_header_info().  single_picture_header_flag forces the KEY
+  // frame / no-override shape used by the M0 writer.
+  put_uvlc(writer, 0);  // cur_mfh_id
+  put_uvlc(writer, 0);  // seq_header_id_in_frame_header
+  writer.put_bit(false);  // allow_screen_content_tools
+  writer.put_bit(false);  // allow_intrabc
+  writer.put_bit(c.disable_cdf_update);
+  write_chroma_tile_info(writer, c);
+  writer.put_bits(c.base_q_idx, 8U);  // base_q_idx: 8-bit stream
+  writer.put_bit(false);  // segmentation_enabled
+  writer.put_bit(false);  // using_qmatrix
+  writer.put_bit(false);  // delta_q_present
+
+  // §5.18.5.2 deblocking_filter_params().  The chroma flags are coded only for
+  // a non-monochrome stream with at least one luma direction; DfDeltaQ = 0.
+  const bool has_chroma = fmt::has_chroma(c.chroma);
+  writer.put_bit(f.apply_deblock_y_vert);
+  writer.put_bit(f.apply_deblock_y_horz);
+  const bool have_chroma_deblock =
+      has_chroma && (f.apply_deblock_y_vert || f.apply_deblock_y_horz);
+  if (have_chroma_deblock) {
+    writer.put_bit(f.apply_deblock_u);
+    writer.put_bit(f.apply_deblock_v);
+  }
+  if (f.apply_deblock_y_vert) writer.put_bit(false);
+  if (f.apply_deblock_y_horz) writer.put_bit(false);
+  if (have_chroma_deblock && f.apply_deblock_u) writer.put_bit(false);
+  if (have_chroma_deblock && f.apply_deblock_v) writer.put_bit(false);
+
+  // §5.18.7.9 gdf_params() (header-only mode).
+  if (f.enable_gdf) {
+    namespace gdf = av2enc::filters::gdf;
+    gdf::FrameGdfContext context;
+    context.enable_gdf = true;
+    context.gdf_unit_matches_sb_size = c.gdf_unit_matches_sb_size;
+    context.coded_lossless = false;
+    context.single_picture_header_flag = true;
+    context.sb_size = 64;
+    context.width = c.max_frame_width;
+    context.height = c.max_frame_height;
+    context.mi_cols = static_cast<int>(chroma_mi_cols(c));
+    context.mi_rows = static_cast<int>(chroma_mi_rows(c));
+    context.disable_loopfilters_across_tiles = false;
+    context.tile_cols = 1;
+    context.tile_rows = 1;
+    context.mi_col_starts.assign(1, 0);
+    context.mi_row_starts.assign(1, 0);
+    gdf::FrameGdfParams params;
+    params.frame_enable = true;
+    params.per_block = false;
+    params.pic_qc_idx = f.gdf_pic_qc_idx;
+    params.pic_scale_idx = f.gdf_pic_scale_idx;
+    std::string gdf_error;
+    gdf::WriteFrameGdfParams(writer, context, &params, &gdf_error);
+    assert(gdf_error.empty());
+    (void)gdf_error;
+  }
+
+  // §5.18.7.10 cdef_params().  single_picture_header_flag infers
+  // cdef_frame_enable = 1, so only damping / strengths / skip / strength sets
+  // are coded.  8-bit strengths are used as-is (coeffShift = 0).
+  if (f.enable_cdef) {
+    assert(f.cdef_damping >= 3 && f.cdef_damping <= 6);
+    assert(f.cdef_num_strengths >= 1 && f.cdef_num_strengths <= 8);
+    writer.put_bits(static_cast<std::uint64_t>(f.cdef_damping - 3), 2U);
+    writer.put_bits(static_cast<std::uint64_t>(f.cdef_num_strengths - 1), 3U);
+    writer.put_bit(false);  // on_skip_txfm_frame_enable (ADAPTIVE, no skips)
+    for (int i = 0; i < f.cdef_num_strengths; ++i) {
+      const cdef::CdefStrength& s = f.cdef_strengths[i];
+      writer.put_bit(s.y_pri == 0);
+      if (s.y_pri != 0) {
+        writer.put_bits(static_cast<std::uint64_t>(s.y_pri), 4U);
+      }
+      writer.put_bits(static_cast<std::uint64_t>(s.y_sec == 4 ? 3 : s.y_sec),
+                      2U);
+      if (has_chroma) {
+        writer.put_bit(s.uv_pri == 0);
+        if (s.uv_pri != 0) {
+          writer.put_bits(static_cast<std::uint64_t>(s.uv_pri), 4U);
+        }
+        writer.put_bits(
+            static_cast<std::uint64_t>(s.uv_sec == 4 ? 3 : s.uv_sec), 2U);
+      }
+    }
+  }
+
+  // §5.18.7.11 lr_params().
+  if (f.enable_restoration) {
+    namespace lr_syntax = av2enc::hbd::lr_syntax;
+    lr_syntax::LrParams params;
+    av2enc::hbd::fill_lr_params(f.lr, fmt::num_planes(c.chroma), &params);
+    lr_syntax::LrHeaderContext context;
+    av2enc::hbd::fill_lr_header_context(
+        f.lr, fmt::num_planes(c.chroma), fmt::subsampling_x(c.chroma),
+        fmt::subsampling_y(c.chroma), static_cast<int>(c.base_q_idx),
+        &context);
+    std::string lr_error;
+    lr_syntax::WriteLrParams(writer, &params, context, &lr_error);
+    assert(lr_error.empty());
+    (void)lr_error;
+  }
+
+  // §5.18.7.12 ccso_params().  single_picture_header_flag infers
+  // ccso_frame_flag = 1; the offset table is per plane in (d0, d1, band) order.
+  if (f.enable_ccso) {
+    for (int plane = 0; plane < 3; ++plane) {
+      if (plane > 0 && !has_chroma) break;
+      const av2enc::hbd::HbdCcsoPlaneConfig& p = f.ccso.plane[plane];
+      writer.put_bit(p.enabled);
+      if (!p.enabled) continue;
+      writer.put_bit(p.bo_only);
+      writer.put_bits(static_cast<std::uint64_t>(p.scale_idx), 2U);
+      if (!p.bo_only) {
+        writer.put_bits(static_cast<std::uint64_t>(p.quant_idx), 2U);
+        writer.put_bits(static_cast<std::uint64_t>(p.ext_filter), 3U);
+        const int quant =
+            restoration::kCcsoQuantSz[p.scale_idx & 3][p.quant_idx & 3];
+        if (quant != 0) writer.put_bit(p.edge_clf != 0);
+      }
+      const int band_bits = 2 + (p.bo_only ? 1 : 0);
+      writer.put_bits(static_cast<std::uint64_t>(p.max_band_log2),
+                      static_cast<unsigned>(band_bits));
+      const int interval = p.bo_only ? 1 : (3 - p.edge_clf);
+      const std::size_t need =
+          static_cast<std::size_t>(1 << p.max_band_log2) *
+          static_cast<std::size_t>(interval) *
+          static_cast<std::size_t>(interval);
+      assert(p.offset_idx.size() == need);
+      for (std::size_t k = 0; k < need; ++k) {
+        const int idx = p.offset_idx[k];
+        for (int i = 0; i < idx; ++i) writer.put_bit(true);
+        if (idx < 7) writer.put_bit(false);
+      }
+    }
+  }
+
+  writer.put_bit(false);  // tx_mode_select = 0 -> TX_MODE_LARGEST
+  writer.put_bits(0U, 2U);  // reduced_tx_set
+  writer.align_to_byte();  // byte_alignment() (§5.2.4)
+
+  std::vector<std::uint8_t> payload = writer.take_bytes();
+  payload.insert(payload.end(), tile_payload.begin(), tile_payload.end());
+  return av2enc::basic::make_obu(ObuHeader{ObuType::kClosedLoopKey}, payload);
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -271,23 +445,19 @@ bool validate_chroma_seq_config(const ChromaSeqConfig& config,
         "frame header (§5.18.10.1), which this writer does not implement";
     return false;
   }
-  if (config.enable_cdef) {
-    error = "enable_cdef is not implemented by this writer (frame-level "
-            "cdef_params would be required)";
-    return false;
-  }
-  if (config.enable_gdf) {
-    error = "enable_gdf is not implemented by this writer";
-    return false;
-  }
   if (config.enable_restoration) {
-    error = "enable_restoration is not implemented by this writer";
-    return false;
-  }
-  if (config.enable_ccso) {
-    error = "enable_ccso is not implemented by this writer (frame-level "
-            "ccso_params would be required)";
-    return false;
+    if (!config.lr_luma_pc && !config.lr_luma_ns && !config.lr_chroma_ns) {
+      error = "enable_restoration requires at least one loop-restoration tool";
+      return false;
+    }
+    if (config.lr_chroma_ns && !fmt::has_chroma(config.chroma)) {
+      error = "chroma loop restoration is not codable for 4:0:0";
+      return false;
+    }
+    if ((config.lr_luma_pc || config.lr_luma_ns) &&
+        !fmt::has_chroma(config.chroma)) {
+      // Monochrome still codes the luma tool list; no restriction.
+    }
   }
   if (config.enable_fsc) {
     error = "enable_fsc is not implemented by this writer";
@@ -477,11 +647,25 @@ std::size_t write_sequence_header_syntax(BitWriter& writer,
   writer.put_bit(config.disable_loopfilters_across_tiles);
   writer.put_bit(config.enable_cdef);
   writer.put_bit(config.enable_gdf);
-  // gdf_unit_matches_sb_size is absent because enable_gdf = 0.
+  if (config.enable_gdf) {
+    writer.put_bit(config.gdf_unit_matches_sb_size);
+  }
   writer.put_bit(config.enable_restoration);
-  // restoration tool bits are absent because enable_restoration = 0.
+  if (config.enable_restoration) {
+    // §5.4.10 loop-restoration tool list.  lr_tools_uv_present is coded so a
+    // luma-only signal does not inherit the luma tool list into planes 1/2.
+    writer.put_bit(!config.lr_luma_pc);  // lr_tools_disable[0][PC_WIENER]
+    writer.put_bit(!config.lr_luma_ns);  // lr_tools_disable[0][WIENER_NONSEP]
+    const bool uv_present = config.lr_tools_uv_present && fmt::has_chroma(config.chroma);
+    writer.put_bit(uv_present);  // lr_tools_uv_present
+    if (uv_present) {
+      writer.put_bit(!config.lr_chroma_ns);  // lr_tools_disable[1][WIENER_NONSEP]
+    }
+  }
   writer.put_bit(config.enable_ccso);
-  // ccso_unit_matches_sb_size is absent because enable_ccso = 0.
+  if (config.enable_ccso) {
+    writer.put_bit(config.ccso_unit_matches_sb_size);
+  }
   // CdefOnSkipTxfm is forced by single_picture_header_flag = 1.
   writer.put_bits(config.df_par_bits_minus_2, 2U);
 
@@ -793,8 +977,24 @@ bool read_sequence_header_syntax(std::span<const std::uint8_t> payload,
     return false;
   }
   if (info.enable_restoration) {
-    error = "enable_restoration = 1 is not supported by this reader";
-    return false;
+    if (!read_flag(reader, info.lr_tools_disable_pc, "lr_tools_disable_pc",
+                   error)) {
+      return false;
+    }
+    if (!read_flag(reader, info.lr_tools_disable_ns, "lr_tools_disable_ns",
+                   error)) {
+      return false;
+    }
+    if (!read_flag(reader, info.lr_tools_uv_present, "lr_tools_uv_present",
+                   error)) {
+      return false;
+    }
+    if (info.lr_tools_uv_present) {
+      if (!read_flag(reader, info.lr_tools_disable_uv_ns,
+                     "lr_tools_disable_uv", error)) {
+        return false;
+      }
+    }
   }
   if (!read_flag(reader, info.enable_ccso, "enable_ccso", error)) return false;
   if (info.enable_ccso) {
@@ -941,6 +1141,12 @@ bool find_sequence_header(std::span<const std::uint8_t> temporal_unit,
 
 std::vector<std::uint8_t> assemble_chroma_still(
     const ChromaSeqConfig& config, std::span<const std::uint8_t> tile_payload) {
+  return assemble_chroma_still(config, tile_payload, nullptr);
+}
+
+std::vector<std::uint8_t> assemble_chroma_still(
+    const ChromaSeqConfig& config, std::span<const std::uint8_t> tile_payload,
+    const ChromaFilterHeaderConfig* filters) {
   av2enc::basic::StillPictureConfig basic_config;
   basic_config.max_frame_width = config.max_frame_width;
   basic_config.max_frame_height = config.max_frame_height;
@@ -951,8 +1157,12 @@ std::vector<std::uint8_t> assemble_chroma_still(
 
   const std::vector<std::uint8_t> td = av2enc::basic::make_temporal_delimiter_obu();
   const std::vector<std::uint8_t> seq = make_sequence_header_obu(config);
-  const std::vector<std::uint8_t> clk =
-      av2enc::basic::make_closed_loop_key_obu(basic_config, tile_payload);
+  std::vector<std::uint8_t> clk;
+  if (filters == nullptr) {
+    clk = av2enc::basic::make_closed_loop_key_obu(basic_config, tile_payload);
+  } else {
+    clk = make_chroma_filtered_key_obu(config, *filters, tile_payload);
+  }
 
   std::vector<std::uint8_t> out;
   out.reserve(td.size() + seq.size() + clk.size());

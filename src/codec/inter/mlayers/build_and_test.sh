@@ -95,6 +95,7 @@ VIDEO_CORE=(
   "${ROOT}/src/pipeline/video/video_headers.cpp"
   "${ROOT}/src/pipeline/video/video_syntax.cpp"
   "${ROOT}/src/pipeline/video/video_frame.cpp"
+  "${ROOT}/src/codec/inter/temporal/ref_mv_bank.cpp"
 )
 # The M2 carrier is not -Werror clean; keep its warnings visible but do not
 # fail the gate build on them.

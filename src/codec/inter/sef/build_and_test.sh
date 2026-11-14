@@ -107,6 +107,7 @@ if [[ "$RUN_TEST" == "0" || "$RUN_GATE" == "1" ]]; then
     "$ROOT/src/pipeline/video/video_headers.cpp" \
     "$ROOT/src/pipeline/video/video_syntax.cpp" \
     "$ROOT/src/pipeline/video/video_frame.cpp" \
+    "$ROOT/src/codec/inter/temporal/ref_mv_bank.cpp"
     -o "$GATE_BIN"
 
   if [[ -z "${DAV2D:-}" ]]; then

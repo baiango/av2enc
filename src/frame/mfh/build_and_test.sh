@@ -84,6 +84,7 @@ VIDEO_CORE=(
   "$ROOT/src/pipeline/video/video_headers.cpp"
   "$ROOT/src/pipeline/video/video_syntax.cpp"
   "$ROOT/src/pipeline/video/video_frame.cpp"
+  "$ROOT/src/codec/inter/temporal/ref_mv_bank.cpp"
   "$ROOT/src/pipeline/video/post/tiled_frame.cpp"
   "$ROOT/src/pipeline/video/post/bit_depth_checklist.cpp"
   "$ROOT/src/pipeline/video/post/rc_adapter.cpp"

@@ -1,9 +1,14 @@
 #include "formats/chroma/chroma_still.h"
 
 #include "formats/chroma/chroma_headers.h"
+#include "formats/chroma/chroma_filters.h"
 #include "formats/chroma/chroma_residual.h"
 #include "pipeline/still/basic_cdf_tables.h"
 #include "codec/entropy/av2/av2_entropy.h"
+#include "codec/filters/stream/filter_cdfs.h"
+#include "cuda/pipeline/still/cdef/still_cdef_cdf.h"
+#include "cuda/pipeline/still/cdef/still_cdef_index_syntax.h"
+#include "formats/high_bitdepth/hbd_lr_syntax.h"
 
 #include <algorithm>
 #include <array>
@@ -139,6 +144,24 @@ int floor_log2(int value) {
   return result;
 }
 
+// §9.2 transform size index from the nominal dimensions.  The index order is
+// the shared `txv::TxSize` / `deblock::TxSize` enumeration.
+int tx_size_index_from_dims(int w, int h) {
+  struct Entry {
+    int w;
+    int h;
+  };
+  static constexpr Entry kSizes[25] = {
+      {4, 4},   {8, 8},   {16, 16}, {32, 32}, {64, 64}, {4, 8},   {8, 4},
+      {8, 16},  {16, 8},  {16, 32}, {32, 16}, {32, 64}, {64, 32}, {4, 16},
+      {16, 4},  {8, 32},  {32, 8},  {16, 64}, {64, 16}, {4, 32},  {32, 4},
+      {8, 64},  {64, 8},  {4, 64},  {64, 4}};
+  for (int i = 0; i < 25; ++i) {
+    if (kSizes[i].w == w && kSizes[i].h == h) return i;
+  }
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Tile writer
 // ---------------------------------------------------------------------------
@@ -146,8 +169,8 @@ int floor_log2(int value) {
 class TileWriter {
  public:
   TileWriter(const ChromaPicture& picture, const ChromaStillOptions& options,
-             const FrameShape& shape)
-      : picture_(picture), shape_(shape), gpu_(options.gpu) {
+             const FrameShape& shape, const ChromaFilterPlan* plan)
+      : picture_(picture), shape_(shape), gpu_(options.gpu), plan_(plan) {
     mi_cols_ = shape.mi_cols;
     mi_rows_ = shape.mi_rows;
     padded_mi_cols_ = ((mi_cols_ + 15) / 16) * 16;
@@ -157,6 +180,40 @@ class TileWriter {
     tile_buffer_.resize(kTileCapacityBytes);
     enc_.init_symbol(tile_buffer_.data(), tile_buffer_.size());
     enc_.disable_cdf_update = options.disable_cdf_update ? 1 : 0;
+
+    // §7.18/§7.19 filter symbol CDFs.  Frozen, like the rest of this writer.
+    std::memcpy(ccso_cdf_, av2enc::still::filters_stream::kCcsoBlkCdf,
+                sizeof(ccso_cdf_));
+    if (plan_ != nullptr && plan_->cdef.enabled &&
+        plan_->cdef.num_strengths > 1) {
+      cdef_grid_.reset(mi_cols_, mi_rows_);
+      std::memcpy(cdef_index0_, av2enc::cuda::still::kCdefIndex0Cdf,
+                  sizeof(cdef_index0_));
+      cdef_cdfs_.index0 = &cdef_index0_[0][0];
+      cdef_cdfs_.minus1 = cdef_minus1_;
+      const std::uint16_t* minus1 =
+          av2enc::cuda::still::cdef_index_minus1_default(
+              plan_->cdef.num_strengths);
+      if (minus1 != nullptr) {
+        std::memcpy(cdef_minus1_, minus1,
+                    sizeof(std::uint16_t) *
+                        static_cast<std::size_t>(plan_->cdef.num_strengths));
+      }
+    }
+    if (plan_ != nullptr && plan_->lr.config.enabled) {
+      namespace lrs = av2enc::hbd::lr_syntax;
+      lrs::LrParams params;
+      av2enc::hbd::fill_lr_params(plan_->lr.config, shape.num_planes, &params);
+      lrs::LrHeaderContext context;
+      av2enc::hbd::fill_lr_header_context(
+          plan_->lr.config, shape.num_planes, shape.info.subsampling_x,
+          shape.info.subsampling_y, options.base_q_idx, &context);
+      std::string lr_error;
+      lr_ready_ = lrs::InitTileState(&lr_state_, params, mi_cols_, mi_rows_,
+                                     shape.info.subsampling_x,
+                                     shape.info.subsampling_y, &lr_error);
+      if (!lr_ready_) error_ = "LR tile init failed: " + lr_error;
+    }
 
     for (int plane = 0; plane < 3; ++plane) {
       const PlaneShape& p = shape_.planes[static_cast<std::size_t>(plane)];
@@ -222,7 +279,11 @@ class TileWriter {
   }
 
   const Plane& recon(int plane) const { return recon_[plane]; }
+  Plane& recon_mut(int plane) { return recon_[plane]; }
   int leaves() const { return leaves_; }
+  const std::vector<ChromaFilterBlock>& leaf_info() const {
+    return leaves_info_;
+  }
 
  private:
   bool sym(std::uint16_t* cdf, int n, int symbol) {
@@ -307,12 +368,18 @@ class TileWriter {
   // §5.20.3.2 PARTITION_NONE at BLOCK_64X64, then §5.20.5.3 mode info, then
   // §5.20.7 residual for plane 0 and (if present) planes 1/2.
   bool encode_superblock(int r, int c) {
+    // §5.20.10.4 read_lr() precedes read_partition().
+    if (!write_lr(r, c)) return false;
     // do_split context: Partition_Size_Adjust[BLOCK_64X64] = 3, bsw/bsh = 4.
     const int ctx = 3 * 4 + (left_mi(r) < 4 ? 2 : 0) +
                     (above_mi(c) < 4 ? 1 : 0);
     if (!sym(&cdfs_.do_split[0][ctx][0], 2, 0)) {
       return false;
     }
+    // §5.20.10.1/§5.20.10.2: read_cdef()/read_ccso() come after
+    // intra_segment_id (absent: no segmentation) and before the mode info.
+    if (!write_cdef(r, c)) return false;
+    if (!write_ccso(r, c)) return false;
 
     // intra_frame_mode_info() for DC_PRED.
     if (!sym(&cdfs_.y_mode_set[0], 4, 0)) {
@@ -360,6 +427,22 @@ class TileWriter {
         intra_joint(r + y, c + x) = 0;
       }
     }
+    ChromaFilterBlock leaf;
+    leaf.mi_row = r;
+    leaf.mi_col = c;
+    leaf.luma_size = 64;
+    leaf.luma_eob_zero = (luma_eob_ == 0);
+    leaf.tx_size[0] = tx_size_index_from_dims(64, 64);
+    if (!shape_.monochrome) {
+      const auto chroma_size = chroma_mi_size(BlockSize::k64x64, shape_.chroma);
+      if (chroma_size) {
+        const int cw = fmt::block_width(*chroma_size);
+        const int ch = fmt::block_height(*chroma_size);
+        leaf.tx_size[1] = tx_size_index_from_dims(cw, ch);
+        leaf.tx_size[2] = leaf.tx_size[1];
+      }
+    }
+    leaves_info_.push_back(leaf);
     return true;
   }
 
@@ -372,8 +455,142 @@ class TileWriter {
                                  static_cast<std::size_t>(cx)];
   }
 
-  bool write_literal(int bits, std::uint32_t value) {
-    for (int i = bits - 1; i >= 0; --i) {
+  // §5.20.10.4 read_lr(): before read_partition() at the coding-block origin.
+  bool write_lr(int r, int c) {
+    if (!lr_ready_) return error_.empty();
+    namespace lrs = av2enc::hbd::lr_syntax;
+    const av2enc::hbd::HbdLrConfig& cfg = plan_->lr.config;
+    for (int plane = 0; plane < shape_.num_planes; ++plane) {
+      const av2enc::hbd::HbdLrPlaneConfig& pc = cfg.plane[plane];
+      if (pc.frame_type == 0) continue;
+      const int sub_x = plane == 0 ? 0 : shape_.info.subsampling_x;
+      const int sub_y = plane == 0 ? 0 : shape_.info.subsampling_y;
+      const int ox = (c * 4) >> sub_x;
+      const int oy = (r * 4) >> sub_y;
+      const int unit_size = lr_state_.unit_size[plane];
+      if (unit_size <= 0 || ox % unit_size != 0 || oy % unit_size != 0) {
+        continue;
+      }
+      const int unit_row = oy / unit_size;
+      const int unit_col = ox / unit_size;
+      if (unit_row >= lr_state_.unit_rows[plane] ||
+          unit_col >= lr_state_.unit_cols[plane]) {
+        continue;
+      }
+      const std::size_t index =
+          static_cast<std::size_t>(unit_row) *
+              static_cast<std::size_t>(lr_state_.unit_cols[plane]) +
+          static_cast<std::size_t>(unit_col);
+      if (index >= pc.unit_type.size()) {
+        error_ = "LR unit decision grid is too small";
+        return false;
+      }
+      lrs::UnitDecision decision;
+      decision.type = pc.unit_type[index];
+      if (decision.type == av2enc::restoration::kRestoreWienerNs) {
+        if (index >= pc.unit_subset.size() ||
+            index * av2enc::restoration::kWienerNsCoeffStride >=
+                pc.unit_coeffs.size()) {
+          error_ = "LR unit coefficient grid is too small";
+          return false;
+        }
+        decision.subset = pc.unit_subset[index];
+        decision.uv_sym = index < pc.unit_uv_sym.size() &&
+                          pc.unit_uv_sym[index] != 0;
+        for (int j = 0; j < av2enc::restoration::kWienerNsCoeffStride; ++j) {
+          decision.coeffs[j] =
+              pc.unit_coeffs[index * static_cast<std::size_t>(
+                                           av2enc::restoration::
+                                               kWienerNsCoeffStride) +
+                             static_cast<std::size_t>(j)];
+        }
+      }
+      std::string lr_error;
+      if (!lrs::WriteUnit(enc_, lr_state_, plane, unit_row, unit_col, decision,
+                          &lr_error)) {
+        error_ = "LR unit symbol failed: " + lr_error;
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // §5.20.10.1 read_cdef(): one symbol per 64x64 block origin when
+  // CdefStrengths >= 2.
+  bool write_cdef(int r, int c) {
+    if (plan_ == nullptr || !plan_->cdef.enabled ||
+        plan_->cdef.num_strengths <= 1) {
+      return true;
+    }
+    const int n64_cols = (mi_cols_ + 15) / 16;
+    const std::size_t index =
+        static_cast<std::size_t>(r / 16) * static_cast<std::size_t>(n64_cols) +
+        static_cast<std::size_t>(c / 16);
+    if (index >= plan_->cdef.index.size()) {
+      error_ = "cdef_idx grid is too small";
+      return false;
+    }
+    const int idx = static_cast<int>(plan_->cdef.index[index]);
+    const bool ok = av2enc::cuda::still::cdef_encode_block_index(
+        &cdef_grid_, plan_->cdef.num_strengths,
+        /*sb_width_log2=*/4, /*tile_mi_col_start=*/0,
+        /*tile_mi_row_start=*/0, r, c, idx, cdef_cdfs_,
+        [this](std::uint16_t* cdf, int n, int symbol) {
+          return sym(cdf, n, symbol);
+        });
+    if (!ok) {
+      error_ = "cdef_idx is not signallable";
+      return false;
+    }
+    return true;
+  }
+
+  // §5.20.10.2 read_ccso(): one binary symbol per enabled plane at a CCSO unit
+  // origin; the context is the left unit's already-coded value.
+  bool write_ccso(int r, int c) {
+    if (plan_ == nullptr || !plan_->ccso.config.enabled) return true;
+    const int unit_mi = 1 << (plan_->ccso.config.ccso_luma_size_log2 - 2);
+    if (unit_mi <= 0 || (r & (unit_mi - 1)) != 0 ||
+        (c & (unit_mi - 1)) != 0) {
+      return true;
+    }
+    for (int plane = 0; plane < shape_.num_planes; ++plane) {
+      if (!plan_->ccso.config.plane[plane].enabled) continue;
+      const std::vector<std::uint8_t>& grid =
+          plan_->ccso.config.blks[plane];
+      const int cols = plan_->ccso.config.blk_cols[plane];
+      const int rows = plan_->ccso.config.blk_rows[plane];
+      if (cols <= 0 || rows <= 0) {
+        error_ = "ccso unit grid is missing";
+        return false;
+      }
+      const int shift = plan_->ccso.config.ccso_luma_size_log2 - 2;
+      const int unit_row = r >> shift;
+      const int unit_col = c >> shift;
+      if (unit_row >= rows || unit_col >= cols) {
+        error_ = "ccso unit grid does not cover a coding block";
+        return false;
+      }
+      const int value =
+          grid[static_cast<std::size_t>(unit_row) *
+                   static_cast<std::size_t>(cols) +
+               static_cast<std::size_t>(unit_col)] != 0
+              ? 1
+              : 0;
+      int ctx = 0;
+      if (unit_col > 0) {
+        const std::uint8_t left =
+            grid[static_cast<std::size_t>(unit_row) *
+                     static_cast<std::size_t>(cols) +
+                 static_cast<std::size_t>(unit_col - 1)];
+        ctx = 2 * (left != 0 ? 1 : 0);
+      }
+      if (!sym(&ccso_cdf_[plane][ctx][0], 2, value)) return false;
+    }
+    return true;
+  }
+
+  bool write_literal(int bits, std::uint32_t value) {    for (int i = bits - 1; i >= 0; --i) {
       if (!raw_bit(((value >> static_cast<unsigned>(i)) & 1U) != 0U)) {
         return false;
       }
@@ -711,6 +928,8 @@ class TileWriter {
       }
     }
 
+    last_eob_ = eob;
+    if (plane == 0) luma_eob_ = eob;
     if (!sym(skip_cdf, 2, eob == 0 ? 1 : 0)) {
       return false;
     }
@@ -991,6 +1210,7 @@ class TileWriter {
   const ChromaPicture& picture_;
   FrameShape shape_;
   ChromaGpuExecutor* gpu_ = nullptr;
+  const ChromaFilterPlan* plan_ = nullptr;
 
   int mi_cols_ = 0;
   int mi_rows_ = 0;
@@ -1012,7 +1232,19 @@ class TileWriter {
   std::vector<std::uint8_t> intra_joint_;
   int eob_u_ = 0;
   int hr_level_avg_ = 0;
+  int last_eob_ = 0;
+  int luma_eob_ = 0;
   int leaves_ = 0;
+  std::vector<ChromaFilterBlock> leaves_info_;
+
+  // §7.18/§7.19/§7.20 tile symbol state.
+  av2enc::cuda::still::CdefIndexGrid cdef_grid_;
+  av2enc::cuda::still::CdefIndexCdfs cdef_cdfs_{};
+  std::uint16_t cdef_index0_[4][3] = {};
+  std::uint16_t cdef_minus1_[8] = {};
+  std::uint16_t ccso_cdf_[3][4][3] = {};
+  av2enc::hbd::lr_syntax::TileState lr_state_{};
+  bool lr_ready_ = false;
 };
 
 }  // namespace
@@ -1135,10 +1367,65 @@ bool encode_chroma_still_picture(const ChromaPicture& picture,
     }
   }
 
-  TileWriter writer(picture, options, *shape);
+  const ChromaFilterOptions& requested = options.filters;
+  const bool any_filter =
+      requested.enable_deblock || requested.enable_cdef ||
+      requested.enable_ccso || requested.enable_wiener ||
+      requested.enable_chroma_lr || requested.enable_pc_wiener ||
+      requested.enable_gdf;
+  if (any_filter) {
+    if (!options.disable_cdf_update) {
+      error = "in-loop filters require disable_cdf_update = 1 (the filter "
+              "symbol CDFs are frozen in this writer)";
+      return false;
+    }
+    if (options.gpu != nullptr) {
+      error = "in-loop filters are not wired for the 8-bit chroma GPU block "
+              "stage; use the CPU path";
+      return false;
+    }
+  }
+
+  // First pass: reconstruct (and collect the leaf metadata the filter plan
+  // needs).  Its tile payload is discarded when filters are enabled.
+  TileWriter writer(picture, options, *shape, nullptr);
   std::vector<std::uint8_t> tile;
   if (!writer.encode(&tile, error)) {
     return false;
+  }
+
+  ChromaFilterPlan filter_plan;
+  if (any_filter) {
+    ChromaFilterOptions filter_options = requested;
+    filter_options.base_q_idx = options.base_q_idx;
+    ChromaFilterPlanes planes;
+    for (int plane = 0; plane < shape->num_planes; ++plane) {
+      Plane& recon = writer.recon_mut(plane);
+      planes.plane[plane] = recon.samples.data();
+      planes.stride[plane] = recon.width;
+      planes.source[plane] = picture.planes[plane].data();
+      planes.source_stride[plane] = picture.plane_width[plane];
+      planes.visible_w[plane] =
+          shape->planes[static_cast<std::size_t>(plane)].visible_width;
+      planes.visible_h[plane] =
+          shape->planes[static_cast<std::size_t>(plane)].visible_height;
+    }
+    const fmt::Format format{static_cast<std::uint32_t>(picture.width),
+                             static_cast<std::uint32_t>(picture.height),
+                             picture.chroma, fmt::BitDepth::k8};
+    if (!run_chroma_filters(format, planes, writer.leaf_info(),
+                            filter_options, &filter_plan, error)) {
+      return false;
+    }
+    // Second pass: code the same coefficients with the filter syntax inserted
+    // at the §5.20.10 hook points.  The reconstruction is identical, so the
+    // filtered first-pass planes stay authoritative.
+    TileWriter syntax_writer(picture, options, *shape, &filter_plan);
+    std::vector<std::uint8_t> filtered_tile;
+    if (!syntax_writer.encode(&filtered_tile, error)) {
+      return false;
+    }
+    tile.swap(filtered_tile);
   }
 
   ChromaSeqConfig config;
@@ -1149,11 +1436,64 @@ bool encode_chroma_still_picture(const ChromaPicture& picture,
   config.base_q_idx = options.base_q_idx;
   config.disable_cdf_update = options.disable_cdf_update;
 
+  // §5.4.10 / §5.18 filter signalling derived from the same plan the tile
+  // writer used.
+  ChromaFilterHeaderConfig header;
+  const bool header_filters = any_filter && filter_plan.any();
+  if (header_filters) {
+    if (filter_plan.deblock) {
+      header.apply_deblock_y_vert = true;
+      header.apply_deblock_y_horz = true;
+      header.apply_deblock_u = shape->num_planes > 1;
+      header.apply_deblock_v = shape->num_planes > 2;
+    }
+    if (filter_plan.cdef.enabled) {
+      header.enable_cdef = true;
+      header.cdef_damping = filter_plan.cdef.damping;
+      header.cdef_num_strengths = filter_plan.cdef.num_strengths;
+      for (int i = 0; i < filter_plan.cdef.num_strengths; ++i) {
+        header.cdef_strengths[i] = filter_plan.cdef.strengths[i];
+      }
+      config.enable_cdef = true;
+    }
+    if (filter_plan.ccso.config.enabled) {
+      header.enable_ccso = true;
+      header.ccso = filter_plan.ccso.config;
+      config.enable_ccso = true;
+      config.ccso_unit_matches_sb_size =
+          filter_plan.ccso.config.unit_matches_sb_size;
+    }
+    if (filter_plan.lr.config.enabled) {
+      header.enable_restoration = true;
+      header.lr = filter_plan.lr.config;
+      config.enable_restoration = true;
+      config.lr_luma_pc = filter_plan.lr.config.plane[0].frame_type ==
+                          av2enc::restoration::kRestorePcWiener;
+      config.lr_luma_ns = filter_plan.lr.config.plane[0].frame_type ==
+                          av2enc::restoration::kRestoreWienerNs;
+      config.lr_chroma_ns =
+          shape->num_planes > 2 &&
+          (filter_plan.lr.config.plane[1].frame_type ==
+               av2enc::restoration::kRestoreWienerNs ||
+           filter_plan.lr.config.plane[2].frame_type ==
+               av2enc::restoration::kRestoreWienerNs);
+      config.lr_tools_uv_present = !shape->monochrome;
+    }
+    if (filter_plan.gdf.config.enabled) {
+      header.enable_gdf = true;
+      header.gdf_pic_qc_idx = filter_plan.gdf.config.pic_qc_idx;
+      header.gdf_pic_scale_idx = filter_plan.gdf.config.pic_scale_idx;
+      config.enable_gdf = true;
+      config.gdf_unit_matches_sb_size = true;
+    }
+  }
+
   if (!validate_chroma_seq_config(config, error)) {
     return false;
   }
 
-  result.frame = assemble_chroma_still(config, tile);
+  result.frame = assemble_chroma_still(
+      config, tile, header_filters ? &header : nullptr);
   result.tile_bytes = static_cast<std::uint32_t>(tile.size());
   result.frame_bytes = static_cast<std::uint32_t>(result.frame.size());
   result.shape = *shape;

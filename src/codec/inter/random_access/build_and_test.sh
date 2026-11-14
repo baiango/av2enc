@@ -61,6 +61,7 @@ CORE=(
   "$ROOT/src/pipeline/video/video_headers.cpp"
   "$ROOT/src/pipeline/video/video_syntax.cpp"
   "$ROOT/src/pipeline/video/video_frame.cpp"
+  "$ROOT/src/codec/inter/temporal/ref_mv_bank.cpp"
 )
 
 # Unit tests: only our component plus the small bitstream/M2 header helpers.

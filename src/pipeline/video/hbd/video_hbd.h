@@ -23,6 +23,7 @@
 
 #include "codec/inter/mc/mc_types.h"
 #include "formats/format.h"
+#include "pipeline/video/post/video_loop_filters.h"
 #include "pipeline/video/video_frame.h"
 
 namespace av2enc::video::hbd {
@@ -99,6 +100,11 @@ struct Options {
   bool force_inter_residual = false;
   double inter_rd_lambda = 4.0;
   bool trace = false;
+  // Opt-in §7.17-§7.20.5 in-loop filters.  Off by default, so every existing
+  // format video stream keeps its bytes.  Deblock runs on every frame; the
+  // remaining tools are planned on the intra key frame only.
+  bool enable_deblock = false;
+  post::VideoLoopFilterOptions loop_filters;
 };
 
 struct BeginFrame {

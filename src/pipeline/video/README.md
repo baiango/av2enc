@@ -34,15 +34,21 @@ and is gated sample-by-sample against the pinned `dav2d`.
   `OBU_REGULAR_TIP` `TIP_FRAME_AS_OUTPUT` per remaining picture (3..8
   pictures).  Every reference's §7.22 field is stored from the real coded MV
   grid; each TIP frame stores its own field for the chained next TIP, and the
-  sequence enables `enable_ref_frame_mvs`/`enable_tip`.  Hole fill is off (see
-  `docs/negative-results.md`).  Gated by `video_gate --tip` at 4 and 8
-  pictures with `dav2d --strict 1` and exact recon; the GPU path is not wired.
+  sequence enables `enable_ref_frame_mvs`/`enable_tip`.  Hole fill is on (see
+  `docs/tip-decoder-gate.md`).  With `--video-ref-mvs` (4..8 pictures) the last
+  picture is instead a tile-coded P that references the final TIP display
+  frame, so §7.9 runs over a TIP slot's field.  Gated by `video_gate --tip`
+  (and `--tip --ref-mvs`) at 4 and 8 pictures with `dav2d --strict 1` and exact
+  recon; the GPU path is not wired.
 - Temporal reference MVs (`--video-ref-mvs`, §5.4.6/§5.18.2/§7.9/§7.12.2.7-.8):
   every reference slot stores the §7.22 8x8 motion field, the next inter frame
   runs §7.9 estimation and the merge stack inserts the temporal candidates at
-  the normative step-5/step-12 points.  Working for the multi-reference P chain
-  and the B-frame GOPs; `--video-tlayers` is single-reference, so §7.9 produces
-  an empty field there.  Off by default (default streams are byte-identical).
+  the normative step-5/step-12 points.  Working for the multi-reference P chain,
+  the B-frame GOPs, `--video-gme`/`--video-warp` (per-8x8 warped MVs),
+  `--video-compound-wedge` (the §7.22 wedge allow-list) and the
+  `--video-tip` tail P that references the final TIP display frame;
+  `--video-tlayers` is single-reference, so §7.9 produces an empty field there.
+  Off by default (default streams are byte-identical).
   Gate: `src/pipeline/video/video_ref_mvs_gate.sh`; details and MD5s in
   `docs/ref-frame-mvs.md`.
 - Reference reconstruction: the current frame's MI-aligned reconstruction
@@ -62,7 +68,9 @@ and is gated sample-by-sample against the pinned `dav2d`.
   Candidate ties are resolved in reference-list order, exactly like the CPU
   reference.
 - Segmentation / delta-Q (`--video-segmentation`, `--video-delta-q`,
-  `--video-per-segment-q`, CPU only): the frame header codes the real
+  `--video-per-segment-q`, `--video-uv-delta-q`, `--video-seg-skip`,
+  `--video-seg-globalmv`, `--video-seg-temporal`, `--video-segments N`,
+  CPU only): the frame header codes the real
   §5.18.7.1 segmentation table and §5.18.7.8 `delta_q_params()`; every leaf
   codes `intra_segment_id()` / `inter_segment_id()` in the exact
   `inter_frame_mode_info()` / `intra_frame_mode_info()` order, and the first
@@ -74,10 +82,23 @@ and is gated sample-by-sample against the pinned `dav2d`.
   still `--still-per-segment-q` uses.  A nonzero delta step cannot be coded
   when a superblock is a single skipped 64x64 leaf, and a skipped inter leaf
   infers its segment id from the §5.20.7.4 neighbours; both are replayed
-  exactly (see `src/codec/entropy/deltaq/video/README.md`).  Gated by
-  `src/pipeline/video/gate_video_deltaq.sh` with pinned IVF MD5s,
-  `dav2d --strict 1`, picture counts and exact recon; the default-off path is
-  byte-identical.
+  exactly (see `src/codec/entropy/deltaq/video/README.md`).
+  `--video-segments N` (1..16) splits the superblocks into N variance-ranked
+  buckets; N > 8 signals §5.4.4 `enable_ext_seg = 1` (MaxSegments = 16) and
+  exercises `seg_id_ext_flag`/`seg_id_ext`.  `--video-seg-skip` and
+  `--video-seg-globalmv` place `SEG_LVL_SKIP` / `SEG_LVL_GLOBALMV` on the
+  lowest-variance bucket; those leaves are forced to GLOBALMV/skip (an intra
+  key frame suppresses SKIP, see §6.19.4.1) and an edge leaf that cannot be
+  forced falls back to segment 0 with the same qindex.  `--video-seg-temporal`
+  codes `segmentation_temporal_update` on P frames whose primary reference is
+  an earlier P frame and replays `PrevSegmentIds` from the reference frame.
+  `--video-uv-delta-q D` turns on §5.4.8 `separate_uv_delta_q=1` /
+  `equal_ac_dc_q=0` and codes U=+D, V=-D for both DC and AC (`diff_uv_delta=1`);
+  §7.14.2 then gives each chroma plane/component its own quantizer and §7.17.6
+  receives the same UV AC deltas.  Gated by
+  `src/pipeline/video/gate_video_deltaq.sh` with pinned IVF MD5s at 64x64 and
+  640x360, `dav2d --strict 1`, picture counts and exact recon; the default-off
+  path is byte-identical.
 - SDP (`--video-sdp`, §5.4.3): the intra keyframe codes a luma partition tree
   and a chroma tree for every 64x64 superblock.  The luma tree uses
   `--video-max-depth`/`--video-min-block`; the chroma tree is pinned to one
@@ -90,6 +111,26 @@ and is gated sample-by-sample against the pinned `dav2d`.
   ADST/FDST component reaches adjusted length 8 or 16.  Composes with
   `--video-inter-residual` and `--video-tx-search`.  Gate as above; it
   requires at least one coded DDT leaf and sample-exact recon.
+- Reference-management tools on the flat key+P chain (all default off, so the
+  default streams stay byte-identical):
+  - `--video-short-refresh` (§5.4.6 `enable_short_refresh_frame_flags`,
+    §5.18.2 `has_refresh_frame_flags` / `frame_to_refresh`): every P frame
+    codes the compact single-slot refresh form instead of the full mask.  Gate:
+    `video_short_refresh_gate.sh` (64x64 refs 1/2 and 640x360 refs 2).
+  - `--video-same-ref-compound` (§5.4.6 `num_same_ref_compound = 1`,
+    §5.20.7.11 `comp_ref`, §5.20.7.6 `compound_mode_same_refs`): with
+    `--video-compound --video-refs 2` a compound leaf may signal the `(0, 0)`
+    pair; the decision prefers it on an SSE tie with the (0,1) carrier.  Gate:
+    `video_same_ref_compound_gate.sh` (64x64/640x360, counts the same-ref
+    leaves and checks recon).
+  - `--video-mv-traj` (§5.4.6 `enable_mv_traj`, §7.9.2 trajectory fill,
+    §7.12.2.14/.16 `TrajMv` derived candidates): requires
+    `--video-ref-mvs` and exactly two references.  Gate: `video_mv_traj_gate.sh`
+    (64x64/640x360, counts trajectory-derived candidates).  Three references
+    are rejected by name; see `docs/negative-results.md`.
+  - `--video-refmvbank` (§7.12.2.21) is implemented but **rejected by name**:
+    the pinned decoder agrees for one superblock row but diverges at the third
+    row.  Residual and repro are in `docs/negative-results.md`.
 
 ### Sub-8 luma leaves (`--video-min-block 4`)
 
@@ -149,14 +190,14 @@ without changing the M2 syntax writer.
 
 | Field | Value |
 |---|---|
-| `seq_header_id` | 0 |
+| `seq_header_id` | 0; `--video-multi-sequence` carries a second header with id 1 |
 | `seq_profile_idc` | 0 |
 | `single_picture_header_flag` | 0 |
 | `seq_level_idx` | 7 |
-| `seq_tier` | 0 |
+| `seq_tier` | 0 (main tier); 1 with `--video-tier high` (level 4.0+) |
 | `chroma_format_idc` | 0 (4:2:0) |
 | `bit_depth_idc` | 1 (8-bit) |
-| `seq_lcr_id` | 0 |
+| `seq_lcr_id` | 0; 1 with `--video-lcr-full` (activates the global LCR) |
 | `still_picture` | 0 |
 | `max_tlayer_id` / `max_mlayer_id` | 0 / 0 |
 | `monotonic_output_order_flag` | 1 |
@@ -167,17 +208,17 @@ without changing the M2 syntax writer.
 | `use_256x256_superblock` / `use_128x128_superblock` | 0 / 0 |
 | `enable_sdp` / `enable_ext_partitions` | 0 / 0 |
 | `reduce_pb_aspect_ratio` | 0 |
-| `enable_ext_seg` / `seq_seg_info_present_flag` | 0 / 0 |
+| `enable_ext_seg` / `seq_seg_info_present_flag` | 0 / 0; `enable_ext_seg` 1 with `--video-segments 9..16` |
 | `enable_dip` | 0 |
 | `enable_intra_edge_filter` | 1 |
 | `enable_mrls` | 0 |
 | `enable_cfl_intra` | 1 |
-| `cfl_ds_filter_index` | 0 |
+| `cfl_ds_filter_index` | 0; `--video-cfl-ds-filter N` (format video core only) |
 | `enable_mhccp` / `enable_ibp` | 0 / 0; `enable_ibp` 1 only with `--video-ibp` |
 | `seq_enabled_motion_modes[INTERINTRA..EXTENDWARP]` | all 0 |
 | `enable_masked_compound` / `enable_ref_frame_mvs` | 0 / 0 |
 | `order_hint_bits_minus_1` | 3 (`OrderHintBits = 4`) |
-| `enable_refmvbank` | 0 |
+| `enable_refmvbank` | 0 (the `--video-refmvbank` flag is rejected by name) |
 | `disable_drl_reorder` | 1 (`DRL_REORDER_DISABLED`); 0 with `--video-drl-reorder[-always]` |
 | `explicit_ref_frame_map` | 1 |
 | `explicit_num_ref_frames` | 1, `num_ref_frames_minus_1 = 1` (`NumRefFrames = 2`) |
@@ -186,15 +227,15 @@ without changing the M2 syntax writer.
 | `allow_frame_max_drl_bits` | 0 |
 | `seq_max_bvp_drl_bits_minus_1` | ns(3) = 0 |
 | `allow_frame_max_bvp_drl_bits` | 0 |
-| `num_same_ref_compound` | 0 |
-| `enable_tip` / `enable_mv_traj` / `enable_cwp` | 0; `enable_cwp` 1 only with `--video-cwp-weighted` |
+| `num_same_ref_compound` | 0; 1 only with `--video-same-ref-compound` |
+| `enable_tip` / `enable_mv_traj` / `enable_cwp` | 0; `enable_mv_traj` 1 only with `--video-mv-traj`, `enable_cwp` 1 only with `--video-cwp-weighted` |
 | `enable_bawp` | 0; 1 only with `--video-bawp` |
 | `enable_imp_msk_bld` / `enable_df_sub_pu` | 0; enabled by `--video-imp-mask` / `--video-df-sub-pu` |
 | `enable_opfl_refine` | 0 (REFINE_NONE) |
 | `enable_refinemv` / `enable_bru` / `enable_adaptive_mvd` | 0 |
 | `enable_mvd_sign_derive` / `enable_flex_mvres` | 0 |
 | `enable_global_motion` | 0 |
-| `enable_short_refresh_frame_flags` | 0 |
+| `enable_short_refresh_frame_flags` | 0; 1 only with `--video-short-refresh` |
 | `seq_choose_screen_content_tools` / `seq_force_screen_content_tools` | 0 / 0 |
 | `enable_fsc` / `enable_idtx_intra` | 0; `enable_idtx_intra` 1 only with `--video-idtx` |
 | `enable_mrls` | 0; 1 only with `--video-mrl` |
@@ -204,9 +245,9 @@ without changing the M2 syntax writer.
 | `enable_inter_ddt` / `reduced_tx_part_set` / `enable_cctx` / `enable_tcq` | 0 |
 | `enable_parity_hiding` | 0 |
 | `enable_avg_cdf` | 0 (CDFs reset per frame; `disable_cdf_update = 1`) |
-| `separate_uv_delta_q` | 0 |
-| `equal_ac_dc_q` | 1 |
-| `base_uv_ac_delta_q` / `uv_ac_delta_q_enabled` | 23 (delta 0) / 0 |
+| `separate_uv_delta_q` / `equal_ac_dc_q` | 0 / 1; `1 / 0` with `--video-uv-delta-q` |
+| `base_uv_ac_delta_q` / `base_uv_dc_delta_q` | 23 (delta 0) / inferred 0; `--video-uv-delta-q` codes both |
+| `uv_ac_delta_q_enabled` / `uv_dc_delta_q_enabled` | 0 / 0; both 1 with `--video-uv-delta-q` |
 | `disable_loopfilters_across_tiles` / `enable_cdef` / `enable_gdf` | 0 |
 | `enable_restoration` / `enable_ccso` | 0 |
 | `cdef_on_skip_txfm_always_on` / `..._disabled` | 0 / 1 |
@@ -223,7 +264,7 @@ tile covering the frame.
 
 | Field | Value |
 |---|---|
-| `cur_mfh_id` / `seq_header_id_in_frame_header` | 0 / 0 |
+| `cur_mfh_id` / `seq_header_id_in_frame_header` | 0 / 0; 0 / 1 with `--video-multi-sequence` |
 | `immediate_output_frame` | 1 |
 | `frame_size_override_flag` | 0 |
 | `order_hint` | 0 |
@@ -244,7 +285,7 @@ The 64x64 keyframe header occupies 27 syntax bits; with
 
 | Field | Value |
 |---|---|
-| `cur_mfh_id` / `seq_header_id_in_frame_header` | 0 / 0 |
+| `cur_mfh_id` / `seq_header_id_in_frame_header` | 0 / 0; 0 / 1 with `--video-multi-sequence` |
 | `frame_is_inter` | 1 |
 | `immediate_output_frame` | 1 |
 | `frame_size_override_flag` | 0 |
@@ -276,6 +317,20 @@ The 64x64 P-frame header occupies 45 syntax bits; with
 `ref_order_hint` is not a frame-header syntax element; the reference slot's
 saved order hint is the keyframe's `OrderHint = 0`, so `FrameDistance[0] = 1`
 and the P frame's `OrderHints[0] = 0`.
+
+## Header-surface flags (all default off)
+
+| Flag | Syntax | Decoder carrier |
+|---|---|---|
+| `--video-tier high` | `seq_tier = 1` (§5.4.1, only for `seq_level_idx > 3`) | `dav2d --strict 1` + sample-exact `--video-recon`; the gate parses the bit |
+| `--video-multi-sequence` | two sequence headers (ids 0/1) and `seq_header_id_in_frame_header = 1` (§5.18.2) for every frame | `dav2d --strict 1` + recon; header 1 also changes `OrderHintBits` 4 → 5, so a decoder that reused header 0 desynchronises |
+| `--video-lcr-full` | `seq_lcr_id = 1`, global/local LCR (§5.8) and global/local OPS (§5.10/§5.11) before the sequence header | `avmdec` parses and conformance-checks OBU types 16/18; `dav2d` ignores them (prints "Unknown OBU type 16/18") and must still decode the same pictures |
+
+The default stream keeps `seq_tier = 0`, one `seq_header_id = 0` header, no
+LCR/OPS and `seq_lcr_id = 0`; the pinned reference MD5s are unchanged.  The
+gate is `src/pipeline/video/gate_video_headers.sh` (structural header parse +
+`dav2d`/`avmdec` decode + pinned IVF MD5s for the default and all three
+carriers).
 
 ## Tile syntax for a P-frame block
 
@@ -530,6 +585,9 @@ av2enc clip.y4m --video --video-subpel-eighth --video-mv-precision quarter -o cl
 | `--video-implicit-ref-map` | off | sequence `explicit_ref_frame_map = 0`: §7.7/§7.8 derive `NumTotalRefs`, `ref_frame_idx` and the past/future/current lists; no map bits are coded. Flat P, B-frame and `--video-tlayers` carriers; see the reference-management section |
 | `--video-subpel-eighth` | off | add the 1/8-pel ME refinement stage |
 | `--video-mv-precision P` | eighth | `eighth`, `quarter` or `half` pel |
+| `--video-adaptive-mvd` | off | §5.4.6 `enable_adaptive_mvd`: NEWMV blocks may code §5.20.7.20/.21 `mv_joint`/`amvd_index` (`use_amvd`) when the MVD is exactly representable; CPU key+P, single tile, `--video-refs N` |
+| `--video-mvd-sign-derive` | off | §5.4.6 `enable_mvd_sign_derive`: the last nonzero `mv_sign` is derived from the §5.20.7.13 parity; needs `--video-mv-precision half` (or `quarter` + `--video-flex-mvres`) |
+| `--video-flex-mvres` | off | §5.4.6 `enable_flex_mvres`: `UsePerBlockMvPrecision = 1`, each NEWMV block may code `use_most_probable_precision`/`pb_mv_precision` to select a coarser exact precision (1/8→1/2 or 1/4/1/2→1) |
 | `--video-compound` | off | `reference_select` compound (needs `--video-refs 2`) |
 | `--video-bawp` | off | §5.20.7.6/§7.13.3.25 fitted BAWP on eligible single-prediction luma blocks (skip-only plain P chain, single tile); CPU and `--video-gpu` byte-identical |
 | `--video-morph` | off | §5.20.5.4/§7.13.3.26 morphological prediction: the intra keyframe codes the screen-content + global-IBC mode-info path, `morph_pred` and the fitted §7.13.3.25 adaptation of the IBC copy. CPU, single tile, no loop filters |
@@ -625,6 +683,40 @@ in the IVF (TD + SEQ for the key frame, TD + tile group afterwards).
 quantised to the signalled precision. Note §5.20.7.13 only lowers the
 *predictor* for precisions **coarser than 1/2 pel**; for quarter/half the
 predictor is used unchanged and only the MVD is in precision units.
+
+## Adaptive MVD / MVD sign derivation / flexible MV resolution
+
+Three opt-in sequence bits (§5.4.6) extend the NEWMV path (§5.20.7.6). All are
+off by default, so the reference bitstreams are unchanged. They share the
+`inter/mv_precision` module, the per-tile §9.3 CDF state and the §8.3
+`NPos`/`NPosBuf` neighbour grid.
+
+* `--video-adaptive-mvd` codes `use_amvd` after `single_mode`. When the chosen
+  MVD components are in `Amvd_Index_To_Mvd = {2,4,6,8,16,32,64,128}` the block
+  signals `mv_joint`/`amvd_index` instead of the shell code; `IsAdaptiveMvd`
+  pins `MvPrecision` to the frame value and suppresses the per-block precision
+  symbols and sign derivation.
+* `--video-flex-mvres` makes the decoder derive `UsePerBlockMvPrecision = 1`.
+  Every eligible NEWMV block codes `use_most_probable_precision`; a block that
+  selects a coarser value also codes `pb_mv_precision`. The encoder picks the
+  coarsest precision that represents the ME MVD exactly (1/8→1/2 pel, or
+  1/4/1/2→1 pel), so the reconstruction is identical and only the MVD rate
+  changes. Contexts: `UseMostProbablePrecisions` is 0 for intra leaves, 1 for
+  inter blocks that code no symbol, and the coded value for NEWMV; `MvPrecision`
+  drives the `pb_mv_precision` context bit.
+* `--video-mvd-sign-derive` omits the last nonzero `mv_sign`. §5.20.7.13 derives
+  it as `lastSign & 1` over the coded magnitudes, so the encoder forces that
+  sign before costing the block. It is only active when `FrameMvPrecision <=
+  QUARTER` and `MvPrecision < QUARTER` (a half-pel frame, or quarter-pel with
+  flex selecting one-pel blocks).
+
+Gates: `video_adaptive_mvd_gate.sh`, `video_flex_mvres_gate.sh` and
+`video_mvd_sign_derive_gate.sh` encode 64x64 and 640x360 four-picture streams
+with `--video-refs 2 --video-inter-residual --video-tx-search`, require a
+non-zero decision count, and decode with `dav2d f9dafbc --strict 1` with an
+exact `--video-recon` match and picture count. Unsupported compositions
+(B/TIP/temporal/SVC, compound, BAWP, GME/warp, OPFL/refine-MV, multi-tile,
+non-8-bit 4:2:0, CUDA) are rejected by name.
 
 ## Loop filters (opt-in)
 
@@ -1529,18 +1621,18 @@ bounds like `write_plane_block()` does.
 
 ## Remaining gap in this wave
 
-`--video-segmentation` / `--video-delta-q` are **not** wired.  The frame-header
-signalling exists in `src/codec/entropy/deltaq/{still,video}/` and the
-per-superblock planner in `src/codec/rate/rc/` (`plan_delta_q`), and `still_tx`
-already accepts a per-SB `qindex`.  What is missing is the tile-side
-`read_segment_id` / `read_delta_qindex` ordering in `video_syntax.cpp` plus the
-matching per-leaf quantizer switch in `video_frame.cpp` /
-`video_pipeline.cpp`: a P-frame superblock whose first leaf is `skip_flag = 1`
-codes its delta at the first non-skip leaf, so both paths must track the same
-"delta applied" state per superblock.  Do this with the `video_deltaq` adapter
-(`begin_superblock` / `write_*_segment_id` / `write_superblock_delta_q` /
-`commit_segment_block`) and use `still_tx`'s `use_deltaq=1, ratio_scale=1`
-per-SB order.
+The segmentation/delta-Q surface is wired and gated.  It still does not compose
+with `--video-qm`, `--video-tcq`, `--video-cctx`, `--adaptive-cdf`,
+`--cdf-continuity`, multiple tiles, B/temporal-layer/random-access/TIP
+schedules, or the 10-bit/non-4:2:0 video core.  `--video-seg-globalmv` is not
+combined with `--video-per-segment-q` (an edge intra leaf would have to change
+segment and therefore the quantizer); the skip/globalmv feature segments keep
+`ALT_Q = 0` on inter frames for the same fallback reason.  A key frame cannot
+activate `SEG_LVL_SKIP` at all (§6.19.4.1 requires it to be 0 for every intra
+block), so the key frame table keeps ALT_Q and the P-frame table enables the
+feature; the table is per frame.  The pinned `dav2d` f9dafbc also reads
+`is_inter` on a `SEG_LVL_GLOBALMV` block instead of inferring it, so the
+carrier codes the bit (see `docs/negative-results.md`).
 # Format video core (10-bit / 4:2:2 / 4:4:4 / 4:0:0)
 
 `--video --bit-depth 10` and `--chroma 422|444|400` are served by

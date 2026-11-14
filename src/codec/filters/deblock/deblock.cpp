@@ -159,7 +159,12 @@ bool deblock_supported16(const DeblockFrame16& frame,
     return false;
   };
 
-  if (options.bit_depth != 10 && options.bit_depth != 12) {
+  // The 16-bit container is also the generic entry for 8-bit samples with
+  // 4:2:2 / 4:4:4 subsampling, which `deblock_supported()` (the uint8_t M1
+  // entry) scopes to 4:2:0.  The core arithmetic is depth-parameterised, so the
+  // only difference is the sample container.
+  if (options.bit_depth != 8 && options.bit_depth != 10 &&
+      options.bit_depth != 12) {
     return fail(DeblockStatus::kUnsupportedBitDepth);
   }
   if (frame.num_planes < 1 || frame.num_planes > 3) {

@@ -202,4 +202,104 @@ bool estimate_gm_plan_cpu(const VideoInputFrame& source,
   return true;
 }
 
+bool gm_model_uses_warp(const inter::gme::GmParams& params) {
+  // The decoder derives TransformationType from the coded model, not from the
+  // signalled GmType (§6.19.7.x get_wmtype): a model whose linear part is the
+  // identity is TRANSLATION (or IDENTITY) and is never warped.  A model whose
+  // shear fails §7.13.3.21 has gm_params.invalid set, so is_warp_affine_block()
+  // also declines it even though prediction still runs the extended warp.
+  const bool identity_linear =
+      params.p[2] == inter::gme::kGmOne && params.p[3] == 0 &&
+      params.p[4] == 0 && params.p[5] == inter::gme::kGmOne;
+  if (identity_linear) return false;
+  return inter::gme::setup_shear_valid(params.p.data());
+}
+
+void gm_sub_block_warp_mv(const inter::gme::GmParams& params, int pixel_x,
+                          int pixel_y, inter::mc::Mv* mv) {
+  if (mv == nullptr) return;
+  // get_sub_block_warp_mv(): centre of the 8x8 (bw = bh = TMVP_MI_SIZE = 8).
+  const int center_x = pixel_x + 4;
+  const int center_y = pixel_y + 4;
+  const std::int64_t xc =
+      static_cast<std::int64_t>(params.p[2] - inter::gme::kGmOne) * center_x +
+      static_cast<std::int64_t>(params.p[3]) * center_y + params.p[0];
+  const std::int64_t yc =
+      static_cast<std::int64_t>(params.p[4]) * center_x +
+      static_cast<std::int64_t>(params.p[5] - inter::gme::kGmOne) * center_y +
+      params.p[1];
+  // WARPEDMODEL_PREC_BITS (16) -> 1/8 pel (3 fractional bits), rounding half
+  // away from zero exactly like ROUND_POWER_OF_TWO_SIGNED.
+  mv->x = static_cast<int>(inter::gme::round2_signed64(
+      std::clamp<std::int64_t>(xc, INT32_MIN, INT32_MAX), 13));
+  mv->y = static_cast<int>(inter::gme::round2_signed64(
+      std::clamp<std::int64_t>(yc, INT32_MIN, INT32_MAX), 13));
+}
+
+bool ref_mvs_field_selftest(std::string* error) {
+  using inter::gme::GmParams;
+  using inter::gme::GmType;
+  using inter::gme::kGmOne;
+  const auto fail = [error](const char* msg) {
+    if (error != nullptr) *error = msg;
+    return false;
+  };
+  const auto model = [](GmType type, std::array<std::int32_t, 6> p) {
+    GmParams out;
+    out.type = type;
+    out.p = p;
+    return out;
+  };
+  // Model classification: §6.19.7.x get_wmtype over the coded parameters.
+  if (gm_model_uses_warp(model(GmType::kIdentity,
+                               {0, 0, kGmOne, 0, 0, kGmOne}))) {
+    return fail("identity model classified as warp");
+  }
+  if (gm_model_uses_warp(model(GmType::kRotZoom,
+                               {100, -200, kGmOne, 0, 0, kGmOne}))) {
+    return fail("translation-only model classified as warp");
+  }
+  const GmParams zoom =
+      model(GmType::kRotZoom, {0, 0, kGmOne + 8192, 0, 0, kGmOne + 8192});
+  if (!gm_model_uses_warp(zoom)) {
+    return fail("zoom model classified as non-warp");
+  }
+
+  // Per-8x8 projection.  A pure +1/8 scale step (8192 = kGmOne / 8) makes the
+  // expected 1/8-pel value of every 8x8 centre exact.
+  inter::mc::Mv mv;
+  gm_sub_block_warp_mv(zoom, 0, 0, &mv);  // centre (4, 4)
+  if (mv.y != 4 || mv.x != 4) {
+    return fail("zoom projection at origin is not (4, 4)");
+  }
+  gm_sub_block_warp_mv(zoom, 56, 32, &mv);  // centre (60, 36)
+  if (mv.y != 36 || mv.x != 60) {
+    return fail("zoom projection at (56, 32) is not (36, 60)");
+  }
+  // Translation is added after the linear part.
+  const GmParams shifted =
+      model(GmType::kRotZoom, {7 * 8192, -3 * 8192, kGmOne + 8192, 0, 0,
+                               kGmOne + 8192});
+  gm_sub_block_warp_mv(shifted, 0, 0, &mv);  // centre (4, 4)
+  if (mv.y != 4 - 3 || mv.x != 4 + 7) {
+    return fail("translated zoom projection is not (1, 11)");
+  }
+  // Rotation: p3 = +1/16, p4 = -1/16; the centre is (4, 4).
+  const GmParams rot =
+      model(GmType::kRotZoom, {0, 0, kGmOne, kGmOne / 16, -(kGmOne / 16),
+                               kGmOne});
+  gm_sub_block_warp_mv(rot, 0, 0, &mv);  // xc = 4096*4 = 16384 -> 2
+  if (mv.x != 2 || mv.y != -2) {
+    return fail("rotation projection is not (row -2, col 2)");
+  }
+  // Rounding is half away from zero: xc = 8192*1.5 = 12288 -> 1.5 -> 2.
+  const GmParams half =
+      model(GmType::kRotZoom, {0, 0, kGmOne, 12288, 0, kGmOne});
+  gm_sub_block_warp_mv(half, 0, 0, &mv);  // centre (4, 4): 12288*4 = 49152
+  if (mv.x != 6) {
+    return fail("warp projection rounding is not half-away-from-zero");
+  }
+  return true;
+}
+
 }  // namespace av2enc::video

@@ -124,6 +124,19 @@ bool encode_8bit_chroma(const Picture& picture,
   av2enc::chroma::ChromaStillOptions chroma_options;
   chroma_options.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   chroma_options.gpu = options.chroma_gpu;
+  // §7.17-§7.20 in-loop filters (all off by default).
+  chroma_options.filters.base_q_idx = options.base_q_idx;
+  chroma_options.filters.enable_deblock = options.enable_deblock;
+  chroma_options.filters.enable_cdef = options.enable_cdef;
+  chroma_options.filters.cdef_damping = options.cdef_damping;
+  chroma_options.filters.cdef_num_strengths = options.cdef_num_strengths;
+  chroma_options.filters.enable_ccso = options.enable_ccso;
+  chroma_options.filters.ccso_luma_size_log2 = options.ccso_luma_size_log2;
+  chroma_options.filters.ccso_edge_only = options.ccso_edge_only;
+  chroma_options.filters.enable_wiener = options.enable_wiener;
+  chroma_options.filters.enable_chroma_lr = options.enable_chroma_lr;
+  chroma_options.filters.enable_pc_wiener = options.enable_pc_wiener;
+  chroma_options.filters.enable_gdf = options.enable_gdf;
   av2enc::chroma::ChromaStillResult result;
   if (!av2enc::chroma::encode_chroma_still_picture(chroma_picture,
                                                    chroma_options, result,

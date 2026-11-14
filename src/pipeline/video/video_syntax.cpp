@@ -316,8 +316,12 @@ struct CdfState {
 
   // Compound block layer (§5.20.7.10 / §5.20.7.6).
   std::uint16_t comp_mode[5][3];
+  std::uint16_t comp_ref0[3][6][3];
+  std::uint16_t comp_ref1[3][2][6][3];
   std::uint16_t is_joint[2][3];
   std::uint16_t compound_mode_non_joint[5][6];
+  // §5.4.6 num_same_ref_compound > 0 (--video-same-ref-compound).
+  std::uint16_t compound_mode_same_refs[5][5];
   // §5.20.7.6 use_optflow (REFINE_SWITCHABLE only; ctx = YMode != NEAR_NEARMV).
   std::uint16_t use_optflow[2][3];
   // §5.20.7.16 masked compound (enable_masked_compound = 1).
@@ -423,9 +427,13 @@ void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.single_ref, kSingleRefCdf);
   copy_array(c.drl_mode, kDrlModeCdf);
   copy_array(c.comp_mode, multiref::gate::kCompModeCdf);
+  copy_array(c.comp_ref0, multiref::gate::kCompRef0Cdf);
+  copy_array(c.comp_ref1, multiref::gate::kCompRef1Cdf);
   copy_array(c.is_joint, multiref::gate::kIsJointCdf);
   copy_array(c.compound_mode_non_joint,
              multiref::gate::kCompoundModeNonJointCdf);
+  copy_array(c.compound_mode_same_refs,
+             multiref::gate::kCompoundModeSameRefsCdf);
   // §9.3 TileUseOptflowCdf[2] defaults (not generated into
   // video_cdf_tables.h; the compound component pins the same values).
   static constexpr std::uint16_t kUseOptflowCdf[2][3] = {
@@ -746,6 +754,12 @@ class Writer {
     ymode_grid_.assign(mi_cells, 0);
     comp_group_grid_.assign(mi_cells, 0);
     mv_grid_.assign(mi_cells, inter::mc::MiInfo{});
+    prec_grid_.assign(mi_cells, inter::mvprec::NeighborMvInfo{});
+    for (std::size_t i = 0; i < mi_cells; ++i) {
+      prec_grid_[i].available = false;
+      prec_grid_[i].ref[0] = merge::kRefNone;
+      prec_grid_[i].ref[1] = merge::kRefNone;
+    }
     if (plan_.allow_intrabc) {
       ibcs::init_ibc_cdfs(ibc_cdfs_);
       ibc_grid_.assign(mi_cells, 0);
@@ -800,13 +814,14 @@ class Writer {
       qp_plan.base_q_idx = static_cast<int>(config_.base_q_idx);
       qp_plan.segmentation = plan_.segmentation;
       qp_plan.delta_q = plan_.delta_q;
-      qp_plan.enable_ext_seg = false;
+      qp_plan.enable_ext_seg = plan_.enable_ext_seg;
       qp_plan.primary_ref_is_none = plan_.primary_ref_is_none;
       VideoFrameHeader frame_header;
       frame_header.keyframe = !plan_.inter_frame;
       std::string qp_error;
       if (!video::deltaq::begin_frame(dqp_, qp_plan, frame_header, mi_cols_,
-                                      mi_rows_, {}, &qp_error)) {
+                                      mi_rows_, plan_.prev_segment_ids,
+                                      &qp_error)) {
         dqp_init_error_ = "delta-Q setup: " + qp_error;
       } else if (plan_.delta_q.present &&
                  static_cast<int>(plan_.delta_steps.size()) !=
@@ -2663,6 +2678,71 @@ class Writer {
     return want == num_refs - 1;
   }
 
+  // §5.20.7.11 read_compound_ref().  Writes exactly the comp_ref symbols the
+  // decoder reads for `node`'s (ref_index, ref_index1) pair.  NumSameRefCompound
+  // > 0 can repeat reference 0, which is the same-reference compound carrier.
+  bool code_compound_ref(const BlockSyntax& node) {
+    const int n_total = plan_.num_total_refs;
+    if (n_total < 2) return false;
+    const int same = std::min<int>(config_.num_same_ref_compound, n_total);
+    const int want0 = node.ref_index;
+    const int want1 = node.ref_index1;
+    int ref_frame[2] = {n_total - 1, n_total - 1};
+    int n_found = 0;
+    for (int ref = 0; ref < n_total - 1 && n_found < 2; ++ref) {
+      int comp_ref = 0;
+      bool implied = false;
+      if (n_found == 0 && ref == 2) {
+        comp_ref = 1;
+        implied = true;
+      } else if (n_found == 0 && ref + 1 >= same &&
+                 ref + 1 == n_total - 1) {
+        comp_ref = 1;
+        implied = true;
+      } else if (n_found == 0 && ref == want0) {
+        comp_ref = 1;
+      } else if (n_found == 1 && ref == want1) {
+        comp_ref = 1;
+      }
+      if (!implied) {
+        // §9.3 comp_ref CDF context: compare this reference's neighbour
+        // count with the sum of the later references.
+        const int this_count = count_refs(ref);
+        int next_count = 0;
+        for (int i = ref + 1; i < n_total; ++i) {
+          next_count += count_refs(i);
+        }
+        const int ctx = this_count == next_count
+                            ? 1
+                            : (this_count < next_count ? 0 : 2);
+        if (n_found == 0) {
+          if (!sym(&cdfs_.comp_ref0[ctx][std::min(ref, 5)][0], 2, comp_ref)) {
+            return false;
+          }
+        } else {
+          const int prev = ref_frame[0];
+          const bool prev_forward =
+              prev >= 0 && prev < n_total &&
+              plan_.frame_distance[static_cast<std::size_t>(prev)] >= 0;
+          const bool cur_forward =
+              ref >= 0 && ref < n_total &&
+              plan_.frame_distance[static_cast<std::size_t>(ref)] >= 0;
+          const int bit_type = prev_forward != cur_forward ? 1 : 0;
+          if (!sym(&cdfs_.comp_ref1[ctx][bit_type][std::min(ref, 5)][0], 2,
+                   comp_ref)) {
+            return false;
+          }
+        }
+      }
+      if (comp_ref) {
+        ref_frame[n_found] = ref;
+        ++n_found;
+        if (ref < same) --ref;
+      }
+    }
+    return ref_frame[0] == want0 && ref_frame[1] == want1;
+  }
+
   bool code_drl_index(int ctx, int index, int start = 0) {
     const int m = static_cast<int>(config_.max_drl_bits_minus_1) + 1;
     if (index < start || index > m) return false;
@@ -2960,7 +3040,23 @@ class Writer {
       error = "compound syntax is wired for NumTotalRefs == 2";
       return false;
     }
-    if (node.ref_index != 0 || node.ref_index1 != 1) {
+    const bool same_refs = node.ref_index == node.ref_index1;
+    const bool same_ref_carrier =
+        same_refs && config_.num_same_ref_compound > 0;
+    if (same_refs && !same_ref_carrier) {
+      error = "same-reference compound requires num_same_ref_compound > 0";
+      return false;
+    }
+    if (same_ref_carrier) {
+      if (node.ref_index != 0) {
+        error = "same-reference compound is wired for reference pair (0, 0)";
+        return false;
+      }
+      if (node.compound_mode != 3) {
+        error = "same-reference compound is wired for GLOBAL_GLOBALMV only";
+        return false;
+      }
+    } else if (node.ref_index != 0 || node.ref_index1 != 1) {
       error = "compound reference pair must be (0, 1)";
       return false;
     }
@@ -3037,8 +3133,9 @@ class Writer {
     // §5.20.7.6 use_optflow is coded for a switchable frame over an allowed
     // reference pair, before the DRL indices and compound type.
     const bool optflow_eligible =
-        near_near && plan_.opfl_refine_type == 1 && opfl_allowed_for_pair(0, 1) &&
-        cur_w4_ * 4 >= 8 && cur_h4_ * 4 >= 8 && !plan_.frame_is_switch;
+        near_near && !same_refs && plan_.opfl_refine_type == 1 &&
+        opfl_allowed_for_pair(0, 1) && cur_w4_ * 4 >= 8 && cur_h4_ * 4 >= 8 &&
+        !plan_.frame_is_switch;
     if (!optflow_eligible && node.use_optflow) {
       error = "use_optflow set outside the §5.20.7.6 gate";
       return false;
@@ -3047,10 +3144,11 @@ class Writer {
       error = error_;
       return false;
     }
-    // (0, 1) is implied: no comp_ref symbols for NumTotalRefs == 2.
-    if (!sym(&cdfs_.is_joint[is_joint_context(0, 1)][0], 2,
-             node.compound_joint)) {
-      error = error_;
+    // §5.20.7.11 read_compound_ref(): NumTotalRefs == 2 with
+    // num_same_ref_compound == 0 implies (0, 1) with no bits; enabling the
+    // same-reference carrier codes one comp_ref symbol.
+    if (!code_compound_ref(node)) {
+      error = "write compound_ref failed";
       return false;
     }
     merge::NewMvContextParams nparams;
@@ -3071,10 +3169,29 @@ class Writer {
       error = "derive_new_mv_context failed";
       return false;
     }
-    if (!sym(&cdfs_.compound_mode_non_joint[ctx][0], 5,
-             node.compound_mode)) {
-      error = error_;
-      return false;
+    if (same_refs) {
+      // §5.20.7.6: RefFrame[0] == RefFrame[1] selects
+      // compound_mode_same_refs.  Value 2 is GLOBAL_GLOBALMV (0/1 map to
+      // NEAR_NEARMV/NEAR_NEWMV and 3 to NEW_NEWMV).
+      if (node.compound_mode != 3) {
+        error = "same-reference compound expects GLOBAL_GLOBALMV";
+        return false;
+      }
+      if (!sym(&cdfs_.compound_mode_same_refs[ctx][0], 4, 2)) {
+        error = error_;
+        return false;
+      }
+    } else {
+      if (!sym(&cdfs_.is_joint[is_joint_context(0, 1)][0], 2,
+               node.compound_joint)) {
+        error = error_;
+        return false;
+      }
+      if (!sym(&cdfs_.compound_mode_non_joint[ctx][0], 5,
+               node.compound_mode)) {
+        error = error_;
+        return false;
+      }
     }
     if (optflow_eligible &&
         !sym(&cdfs_.use_optflow[node.compound_mode != 0 ? 1 : 0][0], 2,
@@ -3267,11 +3384,17 @@ class Writer {
     params.num_future_refs = plan_.temporal.num_future_refs;
     params.closest_past = plan_.temporal.closest_past;
     params.closest_future = plan_.temporal.closest_future;
+    params.mv_traj = plan_.temporal.mv_traj;
     params.tile_mi_col_start = plan_.tile_mi_col;
     params.tile_mi_row_start = plan_.tile_mi_row;
     params.tile_mi_col_end = plan_.frame_mi_cols;
     params.tile_mi_row_end = plan_.frame_mi_rows;
     merge::MvStack stack;
+    // The decoder's §7.12.2 stack includes the §7.12.2.21 bank candidates
+    // when enable_refmvbank is set.  The encoder decision used them, so the
+    // writer cannot rebuild the same stack without replaying the bank; the
+    // decoder gate is the authority for this configuration.
+    if (!config_.enable_refmvbank) {
     const drl::Mode reorder_mode =
         plan_.drl_reorder == 2
             ? drl::Mode::kAlways
@@ -3352,6 +3475,7 @@ class Writer {
         return false;
       }
     }
+    }
 
     if (plan_.num_total_refs > 1) {
       // §5.20.7.10 read_ref_frames(): when reference_select is on and the
@@ -3397,6 +3521,28 @@ class Writer {
             : (node.inter_mode == kInterNearMv ? 0 : 2);
     if (!code_single_mode(ctx, single_mode)) {
       error = error_;
+      return false;
+    }
+    // §5.20.7.6 use_amvd.  Present only for a NEWMV YMode (allow_amvd_mode()
+    // covers NEWMV / NEW_NEWMV / NEAR_NEWMV / NEW_NEARMV / JOINT_NEWMV); this
+    // writer produces single-reference NEWMV only.  The spec places it
+    // immediately after single_mode and before use_bawp.
+    const bool amvd_symbol_present =
+        plan_.enable_adaptive_mvd && node.inter_mode == kInterNewMv;
+    if (amvd_symbol_present) {
+      const inter::mvprec::NeighborSet neigh = mv_res_neighbours();
+      const int amvd_ctx = inter::mvprec::use_amvd_ctx(neigh, node.ref_index);
+      std::string amvd_error;
+      if (!inter::mvprec::write_use_amvd(
+              enc_, cdfs_.mv_precision,
+              inter::mvprec::use_amvd_cdf_index(inter::mvprec::kYModeNewMv,
+                                                false),
+              amvd_ctx, node.use_amvd != 0, &amvd_error)) {
+        error = "write_use_amvd failed: " + amvd_error;
+        return false;
+      }
+    } else if (node.use_amvd) {
+      error = "use_amvd set outside the §5.20.7.6 gate";
       return false;
     }
     // §5.20.7.6: use_bawp follows single_mode for a single-prediction block
@@ -3456,28 +3602,80 @@ class Writer {
       }
     }
     if (node.inter_mode == kInterNewMv) {
-      if (plan_.mv_precision == 0) {
+      inter::mvprec::MvResConfig res_config;
+      res_config.enable_adaptive_mvd = plan_.enable_adaptive_mvd;
+      res_config.enable_mvd_sign_derive = plan_.enable_mvd_sign_derive;
+      res_config.enable_flex_mvres = plan_.enable_flex_mvres;
+      const me2::FramePrecisionSyntax frame_prec = frame_mv_precision();
+      const int target = node.block_mv_precision >= 0
+                             ? node.block_mv_precision
+                             : frame_prec.frame_precision;
+      inter::mvprec::BlockPrecisionSyntax precision_plan;
+      std::string precision_error;
+      if (!inter::mvprec::plan_block_precision(
+              res_config, frame_prec, inter::mvprec::kYModeNewMv,
+              node.use_amvd != 0, target, &precision_plan,
+              &precision_error)) {
+        error = "plan_block_precision failed: " + precision_error;
+        return false;
+      }
+      if (node.use_amvd && !precision_plan.is_adaptive_mvd) {
+        error = "use_amvd did not produce an IsAdaptiveMvd plan";
+        return false;
+      }
+      const inter::mvprec::NeighborSet neigh = mv_res_neighbours();
+      const int most_probable_ctx =
+          inter::mvprec::use_most_probable_precision_ctx(neigh);
+      const int pb_ctx =
+          inter::mvprec::pb_mv_precision_ctx(neigh, frame_prec.frame_precision);
+      if (!inter::mvprec::write_block_precision(
+              enc_, cdfs_.mv_precision, most_probable_ctx, pb_ctx,
+              precision_plan, &precision_error)) {        error = "write_block_precision failed: " + precision_error;
+        return false;
+      }
+      inter::mvprec::MvdSignConfig sign_config;
+      sign_config.enable_mvd_sign_derive = plan_.enable_mvd_sign_derive;
+      sign_config.frame_precision = frame_prec.frame_precision;
+      sign_config.mv_precision = precision_plan.mv_precision;
+      sign_config.y_mode = inter::mvprec::kYModeNewMv;
+      sign_config.is_adaptive_mvd = precision_plan.is_adaptive_mvd;
+      sign_config.is_compound = false;
+      sign_config.ref_mv_idx = 0;
+      inter::mc::Mv mvd[1] = {inter::mc::Mv{node.mvd_y, node.mvd_x}};
+      if (precision_plan.is_adaptive_mvd) {
+        inter::mvprec::AmvdMvSyntax amvd;
+        if (!inter::mvprec::amvd_mv_from_mv(mvd[0], &amvd,
+                                            &precision_error)) {
+          error = "amvd_mv_from_mv failed: " + precision_error;
+          return false;
+        }
+        if (!inter::mvprec::write_amvd_mv(enc_, cdfs_.mv_precision, amvd,
+                                          &precision_error)) {
+          error = "write_amvd_mv failed: " + precision_error;
+          return false;
+        }
+        if (!inter::mvprec::write_mvd_signs(enc_, sign_config, mvd, 1,
+                                            &precision_error)) {
+          error = "write_mvd_signs (AMVD) failed: " + precision_error;
+          return false;
+        }
+      } else if (precision_plan.mv_precision ==
+                 me2::kMvPrecisionEighthPel) {
+        // The historical 1/8-pel writer codes the sign bits itself.
         if (!write_mv(node.mvd_y, node.mvd_x)) {
           error = error_;
           return false;
         }
       } else {
-        const int precision = plan_.mv_precision == 1
-                                  ? av2enc::me2::kMvPrecisionQuarterPel
-                                  : av2enc::me2::kMvPrecisionHalfPel;
-        std::string shell_error;
-        if (!inter::mvprec::write_shell_mv(enc_, cdfs_.mv_precision,
-                                           node.mvd_y, node.mvd_x, precision,
-                                           &shell_error)) {
-          error = "write_shell_mv failed: " + shell_error;
+        if (!inter::mvprec::write_shell_mv(
+                enc_, cdfs_.mv_precision, node.mvd_y, node.mvd_x,
+                precision_plan.mv_precision, &precision_error)) {
+          error = "write_shell_mv failed: " + precision_error;
           return false;
         }
-        if (node.mvd_y != 0 && !raw_bit(node.mvd_y < 0)) {
-          error = error_;
-          return false;
-        }
-        if (node.mvd_x != 0 && !raw_bit(node.mvd_x < 0)) {
-          error = error_;
+        if (!inter::mvprec::write_mvd_signs(enc_, sign_config, mvd, 1,
+                                            &precision_error)) {
+          error = "write_mvd_signs failed: " + precision_error;
           return false;
         }
       }
@@ -3515,6 +3713,36 @@ class Writer {
 
   inter::mc::Mv block_global_mv(const BlockSyntax& node) const {
     return block_global_mv_for_ref(node, node.ref_index);
+  }
+
+  // §5.18.2 FrameMvPrecision -> the two header bits.  The inter writer never
+  // sets force_integer_mv (screen-content tools are key-frame only), so the
+  // frame precision is always signallable.  With --video-flex-mvres the
+  // derived UsePerBlockMvPrecision is 1.
+  me2::FramePrecisionSyntax frame_mv_precision() const {
+    const int target =
+        plan_.mv_precision == 0
+            ? me2::kMvPrecisionEighthPel
+            : (plan_.mv_precision == 1 ? me2::kMvPrecisionQuarterPel
+                                       : me2::kMvPrecisionHalfPel);
+    me2::FramePrecisionSyntax out;
+    me2::me2_frame_precision_to_bits(
+        target, plan_.enable_flex_mvres ? 1 : 0, /*force_integer_mv=*/0, &out);
+    return out;
+  }
+
+  int block_mv_precision(const BlockSyntax& node) const {
+    if (node.block_mv_precision >= 0) {
+      return node.block_mv_precision;
+    }
+    return frame_mv_precision().frame_precision;
+  }
+
+  // §8.3 MV-resolution neighbour set for the current block.
+  inter::mvprec::NeighborSet mv_res_neighbours() const {
+    return inter::mvprec::collect_neighbors(
+        prec_grid_.data(), mi_cols_, mi_rows_, cur_r_, cur_c_, cur_w4_,
+        cur_h4_, 16);
   }
 
   void update_mode_grids(const BlockSyntax& node) {
@@ -3569,6 +3797,40 @@ class Writer {
         mi.h4 = static_cast<std::int8_t>(cur_h4_);
         mi.col_base = static_cast<std::int16_t>(cur_c_);
         mi.row_base = static_cast<std::int16_t>(cur_r_);
+        // §8.3 MV-resolution neighbour state.  Every decoded MI cell is
+        // available; intra cells carry UseMostProbablePrecisions = 0 and the
+        // frame precision, so they only affect the precision context through
+        // the MvPrecision comparison (which uses the frame value).
+        inter::mvprec::NeighborMvInfo& prec = prec_grid_[idx];
+        prec = inter::mvprec::NeighborMvInfo{};
+        prec.available = true;
+        prec.ref[0] = mi.ref[0];
+        prec.ref[1] = mi.ref[1];
+        prec.y_mode = ymode_grid_[idx];
+        const bool newmv_leaf =
+            node.is_inter && !node.compound &&
+            node.inter_mode == kInterNewMv;
+        prec.uses_amvd = newmv_leaf && node.use_amvd != 0;
+        prec.mv_precision =
+            node.is_inter ? block_mv_precision(node)
+                          : frame_mv_precision().frame_precision;
+        // §5.20.4.1 block state.  Intra leaves set
+        // use_most_probable_precision = 0 and keep FrameMvPrecision; an inter
+        // block that codes no precision symbol (NEARMV/GLOBALMV, or a NEWMV
+        // block that kept the frame value) is 1.  Only a coarser
+        // pb_mv_precision clears the flag.
+        if (newmv_leaf) {
+          prec.use_most_probable_precision =
+              node.block_mv_precision < 0
+                  ? 1
+                  : (node.block_mv_precision ==
+                             frame_mv_precision().frame_precision
+                         ? 1
+                         : 0);
+        } else {
+          prec.use_most_probable_precision = node.is_inter != 0;
+        }
+        prec.interp_filter = 3;  // fixed EIGHTTAP frame filter
       }
     }
   }
@@ -3921,7 +4183,10 @@ class Writer {
     const int tree_type = node.tree_type;
     const bool chroma_part = tree_type == 2;
     const bool chroma_info = (node.flags & kFlagHasChromaInfo) != 0;
-    const bool node_has_chroma = !chroma_info || node.has_chroma != 0;
+    // §5.20.7.26: a monochrome sequence has no chroma residual at all, so the
+    // Subsampled_Size lookup must not run for it.
+    const bool node_has_chroma =
+        fmt::has_chroma(chroma_) && (!chroma_info || node.has_chroma != 0);
     const int chroma_mi_row =
         chroma_info ? static_cast<int>(node.chroma_mi_row) : node.mi_row;
     const int chroma_mi_col =
@@ -4258,7 +4523,10 @@ class Writer {
     const int tree_type = node.tree_type;
     const bool chroma_part = tree_type == 2;
     const bool chroma_info = (node.flags & kFlagHasChromaInfo) != 0;
-    const bool node_has_chroma = !chroma_info || node.has_chroma != 0;
+    // §5.20.7.26: a monochrome sequence has no chroma residual at all, so the
+    // Subsampled_Size lookup must not run for it.
+    const bool node_has_chroma =
+        fmt::has_chroma(chroma_) && (!chroma_info || node.has_chroma != 0);
     if (chroma_part && !node_has_chroma) {
       // §5.20.3.1: a chroma-tree leaf with HasChroma == 0 codes nothing.
       return true;
@@ -4306,6 +4574,28 @@ class Writer {
     const bool dqp = dqp_active_;
     const bool seg_pre_skip = dqp && dqp_.segmentation.seg_id_pre_skip;
     const int segment_id = dqp ? static_cast<int>(node.segment_id) : 0;
+    // §5.20.7.3/.6/.10: SEG_LVL_SKIP/GLOBALMV force YMode = GLOBALMV and
+    // SkipSegFrame; SKIP also infers skip_flag = 1.  The pinned dav2d still
+    // reads is_inter for a GLOBALMV block, so only the ref-frames/mode/skip
+    // bits are inferred (docs/negative-results.md).
+    const bool seg_skip =
+        dqp && plan_.inter_frame && dqp_.segmentation.skip_active(segment_id);
+    const bool seg_globalmv =
+        dqp && plan_.inter_frame &&
+        dqp_.segmentation.globalmv_active(segment_id);
+    const bool seg_forced_inter = seg_skip || seg_globalmv;
+    if (trace_ && dqp) {
+      std::cerr << "wseg r=" << node.mi_row << " c=" << node.mi_col
+                << " size=" << static_cast<int>(node.bsize)
+                << " seg=" << segment_id
+                << " inter=" << static_cast<int>(node.is_inter)
+                << " skip=" << static_cast<int>(node.skip_flag)
+                << " gmv=" << (seg_globalmv ? 1 : 0)
+                << " skp=" << (seg_skip ? 1 : 0)
+                << " preskip=" << (seg_pre_skip ? 1 : 0)
+                << " temporal="
+                << (dqp_.segmentation.temporal_update ? 1 : 0) << "\n";
+    }
     const rc::DeltaQPlanStep* delta_step = sb_first_leaf_ ? sb_step_ : nullptr;
     sb_first_leaf_ = false;
     std::string dq_error;
@@ -4320,11 +4610,24 @@ class Writer {
         return false;
       }
 #endif
+#if defined(AV2ENC_VIDEO_DELTAQ)
+      if (seg_globalmv && node.is_inter == 0) {
+        error = "SEG_LVL_GLOBALMV leaf is not an inter block";
+        return false;
+      }
+#endif
       if (!code_is_inter(node.is_inter != 0)) {
         error = error_;
         return false;
       }
       if (node.is_inter) {
+#if defined(AV2ENC_VIDEO_DELTAQ)
+        if (seg_skip && node.skip_flag == 0) {
+          error = "SEG_LVL_SKIP leaf must have skip_flag = 1";
+          return false;
+        }
+        if (!seg_skip)
+#endif
         if (!code_skip_flag(node.skip_flag != 0)) {
           error = error_;
           return false;
@@ -4345,6 +4648,18 @@ class Writer {
             !write_delta_step(*delta_step, node, node.skip_flag != 0, error)) {
           return false;
         }
+#endif
+#if defined(AV2ENC_VIDEO_DELTAQ)
+        // §5.20.7.6/.10: the forced GLOBALMV path codes ref_frames, mode,
+        // BAWP, motion mode and DRL as inferred values (no bits).
+        if (seg_forced_inter) {
+          if (node.compound || node.inter_mode != kInterGlobalMv ||
+              node.ref_index != 0 || node.mv_y != 0 || node.mv_x != 0 ||
+              node.use_bawp != 0 || node.motion_mode != 0) {
+            error = "segmentation-forced GLOBALMV leaf carries mode syntax";
+            return false;
+          }
+        } else
 #endif
         if (!write_inter_mode_info(node, error)) return false;
         if (node.skip_flag) {
@@ -4602,6 +4917,10 @@ class Writer {
   std::vector<std::uint8_t> ymode_grid_;
   std::vector<std::uint8_t> comp_group_grid_;
   std::vector<inter::mc::MiInfo> mv_grid_;
+  // §8.3 neighbour state for the MV-resolution contexts (use_amvd,
+  // use_most_probable_precision, pb_mv_precision).  One entry per MI cell,
+  // updated with the same block origin/extent as mv_grid_.
+  std::vector<inter::mvprec::NeighborMvInfo> prec_grid_;
 
   int cur_r_ = 0;
   int cur_c_ = 0;

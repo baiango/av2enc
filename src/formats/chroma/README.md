@@ -1,8 +1,8 @@
 # Chroma-format encoder component (`src/encoder/format/chroma/`)
 
-Status: **encoder-side format support for 4:2:2, 4:4:4 and 4:0:0.**
-Standalone component and gate streams; the M1/M2 cores are intentionally
-untouched. The three extra formats are encoded, decoded by `dav2d
+Status: **encoder-side format support for 4:2:2, 4:4:4 and 4:0:0**, with the
+§7.17-§7.20.5 in-loop filter stage.  Standalone component and gate streams; the
+M1/M2 cores are intentionally untouched. The three extra formats are encoded, decoded by `dav2d
 --strict 1`, and compared bit-exactly against the encoder reconstruction at
 64x64 and 640x360.
 
@@ -107,6 +107,7 @@ Monochrome-forced entries.
 | Header reader | `chroma_headers.h` | `read_sequence_header_syntax`, `parse_sequence_header_obu`, `find_sequence_header`, `SequenceHeaderInfo` |
 | Residual shape | `chroma_residual.h` | `make_tx_shape`, `transform_shifts`, `forward_dct`, `inverse_dct`, `quantize_coefficients`, `dequantize_block`, `build_diagonal_scan` |
 | Still writer | `chroma_still.h` | `make_chroma_picture`, `encode_chroma_still_picture`, `copy_visible_plane`, `write_recon_y4m` |
+| In-loop filters | `chroma_filters.h` | `ChromaFilterOptions`, `ChromaFilterPlan`, `ChromaFilterPlanes`, `run_chroma_filters` |
 | Gate tool | `chroma_still_main.cpp` | `chroma_still` CLI |
 
 `SequenceHeaderInfo` exposes the inferred values (`monochrome`,
@@ -117,7 +118,8 @@ independent bit.
 ## Minimal stream design
 
 One key frame, one tile, one `PARTITION_NONE` 64x64 superblock at a time:
-DC_PRED intra, `TX_MODE_LARGEST`, DCT_DCT, no filters, frozen CDFs,
+DC_PRED intra, `TX_MODE_LARGEST`, DCT_DCT, optional §7.17-§7.20.5 filters
+(off by default), frozen CDFs,
 `base_q_idx = 90` (qctx slice 0, `qlookup(90) = 528`). Every superblock of
 64x64 and 640x360 satisfies §5.20.3.2's `has_rows`/`has_cols` half-block test,
 so no implied partition is needed. `supports_64x64_none()` rejects other
@@ -247,23 +249,70 @@ cores should call it rather than re-deriving these values.
 | `gate.sh` | dav2d `--strict 1` + 0-diff + golden gate |
 | `goldens/chroma_goldens.txt` | pinned IVF/decoded MD5s |
 
-## In-loop filter gap (8-bit non-4:2:0)
+## In-loop filters (§7.17-§7.20.5)
 
-This writer has no filter stage at all: it emits no `read_deblocking_filter()`,
-`cdef_params()`, `ccso_params()`, `lr_params()` or per-superblock filter
-syntax, and every `--still-deblock/--still-cdef/--still-ccso/--still-wiener/
---still-chroma-lr/--still-gdf` request is rejected by name for the 8-bit
-format paths.  The 10-bit format writer (`src/formats/high_bitdepth/`) is the
-one that carries the §7.17-§7.20 chain; its chroma LR covers 4:2:2/4:4:4 (see
-`gate_10bit_filters.sh`).  Wiring the 8-bit writer means porting that plan,
-the header rows and the per-superblock hooks (the 10-bit chain is 10-bit
-sample-typed, so the 8-bit core is a separate, smaller port).
+The writer now carries the full filter stage: `read_deblocking_filter()`,
+`gdf_params()`, `cdef_params()`, `lr_params()`, `ccso_params()` in the frame
+header, plus the per-superblock `read_lr()`/`read_cdef()`/`read_ccso()` tile
+symbols.  `--still-deblock`, `--still-cdef`, `--still-ccso`, `--still-wiener`,
+`--still-chroma-lr`, `--still-pc-wiener` and `--still-gdf` are accepted on
+`--still --chroma 422|444|400`; every default (all filters off) stream is
+byte-identical to the previous writer.
+
+`chroma_filters.{h,cpp}` owns the plan/application.  The 8-bit samples are
+carried in the uint16_t filter container with `BitDepth = 8` and run through
+the same depth-parameterised cores as the 10-bit writer:
+
+| Filter | Core | Plan/reuse |
+|---|---|---|
+| §7.17 deblock | `deblock_core.h` (`deblock_frame16`, BitDepth 8) | `ChromaFilterBlock` tx sizes |
+| §7.18 CDEF | `cdef_core.h` (`cdef_frame16`, BitDepth 8) | `hbd::plan_cdef` |
+| §7.19 CCSO | `ccso_core.h` (`ccso_frame16`, BitDepth 8) | `hbd::plan_ccso` |
+| §7.20 Wiener NS | `wiener_core.h` | `hbd::plan_lr` + `apply_wiener16` |
+| §7.20.4 PC-Wiener | `tables/pc_wiener.*` | `hbd::plan_pc_wiener16` + `apply_pc_wiener16` |
+| §7.20.5 GDF | `tables/gdf.*` | `hbd::plan_gdf` + `apply_gdf16` |
+
+The shared "16" entries accept `BitDepth = 8` for the non-4:2:0 geometry
+(the uint8_t entries stay scoped to the 4:2:0 M1/M2 paths).  The container only
+stores clipped samples, so the arithmetic is identical to an 8-bit buffer — the
+dav2d gate is the evidence.
+
+The writer runs two passes when filters are enabled: the first reconstructs
+and collects the per-leaf `luma_eob_zero`/tx-size metadata, `run_chroma_filters`
+plans and applies the chain in normative order (deblock -> CDEF -> CCSO -> LR ->
+GDF), and the second re-codes the same coefficients with the filter syntax at
+the §5.20.10 hook points.  Filters require `disable_cdf_update = 1`; the filter
+symbol CDFs are frozen (default).  Filters are not wired to the 8-bit chroma GPU
+block stage and are rejected there by name.
+
+`--still-chroma-lr --still-deblock` is rejected by name at 4:2:2/4:4:4 for the
+same pinned-decoder chroma-lossless-mask aliasing reason as the 10-bit writer.
+
+Gate: `src/formats/format_gate.sh` runs each filter alone plus the full chain at
+64x64 and 640x360 for 4:2:2/4:4:4/4:0:0 with `dav2d --strict 1` and a 0-diff
+reconstruction comparison.  Two textured-source cases make the Wiener/LR search
+win units so the §5.18.7.11 row and §5.20.10.4 symbols are exercised.  At the
+pinned `--qp 90` the natural fixtures leave every Wiener/chroma-LR unit
+unfiltered (the plan then signals no restoration at all), so those cases are
+byte-identical to the default stream; the 10-bit gate at q303 covers the same
+plan/apply code at a coarser quantiser.
+
+Residual gaps (still gated):
+
+* 8-bit chroma LR finds no improving unit at `--qp 90` on the gate media; its
+  header/tile rows are shared with the exercised luma LR path.
+* The 8-bit writer keeps the §8.3.1 slice-0 coefficient CDFs, so `--qp` stays
+  pinned at 90; a qindex above 90 would need slices 1..3.
+* 4:2:2/4:4:4 chroma LR uses the chroma-only Wiener subset (the CfL luma taps
+  are not decoder-exact with the pinned decoder), exactly like the 10-bit
+  writer.
 
 ## Limitations
 
 * Streams are minimal format/gate streams, not a new production mode. They use
   one 64x64 `PARTITION_NONE` block per superblock and DC-only intra, so they do
-  not exercise 4:2:2/4:4:4 partition, directional intra, CfL, filters or RDO.
+  not exercise 4:2:2/4:4:4 partition, directional intra, CfL, filter RDO or
+  motion.  The in-loop filters are driven by one fixed per-frame plan.
 * `supports_64x64_none()` intentionally rejects geometries where the half-block
   test fails (for example 640x322); use the M1 partition tree for those once it
   is chroma-aware.

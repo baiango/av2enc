@@ -235,4 +235,155 @@ run_case_bframes tlayers4-cdef --video-tlayers 4 --video-cdef
 expect_reject lr-tiles --video-wiener --tiles 2x1
 expect_reject wrappers --video-cdef --video-long-term
 
+# 8. Format video core (10-bit and 8-bit 4:2:2/4:4:4/4:0:0).  The same filter
+#    plans and codecs drive the depth/chroma-generic writer; deblock runs on
+#    every frame and the remaining tools are planned on the intra key frame.
+gen_format_clip() {
+  local tag="$1" bitdepth="$2" chroma="$3" path="$4"
+  python3 - "$tag" "$bitdepth" "$chroma" "$path" <<'PY'
+import math
+import sys
+
+tag, bitdepth, chroma, path = sys.argv[1:5]
+bitdepth = int(bitdepth)
+w, h = 640, 360
+sub_x = 1 if chroma in ("420", "422") else 0
+sub_y = 1 if chroma == "420" else 0
+cw, ch = w >> sub_x, h >> sub_y
+peak = (1 << bitdepth) - 1
+planes = [(w, h)]
+if chroma != "400":
+    planes += [(cw, ch), (cw, ch)]
+
+def sample(x, y, f, plane):
+    # A panning textured box so ME finds real inter leaves and the filter
+    # searches see high-frequency detail.
+    sx, sy = 8 + 6 * f, 12 + 3 * f
+    inside = sx <= x < sx + 96 and sy <= y < sy + 80
+    base = (1 << (bitdepth - 1))
+    amp = 1 << (bitdepth - 3)
+    if plane == 0:
+        v = base + (amp if inside else 0) + (((x * 29 + y * 17 + f * 41) % 229) - 114) + (((x * 7 + y * 13 + f * 5) % 37) - 18)
+    elif plane == 1:
+        v = base + (amp // 2 if inside else 0) + (((x + 2 * f + y) % 31) - 15)
+    else:
+        v = base + (amp // 2 if inside else 0) + (((y + 3 * f + x) % 27) - 13)
+    return max(0, min(peak, v))
+
+with open(path, "wb") as out:
+    out.write(("YUV4MPEG2 W%d H%d F30:1 Ip A1:1 C%s\n" % (w, h, tag)).encode())
+    for f in range(5):
+        out.write(b"FRAME\n")
+        for plane, (pw, ph) in enumerate(planes):
+            row = bytearray()
+            for y in range(ph):
+                for x in range(pw):
+                    v = sample(x, y, f, plane)
+                    if bitdepth == 8:
+                        row.append(v)
+                    else:
+                        row += bytes((v & 0xFF, (v >> 8) & 0xFF))
+            out.write(row)
+PY
+}
+
+run_format_case() {
+  local tag="$1" depth="$2" chroma="$3"
+  shift 3
+  local label="$1"
+  shift
+  local src="$TMP/fmt_${tag}.y4m"
+  local out="$TMP/${tag}_${label}.ivf"
+  local recon="$TMP/${tag}_${label}.recon.y4m"
+  local dec="$TMP/${tag}_${label}.dec.y4m"
+  "$BIN" "$src" -o "$out" --video --bit-depth "$depth" --chroma "$chroma" \
+    --frames 5 --qp "${FORMAT_QP:-90}" --video-recon "$recon" "$@" \
+    >/dev/null 2>"$TMP/${tag}_${label}.err" ||
+    fail "${tag}/${label}: encode failed ($(cat "$TMP/${tag}_${label}.err"))"
+  "$DAV2D" --strict 1 -q -i "$out" -o "$dec" >/dev/null 2>&1 ||
+    fail "${tag}/${label}: dav2d --strict 1 rejected the stream"
+  python3 "$ROOT/src/formats/chroma/compare_y4m.py" "$recon" "$dec" \
+    >/dev/null ||
+    fail "${tag}/${label}: encoder reconstruction differs from the decoded output"
+  if [[ "$label" != "default" ]]; then
+    local base_md5
+    base_md5="$(md5_of "$TMP/${tag}_default.ivf")"
+    [[ "$(md5_of "$out")" != "$base_md5" ]] ||
+      fail "${tag}/${label}: the filter flag did not change the stream"
+  fi
+  echo "PASS video-filters ${tag}/${label} ($(md5_of "$out"))"
+}
+
+run_format_reject() {
+  local tag="$1" depth="$2" chroma="$3" label="$4"
+  shift 4
+  local src="$TMP/fmt_${tag}.y4m"
+  set +e
+  "$BIN" "$src" -o "$TMP/reject_${tag}_${label}.ivf" --video \
+    --bit-depth "$depth" --chroma "$chroma" --frames 5 --qp 90 "$@" \
+    >"$TMP/reject_${tag}_${label}.out" 2>"$TMP/reject_${tag}_${label}.err"
+  local rc=$?
+  set -e
+  [[ $rc -ne 0 ]] || fail "${tag}/${label}: expected a non-zero exit"
+  grep -qE -- "does not decode (exactly|past)" \
+    "$TMP/reject_${tag}_${label}.err" ||
+    fail "${tag}/${label}: rejection did not name the decoder constraint"
+  echo "PASS video-filters ${tag}/reject ${label}"
+}
+
+FORMAT_CASES=(
+  "420p10 10 420"
+  "422p10 10 422"
+  "444p10 10 444"
+  "mono10 10 400"
+  "422 8 422"
+  "444 8 444"
+  "mono 8 400"
+)
+for spec in "${FORMAT_CASES[@]}"; do
+  set -- $spec
+  tag=$1 depth=$2 chroma=$3
+  gen_format_clip "$tag" "$depth" "$chroma" "$TMP/fmt_${tag}.y4m"
+  run_format_case "$tag" "$depth" "$chroma" default
+  run_format_case "$tag" "$depth" "$chroma" deblock --video-deblock
+  run_format_case "$tag" "$depth" "$chroma" cdef --video-cdef
+  run_format_case "$tag" "$depth" "$chroma" ccso --video-ccso
+  run_format_case "$tag" "$depth" "$chroma" wiener --video-wiener
+  if [[ "$depth" == "8" && "$chroma" == "400" ]]; then
+    # Named rejection: the pinned decoder rejects the second frame of an
+    # 8-bit monochrome PC-Wiener sequence (see validate_options()).
+    run_format_reject "$tag" "$depth" "$chroma" pc-wiener-p-frame \
+      --video-pc-wiener
+  else
+    run_format_case "$tag" "$depth" "$chroma" pc-wiener --video-pc-wiener
+  fi
+  run_format_case "$tag" "$depth" "$chroma" gdf --video-gdf
+  run_format_case "$tag" "$depth" "$chroma" chain \
+    --video-deblock --video-cdef --video-ccso --video-wiener --video-gdf
+  if [[ "$chroma" != "400" ]]; then
+    run_format_case "$tag" "$depth" "$chroma" chroma-lr --video-chroma-lr
+    run_format_case "$tag" "$depth" "$chroma" lr-chain \
+      --video-cdef --video-ccso --video-wiener --video-chroma-lr --video-gdf
+    # Chroma LR + deblock stays a named rejection at 4:2:2/4:4:4 (the pinned
+    # decoder's lossless-mask aliasing); 4:2:0 composes.
+    if [[ "$chroma" == "422" || "$chroma" == "444" ]]; then
+      run_format_reject "$tag" "$depth" "$chroma" chroma-lr-deblock \
+        --video-chroma-lr --video-deblock
+    else
+      run_format_case "$tag" "$depth" "$chroma" chroma-lr-deblock \
+        --video-chroma-lr --video-deblock
+    fi
+  fi
+done
+
+# §5.4.5 cfl_ds_filter_index 1..3 on the format video core.  Chroma LR uses the
+# CfL luma taps at 10-bit 4:2:0, so the index is live there; every index must
+# decode to the encoder reconstruction.
+FORMAT_QP=303
+for index in 1 2 3; do
+  run_format_case 420p10 10 420 "cfl-ds-${index}" \
+    --video-chroma-lr --video-cfl-ds-filter "$index"
+done
+FORMAT_QP=90
+
 echo "gate_video_filters: PASS"

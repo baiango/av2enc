@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "formats/format.h"
+#include "codec/transform/delta_q/dcdeltaq.h"
 #include "pipeline/video/post/video_loop_filters.h"
 
 namespace av2enc::video {
@@ -125,6 +126,21 @@ struct VideoOptions {
   // §7.9 + §7.12.2.7/.8 temporal MV candidates.  Off keeps every historical
   // stream byte-identical (the sequence header omits the bit).
   bool enable_ref_frame_mvs = false;
+  // Opt-in §5.4.6 enable_short_refresh_frame_flags (--video-short-refresh):
+  // every P frame codes has_refresh_frame_flags + frame_to_refresh instead of
+  // the full mask.  Off keeps the historical sequence bit and frame headers
+  // byte-identical.
+  bool short_refresh = false;
+  // Opt-in §5.4.6 enable_refmvbank (--video-refmvbank): maintain the §7.12.2.21
+  // per-reference bank and insert its candidates at step 19.
+  bool refmvbank = false;
+  // Opt-in §5.4.6 enable_mv_traj (--video-mv-traj): §7.9.2 trajectory fill and
+  // the §7.12.2.14/.16 TrajMv derived candidates.
+  bool mv_traj = false;
+  // Opt-in §5.4.6 num_same_ref_compound > 0 (--video-same-ref-compound):
+  // compound blocks may code the same reference in both lists.  Requires
+  // --video-compound and two references.
+  bool same_ref_compound = false;
   // Gate stress mode: prefer a NEARMV candidate inserted by the temporal scan
   // whenever one exists.  Proves the coded stream actually depends on the
   // §7.12.2.7/.8 entries (never used for product quality measurements).
@@ -235,6 +251,19 @@ struct VideoOptions {
   bool compound_diffwtd = false;
   // Frame MV precision: 0 = 1/8 pel, 1 = 1/4 pel, 2 = 1/2 pel.
   int mv_precision = 0;
+  // §5.4.6 adaptive MVD (--video-adaptive-mvd): every NEWMV block codes the
+  // use_amvd symbol and, when set, the §5.20.7.20/.21 mv_joint/amvd_index form
+  // instead of the shell MVD.  IsAdaptiveMvd pins MvPrecision to the frame
+  // value and suppresses per-block precision symbols and sign derivation.
+  bool enable_adaptive_mvd = false;
+  // §5.4.6 MVD sign derivation (--video-mvd-sign-derive).  Eligible NEWMV
+  // blocks omit the last nonzero mv_sign; §5.20.7.13 derives it from the
+  // parity of the coded magnitudes, so the encoder forces that sign.
+  bool enable_mvd_sign_derive = false;
+  // §5.4.6 flexible MV resolution (--video-flex-mvres): UsePerBlockMvPrecision
+  // = 1, and each NEWMV block may code use_most_probable_precision /
+  // pb_mv_precision to select a coarser precision than FrameMvPrecision.
+  bool enable_flex_mvres = false;
   // Normative DRL reordering (§7.12.2.19).  Off = DRL_REORDER_DISABLED.
   bool drl_reorder = false;
   bool drl_reorder_always = false;
@@ -279,6 +308,16 @@ struct VideoOptions {
   std::uint8_t max_tlayer_id = 0;
   std::uint8_t max_mlayer_id = 0;
   std::uint8_t seq_max_mlayer_cnt = 1;
+  // §5.4.1 high tier (--video-tier high).  Off keeps seq_tier = 0.
+  bool high_tier = false;
+  // §5.4.1/§5.18.2 multi-sequence surface (--video-multi-sequence): carry a
+  // second sequence header with id 1 and select it with
+  // seq_header_id_in_frame_header.  Off keeps the single id-0 header.
+  bool multi_sequence = false;
+  // §5.8/§5.10/§5.11 full LCR/OPS carrier (--video-lcr-full): activates a
+  // global LCR (seq_lcr_id = 1) and emits a global LCR, a local LCR for
+  // xlayer 0, a global OPS and a local OPS before the key frame.
+  bool lcr_full = false;
   // Opt-in §8.2.4 average-CDF / §7.5 frame-end bookkeeping (--avg-cdf).
   // enable_avg_cdf/avg_cdf_type are then signalled in the sequence header.
   bool avg_cdf = false;
@@ -416,6 +455,28 @@ struct VideoOptions {
   // Qindex delta used by --video-per-segment-q and the --video-delta-q
   // staircase (--video-seg-delta).
   int seg_q_delta = 8;
+  // Opt-in §5.4.8/§5.18.6.1 separate UV/DC delta-Q (--video-uv-delta-q D).
+  // U uses +D and V uses -D for both DC and AC, so separate_uv_delta_q = 1
+  // codes diff_uv_delta = 1 and every chroma plane/component exercises its own
+  // §7.14.2 quantizer.  Off keeps the historical sequence/frame header and a
+  // single qlookup() step for all planes.
+  bool enable_uv_delta_q = false;
+  int uv_delta_q = 0;
+  // §5.4.4 enable_ext_seg / MaxSegments = 16 (--video-segments 9..16).
+  bool enable_ext_seg = false;
+  int num_segments = 2;
+  // Opt-in segmentation extensions.  `seg_q_delta` remains the ALT_Q value;
+  // the skip/globalmv flags select the lowest-variance bucket for their
+  // feature, and temporal_update is coded on P frames whose primary reference
+  // is an earlier P frame.
+  bool enable_seg_skip = false;
+  bool enable_seg_globalmv = false;
+  bool enable_seg_temporal = false;
+  // Resolved §5.4.8/§5.18.6.1 delta-Q state.  Both default to the historical
+  // disabled values.  The encoder derives the per-plane DC/AC quantizers from
+  // these and the frame header writes them through the shared component.
+  dcdeltaq::SequenceDeltaQ seq_delta_q{};
+  dcdeltaq::FrameDeltaQ frame_delta_q{};
   // Debug trace to stderr.
   bool trace = false;
 };
@@ -441,6 +502,27 @@ struct VideoSequenceResult {
   // Number of coded inter leaves whose selected NEARMV candidate or NEWMV
   // predictor came from a §7.12.2.7/.8 temporal entry (gate evidence).
   std::uint64_t temporal_selected = 0;
+  // Number of coded compound leaves that selected a same-reference (§5.4.6
+  // num_same_ref_compound > 0) pair.  Zero unless --video-same-ref-compound.
+  std::uint64_t same_ref_blocks = 0;
+  // §7.12.2.21 bank candidates inserted / selected (0 unless
+  // --video-refmvbank).
+  std::uint64_t refmvbank_candidates = 0;
+  std::uint64_t refmvbank_selected = 0;
+  // §7.12.2.14/.16 trajectory-derived candidate insertions (0 unless
+  // --video-mv-traj).
+  std::uint64_t mv_traj_derived = 0;
+  // P frames coded with the compact §5.18.2 refresh form.
+  std::uint64_t short_refresh_frames = 0;
+  // §5.20.7.6 MV-resolution decisions on coded NEWMV leaves: AMVD, a coarser
+  // per-block precision, and a §5.20.7.13 derived MVD sign (gate evidence).
+  std::uint64_t amvd_selected = 0;
+  std::uint64_t flex_precision_selected = 0;
+  std::uint64_t derived_sign_selected = 0;
+  // §7.22 store evidence: 8x8 cells that needed the per-sub-block warp
+  // projection, and wedge cells where the allow-list dropped a list.
+  std::uint64_t ref_mvs_warp_cells = 0;
+  std::uint64_t ref_mvs_wedge_dropped = 0;
 };
 
 // §5.4.6 NumRefFrames actually signalled for these options: the explicit

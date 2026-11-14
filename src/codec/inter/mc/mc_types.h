@@ -132,6 +132,21 @@ struct MiInfo {
   std::int8_t h4 = 0;
   std::int16_t col_base = 0;      // block origin in MI units
   std::int16_t row_base = 0;
+  // §7.22 motion-field-store metadata.  The merge stack never reads these; the
+  // temporal field store needs the block-level warp and wedge state that the
+  // per-4x4 ref/MV pair cannot express.
+  //
+  // `warp[list]`: the block is coded GLOBALMV/GLOBAL_GLOBALMV with a
+  // non-translation global model, so the decoder's §7.22 store projects the
+  // model at every 8x8 centre instead of copying `mv[list]`.
+  // `is_wedge`/`wedge_index`/`wedge_sign`/`bsize`: the §7.13.3.27 wedge mask
+  // the store samples for its per-8x8 allow-list.  `bsize` is a
+  // partition::BlockSize value.
+  std::int8_t warp[2] = {0, 0};
+  std::int8_t is_wedge = 0;
+  std::int8_t wedge_index = 0;
+  std::int8_t wedge_sign = 0;
+  std::int16_t bsize = 0;
 };
 
 }  // namespace av2enc::inter::mc

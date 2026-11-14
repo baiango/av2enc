@@ -68,6 +68,8 @@ struct HbdLrConfig {
   int tx_skip_cols = 0;
   int tx_skip_rows = 0;
   int base_q_idx = 90;
+  // §5.4.5 cfl_ds_filter_index for the chroma-from-luma taps.
+  int cfl_ds_filter_index = 0;
 };
 
 // §5.18.7.9 GDF frame parameters (header-only mode: gdf_per_block = 0).

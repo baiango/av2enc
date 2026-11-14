@@ -395,8 +395,11 @@ TemporalStatus write_tip_frame_syntax(BitWriter& writer,
       if (col != 0) writer.put_bit(col < 0);
     }
   }
-  writer.put_bit(syntax.tip_sharp);
-  if (!syntax.tip_sharp) writer.put_bit(syntax.tip_regular);
+  if (s.mode == TipFrameMode::kAsOutput) {
+    // §5.18.2 TipInterpFilter: present only for TIP_FRAME_AS_OUTPUT.
+    writer.put_bit(syntax.tip_sharp);
+    if (!syntax.tip_sharp) writer.put_bit(syntax.tip_regular);
+  }
   return TemporalStatus::kOk;
 }
 
@@ -479,10 +482,16 @@ TemporalStatus read_tip_frame_syntax(BitReader& reader,
       s.tip_global_mv = Mv{signed_row, signed_col};
     }
   }
-  if (!reader.get_bit(&s.tip_sharp)) return TemporalStatus::kInvalidArgument;
-  s.tip_regular = false;
-  if (!s.tip_sharp) {
-    if (!reader.get_bit(&s.tip_regular)) return TemporalStatus::kInvalidArgument;
+  if (s.mode == TipFrameMode::kAsOutput) {
+    if (!reader.get_bit(&s.tip_sharp)) return TemporalStatus::kInvalidArgument;
+    s.tip_regular = false;
+    if (!s.tip_sharp) {
+      if (!reader.get_bit(&s.tip_regular))
+        return TemporalStatus::kInvalidArgument;
+    }
+  } else {
+    s.tip_sharp = true;
+    s.tip_regular = false;
   }
   s.interp_filter = filter_of(s.tip_sharp, s.tip_regular);
   *syntax = s;

@@ -49,6 +49,9 @@ struct HbdLrFrame16 {
   int num_planes = 3;
   int bit_depth = 10;
   int base_q_idx = 90;
+  // §5.4.5 cfl_ds_filter_index, used by the chroma-from-luma taps of the
+  // chroma Wiener fit/apply.  0 is the historical 4:2:0 filter.
+  int cfl_ds_filter_index = 0;
 };
 
 struct HbdLrPlan {
@@ -362,7 +365,7 @@ inline av2enc::restoration::LrCoreFrame16 make_lr_core16(
     core.unit_size[p] = config.plane[p].unit_size;
     core.frame_type[p] = config.plane[p].frame_type;
   }
-  core.cfl_ds_filter_index = 0;
+  core.cfl_ds_filter_index = config.cfl_ds_filter_index;
   return core;
 }
 
@@ -574,6 +577,7 @@ inline bool plan_lr(const HbdLrFrame16& frame, bool luma, bool chroma,
                           (3 - std::max(frame.sub_x, frame.sub_y));
   plan->config.enabled = false;
   plan->config.base_q_idx = base_q_idx;
+  plan->config.cfl_ds_filter_index = frame.cfl_ds_filter_index;
   plan->config.luma_shift = 3;
   plan->config.chroma_shift = 3 - std::max(frame.sub_x, frame.sub_y);
 
@@ -590,6 +594,7 @@ inline bool plan_lr(const HbdLrFrame16& frame, bool luma, bool chroma,
   core.sub_x = frame.sub_x;
   core.sub_y = frame.sub_y;
   core.bit_depth = frame.bit_depth;
+  core.cfl_ds_filter_index = frame.cfl_ds_filter_index;
   core.num_planes = frame.num_planes;
   for (int p = 0; p < frame.num_planes; ++p) {
     core.plane[p].curr = frame.curr[p];

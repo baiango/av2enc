@@ -253,10 +253,22 @@ expect_reject() {
   echo "PASS format-video reject $label"
 }
 
-expect_reject deblock --video-deblock
 expect_reject tiles --tiles 2x1
 expect_reject tx-search --video-tx-search
 expect_reject gme --video-gme
+
+# 16-pixel 4:2:2 leaves are still not decoder-exact; an explicit deeper tree is
+# rejected by name (the default clamps 4:2:2 to depth 2).
+generate_clip "422" 8 "422" "$TMP/422.y4m" 1
+set +e
+"$BIN" "$TMP/422.y4m" -o "$TMP/reject.ivf" --video --frames 1 --chroma 422 \
+  --video-max-depth 3 >"$TMP/reject.out" 2>"$TMP/reject.err"
+rc=$?
+set -e
+[[ $rc -ne 0 ]] || fail "4:2:2 depth 3: expected a non-zero exit"
+grep -q -- "16-pixel 4:2:2" "$TMP/reject.err" ||
+  fail "4:2:2 depth 3: rejection did not name the 16-pixel leaves"
+echo "PASS format-video reject 4:2:2-depth3"
 
 # 12-bit is not signalable in AV2 v1.0.0 and is rejected by name.
 set +e

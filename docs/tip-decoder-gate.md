@@ -1,7 +1,8 @@
 # TIP decoder gate and `--video-tip` product stream
 
-Status: **decoder support proven; CPU reference wired; GPU path, TIP-as-ref
-tile symbols and the §7.22 temporal merge feed remain open.**
+Status: **decoder support proven; CPU reference wired; the TIP display frame
+is a gated reference for a later tile-coded P; GPU path and the
+`RefFrame[0] == TIP_FRAME` block symbols remain open.**
 
 Normative reference: AV2 Bitstream & Decoding Process Specification v1.0.0
 (commit `38f28e7`), §5.4.6, §5.18.2, §6.20, §7.9, §7.10, §7.13.3.2, §7.22.
@@ -114,13 +115,55 @@ The in-tree gates are:
   `tools/run_gates.sh`): the product CLI at 4 and 8 pictures with hole fill on
   and off, `dav2d --strict 1`, exact recon, exact picture count, and the two
   modes must differ in both stream and reconstruction (an inert fill fails).
+  The script also runs the TIP-as-reference cases below.
 - `src/pipeline/video/build_and_test.sh`: `video_gate --tip` at 4 and 8
-  pictures with `--tip-no-hole-fill` controls (synthetic 64x64 clip by
-  default), requiring `dav2d --strict 1`, exact recon and exact display order.
+  pictures with `--tip-no-hole-fill` controls and `--tip --ref-mvs` at both
+  counts (synthetic 64x64 clip by default), requiring `dav2d --strict 1`,
+  exact recon and exact display order.
 
 Default streams are unchanged: `--video-tip` is off, and the sequence/frame
 header writers only add fields inside `if (config.enable_tip)` /
 `if (config.enable_ref_frame_mvs)` branches.
+
+## 2b. TIP as a reference (`--video-tip --video-ref-mvs`)
+
+`--video-tip` composes with `--video-ref-mvs` from 4 input pictures.  When the
+flag is on, the **last** input picture is not coded as a TIP frame: it becomes
+a regular tile-coded P whose explicit reference list is
+
+| entry | slot | picture | order hint |
+|---|---|---|---|
+| `ref_frame_idx[0]` | `N-2` | final `TIP_FRAME_AS_OUTPUT` | `N-3` |
+| `ref_frame_idx[1]` | `1` | future anchor P | `N-1` |
+
+so the schedule is key(0), anchor(N-1), TIP(1)…TIP(N-3), P(N-2).  The TIP
+display frame is a normal DPB slot with a §7.22 field
+(`store_tip_frame_motion_field()`); `estimate_motion_field()` reads it and
+`use_ref_frame_mvs = 1` makes both sides build the §7.12.2.7/.8 candidates from
+it.  The anchor P has a single reference and the TIP frames never build the
+temporal stack, so every reported temporal candidate comes from that tail P.
+
+Gate result (`dav2d f9dafbc --strict 1 --threads 1`, recon = decoded Y4M):
+
+| stream | pictures | IVF MD5 | recon MD5 | temporal candidates / selected |
+|---|---:|---|---|---:|
+| 360p, `--video-tip --video-ref-mvs` | 4 | `12d333a4a77f83480bff7e4488e20e45` | `226fb5a076af193a4a5bf50bfe91a61a` | 255 / 19 |
+| 720p, `--video-tip --video-ref-mvs` | 8 | `ac84848c6e63c863770e699e8f3dff08` | `e14d6be1bc188aae01fa35fd192deb66` | 852 / 50 |
+
+The plain `--video-tip` streams keep their pinned MD5s (see §2), i.e. the new
+schedule never applies without `--video-ref-mvs`.  Three input pictures are
+rejected by name because no TIP display picture would precede the tail P.
+
+This is **not** the `RefFrame[0] == TIP_FRAME` block form: the tail P references
+the TIP picture through a slot, so its `tip_frame_mode` is
+`TIP_FRAME_DISABLED`.  §5.20.7.10 `tip_mode`/`tip_pred_mode` symbols (a block
+that predicts from the current frame's own §7.10 field) remain unimplemented.
+
+While wiring this, the §5.18.2 TIP slice writer was fixed: `TipInterpFilter`
+(the `tip_sharp`/`tip_regular` bits) is present only for
+`TIP_FRAME_AS_OUTPUT`.  A `TIP_FRAME_AS_REF`/disabled TIP block previously
+wrote one extra bit, which desynchronised the decoder for every frame with
+`num_total_refs >= 2` in an `enable_tip` sequence.
 
 ## 3. Remaining gaps
 
@@ -137,12 +180,14 @@ header writers only add fields inside `if (config.enable_tip)` /
    `video_cdf_tables.h`) and the §7.12.2.15/.17/.18 candidate helpers exist in
    `src/codec/inter/tip/tip_candidates.cpp`.
 3. **§7.22 feed into the merge stack.** Wired for the ordinary P and B chains
-   (`--video-ref-mvs`, `docs/ref-frame-mvs.md`): every reference slot stores its
-   §7.22 field, §7.9 estimation runs at frame start and the §7.12.2.7/.8 scan is
-   spliced at steps 5/12 in both the decision and syntax stacks.  What remains
-   open is **TIP as a reference inside a tile-coded frame**: `RefFrame[0] ==
-   TIP_FRAME` needs the `TIP_FRAME_AS_REF` tile symbols and a following
-   tile-coded frame, which the product TIP schedule does not build.
+   and for GME/warp and wedge-compound carriers (`--video-ref-mvs`,
+   `docs/ref-frame-mvs.md`): every reference slot stores its §7.22 field, §7.9
+   estimation runs at frame start and the §7.12.2.7/.8 scan is spliced at
+   steps 5/12 in both the decision and syntax stacks.  The TIP display frame is
+   also a gated reference for the tail P of `--video-tip --video-ref-mvs`
+   (§2b).  What remains open is the `RefFrame[0] == TIP_FRAME` block form,
+   which needs the §5.20.7.10 `tip_mode`/`tip_drl_mode`/`tip_pred_mode`
+   symbols.
 4. **OPFL/refine-MV inside TIP** (`enable_tip_refinemv`,
    `enable_opfl_refine`) stays `REFINE_NONE`; the component supports it but
    the product path does not build those statistics.

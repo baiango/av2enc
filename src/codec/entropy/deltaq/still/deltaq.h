@@ -247,6 +247,16 @@ struct FrameSegmentation {
            features[static_cast<std::size_t>(segment_id)]
                .enabled[static_cast<std::size_t>(kSegLvlAltQ)];
   }
+  bool skip_active(int segment_id) const noexcept {
+    return enabled && segment_id >= 0 && segment_id < kMaxSegmentsSpec &&
+           features[static_cast<std::size_t>(segment_id)]
+               .enabled[static_cast<std::size_t>(kSegLvlSkip)];
+  }
+  bool globalmv_active(int segment_id) const noexcept {
+    return enabled && segment_id >= 0 && segment_id < kMaxSegmentsSpec &&
+           features[static_cast<std::size_t>(segment_id)]
+               .enabled[static_cast<std::size_t>(kSegLvlGlobalMv)];
+  }
   std::int32_t alt_q(int segment_id) const noexcept {
     return features[static_cast<std::size_t>(segment_id)]
         .data[static_cast<std::size_t>(kSegLvlAltQ)];

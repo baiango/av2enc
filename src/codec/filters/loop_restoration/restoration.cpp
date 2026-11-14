@@ -313,7 +313,10 @@ RestorationStatus validate_frame16(const RestorationFrame16& f) {
   if (f.mi_cols <= 0 || f.mi_rows <= 0) {
     return RestorationStatus::kInvalidArgument;
   }
-  if (f.bit_depth != 10 && f.bit_depth != 12) {
+  // The 16-bit container serves 8-bit samples too: it is the generic entry for
+  // the non-4:2:0 formats, where the uint8_t `RestorationFrame` path is scoped
+  // to 4:2:0.  The §7.19 arithmetic is depth-parameterised.
+  if (f.bit_depth != 8 && f.bit_depth != 10 && f.bit_depth != 12) {
     return RestorationStatus::kUnsupportedBitDepth;
   }
   if (f.num_planes < 1 || f.num_planes > 3) {

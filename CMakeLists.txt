@@ -173,6 +173,7 @@ add_library(av2enc_core STATIC
   src/codec/inter/temporal/temporal_syntax.cpp
   src/codec/inter/temporal/refinemv.cpp
   src/codec/inter/temporal/opfl.cpp
+  src/codec/inter/temporal/ref_mv_bank.cpp
   src/codec/inter/tip/tip_signalling.cpp
   src/codec/inter/tip/tip_candidates.cpp
   src/codec/inter/tip/tip_build.cpp
@@ -221,6 +222,8 @@ add_library(av2enc_core STATIC
   src/pipeline/video/video_gme.cpp
   src/pipeline/video/video_warp.cpp
   src/pipeline/video/video_headers.cpp
+  # §5.8/§5.10 full LCR/OPS carrier for --video-lcr-full (default off).
+  src/pipeline/video/video_lcr_ops.cpp
   src/pipeline/video/video_syntax.cpp
   src/pipeline/video/video_chroma_search.cpp
   src/pipeline/video/video_frame.cpp
@@ -228,6 +231,7 @@ add_library(av2enc_core STATIC
   # 4:0:0).  The CPU reference and the shared orchestration live here; the CUDA
   # backend is under src/cuda/pipeline/video/hbd/.
   src/pipeline/video/hbd/video_hbd.cpp
+  src/pipeline/video/hbd/video_hbd_filters.cpp
   # Luma TX size/type/partition search (opt-in --video-tx-search): the CPU
   # reference for src/cuda/pipeline/video/tx/.  Both paths share the same
   # candidate sets, arithmetic and tie-breaks.
@@ -516,6 +520,7 @@ target_sources(av2enc_core PRIVATE
   src/formats/chroma/chroma_format.cpp
   src/formats/chroma/chroma_residual.cpp
   src/formats/chroma/chroma_headers.cpp
+  src/formats/chroma/chroma_filters.cpp
   src/formats/chroma/chroma_still.cpp)
 if(NOT AV2ENC_HAVE_STILL_GPU)
   # In a CUDA build with the M1 GPU pipeline, `format.cpp` is already added by
@@ -564,7 +569,10 @@ target_sources(av2enc_core PRIVATE
   src/pipeline/svc/svc_config.cpp
   src/pipeline/svc/svc_pipeline.cpp
   src/pipeline/svc/svc_framing.cpp
-  src/pipeline/svc/svc_stream.cpp)
+  src/pipeline/svc/svc_stream.cpp
+  # §5.8/§5.10 LCR/OPS syntax used by --video-lcr-full.  Default off; the
+  # single-layer --video path never calls it.
+  src/pipeline/svc/ops_full/lcr_ops_full.cpp)
 
 # Host-only multi-GPU scheduling contract (--gpu-plan). Pure planning: no CUDA,
 # no allocations.

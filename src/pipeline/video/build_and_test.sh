@@ -51,6 +51,7 @@ CORE=(
   "$ROOT/src/pipeline/video/video_headers.cpp"
   "$ROOT/src/pipeline/video/video_syntax.cpp"
   "$ROOT/src/pipeline/video/video_frame.cpp"
+  "$ROOT/src/codec/inter/temporal/ref_mv_bank.cpp"
 )
 
 # The M2 writer keeps growing optional modules (TIP/temporal motion field,
@@ -107,6 +108,16 @@ STATUS=0
   --out "${TMPDIR:-/tmp}/video_gate_tip4_noholes.ivf" || STATUS=1
 "${OUT}" --frames 8 --tip --tip-no-hole-fill \
   --out "${TMPDIR:-/tmp}/video_gate_tip8_noholes.ivf" || STATUS=1
+# TIP-as-reference (§7.9 over a TIP display frame): the last picture is a
+# tile-coded P referencing the final TIP frame.  The synthetic 64x64 clip
+# exercises the whole path at both picture counts.
+"${OUT}" --frames 4 --tip --ref-mvs \
+  --out "${TMPDIR:-/tmp}/video_gate_tipref4.ivf" || STATUS=1
+"${OUT}" --frames 8 --tip --ref-mvs \
+  --out "${TMPDIR:-/tmp}/video_gate_tipref8.ivf" || STATUS=1
+# The §7.22 warp store projection self-test (model classification + per-8x8
+# affine arithmetic, §7.22 / §7.13.3.20).
+"${OUT}" --ref-mvs-field-selftest || STATUS=1
 if [[ -f "$ROOT/testdata/shine_1280x720_60f.y4m" ]]; then
   "${OUT}" --input "$ROOT/testdata/shine_1280x720_60f.y4m" --frames 8 \
     --single-block --out "${TMPDIR:-/tmp}/video_gate_720p.ivf" || STATUS=1

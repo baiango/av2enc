@@ -17,6 +17,7 @@
 #pragma once
 
 #include "formats/chroma/chroma_format.h"
+#include "formats/chroma/chroma_filters.h"
 #include "formats/format.h"
 
 #include <cstdint>
@@ -90,6 +91,10 @@ struct ChromaStillOptions {
   std::uint8_t seq_level_idx = 7;
   bool disable_cdf_update = true;
   ChromaGpuExecutor* gpu = nullptr;
+  // §7.17-§7.20 in-loop filters.  All off by default, so every existing
+  // stream stays byte-identical.  The filters require frozen CDFs (the
+  // filter symbol CDFs are not adapted).
+  ChromaFilterOptions filters;
 };
 
 struct ChromaStillResult {
@@ -98,6 +103,7 @@ struct ChromaStillResult {
   std::vector<std::uint8_t> frame;  // TD + SEQ + CLK
   FrameShape shape;
   // Reconstructed planes, padded to shape.planes[p].padded_width/height.
+  // These are the *filtered* planes when any in-loop filter is enabled.
   int recon_width[3] = {0, 0, 0};
   int recon_height[3] = {0, 0, 0};
   std::vector<std::uint8_t> recon[3];

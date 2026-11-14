@@ -33,6 +33,9 @@ namespace av2enc::video::post {
 
 // CLI/encoder options for the M2 loop-filter chain.
 struct VideoLoopFilterOptions {
+  // §5.4.5 cfl_ds_filter_index used by the chroma-from-luma restoration taps
+  // (0 default; 1/2 select the other filters, 3 aliases 0).
+  int cfl_ds_filter_index = 0;
   bool cdef = false;
   // CdefDamping = cdef_damping_minus_3 + 3.
   int cdef_damping = 3;

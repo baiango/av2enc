@@ -152,10 +152,21 @@ struct BlockSyntax {
   std::int32_t mv_x = 0;
   std::int32_t mvd_y = 0;  // signalled MVD for NEWMV, 1/8 luma samples
   std::int32_t mvd_x = 0;
+  // §5.20.7.6 MV-resolution plan for a NEWMV leaf.
+  //   `use_amvd` selects the §5.20.7.20/.21 mv_joint/amvd_index MVD form and
+  //   pins MvPrecision to the frame value.
+  //   `block_mv_precision` is the target me2::kMvPrecision* (6=EIGHTH,
+  //   5=QUARTER, 4=HALF, 3=ONE, ...); -1 means "frame precision, no coarser
+  //   per-block symbol was decided".  With --video-flex-mvres the writer still
+  //   codes use_most_probable_precision for every eligible NEWMV block.
+  //   `mvd_sign_derived` records the §5.20.7.13 derived-sign decision and is
+  //   used by the trace/gate; the writer derives it again from the magnitudes.
+  std::uint8_t use_amvd = 0;
+  std::int8_t block_mv_precision = -1;
+  std::uint8_t mvd_sign_derived = 0;
 
   std::uint8_t y_mode = 0;
-  std::int8_t y_angle_delta = 0;
-  // §5.20.5.5 mrl_index / mrl_sec_index (enable_mrls).  Luma only; 0 when MRL
+  std::int8_t y_angle_delta = 0;  // §5.20.5.5 mrl_index / mrl_sec_index (enable_mrls).  Luma only; 0 when MRL
   // is disabled or the block is non-directional.
   std::uint8_t mrl_index = 0;
   std::uint8_t mrl_sec_index = 0;
@@ -259,6 +270,9 @@ struct TemporalFramePlan {
   // builder temporal-inert without a link dependency on motion_field.cpp.
   merge::TemporalScanFn scan = nullptr;
   const inter::temporal::MotionField* field = nullptr;
+  // §7.9.2 trajectory field (enable_mv_traj); nullptr keeps the derived
+  // candidates projection-only.
+  const inter::temporal::TrajectoryField* mv_traj = nullptr;
 };
 
 struct FramePlan {
@@ -312,6 +326,11 @@ struct FramePlan {
   bool enable_cwp = false;
   // Frame MV precision: 0 = 1/8, 1 = 1/4, 2 = 1/2 pel.
   int mv_precision = 0;
+  // §5.4.6 MV-resolution tools.  Each defaults off; the block writer then
+  // emits exactly the historical single_mode/DRL/shell-MVD syntax.
+  bool enable_adaptive_mvd = false;
+  bool enable_mvd_sign_derive = false;
+  bool enable_flex_mvres = false;
   // FrameDistance[ref] for the MV stack's derived candidates.
   std::array<int, 7> frame_distance{0, 0, 0, 0, 0, 0, 0};
   // §7.12.2 temporal scan state (use_ref_frame_mvs + the §7.9 field).
@@ -357,6 +376,11 @@ struct FramePlan {
   rc::SegmentationParams segmentation{};
   rc::DeltaQParams delta_q{};
   bool primary_ref_is_none = true;
+  // §5.4.4 MaxSegments = 16 for this sequence (--video-segments 9..16).
+  bool enable_ext_seg = false;
+  // §5.20.7.2 previous-frame SegmentIds (PrevSegmentIds) for the temporal
+  // segmentation update.  Empty means "all zero".
+  std::vector<std::uint8_t> prev_segment_ids;
   std::vector<rc::DeltaQPlanStep> delta_steps;
 
   int sb_cols() const;

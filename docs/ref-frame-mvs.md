@@ -1,8 +1,8 @@
 # `--video-ref-mvs` — §7.22 field storage and §7.9/§7.12.2.7 temporal MVs
 
 Status: **CPU product path wired and decoder-gated** on the ordinary P and B
-chains.  Default streams are byte-identical when the flag is off.  GPU, TIP as
-a *reference* inside a tile-coded frame, and multi-reference temporal layers
+chains, on GME/warp and on wedge-compound frames.  Default streams are
+byte-identical when the flag is off.  GPU and multi-reference temporal layers
 remain open (see §5).
 
 Normative reference: AV2 Bitstream & Decoding Process Specification v1.0.0
@@ -36,6 +36,21 @@ For every coded inter frame with `enable_ref_frame_mvs = 1`:
    `num_saved_refs`/`saved_order_hint[]`, mirroring §7.23
    (`RefNumTotalRefs[i] = NumTotalRefs`, `SavedOrderHints[i][j] = OrderHints[j]`).
    The intra key starts with an empty field.
+   The grid cell also carries the block-level state §7.22 needs but the
+   per-4×4 `ref`/`mv` pair cannot express (`MiInfo::warp`, `is_wedge`,
+   `wedge_index`, `wedge_sign`, `bsize`):
+   * a `GLOBALMV`/`GLOBAL_GLOBALMV` block whose §5.18.9 model derives a
+     `TransformationType > TRANSLATION` and passes §7.13.3.21 shear validation
+     stores the model projected at **every 8×8 centre**
+     (`gm_sub_block_warp_mv()`, WARPEDMODEL_PREC_BITS → 1/8 pel, half away from
+     zero), not the block-centre MV;
+   * a §7.13.3.27 wedge compound block stores the block-local luma mask
+     (`wedge_mask_value()`), and `store_motion_field_entry()` applies the
+     `>60`/`<4` per-8×8 allow-list, which can drop one list.
+   The last two are the decoder's `av2_copy_frame_mvs()` warp/wedge branches;
+   validation is `video_gate --ref-mvs-field-selftest` for the projection
+   arithmetic and the gate statistics `§7.22 warp 8x8 cells` /
+   `§7.22 wedge allow-list cells` for the integration.
 2. **§7.9 estimation.** At the start of an inter frame,
    `estimate_motion_field()` fills `MotionFieldConfig` from the current
    explicit reference map (slot, type, order hint, saved field) and calls
@@ -77,6 +92,8 @@ OUT=/tmp/rg src/pipeline/video/video_ref_mvs_gate.sh \
   --base-bin /path/to/pre-change/av2enc
 ```
 
+The script is registered in `tools/run_gates.sh` as `gate_video_ref_mvs`.
+
 Every case encodes, decodes with `--strict 1 --threads 1`, checks the decoded
 picture count, compares the decoded Y4M MD5 with `--video-recon`, and requires
 temporal candidates (and, in the stress cases, at least one **selected**
@@ -110,6 +127,58 @@ build for `--frames 8` (P), `--video-refs 2`, `--b-frames 2` and
 `--video-tlayers 4` at 360p, and for the 8-picture 720p `--video-refs 2`
 stream (`c090fc079bef453957536c01117c7e60`): all `cmp`-identical.
 
+### Composition cases: GME/warp and wedge compound
+
+The gate generates four deterministic fixtures (`fixture_pan64/pan360`,
+`fixture_wedge64/wedge360`) so the tool is actually selected; each case is
+encoded through the CLI, decoded by `dav2d --strict 1`, and compared
+sample-for-sample.  Measured on macOS arm64 with `f9dafbc` (2026-11-14):
+
+| case | pictures | recon = decoded Y4M MD5 | temporal candidates | §7.22 evidence |
+|---|---:|---|---:|---|
+| 64×64 pan, `--video-gme --video-refs 2 --video-ref-mvs` | 8 | `ace351ef470c22b63099fffd3641a284` | 42 | field stored from the GME grid |
+| 64×64 pan, `--video-gme --video-refs 3 --video-ref-mvs` | 8 | `ace351ef470c22b63099fffd3641a284` | 59 | idem |
+| 360p pan, `--video-gme --video-refs 2 --video-ref-mvs` | 8 | `051a7807ca210b4023b47b39861c5b04` | 7336 (2557 selected) | idem |
+| 360p pan, `--video-gme --video-refs 3 --video-ref-mvs` | 8 | `135503a867b689fffadba987ecb05553` | 10182 (2338 selected) | idem |
+| 360p pan, `--video-warp --video-refs 2 --video-ref-mvs` | 8 | `051a7807ca210b4023b47b39861c5b04` | 7336 | `--video-warp` is the GME alias |
+| 64×64 wedge blend, `--video-refs 2 --video-compound --video-compound-wedge --video-ref-mvs` | 8 | `73bfea61be447e97ed535d30a5420b99` | 40 | 60 8×8 cells lost a list |
+| 360p wedge blend, same flags | 8 | `55ee53f43120ac805f87ff2e12825423` | 2426 (60 selected) | 3050 8×8 cells lost a list |
+
+The wedge allow-list counters are per-sequence and appear in the summary as
+`§7.22 wedge allow-list cells N`; the gate fails if a wedge case reports 0.
+On these fixtures the §5.18.9 fit is translation-only, so the decoder also
+takes the non-warp store branch: `§7.22 warp 8x8 cells` stays 0 and the
+per-8×8 projection is covered by `video_gate --ref-mvs-field-selftest`
+(zoom, rotation, translation, rounding and the identity/translation model
+classification).  A genuinely affine `--video-gme` model is not
+reconstruction-exact in this tree for an unrelated warp-predictor reason
+(`docs/negative-results.md`, "Gate `--video-gme` on genuinely affine
+content"), so the composition is gated on content where the carrier itself is
+exact.
+
+Also fixed while gating: an 8-picture wedged P chain hit
+`masked type without comp_group_idx` whenever the §7.13.3.27 search picked
+AVERAGE in a stream with `enable_masked_compound = 1`.  The leaf now stores
+`compound_type = 0` (the no-symbol sentinel) when `comp_group_idx` codes 0.
+
+### TIP display frame as a reference
+
+`--video-tip --video-ref-mvs` (4..8 pictures) codes the final input picture as
+a tile-coded P whose references are the final `TIP_FRAME_AS_OUTPUT` picture and
+the future anchor.  The TIP slot's §7.22 field (stored by
+`store_tip_frame_motion_field()` when that TIP frame was built) is the §7.9
+input, and every reported temporal candidate comes from that P.  Gate
+(`video_tip_gate.sh`, synthetic 64×64 `video_gate --tip --ref-mvs`):
+
+| stream | pictures | IVF MD5 | recon MD5 | candidates / selected |
+|---|---:|---|---|---:|
+| 360p `--video-tip --video-ref-mvs` | 4 | `12d333a4a77f83480bff7e4488e20e45` | `226fb5a076af193a4a5bf50bfe91a61a` | 255 / 19 |
+| 720p `--video-tip --video-ref-mvs` | 8 | `ac84848c6e63c863770e699e8f3dff08` | `e14d6be1bc188aae01fa35fd192deb66` | 852 / 50 |
+
+The plain `--video-tip` streams keep the pinned MD5s in
+`docs/tip-decoder-gate.md`.  See that file's §2b for the schedule and the
+`TipInterpFilter` syntax fix this needed.
+
 ## 4. Rate/quality position
 
 This is a correctness feature, not an RD claim.  On the 360p single-GOP P
@@ -124,18 +193,23 @@ The gate therefore asserts insertion and, through the stress mode, selection.
 
 1. **GPU.** `--video-gpu --video-ref-mvs` is rejected by name.  The CUDA M2
    path has no §7.9 estimator, no §7.22 store and no temporal stack hook.
-2. **TIP as a reference inside a tile-coded frame.** `TIP_FRAME_AS_REF` tile
-   blocks (`tip_mode`/`tip_drl_mode`/`tip_pred_mode`) are still not written, so
-   the merge stack never sees `RefFrame[0] == TIP_FRAME`.  The product TIP path
-   is `TIP_FRAME_AS_OUTPUT` without a tile and keeps its own §7.10 build.
+2. **TIP block form (`RefFrame[0] == TIP_FRAME`).** The TIP *display frame* is
+   now a valid reference slot for a tile-coded P (`--video-tip
+   --video-ref-mvs`, `docs/tip-decoder-gate.md` §2b), with its §7.22 field
+   feeding §7.9.  The §5.20.7.10 `tip_mode`/`tip_drl_mode`/`tip_pred_mode`
+   block symbols are still not written, so a block cannot predict from the
+   current frame's own §7.10 field.
 3. **Temporal layers.** `--video-tlayers` is single-reference by construction
    (`plan.num_refs = 1`), and §7.9 returns an empty field for one reference.
    The flag is accepted, `use_ref_frame_mvs = 1` is signalled, both sides
    insert nothing and the stream decodes exactly — but no candidate exists.  A
    multi-reference hierarchical plan would be needed to exercise it.
-4. **Warp / GME and wedge compounds** are rejected with the flag: §7.22 stores
-   per-8×8 warped MVs and applies a wedge allow-list, neither of which the flat
-   MI grid carries.
+4. **Real-affine `--video-gme` content.** The §7.22 per-8×8 warp store is
+   implemented and unit-checked, but the product `--video-gme` warp predictor
+   itself disagrees with the decoder once the fitted model has a non-identity
+   linear part, independent of `--video-ref-mvs` (repro in
+   `docs/negative-results.md`).  The composition is gated on translation-model
+   content, where the decoder's store also takes the block-MV branch.
 5. **TIP hole fill** is on in the product TIP stream (§7.10.3/.4 with the
    per-frame `allow_tip_hole_fill` bit); the encoder's and the pinned
    decoder's validity masks are cell-identical, see

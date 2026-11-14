@@ -13,6 +13,7 @@
 #include "core/io/ivf.h"
 #include "core/io/y4m.h"
 #include "pipeline/video/post/deblock_grid.h"
+#include "pipeline/video/video_gme.h"
 
 #include <algorithm>
 #include <cmath>
@@ -570,6 +571,14 @@ int main(int argc, char** argv) {
       }
       std::cout << "save_subpu selftest PASS (§7.13.3.15)\n";
       return 0;
+    } else if (arg == "--ref-mvs-field-selftest") {
+      std::string selftest_error;
+      if (!av2enc::video::ref_mvs_field_selftest(&selftest_error)) {
+        std::cerr << "ref-mvs field selftest FAIL: " << selftest_error << "\n";
+        return 1;
+      }
+      std::cout << "ref-mvs field selftest PASS (§7.22 per-8x8 warp store)\n";
+      return 0;
     } else if (arg == "--trace") {
       options.trace = true;
     } else if (arg == "--help") {
@@ -582,7 +591,8 @@ int main(int argc, char** argv) {
                    "[--subpel-eighth] [--mv-precision eighth|quarter|half] "
                    "[--drl-reorder] [--long-term] [--olk] [--leading N] "
                    "[--sef] [--switch] [--ras] [--tip] "
-                   "[--tip-no-hole-fill] [--trace]\n";
+                   "[--tip-no-hole-fill] [--ref-mvs-field-selftest] "
+                   "[--trace]\n";
       return 0;
     } else {
       std::cerr << "unknown argument: " << arg << "\n";

@@ -58,6 +58,9 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/codec/filters/tables/gdf.cpp
   src/codec/filters/tables/luma_source.cpp
   src/codec/filters/tables/pc_wiener.cpp
+  src/codec/transform/ddt/ddt_constraints.cpp
+  src/codec/transform/ddt/ddt_syntax.cpp
+  src/codec/transform/ddt/ddt_transform.cpp
   src/codec/inter/advanced/b_frame.cpp
   src/codec/inter/advanced/compound.cpp
   src/codec/inter/advanced/warp.cpp
@@ -173,6 +176,7 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/pipeline/svc/svc_framing.cpp
   src/pipeline/svc/svc_pipeline.cpp
   src/pipeline/svc/svc_stream.cpp
+  src/pipeline/svc/ops_full/lcr_ops_full.cpp
   src/pipeline/tiles/stream/tiles_stream.cpp
   src/pipeline/tiles/svc_layers.cpp
   src/pipeline/tiles/tile_group.cpp
@@ -190,6 +194,7 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/pipeline/video/video_frames.cpp
   src/pipeline/video/video_gme.cpp
   src/pipeline/video/video_headers.cpp
+  src/pipeline/video/video_lcr_ops.cpp
   src/pipeline/video/video_syntax.cpp
   src/pipeline/video/video_warp.cpp
   src/pipeline/video/video_tx_search.cpp)

@@ -142,7 +142,7 @@ PASSED=0
 SKIPPED=0
 FAILED=0
 INDEX=0
-TOTAL=19
+TOTAL=23
 [ "$QUICK" -eq 1 ] && TOTAL=6
 declare -a RESULTS=()
 
@@ -221,6 +221,9 @@ run_gate gate_tiles src/pipeline/tiles/stream/gate_cli_tiles.sh \
     ${TILES_ARGS[@]+"${TILES_ARGS[@]}"}
 run_gate gate_host_plan src/pipeline/dispatch/gate_host_plan.sh
 run_gate gate_10bit_filters src/formats/high_bitdepth/gate_10bit_filters.sh
+run_gate gate_video_short_refresh src/pipeline/video/video_short_refresh_gate.sh
+run_gate gate_video_same_ref_compound src/pipeline/video/video_same_ref_compound_gate.sh
+run_gate gate_video_mv_traj src/pipeline/video/video_mv_traj_gate.sh
 if [ "$QUICK" -eq 0 ]; then
     run_gate gate_rc src/pipeline/video/post/gate_cli_rc.sh
     run_gate gate_video_cli src/pipeline/video/video_cli_gate.sh --frames 4
@@ -233,10 +236,15 @@ if [ "$QUICK" -eq 0 ]; then
     run_gate gate_video_ibp src/pipeline/video/video_ibp_gate.sh
     run_gate gate_implicit_ref_map src/pipeline/video/gate_implicit_ref_map.sh
     run_gate gate_video_near_near src/pipeline/video/gate_video_near_near.sh
+    run_gate gate_video_ref_mvs src/pipeline/video/video_ref_mvs_gate.sh
     run_gate gate_video_tip src/pipeline/video/video_tip_gate.sh
     run_gate gate_video_drl_reorder src/pipeline/video/gate_video_drl_reorder.sh
+    run_gate gate_video_flex_mvres src/pipeline/video/video_flex_mvres_gate.sh
+    run_gate gate_video_adaptive_mvd src/pipeline/video/video_adaptive_mvd_gate.sh
+    run_gate gate_video_mvd_sign_derive src/pipeline/video/video_mvd_sign_derive_gate.sh
     run_gate gate_video_opfl_refine src/pipeline/video/gate_video_opfl_refine.sh
     run_gate gate_video_dip src/pipeline/video/video_dip_gate.sh
+    run_gate gate_video_headers src/pipeline/video/gate_video_headers.sh
 fi
 
 echo

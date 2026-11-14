@@ -53,7 +53,7 @@
 #include <vector>
 
 #include "core/bitstream/bitwriter.h"
-#include "tiles/svc_layers.h"
+#include "pipeline/tiles/svc_layers.h"
 
 namespace av2enc::svc::ops_full {
 

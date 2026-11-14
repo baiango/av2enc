@@ -140,6 +140,39 @@ with open(out, "wb") as f:
 PY
 }
 
+# gen_8bit_textured <chroma> <out>: deterministic 640x360 8-bit source with
+# strong block edges, so the restoration tools find units that improve SSE at
+# the pinned qp 90.  (On the natural fixtures at qp 90 the Wiener/LR search
+# keeps every unit unfiltered, which leaves the header row untested.)
+gen_8bit_textured() {
+    local format=$1 out=$2
+    python3 - "$format" "$out" <<'PY'
+import sys
+import numpy as np
+
+fmt, out = sys.argv[1], sys.argv[2]
+w, h = 640, 360
+yy, xx = np.mgrid[0:h, 0:w].astype(np.uint32)
+y = ((xx // 3 + yy // 3) % 2 * 120 + 64 + (xx * 7 + yy * 13) % 40).astype(np.uint8)
+if fmt == "400":
+    tag = "Cmono"
+    planes = [y]
+else:
+    sx, sy = (1, 0) if fmt == "422" else (0, 0)
+    tag = "C422" if fmt == "422" else "C444"
+    cw, ch = (w + (1 << sx) - 1) >> sx, (h + (1 << sy) - 1) >> sy
+    cy, cx = np.mgrid[0:ch, 0:cw].astype(np.uint32)
+    u = ((cx // 4 + cy // 4) % 2 * 140 + 40 + (cx * 3) % 20).astype(np.uint8)
+    v = ((cx // 16 + cy // 16) % 2 * 120 + 60).astype(np.uint8)
+    planes = [y, u, v]
+with open(out, "wb") as f:
+    f.write(f"YUV4MPEG2 W{w} H{h} F1:1 Ip A0:0 {tag}\n".encode())
+    f.write(b"FRAME\n")
+    for plane in planes:
+        f.write(plane.tobytes())
+PY
+}
+
 # gen_10bit_source <w> <h> <out> [chroma]
 gen_10bit_source() {
     "${ROOT}/src/pipeline/still/high_bitdepth/gen_y4m_10bit.py" "$@" >/dev/null
@@ -244,6 +277,9 @@ gen_8bit_source "${ROOT}/tests/data/basic_64x64_1f.y4m" 400 "$TMP/src_400_64x64.
 gen_8bit_source "${ROOT}/tests/data/basic_640x360_1f.y4m" 422 "$TMP/src_422_640x360.y4m"
 gen_8bit_source "${ROOT}/tests/data/basic_640x360_1f.y4m" 444 "$TMP/src_444_640x360.y4m"
 gen_8bit_source "${ROOT}/tests/data/basic_640x360_1f.y4m" 400 "$TMP/src_400_640x360.y4m"
+gen_8bit_textured 422 "$TMP/tex_422_640x360.y4m"
+gen_8bit_textured 444 "$TMP/tex_444_640x360.y4m"
+gen_8bit_textured 400 "$TMP/tex_400_640x360.y4m"
 
 run_case 10bit_420_64x64    10 420 "$TMP/src_10_64x64.y4m"
 run_case 10bit_420_640x360  10 420 "$TMP/src_10_640x360.y4m"
@@ -319,6 +355,39 @@ run_case 8bit_400_64x64      8 400 "$TMP/src_400_64x64.y4m"
 run_case 8bit_422_640x360    8 422 "$TMP/src_422_640x360.y4m"
 run_case 8bit_444_640x360    8 444 "$TMP/src_444_640x360.y4m"
 run_case 8bit_400_640x360    8 400 "$TMP/src_400_640x360.y4m"
+
+# 8-bit non-4:2:0 in-loop filters (§7.17-§7.20.5).  The 8-bit chroma writer
+# carries the same plan/header/tile hooks as the 10-bit writer and runs the
+# depth-parameterised cores at BitDepth = 8.  Each filter alone and the full
+# chain must decode to the encoder reconstruction exactly.
+for fmt in 422 444 400; do
+    for size in 64x64 640x360; do
+        src="$TMP/src_${fmt}_${size}.y4m"
+        run_case "8bit_${fmt}_${size}_deblock" 8 "$fmt" "$src" 90 --still-deblock
+        run_case "8bit_${fmt}_${size}_cdef" 8 "$fmt" "$src" 90 --still-cdef
+        run_case "8bit_${fmt}_${size}_ccso" 8 "$fmt" "$src" 90 --still-ccso
+        run_case "8bit_${fmt}_${size}_wiener" 8 "$fmt" "$src" 90 --still-wiener
+        run_case "8bit_${fmt}_${size}_pc_wiener" 8 "$fmt" "$src" 90 --still-pc-wiener
+        run_case "8bit_${fmt}_${size}_gdf" 8 "$fmt" "$src" 90 --still-gdf
+        if [ "$fmt" != "400" ]; then
+            run_case "8bit_${fmt}_${size}_chroma_lr" 8 "$fmt" "$src" 90 --still-chroma-lr
+            run_case "8bit_${fmt}_${size}_lr_chain" 8 "$fmt" "$src" 90 \
+                --still-cdef --still-ccso --still-wiener --still-chroma-lr --still-gdf
+        else
+            run_case "8bit_${fmt}_${size}_all_filters" 8 "$fmt" "$src" 90 \
+                --still-deblock --still-cdef --still-ccso --still-wiener --still-gdf
+        fi
+        run_case "8bit_${fmt}_${size}_deblock_chain" 8 "$fmt" "$src" 90 \
+            --still-deblock --still-cdef --still-ccso --still-wiener --still-gdf
+    done
+    # Restoration search actually wins units on the textured source, so the
+    # §5.18.7.11 row and the §5.20.10.4 unit symbols are exercised.
+    run_case "8bit_${fmt}_640x360_wiener_tex" 8 "$fmt" \
+        "$TMP/tex_${fmt}_640x360.y4m" 90 --still-wiener
+    run_case "8bit_${fmt}_640x360_lr_chain_tex" 8 "$fmt" \
+        "$TMP/tex_${fmt}_640x360.y4m" 90 \
+        --still-cdef --still-ccso --still-wiener --still-chroma-lr --still-gdf
+done
 
 # Frame-body validation: a tag that under-declares the real body, and a valid
 # frame followed by extra bytes.

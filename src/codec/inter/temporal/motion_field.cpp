@@ -1238,6 +1238,9 @@ TemporalStatus store_motion_field_entry(const MotionFieldStoreEntry& in,
     } else if (count1 >= 60) {
       allow[0] = 0;
     }
+    if (in.allow_dropped != nullptr && (allow[0] == 0 || allow[1] == 0)) {
+      *in.allow_dropped = true;
+    }
   }
 
   int final_refs[2] = {kRefNone, kRefNone};

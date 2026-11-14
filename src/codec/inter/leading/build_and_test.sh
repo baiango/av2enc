@@ -101,6 +101,7 @@ CORE=(
   "$ROOT/src/pipeline/video/video_headers.cpp"
   "$ROOT/src/pipeline/video/video_syntax.cpp"
   "$ROOT/src/pipeline/video/video_frame.cpp"
+  "$ROOT/src/codec/inter/temporal/ref_mv_bank.cpp"
   "${LIB[@]}"
   "$ROOT/src/codec/inter/leading/leading_encode.cpp"
 )

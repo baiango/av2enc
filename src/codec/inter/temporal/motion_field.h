@@ -156,6 +156,9 @@ struct MotionFieldStoreEntry {
   // §7.22 past/future ordering.
   int order_hint = 0;
   int ref_order_hint[2] = {kRestrictedOrderHint, kRestrictedOrderHint};
+  // Optional out-flag: set to non-zero when the wedge allow-list dropped one
+  // list for this 8x8 (gate evidence; not used by the store itself).
+  bool* allow_dropped = nullptr;
 };
 
 // Stores one 8x8 entry, applying the wedge allow-list and past/future ordering

@@ -34,15 +34,14 @@ cannot drift.
 
 Wired: flat key + P chain, `--video-refs 1..7` / `--video-num-ref-frames 4..8`,
 partition depth/min-block/force-single, eighth/quarter/half MV precision,
-subpel ME, DC intra fallback (intra keyframe and per-leaf fallback), and the
-opt-in inter residual.
+subpel ME, DC intra fallback (intra keyframe and per-leaf fallback), the
+opt-in inter residual, and the §7.17-§7.20.5 in-loop filters.
 
-Rejected by name on these formats (all 8-bit 4:2:0 only today): deblock,
-CDEF/CCSO/Wiener/chroma-LR/GDF, tiles, B frames, temporal layers, the
-long-term/OLK/leading/SEF/SWITCH/RAS wrappers, `--video-tx-search`,
-`--video-intra-full`, `--video-gme`/`--video-warp`, compound, DRL reorder,
-average/adaptive CDF, MFH, timing and CRF/VBR rate control.  12-bit is not
-signalable in AV2 v1.0.0 and is rejected.
+Rejected by name on these formats (all 8-bit 4:2:0 only today): tiles,
+B frames, temporal layers, the long-term/OLK/leading/SEF/SWITCH/RAS wrappers,
+`--video-tx-search`, `--video-intra-full`, `--video-gme`/`--video-warp`,
+compound, DRL reorder, average/adaptive CDF, MFH, timing and CRF/VBR rate
+control.  12-bit is not signalable in AV2 v1.0.0 and is rejected.
 
 ### 4:2:2 depth limit
 
@@ -93,11 +92,41 @@ CUDA 13.0:
 * ME returns MVs in 1/8 luma samples (an integer-pel offset is 8 units); the
   mode decision and the syntax writer share the same 1/8-pel values.
 
-## In-loop filters
+## In-loop filters (§7.17-§7.20.5)
 
-The format video writer still rejects deblock/CDEF/CCSO/LR/GDF by name.  Its
-private sequence/frame writer has no filter plan or tile hooks, so none of the
-10-bit still filter work is reachable here yet.  The still writer is gated by
-`src/formats/high_bitdepth/gate_10bit_filters.sh`; the video gap is tracked in
-`docs/spec-audit/10-filters.md` with the reproducer
-`av2enc C420p10.y4m -o v.ivf --video --bit-depth 10 --video-cdef`.
+`--video-deblock`, `--video-cdef`, `--video-ccso`, `--video-wiener`,
+`--video-chroma-lr`, `--video-pc-wiener` and `--video-gdf` are wired on every
+format served here (10-bit 4:2:0/4:2:2/4:4:4/4:0:0 and 8-bit 4:2:2/4:4:4/4:0:0).
+Every flag defaults off, so every existing stream is byte-identical.
+
+`video_hbd_filters.{h,cpp}` builds the frame-level `post::VideoFilterPlan` that
+the shared M2 syntax writer already consumes and applies the same
+depth-parameterised cores as the still writers:
+
+| Filter | Applies to |
+|---|---|
+| §7.17 deblock | every frame (the metadata grid carries each leaf's skip flag) |
+| §7.18 CDEF | intra key frame |
+| §7.19 CCSO | intra key frame |
+| §7.20 Wiener NS / PC-Wiener | intra key frame |
+| §7.20.5 GDF | intra key frame |
+
+Every frame is reconstructed in full before its tile payload is assembled, so
+the key-frame plan is made from the completed reconstruction exactly like the
+still writer.  Inter frames code `cdef_frame_enable = 0` / all
+`FrameRestorationType = NONE`, which is why their skipped leaves need no CDEF or
+LR skip grid.  The filtered key frame is also the reference for the following P
+frames, so encoder and decoder references stay identical.
+
+Scope limits (named):
+* 4:2:2 / 4:4:4 chroma LR + deblock is rejected for the same pinned-decoder
+  lossless-mask aliasing reason as the still writer.
+* 8-bit 4:0:0 PC-Wiener is rejected with more than one frame: the key frame
+  decodes bit-exactly, but the pinned decoder rejects the second frame's
+  header.  10-bit 4:0:0 and 8-bit 4:2:2/4:4:4 PC-Wiener are gated exact.
+* The CPU path only; the `--video-gpu` format dispatch rejects filters by name.
+
+Gate: `src/pipeline/video/gate_video_filters.sh` encodes a deterministic
+5-frame clip in every format, for each filter and the full chain, requires
+`dav2d --strict 1` and a 0-diff reconstruction, and checks the
+chroma-LR+deblock / 8-bit mono PC-Wiener rejections.

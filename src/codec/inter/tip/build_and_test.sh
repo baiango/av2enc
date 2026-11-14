@@ -100,6 +100,7 @@ GATE_DEPS=(
   "$ROOT/src/pipeline/video/video_headers.cpp"
   "$ROOT/src/pipeline/video/video_syntax.cpp"
   "$ROOT/src/pipeline/video/video_frame.cpp"
+  "$ROOT/src/codec/inter/temporal/ref_mv_bank.cpp"
   "$ROOT/src/codec/inter/temporal/motion_field.cpp"
   "$ROOT/src/codec/inter/temporal/temporal_common.cpp"
   "$ROOT/src/codec/inter/temporal/tip.cpp"

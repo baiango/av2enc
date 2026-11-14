@@ -198,6 +198,11 @@ neutral path without it).  The gated CLI surface is:
 | `--video-segmentation` | `segmentation_enabled = 1`, `SEG_LVL_ALT_Q = 0` for segment 1 | `intra_segment_id` / `inter_segment_id` from the per-SB variance split | segment id only; qindex unchanged |
 | `--video-delta-q` | `delta_q_present = 1`, `delta_q_res` | `begin_superblock` + one delta step at the first leaf of every SB | per-SB `CurrentQIndex` staircase (`rc::plan_delta_q`) drives the block quantizer |
 | `--video-per-segment-q` | `segmentation_enabled = 1`, `SEG_LVL_ALT_Q = delta` for segment 1 | segment ids as above | §7.14.2 effective qindex drives quantizer and deblock metadata |
+| `--video-uv-delta-q D` | §5.4.8 `separate_uv_delta_q = 1`, `equal_ac_dc_q = 0`, UV DC/AC base + enable fields and §5.18.6.1 frame deltas | base_q_idx byte unchanged; coefficient CDF slice stays raw `base_q_idx` | §7.14.2 `get_q()` per plane/component; U = +D, V = -D for DC and AC (`diff_uv_delta = 1`); §7.17.6 receives the UV AC totals |
+| `--video-segments N` | §5.4.4 `enable_ext_seg = (N > 8)`; §5.4.9 `seg_info(MaxSegments)` | N variance-ranked buckets; ids above 7 use `seg_id_ext_flag`/`seg_id_ext` | per-SB effective qindex |
+| `--video-seg-skip` | `SEG_LVL_SKIP` on the lowest-variance bucket | that bucket's inter leaves are GLOBALMV skip; an intra key frame suppresses the feature (§6.19.4.1) | forced skip, no residual |
+| `--video-seg-globalmv` | `SEG_LVL_GLOBALMV` on the lowest-variance bucket | forced GLOBALMV on ref 0; an edge leaf that cannot be inter falls back to segment 0 | GLOBALMV mode |
+| `--video-seg-temporal` | `segmentation_temporal_update = 1` on P frames whose primary reference is a P frame | `PrevSegmentIds` from the reference frame; `seg_id_predicted` per block | none (map only) |
 
 Call order as coded (the adapter refuses a mismatch):
 
@@ -248,8 +253,18 @@ commit_segment_block(...);
 - `--video-per-segment-q` and `--video-delta-q` are mutually exclusive (the
   encoder supports `ALT_Q + delta-Q` arithmetically but the planner would need
   a joint target; not wired).
-- `SEG_LVL_SKIP` / `SEG_LVL_GLOBALMV`, temporal segmentation prediction, 16
-  segments and UV/DC delta-Q remain unwired, as in the still path.
+- `--video-uv-delta-q` does not compose with QM, TCQ or CCTX (the scalar
+  per-plane step is not their quantizer), nor with the 10-bit / non-4:2:0 core.
+- `SEG_LVL_SKIP` cannot be active on an intra frame (§6.19.4.1), so the key
+  frame table keeps ALT_Q and the P-frame table enables the feature.
+- `--video-seg-globalmv` does not compose with `--video-per-segment-q`: an edge
+  intra leaf must leave the forced-GLOBALMV segment and the quantizer would
+  change.  Feature segments keep `ALT_Q = 0` on inter frames so the fallback is
+  qindex-exact.
+- The pinned `dav2d` f9dafbc reads `is_inter` for a SEG_LVL_GLOBALMV block
+  instead of inferring it; the carrier codes that bit (docs/negative-results.md).
+- Temporal prediction needs a single reference and no B/temporal/random-access
+  schedule.
 
 The gate:
 

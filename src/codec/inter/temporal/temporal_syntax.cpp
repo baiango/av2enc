@@ -273,10 +273,12 @@ TemporalStatus write_frame_temporal_syntax(BitWriter& writer,
         writer.put_bit(col < 0);
       }
     }
-  }
-  writer.put_bit(cfg.tip_sharp);
-  if (!cfg.tip_sharp) {
-    writer.put_bit(cfg.tip_regular);
+    // §5.18.2 codes TipInterpFilter only for TIP_FRAME_AS_OUTPUT; a
+    // TIP_FRAME_AS_REF frame that codes this block carries no filter bits.
+    writer.put_bit(cfg.tip_sharp);
+    if (!cfg.tip_sharp) {
+      writer.put_bit(cfg.tip_regular);
+    }
   }
   return TemporalStatus::kOk;
 }
@@ -370,15 +372,19 @@ TemporalStatus read_frame_temporal_syntax(BitReader& reader,
       }
       cfg->tip.tip_global_mv = Mv{srow, scol};
     }
-  }
-  if (!reader.get_bit(&cfg->tip_sharp)) {
-    return TemporalStatus::kInvalidArgument;
-  }
-  cfg->tip_regular = false;
-  if (!cfg->tip_sharp) {
-    if (!reader.get_bit(&cfg->tip_regular)) {
+    // §5.18.2 TipInterpFilter is present only for TIP_FRAME_AS_OUTPUT.
+    if (!reader.get_bit(&cfg->tip_sharp)) {
       return TemporalStatus::kInvalidArgument;
     }
+    cfg->tip_regular = false;
+    if (!cfg->tip_sharp) {
+      if (!reader.get_bit(&cfg->tip_regular)) {
+        return TemporalStatus::kInvalidArgument;
+      }
+    }
+  } else {
+    cfg->tip_sharp = true;
+    cfg->tip_regular = false;
   }
   cfg->tip.interp_filter =
       cfg->tip_sharp

@@ -54,6 +54,9 @@ STREAMS=()
 
 md5() { md5sum "$1" 2>/dev/null | cut -d' ' -f1 || md5 -q "$1"; }
 
+# Input for the next run_case; the fixture cases below switch it.
+CASE_INPUT="$INPUT"
+
 # Encodes one case, requires the expected temporal-candidate count, decodes and
 # compares the reconstruction.  $1 = label, $2 = expected frame count,
 # $3 = want temporal candidates, $4 = require a selected temporal candidate,
@@ -64,7 +67,7 @@ run_case() {
   local ivf="$OUT/$label.ivf" recon="$OUT/$label.recon.y4m"
   local dec="$OUT/$label.dec.y4m" log="$OUT/$label.log"
   echo "== $label: $*"
-  if ! "$BIN" "$INPUT" -o "$ivf" --video --frames "$frames" \
+  if ! "$BIN" "$CASE_INPUT" -o "$ivf" --video --frames "$frames" \
       --video-recon "$recon" "$@" >"$log" 2>&1; then
     echo "FAIL($label): encode failed"; tail -5 "$log"; FAIL=1; return
   fi
@@ -124,6 +127,155 @@ run_case b6 6 yes no --b-frames 4 --video-ref-mvs
 # stream must decode but report no candidates.
 run_case tl4 4 no no --video-tlayers 4 --video-ref-mvs
 
+# --- §7.22 warp/GME and wedge-compound field storage -----------------------
+#
+# These carriers need fixtures whose content selects the tool, so the gate
+# generates them deterministically (same bytes on every host) instead of
+# depending on an external clip.
+PAN64="$OUT/fixture_pan64.y4m"
+PAN360="$OUT/fixture_pan360.y4m"
+WEDGE64="$OUT/fixture_wedge64.y4m"
+WEDGE360="$OUT/fixture_wedge360.y4m"
+
+if [ ! -s "$PAN64" ] || [ ! -s "$PAN360" ] || [ ! -s "$WEDGE64" ] ||
+   [ ! -s "$WEDGE360" ]; then
+  python3 - "$PAN64" "$PAN360" "$WEDGE64" "$WEDGE360" <<'PY'
+import math
+import sys
+
+pan64, pan360, wedge64, wedge360 = sys.argv[1:5]
+
+def write(path, w, h, frames):
+    cw, ch = w // 2, h // 2
+    with open(path, "wb") as out:
+        out.write(b"YUV4MPEG2 W%d H%d F30:1 Ip A1:1 C420\n" % (w, h))
+        for f, fn in enumerate(frames):
+            out.write(b"FRAME\n")
+            for y in range(h):
+                out.write(bytes(fn(x, y, f, 0, w, h) for x in range(w)))
+            for p in (1, 2):
+                for y in range(ch):
+                    out.write(bytes(fn(2 * x, 2 * y, f, p, w, h)
+                                    for x in range(cw)))
+
+def pan(k):
+    # Smooth pan: the §5.18.9 fit lands on a translation-only model, which is
+    # the shape the product GLOBALMV carrier decodes exactly.  The texture
+    # frequencies are chosen per frame size so the same content family is
+    # exercised at 64x64 and 640x360.
+    def sample(x, y, f, plane, w, h):
+        if w == 64:
+            xx = x + k * f
+            yy = y + 0.5 * k * f
+            if plane == 0:
+                v = 128 + 60 * math.sin(xx * 0.5) + \
+                    40 * math.cos(yy * 0.8) + 20 * math.sin((xx + yy) * 0.3)
+            elif plane == 1:
+                v = 128 + 40 * math.sin((x + 0.5 * k * f) * 0.4) + \
+                    20 * math.cos((y + 0.3 * k * f) * 0.5)
+            else:
+                v = 128 + 35 * math.cos((x + 0.4 * k * f) * 0.6) + \
+                    25 * math.sin((y + 0.2 * k * f) * 0.4)
+        else:
+            xx = x + k * f
+            yy = y + k * f / 3.0
+            if plane == 0:
+                v = 128 + 60 * math.sin(xx * 0.05) + \
+                    40 * math.cos(yy * 0.08) + 20 * math.sin((xx + yy) * 0.03)
+            elif plane == 1:
+                v = 128 + 40 * math.sin((x + 2 * k * f / 3.0) * 0.04) + \
+                    20 * math.cos((y + k * f / 3.0) * 0.05)
+            else:
+                v = 128 + 35 * math.cos((x + 2 * k * f / 3.0) * 0.06) + \
+                    25 * math.sin((y + k * f / 3.0) * 0.04)
+        return max(0, min(255, int(v + 0.5)))
+    return sample
+
+COS = [4, 4, 4, 2, 2, 0, -2, -2, -4, -4, -4, -4, -4, -2, -2, 0, 2, 2, 4, 4]
+SIN = [0, -1, -2, -2, -4, -4, -4, -2, -2, -1, 0, 1, 2, 2, 4, 4, 4, 2, 2, 1]
+POS = [8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 12, 13, 13, 13, 14, 14,
+       14, 14, 14, 15, 15, 15, 15, 15, 15, 15, 15, 15, 16, 16, 16, 16]
+NEG = [8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2,
+       2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0]
+
+def wedge_mask(i, j, bw, bh):
+    # §7.13.3.27 index 22 (direction 6, offset 4/8), sign 0.
+    direction, cx, cy = 6, 4, 4
+    xoff = bw // 2 - ((cx * bw) >> 3)
+    yoff = bh // 2 - ((cy * bh) >> 3)
+    n, m = yoff + i, xoff + j
+    d = ((m << 1) - (bw - 1)) * COS[direction] + \
+        ((n << 1) - (bh - 1)) * SIN[direction]
+    d = max(-31, min(31, d))
+    return 64 - (((POS[d] if d >= 0 else NEG[-d]) << 2))
+
+def wedge_fixture(w, h):
+    def a(x, y, p):
+        if p == 0:
+            return max(0, min(255, int(60 + 30 * math.sin(x * 0.3) +
+                                     20 * math.cos(y * 0.4))))
+        if p == 1:
+            return max(0, min(255, int(90 + 20 * math.sin(x * 0.4))))
+        return max(0, min(255, int(100 + 20 * math.cos(y * 0.5))))
+
+    def b(x, y, p):
+        if p == 0:
+            return max(0, min(255, int(190 + 30 * math.sin(x * 0.3 + 1.5) +
+                                     20 * math.cos(y * 0.4 + 2))))
+        if p == 1:
+            return max(0, min(255, int(180 + 20 * math.sin(x * 0.4 + 1.5))))
+        return max(0, min(255, int(170 + 20 * math.cos(y * 0.5 + 2))))
+
+    def wedge(x, y, p):
+        m = wedge_mask(y % 64, x % 64, 64, 64)
+        av, bv = a(x, y, p), b(x, y, p)
+        return (m * av + (64 - m) * bv + 32) >> 6
+
+    def wrap(fn):
+        return lambda x, y, f, p, fw, fh: fn(x, y, p)
+
+    return [wrap(a), wrap(b), wrap(wedge), wrap(b),
+            wrap(a), wrap(b), wrap(wedge), wrap(b)]
+
+write(pan64, 64, 64, [pan(1)] * 8)
+write(pan360, 640, 360, [pan(3)] * 8)
+write(wedge64, 64, 64, wedge_fixture(64, 64))
+write(wedge360, 640, 360, wedge_fixture(640, 360))
+PY
+fi
+
+# The wedge carrier reports how many stored 8x8 cells lost a list to the §7.22
+# allow-list; the case is only meaningful when that path runs.
+check_wedge_drops() {
+  local label=$1
+  local drops
+  drops=$(sed -n 's/.*§7\.22 wedge allow-list cells \([0-9]*\).*/\1/p' \
+      "$OUT/$label.log" | tail -1)
+  drops=${drops:-0}
+  if [ "$drops" -le 0 ]; then
+    echo "FAIL($label): §7.22 wedge allow-list never ran"; FAIL=1
+  else
+    echo "  PASS($label): §7.22 wedge allow-list cells $drops"
+  fi
+}
+
+CASE_INPUT="$PAN64"
+run_case gme64 8 yes no --video-gme --video-refs 2 --video-ref-mvs
+run_case gme64_refs3 8 yes no --video-gme --video-refs 3 --video-ref-mvs
+CASE_INPUT="$PAN360"
+run_case gme360 8 yes no --video-gme --video-refs 2 --video-ref-mvs
+run_case gme360_refs3 8 yes no --video-gme --video-refs 3 --video-ref-mvs
+run_case warp360 8 yes no --video-warp --video-refs 2 --video-ref-mvs
+CASE_INPUT="$WEDGE64"
+run_case wedge64 8 yes no --video-refs 2 --video-compound \
+  --video-compound-wedge --video-ref-mvs
+check_wedge_drops wedge64
+CASE_INPUT="$WEDGE360"
+run_case wedge360 8 yes no --video-refs 2 --video-compound \
+  --video-compound-wedge --video-ref-mvs
+check_wedge_drops wedge360
+CASE_INPUT="$INPUT"
+
 # --- "flag off" byte identity ---------------------------------------------
 if [ -n "$BASE_BIN" ] && [ -x "$BASE_BIN" ]; then
   for spec in "default:8:" "refs2:8:--video-refs 2" "b4:4:--b-frames 2" \
@@ -151,6 +303,25 @@ if [ -n "$BASE_BIN" ] && [ -x "$BASE_BIN" ]; then
   else
     echo "  PASS(marker): --video-ref-mvs changes the stream"
   fi
+  # The §7.22 store must not perturb carriers that do not enable it: the GME
+  # and wedge-compound streams with --video-ref-mvs off stay byte-identical.
+  for spec in "gme:$PAN360:8:--video-gme --video-refs 2" \
+              "wedge:$WEDGE64:4:--video-refs 2 --video-compound --video-compound-wedge"; do
+    label=${spec%%:*}; rest=${spec#*:}; clip=${rest%%:*}; rest=${rest#*:}
+    frames=${rest%%:*}; extra=${rest#*:}
+    # shellcheck disable=SC2086
+    "$BASE_BIN" "$clip" -o "$OUT/base_$label.ivf" --video --frames "$frames" \
+      $extra >/dev/null 2>&1
+    # shellcheck disable=SC2086
+    "$BIN" "$clip" -o "$OUT/new_$label.ivf" --video --frames "$frames" \
+      $extra >/dev/null 2>&1
+    if ! cmp -s "$OUT/base_$label.ivf" "$OUT/new_$label.ivf"; then
+      echo "FAIL(identity/$label): stream changed with --video-ref-mvs off"
+      FAIL=1
+    else
+      echo "  PASS(identity/$label): $(md5 "$OUT/new_$label.ivf")"
+    fi
+  done
 fi
 
 if [ "$FAIL" -ne 0 ]; then

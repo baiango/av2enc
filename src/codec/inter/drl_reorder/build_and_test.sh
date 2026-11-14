@@ -99,6 +99,7 @@ GATE_DEPS=(
   "$ROOT/src/pipeline/video/video_headers.cpp"
   "$ROOT/src/pipeline/video/video_syntax.cpp"
   "$ROOT/src/pipeline/video/video_frame.cpp"
+  "$ROOT/src/codec/inter/temporal/ref_mv_bank.cpp"
   drl_reorder.cpp
   drl_syntax.cpp
   video_stack_adapter.cpp

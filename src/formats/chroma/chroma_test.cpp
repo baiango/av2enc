@@ -381,6 +381,120 @@ void test_headers() {
   }
 }
 
+void test_filter_headers() {
+  // §5.4.10 sequence_filter_config(): the tool flags and the loop-restoration
+  // tool list round-trip through the reader.
+  const ChromaFormat formats[] = {ChromaFormat::k420, ChromaFormat::k422,
+                                  ChromaFormat::k444, ChromaFormat::k400};
+  for (ChromaFormat format : formats) {
+    av2enc::chroma::ChromaSeqConfig config;
+    config.chroma = format;
+    config.enable_cdef = true;
+    config.enable_gdf = true;
+    config.gdf_unit_matches_sb_size = true;
+    config.enable_restoration = true;
+    config.lr_luma_ns = true;
+    config.lr_tools_uv_present = av2enc::chroma::chroma_format_info(format).num_planes > 1;
+    config.enable_ccso = true;
+    config.ccso_unit_matches_sb_size = true;
+    std::string error;
+    CHECK(av2enc::chroma::validate_chroma_seq_config(config, error));
+
+    av2enc::BitWriter writer;
+    av2enc::chroma::write_sequence_header_syntax(writer, config);
+    const std::vector<std::uint8_t> syntax = writer.take_bytes();
+    av2enc::chroma::SequenceHeaderInfo info;
+    CHECK(av2enc::chroma::read_sequence_header_syntax(syntax, info, error));
+    CHECK(info.enable_cdef);
+    CHECK(info.enable_restoration);
+    CHECK(!info.lr_tools_disable_ns);
+    CHECK(info.lr_tools_disable_pc);
+    CHECK_EQ(info.lr_tools_uv_present,
+             av2enc::chroma::chroma_format_info(format).num_planes > 1);
+    CHECK(info.enable_ccso);
+  }
+
+  // enable_restoration with no tool is not signallable.
+  av2enc::chroma::ChromaSeqConfig bad;
+  bad.chroma = ChromaFormat::k422;
+  bad.enable_restoration = true;
+  std::string error;
+  CHECK(!av2enc::chroma::validate_chroma_seq_config(bad, error));
+  // Chroma restoration is not codable for 4:0:0.
+  bad = av2enc::chroma::ChromaSeqConfig{};
+  bad.chroma = ChromaFormat::k400;
+  bad.enable_restoration = true;
+  bad.lr_chroma_ns = true;
+  CHECK(!av2enc::chroma::validate_chroma_seq_config(bad, error));
+
+  // The frame-header row writer emits the deblock/CDEF/GDF rows; a dummy tile
+  // payload is enough to check assembly and the sequence flags.
+  av2enc::chroma::ChromaSeqConfig config;
+  config.chroma = ChromaFormat::k422;
+  config.enable_cdef = true;
+  config.enable_gdf = true;
+  av2enc::chroma::ChromaFilterHeaderConfig filters;
+  filters.apply_deblock_y_vert = true;
+  filters.apply_deblock_y_horz = true;
+  filters.apply_deblock_u = true;
+  filters.apply_deblock_v = true;
+  filters.enable_cdef = true;
+  filters.cdef_damping = 3;
+  filters.cdef_num_strengths = 2;
+  filters.cdef_strengths[0] = av2enc::cdef::CdefStrength{0, 0, 0, 0};
+  filters.cdef_strengths[1] = av2enc::cdef::CdefStrength{4, 0, 2, 0};
+  filters.enable_gdf = true;
+  filters.gdf_pic_qc_idx = 1;
+  filters.gdf_pic_scale_idx = 1;
+  const std::uint8_t dummy_tile[] = {0x00};
+  const std::vector<std::uint8_t> plain =
+      av2enc::chroma::assemble_chroma_still(config, dummy_tile);
+  const std::vector<std::uint8_t> with_filters =
+      av2enc::chroma::assemble_chroma_still(config, dummy_tile, &filters);
+  CHECK(with_filters.size() > plain.size());
+  av2enc::chroma::SequenceHeaderInfo info;
+  CHECK(av2enc::chroma::find_sequence_header(with_filters, info, error));
+  CHECK(info.enable_cdef);
+}
+
+void test_filter_encoder_smoke() {
+  const ChromaFormat formats[] = {ChromaFormat::k422, ChromaFormat::k444,
+                                  ChromaFormat::k400};
+  const int width = 64;
+  const int height = 64;
+  std::vector<std::uint8_t> y(static_cast<std::size_t>(width) * height, 0);
+  for (int row = 0; row < height; ++row) {
+    for (int col = 0; col < width; ++col) {
+      y[static_cast<std::size_t>(row) * width + col] =
+          static_cast<std::uint8_t>(((col / 4 + row / 4) % 2) * 200 + 20);
+    }
+  }
+  const std::size_t chroma = static_cast<std::size_t>(width / 2) * (height / 2);
+  std::vector<std::uint8_t> u(chroma, 140);
+  std::vector<std::uint8_t> v(chroma, 116);
+  for (ChromaFormat format : formats) {
+    av2enc::chroma::ChromaPicture picture;
+    std::string error;
+    CHECK(av2enc::chroma::make_chroma_picture(width, height, format, y, u, v,
+                                               picture, error));
+    av2enc::chroma::ChromaStillOptions options;
+    options.filters.enable_deblock = true;
+    options.filters.enable_cdef = true;
+    options.filters.cdef_num_strengths = 2;
+    options.filters.enable_ccso = true;
+    options.filters.enable_gdf = true;
+    av2enc::chroma::ChromaStillResult result;
+    CHECK(av2enc::chroma::encode_chroma_still_picture(picture, options, result,
+                                                       error));
+    CHECK(!result.frame.empty());
+    av2enc::chroma::SequenceHeaderInfo info;
+    CHECK(av2enc::chroma::find_sequence_header(result.frame, info, error));
+    CHECK(info.enable_cdef);
+    CHECK_EQ(info.chroma_format_idc,
+             av2enc::chroma::chroma_format_idc(format));
+  }
+}
+
 void test_tx_shapes() {
   struct Expected {
     int w;
@@ -535,6 +649,8 @@ int main() {
   test_geometry();
   test_tool_legality();
   test_headers();
+  test_filter_headers();
+  test_filter_encoder_smoke();
   test_tx_shapes();
   test_transform_roundtrip();
   test_encoder_smoke();

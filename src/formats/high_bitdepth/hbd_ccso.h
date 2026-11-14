@@ -31,6 +31,7 @@ namespace av2enc::hbd {
 
 struct HbdCcsoPlan {
   HbdCcsoConfig config;
+  int bit_depth = 10;
   std::int64_t sse_before = 0;
   std::int64_t sse_after = 0;
 };
@@ -277,6 +278,7 @@ inline bool plan_ccso(const HbdCcsoFrame16& frame, int ccso_luma_size_log2,
   plan->config.enabled = false;
   plan->config.ccso_luma_size_log2 = ccso_luma_size_log2;
   plan->config.unit_matches_sb_size = true;
+  plan->bit_depth = frame.bit_depth;
 
   std::vector<ccso_detail::Candidate> candidates;
   if (!edge_only) {
@@ -421,7 +423,7 @@ inline bool apply_ccso16(const HbdCcsoPlan& plan, const fmt::Format& format,
   frame.mi_rows = mi_rows;
   frame.subsampling_x = fmt::subsampling_x(format.chroma);
   frame.subsampling_y = fmt::subsampling_y(format.chroma);
-  frame.bit_depth = 10;
+  frame.bit_depth = plan.bit_depth;
   frame.num_planes = num_planes;
   frame.sb_width = 64;
   frame.sb_height = 64;
