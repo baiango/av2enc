@@ -779,10 +779,6 @@ bool validate_geometry(const FrameGeometry& geometry, std::string& error) {
     return fail(error,
                 "max_pb_aspect_ratio must be 2, 4, or 8 (AV2 §5.4.3)");
   }
-  if (geometry.chroma_subsampling_x != geometry.chroma_subsampling_y &&
-      geometry.has_chroma) {
-    return fail(error, "4:2:2 chroma is not modelled; use 4:2:0 or 4:4:4");
-  }
   error.clear();
   return true;
 }
@@ -946,6 +942,15 @@ bool is_chroma_offset_for_partition(const FrameGeometry& geometry,
                                       partition_subsize(partition, size));
 }
 
+namespace {
+// Subsampled_Size[block][1][0] for 4:2:2 (sub_x = 1, sub_y = 0), AV2 §9.2.
+// 255 is the invalid sentinel.
+constexpr int kChroma422Subsize[] = {
+    0,   255, 0,   1,   19,  3,   4,   21,  6,   7,   23,  9,   10,  255, 12,
+    13,  255, 15,  16,  255, 2,   25,  5,   27,  8,   255, 20,  255, 22,
+};
+}  // namespace
+
 BlockSize chroma_plane_residual_size(const FrameGeometry& geometry,
                                      BlockSize luma_size) {
   if (!is_valid_block_size(luma_size)) {
@@ -958,7 +963,13 @@ BlockSize chroma_plane_residual_size(const FrameGeometry& geometry,
     return static_cast<BlockSize>(
         kChroma420Subsize[static_cast<std::size_t>(luma_size)]);
   }
-  return BlockSize::kInvalid;  // 4:2:2 not modelled
+  if (geometry.chroma_subsampling_x && !geometry.chroma_subsampling_y) {
+    const int value =
+        kChroma422Subsize[static_cast<std::size_t>(luma_size)];
+    return value == 255 ? BlockSize::kInvalid
+                        : static_cast<BlockSize>(value);
+  }
+  return BlockSize::kInvalid;
 }
 
 bool is_partition_allowed(const FrameGeometry& geometry, int mi_row,

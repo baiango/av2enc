@@ -44,16 +44,14 @@ B frames, temporal layers, the long-term/OLK/leading/SEF/SWITCH/RAS wrappers,
 compound, DRL reorder, average/adaptive CDF, MFH, timing and CRF/VBR rate
 control.  12-bit is not signalable in AV2 v1.0.0 and is rejected.
 
-### 4:2:2 depth limit
+### 4:2:2 depth
 
-`partition::` does not model 4:2:2 chroma geometry, so the 4:2:2 tree is
-luma-driven and the syntax writer derives each leaf's chroma residual size
-with `fmt::chroma_residual_size()`.  A 16-pixel 4:2:2 leaf (16x32 / 32x16) is
-not decoder-gated yet: `--video-max-depth 3` produces streams the pinned
-`dav2d` rejects with `Error decoding frame: Invalid argument`.  The CLI
-therefore defaults 4:2:2 to depth 2 and rejects an explicit deeper tree by
-name.  This is a documented integration gap, not a silent clamp: pass
-`--video-max-depth 2` explicitly to make the choice visible.
+`partition::chroma_plane_residual_size()` models 4:2:2 (`Subsampled_Size[.][1][0]`),
+so the tree is no longer luma-only.  `--video-max-depth 3/4` produces 16-pixel
+4:2:2 leaves (16x32 / 32x16) that decode exactly with the pinned `dav2d
+--strict 1`; `gate_video_422_depth.sh` covers 8/10-bit at 64x64 and 640x360.
+The default stays `--video-max-depth 2` for historical 4:2:2 streams; the
+rejection of deeper trees was removed.
 
 ## Gate
 

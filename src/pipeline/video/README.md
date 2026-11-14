@@ -1720,8 +1720,9 @@ pinned stream above are unchanged.
 * Deblock, loop filters, tiles, B frames, temporal layers, frame-type
   wrappers, TX search, full intra, GME/warp, compound, DRL, average CDF,
   MFH/timing and CRF/VBR are rejected by name on these formats.
-* 4:2:2 is gated at `--video-max-depth 2`; 16-pixel 4:2:2 leaves are not
-  decoder-gated yet.
+* 4:2:2 defaults to `--video-max-depth 2`; 16-pixel 4:2:2 leaves
+  (`--video-max-depth 3/4`) are decoder-exact now that `partition` models
+  4:2:2 chroma, and are gated by `gate_video_422_depth.sh`.
 * Gate: `src/cuda/pipeline/video/gate_video_formats.sh` (CTest
   `gate_video_formats`) at 640x360 / 4 frames, all seven formats.
 ## Data-driven intra prediction (opt-in, CPU)

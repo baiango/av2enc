@@ -5780,8 +5780,9 @@ int run_video_format_encode(const Options& options) {
   video_options.max_partition_depth = options.video_max_depth;
   if (format.chroma == av2enc::fmt::ChromaFormat::k422 &&
       !flag_given(options, "--video-max-depth")) {
-    // 4:2:2 is gated at 32x32 roots: 16-pixel 4:2:2 leaves still fail the
-    // pinned decoder's frame-header parse (docs/negative-results.md).
+    // Historical 4:2:2 default: 32x32 roots.  16-pixel 4:2:2 leaves are now
+    // exact (partition models 4:2:2 chroma), so an explicit
+    // --video-max-depth 3/4 is accepted; the default stream stays unchanged.
     video_options.max_partition_depth = 2;
   }
   video_options.me_range = options.video_me_range;

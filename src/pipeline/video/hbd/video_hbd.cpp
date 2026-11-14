@@ -558,13 +558,9 @@ class FrameEncoder {
     // The partition module derives its allowed set from the chroma geometry
     // (CHROMA_PART / Subsampled_Size).  Keep it in sync with the signalled
     // format; a wrong mask changes the partition symbol the writer emits.
-    // The partition module does not model 4:2:2 chroma sizes, so the 4:2:2
-    // tree is luma-driven (the decoder's SHARED_PART rule is geometric; the
-    // syntax writer validates each chroma residual size and fails loudly if a
-    // produced leaf cannot carry 4:2:2 chroma).
-    geometry_.has_chroma =
-        fmt::has_chroma(format_.chroma) &&
-        format_.chroma != fmt::ChromaFormat::k422;
+    // 4:2:2 is modelled by partition::chroma_plane_residual_size(), so the
+    // tree is not luma-only and 16-pixel 4:2:2 leaves decode exactly.
+    geometry_.has_chroma = fmt::has_chroma(format_.chroma);
     geometry_.chroma_subsampling_x = fmt::subsampling_x(format_.chroma) != 0;
     geometry_.chroma_subsampling_y = fmt::subsampling_y(format_.chroma) != 0;
     mi_cols_ = partition::mi_cols(geometry_);
@@ -1262,16 +1258,6 @@ bool validate_options(const Options& options, std::size_t frame_count,
   if (format.chroma == fmt::ChromaFormat::k422 && options.min_block_size < 16) {
     error = "4:2:2 video requires --video-min-block >= 16 (sub-16 leaves have "
             "no legal 4:2:2 chroma residual size)";
-    return false;
-  }
-  if (format.chroma == fmt::ChromaFormat::k422 &&
-      options.max_partition_depth > 2) {
-    // 16-pixel 4:2:2 leaves are still not decoder-exact: a 16x32/32x16 leaf
-    // makes pinned dav2d fail while parsing the frame header (not the tile
-    // payload), and 32x32 roots decode exactly.  Reject the depth by name
-    // instead of producing an invalid stream.
-    error = "4:2:2 video supports --video-max-depth <= 2 (16-pixel 4:2:2 "
-            "leaves are not decoder-exact yet)";
     return false;
   }
   if (options.max_partition_depth < 0 || options.max_partition_depth > 8) {
