@@ -167,6 +167,9 @@ struct CdefStageOptions {
   // Optional candidate ladder (syntax values); null uses the default ladder.
   const cdef::CdefStrength* candidates = nullptr;
   int candidate_count = 0;
+  // 2x2 MI decimation for the frame-level strength choice: evaluate every
+  // `search_step`-th 8x8 block row/column.  Requires num_strengths == 1.
+  int search_step = 1;
 };
 
 struct CdefStagePlan {

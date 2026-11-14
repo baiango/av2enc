@@ -221,6 +221,7 @@ bool still_cdef_plan(const CdefStageFrame& frame, const CdefStageOptions& option
   search.chroma_weight = options.chroma_weight;
   search.candidates = options.candidates;
   search.candidate_count = options.candidate_count;
+  search.eval_step = options.search_step;
 
   std::string search_error;
   if (!cdef::cdef_search_plan(view, search, &plan->search, &search_error)) {

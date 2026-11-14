@@ -52,14 +52,14 @@ decisions are used.
 **Measured baselines** (NASA clip, 60 frames). The benchmark source is
 [`First-8K-Video-from-Space_orig.mp4`](https://images-assets.nasa.gov/video/First-8K-Video-from-Space/First-8K-Video-from-Space~orig.mp4)
 (8192x4096, 2:1, bt709). The **default** CPU point is QP 189 at 480x240/30;
-the measured opt-in points are `quality` at QP 190 and `--nightly` at QP 142.
+the measured opt-in points are `quality` at QP 190 and `--nightly` at QP 117.
 Old Shine rows are historical.
 
 | Case | Device | Bitrate CPU / GPU | CVVDP | PSNR-Y | Encode |
 |---|---|---:|---:|---:|---:|
 | CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 23.7 fps (1 thread) / 54.6 fps (8 threads) |
 | CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 27.58 dB | 23.4 fps (8 threads) |
-| CPU 240p30, `--nightly` QP 142 | Apple M4 | 100.2 / - kbps | **8.746 JOD** | **35.38 dB** | 18.9 fps (8 threads) |
+| CPU 240p30, `--nightly` QP 117 | Apple M4 | 100.1 / - kbps | **9.547 JOD** | **40.87 dB** | 9.1 fps (8 threads) |
 | AVM CBR (NASA) | Apple M4 | 92.1 / - kbps | 8.791 JOD | 37.78 dB | 0.071 fps |
 | CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | 49.4 fps |
 | CPU/GPU parity, QP 189 | RTX 3060 | 100.0 / 100.0 kbps | drift 0 | drift 0 | 40.0 fps |
@@ -70,10 +70,9 @@ AVM's CBR rate control undershot its request and produced 92.1 kbps at
 0.071 fps, so the quality comparison is at 92.1 vs 100.0 kbps. `quality` and
 `--nightly` are CPU-only; the default and GPU paths keep the historical
 25,009-byte stream / MD5 `a1d0dba1259b20a4b628d4cd1e14c33c`. The `quality`
-stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP142
-stream is 25,062 B / MD5 `ada720ee20ac1caf908eb1b6269e4cb8`. At the 100 kbps
-point, nightly is +3.94 JOD over the default and +2.44 JOD over `quality`
-(interpolated to 100.04 kbps: ~8.735 JOD).
+stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP117
+stream is 25,022 B / MD5 `b7388311a0e13cd90c7e1c9a2883588e`. At the 100.2 kbps
+point, nightly is +4.74 JOD over the default and +3.24 JOD over `quality`.
 
 The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
 25,009-byte stream as the CPU reference (`100.0 / 100.0 kbps`, MD5
@@ -423,15 +422,16 @@ Current gates:
   (+1.50 JOD), PSNR-Y 27.58 dB (+3.11 dB)** at QP190 / 100.56 kbps; the
   interpolated 100.04 kbps point is 6.273 JOD. The per-tool table and exact
   flags are in `docs/video-rd-preset.md`.
-  Algorithmic nightly aggregate: **`--nightly` combines rate-aware CCSO and
-  bottom-edge inter; it measures 8.746 JOD / 35.38 dB PSNR-Y at 100.25 kbps
-  (QP142)** — +3.94 JOD over the default and +2.44 JOD over the stable preset
-  at essentially the same rate. It is CPU-only and rejects `--video-gpu`, so
-  the default and GPU streams keep the historical CPU decisions
-  (`a1d0dba1...`, 25,009 B). The TX context rate and rate-aware partition tree
-  are separate opt-ins; they measured positive alone but did not stack with
-  the edge path. The measured table and exact flags are in
-  `docs/video-nightly.md`.
+  Algorithmic nightly aggregate: **`--nightly` measures 9.547 JOD /
+  40.87 dB PSNR-Y at 100.1 kbps (QP117)** — +4.74 JOD over the default and
+  +3.24 JOD over the stable preset at essentially the same rate. It combines
+  64-band/refit/priced-unit CCSO, bottom-edge inter and residual masking, the
+  measured partition probe, a reference-intro key/first-P QP offset, luma
+  inter RDOQ, CDEF, the BAWP carrier over inter residual and the calibrated
+  leaf RD cost (`--video-leaf-rd`). It is CPU-only and
+  rejects `--video-gpu`, so the default and GPU streams keep the historical CPU
+  decisions (`a1d0dba1...`, 25,009 B). The measured tables, per-tool
+  contributions and exact flags are in `docs/video-nightly.md`.
 - **GPU calibration:** same 240p30 decisions at QP 189; CVVDP ±0.05 JOD,
   bitrate ±2%, PSNR-Y ±0.1 dB drift. The QP189 stream is byte-identical on both
   GPU hosts and the CPU (`a1d0dba1...`).

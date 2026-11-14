@@ -121,6 +121,9 @@ struct Options {
   // Optional candidate ladder (syntax values); null uses the default ladder.
   const av2enc::cdef::CdefStrength* candidates = nullptr;
   int candidate_count = 0;
+  // 2x2 MI decimation for the frame-level strength choice (CdefStrengths == 1
+  // only): evaluate every `search_step`-th 8x8 block row/column.
+  int search_step = 1;
 };
 
 // Result of the per-frame decision.

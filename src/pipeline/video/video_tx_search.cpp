@@ -9,6 +9,7 @@
 
 #include "codec/rate/rc/rc_tables.h"
 #include "codec/rate/rdo/rdo.h"
+#include "codec/rate/rdoq/rdoq.h"
 #include "codec/rate/rdoq/rdoq_av2_model.h"
 #include "codec/transform/tcq/tcq.h"
 #include "codec/transform/tcq/tcq_av2_model.h"
@@ -339,6 +340,7 @@ struct LeafCandidate {
   bool valid = false;
   std::int32_t tx_size = 0;
   std::int32_t tx_type = 0;
+  TypeEntry type;
   int eob = 0;
   int nonzero = 0;
   double sse = 0.0;
@@ -360,6 +362,13 @@ struct LeafCandidate {
 // estimates (0 is the writer's "same size as the coding block" context).
 // Returns false when the static model rejects the block; the caller then
 // keeps the historical heuristic.
+// Under `--video-rdoq` the static §8.3 model prices the default (non-adaptive)
+// CDF tables while the tile coder adapts its CDFs, so the real syntax cost is
+// roughly this fraction of the estimate.  The RDOQ cost model therefore scales
+// the static bits by this value; `kModelRateScale` is the measured calibration
+// from the `--video-rdoq` integration (`docs/video-rdoq.md`).
+constexpr double kModelRateScale = 0.4;
+
 bool block_syntax_bits(const txv::TxParams& params,
                        const std::vector<std::int32_t>& levels_raster,
                        const std::vector<std::uint16_t>& scan, int qctx,
@@ -411,7 +420,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
                         int leaf_h, std::int32_t tx_size, std::int32_t tx_type,
                         const TypeEntry& type, bool is_inter, int qindex,
                         int delta_dc, int delta_ac, const Options& options,
-                        LeafCandidate* out, std::string* error) {
+                        bool rdoq, LeafCandidate* out, std::string* error) {
   const auto params_opt = txv::make_tx_params(
       static_cast<txv::TxSize>(tx_size), static_cast<txv::TxType>(tx_type));
   if (!params_opt.has_value()) {
@@ -539,13 +548,76 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     }
   }
 
+  // Opt-in coefficient-level RDOQ.  Inter luma only, scalar DC == AC step, no
+  // DDT (the trellis forward coefficients come from `txv::forward_block`).
+  // The trellis returns syntax levels, so the reconstruction below and the
+  // syntax writer see exactly the same coefficients.
+  double rdoq_level_bits = -1.0;
+  const bool use_rdoq = rdoq && !use_tcq && options.rdoq && is_inter &&
+                        dcq == acq && tx_type <= 9 && !use_ddt;
+  if (use_rdoq) {
+    std::vector<std::int32_t> scalar_scan(static_cast<std::size_t>(area));
+    std::vector<av2enc::rdoq::Coefficient> input(
+        static_cast<std::size_t>(area));
+    for (int c = 0; c < area; ++c) {
+      const int pos = scan[static_cast<std::size_t>(c)];
+      scalar_scan[static_cast<std::size_t>(c)] =
+          levels[static_cast<std::size_t>(pos)];
+      input[static_cast<std::size_t>(c)].original =
+          coeff[static_cast<std::size_t>(pos)];
+      input[static_cast<std::size_t>(c)].scalar_level =
+          levels[static_cast<std::size_t>(pos)];
+      input[static_cast<std::size_t>(c)].level_context = 0;
+    }
+    av2enc::rdoq::av2::BlockInfo info;
+    info.plane = 0;
+    info.params = params;
+    info.txb_skip_context = 0;
+    info.dc_sign_context = 0;
+    info.qctx = options.rdoq_qctx;
+    info.is_inter = true;
+    av2enc::rdoq::av2::Model model;
+    std::string rdoq_error;
+    if (!model.init(info, scalar_scan, &rdoq_error)) {
+      if (error != nullptr) *error = "rdoq model init failed: " + rdoq_error;
+      return false;
+    }
+    av2enc::rdoq::Config config;
+    config.quant_step = static_cast<double>(acq) / scaled;
+    config.lambda = av2enc::rdo::lambda_sse_from_quant_step(
+        config.quant_step, options.rdoq_sse_scale);
+    config.max_coefficients = area;
+    av2enc::rdoq::RdoqResult result;
+    if (!av2enc::rdoq::rdoq_quantize(input, config, model.rate_model(), result,
+                                     &rdoq_error)) {
+      if (error != nullptr) *error = "rdoq quantize failed: " + rdoq_error;
+      return false;
+    }
+    std::fill(levels.begin(), levels.end(), 0);
+    for (int c = 0; c < result.eob; ++c) {
+      const int pos = scan[static_cast<std::size_t>(c)];
+      levels[static_cast<std::size_t>(pos)] =
+          result.levels[static_cast<std::size_t>(c)];
+    }
+    rdoq_level_bits = result.rate_bits;
+  }
+
+  // Real §8.3 coefficient rate for candidate selection under --video-rdoq.
+  // The historical `coefficient_bits * nonzero` placeholder cannot see level
+  // magnitudes, EOB or the skip symbol; when RDOQ is on the search prices
+  // every inter luma candidate with the same static model the trellis uses.
+  const bool model_rate =
+      options.rdoq && is_inter && dcq == acq && tx_type <= 9 && !use_ddt &&
+      !use_tcq;
+
   std::vector<std::int32_t> dequant(static_cast<std::size_t>(area));
   const int dq_denom = use_tcq ? (params.dq_denom << 1) : params.dq_denom;
   for (int i = 0; i < area; ++i) {
     const int q = i == 0 ? dcq : acq;
     const std::int32_t level =
         use_tcq ? dequant_levels[static_cast<std::size_t>(i)]
-                : levels[static_cast<std::size_t>(i)];    const std::int32_t aq = level < 0 ? -level : level;
+                : levels[static_cast<std::size_t>(i)];
+    const std::int32_t aq = level < 0 ? -level : level;
     const std::int32_t high = (aq * q) & 0xFFFFFF;
     const std::int32_t dq = txv::round2(high, txv::kQuantTableBits) / dq_denom;
     dequant[static_cast<std::size_t>(i)] =
@@ -583,9 +655,24 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
                     ? options.skip_bits
                     : type_bits + options.coefficient_bits *
                                       static_cast<double>(nonzero);
-  if (options.use_context_rate &&
-      txpart::tx_class_of(static_cast<int>(tx_type)) ==
-          txpart::TxScanClass::k2D) {
+  const auto tx_class =
+      txpart::tx_class_of(static_cast<int>(tx_type));
+  if (model_rate && tx_class == txpart::TxScanClass::k2D) {
+    // The RDOQ trellis already priced its own levels with the static §8.3
+    // model; scalar candidates are priced here.  `rdoq_qctx` and `tcq_qctx`
+    // are both the frame base_q_idx slice on the paths that enable them.
+    double syntax_bits = rdoq_level_bits;
+    if (!use_rdoq) syntax_bits = 0.0;
+    if (use_rdoq || block_syntax_bits(
+                        params, levels, scan, options.rdoq_qctx, is_inter,
+                        use_tcq, /*txb_skip_ctx=*/0, /*dc_sign_ctx=*/0,
+                        &syntax_bits)) {
+      rate = syntax_bits * kModelRateScale + type_bits;
+    }
+  } else if (options.use_context_rate &&
+             tx_class == txpart::TxScanClass::k2D) {
+    // The measured `--video-tx-context-rate` path prices the static §8.3
+    // model directly (its own calibration lived in the TX lambda).
     double syntax_bits = 0.0;
     if (block_syntax_bits(params, levels, scan, options.tcq_qctx, is_inter,
                           use_tcq, /*txb_skip_ctx=*/0, /*dc_sign_ctx=*/0,
@@ -597,6 +684,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   out->valid = true;
   out->tx_size = tx_size;
   out->tx_type = tx_type;
+  out->type = type;
   out->eob = eob;
   out->nonzero = nonzero;
   out->sse = static_cast<double>(sse_i);
@@ -690,7 +778,7 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
                 residual_coded, coded_w, coded_h, geometry.parts[k].mi_col * 4,
                 geometry.parts[k].mi_row * 4, leaf_w, leaf_h, tx_size,
                 entry.type, entry, is_inter, qindex, delta_dc, delta_ac,
-                options, &cand, error)) {
+                options, /*rdoq=*/false, &cand, error)) {
           return false;
         }
         added = true;
@@ -710,7 +798,8 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
         if (!evaluate_candidate(
                 residual_coded, coded_w, coded_h, geometry.parts[k].mi_col * 4,
                 geometry.parts[k].mi_row * 4, leaf_w, leaf_h, tx_size, 0, dct,
-                is_inter, qindex, delta_dc, delta_ac, options, &cand, error)) {
+                is_inter, qindex, delta_dc, delta_ac, options, /*rdoq=*/false,
+                &cand, error)) {
           return false;
         }
         if (!codable(cand.tx_type, cand.eob, is_inter)) {
@@ -766,8 +855,8 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
     return false;
   }
 
-  const PlanCandidate* best = nullptr;
-  for (const PlanCandidate& plan : plans) {
+  PlanCandidate* best = nullptr;
+  for (PlanCandidate& plan : plans) {
     if (!plan.valid) continue;
     if (best == nullptr || plan.cost < best->cost ||
         (plan.cost == best->cost && plan.sse < best->sse)) {
@@ -777,6 +866,50 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
   if (best == nullptr) {
     if (error != nullptr) *error = "no codable TX plan";
     return false;
+  }
+
+  // Winner-only RDOQ: the scalar plan search decides size/type/partition, then
+  // every coded leaf of the winning plan is re-quantised with the trellis.  A
+  // leaf whose refined levels would make the block non-codable (an all-zero
+  // inter leaf still codes its TX_TYPE; an intra leaf with eob <= 1 infers
+  // DCT_DCT) keeps its scalar candidate.
+  if (options.rdoq && is_inter) {
+    double scalar_leaf_bits = 0.0;
+    for (int k = 0; k < best->geometry.count; ++k) {
+      scalar_leaf_bits += best->leaves[k].rate_bits;
+    }
+    const double partition_bits = best->rate - scalar_leaf_bits;
+    bool changed = false;
+    for (int k = 0; k < best->geometry.count; ++k) {
+      const LeafCandidate& scalar = best->leaves[k];
+      const int leaf_w = txpart::tx_width(best->geometry.parts[k].tx_size);
+      const int leaf_h = txpart::tx_height(best->geometry.parts[k].tx_size);
+      LeafCandidate refined;
+      if (!evaluate_candidate(
+              residual_coded, coded_w, coded_h,
+              best->geometry.parts[k].mi_col * 4,
+              best->geometry.parts[k].mi_row * 4, leaf_w, leaf_h,
+              scalar.tx_size, scalar.tx_type, scalar.type, is_inter, qindex,
+              delta_dc, delta_ac, options, /*rdoq=*/true, &refined, error)) {
+        return false;
+      }
+      const LeafCandidate& incumbent = best->leaves[k];
+      if (refined.valid && codable(refined.tx_type, refined.eob, is_inter) &&
+          refined.cost <= incumbent.cost) {
+        best->leaves[k] = std::move(refined);
+        changed = true;
+      }
+    }
+    if (changed) {
+      best->sse = 0.0;
+      best->rate = partition_bits;
+      best->cost = partition_bits;
+      for (int k = 0; k < best->geometry.count; ++k) {
+        best->sse += best->leaves[k].sse;
+        best->rate += best->leaves[k].rate_bits;
+        best->cost += best->leaves[k].cost;
+      }
+    }
   }
 
   out->ok = true;

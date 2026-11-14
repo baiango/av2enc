@@ -28,6 +28,8 @@
 #include "codec/transform/variants/tx_variants.h"
 #include "codec/transform/delta_q/dcdeltaq.h"
 #include "codec/rate/rdo/rdo.h"
+#include "codec/rate/rdoq/rdoq.h"
+#include "codec/rate/rdoq/rdoq_av2_model.h"
 #include "codec/transform/ddt/ddt.h"
 #include "codec/transform/qm/qm.h"
 #include "codec/transform/tcq/cctx.h"
@@ -121,6 +123,19 @@ namespace pals = still::palette_stream;
 // INTRA_FRAME = 8.
 constexpr std::int8_t kRefLastAv2 = 0;
 constexpr std::int8_t kRefIntraAv2 = 8;
+
+// Rate-aware partition probe (--video-partition-rd).  The leaf cost is
+//     distortion + lambda * estimated_bits,
+// where distortion/bits come from one NEWMV prediction and one quantised luma
+// residual.  lambda = scale * step^2 keeps the trade-off quantiser-scaled; the
+// default scale (VideoOptions::partition_probe_lambda, 1.1e-5) was calibrated
+// at the project's 240p30 / 100 kbps point (QP 190, step 9216 -> lambda ~ 934).
+// The probe never changes tree legality, so every emitted partition is exactly
+// what the shared solver and `partition::validate_frame` already accept.  It is
+// bounded to the first split level: a superblock leaf against its
+// HORZ/VERT/SPLIT children.
+constexpr double kPartitionProbeSkipBits = 8.0;
+constexpr double kPartitionProbeModeBits = 8.0;
 
 namespace grain = ::av2enc::filters::grain;
 
@@ -470,9 +485,11 @@ void pad_source_420(const VideoInputFrame& frame, int mi_cols, int mi_rows,
 
 std::int64_t sse_against_source(const VideoInputFrame& frame, int plane, int x0,
                                 int y0, int w, int h,
-                                const std::vector<std::uint8_t>& samples) {
+                                const std::vector<std::uint8_t>& samples,
+                                int rows = -1) {
+  const int count = rows >= 0 && rows < h ? rows : h;
   std::int64_t sse = 0;
-  for (int y = 0; y < h; ++y) {
+  for (int y = 0; y < count; ++y) {
     for (int x = 0; x < w; ++x) {
       const int src = source_sample(frame, plane, x0 + x, y0 + y);
       const int p = samples[static_cast<std::size_t>(y) *
@@ -698,7 +715,10 @@ bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, int cw,
                 PlaneQuantStep quant, TxPlan& plan, std::string& error,
                 const qm::QmFrameState* qm_state = nullptr,
                 bool allow_tcq = false, int qctx_slice = 0,
-                bool is_inter = false) {
+                bool is_inter = false, bool allow_rdoq = false,
+                int rdoq_qctx = 0,
+                double rdoq_sse_scale = kVideoRdoqSseScale,
+                int mask_row = -1) {
   auto params_opt = txv::make_tx_params(cw, ch, txv::TxType::kDctDct);
   if (!params_opt.has_value()) {
     error = "unsupported transform size";
@@ -720,6 +740,12 @@ bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, int cw,
   std::vector<std::int16_t> residual_coded(
       static_cast<std::size_t>(coded_pels));
   for (int y = 0; y < ch; ++y) {
+    // --video-edge-mask: rows at/after mask_row lie below the visible picture
+    // bottom.  They are reconstructed by the decoder but never output and
+    // never predicted from (MiRows clamp + reference edge replication), so the
+    // source view is the prediction there: zero residual, no levels spent on
+    // samples nobody sees.  Encoder-side only; no syntax change.
+    const bool hidden = mask_row >= 0 && y >= mask_row;
     for (int x = 0; x < cw; ++x) {
       const int src = source_sample(frame, plane, x0 + x, y0 + y);
       const int p = pred[static_cast<std::size_t>(y) *
@@ -728,7 +754,7 @@ bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, int cw,
       residual_coded[static_cast<std::size_t>(y) *
                          static_cast<std::size_t>(cw) +
                      static_cast<std::size_t>(x)] =
-          static_cast<std::int16_t>(src - p);
+          static_cast<std::int16_t>(hidden ? 0 : src - p);
     }
   }
   std::vector<std::int16_t> residual_adj(
@@ -784,6 +810,62 @@ bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, int cw,
   const int area = params.w * params.h;
   std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
   syntax::build_scan(params.w, params.h, scan);
+
+  // Opt-in coefficient-level RDOQ (--video-rdoq).  Luma inter residual only,
+  // and only on the scalar quantiser: QM and split DC/AC change the per
+  // coefficient step, which the trellis Config cannot express.  The trellis
+  // rate is the static AV2 §8.3 model under the inter plane contexts; it
+  // returns syntax levels, so the writer, the dequantiser and the decoder see
+  // exactly the same coefficient set.  Scalar quantisation stays the fallback.
+  const bool use_rdoq = allow_rdoq && plane == 0 && is_inter &&
+                        qm_state == nullptr && !split_dc_ac &&
+                        params.tx_type <= 9;
+  if (use_rdoq) {
+    std::vector<std::int32_t> scalar_scan(static_cast<std::size_t>(area));
+    std::vector<av2enc::rdoq::Coefficient> input(
+        static_cast<std::size_t>(area));
+    for (int c = 0; c < area; ++c) {
+      const int pos = scan[static_cast<std::size_t>(c)];
+      scalar_scan[static_cast<std::size_t>(c)] =
+          plan.levels[static_cast<std::size_t>(pos)];
+      input[static_cast<std::size_t>(c)].original =
+          coeff[static_cast<std::size_t>(pos)];
+      input[static_cast<std::size_t>(c)].scalar_level =
+          plan.levels[static_cast<std::size_t>(pos)];
+      input[static_cast<std::size_t>(c)].level_context = 0;
+    }
+    av2enc::rdoq::av2::BlockInfo info;
+    info.plane = 0;
+    info.params = params;
+    info.txb_skip_context = 0;
+    info.dc_sign_context = 0;
+    // §8.3.1: the coefficient CDF slice follows the raw frame base_q_idx, not
+    // a segmented SB qindex.
+    info.qctx = rdoq_qctx;
+    info.is_inter = true;
+    av2enc::rdoq::av2::Model model;
+    std::string rdoq_error;
+    if (!model.init(info, scalar_scan, &rdoq_error)) {
+      error = "rdoq model init failed: " + rdoq_error;
+      return false;
+    }
+    av2enc::rdoq::Config rdoq_config;
+    rdoq_config.quant_step = 1.0 / params.quant_factor;
+    rdoq_config.lambda = av2enc::rdo::lambda_sse_from_quant_step(
+        rdoq_config.quant_step, rdoq_sse_scale);
+    rdoq_config.max_coefficients = area;
+    av2enc::rdoq::RdoqResult rdoq_result;
+    if (!av2enc::rdoq::rdoq_quantize(input, rdoq_config, model.rate_model(),
+                                     rdoq_result, &rdoq_error)) {
+      error = "rdoq quantize failed: " + rdoq_error;
+      return false;
+    }
+    std::fill(plan.levels.begin(), plan.levels.end(), 0);
+    for (int c = 0; c < rdoq_result.eob; ++c) {
+      plan.levels[scan[static_cast<std::size_t>(c)]] =
+          rdoq_result.levels[static_cast<std::size_t>(c)];
+    }
+  }
 
   // §5.20.7.27 trellis-coded quantisation.  Luma-only and TX_CLASS_2D-only;
   // QM changes the per-coefficient quantiser and is rejected with TCQ before
@@ -984,6 +1066,88 @@ bool luma_plan_all_zero(const TxPlan& plan) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Leaf RD cost (--video-leaf-rd)
+//
+// The historical intra/inter decision compared coded SSE with a fixed
+// `inter_rd_lambda` (4.0) that was meaningless against a QP 142 block SSE, and
+// it charged neither the intra mode/MRL syntax nor the inter mode/MV syntax.
+// One calibrated cost replaces it:
+//
+//   J = SSE + lambda(qindex) * bits,   lambda = c * sqrt((qstep/8) / ref)
+//
+// qstep is the §7.14.2 qlookup() value and qstep/8 the per-sample luma
+// reconstruction step the M1 transform path produces, so the lambda follows
+// the frame quantiser instead of being a per-content constant.  The bit terms
+// mirror the real codeword shape (symbol arities from the syntax writer) and
+// stay in true bits, so the same lambda is valid for every comparison.
+// ---------------------------------------------------------------------------
+
+// c = 125 anchored at QP 104.  The measured optimum is nearly flat over QP
+// 104..145, i.e. it grows far slower than the high-rate Q^2 relation; a sqrt()
+// fit stays within 0.01 JOD of the best constant on both the 100 kbps point
+// and the 50..80 kbps range, while still following the frame quantiser.  The
+// reference lambda was re-calibrated to 125 when the nightly aggregate gained
+// the partition probe and luma RDOQ (those tools already price coefficients,
+// so the leaf needs less rate pressure); see docs/video-nightly.md.
+constexpr double kLeafRdLambdaRef = 125.0;
+constexpr double kLeafRdLambdaRefStep = 98.0;  // qlookup(104) / 8
+
+double leaf_rd_lambda(int qindex) {
+  const int q = std::clamp(qindex, 0, 255);
+  const double step = static_cast<double>(rc::kQlookupQ0To255[q]) / 8.0;
+  return kLeafRdLambdaRef * std::sqrt(step / kLeafRdLambdaRefStep);
+}
+
+bool y_mode_directional(std::uint8_t mode) { return mode >= 1 && mode <= 8; }
+
+// §5.20.5.5 YMode: 4-ary set symbol + 8-ary index + optional 6-ary offset
+// escape.  A directional mode sits deep in the neighbour-derived list (or
+// escapes), so it costs more than DC/SMOOTH/PAETH.  §5.20.5.5 MRL adds a
+// 4-ary index and a 2-ary secondary flag; DIP adds its 2-ary flag.
+double intra_luma_syntax_bits(int mode, int angle_delta, int mrl_index,
+                              bool mrl_sec, bool dip) {
+  double bits = y_mode_directional(static_cast<std::uint8_t>(mode)) ? 5.0 : 3.0;
+  if (y_mode_directional(static_cast<std::uint8_t>(mode)) &&
+      angle_delta != 0) {
+    bits += 0.5;
+  }
+  if (mrl_index > 0) bits += 2.5 + (mrl_sec ? 1.0 : 0.0);
+  if (dip) bits += 1.0;
+  return bits;
+}
+
+// Chroma: 8-ary UV mode index (3-bit escape), the CfL flag and, when CfL is
+// selected, cfl_index plus the sign/alpha symbols.  CCTX adds its joint type.
+double intra_chroma_syntax_bits(bool cfl, bool cctx) {
+  double bits = 2.0;  // UV mode index ~2 bits for DC
+  if (cfl) bits += 1.0 + 1.0 + 5.0;
+  if (cctx) bits += 1.5;
+  return bits;
+}
+
+// §5.20.7.6 YMode = NEARMV + single_mode (3-ary), then the DRL index
+// (2-ary chain) or the shell-coded MVD.  A shell code pays one 2-ary set
+// symbol, one 8-ary class symbol and `floor_log2(shell)` offset bits, shared
+// by both components.
+double inter_syntax_bits(int mode, int drl_index, int mvd_y, int mvd_x,
+                         bool amvd) {
+  double bits = 1.7;
+  if (mode == syntax::kInterNearMv) {
+    bits += 1.0 + 0.7 * static_cast<double>(std::max(0, drl_index));
+  } else if (mode == syntax::kInterNewMv) {
+    if (amvd) {
+      bits += 2.0;
+    } else {
+      const int shell = std::abs(mvd_y) + std::abs(mvd_x);
+      if (shell > 0) {
+        bits += 4.0 + std::floor(std::log2(static_cast<double>(shell)));
+      }
+    }
+  }
+  return bits;
+}
+
 // Copies one leaf's luma coefficient layout into the syntax node and appends
 // the scan-order levels.  The no-search path is the historical single DCT; the
 // search path fills the TX_MODE_SELECT per-part list.
@@ -1039,16 +1203,20 @@ bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
                     txtsearch::Mode mode, double lambda, bool allow_idtx,
                     int intra_mapped_mode, bool allow_tcq, int qctx_slice,
                     bool enable_inter_ddt, bool search_partition,
-                    bool context_rate, bool trace, TxPlan& plan,
-                    std::string& error) {
+                    bool context_rate, bool trace, bool allow_rdoq,
+                    int rdoq_qctx, double rdoq_sse_scale, TxPlan& plan,
+                    std::string& error, int mask_row = -1) {
   std::vector<std::int16_t> residual(
       static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
   for (int y = 0; y < ch; ++y) {
+    // Same --video-edge-mask contract as compute_tx(): hidden bottom rows get
+    // a zero residual so the TX search does not spend bits on them.
+    const bool hidden = mask_row >= 0 && y >= mask_row;
     for (int x = 0; x < cw; ++x) {
       const int src = source_sample(frame, 0, x0 + x, y0 + y);
       const int p = pred[static_cast<std::size_t>(y) * cw + x];
       residual[static_cast<std::size_t>(y) * cw + x] =
-          static_cast<std::int16_t>(src - p);
+          static_cast<std::int16_t>(hidden ? 0 : src - p);
     }
   }
   txtsearch::Options options;
@@ -1057,6 +1225,9 @@ bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   options.intra_mapped_mode = intra_mapped_mode;
   options.tcq = allow_tcq;
   options.tcq_qctx = qctx_slice;
+  options.rdoq = allow_rdoq;
+  options.rdoq_qctx = rdoq_qctx;
+  options.rdoq_sse_scale = rdoq_sse_scale;
   options.enable_inter_ddt = enable_inter_ddt;
   // The exact §8.3.2 model is the measured preset behavior
   // (--video-tx-context-rate).  Standalone --video-tx-search and the DDT-only
@@ -1386,7 +1557,7 @@ bool compute_chroma_cctx(const VideoInputFrame& frame, int x0, int y0, int cw,
                          const std::vector<std::uint8_t>& v_pred,
                          int quant_step, bool is_inter, TxPlan& u_plan,
                          TxPlan& v_plan, int* cctx_type_out,
-                         std::string& error) {
+                         std::string& error, int mask_row = -1) {
   auto params_opt = txv::make_tx_params(cw, ch, txv::TxType::kDctDct);
   if (!params_opt.has_value()) {
     error = "unsupported chroma transform size for CCTX";
@@ -1404,6 +1575,7 @@ bool compute_chroma_cctx(const VideoInputFrame& frame, int x0, int y0, int cw,
                                 const std::vector<std::uint8_t>& pred) {
     std::vector<std::int16_t> coded(static_cast<std::size_t>(coded_pels));
     for (int y = 0; y < ch; ++y) {
+      const bool hidden = mask_row >= 0 && y >= mask_row;
       for (int x = 0; x < cw; ++x) {
         const int src = source_sample(frame, plane, x0 + x, y0 + y);
         const int p =
@@ -1411,7 +1583,7 @@ bool compute_chroma_cctx(const VideoInputFrame& frame, int x0, int y0, int cw,
                  static_cast<std::size_t>(x)];
         coded[static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
               static_cast<std::size_t>(x)] =
-            static_cast<std::int16_t>(src - p);
+            static_cast<std::int16_t>(hidden ? 0 : src - p);
       }
     }
     std::vector<std::int16_t> adj(static_cast<std::size_t>(area));
@@ -1812,6 +1984,197 @@ class InterFrameEncoder {
     return static_cast<std::int64_t>(sse);
   }
 
+  // ---------------------------------------------------------------------
+  // Rate-aware partition probe (--video-partition-rd)
+  //
+  // The historical tree prices a leaf by the variance of its source samples
+  // about the block mean.  That ignores prediction: splitting a 64x64 block
+  // into two 32-wide leaves can cut the inter residual a lot, but the variance
+  // of a natural-image block is almost entirely within-child variance, so the
+  // between-child term that a split can recover is tiny.  The probe measures
+  // the quantity the encoder actually spends: one NEWMV prediction plus one
+  // quantised luma residual, priced as distortion + lambda * estimated bits.
+  //
+  // Everything here is read-only with respect to encoder state: ME reads the
+  // source/reference planes, compute_tx() writes only the local TxPlan, and
+  // the result depends only on (frame, reference, options).  That keeps the
+  // tree deterministic and lets the frame-level precompute run in parallel.
+  // ---------------------------------------------------------------------
+  struct PartitionProbeJob {
+    int mi_row = 0;
+    int mi_col = 0;
+    partition::BlockSize size = partition::BlockSize::kInvalid;
+  };
+
+  static std::uint64_t partition_probe_key(int mi_row, int mi_col,
+                                           partition::BlockSize size) {
+    return (static_cast<std::uint64_t>(mi_row) & 0xFFFFU) |
+           ((static_cast<std::uint64_t>(mi_col) & 0xFFFFU) << 16U) |
+           ((static_cast<std::uint64_t>(size) & 0xFFU) << 32U);
+  }
+
+  // Mirrors encode_leaf()'s inter_fits test: the leaf coder handles up to
+  // 64x64, the whole-frame path keeps reads inside the MI extent, and the
+  // bottom row only has inter prediction when the edge-padded reference is
+  // active.  Tiled coding keeps the historical tile-local probe-free path.
+  bool partition_probe_fits(int mi_row, int mi_col,
+                            partition::BlockSize size) const {
+    const int bw = partition::block_width(size);
+    const int bh = partition::block_height(size);
+    if (bw < 8 || bh < 8 || bw > 64 || bh > 64) return false;
+    if (width_ != static_cast<int>(source_.width) ||
+        height_ != static_cast<int>(source_.height)) {
+      return false;
+    }
+    const int x0 = mi_col * 4;
+    const int y0 = mi_row * 4;
+    if (x0 + bw > mi_cols_ * 4) return false;
+    if (y0 + bh > mi_rows_ * 4 &&
+        !(edge_pad_rows_ > 0 && y0 < mi_rows_ * 4)) {
+      return false;
+    }
+    return true;
+  }
+
+  // Returns true and fills `cost` when the probe can model this leaf.  Nodes
+  // that cannot be predicted (sub-8, right/bottom edges outside the coded
+  // extent, ME failure) are left to the caller's historical estimate.
+  bool partition_probe_leaf_cost(const partition::PartitionNodeInfo& info,
+                                 double lambda, double& cost) const {
+    if (!partition_probe_fits(info.mi_row, info.mi_col, info.size)) {
+      return false;
+    }
+    const int bw = partition::block_width(info.size);
+    const int bh = partition::block_height(info.size);
+    const int ax0 = info.mi_col * 4 + tile_x_;
+    const int ay0 = info.mi_row * 4 + tile_y_;
+    std::string probe_error;
+    inter::mc::Mv mv{};
+    std::vector<std::uint8_t> pred;
+    if (!search_me(0, ax0, ay0, bw, bh, mv, probe_error) ||
+        !predict_luma(0, mv, ax0, ay0, bw, bh, pred)) {
+      return false;
+    }
+    const double pred_sse = static_cast<double>(
+        sse_against_source(source_, 0, ax0, ay0, bw, bh, pred));
+    double best = pred_sse + lambda * kPartitionProbeSkipBits;
+    TxPlan plan;
+    if (compute_tx(source_, 0, ax0, ay0, bw, bh, pred, plane_quant_[0], plan,
+                   probe_error, /*qm_state=*/nullptr, /*allow_tcq=*/false,
+                   /*qctx_slice=*/0, /*is_inter=*/true)) {
+      const double res_sse = static_cast<double>(
+          sse_against_source(source_, 0, ax0, ay0, bw, bh, plan.recon));
+      const double bits = kPartitionProbeModeBits + luma_plan_bits(plan, true);
+      best = std::min(best, res_sse + lambda * bits);
+    }
+    cost = best;
+    return true;
+  }
+
+  // Enumerates every node the bounded probe may price: the superblock root plus
+  // its partition children down to `max_depth`.  Costs are looked up by
+  // (mi_row, mi_col, size); nodes the solver reaches outside this set (forced
+  // boundary partitions) fall back to a synchronous probe in the cost
+  // callback, so the tree can never consult a stale or missing cost.
+  void collect_partition_probe_jobs(
+      int mi_row, int mi_col, partition::BlockSize size, int depth,
+      int max_depth, int floor_px,
+      std::vector<PartitionProbeJob>& jobs) const {
+    jobs.push_back(PartitionProbeJob{mi_row, mi_col, size});
+    if (depth >= max_depth) return;
+    const int w4 = partition::num_4x4_blocks_wide(size);
+    const int h4 = partition::num_4x4_blocks_high(size);
+    const auto visit = [&](int r, int c, partition::BlockSize child) {
+      if (!partition::is_inside(geometry_, r, c)) return;
+      if (partition::block_width(child) < floor_px ||
+          partition::block_height(child) < floor_px) {
+        return;
+      }
+      collect_partition_probe_jobs(r, c, child, depth + 1, max_depth,
+                                   floor_px, jobs);
+    };
+    const partition::BlockSize horz =
+        partition::partition_subsize(partition::PartitionType::kHorz, size);
+    if (partition::is_valid_block_size(horz)) {
+      visit(mi_row, mi_col, horz);
+      visit(mi_row + h4 / 2, mi_col, horz);
+    }
+    const partition::BlockSize vert =
+        partition::partition_subsize(partition::PartitionType::kVert, size);
+    if (partition::is_valid_block_size(vert)) {
+      visit(mi_row, mi_col, vert);
+      visit(mi_row, mi_col + w4 / 2, vert);
+    }
+    const partition::BlockSize split =
+        partition::partition_subsize(partition::PartitionType::kSplit, size);
+    if (partition::is_valid_block_size(split)) {
+      visit(mi_row, mi_col, split);
+      visit(mi_row, mi_col + w4 / 2, split);
+      visit(mi_row + h4 / 2, mi_col, split);
+      visit(mi_row + h4 / 2, mi_col + w4 / 2, split);
+    }
+  }
+
+  std::unordered_map<std::uint64_t, double> build_partition_probe_costs(
+      int max_depth, int floor_px, double lambda) const {
+    std::vector<PartitionProbeJob> jobs;
+    const int sb_mi = partition::sb_size_mi(geometry_);
+    const int cols = partition::sb_cols(geometry_);
+    const int rows = partition::sb_rows(geometry_);
+    for (int sby = 0; sby < rows; ++sby) {
+      for (int sbx = 0; sbx < cols; ++sbx) {
+        const int mi_row = sby * sb_mi;
+        const int mi_col = sbx * sb_mi;
+        if (!partition::is_inside(geometry_, mi_row, mi_col)) continue;
+        collect_partition_probe_jobs(
+            mi_row, mi_col, partition::superblock_size(geometry_.sb_size), 0,
+            max_depth, floor_px, jobs);
+      }
+    }
+    std::vector<double> costs(jobs.size(), partition::kInfiniteCost);
+    std::vector<char> modeled(jobs.size(), 0);
+    const auto run = [&](std::size_t i) {
+      partition::PartitionNodeInfo info;
+      info.mi_row = jobs[i].mi_row;
+      info.mi_col = jobs[i].mi_col;
+      info.size = jobs[i].size;
+      double cost = partition::kInfiniteCost;
+      if (partition_probe_leaf_cost(info, lambda, cost)) {
+        costs[i] = cost;
+        modeled[i] = 1;
+      }
+    };
+    const unsigned workers = parallel::resolve_workers(options_.cpu_threads);
+    if (workers > 1 && jobs.size() > 1) {
+      parallel::parallel_for(jobs.size(), workers, run);
+    } else {
+      for (std::size_t i = 0; i < jobs.size(); ++i) run(i);
+    }
+    std::unordered_map<std::uint64_t, double> out;
+    out.reserve(jobs.size());
+    for (std::size_t i = 0; i < jobs.size(); ++i) {
+      if (!modeled[i]) continue;
+      out.emplace(partition_probe_key(jobs[i].mi_row, jobs[i].mi_col,
+                                      jobs[i].size),
+                  costs[i]);
+    }
+    return out;
+  }
+
+  // --video-edge-mask: number of coded rows of a plane block that lie above
+  // the visible picture bottom.  The tail rows are reconstructed by the
+  // decoder but never output and never predicted from (MiRows clamp plus the
+  // reference edge replication), so the encoder may treat them as hidden.
+  // Returns h unchanged when the flag is off, the block is inside the
+  // picture, or the frame is tiled (the edge path is whole-frame only).
+  int visible_rows(int plane, int y0, int h) const {
+    if (!options_.enable_edge_mask || edge_pad_rows_ <= 0) return h;
+    const int vis_h = plane == 0 ? height_ : (height_ + 1) / 2;
+    const int rows = vis_h - y0;
+    if (rows >= h) return h;
+    return rows > 0 ? rows : 0;
+  }
+
 
 #if defined(AV2ENC_VIDEO_DELTAQ)
   // ---------------------------------------------------------------------
@@ -2180,32 +2543,60 @@ class InterFrameEncoder {
     // reason the default tree never takes an optional split at high QP.
     const double legacy_lambda =
         0.85 * std::pow(2.0, (options_.base_q_idx - 12) / 6.0);
-    // Opt-in rate-aware partition tree.  The leaf distortion stays the source
-    // variance (a QP-independent proxy for the energy a leaf cannot predict),
-    // but every candidate now also pays a rate term in the same SSE units:
+    // Rate-aware partition fallback.  It keeps the source variance (a
+    // QP-independent proxy for the energy a leaf cannot predict) and charges a
+    // rate term in the same SSE units:
     //   leaf  = variance + price * leaf_bits       (mode/MV/skip syntax)
     //   split = price * 2.0                        (partition symbol bits)
-    // `price` is one estimated syntax bit in SSE units; the 10-bit leaf term
-    // plus the 2-bit partition symbol give a ~8,400-SSE penalty per split,
-    // calibrated from the measured local RD slope of this clip at the
-    // ~100 kbps operating point (4,000-6,300 SSE/bit over QP 168..190; see
-    // docs/video-rd-preset.md).  The per-leaf syntax estimates are the average
-    // non-coefficient cost of an inter leaf (skip + is_inter + mode + MVD) and
-    // an intra leaf (YMode + angle), so a split that creates an inter leaf is
-    // priced about 1.7x an intra leaf.
+    // This is the whole cost for the keyframe and for P-frame leaves the
+    // measured probe cannot model (sub-8, right/bottom edges, ME failure), and
+    // it is the only cost when `partition_rd` is off (with the historical
+    // SAD-domain price).  `price` is one estimated syntax bit in SSE units;
+    // 700 with the 10-bit inter leaf term and 2-bit partition symbol gives a
+    // ~8,400-SSE split penalty, calibrated from the measured local RD slope of
+    // this clip at the ~100 kbps point (4,000-6,300 SSE/bit over QP 168..190;
+    // see docs/video-rd-preset.md).  The measured probe supersedes it on the
+    // P-frame path.
     constexpr double kPartitionSsePerSyntaxBit = 700.0;
     constexpr double kPartitionSignalBits = 2.0;
     constexpr double kPartitionLeafBitsInter = 10.0;
     constexpr double kPartitionLeafBitsIntra = 6.0;
-    const double syntax_bit_price =
+    double syntax_bit_price =
         options_.partition_rd ? kPartitionSsePerSyntaxBit : legacy_lambda;
     const double signal_bits = kPartitionSignalBits;
-    const double leaf_bits = options_.partition_rd
-                                 ? (keyframe_ ? kPartitionLeafBitsIntra
-                                              : kPartitionLeafBitsInter)
-                                 : 0.0;
+    double leaf_bits = options_.partition_rd
+                           ? (keyframe_ ? kPartitionLeafBitsIntra
+                                        : kPartitionLeafBitsInter)
+                           : 0.0;
+    // Measured partition probe.  It replaces the variance leaf proxy with one
+    // NEWMV prediction plus one quantised luma residual for every candidate
+    // node, and is bounded to the first split level.  Only the whole-frame
+    // P-frame path with the plain rect/split tree uses it; every other tree
+    // keeps the calibrated syntax-bit estimate above.
+    const bool partition_probe =
+        options_.partition_rd && !keyframe_ && !options_.force_single_block &&
+        !options_.ext_partitions && !options_.enable_segmentation &&
+        !options_.enable_delta_q && !options_.per_segment_q &&
+        width_ == static_cast<int>(source_.width) &&
+        height_ == static_cast<int>(source_.height);
+    std::unordered_map<std::uint64_t, double> probe_costs;
+    if (partition_probe) {
+      const double step = rc::quant_step_from_qindex(options_.base_q_idx);
+      syntax_bit_price = options_.partition_probe_lambda * step * step;
+      // The probe's bits are real (mode/skip syntax plus the residual rate),
+      // so the leaf-level syntax estimate is inside the measured cost.
+      leaf_bits = 0.0;
+      poptions.max_depth =
+          std::min(poptions.max_depth,
+                   std::clamp(options_.partition_probe_depth, 1, 3));
+      probe_costs = build_partition_probe_costs(
+          poptions.max_depth,
+          std::max(poptions.min_block_size_px, partition::kMinBlockPixels),
+          syntax_bit_price);
+    }
     const double signal_cost = syntax_bit_price * signal_bits;
-    const auto cost_fn = [this, signal_cost, syntax_bit_price, leaf_bits](
+    const auto cost_fn = [this, signal_cost, syntax_bit_price, leaf_bits,
+                          partition_probe, &probe_costs](
                              const partition::PartitionNodeInfo& info) {
       partition::NodeCosts costs;
       // The leaf coder handles coding blocks up to 64x64.  A larger node must
@@ -2213,10 +2604,24 @@ class InterFrameEncoder {
       // implies NONE at those sizes, so the solver always has a partition.
       const int bw = partition::block_width(info.size);
       const int bh = partition::block_height(info.size);
-      costs.leaf = (bw <= 64 && bh <= 64)
-                       ? static_cast<double>(block_variance_cost_at(info)) +
-                             syntax_bit_price * leaf_bits
-                       : partition::kInfiniteCost;
+      double leaf = partition::kInfiniteCost;
+      if (bw <= 64 && bh <= 64) {
+        leaf = static_cast<double>(block_variance_cost_at(info)) +
+               syntax_bit_price * leaf_bits;
+        if (partition_probe) {
+          const auto it = probe_costs.find(
+              partition_probe_key(info.mi_row, info.mi_col, info.size));
+          if (it != probe_costs.end()) {
+            leaf = it->second;
+          } else {
+            double measured = 0.0;
+            if (partition_probe_leaf_cost(info, syntax_bit_price, measured)) {
+              leaf = measured;
+            }
+          }
+        }
+      }
+      costs.leaf = leaf;
       costs.none_signal = 0.0;
       costs.split_signal = signal_cost;
       costs.horz_signal = signal_cost;
@@ -4673,6 +5078,23 @@ class InterFrameEncoder {
     const int ay0 = y0 + tile_y_;
     const int acx0 = cx0 + tile_x_ / 2;
     const int acy0 = cy0 + tile_y_ / 2;
+    // --video-edge-mask: if this leaf's coded extent crosses the visible
+    // bottom edge, the tail rows are decoder-invisible.  Both TX entry points
+    // use the prediction as the source view there (zero residual) so no
+    // levels are spent on samples the decoder discards after filtering.
+    const int luma_mask_row = visible_rows(0, y0, h);
+    const int chroma_mask_row = visible_rows(1, cy0, ch);
+    // --video-edge-mask: the decision metrics score only the rows the decoder
+    // can see.  Removing the hidden-row bits is not enough on its own: the
+    // skip/residual and mode comparisons would still charge a coded residual
+    // for hidden-row SSD it can never fix (the source there is the clamped
+    // last visible row, the prediction comes from the edge-padded reference),
+    // which biases every bottom leaf toward skip.
+    const auto sse_vis = [&](int plane, int sx, int sy, int sw, int sh,
+                             const std::vector<std::uint8_t>& samples) {
+      return sse_against_source(source_, plane, sx, sy, sw, sh, samples,
+                                plane == 0 ? luma_mask_row : chroma_mask_row);
+    };
     if (ibc_enabled_) {
       // §5.20.4.1 decode_block(): update_ibc_buffers() runs at the start of
       // every block, before its mode info builds the BV stack.
@@ -4700,6 +5122,11 @@ class InterFrameEncoder {
 
     InterCandidate best;
     InterCandidate same_ref_best;
+    // Lowest-SSE signallable non-GLOBALMV candidate.  §5.20.7.6 makes BAWP
+    // unavailable on a GLOBALMV leaf, so when the plain search picks GLOBALMV
+    // (every zero-MV block of a static clip does) this carrier is the same MV
+    // expressed as NEARMV/NEWMV and can carry use_bawp.
+    InterCandidate bawp_carrier;
     InterCandidate global_cand;
     bool global_cand_valid = false;
 #if defined(AV2ENC_VIDEO_DELTAQ)
@@ -4718,9 +5145,33 @@ class InterFrameEncoder {
     const bool seg_globalmv_leaf = false;
     const bool seg_forced_inter = false;
 #endif
+    // --video-leaf-rd prices the inter candidates with the same cost the leaf
+    // decision uses, so a NEWMV that wins by a handful of SSE but costs ten
+    // MVD bits no longer shadows a NEARMV/GLOBALMV that codes zero MVD.
+    const double inter_lambda =
+        options_.enable_leaf_rd ? leaf_rd_lambda(current_qindex_) : 0.0;
+    const auto inter_cost = [&](const InterCandidate& cand) {
+      return static_cast<double>(cand.sse) +
+             inter_lambda * inter_syntax_bits(cand.mode, cand.drl_index,
+                                              cand.mvd.y, cand.mvd.x,
+                                              cand.use_amvd);
+    };
     const auto consider = [&](InterCandidate cand) {
       if (!cand.valid) return;
-      if (!best.valid || cand.sse < best.sse) best = cand;
+      if (!best.valid) {
+        best = cand;
+      } else if (inter_lambda > 0.0 ? inter_cost(cand) < inter_cost(best)
+                                     : cand.sse < best.sse) {
+        best = cand;
+      }
+      // §5.20.7.6 BAWP is coded only for a non-GLOBALMV single-prediction
+      // leaf.  Track the best carrier so a GLOBALMV winner can still use the
+      // fitted predictor when the candidate set contains the same MV.
+      if (options_.bawp_carrier && !cand.compound &&
+          cand.mode != syntax::kInterGlobalMv &&
+          (!bawp_carrier.valid || cand.sse < bawp_carrier.sse)) {
+        bawp_carrier = cand;
+      }
     };
 
     // §5.20.3.1 sub-8 luma leaves and shared-ChromaMi owners keep the intra
@@ -4767,7 +5218,7 @@ class InterFrameEncoder {
             cand.mode = syntax::kInterGlobalMv;
             cand.ref_index = ref_index;
             cand.mv = gm_mv;
-            cand.sse = sse_against_source(source_, 0, ax0, ay0, w, h, luma);
+            cand.sse = sse_vis(0, ax0, ay0, w, h, luma);
             if (trace_) {
               std::cerr << "  cand ref=" << ref_index << " global mv=("
                         << gm_mv.y << "," << gm_mv.x << ") warp="
@@ -4816,7 +5267,7 @@ class InterFrameEncoder {
               cand.mv = near_mv;
               cand.from_temporal = stack.cand[i].from_temporal;
               cand.from_refmvbank = stack.cand[i].from_refmvbank;
-              cand.sse = sse_against_source(source_, 0, ax0, ay0, w, h, luma);
+              cand.sse = sse_vis(0, ax0, ay0, w, h, luma);
               if (options_.ref_mvs_stress && cand.from_temporal) {
                 cand.sse = -1;
               }
@@ -4955,7 +5406,7 @@ class InterFrameEncoder {
                   cand.mvd_sign_derived = sign_derived;
                   cand.from_temporal = stack.cand[0].from_temporal;
                   cand.sse =
-                      sse_against_source(source_, 0, ax0, ay0, w, h, luma);
+                      sse_vis(0, ax0, ay0, w, h, luma);
                   if (trace_) {
                     std::cerr << "  cand ref=" << ref_index << " new me=("
                               << me_mv.y << "," << me_mv.x << ") res=("
@@ -5090,7 +5541,7 @@ class InterFrameEncoder {
           cand.mv = inter::mc::Mv{0, 0};
           cand.sse = compound_sse >= 0
                          ? compound_sse
-                         : sse_against_source(source_, 0, x0, y0, w, h,
+                         : sse_vis(0, x0, y0, w, h,
                                               compound_y_);
           cand.compound_type =
               params.type == inter::adv::CompoundType::kWedge
@@ -5136,7 +5587,7 @@ class InterFrameEncoder {
         cand.compound_type = 2;  // AVERAGE (no comp_group_idx symbol)
         cand.mv = inter::mc::Mv{0, 0};
         cand.mv1 = inter::mc::Mv{0, 0};
-        cand.sse = sse_against_source(source_, 0, x0, y0, w, h, compound_y_);
+        cand.sse = sse_vis(0, x0, y0, w, h, compound_y_);
         same_ref_best = cand;
       }
     }
@@ -5238,7 +5689,7 @@ class InterFrameEncoder {
         cand.use_imp_mask = chosen_params.use_imp_mask;
         cand.sse = chosen_sse >= 0
                        ? chosen_sse
-                       : sse_against_source(source_, 0, ax0, ay0, w, h,
+                       : sse_vis(0, ax0, ay0, w, h,
                                             compound_y_);
         if (trace_) {
           std::cerr << "  cand compound near-near mv0=(" << mv0.y << ","
@@ -5458,7 +5909,7 @@ class InterFrameEncoder {
           return false;
         }
         const std::int64_t incumbent_sse =
-            sse_against_source(source_, 0, ax0, ay0, w, h, intra_y_pred);
+            sse_vis(0, ax0, ay0, w, h, intra_y_pred);
         if (static_cast<std::int64_t>(dip_decision.cost.sse) <
             incumbent_sse) {
           dip::Params dip_pred_params;
@@ -5498,13 +5949,16 @@ class InterFrameEncoder {
                                                   : current_qindex_),
                      /*enable_inter_ddt=*/false, /*search_partition=*/false,
                      /*context_rate=*/options_.tx_context_rate, options_.trace,
-                     intra_y, error)
+                     /*allow_rdoq=*/false, /*rdoq_qctx=*/0,
+                     options_.rdoq_sse_scale, intra_y, error, luma_mask_row)
                : !compute_tx(source_, 0, ax0, ay0, w, h, intra_y_pred,
                              plane_quant_[0], intra_y, error,
                              qm_enabled_ ? &qm_state_ : nullptr,
                              options_.enable_tcq,
                              ::av2enc::still::qctx::slice_for_base_q_idx(current_qindex_),
-                             /*is_inter=*/false))) {
+                             /*is_inter=*/false, /*allow_rdoq=*/false,
+                             /*rdoq_qctx=*/0, options_.rdoq_sse_scale,
+                             luma_mask_row))) {
         error = "intra prediction failed";
         return false;
       }
@@ -5538,7 +5992,7 @@ class InterFrameEncoder {
         // Opt-in CfL chroma decision (§7.13.5).  The candidate set is the M1
         // still product's default {DC, CfL} with derived alpha.
         const std::int64_t dc_sse_u =
-            sse_against_source(source_, 1, acx0, acy0, cw, ch, intra_u_pred);
+            sse_vis(1, acx0, acy0, cw, ch, intra_u_pred);
         const int frame_chroma_width = static_cast<int>((source_.width + 1U) / 2U);
         const int frame_chroma_height =
             static_cast<int>((source_.height + 1U) / 2U);
@@ -5594,21 +6048,26 @@ class InterFrameEncoder {
         // is true for 4:2:0; the CLI rejects the other formats with CCTX.
         if (!compute_chroma_cctx(source_, acx0, acy0, cw, ch, intra_u_pred,
                                  intra_v_pred, quant_step_, /*is_inter=*/false,
-                                 intra_u, intra_v, &intra_cctx_type, error)) {
+                                 intra_u, intra_v, &intra_cctx_type, error,
+                                 chroma_mask_row)) {
           return false;
         }
       } else if (!compute_tx(source_, 1, acx0, acy0, cw, ch, intra_u_pred,
                              plane_quant_[1], intra_u, error,
-                             qm_enabled_ ? &qm_state_ : nullptr) ||
+                             qm_enabled_ ? &qm_state_ : nullptr,
+                             /*allow_tcq=*/false, /*qctx_slice=*/0,
+                             /*is_inter=*/false, chroma_mask_row) ||
                  !compute_tx(source_, 2, acx0, acy0, cw, ch, intra_v_pred,
                              plane_quant_[2], intra_v, error,
-                             qm_enabled_ ? &qm_state_ : nullptr)) {
+                             qm_enabled_ ? &qm_state_ : nullptr,
+                             /*allow_tcq=*/false, /*qctx_slice=*/0,
+                             /*is_inter=*/false, chroma_mask_row)) {
         return false;
       }
       }  // owns_chroma
       intra_sse = chroma_part
                       ? 0
-                      : sse_against_source(source_, 0, ax0, ay0, w, h,
+                      : sse_vis(0, ax0, ay0, w, h,
                                            intra_y.recon);
       if (trace_) {
         std::cerr << "  cand intra sse=" << intra_sse;
@@ -5628,7 +6087,7 @@ class InterFrameEncoder {
     std::int64_t intra_pred_sse = intra_sse;
     if (keyframe_ && palette_enabled_ && have_intra) {
       intra_pred_sse =
-          sse_against_source(source_, 0, ax0, ay0, w, h, intra_y_pred);
+          sse_vis(0, ax0, ay0, w, h, intra_y_pred);
       if (!choose_palette_leaf(r, c, static_cast<int>(node.size), w, h,
                                intra_pred_sse, palette_choice, error)) {
         return false;
@@ -5727,14 +6186,25 @@ class InterFrameEncoder {
         return false;
       }
       inter_luma_sse =
-          sse_against_source(source_, 0, ax0, ay0, w, h, inter_y);
+          sse_vis(0, ax0, ay0, w, h, inter_y);
       // §5.20.7.6 / §7.13.3.25: evaluate the fitted BAWP predictor for an
       // eligible single-prediction block (>= 8x8, not GLOBALMV, no warp).
       // The decoder applies the same fit before the residual, so a selected
       // block carries use_bawp = 1 and the adapted prediction.
+      //
+      // A GLOBALMV winner may still take BAWP through a NEARMV/NEWMV carrier
+      // at the same MV: §5.20.7.6 does not code use_bawp on GLOBALMV, so the
+      // encoder re-expresses an identical prediction in a mode that can.  The
+      // swap never changes the MV or reference.  Segment-forced GLOBALMV
+      // leaves keep their forced mode.
+      const bool bawp_carrier_ok =
+          best.mode != syntax::kInterGlobalMv ||
+          (options_.bawp_carrier && !seg_forced_inter &&
+           bawp_carrier.valid &&
+           bawp_carrier.ref_index == best.ref_index &&
+           bawp_carrier.mv == best.mv);
       if (options_.enable_bawp && options_.tile_cols == 0 && !best.compound &&
-          !best.use_warp &&
-          best.mode != syntax::kInterGlobalMv && w >= 8 && h >= 8 &&
+          !best.use_warp && bawp_carrier_ok && w >= 8 && h >= 8 &&
           mi_cols_ * 4 == static_cast<int>(source_.width) &&
           mi_rows_ * 4 == static_cast<int>(source_.height)) {
         std::vector<std::uint8_t> adapted = inter_y;
@@ -5746,8 +6216,11 @@ class InterFrameEncoder {
                             c, x0, y0, w, h, best.mv.y, best.mv.x, adapted,
                             &fit)) {
           const std::int64_t adapted_sse =
-              sse_against_source(source_, 0, ax0, ay0, w, h, adapted);
+              sse_vis(0, ax0, ay0, w, h, adapted);
           if (adapted_sse < inter_luma_sse) {
+            if (best.mode == syntax::kInterGlobalMv) {
+              best = bawp_carrier;
+            }
             bawp_applied = true;
             bawp_fit = fit;
             inter_y = adapted;
@@ -5757,6 +6230,7 @@ class InterFrameEncoder {
         if (trace_) {
           std::cerr << "  cand bawp alpha=" << bawp_fit.alpha
                     << " count=" << bawp_fit.count
+                    << " carrier=" << static_cast<int>(best.mode)
                     << " applied=" << (bawp_applied ? 1 : 0) << "\n";
         }
       }
@@ -5777,16 +6251,16 @@ class InterFrameEncoder {
           return false;
         }
         const std::int64_t plain_sse =
-            sse_against_source(source_, 0, ax0, ay0, w, h, inter_y) +
-            sse_against_source(source_, 1, acx0, acy0, cw, ch, inter_u) +
-            sse_against_source(source_, 2, acx0, acy0, cw, ch, inter_v);
+            sse_vis(0, ax0, ay0, w, h, inter_y) +
+            sse_vis(1, acx0, acy0, cw, ch, inter_u) +
+            sse_vis(2, acx0, acy0, cw, ch, inter_v);
         if (inter_intra_sse < plain_sse) {
           inter_intra_applied = true;
           inter_y = ii_y;
           inter_u = ii_u;
           inter_v = ii_v;
           inter_luma_sse =
-              sse_against_source(source_, 0, ax0, ay0, w, h, inter_y);
+              sse_vis(0, ax0, ay0, w, h, inter_y);
         }
         if (trace_) {
           std::cerr << "  cand interintra applied="
@@ -5802,8 +6276,8 @@ class InterFrameEncoder {
           !seg_skip_leaf) {
         const std::int64_t pred_total =
             inter_luma_sse +
-            sse_against_source(source_, 1, acx0, acy0, cw, ch, inter_u) +
-            sse_against_source(source_, 2, acx0, acy0, cw, ch, inter_v);
+            sse_vis(1, acx0, acy0, cw, ch, inter_u) +
+            sse_vis(2, acx0, acy0, cw, ch, inter_v);
         if (((options_.enable_tx_search || options_.enable_inter_ddt)
                  ? !search_luma_tx(source_, ax0, ay0, w, h, inter_y,
                                    current_qindex_,
@@ -5820,37 +6294,54 @@ class InterFrameEncoder {
                                    /*search_partition=*/
                                    options_.enable_tx_search,
                                    /*context_rate=*/options_.tx_context_rate,
-                                   options_.trace, res_y, error)
+                                   options_.trace, options_.enable_rdoq,
+                                   ::av2enc::still::qctx::slice_for_base_q_idx(
+                                       static_cast<int>(options_.base_q_idx)),
+                                   options_.rdoq_sse_scale, res_y, error,
+                                   luma_mask_row)
                  : !compute_tx(source_, 0, ax0, ay0, w, h, inter_y,
                                plane_quant_[0], res_y, error,
                                qm_enabled_ ? &qm_state_ : nullptr,
                                options_.enable_tcq,
                                ::av2enc::still::qctx::slice_for_base_q_idx(current_qindex_),
-                               /*is_inter=*/true)) ||
+                               /*is_inter=*/true, options_.enable_rdoq,
+                               ::av2enc::still::qctx::slice_for_base_q_idx(
+                                   static_cast<int>(options_.base_q_idx)),
+                               options_.rdoq_sse_scale, luma_mask_row)) ||
             (options_.enable_cctx
                  ? !compute_chroma_cctx(source_, acx0, acy0, cw, ch, inter_u,
                                         inter_v, quant_step_, /*is_inter=*/true,
-                                        res_u, res_v, &inter_cctx_type, error)
+                                        res_u, res_v, &inter_cctx_type, error,
+                                        chroma_mask_row)
                  : (!compute_tx(source_, 1, acx0, acy0, cw, ch, inter_u,
                                 plane_quant_[1], res_u, error,
-                                qm_enabled_ ? &qm_state_ : nullptr) ||
+                                qm_enabled_ ? &qm_state_ : nullptr,
+                                /*allow_tcq=*/false, /*qctx_slice=*/0,
+                                /*is_inter=*/true, /*allow_rdoq=*/false,
+                                /*rdoq_qctx=*/0, 0.0, chroma_mask_row) ||
                     !compute_tx(source_, 2, acx0, acy0, cw, ch, inter_v,
                                 plane_quant_[2], res_v, error,
-                                qm_enabled_ ? &qm_state_ : nullptr)))) {
+                                qm_enabled_ ? &qm_state_ : nullptr,
+                                /*allow_tcq=*/false, /*qctx_slice=*/0,
+                                /*is_inter=*/true, /*allow_rdoq=*/false,
+                                /*rdoq_qctx=*/0, 0.0, chroma_mask_row)))) {
           return false;
         }
         if (trace_ && options_.enable_cctx) {
           std::cerr << "  cand inter cctx=" << inter_cctx_type << "\n";
         }
         const std::int64_t res_total =
-            sse_against_source(source_, 0, ax0, ay0, w, h, res_y.recon) +
-            sse_against_source(source_, 1, acx0, acy0, cw, ch, res_u.recon) +
-            sse_against_source(source_, 2, acx0, acy0, cw, ch, res_v.recon);
+            sse_vis(0, ax0, ay0, w, h, res_y.recon) +
+            sse_vis(1, acx0, acy0, cw, ch, res_u.recon) +
+            sse_vis(2, acx0, acy0, cw, ch, res_v.recon);
         const bool all_zero =
             luma_plan_all_zero(res_y) && res_u.eob == 0 && res_v.eob == 0;
         // Reconstruction step is qlookup/8 (66 at QP 90); sse_scale 0.5 is
-        // the M1 calibrated value.
-        const double kLambda = options_.inter_rd_lambda;
+        // the M1 calibrated value.  --video-leaf-rd swaps in the same
+        // QP-derived lambda the intra/inter decision uses.
+        const double kLambda = options_.enable_leaf_rd
+                                   ? leaf_rd_lambda(current_qindex_)
+                                   : options_.inter_rd_lambda;
         const double res_bits = 3.0 + luma_plan_bits(res_y, true) +
                                 estimate_tx_bits(res_u, false) +
                                 estimate_tx_bits(res_v, false);
@@ -5865,7 +6356,7 @@ class InterFrameEncoder {
           inter_u = res_u.recon;
           inter_v = res_v.recon;
           inter_luma_sse =
-              sse_against_source(source_, 0, ax0, ay0, w, h, inter_y);
+              sse_vis(0, ax0, ay0, w, h, inter_y);
           if (trace_ && options_.enable_inter_ddt) {
             for (const TxPlan::Part& part : res_y.parts) {
               const auto part_params = txv::make_tx_params(
@@ -5913,7 +6404,38 @@ class InterFrameEncoder {
       use_palette = false;
     }
     if (!use_intra && have_intra && !seg_forced_inter) {
-      if (options_.enable_inter_residual) {
+      if (options_.enable_leaf_rd) {
+        // One leaf cost for the intra/inter decision: coded SSE plus one
+        // QP-derived lambda times the real-ish syntax rate.  Both sides pay
+        // the same is_inter/skip base; each adds its own mode syntax and its
+        // residual estimate, so a mode that is cheap to signal can win even
+        // when its prediction SSE is slightly worse.
+        const double lambda = leaf_rd_lambda(current_qindex_);
+        double intra_bits =
+            2.0 + luma_plan_bits(intra_y, false) +
+            estimate_tx_bits(intra_u, false) +
+            estimate_tx_bits(intra_v, false) +
+            intra_luma_syntax_bits(intra_y_mode, intra_y_angle_delta,
+                                   intra_mrl_index, intra_mrl_sec_index,
+                                   intra_use_dip) +
+            intra_chroma_syntax_bits(intra_is_cfl, options_.enable_cctx);
+        double inter_bits =
+            2.0 + inter_syntax_bits(best.mode, best.drl_index, best.mvd.y,
+                                    best.mvd.x, best.use_amvd);
+        if (inter_residual) {
+          inter_bits += luma_plan_bits(res_y, true) +
+                        estimate_tx_bits(res_u, false) +
+                        estimate_tx_bits(res_v, false);
+        }
+        use_intra = static_cast<double>(intra_sse) + lambda * intra_bits <
+                    static_cast<double>(inter_luma_sse) + lambda * inter_bits;
+        if (trace_) {
+          std::cerr << "  leafrd intra=" << intra_sse << "+" << lambda << "*"
+                    << intra_bits << " inter=" << inter_luma_sse << "+"
+                    << lambda << "*" << inter_bits << " use_intra="
+                    << (use_intra ? 1 : 0) << "\n";
+        }
+      } else if (options_.enable_inter_residual) {
         // Rate-aware decision on the opt-in residual path.  The historical
         // path compared raw SSE only, so a fine quantiser made intra win even
         // when it cost two orders of magnitude more bits.
@@ -9857,29 +10379,33 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   };
 
   // --video-edge-inter: the decoder reconstructs the full bottom block but
-  // extends the reference from the visible picture edge (§7.20-style edge
-  // replication) before the frame becomes a reference.  Mirror that here so
-  // the next frame's MC reads the same padded samples.  Runs after the
-  // in-loop filters, which is where the decoder extends.
+  // extends the reference from the coded MI edge (§7.20-style edge
+  // replication) before the frame becomes a reference.  That edge is
+  // MiRows*4, not the visible height: for a height that is not a multiple of
+  // 8 the last MI row is only partly visible and the decoder keeps its
+  // reconstruction (e.g. 100x70: rows 70..71 are inside MiRows*4 = 72 and are
+  // real samples; rows 72.. are the replicated ones).  Mirror that here so the
+  // next frame's MC reads the same padded samples.  Runs after the in-loop
+  // filters, which is where the decoder extends.
   const auto pad_recon_bottom = [&]() {
     // Only --video-edge-inter asks for the padded reference.  Without the
     // flag the MI-aligned rows below the visible picture keep their historical
     // contents (zero), which the CDEF/recon gates depend on for non-/8 sizes.
     if (!options.enable_edge_inter ||
-        recon_rows <= static_cast<int>(height)) {
+        recon_rows <= recon_mi_rows * 4) {
       return;
     }
     for (int plane = 0; plane < 3; ++plane) {
       Plane& dst = frame_recon[plane];
-      const int vis_h =
-          plane == 0 ? static_cast<int>(height)
-                     : static_cast<int>((height + 1U) / 2U);
-      if (vis_h <= 0 || vis_h > dst.height) continue;
+      // Luma MI edge in rows; chroma is subsampled by 2 in both directions.
+      const int mi_edge_h = plane == 0 ? recon_mi_rows * 4
+                                       : recon_mi_rows * 2;
+      if (mi_edge_h <= 0 || mi_edge_h > dst.height) continue;
       const std::uint8_t* src_row =
           dst.samples.data() +
-          static_cast<std::size_t>(vis_h - 1) *
+          static_cast<std::size_t>(mi_edge_h - 1) *
               static_cast<std::size_t>(dst.stride);
-      for (int y = vis_h; y < dst.height; ++y) {
+      for (int y = mi_edge_h; y < dst.height; ++y) {
         std::memcpy(dst.samples.data() +
                         static_cast<std::size_t>(y) *
                             static_cast<std::size_t>(dst.stride),

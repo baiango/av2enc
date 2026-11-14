@@ -1,10 +1,15 @@
-# Rate-aware video partition tree (`--video-partition-rd`)
+# Measured video partition tree (`--video-partition-rd`)
 
-`--video-partition-rd` replaces the CPU `--video` partition decision cost with a
-single-domain RD cost. It is an explicit CPU opt-in on top of
-`--video-rd-preset quality`; it is not in `--nightly` because it measured worse
-when stacked on the bottom-edge path. The flag-less default keeps the
-historical tree and every pinned stream byte-identical.
+`--video-partition-rd` replaces the CPU `--video` P-frame partition cost with a
+measured inter RD probe: each candidate leaf is priced by one NEWMV prediction
+plus one quantised luma residual. It is an explicit CPU opt-in and is part of
+the `--nightly` aggregate. The flag-less default, the stable `quality` preset
+and every GPU path keep the historical tree and byte-identical streams.
+
+```sh
+av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/n.ivf \
+    --video --frames 60 --qp 136 --cpu-threads 8 --nightly
+```
 
 ## The defect
 
@@ -21,50 +26,46 @@ signal_cost = 2.0 * lambda;
 
 At QP 190 the signal cost is `1.44e9`, while the largest possible variance
 reduction of a 64x64 8-bit block is `4096 * 127.5^2 = 6.66e7` (half the samples
-0, half 255). Every optional split is therefore unaffordable above
-`q ≈ 163`. The P-frame tree collapses to one 64x64 leaf per superblock (only
-geometry-forced edge splits survive), so a frame gets ~30 motion vectors, one
-per 64x64 area. The measured consequence at 480x240/100 kbps is severe:
-PSNR-Y 27.58 dB for the measured preset, with the partition search contributing
-almost nothing.
+0, half 255). Every optional split is therefore unaffordable above `q ≈ 163`,
+and the P-frame tree collapses to one 64x64 leaf per superblock (only
+geometry-forced edge splits survive). A first-rate-aware fix priced a
+variance leaf plus a constant `700` SSE per estimated syntax bit; it recovered
+part of the loss but variance still cannot see prediction: a split only
+recovers the between-child mean term, not the inter-residual reduction.
 
 ## The change
 
-Both terms now live in the source-variance (SSE) domain:
+The probe measures the quantity the encoder actually spends:
 
 ```text
-leaf  = variance(block) + price * leaf_bits
-split = price * 2 bits
+leaf = D + lambda * R
+D    = min(prediction SSE, quantised-residual reconstruction SSE)
+R    = 8 mode bits + luma_plan_bits(plan)          (or 8 skip bits)
+lambda = scale * step^2,  step = rc::quant_step_from_qindex(base_q_idx)
 ```
 
-* `price = 700` SSE per estimated syntax bit.
-* `leaf_bits = 10` for an inter leaf (skip + `is_inter` + single mode + MVD
-  shell) and `6` for an intra leaf (YMode + angle).
-* The partition symbol is `2` bits.
-
-A binary split adds one leaf and one partition symbol, so it costs
-`700 * (10 + 2) = 8,400` SSE for an inter leaf and `700 * (6 + 2) = 5,600` for
-an intra leaf. `price` is calibrated from the measured local slope of this
-clip's RD curve at the ~100 kbps operating point:
-
-| Point | local slope |
-|---|---:|
-| default preset near QP 190 | ≈ 4,000 SSE/bit |
-| new tree near QP 168 | ≈ 6,300 SSE/bit |
-
-The leaf distortion deliberately remains the source variance, which is
-QP-independent. That is why the price is a calibrated constant rather than the
-quantiser Lagrangian: the Lagrangian applies to quantised coefficient
-distortion, while the variance proxy measures the prediction energy a larger
-block cannot represent. Spreading the measured 4,000–6,300 SSE/bit slope over
-the 12 syntax bits a split adds gives the 700 price above; the resulting 8,400
-SSE split penalty sits in the measured plateau.
-
-The tree still uses the existing legal-partition rules, `min_block_size`
-(default 16 on this surface), `max_partition_depth`, the >64x64
-`kInfiniteCost` rule, and the existing deterministic solver. The change is
-only the cost of a leaf and of a partition symbol, so it is a decision-layer
-model change, not a new tool or a flag combination.
+* `D` comes from one NEWMV search and one `compute_tx()` on the winner; the
+  plan's `luma_plan_bits()` is the encoder's existing residual-rate estimate.
+* `lambda` is quantiser-scaled. The default scale is `1.1e-5`; `--nightly`
+  uses the measured `2.75e-6` (see the sweep below). Both are exposed as
+  `--video-partition-rd-lambda <S>`.
+* The probe is bounded to the first split level: a superblock leaf against its
+  HORZ/VERT/SPLIT children. `--video-partition-rd-depth <N>` (1..3) extends it;
+  depth 1 is the measured default.
+* Candidates are precomputed on the frame worker pool and keyed by
+  `(mi_row, mi_col, size)`. Nodes the solver reaches outside that set (forced
+  boundary partitions) are probed synchronously, so the tree never consults a
+  stale or missing cost.
+* The probe is read-only with respect to encoder state. The shared
+  `partition::decide_frame` solver still owns legality, forced boundaries,
+  chroma ownership and the deterministic tie-break, so the emitted tree is
+  exactly `validate_frame`'s tree.
+* Leaves that cannot be inter-predicted (sub-8, right-edge, ME failure) and the
+  keyframe keep the SSE-domain variance + syntax-bit estimate. The keyframe
+  tree is unchanged.
+* The bottom row is probed over its full coded 64x64 extent, the same extent
+  `encode_leaf()` uses with the `--video-edge-inter` padded reference, so the
+  probe and the coder agree on which leaves are inter-capable.
 
 ## Measured RD
 
@@ -73,92 +74,91 @@ CPU `--video`, `--cpu-threads 8`, `AV2ENC_CPU_FAST=ON`, Apple M4. Quality:
 `tools/quality.py` (CVVDP 0.5.7, `standard_fhd`, MPS) against the pinned
 `dav2d-macos`.
 
-The new preset at the same QP:
-
-| QP | old preset kbps | old JOD | new preset kbps | new JOD | Δ rate | Δ JOD |
-|---:|---:|---:|---:|---:|---:|---:|
-| 189 | 103.70 | 6.3657 | 81.376 | 7.3391 | -21.5% | +0.973 |
-| 190 | 100.564 | 6.3021 | 81.920 | 7.3181 | -18.5% | +1.016 |
-| 191 | 101.40 | 6.2466 | 82.776 | 7.2597 | -18.4% | +1.013 |
-| 192 | 98.42 | 6.1832 | 81.980 | 7.2329 | -16.7% | +1.050 |
-
-At the original ~100.56 kbps operating point the new curve reaches it at
-QP 164/165:
+`--nightly` + probe (`--qp`, probe lambda `2.75e-6`, depth 1):
 
 | QP | kbps | CVVDP JOD | PSNR-Y |
 |---:|---:|---:|---:|
-| 164 | 102.132 | 8.3782 | 33.802 |
-| 165 | 100.252 | 8.3438 | 33.547 |
-| 166 | 99.280 | 8.3337 | 33.463 |
-| 167 | 98.572 | 8.2810 | 33.363 |
-| 168 | 98.324 | 8.2533 | 33.218 |
-| 169 | 96.976 | 8.2026 | 33.036 |
-| 170 | 96.812 | 8.2058 | 32.956 |
+| 135 | 103.736 | 9.1651 | 37.101 |
+| **136** | **100.116** | **9.1542** | **36.946** |
+| 137 | 98.592 | 9.1198 | 36.929 |
 
-Iso-rate at 100.564 kbps (linear interpolation between QP 164 and QP 165):
+At the established ~100.25 kbps point:
 
 | Stream | Rate | CVVDP | PSNR-Y |
 |---|---:|---:|---:|
-| old preset, QP 190 | 100.564 kbps | 6.3021 | 27.5816 |
-| new preset, interpolated | 100.564 kbps | **8.3495** | **33.589** |
-| **delta** | matched | **+2.047 JOD** | **+6.008 dB** |
+| `--nightly` QP142 (edge + CCSO, historical tree) | 100.248 kbps | 8.7465 | 35.3754 dB |
+| `--nightly` QP136 (edge + CCSO + probe) | 100.116 kbps | **9.1542** | **36.946 dB** |
+| probe, interpolated to 100.248 kbps (QP 135/136) | 100.248 kbps | **9.1546** | **~36.95 dB** |
+| **delta (interpolated)** | matched | **+0.408 JOD** | **+1.57 dB** |
 
-Nearest measured point (QP 165, 100.252 kbps, -0.31% rate): **+2.042 JOD**,
-+5.965 dB.
+The probe also reaches 100.116 kbps at QP136 versus QP142 for the same
+edge+CCSO path: the finer tree removes rate, so the iso-rate point moves to a
+lower QP. The gain is content-dependent; this fixture is mostly static text
+over a slowly moving model, where cheap skip leaves with per-32-block MVs beat
+the legacy 64x64 tree by a wide margin.
 
-At iso-CVVDP the new curve is far below the old one. The new stream reaches
-6.3021 JOD near QP 208:
+### Lambda sweep
 
-| QP | kbps | CVVDP JOD |
-|---:|---:|---:|
-| 205 | 78.316 | 6.4597 |
-| 208 | 75.108 | 6.3098 |
-| 210 | 75.080 | 6.2725 |
+Iso-rate CVVDP for the same nightly aggregate and depth 1, interpolating each
+lambda's bracketing QPs to 100.248 kbps:
 
-Interpolated at CVVDP 6.3021: **75.1 kbps vs 100.564 kbps (-25.3% rate)**.
-
-## Encode time
-
-Host-relative, a single run, 60 frames:
-
-| Stream | Wall time |
+| probe lambda | iso-rate JOD |
 |---|---:|
-| old preset, QP 190 | 10.7 s |
-| new preset, QP 165 | 11.9 s |
-| new preset, QP 190 | 9.2 s |
+| `1e-9` (rate-free) | ≈9.10 |
+| `0.1375e-5` | 9.131 |
+| `1.1e-5` (probe default) | 9.134 |
+| `2.2e-5` | 9.136 |
+| `0.22e-5` | 9.143 |
+| `0.55e-5` | 9.145 |
+| `0.33e-5` | 9.151 |
+| **`0.275e-5`** | **9.155** |
 
-The finer tree has more leaves but each leaf is smaller, so the ME and TX
-search work per leaf shrinks by about the same factor. The change is ~1.1x at
-the 100 kbps point, not a multiple.
+The measured optimum is a quarter of the original probe scale; the nightly
+aggregate carries `2.75e-6`. Larger values overprice the extra leaves and the
+rate-free limit over-splits.
+
+### Depth
+
+Depth 2 (QP 138/139 bracket, same lambda) measures ≈9.109 JOD at 100.248 kbps:
+worse than depth 1 at ≈1.2x the encode work. The first split level already
+captures the win on this clip.
+
+### Encode time
+
+60 frames on the M4 (host otherwise idle): edge+CCSO QP142 is 8.2-8.9 s wall
+(6.0 s CPU); nightly + probe QP136 is 10.5-11.4 s wall (14.5 s CPU across the
+8-thread pool). The wall cost is ~+25% because the probe precompute runs on the
+frame pool; the per-leaf ME/TX work is parallel.
 
 ## Verification
 
-The stream is decoded and compared sample for sample with the encoder
-reconstruction:
-
 ```sh
+BIN=build-a/av2enc
 DAV2D=/Users/arin/work/av2enc/tools/bin/dav2d-macos
-build-algo/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/p.ivf \
-    --video --frames 60 --qp 165 --cpu-threads 8 \
-    --video-rd-preset quality --video-recon /tmp/p.y4m
-$DAV2D -q --strict 1 -i /tmp/p.ivf -o /tmp/p_dec.y4m --threads 1
+$BIN testdata/nasa_480x240_30fps_60f.y4m -o /tmp/n.ivf --video --frames 60 \
+     --qp 136 --cpu-threads 8 --nightly --video-recon /tmp/n.y4m
+tools/validate_dav2d.sh /tmp/n.ivf                 # OK, 60 frames
+$DAV2D -q --strict 1 -i /tmp/n.ivf -o /tmp/n_dec.y4m --threads 1
+# encoder recon payload == decoder payload, 10,368,000 B, byte for byte
+tools/quality.py --ref testdata/nasa_480x240_30fps_60f.y4m --ivf /tmp/n.ivf \
+     --json /tmp/n.json                            # 9.1542 JOD, 36.946 dB
 ```
 
-QP 165 and QP 190 both decode with `--strict 1`, 60 pictures, and the 10,368,000
-byte recon payload equals the decoder payload byte for byte.
-`tools/validate_dav2d.sh` also passes. `tools/gate_video_rd_preset.sh` checks
-the preset expansion (including `--video-partition-rd`), the pinned flag-less
-480x240 default (`25,009 B`, `a1d0dba1...`), `--strict 1`, and the recon
-comparison.
+`tools/gate_video_nightly.sh` checks the `--nightly` expansion (including the
+probe flags), the pinned default (`25,009 B`, `a1d0dba1...`) and `quality`
+(`25,141 B`, `3984677b...`) streams, `--strict 1` decode and visible recon
+equality.
 
 ## Interactions
 
-* CPU `--video` only. `--video-gpu` is rejected by name; `--still` uses its own
-  tree.
-* `--video-ext-partitions` and `--video-sdp` have separate cost models and are
-  rejected by name rather than silently ignoring the flag; SVC layers are
-  rejected for the same reason.
-* The lossless path uses a fixed block size and is rejected by name.
-* `--video-partition-rd` alone is valid; the measured preset adds the
-  inter-residual, deblock/CCSO, TX-search and intra-full tools that make the
-  tree's extra leaves affordable.
+* CPU `--video` only, 8-bit 4:2:0, single tile, flat P chain. `--video-gpu`,
+  `--still`, the non-4:2:0 format cores, `--tiles > 1x1`, the B/temporal-layer/
+  random-access/TIP schedules and the 128/256 superblock trees are rejected by
+  name. `--video-ext-partitions`, `--video-sdp`, SVC layers and the lossless
+  path are likewise rejected.
+* The probe is not a tool toggle: it replaces the partition decision cost. The
+  surrounding tools (`--video-inter-residual`, `--video-deblock`,
+  `--video-ccso`, `--video-tx-search`, `--video-intra-full`) make the extra
+  leaves affordable; `--nightly` adds rate-aware CCSO and bottom-edge inter.
+* `--video-tx-context-rate` still measures negative when stacked on this path
+  (9.109 JOD at 101.13 kbps with the probe), so it stays a separate opt-in.

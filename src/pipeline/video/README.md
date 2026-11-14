@@ -767,6 +767,7 @@ Composition:
 | `--video-cdef` | §7.18, §5.18.7.10 | off | one strength set (no tile symbol) |
 | `--video-cdef-strength N` | `CdefStrengths` 1..8 | 1 | 2..8 codes a per-64×64 `cdef_idx` |
 | `--video-cdef-damping N` | `CdefDamping` 3..6 | 3 | |
+| `--video-cdef-search m` | encoder search | `full` | `full`/`ladder`/`step`/`fast`; `step`/`fast` (2x2 MI decimation) need `CdefStrengths 1` |
 | `--video-ccso` | §7.19, §5.18.7.12 | off | band-offset only |
 | `--video-ccso-bands N` | `CcsoMaxBandLog2` 0..6 | 4 | |
 | `--video-wiener` | §7.20.3, §5.18.7.11 | off | luma Wiener NS, per unit |

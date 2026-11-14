@@ -114,6 +114,44 @@ iso-rate 897 kbps the new curve extrapolates to +0.10 JOD. The 720p preset's
 QP 190/192 rates are also nearly equal, so this is a direction check, not a
 second operating-point claim.
 
+### TX lambda calibration on the nightly edge path
+
+The first nightly measurement (`quality + edge + tx-context`, lambda 256)
+lost ground because of the weight, not the model: the context rate charges
+real bits, ~2.5–3× the historical heuristic, while the outer decisions and
+the preset still use `--video-tx-lambda 256`. Sweeping the weight at the
+100 kbps point (480x240x60, `--nightly --video-tx-context-rate
+--video-tx-lambda L`, CVVDP measured at every point) moves the optimum to
+40–56:
+
+| `--video-tx-lambda` | QP | bytes | kbps | CVVDP | PSNR-Y | iso-rate JOD at 100.248 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 137 | 30,842 | 123.368 | — | — | (off the 100 kbps hull) |
+| 32 | 140 | 25,706 | 102.824 | 8.7695 | 35.5127 | 8.7435 |
+| 40 | 139 | 25,342 | 101.368 | 8.7906 | 35.5273 | 8.7795 |
+| 44 | 139 | 25,190 | 100.760 | 8.7710 | 35.4576 | 8.7679 |
+| **48** | **138** | **24,940** | **99.760** | **8.7884** | **35.5306** | **8.7901** |
+| 52 | 138 | 25,071 | 100.284 | 8.7799 | 35.4273 | 8.7799 |
+| 56 | 137 | 25,634 | 102.536 | 8.7795 | 35.4908 | 8.7732 |
+| 64 | 137 | 25,529 | 102.116 | 8.7754 | 35.4603 | 8.7679 |
+| 96 | 137 | 25,236 | 100.944 | 8.7709 | 35.4455 | 8.7685 |
+| 128 | 137 | 25,168 | 100.672 | 8.7663 | 35.3680 | 8.7635 |
+| 256 | 139 | 25,009 | 100.036 | 8.5696 | 33.8140 | 8.5696 |
+
+Baseline `--nightly` without the context model at 100.248 kbps is 8.7465 JOD /
+35.3754 dB. The plateau (40–56) is +0.02 to +0.05 JOD and the interpolated
+values wiggle by ±0.01 with the QP-to-QP mode changes, so 48 is picked as the
+plateau centre, not as a uniquely better point: at QP 138 it is a direct
+same-rate win (99.760 kbps vs the baseline's 99.760 kbps interpolation,
++0.062 JOD / +0.21 dB), and lambda 52 independently wins at 100.284 kbps
+(+0.034 JOD).
+
+Control: `--nightly --video-tx-lambda 48` **without** the context model is
+disastrous (QP 146: 103.160 kbps, 8.6581 JOD; iso-rate ≈8.637), because the
+heuristic under-charges every leaf and the low weight removes the rate
+penalty. The pairing of the true-bit model with a matching weight is what
+wins.
+
 ## Validation
 
 * flag-less 480x240 QP 189 stream: 25,009 B,
@@ -135,6 +173,24 @@ second operating-point claim.
   `b_psq_ir` row is byte-identical again);
 * re-encoding a given QP twice gives the same IVF MD5 (deterministic).
 
+After the `--video-tx-lambda 48` calibration (this tree):
+
+* `--nightly` expands to `--video-rd-preset quality --video-ccso-rd
+  --video-edge-inter --video-tx-context-rate --video-tx-lambda 48` and its
+  480x240 QP 138 stream is pinned at 24,940 B /
+  `c4797f3bef07da3ed608caf5340875c5`;
+* an explicit `--video-tx-lambda` overrides the nightly default and reproduces
+  the sweep rows exactly (e.g. lambda 64 QP 138 → 24,662 B, lambda 256 QP 139 →
+  25,009 B);
+* `tools/gate_video_nightly.sh`: expansion identity, default/quality/nightly
+  pins and the gate's 4-frame strict-decode/recon checks all pass; the
+  60-frame QP 138 stream separately decodes under `dav2d --strict 1` and its
+  `--video-recon` payload equals the decoded payload byte for byte
+  (PSNR-Y 35.5306);
+* `tools/gate_video_rd_preset.sh`, `tools/gate_video_edge_inter.sh`,
+  `gate_video_deltaq.sh` (53/53) and `tools/test.sh` pass; the
+  `verify_baseline.sh --check` ctest/feature-gate/19-stream set is unchanged.
+
 ## Follow-ups and rejected ideas
 
 * **CUDA device port.** `src/cuda/pipeline/video/tx/video_tx.cu` still prices
@@ -147,7 +203,8 @@ second operating-point claim.
   `lambda = 256` balance (tested with `--video-tx-lambda 102`, i.e. the same
   reparametrisation): iso-rate JOD at 100.04 kbps stayed +0.042 vs +0.044.
   Lambda is a reparametrisation of the same hull here, so the absolute model
-  scale was left at true bits.
+  scale was left at true bits. The rescaled weight is what composes with the
+  nightly edge path; see the lambda calibration above.
 * **Top-K re-rank** (score with the heuristic, re-price the best two): not
   needed; full pricing costs ~10% wall time, and it keeps the comparison
   exact for every candidate in the existing order.
@@ -161,6 +218,8 @@ second operating-point claim.
   it changed standalone CPU tx-search decisions while the CUDA device module
   still used the heuristic, silently breaking `gate_video_tx_search`.  The
   preset-only gate keeps that contract; the explicit
-  `--video-tx-context-rate --video-gpu` is rejected by name. This model is an
-explicit CPU opt-in; it is not in `--nightly` because it measured worse in
-combination with the bottom-edge path (`docs/video-nightly.md`).
+  `--video-tx-context-rate --video-gpu` is rejected by name. The model stays
+  an explicit CPU opt-in; `--nightly` turns it on with
+  `--video-tx-lambda 48` (`docs/video-nightly.md`). With the historical
+  weight (256) it still measures worse than edge + CCSO, so it is calibrated
+  only inside the nightly aggregate.

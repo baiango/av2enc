@@ -365,7 +365,7 @@ const std::uint16_t* Model::txb_skip_cdf() const {
       (av2enc::still::kTxSizeSqr[info_.params.tx_size] +
        av2enc::still::kTxSizeSqrUp[info_.params.tx_size] + 1) >> 1;
   return &(*q.txb_skip)[info_.is_inter ? 1 : 0][tsc]
-                       [info_.txb_skip_context][0];
+                      [info_.txb_skip_context][0];
 }
 
 double Model::coefficient_rate(void* context,

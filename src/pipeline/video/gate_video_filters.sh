@@ -175,6 +175,12 @@ fi
 run_case cdef-index4 --video-cdef --video-cdef-strength 4
 run_case cdef-index4-damping4 --video-cdef-strength 4 --video-cdef-damping 4
 
+# 2b. Bounded strength searches: the decision search changes, the filter and
+#     the syntax do not, so every mode must decode to the encoder's recon.
+run_case cdef-search-ladder --video-cdef-search ladder
+run_case cdef-search-step --video-cdef-search step
+run_case cdef-search-fast --video-cdef-search fast
+
 # 4. CCSO (§7.19): band-offset only, then combined with CDEF so the
 #    CDEF->CCSO order and the pre-CDEF CurrFrame path are both exercised.
 run_case ccso --video-ccso
@@ -201,8 +207,7 @@ run_case full-chain --video-cdef --video-ccso --video-wiener --video-chroma-lr \
   --video-gdf
 
 # 7. Named rejections must stay explicit rather than silently ignored.
-expect_reject() {
-  local label="$1"
+expect_reject() {  local label="$1"
   shift
   set +e
   "$BIN" "$CLIP" -o "$TMP/reject.ivf" --video --frames "$FRAMES" "$@" \
@@ -214,6 +219,9 @@ expect_reject() {
     fail "$label: rejection did not name the video flag"
   echo "PASS video-filters reject $label"
 }
+# A decimated CDEF search cannot feed a per-block index grid.
+expect_reject cdef-step-needs-single --video-cdef-search step \
+  --video-cdef-strength 4
 # §5.19 tiles: one picture-level filter pass over the assembled reconstruction.
 run_case tiles-cdef --video-cdef --tiles 2x1
 run_case tiles-gdf --video-gdf --tiles 2x2

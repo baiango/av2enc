@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "codec/filters/cdef/cdef.h"
+#include "codec/filters/cdef/cdef_search.h"
 #include "codec/filters/cdef/syntax/video_cdef.h"
 #include "codec/filters/loop_restoration/restoration.h"
 #include "codec/filters/loop_restoration/restoration_common.h"
@@ -154,6 +155,28 @@ bool prepare_cdef(const VideoLoopFilterFrame& frame,
   // With >1 strength the all-zero set must exist so a block can be left
   // unfiltered: §5.20.10.1 has no "off" index outside the strength table.
   cdef_options.include_off = options.cdef_num_strengths > 1;
+
+  // Bounded strength search (--video-cdef-search).  The compact ladder and the
+  // block-grid decimation only change how the frame-level strength set is
+  // chosen; the filter, the header and the index grid keep their exact syntax,
+  // so the recon is still the decoder's recon.
+  const auto mode = options.cdef_search_mode;
+  const bool fast_ladder =
+      mode == VideoLoopFilterOptions::CdefSearchMode::kLadder ||
+      mode == VideoLoopFilterOptions::CdefSearchMode::kFast;
+  const bool decimate =
+      mode == VideoLoopFilterOptions::CdefSearchMode::kStep ||
+      mode == VideoLoopFilterOptions::CdefSearchMode::kFast;
+  if (decimate && options.cdef_num_strengths != 1) {
+    return fail(error,
+                "video CDEF: a decimated strength search requires "
+                "CdefStrengths == 1");
+  }
+  if (fast_ladder) {
+    cdef_options.candidates = av2enc::cdef::kCdefFastCandidates;
+    cdef_options.candidate_count = av2enc::cdef::kCdefFastCandidateCount;
+  }
+  cdef_options.search_step = decimate ? 2 : 1;
 
   cdef_adapter::Plan adapter_plan;
   if (!cdef_adapter::plan(view, cdef_options, &adapter_plan, error)) {
@@ -356,93 +379,153 @@ bool prepare_ccso(const VideoLoopFilterFrame& frame,
       // SSE + lambda * table bits, sweep the free 2-bit scale_idx and then do
       // one exact clamped pass per plane to decide the per-unit ccso_blk
       // symbol.  A disabled unit/plane is left untouched by both sides.
+      // With ccso_refit_passes > 0 the table is refitted on the samples of
+      // the units that survived pruning and the units are re-decided, which
+      // removes the bias of samples the first table intentionally ignores.
       const double lambda = options.ccso_lambda;
+      const double unit_bits = options.ccso_unit_bits;
       auto unary_extra_bits = [](int idx) { return idx < 7 ? idx : 6; };
-      double best_cost = std::numeric_limits<double>::infinity();
-      int best_scale = 0;
-      std::vector<std::uint8_t> best_idx(static_cast<std::size_t>(bands), 0);
-      for (int scale_idx = 0; scale_idx < 4; ++scale_idx) {
-        const int scale = scale_idx + 1;
-        double cost = 0.0;
-        std::vector<std::uint8_t> idx(static_cast<std::size_t>(bands), 0);
-        for (int band = 0; band < bands; ++band) {
-          int band_idx = 0;
-          double band_cost = sum_e2[static_cast<std::size_t>(band)];
-          for (int i = 0; i < 8; ++i) {
-            const double off =
-                static_cast<double>(rest::kCcsoOffset[i] * scale);
-            const double sse =
-                sum_e2[static_cast<std::size_t>(band)] -
-                2.0 * off * sum_e[static_cast<std::size_t>(band)] +
-                off * off * count[static_cast<std::size_t>(band)];
-            const double c = sse + lambda * unary_extra_bits(i);
-            if (c < band_cost - 1e-9) {
-              band_cost = c;
-              band_idx = i;
-            }
-          }
-          cost += band_cost;
-          idx[static_cast<std::size_t>(band)] =
-              static_cast<std::uint8_t>(band_idx);
-        }
-        if (cost < best_cost - 1e-9) {
-          best_cost = cost;
-          best_scale = scale_idx;
-          best_idx = std::move(idx);
-        }
-      }
-      plane_plan.scale_idx = best_scale;
-      plane_plan.offset_idx = best_idx;
 
       int pcols = 0;
       int prows = 0;
       rest::ccso_blk_grid_size(pw, ph, ccso_luma_log2, sub, sub, &pcols,
                                &prows);
       const int shift = ccso_luma_log2 - sub;
-      std::vector<double> unit_off(
-          static_cast<std::size_t>(pcols) * static_cast<std::size_t>(prows),
-          0.0);
-      std::vector<double> unit_on(unit_off.size(), 0.0);
-      const int scale = best_scale + 1;
-      for (int y = 0; y < ph; ++y) {
-        const int lx_row = (y << sub) * curr_luma_stride;
-        for (int x = 0; x < pw; ++x) {
-          const int lx = x << sub;
-          const int band = curr_luma[lx_row + lx] >> band_shift;
-          const int off =
-              rest::kCcsoOffset[best_idx[static_cast<std::size_t>(band)]] *
-              scale;
-          const int base =
-              rec[static_cast<std::size_t>(y) *
-                      static_cast<std::size_t>(rec_stride) +
-                  static_cast<std::size_t>(x)];
-          const int src_value =
-              src[static_cast<std::size_t>(y) *
-                      static_cast<std::size_t>(src_stride) +
-                  static_cast<std::size_t>(x)];
-          const int filtered = std::clamp(base + off, 0, 255);
-          const std::size_t unit =
-              static_cast<std::size_t>(y >> shift) *
-                  static_cast<std::size_t>(pcols) +
-              static_cast<std::size_t>(x >> shift);
-          const double d_off = static_cast<double>(src_value - base);
-          const double d_on = static_cast<double>(src_value - filtered);
-          unit_off[unit] += d_off * d_off;
-          unit_on[unit] += d_on * d_on;
+      const std::size_t unit_count =
+          static_cast<std::size_t>(pcols) * static_cast<std::size_t>(prows);
+
+      // Fit the band table by SSE + lambda * tu(7) bits.  When `include` is
+      // non-empty only samples of units with a non-zero entry contribute.
+      auto fit_table = [&](const std::vector<std::uint8_t>& include,
+                           int* out_scale_idx,
+                           std::vector<std::uint8_t>* out_idx) {
+        std::vector<double> e(static_cast<std::size_t>(bands), 0.0);
+        std::vector<double> e2(static_cast<std::size_t>(bands), 0.0);
+        std::vector<double> n(static_cast<std::size_t>(bands), 0.0);
+        const bool restrict = !include.empty();
+        for (int y = 0; y < ph; ++y) {
+          const int lx_row = (y << sub) * curr_luma_stride;
+          for (int x = 0; x < pw; ++x) {
+            if (restrict) {
+              const std::size_t unit =
+                  static_cast<std::size_t>(y >> shift) *
+                      static_cast<std::size_t>(pcols) +
+                  static_cast<std::size_t>(x >> shift);
+              if (include[unit] == 0) continue;
+            }
+            const int lx = x << sub;
+            const int band = curr_luma[lx_row + lx] >> band_shift;
+            const int src_value =
+                src[static_cast<std::size_t>(y) *
+                        static_cast<std::size_t>(src_stride) +
+                    static_cast<std::size_t>(x)];
+            const int d =
+                src_value - rec[static_cast<std::size_t>(y) *
+                                    static_cast<std::size_t>(rec_stride) +
+                                static_cast<std::size_t>(x)];
+            e[static_cast<std::size_t>(band)] += d;
+            e2[static_cast<std::size_t>(band)] +=
+                static_cast<double>(d) * static_cast<double>(d);
+            n[static_cast<std::size_t>(band)] += 1.0;
+          }
         }
+        double best_cost = std::numeric_limits<double>::infinity();
+        int best_scale = 0;
+        std::vector<std::uint8_t> best(static_cast<std::size_t>(bands), 0);
+        for (int scale_idx = 0; scale_idx < 4; ++scale_idx) {
+          const int scale = scale_idx + 1;
+          double cost = 0.0;
+          std::vector<std::uint8_t> idx(static_cast<std::size_t>(bands), 0);
+          for (int band = 0; band < bands; ++band) {
+            const std::size_t b = static_cast<std::size_t>(band);
+            int band_idx = 0;
+            double band_cost = e2[b];
+            for (int i = 0; i < 8; ++i) {
+              const double off =
+                  static_cast<double>(rest::kCcsoOffset[i] * scale);
+              const double sse = e2[b] - 2.0 * off * e[b] + off * off * n[b];
+              const double c = sse + lambda * unary_extra_bits(i);
+              if (c < band_cost - 1e-9) {
+                band_cost = c;
+                band_idx = i;
+              }
+            }
+            cost += band_cost;
+            idx[b] = static_cast<std::uint8_t>(band_idx);
+          }
+          if (cost < best_cost - 1e-9) {
+            best_cost = cost;
+            best_scale = scale_idx;
+            best = std::move(idx);
+          }
+        }
+        *out_scale_idx = best_scale;
+        *out_idx = std::move(best);
+      };
+
+      // Exact clamped per-unit SSE with the given table, then enable the units
+      // whose SSE gain pays for one ccso_blk symbol.
+      auto decide_units = [&](int scale_idx,
+                              const std::vector<std::uint8_t>& idx,
+                              std::vector<std::uint8_t>* blks) {
+        const int scale = scale_idx + 1;
+        std::vector<double> unit_off(unit_count, 0.0);
+        std::vector<double> unit_on(unit_count, 0.0);
+        for (int y = 0; y < ph; ++y) {
+          const int lx_row = (y << sub) * curr_luma_stride;
+          for (int x = 0; x < pw; ++x) {
+            const int lx = x << sub;
+            const int band = curr_luma[lx_row + lx] >> band_shift;
+            const int off =
+                rest::kCcsoOffset[idx[static_cast<std::size_t>(band)]] *
+                scale;
+            const int base =
+                rec[static_cast<std::size_t>(y) *
+                        static_cast<std::size_t>(rec_stride) +
+                    static_cast<std::size_t>(x)];
+            const int src_value =
+                src[static_cast<std::size_t>(y) *
+                        static_cast<std::size_t>(src_stride) +
+                    static_cast<std::size_t>(x)];
+            const int filtered = std::clamp(base + off, 0, 255);
+            const std::size_t unit =
+                static_cast<std::size_t>(y >> shift) *
+                    static_cast<std::size_t>(pcols) +
+                static_cast<std::size_t>(x >> shift);
+            const double d_off = static_cast<double>(src_value - base);
+            const double d_on = static_cast<double>(src_value - filtered);
+            unit_off[unit] += d_off * d_off;
+            unit_on[unit] += d_on * d_on;
+          }
+        }
+        blks->assign(unit_count, 0);
+        std::size_t enabled = 0;
+        for (std::size_t u = 0; u < unit_count; ++u) {
+          if (unit_off[u] - unit_on[u] > lambda * unit_bits) {
+            (*blks)[u] = 1;
+            ++enabled;
+          }
+        }
+        return enabled;
+      };
+
+      std::vector<std::uint8_t> keep;  // empty = every unit participates
+      int scale_idx = 0;
+      std::vector<std::uint8_t> idx;
+      fit_table(keep, &scale_idx, &idx);
+      std::vector<std::uint8_t> blks;
+      std::size_t enabled_units = decide_units(scale_idx, idx, &blks);
+      for (int pass = 0; pass < options.ccso_refit_passes && enabled_units > 0;
+           ++pass) {
+        keep = blks;
+        fit_table(keep, &scale_idx, &idx);
+        enabled_units = decide_units(scale_idx, idx, &blks);
       }
-      // The ccso_blk symbol is a 2-symbol adaptive CDF symbol, ~0.5-1 bit.
-      constexpr double kUnitSymbolBits = 1.0;
+      plane_plan.scale_idx = scale_idx;
+      plane_plan.offset_idx = idx;
       plane_plan.blk_cols = pcols;
       plane_plan.blk_rows = prows;
-      plane_plan.blks.assign(unit_on.size(), 0);
-      std::size_t enabled_units = 0;
-      for (std::size_t u = 0; u < unit_on.size(); ++u) {
-        if (unit_off[u] - unit_on[u] > lambda * kUnitSymbolBits) {
-          plane_plan.blks[u] = 1;
-          ++enabled_units;
-        }
-      }
+      plane_plan.blks = std::move(blks);
       if (enabled_units == 0) {
         plane_plan.enabled = false;
         plane_plan.blks.clear();

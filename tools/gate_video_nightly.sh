@@ -4,10 +4,16 @@
 # Checks:
 #   * --nightly expands to the documented flags (same IVF bytes as spelling
 #     every flag out);
-#   * the flag-less default and the stable quality preset keep their pins;
+#   * the reference-intro QP offset is live under --nightly and an explicit 0
+#     restores the fixed-QP decisions;
+#   * the flag-less default, the stable quality preset and the nightly
+#     operating point keep their pins;
 #   * --nightly decodes under dav2d --strict 1 and the visible encoder recon
 #     equals the decoded payload;
-#   * --nightly --video-gpu and --nightly --still are rejected by name.
+#   * the BAWP carrier selects fitted predictors on interior and bottom-edge
+#     leaves, decodes --strict 1 and reproduces the visible recon;
+#   * --nightly --video-gpu and --nightly --still are rejected by name, and the
+#     CPU-only BAWP carrier rejects --video-gpu/--tiles/--b-frames.
 #
 # Usage: tools/gate_video_nightly.sh [--bin build/av2enc] [--dav2d PATH]
 # Exit: 0 pass, 1 failure, 2 usage, 77 missing fixture/decoder.
@@ -51,7 +57,12 @@ trap 'rm -rf "$TMP"' EXIT
 FAILED=0
 fail() { echo "FAIL: $*" >&2; FAILED=1; }
 
-NIGHTLY_FLAGS=(--video-rd-preset quality --video-ccso-rd --video-edge-inter)
+NIGHTLY_FLAGS=(--video-rd-preset quality --video-ccso-rd --video-edge-inter
+               --video-partition-rd --video-partition-rd-lambda 2.75e-6
+               --video-key-qp-offset -16 --video-rdoq --video-edge-mask
+               --video-cdef --video-ccso-bands 6 --video-ccso-lambda 22
+               --video-ccso-refit 2 --video-ccso-unit-bits 2
+               --video-bawp --video-bawp-carrier --video-leaf-rd)
 
 echo "== nightly RD gate =="
 
@@ -83,6 +94,28 @@ if [ -f "$TMP/nightly.ivf" ] && [ -f "$TMP/explicit.ivf" ]; then
     cmp -s "$TMP/nightly.ivf" "$TMP/explicit.ivf" ||
         fail "--nightly differs from its documented flag expansion"
 fi
+
+# --- reference-intro QP offset -------------------------------------------
+# --nightly owns the key/first-P QP offset; an explicit 0 must restore the
+# historical fixed-QP decisions, so the two streams must differ.
+if ! "$BIN" "$SHINE" -o "$TMP/nightly-off0.ivf" --nightly --frames "$FRAMES" \
+        --qp 190 --video-key-qp-offset 0 >"$TMP/nightly-off0.log" 2>&1; then
+    fail "the --nightly --video-key-qp-offset 0 encode failed"
+fi
+if [ -f "$TMP/nightly.ivf" ] && [ -f "$TMP/nightly-off0.ivf" ]; then
+    cmp -s "$TMP/nightly.ivf" "$TMP/nightly-off0.ivf" &&
+        fail "the reference-intro QP offset is not live under --nightly"
+fi
+if "$BIN" "$SHINE" -o "$TMP/off-still.ivf" --still \
+        --video-key-qp-offset -16 >/dev/null 2>"$TMP/off-still.err"; then
+    fail "--video-key-qp-offset was accepted without --video"
+fi
+if "$BIN" "$SHINE" -o "$TMP/off-rc.ivf" --video --frames "$FRAMES" \
+        --rc crf --video-key-qp-offset -16 >/dev/null 2>"$TMP/off-rc.err"; then
+    fail "--video-key-qp-offset was accepted with --rc crf"
+fi
+grep -q "fixed --qp stream" "$TMP/off-rc.err" ||
+    fail "--video-key-qp-offset + --rc crf did not name the fixed-QP contract"
 
 # --- default and quality pins --------------------------------------------
 if [ -f "$NASA" ]; then
@@ -118,6 +151,23 @@ PY
         [ "$MD5" = "3984677b9b665952984b07b7cf75c6ea" ] ||
             fail "quality stream md5 is $MD5, expected 3984677b..."
     fi
+
+    if ! "$BIN" "$NASA" -o "$TMP/nightly60.ivf" --video --frames 60 \
+            --qp 117 --cpu-threads 8 --nightly >"$TMP/nightly60.log" 2>&1; then
+        fail "the nightly operating-point encode failed"
+    fi
+    if [ -f "$TMP/nightly60.ivf" ]; then
+        BYTES=$(wc -c <"$TMP/nightly60.ivf" | tr -d ' ')
+        MD5=$(python3 - "$TMP/nightly60.ivf" <<'PY'
+import hashlib, sys
+print(hashlib.md5(open(sys.argv[1], 'rb').read()).hexdigest())
+PY
+)
+        [ "$BYTES" = "25022" ] ||
+            fail "nightly stream is $BYTES B, expected 25022"
+        [ "$MD5" = "b7388311a0e13cd90c7e1c9a2883588e" ] ||
+            fail "nightly stream md5 is $MD5, expected b7388311..."
+    fi
 fi
 
 # --- strict decode + visible recon ---------------------------------------
@@ -151,9 +201,87 @@ then
     fail "decoder output differs from the encoder reconstruction"
 fi
 
+# --- BAWP + inter residual on the edge path ------------------------------
+# --nightly carries the CPU-only BAWP carrier: a GLOBALMV winner on a fade is
+# re-expressed as NEARMV/NEWMV so §5.20.7.6 can code use_bawp, and the residual
+# is coded against the fitted predictor.  The 60-frame fade clip must select
+# the fitted predictor on both interior and bottom-edge leaves, decode under
+# --strict 1 and reproduce the visible encoder reconstruction.
+if [ -f "$NASA" ]; then
+    if ! "$BIN" "$NASA" -o "$TMP/bawp.ivf" --nightly --frames 60 \
+            --qp 142 --cpu-threads 8 --video-recon "$TMP/bawp.y4m" \
+            --video-trace >"$TMP/bawp.log" 2>"$TMP/bawp.trace"; then
+        fail "the --nightly BAWP encode failed"
+        cat "$TMP/bawp.log" >&2
+    else
+        APPLIED=$(grep -c "carrier=.*applied=1" "$TMP/bawp.trace" || true)
+        EDGE_APPLIED=$(awk '/carrier=.*applied=1/{a=1}
+            /m2 inter r=48|m2 intra r=48/{if (a) n++; a=0}
+            END{print n+0}' "$TMP/bawp.trace")
+        echo "BAWP applied leaves=$APPLIED (bottom rows=$EDGE_APPLIED)"
+        [ "$APPLIED" -ge 50 ] ||
+            fail "only $APPLIED BAWP leaves selected (expected >= 50)"
+        [ "$EDGE_APPLIED" -ge 8 ] ||
+            fail "only $EDGE_APPLIED BAWP bottom-row leaves (expected >= 8)"
+        if ! "$DAV2D" -q --strict 1 -i "$TMP/bawp.ivf" \
+                -o "$TMP/bawp_dec.y4m" --threads 1 >"$TMP/bawp_strict.log" 2>&1; then
+            fail "the --nightly BAWP stream failed dav2d --strict 1"
+            cat "$TMP/bawp_strict.log" >&2
+        elif ! python3 - "$TMP/bawp.y4m" "$TMP/bawp_dec.y4m" <<'PY'
+import sys
+
+def payload(path):
+    data = open(path, 'rb').read()
+    nl = data.index(b'\n') + 1
+    return data[nl:].replace(b'FRAME\n', b'')
+
+a, b = payload(sys.argv[1]), payload(sys.argv[2])
+if len(a) != len(b):
+    print(f"BAWP recon payload {len(a)} B != decoded {len(b)} B", file=sys.stderr)
+    sys.exit(1)
+if a != b:
+    diff = sum(1 for x, y in zip(a, b) if x != y)
+    print(f"BAWP recon differs from decoded output in {diff} byte(s)",
+          file=sys.stderr)
+    sys.exit(1)
+print(f"BAWP visible recon matches decoded output ({len(a)} B)")
+PY
+        then
+            fail "BAWP decoder output differs from the encoder reconstruction"
+        fi
+    fi
+
+    # The carrier is CPU-only and keeps the plain-chain surface.  Plain
+    # --video-bawp stays skip-only (the CUDA BAWP backend parity path).
+    if "$BIN" "$SHINE" -o "$TMP/bawp_gpu.ivf" --video --frames 1 --qp 190 \
+            --video-bawp-carrier --video-gpu >/dev/null 2>"$TMP/bawp_gpu.err"; then
+        fail "--video-bawp-carrier was accepted with --video-gpu"
+    fi
+    grep -q "CPU-only" "$TMP/bawp_gpu.err" ||
+        fail "the --video-bawp-carrier GPU rejection did not name the CPU-only path"
+    if "$BIN" "$SHINE" -o "$TMP/bawp_tiles.ivf" --video --frames 1 --qp 190 \
+            --video-bawp-carrier --tiles 2x1 >/dev/null 2>"$TMP/bawp_tiles.err"; then
+        fail "--video-bawp-carrier was accepted with --tiles"
+    fi
+    grep -q "single tile" "$TMP/bawp_tiles.err" ||
+        fail "the --video-bawp-carrier tile rejection did not name the single tile"
+    if "$BIN" "$SHINE" -o "$TMP/bawp_b.ivf" --video --frames 2 --qp 190 \
+            --video-bawp-carrier --b-frames 1 >/dev/null 2>"$TMP/bawp_b.err"; then
+        fail "--video-bawp-carrier was accepted with --b-frames"
+    fi
+    grep -q -- "--video-bawp" "$TMP/bawp_b.err" ||
+        fail "the --video-bawp-carrier B-frame rejection did not name --video-bawp"
+    if "$BIN" "$SHINE" -o "$TMP/bawp_res.ivf" --video --frames 1 --qp 190 \
+            --video-bawp --video-inter-residual >/dev/null 2>"$TMP/bawp_res.err"; then
+        fail "plain --video-bawp was accepted with --video-inter-residual"
+    fi
+    grep -q -- "--video-bawp-carrier" "$TMP/bawp_res.err" ||
+        fail "the BAWP+residual rejection did not name --video-bawp-carrier"
+fi
+
 if [ "$FAILED" -ne 0 ]; then
     echo "gate_video_nightly: FAILED" >&2
     exit 1
 fi
-echo "gate_video_nightly: OK (expansion, pins, strict decode, visible recon)"
+echo "gate_video_nightly: OK (expansion, pins, strict decode, visible recon, BAWP)"
 exit 0

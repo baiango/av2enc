@@ -252,7 +252,9 @@ if [ "$QUICK" -eq 0 ]; then
     run_gate gate_video_headers src/pipeline/video/gate_video_headers.sh
     run_gate gate_video_rd_preset tools/gate_video_rd_preset.sh
     run_gate gate_video_nightly tools/gate_video_nightly.sh
+    run_gate gate_video_rdoq tools/gate_video_rdoq.sh
     run_gate gate_video_edge_inter tools/gate_video_edge_inter.sh
+    run_gate gate_video_edge_mask tools/gate_video_edge_mask.sh
 fi
 
 echo

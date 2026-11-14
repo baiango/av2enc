@@ -665,6 +665,13 @@ void test_av2_model() {
   }();
   check(result.cost <= scalar_cost + 1.0e-6,
         "RDOQ with the AV2 model is no worse than scalar");
+
+  // §8.3.2 inter plane context: the same block under `is_inter` selects
+  // txb_skip[1] and eob plane context 1, and the trellis runs on it.
+  RdoqResult inter_result;
+  check(rdoq_quantize(block, config, inter_model.rate_model(), inter_result,
+                      &error),
+        "RDOQ with the AV2 inter model succeeds");
 }
 
 }  // namespace

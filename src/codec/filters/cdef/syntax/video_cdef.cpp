@@ -160,6 +160,7 @@ bool plan(const FrameView& frame, const Options& options, Plan* out,
   stage_options.chroma_weight = options.chroma_weight;
   stage_options.candidates = options.candidates;
   stage_options.candidate_count = options.candidate_count;
+  stage_options.search_step = options.search_step;
 
   CdefStagePlan stage_plan;
   if (!av2enc::cuda::still::still_cdef_plan(view, stage_options, &stage_plan,

@@ -58,6 +58,18 @@ AV2ENC_CDEF_TABLE CdefStrength kCdefDefaultCandidates[kCdefDefaultCandidateCount
     {12, 4, 8, 4},   // strong
 };
 
+// Compact candidate ladder for the bounded video search
+// (`--video-cdef-search ladder|fast`).  Four sets instead of ten: the identity
+// set plus the weak / moderate / strong rungs the default ladder's winner
+// normally lands on.  Standard syntax-value strengths.
+inline constexpr int kCdefFastCandidateCount = 4;
+AV2ENC_CDEF_TABLE CdefStrength kCdefFastCandidates[kCdefFastCandidateCount] = {
+    {0, 0, 0, 0},   // off / copy
+    {2, 0, 0, 0},   // weak luma
+    {4, 2, 0, 0},   // luma primary + secondary
+    {8, 4, 4, 2},   // strong luma + full chroma
+};
+
 AV2ENC_CDEF_HD constexpr bool cdef_is_zero_strength(const CdefStrength& s) {
   return s.y_pri == 0 && s.y_sec == 0 && s.uv_pri == 0 && s.uv_sec == 0;
 }
@@ -101,15 +113,16 @@ struct CdefBlockSse {
   std::int64_t chroma = 0;
 };
 
-// Filters one 8x8 luma CDEF block (plus its chroma blocks unless skipped) at
-// (r, c) in luma MI units with the supplied strength set, optionally writing the
-// result into `dst` (three plane pointers; any entry may be null), and returns
-// the squared error against `ref` over the visible area.
-//
-// Taps are always read from `src` (the unfiltered frame), never from `dst`.
-AV2ENC_CDEF_HD CdefBlockSse cdef_eval_block(
+// Evaluates one 8x8 luma CDEF block (plus its chroma blocks unless skipped) for
+// a strength set whose block-derived inputs (`y_dir`, `var`, `skip`,
+// `skip_chroma`) were already computed.  Those four values do not depend on the
+// strength set, so the search computes them once per block and reuses them
+// across the whole candidate ladder; `cdef_eval_block()` below is the
+// self-contained wrapper.
+AV2ENC_CDEF_HD CdefBlockSse cdef_eval_block_params(
     const CdefSearchFrame& frame, const CdefStrength& strength, int damping,
-    bool on_skip_txfm, bool disable_loopfilters_across_tiles, int r, int c,
+    bool disable_loopfilters_across_tiles, int r, int c, int y_dir,
+    std::int64_t var, bool skip, bool skip_chroma,
     std::uint8_t* const dst[3]) {
   CdefBlockSse sse;
   const int sub_x = frame.subsampling_x;
@@ -119,20 +132,9 @@ AV2ENC_CDEF_HD CdefBlockSse cdef_eval_block(
       frame.tile_row_starts, frame.num_tile_rows,
       disable_loopfilters_across_tiles, r, c);
 
-  bool skip = false;
-  bool skip_chroma = false;
-  cdef_block_skip_flags(frame.skip, frame.lossless, frame.lossless_chroma,
-                        frame.mi_cols, r, c, on_skip_txfm, &skip,
-                        &skip_chroma);
-
-  int y_dir = 0;
-  std::int64_t var = 0;
   CdefFilterParams luma{0, 0, 0, damping};
   CdefFilterParams chroma{0, 0, 0, damping - 1};
   if (!skip) {
-    cdef_direction(frame.src[0].data,
-                   static_cast<std::size_t>(frame.src[0].stride),
-                   c * kMiSize, r * kMiSize, 8, &y_dir, &var);
     luma = cdef_luma_params(strength.y_pri, strength.y_sec, y_dir, var, damping);
     chroma = cdef_chroma_params(strength.uv_pri, strength.uv_sec, y_dir, sub_x,
                                 sub_y, damping);
@@ -214,6 +216,31 @@ AV2ENC_CDEF_HD CdefBlockSse cdef_eval_block(
   return sse;
 }
 
+// Self-contained single-block evaluation: derives the block skip flags and the
+// §7.18.2 direction/variance, then runs the filter.  Convenience wrapper around
+// cdef_eval_block_params(); the search uses the split form to compute those
+// block-derived values once per block instead of once per candidate.
+AV2ENC_CDEF_HD CdefBlockSse cdef_eval_block(
+    const CdefSearchFrame& frame, const CdefStrength& strength, int damping,
+    bool on_skip_txfm, bool disable_loopfilters_across_tiles, int r, int c,
+    std::uint8_t* const dst[3]) {
+  bool skip = false;
+  bool skip_chroma = false;
+  cdef_block_skip_flags(frame.skip, frame.lossless, frame.lossless_chroma,
+                        frame.mi_cols, r, c, on_skip_txfm, &skip,
+                        &skip_chroma);
+  int y_dir = 0;
+  std::int64_t var = 0;
+  if (!skip) {
+    cdef_direction(frame.src[0].data,
+                   static_cast<std::size_t>(frame.src[0].stride),
+                   c * kMiSize, r * kMiSize, 8, &y_dir, &var);
+  }
+  return cdef_eval_block_params(frame, strength, damping,
+                                disable_loopfilters_across_tiles, r, c, y_dir,
+                                var, skip, skip_chroma, dst);
+}
+
 // ---------------------------------------------------------------------------
 // Host-only planning
 // ---------------------------------------------------------------------------
@@ -231,6 +258,11 @@ struct CdefSearchOptions {
   // Candidate ladder; null/0 selects kCdefDefaultCandidates.
   const CdefStrength* candidates = nullptr;
   int candidate_count = 0;
+  // Evaluate every `eval_step`-th 8x8 block row and column (2 = 2x2 MI
+  // decimation: a quarter of the blocks) for the frame-level strength choice.
+  // Only valid with num_strengths == 1: with a per-block index grid every block
+  // needs its own exact SSE table.  1 evaluates the whole frame.
+  int eval_step = 1;
   // Weight applied to chroma SSE when ranking.  1 = sample-weighted total SSE.
   std::int64_t chroma_weight = 1;
 };
@@ -620,6 +652,14 @@ inline bool cdef_search_plan(const CdefSearchFrame& frame,
   if (options.chroma_weight < 0) {
     return fail("negative chroma weight");
   }
+  if (options.eval_step < 1) {
+    return fail("eval_step must be >= 1");
+  }
+  if (options.eval_step > 1 && options.num_strengths != 1) {
+    return fail(
+        "decimated CDEF search requires CdefStrengths == 1 (a per-block index "
+        "grid needs every block's SSE)");
+  }
   std::vector<CdefStrength> pool;
   if (!search_detail::build_pool(options, &pool, error)) {
     return false;
@@ -644,23 +684,45 @@ inline bool cdef_search_plan(const CdefSearchFrame& frame,
     }
   }
 
+  const int eval_step = options.eval_step;
+  const bool decimate = eval_step > 1;
+
   for (int r = 0; r < frame.mi_rows; r += kCdefBlock4) {
+    const int br = r / kCdefBlock4;
+    if (decimate && (br % eval_step) != 0) continue;
     for (int c = 0; c < frame.mi_cols; c += kCdefBlock4) {
+      const int bc = c / kCdefBlock4;
+      if (decimate && (bc % eval_step) != 0) continue;
       const int block = (r / kCdefSize4) * n64_cols + (c / kCdefSize4);
       std::uint8_t* const no_dst[3] = {nullptr, nullptr, nullptr};
+      // The §7.18.1 skip flags and the §7.18.2 direction/variance depend only on
+      // the block, not on the strength set: derive them once per block.
+      bool skip = false;
+      bool skip_chroma = false;
+      cdef_block_skip_flags(frame.skip, frame.lossless, frame.lossless_chroma,
+                            frame.mi_cols, r, c, options.on_skip_txfm, &skip,
+                            &skip_chroma);
+      int y_dir = 0;
+      std::int64_t var = 0;
+      if (!skip) {
+        cdef_direction(frame.src[0].data,
+                       static_cast<std::size_t>(frame.src[0].stride),
+                       c * kMiSize, r * kMiSize, 8, &y_dir, &var);
+      }
       if (off_index < 0) {
         // Identity set not in the pool: evaluate it for reporting only.
-        const CdefBlockSse off = cdef_eval_block(
-            frame, identity, options.damping, options.on_skip_txfm,
-            options.disable_loopfilters_across_tiles, r, c, no_dst);
+        const CdefBlockSse off = cdef_eval_block_params(
+            frame, identity, options.damping,
+            options.disable_loopfilters_across_tiles, r, c, y_dir, var, skip,
+            skip_chroma, no_dst);
         off_sse[static_cast<std::size_t>(block)] +=
             off.luma + chroma_weight * off.chroma;
       }
       for (int k = 0; k < ncand; ++k) {
-        const CdefBlockSse one = cdef_eval_block(
+        const CdefBlockSse one = cdef_eval_block_params(
             frame, pool[static_cast<std::size_t>(k)], options.damping,
-            options.on_skip_txfm, options.disable_loopfilters_across_tiles, r,
-            c, no_dst);
+            options.disable_loopfilters_across_tiles, r, c, y_dir, var, skip,
+            skip_chroma, no_dst);
         sse[static_cast<std::size_t>(k) * nb +
             static_cast<std::size_t>(block)] +=
             one.luma + chroma_weight * one.chroma;

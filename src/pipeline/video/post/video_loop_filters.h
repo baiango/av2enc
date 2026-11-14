@@ -48,6 +48,18 @@ struct VideoLoopFilterOptions {
   // codes no skip flag on intra leaves and disables the tool on skipped inter
   // leaves, so DISABLED is the only mode wired here.
   int cdef_on_skip_txfm_mode = 0;
+  // Strength-search budget (--video-cdef-search).  kFull is the historical
+  // 10-candidate whole-frame search; kLadder uses the compact 4-set ladder;
+  // kStep evaluates the 10-set ladder on a 2x2-decimated block grid; kFast
+  // combines both.  Decimation is only valid with CdefStrengths == 1, where the
+  // search only needs the frame-level ranking and no per-block index grid.
+  enum class CdefSearchMode : int {
+    kFull = 0,
+    kLadder = 1,
+    kStep = 2,
+    kFast = 3,
+  };
+  CdefSearchMode cdef_search_mode = CdefSearchMode::kFull;
 
   bool ccso = false;
   // CcsoMaxBandLog2 for the band-offset-only form (0..6).
@@ -56,9 +68,17 @@ struct VideoLoopFilterOptions {
   // table, sweeps scale_idx and prunes per-unit ccso_blk symbols; the default
   // distortion-only fit is untouched when this is false.
   bool ccso_rd = false;
-  // SSE-per-bit weight for ccso_rd.  Distortion is summed YUV SSE; the table
-  // step model uses one lambda for every plane.
+  // SSE-per-bit weight for ccso_rd.  Distortion is summed YUV SSE.
   double ccso_lambda = 64.0;
+  // Extra exact table refit + re-prune passes after the first decision.  Each
+  // pass refits the band offsets on the samples of the units the previous pass
+  // kept enabled, re-sweeps scale_idx, then re-decides the ccso_blk symbols.
+  int ccso_refit_passes = 0;
+  // Price of one per-unit ccso_blk symbol in the prune decision.  The symbol
+  // is a 2-symbol adaptive CDF symbol whose real cost depends on the neighbour
+  // context; enabling a unit also changes the coded residual, so the measured
+  // value is above one bit.  1.0 is the historical fixed estimate.
+  double ccso_unit_bits = 1.0;
 
   // §7.20 luma non-separable Wiener and/or chroma loop restoration.
   bool wiener = false;

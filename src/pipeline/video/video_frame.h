@@ -38,6 +38,12 @@ inline constexpr int kMaxNumRefFrames = 16;
 // type plans both stop at eight slots).
 inline constexpr int kMaxRefSlots = 8;
 
+// Default SSE-domain lambda calibration for --video-rdoq:
+// lambda = scale * (1/quant_factor)^2.  Measured on the 240p30 nightly gate:
+// the iso-rate CVVDP plateau is 0.08-0.16, and 0.1 is the chosen value; see
+// docs/video-rdoq.md.
+inline constexpr double kVideoRdoqSseScale = 0.1;
+
 // Pixel format of one sequence.  The default is the historical 8-bit 4:2:0
 // stream, which keeps every existing bitstream byte-identical.  Any other
 // format goes through the high-bit-depth / chroma video core
@@ -102,6 +108,16 @@ struct VideoOptions {
   // edge-extended past the visible picture, so MC reads the same padded
   // samples.  Off keeps every historical stream byte-identical.
   bool enable_edge_inter = false;
+  // Opt-in bottom-edge residual mask (--video-edge-mask): the coded rows of a
+  // leaf below the visible bottom are decoder-invisible, so the encoder uses
+  // the prediction as the source view there (zero residual) before the
+  // transform.  No syntax change; needs enable_edge_inter.
+  bool enable_edge_mask = false;
+  // Opt-in CPU-only BAWP carrier (--video-bawp-carrier).  A GLOBALMV winner is
+  // re-expressed as NEARMV/NEWMV at the same MV so §5.20.7.6 can code
+  // use_bawp; the inter-residual path codes the residual against the fitted
+  // predictor.  Off keeps --video-bawp skip-only and CPU/CUDA byte-identical.
+  bool bawp_carrier = false;
   // Opt-in §7.13.5 CfL chroma decision (--video-cfl): the M1 still product's
   // {DC, CfL} candidate set with derived alpha.  Off by default so every
   // historical stream stays byte-identical.
@@ -118,6 +134,16 @@ struct VideoOptions {
   // sequence selects choose_tcq_per_frame = 1 (so every frame codes allow_tcq)
   // and enable_parity_hiding = 0.  Luma TX_CLASS_2D blocks only.
   bool enable_tcq = false;
+  // Opt-in coefficient-level RDOQ (--video-rdoq): replaces the scalar luma
+  // quantiser of inter residual blocks with the full trellis from
+  // codec/rate/rdoq, and prices the luma TX plan search with the same static
+  // AV2 §8.3 CDF model.  Coefficient levels and the RD-best TX plan change;
+  // no new syntax element is introduced.  Off keeps every historical stream
+  // byte-identical.
+  bool enable_rdoq = false;
+  // SSE-domain lambda calibration for --video-rdoq:
+  // lambda = scale * (1/quant_factor)^2.
+  double rdoq_sse_scale = kVideoRdoqSseScale;
   // Opt-in §5.4.8 / §7.14.6 cross-component transform (--video-cctx).  U/V are
   // quantised jointly and plane 1 codes cctx_type.
   bool enable_cctx = false;
@@ -181,6 +207,12 @@ struct VideoOptions {
   // three planes.  force_inter_residual bypasses the rate heuristic and codes
   // residual on every inter leaf (gate stress mode).
   bool enable_inter_residual = false;
+  // Opt-in leaf RD cost (--video-leaf-rd).  Replaces the historical
+  // intra/inter heuristic with one cost: SSE + lambda * bits, where the bits
+  // include the real-ish luma/chroma mode syntax and the inter mode/MV bits,
+  // and lambda is derived from the frame qindex instead of the fixed value.
+  // Off by default so every historical stream stays byte-identical.
+  bool enable_leaf_rd = false;
   // Distortion-per-bit weight for the opt-in residual RD decision.  Tuned on
   // 360p content: 4 keeps the default-path quality while cutting the stream
   // roughly 3x; the historical implicit value was ~0.5*(qlookup/8)^2 (2178
@@ -205,17 +237,30 @@ struct VideoOptions {
   // tool it lowers rate and raises PSNR slightly; the default skip-only path
   // is rate-neutral because it has no inter residual leaves to search.
   double tx_rd_lambda = 256.0;
-  // Opt-in rate-aware §5.20.3.1 partition tree (--video-partition-rd, also set
-  // by --video-rd-preset quality).  Off keeps the historical cost, which mixes
+  // Opt-in rate-aware §5.20.3.1 partition tree (--video-partition-rd, set by
+  // --nightly).  Off keeps the historical cost, which mixes
   // a source-variance leaf distortion with a SAD-domain signal cost; that
   // signal cost exceeds the maximum 64x64 variance reduction above q≈163, so
   // every optional split is unaffordable and the P-frame tree collapses to one
-  // 64x64 leaf per superblock.  When on, every candidate is costed in the SSE
-  // domain and each leaf also pays an estimated mode/MV/skip syntax rate:
-  //   leaf = variance + lambda_sse * leaf_bits,  split = lambda_sse * 2 bits
-  // with lambda_sse calibrated to the measured local RD slope at the ~100 kbps
-  // operating point.  All pinned default streams keep the historical path.
+  // 64x64 leaf per superblock.  When on, each P-frame candidate leaf is priced
+  // by a measured inter RD probe: one NEWMV prediction plus one quantised luma
+  // residual, `cost = D + lambda * R` with `lambda = 1.1e-5 * step^2`, bounded
+  // to the first split level.  Nodes the probe cannot model and the keyframe
+  // keep the SSE-domain estimate with per-leaf syntax bits:
+  //   leaf = variance + lambda_sse * leaf_bits,  split = lambda_sse * 2 bits.
+  // All pinned default streams keep the historical path.
   bool partition_rd = false;
+  // SSE-per-bit scale for the measured partition probe:
+  //   lambda = partition_probe_lambda * step^2.
+  // The 1.1e-5 default was calibrated at the 240p30 / ~100 kbps point; the
+  // probe's rate is the encoder's estimated syntax+residual bit count, so the
+  // scale absorbs the gap to the true Lagrangian.  Only used with
+  // `partition_rd`.
+  double partition_probe_lambda = 1.1e-5;
+  // First-level bound of the measured partition probe: depth 1 prices a
+  // superblock against its HORZ/VERT/SPLIT children, depth 2 recurses once
+  // more while respecting min_block_size.  Deeper probes cost ~2x encode time.
+  int partition_probe_depth = 1;
   int min_block_size = 16;
   int max_partition_depth = 4;
   // §5.4.3 sequence_partition_config() superblock size (--video-sb128 /

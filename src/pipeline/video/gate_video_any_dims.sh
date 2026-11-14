@@ -19,6 +19,9 @@
 #   8-bit 4:4:4:  100x70, 130x74, 424x240, 640x362, 101x71 (odd W and H)
 # Each clip is a 4-frame key+P chain, encoded with and without
 # deblock / CDEF / CCSO / Wiener NS LR / chroma LR / GDF and the full chains.
+# A vertically moving 100x70 and 640x362 pair additionally exercises
+# --video-edge-inter, whose reference pad must clamp at MiRows*4 (not the
+# visible height) for heights that are not a multiple of 8.
 # The 4:2:2/4:4:4 deblock+chroma-LR pair keeps its named rejection.
 #
 # Exits 77 (CTest skip) when the pinned decoder or python3 is unavailable.
@@ -223,6 +226,39 @@ for spec in 100x70 130x74 424x240 640x362; do
 done
 for spec in 100x70 130x74 424x240 640x362 101x71; do
   run_matrix "$TMP/${spec}_444.y4m" "${spec%x*}" "${spec#*x}" 444
+done
+
+# --- bottom-edge inter on non-/8 heights ---------------------------------
+# The --video-edge-inter reference pad clamps at MiRows*4, not the visible
+# height: 100x70 has MiRows = 18 (72 rows), so rows 70..71 are real coded
+# samples and only rows >= 72 are replicated.  A vertically moving pattern
+# makes the next frame read the partly-visible last MI row, which is exactly
+# where a visible-height pad decodes differently.
+python3 - "$TMP" <<'PY'
+import math
+import sys
+
+tmp = sys.argv[1]
+frames = 4
+for w, h in ((100, 70), (640, 362)):
+    path = "%s/edge_%dx%d.y4m" % (tmp, w, h)
+    with open(path, "wb") as out:
+        out.write(("YUV4MPEG2 W%d H%d F30:1 Ip A1:1 C420jpeg\n" %
+                   (w, h)).encode())
+        for t in range(frames):
+            out.write(b"FRAME\n")
+            out.write(bytes(
+                max(0, min(255, int(
+                    100.0 + 70.0 * math.sin((i + 2 * t) / 7.0) +
+                    50.0 * math.cos((j + t) / 5.0) +
+                    30.0 * math.sin((i + j + 3 * t) / 11.0))))
+                for j in range(h) for i in range(w)))
+            for _ in range(2):
+                out.write(bytes([128] * ((w // 2) * (h // 2))))
+PY
+for spec in 100x70 640x362; do
+  run_case "edge-${spec}" "$TMP/edge_${spec}.y4m" "${spec%x*}" "${spec#*x}" \
+    420 --video-edge-inter
 done
 
 # --- format constraints --------------------------------------------------

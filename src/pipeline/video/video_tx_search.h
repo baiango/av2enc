@@ -86,6 +86,15 @@ struct Options {
   // COEFF_CDF_Q_CTXS slice from the frame base_q_idx.
   bool tcq = false;
   std::int32_t tcq_qctx = 0;
+  // Opt-in coefficient-level RDOQ for luma inter residual blocks
+  // (--video-rdoq).  The winning TX plan is re-quantised with the full trellis
+  // from codec/rate/rdoq, priced by the static AV2 §8.3 inter CDF model.
+  // `rdoq_qctx` is the §8.3.1 COEFF_CDF_Q_CTXS slice from the frame
+  // base_q_idx (the writer's CDF set, not a segmented SB qindex).
+  bool rdoq = false;
+  std::int32_t rdoq_qctx = 0;
+  // SSE-domain lambda calibration; see video_frame.h kVideoRdoqSseScale.
+  double rdoq_sse_scale = 0.1;
 };
 
 // One winning transform block.

@@ -238,7 +238,7 @@ frames that reference future frames, selected by the reference lists in §7.7/§
 | Global motion (identity, rotation-zoom, affine; translation components) | §5.18.9, §6.17.9, §7.12.2.1 | B | M–L; needs global motion estimation | 2–6% on pans/zooms; ~0 on static content | M4 | U2 — unverified |
 | Local warp / affine (`LOCALWARP`, `DELTAWARP`, `WARPMV`, `WARP_NEWMV`) | §5.4.6, §5.20.7.7, §7.13.3.19–§7.13.3.24 | B | L–XL; depends on inter MC and MV prediction | 2–8% on camera motion/rotation; content-dependent | M4 | U2 — unverified |
 | Interintra (inter + intra blend, 4 intra modes, wedge option) | §5.20.7.15, §6.19.7.14, §7.13.3.29, §7.13.3.30 | B | M; depends on inter and intra prediction | 0.5–2% | M4 | U2 — unverified |
-| BAWP (block adaptive weighted prediction) | §5.4.6 (`enable_bawp`), §5.20.7.6, §7.13.3.25 | B | M; encoder estimates scale/offset | 0.5–2%; fades and exposure changes | M4 | U2 — unverified |
+| BAWP (block adaptive weighted prediction) | §5.4.6 (`enable_bawp`), §5.20.7.6, §7.13.3.25 | B | M; encoder estimates scale/offset | measured ≈−4% rate at iso-CVVDP on a fade (nightly 240p, `--video-bawp-carrier`); 0.5–2% otherwise | M4 | **verified** (CPU carrier; CUDA skip-only) |
 | TIP (temporally interpolated prediction; frame/block mode) | §5.4.6 (`enable_tip`), §7.10, §7.13.3.2 | B | XL; motion-field construction, hole filling, TIP deblock | 2–6%; alt-ref/pyramid content | M4 | U2 — unverified |
 | OPFL (optical-flow refinement; `enable_opfl_refine`) | §5.4.6, §7.13.3.8–§7.13.3.12 | B | L; encoder must mirror decoder refinement | 0.5–2% | M4 | U2 — unverified |
 | Ref MV bank / temporal MV prediction (`enable_refmvbank`) | §5.4.6, §7.9, §7.12.2.21 | B | L; motion-field storage and projection | 1–3% | M4 | U2 — unverified |
