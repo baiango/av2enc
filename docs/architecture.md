@@ -239,7 +239,7 @@ Rules:
 - Precompute may change encoder decisions, but the output must still pass
   `dav2d`; it must never reduce quality just to use memory.
 
-## Project objectives (2026-11-13)
+## Project objectives (2026-11-14)
 
 - **CPU mode:** maximize **CVVDP/JOD at 480×240 (240p, 2:1) @ 30 fps and 100 kbps**.
   Quality is the KPI; CPU speed is not. NASA baseline: CVVDP 4.802 JOD at

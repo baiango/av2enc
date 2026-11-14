@@ -19,23 +19,27 @@ plus all subagent sessions — as of **2026-11-14**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 154,965,814 |
-| Output | 26,341,729 |
-| Reasoning | 27,573,926 |
-| **Input + output + reasoning** | **~208.9 M** |
-| Cached context reads | 17,529,485,504 |
-| **Including cache reads** | **~17.74 B** |
+| Fresh input | 156,990,207 |
+| Output | 26,723,086 |
+| Reasoning | 27,937,493 |
+| **Input + output + reasoning** | **~211.7 M** |
+| Cached context reads | 18,006,402,752 |
+| **Including cache reads** | **~18.22 B** |
 
-361 sessions (main + subagents). Cache reads dominate because every subagent
+362 sessions (main + subagents). Cache reads dominate because every subagent
 re-reads a long context; they are normally billed at a fraction of fresh input.
 The figures keep growing while work continues, so treat them as a snapshot, not
 a final total.
 
-## Status (2026-11-13)
+## Status (2026-11-14)
 
-The encoder is feature-complete for the spec tools that the pinned decoders can
-validate. Both product paths are byte-identical to the CPU reference where the
-same decisions are used.
+The CPU writer covers every AV2 tool that the pinned decoders (`dav2d`, plus
+`avmdec` where `dav2d` cannot parse) can validate, including the cases
+previously misdiagnosed as decoder limits (ref-MV bank,
+`mv_traj` with >=3 refs, 8-bit 4:0:0 PC-Wiener, 4:2:2 16-pixel leaves, TIP
+block references, arbitrary frame dimensions). The GPU path is the
+decision-identical M2 mirror of the CPU and is byte-identical where the same
+decisions are used.
 
 **Objectives**
 
@@ -58,8 +62,8 @@ rows are historical.
 | GPU 1440x720 QP90 | RTX 3080 Ti | - / 7664 kbps | 9.704 JOD | 42.85 dB | 5.40 fps |
 | GPU 1440x720 QP90 | RTX 3060 | - / 7664 kbps | 9.704 JOD | 42.85 dB | 4.88 fps |
 
-AVM's CBR run asked for 30 kbps but produced 92.1 kbps at 0.071 fps, so the
-quality comparison is at 92.1 vs 100.0 kbps. The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
+AVM's CBR rate control undershot its request and produced 92.1 kbps at
+0.071 fps, so the quality comparison is at 92.1 vs 100.0 kbps. The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
 25,009-byte stream as the CPU reference (`100.0 / 100.0 kbps`, MD5
 `a1d0dba1259b20a4b628d4cd1e14c33c`). The 60-frame 480x240 encode takes 3.86 s
 on the M4 CPU reference (15.5 fps), 1.22 s on the RTX 3080 Ti (49.4 fps) and
@@ -95,18 +99,21 @@ reference; GPU output is byte-identical at the calibration point.
   AVERAGE/wedge/diffwtd, temporal layers, long-term/OLK/leading/SEF/SWITCH/RAS,
   MFH, timing, content interpretation, adaptive/average CDF, CRF/VBR,
   multi-tile, deblock, CDEF, CCSO, Wiener/chroma LR/GDF/PC-Wiener, BAWP,
-  global motion/warp, CfL, MHCCP, QM, full intra search, TX search, and
-  10-bit/chroma formats. TIP is CPU-only; morph, OPFL/refine-MV, inter-intra,
-  sub-PU/temporal MV and video segmentation are still being completed.
+  global motion/warp, CfL, MHCCP, QM, full intra search, TX search, DIP/IBP,
+  MRL/IST, TCQ/CCTX, SDP/DDT, palette/IBC, SB128/256, sub-8/shared chroma,
+  grain (all schedules), lossless (formats, hierarchical-P/B, 4:0:0), SVC,
+  arbitrary dimensions, and 10-bit/chroma formats. TIP block references and
+  the CPU-only tools are rejected by `--video-gpu` by name.
 
 **Tests**
 
-- Default `ctest`: 10/10 in about 5 s.
-- Product gates: `gate_video_gpu`, `gate_video_filters`, `gate_video_formats`,
-  `gate_video_gpu_intra`, `gate_video_tx_search` all green on the RTX 3060.
-- CUDA module batch: 100 suites, 98 pass; the two failures are the pre-existing
-  `tx_partition` and still `recon` harnesses (test-only; the product paths pass).
-- CPU baseline: 19 pinned streams, 18 gates, 30 features.
+- `tools/test.sh`: 10/10 unit tests in about 6 s; `ctest`: 23/23.
+- CPU product gates: `tools/run_gates.sh --no-ctest` **32/32** on the final
+  tree, 19 pinned streams, 30 feature checks.
+- The 1440x720 throughput + calibration gate was green on the RTX 3060 and
+  3080 Ti benchmark hosts; the earlier full GPU product matrix was green on the
+  RTX 3060 before those boxes were retired. The old 100-suite CUDA batch was
+  98/100 (pre-existing test-only `tx_partition` and still `recon` harnesses).
 - Every accepted stream is checked with pinned `dav2d --strict 1` and decoded
   picture counts; AVM is used only where `dav2d` cannot parse a spec tool
   (user QM, CDF continuity, layered SVC).
@@ -160,9 +167,10 @@ Video options: `--p-frames`, `--b-frames`, `--video-refs 1..7`,
 `--video-gdf`, `--video-intra-full`, `--video-tx-search`, `--tiles CxR`,
 `--video-mfh`, `--video-timing`, `--avg-cdf`/`--adaptive-cdf`, and
 `--rc cqp|crf|vbr` with `--crf` / `--bitrate`. `--video-gpu` supports the same
-surface except the explicitly named CPU-only/decoder-gated modes (TIP on GPU,
-morph, OPFL/refine-MV, inter-intra, sub-PU/temporal MV, segmentation,
-implicit reference lists, DRL reorder, CDF continuity, SVC, user QM).
+surface except the explicitly named CPU-only/decoder-gated modes (TIP block
+references, morph, OPFL/refine-MV, inter-intra, sub-PU/temporal MV,
+segmentation, implicit reference lists, DRL reorder, CDF continuity, grain,
+lossless, SB128/256, non-/8 dimensions, SVC, user QM).
 
 Usage and option-combination errors exit 2; encoder, decoder and I/O failures
 exit 1. `--gpu-plan N` is a host-only multi-GPU dry run: it prints the tile
@@ -197,7 +205,7 @@ output, compare pixels). Do not read or copy their encoder-side code.
 - 8 GB cards, RTX 4070 Super and RTX 5070 are **no longer targets**.
 - Multi-GPU development: **N× RTX 3060 12 GB**, each with a device-sized arena.
 - GPU benchmark target: maximize **720p encode fps** on the 3060/3080 Ti/5090
-  using the 240p30/30 kbps decisions; there is no 1080p speed floor anymore.
+  using the 240p30/100 kbps decisions; there is no 1080p speed floor anymore.
 - Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja**. CPU is a reference/test
   path only, not the product.
 - Fat binary: `sm_86;sm_120`. The feature baseline stays `sm_86`; the same
@@ -255,17 +263,18 @@ Disk is 16GB: keep test media tiny (<100MB total), prefer 64x64/256x256 frames.
 
 ## Current capabilities
 
-The encoder covers the spec tools that the pinned decoders validate, in both
-still and video modes. The remaining gaps are explicit decoder or product
-limits, not hidden fallbacks:
+The CPU writer covers the spec tools the pinned decoders validate. The
+remaining limits are explicit decoder or product limits, not hidden fallbacks:
 
-- **CPU completeness wave in progress:** morph, OPFL/refine-MV, inter-intra,
-  sub-PU/temporal MV, video segmentation/delta-Q, 10-bit/chroma CDEF/CCSO/LR,
-  metadata OBUs, SVC layers and implicit reference lists.
-- **Decoder-gated with `dav2d`:** user-defined QM OBUs, cross-frame CDF carry,
-  multi-layer SVC and implicit reference maps (AVM validates some of these).
+- **CPU:** all tracked features are wired and gated; see
+  `docs/cpu-feature-completion.md` (36 items) and `docs/negative-results.md`.
+- **GPU:** M2 mirror of the 8-bit 4:2:0 CPU decisions. CPU-only tools (morph,
+  OPFL/refine-MV, inter-intra, TIP block references, segmentation, implicit
+  maps, DRL reorder, CDF continuity, SVC, user QM) are rejected by name.
+- **Pinned `dav2d` limits:** user QM OBUs, cross-frame CDF carry, the nested
+  decoder model and multi-layer SVC need `avmdec`; 1-D negative H/V_DCT is
+  rejected. Cross-xlayer SVC prediction is spec-forbidden (§6.8.2).
 - **Not signalable in AV2 v1.0.0:** 12-bit.
-- 1-D intra types with negative H/V_DCT are rejected by the pinned decoder.
 
 See `docs/cuda-gap-analysis.md` for the per-tool CUDA matrix and
 `docs/negative-results.md` for every confirmed decoder/product limitation.
@@ -287,9 +296,11 @@ Agent worktrees and branches live outside the main checkout.
 ## Quality
 
 `tools/quality.py` computes bitrate, PSNR, SSIM, and CVVDP (JOD) for an IVF.
-It also records `decode_fps` and `decode_realtime_x` from `dav2d`. The AVM
-reference baseline is in `bench/avm_baseline/README.md`; compare at matched
-bitrate, and always confirm `dav2d` decoded the stream first. A fast-decode
+It also records `decode_fps` and `decode_realtime_x` from `dav2d`. The current
+AVM reference point is the NASA 240p30 row in the baseline table above
+(92.1 kbps, 8.791 JOD); the historical Shine 720p sweep is archived in
+`bench/avm_baseline/README.md`. Compare at matched bitrate, and always confirm
+`dav2d` decoded the stream first. A fast-decode
 profile is deferred until quality and encode speed are settled.
 
 `tools/score_speed.py` reports speed vs CVVDP. `tools/score_tradeoff.py` enforces
