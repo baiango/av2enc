@@ -230,6 +230,20 @@ of Vast.ai: the tight RD loop needs fast local iteration, and GPU boxes are
 tuned for CUDA validation rather than CPU quality experiments. GPU hosts are
 used only when CUDA parity or the 1440x720 benchmark is the task.
 
+## SIMD (AVX2 / NEON)
+
+Explicit SIMD is **open** as an optimization path: **AVX2** on x86_64 and
+**NEON** on arm64. Host-side SIMD is much cheaper and faster to implement,
+validate and iterate than a new CUDA kernel, so it is explicitly in scope for
+the CPU reference and for shared pixel/transform/filter/ME/entropy helpers.
+
+The order is: scalar reference first, then compiler autovectorization/LTO
+(`-O3`, `AV2ENC_NATIVE`/`AV2ENC_CPU_FAST`), then explicit intrinsics where the
+profile shows a hot loop. SIMD code must keep a scalar fallback, be
+byte-identical across x86_64 and arm64, and keep the decoder/recon gates green.
+Do not use SIMD to change an RD decision unless the change is a measured,
+decoder-gated opt-in.
+
 ## Performance expectations
 
 - **CPU mode objective:** maximize **CVVDP/JOD at 480×240 (240p, 2:1) @ 30 fps
@@ -241,6 +255,9 @@ used only when CUDA parity or the 1440x720 benchmark is the task.
   hardware is the RTX 3080 Ti; the RTX 5090 is the maximum-speed host.
 - **Not targets:** the old 1080p ≥1 fps floor, 8 GB cards, RTX 4070 Super and
   RTX 5070.
+- **SIMD:** AVX2 (x86_64) and NEON (arm64) are open optimization targets;
+  explicit intrinsics are much cheaper and faster to iterate than new CUDA
+  kernels. Keep the scalar reference and byte-identical outputs.
 - **CPU development loop:** Apple M4 (this Mac) with `--cpu-threads` and
   `AV2ENC_CPU_FAST=ON` for the daily RD loop; **Modal**
   (https://modal.com/) for bursty parallel QP/thread/RD sweeps. CPU-mode
