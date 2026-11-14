@@ -53,8 +53,8 @@ rows are historical.
 |---|---|---:|---:|---:|---:|
 | CPU 240p30, QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 15.5 fps |
 | AVM CBR (NASA) | Apple M4 | 92.1 / - kbps | 8.791 JOD | 37.78 dB | 0.071 fps |
-| CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | 49.4 fps (CPU 15.5) |
-| CPU/GPU parity, QP 189 | RTX 3060 | 100.0 / 100.0 kbps | drift 0 | drift 0 | 40.0 fps (CPU 15.5) |
+| CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | 49.4 fps |
+| CPU/GPU parity, QP 189 | RTX 3060 | 100.0 / 100.0 kbps | drift 0 | drift 0 | 40.0 fps |
 | GPU 1440x720 QP90 | RTX 3080 Ti | - / 7664 kbps | 9.704 JOD | 42.85 dB | 5.40 fps |
 | GPU 1440x720 QP90 | RTX 3060 | - / 7664 kbps | 9.704 JOD | 42.85 dB | 4.88 fps |
 
@@ -62,8 +62,9 @@ AVM's CBR run asked for 30 kbps but produced 92.1 kbps at 0.071 fps, so the
 quality comparison is at 92.1 vs 100.0 kbps. The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
 25,009-byte stream as the CPU reference (`100.0 / 100.0 kbps`, MD5
 `a1d0dba1259b20a4b628d4cd1e14c33c`). The 60-frame 480x240 encode takes 3.86 s
-on the M4 (15.5 fps), 1.22 s on the RTX 3080 Ti (49.4 fps) and 1.50 s on the
-RTX 3060 (40.0 fps). The 1440x720 QP90 stream is byte-identical
+on the M4 CPU reference (15.5 fps), 1.22 s on the RTX 3080 Ti (49.4 fps) and
+1.50 s on the RTX 3060 (40.0 fps), i.e. 3.2x and 2.6x the CPU reference speed
+for the same 100 kbps stream. The 1440x720 QP90 stream is byte-identical
 on both GPUs and on the CPU reference (MD5
 `f9b6e086aa7d9da78792cf74b9746741`, 958,023 bytes); the CPU encodes the same
 60 frames at 1.36 fps on the M4.
