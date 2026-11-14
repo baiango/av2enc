@@ -142,7 +142,7 @@ PASSED=0
 SKIPPED=0
 FAILED=0
 INDEX=0
-TOTAL=23
+TOTAL=30
 [ "$QUICK" -eq 1 ] && TOTAL=6
 declare -a RESULTS=()
 
@@ -226,6 +226,9 @@ run_gate gate_video_same_ref_compound src/pipeline/video/video_same_ref_compound
 run_gate gate_video_mv_traj src/pipeline/video/video_mv_traj_gate.sh
 if [ "$QUICK" -eq 0 ]; then
     run_gate gate_rc src/pipeline/video/post/gate_cli_rc.sh
+    run_gate gate_video_bgops src/pipeline/video/gate_video_bgops.sh
+    run_gate gate_video_tlayer_refs src/pipeline/video/gate_video_tlayer_refs.sh
+    run_gate gate_video_schedule_rc src/pipeline/video/gate_video_schedule_rc.sh
     run_gate gate_video_cli src/pipeline/video/video_cli_gate.sh --frames 4
     run_gate gate_wrapper_cdf src/pipeline/video/wrapper_cdf_gate.sh
     run_gate gate_video_inter_residual src/pipeline/video/video_cli_gate.sh \

@@ -15,6 +15,8 @@
 #include "core/io/ivf.h"
 #include "core/io/y4m.h"
 #include "pipeline/video/video_frame.h"
+#include "codec/inter/bframes/bframes.h"
+#include "codec/inter/tlayers/tlayers.h"
 #include "codec/rate/rc/hrd/hrd.h"
 #include "frame/metadata/cli/metadata_cli.h"
 #include "frame/metadata/types/metadata_types.h"
@@ -318,6 +320,18 @@ struct Options {
   // default off so every historical stream is byte-identical.
   bool video_palette = false;     // §5.20.8 luma palette selection
   bool video_ibc = false;         // §5.20.5.3/.4 general intra block copy
+  // §5.4.7 forced screen-content form on the palette/IBC/morph carriers.
+  bool video_scc_force = false;
+  // §5.4.7 seq_force_integer_mv (requires --video-scc-force).
+  bool video_force_integer_mv = false;
+  // §5.4.3 reduce_pb_aspect_ratio with max_pb_aspect_ratio_log2_minus_1.
+  bool video_reduce_pb_aspect = false;
+  // §5.4.4 seq_seg_info_present_flag (--video-seq-seg-info).  The frozen form
+  // codes seq_allow_seg_info_change = 0, so every frame reuses the table with
+  // no reuse_seg_info bit.
+  bool video_seq_seg_info = false;
+  bool video_seq_seg_frozen = false;
+  int video_pb_aspect_log2_minus_1 = 1;  // 0 -> 2:1, 1 -> 4:1
   bool video_compound_near_near = false;  // §5.20.7.6 NEAR_NEARMV carrier
   bool video_tip = false;
   // A/B control for the §5.4.6 enable_tip_hole_fill bring-up: keeps the
@@ -356,6 +370,7 @@ struct Options {
   bool video_ras = false;
   int video_tlayers = 0;   // 0 = off; N = one closed hierarchical-P GOP
   int video_tlayer_drop = -1;  // -1 = keep every layer
+  int video_gops = 1;      // consecutive closed B-frame GOPs (default 1)
   bool video_force_single = false;
   bool video_sb128 = false;
   bool video_sb256 = false;
@@ -802,7 +817,9 @@ void print_usage(std::ostream& out) {
                             "frame (--video; default: no LCR/OPS)"});
   item("--p-frames <N>", {"Number of P frames (default: all frames after the",
                           "keyframe)"});
-  item("--b-frames <N>", {"B frames in one closed IPBB GOP, 0..6 (default 0)"});
+  item("--b-frames <N>", {"B frames per closed IPBB GOP, 0..6 (default 0)"});
+  item("--video-gops <N>", {"Consecutive closed B-frame GOPs (default 1);",
+                            "each GOP starts with a CLK slot reset"});
   item("--video-tlayers <N>", {"Hierarchical P GOP with N = 4 or 8 temporal",
                               "layers; coding order differs from display order"});
   item("--video-tlayer-drop <L>", {"Encode only temporal layers <= L (dropped-",
@@ -903,6 +920,33 @@ void print_usage(std::ostream& out) {
   item("--video-ibc", {"Opt-in §5.20.5.3/.4 general intra block copy on the",
                        "intra keyframe: use_intrabc + BV stack/DRL search",
                        "(CPU, single tile)"});
+  item("--video-scc-force", {"Write the §5.4.7 forced screen-content form",
+                             "(seq_force_screen_content_tools = 1) instead of",
+                             "the per-frame SELECT form: palette/IBC are",
+                             "inferred on for every frame. Requires one of",
+                             "--video-palette/--video-ibc/--video-morph"});
+  item("--video-force-integer-mv", {"With --video-scc-force: write",
+                                    "seq_force_integer_mv = 1 so every frame",
+                                    "derives FrameMvPrecision = one pel; the",
+                                    "inter MVs are quantised to the integer",
+                                    "grid and no frame codes the precision",
+                                    "pair"});
+  item("--video-reduce-pb-aspect", {"Write §5.4.3 reduce_pb_aspect_ratio = 1",
+                                    "with MaxPbAspectRatio = 4 (use",
+                                    "--video-pb-aspect-2 for 2:1) and run the",
+                                    "partition search under that limit"});
+  item("--video-pb-aspect-2", {"With --video-reduce-pb-aspect: select",
+                               "max_pb_aspect_ratio_log2_minus_1 = 0",
+                               "(MaxPbAspectRatio = 2) instead of 4"});
+  item("--video-seq-seg-info", {"Write §5.4.4 seq_seg_info_present_flag = 1:",
+                                "the sequence header carries the segment",
+                                "table (seq_allow_seg_info_change = 1) and",
+                                "each frame codes reuse_seg_info or its own",
+                                "seg_info(). Requires --video-segmentation"});
+  item("--video-seq-seg-info-frozen", {"With --video-seq-seg-info: write",
+                                       "seq_allow_seg_info_change = 0 so every",
+                                       "frame reuses the sequence table with",
+                                       "no reuse_seg_info bit"});
   item("--video-ref-mvs-stress", {"Gate stress mode for --video-ref-mvs:",
                                   "always prefer a temporal NEARMV candidate",
                                   "when one exists (proves the coded stream",
@@ -2202,6 +2246,20 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-gops") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-gops'";
+        return ParseStatus::kError;
+      }
+      int value = 0;
+      if (!parse_int(argv[++i], value) || value <= 0) {
+        error = "--video-gops must be a positive integer";
+        return ParseStatus::kError;
+      }
+      options.video_gops = value;
+      continue;
+    }
+
     if (argument == "--video-refs") {
       if (i + 1 >= argc) {
         error = "missing value after '--video-refs'";
@@ -2489,6 +2547,40 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--video-ibc") {
       options.video_ibc = true;
+      continue;
+    }
+
+    if (argument == "--video-scc-force") {
+      options.video_scc_force = true;
+      continue;
+    }
+
+    if (argument == "--video-force-integer-mv") {
+      options.video_force_integer_mv = true;
+      continue;
+    }
+
+    if (argument == "--video-reduce-pb-aspect") {
+      options.video_reduce_pb_aspect = true;
+      options.video_pb_aspect_log2_minus_1 = 1;  // 4:1
+      continue;
+    }
+
+    if (argument == "--video-pb-aspect-2") {
+      options.video_reduce_pb_aspect = true;
+      options.video_pb_aspect_log2_minus_1 = 0;  // 2:1
+      continue;
+    }
+
+    if (argument == "--video-seq-seg-info") {
+      options.video_seq_seg_info = true;
+      options.video_seq_seg_frozen = false;
+      continue;
+    }
+
+    if (argument == "--video-seq-seg-info-frozen") {
+      options.video_seq_seg_info = true;
+      options.video_seq_seg_frozen = true;
       continue;
     }
 
@@ -3315,6 +3407,89 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
     }
+    if (options.video_scc_force) {
+      // §5.4.7 forced form: only meaningful on the screen-content carriers.
+      // The per-tool gates above cover the tile count, frame-type chain,
+      // format and CDF surface; here we only require a carrier and CPU.
+      if (!(options.video_palette || options.video_ibc ||
+            options.video_morph)) {
+        error = "--video-scc-force needs one of --video-palette/--video-ibc/"
+                "--video-morph: the forced sequence form only changes how "
+                "those tools are signalled";
+        return ParseStatus::kError;
+      }
+      if (options.video_gpu) {
+        error = "--video-scc-force is CPU-only: the CUDA M2 backend has no "
+                "screen-content mode-info path";
+        return ParseStatus::kError;
+      }
+    }
+    if (options.video_force_integer_mv) {
+      if (!options.video_scc_force) {
+        error = "--video-force-integer-mv needs --video-scc-force";
+        return ParseStatus::kError;
+      }
+      // force_integer_mv pins FrameMvPrecision to one pel, so a frame
+      // precision flag or a per-block precision tool would be silently
+      // ignored (or desynchronise the MVD units).
+      if (options.video_mv_precision != 0) {
+        error = "--video-force-integer-mv pins FrameMvPrecision to one pel; "
+                "drop --video-mv-precision";
+        return ParseStatus::kError;
+      }
+      if (options.video_flex_mvres || options.video_adaptive_mvd ||
+          options.video_mvd_sign_derive) {
+        error = "--video-force-integer-mv is not wired with "
+                "--video-flex-mvres/--video-adaptive-mvd/"
+                "--video-mvd-sign-derive (pb_mv_precision and the AMVD/sign "
+                "units assume a signalled frame precision)";
+        return ParseStatus::kError;
+      }
+      if (options.video_gme || options.video_warp) {
+        error = "--video-force-integer-mv is not wired with "
+                "--video-gme/--video-warp (the projected global MVs are not "
+                "quantised to the one-pel frame grid)";
+        return ParseStatus::kError;
+      }
+    }
+    if (options.video_reduce_pb_aspect) {
+      // §5.4.3: the tiled writer has its own minimal sequence header that does
+      // not carry the partition config; keep the tiled path byte-identical.
+      if (options.tiles != "1x1") {
+        error = "--video-reduce-pb-aspect is gated on a single tile (the "
+                "tiled sequence-header copy does not carry the partition "
+                "config)";
+        return ParseStatus::kError;
+      }
+      if (options.b_frames != 0 || options.video_tlayers != 0 ||
+          options.video_tip || options.video_long_term || options.video_olk ||
+          options.video_leading != 0 || options.video_sef ||
+          options.video_switch || options.video_ras) {
+        error = "--video-reduce-pb-aspect is gated on the plain key+P chain: "
+                "the B/TIP/frame-type wrappers build their own sequence header "
+                "and partition plan";
+        return ParseStatus::kError;
+      }
+    }
+    if (options.video_seq_seg_info) {
+      if (!options.video_segmentation && !options.video_per_segment_q) {
+        error = "--video-seq-seg-info needs --video-segmentation or "
+                "--video-per-segment-q";
+        return ParseStatus::kError;
+      }
+      if (options.tiles != "1x1") {
+        error = "--video-seq-seg-info is gated on a single tile (the tiled "
+                "sequence-header copy does not carry the segment table)";
+        return ParseStatus::kError;
+      }
+      if (options.video_seq_seg_frozen &&
+          (options.video_seg_skip || options.video_seg_globalmv)) {
+        error = "--video-seq-seg-info-frozen is not wired with "
+                "--video-seg-skip/--video-seg-globalmv: those features make "
+                "the P-frame table differ from the frozen sequence table";
+        return ParseStatus::kError;
+      }
+    }
     if (options.video_bru) {
       // §7.12.2/§7.22 BRU needs enable_bru/use_bru and the BRU tile mode.
       // The component writer builds a valid stream, but the pinned decoder
@@ -4000,8 +4175,13 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         error = "--video-lossless is Q=0; drop --qp or pass --qp 0";
         return ParseStatus::kError;
       }
-      if ((options.bit_depth != 8) || (options.chroma != "420")) {
-        error = "--video-lossless is wired for 8-bit 4:2:0";
+      if (options.bit_depth != 8 && options.bit_depth != 10) {
+        error = "--video-lossless supports 8-bit and 10-bit (12-bit is not "
+                "signalable in AV2 v1.0.0)";
+        return ParseStatus::kError;
+      }
+      if (options.chroma == "400") {
+        error = "--video-lossless does not code 4:0:0 yet";
         return ParseStatus::kError;
       }
       if (flag_given(options, "--video-min-block")) {
@@ -4051,7 +4231,6 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
           {options.video_subpel_eighth, "--video-subpel-eighth"},
           {options.video_refs != 1, "--video-refs"},
           {options.b_frames != 0, "--b-frames"},
-          {options.video_tlayers != 0, "--video-tlayers"},
           {options.video_long_term, "--video-long-term"},
           {options.video_olk, "--video-olk"},
           {options.video_leading != 0, "--video-leading"},
@@ -4247,6 +4426,10 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "--video-compound";
       return ParseStatus::kError;
     }
+    if (options.video_gops != 1 && options.b_frames == 0) {
+      error = "--video-gops only applies to the --b-frames schedule";
+      return ParseStatus::kError;
+    }
     if (options.b_frames != 0) {
       if (options.video_tlayers != 0 || frame_modes != 0) {
         error = "--b-frames cannot be combined with the temporal-layer or "
@@ -4256,10 +4439,6 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       if (options.video_refs != 1) {
         error = "--b-frames owns the per-frame reference list; keep "
                 "--video-refs 1";
-        return ParseStatus::kError;
-      }
-      if (options.rc_mode != "cqp") {
-        error = "--b-frames does not compose with --rc crf/vbr";
         return ParseStatus::kError;
       }
       if (options.video_drl_reorder) {
@@ -4279,10 +4458,6 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       if (options.video_refs != 1 || options.video_mv_precision != 0) {
         error = "--video-tlayers needs --video-refs 1 and eighth-pel MV "
                 "precision";
-        return ParseStatus::kError;
-      }
-      if (options.rc_mode != "cqp") {
-        error = "--video-tlayers does not compose with --rc crf/vbr";
         return ParseStatus::kError;
       }
       if (options.video_tlayer_drop > 3) {
@@ -4670,12 +4845,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "not gated";
       return ParseStatus::kError;
     }
-    if (options.rc_given || options.rc_crf_given ||
-        options.rc_bitrate_given) {
-      error = "--svc-layers has one fixed quantizer per layer; --rc/--crf/"
-              "--bitrate are not wired into the SVC path yet";
-      return ParseStatus::kError;
-    }
+
     const int selections = (options.svc_oppoint >= 0 ? 1 : 0) +
                            (options.svc_all_layers ? 1 : 0) +
                            (options.svc_spatial_layers >= 1 ? 1 : 0);
@@ -4983,6 +5153,86 @@ double scaled_bitrate_estimate(void* context,
          model->scale;
 }
 
+// Encoder coding order for the reordering schedules.  The rate-control loop
+// must walk the pictures in the order they are actually coded: the B and
+// hierarchical-P schedules emit units in coding order, and the complexity
+// proxy for a picture is the source of its primary reference, not the
+// previous display frame.  `primary_ref[display]` is -1 for an intra key.
+struct VideoCodingSchedule {
+  std::vector<int> order;        // display indices in coding order
+  std::vector<int> primary_ref;  // primary reference display, -1 for intra
+};
+
+bool video_coding_schedule(const Options& options, int frame_count,
+                           VideoCodingSchedule& out, std::string& error) {
+  out = VideoCodingSchedule{};
+  if (options.b_frames != 0) {
+    namespace bf = av2enc::inter::bframes;
+    const int gop_size = static_cast<int>(options.b_frames) + 2;
+    const int num_gops = std::max(1, options.video_gops);
+    bf::SequenceConfig sc;
+    sc.num_gops = num_gops;
+    sc.gop_size = gop_size;
+    sc.pattern = bf::GopPattern::kIpbb;
+    int order_hint_bits = 4;
+    while ((1 << order_hint_bits) < frame_count) ++order_hint_bits;
+    sc.order_hint_bits = order_hint_bits;
+    sc.num_slots = 16;
+    sc.base_q_idx = static_cast<int>(options.qp);
+    bf::Plan plan;
+    bf::PlanError plan_error = bf::PlanError::kOk;
+    if (!bf::build_sequence(sc, plan, &plan_error)) {
+      error = std::string("B-frame rate-control schedule: ") +
+              bf::plan_error_name(plan_error);
+      return false;
+    }
+    out.order = plan.coding_order;
+    out.primary_ref.assign(static_cast<std::size_t>(plan.display_count()), -1);
+    for (const bf::FramePlan& fp : plan.frames) {
+      if (!fp.is_key) {
+        out.primary_ref[static_cast<std::size_t>(fp.display_index)] =
+            fp.ref_display[0];
+      }
+    }
+    return true;
+  }
+  // --svc-temporal N is the same hierarchical-P closed GOP with 1 << N
+  // pictures (the SVC writer expands it into temporal units).
+  const bool svc_temporal =
+      options.svc_given && options.svc_temporal > 1;
+  if (options.video_tlayers > 0 || svc_temporal) {
+    namespace tl = av2enc::inter::tlayers;
+    const int gop = svc_temporal ? (1 << options.svc_temporal)
+                                 : options.video_tlayers;
+    tl::PlanConfig pc;
+    pc.gop_size = gop;
+    pc.schedule = tl::Schedule::kHierarchicalP;
+    pc.ref_mode = tl::RefMode::kTwo;
+    pc.dependency = tl::DependencyMode::kAllLower;
+    pc.explicit_dependency_map = false;
+    pc.order_hint_bits = gop >= 16 ? 5 : 4;
+    pc.num_slots = gop;
+    pc.base_q_idx = static_cast<std::uint8_t>(options.qp);
+    tl::Plan plan;
+    tl::PlanError plan_error = tl::PlanError::kOk;
+    if (!tl::build_plan(pc, plan, &plan_error)) {
+      error = std::string("temporal-layer rate-control schedule: ") +
+              tl::plan_error_name(plan_error);
+      return false;
+    }
+    out.order = plan.coding_order;
+    out.primary_ref.assign(static_cast<std::size_t>(plan.display_count()), -1);
+    for (const tl::PlannedFrame& pf : plan.frames) {
+      if (!pf.is_key) {
+        out.primary_ref[static_cast<std::size_t>(pf.display_index)] =
+            pf.ref_display[0];
+      }
+    }
+    return true;
+  }
+  return true;  // flat key+P: display order, previous display frame
+}
+
 // Per-frame base_q_idx planning for --video. Empty output means the historical
 // fixed --qp stream (the default). CRF and VBR go through the shared rate
 // controller and the per-frame RC adapter so the frame header and the coefficient-CDF
@@ -5008,15 +5258,40 @@ bool plan_video_rate_control(
   const std::vector<std::uint8_t> zero_plane(
       static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
 
+  // Reordering schedules: plan each picture in coding order using its actual
+  // primary reference as the motion-free inter proxy.  The flat key+P chain
+  // keeps the historical display-order/previous-frame model.
+  VideoCodingSchedule schedule;
+  if (!video_coding_schedule(options, static_cast<int>(inputs.size()),
+                             schedule, error)) {
+    return false;
+  }
+  if (schedule.order.empty()) {
+    schedule.order.resize(inputs.size());
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+      schedule.order[i] = static_cast<int>(i);
+    }
+  }
+  // `primary_ref` is only populated by video_coding_schedule for the
+  // reordering paths; an empty vector means the historical proxy.
+  const bool has_primary_ref = !schedule.primary_ref.empty();
+  if (has_primary_ref &&
+      schedule.primary_ref.size() != inputs.size()) {
+    error = "rate-control schedule does not cover every input picture";
+    return false;
+  }
+
   std::vector<av2enc::rc::FrameComplexity> complexity(inputs.size());
   for (std::size_t i = 0; i < inputs.size(); ++i) {
     std::span<const std::uint8_t> predicted(zero_plane);
-    if (i > 0) {
-      predicted = inputs[i - 1].y;  // previous source = motion-free inter proxy
+    int ref = i > 0 ? static_cast<int>(i) - 1 : -1;
+    if (has_primary_ref) ref = schedule.primary_ref[i];
+    if (ref >= 0 && ref < static_cast<int>(inputs.size())) {
+      predicted = inputs[static_cast<std::size_t>(ref)].y;
     }
     complexity[i] = av2enc::rc::complexity_from_u8_planes(
         inputs[i].y, predicted, width, height, width);
-    complexity[i].intra_fraction = i == 0 ? 1.0 : 0.0;
+    complexity[i].intra_fraction = ref < 0 ? 1.0 : 0.0;
   }
 
   av2enc::video::post::VideoRcConfig rc_config;
@@ -5033,13 +5308,18 @@ bool plan_video_rate_control(
     rc_config.rc.vbr.frame_rate_num = y4m.fps_num;
     rc_config.rc.vbr.frame_rate_den = y4m.fps_den;
     if (pass1_payload_bits != nullptr) {
-      // Calibrate against the pass-1 payload at the fixed --qp.
+      // Calibrate against the pass-1 payload at the fixed --qp.  The encoder
+      // emitted tile_bytes in coding order, so pair each payload with the
+      // complexity of the picture at that coding position.
       double measured = 0.0;
       double modelled = 0.0;
-      for (std::size_t i = 0; i < complexity.size(); ++i) {
-        measured += static_cast<double>((*pass1_payload_bits)[i]);
+      for (std::size_t c = 0; c < schedule.order.size(); ++c) {
+        const std::size_t display =
+            static_cast<std::size_t>(schedule.order[c]);
+        if (c >= pass1_payload_bits->size()) break;
+        measured += static_cast<double>((*pass1_payload_bits)[c]);
         modelled += av2enc::rc::estimate_frame_bits_model(
-            complexity[i], static_cast<int>(options.qp));
+            complexity[display], static_cast<int>(options.qp));
       }
       if (modelled > 0.0 && std::isfinite(measured)) {
         model_scale.scale =
@@ -5056,12 +5336,16 @@ bool plan_video_rate_control(
   }
 
   frame_qp->resize(inputs.size());
-  for (std::size_t i = 0; i < inputs.size(); ++i) {
+  // The virtual buffer walks the actual coding order.  frame_qp itself stays
+  // indexed by display order because that is how the encoder's per-frame plan
+  // looks up each picture's base_q_idx.
+  for (const int display_index : schedule.order) {
+    const std::size_t display = static_cast<std::size_t>(display_index);
     av2enc::video::post::VideoFrameQp qp;
-    if (!rc.begin_frame(complexity[i], qp, &error)) {
+    if (!rc.begin_frame(complexity[display], qp, &error)) {
       return false;
     }
-    (*frame_qp)[i] = static_cast<std::uint8_t>(qp.base_q_idx);
+    (*frame_qp)[display] = static_cast<std::uint8_t>(qp.base_q_idx);
     // Feed the controller's own (calibrated) estimate back into the virtual
     // buffer: the encoding pass is open-loop, so there is no later measurement.
     const std::int64_t actual_bits =
@@ -5274,13 +5558,17 @@ bool validate_video_sequence_length(const Options& options,
             std::to_string(frame_count);
     return false;
   }
-  if (options.b_frames != 0 &&
-      frame_count != static_cast<std::size_t>(options.b_frames) + 2U) {
-    error = "--b-frames codes one closed GOP: pass exactly " +
-            std::to_string(options.b_frames + 2U) +
-            " frames (N B frames + key + P anchor); got " +
-            std::to_string(frame_count);
-    return false;
+  if (options.b_frames != 0) {
+    const std::size_t per_gop = static_cast<std::size_t>(options.b_frames) + 2U;
+    const std::size_t gops = static_cast<std::size_t>(std::max(1, options.video_gops));
+    if (frame_count != per_gop * gops) {
+      error = "--b-frames --video-gops " + std::to_string(gops) +
+              " codes " + std::to_string(gops) + " closed GOP(s): pass exactly " +
+              std::to_string(per_gop * gops) +
+              " frames (N B frames + key + P anchor per GOP); got " +
+              std::to_string(frame_count);
+      return false;
+    }
   }
   if (options.video_long_term && frame_count > 16U) {
     error = "--video-long-term supports at most 16 input frames "
@@ -5509,6 +5797,7 @@ int run_video_format_encode(const Options& options) {
   video_options.loop_filters.pc_wiener = options.video_pc_wiener;
   video_options.loop_filters.chroma_lr = options.video_chroma_lr;
   video_options.loop_filters.gdf = options.video_gdf;
+  video_options.film_grain = options.video_grain;
 
   if (options.video_gpu &&
       (video_options.enable_deblock || video_options.loop_filters.any())) {
@@ -5610,13 +5899,16 @@ int run_video_lossless_encode(const Options& options,
     picture.width = static_cast<int>(frame.width);
     picture.height = static_cast<int>(frame.height);
     picture.format = av2enc::lossless::inter::ChromaFormat::k420;
-    picture.y = frame.y;
-    picture.u = frame.u;
-    picture.v = frame.v;
+    picture.bit_depth = 8;
+    picture.y.assign(frame.y.begin(), frame.y.end());
+    picture.u.assign(frame.u.begin(), frame.u.end());
+    picture.v.assign(frame.v.begin(), frame.v.end());
     pictures.push_back(std::move(picture));
   }
 
   av2enc::lossless::inter::Options lossless;
+  lossless.bit_depth = 8;
+  lossless.temporal_layers = options.video_tlayers;
   lossless.adaptive_cdf = options.adaptive_cdf;
   lossless.enable_fsc = true;
   lossless.enable_dpcm = true;
@@ -5653,9 +5945,9 @@ int run_video_lossless_encode(const Options& options,
       av2enc::video::VideoReconFrame frame;
       frame.width = static_cast<std::uint32_t>(picture.width);
       frame.height = static_cast<std::uint32_t>(picture.height);
-      frame.y = picture.y;
-      frame.u = picture.u;
-      frame.v = picture.v;
+      frame.y.assign(picture.y.begin(), picture.y.end());
+      frame.u.assign(picture.u.begin(), picture.u.end());
+      frame.v.assign(picture.v.begin(), picture.v.end());
       recon.push_back(std::move(frame));
     }
     if (!write_video_recon_y4m(options.video_recon, y4m, recon, error)) {
@@ -5684,6 +5976,211 @@ int run_video_lossless_encode(const Options& options,
             << encoded.recon.size() << " output frame(s), base_q_idx 0, "
             << writer.bytes_written() << " IVF bytes, inter blocks "
             << inter_blocks << ", intra blocks " << intra_blocks << "\n";
+  return 0;
+}
+
+// --video-lossless on the format video cores: 10-bit and 8-bit
+// 4:2:2/4:4:4/4:0:0.  The lossless writer is depth/chroma generic; the CLI
+// only converts the fmt::Picture planes into its uint16_t pictures.
+// Entry point for --video-lossless on a non-4:2:0 or 10-bit input.  It reads
+// the input with the format Y4M reader (the 8-bit 4:2:0 path uses the plain
+// reader) and hands the pictures to the shared lossless writer.
+int run_video_lossless_format_encode(
+    const Options& options, const av2enc::fmt::Format& format,
+    const av2enc::fmt::Y4mFormatInfo& info,
+    const std::vector<av2enc::fmt::Picture>& pictures);
+
+int run_video_lossless_any(const Options& options) {
+  av2enc::fmt::Format format;
+  format.chroma = options.chroma == "422"   ? av2enc::fmt::ChromaFormat::k422
+                  : options.chroma == "444" ? av2enc::fmt::ChromaFormat::k444
+                  : options.chroma == "400" ? av2enc::fmt::ChromaFormat::k400
+                                            : av2enc::fmt::ChromaFormat::k420;
+  format.depth = options.bit_depth == 10 ? av2enc::fmt::BitDepth::k10
+                                         : av2enc::fmt::BitDepth::k8;
+
+  std::size_t limit = 0;
+  if (options.max_frames != 0) {
+    limit = static_cast<std::size_t>(options.max_frames);
+  } else if (options.p_frames != 0) {
+    limit = static_cast<std::size_t>(options.p_frames) + 1U;
+  }
+  std::vector<av2enc::fmt::Picture> pictures;
+  av2enc::fmt::Y4mFormatInfo info;
+  std::string error;
+  if (!av2enc::fmt::read_y4m_sequence(options.input, &pictures, &info, limit,
+                                      &error)) {
+    std::cerr << "av2enc: error: " << error << "\n";
+    return 1;
+  }
+  if (info.chroma != format.chroma || info.depth != format.depth) {
+    std::cerr << "av2enc: error: --bit-depth/--chroma request "
+              << av2enc::fmt::bit_depth_name(format.depth) << " "
+              << av2enc::fmt::chroma_format_name(format.chroma)
+              << " does not match the input coloursapce "
+              << av2enc::fmt::chroma_format_name(info.chroma) << " "
+              << av2enc::fmt::bit_depth_name(info.depth)
+              << "; the format paths never convert implicitly\n";
+    return 2;
+  }
+  format.width = info.width;
+  format.height = info.height;
+  if (format.width % 8U != 0U || format.height % 8U != 0U) {
+    std::cerr << "av2enc: error: --video requires dimensions divisible by 8, "
+              << "got " << format.width << "x" << format.height << "\n";
+    return 2;
+  }
+  if (!av2enc::fmt::is_signalable(format)) {
+    std::cerr << "av2enc: error: the requested format is not signalable in "
+                 "AV2 v1.0.0\n";
+    return 2;
+  }
+  if (!validate_video_sequence_length(options, pictures.size(), error)) {
+    std::cerr << "av2enc: error: " << error << "\n";
+    return 2;
+  }
+  return run_video_lossless_format_encode(options, format, info, pictures);
+}
+
+int run_video_lossless_format_encode(
+    const Options& options, const av2enc::fmt::Format& format,
+    const av2enc::fmt::Y4mFormatInfo& info,
+    const std::vector<av2enc::fmt::Picture>& pictures) {
+  std::string error;
+  const int sub_x = av2enc::fmt::subsampling_x(format.chroma);
+  const int sub_y = av2enc::fmt::subsampling_y(format.chroma);
+  const bool has_chroma = av2enc::fmt::has_chroma(format.chroma);
+  const std::uint32_t cw = format.width >> sub_x;
+  const std::uint32_t ch = format.height >> sub_y;
+
+  av2enc::lossless::inter::ChromaFormat chroma =
+      av2enc::lossless::inter::ChromaFormat::k420;
+  if (format.chroma == av2enc::fmt::ChromaFormat::k422) {
+    chroma = av2enc::lossless::inter::ChromaFormat::k422;
+  } else if (format.chroma == av2enc::fmt::ChromaFormat::k444) {
+    chroma = av2enc::lossless::inter::ChromaFormat::k444;
+  } else if (format.chroma == av2enc::fmt::ChromaFormat::k400) {
+    std::cerr << "av2enc: error: --video-lossless does not code 4:0:0 yet\n";
+    return 2;
+  }
+  if (!has_chroma) {
+    std::cerr << "av2enc: error: --video-lossless does not code 4:0:0 yet\n";
+    return 2;
+  }
+
+  std::vector<av2enc::lossless::inter::Picture> lossless_pictures;
+  lossless_pictures.reserve(pictures.size());
+  for (const av2enc::fmt::Picture& picture : pictures) {
+    av2enc::lossless::inter::Picture out;
+    out.width = static_cast<int>(format.width);
+    out.height = static_cast<int>(format.height);
+    out.format = chroma;
+    out.bit_depth = format.depth == av2enc::fmt::BitDepth::k10 ? 10 : 8;
+    out.y.assign(static_cast<std::size_t>(format.width) * format.height, 0);
+    for (std::uint32_t r = 0; r < format.height; ++r) {
+      std::memcpy(out.y.data() + static_cast<std::size_t>(r) * format.width,
+                  picture.planes[0].samples.data() +
+                      static_cast<std::size_t>(r) * picture.planes[0].stride,
+                  static_cast<std::size_t>(format.width) *
+                      sizeof(std::uint16_t));
+    }
+    out.u.assign(static_cast<std::size_t>(cw) * ch, 0);
+    out.v.assign(static_cast<std::size_t>(cw) * ch, 0);
+    for (std::uint32_t r = 0; r < ch; ++r) {
+      std::memcpy(out.u.data() + static_cast<std::size_t>(r) * cw,
+                  picture.planes[1].samples.data() +
+                      static_cast<std::size_t>(r) * picture.planes[1].stride,
+                  static_cast<std::size_t>(cw) * sizeof(std::uint16_t));
+      std::memcpy(out.v.data() + static_cast<std::size_t>(r) * cw,
+                  picture.planes[2].samples.data() +
+                      static_cast<std::size_t>(r) * picture.planes[2].stride,
+                  static_cast<std::size_t>(cw) * sizeof(std::uint16_t));
+    }
+    lossless_pictures.push_back(std::move(out));
+  }
+
+  av2enc::lossless::inter::Options lossless;
+  lossless.bit_depth = format.depth == av2enc::fmt::BitDepth::k10 ? 10 : 8;
+  lossless.temporal_layers = options.video_tlayers;
+  lossless.adaptive_cdf = options.adaptive_cdf;
+  lossless.enable_fsc = true;
+  lossless.enable_dpcm = true;
+  lossless.force_intra_fsc = options.lossless_force_fsc;
+  lossless.intra_period = options.video_lossless_intra_period;
+  lossless.block_size =
+      flag_given(options, "--video-min-block") ? options.video_min_block : 8;
+  av2enc::lossless::inter::EncodeResult encoded;
+  if (!av2enc::lossless::inter::encode_video(lossless_pictures, lossless,
+                                             &encoded, &error)) {
+    std::cerr << "av2enc: error: --video-lossless: " << error << "\n";
+    return 1;
+  }
+  if (!encoded.exact) {
+    std::cerr << "av2enc: error: --video-lossless reconstruction is not exact "
+                 "(max |err| "
+              << encoded.max_abs_recon_error << ")\n";
+    return 1;
+  }
+
+  av2enc::IvfHeader ivf;
+  ivf.width = static_cast<std::uint16_t>(format.width);
+  ivf.height = static_cast<std::uint16_t>(format.height);
+  ivf.fps_num = info.fps_num;
+  ivf.fps_den = info.fps_den;
+  av2enc::IvfWriter writer;
+  if (!writer.open(options.output, ivf, error)) {
+    std::cerr << "av2enc: error: " << error << "\n";
+    return 1;
+  }
+  for (std::size_t i = 0; i < encoded.units.size(); ++i) {
+    if (!writer.write_frame(encoded.units[i], static_cast<std::uint64_t>(i),
+                            error)) {
+      std::cerr << "av2enc: error: " << error << "\n";
+      return 1;
+    }
+  }
+  if (!options.video_recon.empty()) {
+    std::vector<av2enc::video::VideoReconFrame> recon;
+    recon.reserve(encoded.recon.size());
+    for (const av2enc::lossless::inter::Picture& picture : encoded.recon) {
+      av2enc::video::VideoReconFrame frame;
+      frame.width = static_cast<std::uint32_t>(picture.width);
+      frame.height = static_cast<std::uint32_t>(picture.height);
+      frame.format = format;
+      frame.y16 = picture.y;
+      frame.u16 = picture.u;
+      frame.v16 = picture.v;
+      recon.push_back(std::move(frame));
+    }
+    if (!write_video_recon_y4m_format(options.video_recon, format,
+                                      info.fps_num, info.fps_den, recon,
+                                      error)) {
+      std::cerr << "av2enc: error: " << error << "\n";
+      return 1;
+    }
+  }
+  if (!writer.close(error)) {
+    std::cerr << "av2enc: error: " << error << "\n";
+    return 1;
+  }
+
+  std::uint64_t inter_blocks = 0;
+  std::uint64_t intra_blocks = 0;
+  for (const av2enc::lossless::inter::FrameStats& stats : encoded.stats) {
+    inter_blocks += static_cast<std::uint64_t>(stats.inter_blocks);
+    intra_blocks += static_cast<std::uint64_t>(stats.intra_blocks);
+  }
+  std::cout << "av2enc: Video lossless encode complete\n"
+            << "  input:   " << options.input.string() << " ("
+            << format.width << "x" << format.height << ", "
+            << info.colorspace << ", " << info.fps_num << "/" << info.fps_den
+            << " fps)\n"
+            << "  output:  " << options.output.string() << " ("
+            << writer.bytes_written() << " bytes IVF)\n"
+            << "  frames:  " << encoded.units.size() << " temporal unit(s), "
+            << encoded.recon.size() << " output frame(s), base_q_idx 0, "
+            << "inter blocks " << inter_blocks << ", intra blocks "
+            << intra_blocks << "\n";
   return 0;
 }
 
@@ -5789,6 +6286,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_imp_msk_bld = options.video_imp_mask;
   video_options.enable_df_sub_pu = options.video_df_sub_pu;
   video_options.b_frames = static_cast<int>(options.b_frames);
+  video_options.video_gops = options.video_gops;
   video_options.enable_inter_residual = options.video_inter_residual;
   video_options.enable_sdp = options.video_sdp;
   video_options.enable_inter_ddt = options.video_ddt;
@@ -5832,6 +6330,13 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_morph = options.video_morph;
   video_options.enable_palette = options.video_palette;
   video_options.enable_ibc = options.video_ibc;
+  video_options.seq_force_screen_content_tools = options.video_scc_force;
+  video_options.seq_force_integer_mv = options.video_force_integer_mv;
+  video_options.reduce_pb_aspect_ratio = options.video_reduce_pb_aspect;
+  video_options.max_pb_aspect_ratio_log2_minus_1 =
+      options.video_pb_aspect_log2_minus_1;
+  video_options.seq_seg_info_present = options.video_seq_seg_info;
+  video_options.seq_allow_seg_info_change = !options.video_seq_seg_frozen;
   video_options.enable_interintra = options.video_compound_interintra;
   video_options.enable_ref_frame_mvs = options.video_ref_mvs;
   video_options.ref_mvs_stress = options.video_ref_mvs_stress;
@@ -6326,8 +6831,103 @@ int run_svc_encode(const Options& options, av2enc::Y4mReader& reader,
     inputs.push_back(input);
   }
 
+  // Per-frame rate control for the layered writer.  The plan is indexed by
+  // display order; svc_stream shifts it by the embedded-layer quality step so
+  // every mlayer keeps its own quality rung.  VBR reuses the same two-pass
+  // calibration + global-offset bisection as the flat --video path, measuring
+  // the summed tile payload of every emitted temporal unit.
+  std::vector<std::uint8_t> frame_qp;
+  std::vector<std::uint8_t> planned_qp;
+  int svc_vbr_iterations = 0;
+  double svc_vbr_target_kbps = 0.0;
+  if (options.rc_mode != "cqp") {
+    std::vector<std::uint32_t> pass1_payload_bits;
+    if (options.rc_mode == "vbr") {
+      av2enc::svc::SvcEncodeOptions stats_options = svc;
+      stats_options.video.base_q_idx = static_cast<std::uint8_t>(options.qp);
+      av2enc::svc::SvcStreamResult stats;
+      if (!av2enc::svc::encode_svc_sequence(inputs, stats_options, stats,
+                                            error)) {
+        std::cerr << "av2enc: error: --rc vbr statistics pass: " << error
+                  << "\n";
+        return 1;
+      }
+      pass1_payload_bits.reserve(stats.unit_payload_bytes.size());
+      for (const std::uint32_t bytes : stats.unit_payload_bytes) {
+        pass1_payload_bits.push_back(bytes * 8U);
+      }
+    }
+    if (!plan_video_rate_control(
+            options, y4m, inputs,
+            options.rc_mode == "vbr" ? &pass1_payload_bits : nullptr, &frame_qp,
+            error)) {
+      std::cerr << "av2enc: error: --rc " << options.rc_mode << ": " << error
+                << "\n";
+      return 1;
+    }
+    planned_qp = frame_qp;
+    svc.video.frame_base_q_idx = frame_qp;
+    svc.video.base_q_idx = frame_qp.front();
+  }
+
   av2enc::svc::SvcStreamResult result;
-  if (!av2enc::svc::encode_svc_sequence(inputs, svc, result, error)) {
+  if (options.rc_mode == "vbr") {
+    const double duration =
+        static_cast<double>(inputs.size()) *
+        static_cast<double>(y4m.fps_den) / static_cast<double>(y4m.fps_num);
+    svc_vbr_target_kbps = options.rc_bitrate_kbps;
+    const double target_bits = svc_vbr_target_kbps * 1000.0 * duration;
+    const auto apply_offset = [&](int offset) {
+      frame_qp.resize(planned_qp.size());
+      for (std::size_t i = 0; i < planned_qp.size(); ++i) {
+        frame_qp[i] = static_cast<std::uint8_t>(
+            std::clamp(static_cast<int>(planned_qp[i]) + offset, 1, 255));
+      }
+      svc.video.frame_base_q_idx = frame_qp;
+      svc.video.base_q_idx = frame_qp.front();
+    };
+    int low = -254;
+    int high = 254;
+    int offset = 0;
+    double best_error = std::numeric_limits<double>::infinity();
+    av2enc::svc::SvcStreamResult best_result;
+    std::vector<std::uint8_t> best_qp = planned_qp;
+    while (low <= high && svc_vbr_iterations < 12) {
+      ++svc_vbr_iterations;
+      apply_offset(offset);
+      av2enc::svc::SvcStreamResult candidate;
+      if (!av2enc::svc::encode_svc_sequence(inputs, svc, candidate, error)) {
+        std::cerr << "av2enc: error: --rc vbr pass " << svc_vbr_iterations
+                  << ": " << error << "\n";
+        return 1;
+      }
+      std::uint64_t measured = 0;
+      for (const std::uint32_t bytes : candidate.unit_payload_bytes) {
+        measured += static_cast<std::uint64_t>(bytes) * 8U;
+      }
+      const double error_ratio =
+          target_bits > 0.0
+              ? std::fabs(static_cast<double>(measured) - target_bits) /
+                    target_bits
+              : 0.0;
+      if (error_ratio < best_error) {
+        best_error = error_ratio;
+        best_result = candidate;
+        best_qp = frame_qp;
+      }
+      if (error_ratio <= 0.03) break;
+      if (static_cast<double>(measured) > target_bits) {
+        low = offset + 1;
+      } else {
+        high = offset - 1;
+      }
+      offset = low + (high - low) / 2;
+    }
+    result = std::move(best_result);
+    frame_qp = best_qp;
+    svc.video.frame_base_q_idx = frame_qp;
+    svc.video.base_q_idx = frame_qp.front();
+  } else if (!av2enc::svc::encode_svc_sequence(inputs, svc, result, error)) {
     std::cerr << "av2enc: error: --svc-layers: " << error << "\n";
     return 1;
   }
@@ -6408,6 +7008,34 @@ int run_svc_encode(const Options& options, av2enc::Y4mReader& reader,
             << result.selected_layers << " selected layer(s), "
             << result.selection_label << "\n"
             << "  payload: " << total_payload << " bytes\n";
+  if (!frame_qp.empty()) {
+    const double duration =
+        static_cast<double>(inputs.size()) *
+        static_cast<double>(y4m.fps_den) / static_cast<double>(y4m.fps_num);
+    const double kbps = duration > 0.0
+                            ? static_cast<double>(total_payload) * 8.0 /
+                                  duration / 1000.0
+                            : 0.0;
+    std::cout << "  rc:      " << options.rc_mode;
+    if (options.rc_mode == "crf") {
+      std::cout << " " << options.rc_crf << ", achieved " << kbps
+                << " kbps (payload)\n";
+    } else if (options.rc_mode == "vbr") {
+      const double error_pct =
+          svc_vbr_target_kbps > 0.0
+              ? (kbps - svc_vbr_target_kbps) / svc_vbr_target_kbps * 100.0
+              : 0.0;
+      std::cout << " target " << svc_vbr_target_kbps << " kbps (closed-loop "
+                << svc_vbr_iterations << " pass(es)), achieved " << kbps
+                << " kbps (" << (error_pct >= 0.0 ? "+" : "") << error_pct
+                << "% error, payload)\n";
+    }
+    std::cout << "  frame QP:";
+    for (const std::uint8_t qp : frame_qp) {
+      std::cout << " " << static_cast<int>(qp);
+    }
+    std::cout << "\n";
+  }
   return 0;
 }
 
@@ -6774,13 +7402,11 @@ int main(int argc, char** argv) {
   const bool format_10bit = options.bit_depth == 10;
   const bool format_chroma = options.chroma != "420";
   if ((format_10bit || format_chroma) && options.video) {
+    if (options.video_lossless) {
+      return run_video_lossless_any(options);
+    }
     if (options.video_user_qm) {
       std::cerr << "av2enc: error: --video-user-qm is wired for the 8-bit "
-                   "4:2:0 video core only\n";
-      return 2;
-    }
-    if (options.video_grain) {
-      std::cerr << "av2enc: error: --video-grain is wired for the 8-bit "
                    "4:2:0 video core only\n";
       return 2;
     }

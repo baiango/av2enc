@@ -156,9 +156,12 @@ struct Picture {
   int width = 0;
   int height = 0;
   ChromaFormat format = ChromaFormat::k420;
-  std::vector<std::uint8_t> y;
-  std::vector<std::uint8_t> u;
-  std::vector<std::uint8_t> v;
+  // Samples are LSB-aligned at `bit_depth` (8, 10 or 12) and stored as
+  // uint16_t so one reader/writer serves every depth.
+  int bit_depth = 8;
+  std::vector<std::uint16_t> y;
+  std::vector<std::uint16_t> u;
+  std::vector<std::uint16_t> v;
 };
 
 struct Options {
@@ -191,6 +194,15 @@ struct Options {
   bool force_intra_fsc = false;
   // Verify every reconstructed sample before returning success.
   bool verify_exact = true;
+  // Sample depth of the pictures and the signalled bit_depth_idc
+  // (8 = bit_depth_idc 1, 10 = bit_depth_idc 0).  The lossless reconstruction
+  // clips to [0, (1 << bit_depth) - 1].
+  int bit_depth = 8;
+  // Hierarchical-P temporal-layer GOP size (4/8/16).  0 keeps the historical
+  // flat key+P chain.  The schedule is the one --video-tlayers uses: the
+  // tlayers plan's coding order, one single reference per frame, implicit
+  // output pictures and per-OBU obu_tlayer_id.
+  int temporal_layers = 0;
 };
 
 struct FrameStats {

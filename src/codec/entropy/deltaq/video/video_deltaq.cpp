@@ -37,6 +37,9 @@ av2enc::deltaq::FrameQpHeader frame_qp_header(const FrameQpPlan& plan) noexcept 
   out.enable_ext_seg = plan.enable_ext_seg;
   out.frame_type_switch = false;  // M2 never emits SWITCH_FRAME
   out.using_qmatrix = false;
+  out.seq_seg_info_present = plan.seq_seg_info_present;
+  out.seq_allow_seg_info_change = plan.seq_allow_seg_info_change;
+  out.reuse_seg_info = plan.reuse_seg_info;
   return out;
 }
 

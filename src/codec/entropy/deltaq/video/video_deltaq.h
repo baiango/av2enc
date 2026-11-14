@@ -42,6 +42,11 @@ struct FrameQpPlan {
   rc::DeltaQParams delta_q{};
   rc::SegmentationParams segmentation{};
   bool enable_ext_seg = false;
+  // §5.4.4 sequence segment table: when present, the frame reuses it (or, with
+  // allow_change, codes reuse_seg_info) instead of seg_info().
+  bool seq_seg_info_present = false;
+  bool seq_allow_seg_info_change = false;
+  bool reuse_seg_info = true;
   // DerivedPrimaryRefFrame == PRIMARY_REF_NONE.  This is NOT simply
   // `VideoFrameHeader.keyframe`: choose_primary_secondary_ref_frame() only
   // considers references whose frame type is INTER_FRAME.  M2's first P frame

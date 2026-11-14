@@ -68,12 +68,31 @@ enum class DependencyMode {
   kAllLower,
 };
 
+// Hierarchical-P reference mode.
+enum class RefMode {
+  // Historical carrier: every frame after the anchor references the previous
+  // coding-order frame.  §7.9 returns an empty motion field for these frames,
+  // so use_ref_frame_mvs is inert but decodable.
+  kSingle = 0,
+  // Two references per interior frame: the two nearest already-coded pictures
+  // whose temporal layer is <= this frame's layer (so the default
+  // TLayerDependencyMap[c][r] = (r <= c) admits every reference).  This
+  // populates §7.22 fields from two directions so §7.9 can project real
+  // candidates.  The first inter picture has only the key available and keeps
+  // one reference.
+  kTwo = 1,
+};
+
 struct PlanConfig {
   // Power of two. kHierarchicalP accepts 2..16; kHierarchicalB accepts 2..8
   // because max_tlayer_id is f(2) and a 16-frame B pyramid needs layer 4.
   int gop_size = 8;
   Schedule schedule = Schedule::kHierarchicalB;
   DependencyMode dependency = DependencyMode::kAllLower;
+  // Hierarchical-P reference count.  kTwo leaves the coding order and the
+  // layer assignment untouched and only widens the per-frame reference list,
+  // so the schedule/payload stays deterministic.
+  RefMode ref_mode = RefMode::kSingle;
   // Code the TLayerDependencyMap explicitly. The pinned dav2d nightly
   // (f9dafbc) parses a different, later dependency syntax, so the decoder gate
   // uses the spec's default map (flag = 0) with DependencyMode::kAllLower.

@@ -207,8 +207,8 @@ without changing the M2 syntax writer.
 | `decoder_model_info_present_flag` | 0 |
 | `use_256x256_superblock` / `use_128x128_superblock` | 0 / 0 |
 | `enable_sdp` / `enable_ext_partitions` | 0 / 0 |
-| `reduce_pb_aspect_ratio` | 0 |
-| `enable_ext_seg` / `seq_seg_info_present_flag` | 0 / 0; `enable_ext_seg` 1 with `--video-segments 9..16` |
+| `reduce_pb_aspect_ratio` | 0; 1 with `--video-reduce-pb-aspect`, then `max_pb_aspect_ratio_log2_minus_1` selects 4:1 (1, default) or 2:1 (0, `--video-pb-aspect-2`) |
+| `enable_ext_seg` / `seq_seg_info_present_flag` | 0 / 0; `enable_ext_seg` 1 with `--video-segments 9..16`; `seq_seg_info_present_flag` 1 with `--video-seq-seg-info` (then `seq_allow_seg_info_change` + the §5.4.9 table; `--video-seq-seg-info-frozen` codes `allow_change = 0`) |
 | `enable_dip` | 0 |
 | `enable_intra_edge_filter` | 1 |
 | `enable_mrls` | 0 |
@@ -236,7 +236,7 @@ without changing the M2 syntax writer.
 | `enable_mvd_sign_derive` / `enable_flex_mvres` | 0 |
 | `enable_global_motion` | 0 |
 | `enable_short_refresh_frame_flags` | 0; 1 only with `--video-short-refresh` |
-| `seq_choose_screen_content_tools` / `seq_force_screen_content_tools` | 0 / 0 |
+| `seq_choose_screen_content_tools` / `seq_force_screen_content_tools` | 0 / 0; the palette/IBC/morph carriers select the per-frame form (`seq_choose_screen_content_tools = 1`), `--video-scc-force` writes the forced form (`0 / 1`); `seq_choose_integer_mv` is SELECT unless `--video-force-integer-mv` writes `0 / 1` (`seq_force_integer_mv = 1`) |
 | `enable_fsc` / `enable_idtx_intra` | 0; `enable_idtx_intra` 1 only with `--video-idtx` |
 | `enable_mrls` | 0; 1 only with `--video-mrl` |
 | `enable_dip` | 0; 1 only with `--video-dip` |
@@ -617,8 +617,8 @@ av2enc clip.y4m --video --video-subpel-eighth --video-mv-precision quarter -o cl
 | `--video-user-qm` | off | §5.13 `OBU_QUANTIZATION_MATRIX` (type 22) before the key frame with an identity all-32 user matrix for level 0, plus `using_qmatrix = 1`; implies `--video-qm`; pinned dav2d rejects every QM OBU, so the gate is avmdec (`video_user_qm_gate.sh`) |
 | `--video-tcq` | off | §5.4.8/§5.20.7.27 trellis-coded quantisation: `enable_tcq = 1`, `choose_tcq_per_frame = 1`, a per-frame `allow_tcq` bit and luma TX_CLASS_2D trellis levels with the §7.14.4 extra `dqDenom` shift; composes with `--video-tx-search` and `--video-inter-residual`; `video_tcq_gate.sh` decodes at QP 60/90/120 with `dav2d --strict 1` and compares the recon exactly |
 | `--video-cctx` | off | §5.4.8/§7.14.6 cross-component transform: `enable_cctx = 1`, per-block `cctx_type` on plane 1 (after the U EOB) and the joint U/V dequant rotation; composes with `--video-tcq` and `--video-tx-search`; `video_cctx_gate.sh` decodes at QP 60/90/120 with `dav2d --strict 1` and compares the recon exactly |
-| `--video-grain` | off | §5.14/§5.18.10 film grain: sequence `film_grain_params_present = 1`, one model OBU (type 23) before each coded-frame OBU, per-frame `film_grain_config()`; CPU-only plain P chain; `video_grain_gate.sh` decodes with dav2d `--filmgrain 0` (recon exact) and `--filmgrain 1` (synthesis) |
-| `--video-lossless` | off | Q=0 lossless P frame sequence via `src/codec/entropy/lossless/inter/`: its own headers (`CodedLossless = 1`, `base_q_idx = 0`, `ONLY_4X4`), DPCM/reversible WHT/IDTX and FSC; `--video-lossless-intra-period N` forces one intra block per N; `--lossless-fsc` forces the FSC coefficient path; `video_lossless_gate.sh` pins 4/8-frame streams and compares dav2d recon exactly |
+| `--video-grain` | off | §5.14/§5.18.10 film grain: sequence `film_grain_params_present = 1`, at most one model OBU (type 23) per temporal unit immediately before the coded-frame OBU, per-frame `film_grain_config()`; CPU-only; composes with the flat P chain, `--tiles`, `--b-frames`, `--video-tlayers`, `--video-tip`, the format cores (10-bit / non-4:2:0) and the loop filters / `--avg-cdf --adaptive-cdf` chain; the SEF/SWITCH/RAS/OLK/leading/long-term wrappers stay rejected by name; `video_grain_gate.sh` decodes every composition at 640x360 and 64x64 with dav2d `--filmgrain 0` (recon exact) and `--filmgrain 1` (synthesis), 118 checks |
+| `--video-lossless` | off | Q=0 lossless sequence via `src/codec/entropy/lossless/inter/`: its own headers (`CodedLossless = 1`, `base_q_idx = 0`, `ONLY_4X4`), DPCM/reversible WHT/IDTX and FSC; `--video-lossless-intra-period N` forces one intra block per N; `--lossless-fsc` forces the FSC coefficient path; supports 8/10-bit 4:2:0/4:2:2/4:4:4 and the hierarchical-P schedule (`--video-tlayers 4/8/16`); `video_lossless_gate.sh` pins the plain 4/8-frame streams plus the format and temporal-layer cases and compares dav2d recon exactly |
 | `--video-max-depth D` / `--video-min-block N` / `--video-force-single` | 4 / 16 / off | partition controls; `N` is 4..64.  `N = 4` enables §5.20.3.1 sub-8 intra keyframe leaves with shared-chroma ownership (see "Sub-8 luma leaves"); P-frame leaves stay >= 8x8 |
 | `--video-recon FILE` | off | dump the encoder reconstruction Y4M (gate use) |
 | `--video-tlayers N` | off | one hierarchical-P GOP of N (4/8) frames with temporal layers |
@@ -1214,7 +1214,9 @@ src/pipeline/video/gate_video_morph_interintra.sh --bin build/av2enc
 frame with `allow_screen_content_tools && enable_bawp`. The product carrier is
 therefore the intra keyframe:
 
-* §5.4.7 `seq_choose_screen_content_tools = seq_choose_integer_mv = 1`;
+* §5.4.7 `seq_choose_screen_content_tools = seq_choose_integer_mv = 1`
+  (the alternative forced form is `--video-scc-force`; see the forced sequence
+  surface section);
 * the keyframe frame header sets `allow_screen_content_tools = 1`,
   `force_integer_mv = 1`, `allow_intrabc = 1`, `allow_global_intrabc = 1`,
   `allow_local_intrabc = 0`;
@@ -1367,6 +1369,59 @@ palette and the morph/IBC carrier compose.
 
 ```sh
 src/pipeline/video/gate_video_scc.sh --bin build-int/av2enc
+```
+
+---
+
+# Forced sequence surface: `--video-scc-force`, `--video-force-integer-mv`,
+# `--video-reduce-pb-aspect`, `--video-seq-seg-info`
+
+These four flags close the remaining §5.4 sequence-header combinations.  All are
+CPU-only, default off, and every default stream stays byte-identical.
+
+* `--video-scc-force` writes the §5.4.7 forced form
+  (`seq_choose_screen_content_tools = 0`, `seq_force_screen_content_tools = 1`)
+  instead of the per-frame SELECT form.  Every frame then infers
+  `allow_screen_content_tools = 1` and codes no allow bit; the keyframe still
+  codes `force_integer_mv = 1` while P frames code `force_integer_mv = 0`
+  (unless pinned below).  P frames therefore code the mandatory
+  `palette_mode_info()` (`has_palette_y = 0`) on eligible intra leaves, exactly
+  as the decoder derives it.  Requires one of `--video-palette`,
+  `--video-ibc`, `--video-morph`.
+* `--video-force-integer-mv` (requires `--video-scc-force`) writes
+  `seq_choose_integer_mv = 0` / `seq_force_integer_mv = 1`.  Every frame derives
+  `force_integer_mv = 1` and FrameMvPrecision = `MV_PRECISION_ONE_PEL`: the
+  inter header codes no `use_qtr_precision_mv`/`allow_high_precision_mv` pair,
+  §5.20.7.13 lowers the predictor, the motion search quantises MVs to the
+  integer grid and the MVD shell codes one-pel units.  Rejected by name with
+  `--video-mv-precision`, `--video-flex-mvres`, `--video-adaptive-mvd`,
+  `--video-mvd-sign-derive` and `--video-gme`/`--video-warp`.
+* `--video-reduce-pb-aspect` writes `reduce_pb_aspect_ratio = 1` plus
+  `max_pb_aspect_ratio_log2_minus_1 = 1` (4:1; `--video-pb-aspect-2` selects
+  2:1, i.e. the extra bit = 0).  The partition search and the tile writer run
+  with the derived `MaxPbAspectRatio` (2 or 4) so every coded leaf satisfies
+  §6.19.4.1 and `is_partition_allowed()` recomputes the same allowed set.
+  Gated on the plain key+P chain (the B/TIP/frame-type wrappers build their
+  own sequence header and partition plan) and rejected with `--tiles` (the
+  tiled header copy does not carry it).
+* `--video-seq-seg-info` writes §5.4.4 `seq_seg_info_present_flag = 1` with
+  `seq_allow_seg_info_change = 1` and the full §5.4.9 `seg_info(MaxSegments)`
+  table (the key-frame form).  Each frame codes `reuse_seg_info`; the P frames
+  that add a SKIP/GLOBALMV feature code their own table.  The frozen form
+  `--video-seq-seg-info-frozen` writes `allow_change = 0`, so every frame reuses
+  the table with no `reuse_seg_info` bit.  Composes with `enable_ext_seg`
+  (`--video-segments 9..16`).  Requires `--video-segmentation` or
+  `--video-per-segment-q`; rejected with `--tiles`.
+
+`src/pipeline/video/gate_video_seq_surface.sh` pins the IVF MD5s at 64x64 and
+640x360, runs `dav2d f9dafbc --strict 1 --threads 1`, checks the picture count
+and requires a sample-exact `--video-recon` match.  The force-integer case
+asserts at least one NEWMV block is chosen and every traced MVD component is a
+multiple of 8; the reduce-aspect cases assert the 4:1, 2:1 and default trees
+produce three distinct streams.
+
+```sh
+src/pipeline/video/gate_video_seq_surface.sh --bin build-int/av2enc
 ```
 
 ---
@@ -1554,8 +1609,19 @@ Wiring notes:
   coded-frame OBU; §5.18.10.1 codes `apply_grain`/`fgm_id`/`grain_seed` in the
   frame header.  Film grain is output-side synthesis, so `dav2d --filmgrain 0`
   must equal `--video-recon` (0 samples at 720p); `--filmgrain 1` decodes the
-  same picture count with different samples.  The tiled, B/temporal-layer, TIP
-  and random-access writers do not signal grain and are rejected by name.
+  same picture count with different samples.  The plain chain, `--tiles`,
+  `--b-frames`, `--video-tlayers`, `--video-tip`, the `--bit-depth/--chroma`
+  format cores, the §7.17-§7.20.5 loop filters and the `--avg-cdf
+  --adaptive-cdf` chain all carry the config and the model OBU (a TIP OBU
+  codes its config right after the TIP block; every other schedule uses the
+  normal `frame_header_info()` tail).  The filters and the CDF chain are
+  orthogonal to grain: the encoder reconstruction is never grain-filtered and
+  the model OBU is an independent unit OBU, so each filter plan and the §8.2.4
+  CDF image keep their bytes.  The B/temporal schedules plan on the source
+  picture in coding order, so the model is available to every unit.  The
+  SEF/SWITCH/RAS/OLK/leading/long-term components own their §5.18.2 writers and
+  code no `film_grain_params_present`/`film_grain_config()`, so those wrappers
+  stay rejected by name.
 * `--video-idtx` signals §5.4.8 `enable_idtx_intra` and codes the §5.20.5.5
   `fsc_mode = 0` symbol on every <= 32x32 luma coding block; the TX search then
   exposes the 2-D `IDTX` type (9).  Without the flag the search filters IDTX so
@@ -1604,6 +1670,12 @@ sample-exact; `gate_video_gpu.sh --cfl-only|--mhccp-only|--pcw-only|--qm-only`):
 | `--video-lossless --video-lossless-intra-period 4`, 4 frames | `59cf90c17e97639bfd9ed8d06670a964` |
 | `--video-lossless ... --lossless-fsc`, 4 frames | `31e50ec0d113cc02d1383664ff371124` |
 | `--video-lossless`, 8 frames, 720p | `19c4b81811692127c108fad1c6ec7f47` |
+| `--video-lossless --video-tlayers 4`, 4 frames, 720p | `f0a2ce304b609a2312822838ab4f7125` |
+| `--video-lossless --video-tlayers 8`, 8 frames, 720p | `1b02c94e0c0b044157e86e973261ac36` |
+| `--video-lossless`, 10-bit 4:2:0, 4 frames, 360p | `3b8293a818b771cdab190a53f5635813` |
+| `--video-lossless --video-tlayers 4`, 10-bit 4:2:0, 4 frames | `2cf0113f2a27957a86e836b0344e9335` |
+| `--video-lossless`, 10-bit 4:2:2/4:4:4, 4 frames, 360p | `b5835150471b2d3f163df693cc6e4061` / `37921674d1ef264eec9194af26cf38ce` |
+| `--video-lossless`, 8-bit 4:2:2/4:4:4, 4 frames, 360p | `34304fc9f5dd82347bf60dd548fd670e` / `ea09a31d9544d4eaf476a6c1461b0df1` |
 | `--video-tx-search`, 4 frames, 720p | `be155c435a6c4d591bb5b7ab7d084c7e` |
 | `--video-tx-search --video-idtx`, 4 frames | `13c96481b49d6150d7cb9fa4240f5c69` |
 | `--video-tx-search --video-idtx`, 8 frames | `c4e7ceab9bf98e672c992b30b93aa871` |

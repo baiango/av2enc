@@ -29,12 +29,20 @@
 
 namespace av2enc::filters::grain {
 
-// Planar 8-bit input.  `u`/`v` may be null when only luma is analysed (the
-// estimator then still produces a luma-only model).
+// Planar input.  For `bit_depth == 8` the `y`/`u`/`v` pointers are used;
+// for 10/12-bit the `*_16` pointers are.  The estimator normalises a high
+// bit-depth sample to the 8-bit domain (`sample >> (bit_depth - 8)`) so the
+// scaling curve and AR fit stay in the same numeric range; the model itself is
+// bit-depth independent, exactly like §5.18.10.2.  `u`/`v` may be null when
+// only luma is analysed (the estimator then still produces a luma-only model).
 struct GrainFrameView {
   const std::uint8_t* y = nullptr;
   const std::uint8_t* u = nullptr;
   const std::uint8_t* v = nullptr;
+  const std::uint16_t* y16 = nullptr;
+  const std::uint16_t* u16 = nullptr;
+  const std::uint16_t* v16 = nullptr;
+  int bit_depth = 8;  // 8, 10 or 12
   int width = 0;
   int height = 0;
   int y_stride = 0;

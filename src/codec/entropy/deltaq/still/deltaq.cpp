@@ -304,6 +304,24 @@ int max_segments(bool enable_ext_seg) noexcept {
   return enable_ext_seg ? kMaxSegmentsSpec : kMaxSegmentsBase;
 }
 
+// §5.4.9 seg_info() shared by sequence_segment_config() and
+// segmentation_params().
+bool validate_segment_table(const rc::SegmentationParams& params,
+                            int num_segments, std::string* error) {
+  return validate_seg_info(params, num_segments, error);
+}
+
+void write_segment_table(BitWriter& writer,
+                         const rc::SegmentationParams& params,
+                         int num_segments) {
+  write_seg_info(writer, params, num_segments);
+}
+
+bool read_segment_table(BitReader& reader, int num_segments,
+                        rc::SegmentationParams& params, std::string* error) {
+  return read_seg_info(reader, num_segments, params, error);
+}
+
 int coeff_cdf_qctx(int base_q_idx) noexcept {
   // §6.17.2: raw base_q_idx, never an effective/segment/delta qindex.
   const int q = clip3(0, 255, base_q_idx);
@@ -388,9 +406,24 @@ std::size_t write_segmentation_params(BitWriter& writer,
   writer.put_bit(params.enabled);
   if (!params.enabled) return writer.bit_size() - start;
 
-  // cur_mfh_id == 0 and seq_seg_info_present_flag == 0, so haveSegParams = 0,
-  // allowChange = 0, reuse_seg_info = 0: seg_info(MaxSegments) is present.
-  write_seg_info(writer, params, num_segments);
+  // §5.18.7.1: the frame reuses the §5.4.4 sequence table unless the sequence
+  // allows a change and the frame asks for one.  With seq_seg_info_present = 0
+  // the frame always codes seg_info(MaxSegments).
+  bool reuse = header.seq_seg_info_present;
+  if (header.seq_seg_info_present) {
+    if (header.seq_allow_seg_info_change) {
+      reuse = header.reuse_seg_info;
+      writer.put_bit(reuse);  // reuse_seg_info
+    } else if (!header.reuse_seg_info) {
+      set_error(error,
+                "segmentation: seq_allow_seg_info_change = 0 forbids a frame "
+                "seg_info()");
+      return 0;
+    }
+  }
+  if (!reuse) {
+    write_seg_info(writer, params, num_segments);
+  }
 
   if (header.primary_ref_is_none) {
     // segmentation_update_map = 1; segmentation_temporal_update = 0 (no bits).

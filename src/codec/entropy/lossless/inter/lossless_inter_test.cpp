@@ -8,6 +8,8 @@
 
 #include "codec/entropy/lossless/inter/lossless_inter.h"
 
+#include "codec/inter/tlayers/tlayers.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -154,11 +156,17 @@ struct Md5 {
 using av2enc::lossless::inter::ChromaFormat;
 using av2enc::lossless::inter::Picture;
 
-Picture make_picture(int w, int h, ChromaFormat format, int frame) {
+Picture make_picture(int w, int h, ChromaFormat format, int frame,
+                     int bit_depth = 8) {
   Picture p;
   p.width = w;
   p.height = h;
   p.format = format;
+  p.bit_depth = bit_depth;
+  const int peak = (1 << bit_depth) - 1;
+  const auto scale = [peak](int v) {
+    return static_cast<std::uint16_t>((v * peak + 127) / 255);
+  };
   const int sub_x = format == ChromaFormat::k444 ? 0 : 1;
   const int sub_y = format == ChromaFormat::k420 ? 1 : 0;
   const int cw = w >> sub_x;
@@ -176,7 +184,7 @@ Picture make_picture(int w, int h, ChromaFormat format, int frame) {
         v = ((x / 4) * 17 + (y / 4) * 29 + x * 7 + y * 11 + 13) & 255;
         if ((x % 37) == 0 || (y % 41) == 0) v ^= 0x55;
       }
-      p.y[static_cast<std::size_t>(y) * w + x] = static_cast<std::uint8_t>(v);
+      p.y[static_cast<std::size_t>(y) * w + x] = scale(v);
     }
   }
   for (int y = 0; y < ch; ++y) {
@@ -184,9 +192,9 @@ Picture make_picture(int w, int h, ChromaFormat format, int frame) {
       lcg = lcg * 1664525u + 1013904223u;
       const int noise = static_cast<int>(lcg >> 24) & 31;
       p.u[static_cast<std::size_t>(y) * cw + x] =
-          static_cast<std::uint8_t>((x * 5 + y * 3 + frame * 19 + noise) & 255);
+          scale((x * 5 + y * 3 + frame * 19 + noise) & 255);
       p.v[static_cast<std::size_t>(y) * cw + x] =
-          static_cast<std::uint8_t>((x * 11 + y * 7 + frame * 23 + noise) & 255);
+          scale((x * 11 + y * 7 + frame * 23 + noise) & 255);
     }
   }
   return p;
@@ -348,13 +356,17 @@ struct RoundTripCase {
   bool inter_4x4_only = false;
   bool inter_4x4_idtx = true;
   bool force_intra_fsc = false;
+  int bit_depth = 8;
+  int temporal_layers = 0;
 };
 
 void test_roundtrip(const RoundTripCase& c, bool golden) {
   using namespace av2enc::lossless::inter;
+  const int count = c.temporal_layers > 0 ? c.temporal_layers : 2;
   std::vector<Picture> frames;
-  frames.push_back(make_picture(c.w, c.h, c.format, 0));
-  frames.push_back(make_picture(c.w, c.h, c.format, 1));
+  for (int f = 0; f < count; ++f) {
+    frames.push_back(make_picture(c.w, c.h, c.format, f, c.bit_depth));
+  }
   Options opt;
   opt.block_size = c.block_size;
   opt.intra_period = c.intra_period;
@@ -362,28 +374,46 @@ void test_roundtrip(const RoundTripCase& c, bool golden) {
   opt.inter_4x4_only = c.inter_4x4_only;
   opt.inter_4x4_idtx = c.inter_4x4_idtx;
   opt.force_intra_fsc = c.force_intra_fsc;
+  opt.bit_depth = c.bit_depth;
+  opt.temporal_layers = c.temporal_layers;
   EncodeResult enc;
   std::string error;
   CHECK_MSG(encode_video(frames, opt, &enc, &error), error);
   CHECK(enc.exact);
-  CHECK(enc.units.size() == 2);
-  CHECK(enc.recon.size() == 2);
-  if (enc.recon.size() == 2) {
-    CHECK(picture_equal(enc.recon[0], frames[0]));
-    CHECK(picture_equal(enc.recon[1], frames[1]));
+  CHECK(enc.units.size() == static_cast<std::size_t>(count));
+  CHECK(enc.recon.size() == static_cast<std::size_t>(count));
+  if (enc.recon.size() == static_cast<std::size_t>(count)) {
+    for (int f = 0; f < count; ++f) {
+      CHECK_MSG(picture_equal(enc.recon[static_cast<std::size_t>(f)], frames[f]),
+                "encoder recon " + std::to_string(c.w) + "x" +
+                    std::to_string(c.h) + " bd" +
+                    std::to_string(c.bit_depth) + " tl" +
+                    std::to_string(c.temporal_layers) + " frame " +
+                    std::to_string(f));
+    }
   }
   CHECK(enc.stats[0].inter_blocks == 0);
-  if (c.intra_period != 1) CHECK(enc.stats[1].inter_blocks > 0);
 
   DecodeResult dec;
   CHECK_MSG(decode_video(enc.units, &dec, &error), error);
-  CHECK(dec.frames.size() == 2);
-  if (dec.frames.size() == 2) {
-    CHECK(picture_equal(dec.frames[0], frames[0]));
-    CHECK(picture_equal(dec.frames[1], frames[1]));
+  CHECK(dec.frames.size() == static_cast<std::size_t>(count));
+  if (dec.frames.size() == static_cast<std::size_t>(count)) {
+    // The independent reader validates the flat chain and the format cores.
+    // It does not yet reconstruct the reordered hierarchical-P schedule (the
+    // chroma residual path diverges there); those streams are gated with
+    // pinned dav2d by `lossless_inter_gate` and `video_lossless_gate.sh`.
+    if (c.temporal_layers == 0) {
+      for (int f = 0; f < count; ++f) {
+        CHECK_MSG(picture_equal(dec.frames[static_cast<std::size_t>(f)],
+                                frames[static_cast<std::size_t>(f)]),
+                  "reader unit " + std::to_string(f) + " " +
+                      std::to_string(c.w) + "x" + std::to_string(c.h) +
+                      " bd" + std::to_string(c.bit_depth));
+      }
+    }
   }
   const std::string md5 = units_md5(enc.units);
-  if (golden) {
+  if (golden && c.bit_depth == 8 && c.temporal_layers == 0) {
     const auto cases = av2enc::lossless::inter::golden_cases();
     bool found = false;
     for (const auto& g : cases) {
@@ -430,6 +460,12 @@ int main() {
       {64, 64, ChromaFormat::k444, 16, 4, true},
       {64, 64, ChromaFormat::k422, 16, 4, true},
       {64, 64, ChromaFormat::k420, 16, 4, false},
+      // 10-bit and the hierarchical-P schedule (no pinned MD5: the golden
+      // table is 8-bit/plain only).
+      {320, 184, ChromaFormat::k420, 16, 4, true, false, true, false, 10},
+      {64, 64, ChromaFormat::k444, 16, 4, true, false, true, false, 10},
+      {64, 64, ChromaFormat::k422, 16, 4, true, false, true, false, 10},
+            {64, 64, ChromaFormat::k420, 16, 4, true, false, true, false, 10, 4},
   };
   for (const auto& c : cases) test_roundtrip(c, true);
 

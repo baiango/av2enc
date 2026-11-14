@@ -35,7 +35,8 @@ cannot drift.
 Wired: flat key + P chain, `--video-refs 1..7` / `--video-num-ref-frames 4..8`,
 partition depth/min-block/force-single, eighth/quarter/half MV precision,
 subpel ME, DC intra fallback (intra keyframe and per-leaf fallback), the
-opt-in inter residual, and the §7.17-§7.20.5 in-loop filters.
+opt-in inter residual, the §7.17-§7.20.5 in-loop filters, and `--video-grain`
+(§5.14 model OBU + §5.18.10.1 config; see `video_grain_gate.sh`).
 
 Rejected by name on these formats (all 8-bit 4:2:0 only today): tiles,
 B frames, temporal layers, the long-term/OLK/leading/SEF/SWITCH/RAS wrappers,

@@ -23,6 +23,7 @@
 #include "formats/high_bitdepth/hbd_depth.h"
 #include "pipeline/video/hbd/video_hbd_filters.h"
 #include "pipeline/video/hbd/video_hbd_ops.h"
+#include "pipeline/grain/grain_stream.h"
 #include "pipeline/video/video_headers.h"
 #include "pipeline/video/video_syntax.h"
 
@@ -32,6 +33,7 @@ namespace {
 using partition::BlockSize;
 using partition::FrameGeometry;
 using partition::PartitionNode;
+namespace grain = ::av2enc::filters::grain;
 
 constexpr std::int8_t kRefIntraAv2 = 8;
 constexpr std::int8_t kRefNone = -1;
@@ -1310,6 +1312,69 @@ bool validate_options(const Options& options, std::size_t frame_count,
   return true;
 }
 
+// §5.14 film grain helpers for the format video core.
+grain::GrainChromaIdc grain_chroma_idc(fmt::ChromaFormat chroma) {
+  switch (chroma) {
+    case fmt::ChromaFormat::k400:
+      return grain::GrainChromaIdc::k400;
+    case fmt::ChromaFormat::k422:
+      return grain::GrainChromaIdc::k422;
+    case fmt::ChromaFormat::k444:
+      return grain::GrainChromaIdc::k444;
+    case fmt::ChromaFormat::k420:
+    default:
+      return grain::GrainChromaIdc::k420;
+  }
+}
+
+grain::GrainFrameView grain_view_of(const VideoInputFrame& frame) {
+  grain::GrainFrameView view;
+  // The format core always carries packed uint16_t planes (LSB-aligned), even
+  // for its 8-bit formats, so prefer them whenever they are present.
+  const bool packed16 = !frame.y16.empty();
+  const int sub_x = fmt::subsampling_x(frame.format.chroma);
+  const bool has_chroma = fmt::has_chroma(frame.format.chroma);
+  if (packed16) {
+    view.y16 = frame.y16.data();
+    if (has_chroma) {
+      view.u16 = frame.u16.data();
+      view.v16 = frame.v16.data();
+    }
+    view.bit_depth = frame.format.depth == fmt::BitDepth::k10 ? 10 : 8;
+  } else {
+    view.y = frame.y.data();
+    if (has_chroma) {
+      view.u = frame.u.data();
+      view.v = frame.v.data();
+    }
+    view.bit_depth = 8;
+  }
+  view.width = static_cast<int>(frame.width);
+  view.height = static_cast<int>(frame.height);
+  view.y_stride = static_cast<int>(frame.width);
+  view.c_stride = static_cast<int>(frame.width >> sub_x);
+  return view;
+}
+
+bool insert_grain(const grain::GrainFramePlan& plan,
+                  std::vector<std::uint8_t>& unit, std::string& error) {
+  if (!plan.emit_model) return true;
+  std::string grain_error;
+  const std::vector<std::uint8_t> obu =
+      grain::MakeFilmGrainObu(plan.obu, &grain_error);
+  if (obu.empty()) {
+    error = "film grain OBU: " + grain_error;
+    return false;
+  }
+  std::vector<std::uint8_t> with_grain;
+  if (!grain::InsertFilmGrainObu(unit, obu, &with_grain, &grain_error)) {
+    error = "film grain OBU: " + grain_error;
+    return false;
+  }
+  unit.swap(with_grain);
+  return true;
+}
+
 bool encode_sequence(std::span<const VideoInputFrame> frames,
                      const Options& options, Backend& backend,
                      VideoSequenceResult& result, std::string& error) {
@@ -1373,6 +1438,12 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
   }
   const int order_hint_bits = 4;
 
+  // §5.14 film grain: one planner per CVS, planned in coding order, one model
+  // OBU per temporal unit at most.
+  grain::GrainPlanOptions grain_options;
+  grain_options.chroma_idc = grain_chroma_idc(format.chroma);
+  grain::GrainStreamPlanner grain_planner(grain_options);
+
   Plane frame_recon[3];
   for (int plane = 0; plane < 3; ++plane) {
     if (plane > 0 && !has_chroma) continue;
@@ -1395,6 +1466,7 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
   config.enable_cfl_intra = true;
   config.cfl_ds_filter_index = options.loop_filters.cfl_ds_filter_index;
   config.enable_deblock = options.enable_deblock;
+  config.film_grain_params_present = options.film_grain;
   apply_video_loop_filter_sequence_config(config, options.loop_filters);
   if (!fmt::has_chroma(format.chroma)) {
     // §5.4.10: monochrome codes no chroma loop-restoration tool list.
@@ -1507,16 +1579,32 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
     std::vector<std::uint8_t> unit;
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> seq = make_sequence_header_obu(config);
+    grain::GrainFramePlan key_grain;
+    if (options.film_grain &&
+        !grain_planner.PlanFrame(grain_view_of(frames[0]), 0, 0, 0, &key_grain,
+                                 &error)) {
+      error = "keyframe film grain: " + error;
+      return false;
+    }
     VideoFrameHeader header;
     header.keyframe = true;
     header.order_hint = 0;
     header.ref_slot = 0;
     header.refresh_frame_flags = (1U << config.num_ref_frames) - 1U;
+    if (options.film_grain) {
+      header.apply_grain = key_grain.apply_grain;
+      header.fgm_id = static_cast<std::uint8_t>(key_grain.fgm_id);
+      header.grain_seed = key_grain.grain_seed;
+    }
     apply_video_loop_filter_frame_header(filter_plan, header);
     const std::vector<std::uint8_t> obu = make_frame_obu(config, header, payload);
     unit.insert(unit.end(), td.begin(), td.end());
     unit.insert(unit.end(), seq.begin(), seq.end());
     unit.insert(unit.end(), obu.begin(), obu.end());
+    if (options.film_grain && !insert_grain(key_grain, unit, error)) {
+      error = "keyframe " + error;
+      return false;
+    }
     result.units.push_back(std::move(unit));
 
     VideoReconFrame recon;
@@ -1619,11 +1707,29 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
     header.allow_high_precision_mv = options.mv_precision != 2;
     apply_video_loop_filter_frame_header(filter_plan, header);
 
+    grain::GrainFramePlan grain_plan;
+    if (options.film_grain &&
+        !grain_planner.PlanFrame(grain_view_of(frames[i]),
+                                 static_cast<std::uint32_t>(i), 0, 0,
+                                 &grain_plan, &error)) {
+      error = "P-frame " + std::to_string(i) + " film grain: " + error;
+      return false;
+    }
+    if (options.film_grain) {
+      header.apply_grain = grain_plan.apply_grain;
+      header.fgm_id = static_cast<std::uint8_t>(grain_plan.fgm_id);
+      header.grain_seed = grain_plan.grain_seed;
+    }
+
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> obu = make_frame_obu(config, header, payload);
     std::vector<std::uint8_t> unit;
     unit.insert(unit.end(), td.begin(), td.end());
     unit.insert(unit.end(), obu.begin(), obu.end());
+    if (options.film_grain && !insert_grain(grain_plan, unit, error)) {
+      error = "P-frame " + std::to_string(i) + " " + error;
+      return false;
+    }
     result.units.push_back(std::move(unit));
 
     VideoReconFrame recon;
@@ -1709,6 +1815,7 @@ bool encode_video_sequence_format(std::span<const VideoInputFrame> frames,
   format_options.trace = options.trace;
   format_options.enable_deblock = options.enable_deblock;
   format_options.loop_filters = options.loop_filters;
+  format_options.film_grain = options.film_grain;
 
   // Only the flat key + P chain is wired.  Reject every other M2 feature by
   // name instead of silently dropping it.

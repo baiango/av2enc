@@ -1,6 +1,7 @@
 #include "pipeline/video/video_headers.h"
 
 #include "core/bitstream/basic_headers.h"
+#include "codec/entropy/deltaq/still/deltaq.h"
 #if defined(AV2ENC_VIDEO_DELTAQ)
 #include "codec/entropy/deltaq/video/video_deltaq.h"
 #endif
@@ -306,11 +307,24 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   if (c.enable_ext_partitions) {
     writer.put_bit(c.enable_uneven_4way_partitions);
   }
-  writer.put_bit(false);  // reduce_pb_aspect_ratio
+  // §5.4.3 reduce_pb_aspect_ratio / max_pb_aspect_ratio_log2_minus_1.  The
+  // historical bit is 0 (MaxPbAspectRatio = 8); --video-reduce-pb-aspect codes
+  // one extra bit selecting 2:1 (0) or 4:1 (1) and the partition search runs
+  // with the same limit.
+  writer.put_bit(c.reduce_pb_aspect_ratio);  // reduce_pb_aspect_ratio
+  if (c.reduce_pb_aspect_ratio) {
+    writer.put_bit(c.max_pb_aspect_ratio_log2_minus_1 != 0);
+  }
 
   // §5.4.4 sequence_segment_config().
   writer.put_bit(c.enable_ext_seg);  // enable_ext_seg
-  writer.put_bit(false);  // seq_seg_info_present_flag
+  writer.put_bit(c.seq_seg_info_present);  // seq_seg_info_present_flag
+  if (c.seq_seg_info_present) {
+    writer.put_bit(c.seq_allow_seg_info_change);  // seq_allow_seg_info_change
+    ::av2enc::deltaq::write_segment_table(
+        writer, c.seq_seg_info,
+        ::av2enc::deltaq::max_segments(c.enable_ext_seg));
+  }
 
   // §5.4.5 sequence_intra_config().
   writer.put_bit(c.enable_dip);  // enable_dip
@@ -379,7 +393,19 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   // (no screen-content tools).  The morph carrier selects the per-frame form:
   // seq_choose_screen_content_tools = SELECT and seq_choose_integer_mv =
   // SELECT, so screen_content_params()/intrabc_params() read the frame bits.
-  if (c.seq_screen_content_tools_present) {
+  // --video-scc-force writes the forced form instead: choose = 0 with
+  // force_screen_content_tools = 1, so allow_screen_content_tools is inferred
+  // 1 for every frame and no frame codes the allow bit.
+  if (c.seq_force_screen_content_tools) {
+    writer.put_bit(false);  // seq_choose_screen_content_tools
+    writer.put_bit(true);   // seq_force_screen_content_tools
+    if (c.seq_force_integer_mv) {
+      writer.put_bit(false);  // seq_choose_integer_mv
+      writer.put_bit(true);   // seq_force_integer_mv
+    } else {
+      writer.put_bit(true);   // seq_choose_integer_mv = SELECT
+    }
+  } else if (c.seq_screen_content_tools_present) {
     writer.put_bit(true);  // seq_choose_screen_content_tools
     writer.put_bit(true);  // seq_choose_integer_mv
   } else {
@@ -474,6 +500,38 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   return writer.bit_size() - start;
 }
 
+// §5.18.3.3 screen_content_params().  The frame bits present depend on the
+// §5.4.7 sequence form: SELECT codes allow_screen_content_tools, the force form
+// infers it 1.  force_integer_mv is coded when the sequence leaves integer-MV
+// choice to the frame (SELECT or force-screen with choose_integer_mv = 1) and
+// otherwise inferred 1.  Returns the effective pair.
+struct FrameScreenContentBits {
+  bool allow_screen_content_tools = false;
+  bool force_integer_mv = false;
+};
+
+FrameScreenContentBits write_frame_screen_content_params(
+    BitWriter& writer, const VideoConfig& c, const VideoFrameHeader& h) {
+  FrameScreenContentBits out;
+  const bool select_screen =
+      c.seq_screen_content_tools_present && !c.seq_force_screen_content_tools;
+  if (select_screen) {
+    writer.put_bit(h.allow_screen_content_tools);
+    out.allow_screen_content_tools = h.allow_screen_content_tools;
+  } else {
+    out.allow_screen_content_tools = c.seq_force_screen_content_tools;
+  }
+  if (out.allow_screen_content_tools) {
+    if (!(c.seq_force_screen_content_tools && c.seq_force_integer_mv)) {
+      writer.put_bit(h.force_integer_mv);
+      out.force_integer_mv = h.force_integer_mv;
+    } else {
+      out.force_integer_mv = true;
+    }
+  }
+  return out;
+}
+
 std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
                                       const VideoFrameHeader& h) {
   const std::size_t start = writer.bit_size();
@@ -513,12 +571,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     // §5.18.3.3 screen_content_params(): present when the sequence selected the
     // per-frame form; otherwise allow_screen_content_tools is inferred 0 and
     // no bit is coded.
-    if (c.seq_screen_content_tools_present) {
-      writer.put_bit(h.allow_screen_content_tools);
-      if (h.allow_screen_content_tools) {
-        writer.put_bit(h.force_integer_mv);
-      }
-    }
+    write_frame_screen_content_params(writer, c, h);
     // §5.18.3.4 intrabc_params().
     writer.put_bit(h.allow_intrabc);
     if (h.allow_intrabc) {
@@ -610,26 +663,46 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     }
     if (h.tip_frame) {
       // §5.18.2 runs decode_frame_wrapup() right after the TIP block: no
-      // disable_cdf_update / tile_info / quantization / tail syntax.
+      // disable_cdf_update / tile_info / quantization tail.  The §5.18.10.1
+      // film grain config still follows the TIP block when the sequence sets
+      // film_grain_params_present; omitting it makes the pinned dav2d read
+      // past the OBU ("Overrun in OBU bit buffer") on the first TIP unit.
+      if (c.film_grain_params_present) {
+        namespace grain = ::av2enc::filters::grain;
+        grain::FilmGrainConfig config;
+        config.apply_grain = h.apply_grain;
+        config.fgm_id = h.fgm_id;
+        config.grain_seed = h.grain_seed;
+        grain::FilmGrainConfigContext context;
+        context.film_grain_params_present = true;
+        context.single_picture_header_flag = false;
+        context.immediate_output_frame = h.immediate_output_frame;
+        context.implicit_output_frame = h.implicit_output_frame;
+        std::string grain_error;
+        grain::WriteFilmGrainConfig(writer, config, context, &grain_error);
+        assert(grain_error.empty());
+      }
       return writer.bit_size() - start;
     }
     // use_ref_frame_mvs = 0, TipFrameMode = TIP_FRAME_DISABLED.
-    // §5.18.3.3 screen_content_params(): present only when the sequence
-    // selected the per-frame form.  The inter frames of a morph stream code
-    // allow_screen_content_tools = 0 (morph is an intra-keyframe tool).
-    if (c.seq_screen_content_tools_present) {
-      writer.put_bit(h.allow_screen_content_tools);
-      if (h.allow_screen_content_tools) {
-        writer.put_bit(h.force_integer_mv);
-      }
-    }
+    // §5.18.3.3 screen_content_params(): present when the sequence selected the
+    // per-frame form.  The inter frames of a morph stream code
+    // allow_screen_content_tools = 0 (morph is an intra-keyframe tool); with the
+    // forced form every frame infers 1 and the eligible intra leaves code their
+    // palette_mode_info() (has_palette_y = 0).
+    const FrameScreenContentBits scc =
+        write_frame_screen_content_params(writer, c, h);
     // §5.18.3.4 intrabc_params(): allow_intrabc only (an inter frame infers
     // allow_global_intrabc = 0 / allow_local_intrabc = 1 when it is set).
     writer.put_bit(h.allow_intrabc);
     // max_drl_bits_minus_1 = seq_max_drl_bits_minus_1, no bits.
-    writer.put_bit(h.use_qtr_precision_mv);  // use_qtr_precision_mv
-    if (!h.use_qtr_precision_mv) {
-      writer.put_bit(h.allow_high_precision_mv);  // allow_high_precision_mv
+    // §5.18.2: force_integer_mv = 1 pins FrameMvPrecision to one pel and
+    // removes the use_qtr_precision_mv/allow_high_precision_mv pair.
+    if (!scc.force_integer_mv) {
+      writer.put_bit(h.use_qtr_precision_mv);  // use_qtr_precision_mv
+      if (!h.use_qtr_precision_mv) {
+        writer.put_bit(h.allow_high_precision_mv);  // allow_high_precision_mv
+      }
     }    writer.put_bit(false);  // is_filter_switchable
     writer.put_bits(0U, 2U);  // interpolation_filter = EIGHTTAP
     // frame_enabled_motion_modes[] all zero -> no bits.
@@ -673,6 +746,9 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     plan.delta_q = h.qp.delta_q;
     plan.primary_ref_is_none = h.qp.primary_ref_is_none;
     plan.enable_ext_seg = h.qp.enable_ext_seg;
+    plan.seq_seg_info_present = h.qp.seq_seg_info_present;
+    plan.seq_allow_seg_info_change = h.qp.seq_allow_seg_info_change;
+    plan.reuse_seg_info = h.qp.reuse_seg_info;
     std::string qp_error;
     if (deltaq::write_frame_qp_syntax(writer, plan, h, &qp_error) == 0) {
       // The header writer has no error channel; the planner validates the

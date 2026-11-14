@@ -105,6 +105,9 @@ struct Options {
   // remaining tools are planned on the intra key frame only.
   bool enable_deblock = false;
   post::VideoLoopFilterOptions loop_filters;
+  // Opt-in §5.14/§5.18.10 film grain signalling (--video-grain).  Off keeps
+  // the historical sequence/header bits.
+  bool film_grain = false;
 };
 
 struct BeginFrame {

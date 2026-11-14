@@ -37,6 +37,7 @@ SOURCES=(
   "${ROOT}/src/codec/entropy/av2/av2_entropy.cpp"
   "${ROOT}/src/codec/intra/modes/intra_modes.cpp"
   "${ROOT}/src/codec/partition/tree/partition.cpp"
+  "${ROOT}/src/codec/inter/tlayers/tlayers.cpp"
 )
 
 if [[ -z "${BUILD_DIR:-}" ]]; then

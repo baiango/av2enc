@@ -5,6 +5,7 @@
 #include "pipeline/video/post/rc_adapter.h"
 
 #include "codec/filters/gdf/gdf_syntax.h"
+#include "pipeline/grain/film_grain_syntax.h"
 
 #include <algorithm>
 #include <cassert>
@@ -238,7 +239,7 @@ std::size_t write_sequence_header(const VideoConfig& c,
 
   // §5.4.2 sequence_tile_config().
   writer.put_bit(false);  // seq_tile_info_present_flag
-  writer.put_bit(false);  // film_grain_params_present
+  writer.put_bit(sequence.film_grain_params_present);  // §5.4.2 film grain
 
   return writer.bit_size() - start;
 }
@@ -615,6 +616,25 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
   }
   writer.put_bits(0U, 2U);  // reduced_tx_set
   // global_motion_params() / film_grain_config() encode no bits.
+  if (sequence.film_grain_params_present) {
+    // §5.18.10.1: a tiled picture is always an immediate-output picture, so
+    // apply_grain is coded f(1) and the model id/seed follow when it is 1.
+    namespace grain = ::av2enc::filters::grain;
+    grain::FilmGrainConfig grain_config;
+    grain_config.apply_grain = header.apply_grain;
+    grain_config.fgm_id = header.fgm_id;
+    grain_config.grain_seed = header.grain_seed;
+    grain::FilmGrainConfigContext context;
+    context.film_grain_params_present = true;
+    context.single_picture_header_flag = false;
+    context.immediate_output_frame = true;
+    context.implicit_output_frame = false;
+    std::string grain_error;
+    if (!grain::WriteFilmGrainConfig(writer, grain_config, context,
+                                     &grain_error)) {
+      return fail(error, "m2 tiled: film_grain_config: " + grain_error);
+    }
+  }
 
   if (bits != nullptr) *bits = writer.bit_size() - start;
   return true;

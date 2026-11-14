@@ -65,6 +65,9 @@ struct VideoPostSequenceOptions {
   // context_update_tile_id from tile_info().
   bool enable_avg_cdf = false;
   bool avg_cdf_type = true;
+  // §5.4.2 film_grain_params_present (--video-grain).  Off by default, so the
+  // tiled sequence header keeps its historical bit.
+  bool film_grain_params_present = false;
 
   VideoPostSequenceOptions() { filters.cdef_on_skip_txfm_disabled = true; }
 };
@@ -106,6 +109,13 @@ struct VideoTiledFrameHeader {
   // bit is frame-level, so every tile payload in the group must have been
   // coded under the same mode.
   bool tx_mode_select = false;
+
+  // §5.18.10.1 film_grain_config().  Written only when the sequence sets
+  // film_grain_params_present; every tiled picture is an immediate-output
+  // picture, so apply_grain is always written (never inferred).
+  bool apply_grain = false;
+  std::uint8_t fgm_id = 0;
+  std::uint16_t grain_seed = 0;
 
   bool apply_deblocking_filter[4] = {false, false, false, false};
   bool df_delta_q_present[4] = {false, false, false, false};

@@ -316,6 +316,12 @@ expect_usage_error "tlayer-drop above plan maximum" \
   --video-tlayer-drop 2
 expect_usage_error "b-frames frame count" \
   "$INPUT" -o "$SENTINEL" --video --frames 3 --b-frames 2
+expect_usage_error "b-frames multi-GOP frame count" \
+  "$INPUT" -o "$SENTINEL" --video --frames 8 --b-frames 2 --video-gops 1
+expect_usage_error "video-gops needs b-frames" \
+  "$INPUT" -o "$SENTINEL" --video --frames 4 --video-gops 2
+expect_usage_error "video-gops must be positive" \
+  "$INPUT" -o "$SENTINEL" --video --frames 4 --b-frames 2 --video-gops 0
 expect_usage_error "long-term order-hint cap" \
   "$INPUT" -o "$SENTINEL" --video --frames 17 --video-long-term
 

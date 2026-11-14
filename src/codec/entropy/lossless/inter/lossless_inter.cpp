@@ -15,6 +15,7 @@
 #include "pipeline/video/video_cdf_tables.h"
 #include "codec/partition/tree/partition.h"
 #include "codec/entropy/av2/av2_entropy.h"
+#include "codec/inter/tlayers/tlayers.h"
 
 #include <algorithm>
 #include <array>
@@ -30,6 +31,7 @@ namespace {
 using av2enc::av2::Decoder;
 using av2enc::av2::Encoder;
 using av2enc::av2::Status;
+namespace tl = ::av2enc::inter::tlayers;
 using partition::BlockSize;
 using partition::PartitionType;
 
@@ -562,74 +564,176 @@ class SymReader {
 struct Plane {
   int w = 0;
   int h = 0;
-  std::vector<std::uint8_t> data;
+  // Samples are stored as uint16_t at every bit depth (8/10/12).  The stream
+  // syntax is depth-scaled; only the reconstruction clip changes.
+  std::vector<std::uint16_t> data;
 
   void resize(int width, int height) {
     w = width;
     h = height;
     data.assign(static_cast<std::size_t>(w) * h, 0);
   }
-  std::uint8_t* row(int y) {
+  std::uint16_t* row(int y) {
     return data.data() + static_cast<std::size_t>(y) * w;
   }
-  const std::uint8_t* row(int y) const {
+  const std::uint16_t* row(int y) const {
     return data.data() + static_cast<std::size_t>(y) * w;
   }
 };
 
+// §7.13.3.22 Div_Lut, used by the §7.13.2.11 DC approx_divide().
+constexpr int kLosslessDivLutBits = 7;
+constexpr int kLosslessDivLutPrecBits = 9;
+constexpr int kLosslessDivLut[129] = {
+    512, 508, 504, 500, 496, 493, 489, 485, 482, 478, 475, 471, 468, 465,
+    462, 458, 455, 452, 449, 446, 443, 440, 437, 434, 431, 428, 426, 423,
+    420, 417, 415, 412, 410, 407, 405, 402, 400, 397, 395, 392, 390, 388,
+    386, 383, 381, 379, 377, 374, 372, 370, 368, 366, 364, 362, 360, 358,
+    356, 354, 352, 350, 349, 347, 345, 343, 341, 340, 338, 336, 334, 333,
+    331, 329, 328, 326, 324, 323, 321, 320, 318, 317, 315, 314, 312, 311,
+    309, 308, 306, 305, 303, 302, 301, 299, 298, 297, 295, 294, 293, 291,
+    290, 289, 287, 286, 285, 284, 282, 281, 280, 279, 278, 277, 275, 274,
+    273, 272, 271, 270, 269, 267, 266, 265, 264, 263, 262, 261, 260, 259,
+    258, 257, 256};
+
+int round2_shift(int value, int shift) {
+  if (shift <= 0) return value;
+  return (value + (1 << (shift - 1))) >> shift;
+}
+
+int resolve_divisor(int divisor) {
+  const int magnitude = std::abs(divisor);
+  const int n = floor_log2(magnitude);
+  const int e = magnitude - (1 << n);
+  const int f = n > kLosslessDivLutBits
+                    ? round2_shift(e, n - kLosslessDivLutBits)
+                    : (e << (kLosslessDivLutBits - n));
+  return kLosslessDivLut[f] * (divisor < 0 ? -1 : 1);
+}
+
+int divisor_shift(int divisor) {
+  return floor_log2(std::abs(divisor)) + kLosslessDivLutPrecBits;
+}
+
+int approx_divide_lossless(int numerator, int denominator) {
+  return round2_shift(numerator * resolve_divisor(denominator),
+                      divisor_shift(denominator));
+}
+
+int clip1_depth(int value, int bit_depth) {
+  return clip3(0, (1 << bit_depth) - 1, value);
+}
+
+// §7.13.2.1 edge arrays for a 10/12-bit plane.  The module codes only DC, V
+// and H, so the directional padding / edge filtering of the shared 8-bit
+// intra component is not needed; the unavailable-neighbour fillers (mid - 1
+// for above, mid + 1 for left) match §7.13.2.1 exactly.
+struct Edges16 {
+  std::array<int, 129> above{};
+  std::array<int, 129> left{};
+};
+
+void prepare_edges16(const Plane& plane, int x, int y, int w, int h,
+                     int bit_depth, bool have_left, bool have_above,
+                     Edges16* edges) {
+  const int mid = 1 << (bit_depth - 1);
+  const int num_needed = w + h;
+  const int max_x = plane.w - 1;
+  const int max_y = plane.h - 1;
+  for (int i = 0; i < num_needed; ++i) {
+    if (!have_left && have_above) {
+      edges->left[i] = plane.data[static_cast<std::size_t>(y - 1) * plane.w + x];
+    } else if (!have_left) {
+      edges->left[i] = mid + 1;
+    } else {
+      const int row = std::min(y + i, max_y);
+      edges->left[i] =
+          plane.data[static_cast<std::size_t>(row) * plane.w + (x - 1)];
+    }
+  }
+  for (int i = 0; i < num_needed; ++i) {
+    if (!have_above && have_left) {
+      edges->above[i] =
+          plane.data[static_cast<std::size_t>(y) * plane.w + (x - 1)];
+    } else if (!have_above) {
+      edges->above[i] = mid - 1;
+    } else {
+      const int col = std::min(x + i, max_x);
+      edges->above[i] =
+          plane.data[static_cast<std::size_t>(y - 1) * plane.w + col];
+    }
+  }
+}
+
 bool predict_intra_block(const Plane& plane, int x, int y, int w, int h,
                          int mode, bool have_left, bool have_above,
-                         int bit_depth, std::uint8_t* dst,
+                         int bit_depth, std::uint16_t* dst,
                          std::size_t dst_stride) {
-  using intra::Mode;
-  intra::NeighborRequest req;
-  req.recon.data = plane.data.data();
-  req.recon.stride = plane.w;
-  req.x = x;
-  req.y = y;
-  req.w = w;
-  req.h = h;
-  req.max_x = plane.w - 1;
-  req.max_y = plane.h - 1;
-  req.have_left = have_left;
-  req.have_above = have_above;
-  req.num4_above_right = 0;
-  req.num4_below_left = 0;
-  req.color_plane = 0;
-  intra::PredictParams params;
+  if (static_cast<int>(dst_stride) < w) return false;
+  Edges16 edges;
+  prepare_edges16(plane, x, y, w, h, bit_depth, have_left, have_above, &edges);
   switch (mode) {
-    case kDcPred:
-      params.mode = Mode::kDc;
-      break;
+    case kDcPred: {
+      int value = 0;
+      if (have_left && have_above) {
+        int sum = 0;
+        for (int k = 0; k < h; ++k) sum += edges.left[k];
+        for (int k = 0; k < w; ++k) sum += edges.above[k];
+        value = clip1_depth(approx_divide_lossless(sum, w + h), bit_depth);
+      } else if (have_left) {
+        int sum = 0;
+        for (int k = 0; k < h; ++k) sum += edges.left[k];
+        value = round2_shift(sum, floor_log2(h));
+      } else if (have_above) {
+        int sum = 0;
+        for (int k = 0; k < w; ++k) sum += edges.above[k];
+        value = round2_shift(sum, floor_log2(w));
+      } else {
+        value = 1 << (bit_depth - 1);
+      }
+      for (int i = 0; i < h; ++i) {
+        for (int j = 0; j < w; ++j) {
+          dst[static_cast<std::size_t>(i) * dst_stride + j] =
+              static_cast<std::uint16_t>(value);
+        }
+      }
+      return true;
+    }
     case kV:
-      params.mode = Mode::kV;
-      break;
+      for (int i = 0; i < h; ++i) {
+        for (int j = 0; j < w; ++j) {
+          dst[static_cast<std::size_t>(i) * dst_stride + j] =
+              static_cast<std::uint16_t>(edges.above[j]);
+        }
+      }
+      return true;
     case kH:
-      params.mode = Mode::kH;
-      break;
+      for (int i = 0; i < h; ++i) {
+        for (int j = 0; j < w; ++j) {
+          dst[static_cast<std::size_t>(i) * dst_stride + j] =
+              static_cast<std::uint16_t>(edges.left[i]);
+        }
+      }
+      return true;
     default:
       return false;
   }
-  params.angle_delta = 0;
-  params.enable_edge_filter = false;
-  return intra::predict_block(req, bit_depth, params, dst, dst_stride) ==
-         intra::IntraStatus::kOk;
 }
 
 void predict_inter_zero(const Plane& ref, int x, int y, int w, int h,
-                        std::uint8_t* dst, std::size_t dst_stride) {
+                        std::uint16_t* dst, std::size_t dst_stride) {
   for (int i = 0; i < h; ++i) {
-    const std::uint8_t* src = ref.data.data() +
-                             static_cast<std::size_t>(y + i) * ref.w + x;
-    std::uint8_t* d = dst + static_cast<std::size_t>(i) * dst_stride;
-    std::memcpy(d, src, static_cast<std::size_t>(w));
+    const std::uint16_t* src = ref.data.data() +
+                               static_cast<std::size_t>(y + i) * ref.w + x;
+    std::uint16_t* d = dst + static_cast<std::size_t>(i) * dst_stride;
+    std::memcpy(d, src, static_cast<std::size_t>(w) * sizeof(std::uint16_t));
   }
 }
 
 void reconstruct_block(const int* levels, int w, int h, bool dct_dct, bool dpcm,
-                       bool vertical, const std::uint8_t* pred,
-                       std::size_t pred_stride, std::uint8_t* recon,
-                       std::size_t recon_stride) {
+                       bool vertical, const std::uint16_t* pred,
+                       std::size_t pred_stride, std::uint16_t* recon,
+                       std::size_t recon_stride, int bit_depth) {
   std::vector<int> tmp(static_cast<std::size_t>(w) * h);
   std::vector<int> residual(static_cast<std::size_t>(w) * h);
   inverse_lossless_block(levels, w, h, dct_dct, tmp.data());
@@ -643,7 +747,8 @@ void reconstruct_block(const int* levels, int w, int h, bool dct_dct, bool dpcm,
     for (int j = 0; j < w; ++j) {
       const int p = pred[static_cast<std::size_t>(i) * pred_stride + j];
       recon[static_cast<std::size_t>(i) * recon_stride + j] =
-          static_cast<std::uint8_t>(clip3(0, 255, p + residual[i * w + j]));
+          static_cast<std::uint16_t>(
+              clip1_depth(p + residual[i * w + j], bit_depth));
     }
   }
 }
@@ -1955,7 +2060,7 @@ struct BlockPlan {
 };
 
 struct PredictionScratch {
-  std::array<std::uint8_t, 1024> pred{};
+  std::array<std::uint16_t, 1024> pred{};
   std::array<int, 1024> residual{};
   std::array<int, 1024> tmp{};
   std::array<int, 1024> levels{};
@@ -2332,7 +2437,7 @@ class TileWriter {
       if (plan.is_inter) {
         predict_inter_zero(*ref_[0], px, py, w, h, s.pred.data(), w);
       } else if (!predict_intra_block(*recon_[0], px, py, w, h, plan.y_mode,
-                                      px > 0, py > 0, 8, s.pred.data(), w)) {
+                                      px > 0, py > 0, opt_.bit_depth, s.pred.data(), w)) {
         *error = "luma intra prediction failed";
         return false;
       }
@@ -2371,7 +2476,7 @@ class TileWriter {
                         s.pred.data(), w,
                         recon_[0]->data.data() +
                             static_cast<std::size_t>(py) * recon_[0]->w + px,
-                        recon_[0]->w);
+                        recon_[0]->w, opt_.bit_depth);
       return true;
     };
 
@@ -2455,8 +2560,8 @@ class TileWriter {
           if (plan.is_inter) {
             predict_inter_zero(*ref_[plane], px, py, 4, 4, s.pred.data(), 4);
           } else if (!predict_intra_block(*recon_[plane], px, py, 4, 4,
-                                          plan.uv_mode, px > 0, py > 0, 8,
-                                          s.pred.data(), 4)) {
+                                          plan.uv_mode, px > 0, py > 0,
+                                          opt_.bit_depth, s.pred.data(), 4)) {
             *error = "chroma intra prediction failed";
             return false;
           }
@@ -2494,7 +2599,7 @@ class TileWriter {
                             recon_[plane]->data.data() +
                                 static_cast<std::size_t>(py) * recon_[plane]->w +
                                 px,
-                            recon_[plane]->w);
+                            recon_[plane]->w, opt_.bit_depth);
         }
       }
     }
@@ -2858,7 +2963,7 @@ class TileReader {
       if (plan.is_inter) {
         predict_inter_zero(*ref_[0], px, py, w, h, s.pred.data(), w);
       } else if (!predict_intra_block(*recon_[0], px, py, w, h, plan.y_mode,
-                                      px > 0, py > 0, 8, s.pred.data(), w)) {
+                                      px > 0, py > 0, opt_.bit_depth, s.pred.data(), w)) {
         *error = "luma intra prediction failed";
         return false;
       }
@@ -2873,7 +2978,7 @@ class TileReader {
                         s.pred.data(), w,
                         recon_[0]->data.data() +
                             static_cast<std::size_t>(py) * recon_[0]->w + px,
-                        recon_[0]->w);
+                        recon_[0]->w, opt_.bit_depth);
       return true;
     };
 
@@ -2949,8 +3054,8 @@ class TileReader {
           if (plan.is_inter) {
             predict_inter_zero(*ref_[plane], px, py, 4, 4, s.pred.data(), 4);
           } else if (!predict_intra_block(*recon_[plane], px, py, 4, 4,
-                                          plan.uv_mode, px > 0, py > 0, 8,
-                                          s.pred.data(), 4)) {
+                                          plan.uv_mode, px > 0, py > 0,
+                                          opt_.bit_depth, s.pred.data(), 4)) {
             *error = "chroma intra prediction failed";
             return false;
           }
@@ -2971,7 +3076,7 @@ class TileReader {
                             recon_[plane]->data.data() +
                                 static_cast<std::size_t>(py) * recon_[plane]->w +
                                 px,
-                            recon_[plane]->w);
+                            recon_[plane]->w, opt_.bit_depth);
         }
       }
     }
@@ -3031,9 +3136,11 @@ void append_leb128(std::vector<std::uint8_t>& out, std::uint32_t value) {
 }
 
 std::vector<std::uint8_t> make_obu(std::uint8_t type,
-                                   std::span<const std::uint8_t> payload) {
+                                   std::span<const std::uint8_t> payload,
+                                   std::uint8_t tlayer_id = 0) {
   std::vector<std::uint8_t> body;
-  body.push_back(static_cast<std::uint8_t>((type & 0x1f) << 2));
+  body.push_back(static_cast<std::uint8_t>(((type & 0x1f) << 2) |
+                                           (tlayer_id & 0x03)));
   body.insert(body.end(), payload.begin(), payload.end());
   std::vector<std::uint8_t> out;
   append_leb128(out, static_cast<std::uint32_t>(body.size()));
@@ -3132,20 +3239,31 @@ std::uint8_t sequence_profile(ChromaFormat f) {
   return 31;
 }
 
+// §5.4.1 fields that depend on the frame schedule.  The plain key+P chain
+// keeps max_tlayer_id = 0, monotonic output and NumRefFrames = 2; the
+// hierarchical-P schedule raises them from the tlayers plan.
+struct ScheduleInfo {
+  int max_tlayer_id = 0;
+  bool monotonic_output_order = true;
+  int order_hint_bits = 4;
+  int num_ref_frames = 2;
+};
+
 void write_sequence_header(av2enc::BitWriter& w, const Options& opt,
-                           const Geometry& g) {
+                           const Geometry& g, const ScheduleInfo& schedule) {
   put_uvlc(w, 0);  // seq_header_id
   w.put_bits(sequence_profile(g.format), 5);
   w.put_bit(false);  // single_picture_header_flag
   w.put_bits(static_cast<std::uint64_t>(opt.seq_level_idx), 5);
   if (opt.seq_level_idx > 3) w.put_bit(false);  // seq_tier
   put_uvlc(w, chroma_format_idc(g.format));
-  put_uvlc(w, 1);  // bit_depth_idc = 1 -> 8-bit
+  // §5.4.1 bit_depth_idc: 0 = 10-bit, 1 = 8-bit (12-bit is not signalable).
+  put_uvlc(w, opt.bit_depth == 8 ? 1 : 0);
   w.put_bits(0, 3);  // seq_lcr_id
   w.put_bit(false);  // still_picture
-  w.put_bits(0, 2);  // max_tlayer_id
+  w.put_bits(static_cast<std::uint64_t>(schedule.max_tlayer_id), 2);
   w.put_bits(0, 3);  // max_mlayer_id
-  w.put_bit(true);   // monotonic_output_order_flag
+  w.put_bit(schedule.monotonic_output_order);
 
   unsigned wb = bit_width(static_cast<std::uint32_t>(g.width) - 1);
   unsigned hb = bit_width(static_cast<std::uint32_t>(g.height) - 1);
@@ -3158,6 +3276,13 @@ void write_sequence_header(av2enc::BitWriter& w, const Options& opt,
   w.put_bit(false);  // seq_cropping_window_present_flag
   w.put_bit(false);  // seq_initial_display_delay_present_flag
   w.put_bit(false);  // decoder_model_info_present_flag
+
+  // §5.4.1 TLayerDependencyMap: present only when max_tlayer_id > 0.  The
+  // hierarchical-P plan uses the default map (ref_tlayer <= obu_tlayer_id),
+  // so the explicit map flag is 0.
+  if (schedule.max_tlayer_id > 0) {
+    w.put_bit(false);  // tlayer_dependency_present_flag = 0
+  }
 
   // §5.4.3 sequence_partition_config()
   w.put_bit(false);  // use_256x256_superblock
@@ -3183,12 +3308,12 @@ void write_sequence_header(av2enc::BitWriter& w, const Options& opt,
   for (int i = 0; i < 4; ++i) w.put_bit(false);
   w.put_bit(false);  // enable_masked_compound
   w.put_bit(false);  // enable_ref_frame_mvs
-  w.put_bits(3, 4);  // order_hint_bits_minus_1 -> 4 bits
+  w.put_bits(static_cast<std::uint64_t>(schedule.order_hint_bits - 1), 4);
   w.put_bit(false);  // enable_refmvbank
   w.put_bit(true);   // disable_drl_reorder
   w.put_bit(true);   // explicit_ref_frame_map
   w.put_bit(true);   // explicit_num_ref_frames
-  w.put_bits(1, 4);  // num_ref_frames_minus_1 -> 2
+  w.put_bits(static_cast<std::uint64_t>(schedule.num_ref_frames - 1), 4);
   w.put_bits(0, 3);  // long_term_frame_id_bits
   put_ns(w, 5, 0);   // seq_max_drl_bits_minus_1
   w.put_bit(false);  // allow_frame_max_drl_bits
@@ -3319,6 +3444,8 @@ struct SeqInfo {
   bool enable_fsc = false;
   int order_hint_bits = 0;
   int num_ref_frames = 0;
+  int bit_depth = 8;
+  int max_tlayer_id = 0;
 };
 
 bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
@@ -3349,15 +3476,21 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   }
   info->format = static_cast<ChromaFormat>(chroma);
   std::uint32_t depth = 0;
-  if (!r.uvlc(&depth) || depth != 1) {
-    *error = "sequence header: expected 8-bit";
+  if (!r.uvlc(&depth) || depth > 1) {
+    *error = "sequence header: bit_depth_idc";
     return false;
   }
+  info->bit_depth = depth == 1 ? 8 : 10;
   if (!r.read_bits(3, &v)) return false;  // seq_lcr_id
   bool still = false;
   if (!r.read_bit(&still)) return false;
   if (!r.read_bits(2, &v)) return false;
+  info->max_tlayer_id = static_cast<int>(v);
   if (!r.read_bits(3, &v)) return false;
+  if (v != 0) {
+    *error = "sequence header: multi-layer streams unsupported";
+    return false;
+  }
   bool monotonic = false;
   if (!r.read_bit(&monotonic)) return false;
 
@@ -3382,6 +3515,13 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   if (!r.read_bit(&delay) || !r.read_bit(&dmodel) || delay || dmodel) {
     *error = "sequence header: decoder model unsupported";
     return false;
+  }
+  if (info->max_tlayer_id > 0) {
+    bool tlayer_map = false;
+    if (!r.read_bit(&tlayer_map) || tlayer_map) {
+      *error = "sequence header: explicit TLayerDependencyMap unsupported";
+      return false;
+    }
   }
   bool b256 = false, b128 = false, sdp = false, extpart = false,
        aspect = false;
@@ -3551,6 +3691,12 @@ struct FrameHeaderInfo {
   bool segmentation_enabled = false;
   bool using_qmatrix = false;
   std::uint32_t reduced_tx_set = 0;
+  // §5.18.2 output flags.  The plain chain is always immediate output; the
+  // hierarchical-P schedule codes every frame after the first as an implicit
+  // output picture because monotonic_output_order_flag = 0.
+  bool immediate_output_frame = true;
+  bool implicit_output_frame = false;
+  int order_hint_bits = 4;
 };
 
 void write_frame_header(av2enc::BitWriter& w, const Options& opt,
@@ -3559,9 +3705,12 @@ void write_frame_header(av2enc::BitWriter& w, const Options& opt,
   put_uvlc(w, 0);  // cur_mfh_id
   put_uvlc(w, 0);  // seq_header_id_in_frame_header
   if (!h.keyframe) w.put_bit(true);     // frame_is_inter
-  w.put_bit(true);                      // immediate_output_frame
+  w.put_bit(h.immediate_output_frame);
+  if (!h.immediate_output_frame) {
+    w.put_bit(h.implicit_output_frame);
+  }
   w.put_bit(false);                     // frame_size_override_flag
-  w.put_bits(h.order_hint, 4);          // order_hint
+  w.put_bits(h.order_hint, static_cast<unsigned>(h.order_hint_bits));
   if (h.keyframe) {
     // OBU_CLOSED_LOOP_KEY + max_mlayer_id == 0: refresh_frame_flags inferred.
   } else {
@@ -3570,7 +3719,7 @@ void write_frame_header(av2enc::BitWriter& w, const Options& opt,
     w.put_bits(h.refresh_flags, static_cast<unsigned>(num_ref_frames));
     w.put_bit(true);                  // frame_explicit_ref_frame_map
     w.put_bits(h.num_total_refs, 3);  // num_total_refs
-    w.put_bits(0, ceil_log2(static_cast<unsigned>(num_ref_frames)));
+    w.put_bits(h.ref_idx, ceil_log2(static_cast<unsigned>(num_ref_frames)));
     // ref_frame_idx[0]
   }
   if (h.keyframe) {
@@ -3588,7 +3737,7 @@ void write_frame_header(av2enc::BitWriter& w, const Options& opt,
   w.put_bit(true);  // uniform_tile_spacing_flag
   if (sb_cols > 1) w.put_bit(false);
   if (sb_rows > 1) w.put_bit(false);
-  w.put_bits(h.base_q_idx, 8);
+  w.put_bits(h.base_q_idx, opt.bit_depth == 8 ? 8 : 9);
   w.put_bit(h.segmentation_enabled);
   w.put_bit(h.using_qmatrix);
   if (!h.keyframe) {
@@ -3625,9 +3774,15 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
     }
   }
   bool immediate = false;
-  if (!r.read_bit(&immediate) || !immediate) {
-    *error = "frame header: expected immediate_output_frame";
-    return false;
+  if (!r.read_bit(&immediate)) return false;
+  if (!immediate) {
+    // monotonic_output_order_flag = 0 (hierarchical-P schedule) codes the
+    // implicit output picture flag right after it.
+    bool implicit = false;
+    if (!r.read_bit(&implicit) || !implicit) {
+      *error = "frame header: hidden picture";
+      return false;
+    }
   }
   bool override = false;
   if (!r.read_bit(&override) || override) {
@@ -3724,7 +3879,9 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
       return false;
     }
   }
-  if (!r.read_bits(8, &out->base_q_idx)) return false;
+  if (!r.read_bits(seq.bit_depth == 8 ? 8 : 9, &out->base_q_idx)) {
+    return false;
+  }
   bool seg = false;
   if (!r.read_bit(&seg)) return false;
   out->segmentation_enabled = seg;
@@ -3778,11 +3935,13 @@ bool planes_from_picture(const Picture& p, const Geometry& g, Plane* out,
   return true;
 }
 
-Picture picture_from_planes(const Geometry& g, const Plane planes[3]) {
+Picture picture_from_planes(const Geometry& g, const Plane planes[3],
+                           int bit_depth) {
   Picture p;
   p.width = g.width;
   p.height = g.height;
   p.format = g.format;
+  p.bit_depth = bit_depth;
   p.y = planes[0].data;
   p.u = planes[1].data;
   p.v = planes[2].data;
@@ -3835,22 +3994,78 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
     }
   }
 
+  // Frame schedule.  temporal_layers == 0 is the historical key + flat P
+  // chain (every P references the previous coded picture, refresh flags 1,
+  // NumRefFrames 2).  temporal_layers = 4/8/16 is the same hierarchical-P
+  // schedule --video-tlayers uses: the plan's coding order, one single
+  // reference, implicit output pictures and per-OBU obu_tlayer_id.
+  ScheduleInfo schedule;
+  tl::Plan layer_plan;
+  const bool layered = options.temporal_layers > 0;
+  if (layered) {
+    tl::PlanConfig pc;
+    pc.gop_size = options.temporal_layers;
+    pc.schedule = tl::Schedule::kHierarchicalP;
+    pc.dependency = tl::DependencyMode::kAllLower;
+    pc.explicit_dependency_map = false;  // pinned dav2d default map
+    pc.order_hint_bits = options.temporal_layers >= 16 ? 5 : 4;
+    pc.num_slots = options.temporal_layers;
+    pc.base_q_idx = 0;
+    tl::PlanError plan_error = tl::PlanError::kOk;
+    if (!tl::build_plan(pc, layer_plan, &plan_error)) {
+      *error = std::string("temporal-layer plan: ") +
+               tl::plan_error_name(plan_error);
+      return false;
+    }
+    if (static_cast<int>(pictures.size()) != options.temporal_layers) {
+      *error = "--video-lossless --video-tlayers codes one closed GOP: the "
+               "input must have exactly the GOP size in pictures";
+      return false;
+    }
+    tl::PlanError validation = tl::PlanError::kOk;
+    int bad_display = -1;
+    int bad_coding = -1;
+    if (!tl::validate_plan(layer_plan, &validation, &bad_display,
+                           &bad_coding)) {
+      *error = std::string("temporal-layer plan invalid: ") +
+               tl::plan_error_name(validation);
+      return false;
+    }
+    schedule.max_tlayer_id = layer_plan.max_tlayer_id;
+    schedule.monotonic_output_order = false;
+    schedule.order_hint_bits = pc.order_hint_bits;
+    schedule.num_ref_frames = layer_plan.num_slots;
+  }
+
   av2enc::BitWriter seq;
-  write_sequence_header(seq, options, g);
+  write_sequence_header(seq, options, g, schedule);
   seq.put_bit(false);  // obu_extension_flag
   put_trailing_bits(seq);
   const std::vector<std::uint8_t> seq_obu = make_obu(1, seq.take_bytes());
 
   const std::vector<std::uint8_t> td_obu = make_obu(2, {});
 
-  std::vector<Picture> recon_frames;
+  std::vector<int> coding_order;
+  coding_order.reserve(pictures.size());
+  if (layered) {
+    coding_order = layer_plan.coding_order;
+  } else {
+    for (std::size_t i = 0; i < pictures.size(); ++i) {
+      coding_order.push_back(static_cast<int>(i));
+    }
+  }
+  std::vector<Picture> recon_by_display(pictures.size());
   std::uint64_t max_err = 0;
 
-  for (std::size_t frame_index = 0; frame_index < pictures.size();
-       ++frame_index) {
-    const bool keyframe = frame_index == 0;
+  for (std::size_t ci = 0; ci < coding_order.size(); ++ci) {
+    const int display = coding_order[ci];
+    const bool keyframe = ci == 0;
+    const tl::PlannedFrame* pf =
+        layered ? &layer_plan.frames[static_cast<std::size_t>(display)]
+                : nullptr;
     Plane src[3];
-    if (!planes_from_picture(pictures[frame_index], g, src, error)) {
+    if (!planes_from_picture(pictures[static_cast<std::size_t>(display)], g,
+                             src, error)) {
       return false;
     }
     Plane recon[3];
@@ -3861,7 +4076,15 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
     Plane ref_storage[3];
     const Plane* ref[3] = {nullptr, nullptr, nullptr};
     if (!keyframe) {
-      if (!planes_from_picture(recon_frames.back(), g, ref_storage, error)) {
+      int ref_display = coding_order[ci - 1];
+      if (pf != nullptr && pf->num_refs > 0) ref_display = pf->ref_display[0];
+      const Picture& ref_picture =
+          recon_by_display[static_cast<std::size_t>(ref_display)];
+      if (ref_picture.y.empty()) {
+        *error = "lossless reference picture was not coded";
+        return false;
+      }
+      if (!planes_from_picture(ref_picture, g, ref_storage, error)) {
         return false;
       }
       ref[0] = &ref_storage[0];
@@ -3876,7 +4099,6 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
     FrameStats stats;
     Plane* src_ptr[3] = {&src[0], &src[1], &src[2]};
     Plane* recon_ptr[3] = {&recon[0], &recon[1], &recon[2]};
-
     std::vector<std::uint8_t> tile(16U * 1024U * 1024U);
     std::size_t tile_bytes = 0;
     TileWriter writer(g, options, keyframe, cdfs, ctx, src_ptr, recon_ptr, ref,
@@ -3888,21 +4110,37 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
 
     FrameHeaderInfo header;
     header.keyframe = keyframe;
-    header.order_hint = static_cast<std::uint32_t>(frame_index);
-    header.refresh_flags = 1;
     header.num_total_refs = 1;
     header.base_q_idx = 0;
     header.reduced_tx_set = 0;
     header.disable_cdf_update = !options.adaptive_cdf;
+    header.order_hint_bits = schedule.order_hint_bits;
+    if (pf != nullptr) {
+      header.order_hint = pf->order_hint_lsbs;
+      header.refresh_flags = pf->refresh_frame_flags;
+      header.ref_idx = static_cast<std::uint32_t>(pf->ref_slot[0] < 0
+                                                     ? 0
+                                                     : pf->ref_slot[0]);
+      header.immediate_output_frame = pf->immediate_output_frame;
+      header.implicit_output_frame = pf->implicit_output_frame;
+    } else {
+      header.order_hint = static_cast<std::uint32_t>(display);
+      header.refresh_flags = 1;
+      header.immediate_output_frame = true;
+      header.implicit_output_frame = false;
+    }
 
     av2enc::BitWriter fw;
     fw.put_bit(true);  // is_first_tile_group
-    write_frame_header(fw, options, header, g, 2);
+    write_frame_header(fw, options, header, g, schedule.num_ref_frames);
     fw.align_to_byte();
     std::vector<std::uint8_t> payload = fw.take_bytes();
     payload.insert(payload.end(), tile.begin(), tile.end());
     const std::uint8_t obu_type = keyframe ? 4 : 7;
-    const std::vector<std::uint8_t> frame_obu = make_obu(obu_type, payload);
+    const std::uint8_t obu_tlayer =
+        pf != nullptr ? static_cast<std::uint8_t>(pf->obu_tlayer_id()) : 0;
+    const std::vector<std::uint8_t> frame_obu =
+        make_obu(obu_type, payload, obu_tlayer);
 
     std::vector<std::uint8_t> unit;
     unit.insert(unit.end(), td_obu.begin(), td_obu.end());
@@ -3918,8 +4156,12 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
     stats.exact = err == 0;
     max_err = std::max(max_err, err);
     result->stats.push_back(stats);
-    result->recon.push_back(picture_from_planes(g, recon));
-    recon_frames.push_back(picture_from_planes(g, recon));
+    recon_by_display[static_cast<std::size_t>(display)] =
+        picture_from_planes(g, recon, options.bit_depth);
+  }
+  result->recon.reserve(pictures.size());
+  for (Picture& picture : recon_by_display) {
+    result->recon.push_back(std::move(picture));
   }
 
   result->max_abs_recon_error = max_err;
@@ -4003,10 +4245,10 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
     recon[0].resize(g.width, g.height);
     recon[1].resize(g.chroma_w, g.chroma_h);
     recon[2].resize(g.chroma_w, g.chroma_h);
-
     Options opt;
     opt.adaptive_cdf = !header.disable_cdf_update;
     opt.enable_fsc = seq.enable_fsc;
+    opt.bit_depth = seq.bit_depth;
     CdfState cdfs;
     init_cdfs(cdfs);
     TileContext ctx;
@@ -4016,7 +4258,7 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
     TileReader reader(g, opt, keyframe, cdfs, ctx, recon_ptr, ref, &stats);
     if (!reader.decode_tile(tile, tile_size, tile_size, *error)) return false;
 
-    Picture pic = picture_from_planes(g, recon);
+    Picture pic = picture_from_planes(g, recon, seq.bit_depth);
     stats_out.push_back(stats);
     frames.push_back(std::move(pic));
   }

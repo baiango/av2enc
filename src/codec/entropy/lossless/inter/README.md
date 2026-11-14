@@ -11,21 +11,42 @@ From-scratch CPU reference for the lossless inter paths that
 | inter residual WHT / IDTX / DPCM reconstruction (§7.15.4, p525–528) | **WIRED** |
 | FSC coefficient syntax beyond 4×4/8×8 (§5.20.7.27 `coeff_base_bob` / `coeff_base_idtx` / `coeff_br_idtx` / `idtx_sign`) | **WIRED** for 4×4…32×32 rectangular luma transforms; unit-tested at 8×16/16×8/16×32/32×16/32×32 |
 | lossless 4:4:4 / 4:2:2 | **WIRED** and decoder-gated (spec §6.4.2 Table 6.2 allows both; no lossless restriction) |
+| 10-bit lossless | **WIRED** and decoder-gated (`bit_depth_idc = 0`, f(9) `base_q_idx`, Clip1(10)) |
+| hierarchical-P schedule | **WIRED** and decoder-gated (`--video-tlayers 4/8`; see "CLI wiring") |
 
 Normative source: `spec/AV2_Spec_v1.0.0.pdf` (v1.0.0, commit `38f28e7`).
 `dav2d` is a black-box validator only.
 
 ## CLI wiring
 
-`av2enc --video-lossless` (8-bit 4:2:0, CPU) routes the plain multi-frame
-sequence to `encode_video()`; the module's sequence/frame headers,
-`CodedLossless` quantization, DPCM/WHT/IDTX reconstruction and FSC syntax are
-used unchanged.  `--video-lossless-intra-period N` sets `Options::intra_period`
-(0 = all inter), `--video-min-block 8|16|32` selects the coding block size, and
-`--lossless-fsc` forces `force_intra_fsc`.  The decoder gate is
-`src/pipeline/video/video_lossless_gate.sh`: 4/8-frame 720p streams decode with
-`dav2d --strict 1` and equal `--video-recon` exactly.  This module's own
-`build_and_test.sh` still builds and gates it standalone.
+`av2enc --video-lossless` (CPU) routes the sequence to `encode_video()`; the
+module's sequence/frame headers, `CodedLossless` quantization, DPCM/WHT/IDTX
+reconstruction and FSC syntax are used unchanged.  Supported surface:
+
+* 8-bit and 10-bit, 4:2:0/4:2:2/4:4:4 (`--bit-depth 8|10 --chroma 420|422|444`);
+  4:0:0 is not coded yet.
+* the flat key+P chain and the hierarchical-P temporal-layer schedule
+  (`--video-tlayers 4|8|16`).  The schedule comes from
+  `src/codec/inter/tlayers/` (`kHierarchicalP`, single reference, implicit
+  output pictures); the sequence header raises `max_tlayer_id`/NumRefFrames,
+  clears `monotonic_output_order_flag`, and the frame OBU carries
+  `obu_tlayer_id`.
+* `--video-lossless-intra-period N` sets `Options::intra_period` (0 = all
+  inter), `--video-min-block 8|16|32` selects the coding block size, and
+  `--lossless-fsc` forces `force_intra_fsc`.
+
+Samples are stored as `uint16_t` (`Picture::bit_depth`) at every depth; the
+reconstruction clips to `[0, (1 << bit_depth) - 1]` and the DC predictor uses
+the §7.13.3.22 `Div_Lut` form (the `w + h` denominator is not a power of two
+for rectangular leaves).  The module's sequence/frame headers carry
+`bit_depth_idc`, the depth-scaled `base_q_idx` (f(8)/f(9)) and, for
+`max_tlayer_id > 0`, the `tlayer_dependency_present_flag`.
+
+The decoder gates are `src/pipeline/video/video_lossless_gate.sh` (720p plain
+4/8-frame streams, `--video-tlayers 4/8`, and every supported format at
+640x360 plus 64x64, all `dav2d --strict 1` with 0-diff recon) and this
+module's own `build_and_test.sh`, whose gate now covers 10-bit 4:2:0/4:4:4 and
+a 4-frame temporal-layer GOP.
 
 ## What is encoded
 
@@ -51,8 +72,11 @@ used unchanged.  `--video-lossless-intra-period N` sets `Options::intra_period`
   transforms; `segEob = min(32,w)*min(32,h)` and the §5.20.7.30 2-D scan are
   generated, not specialised to 4×4/8×8.
 
-Scope limits: monochrome, 10/12-bit, SDP/CHROMA_PART, multiple tiles, real
-motion search, and lossy quantisation are not encoded.  The FSC coefficient
+Scope limits: 4:0:0 (monochrome), 12-bit, SDP/CHROMA_PART, multiple tiles,
+real motion search, and lossy quantisation are not encoded.  The independent
+reader (`decode_video()`) validates the flat chain and the format cores; the
+reordered hierarchical-P schedule is gated by pinned `dav2d` instead, because
+the reader's chroma residual path is not wired for that coding order.  The FSC coefficient
 syntax is lossless-level only here; the same syntax with lossy levels is
 exercised by `fsc_coeff_roundtrip()`.
 
@@ -171,10 +195,15 @@ ok   136x88_420_b16_p4
 ok   640x360_420_b16_p4
 ok   64x64_444_b16_p4
 ok   64x64_422_b16_p4
-lossless_inter_gate: 16 checks passed
+ok   64x64_420p10_b16_p4
+ok   64x64_444p10_b16_p4
+ok   640x360_420p10_b16_p4
+ok   64x64_420_tl4
+ok   64x64_420p10_tl4
+lossless_inter_gate: 26 checks passed
 ```
 
-The dev-host test run reports `lossless_inter_test: 6215 checks, 0 failures`.
+The dev-host test run reports `lossless_inter_test: 6268 checks, 0 failures`.
 
 Each case proves two things: the module's reader reproduces both frames, and
 `dav2d` outputs exactly the 2-frame source I420 (all Y/U/V samples, both

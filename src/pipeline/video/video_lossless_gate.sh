@@ -17,6 +17,9 @@
 #   3. Four and eight frame streams are IVF-pinned.
 #   4. A `--video` stream is unchanged (this is an independent writer) and the
 #      video tools the lossless writer does not implement are rejected by name.
+#   5. The format cores (10-bit 4:2:0/4:2:2/4:4:4 and 8-bit 4:2:2/4:4:4) decode
+#      exactly at 640x360 and 64x64, and the hierarchical-P schedule
+#      (--video-tlayers 4/8) decodes exactly, including 10-bit.
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "$0")/../../.." && pwd)"
@@ -104,16 +107,16 @@ passes=0
 pass_case() { echo "PASS $1"; passes=$((passes + 1)); }
 fail_case() { echo "FAIL $1: $2" >&2; failures=$((failures + 1)); }
 
-# run_case <name> <frames> <expected md5> [encoder args...]
-run_case() {
-  local name=$1 frames=$2 expected=$3; shift 3
+# run_input_case <name> <input> <frames> <expected md5|""> [encoder args...]
+run_input_case() {
+  local name=$1 input=$2 frames=$3 expected=$4; shift 4
   local out="$TMP/$name.ivf" recon="$TMP/$name.recon.y4m" dec="$TMP/$name.dav.y4m"
-  if ! "$AV2ENC_BIN" "$INPUT" -o "$out" --frames "$frames" \
+  if ! "$AV2ENC_BIN" "$input" -o "$out" --frames "$frames" \
         --video-lossless --video-recon "$recon" "$@" >"$TMP/$name.log" 2>&1; then
     fail_case "$name" "encode failed"; cat "$TMP/$name.log" >&2; return
   fi
   local got; got=$(md5_of "$out")
-  if [ "$got" != "$expected" ]; then
+  if [ -n "$expected" ] && [ "$got" != "$expected" ]; then
     fail_case "$name" "IVF md5 $got, expected $expected"; return
   fi
   if ! "$DAV2D" -q -i "$out" -o "$dec" --threads 1 --strict 1 \
@@ -125,7 +128,65 @@ run_case() {
     fail_case "$name" "encoder recon differs from dav2d"
     cat "$TMP/$name.cmp.log" >&2; return
   fi
-  pass_case "$name ($(wc -c <"$out" | tr -d ' ') B, md5 $expected)"
+  pass_case "$name ($(wc -c <"$out" | tr -d ' ') B, md5 $got)"
+}
+
+# run_case <name> <frames> <expected md5> [encoder args...]
+run_case() {
+  local name=$1 frames=$2 expected=$3; shift 3
+  run_input_case "$name" "$INPUT" "$frames" "$expected" "$@"
+}
+
+# Deterministic noise clip at an arbitrary bit depth / chroma format.
+generate_clip() {
+  local tag=$1 bitdepth=$2 chroma=$3 path=$4 frames=$5 width=$6 height=$7
+  python3 - "$tag" "$bitdepth" "$chroma" "$path" "$frames" "$width" \
+    "$height" <<'PYGEN'
+import math
+import sys
+
+tag, bitdepth, chroma, path, frames, width, height = sys.argv[1:8]
+bitdepth = int(bitdepth)
+frames = int(frames)
+w, h = int(width), int(height)
+sub_x = 1 if chroma in ("420", "422") else 0
+sub_y = 1 if chroma == "420" else 0
+cw, ch = w >> sub_x, h >> sub_y
+peak = (1 << bitdepth) - 1
+planes = [(w, h)]
+if chroma != "400":
+    planes += [(cw, ch), (cw, ch)]
+
+def noise(x, y, f, plane):
+    v = (x * 374761393 + y * 668265263 + f * 2246822519 +
+         plane * 3266489917) & 0xFFFFFFFF
+    v = ((v ^ (v >> 13)) * 1274126177) & 0xFFFFFFFF
+    return ((v ^ (v >> 16)) & 0x7FF) - 1024
+
+def sample(x, y, f, plane):
+    v = (1 << (bitdepth - 1)) + \
+        (1 << (bitdepth - 3)) * math.sin((x + 4 * f + 7 * plane) * 0.05) + \
+        (1 << (bitdepth - 4)) * math.cos((y + f + 3 * plane) * 0.07) + \
+        (1 << (bitdepth - 5)) * math.sin((x + y + 11 * f) * 0.013)
+    v += noise(x, y, f, plane) * ((1 << (bitdepth - 6)) / 1024.0)
+    return max(0, min(peak, int(v + 0.5)))
+
+with open(path, "wb") as out:
+    out.write(("YUV4MPEG2 W%d H%d F30:1 Ip A1:1 C%s\n" % (w, h, tag)).encode())
+    for f in range(frames):
+        out.write(b"FRAME\n")
+        for plane, (pw, ph) in enumerate(planes):
+            if bitdepth == 8:
+                for _ in range(ph):
+                    out.write(bytes(sample(x, _, f, plane) for x in range(pw)))
+            else:
+                for _ in range(ph):
+                    row = bytearray()
+                    for x in range(pw):
+                        v = sample(x, _, f, plane)
+                        row += bytes((v & 0xFF, (v >> 8) & 0xFF))
+                    out.write(row)
+PYGEN
 }
 
 # All-inter (IDTX/FSC on every P block), mixed DPCM/WHT, forced FSC, 8 frames.
@@ -135,6 +196,44 @@ run_case mixed_4 4 59cf90c17e97639bfd9ed8d06670a964 \
 run_case forced_fsc_4 4 31e50ec0d113cc02d1383664ff371124 \
   --video-lossless-intra-period 4 --lossless-fsc
 run_case all_inter_8 8 19c4b81811692127c108fad1c6ec7f47
+run_case tlayers_4 4 f0a2ce304b609a2312822838ab4f7125 --video-tlayers 4
+run_case tlayers_8 8 1b02c94e0c0b044157e86e973261ac36 --video-tlayers 8
+
+# ------------------------------------------------------- format video cores --
+# Pinned MD5s for the format cases (646x360 / 64x64 4-frame noise clips).
+fmt_pin() {
+  case "$1:$2" in
+    420p10:640) echo 3b8293a818b771cdab190a53f5635813 ;;
+    420p10:64) echo 631592b06357a3554bbacf298609e9cd ;;
+    422p10:640) echo b5835150471b2d3f163df693cc6e4061 ;;
+    444p10:640) echo 37921674d1ef264eec9194af26cf38ce ;;
+    422:640) echo 34304fc9f5dd82347bf60dd548fd670e ;;
+    444:640) echo ea09a31d9544d4eaf476a6c1461b0df1 ;;
+    444:64) echo b8bdea194e12ea3eac2d23c11f8073bc ;;
+    *) echo "" ;;
+  esac
+}
+for spec in "420p10 10 420" "422p10 10 422" "444p10 10 444" \
+            "422 8 422" "444 8 444"; do
+  # shellcheck disable=SC2086
+  set -- $spec
+  tag=$1 depth=$2 chroma=$3
+  clip="$TMP/f_${tag}_640.y4m"
+  generate_clip "$tag" "$depth" "$chroma" "$clip" 4 640 360
+  run_input_case "fmt_${tag}_640x360" "$clip" 4 "$(fmt_pin "$tag" 640)" \
+    --bit-depth "$depth" --chroma "$chroma"
+  if [ "$tag" = "420p10" ] || [ "$tag" = "444" ]; then
+    clip="$TMP/f_${tag}_64.y4m"
+    generate_clip "$tag" "$depth" "$chroma" "$clip" 4 64 64
+    run_input_case "fmt_${tag}_64x64" "$clip" 4 "$(fmt_pin "$tag" 64)" \
+      --bit-depth "$depth" --chroma "$chroma"
+    if [ "$tag" = "420p10" ]; then
+      run_input_case "fmt_${tag}_tlayers4_640" \
+        "$TMP/f_420p10_640.y4m" 4 2cf0113f2a27957a86e836b0344e9335 \
+        --bit-depth 10 --chroma 420 --video-tlayers 4
+    fi
+  fi
+done
 
 # Independent writer: a normal --video stream must not move.
 BASE="$TMP/base.ivf"

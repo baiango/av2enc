@@ -54,6 +54,14 @@ struct VideoConfig {
   // §5.4.4 sequence_segment_config().  enable_ext_seg raises MaxSegments from
   // 8 to 16 (--video-segments 9..16).  Off keeps the historical zero bit.
   bool enable_ext_seg = false;
+  // --video-seq-seg-info: seq_seg_info_present_flag = 1 writes
+  // seq_allow_seg_info_change plus the full seg_info(MaxSegments) table, so
+  // every frame can reuse it instead of coding a per-frame table.  Off keeps
+  // the historical zero bit.
+  bool seq_seg_info_present = false;
+  bool seq_allow_seg_info_change = true;
+  // The sequence segment table (SEG_LVL_* features, MaxSegments entries).
+  rc::SegmentationParams seq_seg_info{};
   // §5.4.6 order_hint_bits_minus_1 + 1. Four bits covers a 16-frame GOP.
   std::uint8_t order_hint_bits = 4;
   // §5.4.6 explicit_num_ref_frames / num_ref_frames_minus_1.
@@ -132,11 +140,34 @@ struct VideoConfig {
   // §5.4.3 extended-partition tools (--video-ext-partitions).
   bool enable_ext_partitions = false;
   bool enable_uneven_4way_partitions = false;
+  // §5.4.3 reduce_pb_aspect_ratio / max_pb_aspect_ratio_log2_minus_1
+  // (--video-reduce-pb-aspect).  When set, MaxPbAspectRatio is
+  // 1 << (log2_minus_1 + 1) = 2 or 4 instead of 8; the partition search runs
+  // with the same limit so every coded leaf satisfies §6.19.4.1.
+  bool reduce_pb_aspect_ratio = false;
+  int max_pb_aspect_ratio_log2_minus_1 = 1;
   // §5.4.7 screen-content config.  `seq_screen_content_tools_present` writes
   // seq_choose_screen_content_tools = seq_choose_integer_mv = 1, so the frame
   // header decides allow_screen_content_tools / force_integer_mv.  Off keeps
   // the historical two zero bits and no frame-header screen syntax.
   bool seq_screen_content_tools_present = false;
+  // --video-scc-force: seq_choose_screen_content_tools = 0 with
+  // seq_force_screen_content_tools = 1, so every frame infers
+  // allow_screen_content_tools = 1 and codes no allow bit.  seq_choose_integer_mv
+  // stays SELECT unless `seq_force_integer_mv` is also set, so the keyframe
+  // still decides force_integer_mv with one frame-header bit.
+  bool seq_force_screen_content_tools = false;
+  // --video-force-integer-mv (requires seq_force_screen_content_tools):
+  // seq_choose_integer_mv = 0 / seq_force_integer_mv = 1.  Every frame infers
+  // force_integer_mv = 1, the inter frame header codes no
+  // use_qtr_precision_mv/allow_high_precision_mv pair, and every inter MV is on
+  // the one-pel grid (§5.18.2 FrameMvPrecision = MV_PRECISION_ONE_PEL).
+  bool seq_force_integer_mv = false;
+
+  // True when the sequence enables the screen-content tools at all.
+  bool screen_content_tools_enabled() const {
+    return seq_screen_content_tools_present || seq_force_screen_content_tools;
+  }
   bool disable_cdf_update = true;
   // §5.18.7.9 deblocking_filter_params(): when enabled the frame header codes
   // all four apply_deblocking_filter flags with DfDeltaQ = 0 (df_par_bits =
@@ -296,6 +327,12 @@ struct VideoFrameQp {
   // (--video-segments 9..16).  It is not a frame-level bit; the frame header
   // writer uses it only to size seg_info().
   bool enable_ext_seg = false;
+  // §5.4.4 sequence segment table (--video-seq-seg-info).  When present the
+  // frame reuses the sequence seg_info(); with allow_change = 0 the reuse is
+  // inferred and no reuse_seg_info bit is coded.
+  bool seq_seg_info_present = false;
+  bool seq_allow_seg_info_change = false;
+  bool reuse_seg_info = true;
 };
 
 struct VideoFrameHeader {

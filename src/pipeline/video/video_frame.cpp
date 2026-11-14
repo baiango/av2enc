@@ -123,22 +123,55 @@ namespace grain = ::av2enc::filters::grain;
 
 // §5.14 film grain: estimate/plan one picture and insert the model OBU before
 // the coded-frame OBU of its temporal unit (§7.3.3/.4, §7.3.8.8).
-bool plan_grain_frame(const VideoInputFrame& frame, std::uint32_t index,
-                      grain::GrainStreamPlanner& planner,
-                      grain::GrainFramePlan& plan, std::string& error) {
+grain::GrainChromaIdc grain_chroma_idc_of(fmt::ChromaFormat chroma) {
+  switch (chroma) {
+    case fmt::ChromaFormat::k400:
+      return grain::GrainChromaIdc::k400;
+    case fmt::ChromaFormat::k422:
+      return grain::GrainChromaIdc::k422;
+    case fmt::ChromaFormat::k444:
+      return grain::GrainChromaIdc::k444;
+    case fmt::ChromaFormat::k420:
+    default:
+      return grain::GrainChromaIdc::k420;
+  }
+}
+
+grain::GrainFrameView make_grain_view(const VideoInputFrame& frame) {
   grain::GrainFrameView view;
-  view.y = frame.y.data();
-  view.u = frame.u.data();
-  view.v = frame.v.data();
+  // Prefer the packed uint16_t planes when they are present: the format cores
+  // carry them even at 8-bit.
+  const bool packed16 = !frame.y16.empty();
+  const int sub_x = fmt::subsampling_x(frame.format.chroma);
+  const bool has_chroma = fmt::has_chroma(frame.format.chroma);
+  if (packed16) {
+    view.y16 = frame.y16.data();
+    if (has_chroma) {
+      view.u16 = frame.u16.data();
+      view.v16 = frame.v16.data();
+    }
+    view.bit_depth = frame.format.depth == fmt::BitDepth::k10 ? 10 : 8;
+  } else {
+    view.y = frame.y.data();
+    if (has_chroma) {
+      view.u = frame.u.data();
+      view.v = frame.v.data();
+    }
+    view.bit_depth = 8;
+  }
   view.width = static_cast<int>(frame.width);
   view.height = static_cast<int>(frame.height);
   view.y_stride = static_cast<int>(frame.width);
-  view.c_stride = static_cast<int>(frame.width / 2U);
-  if (!planner.PlanFrame(view, index, /*tlayer_id=*/0, /*mlayer_id=*/0, &plan,
-                         &error)) {
-    return false;
-  }
-  return true;
+  view.c_stride = static_cast<int>(frame.width >> sub_x);
+  return view;
+}
+
+bool plan_grain_frame(const VideoInputFrame& frame, std::uint32_t index,
+                      grain::GrainStreamPlanner& planner,
+                      grain::GrainFramePlan& plan, std::string& error,
+                      int tlayer_id = 0, int mlayer_id = 0) {
+  return planner.PlanFrame(make_grain_view(frame), index, tlayer_id, mlayer_id,
+                           &plan, &error);
 }
 
 bool insert_grain_obu(const grain::GrainFramePlan& plan,
@@ -282,9 +315,11 @@ int relative_dist(std::uint32_t a, std::uint32_t b, int bits) {
   return diff;
 }
 
-// Round a 1/8-pel MV to the signalled frame precision: 1/8, 1/4 or 1/2 pel.
+// Round a 1/8-pel MV to the signalled frame precision: 1/8, 1/4, 1/2 or one
+// pel (3, only with seq_force_integer_mv).
 inter::mc::Mv quantize_mv(inter::mc::Mv mv, int precision) {
-  const int quantum = precision == 1 ? 2 : (precision == 2 ? 4 : 1);
+  const int quantum =
+      precision == 1 ? 2 : (precision == 2 ? 4 : (precision == 3 ? 8 : 1));
   if (quantum == 1) return mv;
   const auto round_component = [quantum](int value) {
     const int magnitude = value < 0 ? -value : value;
@@ -512,6 +547,27 @@ bool make_video_segmentation(const VideoOptions& options,
   return true;
 }
 
+// The §5.4.4 sequence table is the key-frame form of the planner: identical
+// features to every other frame unless a P-only SKIP/GLOBALMV feature is
+// enabled.  `num_segments` is the same MaxSegments the header writer uses.
+bool same_segmentation_table(const rc::SegmentationParams& a,
+                             const rc::SegmentationParams& b,
+                             int num_segments) noexcept {
+  for (int i = 0; i < num_segments; ++i) {
+    const rc::SegmentFeatures& fa = a.segments[static_cast<std::size_t>(i)];
+    const rc::SegmentFeatures& fb = b.segments[static_cast<std::size_t>(i)];
+    for (int j = 0; j < 3; ++j) {
+      if (fa.enabled[static_cast<std::size_t>(j)] !=
+              fb.enabled[static_cast<std::size_t>(j)] ||
+          fa.data[static_cast<std::size_t>(j)] !=
+              fb.data[static_cast<std::size_t>(j)]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // §5.18.7.1 segmentation_params() / §5.18.7.8 delta_q_params() for one frame.
 // The feature table is coded per frame; the per-frame map lives in the tile
 // payload.  Validates the plan before the header writer runs (the writer has no
@@ -523,6 +579,8 @@ bool build_video_frame_qp(const VideoOptions& options, int base_q_idx,
   header.qp.primary_ref_is_none = primary_ref_is_none;
   header.qp.frame_delta_q = options.frame_delta_q;
   header.qp.enable_ext_seg = options.enable_ext_seg;
+  header.qp.seq_seg_info_present = options.seq_seg_info_present;
+  header.qp.seq_allow_seg_info_change = options.seq_allow_seg_info_change;
   if (!options.enable_segmentation && !options.per_segment_q &&
       !options.enable_delta_q && !options.enable_uv_delta_q) {
     return true;
@@ -535,6 +593,17 @@ bool build_video_frame_qp(const VideoOptions& options, int base_q_idx,
   }
   header.qp.delta_q.present = options.enable_delta_q;
   header.qp.delta_q.res = options.enable_delta_q ? options.delta_q_res : 0;
+  if (options.seq_seg_info_present && header.qp.segmentation.enabled) {
+    // §5.18.7.1: reuse_seg_info = 1 matches the decoded SeqFeature* table, so
+    // the frame table must equal the sequence table feature for feature.
+    rc::SegmentationParams seq_table;
+    if (!make_video_segmentation(options, /*primary_ref_is_none=*/true,
+                                 /*frame_is_intra=*/true, seq_table, error)) {
+      return false;
+    }
+    header.qp.reuse_seg_info = same_segmentation_table(
+        header.qp.segmentation, seq_table, video_num_segments(options));
+  }
   deltaq::FrameQpHeader qp_header;
   qp_header.primary_ref_is_none = primary_ref_is_none;
   qp_header.enable_ext_seg = options.enable_ext_seg;
@@ -1529,6 +1598,13 @@ class InterFrameEncoder {
                    ? 128
                    : options_.superblock_pixels();
     geometry_.sb_size = sb_size_;
+    // §5.4.3 MaxPbAspectRatio: 8 unless reduce_pb_aspect_ratio selects the
+    // 2:1 or 4:1 form.  The partition search and the §6.19.3.2 validation must
+    // agree with the sequence header the decoder reads.
+    geometry_.max_pb_aspect_ratio =
+        options_.reduce_pb_aspect_ratio
+            ? (1 << (options_.max_pb_aspect_ratio_log2_minus_1 + 1))
+            : 8;
     geometry_.has_chroma = true;
     geometry_.chroma_subsampling_x = true;
     geometry_.chroma_subsampling_y = true;
@@ -2369,6 +2445,7 @@ class InterFrameEncoder {
     plan.width = width_;
     plan.height = height_;
     plan.sb_size = sb_size_;
+    plan.max_pb_aspect_ratio = geometry_.max_pb_aspect_ratio;
     plan.frame_mi_cols = frame_mi_cols_;
     plan.frame_mi_rows = frame_mi_rows_;
     plan.tile_mi_row = tile_mi_row_;
@@ -2386,17 +2463,23 @@ class InterFrameEncoder {
     plan.enable_cwp = options_.enable_cwp_weighted;
     plan.allow_bawp = (options_.enable_bawp || options_.enable_morph) &&
                       !keyframe_;
-    // §5.4.7/§5.18.3.3/.4 screen-content tools.  Only the intra keyframe and
-    // only the single-tile writer: the palette above/left cache and the IBC
-    // BV ring are tile-local, and a tile boundary would change both.
-    const bool scc_carrier = keyframe_ && options_.tile_cols == 0 &&
-                             options_.tile_rows == 0;
+    // §5.4.7/§5.18.3.3/.4 screen-content tools.  The palette above/left cache
+    // and the IBC BV ring are tile-local, so only the single-tile writer.
+    // --video-scc-force extends the tools to the inter frames: the forced
+    // sequence form infers allow_screen_content_tools = 1 there, and every
+    // eligible intra leaf then codes palette_mode_info() (has_palette_y = 0).
+    const bool scc_carrier =
+        options_.tile_cols == 0 && options_.tile_rows == 0;
     plan.allow_screen_content_tools =
-        scc_carrier && (options_.enable_morph || options_.enable_palette ||
-                        options_.enable_ibc);
+        scc_carrier &&
+        (options_.seq_force_screen_content_tools ||
+         (keyframe_ && (options_.enable_morph || options_.enable_palette ||
+                        options_.enable_ibc)));
     plan.allow_intrabc =
-        scc_carrier && (options_.enable_morph || options_.enable_ibc);
+        keyframe_ && scc_carrier &&
+        (options_.enable_morph || options_.enable_ibc);
     plan.force_integer_mv = true;
+    plan.frame_force_integer_mv = options_.seq_force_integer_mv;
     // §5.20.5.4 reads morph_pred inside read_intrabc_info() whenever
     // allow_screen_content_tools && enable_bawp, independent of --video-morph.
     // So any IBC carrier on a BAWP sequence codes the symbol; without the
@@ -2410,7 +2493,8 @@ class InterFrameEncoder {
         (options_.compound_wedge || options_.compound_diffwtd);
     plan.opfl_refine_type = plan.reference_select ? options_.opfl_refine_type : 0;
     plan.enable_refinemv = plan.reference_select && options_.enable_refinemv;
-    plan.mv_precision = options_.mv_precision;
+    plan.mv_precision =
+        options_.seq_force_integer_mv ? 3 : options_.mv_precision;
     plan.enable_adaptive_mvd = options_.enable_adaptive_mvd;
     plan.enable_mvd_sign_derive = options_.enable_mvd_sign_derive;
     plan.enable_flex_mvres = options_.enable_flex_mvres;
@@ -2451,6 +2535,9 @@ class InterFrameEncoder {
     config.use_256x256_superblock = options_.sb256;
     config.enable_ext_partitions = options_.ext_partitions;
     config.enable_uneven_4way_partitions = options_.ext_partitions;
+    config.reduce_pb_aspect_ratio = options_.reduce_pb_aspect_ratio;
+    config.max_pb_aspect_ratio_log2_minus_1 =
+        options_.max_pb_aspect_ratio_log2_minus_1;
     config.base_q_idx = options_.base_q_idx;
     config.order_hint_bits = 4;
     config.num_ref_frames = 2;
@@ -2485,8 +2572,12 @@ class InterFrameEncoder {
     config.enable_mvd_sign_derive = options_.enable_mvd_sign_derive;
     config.enable_flex_mvres = options_.enable_flex_mvres;
     config.seq_screen_content_tools_present =
-        keyframe_ && (options_.enable_morph || options_.enable_palette ||
-                      options_.enable_ibc);
+        !options_.seq_force_screen_content_tools && keyframe_ &&
+        (options_.enable_morph || options_.enable_palette ||
+         options_.enable_ibc);
+    config.seq_force_screen_content_tools =
+        options_.seq_force_screen_content_tools;
+    config.seq_force_integer_mv = options_.seq_force_integer_mv;
     config.enable_interintra = options_.enable_interintra;
 
     std::size_t tile_bytes = 0;
@@ -4487,24 +4578,37 @@ class InterFrameEncoder {
           }
 
           if (options_.enable_newmv) {
+            // seq_force_integer_mv pins FrameMvPrecision to one pel for the
+            // whole sequence, so the inter search codes one-pel MVDs.
+            const int mv_precision =
+                options_.seq_force_integer_mv ? 3 : options_.mv_precision;
             inter::mc::Mv me_mv{};
             if (run_me(ref_index, ax0, ay0, w, h, me_mv, error)) {
-              me_mv = quantize_mv(me_mv, options_.mv_precision);
-              const inter::mc::Mv pred = stack.cand[0].mv[0];
+              me_mv = quantize_mv(me_mv, mv_precision);
+              inter::mc::Mv pred = stack.cand[0].mv[0];
+              // §5.20.7.13 assign_mv(): for a frame precision coarser than
+              // 1/2 pel (MV_PRECISION_ONE_PEL) the decoder lowers the predictor
+              // before adding DiffMv.  The quarter/half frames keep it as-is.
+              if (mv_precision == 3) {
+                me2::me2_lower_mv_precision(&pred.y, &pred.x,
+                                            me2::kMvPrecisionOnePel);
+              }
               // §5.20.7.13 only lowers the predictor when MvPrecision is
               // coarser than 1/2 pel.  Our quarter/half frames keep the
               // predictor as-is; the MVD itself is coded in precision units.
               const inter::mc::Mv delta{me_mv.y - pred.y, me_mv.x - pred.x};
               inter::mc::Mv mvd =
-                  options_.mv_precision == 0
+                  mv_precision == 0
                       ? delta
-                      : quantize_mv(delta, options_.mv_precision);
+                      : quantize_mv(delta, mv_precision);
               const int frame_prec =
-                  options_.mv_precision == 0
+                  mv_precision == 0
                       ? me2::kMvPrecisionEighthPel
-                      : (options_.mv_precision == 1
+                      : (mv_precision == 1
                              ? me2::kMvPrecisionQuarterPel
-                             : me2::kMvPrecisionHalfPel);
+                             : (mv_precision == 2
+                                    ? me2::kMvPrecisionHalfPel
+                                    : me2::kMvPrecisionOnePel));
               // §5.20.7.6 AMVD: the MVD magnitudes must be exactly
               // representable by Amvd_Index_To_Mvd.  When they are, the
               // index form codes fewer bits and reconstructs the same MV.
@@ -4573,7 +4677,7 @@ class InterFrameEncoder {
               }
               merge::ResolvedMode resolved;
               const bool resolved_ok =
-                  options_.mv_precision == 0
+                  mv_precision == 0
                       ? merge::resolve_single_mode(
                             stack, stack_params, merge::SingleMode::kNewMv, 0,
                             mvd, &resolved) == merge::Status::kOk
@@ -4581,7 +4685,7 @@ class InterFrameEncoder {
               if (resolved_ok) {
                 std::vector<std::uint8_t> luma;
                 const inter::mc::Mv new_mv =
-                    options_.mv_precision == 0
+                    mv_precision == 0
                         ? resolved.mv[0]
                         : inter::mc::Mv{pred.y + mvd.y, pred.x + mvd.x};
                 if (predict_luma(ref_index, new_mv, ax0, ay0, w, h, luma)) {
@@ -4591,7 +4695,7 @@ class InterFrameEncoder {
                   cand.ref_index = ref_index;
                   cand.drl_index = 0;
                   cand.mv = new_mv;
-                  cand.mvd = options_.mv_precision == 0 ? resolved.mvd[0] : mvd;
+                  cand.mvd = mv_precision == 0 ? resolved.mvd[0] : mvd;
                   cand.use_amvd = use_amvd;
                   cand.block_mv_precision =
                       target == frame_prec ? -1 : target;
@@ -6481,23 +6585,29 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   namespace bf = inter::bframes;
   const std::uint32_t width = frames[0].width;
   const std::uint32_t height = frames[0].height;
-  if (frames.size() != static_cast<std::size_t>(gop_size)) {
-    error = "--b-frames codes one closed GOP: pass exactly " +
-            std::to_string(gop_size) + " frames (N B frames + key + P anchor)";
+  const int num_gops = std::max(1, options.video_gops);
+  const std::size_t expected =
+      static_cast<std::size_t>(gop_size) * static_cast<std::size_t>(num_gops);
+  if (frames.size() != expected) {
+    error = "--b-frames codes " + std::to_string(num_gops) +
+            " closed GOP(s): pass exactly " + std::to_string(expected) +
+            " frames (N B frames + key + P anchor per GOP)";
     return false;
   }
   bf::SequenceConfig sc;
-  sc.num_gops = static_cast<int>(frames.size()) / gop_size;
+  sc.num_gops = num_gops;
   sc.gop_size = gop_size;
   sc.pattern = bf::GopPattern::kIpbb;
-  sc.order_hint_bits = 4;
+  // OrderHintBits must cover the whole sequence: two 8-frame GOPs need 16
+  // distinct hints, so the historical 4 bits stay exact until 16 pictures.
+  int order_hint_bits = 4;
+  while ((1 << order_hint_bits) < static_cast<int>(frames.size())) {
+    ++order_hint_bits;
+  }
+  sc.order_hint_bits = order_hint_bits;
   sc.num_slots = 16;
   sc.base_q_idx = options.base_q_idx;
   sc.leading_pictures = 0;
-  if (sc.num_gops != 1) {
-    error = "--b-frames codes exactly one GOP";
-    return false;
-  }
   bf::Plan plan;
   bf::PlanError plan_error = bf::PlanError::kOk;
   if (!bf::build_sequence(sc, plan, &plan_error)) {
@@ -6507,6 +6617,15 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   if (plan.display_count() != static_cast<int>(frames.size())) {
     error = "B-frame schedule display count mismatch";
     return false;
+  }
+  // A CLK that starts a later GOP refreshes every slot.  Its output process
+  // flushes the previous GOP's buffered pictures (implicit output only retains
+  // pictures in the reference store), so every key is immediate_output.
+  for (bf::FramePlan& fp : plan.frames) {
+    if (fp.is_key) {
+      fp.immediate_output_frame = true;
+      fp.implicit_output_frame = false;
+    }
   }
   bf::ValidationReport report;
   if (!bf::validate_plan(plan, &report)) {
@@ -6565,6 +6684,7 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   config.enable_ref_frame_mvs = options.enable_ref_frame_mvs;
   config.max_tlayer_id = 0;
   config.monotonic_output_order_flag = false;
+  config.film_grain_params_present = options.film_grain;
 
   const int mi_cols = 2 * static_cast<int>((width + 7U) >> 3U);
   const int mi_rows = 2 * static_cast<int>((height + 7U) >> 3U);
@@ -6575,6 +6695,10 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   VideoOptions frame_options = options;
   frame_options.temporal_layers = 0;
   frame_options.tlayer_drop = -1;
+  // §5.14 film grain: one planner over the whole CVS.  Every picture of an
+  // I/P/B schedule is output (immediate or implicit), so every frame header
+  // codes film_grain_config() and its unit may carry one model OBU.
+  grain::GrainStreamPlanner grain_planner;
 
   bool wrote_sequence_header = false;
   // §7.23 mirror for the implicit map.  This path signals obu_tlayer_id = 0
@@ -6594,6 +6718,16 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
       return false;
     }
     const bf::FrameHeaderFields hf = bf::header_fields(*fp);
+    // Per-frame rate control: the planner is indexed by display order, so the
+    // coding-order walk picks each picture's own base_q_idx.  Header and
+    // coefficient-CDF qctx slice both follow it.
+    const std::uint8_t base_q =
+        options.frame_base_q_idx.empty()
+            ? static_cast<std::uint8_t>(options.base_q_idx)
+            : options.frame_base_q_idx[static_cast<std::size_t>(display)];
+    frame_options.base_q_idx = base_q;
+    VideoConfig frame_config = config;
+    frame_config.base_q_idx = base_q;
     // Map slots (header ref_frame_idx) and the display picture each one holds.
     std::vector<int> map_slots;
     std::vector<int> ref_displays;
@@ -6743,6 +6877,23 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
         options.enable_ref_frame_mvs && !hf.keyframe;
     apply_video_loop_filter_frame_header(encoder.filter_plan(), header);
 
+    // §5.14: plan this picture's model in coding order before the frame header
+    // is written; a changed model emits one film grain OBU in this unit.
+    grain::GrainFramePlan grain_plan;
+    if (options.film_grain &&
+        !plan_grain_frame(frames[static_cast<std::size_t>(display)],
+                          static_cast<std::uint32_t>(display), grain_planner,
+                          grain_plan, error)) {
+      error = "B-frame display " + std::to_string(display) + " film grain: " +
+              error;
+      return false;
+    }
+    if (options.film_grain) {
+      header.apply_grain = grain_plan.apply_grain;
+      header.fgm_id = static_cast<std::uint8_t>(grain_plan.fgm_id);
+      header.grain_seed = grain_plan.grain_seed;
+    }
+
     std::vector<std::uint8_t> unit;
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     unit.insert(unit.end(), td.begin(), td.end());
@@ -6751,8 +6902,13 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
       unit.insert(unit.end(), seq.begin(), seq.end());
       wrote_sequence_header = true;
     }
-    const std::vector<std::uint8_t> obu = make_frame_obu(config, header, tile, 0);
+    const std::vector<std::uint8_t> obu =
+        make_frame_obu(frame_config, header, tile, 0);
     unit.insert(unit.end(), obu.begin(), obu.end());
+    if (options.film_grain && !insert_grain_obu(grain_plan, unit, error)) {
+      error = "B-frame display " + std::to_string(display) + ": " + error;
+      return false;
+    }
     result.units.push_back(std::move(unit));
 
     result.frame_bytes.push_back(
@@ -6766,7 +6922,7 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
       // §7.23: the next frame's derivation reads this frame's slot state.
       if (!ref_bank.refresh(hf.refresh_frame_flags, fp->display_order_hint,
                             static_cast<int>(width), static_cast<int>(height),
-                            config.base_q_idx, hf.keyframe, /*tlayer_id=*/0,
+                            base_q, hf.keyframe, /*tlayer_id=*/0,
                             /*mlayer_id=*/0, hf.implicit_output_frame,
                             hf.immediate_output_frame, -1, &error)) {
         error = "B-frame display " + std::to_string(display) +
@@ -6862,14 +7018,20 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
             std::to_string(gop) + " input frames";
     return false;
   }
-  if (!options.frame_base_q_idx.empty()) {
-    error = "--video-tlayers does not compose with per-frame rate control";
+  if (!options.frame_base_q_idx.empty() &&
+      options.frame_base_q_idx.size() != frames.size()) {
+    error = "per-frame rate control needs one base_q_idx per temporal-layer "
+            "picture";
     return false;
   }
 
   tl::PlanConfig pc;
   pc.gop_size = gop;
   pc.schedule = tl::Schedule::kHierarchicalP;
+  // Two references per interior frame (the base inter picture keeps the key
+  // as its only reference).  The default TLayerDependencyMap admits both, and
+  // the §7.22 fields then let §7.9 project real ref-MV candidates.
+  pc.ref_mode = tl::RefMode::kTwo;
   pc.dependency = tl::DependencyMode::kAllLower;
   pc.explicit_dependency_map = false;  // pinned dav2d parses the default map
   // A 16-frame GOP needs OrderHintBits 5: the display hint of the anchor at
@@ -6966,6 +7128,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.max_mlayer_id = options.max_mlayer_id;
   config.seq_max_mlayer_cnt = options.seq_max_mlayer_cnt;
   config.tlayer_dependency_present_flag = plan.tlayer_dependency_present_flag;
+  config.film_grain_params_present = options.film_grain;
   for (int curr = 0; curr <= plan.max_tlayer_id; ++curr) {
     for (int ref = 0; ref <= plan.max_tlayer_id; ++ref) {
       config.tlayer_dependency[curr][ref] =
@@ -6985,6 +7148,11 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   frame_options.temporal_layers = 0;
   frame_options.tlayer_drop = -1;
 
+  // §5.14 film grain: every temporal-layer picture is output (immediate or
+  // implicit), so every unit carries the §5.18.10.1 config and at most one
+  // model OBU.
+  grain::GrainStreamPlanner grain_planner;
+
   bool wrote_sequence_header = false;
   // §7.23 mirror for the implicit map; the OBU tlayer id is stored per slot so
   // the default TLayerDependencyMap (`ref_tlayer <= obu_tlayer_id`) applies.
@@ -7001,6 +7169,15 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       return false;
     }
     const int tlayer_id = pf.obu_tlayer_id();
+    // Per-frame rate control follows display order (the planner's indexing),
+    // while units are emitted in coding order.
+    const std::uint8_t base_q =
+        options.frame_base_q_idx.empty()
+            ? static_cast<std::uint8_t>(options.base_q_idx)
+            : options.frame_base_q_idx[static_cast<std::size_t>(display)];
+    frame_options.base_q_idx = base_q;
+    VideoConfig frame_config = config;
+    frame_config.base_q_idx = base_q;
 
     std::vector<int> map_slots;
     std::vector<int> ref_displays;
@@ -7146,12 +7323,31 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
     header.refresh_frame_flags = pf.refresh_frame_flags;
     header.immediate_output_frame = pf.immediate_output_frame;
     header.implicit_output_frame = pf.implicit_output_frame;
-    header.reference_select = false;  // --video-tlayers is single-reference
+    // reference_select stays 0: the block layer uses one reference per block;
+    // the two-entry map is what feeds the §7.9 field.
+    header.reference_select = false;
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
     header.use_ref_frame_mvs =
         options.enable_ref_frame_mvs && !pf.is_key;
     apply_video_loop_filter_frame_header(encoder.filter_plan(), header);
+
+    // §5.14: plan in coding order before the frame header; the model OBU is
+    // inserted into this layer's temporal unit.
+    grain::GrainFramePlan grain_plan;
+    if (options.film_grain &&
+        !plan_grain_frame(frames[static_cast<std::size_t>(display)],
+                          static_cast<std::uint32_t>(display), grain_planner,
+                          grain_plan, error, tlayer_id, /*mlayer_id=*/0)) {
+      error = "temporal-layer frame " + std::to_string(display) +
+              " film grain: " + error;
+      return false;
+    }
+    if (options.film_grain) {
+      header.apply_grain = grain_plan.apply_grain;
+      header.fgm_id = static_cast<std::uint8_t>(grain_plan.fgm_id);
+      header.grain_seed = grain_plan.grain_seed;
+    }
 
     std::vector<std::uint8_t> unit;
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
@@ -7162,9 +7358,14 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       wrote_sequence_header = true;
     }
     const std::vector<std::uint8_t> obu =
-        make_frame_obu(config, header, tile,
+        make_frame_obu(frame_config, header, tile,
                        static_cast<std::uint8_t>(pf.obu_tlayer_id()));
     unit.insert(unit.end(), obu.begin(), obu.end());
+    if (options.film_grain && !insert_grain_obu(grain_plan, unit, error)) {
+      error = "temporal-layer frame " + std::to_string(display) + ": " +
+              error;
+      return false;
+    }
     result.units.push_back(std::move(unit));
 
     result.tile_bytes.push_back(static_cast<std::uint32_t>(tile.size()));
@@ -7177,7 +7378,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
     if (options.implicit_ref_map) {
       if (!ref_bank.refresh(pf.refresh_frame_flags, pf.display_order_hint,
                             static_cast<int>(width), static_cast<int>(height),
-                            config.base_q_idx, pf.is_key, tlayer_id,
+                            base_q, pf.is_key, tlayer_id,
                             /*mlayer_id=*/0, pf.implicit_output_frame,
                             pf.immediate_output_frame, -1, &error)) {
         error = "temporal-layer frame " + std::to_string(display) +
@@ -7361,8 +7562,20 @@ bool encode_video_refinement_sequence(
   frame_options.tlayer_drop = -1;
   frame_options.force_intra = false;
 
+  if (!options.frame_base_q_idx.empty() &&
+      options.frame_base_q_idx.size() != frames.size()) {
+    error = "embedded refinement needs one base_q_idx per picture";
+    return false;
+  }
   bool wrote_sequence_header = false;
   for (std::size_t i = 0; i < frames.size(); ++i) {
+    const std::uint8_t base_q =
+        options.frame_base_q_idx.empty()
+            ? static_cast<std::uint8_t>(options.base_q_idx)
+            : options.frame_base_q_idx[i];
+    frame_options.base_q_idx = base_q;
+    VideoConfig frame_config = config;
+    frame_config.base_q_idx = base_q;
     std::vector<inter::mc::RefFrame> refs;
     inter::mc::RefFrame ref;
     const VideoReconFrame& reference = references[i];
@@ -7415,7 +7628,8 @@ bool encode_video_refinement_sequence(
       unit.insert(unit.end(), seq.begin(), seq.end());
       wrote_sequence_header = true;
     }
-    const std::vector<std::uint8_t> obu = make_frame_obu(config, header, tile);
+    const std::vector<std::uint8_t> obu =
+        make_frame_obu(frame_config, header, tile);
     unit.insert(unit.end(), obu.begin(), obu.end());
     result.units.push_back(std::move(unit));
 
@@ -7567,8 +7781,16 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
   config.choose_tcq_per_frame = options.enable_tcq;
   config.enable_cctx = options.enable_cctx;
   config.disable_drl_reorder = true;
+  config.film_grain_params_present = options.film_grain;
 
   std::array<TipSlotState, kMaxRefSlots> slots;
+
+  // §5.14 film grain: the key and the tile-coded P frames of this schedule are
+  // ordinary frame headers and code film_grain_config().  A TIP OBU ends its
+  // header at decode_frame_wrapup() (§5.18.2), so a TIP picture has no config
+  // site: it is planned with apply_grain = 0 and carries no model OBU.
+  grain::GrainStreamPlanner grain_planner;
+  grain::GrainFramePlan key_grain;
 
   // --- Key frame -----------------------------------------------------------
   VideoFrameHeader key_header;
@@ -7576,6 +7798,16 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
   key_header.order_hint = 0;
   key_header.ref_slot = 0;
   key_header.refresh_frame_flags = (1U << num_ref_frames) - 1U;
+  if (options.film_grain &&
+      !plan_grain_frame(frames[0], 0, grain_planner, key_grain, error)) {
+    error = "TIP keyframe film grain: " + error;
+    return false;
+  }
+  if (options.film_grain) {
+    key_header.apply_grain = key_grain.apply_grain;
+    key_header.fgm_id = static_cast<std::uint8_t>(key_grain.fgm_id);
+    key_header.grain_seed = key_grain.grain_seed;
+  }
 
   std::vector<inter::mc::RefFrame> no_refs;
   std::array<int, 7> no_distance{};
@@ -7605,6 +7837,10 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
     unit.insert(unit.end(), td.begin(), td.end());
     unit.insert(unit.end(), seq.begin(), seq.end());
     unit.insert(unit.end(), obu.begin(), obu.end());
+    if (options.film_grain && !insert_grain_obu(key_grain, unit, error)) {
+      error = "TIP keyframe: " + error;
+      return false;
+    }
     result.units.push_back(std::move(unit));
     result.recon.push_back(to_recon_frame(slots[0].plane[0], slots[0].plane[1],
                                          slots[0].plane[2], width, height));
@@ -7669,6 +7905,20 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
     header.allow_high_precision_mv = options.mv_precision != 2;
     header.use_ref_frame_mvs = options.enable_ref_frame_mvs;
 
+    grain::GrainFramePlan anchor_grain;
+    if (options.film_grain &&
+        !plan_grain_frame(frames.back(),
+                          static_cast<std::uint32_t>(anchor_hint),
+                          grain_planner, anchor_grain, error)) {
+      error = "TIP anchor film grain: " + error;
+      return false;
+    }
+    if (options.film_grain) {
+      header.apply_grain = anchor_grain.apply_grain;
+      header.fgm_id = static_cast<std::uint8_t>(anchor_grain.fgm_id);
+      header.grain_seed = anchor_grain.grain_seed;
+    }
+
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> obu =
         make_frame_obu(config, header, payload);
@@ -7676,6 +7926,10 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
     unit.reserve(td.size() + obu.size());
     unit.insert(unit.end(), td.begin(), td.end());
     unit.insert(unit.end(), obu.begin(), obu.end());
+    if (options.film_grain && !insert_grain_obu(anchor_grain, unit, error)) {
+      error = "TIP anchor: " + error;
+      return false;
+    }
     result.units.push_back(std::move(unit));
     result.recon.push_back(to_recon_frame(slot.plane[0], slot.plane[1],
                                          slot.plane[2], width, height));
@@ -7863,6 +8117,22 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
     header.tip_sharp = true;
     header.allow_tip_hole_fill = tip.allow_tip_hole_fill;
 
+    // §5.14: a TIP picture codes film_grain_config() right after the TIP block
+    // (the config is the only tail syntax the TIP header keeps).
+    grain::GrainFramePlan tip_grain;
+    if (options.film_grain &&
+        !plan_grain_frame(frames[static_cast<std::size_t>(hint)],
+                          static_cast<std::uint32_t>(hint), grain_planner,
+                          tip_grain, error)) {
+      error = "TIP frame " + std::to_string(i) + " film grain: " + error;
+      return false;
+    }
+    if (options.film_grain) {
+      header.apply_grain = tip_grain.apply_grain;
+      header.fgm_id = static_cast<std::uint8_t>(tip_grain.fgm_id);
+      header.grain_seed = tip_grain.grain_seed;
+    }
+
     std::vector<std::uint8_t> obu = make_tip_frame_obu(config, header, error);
     if (obu.empty()) {
       error = "TIP frame " + std::to_string(i) + ": " + error;
@@ -7873,6 +8143,10 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
     unit.reserve(td.size() + obu.size());
     unit.insert(unit.end(), td.begin(), td.end());
     unit.insert(unit.end(), obu.begin(), obu.end());
+    if (options.film_grain && !insert_grain_obu(tip_grain, unit, error)) {
+      error = "TIP frame " + std::to_string(i) + ": " + error;
+      return false;
+    }
     result.units.push_back(std::move(unit));
     result.recon.push_back(to_recon_frame(slot.plane[0], slot.plane[1],
                                          slot.plane[2], width, height));
@@ -8001,12 +8275,30 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
     header.allow_high_precision_mv = options.mv_precision != 2;
     header.use_ref_frame_mvs = true;
 
+    grain::GrainFramePlan tail_grain;
+    if (options.film_grain &&
+        !plan_grain_frame(frames[static_cast<std::size_t>(display)],
+                          static_cast<std::uint32_t>(display), grain_planner,
+                          tail_grain, error)) {
+      error = "TIP tail P film grain: " + error;
+      return false;
+    }
+    if (options.film_grain) {
+      header.apply_grain = tail_grain.apply_grain;
+      header.fgm_id = static_cast<std::uint8_t>(tail_grain.fgm_id);
+      header.grain_seed = tail_grain.grain_seed;
+    }
+
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> obu = make_frame_obu(config, header, payload);
     std::vector<std::uint8_t> unit;
     unit.reserve(td.size() + obu.size());
     unit.insert(unit.end(), td.begin(), td.end());
     unit.insert(unit.end(), obu.begin(), obu.end());
+    if (options.film_grain && !insert_grain_obu(tail_grain, unit, error)) {
+      error = "TIP tail P: " + error;
+      return false;
+    }
     result.units.push_back(std::move(unit));
     result.recon.push_back(to_recon_frame(slot.plane[0], slot.plane[1],
                                          slot.plane[2], width, height));
@@ -8427,19 +8719,18 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     }
   }
   // §5.14 film grain is planned per output picture and inserted into the
-  // plain single-tile temporal units.  The frame-type wrappers and the tiled
-  // writer have their own header writers and are rejected by name.
+  // temporal unit of every supported schedule (plain, tiles, B frames,
+  // temporal layers, TIP).  The random-access frame-type wrappers own their
+  // §5.18.2 writers through separate components that code neither
+  // film_grain_config() nor film_grain_params_present; they stay rejected by
+  // name instead of silently dropping the config.
   if (options.film_grain) {
-    if (options.tile_cols > 0 || options.tile_rows > 0) {
-      error = "--video-grain does not compose with --tiles";
-      return false;
-    }
-    if (options.b_frames > 0 || options.temporal_layers > 0 ||
-        options.long_term || options.olk || options.leading_frames > 0 ||
-        options.sef || options.ra_switch || options.ras ||
-        options.enable_tip) {
-      error = "--video-grain does not compose with the B/temporal-layer/"
-              "random-access/TIP frame schedules";
+    if (options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras) {
+      error = "--video-grain does not compose with the long-term/OLK/"
+              "leading/SEF/SWITCH/RAS frame-type wrappers: their sequence and "
+              "frame headers code no film_grain_params_present/"
+              "film_grain_config()";
       return false;
     }
   }
@@ -8723,6 +9014,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // signal the average-CDF flags the per-tile bank below actually runs.
   tile_sequence.enable_avg_cdf = options.avg_cdf;
   tile_sequence.avg_cdf_type = true;
+  tile_sequence.film_grain_params_present = options.film_grain;
   if (options.tile_cols != 0 || options.tile_rows != 0) {
     if (options.tile_cols < 1 || options.tile_rows < 1) {
       error = "tile_cols/tile_rows must both be positive";
@@ -8898,9 +9190,26 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   config.use_256x256_superblock = options.sb256;
   config.enable_ext_partitions = options.ext_partitions;
   config.enable_uneven_4way_partitions = options.ext_partitions;
+  config.reduce_pb_aspect_ratio = options.reduce_pb_aspect_ratio;
+  config.max_pb_aspect_ratio_log2_minus_1 =
+      options.max_pb_aspect_ratio_log2_minus_1;
   config.base_q_idx = options.base_q_idx;
   config.seq_delta_q = options.seq_delta_q;
   config.enable_ext_seg = options.enable_ext_seg;
+#if defined(AV2ENC_VIDEO_DELTAQ)
+  if (options.seq_seg_info_present) {
+    // --video-seq-seg-info: carry the §5.4.9 table in the sequence header so
+    // every frame can reuse it.  The table is the key-frame form; P frames with
+    // a SKIP/GLOBALMV feature code their own seg_info() when allow_change = 1.
+    config.seq_seg_info_present = true;
+    config.seq_allow_seg_info_change = options.seq_allow_seg_info_change;
+    if (!make_video_segmentation(options, /*primary_ref_is_none=*/true,
+                                 /*frame_is_intra=*/true, config.seq_seg_info,
+                                 error)) {
+      return false;
+    }
+  }
+#endif
   config.order_hint_bits = order_hint_bits;
   config.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);
   config.explicit_ref_frame_map = !options.implicit_ref_map;
@@ -8970,9 +9279,14 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   config.enable_mvd_sign_derive = options.enable_mvd_sign_derive;
   config.enable_flex_mvres = options.enable_flex_mvres;
   // §5.4.7/§5.20.5.4: the screen-content carriers select the per-frame form
-  // and code the IBC/palette mode-info path on the intra keyframe.
+  // and code the IBC/palette mode-info path on the intra keyframe;
+  // --video-scc-force selects the forced sequence form instead.
   config.seq_screen_content_tools_present =
-      options.enable_morph || options.enable_palette || options.enable_ibc;
+      !options.seq_force_screen_content_tools &&
+      (options.enable_morph || options.enable_palette || options.enable_ibc);
+  config.seq_force_screen_content_tools =
+      options.seq_force_screen_content_tools;
+  config.seq_force_integer_mv = options.seq_force_integer_mv;
   config.enable_interintra = options.enable_interintra;
   config.enable_ref_frame_mvs = options.enable_ref_frame_mvs;  // §5.4.10 CDEF/CCSO sequence flags for the opt-in M2 loop filters.
   if (options.loop_filters.cdef) {
@@ -9098,7 +9412,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     key_header.fgm_id = static_cast<std::uint8_t>(key_grain.fgm_id);
     key_header.grain_seed = key_grain.grain_seed;
   }
-  if (config.seq_screen_content_tools_present) {
+  if (config.screen_content_tools_enabled()) {
     // §5.18.3.3/.4: the keyframe allows screen-content tools; IBC (and the
     // morph carrier) additionally allow global intra block copy with integer
     // block vectors.  Palette-only streams code allow_intrabc = 0.
@@ -9166,7 +9480,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     // leaves, which code eob = 0) contribute nothing to Skips[].  Only build
     // the list on a screen-content carrier so every historical keyframe keeps
     // the previous all-zero grid.
-    if (config.seq_screen_content_tools_present) {
+    if (config.screen_content_tools_enabled()) {
       std::vector<post::VideoLoopFilterBlock> key_blocks;
       for (std::size_t t = 0; t < tile_sources.size(); ++t) {
         const CodedTile& tile = tile_sources[t];
@@ -9309,6 +9623,9 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       header.gdf = key_header.gdf;
       header.cdef_frame_enable = key_header.cdef.enabled;
       header.ccso_frame_flag = key_header.ccso.enabled;
+      header.apply_grain = key_header.apply_grain;
+      header.fgm_id = key_header.fgm_id;
+      header.grain_seed = key_header.grain_seed;
       std::vector<std::vector<std::uint8_t>> payloads;
       payloads.reserve(tile_sources.size());
       for (const CodedTile& tile : tile_sources) {
@@ -9736,6 +10053,13 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     if (options.short_refresh) ++result.short_refresh_frames;
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
+    // §5.18.3.3: with --video-scc-force the sequence infers
+    // allow_screen_content_tools = 1, so the eligible intra leaves code
+    // palette_mode_info(); force_integer_mv stays with the frame unless
+    // --video-force-integer-mv pins it in the sequence.
+    header.allow_screen_content_tools =
+        config.seq_force_screen_content_tools;
+    header.force_integer_mv = config.seq_force_integer_mv;
     header.use_ref_frame_mvs = options.enable_ref_frame_mvs;
     // SEF wrapper: code the last picture hidden so a following SEF unit can
     // re-show it; the decoder output count is unchanged.
@@ -9781,6 +10105,9 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       tiled_header.gdf = header.gdf;
       tiled_header.cdef_frame_enable = header.cdef.enabled;
       tiled_header.ccso_frame_flag = header.ccso.enabled;
+      tiled_header.apply_grain = header.apply_grain;
+      tiled_header.fgm_id = header.fgm_id;
+      tiled_header.grain_seed = header.grain_seed;
       std::vector<std::vector<std::uint8_t>> payloads;
       payloads.reserve(tile_sources.size());
       for (const CodedTile& tile : tile_sources) {

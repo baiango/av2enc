@@ -19,16 +19,29 @@ int ClampInt(int value, int lo, int hi) {
 
 int AbsInt(int value) { return value < 0 ? -value : value; }
 
+// One luma sample in the estimator's 8-bit numeric domain.  A 10/12-bit view
+// is shifted down so the scaling curve and AR fit keep the same ranges the
+// 8-bit estimator was tuned for; the emitted model is bit-depth independent.
+inline int LumaSample(const GrainFrameView& f, int x, int y) {
+  const std::ptrdiff_t index =
+      static_cast<std::ptrdiff_t>(y) * f.y_stride + x;
+  if (f.y16 != nullptr) {
+    const int shift = f.bit_depth > 8 ? f.bit_depth - 8 : 0;
+    return static_cast<int>(f.y16[index]) >> shift;
+  }
+  return static_cast<int>(f.y[index]);
+}
+
+inline bool ViewUsable(const GrainFrameView& f) {
+  if (f.width < 8 || f.height < 8) return false;
+  return f.y16 != nullptr || f.y != nullptr;
+}
+
 // 4-neighbour Laplacian on interior luma samples.
 int Laplacian(const GrainFrameView& f, int x, int y) {
-  const std::uint8_t* row = f.y + static_cast<std::ptrdiff_t>(y) * f.y_stride;
-  const std::uint8_t* up =
-      f.y + static_cast<std::ptrdiff_t>(y - 1) * f.y_stride;
-  const std::uint8_t* down =
-      f.y + static_cast<std::ptrdiff_t>(y + 1) * f.y_stride;
-  return 4 * static_cast<int>(row[x]) - static_cast<int>(row[x - 1]) -
-         static_cast<int>(row[x + 1]) - static_cast<int>(up[x]) -
-         static_cast<int>(down[x]);
+  return 4 * LumaSample(f, x, y) - LumaSample(f, x - 1, y) -
+         LumaSample(f, x + 1, y) - LumaSample(f, x, y - 1) -
+         LumaSample(f, x, y + 1);
 }
 
 // Cholesky solve of A x = b for a small symmetric positive-definite system.
@@ -147,8 +160,7 @@ int BuildScalingCurve(const GrainFrameView& f,
 
   for (int y = 1; y < f.height - 1; ++y) {
     for (int x = 1; x < f.width - 1; ++x) {
-      const int sample = static_cast<int>(
-          f.y[static_cast<std::ptrdiff_t>(y) * f.y_stride + x]);
+      const int sample = LumaSample(f, x, y);
       int bucket = 0;
       while (bucket + 1 < kBuckets && sample > bucket_x[bucket + 1]) ++bucket;
       const int activity = AbsInt(Laplacian(f, x, y));
@@ -229,8 +241,7 @@ bool ParseLeb128(std::span<const std::uint8_t> data, std::size_t* pos,
 GrainEstimate EstimateGrainModel(const GrainFrameView& frame,
                                  const GrainEstimateOptions& options) {
   GrainEstimate estimate;
-  if (!options.enable || frame.y == nullptr || frame.width < 8 ||
-      frame.height < 8) {
+  if (!options.enable || !ViewUsable(frame)) {
     return estimate;
   }
 

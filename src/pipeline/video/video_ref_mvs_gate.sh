@@ -123,9 +123,10 @@ run_case p8_refs3_stress 8 yes yes --video-refs 3 --video-ref-mvs-stress
 run_case b4_stress 4 yes yes --b-frames 2 --video-ref-mvs-stress
 run_case b4 4 yes no --b-frames 2 --video-ref-mvs
 run_case b6 6 yes no --b-frames 4 --video-ref-mvs
-# Temporal layers are single-reference: §7.9 returns an empty field, so the
-# stream must decode but report no candidates.
-run_case tl4 4 no no --video-tlayers 4 --video-ref-mvs
+# Hierarchical-P temporal layers use two references per interior picture, so
+# the §7.22 fields exist and §7.9 must project candidates.
+run_case tl4 4 yes no --video-tlayers 4 --video-ref-mvs
+run_case tl8 8 yes no --video-tlayers 8 --video-ref-mvs
 
 # --- §7.22 warp/GME and wedge-compound field storage -----------------------
 #
@@ -278,8 +279,9 @@ CASE_INPUT="$INPUT"
 
 # --- "flag off" byte identity ---------------------------------------------
 if [ -n "$BASE_BIN" ] && [ -x "$BASE_BIN" ]; then
-  for spec in "default:8:" "refs2:8:--video-refs 2" "b4:4:--b-frames 2" \
-              "tl4:4:--video-tlayers 4"; do
+  # --video-tlayers is intentionally not in this list: the multi-reference
+  # hierarchical plan changes its payload by design (see the §7.9 gate above).
+  for spec in "default:8:" "refs2:8:--video-refs 2" "b4:4:--b-frames 2"; do
     label=${spec%%:*}; rest=${spec#*:}; frames=${rest%%:*}; extra=${rest#*:}
     # shellcheck disable=SC2086
     "$BASE_BIN" "$INPUT" -o "$OUT/base_$label.ivf" --video --frames "$frames" \

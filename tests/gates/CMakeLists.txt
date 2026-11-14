@@ -69,6 +69,37 @@ set_tests_properties(gate_rc PROPERTIES
   TIMEOUT 600
   LABELS "gate;gate-video")
 
+# Multi-GOP B frames (--b-frames N --video-gops M): every GOP starts with a
+# CLK slot reset; decode with dav2d --strict 1 and compare recon sample-exactly.
+add_test(NAME gate_video_bgops
+  COMMAND bash "${PROJECT_SOURCE_DIR}/src/pipeline/video/gate_video_bgops.sh"
+          --bin $<TARGET_FILE:av2enc>)
+set_tests_properties(gate_video_bgops PROPERTIES
+  SKIP_RETURN_CODE 77
+  TIMEOUT 600
+  LABELS "gate;gate-video")
+
+# Multi-reference hierarchical-P temporal layers: two references per interior
+# picture, §7.9 candidates present, dav2d --strict 1 sample-exact.
+add_test(NAME gate_video_tlayer_refs
+  COMMAND bash "${PROJECT_SOURCE_DIR}/src/pipeline/video/gate_video_tlayer_refs.sh"
+          --bin $<TARGET_FILE:av2enc>)
+set_tests_properties(gate_video_tlayer_refs PROPERTIES
+  SKIP_RETURN_CODE 77
+  TIMEOUT 600
+  LABELS "gate;gate-video")
+
+# --rc crf/vbr on the B, temporal-layer and SVC schedules: coding-order plan,
+# one QP per picture, VBR within 10%, dav2d --strict 1 sample-exact.
+add_test(NAME gate_video_schedule_rc
+  COMMAND bash "${PROJECT_SOURCE_DIR}/src/pipeline/video/gate_video_schedule_rc.sh"
+          --bin $<TARGET_FILE:av2enc>)
+set_tests_properties(gate_video_schedule_rc PROPERTIES
+  SKIP_RETURN_CODE 77
+  TIMEOUT 900
+  LABELS "gate;gate-video")
+
+
 # Host-only multi-GPU planning contract (--gpu-plan). No decoder required.
 add_test(NAME gate_host_plan
   COMMAND bash "${PROJECT_SOURCE_DIR}/src/pipeline/dispatch/gate_host_plan.sh"

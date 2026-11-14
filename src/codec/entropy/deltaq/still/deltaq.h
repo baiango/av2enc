@@ -85,6 +85,18 @@ inline constexpr int kQctxCount = 4;         // COEFF_CDF_Q_CTXS
 // Number of segment ids available for `enable_ext_seg` (§5.4.4).
 int max_segments(bool enable_ext_seg) noexcept;
 
+// §5.4.9 seg_info(MaxSegments), the segment feature table shared by
+// sequence_segment_config() (seq_seg_info_present_flag = 1) and
+// segmentation_params() (when the frame does not reuse the sequence table).
+bool validate_segment_table(const rc::SegmentationParams& params,
+                            int num_segments, std::string* error = nullptr);
+void write_segment_table(BitWriter& writer,
+                         const rc::SegmentationParams& params,
+                         int num_segments);
+bool read_segment_table(BitReader& reader, int num_segments,
+                        rc::SegmentationParams& params,
+                        std::string* error = nullptr);
+
 // Clause 6.17.2 slice index.  The input is the *raw* base_q_idx.
 int coeff_cdf_qctx(int base_q_idx) noexcept;
 
@@ -176,6 +188,16 @@ struct FrameQpHeader {
   // quantization matrices; a true value is rejected because the QM payload is
   // not part of this module.
   bool using_qmatrix = false;
+  // §5.4.4 sequence_segment_config(): seq_seg_info_present_flag and
+  // seq_allow_seg_info_change.  When the sequence carries the table the frame
+  // may reuse it instead of coding seg_info(); with allow_change = 0 the reuse
+  // is inferred and no reuse_seg_info bit is coded.
+  bool seq_seg_info_present = false;
+  bool seq_allow_seg_info_change = false;
+  // Frame request: reuse_seg_info (only meaningful when the sequence present
+  // and allow_change are both 1).  The frame's `params` must still carry the
+  // same table so the derived state and block decisions match the decoder.
+  bool reuse_seg_info = true;
 };
 
 // Writes segmentation_params() (§5.18.7.1).  Returns the number of bits.

@@ -56,14 +56,14 @@ repro and kept rejected.
 | 25 | High tier, `seq_header_id` bank / multi-sequence, full LCR/OPS fields | DONE (`--video-tier high`, `--video-multi-sequence`, `--video-lcr-full`; `gate_video_headers.sh`) |
 | 26 | Separate UV/DC delta-Q (`separate_uv_delta_q`, `equal_ac_dc_q`) | DONE (`--video-uv-delta-q`; `gate_video_deltaq.sh`) |
 | 27 | 10-bit / non-4:2:0 video in-loop filters | DONE `610e92b` (4:2:2 16-px and 8-bit 4:0:0 PC-Wiener rejected) |
-| 28 | CRF/VBR with B frames, temporal layers, SVC | QUEUE |
-| 29 | Multi-GOP B frames, multi-reference hierarchical P | QUEUE |
-| 30 | `SEG_LVL_SKIP`/`SEG_LVL_GLOBALMV`, temporal segmentation, 16 segments | DONE (`--video-seg-skip/--video-seg-globalmv/--video-seg-temporal/--video-segments`; `gate_video_deltaq.sh`) |
-| 31 | Film grain / lossless on the other schedules and formats | QUEUE |
+| 28 | CRF/VBR with B frames, temporal layers, SVC | DONE `73a84c8` (`gate_video_schedule_rc.sh`) |
+| 29 | Multi-GOP B frames, multi-reference hierarchical P | DONE `73a84c8` (`--video-gops`, two-ref t-layers) |
+| 30 | `SEG_LVL_SKIP`/`SEG_LVL_GLOBALMV`, temporal segmentation, 16 segments | DONE (`--video-seg-skip/--video-seg-globalmv/--video-seg-temporal/--video-segments`; `gate_video_deltaq.sh`); `seq_seg_info_present_flag` with the sequence table via `--video-seq-seg-info[-frozen]` (`gate_video_seq_surface.sh`) |
+| 31 | Film grain / lossless on the other schedules and formats | DONE `02aa18e` (SEF/SWITCH/RAS/OLK/LTR and lossless+B stay rejected) |
 | 32 | 8-bit non-4:2:0 still writer filter stage | DONE `610e92b` |
 | 33 | 4:2:2 16-pixel leaves | BLOCKED: pinned dav2d frame-header parse error; rejection retained |
 | 34 | `cfl_ds_filter_index` 1..3 | DONE `610e92b` (format video core; M2 8-bit 4:2:0 rejects) |
-| 35 | Screen-content force-on, `reduce_pb_aspect_ratio` | QUEUE |
+| 35 | Screen-content force-on, `reduce_pb_aspect_ratio` | DONE (`--video-scc-force`, `--video-force-integer-mv`, `--video-reduce-pb-aspect`; `gate_video_seq_surface.sh`) |
 
 ## Hard dav2d rejections (out of scope; stay documented)
 

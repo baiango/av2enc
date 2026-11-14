@@ -284,12 +284,31 @@ bool encode_svc_sequence(std::span<const video::VideoInputFrame> frames,
       layer.width = spec.width;
       layer.height = spec.height;
 
+      // Per-frame rate control: shift the planned QP by this mlayer's quality
+      // step.  The base chain keeps +(embedded-1)*step, the highest mlayer
+      // keeps the plan unchanged, exactly like the fixed-QP ladder.
+      std::vector<std::uint8_t> layer_frame_qp;
+      if (!options.video.frame_base_q_idx.empty()) {
+        const int shift = (embedded_count - 1 - m) * options.embedded_qp_step;
+        layer_frame_qp.resize(options.video.frame_base_q_idx.size());
+        for (std::size_t i = 0; i < layer_frame_qp.size(); ++i) {
+          layer_frame_qp[i] = static_cast<std::uint8_t>(std::clamp(
+              static_cast<int>(options.video.frame_base_q_idx[i]) + shift, 1,
+              255));
+        }
+      }
+
       video::VideoSequenceResult sequence;
       if (m == 0) {
-        const int qp = std::min(
-            255, static_cast<int>(options.video.base_q_idx) +
-                     (embedded_count - 1) * options.embedded_qp_step);
-        layer_options.base_q_idx = static_cast<std::uint16_t>(qp);
+        if (!layer_frame_qp.empty()) {
+          layer_options.frame_base_q_idx = layer_frame_qp;
+          layer_options.base_q_idx = layer_frame_qp.front();
+        } else {
+          const int qp = std::min(
+              255, static_cast<int>(options.video.base_q_idx) +
+                       (embedded_count - 1) * options.embedded_qp_step);
+          layer_options.base_q_idx = static_cast<std::uint16_t>(qp);
+        }
         if (!video::encode_video_sequence(layer_frames, layer_options,
                                           sequence, error)) {
           std::ostringstream text;
@@ -310,11 +329,16 @@ bool encode_svc_sequence(std::span<const video::VideoInputFrame> frames,
         if (temporal_count > 1) {
           return fail(error, "embedded refinement needs --svc-temporal 1");
         }
-        const int qp = std::min(
-            255, static_cast<int>(options.video.base_q_idx) +
-                     (embedded_count - 1 - m) * options.embedded_qp_step);
         video::VideoOptions refine_options = layer_options;
-        refine_options.base_q_idx = static_cast<std::uint16_t>(qp);
+        if (!layer_frame_qp.empty()) {
+          refine_options.frame_base_q_idx = layer_frame_qp;
+          refine_options.base_q_idx = layer_frame_qp.front();
+        } else {
+          const int qp = std::min(
+              255, static_cast<int>(options.video.base_q_idx) +
+                       (embedded_count - 1 - m) * options.embedded_qp_step);
+          refine_options.base_q_idx = static_cast<std::uint16_t>(qp);
+        }
         refine_options.temporal_layers = 0;
         refine_options.tlayer_drop = -1;
         video::RefinementOptions refinement;

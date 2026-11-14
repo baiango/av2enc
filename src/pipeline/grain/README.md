@@ -4,8 +4,18 @@ AV2 v1.0.0 film grain **signalling**, model estimation and slot selection.
 This directory adds the encoder side of `OBU_FILM_GRAIN` and
 `film_grain_config()`.
 
-**Integration status (2026-11-12).**  The still composition root wires this
-module behind `--still-grain`: `film_grain_params_present = 1`, one
+**Integration status (2026-11-14).**  `--video-grain` now composes with the
+flat P chain, `--tiles`, `--b-frames`, `--video-tlayers`, `--video-tip`, the
+loop filters / `--avg-cdf --adaptive-cdf` chain and the
+`--bit-depth/--chroma` format cores (10-bit 4:2:0/4:2:2/4:4:4/4:0:0 and 8-bit
+4:2:2/4:4:4/4:0:0); `video_grain_gate.sh` gates every composition at 640x360
+and 64x64 (`--filmgrain 0` recon-exact, `--filmgrain 1` synthesis, 118
+checks).  The
+estimator accepts a packed `uint16_t` view (`GrainFrameView::y16/u16/v16` +
+`bit_depth`) and normalises it to the 8-bit domain, so one model syntax serves
+every depth.  The random-access frame-type wrappers stay rejected by name
+(their components code neither the sequence bit nor the config).  The still
+composition root wires this module behind `--still-grain`: `film_grain_params_present = 1`, one
 `film_grain_obu()` before the coded-frame OBU, and `film_grain_config()` as the
 last frame-header field.  `--still-grain` keeps the fixed two-point 4:2:0 model;
 `--still-grain-adaptive` additionally runs `GrainStreamPlanner::PlanFrame()` on
@@ -280,9 +290,13 @@ because `src/encoder/m2/video_syntax.cpp` has pre-existing
   after `film_grain_config()`) is not modelled. The planner only plans coded
   output frames.
 * Multi-layer dependency maps are assumed to be the §6.4.2 defaults
-  (`refTLayer <= currTLayer`, `refLayer <= currLayer`); the repo's streams
-  have `max_tlayer_id = max_mlayer_id = 0`, so every slot satisfies them.
-* `fgm_chroma_idc` is validated against the frame's chroma format, but only
-  4:2:0 is exercised end-to-end; 4:0:0 / 4:2:2 / 4:4:4 models are covered by
-  syntax round-trip tests.
+  (`refTLayer <= currTLayer`, `refLayer <= currLayer`).  The video temporal-
+  layer schedule has `max_mlayer_id = 0` and increasing `obu_tlayer_id`, which
+  the default map admits; the planner is called with the picture's real
+  `tlayer_id`.
+* `fgm_chroma_idc` follows the frame format: the video gates exercise 4:2:0,
+  4:2:2, 4:4:4 and 4:0:0 at 8 and 10-bit.
+* The random-access frame-type wrappers (SEF/SWITCH/RAS/OLK/leading/long-term)
+  keep `--video-grain` rejected by name: their sequence/frame header components
+  have no film-grain syntax.
 

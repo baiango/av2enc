@@ -699,6 +699,7 @@ class Writer {
     geometry_.width = plan.width;
     geometry_.height = plan.height;
     geometry_.sb_size = plan.sb_size;
+    geometry_.max_pb_aspect_ratio = plan.max_pb_aspect_ratio;
     // The M2 8-bit 4:2:0 default keeps the historical geometry.  The format
     // path (10-bit / 4:2:2 / 4:4:4 / 4:0:0) carries its chroma layout in the
     // sequence header config.
@@ -3448,8 +3449,13 @@ class Writer {
                                          : merge::SingleMode::kNewMv;
       if (plan_.mv_precision != 0 && node.inter_mode == kInterNewMv) {
         // The MVD is coded in precision units but the predictor is used
-        // unchanged (only precisions coarser than 1/2 pel lower it).
-        const inter::mc::Mv pred = stack.cand[drl].mv[0];
+        // unchanged except for a frame coarser than 1/2 pel, where
+        // §5.20.7.13 lowers it first.
+        inter::mc::Mv pred = stack.cand[drl].mv[0];
+        if (plan_.frame_force_integer_mv) {
+          me2::me2_lower_mv_precision(&pred.y, &pred.x,
+                                      me2::kMvPrecisionOnePel);
+        }
         const inter::mc::Mv expected{pred.y + node.mvd_y, pred.x + node.mvd_x};
         if (expected.y != node.mv_y || expected.x != node.mv_x) {
           error = "block MV does not match the signalled inter mode";
@@ -3715,19 +3721,22 @@ class Writer {
     return block_global_mv_for_ref(node, node.ref_index);
   }
 
-  // §5.18.2 FrameMvPrecision -> the two header bits.  The inter writer never
-  // sets force_integer_mv (screen-content tools are key-frame only), so the
-  // frame precision is always signallable.  With --video-flex-mvres the
-  // derived UsePerBlockMvPrecision is 1.
+  // §5.18.2 FrameMvPrecision -> the two header bits.  With
+  // seq_force_integer_mv the sequence pins the frame to one pel, so the header
+  // codes no precision pair (and the tile MVDs use one-pel units).
   me2::FramePrecisionSyntax frame_mv_precision() const {
-    const int target =
-        plan_.mv_precision == 0
-            ? me2::kMvPrecisionEighthPel
-            : (plan_.mv_precision == 1 ? me2::kMvPrecisionQuarterPel
-                                       : me2::kMvPrecisionHalfPel);
+    int target = me2::kMvPrecisionEighthPel;
+    if (plan_.frame_force_integer_mv) {
+      target = me2::kMvPrecisionOnePel;
+    } else if (plan_.mv_precision == 1) {
+      target = me2::kMvPrecisionQuarterPel;
+    } else if (plan_.mv_precision == 2) {
+      target = me2::kMvPrecisionHalfPel;
+    }
     me2::FramePrecisionSyntax out;
     me2::me2_frame_precision_to_bits(
-        target, plan_.enable_flex_mvres ? 1 : 0, /*force_integer_mv=*/0, &out);
+        target, plan_.enable_flex_mvres ? 1 : 0,
+        plan_.frame_force_integer_mv ? 1 : 0, &out);
     return out;
   }
 

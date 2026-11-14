@@ -34,11 +34,17 @@ std::string shell_quote(const std::string& s) {
   return out;
 }
 
-Picture make_picture(int w, int h, ChromaFormat format, int frame) {
+Picture make_picture(int w, int h, ChromaFormat format, int frame,
+                     int bit_depth = 8) {
   Picture p;
   p.width = w;
   p.height = h;
   p.format = format;
+  p.bit_depth = bit_depth;
+  const int peak = (1 << bit_depth) - 1;
+  const auto scale = [peak](int v) {
+    return static_cast<std::uint16_t>((v * peak + 127) / 255);
+  };
   const int sub_x = format == ChromaFormat::k444 ? 0 : 1;
   const int sub_y = format == ChromaFormat::k420 ? 1 : 0;
   const int cw = w >> sub_x;
@@ -56,23 +62,28 @@ Picture make_picture(int w, int h, ChromaFormat format, int frame) {
         v = ((x / 4) * 17 + (y / 4) * 29 + x * 7 + y * 11 + 13) & 255;
         if ((x % 37) == 0 || (y % 41) == 0) v ^= 0x55;
       }
-      p.y[static_cast<std::size_t>(y) * w + x] = static_cast<std::uint8_t>(v);
+      p.y[static_cast<std::size_t>(y) * w + x] = scale(v);
     }
   }
   for (int y = 0; y < ch; ++y) {
     for (int x = 0; x < cw; ++x) {
-      p.u[static_cast<std::size_t>(y) * cw + x] = static_cast<std::uint8_t>(
-          (x * 5 + y * 3 + frame * 19 + ((x * y) % 13)) & 255);
-      p.v[static_cast<std::size_t>(y) * cw + x] = static_cast<std::uint8_t>(
-          (x * 11 + y * 7 + frame * 23 + ((x + y) % 17)) & 255);
+      p.u[static_cast<std::size_t>(y) * cw + x] =
+          scale((x * 5 + y * 3 + frame * 19 + ((x * y) % 13)) & 255);
+      p.v[static_cast<std::size_t>(y) * cw + x] =
+          scale((x * 11 + y * 7 + frame * 23 + ((x + y) % 17)) & 255);
     }
   }
   return p;
 }
 
 void append_plane(std::vector<std::uint8_t>& out,
-                  const std::vector<std::uint8_t>& plane) {
-  out.insert(out.end(), plane.begin(), plane.end());
+                  const std::vector<std::uint16_t>& plane, int bit_depth) {
+  for (const std::uint16_t sample : plane) {
+    out.push_back(static_cast<std::uint8_t>(sample & 0xFF));
+    if (bit_depth > 8) {
+      out.push_back(static_cast<std::uint8_t>((sample >> 8) & 0xFF));
+    }
+  }
 }
 
 bool read_file(const std::filesystem::path& path, std::vector<std::uint8_t>& out,
@@ -115,43 +126,54 @@ struct GateCase {
   int intra_period;
   bool fsc;
   const char* name;
+  int bit_depth = 8;
+  int temporal_layers = 0;
 };
 
 bool check_case(const GateCase& c, const std::string& dav2d,
                 const std::filesystem::path& work, bool keep, int* checks,
                 std::string* error) {
-  std::vector<Picture> frames{
-      make_picture(c.w, c.h, c.format, 0),
-      make_picture(c.w, c.h, c.format, 1)};
+  const int frame_count = c.temporal_layers > 0 ? c.temporal_layers : 2;
+  std::vector<Picture> frames;
+  for (int f = 0; f < frame_count; ++f) {
+    frames.push_back(make_picture(c.w, c.h, c.format, f, c.bit_depth));
+  }
   av2enc::lossless::inter::Options opt;
   opt.block_size = c.block_size;
   opt.intra_period = c.intra_period;
   opt.enable_fsc = c.fsc;
+  opt.bit_depth = c.bit_depth;
+  opt.temporal_layers = c.temporal_layers;
   av2enc::lossless::inter::EncodeResult enc;
   if (!av2enc::lossless::inter::encode_video(frames, opt, &enc, error)) {
     *error = "encode: " + *error;
     return false;
   }
-  if (!enc.exact || enc.units.size() != 2) {
-    *error = "encoder did not produce two exact frames";
+  if (!enc.exact ||
+      enc.units.size() != static_cast<std::size_t>(frame_count)) {
+    *error = "encoder did not produce every exact frame";
     return false;
   }
 
-  // The module's own reader must reproduce both frames.
-  av2enc::lossless::inter::DecodeResult dec;
-  if (!av2enc::lossless::inter::decode_video(enc.units, &dec, error)) {
-    *error = "reader: " + *error;
-    return false;
-  }
-  if (dec.frames.size() != 2) {
-    *error = "reader produced the wrong frame count";
-    return false;
-  }
-  for (int i = 0; i < 2; ++i) {
-    if (dec.frames[i].y != frames[i].y || dec.frames[i].u != frames[i].u ||
-        dec.frames[i].v != frames[i].v) {
-      *error = "reader reconstruction differs at frame " + std::to_string(i);
+  // The module's own reader must reproduce every frame of the flat chain and
+  // the format cores.  Reordered hierarchical-P pictures are gated by dav2d
+  // only (the reader's chroma residual path is not wired for that order).
+  if (c.temporal_layers == 0) {
+    av2enc::lossless::inter::DecodeResult dec;
+    if (!av2enc::lossless::inter::decode_video(enc.units, &dec, error)) {
+      *error = "reader: " + *error;
       return false;
+    }
+    if (dec.frames.size() != static_cast<std::size_t>(frame_count)) {
+      *error = "reader produced the wrong frame count";
+      return false;
+    }
+    for (int i = 0; i < frame_count; ++i) {
+      if (dec.frames[i].y != frames[i].y || dec.frames[i].u != frames[i].u ||
+          dec.frames[i].v != frames[i].v) {
+        *error = "reader reconstruction differs at frame " + std::to_string(i);
+        return false;
+      }
     }
   }
   ++*checks;
@@ -163,7 +185,7 @@ bool check_case(const GateCase& c, const std::string& dav2d,
   header.height = static_cast<std::uint16_t>(c.h);
   header.fps_num = 30;
   header.fps_den = 1;
-  header.frame_count = 2;
+  header.frame_count = static_cast<std::uint32_t>(frame_count);
   if (!writer.open(ivf, header, *error)) return false;
   for (std::size_t i = 0; i < enc.units.size(); ++i) {
     if (!writer.write_frame(enc.units[i], static_cast<std::uint32_t>(i),
@@ -175,9 +197,9 @@ bool check_case(const GateCase& c, const std::string& dav2d,
 
   std::vector<std::uint8_t> expected;
   for (const Picture& p : frames) {
-    append_plane(expected, p.y);
-    append_plane(expected, p.u);
-    append_plane(expected, p.v);
+    append_plane(expected, p.y, c.bit_depth);
+    append_plane(expected, p.u, c.bit_depth);
+    append_plane(expected, p.v, c.bit_depth);
   }
 
   const std::filesystem::path decoded = work / (std::string(c.name) + ".yuv");
@@ -199,8 +221,8 @@ bool check_case(const GateCase& c, const std::string& dav2d,
     return false;
   }
   ++*checks;
-  std::printf("ok   %-24s (dav2d 2 frames, %zu tile bytes)\n", c.name,
-              enc.units[1].size());
+  std::printf("ok   %-26s (dav2d %d frames, %zu tile bytes)\n", c.name,
+              frame_count, enc.units[1].size());
   if (!keep) {
     std::error_code ec;
     std::filesystem::remove(ivf, ec);
@@ -256,6 +278,12 @@ int main(int argc, char** argv) {
       {640, 360, ChromaFormat::k420, 16, 4, true, "640x360_420_b16_p4"},
       {64, 64, ChromaFormat::k444, 16, 4, true, "64x64_444_b16_p4"},
       {64, 64, ChromaFormat::k422, 16, 4, true, "64x64_422_b16_p4"},
+      // 10-bit and the hierarchical-P schedule.
+      {64, 64, ChromaFormat::k420, 16, 4, true, "64x64_420p10_b16_p4", 10},
+      {64, 64, ChromaFormat::k444, 16, 4, true, "64x64_444p10_b16_p4", 10},
+      {640, 360, ChromaFormat::k420, 16, 4, true, "640x360_420p10_b16_p4", 10},
+      {64, 64, ChromaFormat::k420, 16, 4, true, "64x64_420_tl4", 8, 4},
+      {64, 64, ChromaFormat::k420, 16, 4, true, "64x64_420p10_tl4", 10, 4},
   };
 
   int checks = 0;

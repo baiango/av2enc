@@ -279,6 +279,10 @@ struct FramePlan {
   int width = 0;
   int height = 0;
   int sb_size = 64;  // false for the intra keyframe (intra_frame_mode_info), true for P frames
+  // §5.4.3 MaxPbAspectRatio the sequence header derived (8, or 2/4 with
+  // reduce_pb_aspect_ratio).  The partition search and the tile writer's
+  // §6.19.3.2 recomputation must use the same value.
+  int max_pb_aspect_ratio = 8;
   // (inter_frame_mode_info, which codes is_inter/skip).
   bool inter_frame = true;
   // §5.4.3 enable_sdp.  The sequence-header bit is signalled for the whole
@@ -295,7 +299,13 @@ struct FramePlan {
   // independent of `morph_pred_present` (that symbol needs enable_bawp).
   bool allow_screen_content_tools = false;
   bool allow_intrabc = false;
+  // IBC block-vector precision (force_integer_mv on the frame that codes
+  // use_intrabc).  Independent of the inter-frame precision pin below.
   bool force_integer_mv = true;
+  // §5.4.7 seq_force_integer_mv: the sequence pins FrameMvPrecision to one pel
+  // for every frame, so the inter writer codes no precision pair and the
+  // MVDs use one-pel units.  Off keeps every historical inter stream.
+  bool frame_force_integer_mv = false;
   bool morph_pred_present = false;
   // §5.20.8 palette analysis results, indexed by BlockSyntax::palette_index.
   // Empty on every stream that does not select a palette.

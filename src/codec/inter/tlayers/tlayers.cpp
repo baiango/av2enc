@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 
 namespace av2enc::inter::tlayers {
 namespace {
@@ -139,11 +140,62 @@ bool build_schedule(const PlanConfig& config, std::vector<int>& coding_order,
     work.push_back(Interval{interval.lo, mid, interval.layer + 1});
     work.push_back(Interval{mid, interval.hi, interval.layer + 1});
   }
-  // Single-reference carrier: every frame after the anchor references the
-  // immediately preceding frame in coding order. Lower layers are always
-  // decoded before higher layers.
-  for (std::size_t c = 2; c < coding_order.size(); ++c) {
-    refs[static_cast<std::size_t>(coding_order[c])] = {coding_order[c - 1]};
+  if (config.ref_mode == RefMode::kSingle) {
+    // Single-reference carrier: every frame after the anchor references the
+    // immediately preceding frame in coding order. Lower layers are always
+    // decoded before higher layers.
+    for (std::size_t c = 2; c < coding_order.size(); ++c) {
+      refs[static_cast<std::size_t>(coding_order[c])] = {coding_order[c - 1]};
+    }
+    return true;
+  }
+  if (config.ref_mode != RefMode::kTwo) {
+    set_error(error, PlanError::kBadSchedule);
+    return false;
+  }
+  // Two-reference carrier.  For each frame pick the two nearest pictures that
+  // are already in coding order and whose temporal layer is <= this frame's
+  // layer.  Sorting by (layer, |display distance|, display) is deterministic
+  // and keeps every reference inside the default TLayerDependencyMap.
+  std::vector<int> coding_index(static_cast<std::size_t>(n), -1);
+  for (std::size_t c = 0; c < coding_order.size(); ++c) {
+    coding_index[static_cast<std::size_t>(coding_order[c])] =
+        static_cast<int>(c);
+  }
+  for (std::size_t c = 1; c < coding_order.size(); ++c) {
+    const int display = coding_order[c];
+    const int layer_id = layer[static_cast<std::size_t>(display)];
+    std::vector<int> candidates;
+    for (int e = 0; e < n; ++e) {
+      if (coding_index[static_cast<std::size_t>(e)] >=
+              static_cast<int>(c) ||
+          e == display) {
+        continue;
+      }
+      if (layer[static_cast<std::size_t>(e)] > layer_id) {
+        continue;
+      }
+      candidates.push_back(e);
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [&](int a, int b) {
+                const int la = layer[static_cast<std::size_t>(a)];
+                const int lb = layer[static_cast<std::size_t>(b)];
+                if (la != lb) return la < lb;
+                const int da = std::abs(a - display);
+                const int db = std::abs(b - display);
+                if (da != db) return da < db;
+                return a < b;
+              });
+    std::vector<int>& frame_refs = refs[static_cast<std::size_t>(display)];
+    const std::size_t take = std::min<std::size_t>(2, candidates.size());
+    // Write them nearest-first in display distance so ref_frame_idx[0] is the
+    // closest picture.
+    frame_refs.assign(candidates.begin(), candidates.begin() +
+                                              static_cast<std::ptrdiff_t>(take));
+    std::sort(frame_refs.begin(), frame_refs.end(), [&](int a, int b) {
+      return std::abs(a - display) < std::abs(b - display);
+    });
   }
   return true;
 }

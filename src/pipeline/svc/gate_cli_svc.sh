@@ -123,8 +123,8 @@ expect_reject "--svc-temporal 2 with a 3-frame GOP" "${COMMON[@]}" \
     --svc-layers 0=640x360 --svc-temporal 2
 expect_reject "--svc-layers + --tiles" "${COMMON[@]}" --svc-layers 0=640x360 \
     --tiles 2x2
-expect_reject "--svc-layers + --rc vbr" "${COMMON[@]}" --svc-layers 0=640x360 \
-    --rc vbr --bitrate 500
+# --rc crf/vbr is wired into the layered writer (gate_video_schedule_rc.sh);
+# an explicit --crf without --rc crf is still a usage error.
 expect_reject "--svc-layers + --crf" "${COMMON[@]}" --svc-layers 0=640x360 \
     --crf 20
 expect_reject "--svc-layers + --bitrate" "${COMMON[@]}" --svc-layers 0=640x360 \

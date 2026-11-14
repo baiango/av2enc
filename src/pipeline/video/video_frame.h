@@ -240,6 +240,10 @@ struct VideoOptions {
   // B frames: N consecutive B frames per GOP (0 = the flat key + P chain).
   // Requires num_total_refs == 1 (the bframes plan owns the per-frame refs).
   int b_frames = 0;
+  // Number of consecutive closed B-frame GOPs (default 1).  The input is
+  // gops * (b_frames + 2) frames; every GOP starts with a CLK that resets the
+  // §7.23 reference store.
+  int video_gops = 1;
   // Compound prediction (reference_select = 1).  Requires num_total_refs == 2;
   // the gated subset is non-joint GLOBAL_GLOBALMV with the AVERAGE blend.
   bool compound = false;
@@ -376,6 +380,25 @@ struct VideoOptions {
   // Same mode-info path as the morph carrier without morph_pred.  Off keeps
   // every historical stream byte-identical.
   bool enable_ibc = false;
+  // --video-scc-force: write the §5.4.7 forced screen-content form
+  // (seq_choose_screen_content_tools = 0, seq_force_screen_content_tools = 1).
+  // Every frame infers allow_screen_content_tools = 1, so palette/IBC are
+  // signalled without a per-frame allow bit and without the single-picture
+  // inference.  Off keeps the historical two zero bits.
+  bool seq_force_screen_content_tools = false;
+  // --video-force-integer-mv (requires seq_force_screen_content_tools): write
+  // seq_choose_integer_mv = 0 / seq_force_integer_mv = 1.  Every frame then
+  // derives force_integer_mv = 1 and FrameMvPrecision = one pel; the inter
+  // search quantises MVs to the integer grid and the header codes no precision
+  // pair.  Off leaves integer-MV choice to each frame.
+  bool seq_force_integer_mv = false;
+  // §5.4.3 sequence_partition_config() reduce_pb_aspect_ratio
+  // (--video-reduce-pb-aspect).  When set, the header codes
+  // max_pb_aspect_ratio_log2_minus_1 (0 -> 2:1, 1 -> 4:1) and the partition
+  // search runs with that MaxPbAspectRatio.  Off keeps the historical zero bit
+  // and MaxPbAspectRatio = 8.
+  bool reduce_pb_aspect_ratio = false;
+  int max_pb_aspect_ratio_log2_minus_1 = 1;
   // §5.20.7.14/.15 / §7.13.3.29/.30 inter-intra (--video-compound-interintra).
   // Codes seq_enabled_motion_modes[INTERINTRA], the single-reference
   // motion-mode/interintra_mode/wedge_interintra syntax, and blends the inter
@@ -455,6 +478,11 @@ struct VideoOptions {
   // Qindex delta used by --video-per-segment-q and the --video-delta-q
   // staircase (--video-seg-delta).
   int seg_q_delta = 8;
+  // §5.4.4 seq_seg_info_present_flag (--video-seq-seg-info): the sequence
+  // header carries the full segment table and every frame reuses it (or, with
+  // allow_change, codes reuse_seg_info).  Off keeps the historical zero bit.
+  bool seq_seg_info_present = false;
+  bool seq_allow_seg_info_change = true;
   // Opt-in §5.4.8/§5.18.6.1 separate UV/DC delta-Q (--video-uv-delta-q D).
   // U uses +D and V uses -D for both DC and AC, so separate_uv_delta_q = 1
   // codes diff_uv_delta = 1 and every chroma plane/component exercises its own
