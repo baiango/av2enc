@@ -61,7 +61,8 @@ Old Shine rows are historical.
 | CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 27.58 dB | 23.4 fps (8 threads) |
 | CPU 240p30, `--nightly` QP 117 | Apple M4 | 99.8 / - kbps | **9.587 JOD** | **41.70 dB** | 7.6 fps (8 threads) |
 | AVM CBR (NASA, target 34 kbps) | Apple M4 | 99.5 / - kbps | 8.452 JOD | 36.53 dB | 1.94 fps |
-| SVT-AV1 4.1.0, CRF 42, preset 4 (NASA) | Apple M4 | 100.2 / - kbps | **9.756 JOD** | **45.92 dB** | 306 fps |
+| SVT-AV1 4.1.0, CRF 42, preset 4 (NASA) | Apple M4 | 100.2 / - kbps | 9.756 JOD | 45.92 dB | 306 fps |
+| SVT-AV1 4.1.0, CRF 36.5, preset 0 (NASA) | Apple M4 | 100.3 / - kbps | **9.830 JOD** | **48.80 dB** | 16.6 fps |
 | CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | 49.4 fps |
 | CPU/GPU parity, QP 189 | RTX 3060 | 100.0 / 100.0 kbps | drift 0 | drift 0 | 40.0 fps |
 | GPU 1440x720 QP90 | RTX 3080 Ti | - / 7664 kbps | 9.704 JOD | 42.85 dB | 5.40 fps |
@@ -79,12 +80,14 @@ stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP117
 stream is 24,939 B / MD5 `8f8713dac14eaa74af770e9142e5eae9`. At ~100 kbps,
 nightly is +4.78 JOD over the default and +3.28 JOD over `quality`.
 
-SVT-AV1 v4.1.0 was measured with `--preset 4 --crf 42` (CRF 41 = 101.7 kbps,
-CRF 42 = 100.16 kbps, CRF 43 = 95.7 kbps), decoded with `dav1d`, and scored with
-the same `tools/quality.py` CVVDP model. At ~100 kbps it reaches **9.756 JOD /
-45.92 dB** at 306 fps. AV1 is not AV2, so this is a cross-encoder calibration
-point, not a codec-parity claim; at this rate the nightly AV2 stream is
-**−0.169 JOD / −4.22 dB** versus SVT-AV1.
+SVT-AV1 v4.1.0 was measured at two presets, decoded with `dav1d`, and scored
+with the same `tools/quality.py` CVVDP model. **Preset 4 / CRF 42** gives
+100.16 kbps / 9.756 JOD / 45.92 dB at 306 fps. **Preset 0 / CRF 36.5** gives
+**100.26 kbps / 9.830 JOD / 48.80 dB** at 16.6 fps (CRF 35 = 106.0, 36 = 101.7,
+36.5 = 100.26, 37 = 97.7). Preset 0 is the quality reference; preset 4 is the
+speed reference. AV1 is not AV2, so these are cross-encoder calibration points,
+not codec-parity claims. At this rate the nightly AV2 stream is **−0.169 JOD /
+−4.22 dB** versus preset 4 and **−0.244 JOD / −7.10 dB** versus preset 0.
 
 The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
 25,009-byte stream as the CPU reference (`100.0 / 100.0 kbps`, MD5

@@ -243,7 +243,7 @@ Rules:
 
 - **CPU mode:** maximize **CVVDP/JOD at 480×240 (240p, 2:1) @ 30 fps and 100 kbps**.
   Quality is the KPI; CPU speed is not. NASA baseline: CVVDP 4.802 JOD at
-  100.0 kbps (AVM CBR: 8.452 JOD at 99.5 kbps; SVT-AV1 4.1.0: 9.756 JOD at 100.2 kbps).
+  100.0 kbps (AVM CBR: 8.452 JOD at 99.5 kbps; SVT-AV1 4.1.0: 9.756 JOD at preset 4/100.2 kbps, 9.830 JOD at preset 0/100.3 kbps).
 - **GPU calibration:** encode the CPU point (240p30, 100 kbps, QP 189) on GPU
   and require minimal drift: CVVDP ±0.05 JOD, bitrate ±2%, PSNR-Y ±0.1 dB.
   Current drift is zero (byte-identical stream, 4df16901...).

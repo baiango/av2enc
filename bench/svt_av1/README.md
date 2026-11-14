@@ -22,12 +22,15 @@ DAV2D=tools/bin/dav2d-macos tools/quality.py \
 
 | Stream | IVF bytes | kbps | CVVDP | PSNR-Y | Encode |
 |---|---:|---:|---:|---:|---:|
-| SVT-AV1 CRF 42, preset 4 | 25,039 | 100.16 | **9.7560 JOD** | **45.9248 dB** | 306 fps (0.196 s/60 f) |
+| SVT-AV1 CRF 42, preset 4 | 25,039 | 100.16 | 9.7560 JOD | 45.9248 dB | 306 fps (0.196 s/60 f) |
+| **SVT-AV1 CRF 36.5, preset 0** | **25,064** | **100.26** | **9.8304 JOD** | **48.8001 dB** | **16.6 fps (3.61 s/60 f)** |
 
-CRF sweep: CRF 40 = 106.2 kbps, 41 = 101.7, **42 = 100.16**, 43 = 95.7.
+Preset-4 CRF sweep: 40 = 106.2 kbps, 41 = 101.7, **42 = 100.16**, 43 = 95.7.
+Preset-0 sweep: 35 = 106.0, 36 = 101.7, **36.5 = 100.26**, 37 = 97.7.
 `dav1d` decoded all streams; the same `tools/quality.py` CVVDP 0.5.7 /
 `standard_fhd` / MPS model used for AV2 scored the decoded Y4M.
 
 At the same 100 kbps point, the current `--nightly` AV2 stream is 9.5868 JOD /
-41.6953 dB, so SVT-AV1 is +0.169 JOD / +4.22 dB on this clip. Encoder speed is
-not comparable: SVT-AV1 preset 4 is 306 fps, nightly AV2 is 7.6 fps on the M4.
+41.6953 dB. SVT-AV1 preset 4 is +0.169 JOD / +4.22 dB; preset 0 is **+0.244 JOD
+/ +7.10 dB** over nightly. Speed is not comparable: preset 4 is 306 fps,
+preset 0 is 16.6 fps, nightly AV2 is 7.6 fps on the M4.
