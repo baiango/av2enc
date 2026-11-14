@@ -241,14 +241,14 @@ Rules:
 
 ## Project objectives (2026-11-13)
 
-- **CPU mode:** maximize **CVVDP/JOD at 480×240 (240p, 2:1) @ 30 fps and 30 kbps**.
-  Quality is the KPI; CPU speed is not. NASA baseline: CVVDP 3.086 JOD at
-  29.8 kbps (AVM reference pending).
-- **GPU calibration:** encode the CPU point (240p30, 30 kbps, QP 150) on GPU
+- **CPU mode:** maximize **CVVDP/JOD at 480×240 (240p, 2:1) @ 30 fps and 100 kbps**.
+  Quality is the KPI; CPU speed is not. NASA baseline: CVVDP 4.802 JOD at
+  100.0 kbps (AVM: 8.791 JOD at 92.1 kbps).
+- **GPU calibration:** encode the CPU point (240p30, 100 kbps, QP 189) on GPU
   and require minimal drift: CVVDP ±0.05 JOD, bitrate ±2%, PSNR-Y ±0.1 dB.
   Current drift is zero (byte-identical stream, 4df16901...).
 - **GPU throughput:** the GPU uses the **same decisions** calibrated at
-  240p30/30 kbps and maximizes **encode fps at 1440×720**. The 720p run is a
+  240p30/100 kbps and maximizes **encode fps at 1440×720**. The 720p run is a
   cross-encoder throughput benchmark, not a separate decision/quality point.
   The RTX 3080 Ti is the production host and the RTX 5090 the maximum-speed
   host.

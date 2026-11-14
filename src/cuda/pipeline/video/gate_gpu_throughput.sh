@@ -3,7 +3,7 @@
 #
 # Two measurements, one script:
 #
-#   1. CALIBRATION (decision policy): 424x240 (240p), 60 frames, QP 150.
+#   1. CALIBRATION (decision policy): 480x240 (240p), 60 frames, QP 189
 #      The GPU path must reproduce the CPU reference decode within
 #        CVVDP <= 0.05 JOD, bitrate <= 2 %, PSNR-Y <= 0.1 dB.
 #      The current GPU pipeline is a decision-identical mirror of the CPU one,
@@ -255,7 +255,7 @@ ROW_VALUES=()
 [[ "$QUICK" == 1 ]] && row "gate_gpu_throughput: quick mode (no CVVDP, 4 frames)"
 
 # Calibration point: the decision policy is pinned here.
-run_point "cal144-qp150" "$CAL_CLIP" 60 150 256 144 || status=1
+run_point "cal480-qp189" "$CAL_CLIP" 60 189 480 240 || status=1
 
 # Throughput point.
 run_point "bench720-qp90" "$CLIP" "$FRAMES" 90 "$WIDTH" "$HEIGHT" || status=1
@@ -292,7 +292,7 @@ check_drift() {
   return 0
 }
 
-check_drift "cal144-qp150" "$CVVDP_TOL" "$BITRATE_TOL" "$PSNR_TOL" || status=1
+check_drift "cal480-qp189" "$CVVDP_TOL" "$BITRATE_TOL" "$PSNR_TOL" || status=1
 check_drift "bench720-qp90" "$CVVDP_TOL" "$BITRATE_TOL" "$PSNR_TOL" || status=1
 
 if [[ "$MIN_FPS" != 0 ]]; then

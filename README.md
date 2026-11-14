@@ -39,28 +39,34 @@ same decisions are used.
 
 **Objectives**
 
-- **CPU:** maximize CVVDP/JOD at **480x240 (240p, 2:1) @ 30 fps, 30 kbps**.
+- **CPU:** maximize CVVDP/JOD at **480x240 (240p, 2:1) @ 30 fps, 100 kbps**.
   Quality is the KPI, not CPU speed.
-- **GPU:** use the decisions calibrated at 240p30/30 kbps unchanged, and
+- **GPU:** use the decisions calibrated at 240p30/100 kbps unchanged, and
   maximize **1440x720** encode throughput as a cross-encoder benchmark.
 
 **Measured baselines** (NASA clip, 60 frames). The benchmark source is
 [`First-8K-Video-from-Space_orig.mp4`](https://images-assets.nasa.gov/video/First-8K-Video-from-Space/First-8K-Video-from-Space~orig.mp4)
-(8192x4096, 2:1, bt709); the CPU point is QP 225 at 480x240/30 fps. Old Shine
+(8192x4096, 2:1, bt709); the CPU point is QP 189 at 480x240/30 fps. Old Shine
 rows are historical.
 
-| Case | Bitrate | CVVDP | PSNR-Y |
-|---|---:|---:|---:|
-| CPU 240p30, QP 225 (NASA) | 29.8 kbps | 3.086 JOD | 22.47 dB |
-| AVM reference 240p30 (NASA) | not measured | — | — |
-| CPU/GPU 240p30 calibration (QP 150) | parity check | drift 0 | drift 0 |
-| GPU 1440x720, QP 150 (NASA, pending) | — | — | — |
-| GPU 1440x720, QP 90 (NASA, pending) | — | — | — |
+| Case | Bitrate | CVVDP | PSNR-Y | Encode |
+|---|---:|---:|---:|---:|
+| CPU 240p30, QP 189 (NASA) | 100.0 kbps | 4.802 JOD | 24.47 dB | 15.5 fps (M4) |
+| AVM CBR (NASA) | 92.1 kbps | 8.791 JOD | 37.78 dB | 0.071 fps |
+| CPU/GPU 240p30 parity, QP 189 | 100.0 kbps | drift 0 | drift 0 | 1.2-1.5 s |
+| GPU 1440x720 QP90, RTX 3080 Ti | 7664 kbps | 9.704 JOD | 42.85 dB | 5.40 fps |
+| GPU 1440x720 QP90, RTX 3060 | 7664 kbps | 9.704 JOD | 42.85 dB | 4.88 fps |
 
-The previous Shine 1280x720/1440p measurements were 268.8 kbps / 9.465 JOD /
-40.83 dB at QP 150 and 1943 kbps / 9.876 JOD / 51.76 dB at QP 90 (4.15 and
-5.92 fps on the RTX 3060). The CPU is the quality reference; GPU output is
-currently byte-identical at the calibration point.
+AVM's CBR run asked for 30 kbps but produced 92.1 kbps at 0.071 fps, so the
+quality comparison is at 92.1 vs 100.0 kbps. The 1440x720 QP90 stream is
+byte-identical on both GPUs and on the CPU reference (MD5
+`f9b6e086aa7d9da78792cf74b9746741`, 958,023 bytes); the CPU encodes the same
+60 frames at 1.36 fps on the M4. The CPU/GPU parity stream at QP 189 is
+identical (`a1d0dba1259b20a4b628d4cd1e14c33c`, 25,009 bytes) on both GPUs.
+
+The previous Shine 1280x720 measurements were 268.8 kbps / 9.465 JOD / 40.83 dB
+at QP 150 and 1943 kbps / 9.876 JOD / 51.76 dB at QP 90. The CPU is the quality
+reference; GPU output is byte-identical at the calibration point.
 
 **Reference pins**
 
@@ -152,8 +158,8 @@ assignment and exits without writing a stream.
 ## Performance expectations
 
 - **CPU mode objective:** maximize **CVVDP/JOD at 480×240 (240p, 2:1) @ 30 fps
-  and 30 kbps**. The CPU is the quality reference; speed is not its KPI.
-- **GPU mode objective:** use the decisions calibrated at **240p30 @ 30 kbps**
+  and 100 kbps**. The CPU is the quality reference; speed is not its KPI.
+- **GPU mode objective:** use the decisions calibrated at **240p30 @ 100 kbps**
   (minimal drift: CVVDP ±0.05 JOD, bitrate ±2%, PSNR-Y ±0.1 dB) unchanged,
   then maximize **1440×720** encode throughput. The 720p run is a benchmark
   against other encoders, not a separate quality-tuning point. Production
@@ -278,12 +284,14 @@ a three-way budget (max CVVDP subject to a bitrate cap and a speed floor).
 
 Current gates:
 
-- **CPU quality:** 480x240 (240p, 2:1) @ 30 fps at **30 kbps**, maximize CVVDP.
-  NASA baseline: 3.086 JOD at 29.8 kbps, PSNR-Y 22.47 dB (QP 225).
-- **GPU calibration:** same 240p30 decisions at QP 150; CVVDP ±0.05 JOD,
-  bitrate ±2%, PSNR-Y ±0.1 dB drift. Re-run the calibration on a GPU host.
-- **GPU benchmark:** 1440x720 throughput with the calibrated decisions (NASA
-  re-run pending; the old Shine point was 4.15/5.92 fps on the RTX 3060).
+- **CPU quality:** 480x240 (240p, 2:1) @ 30 fps at **100 kbps**, maximize CVVDP.
+  NASA baseline: 4.802 JOD at 100.0 kbps, PSNR-Y 24.47 dB (QP 189).
+- **GPU calibration:** same 240p30 decisions at QP 189; CVVDP ±0.05 JOD,
+  bitrate ±2%, PSNR-Y ±0.1 dB drift. The QP189 stream is byte-identical on both
+  GPU hosts and the CPU (`a1d0dba1...`).
+- **GPU benchmark:** 1440x720 QP90, 60 frames: 5.40 fps on the RTX 3080 Ti and
+  4.88 fps on the RTX 3060; 7664 kbps, CVVDP 9.704 JOD, PSNR-Y 42.85 dB
+  (stream identical to the CPU reference).
 
 Validate a report's host with `tools/check_target_host.py` (RTX 3060 12 GB /
 3080 Ti / 5090).
