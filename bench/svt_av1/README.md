@@ -27,6 +27,15 @@ DAV2D=tools/bin/dav2d-macos tools/quality.py \
 
 Preset-4 CRF sweep: 40 = 106.2 kbps, 41 = 101.7, **42 = 100.16**, 43 = 95.7.
 Preset-0 sweep: 35 = 106.0, 36 = 101.7, **36.5 = 100.26**, 37 = 97.7.
+
+Preset-0 low-rate points (same clip, decoded and scored identically):
+
+| Preset-0 CRF | kbps | CVVDP | PSNR-Y |
+|---:|---:|---:|---:|
+| 42 | 83.10 | 9.8023 | 47.5412 |
+| 45 | 76.46 | 9.7757 | 46.7260 |
+| 50 | 65.19 | 9.7171 | 45.4659 |
+| 55 | 54.22 | 9.5849 | 43.7657 |
 `dav1d` decoded all streams; the same `tools/quality.py` CVVDP 0.5.7 /
 `standard_fhd` / MPS model used for AV2 scored the decoded Y4M.
 
@@ -34,3 +43,8 @@ At the same 100 kbps point, the current `--nightly` AV2 stream is 9.5868 JOD /
 41.6953 dB. SVT-AV1 preset 4 is +0.169 JOD / +4.22 dB; preset 0 is **+0.244 JOD
 / +7.10 dB** over nightly. Speed is not comparable: preset 4 is 306 fps,
 preset 0 is 16.6 fps, nightly AV2 is 7.6 fps on the M4.
+
+At **iso-CVVDP 9.585**, preset 0 reaches the same perceptual quality at
+**54.22 kbps** versus nightly's 99.756 kbps. The AV2 stream therefore uses
+**~1.84x the rate** (84% more) at equal CVVDP; the 100 kbps JOD gap is small
+only because CVVDP is near saturation.
