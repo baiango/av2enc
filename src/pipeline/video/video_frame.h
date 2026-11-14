@@ -91,6 +91,34 @@ struct VideoOptions {
   // path. Used by the opt-in --rc crf/vbr path; the frame header and the
   // coefficient-CDF qctx slice both follow the per-frame value.
   std::vector<std::uint8_t> frame_base_q_idx;
+  // Opt-in per-frame drift refresh (--video-drift-refresh).  The flat key+P
+  // chain codes almost every P leaf as skip, so a prediction error that a
+  // frame inherits from its reference is never repaid: per-frame PSNR decays
+  // until the content changes.  When enabled, each inter frame measures its
+  // primary reference's actual reconstruction error (luma PSNR of the stored
+  // reference plane against the source picture it was coded from).  A frame
+  // whose reference is below `drift_refresh_threshold_db` is coded as a
+  // *refresh*: base_q_idx drops by `drift_refresh_qp` and every inter leaf
+  // codes its residual (the leaf RD decision is bypassed), so the frame's own
+  // reconstruction — which becomes the next reference — resets the chain.
+  // Refreshes are charged against one per-sequence payload allowance
+  // (`drift_refresh_budget` bytes, measured against the running mean P
+  // payload) so the total rate stays bounded.  Off by default: every
+  // historical stream, including the pinned nightly stream, is byte-identical.
+  bool drift_refresh = false;
+  // Allowed drift below the key picture, in dB of luma PSNR.  The anchor is
+  // the key picture's own measured reconstruction PSNR (so the trigger scales
+  // with the operating point and the content instead of being an absolute
+  // number): a frame refreshes when its primary reference is worse than
+  // `anchor - drift_refresh_threshold_db`.  The measured 240p night point
+  // peaks at 2.5 dB (key 44.7 dB, first trigger at the 42.1 dB frames).
+  double drift_refresh_threshold_db = 2.5;
+  // base_q_idx reduction on a refresh frame (0 = same QP, residual only).
+  int drift_refresh_qp = 0;
+  // Per-sequence payload allowance for refreshes, in bytes.  Each refresh is
+  // charged its payload minus the running mean inter payload; once the
+  // allowance is exhausted no further frame refreshes.
+  int drift_refresh_budget = 1200;
   // Opt-in §7.17 deblocking of every reconstructed frame (--video-deblock).
   // Off keeps every historical stream byte-identical.  When on, the frame
   // header signals all four apply flags with zero df_delta_q, and the
@@ -650,6 +678,11 @@ struct VideoSequenceResult {
   // Coded leaves with RefFrame[0] == TIP_FRAME (§5.20.7.10 block form, gate
   // evidence for --video-tip-block-ref).
   std::uint64_t tip_block_refs = 0;
+  // --video-drift-refresh evidence: inter frames coded as a refresh, and the
+  // payload bytes they were charged (frame payload minus the running mean
+  // inter payload).
+  std::uint64_t drift_refresh_frames = 0;
+  std::uint64_t drift_refresh_bytes = 0;
 };
 
 // §5.4.6 NumRefFrames actually signalled for these options: the explicit

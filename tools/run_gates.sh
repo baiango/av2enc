@@ -257,6 +257,8 @@ if [ "$QUICK" -eq 0 ]; then
     run_gate gate_video_rdoq tools/gate_video_rdoq.sh
     run_gate gate_video_edge_inter tools/gate_video_edge_inter.sh
     run_gate gate_video_edge_mask tools/gate_video_edge_mask.sh
+    run_gate gate_video_drift_refresh \
+        src/pipeline/video/video_drift_refresh_gate.sh
 fi
 
 echo

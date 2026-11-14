@@ -10,7 +10,7 @@
 # 5. Asserts that --cdf-continuity is rejected by the CLI: the encoder side is
 #    wired, but pinned dav2d f9dafbc rejects disable_cross_frame_cdf_init = 0.
 # 6. Per-frame QP (--video-cdf-per-frame-qp): a reference-intro plan inside one
-#    coefficient qctx slice decodes --strict 1 with exact visible recon; a plan
+#    coefficient qctx slices decodes --strict 1 with exact visible recon; a plan
 #    crossing a §8.3.1 boundary, the same plan without the opt-in, and the flag
 #    without the CDF chain are all rejected by name.
 #
@@ -118,7 +118,7 @@ fi
 # --- per-frame QP reset (--video-cdf-per-frame-qp) ------------------------
 # Nightly-style reference-intro plan: the key frame takes --qp - 16.  At
 # --qp 190 that is key 174 / P 190, both in coefficient qctx slice 2 (§8.3.1),
-# so the CDF image can reset from each frame's own slice and never carry
+# so the CDF image resets from each frame's own slice and never carries
 # across frames.  The stream must decode under --strict 1 and reproduce the
 # visible encoder reconstruction, like the fixed-QP average-CDF stream.
 if ! "$BIN" "$SRC" -o "$TMP/pf.ivf" --video --p-frames 2 --qp 190 \
@@ -139,16 +139,25 @@ if ! compare_recon "$TMP/pf.y4m" "$TMP/pf.dec.y4m" >"$TMP/pf.cmp.log" 2>&1; then
 fi
 
 # A plan that crosses a §8.3.1 slice boundary (key 125 = slice 1, P 141 =
-# slice 2) cannot share one default image and must be named by the encoder.
-if "$BIN" "$SRC" -o "$TMP/pf-bad.ivf" --video --p-frames 2 --qp 141 \
+# slice 2) is legal: disable_cross_frame_cdf_init stays 1 and §8.3.1 selects
+# the default coefficient CDFs from each frame's own base_q_idx, so the
+# encoder re-derives the §9.3 image per frame.  The stream must decode under
+# --strict 1 and reproduce the visible encoder reconstruction.
+if ! "$BIN" "$SRC" -o "$TMP/pf-x.ivf" --video --p-frames 2 --qp 141 \
         --video-key-qp-offset -16 --video-cdf-per-frame-qp \
-        --avg-cdf --adaptive-cdf >/dev/null 2>"$TMP/pf-bad.err"; then
-    echo "FAIL: a sequence crossing coefficient qctx slices was accepted" >&2
-    exit 1
+        --avg-cdf --adaptive-cdf --video-recon "$TMP/pf-x.y4m" \
+        >"$TMP/pf-x.log" 2>&1; then
+    echo "FAIL: a cross-slice per-frame QP plan was rejected" >&2
+    cat "$TMP/pf-x.log" >&2; exit 1
 fi
-if ! grep -q "one coefficient qctx slice" "$TMP/pf-bad.err"; then
-    echo "FAIL: the qctx-slice rejection message changed" >&2
-    cat "$TMP/pf-bad.err" >&2; exit 1
+if ! "$DAV2D" -q --strict 1 -i "$TMP/pf-x.ivf" -o "$TMP/pf-x.dec.y4m" \
+        --threads 1 >"$TMP/pf-x.dec.log" 2>&1; then
+    echo "FAIL cross-slice: dav2d rejected" >&2
+    cat "$TMP/pf-x.dec.log" >&2; exit 1
+fi
+if ! compare_recon "$TMP/pf-x.y4m" "$TMP/pf-x.dec.y4m" >"$TMP/pf-x.cmp.log" 2>&1; then
+    echo "FAIL cross-slice: recon mismatch" >&2
+    cat "$TMP/pf-x.cmp.log" >&2; exit 1
 fi
 
 # The opt-in stays opt-in: the same per-frame plan without the flag is

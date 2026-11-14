@@ -17,13 +17,15 @@ Expansion (the gate asserts this is byte-identical to typing the flags out):
   --video-ccso-refit 2 --video-ccso-unit-bits 2
 --video-edge-inter --video-edge-mask
 --video-partition-rd --video-partition-rd-lambda 2.75e-6
---video-key-qp-offset -16
+--video-key-qp-offset -25
 --video-rdoq
 --video-cdef
 --video-bawp --video-bawp-carrier
 --video-leaf-rd
 --video-subpel-eighth --video-tx-lambda 136
 --video-key-intra-txpart
+--avg-cdf --adaptive-cdf --video-cdf-per-frame-qp
+--video-drift-refresh
 ```
 
 `--nightly` rejects `--video-gpu` and `--still`. The bottom-edge path requires
@@ -36,11 +38,15 @@ Host: Apple M4, `AV2ENC_CPU_FAST=ON`, `--cpu-threads 8`. Clip:
 `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames. Quality: `tools/quality.py`
 (CVVDP 0.5.7, `standard_fhd`, MPS) with `dav2d-macos`.
 
-| QP | Bytes | kbps | CVVDP | PSNR-Y |
+The pin is QP110 with the `-25` reference-intro offset; the offset is the
+freedom that the adaptive-CDF saving buys, so the sweep below is in offset
+rather than QP (bytes and rate both move with it):
+
+| key offset (QP110) | Bytes | kbps | CVVDP | PSNR-Y |
 |---:|---:|---:|---:|---:|
-| 110 | **24,994** | **99.976** | **9.6802** | **42.9799** |
-| 111 | 25,062 | 100.248 | 9.6808 | 42.9665 |
-| 112 | 24,731 | 98.924 | 9.6730 | 42.8777 |
+| -24 | 24,441 | 97.764 | 9.7148 | 43.6910 |
+| **-25** | **24,904** | **99.616** | **9.7069** | **43.8667** |
+| -26 | 25,229 | 100.916 | 9.7102 | 43.9231 |
 
 At the established 100 kbps point:
 
@@ -49,20 +55,24 @@ At the established 100 kbps point:
 | default QP189 | 100.036 kbps | 4.8021 | 24.4667 dB |
 | `quality` QP190 | 100.564 kbps | 6.3021 | 27.5816 dB |
 | previous nightly QP117 (no intra TX part) | 100.088 kbps | 9.5467 | 40.8670 dB |
-| **`--nightly` QP110** | **99.976 kbps** | **9.6802** | **42.9799 dB** |
-| at iso-rate 100.088 kbps (QP110/111) | 100.088 kbps | **≈9.680** | **≈42.97 dB** |
+| previous nightly QP110 (no CDF/drift) | 99.976 kbps | 9.6802 | 42.9799 dB |
+| **`--nightly` QP110, key -25 + CDF + drift** | **99.616 kbps** | **9.7069** | **43.8667 dB** |
+| at iso-rate 99.976 kbps | 99.976 kbps | **≈9.707** | **≈43.88 dB** |
 
 The keyframe intra luma TX partition with per-part prediction/recon adds
 **+0.093 JOD / +1.28 dB** at iso-rate: the three bad 64×16 keyframe leaves gain
-~9 dB and the first P frame loses most of its repair cost. Nightly is
-**+4.88 JOD** over the default and **+3.38 JOD** over the stable `quality`
-preset at the same rate. The stream is 24,994 B, MD5
-`bc4a3756d312bd259e97397f9bd86853`; `dav2d-macos --strict 1` decodes it and the
+~9 dB and the first P frame loses most of its repair cost. The adaptive-CDF
+chain plus a lower key offset add a further **+0.028 JOD / +0.90 dB** at
+iso-rate (it is one move: the entropy saving pays for the key bits), and the
+drift refresh forces the inter residual on the frames whose reference has
+slipped. Nightly is **+4.90 JOD** over the default and **+3.40 JOD** over the
+stable `quality` preset at the same rate. The stream is 24,904 B, MD5
+`5f44c0d1795357b5beec84adaed0fe5b`; `dav2d-macos --strict 1` decodes it and the
 60-frame encoder recon payload equals the decoded payload byte for byte
 (10,368,000 B).
 
-Encode speed is **8.1 fps** (7.38 s for 60 frames, best of 3) on the M4 at the
-QP110 operating point.
+Encode speed is **7.2 fps** (8.38 s for 60 frames, best of 3) on the M4 at the
+QP110 operating point; the CDF chain is the cost, the refresh adds ~2%.
 
 ## Per-tool contributions
 
@@ -73,7 +83,7 @@ the ones that stacked. Approximate contributions at or near the 100 kbps point:
 |---|---|
 | Bottom-edge inter (`--video-edge-inter`) | +2.39 JOD over the old quality preset |
 | Measured partition probe (`--video-partition-rd`) | +0.41 JOD over edge+CCSO |
-| Reference-intro key/first-P QP offset (`-16`) | +0.22 JOD |
+| Reference-intro key/first-P QP offset | +0.22 JOD |
 | Luma inter RDOQ (`--video-rdoq`) | +0.20 JOD |
 | CDEF (bounded search) | +0.20 JOD |
 | 64-band/refit/priced-unit CCSO | +0.15 JOD |
@@ -82,6 +92,8 @@ the ones that stacked. Approximate contributions at or near the 100 kbps point:
 | Calibrated leaf RD cost (`--video-leaf-rd`) | +0.05 JOD |
 | 1/8-pel ME + TX-search λ 136 | +0.04 JOD |
 | Keyframe intra luma TX partition | +0.09 JOD |
+| Adaptive coefficient CDFs (per-frame reset) | −13.9% rate at identical decisions |
+| Key -16 → -25 offset (paid by the CDF saving) + drift refresh | +0.03 JOD |
 
 Positive changes that did **not** stack and are therefore explicit opt-ins,
 not part of nightly: the §8.3.2 TX context rate (it needs
@@ -89,12 +101,13 @@ not part of nightly: the §8.3.2 TX context rate (it needs
 candidate term on its own (+0.004 JOD at the operating point; it is one part of
 the leaf RD cost below), and the keyframe intra RD re-rank (+0.007 JOD).
 Chroma-aware intra/inter RD is a measured null on this achromatic clip.
-The per-frame adaptive-CDF path (`--avg-cdf --adaptive-cdf
---video-cdf-per-frame-qp`) is also opt-in: it cuts 13.95% of the rate at
-identical decisions, but the exact 100 kbps mapping with the `-16` key offset
-crosses a coefficient-qctx slice boundary, so it is not part of this nightly
-pin. It is the next rate-efficiency lever once the slice-crossing case is
-handled.
+Per-frame drift refresh (`--video-drift-refresh`,
+`docs/video-drift-refresh.md`) is now part of the aggregate: on its own it is
+**+0.022 JOD / +0.12 dB at iso-rate 99.976 kbps** (+0.89 dB mean luma on the
+refreshed frames 32-40) for +2.6% rate at the same QP, and it stacks with the
+CDF/key-QP move above. It is CPU-only, single-tile, cqp and 8-bit 4:2:0, and it
+composes with the CDF chain only while the refresh keeps every frame's QP
+(`--video-drift-refresh-qp 0`, the default).
 
 ## Leaf RD cost (`--video-leaf-rd`)
 
@@ -124,58 +137,66 @@ per-frame QP plan (key `--qp - 16`, P `--qp`), so the aggregate could not turn
 adaptation on.
 
 `--video-cdf-per-frame-qp` opts into a reset-per-frame image instead of a
-carry: every frame starts from the §9.3 defaults for its own §8.3.1
-coefficient qctx slice, and `disable_cross_frame_cdf_init` stays 1 (the pinned
-decoder rejects the carry form). Resetting is only equivalent to one shared
-image when every frame lands in the same slice, so a plan that crosses a
-slice boundary is rejected by name. At `--qp 117` the key QP is 101 and the P
-QP is 117, both in slice 1.
+carry: every frame starts from the §9.3 defaults, and
+`disable_cross_frame_cdf_init` stays 1. §8.3.1 selects those defaults from the
+**current frame's** `base_q_idx`, so the encoder re-derives the flat default
+image for every frame and a plan that crosses a qctx slice is legal. Pinned
+`dav2d` accepts that form: it installs exactly the same per-frame §9.3 image
+the encoder seeded. The carry form (`disable_cross_frame_cdf_init = 0`) is a
+separate story: the pinned decoder does implement §7.4.4, but our post-frame-1
+§7.5/§8.2.4 image diverges whenever that frame codes a real tile, and
+`--cdf-continuity` stays behind its env gate until that is fixed
+(`exp/rd7-floor` has the experiments; note `dav2d` exits 0 after failing
+pictures, so check the decoded frame count, not just the exit status).
 
-The flag changes no decision: at every tested QP the decoded output is
-byte-identical to the frozen stream, so CVVDP and PSNR are unchanged while the
-entropy layer is ~14% smaller.
+### Same quality, fewer bytes
 
-```sh
-av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/cdf117.ivf \
-    --video --frames 60 --qp 110 --cpu-threads 8 --nightly \
-    --avg-cdf --adaptive-cdf --video-cdf-per-frame-qp
-```
+At a fixed QP the flag changes no decision: the decoded output is
+byte-identical to the frozen stream (MD5 `64be64f05c659f86b52456519ec65330`
+for both at QP 110), so CVVDP and PSNR are unchanged while the entropy layer
+shrinks. On the QP110 pin the plan is key 94 / P 110, which crosses slices 2
+and 3, i.e. exactly the case that used to be rejected.
 
-| QP | frozen bytes | adaptive bytes | rate Δ | CVVDP (both) | PSNR-Y (both) |
-|---:|---:|---:|---:|---:|---:|
-| 114 | 25,821 | 22,170 | −14.14% | 9.5725 | 41.6478 |
-| 115 | 25,485 | 21,944 | −13.89% | 9.5913 | 41.6659 |
-| 116 | 25,163 | 21,621 | −14.08% | 9.5642 | 41.5299 |
-| **117** | **24,939** | **21,461** | **−13.95%** | **9.5868** | **41.6953** |
-| 118 | 24,344 | 20,908 | −14.11% | 9.5547 | 41.2929 |
-| 119 | 24,160 | 20,763 | −14.06% | 9.5552 | 41.2985 |
-| 120 | 24,021 | 20,650 | −14.03% | 9.5446 | 41.2287 |
+| Stream | Bytes | kbps | CVVDP | PSNR-Y |
+|---|---:|---:|---:|---:|
+| `--nightly` QP110 (key 94) | 24,994 | 99.976 | 9.6802 | 42.9799 |
+| same, `+ --video-cdf-per-frame-qp` | 21,530 | 86.120 | 9.6802 | 42.9799 |
 
-The key frame carries ~73% of the tile bits and its coefficient entropy
-shrinks by 10.4% (130,984 → 117,408 bits at QP117); the already
-skip-dominated P payload shrinks by 29.9%. The tile is 15.6% smaller
-(22,315 → 18,842 B) and the OBU/header overhead leaves the IVF 13.95%
-smaller. The QP117 stream is 21,461 B, MD5
-`cc4bf99f193ff80ac4420d3f6b4ac69b`.
+That is −13.86% rate at identical reconstruction. The QP110 CDF stream is
+21,530 B, MD5 `b6220e473ef46b367d27c7925b1e8c23`.
 
-### Iso-rate
+### Spending the saving: the key QP, not the global QP
 
-- **Same quality:** QP117 is 85.844 kbps instead of 99.756 kbps (−13.95%) with
-  identical reconstruction and CVVDP. This is the primary result: the gain is
-  a pure rate reduction on this operating point.
-- **Same rate:** the lowest nightly point that stays in one slice is QP107
-  (key 91 / P 107): 24,301 B / 97.204 kbps / 9.6078 JOD / 42.1715 dB. The
-  frozen aggregate interpolated to the same 97.2 kbps (QP118/119) is
-  9.5548 JOD / 41.294 dB, so **+0.053 JOD / +0.88 dB at iso-rate**.
-- The nominal 99.756 kbps point needs QP≈106.3, where the key frame (90) falls
-  in qctx slice 0 and P (106) in slice 1; the encoder rejects that plan by
-  name. Interpolating the measured QP107/108 point gives **≈9.616 JOD
-  (+0.03)** at 99.756 kbps.
+Freeing 13.9% of the stream does not help by itself, because lowering the
+*global* QP buys almost nothing on this clip: the CVVDP loss is carried by the
+drifted tail of the P chain (f33-f59 at 41-42 dB), which barely responds to
+QP. Measured at iso-rate: QP99 with the CDF is 24,965 B / 99.860 kbps /
+9.6703 JOD / 43.4072 dB, i.e. **-0.010 JOD** against the QP110 pin despite
++0.43 dB PSNR.
 
-CVVDP is close to saturation on this clip (the working range is ~9.54–9.61
-JOD), so the flat JOD curve understates the rate reduction; the PSNR-Y and
-same-quality byte deltas are the more legible measures here.
+The saving does pay when it is spent on the **keyframe**, which is 70% of the
+bits and the reference for the whole chain. Fixing P at QP110 and moving the
+reference-intro offset down:
 
+| Plan (QP110, adaptive CDF) | Bytes | kbps | CVVDP | PSNR-Y |
+|---|---:|---:|---:|---:|
+| key -16 (no change) | 21,530 | 86.12 | 9.6802 | 42.98 |
+| key -24 | 23,981 | 95.92 | 9.6908 | 43.38 |
+| **key -26** | **24,516** | **98.06** | **9.7200** | **43.83** |
+| key -27 | 24,749 | 99.00 | 9.6927 | 43.57 |
+| key -28 | 25,249 | 101.00 | 9.6955 | 43.45 |
+
+The QP-to-QP CVVDP ripple on this clip is ±0.03 JOD, so read the gain as
+**+0.01 to +0.02 JOD at iso-rate** (9.694-9.704 interpolated to 99.976 kbps),
+with a firmer **+0.6 to +0.9 dB PSNR-Y**. For reference, dropping the key QP by
+26 without the CDF costs ~27.9 kB and does not fit the point at all.
+
+Recommended nightly composition: the flag and a `--video-key-qp-offset -26`
+retune move together, since the flag is what pays for the lower key QP. It is
+not folded into the QP110 pin yet so the in-flight frame-level levers keep a
+comparable baseline.
+
+## Where the bits and the loss are
 ## Where the bits and the loss are
 
 Bit split of the 24,994-byte nightly stream (`--qp 110`), from the encoder's
@@ -243,7 +264,7 @@ keyframe, residual coding in P), not frame-level rate allocation.
   equality, BAWP carrier activity and the GPU/`--still` rejections.
 - `src/pipeline/video/gate_avg_cdf.sh` adds the `--video-cdf-per-frame-qp`
   case (strict decode + visible recon at key 174 / P 190) and the named
-  rejections: a plan crossing a qctx slice, a per-frame plan without the
+  rejections: a per-frame plan without the
   opt-in, and the opt-in without the CDF chain.
 - `tools/gate_video_edge_inter.sh`, `tools/gate_video_rd_preset.sh` and
   `gate_video_any_dims.sh` (including the MI-edge 100x70/640x362 cases) pass.

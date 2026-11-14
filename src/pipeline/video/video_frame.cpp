@@ -485,6 +485,36 @@ void pad_source_420(const VideoInputFrame& frame, int mi_cols, int mi_rows,
   }
 }
 
+// Luma PSNR (dB) of a stored reference plane against the source picture it was
+// coded from, over the visible width x height.  --video-drift-refresh uses it
+// as its accumulated-error trigger: the flat P chain refreshes its only
+// reference slot, so the stored plane *is* the reference of the next frame.
+double reference_luma_psnr(const Plane& reference, const VideoInputFrame& source,
+                           int width, int height) {
+  if (reference.width < width || reference.height < height ||
+      source.y.size() < static_cast<std::size_t>(width) *
+                            static_cast<std::size_t>(height)) {
+    return 99.0;
+  }
+  std::int64_t sse = 0;
+  for (int y = 0; y < height; ++y) {
+    const std::uint8_t* ref_row =
+        reference.samples.data() + static_cast<std::size_t>(y) *
+                                       static_cast<std::size_t>(reference.stride);
+    const std::uint8_t* src_row =
+        source.y.data() + static_cast<std::size_t>(y) *
+                              static_cast<std::size_t>(width);
+    for (int x = 0; x < width; ++x) {
+      const int d = static_cast<int>(src_row[x]) - static_cast<int>(ref_row[x]);
+      sse += static_cast<std::int64_t>(d) * d;
+    }
+  }
+  if (sse <= 0) return 99.0;
+  const double mse =
+      static_cast<double>(sse) / (static_cast<double>(width) * height);
+  return 10.0 * std::log10(255.0 * 255.0 / mse);
+}
+
 std::int64_t sse_against_source(const VideoInputFrame& frame, int plane, int x0,
                                 int y0, int w, int h,
                                 const std::vector<std::uint8_t>& samples,
@@ -10120,7 +10150,77 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
               "core only; the format cores keep the explicit map";
       return false;
     }
+    if (options.drift_refresh) {
+      error = "--video-drift-refresh is wired for the 8-bit 4:2:0 video core "
+              "only; the format cores have no drift measurement";
+      return false;
+    }
     return encode_video_sequence_format(frames, options, result, error);
+  }
+  // --video-drift-refresh (see VideoOptions::drift_refresh): one per-frame QP
+  // plan on a single-tile low-delay inter chain.  The frame-type wrappers, the
+  // B/reorder schedules, the CDF chain and the tile writers own their own
+  // base_q_idx handling, so they are named rejections rather than silently
+  // unrefreshed pictures.
+  if (options.drift_refresh) {
+    if (options.drift_refresh_threshold_db <= 0.0 ||
+        options.drift_refresh_threshold_db >= 30.0) {
+      error = "drift_refresh_threshold_db must be in (0, 30)";
+      return false;
+    }
+    if (options.drift_refresh_qp < 0 || options.drift_refresh_qp > 64) {
+      error = "drift_refresh_qp must be in [0, 64]";
+      return false;
+    }
+    if (options.drift_refresh_budget < 0) {
+      error = "drift_refresh_budget must be >= 0";
+      return false;
+    }
+    if (options.tile_cols > 0 || options.tile_rows > 0) {
+      error = "--video-drift-refresh is wired for a single tile (the tiled "
+              "frame header signals one base_q_idx for the whole tile group)";
+      return false;
+    }
+    if (options.b_frames > 0 || options.temporal_layers > 0 ||
+        options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras ||
+        options.enable_tip) {
+      error = "--video-drift-refresh is wired for the flat key+P chain; drop "
+              "the B-frame / reorder / temporal-layer / TIP / frame-type "
+              "wrapper mode";
+      return false;
+    }
+    if (options.compound) {
+      error = "--video-drift-refresh is wired for single-reference inter "
+              "prediction";
+      return false;
+    }
+    // The CDF chain composes only while the refresh keeps every frame's QP:
+    // with drift_refresh_qp == 0 the §9.3 image still follows the static
+    // per-frame plan, and the forced residual is decision-level only.
+    if ((options.avg_cdf || options.adaptive_cdf ||
+         options.cdf_continuity) &&
+        options.drift_refresh_qp != 0) {
+      error = "--video-drift-refresh composes with the CDF chain only at "
+              "--video-drift-refresh-qp 0: a run-time base_q_idx change would "
+              "desynchronise the per-frame §9.3 image";
+      return false;
+    }
+    if (options.cdf_continuity) {
+      error = "--video-drift-refresh does not compose with --cdf-continuity";
+      return false;
+    }
+    if (options.enable_segmentation || options.per_segment_q ||
+        options.enable_delta_q) {
+      error = "--video-drift-refresh does not compose with segmentation/"
+              "delta-Q: both own the per-frame effective qindex";
+      return false;
+    }
+    if (options.sb128 || options.sb256 || options.ext_partitions) {
+      error = "--video-drift-refresh is wired for the 64x64 root partition "
+              "search";
+      return false;
+    }
   }
   error.clear();
   result = VideoSequenceResult{};
@@ -10841,26 +10941,11 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
               "each frame's slice; it does not compose with --cdf-continuity";
       return false;
     }
-    // §8.3.1 selects the default coefficient CDFs from the raw frame
-    // base_q_idx.  Resetting per frame is only equivalent to the fixed-QP
-    // image when every frame lands in the same slice; otherwise the decoder
-    // would install a different §9.3 image than the encoder's seed.
-    const int frame_slice = ::av2enc::still::qctx::slice_for_base_q_idx(
-        static_cast<int>(frame_qp(0)));
-    for (std::size_t i = 1; i < frames.size(); ++i) {
-      const int slice = ::av2enc::still::qctx::slice_for_base_q_idx(
-          static_cast<int>(frame_qp(i)));
-      if (slice != frame_slice) {
-        error = "--video-cdf-per-frame-qp needs one coefficient qctx slice "
-                "(§8.3.1) for the whole sequence: frame 0 base_q_idx " +
-                std::to_string(static_cast<int>(frame_qp(0))) +
-                " is slice " + std::to_string(frame_slice) + ", frame " +
-                std::to_string(i) + " base_q_idx " +
-                std::to_string(static_cast<int>(frame_qp(i))) +
-                " is slice " + std::to_string(slice);
-        return false;
-      }
-    }
+    // §8.3.1 selects the default coefficient CDFs from the frame's own
+    // base_q_idx, so a plan that crosses qctx slices is legal as long as the
+    // default image is re-derived per frame (seed_frame_cdfs below).  Pinned
+    // dav2d accepts that form: disable_cross_frame_cdf_init stays 1, so the
+    // decoder installs the same per-frame §9.3 image.
   }
   if (options.cdf_continuity && !(options.avg_cdf && options.adaptive_cdf)) {
     error = "--cdf-continuity requires --avg-cdf and --adaptive-cdf";
@@ -10905,10 +10990,28 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       error = "average-CDF bank: " + error;
       return false;
     }
+    // §8.3.1: the default coefficient CDFs come from the *current* frame's
+    // base_q_idx, so a per-frame QP plan that crosses a qctx slice must
+    // rebuild the flat default image for each frame.  The four images keep
+    // their size, so every CdfTable pointer stays valid and begin_frame()
+    // copies the new defaults into frame/tile/saved in place.
+    if (!syntax::cdf_image_defaults_for_base_q_idx(
+            static_cast<int>(frame_qp(0)), cdf_defaults, &error)) {
+      return false;
+    }
     // CLK resets to the §9.3 defaults (§5.18.2: FrameIsIntra,
     // primary_ref_frame = PRIMARY_REF_NONE).
     cdf_bank.begin_frame(/*reset_to_defaults=*/true);
   }
+  // Re-derive the §9.3 image for one frame and reset the bank to it.
+  const auto seed_frame_cdfs = [&](std::size_t frame_index) -> bool {
+    if (!syntax::cdf_image_defaults_for_base_q_idx(
+            static_cast<int>(frame_qp(frame_index)), cdf_defaults, &error)) {
+      return false;
+    }
+    cdf_bank.begin_frame(/*reset_to_defaults=*/true);
+    return true;
+  };
 #endif
 
   const VideoOptions key_options = options_for_frame(0);
@@ -11435,6 +11538,11 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // the most recently decoded slots and refresh a rotating slot.
   std::array<RefSlot, kMaxRefSlots> slots;
   std::array<SlotField, kMaxRefSlots> slot_fields;
+  // Input-picture index each slot was coded from.  The §5.18.2 order hint is
+  // 4 bits in the flat chain, so it wraps every 16 frames and cannot index the
+  // source array; --video-drift-refresh measures a reference against the
+  // picture it was actually coded from.
+  std::array<std::size_t, kMaxRefSlots> slot_source_index{};
   std::vector<int> recent_slots;
   slots[0].valid = true;
   slots[0].is_key = true;
@@ -11481,6 +11589,20 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // segmentation_temporal_update.  Only the single-tile segmentation path
   // (which rejects --tiles > 1x1) uses it.
   std::vector<std::uint8_t> prev_segment_map;
+  // --video-drift-refresh accounting.  `drift_mean_inter_payload` is the
+  // running mean payload of the frames that were not refreshes, so a refresh
+  // is charged only the bytes it added on top of the chain's normal cost.
+  double drift_spent_bytes = 0.0;
+  double drift_mean_inter_payload = 0.0;
+  std::uint64_t drift_inter_count = 0;
+  // The drift anchor is the key picture's own measured reconstruction PSNR, so
+  // the allowance follows the operating point instead of an absolute dB.
+  const double drift_anchor_psnr =
+      options.drift_refresh
+          ? reference_luma_psnr(slots[0].plane[0], frames[0],
+                                static_cast<int>(width),
+                                static_cast<int>(height))
+          : 0.0;
   for (std::size_t i = 1; i < frames.size(); ++i) {
     const std::uint32_t order_hint =
         static_cast<std::uint32_t>(i) &
@@ -11527,7 +11649,54 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                               order_hint_bits);
     }
 
-    const VideoOptions frame_options = options_for_frame(i);
+    VideoOptions frame_options = options_for_frame(i);
+    // --video-drift-refresh: measure the primary reference's actual
+    // reconstruction error (stored reference plane against the source picture
+    // that produced it) and, when it is below the threshold and the sequence
+    // allowance is not exhausted, code this frame as a refresh: lower the
+    // frame QP and code the residual of every inter leaf so the error does not
+    // survive into the following frames.  `effective_frame_qp` is the single
+    // source of truth for the frame header, the reference-bank record and the
+    // quantiser; without the flag it is exactly frame_qp(i).
+    int effective_frame_qp = static_cast<int>(frame_options.base_q_idx);
+    bool drift_refresh_frame = false;
+    if (options.drift_refresh && !frame_ref_slots.empty()) {
+      const RefSlot& primary =
+          slots[static_cast<std::size_t>(frame_ref_slots.front())];
+      const std::size_t source_index =
+          slot_source_index[static_cast<std::size_t>(frame_ref_slots.front())];
+      double ref_psnr = 99.0;
+      if (primary.valid && source_index < frames.size() &&
+          frames[source_index].width == width &&
+          frames[source_index].height == height) {
+        ref_psnr = reference_luma_psnr(primary.plane[0], frames[source_index],
+                                       static_cast<int>(width),
+                                       static_cast<int>(height));
+      }
+      drift_refresh_frame =
+          ref_psnr <
+              drift_anchor_psnr - options.drift_refresh_threshold_db &&
+          drift_spent_bytes <
+              static_cast<double>(options.drift_refresh_budget);
+      if (options.trace) {
+        std::cerr << "drift frame=" << i << " slot=" << frame_ref_slots.front()
+                  << " anchor=" << drift_anchor_psnr
+                  << " ref_psnr=" << ref_psnr
+                  << " spent=" << drift_spent_bytes
+                  << " refresh=" << (drift_refresh_frame ? 1 : 0) << "\n";
+      }
+      if (drift_refresh_frame) {
+        effective_frame_qp =
+            std::max(1, std::min(255, effective_frame_qp -
+                                          options.drift_refresh_qp));
+        frame_options.base_q_idx =
+            static_cast<std::uint16_t>(effective_frame_qp);
+        // Code the residual of every inter leaf: the leaf RD price refuses it
+        // at these QPs (the error is a few LSB per sample), so the refresh has
+        // to bypass that decision for the frame whose job is to reset it.
+        frame_options.force_inter_residual = true;
+      }
+    }
     // §5.14: plan this picture's grain model in coding order before the frame
     // header is written; a changed model emits one film grain OBU.
     //
@@ -11591,8 +11760,8 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                   cdf_slots[static_cast<std::size_t>(primary_slot)].end(),
                   cdf_frame.begin());
         cdf_bank.begin_frame(/*reset_to_defaults=*/false);
-      } else {
-        cdf_bank.begin_frame(/*reset_to_defaults=*/true);
+      } else if (!seed_frame_cdfs(i)) {
+        return false;
       }
     }
 #endif
@@ -11866,7 +12035,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
 #endif
 
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
-    config.base_q_idx = frame_qp(i);
+    config.base_q_idx = static_cast<std::uint8_t>(effective_frame_qp);
     std::vector<std::uint8_t> obu;
     if (tiled) {
       post::VideoTiledFrameHeader tiled_header;
@@ -11920,11 +12089,29 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     result.tile_bytes.push_back(payload_bytes);
     result.inter_blocks.push_back(inter_blocks);
     result.intra_blocks.push_back(intra_blocks);
+    if (options.drift_refresh) {
+      if (drift_refresh_frame) {
+        const double extra =
+            static_cast<double>(payload_bytes) - drift_mean_inter_payload;
+        if (extra > 0.0) drift_spent_bytes += extra;
+        ++result.drift_refresh_frames;
+        result.drift_refresh_bytes +=
+            static_cast<std::uint64_t>(extra > 0.0 ? extra : 0.0);
+      } else {
+        drift_mean_inter_payload =
+            (drift_mean_inter_payload *
+                 static_cast<double>(drift_inter_count) +
+             static_cast<double>(payload_bytes)) /
+            static_cast<double>(drift_inter_count + 1U);
+        ++drift_inter_count;
+      }
+    }
 
     // Store the reconstruction and refresh the rotating slot.
     slots[write_slot].valid = true;
     slots[write_slot].is_key = false;
     slots[write_slot].order_hint = order_hint;
+    slot_source_index[static_cast<std::size_t>(write_slot)] = i;
     for (int plane = 0; plane < 3; ++plane) {
       slots[write_slot].plane[plane] = frame_recon[plane];
     }
@@ -11934,7 +12121,8 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
         !ref_bank.refresh(header.refresh_frame_flags,
                           static_cast<int>(order_hint),
                           static_cast<int>(width), static_cast<int>(height),
-                          frame_qp(i), /*key_frame=*/false, 0, 0,
+                          static_cast<std::uint8_t>(effective_frame_qp),
+                          /*key_frame=*/false, 0, 0,
                           header.implicit_output_frame,
                           header.immediate_output_frame, -1, &error)) {
       error = "P-frame " + std::to_string(i) + " reference bank: " + error;

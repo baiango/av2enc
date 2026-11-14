@@ -468,6 +468,18 @@ struct Options {
   // reproduces the fixed-QP stream byte for byte.
   bool video_key_qp_offset_given = false;
   int video_key_qp_offset = 0;
+  // Opt-in per-frame drift refresh (--video-drift-refresh).  The flat key+P
+  // chain codes almost every P leaf as skip, so a prediction error the frame
+  // inherits is never repaid.  When enabled, each inter frame measures its
+  // primary reference's reconstruction error and, if it is below the
+  // threshold, codes itself as a refresh (frame QP - N, residual on every
+  // inter leaf) within one per-sequence payload allowance.  Off by default:
+  // every pinned stream stays byte-identical.  CPU-only, single-tile,
+  // low-delay flat chain, --rc cqp only.
+  bool video_drift_refresh = false;
+  double video_drift_refresh_threshold = 2.5;  // dB below the key
+  int video_drift_refresh_qp = 0;
+  int video_drift_refresh_budget = 1200;  // bytes per sequence
   std::uint64_t vram_cap_mib = 0;  // 0 = largest reservation the device can serve
   int bit_depth = 8;               // 8 (default) or 10; 12-bit is not signalable
   std::string chroma = "420";      // 420 (default), 422, 444, 400
@@ -1268,6 +1280,19 @@ void print_usage(std::ostream& out) {
                             "its source predecessor inherits the previous QP",
                             "(so a duplicated opening pair shares one QP).",
                             "N = 0 keeps the fixed-QP stream"});
+  item("--video-drift-refresh", {"Opt-in per-frame drift refresh on the flat",
+                            "key+P chain (CPU, single tile, cqp): measure the",
+                            "primary reference's reconstruction PSNR and code",
+                            "a frame as a refresh (frame QP - N, residual on",
+                            "every inter leaf) when it drops below the",
+                            "threshold, within one per-sequence byte budget"});
+  item("--video-drift-refresh-threshold <dB>", {"Allowed drift below the key",
+                            "picture's own luma PSNR; an inter frame whose",
+                            "reference is worse refreshes (default 2.5)"});
+  item("--video-drift-refresh-qp <N>", {"base_q_idx reduction on a refresh frame",
+                            "(default 0 = residual only)"});
+  item("--video-drift-refresh-budget <bytes>", {"Per-sequence refresh payload",
+                            "allowance (default 1200)"});
   item("--svc-layers <spec>", {"SVC: spatial layers as x0=WxH[,x1=WxH...]"});
   item("--svc-lcr-id <N>", {"SVC: seq_lcr_id (1..7)"});
   item("--svc-temporal <N>", {"SVC: temporal layers 1..4; N > 1 codes one",
@@ -1577,20 +1602,34 @@ bool apply_video_nightly(Options& options, std::string& error) {
   if (!flag_given(options, "--video-partition-rd-depth")) {
     options.video_partition_depth = 1;
   }
-  // Reference-intro allocation: the key frame spends -16 QP (better key and
+  // Reference-intro allocation: the key frame spends -25 QP (better key and
   // matching first P reference, so the P chain starts from a cleaner picture);
-  // a duplicated opening pair keeps one QP.  Measured at the 240p30 / 100 kbps
-  // point; see docs/video-nightly.md.  A caller-supplied offset wins, and the
-  // rate-controlled paths (--rc crf/vbr) own base_q_idx, so they are skipped.
+  // a duplicated opening pair keeps one QP.  The adaptive-CDF rate saving below
+  // is what pays for the extra key bits, so the two move together.  Measured
+  // at the 240p30 / 100 kbps point; see docs/video-nightly.md.  A
+  // caller-supplied offset wins, and the rate-controlled paths (--rc crf/vbr)
+  // own base_q_idx, so they are skipped.
   if (!options.video_key_qp_offset_given && options.rc_mode == "cqp") {
-    options.video_key_qp_offset = -16;
+    options.video_key_qp_offset = -25;
     options.video_key_qp_offset_given = true;
   }
   // Luma inter coefficient RDOQ at its measured lambda calibration.
   options.video_rdoq = true;
   // Keyframe intra luma TX partitioning with per-part prediction/recon.
-  // At QP110 this is 24,994 B / 99.976 kbps / 9.6802 JOD / 42.9799 dB.
   options.video_key_intra_txpart = true;
+  // Adaptive coefficient CDFs and the drift-triggered refresh.  The CDF chain
+  // is a pure entropy win at fixed decisions (-13.9% rate), and its saving is
+  // what the -25 key offset spends; the refresh forces the inter residual on
+  // the frames whose reference has drifted more than 2.5 dB below the key.
+  // At QP110 the combination is 24,904 B / 99.616 kbps / 9.7069 JOD /
+  // 43.8667 dB (8, 6.9 fps).  The rate-controlled paths keep the historical
+  // decisions because they own base_q_idx.
+  if (options.rc_mode == "cqp") {
+    options.avg_cdf = true;
+    options.adaptive_cdf = true;
+    options.video_cdf_per_frame_qp = true;
+    options.video_drift_refresh = true;
+  }
   // Measured with the final aggregate: 1/8-pel ME refinement and the
   // RDOQ-interaction TX-search lambda.  At QP117 this is 24,939 B /
   // 99.756 kbps / 9.5868 JOD / 41.6953 dB.
@@ -3470,6 +3509,58 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    // --video-drift-refresh: implementation, then docs.  Delimited block so it
+    // can be merged without collisions.
+    if (argument == "--video-drift-refresh") {
+      options.video_drift_refresh = true;
+      continue;
+    }
+
+    if (argument == "--video-drift-refresh-threshold") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-drift-refresh-threshold'";
+        return ParseStatus::kError;
+      }
+      double db = 0.0;
+      if (!parse_double(argv[++i], db) || db <= 0.0 || db >= 30.0) {
+        error = "--video-drift-refresh-threshold must be a drift allowance in "
+                "(0, 30) dB";
+        return ParseStatus::kError;
+      }
+      options.video_drift_refresh_threshold = db;
+      continue;
+    }
+
+    if (argument == "--video-drift-refresh-qp") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-drift-refresh-qp'";
+        return ParseStatus::kError;
+      }
+      int drop = 0;
+      if (!parse_int(argv[++i], drop) || drop < 0 || drop > 64) {
+        error = "--video-drift-refresh-qp must be an integer in [0, 64]";
+        return ParseStatus::kError;
+      }
+      options.video_drift_refresh_qp = drop;
+      continue;
+    }
+
+    if (argument == "--video-drift-refresh-budget") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-drift-refresh-budget'";
+        return ParseStatus::kError;
+      }
+      int bytes = 0;
+      if (!parse_int(argv[++i], bytes) || bytes < 0) {
+        error = "--video-drift-refresh-budget must be a non-negative byte "
+                "count";
+        return ParseStatus::kError;
+      }
+      options.video_drift_refresh_budget = bytes;
+      continue;
+    }
+    // --video-drift-refresh block end.
+
     if (argument == "--svc-layers") {
       if (i + 1 >= argc) {
         error = "missing value after '--svc-layers'";
@@ -3778,6 +3869,66 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       }
     }
   }
+
+  // --video-drift-refresh: implementation, then docs.  Delimited block so it
+  // can be merged without collisions.  The mechanism itself lives in
+  // src/pipeline/video/video_frame.cpp (the measured reference-error trigger).
+  if (options.video_drift_refresh) {
+    if (!options.video || options.m1 || options.still_gpu) {
+      error = "--video-drift-refresh applies to the CPU --video encoder; "
+              "pass --video";
+      return ParseStatus::kError;
+    }
+    if (options.video_gpu) {
+      error = "--video-drift-refresh is CPU-only: the CUDA backend keeps the "
+              "historical skip chain";
+      return ParseStatus::kError;
+    }
+    if (options.rc_mode != "cqp") {
+      error = "--video-drift-refresh layers a per-frame QP plan on the fixed "
+              "--qp stream; use --rc cqp (the --rc crf/vbr planners own "
+              "base_q_idx)";
+      return ParseStatus::kError;
+    }
+    if (options.tiles != "1x1") {
+      error = "--video-drift-refresh is wired for a single tile";
+      return ParseStatus::kError;
+    }
+    if (options.svc_given) {
+      error = "--video-drift-refresh is wired for the plain --video chain, "
+              "not the SVC layers";
+      return ParseStatus::kError;
+    }
+    if (options.b_frames != 0 || options.video_tlayers != 0 ||
+        options.video_tip || options.video_long_term || options.video_olk ||
+        options.video_leading != 0 || options.video_sef ||
+        options.video_switch || options.video_ras) {
+      error = "--video-drift-refresh is wired for the flat key+P chain; drop "
+              "the B-frame / reorder / temporal-layer / frame-type wrapper "
+              "mode";
+      return ParseStatus::kError;
+    }
+    if (options.bit_depth != 8 || options.chroma != "420") {
+      error = "--video-drift-refresh is wired for 8-bit 4:2:0";
+      return ParseStatus::kError;
+    }
+    // A run-time base_q_idx change would desynchronise the §9.3 image from
+    // the static per-frame plan, so the CDF chain is only allowed while the
+    // refresh keeps every frame's QP (--video-drift-refresh-qp 0).  The forced
+    // residual is decision-level and does not touch the CDF seeding.
+    if ((options.avg_cdf || options.adaptive_cdf || options.cdf_continuity) &&
+        options.video_drift_refresh_qp != 0) {
+      error = "--video-drift-refresh composes with the CDF chain only at "
+              "--video-drift-refresh-qp 0: a run-time base_q_idx change would "
+              "desynchronise the per-frame §9.3 CDF image";
+      return ParseStatus::kError;
+    }
+    if (options.cdf_continuity) {
+      error = "--video-drift-refresh does not compose with --cdf-continuity";
+      return ParseStatus::kError;
+    }
+  }
+  // --video-drift-refresh block end.
 
   if (options.video_edge_mask) {
     if (!options.video || options.m1 || options.still_gpu) {
@@ -7242,6 +7393,13 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_inter_residual = options.video_inter_residual;
   video_options.enable_edge_inter = options.video_edge_inter;
   video_options.enable_edge_mask = options.video_edge_mask;
+  // --video-drift-refresh (implementation, then docs).
+  video_options.drift_refresh = options.video_drift_refresh;
+  video_options.drift_refresh_threshold_db =
+      options.video_drift_refresh_threshold;
+  video_options.drift_refresh_qp = options.video_drift_refresh_qp;
+  video_options.drift_refresh_budget = options.video_drift_refresh_budget;
+  // --video-drift-refresh block end.
   video_options.enable_leaf_rd = options.video_leaf_rd;
   video_options.enable_sdp = options.video_sdp;
   video_options.enable_inter_ddt = options.video_ddt;
@@ -7610,6 +7768,12 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   if (result.short_refresh_frames != 0) {
     std::cout << ", short refresh frames " << result.short_refresh_frames;
   }
+  // --video-drift-refresh evidence (implementation, then docs).
+  if (options.video_drift_refresh) {
+    std::cout << ", drift refresh frames " << result.drift_refresh_frames
+              << " (" << result.drift_refresh_bytes << " extra payload bytes)";
+  }
+  // --video-drift-refresh block end.
   if (result.amvd_selected != 0) {
     std::cout << ", AMVD leaves " << result.amvd_selected;
   }
