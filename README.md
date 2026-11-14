@@ -45,8 +45,9 @@ same decisions are used.
   maximize **1440x720** encode throughput as a cross-encoder benchmark.
 
 **Measured baselines** (NASA clip, 60 frames). The benchmark source is
-`First-8K-Video-from-Space_orig.mp4` (8192x4096, 2:1, bt709); the CPU point is
-QP 225 at 480x240/30 fps. Old Shine rows are historical.
+[`First-8K-Video-from-Space_orig.mp4`](https://images-assets.nasa.gov/video/First-8K-Video-from-Space/First-8K-Video-from-Space~orig.mp4)
+(8192x4096, 2:1, bt709); the CPU point is QP 225 at 480x240/30 fps. Old Shine
+rows are historical.
 
 | Case | Bitrate | CVVDP | PSNR-Y |
 |---|---:|---:|---:|
