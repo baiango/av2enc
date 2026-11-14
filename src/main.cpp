@@ -1571,6 +1571,13 @@ bool apply_video_nightly(Options& options, std::string& error) {
   }
   // Luma inter coefficient RDOQ at its measured lambda calibration.
   options.video_rdoq = true;
+  // Measured with the final aggregate: 1/8-pel ME refinement and the
+  // RDOQ-interaction TX-search lambda.  At QP117 this is 24,939 B /
+  // 99.756 kbps / 9.5868 JOD / 41.6953 dB.
+  options.video_subpel_eighth = true;
+  if (!flag_given(options, "--video-tx-lambda")) {
+    options.video_tx_lambda = 136.0;
+  }
   // The bottom-edge residual mask: hidden decoder-invisible rows get no
   // residual and the bottom-leaf decisions score only the visible rows.
   options.video_edge_mask = true;

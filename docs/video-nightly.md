@@ -22,6 +22,7 @@ Expansion (the gate asserts this is byte-identical to typing the flags out):
 --video-cdef
 --video-bawp --video-bawp-carrier
 --video-leaf-rd
+--video-subpel-eighth --video-tx-lambda 136
 ```
 
 `--nightly` rejects `--video-gpu` and `--still`. The bottom-edge path requires
@@ -36,12 +37,8 @@ Host: Apple M4, `AV2ENC_CPU_FAST=ON`, `--cpu-threads 8`. Clip:
 
 | QP | Bytes | kbps | CVVDP | PSNR-Y |
 |---:|---:|---:|---:|---:|
-| 114 | 26,017 | 104.068 | 9.5408 | 41.0384 |
-| 115 | 25,481 | 101.924 | 9.5484 | 40.9679 |
-| 116 | 25,294 | 101.176 | 9.5358 | 40.9400 |
-| **117** | **25,022** | **100.088** | **9.5467** | **40.8670** |
-| 118 | 24,728 | 98.912 | 9.5241 | 40.7431 |
-| 120 | 23,946 | 95.784 | 9.5175 | 40.6268 |
+| 116 | 25,163 | 100.652 | 9.5642 | 41.5299 |
+| **117** | **24,939** | **99.756** | **9.5868** | **41.6953** |
 
 At the established 100 kbps point:
 
@@ -49,26 +46,19 @@ At the established 100 kbps point:
 |---|---:|---:|---:|
 | default QP189 | 100.036 kbps | 4.8021 | 24.4667 dB |
 | `quality` QP190 | 100.564 kbps | 6.3021 | 27.5816 dB |
-| previous nightly QP125 (no leaf RD) | 100.228 kbps | 9.4918 | 40.6553 dB |
-| **`--nightly` QP117 (leaf RD)** | **100.088 kbps** | **9.5467** | **40.8670 dB** |
-| at iso-rate 100.228 kbps (QP116/117) | 100.228 kbps | **9.5453** | **40.876 dB** |
+| previous nightly QP117 (no 1/8-pel/TX retune) | 100.088 kbps | 9.5467 | 40.8670 dB |
+| **`--nightly` QP117** | **99.756 kbps** | **9.5868** | **41.6953 dB** |
+| at iso-rate 100.088 kbps (QP116/117) | 100.088 kbps | **≈9.584** | **≈41.66 dB** |
 
-The calibrated leaf RD cost (`--video-leaf-rd`, §"Leaf RD cost" below) adds
-**+0.0535 JOD / +0.22 dB** at the established 100.228 kbps point. Nightly is
-**+4.74 JOD** over the default and **+3.24 JOD** over the stable `quality`
-preset at the same rate. The stream is 25,022 B, MD5
-`b7388311a0e13cd90c7e1c9a2883588e`; `dav2d-macos --strict 1` decodes it and the
-60-frame encoder recon payload equals the decoded payload byte for byte
-(10,368,000 B).
+The final 1/8-pel ME refinement plus the RDOQ-tuned TX-search lambda add
+**+0.040 JOD / +0.83 dB** at iso-rate. Nightly is **+4.78 JOD** over the default
+and **+3.28 JOD** over the stable `quality` preset at the same rate. The stream
+is 24,939 B, MD5 `8f8713dac14eaa74af770e9142e5eae9`; `dav2d-macos --strict 1`
+decodes it and the 60-frame encoder recon payload equals the decoded payload
+byte for byte (10,368,000 B).
 
-Across the measured CVVDP range (9.48–9.54 JOD) the PCHIP BD-rate is
-**−9.1%** (raw −9.3%) versus the previous aggregate; at iso-CVVDP 9.4918 the
-leaf-RD curve reaches ≈91.6 kbps (−8.6% rate).
-
-Encode speed is **9.1 fps** (6.58 s for 60 frames, best of 3) on the M4 at the
-QP117 operating point; the previous QP125 aggregate measured 7.7 fps (7.84 s)
-on the same host session. The leaf cost replaces residual work with a few syntax
-bits, so the higher-rate point is not slower.
+Encode speed is **7.6 fps** (7.86 s for 60 frames, best of 3) on the M4 at the
+QP117 operating point; the 1/8-pel stage adds ME work but also reduces rate.
 
 ## Per-tool contributions
 
@@ -86,6 +76,7 @@ the ones that stacked. Approximate contributions at or near the 100 kbps point:
 | Bottom residual mask (`--video-edge-mask`) | +0.07 JOD |
 | BAWP carrier over inter residual | +0.04 JOD |
 | Calibrated leaf RD cost (`--video-leaf-rd`) | +0.05 JOD |
+| 1/8-pel ME + TX-search λ 136 | +0.04 JOD |
 
 Positive changes that did **not** stack and are therefore explicit opt-ins,
 not part of nightly: the §8.3.2 TX context rate (it needs

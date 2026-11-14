@@ -62,7 +62,8 @@ NIGHTLY_FLAGS=(--video-rd-preset quality --video-ccso-rd --video-edge-inter
                --video-key-qp-offset -16 --video-rdoq --video-edge-mask
                --video-cdef --video-ccso-bands 6 --video-ccso-lambda 22
                --video-ccso-refit 2 --video-ccso-unit-bits 2
-               --video-bawp --video-bawp-carrier --video-leaf-rd)
+               --video-bawp --video-bawp-carrier --video-leaf-rd
+               --video-subpel-eighth --video-tx-lambda 136)
 
 echo "== nightly RD gate =="
 
@@ -163,10 +164,10 @@ import hashlib, sys
 print(hashlib.md5(open(sys.argv[1], 'rb').read()).hexdigest())
 PY
 )
-        [ "$BYTES" = "25022" ] ||
-            fail "nightly stream is $BYTES B, expected 25022"
-        [ "$MD5" = "b7388311a0e13cd90c7e1c9a2883588e" ] ||
-            fail "nightly stream md5 is $MD5, expected b7388311..."
+        [ "$BYTES" = "24939" ] ||
+            fail "nightly stream is $BYTES B, expected 24939"
+        [ "$MD5" = "8f8713dac14eaa74af770e9142e5eae9" ] ||
+            fail "nightly stream md5 is $MD5, expected 8f8713da..."
     fi
 fi
 

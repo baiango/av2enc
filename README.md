@@ -59,7 +59,7 @@ Old Shine rows are historical.
 |---|---|---:|---:|---:|---:|
 | CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 23.7 fps (1 thread) / 54.6 fps (8 threads) |
 | CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 27.58 dB | 23.4 fps (8 threads) |
-| CPU 240p30, `--nightly` QP 117 | Apple M4 | 100.1 / - kbps | **9.547 JOD** | **40.87 dB** | 9.1 fps (8 threads) |
+| CPU 240p30, `--nightly` QP 117 | Apple M4 | 99.8 / - kbps | **9.587 JOD** | **41.70 dB** | 7.6 fps (8 threads) |
 | AVM CBR (NASA, target 34 kbps) | Apple M4 | 99.5 / - kbps | 8.452 JOD | 36.53 dB | 1.94 fps |
 | CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | 49.4 fps |
 | CPU/GPU parity, QP 189 | RTX 3060 | 100.0 / 100.0 kbps | drift 0 | drift 0 | 40.0 fps |
@@ -75,8 +75,8 @@ is superseded because the binaries are not directly comparable. `quality` and
 `--nightly` are CPU-only; the default and GPU paths keep the historical
 25,009-byte stream / MD5 `a1d0dba1259b20a4b628d4cd1e14c33c`. The `quality`
 stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP117
-stream is 25,022 B / MD5 `b7388311a0e13cd90c7e1c9a2883588e`. At the 100.2 kbps
-point, nightly is +4.74 JOD over the default and +3.24 JOD over `quality`.
+stream is 24,939 B / MD5 `8f8713dac14eaa74af770e9142e5eae9`. At ~100 kbps,
+nightly is +4.78 JOD over the default and +3.28 JOD over `quality`.
 
 The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
 25,009-byte stream as the CPU reference (`100.0 / 100.0 kbps`, MD5
@@ -426,13 +426,14 @@ Current gates:
   (+1.50 JOD), PSNR-Y 27.58 dB (+3.11 dB)** at QP190 / 100.56 kbps; the
   interpolated 100.04 kbps point is 6.273 JOD. The per-tool table and exact
   flags are in `docs/video-rd-preset.md`.
-  Algorithmic nightly aggregate: **`--nightly` measures 9.547 JOD /
-  40.87 dB PSNR-Y at 100.1 kbps (QP117)** — +4.74 JOD over the default and
-  +3.24 JOD over the stable preset at essentially the same rate. It combines
+  Algorithmic nightly aggregate: **`--nightly` measures 9.587 JOD /
+  41.70 dB PSNR-Y at 99.8 kbps (QP117)** — +4.78 JOD over the default and
+  +3.28 JOD over the stable preset at essentially the same rate. It combines
   64-band/refit/priced-unit CCSO, bottom-edge inter and residual masking, the
   measured partition probe, a reference-intro key/first-P QP offset, luma
-  inter RDOQ, CDEF, the BAWP carrier over inter residual and the calibrated
-  leaf RD cost (`--video-leaf-rd`). It is CPU-only and
+  inter RDOQ, CDEF, the BAWP carrier over inter residual, the calibrated
+  leaf RD cost (`--video-leaf-rd`), 1/8-pel ME refinement and the RDOQ-tuned
+  TX-search lambda. It is CPU-only and
   rejects `--video-gpu`, so the default and GPU streams keep the historical CPU
   decisions (`a1d0dba1...`, 25,009 B). The measured tables, per-tool
   contributions and exact flags are in `docs/video-nightly.md`.
