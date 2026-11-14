@@ -60,14 +60,18 @@ Old Shine rows are historical.
 | CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 23.7 fps (1 thread) / 54.6 fps (8 threads) |
 | CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 27.58 dB | 23.4 fps (8 threads) |
 | CPU 240p30, `--nightly` QP 117 | Apple M4 | 100.1 / - kbps | **9.547 JOD** | **40.87 dB** | 9.1 fps (8 threads) |
-| AVM CBR (NASA) | Apple M4 | 92.1 / - kbps | 8.791 JOD | 37.78 dB | 0.071 fps |
+| AVM CBR (NASA, target 34 kbps) | Apple M4 | 99.5 / - kbps | 8.452 JOD | 36.53 dB | 1.94 fps |
 | CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | 49.4 fps |
 | CPU/GPU parity, QP 189 | RTX 3060 | 100.0 / 100.0 kbps | drift 0 | drift 0 | 40.0 fps |
 | GPU 1440x720 QP90 | RTX 3080 Ti | - / 7664 kbps | 9.704 JOD | 42.85 dB | 5.40 fps |
 | GPU 1440x720 QP90 | RTX 3060 | - / 7664 kbps | 9.704 JOD | 42.85 dB | 4.88 fps |
 
-AVM's CBR rate control undershot its request and produced 92.1 kbps at
-0.071 fps, so the quality comparison is at 92.1 vs 100.0 kbps. `quality` and
+AVM CBR was re-measured at the 100 kbps point with the current AVM source
+(`7a0c956`): target 34 kbps produced **99.5 kbps** (0.5% below target) at
+8.452 JOD / 36.53 dB, 1.94 fps. CBR undershoots at low targets (target 30 →
+93.5 kbps, target 35 → 101.4 kbps), so 34 is the closest integer target. The
+previous 92.1 kbps / 8.791 JOD row used the older AVM nightly `cd7d8bc3db`; it
+is superseded because the binaries are not directly comparable. `quality` and
 `--nightly` are CPU-only; the default and GPU paths keep the historical
 25,009-byte stream / MD5 `a1d0dba1259b20a4b628d4cd1e14c33c`. The `quality`
 stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP117
@@ -406,7 +410,7 @@ Agent worktrees and branches live outside the main checkout.
 `tools/quality.py` computes bitrate, PSNR, SSIM, and CVVDP (JOD) for an IVF.
 It also records `decode_fps` and `decode_realtime_x` from `dav2d`. The current
 AVM reference point is the NASA 240p30 row in the baseline table above
-(92.1 kbps, 8.791 JOD); the historical Shine 720p sweep is archived in
+(99.5 kbps, 8.452 JOD); the historical Shine 720p sweep is archived in
 `bench/avm_baseline/README.md`. Compare at matched bitrate, and always confirm
 `dav2d` decoded the stream first. A fast-decode
 profile is deferred until quality and encode speed are settled.

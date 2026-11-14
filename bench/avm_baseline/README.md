@@ -1,7 +1,9 @@
 > **Historical baseline.** These tables are the Shine 1280x720 sweep from
 > 2026-11-10. The current benchmark uses the NASA 8192x4096 (2:1) clip; the AVM
-> 240p30 point is 92.1 kbps / 8.791 JOD / 0.071 fps and is recorded in the main
-> README. Keep the tables below for history and methodology.
+> 240p30 point is 99.5 kbps / 8.452 JOD / 1.94 fps and is recorded in the main
+> README. The older 92.1 kbps / 8.791 JOD value came from the AVM nightly
+> `cd7d8bc3db`; the current source (`7a0c956`) does not reproduce it. Keep the
+> tables below for history and methodology.
 
 # AVM baseline
 
