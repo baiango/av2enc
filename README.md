@@ -164,7 +164,7 @@ Video options: `--p-frames`, `--b-frames`, `--video-refs 1..7`,
 `--video-bawp`, `--video-cfl`,
 `--video-mhccp`, `--video-pc-wiener`, `--video-qm`, `--video-deblock`,
 `--video-cdef`, `--video-ccso`, `--video-wiener`, `--video-chroma-lr`,
-`--video-gdf`, `--video-intra-full`, `--video-tx-search`, `--tiles CxR`,
+`--video-gdf`, `--video-intra-full`, `--video-tx-search`, `--video-rd-preset quality`, `--tiles CxR`,
 `--video-mfh`, `--video-timing`, `--avg-cdf`/`--adaptive-cdf`, and
 `--rc cqp|crf|vbr` with `--crf` / `--bitrate`. `--video-gpu` supports the same
 surface except the explicitly named CPU-only/decoder-gated modes (TIP block
@@ -405,6 +405,12 @@ Current gates:
 
 - **CPU quality:** 480x240 (240p, 2:1) @ 30 fps at **100 kbps**, maximize CVVDP.
   NASA baseline: 4.802 JOD at 100.0 kbps, PSNR-Y 24.47 dB (QP 189).
+  Opt-in RD preset: `--video-rd-preset quality` measures **6.302 JOD
+  (+1.50 JOD), PSNR-Y 27.58 dB (+3.11 dB)** at QP 190 / 100.56 kbps; the
+  interpolated point at 100.04 kbps is **6.273 JOD (+1.47 JOD), 27.51 dB
+  (+3.04 dB)**. The per-tool table, exact flags and rejected compositions are
+  in `docs/video-rd-preset.md`; a separate algorithmic-RD track is in progress.
+  The default stream is unchanged (`a1d0dba1...`, 25,009 B).
 - **GPU calibration:** same 240p30 decisions at QP 189; CVVDP ±0.05 JOD,
   bitrate ±2%, PSNR-Y ±0.1 dB drift. The QP189 stream is byte-identical on both
   GPU hosts and the CPU (`a1d0dba1...`).

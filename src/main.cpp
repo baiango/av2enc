@@ -274,6 +274,10 @@ struct Options {
   // mode (§5.20.7.14 motion_mode_allowed() requires !isCompound).
   bool video_compound_interintra = false;
   bool video_inter_residual = false;
+  // Opt-in measured CPU RD preset (--video-rd-preset <name>).  Empty means no
+  // expansion, so the default stream stays byte-identical.  The expansion only
+  // sets existing CLI options and then the normal validation runs.
+  std::string video_rd_preset;
   // Opt-in §5.18.8.1 TX_MODE_SELECT luma TX size/type/partition search.
   bool video_tx_search = false;
   double video_tx_lambda = 256.0;
@@ -868,6 +872,12 @@ void print_usage(std::ostream& out) {
                                "block may select a coarser MV precision than",
                                "the frame value (§5.20.7.6)"});
   item("--video-inter-residual", {"Code a quantised inter residual"});
+  item("--video-rd-preset <name>", {"Expand a measured CPU RD preset:",
+                                     "'quality' = --video-inter-residual",
+                                     "--video-deblock --video-ccso",
+                                     "--video-tx-search --video-intra-full",
+                                     "(default off; the flags stay",
+                                     "individually available)"});
   item("--video-tx-search", {"Opt-in §5.18.8 TX_MODE_SELECT luma TX size/type/",
                                 "partition search (changes the bitstream)"});
   item("--video-tx-lambda <S>", {"SSE-per-bit weight for --video-tx-search",
@@ -1350,6 +1360,38 @@ bool apply_effort_ranking(Options& options, std::string& error) {
   options.m1 = true;  // the measured ranking is a Still-path preset
   options.effort_active = true;
   options.effort_report = av2enc::effort::format_selection(selection);
+  return true;
+}
+
+// Expansion of the measured video RD presets (--video-rd-preset <name>).  The
+// preset only sets existing CLI options; the caller then runs the normal
+// combination validation, so a preset cannot reach a tool pairing that the
+// individual flags reject.  No preset leaves every field untouched, so the
+// historical default stream is byte-identical.
+//
+// The 'quality' row is measured on the CPU --video reference at the 240p30 /
+// 100 kbps point (see docs/video-rd-preset.md): a single tile, P-only chain.
+bool apply_video_rd_preset(Options& options, std::string& error) {
+  if (options.video_rd_preset.empty()) return true;
+  if (options.video_rd_preset != "quality") {
+    error = "--video-rd-preset expects 'quality' (the only measured row)";
+    return false;
+  }
+  if (!options.video) {
+    error = "--video-rd-preset applies to the CPU --video encoder; pass "
+            "--video (the --still writer pins its own tool set)";
+    return false;
+  }
+  if (options.video_gpu) {
+    error = "--video-rd-preset is the measured CPU tool set; drop --video-gpu "
+            "(its decisions are calibrated separately)";
+    return false;
+  }
+  options.video_inter_residual = true;
+  options.video_deblock = true;
+  options.video_ccso = true;
+  options.video_tx_search = true;
+  options.video_intra_full = true;
   return true;
 }
 
@@ -2411,6 +2453,15 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-rd-preset") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-rd-preset'";
+        return ParseStatus::kError;
+      }
+      options.video_rd_preset = argv[++i];
+      continue;
+    }
+
     if (argument == "--video-tx-search") {
       options.video_tx_search = true;
       continue;
@@ -3209,6 +3260,10 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     if (!apply_effort_ranking(options, error)) {
       return ParseStatus::kError;
     }
+  }
+
+  if (!apply_video_rd_preset(options, error)) {
+    return ParseStatus::kError;
   }
 
   if (options.input.empty() && !options.effort_plan) {
