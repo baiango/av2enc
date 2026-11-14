@@ -54,7 +54,8 @@ At 100.248 kbps the nightly stream is **+3.94 JOD** over the default and
 **+2.44 JOD** over the stable `quality` preset, for +7.79 dB PSNR-Y over the
 default. Interpolated to 100.036 kbps the nightly CVVDP is about **8.735**.
 
-Encode time is ~4 s for 60 frames on the M4, close to the edge-only path.
+Encode time is **3.17 s best / 3.54 s median** for 60 frames on the M4
+(18.9 / 17.0 fps), close to the edge-only path; the host was shared.
 
 ## Why not stack the other algorithms?
 

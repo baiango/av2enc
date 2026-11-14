@@ -50,12 +50,15 @@ decisions are used.
 
 **Measured baselines** (NASA clip, 60 frames). The benchmark source is
 [`First-8K-Video-from-Space_orig.mp4`](https://images-assets.nasa.gov/video/First-8K-Video-from-Space/First-8K-Video-from-Space~orig.mp4)
-(8192x4096, 2:1, bt709); the CPU point is QP 189 at 480x240/30 fps. Old Shine
-rows are historical.
+(8192x4096, 2:1, bt709). The **default** CPU point is QP 189 at 480x240/30;
+the measured opt-in points are `quality` at QP 190 and `--nightly` at QP 142.
+Old Shine rows are historical.
 
 | Case | Device | Bitrate CPU / GPU | CVVDP | PSNR-Y | Encode |
 |---|---|---:|---:|---:|---:|
-| CPU 240p30, QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 20.8 fps (1 thread) |
+| CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 23.7 fps (1 thread) / 54.6 fps (8 threads) |
+| CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 27.58 dB | 23.4 fps (8 threads) |
+| CPU 240p30, `--nightly` QP 142 | Apple M4 | 100.2 / - kbps | **8.746 JOD** | **35.38 dB** | 18.9 fps (8 threads) |
 | AVM CBR (NASA) | Apple M4 | 92.1 / - kbps | 8.791 JOD | 37.78 dB | 0.071 fps |
 | CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | 49.4 fps |
 | CPU/GPU parity, QP 189 | RTX 3060 | 100.0 / 100.0 kbps | drift 0 | drift 0 | 40.0 fps |
@@ -63,12 +66,21 @@ rows are historical.
 | GPU 1440x720 QP90 | RTX 3060 | - / 7664 kbps | 9.704 JOD | 42.85 dB | 4.88 fps |
 
 AVM's CBR rate control undershot its request and produced 92.1 kbps at
-0.071 fps, so the quality comparison is at 92.1 vs 100.0 kbps. The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
+0.071 fps, so the quality comparison is at 92.1 vs 100.0 kbps. `quality` and
+`--nightly` are CPU-only; the default and GPU paths keep the historical
+25,009-byte stream / MD5 `a1d0dba1259b20a4b628d4cd1e14c33c`. The `quality`
+stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP142
+stream is 25,062 B / MD5 `ada720ee20ac1caf908eb1b6269e4cb8`. At the 100 kbps
+point, nightly is +3.94 JOD over the default and +2.44 JOD over `quality`
+(interpolated to 100.04 kbps: ~8.735 JOD).
+
+The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
 25,009-byte stream as the CPU reference (`100.0 / 100.0 kbps`, MD5
-`a1d0dba1259b20a4b628d4cd1e14c33c`). The 60-frame 480x240 encode takes 3.86 s
-on the M4 CPU reference (15.5 fps), 1.22 s on the RTX 3080 Ti (49.4 fps) and
-1.50 s on the RTX 3060 (40.0 fps), i.e. 3.2x and 2.6x the CPU reference speed
-for the same 100 kbps stream. The 1440x720 QP90 stream is byte-identical
+`a1d0dba1259b20a4b628d4cd1e14c33c`). Encode fps above is 60 frames divided by
+the best-of-3 wall time on the M4 (host shared); the thread count is shown.
+The same 60-frame 480x240 stream takes 1.22 s on the RTX 3080 Ti (49.4 fps) and
+1.50 s on the RTX 3060 (40.0 fps), i.e. 2.1x and 1.7x the 1-thread CPU
+reference speed for the same 100 kbps stream. The 1440x720 QP90 stream is byte-identical
 on both GPUs and on the CPU reference (MD5
 `f9b6e086aa7d9da78792cf74b9746741`, 958,023 bytes); the CPU encodes the same
 60 frames at 1.36 fps on the M4.
