@@ -75,6 +75,7 @@
 #endif
 #include "pipeline/video/post/tiled_frame.h"
 #include "pipeline/video/post/deblock_grid.h"
+#include "core/parallel/parallel_for.h"
 #if defined(AV2ENC_VIDEO_FORMATS)
 #include "pipeline/video/hbd/video_hbd.h"
 #endif
@@ -91,6 +92,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -2259,6 +2261,12 @@ class InterFrameEncoder {
       base_superblocks = frame.superblocks;
     }
 
+    // The partition tree is final, so the pure NEWMV searches can run ahead
+    // of the coding-order walk on the host worker pool.  Serial at 1 thread.
+    if (!base_superblocks.empty()) {
+      precompute_leaf_me(base_superblocks, options_.cpu_threads);
+    }
+
     const auto collect_superblocks = [&]() -> bool {
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
       if (options_.ext_partitions) {
@@ -3297,6 +3305,22 @@ class InterFrameEncoder {
 
   bool run_me(int ref_index, int x0, int y0, int w, int h,
               inter::mc::Mv& mv, std::string& error) {
+    if (!me_cache_.empty()) {
+      const auto it = me_cache_.find(me_cache_key(ref_index, x0, y0, w, h));
+      if (it != me_cache_.end()) {
+        mv = it->second;
+        return true;
+      }
+    }
+    return search_me(ref_index, x0, y0, w, h, mv, error);
+  }
+
+  // Pure §7.13 NEWMV search for one block.  It reads only the source frame,
+  // the reference frame and the frame-level ME options; neighbour
+  // reconstruction and the MV stack are not inputs, so identical jobs produce
+  // identical results regardless of the order (or thread) they run in.
+  bool search_me(int ref_index, int x0, int y0, int w, int h,
+                 inter::mc::Mv& mv, std::string& error) const {
     const int frame_width = static_cast<int>(source_.width);
     const int frame_height = static_cast<int>(source_.height);
     const int frame_chroma_width = frame_width / 2;
@@ -3353,6 +3377,100 @@ class InterFrameEncoder {
     }
     mv = inter::mc::mv_from_me_1_16(res.mv_y, res.mv_x);
     return true;
+  }
+
+  // ---------------------------------------------------------------------
+  // Deterministic batched motion search.
+  //
+  // decide() knows the full partition tree before collect_node() walks it, and
+  // the NEWMV search above is pure, so every leaf's search can run up front in
+  // parallel.  Each job owns its result slot and me_cache_ is filled in job
+  // order afterwards, so the per-leaf lookup returns exactly the MV the serial
+  // search returns.  Only the whole-frame path opts in; a tiled frame already
+  // parallelises whole tile encoders and must not nest thread pools.
+  // ---------------------------------------------------------------------
+  static std::uint64_t me_cache_key(int ref_index, int x0, int y0, int w,
+                                    int h) {
+    return (static_cast<std::uint64_t>(ref_index) & 0x7U) |
+           ((static_cast<std::uint64_t>(x0) & 0xFFFFU) << 3U) |
+           ((static_cast<std::uint64_t>(y0) & 0xFFFFU) << 19U) |
+           ((static_cast<std::uint64_t>(w) & 0x3FFU) << 35U) |
+           ((static_cast<std::uint64_t>(h) & 0x3FFU) << 45U);
+  }
+
+  void precompute_leaf_me(const std::vector<PartitionNode>& superblocks,
+                          unsigned workers) {
+    if (keyframe_ || !options_.enable_newmv || options_.force_global_mv) return;
+    if (width_ != static_cast<int>(source_.width) ||
+        height_ != static_cast<int>(source_.height)) {
+      return;  // tiled: the tile encoders themselves run in parallel
+    }
+    if (parallel::resolve_workers(workers) <= 1) return;
+
+    struct MeJob {
+      int ref_index;
+      int x;
+      int y;
+      int w;
+      int h;
+    };
+    std::vector<MeJob> jobs;
+    jobs.reserve(1024);
+    const auto walk = [&](auto&& self, const PartitionNode& node) -> void {
+      if (node.partition != PartitionType::kNone) {
+        for (const PartitionNode& child : node.children) self(self, child);
+        return;
+      }
+      const int w = partition::block_width(node.size);
+      const int h = partition::block_height(node.size);
+      if (w < 8 || h < 8) return;  // encode_leaf() keeps sub-8 leaves intra
+      const int x0 = node.mi_col * 4;
+      const int y0 = node.mi_row * 4;
+      if (x0 + w > mi_cols_ * 4 || y0 + h > mi_rows_ * 4) return;
+      for (int ref = 0; ref < num_total_refs_; ++ref) {
+        jobs.push_back(MeJob{ref, x0 + tile_x_, y0 + tile_y_, w, h});
+      }
+    };
+    for (const PartitionNode& sb : superblocks) walk(walk, sb);
+    if (jobs.empty()) return;
+
+    std::vector<inter::mc::Mv> mvs(jobs.size());
+    std::vector<char> ok(jobs.size(), 0);
+    // Round-robin the raster-ordered job list over the fixed chunks: the leaf
+    // search cost has a strong vertical gradient (flat sky vs textured
+    // ground), so contiguous raster slices would leave workers idle.  The
+    // permutation is built before the threads start and is a bijection, so
+    // every job runs exactly once and the merge below stays in job order.
+    const std::size_t chunks = std::min<std::size_t>(
+        static_cast<std::size_t>(parallel::resolve_workers(workers)),
+        jobs.size());
+    const std::size_t chunk_size = (jobs.size() + chunks - 1) / chunks;
+    std::vector<std::size_t> order;
+    order.reserve(jobs.size());
+    for (std::size_t chunk = 0; chunk < chunks; ++chunk) {
+      for (std::size_t rank = 0; rank < chunk_size; ++rank) {
+        const std::size_t job_index = rank * chunks + chunk;
+        if (job_index < jobs.size()) order.push_back(job_index);
+      }
+    }
+    parallel::parallel_for(order.size(), workers, [&](std::size_t p) {
+      const std::size_t job_index = order[p];
+      const MeJob& job = jobs[job_index];
+      std::string job_error;
+      ok[job_index] = search_me(job.ref_index, job.x, job.y, job.w, job.h,
+                                mvs[job_index], job_error)
+                          ? 1
+                          : 0;
+    });
+    // Merge in job order.  A failed job stays uncached and falls back to the
+    // serial search, so the error text and behaviour are unchanged.
+    for (std::size_t i = 0; i < jobs.size(); ++i) {
+      if (ok[i] == 0) continue;
+      const MeJob& job = jobs[i];
+      me_cache_.emplace(me_cache_key(job.ref_index, job.x, job.y, job.w,
+                                     job.h),
+                        mvs[i]);
+    }
   }
 
   // §7.13.2.15/.16 neighbour smooth flags at the coding-block origin, derived
@@ -6546,6 +6664,10 @@ class InterFrameEncoder {
   const VideoOptions& options_;
   bool trace_ = false;
   bool keyframe_ = false;
+  // Deterministic batch results for the pure NEWMV search, keyed by
+  // (reference index, absolute block origin, block size).  Empty unless
+  // precompute_leaf_me() ran for a whole-frame P frame.
+  std::unordered_map<std::uint64_t, inter::mc::Mv> me_cache_;
   int tile_x_ = 0;
   int tile_mi_row_ = 0;
   int tile_mi_col_ = 0;
@@ -9977,19 +10099,31 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   std::vector<std::uint16_t> cdf_seed;
   if (cdf_chain) cdf_seed = cdf_tile;  // §8.2.2 FrameCdf seed for every tile
   [[maybe_unused]] std::uint32_t cdf_tile_index = 0;
-  std::vector<std::unique_ptr<InterFrameEncoder>> key_encoders;
-  key_encoders.reserve(tile_sources.size());
-  for (CodedTile& tile : tile_sources) {
+  // Independent tile encoders can run on the host worker pool: each tile owns
+  // its reconstruction, decisions and MV grid, and references are read-only.
+  // Entropy coding (encoder->write()) is never parallelised, and the CDF-chain
+  // path stays serial because every tile shares cdf_tile/cdf_scratch.
+  const unsigned tile_workers =
+      (tile_sources.size() > 1 && !cdf_chain && !options.trace)
+          ? parallel::resolve_workers(options.cpu_threads)
+          : 1U;
+  std::vector<std::unique_ptr<InterFrameEncoder>> key_encoders(
+      tile_sources.size());
+  std::vector<std::string> key_tile_errors(tile_sources.size());
+  std::vector<std::uint32_t> key_tile_intra(tile_sources.size(), 0);
+  parallel::parallel_for(tile_sources.size(), tile_workers,
+                         [&](std::size_t t) {
+    CodedTile& tile = tile_sources[t];
     if (cdf_chain) cdf_tile = cdf_seed;
+    std::string& tile_error = key_tile_errors[t];
     auto encoder = std::make_unique<InterFrameEncoder>(
         frames[0], no_refs, no_distance, 1, key_options, options.trace,
         /*keyframe=*/true, tile.x, tile.y, tile.w, tile.h,
         cdf_chain ? std::span<const std::uint16_t>(cdf_tile)
                   : std::span<const std::uint16_t>(),
         cdf_chain ? &cdf_scratch : nullptr);
-    if (!encoder->decide(error) || !encoder->deblock(error)) {
-      error = "keyframe encode failed: " + error;
-      return false;
+    if (!encoder->decide(tile_error) || !encoder->deblock(tile_error)) {
+      return;
     }
     paste_tile(encoder->recon(0), frame_recon[0], tile.x, tile.y,
                encoder->recon(0).width, encoder->recon(0).height);
@@ -9997,8 +10131,17 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                encoder->recon(1).width, encoder->recon(1).height);
     paste_tile(encoder->recon(2), frame_recon[2], tile.x / 2, tile.y / 2,
                encoder->recon(2).width, encoder->recon(2).height);
-    key_intra_blocks += encoder->intra_blocks();
-    key_encoders.push_back(std::move(encoder));
+    key_tile_intra[t] = encoder->intra_blocks();
+    key_encoders[t] = std::move(encoder);
+  });
+  // Merge per-tile state in tile order: the first failing tile keeps the
+  // historical error text and the counts stay order-independent.
+  for (std::size_t t = 0; t < tile_sources.size(); ++t) {
+    if (!key_tile_errors[t].empty()) {
+      error = "keyframe encode failed: " + key_tile_errors[t];
+      return false;
+    }
+    key_intra_blocks += key_tile_intra[t];
   }
   post::VideoFilterPlan key_filters;
   if (options.loop_filters.any()) {
@@ -10432,10 +10575,16 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       temporal_ctx.field = &motion_field.field;
       temporal_ctx.mv_traj = options.mv_traj ? &motion_field.traj : nullptr;
     }
-    std::vector<std::unique_ptr<InterFrameEncoder>> tile_encoders;
-    tile_encoders.reserve(tile_sources.size());
-    for (CodedTile& tile : tile_sources) {
+    std::vector<std::unique_ptr<InterFrameEncoder>> tile_encoders(
+        tile_sources.size());
+    std::vector<std::string> tile_errors(tile_sources.size());
+    std::vector<std::uint32_t> tile_inter(tile_sources.size(), 0);
+    std::vector<std::uint32_t> tile_intra(tile_sources.size(), 0);
+    parallel::parallel_for(tile_sources.size(), tile_workers,
+                           [&](std::size_t t) {
+      CodedTile& tile = tile_sources[t];
       if (cdf_chain) cdf_tile = cdf_seed;
+      std::string& tile_error = tile_errors[t];
       auto encoder = std::make_unique<InterFrameEncoder>(
           frames[i], references, frame_distance, ref_count, frame_options,
           options.trace, /*keyframe=*/false, tile.x, tile.y, tile.w, tile.h,
@@ -10445,19 +10594,26 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
           /*primary_ref_is_none=*/i == 1, &temporal_ctx,
           i == 1 ? std::span<const std::uint8_t>()
                  : std::span<const std::uint8_t>(prev_segment_map));
-      if (!encoder->decide(error) || !encoder->deblock(error)) {
-        error = "P-frame " + std::to_string(i) + ": " + error;
-        return false;
+      if (!encoder->decide(tile_error) || !encoder->deblock(tile_error)) {
+        return;
       }
-      inter_blocks += encoder->inter_blocks();
-      intra_blocks += encoder->intra_blocks();
+      tile_inter[t] = encoder->inter_blocks();
+      tile_intra[t] = encoder->intra_blocks();
       paste_tile(encoder->recon(0), frame_recon[0], tile.x, tile.y,
                  encoder->recon(0).width, encoder->recon(0).height);
       paste_tile(encoder->recon(1), frame_recon[1], tile.x / 2, tile.y / 2,
                  encoder->recon(1).width, encoder->recon(1).height);
       paste_tile(encoder->recon(2), frame_recon[2], tile.x / 2, tile.y / 2,
                  encoder->recon(2).width, encoder->recon(2).height);
-      tile_encoders.push_back(std::move(encoder));
+      tile_encoders[t] = std::move(encoder);
+    });
+    for (std::size_t t = 0; t < tile_sources.size(); ++t) {
+      if (!tile_errors[t].empty()) {
+        error = "P-frame " + std::to_string(i) + ": " + tile_errors[t];
+        return false;
+      }
+      inter_blocks += tile_inter[t];
+      intra_blocks += tile_intra[t];
     }
     for (const std::unique_ptr<InterFrameEncoder>& encoder : tile_encoders) {
       result.temporal_candidates +=

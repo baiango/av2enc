@@ -18,6 +18,13 @@ target_link_libraries(basic_headers_test PRIVATE av2enc_core)
 av2enc_apply_warnings(basic_headers_test)
 add_test(NAME basic_headers_test COMMAND basic_headers_test)
 
+# Deterministic parallel-for helper.  The executable is registered as the
+# gate_parallel_for product gate (tests/gates) rather than a core CTest test,
+# so the pinned ctest inventory in refactor/baseline.json stays unchanged.
+add_executable(parallel_for_test parallel_for_test.cpp)
+target_link_libraries(parallel_for_test PRIVATE av2enc_core)
+av2enc_apply_warnings(parallel_for_test)
+
 add_executable(still_headers_test still_headers_test.cpp)
 target_link_libraries(still_headers_test PRIVATE av2enc_core)
 av2enc_apply_warnings(still_headers_test)
@@ -43,6 +50,10 @@ set_tests_properties(dav2d_smoke PROPERTIES
 # Deterministic Y4M generator for edge-geometry tests (no ffmpeg dependency).
 add_executable(gen_y4m gen_y4m.cpp)
 av2enc_apply_warnings(gen_y4m)
+
+# --cpu-threads identity is tests/multithread_identity.sh, registered as the
+# gate_multithread_identity product gate in tests/gates/ (see the note above:
+# the pinned ctest inventory must not gain a core test).
 
 # Edge superblock decode gate: the five reported failing sizes plus the pinned
 # 64x64 / 640x360 / 1080p regressions. M0 must handle every size it claims to

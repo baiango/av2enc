@@ -410,6 +410,11 @@ struct Options {
   // Multi-tile stills. "1x1" (default) keeps the single-tile writer; every
   // other value selects the tiled writer and requires --no-deblock.
   std::string tiles = "1x1";
+  // Host CPU workers for the CPU reference video encoder's deterministic
+  // parallel-for loops (--cpu-threads).  1 (default) is the serial path;
+  // 0 means auto (hardware concurrency).  Ignored by the GPU path.
+  unsigned cpu_threads = 1;
+  bool cpu_threads_given = false;
   // Host-only multi-GPU tile-plan dump. 0 = off (the default); never allocates
   // device memory and never writes a stream.
   int gpu_plan = 0;
@@ -781,6 +786,10 @@ void print_usage(std::ostream& out) {
   item("--tiles <N|CxR>", {"Uniform tile grid, default 1x1: a count",
                            "2/4/8/16/32 or a grid 2x1/2x2/4x2/8x2/16x2.",
                            "Requires --no-deblock; 8-bit 4:2:0 only"});
+  item("--cpu-threads <N>", {"CPU --video reference worker count: 1 (default,",
+                             "serial), 0 = auto, 2..256. Independent tile",
+                             "encoders and the batched NEWMV search run in",
+                             "parallel; the bitstream is byte-identical"});
   item("--bit-depth <8|10>", {"Sample depth (default 8). 10 requires --still, a",
                               "C420p10/C422p10/C444p10/Cmono10 input and",
                               "base_q_idx 1..303; 12-bit is not signalable in",
@@ -1530,6 +1539,22 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
       options.tiles = canonical;
+      continue;
+    }
+
+    if (argument == "--cpu-threads") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--cpu-threads'";
+        return ParseStatus::kError;
+      }
+      int value = 0;
+      if (!parse_int(argv[++i], value) || value < 0 || value > 256) {
+        error = "--cpu-threads must be an integer in [0, 256] "
+                "(0 = auto, 1 = serial)";
+        return ParseStatus::kError;
+      }
+      options.cpu_threads = static_cast<unsigned>(value);
+      options.cpu_threads_given = true;
       continue;
     }
 
@@ -3199,6 +3224,18 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     error = std::move(message);
     return ParseStatus::kError;
   };
+
+  if (options.cpu_threads_given) {
+    if (!options.video) {
+      error = "--cpu-threads applies to the CPU --video reference encoder";
+      return ParseStatus::kError;
+    }
+    if (options.video_gpu) {
+      error = "--cpu-threads is a CPU reference knob; the GPU backend "
+              "(--video-gpu) has its own scheduling";
+      return ParseStatus::kError;
+    }
+  }
 
   if (options.gpu_plan != 0) {
     if (options.video || options.m1 || options.still_gpu || options.lossless) {
@@ -6454,6 +6491,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.loop_filters.chroma_lr = options.video_chroma_lr;
   video_options.loop_filters.gdf = options.video_gdf;
   video_options.trace = options.video_trace;
+  video_options.cpu_threads = options.cpu_threads;
   if (options.tiles != "1x1") {
     const av2enc::tiles::TileLayoutDims dims =
         av2enc::tiles::preset_dims(tile_preset_from_layout(options.tiles));

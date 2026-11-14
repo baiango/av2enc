@@ -306,6 +306,12 @@ struct VideoOptions {
   // clamped to the containing tile so the reconstruction stays decoder-exact.
   int tile_cols = 0;
   int tile_rows = 0;
+  // Host worker count for the CPU reference encoder's deterministic
+  // parallel-for loops (independent tile encoders and batched motion search).
+  // 1 (the default) keeps the historical serial path; 0 means "auto"
+  // (std::thread::hardware_concurrency).  Results are byte-identical for
+  // every value: work is partitioned up front and merged in index order.
+  unsigned cpu_threads = 1;
   // SVC sequence-header layer limits (§5.4.1).  Defaults reproduce the
   // single-layer header (seq_lcr_id = 0, M = T = 1).
   std::uint8_t seq_lcr_id = 0;

@@ -16,6 +16,12 @@ option(AV2ENC_ENABLE_CUDA "Build the CUDA encoder backend (requires nvcc)" ON)
 option(AV2ENC_ALLOW_CPU_ONLY
   "Allow a CPU-only reference/test build (not a supported encoder target)" OFF)
 
+# The CPU parallel-for helper uses std::thread.  This is always available, but
+# linking the platform thread library explicitly keeps non-Apple hosts working
+# (Linux needs -pthread).  No OpenMP dependency: macOS clang ships no libomp.
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 include(CheckLanguage)
 check_language(CUDA)
 set(AV2ENC_CUDA_AVAILABLE OFF)
@@ -69,6 +75,98 @@ function(av2enc_apply_warnings target)
       -Wshadow)
   endif()
 endfunction()
+
+# ---------------------------------------------------------------------------
+# Host-CPU code-generation options (opt-in, default OFF).
+#
+# The shipped encoder is the CUDA target and the CPU path is the correctness
+# oracle, so none of these are on by default: a default build must stay
+# portable and byte-identical everywhere. They change code generation only.
+#
+#   AV2ENC_NATIVE    -mcpu=native / -march=native: tune for the build host.
+#                    Not portable: the binary then requires that CPU.
+#   AV2ENC_LTO       Link-time optimization of the host C++ targets.
+#   AV2ENC_CPU_FAST  Aggregate: AV2ENC_NATIVE + AV2ENC_LTO + loop unrolling and
+#                    the errno/trap FP bookkeeping flags below.
+#
+# Result neutrality: the CPU reference keeps -ffp-contract=off (see
+# av2enc_core below), and no fast-math flag is ever added, so integer results,
+# tie-breaks and therefore every pinned bitstream are unchanged. The extra FP
+# flags only drop errno/trap bookkeeping; they do not permit reassociation.
+# ---------------------------------------------------------------------------
+option(AV2ENC_NATIVE
+  "Tune host C++ code for the build machine (-mcpu/-march=native, not portable)" OFF)
+option(AV2ENC_LTO "Enable link-time optimization for the host C++ targets" OFF)
+option(AV2ENC_CPU_FAST
+  "Aggregate host-CPU speed options (implies AV2ENC_NATIVE and AV2ENC_LTO)" OFF)
+
+set(AV2ENC_NATIVE_EFFECTIVE ${AV2ENC_NATIVE})
+set(AV2ENC_LTO_EFFECTIVE ${AV2ENC_LTO})
+if(AV2ENC_CPU_FAST)
+  set(AV2ENC_NATIVE_EFFECTIVE ON)
+  set(AV2ENC_LTO_EFFECTIVE ON)
+endif()
+
+if(AV2ENC_LTO_EFFECTIVE)
+  if(AV2ENC_HAVE_CUDA)
+    # The device link is driven by nvcc, which does not accept -flto. LTO is a
+    # host-only tuning knob for the CPU reference build.
+    message(WARNING
+      "av2enc: AV2ENC_LTO/AV2ENC_CPU_FAST: LTO is only wired for CPU-only "
+      "builds; ignoring it for this CUDA build.")
+    set(AV2ENC_LTO_EFFECTIVE OFF)
+  elseif(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    message(WARNING
+      "av2enc: AV2ENC_LTO/AV2ENC_CPU_FAST: LTO is not implemented for "
+      "${CMAKE_CXX_COMPILER_ID}; ignoring it.")
+    set(AV2ENC_LTO_EFFECTIVE OFF)
+  endif()
+endif()
+
+set(AV2ENC_CPU_FAST_OPTIONS)
+if(AV2ENC_CPU_FAST)
+  # -funroll-loops is result-neutral. -fno-math-errno only stops libm calls
+  # from setting errno; -fno-trapping-math only assumes FP exceptions are not
+  # observed. Neither allows reordering, so duals/norms stay bit-exact. We do
+  # not add -fomit-frame-pointer: arm64 omits it by default at -O2 and the
+  # x86-64 win is noise compared to the loss of crash/step debugging.
+  list(APPEND AV2ENC_CPU_FAST_OPTIONS -funroll-loops)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    list(APPEND AV2ENC_CPU_FAST_OPTIONS -fno-math-errno -fno-trapping-math)
+  endif()
+endif()
+
+# Applies the host-CPU options to one C++ target. Kept per-target so CUDA
+# targets and their device link are never touched.
+function(av2enc_apply_cpu_options target)
+  if(AV2ENC_NATIVE_EFFECTIVE AND NOT MSVC)
+    if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+      target_compile_options(${target} PRIVATE -mcpu=native)
+    else()
+      target_compile_options(${target} PRIVATE -march=native)
+    endif()
+  endif()
+  if(AV2ENC_CPU_FAST_OPTIONS)
+    target_compile_options(${target} PRIVATE ${AV2ENC_CPU_FAST_OPTIONS})
+  endif()
+  if(AV2ENC_LTO_EFFECTIVE)
+    # Full LTO. Do not use CMake's INTERPROCEDURAL_OPTIMIZATION here: with
+    # AppleClang it selects -flto=thin, which measures ~18% slower than plain
+    # -flto on the CPU reference (see README "CPU build options").
+    target_compile_options(${target} PRIVATE -flto)
+  endif()
+endfunction()
+
+if(AV2ENC_LTO_EFFECTIVE)
+  # av2enc_core's archive holds LTO bitcode, so every consumer that links it
+  # (CLI, harnesses, ctest binaries) needs the LTO driver at link time. The
+  # LINK_LANGUAGE guard keeps CUDA device links untouched.
+  add_link_options($<$<LINK_LANGUAGE:CXX>:-flto>)
+endif()
+
+message(STATUS
+  "av2enc: host-CPU options: native=${AV2ENC_NATIVE_EFFECTIVE} "
+  "lto=${AV2ENC_LTO_EFFECTIVE} cpu_fast=${AV2ENC_CPU_FAST}")
 
 # Host-side code shared by the CLI and the tests. GPU code will be added as a
 # separate target once CUDA kernels exist.
@@ -272,6 +370,7 @@ add_library(av2enc_core STATIC
   src/cuda/pipeline/still/cdef/still_cdef.cpp)
 target_include_directories(av2enc_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(av2enc_core PUBLIC cxx_std_20)
+target_link_libraries(av2enc_core PUBLIC Threads::Threads)
 # Enable the wave-3 frame-type dispatch in video_frame.cpp.  Standalone tool
 # gate scripts compile video_frame.cpp without this define and keep the plain
 # path only, so they do not need the inter module sources.
@@ -297,9 +396,14 @@ target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_DELTAQ=1)
 # partition_ext adapter and keep the base partition set.
 target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_EXT_PARTITIONS=1)
 av2enc_apply_warnings(av2enc_core)
+# Opt-in host tuning. The portable default stays empty; with AV2ENC_CPU_FAST
+# the core library and the CLI (not the CUDA targets) get native codegen, LTO
+# and -funroll-loops.
+av2enc_apply_cpu_options(av2enc_core)
 # The CPU reference must be bit-identical across compilers and platforms. The
 # M0/M1 forward transforms use binary64; FMA contraction changes coefficients
-# and therefore the bitstream.
+# and therefore the bitstream. This applies after av2enc_apply_cpu_options so
+# -mcpu=native cannot re-enable contraction.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(av2enc_core PRIVATE -ffp-contract=off)
 endif()
@@ -598,6 +702,7 @@ if(TARGET av2enc_video_gpu)
   target_link_libraries(av2enc PRIVATE av2enc_video_gpu)
 endif()
 av2enc_apply_warnings(av2enc)
+av2enc_apply_cpu_options(av2enc)
 
 # Encoder-reconstruction dump harness for the intra gates.  Test-only: it links
 # the same core library and is not registered with CTest, so the pinned ctest
@@ -605,6 +710,7 @@ av2enc_apply_warnings(av2enc)
 add_executable(still_recon_dump src/pipeline/still/stream/still_recon_dump.cpp)
 target_link_libraries(still_recon_dump PRIVATE av2enc_core)
 av2enc_apply_warnings(still_recon_dump)
+av2enc_apply_cpu_options(still_recon_dump)
 
 # Encoder-reconstruction dump harness for the loop-restoration gate.  The
 # documented command is `cmake --build <build> --target still_dump`, so the
@@ -614,12 +720,14 @@ av2enc_apply_warnings(still_recon_dump)
 add_executable(still_dump tools/still_verify/still_dump.cpp)
 target_link_libraries(still_dump PRIVATE av2enc_core)
 av2enc_apply_warnings(still_dump)
+av2enc_apply_cpu_options(still_dump)
 
 # Multi-frame P-frame correctness gate (encode -> dav2d -> recon compare).  Not
 # registered with CTest so the pinned test inventory is unchanged.
 add_executable(video_gate src/pipeline/video/video_gate.cpp)
 target_link_libraries(video_gate PRIVATE av2enc_core)
 av2enc_apply_warnings(video_gate)
+av2enc_apply_cpu_options(video_gate)
 
 include(CTest)
 if(BUILD_TESTING)

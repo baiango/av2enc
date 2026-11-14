@@ -55,7 +55,7 @@ rows are historical.
 
 | Case | Device | Bitrate CPU / GPU | CVVDP | PSNR-Y | Encode |
 |---|---|---:|---:|---:|---:|
-| CPU 240p30, QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 15.5 fps |
+| CPU 240p30, QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 20.8 fps (1 thread) |
 | AVM CBR (NASA) | Apple M4 | 92.1 / - kbps | 8.791 JOD | 37.78 dB | 0.071 fps |
 | CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | 49.4 fps |
 | CPU/GPU parity, QP 189 | RTX 3060 | 100.0 / 100.0 kbps | drift 0 | drift 0 | 40.0 fps |
@@ -176,6 +176,27 @@ Usage and option-combination errors exit 2; encoder, decoder and I/O failures
 exit 1. `--gpu-plan N` is a host-only multi-GPU dry run: it prints the tile
 assignment and exits without writing a stream.
 
+CPU workers: `--cpu-threads N` (default 1 = the historical serial path, 0 =
+auto = `hardware_concurrency`) runs the independent tile encoders and the
+batched NEWMV motion search of the CPU `--video` reference on N host threads.
+The work is partitioned before the threads start and merged in index order, so
+the IVF bytes and the decoder-visible reconstruction are identical at every N;
+`tests/multithread_identity.sh` asserts 1/2/4 workers for a whole-frame and a
+2x2-tiled P sequence, and `tools/refactor/verify_baseline.sh --check` pins the
+default stream. Entropy coding, the coding-order partition walk and the loop
+filters stay serial, and `--video-gpu` rejects the flag (the device backend has
+its own scheduling).
+
+Measured on the M4 (median of 3, host shared):
+
+| Case | 1 thread | 2 | 4 | 8 |
+|---|---:|---:|---:|---:|
+| 480x240 QP189, 60 f | 24.6 fps | 1.45x | 1.84x | 2.20x |
+| 1440x720 QP90, 60 f | 2.41 fps | 1.22x | 1.59x | 2.18x |
+
+The default single-tile P chain parallelises the batched NEWMV search (about
+70% of the 720p encode); tiles additionally parallelise the tile encoders.
+
 ## Performance expectations
 
 - **CPU mode objective:** maximize **CVVDP/JOD at 480×240 (240p, 2:1) @ 30 fps
@@ -188,6 +209,63 @@ assignment and exits without writing a stream.
 - **Not targets:** the old 1080p ≥1 fps floor, 8 GB cards, RTX 4070 Super and
   RTX 5070.
 - **macOS:** AVM/CVVDP scoring only; not an encoder target.
+
+## CPU build options (opt-in)
+
+The default build is portable and byte-identical on every host (`-O3`, no host
+tuning). Three cache options tune host code generation only; none of them
+changes the bitstream, and all are OFF by default:
+
+| Option | Effect |
+|---|---|
+| `AV2ENC_NATIVE=ON` | `-mcpu=native` (Apple clang/arm64) or `-march=native` (x86 Clang/GCC). Host-specific binary. |
+| `AV2ENC_LTO=ON` | Full `-flto` for the host C++ targets (CPU-only builds; ignored on CUDA builds). |
+| `AV2ENC_CPU_FAST=ON` | Aggregate: NATIVE + LTO + `-funroll-loops -fno-math-errno -fno-trapping-math`. |
+
+```sh
+cmake -S . -B build-int -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DAV2ENC_ENABLE_CUDA=OFF -DAV2ENC_ALLOW_CPU_ONLY=ON \
+      -DAV2ENC_CPU_FAST=ON
+cmake --build build-int -j8
+tools/test.sh --build build-int
+```
+
+Measured on the M4 with the same source and interleaved runs (best of N wall
+times; the fanless host was also under other load):
+
+| Case | Default | `AV2ENC_CPU_FAST=ON` | Gain |
+|---|---:|---:|---:|
+| 480x240 QP189, 60 f | 2.49 s (24.1 fps) | 2.00 s (30.0 fps) | +24% |
+| 1440x720 QP90, 60 f | 26.2 s (2.29 fps) | 19.6 s (3.05 fps) | +33% |
+
+Both streams stay byte-identical (25,009 B / `a1d0dba1...` and 958,023 B /
+`f9b6e086...`), the 19-stream pinned baseline passes with the tuned binary, and
+the default build is unchanged (`verify_baseline.sh --check`: 19 streams, 25/25
+ctest, 30 feature checks).
+
+Combined with `--cpu-threads 8` on the M4 (interleaved, best of 2):
+
+| Case | Default, 1 thread | `CPU_FAST`, 8 threads | Gain |
+|---|---:|---:|---:|
+| 480x240 QP189, 60 f | 20.8 fps | 63.7 fps | 3.06x |
+| 1440x720 QP90, 60 f | 2.58 fps | 6.41 fps | 2.48x |
+
+All four binaries produce the same IVF bytes (`a1d0dba1...` / `f9b6e086...`). Absolute times on this host move with load (the same
+default binary ranged 2.5–3.5 s at 480x240 across the session), so the gain is
+measured interleaved against the default build rather than against the older
+15.5 fps row above.
+
+The gain is almost entirely **full LTO**. CMake's `INTERPROCEDURAL_OPTIMIZATION`
+picks `-flto=thin` for AppleClang, which measured ~18% *slower* than the default
+build here, so the option passes plain `-flto` explicitly. `-mcpu=native` and
+`-funroll-loops` were within noise on the M4 (kept because x86 hosts can
+autovectorize with `-march=native`). No fast-math is ever enabled and
+`-ffp-contract=off` stays in force.
+
+**Portability:** `AV2ENC_NATIVE`/`AV2ENC_CPU_FAST` binaries require the build
+CPU; use the default build for release artifacts and the CUDA product. LTO is
+skipped with a warning on CUDA builds because the device link is driven by
+`nvcc`. Details and the full measurement notes: `docs/cpu-build-options.md`.
 
 ## Hard constraint
 

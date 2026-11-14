@@ -118,6 +118,23 @@ set_tests_properties(gate_video_cli PROPERTIES
   TIMEOUT 300
   LABELS "gate;gate-video")
 
+# Host CPU worker pool.  gate_parallel_for covers the std::thread parallel-for
+# helper (coverage, order independence, nested serialisation);
+# gate_multithread_identity encodes a whole-frame and a 2x2-tiled P sequence at
+# 1/2/4 workers and requires identical IVF bytes.
+add_test(NAME gate_parallel_for COMMAND $<TARGET_FILE:parallel_for_test>)
+set_tests_properties(gate_parallel_for PROPERTIES
+  TIMEOUT 120
+  LABELS "gate")
+
+add_test(NAME gate_multithread_identity
+  COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/../multithread_identity.sh"
+          $<TARGET_FILE:av2enc> $<TARGET_FILE:gen_y4m>)
+set_tests_properties(gate_multithread_identity PROPERTIES
+  SKIP_RETURN_CODE 77
+  TIMEOUT 600
+  LABELS "gate;gate-video")
+
 # Opt-in M2 loop filters on --video (--video-cdef, ...): pinned default stream,
 # dav2d --strict 1, and encoder-recon == decoded output for every filter case.
 add_test(NAME gate_video_filters
