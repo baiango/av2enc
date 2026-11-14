@@ -39,18 +39,20 @@ same decisions are used.
 
 **Objectives**
 
-- **CPU:** maximize CVVDP/JOD at **256x144 @ 30 fps, 30 kbps**. Quality is the
-  KPI, not CPU speed.
-- **GPU:** use the decisions calibrated at 144p30/30 kbps unchanged, and
+- **CPU:** maximize CVVDP/JOD at **424x240 (240p) @ 30 fps, 30 kbps**. Quality
+  is the KPI, not CPU speed.
+- **GPU:** use the decisions calibrated at 240p30/30 kbps unchanged, and
   maximize **1280x720** encode throughput as a cross-encoder benchmark.
 
-**Measured baselines** (Shine clip, 60 frames)
+**Measured baselines** (Shine clip, 60 frames). The 144p30 rows are the previous
+target and are kept for history; the 240p30 operating point has not been
+re-measured yet.
 
 | Case | Bitrate | CVVDP | PSNR-Y |
 |---|---:|---:|---:|
-| CPU 144p30, QP 150 | 30.3 kbps | 8.354 JOD | 32.25 dB |
-| AVM reference 144p30, CBR 23 | 30.6 kbps | 9.927 JOD | 59.22 dB |
-| CPU/GPU 144p30 calibration | 30.3 kbps | drift 0 | drift 0 |
+| CPU 144p30, QP 150 (previous target) | 30.3 kbps | 8.354 JOD | 32.25 dB |
+| AVM reference 144p30, CBR 23 (previous target) | 30.6 kbps | 9.927 JOD | 59.22 dB |
+| CPU/GPU 144p30 calibration (previous target) | 30.3 kbps | drift 0 | drift 0 |
 | GPU 720p, QP 150 (calibrated policy) | 268.8 kbps | 9.465 JOD | 40.83 dB |
 | GPU 720p, QP 90 | 1943 kbps | 9.876 JOD | 51.76 dB |
 
@@ -147,9 +149,9 @@ assignment and exits without writing a stream.
 
 ## Performance expectations
 
-- **CPU mode objective:** maximize **CVVDP/JOD at 256×144 @ 30 fps and
+- **CPU mode objective:** maximize **CVVDP/JOD at 424×240 (240p) @ 30 fps and
   30 kbps**. The CPU is the quality reference; speed is not its KPI.
-- **GPU mode objective:** use the decisions calibrated at **144p30 @ 30 kbps**
+- **GPU mode objective:** use the decisions calibrated at **240p30 @ 30 kbps**
   (minimal drift: CVVDP ±0.05 JOD, bitrate ±2%, PSNR-Y ±0.1 dB) unchanged,
   then maximize **1280×720** encode throughput. The 720p run is a benchmark
   against other encoders, not a separate quality-tuning point. Production
@@ -174,7 +176,7 @@ output, compare pixels). Do not read or copy their encoder-side code.
 - 8 GB cards, RTX 4070 Super and RTX 5070 are **no longer targets**.
 - Multi-GPU development: **N× RTX 3060 12 GB**, each with a device-sized arena.
 - GPU benchmark target: maximize **720p encode fps** on the 3060/3080 Ti/5090
-  using the 144p30/30 kbps decisions; there is no 1080p speed floor anymore.
+  using the 240p30/30 kbps decisions; there is no 1080p speed floor anymore.
 - Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja**. CPU is a reference/test
   path only, not the product.
 - Fat binary: `sm_86;sm_120`. The feature baseline stays `sm_86`; the same
@@ -274,10 +276,11 @@ a three-way budget (max CVVDP subject to a bitrate cap and a speed floor).
 
 Current gates:
 
-- **CPU quality:** 256x144 @ 30 fps at **30 kbps**, maximize CVVDP. Baseline
-  8.354 JOD; AVM reference 9.927 JOD at 30.6 kbps.
-- **GPU calibration:** same 144p30/QP150 decisions; CVVDP ±0.05 JOD,
-  bitrate ±2%, PSNR-Y ±0.1 dB drift. Current drift is zero.
+- **CPU quality:** 424x240 (240p) @ 30 fps at **30 kbps**, maximize CVVDP.
+  The previous 144p30 baseline was 8.354 JOD (AVM 9.927 JOD at 30.6 kbps); the
+  240p30 point must be re-measured with CVVDP.
+- **GPU calibration:** same 240p30 decisions at QP 150; CVVDP ±0.05 JOD,
+  bitrate ±2%, PSNR-Y ±0.1 dB drift. Re-run the calibration on a GPU host.
 - **GPU benchmark:** 1280x720 throughput with the calibrated decisions
   (4.15 fps at QP 150, 5.92 fps at QP 90 on the RTX 3060).
 

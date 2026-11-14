@@ -580,10 +580,10 @@ cross-encoder throughput benchmark.  Two points are measured separately
 
 | Point | Purpose | Gate |
 |---|---|---|
-| 256x144@30 QP150 (~30 kbps) | decision-policy calibration | CVVDP <= 0.05 JOD, bitrate <= 2 %, PSNR-Y <= 0.1 dB drift vs the CPU reference |
+| 424x240@30 QP150 (240p) | decision-policy calibration | CVVDP <= 0.05 JOD, bitrate <= 2 %, PSNR-Y <= 0.1 dB drift vs the CPU reference |
 | 1280x720 QP90, 60 frames | throughput | fps (best of N) plus the same drift row |
 
-The calibration clip is the benchmark clip scaled to 256x144 (exactly 1/5 of
+The calibration clip is the benchmark clip scaled to 424x240 (240p, /8-aligned,
 720p), so both rows describe the same content.  The GPU pipeline is a
 decision-identical mirror, so every drift row is 0 and the throughput
 optimizations below only change *how* the same decisions are executed.

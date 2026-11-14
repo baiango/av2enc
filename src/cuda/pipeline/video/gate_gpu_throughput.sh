@@ -3,7 +3,7 @@
 #
 # Two measurements, one script:
 #
-#   1. CALIBRATION (decision policy): 256x144@30, 60 frames, QP 150 (~30 kbps).
+#   1. CALIBRATION (decision policy): 424x240 (240p), 60 frames, QP 150.
 #      The GPU path must reproduce the CPU reference decode within
 #        CVVDP <= 0.05 JOD, bitrate <= 2 %, PSNR-Y <= 0.1 dB.
 #      The current GPU pipeline is a decision-identical mirror of the CPU one,
@@ -135,14 +135,14 @@ if [[ -z "$CLIP" ]]; then
   fi
 fi
 # Calibration source: the same content as the throughput benchmark, scaled to
-# 256x144 (exactly 1/5 of 1280x720).  This is the decision-policy calibration
-# point (~30 kbps at QP 150).  Without ffmpeg, fall back to the synthetic clip.
-CAL_CLIP="$TMP/cal_256x144.y4m"
+# 424x240 (240p, /8-aligned).  This is the decision-policy calibration point.
+# Without ffmpeg, fall back to the synthetic clip.
+CAL_CLIP="$TMP/cal_424x240.y4m"
 if command -v ffmpeg >/dev/null 2>&1 && [[ "$WIDTH" == 1280 && "$HEIGHT" == 720 ]]; then
-  ffmpeg -y -loglevel error -i "$CLIP" -vf scale=256:144 -pix_fmt yuv420p \
-    -frames:v 60 "$CAL_CLIP" >/dev/null 2>&1 || gen_clip "$CAL_CLIP" 256 144 60
+  ffmpeg -y -loglevel error -i "$CLIP" -vf scale=424:240 -pix_fmt yuv420p \
+    -frames:v 60 "$CAL_CLIP" >/dev/null 2>&1 || gen_clip "$CAL_CLIP" 424 240 60
 else
-  gen_clip "$CAL_CLIP" 256 144 60
+  gen_clip "$CAL_CLIP" 424 240 60
 fi
 
 status=0
