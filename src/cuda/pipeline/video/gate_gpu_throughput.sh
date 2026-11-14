@@ -9,7 +9,7 @@
 #      The current GPU pipeline is a decision-identical mirror of the CPU one,
 #      so the expected drift is exactly 0 (identical temporal units).
 #
-#   2. THROUGHPUT: 1280x720, QP 90 (the cross-encoder benchmark point).  Only
+#   2. THROUGHPUT: 1440x720, QP 90 (the cross-encoder benchmark point).  Only
 #      speed is being optimized there; this script reports fps plus the same
 #      drift row so a throughput change cannot silently move quality.
 #
@@ -18,7 +18,7 @@
 #
 # Usage:
 #   src/cuda/pipeline/video/gate_gpu_throughput.sh --bin build/av2enc
-#   ... --frames 60 --repeats 3 --width 1280 --height 720
+#   ... --frames 60 --repeats 3 --width 1440 --height 720
 #   ... --quick            # 4-frame smoke, skips CVVDP
 #   ... --json out.json    # machine-readable row set
 #
@@ -32,7 +32,7 @@ BIN=""
 DAV2D="${DAV2D:-}"
 FRAMES=60
 REPEATS=3
-WIDTH=1280
+WIDTH=1440
 HEIGHT=720
 CLIP=""
 QUICK=0
@@ -128,21 +128,21 @@ PY
 
 if [[ -z "$CLIP" ]]; then
   CLIP="$TMP/bench_${WIDTH}x${HEIGHT}.y4m"
-  if [[ "$WIDTH" == 1280 && "$HEIGHT" == 720 && -f "$ROOT/testdata/shine_1280x720_60f.y4m" ]]; then
-    CLIP="$ROOT/testdata/shine_1280x720_60f.y4m"
+  if [[ "$WIDTH" == 1440 && "$HEIGHT" == 720 && -f "$ROOT/testdata/nasa_1440x720_60f.y4m" ]]; then
+    CLIP="$ROOT/testdata/nasa_1440x720_60f.y4m"
   else
     gen_clip "$CLIP" "$WIDTH" "$HEIGHT" "$(( FRAMES > 60 ? FRAMES : 60 ))"
   fi
 fi
 # Calibration source: the same content as the throughput benchmark, scaled to
-# 424x240 (240p, /8-aligned).  This is the decision-policy calibration point.
+# 480x240 (240p, 2:1).  This is the decision-policy calibration point.
 # Without ffmpeg, fall back to the synthetic clip.
-CAL_CLIP="$TMP/cal_424x240.y4m"
+CAL_CLIP="$TMP/cal_480x240.y4m"
 if command -v ffmpeg >/dev/null 2>&1 && [[ "$WIDTH" == 1280 && "$HEIGHT" == 720 ]]; then
-  ffmpeg -y -loglevel error -i "$CLIP" -vf scale=424:240 -pix_fmt yuv420p \
-    -frames:v 60 "$CAL_CLIP" >/dev/null 2>&1 || gen_clip "$CAL_CLIP" 424 240 60
+  ffmpeg -y -loglevel error -i "$CLIP" -vf "fps=30,scale=480:240" -pix_fmt yuv420p \
+    -frames:v 60 "$CAL_CLIP" >/dev/null 2>&1 || gen_clip "$CAL_CLIP" 480 240 60
 else
-  gen_clip "$CAL_CLIP" 424 240 60
+  gen_clip "$CAL_CLIP" 480 240 60
 fi
 
 status=0
