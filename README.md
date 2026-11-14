@@ -197,6 +197,11 @@ Measured on the M4 (median of 3, host shared):
 The default single-tile P chain parallelises the batched NEWMV search (about
 70% of the 720p encode); tiles additionally parallelise the tile encoders.
 
+CPU-mode development now runs on the M4 (and Modal for larger sweeps) instead
+of Vast.ai: the tight RD loop needs fast local iteration, and GPU boxes are
+tuned for CUDA validation rather than CPU quality experiments. GPU hosts are
+used only when CUDA parity or the 1440x720 benchmark is the task.
+
 ## Performance expectations
 
 - **CPU mode objective:** maximize **CVVDP/JOD at 480×240 (240p, 2:1) @ 30 fps
@@ -208,7 +213,12 @@ The default single-tile P chain parallelises the batched NEWMV search (about
   hardware is the RTX 3080 Ti; the RTX 5090 is the maximum-speed host.
 - **Not targets:** the old 1080p ≥1 fps floor, 8 GB cards, RTX 4070 Super and
   RTX 5070.
-- **macOS:** AVM/CVVDP scoring only; not an encoder target.
+- **CPU development loop:** Apple M4 (this Mac) with `--cpu-threads` and
+  `AV2ENC_CPU_FAST=ON` for the daily RD loop; **Modal**
+  (https://modal.com/) for bursty parallel QP/thread/RD sweeps. CPU-mode
+  development moved off Vast.ai because GPU-box turnaround is slow for tight
+  RD iteration; GPU hosts remain for CUDA validation and the 1440x720
+  benchmark.
 
 ## CPU build options (opt-in)
 
@@ -277,15 +287,19 @@ output, compare pixels). Do not read or copy their encoder-side code.
 
 ## Target
 
-- Development / feature baseline: **RTX 3060 12 GB (`sm_86`)**.
+- CPU RD / quality development: **Apple M4 (10 cores)** with `--cpu-threads`
+  and `AV2ENC_CPU_FAST=ON`; **Modal** (https://modal.com/) for parallel sweeps.
+  This replaced Vast.ai for CPU-mode development.
+- GPU development / feature baseline: **RTX 3060 12 GB (`sm_86`)**.
 - Production target: **RTX 3080 Ti 12 GB (`sm_86`)**.
 - Maximum-speed target: **RTX 5090 32 GB (`sm_120`)**.
 - 8 GB cards, RTX 4070 Super and RTX 5070 are **no longer targets**.
 - Multi-GPU development: **N× RTX 3060 12 GB**, each with a device-sized arena.
 - GPU benchmark target: maximize **720p encode fps** on the 3060/3080 Ti/5090
   using the 240p30/100 kbps decisions; there is no 1080p speed floor anymore.
-- Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja**. CPU is a reference/test
-  path only, not the product.
+- Build: **Linux + CUDA 12.8 + C++20 + CMake/Ninja** for the GPU product;
+  **macOS arm64 + Apple clang** for CPU-mode development. The CPU is the
+  quality/RD reference and the development path; the GPU is the product.
 - Fat binary: `sm_86;sm_120`. The feature baseline stays `sm_86`; the same
   kernels run on both, with no Blackwell-only instructions required (no TMA,
   clusters, FP4 or tensor-core paths).
@@ -329,11 +343,14 @@ Disk is 16GB: keep test media tiny (<100MB total), prefer 64x64/256x256 frames.
 
 ## Platforms
 
-- **Linux x86_64 + CUDA** — the only supported encoder target (Vast.ai RTX 3060/3080 Ti/5090,
-  CUDA 12.8).
-- **macOS arm64** — **not an encoder build target.** It is used only for the AVM
-  baseline, AVM encoding, and CVVDP/MPS quality scoring. CPU reference tests may
-  run there, but Mac encoder support is not promised.
+- **Linux x86_64 + CUDA** — the encoder product target (GPU hosts such as
+  Vast.ai RTX 3060/3080 Ti/5090, CUDA 12.8).
+- **macOS arm64** — the **CPU-mode RD/quality development host** (Apple M4):
+  CPU encoder builds, `--cpu-threads`, gates, and AVM/CVVDP scoring. **Modal**
+  (https://modal.com/) supplies bursty parallel CPU sweeps when the M4 is busy.
+  CPU-mode development deliberately moved off Vast.ai, whose GPU boxes are
+  tuned for CUDA tests and too slow to turn around for the RD loop. Mac CUDA is
+  not supported.
 - **Windows** — unsupported and untested. There is no Windows machine here, so
   if you want to run this on Windows: **good luck**. The C++20/CUDA sources are
   portable in principle, but the tooling is POSIX (`tools/*.sh`, SSH/tar sync).
