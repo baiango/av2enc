@@ -237,6 +237,14 @@ struct VideoOptions {
   // tool it lowers rate and raises PSNR slightly; the default skip-only path
   // is rate-neutral because it has no inter residual leaves to search.
   double tx_rd_lambda = 256.0;
+  // Opt-in keyframe intra luma TX partition (--video-key-intra-txpart).  The
+  // TX search's single-predictor contract cannot code an intra partition, so
+  // the still encoder's chain is ported here: each candidate part is predicted
+  // from the neighbours the earlier parts just reconstructed, transformed,
+  // quantised and written back before the next part predicts.  Requires
+  // enable_tx_search (TX_MODE_SELECT).  Default off: the default, quality and
+  // nightly streams stay byte-identical.
+  bool enable_key_intra_tx_part = false;
   // Opt-in rate-aware §5.20.3.1 partition tree (--video-partition-rd, set by
   // --nightly).  Off keeps the historical cost, which mixes
   // a source-variance leaf distortion with a SAD-domain signal cost; that
@@ -407,6 +415,12 @@ struct VideoOptions {
   // and clears disable_cross_frame_cdf_init, so the decoder loads the same
   // context.
   bool cdf_continuity = false;
+  // Opt-in (--video-cdf-per-frame-qp): allow --avg-cdf/--adaptive-cdf on a
+  // stream whose frame_base_q_idx plan varies the per-frame base_q_idx.  The
+  // §8.2.2 tile seed is re-initialised from the frame's own coefficient-qctx
+  // slice (§8.3.1) and never carried across frames, so every frame must use
+  // one qctx slice.  Off keeps the historical "fixed base_q_idx" rejection.
+  bool cdf_per_frame_qp = false;
   // Opt-in §5.4.1/§5.4.12/§5.4.13 timing: decoder_model_info_present_flag with
   // num_units_in_decoding_tick plus a content-interpretation OBU carrying
   // timing_info().  Pinned dav2d accepts this form (the nested

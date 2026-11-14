@@ -63,7 +63,8 @@ NIGHTLY_FLAGS=(--video-rd-preset quality --video-ccso-rd --video-edge-inter
                --video-cdef --video-ccso-bands 6 --video-ccso-lambda 22
                --video-ccso-refit 2 --video-ccso-unit-bits 2
                --video-bawp --video-bawp-carrier --video-leaf-rd
-               --video-subpel-eighth --video-tx-lambda 136)
+               --video-subpel-eighth --video-tx-lambda 136
+               --video-key-intra-txpart)
 
 echo "== nightly RD gate =="
 
@@ -154,7 +155,7 @@ PY
     fi
 
     if ! "$BIN" "$NASA" -o "$TMP/nightly60.ivf" --video --frames 60 \
-            --qp 117 --cpu-threads 8 --nightly >"$TMP/nightly60.log" 2>&1; then
+            --qp 110 --cpu-threads 8 --nightly >"$TMP/nightly60.log" 2>&1; then
         fail "the nightly operating-point encode failed"
     fi
     if [ -f "$TMP/nightly60.ivf" ]; then
@@ -164,10 +165,10 @@ import hashlib, sys
 print(hashlib.md5(open(sys.argv[1], 'rb').read()).hexdigest())
 PY
 )
-        [ "$BYTES" = "24939" ] ||
-            fail "nightly stream is $BYTES B, expected 24939"
-        [ "$MD5" = "8f8713dac14eaa74af770e9142e5eae9" ] ||
-            fail "nightly stream md5 is $MD5, expected 8f8713da..."
+        [ "$BYTES" = "24994" ] ||
+            fail "nightly stream is $BYTES B, expected 24994"
+        [ "$MD5" = "bc4a3756d312bd259e97397f9bd86853" ] ||
+            fail "nightly stream md5 is $MD5, expected bc4a3756..."
     fi
 fi
 

@@ -3089,9 +3089,12 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
   if ((options.avg_cdf || options.adaptive_cdf) &&
       !options.frame_base_q_idx.empty()) {
     // §8.2.4 seeds the frame CDF image from one base_q_idx; the CPU reference
-    // rejects the same pair.
-    error = "average-CDF/continuity requires a fixed base_q_idx "
-            "(no --rc crf/vbr per-frame QP)";
+    // rejects the same pair unless --video-cdf-per-frame-qp opts in.
+    error = options.cdf_per_frame_qp
+                ? "--video-cdf-per-frame-qp is CPU-only: the GPU M2 backend "
+                  "does not re-initialise the CDF image per frame"
+                : "average-CDF/continuity requires a fixed base_q_idx "
+                  "(no --rc crf/vbr per-frame QP)";
     return false;
   }
   if (opt_drl_reorder(options) != 0) {

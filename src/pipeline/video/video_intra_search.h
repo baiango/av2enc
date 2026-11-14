@@ -82,6 +82,20 @@ class BlockDecoded {
       }
     }
   }
+  // Cell access for the intra TX-partition search, which must restore the
+  // §6.19.2.3 map after a losing trial (the still encoder's DecodedMap
+  // snapshot/restore).  Out-of-range reads are 0, matching at().
+  std::uint8_t cell(int x, int y) const {
+    if (x < 0 || y < 0 || x >= cols_ || y >= rows_) return 0;
+    return cells_[static_cast<std::size_t>(y) *
+                      static_cast<std::size_t>(cols_) +
+                  static_cast<std::size_t>(x)];
+  }
+  void set_cell(int x, int y, std::uint8_t value) {
+    if (x < 0 || y < 0 || x >= cols_ || y >= rows_) return;
+    cells_[static_cast<std::size_t>(y) * static_cast<std::size_t>(cols_) +
+            static_cast<std::size_t>(x)] = value;
+  }
 
  private:
   int cols_ = 0;

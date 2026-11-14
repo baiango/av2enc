@@ -141,6 +141,10 @@ struct Options {
   bool avg_cdf = false;
   // §5.18.2 cross-frame CDF carry on --video (requires --avg-cdf).
   bool cdf_continuity = false;
+  // Opt-in per-frame QP support for the average-CDF chain
+  // (--video-cdf-per-frame-qp): the §8.2.2 CDF image resets from each frame's
+  // coefficient qctx slice instead of one fixed base_q_idx.
+  bool video_cdf_per_frame_qp = false;
   // §5.4.1/§5.4.12/§5.4.13 timing on --video.
   bool video_timing = false;
   // §5.7 multi-frame header on --video.
@@ -295,6 +299,9 @@ struct Options {
   std::string video_rd_preset;
   // Opt-in §5.18.8.1 TX_MODE_SELECT luma TX size/type/partition search.
   bool video_tx_search = false;
+  // Opt-in keyframe intra luma TX partition with per-part prediction
+  // (--video-key-intra-txpart).  Requires --video-tx-search.
+  bool video_key_intra_txpart = false;
   // Price TX-search candidates with the §8.3.2 coefficient-context model.
   // The measured RD preset turns this on; standalone --video-tx-search keeps
   // the historical heuristic so the CUDA device TX module (which has no
@@ -721,6 +728,11 @@ void print_usage(std::ostream& out) {
   item("--cdf-continuity", {"Video: carry the adapted CDFs across frames by",
                             "loading the primary reference's saved context",
                             "(§5.18.2; requires --avg-cdf --adaptive-cdf)"});
+  item("--video-cdf-per-frame-qp", {"Video: allow --avg-cdf --adaptive-cdf",
+                                    "with a per-frame QP plan; every frame",
+                                    "resets the §8.2.2 CDF image from its own",
+                                    "coefficient qctx slice (§8.3.1), so all",
+                                    "frames must share one slice. CPU only"});
   item("--vram-cap <MiB>", {"CUDA arena upper bound; 0 takes the largest",
                             "reservation the device can serve (default 0).",
                             "CPU-only builds accept it as a documented no-op"});
@@ -958,6 +970,11 @@ void print_usage(std::ostream& out) {
                                      "context rate is a separate opt-in"});
   item("--video-tx-search", {"Opt-in §5.18.8 TX_MODE_SELECT luma TX size/type/",
                                 "partition search (changes the bitstream)"});
+  item("--video-key-intra-txpart", {"Opt-in keyframe intra luma TX",
+                                     "partition search with per-part",
+                                     "prediction and reconstruction feedback",
+                                     "(needs --video-tx-search; CPU-only",
+                                     "8-bit 4:2:0; changes the bitstream)"});
   item("--video-tx-context-rate", {"Price TX-search candidates with the",
                                     "§8.3.2 coefficient-context model (the",
                                     "measured preset behavior; CPU-only, needs",
@@ -1571,6 +1588,9 @@ bool apply_video_nightly(Options& options, std::string& error) {
   }
   // Luma inter coefficient RDOQ at its measured lambda calibration.
   options.video_rdoq = true;
+  // Keyframe intra luma TX partitioning with per-part prediction/recon.
+  // At QP110 this is 24,994 B / 99.976 kbps / 9.6802 JOD / 42.9799 dB.
+  options.video_key_intra_txpart = true;
   // Measured with the final aggregate: 1/8-pel ME refinement and the
   // RDOQ-interaction TX-search lambda.  At QP117 this is 24,939 B /
   // 99.756 kbps / 9.5868 JOD / 41.6953 dB.
@@ -1695,6 +1715,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--cdf-continuity") {
       options.cdf_continuity = true;
+      continue;
+    }
+
+    if (argument == "--video-cdf-per-frame-qp") {
+      options.video_cdf_per_frame_qp = true;
       continue;
     }
 
@@ -2706,6 +2731,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--video-tx-search") {
       options.video_tx_search = true;
+      continue;
+    }
+
+    if (argument == "--video-key-intra-txpart") {
+      options.video_key_intra_txpart = true;
       continue;
     }
 
@@ -3739,10 +3769,13 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       return ParseStatus::kError;
     }
     if (options.avg_cdf || options.adaptive_cdf || options.cdf_continuity) {
-      error = "--video-key-qp-offset needs a fixed base_q_idx; --avg-cdf/"
-              "--adaptive-cdf/--cdf-continuity are not compatible with "
-              "per-frame QP";
-      return ParseStatus::kError;
+      if (!options.video_cdf_per_frame_qp) {
+        error = "--video-key-qp-offset needs a fixed base_q_idx; --avg-cdf/"
+                "--adaptive-cdf/--cdf-continuity are not compatible with "
+                "per-frame QP (pass --video-cdf-per-frame-qp to reset the CDF "
+                "image per frame)";
+        return ParseStatus::kError;
+      }
     }
   }
 
@@ -3798,6 +3831,30 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
                     " has no effect on the plan");
     }
   }
+  if (options.video_cdf_per_frame_qp) {
+    if (!options.video || options.m1 || options.still_gpu ||
+        options.lossless) {
+      error = "--video-cdf-per-frame-qp applies to the CPU --video encoder; "
+              "pass --video";
+      return ParseStatus::kError;
+    }
+    if (!options.avg_cdf || !options.adaptive_cdf) {
+      error = "--video-cdf-per-frame-qp needs --avg-cdf and --adaptive-cdf: "
+              "it only relaxes the §8.2.2 CDF-image reset for a per-frame QP "
+              "plan";
+      return ParseStatus::kError;
+    }
+    if (options.cdf_continuity) {
+      error = "--video-cdf-per-frame-qp re-initialises the CDF image from "
+              "each frame's slice; it does not compose with --cdf-continuity";
+      return ParseStatus::kError;
+    }
+    if (options.tiles != "1x1") {
+      error = "--video-cdf-per-frame-qp is wired for a single tile";
+      return ParseStatus::kError;
+    }
+  }
+
   if (options.video) {
     if (options.m1 || options.still_gpu || options.lossless) {
       error = "--video cannot be combined with --still, --still-gpu or "
@@ -3872,12 +3929,13 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "sub-encodes whose per-frame QP count differs from the input";
       return ParseStatus::kError;
     }
-    if (options.rc_mode != "cqp" &&
+    if (options.rc_mode != "cqp" && !options.video_cdf_per_frame_qp &&
         (options.avg_cdf || options.adaptive_cdf ||
          options.cdf_continuity)) {
       error = "--rc " + options.rc_mode +
               " needs a fixed base_q_idx; --avg-cdf/--adaptive-cdf/"
-              "--cdf-continuity are not compatible with per-frame QP";
+              "--cdf-continuity are not compatible with per-frame QP (pass "
+              "--video-cdf-per-frame-qp to reset the CDF image per frame)";
       return ParseStatus::kError;
     }
     // CRF derives base_q_idx from --crf only (qcomp is 0, so the quantiser is
@@ -4544,6 +4602,23 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       error = "--video-tx-context-rate requires --video-tx-search";
       return ParseStatus::kError;
     }
+    if (options.video_key_intra_txpart && !options.video_tx_search) {
+      error = "--video-key-intra-txpart requires --video-tx-search (its "
+              "bitstream is TX_MODE_SELECT)";
+      return ParseStatus::kError;
+    }
+    if (options.video_key_intra_txpart && options.video_gpu) {
+      error = "--video-key-intra-txpart is CPU-only: the CUDA video TX module "
+              "has the single-predictor contract, so per-part intra prediction "
+              "is not wired there";
+      return ParseStatus::kError;
+    }
+    if (options.video_key_intra_txpart &&
+        (options.bit_depth != 8 || options.chroma != "420")) {
+      error = "--video-key-intra-txpart is wired for the 8-bit 4:2:0 CPU "
+              "video core";
+      return ParseStatus::kError;
+    }
     if (options.video_tx_context_rate && options.video_gpu) {
       error = "--video-tx-context-rate is CPU-only: the CUDA TX module still "
               "uses the historical rate model, so --video-gpu parity would "
@@ -4821,6 +4896,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
           {options.video_cctx, "--video-cctx"},
           {options.video_grain, "--video-grain"},
           {options.video_tx_search, "--video-tx-search"},
+          {options.video_key_intra_txpart, "--video-key-intra-txpart"},
           {options.video_partition_rd, "--video-partition-rd"},
           {options.video_intra_full, "--video-intra-full"},
           {options.video_cfl, "--video-cfl"},
@@ -5211,6 +5287,10 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
                 " yet; use --video for the CPU reference path";
         return ParseStatus::kError;
       };
+      if (options.video_cdf_per_frame_qp) {
+        return reject_gpu("--video-cdf-per-frame-qp (per-frame CDF image "
+                          "reset)");
+      }
       if (options.video_tip) {
         return reject_gpu("--video-tip (TIP frame scheduling)");
       }
@@ -5253,6 +5333,10 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       if (options.video_ibp) {
         return reject_gpu("--video-ibp (§7.13.2 intra bi-prediction)");
       }
+      if (options.video_key_intra_txpart) {
+        return reject_gpu("--video-key-intra-txpart (per-part intra "
+                          "prediction/recon feedback)");
+      }
       if (options.video_compound_interintra) {
         return reject_gpu("--video-compound-interintra (§5.20.7.14 motion "
                           "mode)");
@@ -5269,6 +5353,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         flag_given(options, "--video-mv-precision") ||
         flag_given(options, "--video-inter-residual") ||
         flag_given(options, "--video-tx-search") ||
+        flag_given(options, "--video-key-intra-txpart") ||
         flag_given(options, "--video-sdp") ||
         flag_given(options, "--video-ddt") ||
         flag_given(options, "--video-tx-lambda") ||
@@ -6415,6 +6500,7 @@ int run_video_format_encode(const Options& options) {
   const std::pair<bool, const char*> unsupported[] = {
       {options.tiles != "1x1", "--tiles"},
       {options.video_tx_search, "--video-tx-search"},
+      {options.video_key_intra_txpart, "--video-key-intra-txpart"},
       {options.video_partition_rd, "--video-partition-rd"},
       {options.video_tcq, "--video-tcq"},
       {options.video_rdoq, "--video-rdoq"},
@@ -7119,6 +7205,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.avg_cdf = options.avg_cdf;
   video_options.adaptive_cdf = options.adaptive_cdf;
   video_options.cdf_continuity = options.cdf_continuity;
+  video_options.cdf_per_frame_qp = options.video_cdf_per_frame_qp;
   video_options.mfh = options.video_mfh;
   video_options.high_tier = options.video_tier_high;
   video_options.multi_sequence = options.video_multi_sequence;
@@ -7159,6 +7246,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_sdp = options.video_sdp;
   video_options.enable_inter_ddt = options.video_ddt;
   video_options.enable_tx_search = options.video_tx_search;
+  video_options.enable_key_intra_tx_part = options.video_key_intra_txpart;
   video_options.tx_context_rate = options.video_tx_context_rate;
   video_options.tx_rd_lambda = options.video_tx_lambda;
   video_options.partition_rd = options.video_partition_rd;

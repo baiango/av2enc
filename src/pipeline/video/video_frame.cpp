@@ -35,6 +35,7 @@
 #include "codec/transform/tcq/cctx.h"
 #include "codec/transform/tcq/tcq.h"
 #include "codec/transform/tcq/tcq_av2_model.h"
+#include "codec/transform/tx_partition/tx_partition.h"
 #include "codec/entropy/qctx/qctx.h"
 #include "codec/rate/rdo/rdo.h"
 #include "pipeline/video/video_bawp.h"
@@ -117,6 +118,7 @@ namespace mrl_stream = still::mrl_stream;
 namespace txsec = ::av2enc::txsec;
 namespace morph = inter::morph;
 namespace pals = still::palette_stream;
+namespace txpart = txpartition;
 
 // AV2 RefFrame labels used by the merge layer's MI grid.  mc::kRefLast is an
 // internal MC label (1); §6.19.7.9 numbers LAST_FRAME = 0 and
@@ -542,6 +544,62 @@ bool intra_dc_predict(const Plane& recon, const VideoInputFrame& frame, int plan
   }
   (void)frame;
   return status == intra::IntraStatus::kOk;
+}
+
+// Single-mode luma prediction at an explicit origin with a caller-supplied
+// §5.20.9.1 availability.  This is the per-TX-part predictor: the intra
+// TX-partition search predicts every part of the coding block with the block's
+// signalled (mode, angle_delta, MRL), but reads the neighbours and the
+// BlockDecoded availability at the *transform* block origin.  Both predictors
+// come from the shared intra component, so the mode/IBP/edge-filter semantics
+// are the same ones `intra_search::search_luma` uses.
+bool intra_luma_part_predict(const Plane& recon,
+                             const intra_search::Availability& avail, int x0,
+                             int y0, int w, int h, int y_mode,
+                             int angle_delta, bool enable_ibp,
+                             bool above_smooth, bool left_smooth,
+                             std::vector<std::uint8_t>& out) {
+  intra::NeighborRequest request;
+  request.recon = intra::PlaneView{recon.samples.data(), recon.stride};
+  request.x = x0;
+  request.y = y0;
+  request.w = w;
+  request.h = h;
+  request.max_x = avail.max_x;
+  request.max_y = avail.max_y;
+  request.have_left = avail.have_left != 0;
+  request.have_above = avail.have_above != 0;
+  request.num4_above_right = avail.num4_above_right;
+  request.num4_below_left = avail.num4_below_left;
+  request.color_plane = 0;
+  intra::IntraEdges edges;
+  if (intra::prepare_edges(request, 8, edges) != intra::IntraStatus::kOk) {
+    return false;
+  }
+  out.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+  if (enable_ibp) {
+    ibp::PredictParams params;
+    params.mode = static_cast<intra::Mode>(y_mode);
+    params.angle_delta = angle_delta;
+    params.enable_ibp = true;
+    // §5.4.8: the sequence header always signals enable_intra_edge_filter = 1
+    // in this tree, and the full intra search predicts with it on.
+    params.enable_edge_filter = true;
+    params.above_neighbor_is_smooth = above_smooth;
+    params.left_neighbor_is_smooth = left_smooth;
+    return ibp::predict(edges, params, out.data(),
+                        static_cast<std::size_t>(w)) ==
+           intra::IntraStatus::kOk;
+  }
+  intra::PredictParams params;
+  params.mode = static_cast<intra::Mode>(y_mode);
+  params.angle_delta = angle_delta;
+  params.enable_edge_filter = true;
+  params.above_neighbor_is_smooth = above_smooth;
+  params.left_neighbor_is_smooth = left_smooth;
+  return intra::predict_intra(edges, params, out.data(),
+                              static_cast<std::size_t>(w)) ==
+         intra::IntraStatus::kOk;
 }
 
 // §7.14.2 qlookup(base_q_idx) for 8-bit streams.  528 at QP 90, the value the
@@ -5025,6 +5083,309 @@ class InterFrameEncoder {
   }
 
 #endif  // AV2ENC_VIDEO_FRAMES
+
+  // --video-key-intra-txpart: keyframe intra luma TX-partition RD search.
+  //
+  // §5.20.7.24/§5.20.6.3 predict per *transform block*: with TX_MODE_SELECT and
+  // an intra partition, every part is predicted from the neighbours that the
+  // previously coded parts of the same coding block have just written, then
+  // transformed, quantised and reconstructed before the next part predicts.
+  // `search_luma_tx(..., search_partition=false)` is single-predictor by
+  // contract, so it cannot be used for the whole block.  This routine runs the
+  // equivalent chain per part and compares NONE against the legal SPLIT/HORZ/
+  // VERT options by coded SSE + lambda * (per-part TX rate + partition bits).
+  //
+  // `block_pred` is the whole-block prediction the mode search already chose
+  // (NONE reuses it verbatim, which keeps the unpartitioned winner identical to
+  // the flag-off stream).  Returns false only on an internal failure.
+  bool encode_intra_luma_tx_partition(
+      int r, int c, int w, int h, BlockSize size,
+      const std::vector<std::uint8_t>& block_pred, int y_mode,
+      int angle_delta, int mrl_index, bool mrl_sec_index,
+      bool above_smooth, bool left_smooth, int mask_row, TxPlan* plan,
+      std::string& error) {
+    const int x0 = c * 4;
+    const int y0 = r * 4;
+    const int ax0 = x0 + tile_x_;
+    const int ay0 = y0 + tile_y_;
+    const double lambda = options_.tx_rd_lambda;
+    const int qctx = ::av2enc::still::qctx::slice_for_base_q_idx(
+        options_.tx_context_rate ? base_q_index() : current_qindex_);
+    const int mi_size = static_cast<int>(size);
+
+    // §5.20.6.3 legal partitions.  HORZ4/VERT4 only appear in the 2or3 branch
+    // (one legal direction); the still encoder's chain enumerates NONE/SPLIT/
+    // HORZ/VERT, and this port keeps exactly that set.
+    std::vector<txpart::TxPartition> options;
+    options.push_back(txpart::TxPartition::kNone);
+    const txpart::LegalSplits legal =
+        txpart::legal_splits(mi_size, /*reduced_tx_part_set=*/false);
+    for (int i = 0; i < legal.option_count; ++i) {
+      const txpart::TxPartition option = legal.options[i];
+      if (option != txpart::TxPartition::kSplit &&
+          option != txpart::TxPartition::kHorz &&
+          option != txpart::TxPartition::kVert) {
+        continue;
+      }
+      txpart::SplitGeometry geometry;
+      std::string geometry_error;
+      if (!txpart::tx_partition_geometry(mi_size, 0, 0, option, &geometry,
+                                         &geometry_error)) {
+        continue;
+      }
+      bool inside = true;
+      for (int k = 0; k < geometry.count; ++k) {
+        const txpart::SplitPart& part = geometry.parts[k];
+        const int px = x0 + part.mi_col * 4;
+        const int py = y0 + part.mi_row * 4;
+        if (px < 0 || py < 0 ||
+            px + txpart::tx_width(part.tx_size) > recon_[0].width ||
+            py + txpart::tx_height(part.tx_size) > mi_rows_ * 4) {
+          inside = false;
+          break;
+        }
+      }
+      if (inside) options.push_back(option);
+    }
+
+    // The decoder reconstructs the same parts in the same order, so a
+    // candidate evaluation writes the real planes and the search restores the
+    // block's recon samples and §6.19.2.3 cells before the next trial.
+    struct Snapshot {
+      int x = 0;
+      int y = 0;
+      int w = 0;
+      int h = 0;
+      std::vector<std::uint8_t> recon;
+      int c0 = 0;
+      int r0 = 0;
+      int cw4 = 0;
+      int ch4 = 0;
+      std::vector<std::uint8_t> decoded;
+    };
+    Snapshot snapshot;
+    snapshot.x = x0;
+    snapshot.y = y0;
+    snapshot.w = w;
+    snapshot.h = h;
+    snapshot.recon.resize(static_cast<std::size_t>(w) *
+                          static_cast<std::size_t>(h));
+    for (int yy = 0; yy < h; ++yy) {
+      for (int xx = 0; xx < w; ++xx) {
+        const int px = x0 + xx;
+        const int py = y0 + yy;
+        snapshot.recon[static_cast<std::size_t>(yy) *
+                           static_cast<std::size_t>(w) +
+                       static_cast<std::size_t>(xx)] =
+            (px < recon_[0].width && py < recon_[0].height)
+                ? recon_[0].at(px, py)
+                : 0;
+      }
+    }
+    snapshot.c0 = x0 / 4;
+    snapshot.r0 = y0 / 4;
+    snapshot.cw4 = (w + 3) / 4;
+    snapshot.ch4 = (h + 3) / 4;
+    snapshot.decoded.resize(static_cast<std::size_t>(snapshot.cw4) *
+                            static_cast<std::size_t>(snapshot.ch4));
+    for (int yy = 0; yy < snapshot.ch4; ++yy) {
+      for (int xx = 0; xx < snapshot.cw4; ++xx) {
+        snapshot.decoded[static_cast<std::size_t>(yy) *
+                             static_cast<std::size_t>(snapshot.cw4) +
+                         static_cast<std::size_t>(xx)] =
+            decoded_[0].cell(snapshot.c0 + xx, snapshot.r0 + yy);
+      }
+    }
+    const auto restore = [&]() {
+      for (int yy = 0; yy < snapshot.h; ++yy) {
+        for (int xx = 0; xx < snapshot.w; ++xx) {
+          const int px = snapshot.x + xx;
+          const int py = snapshot.y + yy;
+          if (px >= recon_[0].width || py >= recon_[0].height) continue;
+          recon_[0].at(px, py) =
+              snapshot.recon[static_cast<std::size_t>(yy) *
+                                 static_cast<std::size_t>(snapshot.w) +
+                             static_cast<std::size_t>(xx)];
+        }
+      }
+      for (int yy = 0; yy < snapshot.ch4; ++yy) {
+        for (int xx = 0; xx < snapshot.cw4; ++xx) {
+          decoded_[0].set_cell(
+              snapshot.c0 + xx, snapshot.r0 + yy,
+              snapshot.decoded[static_cast<std::size_t>(yy) *
+                                   static_cast<std::size_t>(snapshot.cw4) +
+                               static_cast<std::size_t>(xx)]);
+        }
+      }
+    };
+
+    // Runs one candidate against the real planes and leaves its plan, its
+    // block-sized reconstruction and its RD cost in `trial`.
+    struct Trial {
+      txpart::TxPartition part = txpart::TxPartition::kNone;
+      TxPlan plan;
+      std::vector<std::uint8_t> recon;
+      double cost = std::numeric_limits<double>::infinity();
+    };
+    const auto evaluate = [&](txpart::TxPartition part,
+                              Trial* trial) -> bool {
+      trial->part = part;
+      trial->plan = TxPlan{};
+      if (part == txpart::TxPartition::kNone) {
+        TxPlan whole;
+        const int mapped_mode = std::max(
+            0, mrl_stream::mapped_intra_mode_for_mrl(
+                   y_mode, angle_delta, mrl_index, w, h));
+        if (!search_luma_tx(source_, ax0, ay0, w, h, block_pred,
+                            current_qindex_, txtsearch::Mode::kIntra, lambda,
+                            options_.enable_idtx_intra, mapped_mode,
+                            options_.enable_tcq, qctx,
+                            /*enable_inter_ddt=*/false,
+                            /*search_partition=*/false,
+                            options_.tx_context_rate, /*trace=*/false,
+                            /*allow_rdoq=*/false, /*rdoq_qctx=*/0,
+                            options_.rdoq_sse_scale, whole, error, mask_row)) {
+          return false;
+        }
+        trial->recon = whole.recon;
+        trial->plan = std::move(whole);
+        trial->cost = lambda * trial->plan.rate_bits;
+      } else {
+        txpart::SplitGeometry geometry;
+        std::string geometry_error;
+        if (!txpart::tx_partition_geometry(mi_size, 0, 0, part, &geometry,
+                                           &geometry_error)) {
+          error = "intra TX partition geometry failed: " + geometry_error;
+          return false;
+        }
+        TxPlan merged;
+        merged.searched = true;
+        merged.partition = static_cast<int>(part);
+        merged.rate_bits = 0.0;
+        // §5.20.6.3: the partition symbols cost ~3 bits; the exact shared rate
+        // model is the writer's, so the decision uses the still encoder's
+        // constant estimate.
+        double rate = 3.0;
+        std::vector<std::uint8_t> block(
+            static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
+        for (int k = 0; k < geometry.count; ++k) {
+          const txpart::SplitPart& split = geometry.parts[k];
+          const int px = x0 + split.mi_col * 4;
+          const int py = y0 + split.mi_row * 4;
+          const int tw = txpart::tx_width(split.tx_size);
+          const int th = txpart::tx_height(split.tx_size);
+          const intra_search::Availability avail = intra_search::availability(
+              decoded_[0], px / 4, py / 4, tw / 4, th / 4, mi_cols_, mi_rows_,
+              /*sb_mi=*/sb_size_ / 4);
+          std::vector<std::uint8_t> pred;
+          if (mrl_index > 0) {
+            if (!predict_luma_mrl(recon_[0], avail, px, py, tw, th,
+                                  above_smooth, left_smooth, y_mode,
+                                  angle_delta, mrl_index, mrl_sec_index,
+                                  /*sb_height=*/64, pred, error)) {
+              return false;
+            }
+          } else if (!intra_luma_part_predict(
+                         recon_[0], avail, px, py, tw, th, y_mode,
+                         angle_delta, options_.enable_ibp, above_smooth,
+                         left_smooth, pred)) {
+            error = "intra TX-part prediction failed";
+            return false;
+          }
+          const int mapped_mode = std::max(
+              0, mrl_stream::mapped_intra_mode_for_mrl(
+                     y_mode, angle_delta, mrl_index, tw, th));
+          const int part_mask =
+              mask_row < 0 ? -1
+                           : std::clamp(mask_row - split.mi_row * 4, 0, th);
+          TxPlan part_plan;
+          if (!search_luma_tx(
+                  source_, ax0 + split.mi_col * 4, ay0 + split.mi_row * 4,
+                  tw, th, pred, current_qindex_, txtsearch::Mode::kIntra,
+                  lambda, options_.enable_idtx_intra, mapped_mode,
+                  options_.enable_tcq, qctx, /*enable_inter_ddt=*/false,
+                  /*search_partition=*/false, options_.tx_context_rate,
+                  /*trace=*/false, /*allow_rdoq=*/false, /*rdoq_qctx=*/0,
+                  options_.rdoq_sse_scale, part_plan, error, part_mask)) {
+            return false;
+          }
+          if (part_plan.parts.empty()) {
+            error = "intra TX-part search returned no leaves";
+            return false;
+          }
+          const TxPlan::Part& leaf = part_plan.parts[0];
+          TxPlan::Part merged_part;
+          merged_part.x = split.mi_col * 4;
+          merged_part.y = split.mi_row * 4;
+          merged_part.coded_w = tw;
+          merged_part.coded_h = th;
+          merged_part.tx_size = leaf.tx_size;
+          merged_part.tx_type = leaf.tx_type;
+          merged_part.mi_row = split.mi_row;
+          merged_part.mi_col = split.mi_col;
+          merged_part.eob = leaf.eob;
+          merged_part.levels = leaf.levels;
+          rate += part_plan.rate_bits;
+          merged.parts.push_back(std::move(merged_part));
+          write_plane_block(recon_[0], px, py, tw, th, part_plan.recon);
+          decoded_[0].fill(px / 4, py / 4, tw / 4, th / 4);
+          for (int yy = 0; yy < th; ++yy) {
+            for (int xx = 0; xx < tw; ++xx) {
+              block[static_cast<std::size_t>(split.mi_row * 4 + yy) *
+                        static_cast<std::size_t>(w) +
+                    static_cast<std::size_t>(split.mi_col * 4 + xx)] =
+                  part_plan.recon[static_cast<std::size_t>(yy) *
+                                      static_cast<std::size_t>(tw) +
+                                  static_cast<std::size_t>(xx)];
+            }
+          }
+        }
+        merged.tx_size = merged.parts[0].tx_size;
+        merged.eob = merged.parts[0].eob;
+        merged.tx_type = merged.parts[0].tx_type;
+        merged.rate_bits = rate - 3.0;
+        trial->recon = std::move(block);
+        trial->plan = std::move(merged);
+        trial->cost = lambda * rate;
+      }
+      const std::int64_t sse = sse_against_source(
+          source_, 0, ax0, ay0, w, h, trial->recon, mask_row);
+      trial->cost += static_cast<double>(sse);
+      return true;
+    };
+
+    Trial best;
+    bool have_best = false;
+    for (const txpart::TxPartition option : options) {
+      restore();
+      Trial trial;
+      if (!evaluate(option, &trial)) return false;
+      if (!have_best || trial.cost < best.cost) {
+        best = std::move(trial);
+        have_best = true;
+      }
+    }
+    if (!have_best) {
+      error = "intra TX-part search selected no candidate";
+      return false;
+    }
+    restore();
+    // Commit the winner: the whole block is written in one go (the parts
+    // tile it), so the post-block state matches a whole-block reconstruction.
+    write_plane_block(recon_[0], x0, y0, w, h, best.recon);
+    decoded_[0].fill(c, r, w / 4, h / 4);
+    *plan = std::move(best.plan);
+    plan->recon = std::move(best.recon);
+    if (trace_) {
+      std::cerr << "  intra tx part r=" << r << " c=" << c << " " << w << "x"
+                << h << " partition=" << static_cast<int>(best.part)
+                << " parts=" << plan->parts.size()
+                << " rate=" << plan->rate_bits << " cost=" << best.cost
+                << "\n";
+    }
+    return true;
+  }
+
   bool encode_leaf(const PartitionNode& node, std::size_t index,
                    std::string& error, int tree_type = 0,
                    bool leaf_has_chroma = true, int chroma_mi_row = -1,
@@ -5934,23 +6295,44 @@ class InterFrameEncoder {
           intra_dip_transpose = dip_decision.transpose;
         }
       }
+      // --video-key-intra-txpart: an intra luma partition needs per-part
+      // prediction, so it replaces the single-predictor TX search here.  DIP is
+      // a whole-block alternative prediction and stays TX_PARTITION_NONE.
+      const bool intra_tx_partition_search =
+          options_.enable_key_intra_tx_part && options_.enable_tx_search &&
+          keyframe_ && !chroma_part && !intra_use_dip &&
+          intra_y_pred.size() ==
+              static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+      bool part_above_smooth = false;
+      bool part_left_smooth = false;
+      if (intra_tx_partition_search) {
+        luma_neighbor_smooth(r, c, part_above_smooth, part_left_smooth);
+      }
       if (!luma_ok ||
           (options_.enable_tx_search
-               ? !search_luma_tx(
-                     source_, ax0, ay0, w, h, intra_y_pred, current_qindex_,
-                     txtsearch::Mode::kIntra, options_.tx_rd_lambda,
-                     options_.enable_idtx_intra,
-                     std::max(0, mrl_stream::mapped_intra_mode_for_mrl(
-                                     intra_y_mode, intra_y_angle_delta,
-                                     intra_mrl_index, w, h)),
-                     options_.enable_tcq,
-                     ::av2enc::still::qctx::slice_for_base_q_idx(
-                         options_.tx_context_rate ? base_q_index()
-                                                  : current_qindex_),
-                     /*enable_inter_ddt=*/false, /*search_partition=*/false,
-                     /*context_rate=*/options_.tx_context_rate, options_.trace,
-                     /*allow_rdoq=*/false, /*rdoq_qctx=*/0,
-                     options_.rdoq_sse_scale, intra_y, error, luma_mask_row)
+               ? (intra_tx_partition_search
+                      ? !encode_intra_luma_tx_partition(
+                            r, c, w, h, node.size, intra_y_pred, intra_y_mode,
+                            intra_y_angle_delta, intra_mrl_index,
+                            intra_mrl_sec_index, part_above_smooth,
+                            part_left_smooth, luma_mask_row, &intra_y, error)
+                      : !search_luma_tx(
+                            source_, ax0, ay0, w, h, intra_y_pred,
+                            current_qindex_, txtsearch::Mode::kIntra,
+                            options_.tx_rd_lambda, options_.enable_idtx_intra,
+                            std::max(0, mrl_stream::mapped_intra_mode_for_mrl(
+                                            intra_y_mode, intra_y_angle_delta,
+                                            intra_mrl_index, w, h)),
+                            options_.enable_tcq,
+                            ::av2enc::still::qctx::slice_for_base_q_idx(
+                                options_.tx_context_rate ? base_q_index()
+                                                         : current_qindex_),
+                            /*enable_inter_ddt=*/false,
+                            /*search_partition=*/false,
+                            /*context_rate=*/options_.tx_context_rate,
+                            options_.trace, /*allow_rdoq=*/false,
+                            /*rdoq_qctx=*/0, options_.rdoq_sse_scale,
+                            intra_y, error, luma_mask_row))
                : !compute_tx(source_, 0, ax0, ay0, w, h, intra_y_pred,
                              plane_quant_[0], intra_y, error,
                              qm_enabled_ ? &qm_state_ : nullptr,
@@ -10448,9 +10830,37 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   const bool cdf_chain = false;
 #endif
   if (cdf_chain && !options.frame_base_q_idx.empty()) {
-    error = "average-CDF/continuity requires a fixed base_q_idx "
-            "(no --rc crf/vbr per-frame QP)";
-    return false;
+    if (!options.cdf_per_frame_qp) {
+      error = "average-CDF/continuity requires a fixed base_q_idx "
+              "(no --rc crf/vbr per-frame QP); pass --video-cdf-per-frame-qp "
+              "to re-initialise the CDF image from each frame's slice";
+      return false;
+    }
+    if (options.cdf_continuity) {
+      error = "--video-cdf-per-frame-qp re-initialises the CDF image from "
+              "each frame's slice; it does not compose with --cdf-continuity";
+      return false;
+    }
+    // §8.3.1 selects the default coefficient CDFs from the raw frame
+    // base_q_idx.  Resetting per frame is only equivalent to the fixed-QP
+    // image when every frame lands in the same slice; otherwise the decoder
+    // would install a different §9.3 image than the encoder's seed.
+    const int frame_slice = ::av2enc::still::qctx::slice_for_base_q_idx(
+        static_cast<int>(frame_qp(0)));
+    for (std::size_t i = 1; i < frames.size(); ++i) {
+      const int slice = ::av2enc::still::qctx::slice_for_base_q_idx(
+          static_cast<int>(frame_qp(i)));
+      if (slice != frame_slice) {
+        error = "--video-cdf-per-frame-qp needs one coefficient qctx slice "
+                "(§8.3.1) for the whole sequence: frame 0 base_q_idx " +
+                std::to_string(static_cast<int>(frame_qp(0))) +
+                " is slice " + std::to_string(frame_slice) + ", frame " +
+                std::to_string(i) + " base_q_idx " +
+                std::to_string(static_cast<int>(frame_qp(i))) +
+                " is slice " + std::to_string(slice);
+        return false;
+      }
+    }
   }
   if (options.cdf_continuity && !(options.avg_cdf && options.adaptive_cdf)) {
     error = "--cdf-continuity requires --avg-cdf and --adaptive-cdf";
@@ -10471,8 +10881,16 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     cdf_tile.assign(words, 0);
     cdf_saved.assign(words, 0);
     cdf_defaults.assign(words, 0);
-    if (!syntax::cdf_image_defaults_for_base_q_idx(
-            static_cast<int>(options.base_q_idx), cdf_defaults, &error)) {
+    // §8.3.1: the default coefficient CDFs come from the frame's raw
+    // base_q_idx.  With --video-cdf-per-frame-qp every frame was checked to
+    // share one qctx slice above, so the key frame's slice is the whole
+    // sequence's image; each frame still resets to it below.
+    const int cdf_base_q_idx =
+        options.frame_base_q_idx.empty()
+            ? static_cast<int>(options.base_q_idx)
+            : static_cast<int>(options.frame_base_q_idx.front());
+    if (!syntax::cdf_image_defaults_for_base_q_idx(cdf_base_q_idx,
+                                                   cdf_defaults, &error)) {
       return false;
     }
     if (!syntax::cdf_image_tables(cdf_frame, cdf_tile, cdf_saved, cdf_defaults,

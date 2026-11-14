@@ -52,14 +52,14 @@ decisions are used.
 **Measured baselines** (NASA clip, 60 frames). The benchmark source is
 [`First-8K-Video-from-Space_orig.mp4`](https://images-assets.nasa.gov/video/First-8K-Video-from-Space/First-8K-Video-from-Space~orig.mp4)
 (8192x4096, 2:1, bt709). The **default** CPU point is QP 189 at 480x240/30;
-the measured opt-in points are `quality` at QP 190 and `--nightly` at QP 117.
+the measured opt-in points are `quality` at QP 190 and `--nightly` at QP 110.
 Old Shine rows are historical.
 
 | Case | Device | Bitrate CPU / GPU | CVVDP | PSNR-Y | Encode |
 |---|---|---:|---:|---:|---:|
 | CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 23.7 fps (1 thread) / 54.6 fps (8 threads) |
 | CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 27.58 dB | 23.4 fps (8 threads) |
-| CPU 240p30, `--nightly` QP 117 | Apple M4 | 99.8 / - kbps | **9.587 JOD** | **41.70 dB** | 7.6 fps (8 threads) |
+| CPU 240p30, `--nightly` QP 110 | Apple M4 | 100.0 / - kbps | **9.680 JOD** | **42.98 dB** | 8.1 fps (8 threads) |
 | AVM CBR (NASA, target 34 kbps) | Apple M4 | 99.5 / - kbps | 8.452 JOD | 36.53 dB | 1.94 fps |
 | SVT-AV1 4.1.0, CRF 42, preset 4 (NASA) | Apple M4 | 100.2 / - kbps | 9.756 JOD | 45.92 dB | 306 fps |
 | SVT-AV1 4.1.0, CRF 36.5, preset 0 (NASA) | Apple M4 | 100.3 / - kbps | **9.830 JOD** | **48.80 dB** | 16.6 fps |
@@ -76,9 +76,12 @@ previous 92.1 kbps / 8.791 JOD row used the older AVM nightly `cd7d8bc3db`; it
 is superseded because the binaries are not directly comparable. `quality` and
 `--nightly` are CPU-only; the default and GPU paths keep the historical
 25,009-byte stream / MD5 `a1d0dba1259b20a4b628d4cd1e14c33c`. The `quality`
-stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP117
-stream is 24,939 B / MD5 `8f8713dac14eaa74af770e9142e5eae9`. At ~100 kbps,
-nightly is +4.78 JOD over the default and +3.28 JOD over `quality`.
+stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP110
+stream is 24,994 B / MD5 `bc4a3756d312bd259e97397f9bd86853`. At ~100 kbps,
+nightly is +4.88 JOD over the default and +3.38 JOD over `quality`. Adding
+`--avg-cdf --adaptive-cdf --video-cdf-per-frame-qp` to the nightly point keeps
+the reconstruction identical and cuts the QP117 stream to 21,461 B (−13.95%);
+see `docs/video-nightly.md`.
 
 SVT-AV1 v4.1.0 was measured at two presets, decoded with `dav1d`, and scored
 with the same `tools/quality.py` CVVDP model. **Preset 4 / CRF 42** gives
@@ -86,8 +89,8 @@ with the same `tools/quality.py` CVVDP model. **Preset 4 / CRF 42** gives
 **100.26 kbps / 9.830 JOD / 48.80 dB** at 16.6 fps (CRF 35 = 106.0, 36 = 101.7,
 36.5 = 100.26, 37 = 97.7). Preset 0 is the quality reference; preset 4 is the
 speed reference. AV1 is not AV2, so these are cross-encoder calibration points,
-not codec-parity claims. At this rate the nightly AV2 stream is **−0.169 JOD /
-−4.22 dB** versus preset 4 and **−0.244 JOD / −7.10 dB** versus preset 0.
+not codec-parity claims. At this rate the nightly AV2 stream is **−0.076 JOD /
+−2.94 dB** versus preset 4 and **−0.150 JOD / −5.82 dB** versus preset 0.
 
 The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
 25,009-byte stream as the CPU reference (`100.0 / 100.0 kbps`, MD5
@@ -193,11 +196,13 @@ Video options: `--p-frames`, `--b-frames`, `--video-refs 1..7`,
 `--video-cdef`, `--video-ccso`, `--video-wiener`, `--video-chroma-lr`,
 `--video-gdf`, `--video-intra-full`, `--video-tx-search`,
 `--video-partition-rd`, `--video-rd-preset quality`, `--nightly`, `--tiles CxR`,
-`--video-mfh`, `--video-timing`, `--avg-cdf`/`--adaptive-cdf`, and
+`--video-mfh`, `--video-timing`, `--avg-cdf`/`--adaptive-cdf`,
+`--video-cdf-per-frame-qp`, and
 `--rc cqp|crf|vbr` with `--crf` / `--bitrate`. `--video-gpu` supports the same
 surface except the explicitly named CPU-only/decoder-gated modes (TIP block
 references, morph, OPFL/refine-MV, inter-intra, sub-PU/temporal MV,
-segmentation, implicit reference lists, DRL reorder, CDF continuity, grain,
+segmentation, implicit reference lists, DRL reorder, CDF continuity,
+per-frame-QP CDF reset, grain,
 lossless, SB128/256, non-/8 dimensions, SVC, user QM).
 
 Usage and option-combination errors exit 2; encoder, decoder and I/O failures
@@ -454,14 +459,14 @@ Current gates:
   (+1.50 JOD), PSNR-Y 27.58 dB (+3.11 dB)** at QP190 / 100.56 kbps; the
   interpolated 100.04 kbps point is 6.273 JOD. The per-tool table and exact
   flags are in `docs/video-rd-preset.md`.
-  Algorithmic nightly aggregate: **`--nightly` measures 9.587 JOD /
-  41.70 dB PSNR-Y at 99.8 kbps (QP117)** — +4.78 JOD over the default and
-  +3.28 JOD over the stable preset at essentially the same rate. It combines
+  Algorithmic nightly aggregate: **`--nightly` measures 9.680 JOD /
+  42.98 dB PSNR-Y at 100.0 kbps (QP110)** — +4.88 JOD over the default and
+  +3.38 JOD over the stable preset at essentially the same rate. It combines
   64-band/refit/priced-unit CCSO, bottom-edge inter and residual masking, the
   measured partition probe, a reference-intro key/first-P QP offset, luma
   inter RDOQ, CDEF, the BAWP carrier over inter residual, the calibrated
-  leaf RD cost (`--video-leaf-rd`), 1/8-pel ME refinement and the RDOQ-tuned
-  TX-search lambda. It is CPU-only and
+  leaf RD cost (`--video-leaf-rd`), 1/8-pel ME refinement, the RDOQ-tuned
+  TX-search lambda and keyframe intra luma TX partitioning. It is CPU-only and
   rejects `--video-gpu`, so the default and GPU streams keep the historical CPU
   decisions (`a1d0dba1...`, 25,009 B). The measured tables, per-tool
   contributions and exact flags are in `docs/video-nightly.md`.
