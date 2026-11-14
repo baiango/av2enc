@@ -9862,7 +9862,13 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // the next frame's MC reads the same padded samples.  Runs after the
   // in-loop filters, which is where the decoder extends.
   const auto pad_recon_bottom = [&]() {
-    if (recon_rows <= static_cast<int>(height)) return;
+    // Only --video-edge-inter asks for the padded reference.  Without the
+    // flag the MI-aligned rows below the visible picture keep their historical
+    // contents (zero), which the CDEF/recon gates depend on for non-/8 sizes.
+    if (!options.enable_edge_inter ||
+        recon_rows <= static_cast<int>(height)) {
+      return;
+    }
     for (int plane = 0; plane < 3; ++plane) {
       Plane& dst = frame_recon[plane];
       const int vis_h =
