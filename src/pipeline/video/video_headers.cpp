@@ -17,6 +17,8 @@
 #include "pipeline/video/post/loop_filters.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cassert>
 #include <string>
 
@@ -1112,6 +1114,11 @@ std::vector<std::uint8_t> make_frame_obu(const VideoConfig& config,
   BitWriter writer;
   write_tile_group_header(writer, config, header);
   std::vector<std::uint8_t> payload = writer.take_bytes();
+  if (std::getenv("AV2ENC_TRACE_FRAME_OBU") != nullptr) {
+    std::fprintf(stderr, "frame_obu header=%zu tile=%zu key=%d\n",
+                 payload.size(), tile_payload.size(),
+                 header.keyframe ? 1 : 0);
+  }
   payload.insert(payload.end(), tile_payload.begin(), tile_payload.end());
   const ObuType type =
       header.keyframe ? ObuType::kClosedLoopKey : ObuType::kRegularTileGroup;

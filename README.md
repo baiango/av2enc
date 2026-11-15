@@ -15,20 +15,21 @@
 ## Build provenance
 
 Token usage recorded by OpenCode for the AV2 project tree — the main session
-plus all subagent sessions — as of **2026-11-14**:
+plus all subagent sessions — as of **2026-11-15**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 166,684,774 |
-| Output | 28,524,856 |
-| Reasoning | 30,669,400 |
-| **Input + output + reasoning** | **~225.9 M** |
-| Cached context reads | 18,895,194,633 |
-| **Including cache reads** | **~19.12 B** |
+| Fresh input | 171,970,840 |
+| Output | 29,335,530 |
+| Reasoning | 31,652,536 |
+| **Input + output + reasoning** | **~233.0 M** |
+| Cached context reads | 19,413,590,363 |
+| **Including cache reads** | **~19.65 B** |
 
-430 sessions (12 top-level + 418 subagents). Cache reads dominate because every
+445 sessions (15 top-level + 430 subagents). Cache reads dominate because every
 subagent re-reads a long context; they are normally billed at a fraction of
-fresh input.
+fresh input. Measured from `session_v2` (`tokens_input`, `tokens_output`,
+`tokens_reasoning`, `tokens_cache_read`) in the OpenCode state database.
 The figures keep growing while work continues, so treat them as a snapshot, not
 a final total.
 
@@ -59,7 +60,7 @@ Old Shine rows are historical.
 |---|---|---:|---:|---:|---:|
 | CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 23.7 fps (1 thread) / 54.6 fps (8 threads) |
 | CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 27.58 dB | 23.4 fps (8 threads) |
-| CPU 240p30, `--nightly` QP 110 | Apple M4 | 99.6 / - kbps | **9.707 JOD** | **43.87 dB** | 7.2 fps (8 threads) |
+| CPU 240p30, `--nightly` QP 110 | Apple M4 | 99.5 / - kbps | **9.718 JOD** | **43.94 dB** | 7.6 fps (8 threads) |
 | AVM CBR (NASA, target 34 kbps) | Apple M4 | 99.5 / - kbps | 8.452 JOD | 36.53 dB | 1.94 fps |
 | SVT-AV1 4.1.0, CRF 42, preset 4 (NASA) | Apple M4 | 100.2 / - kbps | 9.756 JOD | 45.92 dB | 306 fps |
 | SVT-AV1 4.1.0, CRF 36.5, preset 0 (NASA) | Apple M4 | 100.3 / - kbps | **9.830 JOD** | **48.80 dB** | 16.6 fps |
@@ -77,8 +78,8 @@ is superseded because the binaries are not directly comparable. `quality` and
 `--nightly` are CPU-only; the default and GPU paths keep the historical
 25,009-byte stream / MD5 `a1d0dba1259b20a4b628d4cd1e14c33c`. The `quality`
 stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP110
-stream is 24,904 B / MD5 `5f44c0d1795357b5beec84adaed0fe5b`. At ~100 kbps,
-nightly is +4.90 JOD over the default and +3.40 JOD over `quality`. The
+stream is 24,885 B / MD5 `5e316100ce7fd709b4298ccfebfffccd`. At ~100 kbps,
+nightly is +4.92 JOD over the default and +3.42 JOD over `quality`. The
 aggregate now also carries adaptive coefficient CDFs (a −13.9% entropy saving at
 identical decisions, which pays for a `-25` key offset instead of `-16`) and the
 drift-triggered inter refresh. See `docs/video-nightly.md`.
@@ -89,8 +90,8 @@ with the same `tools/quality.py` CVVDP model. **Preset 4 / CRF 42** gives
 **100.26 kbps / 9.830 JOD / 48.80 dB** at 16.6 fps (CRF 35 = 106.0, 36 = 101.7,
 36.5 = 100.26, 37 = 97.7). Preset 0 is the quality reference; preset 4 is the
 speed reference. AV1 is not AV2, so these are cross-encoder calibration points,
-not codec-parity claims. At this rate the nightly AV2 stream is **−0.049 JOD /
-−2.06 dB** versus preset 4 and **−0.123 JOD / −4.93 dB** versus preset 0.
+not codec-parity claims. At this rate the nightly AV2 stream is **−0.039 JOD /
+−1.86 dB** versus preset 4 and **−0.113 JOD / −4.74 dB** versus preset 0.
 
 The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
 25,009-byte stream as the CPU reference (`100.0 / 100.0 kbps`, MD5
@@ -459,9 +460,9 @@ Current gates:
   (+1.50 JOD), PSNR-Y 27.58 dB (+3.11 dB)** at QP190 / 100.56 kbps; the
   interpolated 100.04 kbps point is 6.273 JOD. The per-tool table and exact
   flags are in `docs/video-rd-preset.md`.
-  Algorithmic nightly aggregate: **`--nightly` measures 9.707 JOD /
-  43.87 dB PSNR-Y at 99.6 kbps (QP110)** — +4.90 JOD over the default and
-  +3.40 JOD over the stable preset at essentially the same rate. It combines
+  Algorithmic nightly aggregate: **`--nightly` measures 9.718 JOD /
+  43.94 dB PSNR-Y at 99.5 kbps (QP110)** — +4.92 JOD over the default and
+  +3.42 JOD over the stable preset at essentially the same rate. It combines
   64-band/refit/priced-unit CCSO, bottom-edge inter and residual masking, the
   measured partition probe, a reference-intro key/first-P QP offset, luma
   inter RDOQ, CDEF, the BAWP carrier over inter residual, the calibrated

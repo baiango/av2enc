@@ -10223,10 +10223,10 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
               "desynchronise the per-frame §9.3 image";
       return false;
     }
-    if (options.cdf_continuity) {
-      error = "--video-drift-refresh does not compose with --cdf-continuity";
-      return false;
-    }
+    // --cdf-continuity composes with --video-drift-refresh: the carried image
+    // follows the symbols actually coded, so a refresh frame's extra residual
+    // needs no §9.3 re-derivation.  Only the per-frame-QP reset form depends on
+    // base_q_idx, and that is checked above.
     if (options.enable_segmentation || options.per_segment_q ||
         options.enable_delta_q) {
       error = "--video-drift-refresh does not compose with segmentation/"
@@ -10946,16 +10946,17 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // and the CI module; the opt-in chain is unavailable there.
   const bool cdf_chain = false;
 #endif
-  if (cdf_chain && !options.frame_base_q_idx.empty()) {
+  if (cdf_chain && !options.frame_base_q_idx.empty() &&
+      !options.cdf_continuity) {
+    // Reset-per-frame form: every frame installs the §9.3 image of its own
+    // coefficient qctx slice, which is only legal while every frame shares
+    // that slice (§8.3.1).  --cdf-continuity needs none of this: the image is
+    // carried, and a reset frame (§5.18.2) derives its defaults from its own
+    // base_q_idx, so the encoder and the decoder agree across slices.
     if (!options.cdf_per_frame_qp) {
       error = "average-CDF/continuity requires a fixed base_q_idx "
               "(no --rc crf/vbr per-frame QP); pass --video-cdf-per-frame-qp "
               "to re-initialise the CDF image from each frame's slice";
-      return false;
-    }
-    if (options.cdf_continuity) {
-      error = "--video-cdf-per-frame-qp re-initialises the CDF image from "
-              "each frame's slice; it does not compose with --cdf-continuity";
       return false;
     }
     // §8.3.1 selects the default coefficient CDFs from the frame's own
@@ -11653,6 +11654,19 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     if (options.trace && options.implicit_ref_map) {
       trace_implicit_map("P", i, ref_count, frame_ref_slots);
     }
+    // §5.18.2 choose_primary_secondary_ref_frame(): only a reference whose
+    // FrameType is INTER_FRAME competes for primary_ref_frame.  When none
+    // does, §5.18.2 forces primary_ref_frame = PRIMARY_REF_NONE and
+    // disable_cross_frame_cdf_init = 1, so the decoder never runs §7.4.4
+    // load_cdfs() for this frame and starts from the §9.3 image instead.
+    bool derived_primary_none = true;
+    for (int r = 0; r < ref_count; ++r) {
+      const int ref_slot = frame_ref_slots[static_cast<std::size_t>(r)];
+      if (!slots[static_cast<std::size_t>(ref_slot)].is_key) {
+        derived_primary_none = false;
+        break;
+      }
+    }
     std::vector<inter::mc::RefFrame> references;
     references.reserve(static_cast<std::size_t>(ref_count));
     std::array<int, 7> frame_distance{};
@@ -11768,7 +11782,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     std::uint32_t intra_blocks = 0;
 #if defined(AV2ENC_VIDEO_CDF_CHAIN)
     if (cdf_chain) {
-      if (options.cdf_continuity) {
+      if (options.cdf_continuity && !derived_primary_none) {
         // §7.4.4 load_cdfs(ref_frame_idx[primary_ref_frame]); we signal
         // primary_ref_frame = 0, so the first reference's saved CDFs are
         // installed into the frame state.
@@ -12000,7 +12014,12 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     header.order_hint = order_hint;
     if (cdf_chain) {
       header.signal_primary_ref_frame = options.cdf_continuity;
-      header.disable_cross_frame_cdf_init = !options.cdf_continuity;
+      // §5.18.2 forces disable_cross_frame_cdf_init = 1 for a frame whose
+      // reference list holds no INTER_FRAME (choose_primary_secondary_ref_frame
+      // returns PRIMARY_REF_NONE).  The header codes the bit the decoder will
+      // actually use, so the §6.17.2 reset and the §7.4.4 load agree.
+      header.disable_cross_frame_cdf_init =
+          !options.cdf_continuity || derived_primary_none;
       header.primary_ref_frame = 0;
     }
     header.num_total_refs = static_cast<std::uint8_t>(ref_count);

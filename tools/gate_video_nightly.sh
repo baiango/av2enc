@@ -59,13 +59,13 @@ fail() { echo "FAIL: $*" >&2; FAILED=1; }
 
 NIGHTLY_FLAGS=(--video-rd-preset quality --video-ccso-rd --video-edge-inter
                --video-partition-rd --video-partition-rd-lambda 2.75e-6
-               --video-key-qp-offset -25 --video-rdoq --video-edge-mask
+               --video-key-qp-offset -27 --video-rdoq --video-edge-mask
                --video-cdef --video-ccso-bands 6 --video-ccso-lambda 22
                --video-ccso-refit 2 --video-ccso-unit-bits 2
                --video-bawp --video-bawp-carrier --video-leaf-rd
                --video-subpel-eighth --video-tx-lambda 136
                --video-key-intra-txpart
-               --avg-cdf --adaptive-cdf --video-cdf-per-frame-qp
+               --avg-cdf --adaptive-cdf --cdf-continuity
                --video-drift-refresh)
 
 echo "== nightly RD gate =="
@@ -167,10 +167,10 @@ import hashlib, sys
 print(hashlib.md5(open(sys.argv[1], 'rb').read()).hexdigest())
 PY
 )
-        [ "$BYTES" = "24904" ] ||
-            fail "nightly stream is $BYTES B, expected 24904"
-        [ "$MD5" = "5f44c0d1795357b5beec84adaed0fe5b" ] ||
-            fail "nightly stream md5 is $MD5, expected 5f44c0d1..."
+        [ "$BYTES" = "24885" ] ||
+            fail "nightly stream is $BYTES B, expected 24885"
+        [ "$MD5" = "5e316100ce7fd709b4298ccfebfffccd" ] ||
+            fail "nightly stream md5 is $MD5, expected 5e316100..."
     fi
 fi
 

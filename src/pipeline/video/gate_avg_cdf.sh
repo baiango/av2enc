@@ -7,8 +7,9 @@
 # 3. Requires dav2d --strict 1 to decode both and the decoded frames to match
 #    the encoder reconstruction exactly.
 # 4. Pins the --avg-cdf MD5.
-# 5. Asserts that --cdf-continuity is rejected by the CLI: the encoder side is
-#    wired, but pinned dav2d f9dafbc rejects disable_cross_frame_cdf_init = 0.
+# 5. Requires --cdf-continuity (the §7.4.4/§7.5 carried image) to decode under
+#    dav2d --strict 1 and reproduce the visible encoder reconstruction.  The
+#    full carry gate is src/pipeline/video/gate_video_cdf_carry.sh.
 # 6. Per-frame QP (--video-cdf-per-frame-qp): a reference-intro plan inside one
 #    coefficient qctx slices decodes --strict 1 with exact visible recon; a plan
 #    crossing a §8.3.1 boundary, the same plan without the opt-in, and the flag
@@ -103,16 +104,24 @@ if [ "$got" != "$EXPECTED_AVG_MD5" ]; then
     exit 1
 fi
 
-# Ungated continuity: the pose/reproducer must stay rejected by the CLI.
-if "$BIN" "$SRC" -o "$TMP/cont.ivf" --video --p-frames 2 --avg-cdf \
-        --adaptive-cdf --cdf-continuity >"$TMP/cont.log" 2>&1; then
-    echo "FAIL: --cdf-continuity was accepted; it must stay off until a " \
-         "decoder implements disable_cross_frame_cdf_init = 0" >&2
+# Cross-frame CDF carry: --cdf-continuity is decoder-gated now (§5.18.2 /
+# §7.4.4 / §7.5), so the same 3-frame key+P chain must decode exactly.  The
+# full carry gate is src/pipeline/video/gate_video_cdf_carry.sh.
+if ! "$BIN" "$SRC" -o "$TMP/cont.ivf" --video --p-frames 2 --avg-cdf \
+        --adaptive-cdf --cdf-continuity --video-recon "$TMP/cont.y4m" \
+        >"$TMP/cont.log" 2>&1; then
+    echo "FAIL: --cdf-continuity encode" >&2; cat "$TMP/cont.log" >&2
     exit 1
 fi
-if ! grep -q "not decoder-gated" "$TMP/cont.log"; then
-    echo "FAIL: --cdf-continuity rejection message changed" >&2
-    cat "$TMP/cont.log" >&2; exit 1
+if ! "$DAV2D" -q --strict 1 -i "$TMP/cont.ivf" -o "$TMP/cont.dec.y4m" \
+        --threads 1 >"$TMP/cont.dec.log" 2>&1; then
+    echo "FAIL continuity: dav2d rejected the carried image" >&2
+    cat "$TMP/cont.dec.log" >&2; exit 1
+fi
+if ! compare_recon "$TMP/cont.y4m" "$TMP/cont.dec.y4m" >"$TMP/cont.cmp.log" \
+        2>&1; then
+    echo "FAIL continuity: recon mismatch" >&2
+    cat "$TMP/cont.cmp.log" >&2; exit 1
 fi
 
 # --- per-frame QP reset (--video-cdf-per-frame-qp) ------------------------
@@ -185,4 +194,5 @@ fi
 
 echo "PASS video avg-cdf: base $(wc -c <"$TMP/base.ivf" | tr -d ' ') B," \
      "avg $(wc -c <"$TMP/avg.ivf" | tr -d ' ') B, md5 $got;" \
-     "per-frame QP $(wc -c <"$TMP/pf.ivf" | tr -d ' ') B; continuity rejected"
+     "per-frame QP $(wc -c <"$TMP/pf.ivf" | tr -d ' ') B; continuity" \
+     "$(wc -c <"$TMP/cont.ivf" | tr -d ' ') B"

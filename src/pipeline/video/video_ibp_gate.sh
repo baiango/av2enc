@@ -33,6 +33,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# tools/run_gates.sh drives every gate with --bin/--dav2d; accept both here so
+# the suite and a standalone run select the same encoder.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bin) AV2ENC_BIN=${2:-}; shift 2 ;;
+    --dav2d) DAV2D=${2:-}; shift 2 ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "video_ibp_gate: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+
 AV2ENC_BIN="${AV2ENC_BIN:-}"
 if [ -z "$AV2ENC_BIN" ]; then
   for candidate in "$ROOT/build-int/av2enc" "$ROOT/build/av2enc" \

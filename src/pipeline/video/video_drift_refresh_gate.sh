@@ -73,11 +73,11 @@ COMMON=(--video --frames 60 --qp "$QP" --cpu-threads "$THREADS"
         --video-ccso-refit 2 --video-ccso-unit-bits 2
         --video-edge-inter --video-edge-mask
         --video-partition-rd --video-partition-rd-lambda 2.75e-6
-        --video-key-qp-offset -25 --video-rdoq --video-cdef
+        --video-key-qp-offset -27 --video-rdoq --video-cdef
         --video-bawp --video-bawp-carrier --video-leaf-rd
         --video-subpel-eighth --video-tx-lambda 136
         --video-key-intra-txpart
-        --avg-cdf --adaptive-cdf --video-cdf-per-frame-qp)
+        --avg-cdf --adaptive-cdf --cdf-continuity)
 
 echo "== video drift refresh gate =="
 
@@ -110,7 +110,7 @@ import hashlib, sys
 print(hashlib.md5(open(sys.argv[1], 'rb').read()).hexdigest())
 PY
 )
-[ "$OFF_MD5" = "c67818f93572d28921e96d12119114ba" ] ||
+[ "$OFF_MD5" = "47b85555ce260c5d4db9023548cdc094" ] ||
     fail "flag-off control stream md5 is $OFF_MD5, expected c67818f9..."
 
 # --- flag on: decode, recon, trace evidence, quality ---------------------
@@ -223,7 +223,7 @@ fi
 COMMON_NOCDF=()
 for a in "${COMMON[@]}"; do
     case "$a" in
-        --avg-cdf|--adaptive-cdf|--video-cdf-per-frame-qp) ;;
+        --avg-cdf|--adaptive-cdf|--video-cdf-per-frame-qp|--cdf-continuity) ;;
         *) COMMON_NOCDF+=("$a") ;;
     esac
 done

@@ -10,6 +10,7 @@
 #include "codec/inter/drl_reorder/video_stack_adapter.h"
 #include "codec/filters/stream/filters_stream.h"
 #include "codec/filters/pc_wiener/pc_wiener_stream.h"
+#include "cuda/pipeline/still/cdef/still_cdef_cdf.h"
 #if defined(AV2ENC_VIDEO_DELTAQ)
 #include "codec/entropy/deltaq/video/video_deltaq.h"
 #endif
@@ -354,6 +355,23 @@ struct CdfState {
   // §5.20.5.5 fsc_mode (enable_idtx_intra/--video-idtx).  Default_Fsc_Mode_Cdf
   // [4][6][3]; the product codes 0 with context [0][group].
   std::uint16_t fsc_mode[4][6][3];
+
+  // §6.17.2 tile CDFs of the §5.20.10 filter symbols.  They adapt per tile
+  // like every other §8.2 CDF, so they must ride the §8.2.4 / §7.5 image:
+  // omitting them desynchronised the first frame that carries CDFs whenever
+  // CDEF or CCSO coded an index symbol.
+  //   cdef_index0   §8.3 cdef_index0, 4 contexts x 2 symbols.
+  //   cdef_minus1_* §8.3 cdef_idx_minus_1 for CdefStrengths 3..8; each is a
+  //                 separate §9.3 array with its own length (N-1 symbols).
+  //   ccso_index    §8.3 ccso_blk, 3 planes x 4 contexts x 2 symbols.
+  std::uint16_t cdef_index0[4][3];
+  std::uint16_t cdef_minus1_3[3];
+  std::uint16_t cdef_minus1_4[4];
+  std::uint16_t cdef_minus1_5[5];
+  std::uint16_t cdef_minus1_6[6];
+  std::uint16_t cdef_minus1_7[7];
+  std::uint16_t cdef_minus1_8[8];
+  std::uint16_t ccso_index[3][4][3];
 };
 
 template <typename T, std::size_t N>
@@ -469,6 +487,42 @@ void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.inter_tx_type_offset_set2, kInterTxTypeOffsetSet2Cdf);
   c.tx_partition.reset(reduced_tx_part_set);
   inter::mvprec::init_default_mv_precision_cdfs(&c.mv_precision);
+  // §6.17.2: the filter tile CDFs reset with everything else.
+  copy_array(c.cdef_index0, av2enc::cuda::still::kCdefIndex0Cdf);
+  copy_array(c.cdef_minus1_3,
+             av2enc::cuda::still::kCdefIndexMinus1With3Cdf);
+  copy_array(c.cdef_minus1_4,
+             av2enc::cuda::still::kCdefIndexMinus1With4Cdf);
+  copy_array(c.cdef_minus1_5,
+             av2enc::cuda::still::kCdefIndexMinus1With5Cdf);
+  copy_array(c.cdef_minus1_6,
+             av2enc::cuda::still::kCdefIndexMinus1With6Cdf);
+  copy_array(c.cdef_minus1_7,
+             av2enc::cuda::still::kCdefIndexMinus1With7Cdf);
+  copy_array(c.cdef_minus1_8,
+             av2enc::cuda::still::kCdefIndexMinus1With8Cdf);
+  copy_array(c.ccso_index, still::filters_stream::kCcsoBlkCdf);
+}
+
+// §9.3 `Default_Cdef_Index_Minus1_With{N}_Cdf` slot of the frame image for a
+// given CdefStrengths.  §5.20.10.1 codes no minus-1 symbol below 3 strengths.
+std::uint16_t* cdef_minus1_slot(CdfState& c, int strengths) {
+  switch (strengths) {
+    case 3:
+      return c.cdef_minus1_3;
+    case 4:
+      return c.cdef_minus1_4;
+    case 5:
+      return c.cdef_minus1_5;
+    case 6:
+      return c.cdef_minus1_6;
+    case 7:
+      return c.cdef_minus1_7;
+    case 8:
+      return c.cdef_minus1_8;
+    default:
+      return nullptr;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -613,6 +667,17 @@ const std::vector<CdfArrayDesc>& cdf_arrays() {
     AV2ENC_ADD_CDF(tx_partition.tx_partition_type, 7);
     AV2ENC_ADD_CDF(tx_partition.tx_partition_type_reduced, 7);
     AV2ENC_ADD_CDF(tx_partition.tx_2or3_partition_type, 2);
+    // §6.17.2 filter tile CDFs (§5.20.10.1 read_cdef / §5.20.10.2 read_ccso).
+    // A frame carries its §8.2 CDF image, so every symbol these tools code
+    // adapts across frames like the block layer.
+    AV2ENC_ADD_CDF(cdef_index0, 2);
+    add(probe.cdef_minus1_3, sizeof(probe.cdef_minus1_3), 2);
+    add(probe.cdef_minus1_4, sizeof(probe.cdef_minus1_4), 3);
+    add(probe.cdef_minus1_5, sizeof(probe.cdef_minus1_5), 4);
+    add(probe.cdef_minus1_6, sizeof(probe.cdef_minus1_6), 5);
+    add(probe.cdef_minus1_7, sizeof(probe.cdef_minus1_7), 6);
+    add(probe.cdef_minus1_8, sizeof(probe.cdef_minus1_8), 7);
+    AV2ENC_ADD_CDF(ccso_index, 2);
 #undef AV2ENC_ADD_CDF
     return out;
   }();
@@ -861,6 +926,18 @@ class Writer {
             &error)) {
       return false;
     }
+    if (cdef_active) {
+      // §8.2.2: the tile's CDEF index CDFs come from the frame image, not
+      // from the §9.3 defaults cdef_tile_init() just installed.
+      const int strengths = filters_->cdef.num_strengths;
+      std::memcpy(cdef_state_.index0, cdfs_.cdef_index0,
+                  sizeof(cdef_state_.index0));
+      if (std::uint16_t* slot = cdef_minus1_slot(cdfs_, strengths)) {
+        std::memcpy(cdef_state_.minus1, slot,
+                    sizeof(std::uint16_t) *
+                        static_cast<std::size_t>(strengths));
+      }
+    }
     const bool lr_active = filters_ != nullptr && filters_->lr.enabled;
     if (lr_active && filters_->lr.pc_wiener) {
       // §5.20.10.4 with FrameRestorationType[0] = RESTORE_PC_WIENER: the luma
@@ -1004,6 +1081,9 @@ class Writer {
                                           mi_rows_, 1, 1, &error)) {
         return false;
       }
+      // §8.2.2: seed the CCSO symbol CDFs from the frame image.
+      std::memcpy(ccso_state_.cdf, cdfs_.ccso_index,
+                  sizeof(ccso_state_.cdf));
     }
     std::size_t index = 0;
     int sb_index = 0;
@@ -1079,6 +1159,22 @@ class Writer {
                     tile_buffer_.begin() +
                         static_cast<std::ptrdiff_t>(payload_bytes));
     if (tile_bytes != nullptr) *tile_bytes = payload_bytes;
+    // §8.2.4 exit_symbol(): the filter tile CDFs this tile adapted belong to
+    // the tile image too.
+    if (cdef_active) {
+      const int strengths = filters_->cdef.num_strengths;
+      std::memcpy(cdfs_.cdef_index0, cdef_state_.index0,
+                  sizeof(cdfs_.cdef_index0));
+      if (std::uint16_t* slot = cdef_minus1_slot(cdfs_, strengths)) {
+        std::memcpy(slot, cdef_state_.minus1,
+                    sizeof(std::uint16_t) *
+                        static_cast<std::size_t>(strengths));
+      }
+    }
+    if (ccso_active) {
+      std::memcpy(cdfs_.ccso_index, ccso_state_.cdf,
+                  sizeof(cdfs_.ccso_index));
+    }
     if (cdf_final_ != nullptr) {
       cdf_final_->resize(cdf_image_words_impl());
       export_cdf_image(cdfs_, cdf_final_->data());

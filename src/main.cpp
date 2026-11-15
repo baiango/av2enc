@@ -740,7 +740,10 @@ void print_usage(std::ostream& out) {
                      "CDFs and average at frame end (§8.2.4/§7.5)"});
   item("--cdf-continuity", {"Video: carry the adapted CDFs across frames by",
                             "loading the primary reference's saved context",
-                            "(§5.18.2; requires --avg-cdf --adaptive-cdf)"});
+                            "(§5.18.2/§7.4.4/§7.5). Requires --avg-cdf",
+                            "--adaptive-cdf; CPU-only, single tile. The first",
+                            "inter frame of a key+P chain still resets",
+                            "(§5.18.2 derived PRIMARY_REF_NONE)"});
   item("--video-cdf-per-frame-qp", {"Video: allow --avg-cdf --adaptive-cdf",
                                     "with a per-frame QP plan; every frame",
                                     "resets the §8.2.2 CDF image from its own",
@@ -1611,7 +1614,7 @@ bool apply_video_nightly(Options& options, std::string& error) {
   // caller-supplied offset wins, and the rate-controlled paths (--rc crf/vbr)
   // own base_q_idx, so they are skipped.
   if (!options.video_key_qp_offset_given && options.rc_mode == "cqp") {
-    options.video_key_qp_offset = -25;
+    options.video_key_qp_offset = -27;
     options.video_key_qp_offset_given = true;
   }
   // Luma inter coefficient RDOQ at its measured lambda calibration.
@@ -1628,7 +1631,14 @@ bool apply_video_nightly(Options& options, std::string& error) {
   if (options.rc_mode == "cqp") {
     options.avg_cdf = true;
     options.adaptive_cdf = true;
-    options.video_cdf_per_frame_qp = true;
+    // --cdf-continuity carries the §7.4.4/§7.5 image instead of re-deriving
+    // the §9.3 one per frame; it is exact now and 2.77% smaller, so the
+    // aggregate uses the carry and does not imply the reset-per-frame opt-in.
+    // An explicit --video-cdf-per-frame-qp keeps the reset-per-frame image,
+    // which is the A/B control the carry gate pins.
+    const bool user_reset = flag_given(options, "--video-cdf-per-frame-qp");
+    options.cdf_continuity = !user_reset;
+    options.video_cdf_per_frame_qp = user_reset;
     options.video_drift_refresh = true;
   }
   // Measured with the final aggregate: 1/8-pel ME refinement and the
@@ -3876,11 +3886,14 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       return ParseStatus::kError;
     }
     if (options.avg_cdf || options.adaptive_cdf || options.cdf_continuity) {
-      if (!options.video_cdf_per_frame_qp) {
+      // --cdf-continuity does not need the reset: the §7.4.4/§7.5 image
+      // follows the symbols actually coded, and only a frame the decoder
+      // resets (§5.18.2) derives its §9.3 defaults from its own base_q_idx.
+      if (!options.video_cdf_per_frame_qp && !options.cdf_continuity) {
         error = "--video-key-qp-offset needs a fixed base_q_idx; --avg-cdf/"
-                "--adaptive-cdf/--cdf-continuity are not compatible with "
-                "per-frame QP (pass --video-cdf-per-frame-qp to reset the CDF "
-                "image per frame)";
+                "--adaptive-cdf are not compatible with per-frame QP (pass "
+                "--video-cdf-per-frame-qp to reset the CDF image per frame, or "
+                "--cdf-continuity to carry it)";
         return ParseStatus::kError;
       }
     }
@@ -3939,10 +3952,10 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "desynchronise the per-frame §9.3 CDF image";
       return ParseStatus::kError;
     }
-    if (options.cdf_continuity) {
-      error = "--video-drift-refresh does not compose with --cdf-continuity";
-      return ParseStatus::kError;
-    }
+    // --cdf-continuity composes with --video-drift-refresh: the carried image
+    // follows the symbols actually coded, so a refresh frame's extra residual
+    // needs no §9.3 re-derivation.  The per-frame-QP reset form above is the
+    // one that depends on base_q_idx.
   }
   // --video-drift-refresh block end.
 
@@ -4054,14 +4067,6 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       error = "--video-timing/--video-mfh are wired into the plain --video "
               "sequence header only; the frame-type modes (long-term/OLK/"
               "leading/SEF/SWITCH/RAS) build their own headers";
-      return ParseStatus::kError;
-    }
-    if (options.cdf_continuity &&
-        std::getenv("AV2ENC_ENABLE_UNGATED_CDF_CONTINUITY") == nullptr) {
-      error = "--cdf-continuity is encoder-wired but not decoder-gated: "
-              "pinned dav2d f9dafbc rejects disable_cross_frame_cdf_init = 0 "
-              "with 'Error parsing frame header' (docs/negative-results.md). "
-              "Set AV2ENC_ENABLE_UNGATED_CDF_CONTINUITY=1 only to reproduce";
       return ParseStatus::kError;
     }
     if ((options.bit_depth != 8 || options.chroma != "420") &&

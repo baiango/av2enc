@@ -442,9 +442,11 @@ struct VideoOptions {
   // --avg-cdf).  Off keeps disable_cdf_update = 1.
   bool adaptive_cdf = false;
   // Opt-in §5.18.2 cross-frame CDF carry (--cdf-continuity): each P frame
-  // installs the primary reference's saved CDFs, signals primary_ref_frame = 0
-  // and clears disable_cross_frame_cdf_init, so the decoder loads the same
-  // context.
+  // installs the primary reference's saved CDFs (§7.4.4), signals
+  // primary_ref_frame = 0 and clears disable_cross_frame_cdf_init, so the
+  // decoder loads the same context.  §5.18.2 forces the §9.3 reset anyway for
+  // a frame whose reference list holds no INTER_FRAME (the first inter frame
+  // of a key+P chain), and the encoder mirrors that reset.
   bool cdf_continuity = false;
   // Opt-in (--video-cdf-per-frame-qp): allow --avg-cdf/--adaptive-cdf on a
   // stream whose frame_base_q_idx plan varies the per-frame base_q_idx.  The

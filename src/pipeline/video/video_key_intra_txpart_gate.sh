@@ -192,10 +192,10 @@ import hashlib, sys
 print(hashlib.md5(open(sys.argv[1], 'rb').read()).hexdigest())
 PY
 )
-    [ "$PIN_BYTES" = "24904" ] ||
-        fail "nightly pin is $PIN_BYTES B, expected 24904"
-    [ "$PIN_MD5" = "5f44c0d1795357b5beec84adaed0fe5b" ] ||
-        fail "nightly pin md5 is $PIN_MD5, expected 5f44c0d1..."
+    [ "$PIN_BYTES" = "24885" ] ||
+        fail "nightly pin is $PIN_BYTES B, expected 24885"
+    [ "$PIN_MD5" = "5e316100ce7fd709b4298ccfebfffccd" ] ||
+        fail "nightly pin md5 is $PIN_MD5, expected 5e316100..."
 fi
 
 if [ "$FAILED" -ne 0 ]; then

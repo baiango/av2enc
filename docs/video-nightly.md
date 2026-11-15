@@ -17,14 +17,14 @@ Expansion (the gate asserts this is byte-identical to typing the flags out):
   --video-ccso-refit 2 --video-ccso-unit-bits 2
 --video-edge-inter --video-edge-mask
 --video-partition-rd --video-partition-rd-lambda 2.75e-6
---video-key-qp-offset -25
+--video-key-qp-offset -27
 --video-rdoq
 --video-cdef
 --video-bawp --video-bawp-carrier
 --video-leaf-rd
 --video-subpel-eighth --video-tx-lambda 136
 --video-key-intra-txpart
---avg-cdf --adaptive-cdf --video-cdf-per-frame-qp
+--avg-cdf --adaptive-cdf --cdf-continuity
 --video-drift-refresh
 ```
 
@@ -42,11 +42,11 @@ The pin is QP110 with the `-25` reference-intro offset; the offset is the
 freedom that the adaptive-CDF saving buys, so the sweep below is in offset
 rather than QP (bytes and rate both move with it):
 
-| key offset (QP110) | Bytes | kbps | CVVDP | PSNR-Y |
+| key offset (QP110, carried CDFs) | Bytes | kbps | CVVDP | PSNR-Y |
 |---:|---:|---:|---:|---:|
-| -24 | 24,441 | 97.764 | 9.7148 | 43.6910 |
-| **-25** | **24,904** | **99.616** | **9.7069** | **43.8667** |
-| -26 | 25,229 | 100.916 | 9.7102 | 43.9231 |
+| -26 | 24,579 | 98.316 | 9.7102 | 43.9231 |
+| **-27** | **24,885** | **99.540** | **9.7177** | **43.9358** |
+| -28 | 25,220 | 100.880 | 9.7108 | 43.8504 |
 
 At the established 100 kbps point:
 
@@ -66,12 +66,12 @@ chain plus a lower key offset add a further **+0.028 JOD / +0.90 dB** at
 iso-rate (it is one move: the entropy saving pays for the key bits), and the
 drift refresh forces the inter residual on the frames whose reference has
 slipped. Nightly is **+4.90 JOD** over the default and **+3.40 JOD** over the
-stable `quality` preset at the same rate. The stream is 24,904 B, MD5
-`5f44c0d1795357b5beec84adaed0fe5b`; `dav2d-macos --strict 1` decodes it and the
+stable `quality` preset at the same rate. The stream is 24,885 B, MD5
+`5e316100ce7fd709b4298ccfebfffccd`; `dav2d-macos --strict 1` decodes it and the
 60-frame encoder recon payload equals the decoded payload byte for byte
 (10,368,000 B).
 
-Encode speed is **7.2 fps** (8.38 s for 60 frames, best of 3) on the M4 at the
+Encode speed is **7.6 fps** (7.87 s for 60 frames, best of 3) on the M4 at the
 QP110 operating point; the CDF chain is the cost, the refresh adds ~2%.
 
 ## Per-tool contributions
@@ -94,6 +94,7 @@ the ones that stacked. Approximate contributions at or near the 100 kbps point:
 | Keyframe intra luma TX partition | +0.09 JOD |
 | Adaptive coefficient CDFs (per-frame reset) | −13.9% rate at identical decisions |
 | Key -16 → -25 offset (paid by the CDF saving) + drift refresh | +0.03 JOD |
+| Cross-frame CDF carry (`--cdf-continuity`) | −2.77% rate at identical decisions, key -27 retune +0.01 JOD |
 
 Positive changes that did **not** stack and are therefore explicit opt-ins,
 not part of nightly: the §8.3.2 TX context rate (it needs
@@ -108,6 +109,18 @@ refreshed frames 32-40) for +2.6% rate at the same QP, and it stacks with the
 CDF/key-QP move above. It is CPU-only, single-tile, cqp and 8-bit 4:2:0, and it
 composes with the CDF chain only while the refresh keeps every frame's QP
 (`--video-drift-refresh-qp 0`, the default).
+
+Cross-frame CDF carry is now decoder-gated and opt-in: `--nightly
+--cdf-continuity` keeps every decision (identical `--video-recon`, 60/60
+pictures under `dav2d --strict 1`) and cuts the pin from 24,904 B / 99.616 kbps
+to 24,214 B / 96.856 kbps, i.e. −2.77% rate. Spending it on the reference
+intro (`--video-key-qp-offset -27`) puts the iso-rate point at 24,885 B /
+99.540 kbps / 9.7177 JOD / 43.9358 dB: **+0.01 JOD / +0.07 dB** at 99.616
+kbps. The carried form also composes with `--video-drift-refresh` (the image
+follows the coded symbols, so a refresh frame needs no §9.3 re-derivation) and
+replaces the reset-per-frame opt-in inside `--nightly`; the reset form stays
+the fallback. See `docs/video-cdf-carry.md` and
+`src/pipeline/video/gate_video_cdf_carry.sh`.
 
 ## Inter residual RD (`--video-leaf-rd-lambda`)
 
@@ -154,12 +167,14 @@ carry: every frame starts from the §9.3 defaults, and
 **current frame's** `base_q_idx`, so the encoder re-derives the flat default
 image for every frame and a plan that crosses a qctx slice is legal. Pinned
 `dav2d` accepts that form: it installs exactly the same per-frame §9.3 image
-the encoder seeded. The carry form (`disable_cross_frame_cdf_init = 0`) is a
-separate story: the pinned decoder does implement §7.4.4, but our post-frame-1
-§7.5/§8.2.4 image diverges whenever that frame codes a real tile, and
-`--cdf-continuity` stays behind its env gate until that is fixed
-(`exp/rd7-floor` has the experiments; note `dav2d` exits 0 after failing
-pictures, so check the decoded frame count, not just the exit status).
+the encoder seeded. The carry form (`disable_cross_frame_cdf_init = 0`,
+`--cdf-continuity`) is now fixed and decoder-gated: the pinned decoder does
+implement §7.4.4, and the old "our §7.5 image diverges" verdict came from the
+encoder seeding the first P frame from the keyframe's context, which §5.18.2
+forces back to the §9.3 image (that frame has no INTER_FRAME reference). The
+nightly aggregate uses the carry when it is passed and the reset form
+otherwise; `docs/video-cdf-carry.md` has the measurements. Note `dav2d` exits 0
+after failing pictures, so check the decoded frame count, not the exit status.
 
 ### Same quality, fewer bytes
 
