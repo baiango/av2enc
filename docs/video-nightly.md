@@ -109,6 +109,18 @@ CDF/key-QP move above. It is CPU-only, single-tile, cqp and 8-bit 4:2:0, and it
 composes with the CDF chain only while the refresh keeps every frame's QP
 (`--video-drift-refresh-qp 0`, the default).
 
+## Inter residual RD (`--video-leaf-rd-lambda`)
+
+`--video-leaf-rd` prices a residual block as `coded SSE + lambda(qindex) *
+bits` with the anchor constant `c = 125` at QP104. The trace of frame 40 shows
+that constant, not the entropy coder, is what makes the drifted P frames skip
+every leaf: at QP80 the frame codes 0 of 58 leaves while the best leaf's coded
+SSE is 6x smaller than its prediction SSE. `--video-leaf-rd-lambda` exposes the
+anchor (default 125, byte-identical). Lowering it to 80 at matched rate gives
++0.019 JOD at -0.13 dB PSNR - a real direction but inside the ripple, so it is
+measurement evidence, not a shipped default. Analysis and the per-leaf tables:
+`docs/video-inter-residual-rd.md`.
+
 ## Leaf RD cost (`--video-leaf-rd`)
 
 One cost replaces the three historical leaf heuristics (inter-candidate

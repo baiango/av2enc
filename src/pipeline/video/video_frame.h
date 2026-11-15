@@ -265,6 +265,9 @@ struct VideoOptions {
   // tool it lowers rate and raises PSNR slightly; the default skip-only path
   // is rate-neutral because it has no inter residual leaves to search.
   double tx_rd_lambda = 256.0;
+  // Anchor constant of the --video-leaf-rd lambda (125 is the measured
+  // 100 kbps calibration; see docs/video-nightly.md).
+  double leaf_rd_lambda_ref = 125.0;
   // Opt-in keyframe intra luma TX partition (--video-key-intra-txpart).  The
   // TX search's single-predictor contract cannot code an intra partition, so
   // the still encoder's chain is ported here: each candidate part is predicted

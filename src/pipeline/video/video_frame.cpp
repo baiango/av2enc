@@ -1181,10 +1181,10 @@ bool luma_plan_all_zero(const TxPlan& plan) {
 constexpr double kLeafRdLambdaRef = 125.0;
 constexpr double kLeafRdLambdaRefStep = 98.0;  // qlookup(104) / 8
 
-double leaf_rd_lambda(int qindex) {
+double leaf_rd_lambda(int qindex, double ref = kLeafRdLambdaRef) {
   const int q = std::clamp(qindex, 0, 255);
   const double step = static_cast<double>(rc::kQlookupQ0To255[q]) / 8.0;
-  return kLeafRdLambdaRef * std::sqrt(step / kLeafRdLambdaRefStep);
+  return ref * std::sqrt(step / kLeafRdLambdaRefStep);
 }
 
 bool y_mode_directional(std::uint8_t mode) { return mode >= 1 && mode <= 8; }
@@ -5540,7 +5540,9 @@ class InterFrameEncoder {
     // decision uses, so a NEWMV that wins by a handful of SSE but costs ten
     // MVD bits no longer shadows a NEARMV/GLOBALMV that codes zero MVD.
     const double inter_lambda =
-        options_.enable_leaf_rd ? leaf_rd_lambda(current_qindex_) : 0.0;
+        options_.enable_leaf_rd
+            ? leaf_rd_lambda(current_qindex_, options_.leaf_rd_lambda_ref)
+            : 0.0;
     const auto inter_cost = [&](const InterCandidate& cand) {
       return static_cast<double>(cand.sse) +
              inter_lambda * inter_syntax_bits(cand.mode, cand.drl_index,
@@ -6751,9 +6753,10 @@ class InterFrameEncoder {
         // Reconstruction step is qlookup/8 (66 at QP 90); sse_scale 0.5 is
         // the M1 calibrated value.  --video-leaf-rd swaps in the same
         // QP-derived lambda the intra/inter decision uses.
-        const double kLambda = options_.enable_leaf_rd
-                                   ? leaf_rd_lambda(current_qindex_)
-                                   : options_.inter_rd_lambda;
+        const double kLambda =
+            options_.enable_leaf_rd
+                ? leaf_rd_lambda(current_qindex_, options_.leaf_rd_lambda_ref)
+                : options_.inter_rd_lambda;
         const double res_bits = 3.0 + luma_plan_bits(res_y, true) +
                                 estimate_tx_bits(res_u, false) +
                                 estimate_tx_bits(res_v, false);
@@ -6762,6 +6765,20 @@ class InterFrameEncoder {
             (!all_zero &&
              static_cast<double>(res_total) + kLambda * res_bits <
                  static_cast<double>(pred_total) + kLambda * 2.0);
+        if (trace_) {
+          std::cerr << "  ileaf " << w << "x" << h << " at " << x0 << ","
+                    << y0 << " mv=" << best.mv.y << "," << best.mv.x
+                    << " ref=" << static_cast<int>(best.ref_index)
+                    << " pred=" << pred_total << " res=" << res_total
+                    << " rbits=" << res_bits << " parts=" << res_y.parts.size()
+                    << " eob=" << res_y.eob << " zero=" << (all_zero ? 1 : 0)
+                    << " want=" << (want ? 1 : 0);
+          for (const TxPlan::Part& part : res_y.parts) {
+            std::cerr << " [" << part.coded_w << "x" << part.coded_h << "/e"
+                      << part.eob << "]";
+          }
+          std::cerr << "\n";
+        }
         if (want) {
           inter_residual = true;
           inter_y = res_y.recon;

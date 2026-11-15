@@ -308,6 +308,7 @@ struct Options {
   // context model yet) still matches the CPU reference byte for byte.
   bool video_tx_context_rate = false;
   double video_tx_lambda = 256.0;
+  double video_leaf_rd_lambda = 125.0;
   // Opt-in rate-aware §5.20.3.1 partition decision (CPU reference).  See
   // VideoOptions::partition_rd; --nightly enables it.
   bool video_partition_rd = false;
@@ -2824,6 +2825,21 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
 
     if (argument == "--video-ddt") {
       options.video_ddt = true;
+      continue;
+    }
+
+    if (argument == "--video-leaf-rd-lambda") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-leaf-rd-lambda'";
+        return ParseStatus::kError;
+      }
+      char* end = nullptr;
+      const double value = std::strtod(argv[++i], &end);
+      if (end == argv[i] || *end != '\0' || !(value > 0.0)) {
+        error = "--video-leaf-rd-lambda needs a positive number";
+        return ParseStatus::kError;
+      }
+      options.video_leaf_rd_lambda = value;
       continue;
     }
 
@@ -7407,6 +7423,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_key_intra_tx_part = options.video_key_intra_txpart;
   video_options.tx_context_rate = options.video_tx_context_rate;
   video_options.tx_rd_lambda = options.video_tx_lambda;
+  video_options.leaf_rd_lambda_ref = options.video_leaf_rd_lambda;
   video_options.partition_rd = options.video_partition_rd;
   video_options.partition_probe_lambda = options.video_partition_lambda;
   video_options.partition_probe_depth = options.video_partition_depth;
