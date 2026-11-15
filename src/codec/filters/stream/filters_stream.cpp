@@ -752,7 +752,8 @@ bool validate_ccso_plane(const CcsoPlaneParams& p, std::string* error) {
 
 std::size_t write_ccso_params(BitWriter& writer, CcsoParams& params,
                               const CcsoHeaderContext& context,
-                              std::string* error) {
+                              std::string* error, CcsoHeaderBits* bits) {
+  if (bits != nullptr) *bits = CcsoHeaderBits{};
   if (context.coded_lossless || !context.enable_ccso) {
     params.frame_flag = false;
     for (int p = 0; p < 3; ++p) params.plane[p].enabled = false;
@@ -765,13 +766,22 @@ std::size_t write_ccso_params(BitWriter& writer, CcsoParams& params,
   } else {
     writer.put_bit(params.frame_flag);
   }
-  if (!params.frame_flag) return writer.bit_size() - start;
+  if (!params.frame_flag) {
+    if (bits != nullptr) bits->total = bits->frame_flag =
+        writer.bit_size() - start;
+    return writer.bit_size() - start;
+  }
+  if (bits != nullptr) bits->frame_flag = writer.bit_size() - start;
 
   for (int plane = 0; plane < context.num_planes; ++plane) {
     CcsoPlaneParams& p = params.plane[plane];
     if (!validate_ccso_plane(p, error)) return 0;
+    const std::size_t plane_start = writer.bit_size();
     writer.put_bit(p.enabled);
-    if (!p.enabled) continue;
+    if (!p.enabled) {
+      if (bits != nullptr) ++bits->plane_flags;
+      continue;
+    }
     if (context.frame_is_intra) {
       params.reuse_ccso[plane] = false;
       params.sb_reuse_ccso[plane] = false;
@@ -783,6 +793,8 @@ std::size_t write_ccso_params(BitWriter& writer, CcsoParams& params,
       writer.put_bit(params.reuse_ccso[plane]);
       writer.put_bit(params.sb_reuse_ccso[plane]);
     }
+    if (bits != nullptr) bits->plane_flags += writer.bit_size() - plane_start;
+    const std::size_t params_start = writer.bit_size();
     writer.put_bit(p.bo_only);
     writer.put_bits(static_cast<std::uint32_t>(p.scale_idx), 2U);
     if (p.bo_only) {
@@ -802,17 +814,32 @@ std::size_t write_ccso_params(BitWriter& writer, CcsoParams& params,
     const int band_bits = 2 + (p.bo_only ? 1 : 0);
     writer.put_bits(static_cast<std::uint32_t>(p.max_band_log2),
                     static_cast<unsigned>(band_bits));
+    if (bits != nullptr) bits->plane_params += writer.bit_size() - params_start;
+    const std::size_t table_start = writer.bit_size();
     const int interval = p.bo_only ? 1 : (3 - p.edge_clf);
     const int bands = 1 << p.max_band_log2;
     std::size_t k = 0;
     for (int d0 = 0; d0 < interval; ++d0) {
       for (int d1 = 0; d1 < interval; ++d1) {
         for (int band = 0; band < bands; ++band) {
-          put_tu(writer, 7U, p.offset_idx[k++]);
+          const std::uint8_t idx = p.offset_idx[k++];
+          put_tu(writer, 7U, idx);
+          if (bits != nullptr) {
+            ++bits->table_symbols[plane];
+            if (idx != 0) ++bits->table_nonzero[plane];
+          }
         }
       }
     }
+    if (bits != nullptr) {
+      const std::size_t table_bits = writer.bit_size() - table_start;
+      bits->table += table_bits;
+      bits->plane_table[plane] = table_bits;
+      bits->plane_total[plane] = writer.bit_size() - plane_start;
+      ++bits->num_planes;
+    }
   }
+  if (bits != nullptr) bits->total = writer.bit_size() - start;
   return writer.bit_size() - start;
 }
 

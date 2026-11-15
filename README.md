@@ -46,7 +46,9 @@ decisions are used.
 **Objectives**
 
 - **CPU:** maximize CVVDP/JOD at **480x240 (240p, 2:1) @ 30 fps, 100 kbps**.
-  Quality is the KPI, not CPU speed.
+  Quality is the KPI, not CPU speed. **The target to beat is SVT-AV1 v4.1.0
+  preset 0** — the mature AV1 quality reference — at matched bitrate. AVM is
+  kept only as a historical calibration point.
 - **GPU:** use the decisions calibrated at 240p30/100 kbps unchanged, and
   maximize **1440x720** encode throughput as a cross-encoder benchmark.
 
@@ -60,8 +62,8 @@ Old Shine rows are historical.
 |---|---|---:|---:|---:|---:|
 | CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 23.7 fps (1 thread) / 54.6 fps (8 threads) |
 | CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 27.58 dB | 23.4 fps (8 threads) |
-| CPU 240p30, `--nightly` QP 110 | Apple M4 | 99.5 / - kbps | **9.718 JOD** | **43.94 dB** | 7.6 fps (8 threads) |
-| AVM CBR (NASA, target 34 kbps) | Apple M4 | 99.5 / - kbps | 8.452 JOD | 36.53 dB | 1.94 fps |
+| CPU 240p30, `--nightly` QP 110 | Apple M4 | 96.5 / - kbps | **9.713 JOD** | **43.89 dB** | 7.6 fps (8 threads) |
+| AVM CBR (NASA, historical) | Apple M4 | 99.5 / - kbps | 8.452 JOD | 36.53 dB | 1.94 fps |
 | SVT-AV1 4.1.0, CRF 42, preset 4 (NASA) | Apple M4 | 100.2 / - kbps | 9.756 JOD | 45.92 dB | 306 fps |
 | SVT-AV1 4.1.0, CRF 36.5, preset 0 (NASA) | Apple M4 | 100.3 / - kbps | **9.830 JOD** | **48.80 dB** | 16.6 fps |
 | CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | 49.4 fps |
@@ -78,11 +80,18 @@ is superseded because the binaries are not directly comparable. `quality` and
 `--nightly` are CPU-only; the default and GPU paths keep the historical
 25,009-byte stream / MD5 `a1d0dba1259b20a4b628d4cd1e14c33c`. The `quality`
 stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP110
-stream is 24,885 B / MD5 `5e316100ce7fd709b4298ccfebfffccd`. At ~100 kbps,
-nightly is +4.92 JOD over the default and +3.42 JOD over `quality`. The
+stream is 24,113 B / MD5 `7f03eb6e82d6ba4cf6666c78285f945b` (96.5 kbps). At
+iso-rate ~100 kbps, nightly is +4.91 JOD over the default and +3.41 JOD over
+`quality`. The
 aggregate now also carries adaptive coefficient CDFs (a −13.9% entropy saving at
 identical decisions, which pays for a `-25` key offset instead of `-16`) and the
 drift-triggered inter refresh. See `docs/video-nightly.md`.
+
+On **real detail** the picture changes: with a 1440x720/60 clip derived from an
+8192x4096 8K master at 300 kbps, SVT preset 0 is **1.26 JOD / 3.3 dB ahead**
+(7.01 vs 8.27 JOD). The smooth NASA 720p upscale gives the opposite sign
+(+0.16 JOD for av2enc), so 720p numbers must name their content. Method, clip
+build and the full ladder: `bench/space8k_720p/README.md`.
 
 SVT-AV1 v4.1.0 was measured at two presets, decoded with `dav1d`, and scored
 with the same `tools/quality.py` CVVDP model. **Preset 4 / CRF 42** gives
@@ -90,8 +99,8 @@ with the same `tools/quality.py` CVVDP model. **Preset 4 / CRF 42** gives
 **100.26 kbps / 9.830 JOD / 48.80 dB** at 16.6 fps (CRF 35 = 106.0, 36 = 101.7,
 36.5 = 100.26, 37 = 97.7). Preset 0 is the quality reference; preset 4 is the
 speed reference. AV1 is not AV2, so these are cross-encoder calibration points,
-not codec-parity claims. At this rate the nightly AV2 stream is **−0.039 JOD /
-−1.86 dB** versus preset 4 and **−0.113 JOD / −4.74 dB** versus preset 0.
+not codec-parity claims. At this rate the nightly AV2 stream is **−0.043 JOD /
+−1.90 dB** versus preset 4 and **−0.117 JOD / −4.78 dB** versus preset 0.
 
 The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
 25,009-byte stream as the CPU reference (`100.0 / 100.0 kbps`, MD5
@@ -442,11 +451,13 @@ Agent worktrees and branches live outside the main checkout.
 ## Quality
 
 `tools/quality.py` computes bitrate, PSNR, SSIM, and CVVDP (JOD) for an IVF.
-It also records `decode_fps` and `decode_realtime_x` from `dav2d`. The current
-AVM reference point is the NASA 240p30 row in the baseline table above
-(99.5 kbps, 8.452 JOD); the historical Shine 720p sweep is archived in
-`bench/avm_baseline/README.md`. Compare at matched bitrate, and always confirm
-`dav2d` decoded the stream first. A fast-decode
+It also records `decode_fps` and `decode_realtime_x` from `dav2d`. The
+cross-encoder **target is SVT-AV1 v4.1.0 preset 0**, measured on the same clip,
+decoded with `dav1d` and scored with the same model: 100.3 kbps / 9.830 JOD /
+48.80 dB. The AVM CBR row in the baseline table (99.5 kbps, 8.452 JOD) is
+retained as a historical calibration point, not the target; the archived Shine
+720p sweep is in `bench/avm_baseline/README.md`. Compare at matched bitrate, and
+always confirm `dav2d` decoded the stream first. A fast-decode
 profile is deferred until quality and encode speed are settled.
 
 `tools/score_speed.py` reports speed vs CVVDP. `tools/score_tradeoff.py` enforces

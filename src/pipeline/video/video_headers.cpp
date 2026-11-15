@@ -103,6 +103,14 @@ std::uint32_t superblock_mi(const VideoConfig& c, bool frame_is_intra) {
   return c.use_128x128_superblock ? 32U : 16U;
 }
 
+// §5.18.7.6 get_seq_sb_size(): the sequence-level coding root.  Unlike
+// superblock_mi() it carries no §5.18.1 intra clamp, because the sequence-level
+// tile_params() runs before any frame exists.
+std::uint32_t seq_superblock_mi(const VideoConfig& c) {
+  if (c.use_256x256_superblock) return 64U;
+  return c.use_128x128_superblock ? 32U : 16U;
+}
+
 int tile_log2(int blk_size, int target) {
   int k = 0;
   while ((blk_size << k) < target) ++k;
@@ -159,12 +167,41 @@ TileIncrementBits tile_increment_bits(const VideoConfig& c,
   return out;
 }
 
-void write_tile_info(BitWriter& writer, const VideoConfig& c,
-                     bool frame_is_intra) {
+// §5.18.7.2 uniform_eligible().
+bool uniform_eligible(std::uint32_t tile_log2, std::uint32_t sb_num) {
+  const std::uint32_t tile_num = 1U << tile_log2;
+  const std::uint32_t tile_width = (sb_num + tile_num - 1U) >> tile_log2;
+  const std::uint32_t last_tile_width = sb_num - (tile_num - 1U) * tile_width;
+  return tile_width >= 1U && last_tile_width >= 1U;
+}
+
+// §5.18.7.2: does this frame infer reuse_tile_info = 1, i.e. code no tile bits?
+// --video-tile-group-compact writes the one-tile grid in the sequence header
+// with allow_tile_info_change = 0, so reuse_tile_info is inferred (not coded)
+// whenever the sequence grid is eligible for this frame.  Our sequence grid is
+// one uniformly spaced tile, i.e. SeqUniformTileSpacingFlag = 1 and
+// SeqTileColsLog2 = SeqTileRowsLog2 = 0, so the §5.18.7.2 test reduces to
+// uniform_eligible(0, sbCols) && uniform_eligible(0, sbRows): true for any
+// frame geometry and SbSize, because a single tile always spans at least one
+// superblock.  The non-uniform branch (SeqSbCols == sbCols) cannot apply here.
+bool tile_info_reused(const VideoConfig& c, bool frame_is_intra) {
+  if (!c.seq_tile_info_present) return false;
   const std::uint32_t sb_mi = superblock_mi(c, frame_is_intra);
   const std::uint32_t sb_cols = (mi_cols(c) + sb_mi - 1U) / sb_mi;
   const std::uint32_t sb_rows = (mi_rows(c) + sb_mi - 1U) / sb_mi;
+  return uniform_eligible(0U, sb_cols) && uniform_eligible(0U, sb_rows);
+}
+
+// §5.18.7.3 tile_params(): uniform_tile_spacing_flag = 1 with one tile, so
+// every coded increment is 0.  The number of increment bits depends on the SB
+// size used for the grid (frame SbSize at frame level, seqSbSize at sequence
+// level) and on the level limits.  Returns the number of bits written.
+std::size_t write_tile_params(BitWriter& writer, const VideoConfig& c,
+                              std::uint32_t sb_mi) {
+  const std::uint32_t sb_cols = (mi_cols(c) + sb_mi - 1U) / sb_mi;
+  const std::uint32_t sb_rows = (mi_rows(c) + sb_mi - 1U) / sb_mi;
   assert(sb_cols >= 1U && sb_rows >= 1U);
+  const std::size_t start = writer.bit_size();
   writer.put_bit(true);  // uniform_tile_spacing_flag
   const TileIncrementBits bits = tile_increment_bits(
       c, static_cast<int>(sb_mi), static_cast<int>(sb_cols),
@@ -179,6 +216,14 @@ void write_tile_info(BitWriter& writer, const VideoConfig& c,
   for (int i = 0; i < bits.rows; ++i) {
     writer.put_bit(false);  // increment_tile_rows_log2 = 0
   }
+  return writer.bit_size() - start;
+}
+
+void write_tile_info(BitWriter& writer, const VideoConfig& c,
+                     bool frame_is_intra) {
+  // §5.18.7.2: a reusable sequence grid codes nothing at all.
+  if (tile_info_reused(c, frame_is_intra)) return;
+  write_tile_params(writer, c, superblock_mi(c, frame_is_intra));
 }
 
 std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
@@ -494,8 +539,16 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   }
   writer.put_bits(0U, 2U); // df_par_bits_minus_2
 
-  // §5.4.2 sequence_tile_config().
-  writer.put_bit(false);  // seq_tile_info_present_flag
+  // §5.4.2 sequence_tile_config().  --video-tile-group-compact moves the
+  // single-tile grid out of the 60 frame headers: seq_tile_info_present_flag = 1
+  // writes allow_tile_info_change = 0 plus tile_params(), and every frame with a
+  // reusable grid then infers reuse_tile_info = 1 (§5.18.7.2) and codes no tile
+  // bits at all.  Off keeps the historical zero bit.
+  writer.put_bit(c.seq_tile_info_present);  // seq_tile_info_present_flag
+  if (c.seq_tile_info_present) {
+    writer.put_bit(false);  // allow_tile_info_change = 0
+    write_tile_params(writer, c, seq_superblock_mi(c));
+  }
 
   writer.put_bit(c.film_grain_params_present);  // §5.14 film grain models
 
@@ -534,9 +587,39 @@ FrameScreenContentBits write_frame_screen_content_params(
   return out;
 }
 
+// §5.18.2 reference/order-hint bit probe.  AV2ENC_TRACE_REF_BITS=1 prints one
+// line per coded frame with the exact bit cost of every reference-related
+// field, so the aggregate can be summed with awk (key= value... pairs):
+//   refsig key=<0|1> hint=<bits> primary=<bits> cdf=<bits> refresh=<bits>
+//          map=<bits> nrefs=<bits> refidx=<bits> n=<count> header=<bits>
+struct RefBitProbe {
+  bool on = std::getenv("AV2ENC_TRACE_REF_BITS") != nullptr;
+  std::size_t hint = 0;
+  std::size_t primary = 0;
+  std::size_t cdf = 0;
+  std::size_t refresh = 0;
+  std::size_t map = 0;
+  std::size_t nrefs = 0;
+  std::size_t refidx = 0;
+};
+
+void emit_ref_bit_probe(const RefBitProbe& p, const VideoFrameHeader& h,
+                        std::size_t header_bits) {
+  if (!p.on) return;
+  std::fprintf(stderr,
+               "refsig key=%d hint=%zu primary=%zu cdf=%zu refresh=%zu "
+               "map=%zu nrefs=%zu refidx=%zu n=%d header=%zu total_ref=%zu\n",
+               h.keyframe ? 1 : 0, p.hint, p.primary, p.cdf, p.refresh, p.map,
+               p.nrefs, p.refidx, static_cast<int>(h.num_total_refs),
+               header_bits,
+               p.hint + p.primary + p.cdf + p.refresh + p.map + p.nrefs +
+                   p.refidx);
+}
+
 std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
                                       const VideoFrameHeader& h) {
   const std::size_t start = writer.bit_size();
+  RefBitProbe probe;
   assert(c.base_q_idx >= 1U);
   assert(c.base_q_idx <=
          static_cast<unsigned>(fmt::max_quantizer(c.depth)));
@@ -558,7 +641,11 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
   }
 
   writer.put_bit(false);  // frame_size_override_flag = 0
-  writer.put_bits(h.order_hint, c.order_hint_bits);  // order_hint
+  {
+    const std::size_t before = writer.bit_size();
+    writer.put_bits(h.order_hint, c.order_hint_bits);  // order_hint
+    probe.hint += writer.bit_size() - before;
+  }
 
   if (key) {
     // FrameIsIntra -> primary_ref_frame = PRIMARY_REF_NONE, no bits.
@@ -583,26 +670,38 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
       }
     }
   } else {
-    writer.put_bit(h.signal_primary_ref_frame);
+    {
+      const std::size_t before = writer.bit_size();
+      writer.put_bit(h.signal_primary_ref_frame);
+      probe.primary += writer.bit_size() - before;
+    }
     // §5.18.2: disable_cross_frame_cdf_init is absent for a TIP frame.
     if (!h.tip_frame) {
+      const std::size_t before = writer.bit_size();
       writer.put_bit(h.disable_cross_frame_cdf_init);
+      probe.cdf += writer.bit_size() - before;
     }
     if (h.signal_primary_ref_frame) {
+      const std::size_t before = writer.bit_size();
       writer.put_bits(h.primary_ref_frame, 3U);  // primary_ref_frame
+      probe.primary += writer.bit_size() - before;
     }
     // refresh_frame_flags is coded after the primary-ref block
     // (§5.18.2).  The compact form replaces the full mask with
     // has_refresh_frame_flags + one frame_to_refresh index; 0 refreshes no
     // slot.  The long form is the historical f(NumRefFrames) mask.
-    if (c.enable_short_refresh_frame_flags) {
-      writer.put_bit(h.has_refresh_frame_flags);
-      if (h.has_refresh_frame_flags) {
-        writer.put_bits(h.frame_to_refresh,
-                        static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
+    {
+      const std::size_t before = writer.bit_size();
+      if (c.enable_short_refresh_frame_flags) {
+        writer.put_bit(h.has_refresh_frame_flags);
+        if (h.has_refresh_frame_flags) {
+          writer.put_bits(h.frame_to_refresh,
+                          static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
+        }
+      } else {
+        writer.put_bits(h.refresh_frame_flags, c.num_ref_frames);
       }
-    } else {
-      writer.put_bits(h.refresh_frame_flags, c.num_ref_frames);
+      probe.refresh += writer.bit_size() - before;
     }
     // §5.18.2 reference map.  The frame_explicit_ref_frame_map bit is only
     // coded when the sequence header enables the choice; with
@@ -611,9 +710,18 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     const unsigned num_refs =
         h.num_total_refs == 0 ? c.num_total_refs : h.num_total_refs;
     if (c.explicit_ref_frame_map) {
-      writer.put_bit(h.frame_explicit_ref_frame_map);
+      {
+        const std::size_t before = writer.bit_size();
+        writer.put_bit(h.frame_explicit_ref_frame_map);
+        probe.map += writer.bit_size() - before;
+      }
       if (h.frame_explicit_ref_frame_map) {
-        writer.put_bits(num_refs, 3U);  // num_total_refs
+        {
+          const std::size_t before = writer.bit_size();
+          writer.put_bits(num_refs, 3U);  // num_total_refs
+          probe.nrefs += writer.bit_size() - before;
+        }
+        const std::size_t before = writer.bit_size();
         if (num_refs <= 1U) {
           writer.put_bits(h.ref_slot,
                           static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
@@ -623,6 +731,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
                             static_cast<unsigned>(ceil_log2(c.num_ref_frames)));
           }
         }
+        probe.refidx += writer.bit_size() - before;
       }
     }
     // frame_size_override_flag == 0 -> frame_size() codes no bits.
@@ -686,6 +795,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
         grain::WriteFilmGrainConfig(writer, config, context, &grain_error);
         assert(grain_error.empty());
       }
+      emit_ref_bit_probe(probe, h, writer.bit_size() - start);
       return writer.bit_size() - start;
     }
     // use_ref_frame_mvs = 0, TipFrameMode = TIP_FRAME_DISABLED.
@@ -1043,6 +1153,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     assert(grain_error.empty());
   }
 
+  emit_ref_bit_probe(probe, h, writer.bit_size() - start);
   return writer.bit_size() - start;
 }
 
@@ -1103,6 +1214,12 @@ std::size_t write_tile_group_header(BitWriter& writer, const VideoConfig& config
   writer.put_bit(true);  // is_first_tile_group
   write_frame_header_syntax(writer, config, header);
   // tile_start_and_end_present_flag is absent (NumTiles == 1).
+  if (std::getenv("AV2ENC_TRACE_FRAME_OBU") != nullptr) {
+    std::fprintf(stderr, "tile_group_header body_bits=%zu pad_bits=%u key=%d\n",
+                 writer.bit_size() - start,
+                 static_cast<unsigned>((8U - (writer.bit_size() & 7U)) & 7U),
+                 header.keyframe ? 1 : 0);
+  }
   writer.align_to_byte();
   return writer.bit_size() - start;
 }

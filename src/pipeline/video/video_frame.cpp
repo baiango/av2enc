@@ -2599,6 +2599,180 @@ class InterFrameEncoder {
     return true;
   }
 
+  // --video-skip-collapse (§5.20.3.2 tree rewrite, opt-in).
+  //
+  // A superblock whose coded leaves are all plain zero-motion inter skips
+  // predicts each 4x4 cell by copying the reference at the same position.
+  // Replacing that subtree with one superblock-sized skip leaf therefore
+  // reproduces exactly the same reconstruction while coding one partition
+  // symbol per superblock instead of the tree.  Eligibility is read from the
+  // leaves the decision pass just produced, so nothing is guessed: a leaf
+  // that codes a residual, moves, or uses any mode that changes the predictor
+  // (compound, TIP, BAWP, inter-intra, morph, global MV) disqualifies its
+  // superblock.  A rewritten superblock that the leaf coder does not reproduce
+  // as a plain zero-motion skip is restored and the frame re-collected.
+  //
+  // Returns true (and leaves the tree alone) when the option is off.
+  template <typename CollectFn>
+  bool collapse_static_superblocks(std::vector<PartitionNode>& superblocks,
+                                   const partition::DecisionOptions& tree_options,
+                                   CollectFn&& collect_frame,
+                                   std::string& error) {
+    if (!options_.skip_collapse || keyframe_) return true;
+    // The rewrite assumes whole-frame MI coordinates, one tile and a 64x64
+    // superblock (a 128/256 root always has to code a partition).
+    if (sb_size_ > 64 || width_ != static_cast<int>(source_.width) ||
+        height_ != static_cast<int>(source_.height) ||
+        superblocks.empty()) {
+      return true;
+    }
+    // §5.18.7.1/.8 codes a per-superblock delta at the first leaf unless the
+    // block is a full-SB skip, so a quantiser plan is not modelled here.
+    if (options_.enable_segmentation || options_.enable_delta_q ||
+        options_.per_segment_q || options_.enable_sdp) {
+      return true;
+    }
+
+    const int sb_cols = partition::sb_cols(geometry_);
+    const int sb_rows = partition::sb_rows(geometry_);
+    if (sb_cols * sb_rows != static_cast<int>(superblocks.size())) {
+      error = "skip collapse: superblock grid does not match the tree";
+      return false;
+    }
+    // Group the coded leaves by superblock root and mark the all-static ones.
+    std::vector<char> candidate(superblocks.size(), 0);
+    std::size_t index = 0;
+    int sb = 0;
+    while (index < blocks_.size()) {
+      const syntax::BlockSyntax& root = blocks_[index];
+      if ((root.flags & syntax::kFlagSbRoot) == 0) {
+        error = "skip collapse: node is not rooted in a superblock";
+        return false;
+      }
+      const std::size_t end =
+          index + 1 + static_cast<std::size_t>(root.subtree);
+      if (end > blocks_.size() || sb >= static_cast<int>(candidate.size())) {
+        error = "skip collapse: inconsistent block tree";
+        return false;
+      }
+      bool static_sb = true;
+      // A GLOBALMV leaf predicts with the §7.12.2.2 global motion vector, so
+      // it is only a plain copy when the frame codes no global motion at all.
+      const bool global_mv_is_zero =
+          !options_.enable_gme && !options_.enable_warp;
+      for (std::size_t k = index; k < end && static_sb; ++k) {
+        const syntax::BlockSyntax& leaf = blocks_[k];
+        if (leaf.partition != static_cast<std::uint8_t>(PartitionType::kNone)) {
+          continue;  // an internal node, not a coded leaf
+        }
+        const bool mode_is_zero_motion =
+            leaf.inter_mode !=
+                static_cast<std::uint8_t>(syntax::kInterGlobalMv) ||
+            global_mv_is_zero;
+        const bool plain_skip =
+            leaf.is_inter != 0 && leaf.skip_flag != 0 && leaf.compound == 0 &&
+            leaf.tip_mode == 0 && leaf.motion_mode == 0 &&
+            leaf.use_bawp == 0 && leaf.use_bawp_chroma == 0 &&
+            leaf.explicit_bawp == 0 && leaf.explicit_bawp_scale == 0 &&
+            leaf.use_optflow == 0 && leaf.use_refinemv == 0 &&
+            leaf.morph_pred == 0 && leaf.ref_index == 0 && leaf.mv_y == 0 &&
+            leaf.mv_x == 0 && mode_is_zero_motion &&
+            (leaf.flags & syntax::kFlagIsIbc) == 0 && leaf.tree_type == 0;
+        if (!plain_skip) static_sb = false;
+      }
+      if (static_sb) candidate[static_cast<std::size_t>(sb)] = 1;
+      index = end;
+      ++sb;
+    }
+    if (sb != static_cast<int>(candidate.size())) {
+      error = "skip collapse: block tree does not cover every superblock";
+      return false;
+    }
+
+    // Cheapest legal tree for one superblock: PARTITION_NONE costs nothing and
+    // every optional split is unaffordable.  Spec-forced splits (frame
+    // boundary) carry no signal cost and are still taken.
+    const partition::CostFunction collapse_cost =
+        [](const partition::PartitionNodeInfo& info) {
+          partition::NodeCosts costs;
+          const int bw = partition::block_width(info.size);
+          const int bh = partition::block_height(info.size);
+          costs.leaf = (bw <= 64 && bh <= 64) ? 0.0 : partition::kInfiniteCost;
+          constexpr double kUnreachable = 1.0e12;
+          costs.split_signal = kUnreachable;
+          costs.horz_signal = kUnreachable;
+          costs.vert_signal = kUnreachable;
+          return costs;
+        };
+
+    const int sb_mi = partition::sb_size_mi(geometry_);
+    const std::vector<PartitionNode> solved = superblocks;
+    std::vector<char> rewritten(superblocks.size(), 0);
+    int rewrites = 0;
+    for (std::size_t s = 0; s < superblocks.size(); ++s) {
+      if (!candidate[s]) continue;
+      if (superblocks[s].partition == PartitionType::kNone) continue;
+      const int sb_row =
+          static_cast<int>(s / static_cast<std::size_t>(sb_cols)) * sb_mi;
+      const int sb_col =
+          static_cast<int>(s % static_cast<std::size_t>(sb_cols)) * sb_mi;
+      const partition::PartitionDecision decision =
+          partition::decide_superblock(geometry_, sb_row, sb_col,
+                                       collapse_cost, tree_options);
+      if (decision.status != partition::DecisionStatus::kOk) continue;
+      superblocks[s] = decision.root;
+      rewritten[s] = 1;
+      ++rewrites;
+    }
+    if (rewrites == 0) return true;
+
+    // Verify: the rewritten superblock must come back as one plain
+    // zero-motion skip leaf.  Anything else goes back to its solved tree.
+    for (int pass = 0; pass < 3; ++pass) {
+      if (!collect_frame()) return false;
+      std::vector<char> revert(superblocks.size(), 0);
+      std::size_t cursor = 0;
+      int cell = 0;
+      while (cursor < blocks_.size()) {
+        const syntax::BlockSyntax& root = blocks_[cursor];
+        const std::size_t end =
+            cursor + 1 + static_cast<std::size_t>(root.subtree);
+        if (end > blocks_.size() ||
+            cell >= static_cast<int>(superblocks.size())) {
+          error = "skip collapse: inconsistent block tree";
+          return false;
+        }
+        if (rewritten[static_cast<std::size_t>(cell)]) {
+          const bool collapsed =
+              root.subtree == 0 &&
+              root.partition ==
+                  static_cast<std::uint8_t>(PartitionType::kNone) &&
+              root.is_inter != 0 && root.skip_flag != 0 && root.compound == 0 &&
+              root.mv_y == 0 && root.mv_x == 0 && root.ref_index == 0;
+          if (!collapsed) revert[static_cast<std::size_t>(cell)] = 1;
+        }
+        cursor = end;
+        ++cell;
+      }
+      if (cell != static_cast<int>(superblocks.size())) {
+        error = "skip collapse: block tree does not cover every superblock";
+        return false;
+      }
+      bool any_bad = false;
+      for (std::size_t s = 0; s < revert.size(); ++s) {
+        if (revert[s]) any_bad = true;
+      }
+      if (!any_bad) return true;
+      for (std::size_t s = 0; s < superblocks.size(); ++s) {
+        if (!revert[s]) continue;
+        superblocks[s] = solved[s];
+        rewritten[s] = 0;
+      }
+    }
+    error = "skip collapse: partition collapse did not settle";
+    return false;
+  }
+
   // Decision + reconstruction phase (no syntax, no filters).  Kept
   // separate so a multi-tile frame can run one frame-level filter pass
   // after every tile has been reconstructed.
@@ -2829,6 +3003,7 @@ class InterFrameEncoder {
 
 #if defined(AV2ENC_VIDEO_DELTAQ)
     if (!prepare_qp_plan(error)) return false;
+#endif
     const auto collect_frame = [&]() -> bool {
       blocks_.clear();
       levels_.clear();
@@ -2846,12 +3021,15 @@ class InterFrameEncoder {
       }
       inter_blocks_ = 0;
       intra_blocks_ = 0;
+#if defined(AV2ENC_VIDEO_DELTAQ)
       if (seg_enabled_) {
         deltaq::clear_above_context(enc_seg_grid_);
         deltaq::clear_left_context(enc_seg_grid_);
       }
+#endif
       return collect_superblocks();
     };
+#if defined(AV2ENC_VIDEO_DELTAQ)
     if (qp_tools_active()) {
       if (delta_q_enabled_) {
         std::vector<int> effective(
@@ -2889,16 +3067,19 @@ class InterFrameEncoder {
       } else if (!collect_frame()) {
         return false;
       }
-      return true;
+    } else if (!collect_frame()) {
+      return false;
     }
-    return collect_frame();
 #else
-    blocks_.clear();
-    levels_.clear();
-    palettes_.clear();
-    if (palette_enabled_) palette_state_.reset(mi_cols_, mi_rows_);
-    return collect_superblocks();
+    if (!collect_frame()) return false;
 #endif
+    // --video-skip-collapse: rewrite all-static superblocks to one skip leaf
+    // and re-collect.  Default off (returns immediately).
+    if (!collapse_static_superblocks(base_superblocks, poptions, collect_frame,
+                                     error)) {
+      return false;
+    }
+    return true;
   }
 
   // Runs the §7.18-§7.20 decision + pixel stage on this encoder's
@@ -3165,6 +3346,7 @@ class InterFrameEncoder {
     config.num_same_ref_compound =
         (options_.same_ref_compound && num_total_refs_ > 1) ? 1U : 0U;
     config.disable_cdf_update = !options_.adaptive_cdf;
+    config.minimal_tile_trailer = options_.minimal_tile_trailer;
     config.enable_avg_cdf = options_.avg_cdf;
     config.avg_cdf_type = true;
     config.enable_cfl_intra = true;
@@ -5138,7 +5320,9 @@ class InterFrameEncoder {
     const int y0 = r * 4;
     const int ax0 = x0 + tile_x_;
     const int ay0 = y0 + tile_y_;
-    const double lambda = options_.tx_rd_lambda;
+    const double lambda = options_.key_tx_lambda > 0.0
+                              ? options_.key_tx_lambda
+                              : options_.tx_rd_lambda;
     const int qctx = ::av2enc::still::qctx::slice_for_base_q_idx(
         options_.tx_context_rate ? base_q_index() : current_qindex_);
     const int mi_size = static_cast<int>(size);
@@ -6351,7 +6535,10 @@ class InterFrameEncoder {
                       : !search_luma_tx(
                             source_, ax0, ay0, w, h, intra_y_pred,
                             current_qindex_, txtsearch::Mode::kIntra,
-                            options_.tx_rd_lambda, options_.enable_idtx_intra,
+                            options_.key_tx_lambda > 0.0
+                                ? options_.key_tx_lambda
+                                : options_.tx_rd_lambda,
+                            options_.enable_idtx_intra,
                             std::max(0, mrl_stream::mapped_intra_mode_for_mrl(
                                             intra_y_mode, intra_y_angle_delta,
                                             intra_mrl_index, w, h)),
@@ -8230,6 +8417,7 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   config.num_total_refs = 1;
   config.max_drl_bits_minus_1 = 4;
   config.disable_cdf_update = !options.adaptive_cdf;
+  config.minimal_tile_trailer = options.minimal_tile_trailer;
   config.enable_avg_cdf = options.avg_cdf;
   config.avg_cdf_type = true;
   config.enable_masked_compound =
@@ -8674,6 +8862,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.num_total_refs = 1;
   config.max_drl_bits_minus_1 = 4;
   config.disable_cdf_update = !options.adaptive_cdf;
+  config.minimal_tile_trailer = options.minimal_tile_trailer;
   config.enable_avg_cdf = options.avg_cdf;
   config.avg_cdf_type = true;
   config.disable_drl_reorder = true;
@@ -10332,6 +10521,49 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
             "is only built by the §7.9 estimation path)";
     return false;
   }
+  // §5.18.2 compact reference signalling (--video-ref-signal-compact).  It
+  // rewrites the sequence header (NumRefFrames = 1, explicit_ref_frame_map =
+  // 0) and the per-frame primary/map fields, so it is gated on the one stream
+  // shape it was measured on: a single-reference low-delay key+P chain.
+  if (options.ref_signal_compact) {
+    if (options.num_total_refs != 1) {
+      error = "--video-ref-signal-compact needs --video-refs 1 (the derived "
+              "§7.7 list must hold exactly the one live slot)";
+      return false;
+    }
+    if (options.b_frames > 0 || options.temporal_layers > 0 ||
+        options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras ||
+        options.enable_tip || options.enable_morph) {
+      error = "--video-ref-signal-compact is gated on the plain key+P chain";
+      return false;
+    }
+    if (options.tile_cols != 0 || options.tile_rows != 0) {
+      error = "--video-ref-signal-compact is gated on a single tile (the "
+              "tiled header writer has its own reference fields)";
+      return false;
+    }
+    if (options.implicit_ref_map) {
+      error = "--video-ref-signal-compact already selects the derived §7.7 "
+              "map; drop --video-implicit-ref-map";
+      return false;
+    }
+    if (options.short_refresh) {
+      error = "--video-ref-signal-compact owns refresh_frame_flags; drop "
+              "--video-short-refresh";
+      return false;
+    }
+    if (options.num_ref_frames != 0) {
+      error = "--video-ref-signal-compact sets NumRefFrames = 1; drop "
+              "--video-num-ref-frames";
+      return false;
+    }
+    if (options.mfh || options.video_timing || options.multi_sequence) {
+      error = "--video-ref-signal-compact is not wired with --video-mfh/"
+              "--video-timing/--video-multi-sequence";
+      return false;
+    }
+  }
   // The §7.9.2 trajectory field feeds both the §7.12.2.8 temporal scan and the
   // §7.12.2.14/.16 derived candidates for any reference count.
   // The syntax writer selects the §8.3.1 qctx slice from base_q_idx and the
@@ -10696,7 +10928,15 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
 #endif
   }
   const int num_total_refs = options.num_total_refs;
-  const int num_ref_frames = av2enc::video::resolved_num_ref_frames(options);
+  // §5.18.2 compact reference signalling: NumRefFrames = 1 makes the §7.7
+  // derived map hold exactly the one live slot, so the writer codes no
+  // reference-map bits.  The order-hint width stays 4: the §5.18.3.1
+  // get_relative_dist() is an exact difference (Clip3, no modulo), so a
+  // narrower OrderHintBits would alias the distance at every wrap.
+  const int num_ref_frames =
+      options.ref_signal_compact
+          ? 1
+          : av2enc::video::resolved_num_ref_frames(options);
   const int order_hint_bits = 4;
 
   // B frames (coding order != display order, two references).
@@ -11047,6 +11287,9 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   config.base_q_idx = options.base_q_idx;
   config.seq_delta_q = options.seq_delta_q;
   config.enable_ext_seg = options.enable_ext_seg;
+  // §5.4.2: --video-tile-group-compact carries the one-tile grid in the
+  // sequence header; the frame writer then codes no tile_info() bits.
+  config.seq_tile_info_present = options.seq_tile_info_present;
 #if defined(AV2ENC_VIDEO_DELTAQ)
   if (options.seq_seg_info_present) {
     // --video-seq-seg-info: carry the §5.4.9 table in the sequence header so
@@ -11063,10 +11306,15 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
 #endif
   config.order_hint_bits = order_hint_bits;
   config.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);
-  config.explicit_ref_frame_map = !options.implicit_ref_map;
+  // --video-ref-signal-compact: explicit_ref_frame_map = 0 is the §7.7
+  // amendment that removes the per-frame frame_explicit_ref_frame_map /
+  // num_total_refs / ref_frame_idx bits entirely.
+  config.explicit_ref_frame_map =
+      !options.implicit_ref_map && !options.ref_signal_compact;
   config.num_total_refs = 1;
   config.max_drl_bits_minus_1 = 4;
   config.disable_cdf_update = !options.adaptive_cdf;
+  config.minimal_tile_trailer = options.minimal_tile_trailer;
   config.enable_masked_compound =
       options.compound && (options.compound_wedge || options.compound_diffwtd);
   config.enable_cwp = options.enable_cwp_weighted;
@@ -12013,7 +12261,13 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     header.seq_header_id = config.seq_header_id;
     header.order_hint = order_hint;
     if (cdf_chain) {
-      header.signal_primary_ref_frame = options.cdf_continuity;
+      // --video-ref-signal-compact omits the primary-ref block: §5.18.2
+      // choose_primary_secondary_ref_frame() resolves the one live reference
+      // to slot 0 for every frame that has an INTER_FRAME reference, and
+      // frame 1 (key-only reference) derives PRIMARY_REF_NONE either way, so
+      // the coded CDF seed is unchanged.
+      header.signal_primary_ref_frame =
+          options.cdf_continuity && !options.ref_signal_compact;
       // §5.18.2 forces disable_cross_frame_cdf_init = 1 for a frame whose
       // reference list holds no INTER_FRAME (choose_primary_secondary_ref_frame
       // returns PRIMARY_REF_NONE).  The header codes the bit the decoder will
@@ -12028,7 +12282,8 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
           static_cast<std::uint8_t>(frame_ref_slots[static_cast<std::size_t>(r)]);
     }
     header.ref_slot = header.ref_frame_idx[0];
-    header.frame_explicit_ref_frame_map = !options.implicit_ref_map;
+    header.frame_explicit_ref_frame_map =
+        !options.implicit_ref_map && !options.ref_signal_compact;
     header.refresh_frame_flags = 1U << write_slot;
     header.has_refresh_frame_flags = true;
     header.frame_to_refresh = static_cast<std::uint8_t>(write_slot);

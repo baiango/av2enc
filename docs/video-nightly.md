@@ -20,6 +20,7 @@ Expansion (the gate asserts this is byte-identical to typing the flags out):
 --video-key-qp-offset -27
 --video-rdoq
 --video-cdef
+--video-cdef-rd
 --video-bawp --video-bawp-carrier
 --video-leaf-rd
 --video-subpel-eighth --video-tx-lambda 136
@@ -45,8 +46,12 @@ rather than QP (bytes and rate both move with it):
 | key offset (QP110, carried CDFs) | Bytes | kbps | CVVDP | PSNR-Y |
 |---:|---:|---:|---:|---:|
 | -26 | 24,579 | 98.316 | 9.7102 | 43.9231 |
-| **-27** | **24,885** | **99.540** | **9.7177** | **43.9358** |
+| **-27** | **24,822** | **99.288** | **9.7177** | **43.9358** |
 | -28 | 25,220 | 100.880 | 9.7108 | 43.8504 |
+
+The -26/-28 rows are the flag-off sweep; the pinned -27 row includes
+`--video-cdef-rd` (below), which removes 63 B without touching a pixel, so its
+CVVDP and PSNR are the flag-off values at a lower rate.
 
 At the established 100 kbps point:
 
@@ -66,8 +71,8 @@ chain plus a lower key offset add a further **+0.028 JOD / +0.90 dB** at
 iso-rate (it is one move: the entropy saving pays for the key bits), and the
 drift refresh forces the inter residual on the frames whose reference has
 slipped. Nightly is **+4.90 JOD** over the default and **+3.40 JOD** over the
-stable `quality` preset at the same rate. The stream is 24,885 B, MD5
-`5e316100ce7fd709b4298ccfebfffccd`; `dav2d-macos --strict 1` decodes it and the
+stable `quality` preset at the same rate. The stream is 24,822 B, MD5
+`41d90595489d4aa9a86a6b3e9132a84f`; `dav2d-macos --strict 1` decodes it and the
 60-frame encoder recon payload equals the decoded payload byte for byte
 (10,368,000 B).
 
@@ -87,6 +92,7 @@ the ones that stacked. Approximate contributions at or near the 100 kbps point:
 | Luma inter RDOQ (`--video-rdoq`) | +0.20 JOD |
 | CDEF (bounded search) | +0.20 JOD |
 | 64-band/refit/priced-unit CCSO | +0.15 JOD |
+| CCSO row priced (`--video-ccso-header-rd`, opt-in, not in the aggregate) | −455 B of row (7.6 B/frame), +0.015-0.02 JOD at iso-rate |
 | Bottom residual mask (`--video-edge-mask`) | +0.07 JOD |
 | BAWP carrier over inter residual | +0.04 JOD |
 | Calibrated leaf RD cost (`--video-leaf-rd`) | +0.05 JOD |
@@ -95,6 +101,15 @@ the ones that stacked. Approximate contributions at or near the 100 kbps point:
 | Adaptive coefficient CDFs (per-frame reset) | −13.9% rate at identical decisions |
 | Key -16 → -25 offset (paid by the CDF saving) + drift refresh | +0.03 JOD |
 | Cross-frame CDF carry (`--cdf-continuity`) | −2.77% rate at identical decisions, key -27 retune +0.01 JOD |
+| CDEF params-row pricing (`--video-cdef-rd`) | −0.25% rate (63 B) at identical decisions |
+
+The CCSO row itself is 1,055 B of the pin (17.6 B/frame, 62.8% of it the
+all-zero `tu(7)` floor of the 64-band table); `--video-ccso-header-rd` prices
+the whole row and picks `ccso_max_band_log2` with the table, cutting it to
+600 B and the stream by 594 B at QP 110 for a measured
+**+0.015-0.02 JOD at iso-rate**. It is an opt-in because that gain sits inside
+the QP ripple; `docs/video-ccso-overhead.md` has the bit split, the reuse
+measurement and the QP 108-112 curves.
 
 Positive changes that did **not** stack and are therefore explicit opt-ins,
 not part of nightly: the §8.3.2 TX context rate (it needs
@@ -115,12 +130,85 @@ Cross-frame CDF carry is now decoder-gated and opt-in: `--nightly
 pictures under `dav2d --strict 1`) and cuts the pin from 24,904 B / 99.616 kbps
 to 24,214 B / 96.856 kbps, i.e. −2.77% rate. Spending it on the reference
 intro (`--video-key-qp-offset -27`) puts the iso-rate point at 24,885 B /
-99.540 kbps / 9.7177 JOD / 43.9358 dB: **+0.01 JOD / +0.07 dB** at 99.616
+99.540 kbps / 9.7177 JOD / 43.9358 dB before the CDEF params-row pricing below
+(24,822 B / 99.288 kbps, same quality): **+0.01 JOD / +0.07 dB** at 99.616
 kbps. The carried form also composes with `--video-drift-refresh` (the image
 follows the coded symbols, so a refresh frame needs no §9.3 re-derivation) and
 replaces the reset-per-frame opt-in inside `--nightly`; the reset form stays
 the fallback. See `docs/video-cdf-carry.md` and
 `src/pipeline/video/gate_video_cdf_carry.sh`.
+
+## CDEF params-row pricing (`--video-cdef-rd`)
+
+`cdef_params()` (§5.18.7.10) is **frame-local**: the pinned decoder reads
+`cdef_frame_enable`, then damping, `CdefStrengths`, the on-skip flag and every
+strength set, and installs exactly that row. There is no "same as the previous
+frame" form and nothing in the sequence header (§5.4.10 signals only
+`enable_cdef`) or the tile group (§5.19) can carry the strengths, so every frame
+that filters re-signals the whole row. At `CdefStrengths == 1` (the nightly
+setting) that is 16 bits (`y_sec == 0`, so the chroma primary is the one-bit
+"zero" form) or 20 bits (any chroma primary), against 1 bit for
+`cdef_frame_enable = 0`.
+
+Measured on the 60-frame nightly stream (`AV2ENC_TRACE_CDEF=1`, per-frame
+`cdef frame=` / `cdef-final frame=` lines):
+
+| Property | Value |
+|---|---|
+| Frames that signal the row | 60/60 (1,012 bits = 126.5 B) |
+| Distinct strength sets | 4 (`4/2/4/2`, `1/0/0/0`, `2/0/0/0`, `12/4/8/4`) |
+| Consecutive pairs where the set changes | 21/59 (35.6%) |
+| Longest run of one set | 31 frames (`1/0/0/0`, frames 1-31) |
+| Frames whose filter changes no sample at all | 33/60 |
+| `CdefStrengths > 1` frames | 0 (no `cdef_idx` symbol is ever coded) |
+
+So the strengths are re-signalled **60 times while they change 21 times**, and
+33 of those 60 rows describe a filter that does not modify a single sample of
+the padded reconstruction. `--video-cdef-rd` prices that row: after the filter
+runs, the post-CDEF planes are compared with the pre-CDEF ones, and a frame that
+is bit-identical codes `cdef_frame_enable = 0` plus keeps its `cdef_idx` grid
+zeroed. The pixels — and therefore the decoded pictures — are unchanged.
+
+Result on the pin: **24,885 → 24,822 B (−63 B, −0.25%)**, 33 frames disabled,
+no decision changes (every frame size stays the same; only the params rows
+shrink), decoded pictures byte-identical (60/60 under `dav2d --strict 1`). The
+63 B is the 33 × 15 bits the rows carried (495 bits = 61.9 B) plus byte-alignment
+rounding. This is a pure entropy move: CVVDP and PSNR-Y are the flag-off values
+at 99.288 instead of 99.540 kbps.
+
+`--video-cdef-rd-lambda <L>` is the opt-in rate-priced arm: it also keeps the
+all-zero set as a candidate at `CdefStrengths == 1` and drops frames whose
+measured visible-area gain cannot pay `L × bits`. That arm **changes the padded
+reconstruction** (the gain metric only covers the visible area, but the padded
+rows are reference data), so it is not in `--nightly`: L=200 costs +3 B versus
+the exact form and already changes samples, L=1000 saves a further 116 B
+(24,706 B) but would need an iso-rate CVVDP sweep to justify. The exact form is
+the shipped default.
+
+### Multi-strength cost (`CdefStrengths > 1`)
+
+The `cdef_idx` path is not used by the nightly pin, but the debug form
+(`--video-cdef-strength 4`, gated by `gate_video_filters.sh`) shows its shape on
+the same clip: the search prunes to 2.08 sets on average (24/60 frames keep more
+than one), the header costs 1,522 bits = 190.2 B over 60 frames (25.4 vs 16.9
+bits/frame) and the per-64×64 index payload adds 172 B, so the row plus indices
+cost ~6.4 B/frame instead of ~2.1 B. Each extra set is +14 bits in the frame
+header (7 luma + 7 chroma), and the per-block symbol is a §8.2-coded
+`cdef_index0` plus the `cdef_idx_minus_1` tail. Any future multi-strength mode
+must price at least those two rows per frame.
+
+### Header overhead
+
+The per-frame `tile_group_obu()` header costs 1,773 B (7.1%) of the pin: 1,634 B
+of header payload (74-449 bits/frame) plus 139 B of tile-group OBU framing. The
+220 bits of §5.19 `byte_alignment()` padding it contains are mandatory and cost
+zero bytes, so they cannot be recovered. The only removable field is the 3-bit
+`tile_params()` grid that every frame repeats; `--video-tile-group-compact`
+(§5.4.2 `seq_tile_info_present_flag = 1` + `allow_tile_info_change = 0`) moves it
+into the sequence header and codes no per-frame tile bits: **24,885 → 24,863 B**
+at 60 frames with a byte-identical decode. It is an opt-in and is **not** part of
+`--nightly`, so the pins above are unchanged. Measurements, the alignment
+distribution and the decoder evidence are in `docs/video-tile-group-header.md`.
 
 ## Inter residual RD (`--video-leaf-rd-lambda`)
 
@@ -281,21 +369,44 @@ keyframe, residual coding in P), not frame-level rate allocation.
 
 ## Verification
 
-- `dav2d-macos --strict 1` decodes the final QP117 stream.
+- `dav2d-macos --strict 1` decodes the final stream (60/60 pictures).
 - 60-frame `--video-recon` payload equals the decoded payload byte for byte;
   the hidden padded rows are outside the Y4M payload.
 - Default 480x240 QP189 stays **25,009 B / `a1d0dba1...`**.
 - `quality` QP190 stays **25,141 B / `3984677b...`**.
-- `tools/gate_video_nightly.sh` checks the expansion, both pins (the nightly
-  pin is QP117 / 24,939 B / `8f8713da...`), strict decode, visible recon
-  equality, BAWP carrier activity and the GPU/`--still` rejections.
+- `tools/gate_video_nightly.sh` checks the expansion, both pins and the nightly
+  pin (**QP110, key -27, 24,822 B / `41d90595...`**), strict decode, visible
+  recon equality, BAWP carrier activity, the `--video-cdef-rd` A/B control
+  (smaller stream, byte-identical decoded pictures, 60/60) and the
+  GPU/`--still` rejections.
 - `src/pipeline/video/gate_avg_cdf.sh` adds the `--video-cdf-per-frame-qp`
   case (strict decode + visible recon at key 174 / P 190) and the named
   rejections: a per-frame plan without the
   opt-in, and the opt-in without the CDF chain.
 - `tools/gate_video_edge_inter.sh`, `tools/gate_video_rd_preset.sh` and
   `gate_video_any_dims.sh` (including the MI-edge 100x70/640x362 cases) pass.
+- The per-frame reference/order-hint syntax is 948 bits over 60 frames
+  (2.0 B/frame) and is cut to 417 bits by `--video-ref-signal-compact`
+  (`NumRefFrames = 1`, derived §7.7 map, no primary-ref block): the same 60
+  pictures decode byte-identically at 24,824 B (−61 B), so it is available as
+  an opt-in but is not part of this pin. Field table and the rejected
+  `OrderHintBits` form: `docs/video-ref-signalling.md`.
 
+- `tools/gate_video_tile_group.sh` covers the header surface:
+  `--video-tile-group-compact` removes exactly 3 bits per frame header, nets
+  −22 B at 60 frames, decodes 60/60 under `--strict 1` with a byte-identical
+  payload, and is rejected with `--tiles`/`--b-frames`.
+
+## The static floor
+
+`--video-skip-collapse` (opt-in, not part of `--nightly`) rewrites a P-frame
+superblock whose leaves are all plain zero-motion inter skips into one
+superblock-sized skip leaf: the reconstruction is unchanged, the partition tree
+bits disappear. On an all-identical 60-frame clip it takes the steady-state P
+frame from 21 B to 17 B (7-byte tile to 3-byte tile; 32.4 information bits to
+7.4) and the whole stream from 20,915 B to 20,695 B. On this clip it is 24,539 B
+/ 9.6973 JOD at the same QP, a wash, which is why it is not in the aggregate.
+The symbol table and the §8.2.4 2-byte floor: `docs/video-skip-collapse.md`.
 
 ## Caveats
 

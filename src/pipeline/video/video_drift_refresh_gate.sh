@@ -110,7 +110,7 @@ import hashlib, sys
 print(hashlib.md5(open(sys.argv[1], 'rb').read()).hexdigest())
 PY
 )
-[ "$OFF_MD5" = "47b85555ce260c5d4db9023548cdc094" ] ||
+[ "$OFF_MD5" = "a3c335a4dc41a8250c30a5b596df702d" ] ||
     fail "flag-off control stream md5 is $OFF_MD5, expected c67818f9..."
 
 # --- flag on: decode, recon, trace evidence, quality ---------------------

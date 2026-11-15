@@ -247,6 +247,13 @@ reconstruct -> deblock -> CDEF -> CCSO -> (loop restoration, if any)
   buffer (`cdef`) and filters `cdef` in place.
 - Loop restoration (Wiener) would follow CCSO; this layer does not emit its
   tile syntax.
+- **CDEF params row** (`--video-cdef-rd`): §5.18.7.10 has no "same as the last
+  frame" form, so every CDEF-enabled frame re-signals damping,
+  `CdefStrengths` and the strength sets. `run_video_loop_filters()` compares the
+  filtered planes with the pre-CDEF ones and, when they are bit-identical,
+  clears `VideoCdefPlan::enabled` (and its `cdef_idx` grid) so the header codes
+  the one-bit `cdef_frame_enable = 0` form instead. The reconstruction and the
+  decoded pictures do not change; see `docs/video-nightly.md`.
 
 Header flags:
 

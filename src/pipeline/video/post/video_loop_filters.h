@@ -60,6 +60,17 @@ struct VideoLoopFilterOptions {
     kFast = 3,
   };
   CdefSearchMode cdef_search_mode = CdefSearchMode::kFull;
+  // Price the §5.18.7.10 params row in the per-frame decision
+  // (--video-cdef-rd).  The header is re-signalled on every frame that enables
+  // CDEF and the syntax has no "same as the previous frame" form, so the only
+  // lever is to not enable it: after the filter runs, a frame whose padded
+  // reconstruction is bit-identical to the pre-CDEF one codes the one-bit
+  // `cdef_frame_enable = 0` form.  The pixels (and therefore the decode) do not
+  // change.  `cdef_rd_lambda > 0` additionally drops frames whose measured
+  // visible-area gain cannot pay for the params row; that arm changes the
+  // reconstruction and is an explicit opt-in.
+  bool cdef_rd = false;
+  double cdef_rd_lambda = 0.0;
 
   bool ccso = false;
   // CcsoMaxBandLog2 for the band-offset-only form (0..6).
@@ -70,6 +81,12 @@ struct VideoLoopFilterOptions {
   bool ccso_rd = false;
   // SSE-per-bit weight for ccso_rd.  Distortion is summed YUV SSE.
   double ccso_lambda = 64.0;
+  // Header-aware CCSO fit (--video-ccso-header-rd).  Prices the whole
+  // §5.18.7.12 row at lambda per bit -- the fixed flag bits and the tu(7)
+  // table including the one-bit "off" symbol of every band -- and chooses
+  // ccso_max_band_log2 together with the offset table instead of pinning the
+  // band count from the CLI.  Requires ccso_rd; off means byte-identical.
+  bool ccso_header_rd = false;
   // Extra exact table refit + re-prune passes after the first decision.  Each
   // pass refits the band offsets on the samples of the units the previous pass
   // kept enabled, re-sweeps scale_idx, then re-decides the ccso_blk symbols.

@@ -12,6 +12,7 @@
 
 #include "av2_entropy.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -1078,6 +1079,222 @@ void test_long_stream_and_tiles() {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// §8.2.4 minimum termination (Encoder::minimal_trailer)
+// ---------------------------------------------------------------------------
+
+struct MinimalEncode {
+  Status status = Status::kInvalidState;
+  std::vector<uint8_t> bytes;
+  uint32_t marker_bit_pos = 0;
+  uint32_t min_payload_bits = 0;
+};
+
+MinimalEncode encode_with_trailer(uint8_t minimal, const uint16_t* cdf0, int n,
+                                  const std::vector<int>& symbols) {
+  MinimalEncode out;
+  std::array<uint16_t, 11> cdf{};
+  for (int i = 0; i < n + 1; ++i) cdf[static_cast<size_t>(i)] = cdf0[i];
+  std::vector<uint8_t> buffer(1u << 20, 0);
+  Encoder encoder;
+  encoder.minimal_trailer = minimal;
+  out.status = encoder.init_symbol(buffer.data(), buffer.size());
+  if (out.status != Status::kOk) return out;
+  for (int symbol : symbols) {
+    out.status = encoder.encode_symbol(cdf.data(), n, symbol);
+    if (out.status != Status::kOk) return out;
+  }
+  size_t payload_bytes = 0;
+  out.status = encoder.exit_symbol(&payload_bytes);
+  if (out.status != Status::kOk) return out;
+  out.bytes.assign(buffer.begin(),
+                   buffer.begin() + static_cast<std::ptrdiff_t>(payload_bytes));
+  out.marker_bit_pos = encoder.marker_bit_pos;
+  out.min_payload_bits = encoder.min_payload_bits;
+  return out;
+}
+
+bool decodes_symbols(const std::vector<uint8_t>& bytes, const uint16_t* cdf0,
+                     int n, const std::vector<int>& symbols) {
+  std::array<uint16_t, 11> cdf{};
+  for (int i = 0; i < n + 1; ++i) cdf[static_cast<size_t>(i)] = cdf0[i];
+  Decoder decoder;
+  if (decoder.init_symbol(bytes.data(), bytes.size(), bytes.size()) !=
+      Status::kOk) {
+    return false;
+  }
+  for (int symbol : symbols) {
+    int decoded = -1;
+    if (decoder.decode_symbol(cdf.data(), n, &decoded) != Status::kOk ||
+        decoded != symbol) {
+      return false;
+    }
+  }
+  return decoder.exit_symbol() == Status::kOk;
+}
+
+// Per-symbol CDF stream: a deterministic CDF per step, so encoder and decoder
+// see the identical model sequence without carrying state.
+void make_step_cdf(uint32_t step, uint16_t* cdf, int* n_out) {
+  uint32_t state = step * 2654435761u + 12345u;
+  auto next = [&]() {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return state;
+  };
+  const int n = 2 + static_cast<int>(next() % 7u);
+  uint32_t v = 0;
+  for (int i = 0; i < n - 1; ++i) {
+    v += 1u + next() % (32767u / static_cast<uint32_t>(n));
+    if (v > 32766u) v = 32766u;
+    cdf[i] = static_cast<uint16_t>(v);
+  }
+  cdf[n - 1] = static_cast<uint16_t>(next() % 124u);
+  cdf[n] = static_cast<uint16_t>(next() % 33u);
+  *n_out = n;
+}
+
+void test_minimal_trailer() {
+  // A pinned vector: 40 symbols of a skewed 4-symbol table.
+  {
+    Cdf cdf = cdf_from_list({8192, 16384, 24576, 16, 0});
+    std::vector<int> symbols;
+    for (int i = 0; i < 40; ++i) symbols.push_back((i * 3 + 1) % 4);
+    const MinimalEncode natural = encode_with_trailer(0, cdf.data(), 4, symbols);
+    const MinimalEncode minimal = encode_with_trailer(1, cdf.data(), 4, symbols);
+    CHECK_STATUS(natural.status, Status::kOk);
+    CHECK_STATUS(minimal.status, Status::kOk);
+    if (natural.status == Status::kOk && minimal.status == Status::kOk) {
+      CHECK(natural.bytes.size() == 13);
+      CHECK(minimal.bytes.size() == 11);
+      CHECK(natural.marker_bit_pos == 82);
+      // The minimum form is a strict prefix of the historical form: it drops
+      // the fourteen marker zeros and the byte padding.
+      CHECK(std::equal(minimal.bytes.begin(), minimal.bytes.end(),
+                       natural.bytes.begin()));
+      const std::vector<uint8_t> expected_minimal = {
+          0x4d, 0x49, 0x34, 0x1a, 0xe8, 0x07,
+          0xbf, 0x8a, 0x90, 0x6f, 0x20};
+      CHECK(minimal.bytes == expected_minimal);
+      CHECK(minimal.min_payload_bits == 88);
+      CHECK(decodes_symbols(natural.bytes, cdf.data(), 4, symbols));
+      CHECK(decodes_symbols(minimal.bytes, cdf.data(), 4, symbols));
+    }
+  }
+
+  // Empty stream: no symbols leaves R = 0, so the floor (2 bytes, the
+  // tile-group minimum) equals the historical form.
+  {
+    Cdf cdf = make_cdf(4, 16, 0);
+    const MinimalEncode natural = encode_with_trailer(0, cdf.data(), 4, {});
+    const MinimalEncode minimal = encode_with_trailer(1, cdf.data(), 4, {});
+    CHECK_STATUS(natural.status, Status::kOk);
+    CHECK_STATUS(minimal.status, Status::kOk);
+    CHECK(natural.bytes.size() == 2);
+    CHECK(minimal.bytes.size() == 2);
+    CHECK(natural.bytes == minimal.bytes);
+    CHECK(minimal.min_payload_bits == 16);
+  }
+
+  // Sweep: the minimum is exactly ceil((R + 1) / 8) bytes (never below two),
+  // it decodes to the same symbols, it is a prefix of the historical form, and
+  // one byte less never decodes.
+  {
+    int trimmed = 0;
+    int64_t saved = 0;
+    for (int iter = 0; iter < 400; ++iter) {
+      const int count = 1 + static_cast<int>(next_random() % 80u);
+      std::vector<std::array<uint16_t, 10>> cdfs;
+      std::vector<int> ns;
+      std::vector<int> symbols;
+      for (int i = 0; i < count; ++i) {
+        std::array<uint16_t, 10> cdf{};
+        int n = 0;
+        make_step_cdf(static_cast<uint32_t>(iter * 131 + i), cdf.data(), &n);
+        cdfs.push_back(cdf);
+        ns.push_back(n);
+        symbols.push_back(static_cast<int>(next_random() %
+                                           static_cast<uint32_t>(n)));
+      }
+
+      // Encode with the per-step CDF sequence (encode_with_trailer assumes one
+      // table, so drive the encoder directly).
+      auto encode_run = [&](uint8_t minimal, MinimalEncode* out,
+                            const uint16_t* unused) {
+        (void)unused;
+        std::vector<uint8_t> buffer(1u << 20, 0);
+        Encoder encoder;
+        encoder.minimal_trailer = minimal;
+        out->status = encoder.init_symbol(buffer.data(), buffer.size());
+        if (out->status != Status::kOk) return;
+        for (int i = 0; i < count; ++i) {
+          std::array<uint16_t, 10> cdf = cdfs[static_cast<size_t>(i)];
+          out->status = encoder.encode_symbol(cdf.data(), ns[static_cast<size_t>(i)],
+                                             symbols[static_cast<size_t>(i)]);
+          if (out->status != Status::kOk) return;
+        }
+        size_t payload_bytes = 0;
+        out->status = encoder.exit_symbol(&payload_bytes);
+        if (out->status != Status::kOk) return;
+        out->bytes.assign(
+            buffer.begin(),
+            buffer.begin() + static_cast<std::ptrdiff_t>(payload_bytes));
+        out->marker_bit_pos = encoder.marker_bit_pos;
+        out->min_payload_bits = encoder.min_payload_bits;
+      };
+      auto decode_run = [&](const std::vector<uint8_t>& bytes) {
+        Decoder decoder;
+        if (decoder.init_symbol(bytes.data(), bytes.size(), bytes.size()) !=
+            Status::kOk) {
+          return false;
+        }
+        for (int i = 0; i < count; ++i) {
+          std::array<uint16_t, 10> cdf = cdfs[static_cast<size_t>(i)];
+          int decoded = -1;
+          if (decoder.decode_symbol(cdf.data(), ns[static_cast<size_t>(i)],
+                                    &decoded) != Status::kOk ||
+              decoded != symbols[static_cast<size_t>(i)]) {
+            return false;
+          }
+        }
+        return decoder.exit_symbol() == Status::kOk;
+      };
+
+      MinimalEncode natural, minimal;
+      encode_run(0, &natural, nullptr);
+      encode_run(1, &minimal, nullptr);
+      CHECK_STATUS(natural.status, Status::kOk);
+      CHECK_STATUS(minimal.status, Status::kOk);
+      if (natural.status != Status::kOk || minimal.status != Status::kOk) {
+        continue;
+      }
+      CHECK(decode_run(natural.bytes));
+      CHECK(decode_run(minimal.bytes));
+      CHECK(minimal.min_payload_bits == minimal.bytes.size() * 8u);
+      uint32_t expected = (natural.marker_bit_pos + 8u) / 8u;
+      if (expected < 2u) expected = 2u;  // tile-group minimum
+      CHECK(minimal.bytes.size() == expected);
+      CHECK(natural.bytes.size() >= minimal.bytes.size());
+      CHECK(std::equal(minimal.bytes.begin(), minimal.bytes.end(),
+                       natural.bytes.begin()));
+      if (minimal.bytes.size() > 2) {
+        std::vector<uint8_t> shorter(minimal.bytes.begin(),
+                                     minimal.bytes.end() - 1);
+        CHECK(!decode_run(shorter));
+      }
+      if (natural.bytes.size() > minimal.bytes.size()) {
+        ++trimmed;
+        saved += static_cast<int64_t>(natural.bytes.size() -
+                                      minimal.bytes.size());
+      }
+    }
+    CHECK(trimmed > 300);
+    CHECK(saved > 500);
+  }
+}
+
 void test_api_misuse() {
   std::vector<uint8_t> buffer(64, 0);
   Encoder encoder;
@@ -1128,6 +1345,7 @@ int main() {
   test_buffer_limits();
   test_average_and_copy_cdf();
   test_long_stream_and_tiles();
+  test_minimal_trailer();
   test_api_misuse();
 
   if (g_failures == 0) {

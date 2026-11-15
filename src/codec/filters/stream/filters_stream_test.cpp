@@ -289,6 +289,67 @@ void test_ccso_header() {
   CHECK(rp.offsets[restoration::ccso_offset_index(3, 0, 0)] == -6);  // -3*2
 }
 
+// §5.18.7.12 exact bit accounting: the encoder prices the CCSO decision with
+// CcsoHeaderBits, so the split must add up to the row and the all-zero table
+// floor (one tu(7) bit per band) must be visible.
+void test_ccso_header_bits() {
+  CcsoHeaderContext ctx;
+  ctx.enable_ccso = true;
+  ctx.single_picture_header_flag = false;
+  ctx.frame_is_intra = false;
+  ctx.num_planes = 3;
+  CcsoParams p;
+  p.frame_flag = true;
+  p.plane[0].enabled = true;
+  p.plane[0].bo_only = true;
+  p.plane[0].max_band_log2 = 6;  // 64 bands, all zero
+  p.plane[0].offset_idx.assign(64, 0);
+
+  BitWriter w;
+  std::string error;
+  CcsoHeaderBits bits;
+  const std::size_t written = write_ccso_params(w, p, ctx, &error, &bits);
+  CHECK(error.empty());
+  CHECK(written == bits.total);
+  // f(1) frame flag, then per plane: ccso_planes f(1); for the enabled luma
+  // plane reuse_ccso f(1) + sb_reuse_ccso f(1) + bo_only f(1) + scale f(2) +
+  // max_band_log2 f(3).  A zero band table is 64 one-bit tu(7) symbols.
+  CHECK(bits.frame_flag == 1U);
+  CHECK(bits.plane_flags == 1U + 2U + 2U);  // luma flag/reuse bits + chroma
+  CHECK(bits.plane_params == 6U);
+  CHECK(bits.table == 64U);
+  CHECK(bits.total == 1U + 5U + 6U + 64U);
+  CHECK(bits.num_planes == 1);
+  CHECK(bits.table_symbols[0] == 64);
+  CHECK(bits.table_nonzero[0] == 0);
+  CHECK(bits.plane_table[0] == 64U);
+
+  // One offset at index 7 (the tu(7) escape) costs 7 bits instead of 1.
+  CcsoParams q;
+  q.frame_flag = true;
+  q.plane[0].enabled = true;
+  q.plane[0].bo_only = true;
+  q.plane[0].max_band_log2 = 1;  // 2 bands
+  q.plane[0].offset_idx = {7, 0};
+  BitWriter w2;
+  CcsoHeaderBits bits2;
+  const std::size_t written2 = write_ccso_params(w2, q, ctx, &error, &bits2);
+  CHECK(error.empty());
+  CHECK(written2 == bits2.total);
+  CHECK(bits2.table == 7U + 1U);
+  CHECK(bits2.table_nonzero[0] == 1);
+
+  // A frame with no plane enabled codes the single zero frame flag.
+  CcsoParams r;
+  r.frame_flag = false;
+  BitWriter w3;
+  CcsoHeaderBits bits3;
+  const std::size_t written3 = write_ccso_params(w3, r, ctx, &error, &bits3);
+  CHECK(error.empty());
+  CHECK(written3 == 1U);
+  CHECK(bits3.total == 1U && bits3.table == 0U);
+}
+
 void test_ccso_tile() {
   CcsoHeaderContext ctx;
   ctx.enable_ccso = true;
@@ -775,6 +836,7 @@ int main() {
   test_cdef_header();
   test_cdef_tile();
   test_ccso_header();
+  test_ccso_header_bits();
   test_ccso_tile();
   test_lr_header_simple();
   test_lr_header_coefficients();

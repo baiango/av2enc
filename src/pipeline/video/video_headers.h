@@ -60,6 +60,13 @@ struct VideoConfig {
   // the historical zero bit.
   bool seq_seg_info_present = false;
   bool seq_allow_seg_info_change = true;
+  // --video-tile-group-compact: §5.4.2 seq_tile_info_present_flag = 1 with
+  // allow_tile_info_change = 0.  The sequence header carries the single-tile
+  // tile_params() once and every frame with a reusable grid infers
+  // reuse_tile_info = 1 (§5.18.7.2), so the 3 bits of tile_info() leave the
+  // per-frame header.  Off keeps the historical zero bit and the per-frame
+  // `1 0 0` tile_params().
+  bool seq_tile_info_present = false;
   // The sequence segment table (SEG_LVL_* features, MaxSegments entries).
   rc::SegmentationParams seq_seg_info{};
   // §5.4.6 order_hint_bits_minus_1 + 1. Four bits covers a 16-frame GOP.
@@ -169,6 +176,10 @@ struct VideoConfig {
     return seq_screen_content_tools_present || seq_force_screen_content_tools;
   }
   bool disable_cdf_update = true;
+  // Opt-in §8.2.4 minimum tile termination (--video-tile-flush-min): the tile
+  // payload stops right after the trailing '1' instead of writing its fourteen
+  // zeros and the byte padding.  Off keeps the historical tile bytes.
+  bool minimal_tile_trailer = false;
   // §5.18.7.9 deblocking_filter_params(): when enabled the frame header codes
   // all four apply_deblocking_filter flags with DfDeltaQ = 0 (df_par_bits =
   // 2 from the sequence header).  Off keeps the historical all-zero row.

@@ -308,6 +308,7 @@ struct Options {
   // context model yet) still matches the CPU reference byte for byte.
   bool video_tx_context_rate = false;
   double video_tx_lambda = 256.0;
+  double video_key_tx_lambda = 0.0;  // 0 = inherit --video-tx-lambda
   double video_leaf_rd_lambda = 125.0;
   // Opt-in rate-aware §5.20.3.1 partition decision (CPU reference).  See
   // VideoOptions::partition_rd; --nightly enables it.
@@ -347,6 +348,11 @@ struct Options {
   bool video_ref_mvs_stress = false;
   // Opt-in §5.4.6 reference-management tools on the CPU --video writer.
   bool video_short_refresh = false;
+  // Opt-in §5.18.2 compact reference signalling (--video-ref-signal-compact):
+  // NumRefFrames = 1 + explicit_ref_frame_map = 0 + no primary-ref block, so a
+  // single-reference P chain codes no reference fields at all.  See
+  // docs/video-ref-signalling.md.
+  bool video_ref_signal_compact = false;
   bool video_refmvbank = false;
   bool video_mv_traj = false;
   bool video_same_ref_compound = false;
@@ -376,6 +382,10 @@ struct Options {
   // no reuse_seg_info bit.
   bool video_seq_seg_info = false;
   bool video_seq_seg_frozen = false;
+  // §5.4.2 seq_tile_info_present_flag (--video-tile-group-compact): the
+  // sequence header carries the one-tile tile_params() and each frame infers
+  // reuse_tile_info = 1 (§5.18.7.2), dropping 3 bits per frame header.
+  bool video_tile_group_compact = false;
   int video_pb_aspect_log2_minus_1 = 1;  // 0 -> 2:1, 1 -> 4:1
   bool video_compound_near_near = false;  // §5.20.7.6 NEAR_NEARMV carrier
   bool video_tip = false;
@@ -423,6 +433,7 @@ struct Options {
   int video_tlayer_drop = -1;  // -1 = keep every layer
   int video_gops = 1;      // consecutive closed B-frame GOPs (default 1)
   bool video_force_single = false;
+  bool video_skip_collapse = false;
   bool video_sb128 = false;
   bool video_sb256 = false;
   bool video_ext_partitions = false;
@@ -432,6 +443,11 @@ struct Options {
   bool video_cdef = false;
   int video_cdef_strength = 1;  // CdefStrengths 1..8
   int video_cdef_damping = 3;   // CdefDamping 3..6
+  // Price the §5.18.7.10 params row in the per-frame CDEF decision
+  // (--video-cdef-rd).  Frames whose filter cannot pay for its own header code
+  // the one-bit `cdef_frame_enable = 0` form instead.
+  bool video_cdef_rd = false;
+  double video_cdef_rd_lambda = 0.0;  // SSE per bit; 0 = zero-gain frames only
   // CDEF strength-search budget (0 full, 1 ladder, 2 step, 3 fast).  Only the
   // decision search changes; the filter and syntax are untouched.
   int video_cdef_search = 0;
@@ -445,6 +461,9 @@ struct Options {
   int video_ccso_refit_passes = 0;
   // Price of one ccso_blk unit symbol in the prune decision.
   double video_ccso_unit_bits = 1.0;
+  // Price the whole §5.18.7.12 row (fixed flags + the tu(7) table) in the CCSO
+  // fit and choose ccso_max_band_log2 with the table (--video-ccso-header-rd).
+  bool video_ccso_header_rd = false;
   // §5.4.5 cfl_ds_filter_index (0..3; 3 aliases 0).  Drives the chroma-from-
   // luma taps of the chroma loop restoration.
   int video_cfl_ds_filter = 0;
@@ -481,6 +500,18 @@ struct Options {
   double video_drift_refresh_threshold = 2.5;  // dB below the key
   int video_drift_refresh_qp = 0;
   int video_drift_refresh_budget = 1200;  // bytes per sequence
+  // Opt-in §8.2.4 minimum tile termination (--video-tile-flush-min).  The
+  // trailing '1' stays where §8.2.4 puts it; the fourteen zeros after it and
+  // the byte padding are not written, which §8.2.4 permits down to
+  // SymbolMaxBits == -14.  Saves 1-2 bytes per coded frame; off by default so
+  // every pinned stream stays byte-identical.
+  bool video_tile_flush_min = false;
+  // Explicit off-switches for the overhead levers --nightly enables, so the
+  // gates keep a real A/B control and a user can drop any of them.
+  bool video_tile_flush_off = false;
+  bool video_ref_signal_off = false;
+  bool video_tile_group_off = false;
+  bool video_ccso_header_off = false;
   std::uint64_t vram_cap_mib = 0;  // 0 = largest reservation the device can serve
   int bit_depth = 8;               // 8 (default) or 10; 12-bit is not signalable
   std::string chroma = "420";      // 420 (default), 422, 444, 400
@@ -1104,6 +1135,13 @@ void print_usage(std::ostream& out) {
                                        "seq_allow_seg_info_change = 0 so every",
                                        "frame reuses the sequence table with",
                                        "no reuse_seg_info bit"});
+  item("--video-tile-group-compact", {"Write §5.4.2",
+                                      "seq_tile_info_present_flag = 1 with",
+                                      "allow_tile_info_change = 0: the",
+                                      "sequence header carries the one-tile",
+                                      "tile_params() and every frame infers",
+                                      "reuse_tile_info = 1 (§5.18.7.2), so the",
+                                      "per-frame tile_info() costs 0 bits"});
   item("--video-ref-mvs-stress", {"Gate stress mode for --video-ref-mvs:",
                                   "always prefer a temporal NEARMV candidate",
                                   "when one exists (proves the coded stream",
@@ -1119,6 +1157,11 @@ void print_usage(std::ostream& out) {
                                   "every P frame codes has_refresh_frame_flags",
                                   "and one frame_to_refresh index instead of the",
                                   "full refresh mask"});
+  item("--video-ref-signal-compact", {"Opt-in §5.18.2 compact reference signalling:",
+                                      "NumRefFrames = 1 and",
+                                      "explicit_ref_frame_map = 0, so a",
+                                      "single-reference P chain codes no",
+                                      "ref-map/primary-ref bits at all"});
   item("--video-refmvbank", {"Opt-in §5.4.6 enable_refmvbank: insert the",
                              "§7.12.2.21 reference-MV bank candidates at",
                              "step 19 (flat P chain, explicit ref map)"});
@@ -1153,6 +1196,14 @@ void print_usage(std::ostream& out) {
                              "--video-compound-near-near and --b-frames"});
   item("--video-cdef", {"Enable §7.18 CDEF on the reconstructed frame before",
                         "it becomes the output/reference (single strength set)"});
+  item("--video-cdef-rd", {"Price the §5.18.7.10 params row in the per-frame",
+                           "CDEF decision: a frame whose filter cannot pay for",
+                           "its own header (zero or negative measured gain)",
+                           "codes the one-bit cdef_frame_enable = 0 form and",
+                           "keeps the unfiltered reconstruction"});
+  item("--video-cdef-rd-lambda <L>", {"SSE-per-bit price for --video-cdef-rd",
+                                      "(default 0: only the frames whose gain",
+                                      "is non-positive, which are bit-identical)"});
   item("--video-cdef-strength <N>", {"CdefStrengths 1..8 (default 1: no tile",
                                      "symbol); 2..8 codes a per-64x64 index"});
   item("--video-cdef-damping <N>", {"CdefDamping 3..6 (default 3)"});
@@ -1173,6 +1224,9 @@ void print_usage(std::ostream& out) {
        {"Extra exact table refit + unit re-prune passes (default 0)"});
   item("--video-ccso-unit-bits <S>",
        {"Price of one ccso_blk unit symbol in the prune decision (default 1)"});
+  item("--video-ccso-header-rd",
+       {"Price the whole ccso_params() row (flags + tu(7) table) and choose",
+        "--video-ccso-bands with the fit (implies --video-ccso-rd)"});
   item("--video-wiener", {"Enable §7.20 luma non-separable Wiener restoration"});
   item("--video-pc-wiener", {"Enable §7.20.4 luma PC-Wiener restoration",
                              "(RESTORE_PC_WIENER per-unit on/off)"});
@@ -1297,6 +1351,13 @@ void print_usage(std::ostream& out) {
                             "(default 0 = residual only)"});
   item("--video-drift-refresh-budget <bytes>", {"Per-sequence refresh payload",
                             "allowance (default 1200)"});
+  item("--video-tile-flush-min", {"Opt-in §8.2.4 minimum tile termination",
+                            "(CPU video writer): stop the tile payload right",
+                            "after the trailing 1 instead of writing its",
+                            "fourteen zeros and the byte padding. Saves",
+                            "1-2 bytes per coded frame at the same",
+                            "reconstruction"});
+  // --video-tile-flush-min block end.
   item("--svc-layers <spec>", {"SVC: spatial layers as x0=WxH[,x1=WxH...]"});
   item("--svc-lcr-id <N>", {"SVC: seq_lcr_id (1..7)"});
   item("--svc-temporal <N>", {"SVC: temporal layers 1..4; N > 1 codes one",
@@ -1340,6 +1401,10 @@ void print_usage(std::ostream& out) {
                           "compare against it)"});
   item("--video-recon <file>", {"Video: write the encoder reconstruction Y4M"});
   item("--video-force-single", {"Video: one 64x64 leaf per superblock"});
+  item("--video-skip-collapse",
+       {"Video: collapse an all-static superblock (every leaf a plain",
+        "zero-motion inter skip) to one superblock-sized skip leaf; the",
+        "reconstruction is unchanged, only the partition tree disappears"});
   item("--video-sb128", {"Video: 128x128 superblocks (§5.4.3",
                          "use_128x128_superblock); leaves stay <= 64x64"});
   item("--video-sb256", {"Video: 256x256 superblocks (§5.4.3",
@@ -1655,6 +1720,19 @@ bool apply_video_nightly(Options& options, std::string& error) {
   // rate-aware-CCSO path: it is the largest algorithmic gain left and, unlike
   // the old --video-cdef --video-gdf pair, affordable (docs/video-nightly.md).
   options.video_cdef = true;
+  // The §5.18.7.10 params row is re-signalled on every CDEF-enabled frame, so a
+  // frame whose filter changes no sample still pays for it.  Price that row in
+  // the decision: such frames code the one-bit `cdef_frame_enable = 0` form
+  // (identical reconstruction, ≈2 B/frame smaller header).  See
+  // docs/video-nightly.md.
+  options.video_cdef_rd = true;
+  // Overhead wave (docs/video-nightly.md): all four leave the decoded picture
+  // byte-identical at the same QP except the CCSO row pricing, which trades
+  // ~2.4% of the rate for a measured +0.015 JOD at iso-rate.
+  options.video_tile_flush_min = !options.video_tile_flush_off;
+  if (!options.video_ref_signal_off) options.video_ref_signal_compact = true;
+  if (!options.video_tile_group_off) options.video_tile_group_compact = true;
+  if (!options.video_ccso_header_off) options.video_ccso_header_rd = true;
   // Rate-aware CCSO is tuned on the nightly measurement point: 64 bands, a
   // table refitted once on the units that survive pruning, and a unit-symbol
   // price above one bit because enabling a unit also changes the coded
@@ -2838,6 +2916,41 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-tile-flush-off") {
+      options.video_tile_flush_off = true;
+      continue;
+    }
+
+    if (argument == "--video-ref-signal-off") {
+      options.video_ref_signal_off = true;
+      continue;
+    }
+
+    if (argument == "--video-tile-group-off") {
+      options.video_tile_group_off = true;
+      continue;
+    }
+
+    if (argument == "--video-ccso-header-off") {
+      options.video_ccso_header_off = true;
+      continue;
+    }
+
+    if (argument == "--video-key-tx-lambda") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-key-tx-lambda'";
+        return ParseStatus::kError;
+      }
+      char* end = nullptr;
+      const double value = std::strtod(argv[++i], &end);
+      if (end == argv[i] || *end != '\0' || !(value > 0.0)) {
+        error = "--video-key-tx-lambda needs a positive number";
+        return ParseStatus::kError;
+      }
+      options.video_key_tx_lambda = value;
+      continue;
+    }
+
     if (argument == "--video-leaf-rd-lambda") {
       if (i + 1 >= argc) {
         error = "missing value after '--video-leaf-rd-lambda'";
@@ -2985,6 +3098,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-ref-signal-compact") {
+      options.video_ref_signal_compact = true;
+      continue;
+    }
+
     if (argument == "--video-refmvbank") {
       options.video_refmvbank = true;
       continue;
@@ -3054,6 +3172,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-tile-group-compact") {
+      options.video_tile_group_compact = true;
+      continue;
+    }
+
     if (argument == "--video-opfl") {
       options.video_opfl = true;
       continue;
@@ -3085,6 +3208,28 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     }
 
     if (argument == "--video-cdef") {
+      options.video_cdef = true;
+      continue;
+    }
+
+    if (argument == "--video-cdef-rd") {
+      options.video_cdef_rd = true;
+      options.video_cdef = true;
+      continue;
+    }
+
+    if (argument == "--video-cdef-rd-lambda") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-cdef-rd-lambda'";
+        return ParseStatus::kError;
+      }
+      double lambda = 0.0;
+      if (!parse_double(argv[++i], lambda) || lambda < 0.0) {
+        error = "--video-cdef-rd-lambda must be a non-negative number";
+        return ParseStatus::kError;
+      }
+      options.video_cdef_rd_lambda = lambda;
+      options.video_cdef_rd = true;
       options.video_cdef = true;
       continue;
     }
@@ -3224,6 +3369,13 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
       options.video_ccso_unit_bits = bits;
+      options.video_ccso_rd = true;
+      options.video_ccso = true;
+      continue;
+    }
+
+    if (argument == "--video-ccso-header-rd") {
+      options.video_ccso_header_rd = true;
       options.video_ccso_rd = true;
       options.video_ccso = true;
       continue;
@@ -3460,6 +3612,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-skip-collapse") {
+      options.video_skip_collapse = true;
+      continue;
+    }
+
     if (argument == "--video-sb128") {
       options.video_sb128 = true;
       continue;
@@ -3534,6 +3691,14 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       options.video_key_qp_offset_given = true;
       continue;
     }
+
+    // --video-tile-flush-min: implementation, then docs.  Delimited block so
+    // it can be merged without collisions.
+    if (argument == "--video-tile-flush-min") {
+      options.video_tile_flush_min = true;
+      continue;
+    }
+    // --video-tile-flush-min block end.
 
     // --video-drift-refresh: implementation, then docs.  Delimited block so it
     // can be merged without collisions.
@@ -3859,6 +4024,28 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       return ParseStatus::kError;
     }
   }
+
+  // --video-tile-flush-min block: the CPU video tile writer only.
+  if (options.video_tile_flush_min) {
+    if (!options.video || options.m1 || options.still_gpu) {
+      error = "--video-tile-flush-min is a --video feature: pass --video";
+      return ParseStatus::kError;
+    }
+    if (options.video_gpu) {
+      error = "--video-tile-flush-min is CPU-only: the CUDA M2 backend keeps "
+              "the historical tile termination as its parity reference";
+      return ParseStatus::kError;
+    }
+    if (options.tiles != "1x1") {
+      error = "--video-tile-flush-min needs the single-tile writer";
+      return ParseStatus::kError;
+    }
+    if (options.lossless) {
+      error = "--video-tile-flush-min applies to the lossy video writer";
+      return ParseStatus::kError;
+    }
+  }
+  // --video-tile-flush-min block end.
 
   if (options.video_key_qp_offset_given) {
     if (!options.video || options.m1 || options.still_gpu) {
@@ -4324,6 +4511,24 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
     }
+    if (options.video_tile_group_compact) {
+      // §5.4.2: only the single-tile plain chain knows the sequence grid up
+      // front; the tiled and frame-type wrappers build their own sequence
+      // headers and would ignore the flag.
+      if (options.tiles != "1x1") {
+        error = "--video-tile-group-compact is gated on a single tile (the "
+                "tiled sequence-header copy carries no sequence tile_params)";
+        return ParseStatus::kError;
+      }
+      if (options.b_frames != 0 || options.video_tlayers != 0 ||
+          options.video_tip || options.video_long_term || options.video_olk ||
+          options.video_leading != 0 || options.video_sef ||
+          options.video_switch || options.video_ras) {
+        error = "--video-tile-group-compact is gated on the plain key+P chain: "
+                "the B/TIP/frame-type wrappers build their own sequence header";
+        return ParseStatus::kError;
+      }
+    }
     if (options.video_bru) {
       // §7.12.2/§7.22 BRU needs enable_bru/use_bru and the BRU tile mode.
       // The component writer builds a valid stream, but the pinned decoder
@@ -4449,6 +4654,23 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     if (options.b_frames != 0 && options.b_frames > 6) {
       error = "--b-frames supports 1..6 B frames per GOP";
       return ParseStatus::kError;
+    }
+    if (options.video_ref_signal_compact) {
+      // §5.18.2 compact reference signalling rewrites the sequence header and
+      // the per-frame reference fields, so it is gated on the stream shape it
+      // was measured on.  The deeper combination checks live in
+      // validate_video_options() (video_frame.cpp).
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = "--video-ref-signal-compact is gated on the 8-bit 4:2:0 core "
+                "(the format video core keeps the historical reference "
+                "fields)";
+        return ParseStatus::kError;
+      }
+      if (options.video_refs != 1) {
+        error = "--video-ref-signal-compact needs --video-refs 1: the §7.7 "
+                "derived map must hold exactly the one live slot";
+        return ParseStatus::kError;
+      }
     }
     if (options.video_implicit_ref_map) {
       // §5.4.6/§7.7 implicit reference maps are wired on the CPU 8-bit 4:2:0
@@ -4800,6 +5022,12 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     if (options.video_ccso_rd &&
         (options.bit_depth != 8 || options.chroma != "420")) {
       error = "--video-ccso-rd is wired for the 8-bit 4:2:0 CPU CCSO planner";
+      return ParseStatus::kError;
+    }
+    if (options.video_ccso_header_rd && options.video_gpu) {
+      error = "--video-ccso-header-rd is a CPU-measured CCSO decision model; "
+              "the CUDA video stream is not calibrated against it (use "
+              "--video)";
       return ParseStatus::kError;
     }
     if (options.video_mhccp && (options.avg_cdf || options.adaptive_cdf)) {
@@ -5174,6 +5402,29 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "exact (drop --video-gpu)";
       return ParseStatus::kError;
     }
+    if (options.video_skip_collapse) {
+      if (options.video_gpu) {
+        error = "--video-skip-collapse is a CPU partition decision: the CUDA "
+                "backend solves its own tree (drop --video-gpu)";
+        return ParseStatus::kError;
+      }
+      if (options.tiles != "1x1") {
+        error = "--video-skip-collapse needs the whole-frame single-tile "
+                "decision pass (--tiles 1x1)";
+        return ParseStatus::kError;
+      }
+      if (options.video_segmentation || options.video_delta_q ||
+          options.video_per_segment_q) {
+        error = "--video-skip-collapse does not compose with the per-segment "
+                "quantiser tools: a full-SB skip leaf cannot code a delta";
+        return ParseStatus::kError;
+      }
+      if (options.bit_depth != 8 || options.chroma != "420") {
+        error = "--video-skip-collapse is wired for the 8-bit 4:2:0 video "
+                "core only";
+        return ParseStatus::kError;
+      }
+    }
     if (options.video_qm && options.video_tx_search) {
       error = "--video-qm does not compose with --video-tx-search: the device "
               "TX search module has its own scalar quantizer";
@@ -5481,6 +5732,10 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       if (options.cdf_continuity) {
         return reject_gpu("--cdf-continuity (cross-frame CDF carry)");
       }
+      if (options.video_ref_signal_compact) {
+        return reject_gpu("--video-ref-signal-compact (CPU §5.18.2 compact "
+                          "reference signalling)");
+      }
       if (options.video_segmentation || options.video_delta_q ||
           options.video_per_segment_q || options.video_uv_delta_q ||
           options.video_seg_skip || options.video_seg_globalmv ||
@@ -5571,6 +5826,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         flag_given(options, "--video-switch") ||
         flag_given(options, "--video-ras") ||
         flag_given(options, "--video-force-single") ||
+        flag_given(options, "--video-skip-collapse") ||
         flag_given(options, "--video-sb128") ||
         flag_given(options, "--video-sb256") ||
         flag_given(options, "--video-ext-partitions") ||
@@ -5578,11 +5834,15 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         flag_given(options, "--video-max-depth") ||
         flag_given(options, "--video-me-range") ||
         flag_given(options, "--video-cdef") ||
+        flag_given(options, "--video-cdef-rd") ||
+        flag_given(options, "--video-cdef-rd-lambda") ||
         flag_given(options, "--video-cdef-strength") ||
         flag_given(options, "--video-cdef-damping") ||
         flag_given(options, "--video-cdef-search") ||
         flag_given(options, "--video-ccso") ||
         flag_given(options, "--video-ccso-bands") ||
+        flag_given(options, "--video-ccso-rd") ||
+        flag_given(options, "--video-ccso-header-rd") ||
         flag_given(options, "--video-wiener") ||
         flag_given(options, "--video-pc-wiener") ||
         flag_given(options, "--video-chroma-lr") ||
@@ -6873,6 +7133,7 @@ int run_video_format_encode(const Options& options) {
   video_options.enable_ref_frame_mvs = options.video_ref_mvs;
   video_options.ref_mvs_stress = options.video_ref_mvs_stress;
   video_options.force_single_block = options.video_force_single;
+  video_options.skip_collapse = options.video_skip_collapse;
   video_options.sb128 = options.video_sb128;
   video_options.sb256 = options.video_sb256;
   video_options.ext_partitions = options.video_ext_partitions;
@@ -6891,6 +7152,8 @@ int run_video_format_encode(const Options& options) {
   video_options.loop_filters.cdef = options.video_cdef;
   video_options.loop_filters.cdef_num_strengths = options.video_cdef_strength;
   video_options.loop_filters.cdef_damping = options.video_cdef_damping;
+  video_options.loop_filters.cdef_rd = options.video_cdef_rd;
+  video_options.loop_filters.cdef_rd_lambda = options.video_cdef_rd_lambda;
   video_options.loop_filters.cdef_search_mode =
       static_cast<av2enc::video::post::VideoLoopFilterOptions::CdefSearchMode>(
           options.video_cdef_search);
@@ -6901,6 +7164,7 @@ int run_video_format_encode(const Options& options) {
   video_options.loop_filters.ccso_refit_passes =
       options.video_ccso_refit_passes;
   video_options.loop_filters.ccso_unit_bits = options.video_ccso_unit_bits;
+  video_options.loop_filters.ccso_header_rd = options.video_ccso_header_rd;
   video_options.loop_filters.cfl_ds_filter_index = options.video_cfl_ds_filter;
   video_options.loop_filters.wiener = options.video_wiener;
   video_options.loop_filters.pc_wiener = options.video_pc_wiener;
@@ -7414,6 +7678,9 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_inter_residual = options.video_inter_residual;
   video_options.enable_edge_inter = options.video_edge_inter;
   video_options.enable_edge_mask = options.video_edge_mask;
+  // --video-tile-flush-min (implementation, then docs).
+  video_options.minimal_tile_trailer = options.video_tile_flush_min;
+  // --video-tile-flush-min block end.
   // --video-drift-refresh (implementation, then docs).
   video_options.drift_refresh = options.video_drift_refresh;
   video_options.drift_refresh_threshold_db =
@@ -7428,6 +7695,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.enable_key_intra_tx_part = options.video_key_intra_txpart;
   video_options.tx_context_rate = options.video_tx_context_rate;
   video_options.tx_rd_lambda = options.video_tx_lambda;
+  video_options.key_tx_lambda = options.video_key_tx_lambda;
   video_options.leaf_rd_lambda_ref = options.video_leaf_rd_lambda;
   video_options.partition_rd = options.video_partition_rd;
   video_options.partition_probe_lambda = options.video_partition_lambda;
@@ -7478,10 +7746,12 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
       options.video_pb_aspect_log2_minus_1;
   video_options.seq_seg_info_present = options.video_seq_seg_info;
   video_options.seq_allow_seg_info_change = !options.video_seq_seg_frozen;
+  video_options.seq_tile_info_present = options.video_tile_group_compact;
   video_options.enable_interintra = options.video_compound_interintra;
   video_options.enable_ref_frame_mvs = options.video_ref_mvs;
   video_options.ref_mvs_stress = options.video_ref_mvs_stress;
   video_options.short_refresh = options.video_short_refresh;
+  video_options.ref_signal_compact = options.video_ref_signal_compact;
   video_options.refmvbank = options.video_refmvbank;
   video_options.mv_traj = options.video_mv_traj;
   video_options.same_ref_compound = options.video_same_ref_compound;
@@ -7519,6 +7789,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.temporal_layers = options.video_tlayers;
   video_options.tlayer_drop = options.video_tlayer_drop;
   video_options.force_single_block = options.video_force_single;
+  video_options.skip_collapse = options.video_skip_collapse;
   video_options.sb128 = options.video_sb128;
   video_options.sb256 = options.video_sb256;
   video_options.ext_partitions = options.video_ext_partitions;
@@ -7528,6 +7799,8 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.loop_filters.cdef = options.video_cdef;
   video_options.loop_filters.cdef_num_strengths = options.video_cdef_strength;
   video_options.loop_filters.cdef_damping = options.video_cdef_damping;
+  video_options.loop_filters.cdef_rd = options.video_cdef_rd;
+  video_options.loop_filters.cdef_rd_lambda = options.video_cdef_rd_lambda;
   video_options.loop_filters.cdef_search_mode =
       static_cast<av2enc::video::post::VideoLoopFilterOptions::CdefSearchMode>(
           options.video_cdef_search);
@@ -7538,6 +7811,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.loop_filters.ccso_refit_passes =
       options.video_ccso_refit_passes;
   video_options.loop_filters.ccso_unit_bits = options.video_ccso_unit_bits;
+  video_options.loop_filters.ccso_header_rd = options.video_ccso_header_rd;
   video_options.loop_filters.wiener = options.video_wiener;
   video_options.loop_filters.pc_wiener = options.video_pc_wiener;
   video_options.loop_filters.chroma_lr = options.video_chroma_lr;

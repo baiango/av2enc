@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <vector>
 
@@ -63,6 +66,32 @@ int plane_width(const VideoLoopFilterFrame& frame, int plane) {
 
 int plane_height(const VideoLoopFilterFrame& frame, int plane) {
   return (frame.mi_rows * 4) >> plane_shift(plane);
+}
+
+// True when every sample of the MI-aligned `out` planes (tight stride = plane
+// width) equals the frame's current reconstruction.  Used by the
+// `--video-cdef-rd` decision: an exactly identity filter is not worth its
+// §5.18.7.10 params row.
+bool planes_identical(const VideoLoopFilterFrame& frame,
+                      const std::uint8_t* const out[3]) {
+  for (int plane = 0; plane < 3; ++plane) {
+    const int w = plane_width(frame, plane);
+    const int h = plane_height(frame, plane);
+    if (out[plane] == nullptr) return false;
+    for (int y = 0; y < h; ++y) {
+      const std::uint8_t* src =
+          frame.plane[plane] + static_cast<std::size_t>(y) *
+                                   static_cast<std::size_t>(
+                                       frame.stride[plane]);
+      const std::uint8_t* dst =
+          out[plane] + static_cast<std::size_t>(y) *
+                           static_cast<std::size_t>(w);
+      if (std::memcmp(src, dst, static_cast<std::size_t>(w)) != 0) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 void copy_plane(const std::uint8_t* src, int src_stride, std::uint8_t* dst,
@@ -154,7 +183,10 @@ bool prepare_cdef(const VideoLoopFilterFrame& frame,
   cdef_options.disable_loopfilters_across_tiles = false;
   // With >1 strength the all-zero set must exist so a block can be left
   // unfiltered: §5.20.10.1 has no "off" index outside the strength table.
-  cdef_options.include_off = options.cdef_num_strengths > 1;
+  // The rate-priced arm (cdef_rd_lambda > 0) also keeps it for
+  // CdefStrengths == 1 so "filter nothing" is a candidate at all.
+  cdef_options.include_off =
+      options.cdef_num_strengths > 1 || options.cdef_rd_lambda > 0.0;
 
   // Bounded strength search (--video-cdef-search).  The compact ladder and the
   // block-grid decimation only change how the frame-level strength set is
@@ -212,11 +244,64 @@ bool prepare_cdef(const VideoLoopFilterFrame& frame,
   plan->n64_cols = adapter_plan.n64_cols;
   plan->n64_rows = adapter_plan.n64_rows;
   plan->index = adapter_plan.cdef_idx;
+  plan->sse_before = adapter_plan.sse_before;
+  plan->sse_after = adapter_plan.sse_after;
+  plan->header_bits = adapter_plan.header_bits;
+  plan->index_bits = adapter_plan.index_bits;
+  plan->blocks_off = adapter_plan.blocks_off;
+
+  // Header-rate decision (--video-cdef-rd).  A frame that enables CDEF always
+  // re-signals damping + CdefStrengths + every strength set in §5.18.7.10; the
+  // syntax has no "same as the previous frame" form (the pinned decoder installs
+  // exactly the row it reads, and `cdef_frame_enable = 0` disables the tool for
+  // the frame).  So the only re-signalling lever is to not enable it.  The exact
+  // form is decided after the filter runs: run_video_loop_filters() compares the
+  // filtered plane with the pre-CDEF one and codes the one-bit "off" form when
+  // they are identical.  An explicit `cdef_rd_lambda > 0` also drops frames
+  // whose measured gain cannot pay for the params row; that arm changes the
+  // reconstruction (gain is measured on the visible area only) and is opt-in.
+  // A frame whose filtered plane is *worse* than the unfiltered one must not
+  // pay for CDEF at all.  At low QP the strength search can still select a
+  // filter that raises SSE (measured: -1.02 dB on a QP20 keyframe for +2 B),
+  // so code the one-bit "off" form here, before the filter runs.
+  if (options.cdef && plan->sse_after > plan->sse_before) {
+    plan->enabled = false;
+    std::fill(plan->index.begin(), plan->index.end(), 0);
+  }
+  if (options.cdef_rd && options.cdef_rd_lambda > 0.0) {
+    const std::int64_t gain = plan->sse_before - plan->sse_after;
+    const double bits =
+        static_cast<double>(plan->header_bits + plan->index_bits);
+    if (static_cast<double>(gain) <= options.cdef_rd_lambda * bits) {
+      plan->enabled = false;
+      std::fill(plan->index.begin(), plan->index.end(), 0);
+    }
+  }
+  if (std::getenv("AV2ENC_TRACE_CDEF") != nullptr) {
+    static int trace_frame = 0;
+    std::fprintf(stderr,
+                 "cdef frame=%d enabled=%d strengths=%d damping=%d sse=%lld "
+                 "off=%lld gain=%lld header_bits=%d index_bits=%d "
+                 "blocks_off=%d set=",
+                 trace_frame++, plan->enabled ? 1 : 0, plan->num_strengths,
+                 plan->damping, static_cast<long long>(plan->sse_after),
+                 static_cast<long long>(plan->sse_before),
+                 static_cast<long long>(plan->sse_before - plan->sse_after),
+                 plan->header_bits, plan->index_bits, plan->blocks_off);
+    for (int i = 0; i < plan->num_strengths; ++i) {
+      std::fprintf(stderr, "%s%d/%d/%d/%d", i ? "," : "",
+                   plan->strength[i].y_pri, plan->strength[i].y_sec,
+                   plan->strength[i].uv_pri, plan->strength[i].uv_sec);
+    }
+    std::fprintf(stderr, "\n");
+  }
   return true;
 }
 
 bool apply_cdef_cpu(VideoLoopFilterFrame& frame, const VideoCdefPlan& plan,
-                    std::string* error) {
+                    std::string* error, bool* identical) {
+  if (identical != nullptr) *identical = true;
+  if (!plan.enabled) return true;
   if (plan.damping < 3 || plan.damping > 6 || plan.num_strengths < 1 ||
       plan.num_strengths > 8) {
     return fail(error, "video CDEF: invalid plan");
@@ -269,6 +354,11 @@ bool apply_cdef_cpu(VideoLoopFilterFrame& frame, const VideoCdefPlan& plan,
     return fail(error, std::string("video CDEF failed: ") +
                            av2enc::cdef::cdef_status_string(status));
   }
+  if (identical != nullptr) {
+    const std::uint8_t* out[3] = {dst_storage[0].data(), dst_storage[1].data(),
+                                  dst_storage[2].data()};
+    *identical = planes_identical(frame, out);
+  }
   for (int plane = 0; plane < 3; ++plane) {
     copy_plane(dst_storage[plane].data(), plane_width(frame, plane),
                frame.plane[plane], frame.stride[plane],
@@ -299,6 +389,320 @@ av2enc::still::filters_stream::CcsoParams make_ccso_header_params(
     dst.offset_idx = src.offset_idx;
   }
   return params;
+}
+
+// ---------------------------------------------------------------------------
+// Header-aware CCSO band table (--video-ccso-header-rd)
+// ---------------------------------------------------------------------------
+//
+// The historical fit prices only the tu(7) *extra* bits of a non-zero band
+// offset: a band that stays at index 0 costs one bit that nobody charges, and
+// the fixed part of the row is free.  With ccso_max_band_log2 = 6 that floor is
+// 64 bits (8 B) per enabled plane on every frame, which is the bulk of the
+// measured CCSO header traffic.  This fit prices the whole row at lambda per
+// bit and chooses max_band_log2, scale_idx and the offset table together:
+//
+//   J = sum_band [ SSE(band, idx) + lambda * tu7_extra_bits(idx) ]
+//       + lambda * (11 + 2^max_band_log2)     // fixed row + one bit per band
+//
+// The fixed 11 bits are what turning one plane on costs in an inter frame:
+// ccso_planes[0..2] (3) + reuse_ccso/sb_reuse_ccso (2) + bo_only (1) +
+// scale_idx (2) + max_band_log2 (3).  The band statistics are additive, so a
+// single pass over the plane fills the finest histogram and every coarser
+// band count aggregates out of it.
+
+struct CcsoPlaneFitInput {
+  int width = 0;
+  int height = 0;
+  int sub = 0;
+  const std::uint8_t* curr_luma = nullptr;
+  int curr_luma_stride = 0;
+  const std::uint8_t* rec = nullptr;
+  int rec_stride = 0;
+  const std::uint8_t* src = nullptr;
+  int src_stride = 0;
+  int ccso_luma_log2 = 6;
+  int max_band_log2 = 6;
+  double lambda = 22.0;
+  double unit_bits = 2.0;
+  int refit_passes = 2;
+};
+
+struct CcsoPlaneFit {
+  bool enabled = false;
+  int max_band_log2 = 0;
+  int scale_idx = 0;
+  std::vector<std::uint8_t> offset_idx;
+  std::vector<std::uint8_t> blks;
+  int blk_cols = 0;
+  int blk_rows = 0;
+  std::size_t enabled_units = 0;
+  // Modelled cost of the chosen table and of leaving the plane unfiltered.
+  double cost = 0.0;
+  double cost_off = 0.0;
+};
+
+CcsoPlaneFit fit_ccso_plane_header_aware(const CcsoPlaneFitInput& in) {
+  CcsoPlaneFit out;
+  const int pw = in.width;
+  const int ph = in.height;
+  const int sub = in.sub;
+  const double lambda = in.lambda;
+  const double unit_bits = in.unit_bits;
+
+  int pcols = 0;
+  int prows = 0;
+  rest::ccso_blk_grid_size(pw, ph, in.ccso_luma_log2, sub, sub, &pcols,
+                           &prows);
+  const int shift = in.ccso_luma_log2 - sub;
+  const std::size_t unit_count =
+      static_cast<std::size_t>(pcols) * static_cast<std::size_t>(prows);
+
+  const int max_bins = 1 << in.max_band_log2;
+  const int max_bin_shift = 8 - in.max_band_log2;
+  // §5.18.7.12 fixed bits of one enabled plane on an inter frame.
+  const int kFixedRowBits = 3 + 2 + 1 + 2 + 3;
+
+  auto extra_bits = [](int idx) { return idx < 7 ? idx : 6; };
+
+  std::vector<double> e(static_cast<std::size_t>(max_bins), 0.0);
+  std::vector<double> e2(static_cast<std::size_t>(max_bins), 0.0);
+  std::vector<double> n(static_cast<std::size_t>(max_bins), 0.0);
+
+  // Fill the finest histogram.  When `include` is non-empty only samples of
+  // units with a non-zero entry contribute.
+  auto collect = [&](const std::vector<std::uint8_t>& include) {
+    std::fill(e.begin(), e.end(), 0.0);
+    std::fill(e2.begin(), e2.end(), 0.0);
+    std::fill(n.begin(), n.end(), 0.0);
+    const bool restrict = !include.empty();
+    for (int y = 0; y < ph; ++y) {
+      const int lx_row = (y << sub) * in.curr_luma_stride;
+      for (int x = 0; x < pw; ++x) {
+        if (restrict) {
+          const std::size_t unit =
+              static_cast<std::size_t>(y >> shift) *
+                  static_cast<std::size_t>(pcols) +
+              static_cast<std::size_t>(x >> shift);
+          if (include[unit] == 0) continue;
+        }
+        const int lx = x << sub;
+        const int band = in.curr_luma[lx_row + lx] >> max_bin_shift;
+        const int src_value =
+            in.src[static_cast<std::size_t>(y) *
+                       static_cast<std::size_t>(in.src_stride) +
+                   static_cast<std::size_t>(x)];
+        const int d =
+            src_value - in.rec[static_cast<std::size_t>(y) *
+                                   static_cast<std::size_t>(in.rec_stride) +
+                               static_cast<std::size_t>(x)];
+        e[static_cast<std::size_t>(band)] += d;
+        e2[static_cast<std::size_t>(band)] +=
+            static_cast<double>(d) * static_cast<double>(d);
+        n[static_cast<std::size_t>(band)] += 1.0;
+      }
+    }
+  };
+
+  // Best scale/table for one band count on the current histogram.
+  auto classify = [&](int bands_log2, int* out_scale,
+                      std::vector<std::uint8_t>* out_idx, double* out_cost) {
+    const int bands = 1 << bands_log2;
+    const int group = max_bins / bands;
+    double best = std::numeric_limits<double>::infinity();
+    int best_scale = 0;
+    std::vector<std::uint8_t> best_idx(static_cast<std::size_t>(bands), 0);
+    for (int scale_idx = 0; scale_idx < 4; ++scale_idx) {
+      const int scale = scale_idx + 1;
+      // Fixed row bits plus the one-bit "off" symbol every band codes.
+      double cost = lambda * static_cast<double>(kFixedRowBits + bands);
+      std::vector<std::uint8_t> idx(static_cast<std::size_t>(bands), 0);
+      for (int band = 0; band < bands; ++band) {
+        double be = 0.0;
+        double be2 = 0.0;
+        double bn = 0.0;
+        for (int j = 0; j < group; ++j) {
+          const std::size_t k =
+              static_cast<std::size_t>(band * group + j);
+          be += e[k];
+          be2 += e2[k];
+          bn += n[k];
+        }
+        int band_idx = 0;
+        double band_cost = be2;
+        for (int i = 1; i < 8; ++i) {
+          const double off =
+              static_cast<double>(rest::kCcsoOffset[i] * scale);
+          const double sse = be2 - 2.0 * off * be + off * off * bn;
+          const double c = sse + lambda * extra_bits(i);
+          if (c < band_cost - 1e-9) {
+            band_cost = c;
+            band_idx = i;
+          }
+        }
+        cost += band_cost;
+        idx[static_cast<std::size_t>(band)] =
+            static_cast<std::uint8_t>(band_idx);
+      }
+      if (cost < best - 1e-9) {
+        best = cost;
+        best_scale = scale_idx;
+        best_idx = std::move(idx);
+      }
+    }
+    *out_scale = best_scale;
+    *out_idx = std::move(best_idx);
+    *out_cost = best;
+  };
+
+  // Exact clamped per-unit SSE with the given table; enable the units whose
+  // SSE gain pays for one ccso_blk symbol.
+  auto decide_units = [&](int bands_log2, int scale_idx,
+                          const std::vector<std::uint8_t>& idx,
+                          std::vector<std::uint8_t>* blks) {
+    const int band_shift = 8 - bands_log2;
+    const int scale = scale_idx + 1;
+    std::vector<double> unit_off(unit_count, 0.0);
+    std::vector<double> unit_on(unit_count, 0.0);
+    for (int y = 0; y < ph; ++y) {
+      const int lx_row = (y << sub) * in.curr_luma_stride;
+      for (int x = 0; x < pw; ++x) {
+        const int lx = x << sub;
+        const int band = in.curr_luma[lx_row + lx] >> band_shift;
+        const int off =
+            rest::kCcsoOffset[idx[static_cast<std::size_t>(band)]] * scale;
+        const int base =
+            in.rec[static_cast<std::size_t>(y) *
+                       static_cast<std::size_t>(in.rec_stride) +
+                   static_cast<std::size_t>(x)];
+        const int src_value =
+            in.src[static_cast<std::size_t>(y) *
+                       static_cast<std::size_t>(in.src_stride) +
+                   static_cast<std::size_t>(x)];
+        const int filtered = std::clamp(base + off, 0, 255);
+        const std::size_t unit =
+            static_cast<std::size_t>(y >> shift) *
+                static_cast<std::size_t>(pcols) +
+            static_cast<std::size_t>(x >> shift);
+        const double d_off = static_cast<double>(src_value - base);
+        const double d_on = static_cast<double>(src_value - filtered);
+        unit_off[unit] += d_off * d_off;
+        unit_on[unit] += d_on * d_on;
+      }
+    }
+    blks->assign(unit_count, 0);
+    std::size_t enabled = 0;
+    for (std::size_t u = 0; u < unit_count; ++u) {
+      if (unit_off[u] - unit_on[u] > lambda * unit_bits) {
+        (*blks)[u] = 1;
+        ++enabled;
+      }
+    }
+    return enabled;
+  };
+
+  std::vector<std::uint8_t> keep;  // empty = every unit participates
+  int bands_log2 = 0;
+  int scale_idx = 0;
+  std::vector<std::uint8_t> idx;
+  double cost = 0.0;
+  double cost_off = 0.0;
+  auto refit = [&]() {
+    collect(keep);
+    cost_off = 0.0;
+    for (int b = 0; b < max_bins; ++b) {
+      cost_off += e2[static_cast<std::size_t>(b)];
+    }
+    double best = std::numeric_limits<double>::infinity();
+    int best_bands = 0;
+    int best_scale = 0;
+    std::vector<std::uint8_t> best_idx;
+    for (int b = 0; b <= in.max_band_log2; ++b) {
+      int s = 0;
+      std::vector<std::uint8_t> ix;
+      double c = 0.0;
+      classify(b, &s, &ix, &c);
+      if (c < best - 1e-9) {
+        best = c;
+        best_bands = b;
+        best_scale = s;
+        best_idx = std::move(ix);
+      }
+    }
+    bands_log2 = best_bands;
+    scale_idx = best_scale;
+    idx = std::move(best_idx);
+    cost = best;
+  };
+
+  refit();
+  std::vector<std::uint8_t> blks;
+  std::size_t enabled_units = decide_units(bands_log2, scale_idx, idx, &blks);
+  for (int pass = 0; pass < in.refit_passes && enabled_units > 0; ++pass) {
+    keep = blks;
+    refit();
+    enabled_units = decide_units(bands_log2, scale_idx, idx, &blks);
+  }
+
+  out.max_band_log2 = bands_log2;
+  out.scale_idx = scale_idx;
+  out.offset_idx = std::move(idx);
+  out.blks = std::move(blks);
+  out.blk_cols = pcols;
+  out.blk_rows = prows;
+  out.enabled_units = enabled_units;
+  out.cost = cost;
+  out.cost_off = cost_off;
+  // §6.17.7.8 has no "table without a unit" form: an all-pruned grid means the
+  // plane is off.  The fit also drops the plane when the table does not repay
+  // the bits it costs at lambda.
+  out.enabled = enabled_units > 0 && cost < cost_off - 1e-9;
+  return out;
+}
+
+// AV2ENC_TRACE_CCSO=1: one line per frame with the exact §5.18.7.12 bit split
+// and how much of the table changed since the previous frame.
+void trace_ccso_header(const VideoCcsoPlan& plan, bool frame_is_intra,
+                       const av2enc::still::filters_stream::CcsoHeaderBits& b) {
+  static int index = 0;
+  static VideoCcsoPlane prev[3];
+  static bool have_prev = false;
+  std::fprintf(stderr,
+               "ccso f=%d key=%d flag=%d bits=%zu (%.2f B) frame=%zu "
+               "pflags=%zu pparams=%zu table=%zu\n",
+               index, frame_is_intra ? 1 : 0, plan.enabled ? 1 : 0,
+               b.total, static_cast<double>(b.total) / 8.0, b.frame_flag,
+               b.plane_flags, b.plane_params, b.table);
+  for (int plane = 0; plane < 3; ++plane) {
+    const VideoCcsoPlane& p = plan.plane[plane];
+    if (!p.enabled) continue;
+    int changed = 0;
+    int changed_scalar = 0;
+    if (have_prev) {
+      changed_scalar = (prev[plane].enabled != p.enabled ||
+                        prev[plane].scale_idx != p.scale_idx ||
+                        prev[plane].max_band_log2 != p.max_band_log2)
+                           ? 1
+                           : 0;
+      const std::size_t n = std::min(prev[plane].offset_idx.size(),
+                                     p.offset_idx.size());
+      for (std::size_t i = 0; i < n; ++i) {
+        if (prev[plane].offset_idx[i] != p.offset_idx[i]) ++changed;
+      }
+      changed += static_cast<int>(p.offset_idx.size() - n);
+    }
+    std::fprintf(stderr,
+                 "  ccso p%d bands=%d sym=%d nz=%d table=%zu bits flags=%zu "
+                 "total=%zu (%zu B) dchg=%d dscalar=%d\n",
+                 plane, 1 << p.max_band_log2, b.table_symbols[plane],
+                 b.table_nonzero[plane], b.plane_table[plane],
+                 b.plane_total[plane] - b.plane_table[plane],
+                 b.plane_total[plane], (b.plane_total[plane] + 7) / 8,
+                 changed, have_prev ? changed_scalar : -1);
+  }
+  for (int plane = 0; plane < 3; ++plane) prev[plane] = plan.plane[plane];
+  have_prev = true;
+  ++index;
 }
 
 bool prepare_ccso(const VideoLoopFilterFrame& frame,
@@ -372,6 +776,36 @@ bool prepare_ccso(const VideoLoopFilterFrame& frame,
     plane_plan.edge_clf = 0;
     plane_plan.max_band_log2 = bands_log2;
     plane_plan.offset_idx.assign(static_cast<std::size_t>(bands), 0);
+    if (options.ccso_rd && options.ccso_header_rd) {
+      CcsoPlaneFitInput fit_in;
+      fit_in.width = pw;
+      fit_in.height = ph;
+      fit_in.sub = sub;
+      fit_in.curr_luma = curr_luma;
+      fit_in.curr_luma_stride = curr_luma_stride;
+      fit_in.rec = rec;
+      fit_in.rec_stride = rec_stride;
+      fit_in.src = src;
+      fit_in.src_stride = src_stride;
+      fit_in.ccso_luma_log2 = ccso_luma_log2;
+      fit_in.max_band_log2 = bands_log2;
+      fit_in.lambda = options.ccso_lambda;
+      fit_in.unit_bits = options.ccso_unit_bits;
+      fit_in.refit_passes = options.ccso_refit_passes;
+      CcsoPlaneFit fit = fit_ccso_plane_header_aware(fit_in);
+      plane_plan.enabled = fit.enabled;
+      plane_plan.max_band_log2 = fit.max_band_log2;
+      plane_plan.scale_idx = fit.scale_idx;
+      plane_plan.offset_idx = std::move(fit.offset_idx);
+      plane_plan.blk_cols = fit.blk_cols;
+      plane_plan.blk_rows = fit.blk_rows;
+      plane_plan.blks = std::move(fit.blks);
+      if (!fit.enabled) {
+        plane_plan.blks.clear();
+        plane_plan.offset_idx.clear();
+      }
+      continue;
+    }
     if (options.ccso_rd) {
       // Rate-aware fit.  §5.18.7.12 codes each ccso_offset_idx as tu(7), so
       // index i costs i extra bits over the index-0 "off" symbol (index 7 is
@@ -571,9 +1005,9 @@ bool prepare_ccso(const VideoLoopFilterFrame& frame,
     any_plane = any_plane || plan->plane[plane].enabled;
   }
   plan->enabled = any_plane;
-  if (!any_plane) return true;
 
-  // Validate through the real header writer before touching any pixel.
+  // Validate through the real header writer before touching any pixel.  The
+  // same pass accounts the exact §5.18.7.12 bits (AV2ENC_TRACE_CCSO).
   av2enc::still::filters_stream::CcsoHeaderContext context;
   context.coded_lossless = false;
   context.enable_ccso = true;
@@ -586,10 +1020,15 @@ bool prepare_ccso(const VideoLoopFilterFrame& frame,
   av2enc::still::filters_stream::CcsoParams params =
       make_ccso_header_params(*plan);
   BitWriter probe;
-  if (av2enc::still::filters_stream::write_ccso_params(probe, params, context,
-                                                       error) == 0 &&
-      (error != nullptr && !error->empty())) {
+  av2enc::still::filters_stream::CcsoHeaderBits bits;
+  av2enc::still::filters_stream::write_ccso_params(probe, params, context,
+                                                   error, &bits);
+  if (any_plane && probe.bit_size() == 0 && error != nullptr &&
+      !error->empty()) {
     return false;
+  }
+  if (std::getenv("AV2ENC_TRACE_CCSO") != nullptr) {
+    trace_ccso_header(*plan, frame.frame_is_intra, bits);
   }
   return true;
 }
@@ -1143,7 +1582,7 @@ bool apply_gdf_cpu(const VideoLoopFilterFrame& frame, const VideoGdfPlan& plan,
 
 bool apply_stage(VideoFilterStage stage, VideoLoopFilterFrame& frame,
                  const VideoFilterPlan& plan, VideoLoopFilterHooks* hooks,
-                 std::string* error) {
+                 std::string* error, bool* cdef_identical = nullptr) {
   if (hooks != nullptr) {
     std::vector<std::uint8_t> stage_out[3];
     VideoLoopFilterDeviceFrame device;
@@ -1162,6 +1601,11 @@ bool apply_stage(VideoFilterStage stage, VideoLoopFilterFrame& frame,
       device.out_stride[plane] = w;
     }
     if (!hooks->apply_stage(stage, plan, device, error)) return false;
+    if (cdef_identical != nullptr) {
+      const std::uint8_t* out[3] = {stage_out[0].data(), stage_out[1].data(),
+                                    stage_out[2].data()};
+      *cdef_identical = planes_identical(frame, out);
+    }
     for (int plane = 0; plane < 3; ++plane) {
       copy_plane(stage_out[plane].data(), plane_width(frame, plane),
                  frame.plane[plane], frame.stride[plane],
@@ -1171,7 +1615,7 @@ bool apply_stage(VideoFilterStage stage, VideoLoopFilterFrame& frame,
   }
   switch (stage) {
     case VideoFilterStage::kCdef:
-      return apply_cdef_cpu(frame, plan.cdef, error);
+      return apply_cdef_cpu(frame, plan.cdef, error, cdef_identical);
     case VideoFilterStage::kCcso:
       return apply_ccso_cpu(frame, plan.ccso, error);
     case VideoFilterStage::kLr:
@@ -1295,8 +1739,27 @@ bool run_video_loop_filters(VideoLoopFilterFrame& frame,
 
   if (options.cdef) {
     if (!prepare_cdef(frame, options, &plan->cdef, error)) return false;
-    if (!apply_stage(VideoFilterStage::kCdef, frame, *plan, hooks, error)) {
-      return false;
+    if (plan->cdef.enabled) {
+      bool identical = false;
+      if (!apply_stage(VideoFilterStage::kCdef, frame, *plan, hooks, error,
+                       &identical)) {
+        return false;
+      }
+      // Exact safety net for the rate-aware decision: if the applied frame is
+      // bit-identical to the pre-CDEF reconstruction the params row buys
+      // nothing, so code the one-bit `cdef_frame_enable = 0` form instead.  The
+      // pixels, and therefore the decoded pictures, are unchanged.
+      if (options.cdef_rd && identical) {
+        plan->cdef.enabled = false;
+        std::fill(plan->cdef.index.begin(), plan->cdef.index.end(), 0);
+      }
+    }
+    if (std::getenv("AV2ENC_TRACE_CDEF") != nullptr) {
+      static int final_frame = 0;
+      std::fprintf(stderr,
+                   "cdef-final frame=%d enabled=%d header_bits=%d\n",
+                   final_frame++, plan->cdef.enabled ? 1 : 0,
+                   plan->cdef.enabled ? plan->cdef.header_bits : 1);
     }
   }
   if (options.ccso) {

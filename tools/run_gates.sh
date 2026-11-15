@@ -142,7 +142,7 @@ PASSED=0
 SKIPPED=0
 FAILED=0
 INDEX=0
-TOTAL=34
+TOTAL=35
 [ "$QUICK" -eq 1 ] && TOTAL=6
 declare -a RESULTS=()
 
@@ -252,14 +252,19 @@ if [ "$QUICK" -eq 0 ]; then
     run_gate gate_video_headers src/pipeline/video/gate_video_headers.sh
     run_gate gate_video_rd_preset tools/gate_video_rd_preset.sh
     run_gate gate_video_nightly tools/gate_video_nightly.sh
+    run_gate gate_video_tile_group tools/gate_video_tile_group.sh
     run_gate gate_video_cdf_carry src/pipeline/video/gate_video_cdf_carry.sh
+    run_gate gate_video_ref_signalling tools/gate_video_ref_signalling.sh
     run_gate gate_video_key_intra_txpart \
         src/pipeline/video/video_key_intra_txpart_gate.sh
     run_gate gate_video_rdoq tools/gate_video_rdoq.sh
     run_gate gate_video_edge_inter tools/gate_video_edge_inter.sh
     run_gate gate_video_edge_mask tools/gate_video_edge_mask.sh
+    run_gate gate_video_ccso_overhead tools/gate_video_ccso_overhead.sh
     run_gate gate_video_drift_refresh \
         src/pipeline/video/video_drift_refresh_gate.sh
+    run_gate gate_video_skip_collapse \
+        src/pipeline/video/video_skip_collapse_gate.sh
 fi
 
 echo

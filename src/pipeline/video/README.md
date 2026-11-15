@@ -264,13 +264,16 @@ without changing the M2 syntax writer.
 | `enable_restoration` / `enable_ccso` | 0 |
 | `cdef_on_skip_txfm_always_on` / `..._disabled` | 0 / 1 |
 | `df_par_bits_minus_2` | 0 |
-| `seq_tile_info_present_flag` | 0 |
+| `seq_tile_info_present_flag` | 0; 1 with `--video-tile-group-compact`, which then also codes `allow_tile_info_change = 0` and the §5.18.7.3 `tile_params()` (see `docs/video-tile-group-header.md`) |
 | `film_grain_params_present` | 0 |
 
 `tile_info()` writes `uniform_tile_spacing_flag = 1` and, when the frame has
 more than one superblock column/row, one zero
 `increment_tile_cols_log2` / `increment_tile_rows_log2` bit. This is a single
-tile covering the frame.
+tile covering the frame. With `--video-tile-group-compact` the sequence header
+owns that grid (`allow_tile_info_change = 0`), so a frame whose grid is
+eligible under §5.18.7.2 infers `reuse_tile_info = 1` and codes **no** tile
+bits.
 
 ## Keyframe frame header (OBU_CLOSED_LOOP_KEY)
 
@@ -766,6 +769,8 @@ Composition:
 | Flag | Spec | Default | Notes |
 |---|---|---|---|
 | `--video-cdef` | §7.18, §5.18.7.10 | off | one strength set (no tile symbol) |
+| `--video-cdef-rd` | §5.18.7.10 | off | price the params row: a frame whose filter changes no sample codes `cdef_frame_enable = 0` (identical pixels) |
+| `--video-cdef-rd-lambda L` | encoder price | 0 | also drop frames whose visible-area gain cannot pay `L × bits`; changes the padded reconstruction |
 | `--video-cdef-strength N` | `CdefStrengths` 1..8 | 1 | 2..8 codes a per-64×64 `cdef_idx` |
 | `--video-cdef-damping N` | `CdefDamping` 3..6 | 3 | |
 | `--video-cdef-search m` | encoder search | `full` | `full`/`ladder`/`step`/`fast`; `step`/`fast` (2x2 MI decimation) need `CdefStrengths 1` |

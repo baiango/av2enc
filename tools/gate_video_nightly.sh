@@ -60,7 +60,10 @@ fail() { echo "FAIL: $*" >&2; FAILED=1; }
 NIGHTLY_FLAGS=(--video-rd-preset quality --video-ccso-rd --video-edge-inter
                --video-partition-rd --video-partition-rd-lambda 2.75e-6
                --video-key-qp-offset -27 --video-rdoq --video-edge-mask
-               --video-cdef --video-ccso-bands 6 --video-ccso-lambda 22
+               --video-cdef --video-cdef-rd
+               --video-tile-flush-min --video-ref-signal-compact
+               --video-tile-group-compact --video-ccso-header-rd
+               --video-ccso-bands 6 --video-ccso-lambda 22
                --video-ccso-refit 2 --video-ccso-unit-bits 2
                --video-bawp --video-bawp-carrier --video-leaf-rd
                --video-subpel-eighth --video-tx-lambda 136
@@ -167,10 +170,50 @@ import hashlib, sys
 print(hashlib.md5(open(sys.argv[1], 'rb').read()).hexdigest())
 PY
 )
-        [ "$BYTES" = "24885" ] ||
-            fail "nightly stream is $BYTES B, expected 24885"
-        [ "$MD5" = "5e316100ce7fd709b4298ccfebfffccd" ] ||
-            fail "nightly stream md5 is $MD5, expected 5e316100..."
+        [ "$BYTES" = "24113" ] ||
+            fail "nightly stream is $BYTES B, expected 24113"
+        [ "$MD5" = "7f03eb6e82d6ba4cf6666c78285f945b" ] ||
+            fail "nightly stream md5 is $MD5, expected 7f03eb6e..."
+    fi
+
+    # --- CDEF params-row pricing (--video-cdef-rd) ---------------------
+    # The flag only removes re-signalled §5.18.7.10 rows for frames whose CDEF
+    # filter changes no sample, so the decoded pictures must be byte-identical
+    # to the same aggregate without it while the stream is strictly smaller.
+    if [ -f "$TMP/nightly60.ivf" ]; then
+        NO_RD_FLAGS=()
+        for f in "${NIGHTLY_FLAGS[@]}"; do
+            [ "$f" = "--video-cdef-rd" ] || NO_RD_FLAGS+=("$f")
+        done
+        if ! "$BIN" "$NASA" -o "$TMP/nightly60-nord.ivf" --video --frames 60 \
+                --qp 110 --cpu-threads 8 "${NO_RD_FLAGS[@]}" \
+                >"$TMP/nightly60-nord.log" 2>&1; then
+            fail "the --video-cdef-rd A/B control encode failed"
+        fi
+        RD_BYTES=$(wc -c <"$TMP/nightly60.ivf" | tr -d ' ')
+        NORD_BYTES=$(wc -c <"$TMP/nightly60-nord.ivf" | tr -d ' ')
+        [ "$RD_BYTES" -lt "$NORD_BYTES" ] ||
+            fail "--video-cdef-rd did not shrink the stream ($RD_BYTES vs $NORD_BYTES)"
+        if ! "$DAV2D" -q --strict 1 -i "$TMP/nightly60.ivf" \
+                -o "$TMP/rd_dec.y4m" --threads 1 >"$TMP/rd_dec.log" 2>&1; then
+            fail "the --video-cdef-rd stream failed dav2d --strict 1"
+        fi
+        if ! "$DAV2D" -q --strict 1 -i "$TMP/nightly60-nord.ivf" \
+                -o "$TMP/nord_dec.y4m" --threads 1 >"$TMP/nord_dec.log" 2>&1; then
+            fail "the --video-cdef-rd A/B control failed dav2d --strict 1"
+        fi
+        if [ -f "$TMP/rd_dec.y4m" ] && [ -f "$TMP/nord_dec.y4m" ]; then
+            cmp -s "$TMP/rd_dec.y4m" "$TMP/nord_dec.y4m" ||
+                fail "--video-cdef-rd changed the decoded pictures"
+            PICS=$(python3 - "$TMP/rd_dec.y4m" <<'PY'
+import sys
+print(open(sys.argv[1], 'rb').read().count(b'FRAME'))
+PY
+)
+            [ "$PICS" = "60" ] ||
+                fail "--video-cdef-rd decoded $PICS pictures, expected 60"
+        fi
+        echo "CDEF params-row pricing: $NORD_BYTES -> $RD_BYTES B, decoded identical"
     fi
 fi
 

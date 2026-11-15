@@ -191,6 +191,14 @@ struct VideoOptions {
   // the full mask.  Off keeps the historical sequence bit and frame headers
   // byte-identical.
   bool short_refresh = false;
+  // Opt-in §5.18.2 compact reference signalling (--video-ref-signal-compact):
+  // a single-reference low-delay P chain signals NumRefFrames = 1 and
+  // explicit_ref_frame_map = 0, so every inter frame codes no reference-map
+  // bits at all (§7.7 derives the one live slot), and the primary-ref block is
+  // omitted because PRIMARY_REF_CHOOSE resolves to the same slot (frame 1
+  // derives PRIMARY_REF_NONE either way).  Off keeps every historical stream
+  // byte-identical.  See docs/video-ref-signalling.md.
+  bool ref_signal_compact = false;
   // Opt-in §5.4.6 enable_refmvbank (--video-refmvbank): maintain the §7.12.2.21
   // per-reference bank and insert its candidates at step 19.
   bool refmvbank = false;
@@ -227,6 +235,19 @@ struct VideoOptions {
   bool force_global_mv = false;
   bool force_intra = false;
   bool force_single_block = false;
+  // Opt-in static-superblock partition collapse (--video-skip-collapse).
+  //
+  // On a P frame, a superblock whose coded leaves are *all* plain
+  // zero-motion inter skips (single reference, no compound / TIP / BAWP /
+  // inter-intra / morph, MV == 0) predicts every 4x4 cell by copying the
+  // reference at the same position.  One superblock-sized skip leaf with
+  // MV == 0 therefore reproduces exactly the same pixels while coding a
+  // single partition symbol instead of a tree.  The decision pass rewrites
+  // those superblocks after the tree solves and re-collects the frame; a
+  // rewritten leaf that does not come back as a plain zero-motion skip is
+  // put back.  Default off: every historical stream, every pinned nightly
+  // stream and every GPU path is byte-identical.
+  bool skip_collapse = false;
   // Feature 1: inter residual.  Off by default; the baseline is skip-only.
   // With it on, the skip/residual and intra/inter decisions use a rate-aware
   // RD cost weighted by inter_rd_lambda instead of the historical SSE-only
@@ -268,6 +289,10 @@ struct VideoOptions {
   // Anchor constant of the --video-leaf-rd lambda (125 is the measured
   // 100 kbps calibration; see docs/video-nightly.md).
   double leaf_rd_lambda_ref = 125.0;
+  // TX-search lambda for intra leaves.  0 inherits tx_rd_lambda; the
+  // keyframe measures far better with a much smaller weight because an
+  // over-large one abandons whole leaves (docs/keyframe-bit-accounting.md).
+  double key_tx_lambda = 0.0;
   // Opt-in keyframe intra luma TX partition (--video-key-intra-txpart).  The
   // TX search's single-predictor contract cannot code an intra partition, so
   // the still encoder's chain is ported here: each candidate part is predicted
@@ -441,6 +466,11 @@ struct VideoOptions {
   // Opt-in §8.2.6 adaptation in the video tile writer (--adaptive-cdf with
   // --avg-cdf).  Off keeps disable_cdf_update = 1.
   bool adaptive_cdf = false;
+  // Opt-in §8.2.4 minimum tile termination (--video-tile-flush-min).  The
+  // trailing '1' stays where §8.2.4 puts it; the fourteen zeros after it and
+  // the byte padding are not written, which §8.2.4 permits down to
+  // SymbolMaxBits == -14.  Off keeps the historical tile bytes.
+  bool minimal_tile_trailer = false;
   // Opt-in §5.18.2 cross-frame CDF carry (--cdf-continuity): each P frame
   // installs the primary reference's saved CDFs (§7.4.4), signals
   // primary_ref_frame = 0 and clears disable_cross_frame_cdf_init, so the
@@ -612,6 +642,12 @@ struct VideoOptions {
   // allow_change, codes reuse_seg_info).  Off keeps the historical zero bit.
   bool seq_seg_info_present = false;
   bool seq_allow_seg_info_change = true;
+  // §5.4.2 seq_tile_info_present_flag (--video-tile-group-compact): the
+  // sequence header carries the one-tile tile_params() with
+  // allow_tile_info_change = 0, so every frame infers reuse_tile_info = 1
+  // (§5.18.7.2) and codes no per-frame tile bits.  Off keeps the historical
+  // zero bit plus the per-frame `1 0 0`.
+  bool seq_tile_info_present = false;
   // Opt-in §5.4.8/§5.18.6.1 separate UV/DC delta-Q (--video-uv-delta-q D).
   // U uses +D and V uses -D for both DC and AC, so separate_uv_delta_q = 1
   // codes diff_uv_delta = 1 and every chroma plane/component exercises its own

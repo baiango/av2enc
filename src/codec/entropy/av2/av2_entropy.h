@@ -230,7 +230,14 @@ struct Encoder {
   uint8_t finished = 0;
   uint8_t failed = 0;
   uint8_t disable_cdf_update = 0;
+  // Opt-in §8.2.4 minimum termination (--video-tile-flush-min).  Off keeps the
+  // historical tile bytes byte for byte.
+  uint8_t minimal_trailer = 0;
   uint8_t reserved = 0;
+  // Diagnostic: shortest payload exit_symbol() can produce for this symbol
+  // stream (see detail::exit_minimal_bits).  Equals `8 * payload_bytes` when
+  // minimal_trailer is set.
+  uint32_t min_payload_bits = 0;
 
   // Encoder counterpart of §8.2.2.  `sz` is not known until exit_symbol(),
   // because the arithmetic coder decides the payload length; the output span
@@ -317,6 +324,33 @@ AV2_ENTROPY_HD inline Status add_prefix_carry(Encoder& e,
     carry = sum >> 1u;
   }
   return carry == 0u ? Status::kOk : Status::kInvalidState;
+}
+
+// ---------------------------------------------------------------------------
+// §8.2.4 minimum termination.
+//
+// The normative decoder derives the trailing-'1' position from SymbolMaxBits
+// alone.  For a payload of NB >= 16 bits that position is always the number of
+// renormalisation bits R the symbol stream requested -- never `NB - 15` -- so
+// shortening a tile never moves the marker: the decoder simply stops reading
+// `d` bits earlier (SymbolMaxBits = NB - 15 - R = -d) and treats every unread
+// bit as 0.  §8.2.4 permits that down to SymbolMaxBits == -14.
+//
+// The fourteen zero bits after the marker and the byte padding after them carry
+// no information, so the shortest conformant tile is
+//
+//     ceil((R + 1) / 8) bytes,
+//
+// i.e. one or two bytes below the "marker + 14 zeros + padding" form.  The
+// marker itself must stay inside the payload, which is why the floor is R + 1
+// bits and not R.
+// ---------------------------------------------------------------------------
+AV2_ENTROPY_HD inline uint32_t exit_minimal_bits(uint32_t prefix_bits) noexcept {
+  if (prefix_bits > 0xFFFFFFF0u) {
+    return 0xFFFFFFFFu;  // not representable; keep the historical form
+  }
+  const uint32_t bits = ((prefix_bits + 8u) / 8u) * 8u;
+  return (bits < 16u) ? 16u : bits;  // init_symbol() reads 15 bits
 }
 
 // Commit an already-computed symbol interval.  Called only after all
@@ -428,6 +462,7 @@ AV2_ENTROPY_HD inline Status Encoder::init_symbol(uint8_t* buffer,
   capacity_bits = static_cast<uint32_t>(capacity_bytes) * 8u;
   prefix_bits = 0;
   marker_bit_pos = 0;
+  min_payload_bits = 0;
   low = 0;
   range = kSymbolRangeInit;
   symbol_count = 0;
@@ -531,9 +566,33 @@ AV2_ENTROPY_HD inline Status Encoder::exit_symbol(
     return Status::kAlreadyFinished;
   }
 
+  constexpr uint32_t kMarkerBits = 15;
+  if (prefix_bits > 0xFFFFFFFFu - kMarkerBits - 7u) {
+    failed = 1;
+    return Status::kInvalidState;
+  }
+  const uint32_t pad_bits = (8u - ((prefix_bits + kMarkerBits) & 7u)) & 7u;
+  // The historical termination: the trailing '1' plus fourteen zeros, padded
+  // to a byte boundary.
+  const uint32_t natural_bits = prefix_bits + kMarkerBits + pad_bits;
+  if (natural_bits > capacity_bits) {
+    failed = 1;
+    return Status::kBufferTooSmall;
+  }
+
+  // Opt-in §8.2.4 minimum termination: the marker stays where it is, the
+  // fourteen zeros after it and the byte padding are simply not written.
+  const uint32_t minimal_bits = detail::exit_minimal_bits(prefix_bits);
+  min_payload_bits =
+      (minimal_bits < natural_bits) ? minimal_bits : natural_bits;
+  const uint32_t payload_bits =
+      (minimal_trailer != 0u) ? min_payload_bits : natural_bits;
+
   // Choose the final code value C = prefix * 2^15 + low + delta so that
   // C mod 2^15 == 0x4000.  Because range >= 2^15 after every symbol, the
   // interval [prefix*2^15 + low, ... + range) always contains such a value.
+  // This is part of the code value, so the minimum termination keeps it: the
+  // trimmed tile is a prefix of the historical tile, never a re-encoding.
   const uint32_t delta = (kTrailingFirstBit - low) & kSymbolValueMask;
   const uint32_t sum = low + delta;
   const uint32_t carry = sum >> 15u;
@@ -541,19 +600,6 @@ AV2_ENTROPY_HD inline Status Encoder::exit_symbol(
     failed = 1;
     return Status::kInvalidState;
   }
-
-  constexpr uint32_t kMarkerBits = 15;
-  if (prefix_bits > 0xFFFFFFFFu - kMarkerBits - 7u) {
-    failed = 1;
-    return Status::kInvalidState;
-  }
-  const uint32_t pad_bits = (8u - ((prefix_bits + kMarkerBits) & 7u)) & 7u;
-  const uint32_t total_bits = prefix_bits + kMarkerBits + pad_bits;
-  if (total_bits > capacity_bits) {
-    failed = 1;
-    return Status::kBufferTooSmall;
-  }
-
   if (carry != 0u) {
     const Status carry_status = detail::add_prefix_carry(*this, carry);
     if (carry_status != Status::kOk) {
@@ -570,7 +616,7 @@ AV2_ENTROPY_HD inline Status Encoder::exit_symbol(
 
   finished = 1;
   if (payload_bytes != nullptr) {
-    *payload_bytes = static_cast<size_t>(total_bits / 8u);
+    *payload_bytes = static_cast<size_t>(payload_bits / 8u);
   }
   return Status::kOk;
 }

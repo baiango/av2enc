@@ -194,10 +194,30 @@ struct CcsoHeaderContext {
   int tile_start_or = 0;
 };
 
+// Exact bit split of the §5.18.7.12 row, filled by write_ccso_params().  The
+// encoder prices the CCSO decision with this: the filter RD only sees unit
+// symbols and tu(7) table bits, so the fixed part of the row (the frame flag,
+// the ccso_planes flags and the per-plane parameter flags) is otherwise free.
+struct CcsoHeaderBits {
+  std::size_t total = 0;      // whole row in bits
+  std::size_t frame_flag = 0; // f(1) ccso_frame_flag
+  std::size_t plane_flags = 0;  // ccso_planes + reuse_ccso + sb_reuse_ccso
+  std::size_t plane_params = 0; // bo_only/scale/quant/ext/edge/max_band
+  std::size_t table = 0;        // tu(7) ccso_offset_idx symbols
+  int num_planes = 0;
+  // Per-plane split; zero for a disabled plane.
+  std::size_t plane_total[3] = {0, 0, 0};
+  std::size_t plane_table[3] = {0, 0, 0};
+  int table_symbols[3] = {0, 0, 0};
+  int table_nonzero[3] = {0, 0, 0};
+};
+
 // Fills params.ccso_luma_size_log2 from the header rule and codes the row.
+// `bits` (optional) receives the exact split of what was written.
 std::size_t write_ccso_params(BitWriter& writer, CcsoParams& params,
                               const CcsoHeaderContext& context,
-                              std::string* error);
+                              std::string* error,
+                              CcsoHeaderBits* bits = nullptr);
 
 bool read_ccso_params(BitReader& reader, const CcsoHeaderContext& context,
                       CcsoParams* params, std::string* error);

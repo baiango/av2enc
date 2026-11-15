@@ -40,6 +40,14 @@ struct VideoCdefPlan {
     int uv_sec = 0;
   };
   Strength strength[8] = {};
+  // Decision accounting (`--video-cdef-rd`): the measured §7.18 SSE before and
+  // after the chosen plan, and the exact §5.18.7.10 / §5.20.10.1 bit counts.
+  // `header_bits` includes the `cdef_frame_enable` bit the M2 header writes.
+  std::int64_t sse_before = 0;
+  std::int64_t sse_after = 0;
+  int header_bits = 0;
+  int index_bits = 0;
+  int blocks_off = 0;
   int n64_cols = 0;
   int n64_rows = 0;
   // One entry per 64x64 luma block, raster order, in [0, num_strengths).

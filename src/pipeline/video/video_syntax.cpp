@@ -59,8 +59,10 @@
 #include "codec/inter/temporal/refinemv.h"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -713,6 +715,64 @@ struct SlotInfo {
   BlockSize size = BlockSize::kInvalid;
 };
 
+// ---------------------------------------------------------------------------
+// Tile symbol cost meter (AV2ENC_SYMBOL_COST=1).
+//
+// Diagnostic only: it never touches the bitstream.  Every tile symbol is
+// attributed to a category, either by the CDF array `sym()` was handed or, for
+// the §5.20.10 filter writers (which call the entropy encoder directly), by the
+// bit-prefix delta across the call.  The table shows what a frame still pays
+// symbol group by symbol group; on a fully-skipped picture it is the floor.
+// ---------------------------------------------------------------------------
+enum CostTag : int {
+  kCostPartition = 0,
+  kCostIsInter,
+  kCostSkip,
+  kCostInterMode,
+  kCostResidual,
+  kCostCdef,
+  kCostCcso,
+  kCostDeltaQ,
+  kCostIntra,
+  kCostOther,
+  kCostTagCount
+};
+
+struct CostMeter {
+  std::uint64_t count[kCostTagCount] = {};
+  double bits[kCostTagCount] = {};
+  bool active = false;
+
+  void add(int tag, double value) {
+    ++count[tag];
+    bits[tag] += value;
+  }
+  void add_prefix(int tag, std::uint64_t before, std::uint64_t after) {
+    ++count[tag];
+    bits[tag] += static_cast<double>(after - before);
+  }
+  double total_bits() const {
+    double sum = 0.0;
+    for (double b : bits) sum += b;
+    return sum;
+  }
+};
+
+const char* cost_tag_name(int tag) {
+  switch (tag) {
+    case kCostPartition: return "partition";
+    case kCostIsInter: return "is_inter";
+    case kCostSkip: return "skip";
+    case kCostInterMode: return "inter_mode";
+    case kCostResidual: return "residual";
+    case kCostCdef: return "cdef_index";
+    case kCostCcso: return "ccso_blk";
+    case kCostDeltaQ: return "delta_q";
+    case kCostIntra: return "intra_mode";
+    default: return "other";
+  }
+}
+
 int enumerate_slots(int mi_row, int mi_col, BlockSize size,
                     PartitionType partition, int mi_rows, int mi_cols,
                     SlotInfo slots[4]) {
@@ -804,6 +864,7 @@ class Writer {
     tile_buffer_.resize(kTileCapacityBytes);
     enc_.init_symbol(tile_buffer_.data(), tile_buffer_.size());
     enc_.disable_cdf_update = config_.disable_cdf_update ? 1 : 0;
+    enc_.minimal_trailer = config_.minimal_tile_trailer ? 1 : 0;
 
     above_mi_.assign(static_cast<std::size_t>(mi_cols_) + 16, 6);
     left_mi_.assign(static_cast<std::size_t>(mi_rows_) + 16, 6);
@@ -900,6 +961,7 @@ class Writer {
     }
 #endif
     trace_ = std::getenv("AV2ENC_VIDEO_TRACE") != nullptr;
+    cost_meter_.active = std::getenv("AV2ENC_SYMBOL_COST") != nullptr;
   }
 
   bool run(std::size_t* tile_bytes, std::string& error) {
@@ -1159,6 +1221,27 @@ class Writer {
                     tile_buffer_.begin() +
                         static_cast<std::ptrdiff_t>(payload_bytes));
     if (tile_bytes != nullptr) *tile_bytes = payload_bytes;
+    // AV2ENC_TRACE_TILE_FLUSH: §8.2.4 termination accounting for this tile.
+    //   R    renormalisation bits the symbol stream asked for (marker pos)
+    //   bits payload bits written (8 * payload_bytes)
+    //   nat  bits the historical "marker + 14 zeros + padding" form writes
+    //   pad  trailer bits after the marker in that historical form
+    //        (always the fourteen marker zeros plus 0..7 alignment bits)
+    //   min  shortest conformant payload (Encoder::min_payload_bits)
+    //   save bytes the minimum termination saves for this tile
+    //        (nat/8 - min/8, independent of --video-tile-flush-min)
+    if (std::getenv("AV2ENC_TRACE_TILE_FLUSH") != nullptr) {
+      const std::uint32_t r = enc_.marker_bit_pos;
+      const std::uint32_t bits = static_cast<std::uint32_t>(payload_bytes) * 8u;
+      const std::uint32_t nat_bits = ((r + 15u + 7u) / 8u) * 8u;
+      const std::uint32_t min_bits = enc_.min_payload_bits;
+      std::fprintf(stderr,
+                   "tile_flush R=%u bits=%u bytes=%zu nat=%u pad=%u min=%u "
+                   "save=%u low=%u range=%u\n",
+                   r, bits, payload_bytes, nat_bits, nat_bits - (r + 15u),
+                   min_bits / 8u, nat_bits / 8u - min_bits / 8u, enc_.low,
+                   enc_.range);
+    }
     // §8.2.4 exit_symbol(): the filter tile CDFs this tile adapted belong to
     // the tile image too.
     if (cdef_active) {
@@ -1179,6 +1262,20 @@ class Writer {
       cdf_final_->resize(cdf_image_words_impl());
       export_cdf_image(cdfs_, cdf_final_->data());
     }
+    if (cost_meter_.active) {
+      // AV2ENC_SYMBOL_COST=1: one row per symbol family, in information bits.
+      // "total" is the information cost the tile actually spent; the payload
+      // length also carries the §8.2.4 marker and padding.
+      std::cerr << "symbol_cost tile_bytes=" << payload_.size()
+                << " info_bits=" << cost_meter_.total_bits();
+      for (int tag = 0; tag < kCostTagCount; ++tag) {
+        if (cost_meter_.count[tag] == 0) continue;
+        std::cerr << " " << cost_tag_name(tag) << "="
+                  << cost_meter_.count[tag] << "/"
+                  << cost_meter_.bits[tag];
+      }
+      std::cerr << "\n";
+    }
     return true;
   }
 
@@ -1188,7 +1285,89 @@ class Writer {
   // ---------------------------------------------------------------------
   // Entropy helpers
   // ---------------------------------------------------------------------
+  // §8.2 symbol information cost in bits.  AV2 tile CDFs store forward
+  // cumulative boundaries cdf[0..n-2] plus the adaptation parameters, so the
+  // probability of symbol s is (cdf[s] - cdf[s-1]) / 32768 with cdf[-1] = 0
+  // and cdf[n-1] = 32768 implicit.  Diagnostic only (AV2ENC_SYMBOL_COST); it
+  // never feeds the bitstream.
+  static double symbol_cost_bits(const std::uint16_t* cdf, int n, int symbol) {
+    if (n < 2 || symbol < 0 || symbol >= n) return 0.0;
+    const int lo = symbol == 0 ? 0 : static_cast<int>(cdf[symbol - 1]);
+    const int hi = symbol == n - 1 ? static_cast<int>(av2::kCdfScale)
+                                   : static_cast<int>(cdf[symbol]);
+    const int freq = hi - lo;
+    if (freq <= 0) return 0.0;
+    return std::log2(static_cast<double>(av2::kCdfScale) /
+                     static_cast<double>(freq));
+  }
+
+  // Attribute a symbol to the CDF array family that owns it.
+  int cost_tag_for(const std::uint16_t* p) const {
+    const auto in = [p](const auto& arr) {
+      const auto* b = reinterpret_cast<const std::uint16_t*>(&arr);
+      return p >= b && p < b + sizeof(arr) / sizeof(std::uint16_t);
+    };
+    if (in(cdfs_.do_split) || in(cdfs_.do_square_split) ||
+        in(cdfs_.rect_type)) {
+      return kCostPartition;
+    }
+    if (in(cdfs_.is_inter)) return kCostIsInter;
+    if (in(cdfs_.skip)) return kCostSkip;
+    if (in(cdfs_.single_mode) || in(cdfs_.single_ref) ||
+        in(cdfs_.drl_mode) || in(cdfs_.comp_mode) || in(cdfs_.comp_ref0) ||
+        in(cdfs_.comp_ref1) || in(cdfs_.is_joint) ||
+        in(cdfs_.compound_mode_non_joint) ||
+        in(cdfs_.compound_mode_same_refs) || in(cdfs_.use_optflow) ||
+        in(cdfs_.comp_group_idx) || in(cdfs_.compound_type) ||
+        in(cdfs_.cwp_idx) || in(cdfs_.wedge_quad) || in(cdfs_.wedge_angle) ||
+        in(cdfs_.wedge_dist1) || in(cdfs_.wedge_dist2) ||
+        in(cdfs_.tip_mode) || in(cdfs_.tip_drl_mode) ||
+        in(cdfs_.tip_pred_mode) || in(cdfs_.use_bawp) ||
+        in(cdfs_.use_bawp_chroma) || in(cdfs_.explicit_bawp) ||
+        in(cdfs_.explicit_bawp_scale) || in(cdfs_.skip_mode) ||
+        in(cdfs_.mv_precision) || in(cdfs_.shell_set) ||
+        in(cdfs_.shell6_class0) || in(cdfs_.shell6_class1) ||
+        in(cdfs_.shell_last_two) || in(cdfs_.offset_low) ||
+        in(cdfs_.offset_class2) || in(cdfs_.offset_other) ||
+        in(cdfs_.col_mv_greater) || in(cdfs_.col_mv_index) ||
+        in(adv_cdfs_) || in(cdfs_.fsc_mode)) {
+      return kCostInterMode;
+    }
+    if (in(cdfs_.txb_skip) || in(cdfs_.v_txb_skip) || in(cdfs_.eob_pt_1024) ||
+        in(cdfs_.eob_pt_512) || in(cdfs_.eob_pt_256) ||
+        in(cdfs_.eob_pt_128) || in(cdfs_.eob_pt_64) || in(cdfs_.eob_pt_32) ||
+        in(cdfs_.eob_pt_16) || in(cdfs_.eob_extra) || in(cdfs_.coeff_base) ||
+        in(cdfs_.coeff_base_lf) || in(cdfs_.coeff_base_eob) ||
+        in(cdfs_.coeff_base_lf_eob) || in(cdfs_.coeff_br) ||
+        in(cdfs_.coeff_br_lf) || in(cdfs_.coeff_base_uv) ||
+        in(cdfs_.coeff_base_lf_uv) || in(cdfs_.coeff_base_eob_uv) ||
+        in(cdfs_.coeff_base_lf_eob_uv) || in(cdfs_.coeff_br_uv) ||
+        in(cdfs_.dc_sign) || in(cdfs_.cctx_type) ||
+        in(cdfs_.inter_tx_type_set1) || in(cdfs_.inter_tx_type_set2) ||
+        in(cdfs_.inter_tx_type_set3) || in(cdfs_.inter_tx_type_long) ||
+        in(cdfs_.inter_tx_type_index_set1) ||
+        in(cdfs_.inter_tx_type_offset_set1) ||
+        in(cdfs_.inter_tx_type_index_set2) ||
+        in(cdfs_.inter_tx_type_offset_set2) || in(cdfs_.tx_partition)) {
+      return kCostResidual;
+    }
+    if (in(cdfs_.y_mode_set) || in(cdfs_.y_mode_index) ||
+        in(cdfs_.y_mode_offset) || in(cdfs_.uv_mode) || in(cdfs_.is_cfl) ||
+        in(cdfs_.cfl_index) || in(cdfs_.cfl_sign) || in(cdfs_.cfl_alpha) ||
+        in(cdfs_.mrl) || in(cdfs_.dip_cdfs) ||
+        in(cdfs_.intra_tx_type_set1) || in(cdfs_.intra_tx_type_long) ||
+        in(cdfs_.is_long_side_dct) || in(cdfs_.sec_tx_type) ||
+        in(cdfs_.most_probable_stx_set) ||
+        in(cdfs_.most_probable_stx_set_adst)) {
+      return kCostIntra;
+    }
+    return kCostOther;
+  }
+
   bool sym(std::uint16_t* cdf, int n, int symbol) {
+    const double cost =
+        cost_meter_.active ? symbol_cost_bits(cdf, n, symbol) : 0.0;
+    const int tag = cost_meter_.active ? cost_tag_for(cdf) : kCostOther;
     const av2::Status status = enc_.encode_symbol(cdf, n, symbol);
     if (status != av2::Status::kOk) {
       error_ = std::string("entropy encode_symbol failed: ") +
@@ -1201,6 +1380,7 @@ class Writer {
                 std::to_string(cur_c_) + ")";
       return false;
     }
+    if (cost_meter_.active) cost_meter_.add(tag, cost);
     return true;
   }
   bool raw_bit(bool bit) {
@@ -4698,10 +4878,15 @@ class Writer {
                                             static_cast<std::size_t>(
                                                 filters_->cdef.n64_cols) +
                                         static_cast<std::size_t>(bc)];
+    const std::uint64_t prefix_before =
+        cost_meter_.active ? enc_.prefix_bits : 0;
     if (!filters_stream::cdef_write_block(
             enc_, cdef_state_, /*tile_mi_col_start=*/0,
             /*tile_mi_row_start=*/0, node.mi_row, node.mi_col, idx, &error)) {
       return false;
+    }
+    if (cost_meter_.active) {
+      cost_meter_.add_prefix(kCostCdef, prefix_before, enc_.prefix_bits);
     }
     return true;
   }
@@ -4724,9 +4909,14 @@ class Writer {
                                 static_cast<std::size_t>(src.blk_cols) +
                             static_cast<std::size_t>(col)];
     }
+    const std::uint64_t prefix_before =
+        cost_meter_.active ? enc_.prefix_bits : 0;
     if (!filters_stream::ccso_write_block(enc_, ccso_state_, node.mi_row,
                                           node.mi_col, blk, &error)) {
       return false;
+    }
+    if (cost_meter_.active) {
+      cost_meter_.add_prefix(kCostCcso, prefix_before, enc_.prefix_bits);
     }
     return true;
   }
@@ -5188,6 +5378,7 @@ class Writer {
   int cur_chroma_c_ = 0;
   int eob_u_ = 0;
   bool trace_ = false;
+  CostMeter cost_meter_;
 };
 
 }  // namespace

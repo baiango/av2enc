@@ -83,6 +83,7 @@ static clip decodes.
 | `--nightly` (reset-per-frame pin) | 24,904 | 99.616 | 9.7069 | 43.8667 |
 | `+ --cdf-continuity` | 24,214 | 96.856 | 9.7069 | 43.8667 |
 | `+ --cdf-continuity --video-key-qp-offset -27` | 24,885 | 99.540 | 9.7177 | 43.9358 |
+| `+ --video-cdef-rd` (nightly pin) | 24,822 | 99.288 | 9.7177 | 43.9358 |
 
 The first two rows have **identical decisions** (same `--video-recon`
 MD5 `9fc52a211517548c08adac095c056a12`, `dav2d --strict 1` decodes 60/60

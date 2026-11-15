@@ -79,6 +79,17 @@ set_tests_properties(gate_video_bgops PROPERTIES
   TIMEOUT 600
   LABELS "gate;gate-video")
 
+# §8.2.4 minimum tile termination (--video-tile-flush-min): the historical
+# pins, the per-tile trailer accounting and a bit-identical decode of the
+# shortened stream (2-, 6- and 60-frame streams).
+add_test(NAME gate_tile_flush
+  COMMAND bash "${PROJECT_SOURCE_DIR}/src/pipeline/video/gate_tile_flush.sh"
+          --bin $<TARGET_FILE:av2enc>)
+set_tests_properties(gate_tile_flush PROPERTIES
+  SKIP_RETURN_CODE 77
+  TIMEOUT 900
+  LABELS "gate;gate-video")
+
 # Multi-reference hierarchical-P temporal layers: two references per interior
 # picture, §7.9 candidates present, dav2d --strict 1 sample-exact.
 add_test(NAME gate_video_tlayer_refs
