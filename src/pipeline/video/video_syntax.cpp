@@ -243,6 +243,12 @@ struct CdfState {
   std::uint16_t do_split[2][64][3];
   std::uint16_t do_square_split[2][8][3];
   std::uint16_t rect_type[2][64][3];
+  // §5.20.3.2 extended-partition rows (§9.3).  They adapt like every other
+  // tile CDF, so they belong in the §8.2 image whenever --video-ext-partitions
+  // selects them.  With the tool off they never code a symbol and stay at
+  // their defaults, so the image is unchanged.
+  std::uint16_t do_ext_partition[2][64][3];
+  std::uint16_t do_uneven_4way_partition[2][64][3];
   std::uint16_t y_mode_set[5];
   std::uint16_t y_mode_index[3][9];
   std::uint16_t y_mode_offset[3][7];
@@ -390,6 +396,11 @@ void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.do_split, av2enc::basic::kDoSplitCdf);
   copy_array(c.do_square_split, av2enc::basic::kDoSquareSplitCdf);
   copy_array(c.rect_type, av2enc::basic::kRectTypeCdf);
+  // §5.20.3.2 extended-partition rows.  The module is always compiled, so the
+  // §9.3 defaults are available even in builds without the video carrier.
+  copy_array(c.do_ext_partition, av2enc::partition_ext::kDoExtPartitionCdf);
+  copy_array(c.do_uneven_4way_partition,
+             av2enc::partition_ext::kDoUneven4wayPartitionCdf);
   copy_array(c.y_mode_set, kYModeSetCdf);
   copy_array(c.y_mode_index, kYModeIndexCdf);
   copy_array(c.y_mode_offset, kYModeOffsetCdf);
@@ -563,6 +574,12 @@ const std::vector<CdfArrayDesc>& cdf_arrays() {
     AV2ENC_ADD_CDF(do_split, 2);
     AV2ENC_ADD_CDF(do_square_split, 2);
     AV2ENC_ADD_CDF(rect_type, 2);
+    // §5.20.3.2 extended partition rows (--video-ext-partitions).  They adapt
+    // per tile like the rect rows; without them in the §8.2 image the carried
+    // CDF state of the ext writer would differ from the decoder's from the
+    // second frame on.
+    AV2ENC_ADD_CDF(do_ext_partition, 2);
+    AV2ENC_ADD_CDF(do_uneven_4way_partition, 2);
     AV2ENC_ADD_CDF(y_mode_set, 4);
     AV2ENC_ADD_CDF(y_mode_index, 8);
     AV2ENC_ADD_CDF(y_mode_offset, 6);
@@ -861,6 +878,13 @@ class Writer {
     if (!cdf_seed_.empty()) {
       import_cdf_image(cdfs_, cdf_seed_.data());
     }
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+    // §8.2.2 tile CDF seed: the extended-partition rows live in the same image
+    // as the rect rows, so the reused still-stream symbol planner starts from
+    // the carried state (and --cdf-continuity holds across frames).  Only the
+    // ext writer owns those rows; the rect writer adapts cdfs_ directly.
+    if (tools_.enable_ext_partitions) import_ext_cdfs_from_image();
+#endif
     tile_buffer_.resize(kTileCapacityBytes);
     enc_.init_symbol(tile_buffer_.data(), tile_buffer_.size());
     enc_.disable_cdf_update = config_.disable_cdf_update ? 1 : 0;
@@ -1259,6 +1283,12 @@ class Writer {
                   sizeof(cdfs_.ccso_index));
     }
     if (cdf_final_ != nullptr) {
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+      // The ext writer owns its own copy of the five partition rows; fold the
+      // adapted values back into the frame image before exporting it.  The
+      // rect writer adapts cdfs_ itself, so it must not be overwritten.
+      if (tools_.enable_ext_partitions) export_ext_cdfs_to_image();
+#endif
       cdf_final_->resize(cdf_image_words_impl());
       export_cdf_image(cdfs_, cdf_final_->data());
     }
@@ -1781,6 +1811,44 @@ class Writer {
   // do_ext_partition / do_uneven_4way_partition and the raw L(1) type bit are
   // the reference module's, not re-derived here.
   // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // §8.2.2 extended-partition CDF image bridge
+  //
+  // `ext_cdfs_` is the still-stream planner's per-tile copy of the five
+  // partition rows.  It is the model the extended writer actually adapts, so
+  // it must be the same state the §8.2.4 / §7.4.4 carry image stores.  These
+  // helpers keep the two in lockstep: one copy in after the seed is imported,
+  // one copy out before the tile image is exported.  With the tool off the
+  // rows are never coded, so both directions are a no-op.
+  // ---------------------------------------------------------------------
+  void import_ext_cdfs_from_image() {
+    std::memcpy(ext_cdfs_.ext.do_split, cdfs_.do_split,
+                sizeof(cdfs_.do_split));
+    std::memcpy(ext_cdfs_.ext.do_square_split, cdfs_.do_square_split,
+                sizeof(cdfs_.do_square_split));
+    std::memcpy(ext_cdfs_.ext.rect_type, cdfs_.rect_type,
+                sizeof(cdfs_.rect_type));
+    std::memcpy(ext_cdfs_.ext.do_ext_partition, cdfs_.do_ext_partition,
+                sizeof(cdfs_.do_ext_partition));
+    std::memcpy(ext_cdfs_.ext.do_uneven_4way_partition,
+                cdfs_.do_uneven_4way_partition,
+                sizeof(cdfs_.do_uneven_4way_partition));
+  }
+
+  void export_ext_cdfs_to_image() {
+    std::memcpy(cdfs_.do_split, ext_cdfs_.ext.do_split,
+                sizeof(cdfs_.do_split));
+    std::memcpy(cdfs_.do_square_split, ext_cdfs_.ext.do_square_split,
+                sizeof(cdfs_.do_square_split));
+    std::memcpy(cdfs_.rect_type, ext_cdfs_.ext.rect_type,
+                sizeof(cdfs_.rect_type));
+    std::memcpy(cdfs_.do_ext_partition, ext_cdfs_.ext.do_ext_partition,
+                sizeof(cdfs_.do_ext_partition));
+    std::memcpy(cdfs_.do_uneven_4way_partition,
+                ext_cdfs_.ext.do_uneven_4way_partition,
+                sizeof(cdfs_.do_uneven_4way_partition));
+  }
+
   bool write_node_ext(std::size_t index, std::size_t* next,
                       std::string& error) {
     const BlockSyntax& node = blocks_[index];

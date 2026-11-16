@@ -415,3 +415,12 @@ gains are content-dependent; the partition probe, RDOQ, CDEF and CCSO
 contributions should be re-measured on other content and rates. `--nightly` is
 a CPU development mode, not the GPU product path, and it is deliberately not
 the default.
+
+## Extended partitions
+
+`--video-ext-partitions` composes with this aggregate: the extended solver uses
+the same leaf cost as the rect tree (the keyframe estimate and the measured
+P-frame probe), and its partition rows ride the §8.2 CDF image. At QP110 the
+composed stream is 23,587 B / 94.348 kbps / 9.6991 JOD / 44.2385 dB; at the pin's
+96.452 kbps the interpolation is 9.6949 JOD / 44.315 dB, i.e. +0.43 dB at
+-0.018 JOD (inside the ±0.03 ripple). See `docs/video-ext-nightly.md`.

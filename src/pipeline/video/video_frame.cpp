@@ -89,6 +89,7 @@
 #include <cstddef>
 #include <limits>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -138,6 +139,47 @@ constexpr std::int8_t kRefIntraAv2 = 8;
 // HORZ/VERT/SPLIT children.
 constexpr double kPartitionProbeSkipBits = 8.0;
 constexpr double kPartitionProbeModeBits = 8.0;
+
+// Diagnosis-only final-tree dump (AV2ENC_PART_TREE=<path>).  It walks the tree
+// the encoder will actually code — not the solver trace — so every emitted node
+// is guaranteed to exist in the stream.  Unset means no file is opened and the
+// decisions are untouched.
+FILE* part_tree_file() {
+  static FILE* file = nullptr;
+  static bool initialized = false;
+  if (!initialized) {
+    initialized = true;
+    const char* path = std::getenv("AV2ENC_PART_TREE");
+    if (path != nullptr && path[0] != '\0') file = std::fopen(path, "w");
+  }
+  return file;
+}
+
+void dump_partition_tree(const partition::PartitionNode& node, FILE* file) {
+  std::fprintf(file,
+               "tree r=%d c=%d w=%d h=%d depth=%d hc=%d co=%d chosen=%s\n",
+               node.mi_row, node.mi_col, partition::block_width(node.size),
+               partition::block_height(node.size), node.depth,
+               node.has_chroma ? 1 : 0, node.chroma_offset ? 1 : 0,
+               partition::partition_name(node.partition));
+  for (const auto& child : node.children) {
+    dump_partition_tree(child, file);
+  }
+}
+
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+void dump_partition_tree_ext(const pe::PartitionNode& node, FILE* file) {
+  std::fprintf(file,
+               "tree r=%d c=%d w=%d h=%d depth=%d hc=%d co=%d chosen=%s\n",
+               node.mi_row, node.mi_col, partition::block_width(node.size),
+               partition::block_height(node.size), node.depth,
+               node.has_chroma ? 1 : 0, node.chroma_offset ? 1 : 0,
+               pe::partition_name(node.partition));
+  for (const auto& child : node.children) {
+    dump_partition_tree_ext(child, file);
+  }
+}
+#endif
 
 namespace grain = ::av2enc::filters::grain;
 
@@ -2201,6 +2243,32 @@ class InterFrameEncoder {
       visit(mi_row + h4 / 2, mi_col, split);
       visit(mi_row + h4 / 2, mi_col + w4 / 2, split);
     }
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+    // The extended solver prices its 3-way / uneven 4-way children with this
+    // same probe, so the precompute pass has to visit their geometry too.  The
+    // child list comes from the spec's decode_partition() enumeration, so the
+    // probe keys are exactly the (mi_row, mi_col, size) the solver will ask
+    // for.  Partitions the solver rejects (min-block floor, chroma offset,
+    // 4-wide vertical) simply never look their children up.
+    if (options_.ext_partitions) {
+      constexpr pe::PartitionType kExtTypes[] = {
+          pe::PartitionType::kHorz3,  pe::PartitionType::kVert3,
+          pe::PartitionType::kHorz4A, pe::PartitionType::kHorz4B,
+          pe::PartitionType::kVert4A, pe::PartitionType::kVert4B};
+      for (pe::PartitionType type : kExtTypes) {
+        pe::ChildSlot slots[4];
+        const int count = pe::enumerate_children(
+            geometry_, mi_row, mi_col, size, type, /*has_chroma=*/true,
+            /*chroma_offset=*/false, pe::ChromaBlock{mi_row, mi_col, size},
+            slots);
+        for (int i = 0; i < count; ++i) {
+          if (!pe::child_is_coded(geometry_, slots[i])) continue;
+          visit(slots[i].mi_row, slots[i].mi_col,
+                static_cast<partition::BlockSize>(slots[i].size));
+        }
+      }
+    }
+#endif
   }
 
   std::unordered_map<std::uint64_t, double> build_partition_probe_costs(
@@ -2832,13 +2900,13 @@ class InterFrameEncoder {
                            : 0.0;
     // Measured partition probe.  It replaces the variance leaf proxy with one
     // NEWMV prediction plus one quantised luma residual for every candidate
-    // node, and is bounded to the first split level.  Only the whole-frame
-    // P-frame path with the plain rect/split tree uses it; every other tree
-    // keeps the calibrated syntax-bit estimate above.
+    // node, and is bounded to the first split level.  It prices leaves only,
+    // so it is independent of which solver reaches them: the extended tree
+    // gets exactly the cost the rect tree charges a same-shaped child.
     const bool partition_probe =
         options_.partition_rd && !keyframe_ && !options_.force_single_block &&
-        !options_.ext_partitions && !options_.enable_segmentation &&
-        !options_.enable_delta_q && !options_.per_segment_q &&
+        !options_.enable_segmentation && !options_.enable_delta_q &&
+        !options_.per_segment_q &&
         width_ == static_cast<int>(source_.width) &&
         height_ == static_cast<int>(source_.height);
     std::unordered_map<std::uint64_t, double> probe_costs;
@@ -2857,33 +2925,42 @@ class InterFrameEncoder {
           syntax_bit_price);
     }
     const double signal_cost = syntax_bit_price * signal_bits;
-    const auto cost_fn = [this, signal_cost, syntax_bit_price, leaf_bits,
-                          partition_probe, &probe_costs](
-                             const partition::PartitionNodeInfo& info) {
-      partition::NodeCosts costs;
-      // The leaf coder handles coding blocks up to 64x64.  A larger node must
-      // split (the 128/256 root and its rectangular children); the spec never
-      // implies NONE at those sizes, so the solver always has a partition.
-      const int bw = partition::block_width(info.size);
-      const int bh = partition::block_height(info.size);
-      double leaf = partition::kInfiniteCost;
-      if (bw <= 64 && bh <= 64) {
-        leaf = static_cast<double>(block_variance_cost_at(info)) +
-               syntax_bit_price * leaf_bits;
-        if (partition_probe) {
-          const auto it = probe_costs.find(
-              partition_probe_key(info.mi_row, info.mi_col, info.size));
-          if (it != probe_costs.end()) {
-            leaf = it->second;
-          } else {
-            double measured = 0.0;
-            if (partition_probe_leaf_cost(info, syntax_bit_price, measured)) {
-              leaf = measured;
+    // One leaf model for both solvers.  It is exactly the historical keyframe
+    // / P-frame estimate (variance + price * leaf_bits) or, when the measured
+    // probe is active, the probe's measured residual RD on the node's own
+    // geometry.  A 64x16 / 16x64 extended leaf is therefore priced by the same
+    // code path that prices a NONE/HORZ/VERT/SPLIT child of the same shape,
+    // including its leaf coder's transform size and chroma ownership.
+    const auto partition_leaf_cost =
+        [this, syntax_bit_price, leaf_bits, partition_probe, &probe_costs](
+            const partition::PartitionNodeInfo& info) {
+          // The leaf coder handles coding blocks up to 64x64.  A larger node
+          // must split (the 128/256 root and its rectangular children); the
+          // spec never implies NONE at those sizes, so the solver always has a
+          // partition.
+          const int bw = partition::block_width(info.size);
+          const int bh = partition::block_height(info.size);
+          if (bw > 64 || bh > 64) return partition::kInfiniteCost;
+          double leaf = static_cast<double>(block_variance_cost_at(info)) +
+                        syntax_bit_price * leaf_bits;
+          if (partition_probe) {
+            const auto it = probe_costs.find(
+                partition_probe_key(info.mi_row, info.mi_col, info.size));
+            if (it != probe_costs.end()) {
+              leaf = it->second;
+            } else {
+              double measured = 0.0;
+              if (partition_probe_leaf_cost(info, syntax_bit_price, measured)) {
+                leaf = measured;
+              }
             }
           }
-        }
-      }
-      costs.leaf = leaf;
+          return leaf;
+        };
+    const auto cost_fn = [partition_leaf_cost, signal_cost](
+                             const partition::PartitionNodeInfo& info) {
+      partition::NodeCosts costs;
+      costs.leaf = partition_leaf_cost(info);
       costs.none_signal = 0.0;
       costs.split_signal = signal_cost;
       costs.horz_signal = signal_cost;
@@ -2899,19 +2976,18 @@ class InterFrameEncoder {
       tools.enable_ext_partitions = true;
       tools.enable_uneven_4way_partitions = true;
       pe::DecisionOptions eopt;
-      eopt.min_block_size_px = keyframe_ ? options_.min_block_size
-                                         : std::max(8, options_.min_block_size);
-      eopt.max_depth = options_.max_partition_depth;
+      // Mirror the rect solver's bound exactly.  With --video-partition-rd the
+      // probe clamps `poptions.max_depth` to the measured first level; the
+      // extended tree must search the same depth or it would compare a deeper
+      // tree against the shallow rect one and win on tiny leaves alone.
+      eopt.min_block_size_px = poptions.min_block_size_px;
+      eopt.max_depth = poptions.max_depth;
       eopt.allow_rect = true;
-      eopt.allow_split = sb_size_ > 64;
+      eopt.allow_split = poptions.allow_split;
       eopt.allow_3way = true;
       eopt.allow_uneven4 = true;
       eopt.tie_break = pe::TieBreakOrder::kRectCompatOrder;
-      if (options_.force_single_block) {
-        eopt.max_depth = 8;
-        eopt.min_block_size_px = 64;
-      }
-      const auto ext_cost_fn = [this, signal_cost](
+      const auto ext_cost_fn = [this, partition_leaf_cost, signal_cost](
                                    const pe::NodeInfo& info) {
         pe::NodeCosts costs;
         const int bw = partition::block_width(info.size);
@@ -2920,8 +2996,11 @@ class InterFrameEncoder {
         binfo.mi_row = info.mi_row;
         binfo.mi_col = info.mi_col;
         binfo.size = static_cast<partition::BlockSize>(info.size);
+        // Same leaf model the rect solver uses for a NONE/HORZ/VERT/SPLIT
+        // child of this geometry: the syntax estimate (variance + leaf rate)
+        // or the measured probe RD, selected by the same predicate.
         costs.leaf = (bw <= 64 && bh <= 64)
-                         ? static_cast<double>(block_variance_cost_at(binfo))
+                         ? partition_leaf_cost(binfo)
                          : pe::kInfiniteCost;
         costs.none_signal = 0.0;
         costs.split_signal = signal_cost;
@@ -2963,6 +3042,12 @@ class InterFrameEncoder {
         return false;
       }
       ext_superblocks = frame.superblocks;
+      if (FILE* tree_file = part_tree_file()) {
+        for (const auto& sb : ext_superblocks) {
+          dump_partition_tree_ext(sb, tree_file);
+        }
+        std::fflush(tree_file);
+      }
     } else
 #endif
     {
@@ -2977,6 +3062,12 @@ class InterFrameEncoder {
         return false;
       }
       base_superblocks = frame.superblocks;
+      if (FILE* tree_file = part_tree_file()) {
+        for (const auto& sb : base_superblocks) {
+          dump_partition_tree(sb, tree_file);
+        }
+        std::fflush(tree_file);
+      }
     }
 
     // The partition tree is final, so the pure NEWMV searches can run ahead
@@ -10222,16 +10313,10 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
               "(the extended solver is wired for 64x64/128x128 roots)";
       return false;
     }
-    if (options.adaptive_cdf || options.avg_cdf || options.cdf_continuity) {
-      error = "--video-ext-partitions does not compose with the CDF "
-              "image/continuity tools yet";
-      return false;
-    }
-    if (options.loop_filters.any()) {
-      error = "--video-ext-partitions does not compose with the loop filters "
-              "yet; deblocking is supported";
-      return false;
-    }
+    // The extended partition rows are part of the §8.2 CDF image (video
+    // syntax CdfState::do_ext_partition / do_uneven_4way_partition), so the
+    // --avg-cdf/--adaptive-cdf/--cdf-continuity carry chain is bit-exact with
+    // the extended writer; nothing to reject here.
     if (options.enable_segmentation || options.enable_delta_q ||
         options.per_segment_q) {
       error = "--video-ext-partitions does not compose with "
@@ -10422,7 +10507,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
               "delta-Q: both own the per-frame effective qindex";
       return false;
     }
-    if (options.sb128 || options.sb256 || options.ext_partitions) {
+    if (options.sb128 || options.sb256) {
       error = "--video-drift-refresh is wired for the 64x64 root partition "
               "search";
       return false;

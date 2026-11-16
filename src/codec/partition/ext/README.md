@@ -359,3 +359,19 @@ low single digits:
   place a GPU planner plugs in.
 - `node_signal_cost()` assumes the caller's `SymbolCosts` are already in bits;
   it does not model adaptation.
+
+## Video carrier (`--video-ext-partitions`)
+
+The product carrier is the CPU `--video` key+P encoder. It composes with
+`--nightly`: the extended solver is priced by the same leaf model as the rect
+solver (the keyframe variance + leaf-rate estimate, or the measured
+`--video-partition-rd` NEWMV/residual probe on P frames) and searches the same
+depth/min-block bound, and its `do_ext_partition` /
+`do_uneven_4way_partition` CDF rows ride the §8.2 carried image. Loop filters,
+the BAWP carrier, the bottom-edge mask and the drift-refresh frames all consume
+the coded leaf list, so they need no extended-specific path.
+
+Measured at the nightly 240p point: -1.5..-2.2% bytes at +0.35..+0.49 dB PSNR
+(iso-rate), and the QP120 keyframe repeats the oracle tree (36
+`HORZ_3`/`VERT_3` nodes, 232 leaves). See `docs/video-ext-nightly.md` and the
+gate `src/pipeline/video/gate_video_ext_nightly.sh`.

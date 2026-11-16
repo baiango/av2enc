@@ -125,3 +125,27 @@ both; a QP-scaled lambda is the structural fix.
 `--video-ext-partitions` is neutral at the 240p pin (iso-rate -0.018 JOD) but
 saves 2.18% bytes and gains +0.35 dB there, so it is a 720p lever and a 240p
 Pareto trade, not a nightly default.
+
+## Second clip: the recipe does NOT all generalise
+
+Validated on `testdata/loral_1440x720_60f.y4m` (1440x720/60, cut from a 3840x2160
+H.264 master, 82 Mbps, talking-head content). This clip is far easier to code:
+56-70 kbps at QP217 where the orbital plate needs 296 kbps. Measured at
+QP195 (~66-100 kbps), key -27 unless stated.
+
+| lever | orbital plate @300 kbps | loral @66 kbps | verdict |
+|---|---:|---:|---|
+| leaf lambda 200-300 | +0.053 JOD | **+0.043 JOD** | **generalises** |
+| 3-way partitions (`--video-ext-partitions`) | +0.051 | ~0.000 | small / neutral |
+| key offset -57 | +0.22 | **-0.10** | **sign flips: do not ship as a constant** |
+
+At QP195, key -27: base 8,250 B / 66.0 kbps / 7.6299; ext 8,318 B / 66.5 /
+7.6322 (neutral at iso-rate); leaf300 7,921 B / 63.4 / 7.6119, which is
+~+0.043 JOD at iso-rate once the 2.6 kbps of saved rate is re-spent.
+
+**Correction:** the "composed recipe" above overstates what generalises. The key
+offset is a content-dependent trade (it funds the key at the expense of the P
+chain, and how much the P chain can absorb depends on motion), so it should be
+derived from a signal (rate/motion), not fixed. The leaf lambda is the one lever
+that held on both clips, which supports scaling it with QP rather than choosing a
+per-resolution constant.

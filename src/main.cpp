@@ -1411,7 +1411,9 @@ void print_usage(std::ostream& out) {
                          "use_256x256_superblock); leaves stay <= 64x64"});
   item("--video-ext-partitions", {"Video: extended/uneven 4-way partitions",
                                   "(§5.4.3 enable_ext_partitions); leaves",
-                                  "stay >= 8x8 and own their chroma"});
+                                  "stay >= 8x8 and own their chroma;",
+                                  "composes with --nightly (same leaf RD",
+                                  "model, carried CDFs and loop filters)"});
   item("--video-min-block <N>",
        {"Video: minimum partition block size, 4..64 (default 16); 4 enables",
         "§5.20.3.1 sub-8 keyframe leaves with shared-chroma ownership"});
@@ -6231,11 +6233,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
               "has its own calibration";
       return ParseStatus::kError;
     }
-    if (options.video_ext_partitions) {
-      error = "--video-partition-rd does not compose with "
-              "--video-ext-partitions (that tree has a separate cost model)";
-      return ParseStatus::kError;
-    }
+    // --video-ext-partitions composes: the extended solver is priced by the
+    // same leaf model as the rect tree (see InterFrameEncoder::decide) — the
+    // variance + leaf-rate estimate for keyframes and the measured
+    // NEWMV/residual probe for P frames.  The candidate set is the only
+    // difference.
     if (options.video_sdp) {
       error = "--video-partition-rd does not compose with --video-sdp (the SDP "
               "tree has a separate cost model)";

@@ -666,7 +666,11 @@ void test_decision_policy() {
   CHECK(decision.root.partition == kVert);
   CHECK(decision.root.children[0].partition == kNone);
 
-  // A forced partition that conflicts with the policy is an error.
+  // A spec-forced partition is honoured even when the policy bound cannot
+  // follow it: the decoder derives it without syntax, so the encoder has no
+  // choice.  Mirrors partition::solve_node()'s boundary relax; this is the
+  // 720p 16-row bottom superblock case (a 128x128 root at the right edge with
+  // max_depth 0 must still subdivide to the coded extent).
   const p::FrameGeometry edge = geometry_420(520, 128, 128);
   pe::DecisionOptions no_depth;
   no_depth.max_depth = 0;
@@ -674,7 +678,9 @@ void test_decision_policy() {
       [](const pe::NodeInfo&) { return kNone; });
   const pe::PartitionDecision forced =
       pe::decide_superblock(edge, 0, 128, none, tools, no_depth);
-  CHECK(forced.status == pe::DecisionStatus::kNoValidPartition);
+  CHECK(forced.status == pe::DecisionStatus::kOk);
+  CHECK(forced.root.partition == kVert);
+  CHECK(forced.leaves > 1);
 
   // Invalid tools.
   const pe::Tools bad = ext_tools(false, true);
