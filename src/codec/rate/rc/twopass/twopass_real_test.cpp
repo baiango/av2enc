@@ -1,6 +1,6 @@
 // Real-encode validation for the two-pass / VBV / lookahead policy.
 //
-// Encodes the 720p Shine clip with the M2 CPU reference frame loop at a small
+// Encodes the 720p fixture with the M2 CPU reference frame loop at a small
 // QP sweep, builds a measured rate table from the real payload sizes, and then
 // drives the second-pass controller against those measurements:
 //

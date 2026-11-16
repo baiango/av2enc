@@ -156,7 +156,7 @@ residual against the CPU reconstruction over all pixels.
 | fixed | n/a | n/a | n/a | n/a | 0 (0/0/0) | 0 | 0 | n/a | inf | 0 |
 | fixed (no δ fix) | n/a | n/a | n/a | n/a | 0 (0/0/0) | 0 | 0 | n/a | inf | 0 |
 
-### 32x32, shine 1080p luma, block-mean predictor (2040 blocks)
+### 32x32, 8K-source 1080p luma, block-mean predictor (2040 blocks)
 
 | variant | coeff bit-exact | max \|Δcoeff\| | RMS Δcoeff | max rel | q mismatch (DC/LF/HF) | blocks w/ q mismatch | max \|Δq\| | near boundary ≤1e-3/≤1e-4/≤1e-5 | recon PSNR | max recon Δ |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -166,7 +166,7 @@ residual against the CPU reconstruction over all pixels.
 | fixed | n/a | n/a | n/a | n/a | 2 (0/0/2) | 2 | 1 | n/a | 83.97 | 1 |
 | fixed (no δ fix) | n/a | n/a | n/a | n/a | 44 (1/6/37) | 40 | 1 | n/a | 71.63 | 1 |
 
-### 16x16, shine 1080p chroma, block-mean predictor (4080 blocks)
+### 16x16, 8K-source 1080p chroma, block-mean predictor (4080 blocks)
 
 | variant | coeff bit-exact | max \|Δcoeff\| | RMS Δcoeff | max rel | q mismatch (DC/LF/HF) | blocks w/ q mismatch | max \|Δq\| | near boundary ≤1e-3/≤1e-4/≤1e-5 | recon PSNR | max recon Δ |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|

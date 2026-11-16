@@ -102,14 +102,14 @@ if [ "$RUN" -eq 1 ]; then
       Y4M_ARGS+=(--y4m "$out")
     done
     # Real-content frames when the (unsynced) test media is present.
-    SHINE="$ROOT/testdata/pub_1280x720_60f.y4m"
-    if [ -s "$SHINE" ]; then
+    PUB_CLIP="$ROOT/testdata/pub_1280x720_60f.y4m"
+    if [ -s "$PUB_CLIP" ]; then
       for size in 64x64 640x360 1920x1080; do
         out="$FRAME_DIR/legacy_${size}.y4m"
         if [ ! -s "$out" ]; then
           w="${size%x*}"
           h="${size#*x}"
-          ffmpeg -v error -i "$SHINE" -frames:v 1 \
+          ffmpeg -v error -i "$PUB_CLIP" -frames:v 1 \
             -vf "scale=${w}:${h}:flags=bicubic" -pix_fmt yuv420p \
             -f yuv4mpegpipe "$out" -y
         fi

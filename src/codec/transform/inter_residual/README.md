@@ -193,18 +193,18 @@ Measured (macOS host, `dav2d-macos`, `base_q_idx = 90`):
   DCT:     P bytes 1379 + 1456   PSNR 42.5753
   all TX:  P bytes 1364 + 1452   PSNR 42.6295   (5 non-DCT leaves)  decode exact
 
-1280x720 shine, depth 0, 3 frames (240 inter leaves/frame, incl. 64x16 edges)
+1280x720 fixture, depth 0, 3 frames (240 inter leaves/frame, incl. 64x16 edges)
   skip only:            P bytes 502    PSNR 36.4047
   inter residual (DCT): P bytes 14424  PSNR 36.4783
   all TX types:         same as DCT at depth 0 (64x64 => TX_SET_DCTONLY)
   DCT-only patched vs stock writer: identical bytes; decode exact
 
-1280x720 shine, depth 4, 2 frames
+1280x720 fixture, depth 4, 2 frames
   DCT:     P bytes 6633  PSNR 47.8278
   all TX:  P bytes 6745  PSNR 47.8783  (76 non-DCT leaves of 111 residual)
   decode exact
 
-1280x720 shine, depth 4, 3 frames (1211-1211 inter leaves/frame, 4x4..64x64)
+1280x720 fixture, depth 4, 3 frames (1211-1211 inter leaves/frame, 4x4..64x64)
   all TX:  P bytes 11499 PSNR 47.6043  (145 non-DCT leaves of 203 residual)
   decode exact
 ```

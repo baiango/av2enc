@@ -1,9 +1,10 @@
 # AVM 360p baseline
 
-Exact **640x360**, no padding. Source: 2 seconds (120 frames, 60 fps) from the
-user's 4K VP9 clip at 10 s.
+Exact **640x360**, no padding. Source: 2 seconds (120 frames, 60 fps) from the NASA 8K clip at 10 s.
 
-Source clip: **[LG QNED 8K MiniLED │Shine 8K HDR 60fps](https://youtu.be/WEwgbKr5R9I)**, 10 s cut.
+Source clip: `First-8K-Video-from-Space_orig.mp4` (NASA, public domain; see
+`docs/testdata-provenance.md`). Rows recorded on the retired unlicensed clip are
+historical and should be re-measured before quoting.
 
 Encoder: AVM macOS arm64 nightly `cd7d8bc3db`, `--end-usage=q --qp=90
 --cpu-used=6 --threads=8`.

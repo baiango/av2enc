@@ -253,7 +253,7 @@ Measured on the development machine (Apple clang 21, `-O2`):
 | real 720p pair 0/10 | 738 | IDENTITY | candidate −8.93 dB | 14,969,651 → 14,969,651 |
 | real 720p + known 1.02×/0.5°/(3,−2) px | 682 | ROTZOOM | 10.37 dB | 372,973,132 → 4,644,720 |
 
-The real consecutive `shine` pair 0/1 is almost static (identity MSE ≈ 0.31 ⇒
+The real consecutive 720p pair 0/1 is almost static (identity MSE ≈ 0.31 ⇒
 ≈53 dB); pair 0/10 has local motion but no coherent global model. In both cases
 the estimator correctly rejects a noisy non-identity candidate. The known-warp
 variant recovers `p0=180224` (2.75 px) and `p1=-139264` (−2.125 px) against the

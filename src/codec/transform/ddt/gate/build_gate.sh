@@ -111,7 +111,7 @@ if [[ -z "${DAV2D:-}" ]]; then
 fi
 cd "$ROOT"
 
-CLIP="$OUT/shine256_motion3.y4m"
+CLIP="$OUT/pub256_motion3.y4m"
 python3 "$HERE/make_motion_clip.py" \
   "$ROOT/testdata/pub_256x256_1f.y4m" "$CLIP"
 

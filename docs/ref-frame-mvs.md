@@ -102,7 +102,7 @@ byte-identical.
 
 Measured on the RTX 3060 host, 8-bit 4:2:0, QP 90, `f9dafbc`:
 
-| case (360p, `shine360.y4m`) | pictures | IVF MD5 | recon = decoded Y4M MD5 | temporal candidates |
+| case (360p, `pub360.y4m`) | pictures | IVF MD5 | recon = decoded Y4M MD5 | temporal candidates |
 |---|---:|---|---|---:|
 | default (flag off) | 8 | `1d053fe962098fb76139dfdfe340715a` | `3b5ee1369221c6ac2cba680ef0aa524f` | 0 |
 | `--video-refs 2 --video-ref-mvs` | 8 | `f37eea404b4163bf91bafafa2eb28d98` | `3b5ee1369221c6ac2cba680ef0aa524f` | 564 |

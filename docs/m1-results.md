@@ -6,7 +6,8 @@ broadly.
 
 ## Benchmark clip
 
-Source: **[LG QNED 8K MiniLED │Shine 8K HDR 60fps](https://youtu.be/WEwgbKr5R9I)**
+Source: retired unlicensed clip (historical measurements; current fixtures and
+recipes are in `docs/testdata-provenance.md`).
 (VP9, 3840×2160, 8-bit 4:2:0 SDR, 60 fps). The benchmark frame is a 10 s cut,
 scaled to the target resolution. AVM numbers use the same frame and the same
 quality tooling.

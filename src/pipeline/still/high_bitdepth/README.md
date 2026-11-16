@@ -163,9 +163,9 @@ Pinned results (deterministic generator, `dav2d f9dafbc`, `base_q_idx = 90`):
 | generator 64x64 | 4 | 2,713 | `1b5018610a86b8d79aba161e95770ae6` | 52.45 dB | 0 LSB |
 | generator 640x360 | 210 | 196,498 | `d5cd53b7e6f18d181b83f11a08d45142` | 31.04 dB | 0 LSB |
 | `testdata/basic_64x64_1f.y4m` (8-bit -> 10-bit) | 4 | 2,429 | — | 52.20 dB | 0 LSB |
-| shine 640x360, 10-bit | 210 | 42,170 | — | 57.16 dB | 0 LSB |
-| shine 1920x1080, 10-bit | 1,950 | 213,338 | — | — | 0 LSB |
-| shine 3840x2160, 10-bit | 7,980 | 687,228 | — | — | 0 LSB |
+| pub 640x360, 10-bit | 210 | 42,170 | — | 57.16 dB | 0 LSB |
+| pub 1920x1080, 10-bit | 1,950 | 213,338 | — | — | 0 LSB |
+| pub 3840x2160, 10-bit | 7,980 | 687,228 | — | — | 0 LSB |
 
 Gate output shape:
 

@@ -45,9 +45,9 @@ fi
 export DAV2D
 
 NASA="$TESTDATA/nasa_480x240_30fps_60f.y4m"
-SHINE="$TESTDATA/pub_640x360_4f.y4m"
-[ -f "$SHINE" ] || SHINE="$TESTDATA/pub_640x360_1f.y4m"
-if [ ! -f "$NASA" ] && [ ! -f "$SHINE" ]; then
+PUB_CLIP="$TESTDATA/pub_640x360_4f.y4m"
+[ -f "$PUB_CLIP" ] || PUB_CLIP="$TESTDATA/pub_640x360_1f.y4m"
+if [ ! -f "$NASA" ] && [ ! -f "$PUB_CLIP" ]; then
     echo "gate_video_rd_preset: SKIP (exit 77): no 4-frame clip in $TESTDATA" >&2
     exit 77
 fi
@@ -64,7 +64,7 @@ PRESET_FLAGS=(--video-inter-residual --video-deblock --video-ccso
 echo "== video RD preset gate =="
 
 # --- usage errors ---------------------------------------------------------
-if "$BIN" "$SHINE" -o "$TMP/reject.ivf" --video --frames 1 \
+if "$BIN" "$PUB_CLIP" -o "$TMP/reject.ivf" --video --frames 1 \
         --video-rd-preset bogus >/dev/null 2>"$TMP/reject1.err"; then
     fail "an unknown --video-rd-preset name was accepted"
 fi
@@ -73,21 +73,21 @@ grep -q "video-rd-preset expects 'quality'" "$TMP/reject1.err" ||
 
 # The rate-aware partition decision is CPU --video only and owns the base
 # tree; reject the carriers whose trees it does not model.
-if "$BIN" "$SHINE" -o "$TMP/reject.ivf" --still --video-partition-rd \
+if "$BIN" "$PUB_CLIP" -o "$TMP/reject.ivf" --still --video-partition-rd \
         >/dev/null 2>"$TMP/rejectp1.err"; then
     fail "--video-partition-rd was accepted on the --still writer"
 fi
 grep -q "pass --video" "$TMP/rejectp1.err" ||
     fail "--still did not report the --video-only partition rejection"
 
-if "$BIN" "$SHINE" -o "$TMP/reject.ivf" --video --frames 1 \
+if "$BIN" "$PUB_CLIP" -o "$TMP/reject.ivf" --video --frames 1 \
         --video-partition-rd --video-sdp >/dev/null 2>"$TMP/rejectp2.err"; then
     fail "--video-partition-rd composed with --video-sdp"
 fi
 grep -q "does not compose with --video-sdp" "$TMP/rejectp2.err" ||
     fail "--video-sdp did not report the partition-cost rejection"
 
-if "$BIN" "$SHINE" -o "$TMP/reject.ivf" --still --video-rd-preset quality \
+if "$BIN" "$PUB_CLIP" -o "$TMP/reject.ivf" --still --video-rd-preset quality \
         >/dev/null 2>"$TMP/reject2.err"; then
     fail "--video-rd-preset was accepted on the --still writer"
 fi
@@ -97,12 +97,12 @@ grep -q "applies to the CPU --video encoder" "$TMP/reject2.err" ||
 
 # --- preset == explicit flag list ----------------------------------------
 FRAMES=4
-if ! "$BIN" "$SHINE" -o "$TMP/preset.ivf" --video --frames "$FRAMES" \
+if ! "$BIN" "$PUB_CLIP" -o "$TMP/preset.ivf" --video --frames "$FRAMES" \
         --qp 189 --video-rd-preset quality >"$TMP/preset.log" 2>&1; then
     fail "the preset encode failed"
     cat "$TMP/preset.log" >&2
 fi
-if ! "$BIN" "$SHINE" -o "$TMP/explicit.ivf" --video --frames "$FRAMES" \
+if ! "$BIN" "$PUB_CLIP" -o "$TMP/explicit.ivf" --video --frames "$FRAMES" \
         --qp 189 "${PRESET_FLAGS[@]}" >"$TMP/explicit.log" 2>&1; then
     fail "the explicit-flags encode failed"
 fi
@@ -149,7 +149,7 @@ fi
 
 # Whole-frame recon check: the encoder dump must match the decoder sample for
 # sample (loop filters and the TX-search reconstruction included).
-if ! "$BIN" "$SHINE" -o "$TMP/recon.ivf" --video --frames "$FRAMES" \
+if ! "$BIN" "$PUB_CLIP" -o "$TMP/recon.ivf" --video --frames "$FRAMES" \
         --qp 189 --video-recon "$TMP/recon.y4m" --video-rd-preset quality \
         >"$TMP/recon-encode.log" 2>&1; then
     fail "the --video-recon encode failed"

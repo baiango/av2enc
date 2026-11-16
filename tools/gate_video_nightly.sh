@@ -45,9 +45,9 @@ fi
 export DAV2D
 
 NASA="$TESTDATA/nasa_480x240_30fps_60f.y4m"
-SHINE="$TESTDATA/pub_640x360_4f.y4m"
-[ -f "$SHINE" ] || SHINE="$TESTDATA/pub_640x360_1f.y4m"
-if [ ! -f "$SHINE" ]; then
+PUB_CLIP="$TESTDATA/pub_640x360_4f.y4m"
+[ -f "$PUB_CLIP" ] || PUB_CLIP="$TESTDATA/pub_640x360_1f.y4m"
+if [ ! -f "$PUB_CLIP" ]; then
     echo "gate_video_nightly: SKIP (exit 77): no short clip in $TESTDATA" >&2
     exit 77
 fi
@@ -75,13 +75,13 @@ NIGHTLY_FLAGS=(--video-rd-preset quality --video-ccso-rd --video-edge-inter
 echo "== nightly RD gate =="
 
 # --- usage rejections -----------------------------------------------------
-if "$BIN" "$SHINE" -o "$TMP/gpu.ivf" --nightly --video-gpu >/dev/null 2>"$TMP/gpu.err"; then
+if "$BIN" "$PUB_CLIP" -o "$TMP/gpu.ivf" --nightly --video-gpu >/dev/null 2>"$TMP/gpu.err"; then
     fail "--nightly accepted --video-gpu"
 fi
 grep -q "nightly is CPU-only" "$TMP/gpu.err" ||
     fail "--nightly --video-gpu did not report the CPU-only rejection"
 
-if "$BIN" "$SHINE" -o "$TMP/still.ivf" --nightly --still >/dev/null 2>"$TMP/still.err"; then
+if "$BIN" "$PUB_CLIP" -o "$TMP/still.ivf" --nightly --still >/dev/null 2>"$TMP/still.err"; then
     fail "--nightly accepted --still"
 fi
 grep -q "nightly is a CPU --video mode" "$TMP/still.err" ||
@@ -89,12 +89,12 @@ grep -q "nightly is a CPU --video mode" "$TMP/still.err" ||
 
 # --- expansion identity ---------------------------------------------------
 FRAMES=4
-if ! "$BIN" "$SHINE" -o "$TMP/nightly.ivf" --nightly --frames "$FRAMES" \
+if ! "$BIN" "$PUB_CLIP" -o "$TMP/nightly.ivf" --nightly --frames "$FRAMES" \
         --qp 190 >"$TMP/nightly.log" 2>&1; then
     fail "--nightly encode failed"
     cat "$TMP/nightly.log" >&2
 fi
-if ! "$BIN" "$SHINE" -o "$TMP/explicit.ivf" --video --frames "$FRAMES" \
+if ! "$BIN" "$PUB_CLIP" -o "$TMP/explicit.ivf" --video --frames "$FRAMES" \
         --qp 190 "${NIGHTLY_FLAGS[@]}" >"$TMP/explicit.log" 2>&1; then
     fail "the explicit nightly flags failed"
 fi
@@ -106,7 +106,7 @@ fi
 # --- reference-intro QP offset -------------------------------------------
 # --nightly owns the key/first-P QP offset; an explicit 0 must restore the
 # historical fixed-QP decisions, so the two streams must differ.
-if ! "$BIN" "$SHINE" -o "$TMP/nightly-off0.ivf" --nightly --frames "$FRAMES" \
+if ! "$BIN" "$PUB_CLIP" -o "$TMP/nightly-off0.ivf" --nightly --frames "$FRAMES" \
         --qp 190 --video-key-qp-offset 0 >"$TMP/nightly-off0.log" 2>&1; then
     fail "the --nightly --video-key-qp-offset 0 encode failed"
 fi
@@ -114,11 +114,11 @@ if [ -f "$TMP/nightly.ivf" ] && [ -f "$TMP/nightly-off0.ivf" ]; then
     cmp -s "$TMP/nightly.ivf" "$TMP/nightly-off0.ivf" &&
         fail "the reference-intro QP offset is not live under --nightly"
 fi
-if "$BIN" "$SHINE" -o "$TMP/off-still.ivf" --still \
+if "$BIN" "$PUB_CLIP" -o "$TMP/off-still.ivf" --still \
         --video-key-qp-offset -16 >/dev/null 2>"$TMP/off-still.err"; then
     fail "--video-key-qp-offset was accepted without --video"
 fi
-if "$BIN" "$SHINE" -o "$TMP/off-rc.ivf" --video --frames "$FRAMES" \
+if "$BIN" "$PUB_CLIP" -o "$TMP/off-rc.ivf" --video --frames "$FRAMES" \
         --rc crf --video-key-qp-offset -16 >/dev/null 2>"$TMP/off-rc.err"; then
     fail "--video-key-qp-offset was accepted with --rc crf"
 fi
@@ -224,7 +224,7 @@ if ! "$DAV2D" -q --strict 1 -i "$TMP/nightly.ivf" -o "$TMP/decoded.y4m" \
     fail "--nightly stream failed dav2d --strict 1"
     cat "$TMP/strict.log" >&2
 fi
-if ! "$BIN" "$SHINE" -o "$TMP/recon.ivf" --nightly --frames "$FRAMES" \
+if ! "$BIN" "$PUB_CLIP" -o "$TMP/recon.ivf" --nightly --frames "$FRAMES" \
         --qp 190 --video-recon "$TMP/recon.y4m" >"$TMP/recon.log" 2>&1; then
     fail "the --nightly --video-recon encode failed"
 elif ! python3 - "$TMP/recon.y4m" "$TMP/decoded.y4m" <<'PY'
@@ -301,25 +301,25 @@ PY
 
     # The carrier is CPU-only and keeps the plain-chain surface.  Plain
     # --video-bawp stays skip-only (the CUDA BAWP backend parity path).
-    if "$BIN" "$SHINE" -o "$TMP/bawp_gpu.ivf" --video --frames 1 --qp 190 \
+    if "$BIN" "$PUB_CLIP" -o "$TMP/bawp_gpu.ivf" --video --frames 1 --qp 190 \
             --video-bawp-carrier --video-gpu >/dev/null 2>"$TMP/bawp_gpu.err"; then
         fail "--video-bawp-carrier was accepted with --video-gpu"
     fi
     grep -q "CPU-only" "$TMP/bawp_gpu.err" ||
         fail "the --video-bawp-carrier GPU rejection did not name the CPU-only path"
-    if "$BIN" "$SHINE" -o "$TMP/bawp_tiles.ivf" --video --frames 1 --qp 190 \
+    if "$BIN" "$PUB_CLIP" -o "$TMP/bawp_tiles.ivf" --video --frames 1 --qp 190 \
             --video-bawp-carrier --tiles 2x1 >/dev/null 2>"$TMP/bawp_tiles.err"; then
         fail "--video-bawp-carrier was accepted with --tiles"
     fi
     grep -q "single tile" "$TMP/bawp_tiles.err" ||
         fail "the --video-bawp-carrier tile rejection did not name the single tile"
-    if "$BIN" "$SHINE" -o "$TMP/bawp_b.ivf" --video --frames 2 --qp 190 \
+    if "$BIN" "$PUB_CLIP" -o "$TMP/bawp_b.ivf" --video --frames 2 --qp 190 \
             --video-bawp-carrier --b-frames 1 >/dev/null 2>"$TMP/bawp_b.err"; then
         fail "--video-bawp-carrier was accepted with --b-frames"
     fi
     grep -q -- "--video-bawp" "$TMP/bawp_b.err" ||
         fail "the --video-bawp-carrier B-frame rejection did not name --video-bawp"
-    if "$BIN" "$SHINE" -o "$TMP/bawp_res.ivf" --video --frames 1 --qp 190 \
+    if "$BIN" "$PUB_CLIP" -o "$TMP/bawp_res.ivf" --video --frames 1 --qp 190 \
             --video-bawp --video-inter-residual >/dev/null 2>"$TMP/bawp_res.err"; then
         fail "plain --video-bawp was accepted with --video-inter-residual"
     fi

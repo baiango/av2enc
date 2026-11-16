@@ -40,8 +40,8 @@ fi
     echo "gate_video_ccso_overhead: SKIP (exit 77): no dav2d binary" >&2; exit 77; }
 
 NASA="$TESTDATA/nasa_480x240_30fps_60f.y4m"
-SHINE="$TESTDATA/pub_640x360_4f.y4m"
-[ -f "$SHINE" ] || SHINE="$TESTDATA/pub_640x360_1f.y4m"
+PUB_CLIP="$TESTDATA/pub_640x360_4f.y4m"
+[ -f "$PUB_CLIP" ] || PUB_CLIP="$TESTDATA/pub_640x360_1f.y4m"
 [ -f "$NASA" ] || {
     echo "gate_video_ccso_overhead: SKIP (exit 77): no 240p60 fixture" >&2
     exit 77; }
@@ -60,21 +60,21 @@ PY
 echo "== CCSO parameter overhead gate =="
 
 # --- named rejections -----------------------------------------------------
-if "$BIN" "$SHINE" -o "$TMP/gpu.ivf" --video --video-gpu \
+if "$BIN" "$PUB_CLIP" -o "$TMP/gpu.ivf" --video --video-gpu \
         --video-ccso-header-rd >/dev/null 2>"$TMP/gpu.err"; then
     fail "--video-ccso-header-rd accepted --video-gpu"
 fi
 grep -q "CPU-measured CCSO decision model" "$TMP/gpu.err" ||
     fail "the --video-gpu rejection did not name the CPU-only contract"
 
-if "$BIN" "$SHINE" -o "$TMP/still.ivf" --still \
+if "$BIN" "$PUB_CLIP" -o "$TMP/still.ivf" --still \
         --video-ccso-header-rd >/dev/null 2>"$TMP/still.err"; then
     fail "--video-ccso-header-rd accepted --still"
 fi
 grep -q "video options require --video" "$TMP/still.err" ||
     fail "the --still rejection did not name the --video requirement"
 
-if "$BIN" "$SHINE" -o "$TMP/ten.ivf" --video --bit-depth 10 \
+if "$BIN" "$PUB_CLIP" -o "$TMP/ten.ivf" --video --bit-depth 10 \
         --video-ccso-header-rd >/dev/null 2>"$TMP/ten.err"; then
     fail "--video-ccso-header-rd accepted a 10-bit core"
 fi

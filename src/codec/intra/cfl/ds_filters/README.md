@@ -171,7 +171,7 @@ the integration change listed below.
 
 ## Quality / rate per filter
 
-`quality/quality_per_filter.sh`, real `shine` content, `--still`, decoded with the
+`quality/quality_per_filter.sh`, real 8K-derived content, `--still`, decoded with the
 pinned dav2d (deltas relative to index 0):
 
 | Size | Filter | Bytes | Y PSNR | U PSNR | V PSNR | Weighted PSNR | Δbytes | ΔW PSNR |

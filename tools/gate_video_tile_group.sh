@@ -50,8 +50,8 @@ command -v python3 >/dev/null 2>&1 || {
     echo "gate_video_tile_group: SKIP (exit 77): no python3" >&2; exit 77; }
 
 NASA="$TESTDATA/nasa_480x240_30fps_60f.y4m"
-SHINE="$TESTDATA/pub_640x360_1f.y4m"
-if [ ! -f "$NASA" ] || [ ! -f "$SHINE" ]; then
+PUB_CLIP="$TESTDATA/pub_640x360_1f.y4m"
+if [ ! -f "$NASA" ] || [ ! -f "$PUB_CLIP" ]; then
     echo "gate_video_tile_group: SKIP (exit 77): missing testdata clips" >&2
     exit 77
 fi
@@ -175,13 +175,13 @@ PY
 [ $? -eq 0 ] || fail "the compact stream lost decoder/recon evidence"
 
 # --- rejections -----------------------------------------------------------
-if "$BIN" "$SHINE" -o "$TMP/tiles.ivf" --video --frames 1 --qp 190 \
+if "$BIN" "$PUB_CLIP" -o "$TMP/tiles.ivf" --video --frames 1 --qp 190 \
         --tiles 2x1 --video-tile-group-compact >/dev/null 2>"$TMP/tiles.err"; then
     fail "--video-tile-group-compact was accepted with --tiles 2x1"
 fi
 grep -q "gated on a single tile" "$TMP/tiles.err" ||
     fail "the multi-tile rejection did not name the single-tile contract"
-if "$BIN" "$SHINE" -o "$TMP/bframes.ivf" --video --frames 2 --qp 190 \
+if "$BIN" "$PUB_CLIP" -o "$TMP/bframes.ivf" --video --frames 2 --qp 190 \
         --b-frames 1 --video-tile-group-compact >/dev/null 2>"$TMP/bframes.err"; then
     fail "--video-tile-group-compact was accepted with --b-frames"
 fi

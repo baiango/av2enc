@@ -171,7 +171,7 @@ of the encoder reconstruction matches (0 diffs). Results:
 | stream | leaves | distinct MVs | max stack | reordered blocks | recon diffs |
 |---|---|---|---|---|---|
 | synthetic 128×128 | 256 | 5 | 3 | 14 | 0 |
-| `shine` 1280×704 | 14,080 | 5 | 4 | 707 | 0 |
+| 720p fixture | 14,080 | 5 | 4 | 707 | 0 |
 | corrupted-index control | 256 | 5 | 3 | 14 | 1,873 |
 
 The negative control (`--corrupt-index`) signals the wrong DRL index and

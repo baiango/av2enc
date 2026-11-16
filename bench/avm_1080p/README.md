@@ -4,7 +4,9 @@ Exact **1920x1080**, 60 fps, 8-bit 4:2:0. Main sweep: 10 frames from
 `testdata/pub_1920x1080_10f.y4m`. Optional steady-state check: 2 seconds
 (120 frames) cut from the original 4K source at 10 s.
 
-Source clip: **[LG QNED 8K MiniLED │Shine 8K HDR 60fps](https://youtu.be/WEwgbKr5R9I)**, 10 s cut.
+Source clip: `First-8K-Video-from-Space_orig.mp4` (NASA, public domain; see
+`docs/testdata-provenance.md`). Rows recorded on the retired unlicensed clip are
+historical and should be re-measured before quoting.
 
 > **Host: Apple M4 Mac mini, 10 cores, 16 GiB, macOS 26.6.2.**
 > AVM here is a **CPU encoder on the Mac**.
@@ -138,7 +140,7 @@ done
 
 ```sh
 cd $HOME/work/av2enc
-SRC="<media>/LG QNED 8K MiniLED │Shine 8K HDR 60fps.webm"
+SRC="<media>/First-8K-Video-from-Space_orig.mp4"
 
 ffmpeg -hide_banner -v error -ss 10 -i "$SRC" -frames:v 120 \
   -vf scale=1920:1080 -pix_fmt yuv420p -an -f yuv4mpegpipe \

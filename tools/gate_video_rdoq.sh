@@ -41,13 +41,13 @@ fi
 export DAV2D
 
 NASA="$TESTDATA/nasa_480x240_30fps_60f.y4m"
-SHINE="$TESTDATA/pub_640x360_4f.y4m"
-[ -f "$SHINE" ] || SHINE="$TESTDATA/pub_640x360_1f.y4m"
-if [ ! -f "$NASA" ] && [ ! -f "$SHINE" ]; then
+PUB_CLIP="$TESTDATA/pub_640x360_4f.y4m"
+[ -f "$PUB_CLIP" ] || PUB_CLIP="$TESTDATA/pub_640x360_1f.y4m"
+if [ ! -f "$NASA" ] && [ ! -f "$PUB_CLIP" ]; then
     echo "gate_video_rdoq: SKIP (exit 77): no fixture in $TESTDATA" >&2
     exit 77
 fi
-CLIP=${NASA:-$SHINE}
+CLIP=${NASA:-$PUB_CLIP}
 FRAMES=60
 [ -f "$NASA" ] || FRAMES=4
 

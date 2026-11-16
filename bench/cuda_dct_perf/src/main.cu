@@ -617,7 +617,7 @@ int run(int argc, char** argv) {
       extract_blocks(frame.y.data(), frame.width, frame.height, 32,
                      &batch.blocks, &batch.preds);
       build_reference(&batch, p32);
-      print_accuracy_header("32x32", "shine 1080p, block-mean predictor",
+      print_accuracy_header("32x32", "8K-source 1080p, block-mean predictor",
                             batch.preds.size(), 32);
       const int warps = 8;
       print_accuracy_row("double",
@@ -652,7 +652,7 @@ int run(int argc, char** argv) {
       batch.blocks.insert(batch.blocks.end(), v_blocks.begin(), v_blocks.end());
       batch.preds.insert(batch.preds.end(), v_preds.begin(), v_preds.end());
       build_reference(&batch, p16);
-      print_accuracy_header("16x16", "shine 1080p chroma, block-mean predictor",
+      print_accuracy_header("16x16", "8K-source 1080p chroma, block-mean predictor",
                             batch.preds.size(), 16);
       const int warps = 4;
       print_accuracy_row("double",

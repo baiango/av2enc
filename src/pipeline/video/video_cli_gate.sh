@@ -16,7 +16,7 @@
 # --illumination-shift generates a deterministic 320x192 clip whose frames are
 # a smooth source plus a constant per-frame brightness offset.  That is the
 # fixture where the --video-inter-residual decision actually codes residual
-# leaves (the 720p shine clip codes none).  --expect-inter-residual turns on
+# leaves (the 720p fixture codes none).  --expect-inter-residual turns on
 # --video-trace and fails unless at least one inter candidate reports
 # residual=1, so the gate cannot pass with a skip-only stream.
 #
@@ -133,7 +133,7 @@ reject() {
 ENCODE_INPUT=$INPUT
 if [ "$ILLUMINATION_SHIFT" -eq 1 ]; then
   # A smooth source plus a constant per-frame brightness offset.  The 720p
-  # shine clip codes no residual at QP 90; this fixture makes the
+  # fixture codes no residual at QP 90; this fixture makes the
   # --video-inter-residual rate decision pick residual leaves.  Keep $INPUT
   # untouched: the usage-error preflight below relies on the longer fixture's
   # frame count.

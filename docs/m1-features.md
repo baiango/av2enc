@@ -539,7 +539,7 @@ so the new modes are CPU-only and `--still-gpu` rejects them by name.
   `--still-sub8` and `--still-sdp` (not wired together yet).
 * Gate (completion wave): `src/codec/partition/ext/product_gate.sh` checks the
   trace selects `HORZ_3@8x32`, `VERT_3@32x8` and `HORZ_4A@32x32` on
-  640x360 shine and requires sample-exact recon with deblock on and off.
+  the 640x360 fixture and requires sample-exact recon with deblock on and off.
   The IVF MD5s above are from the earlier wave and change with the 4-sample
   floor; use the gate, not the old hashes.
 ### Completion wave (branch `integration/partition2`)

@@ -2056,7 +2056,7 @@ def main() -> int:
         f"Hardware class is `{hardware['class']}`.",
         "The 640x360 input is a downscale of the same 4K source; it is a "
         "low-resolution benchmark, not a substitute for native 1080p.",
-        "Content is one smooth TV-demo shot (LG QNED Shine). Absolute rates are "
+        "Content is one smooth TV-demo shot (NASA 8K source). Absolute rates are "
         "easy-content numbers; do not generalize to hard footage.",
         "CVVDP is fixed to `standard_fhd` on the device shown in the report. "
         "JOD is not comparable across display models or viewing conditions.",

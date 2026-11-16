@@ -54,9 +54,9 @@ fi
     echo "gate_video_cdf_carry: no dav2d" >&2; exit 77; }
 
 NASA="$TESTDATA/nasa_480x240_30fps_60f.y4m"
-SHINE="$TESTDATA/pub_640x360_4f.y4m"
-[ -f "$SHINE" ] || SHINE="$TESTDATA/pub_640x360_1f.y4m"
-for f in "$NASA" "$SHINE"; do
+PUB_CLIP="$TESTDATA/pub_640x360_4f.y4m"
+[ -f "$PUB_CLIP" ] || PUB_CLIP="$TESTDATA/pub_640x360_1f.y4m"
+for f in "$NASA" "$PUB_CLIP"; do
     [ -f "$f" ] || { echo "gate_video_cdf_carry: missing $f" >&2; exit 77; }
 done
 # Reference operating point with the reset-per-frame image (docs/video-nightly.md).
@@ -91,7 +91,7 @@ decode_exact() {
 }
 
 # --- 1. §5.18.2 forced reset on the first inter frame ---------------------
-if ! "$BIN" "$SHINE" -o "$TMP/chain.ivf" --video --p-frames 3 --qp 150 \
+if ! "$BIN" "$PUB_CLIP" -o "$TMP/chain.ivf" --video --p-frames 3 --qp 150 \
         --avg-cdf --adaptive-cdf --cdf-continuity \
         --video-recon "$TMP/chain.y4m" >"$TMP/chain.log" 2>&1; then
     echo "FAIL: carry encode on a key+P chain" >&2
@@ -125,7 +125,7 @@ if [ "$CARRY_MD5" != "$CARRY_PIN_MD5" ]; then
 fi
 
 # --- 3. static-clip per-P-frame floor -------------------------------------
-python3 - "$SHINE" "$TMP/static.y4m" 16 <<'PY'
+python3 - "$PUB_CLIP" "$TMP/static.y4m" 16 <<'PY'
 import sys
 data = open(sys.argv[1], 'rb').read()
 end = data.index(b'\n') + 1
@@ -176,7 +176,7 @@ if carry > reset * 0.8:
 PY
 
 # --- 4. rejections --------------------------------------------------------
-if "$BIN" "$SHINE" -o "$TMP/nocdf.ivf" --video --p-frames 2 \
+if "$BIN" "$PUB_CLIP" -o "$TMP/nocdf.ivf" --video --p-frames 2 \
         --cdf-continuity >/dev/null 2>"$TMP/nocdf.err"; then
     echo "FAIL: --cdf-continuity was accepted without the CDF chain" >&2
     exit 1
@@ -184,7 +184,7 @@ fi
 grep -q -- "requires --avg-cdf and --adaptive-cdf" "$TMP/nocdf.err" || {
     echo "FAIL: the --cdf-continuity chain rejection message changed" >&2
     cat "$TMP/nocdf.err" >&2; exit 1; }
-if "$BIN" "$SHINE" -o "$TMP/perframe.ivf" --video --p-frames 2 --qp 190 \
+if "$BIN" "$PUB_CLIP" -o "$TMP/perframe.ivf" --video --p-frames 2 --qp 190 \
         --avg-cdf --adaptive-cdf --video-cdf-per-frame-qp --cdf-continuity \
         >/dev/null 2>"$TMP/perframe.err"; then
     echo "FAIL: --cdf-continuity was accepted with --video-cdf-per-frame-qp" >&2

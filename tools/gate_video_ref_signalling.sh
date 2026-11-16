@@ -50,9 +50,9 @@ fi
     echo "gate_video_ref_signalling: SKIP (exit 77): no dav2d binary" >&2; exit 77; }
 
 NASA="$TESTDATA/nasa_480x240_30fps_60f.y4m"
-SHINE="$TESTDATA/pub_640x360_4f.y4m"
-[ -f "$SHINE" ] || SHINE="$TESTDATA/pub_640x360_1f.y4m"
-for f in "$NASA" "$SHINE"; do
+PUB_CLIP="$TESTDATA/pub_640x360_4f.y4m"
+[ -f "$PUB_CLIP" ] || PUB_CLIP="$TESTDATA/pub_640x360_1f.y4m"
+for f in "$NASA" "$PUB_CLIP"; do
     [ -f "$f" ] || { echo "gate_video_ref_signalling: SKIP (exit 77): missing $f" >&2; exit 77; }
 done
 
@@ -213,10 +213,10 @@ fi
 for preset in plain quality; do
     extra=()
     [ "$preset" = quality ] && extra=(--video-rd-preset quality)
-    "$BIN" "$SHINE" -o "$TMP/s_off_$preset.ivf" --video --frames 4 --qp 190 \
+    "$BIN" "$PUB_CLIP" -o "$TMP/s_off_$preset.ivf" --video --frames 4 --qp 190 \
         ${extra[@]+"${extra[@]}"} >"$TMP/s_off_$preset.log" 2>&1 ||
         { fail "640x360 flag-off encode ($preset) failed"; continue; }
-    "$BIN" "$SHINE" -o "$TMP/s_cmp_$preset.ivf" --video --frames 4 --qp 190 \
+    "$BIN" "$PUB_CLIP" -o "$TMP/s_cmp_$preset.ivf" --video --frames 4 --qp 190 \
         ${extra[@]+"${extra[@]}"} --video-ref-signal-compact \
         --video-recon "$TMP/s_cmp_$preset.recon.y4m" \
         >"$TMP/s_cmp_$preset.log" 2>&1 ||
@@ -233,7 +233,7 @@ done
 # --- 5. rejections -------------------------------------------------------
 expect_reject() {  # $1 = tag, $2 = expected message fragment, rest = flags
     local tag=$1 want=$2; shift 2
-    if "$BIN" "$SHINE" -o "$TMP/rej_$tag.ivf" --video --frames 4 --qp 190 \
+    if "$BIN" "$PUB_CLIP" -o "$TMP/rej_$tag.ivf" --video --frames 4 --qp 190 \
             --video-ref-signal-compact "$@" >/dev/null 2>"$TMP/rej_$tag.err"; then
         fail "--video-ref-signal-compact was accepted with $tag"
         return
@@ -246,7 +246,7 @@ expect_reject tiles "single tile" --tiles 2x1
 expect_reject shortrefresh "--video-short-refresh" --video-short-refresh
 expect_reject nrf "--video-num-ref-frames" --video-num-ref-frames 4
 expect_reject gpu "CPU-only" --video-gpu
-if "$BIN" "$SHINE" -o "$TMP/rej_still.ivf" --video --still --qp 190 \
+if "$BIN" "$PUB_CLIP" -o "$TMP/rej_still.ivf" --video --still --qp 190 \
         --video-ref-signal-compact >/dev/null 2>"$TMP/rej_still.err"; then
     fail "--video-ref-signal-compact was accepted with --still"
 fi

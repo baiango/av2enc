@@ -224,21 +224,21 @@ else
 fi
 
 # --- 5. rejections -------------------------------------------------------
-SHINE="$TESTDATA/pub_640x360_4f.y4m"
-if [ -f "$SHINE" ]; then
-    if "$BIN" "$SHINE" -o "$TMP/gpu.ivf" --video --frames 2 --qp 190 \
+PUB_CLIP="$TESTDATA/pub_640x360_4f.y4m"
+if [ -f "$PUB_CLIP" ]; then
+    if "$BIN" "$PUB_CLIP" -o "$TMP/gpu.ivf" --video --frames 2 --qp 190 \
             --video-qp-lambda --video-gpu >/dev/null 2>"$TMP/gpu.err"; then
         fail "--video-qp-lambda accepted --video-gpu"
     fi
     grep -q "CPU-only" "$TMP/gpu.err" ||
         fail "--video-qp-lambda --video-gpu did not name the CPU-only contract"
-    if "$BIN" "$SHINE" -o "$TMP/rc.ivf" --video --frames 2 --qp 190 \
+    if "$BIN" "$PUB_CLIP" -o "$TMP/rc.ivf" --video --frames 2 --qp 190 \
             --video-qp-lambda --rc crf >/dev/null 2>"$TMP/rc.err"; then
         fail "--video-qp-lambda accepted --rc crf"
     fi
     grep -q "fixed --qp stream" "$TMP/rc.err" ||
         fail "--video-qp-lambda --rc crf did not name the fixed-QP contract"
-    if "$BIN" "$SHINE" -o "$TMP/still.ivf" --still \
+    if "$BIN" "$PUB_CLIP" -o "$TMP/still.ivf" --still \
             --video-qp-lambda >/dev/null 2>"$TMP/still.err"; then
         fail "--video-qp-lambda accepted --still"
     fi

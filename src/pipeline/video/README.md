@@ -1130,7 +1130,7 @@ CWP and the implicit mask ride the NEAR_NEARMV carrier below; the historical
 GLOBAL_GLOBALMV subset keeps CWP_EQUAL.
 
 The compound candidate competes against GLOBALMV / NEARMV / NEWMV on luma SSE;
-`--video-refs 2 --video-compound` on `shine` 720p picks compound on ~22 of 512
+`--video-refs 2 --video-compound` on the 720p fixture picks compound on ~22 of 512
 leaves in three frames.
 
 ```sh

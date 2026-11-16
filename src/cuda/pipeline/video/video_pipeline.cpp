@@ -2793,9 +2793,14 @@ bool encode_temporal_sequence_gpu(Backend& backend,
   tl::PlanConfig pc;
   pc.gop_size = gop;
   pc.schedule = tl::Schedule::kHierarchicalP;
+  // Must match the CPU plan exactly: two references per interior frame, and
+  // 5 order-hint bits once the GOP spans 16 pictures.  Omitting ref_mode made
+  // the GPU code one-reference streams that differed from the CPU reference
+  // (caught by gate_video_gpu's tlayers4 case).
+  pc.ref_mode = tl::RefMode::kTwo;
   pc.dependency = tl::DependencyMode::kAllLower;
   pc.explicit_dependency_map = false;
-  pc.order_hint_bits = 4;
+  pc.order_hint_bits = gop >= 16 ? 5 : 4;
   pc.num_slots = gop;
   pc.base_q_idx = options.base_q_idx;
   tl::Plan plan;
@@ -2888,26 +2893,34 @@ bool encode_temporal_sequence_gpu(Backend& backend,
       return false;
     }
 
+    // Mirror the CPU reference list exactly: every planned reference, in plan
+    // order, with the same distances and order hints.  Coding only ref[0] while
+    // the header advertises num_refs produced a divergent stream (gate_video_gpu
+    // tlayers4).
     std::vector<const VideoReconFrame*> references;
     std::array<int, 7> frame_distance{};
+    std::array<int, 7> ref_order_hints{};
+    int num_refs = 0;
     if (!pf.is_key) {
-      const int ref_display = pf.ref_display[0];
-      if (ref_display < 0 ||
-          recon_by_display[static_cast<std::size_t>(ref_display)].y.empty()) {
-        error = "temporal-layer reference is not available";
-        return false;
+      num_refs = pf.num_refs;
+      for (int r = 0; r < num_refs; ++r) {
+        const int ref_display = pf.ref_display[r];
+        if (ref_display < 0 ||
+            recon_by_display[static_cast<std::size_t>(ref_display)].y.empty()) {
+          error = "temporal-layer reference is not available";
+          return false;
+        }
+        references.push_back(
+            &recon_by_display[static_cast<std::size_t>(ref_display)]);
+        frame_distance[static_cast<std::size_t>(r)] = relative_dist(
+            pf.display_order_hint, pf.ref_order_hint[r],
+            static_cast<int>(pc.order_hint_bits));
+        ref_order_hints[static_cast<std::size_t>(r)] = pf.ref_order_hint[r];
       }
-      references.push_back(
-          &recon_by_display[static_cast<std::size_t>(ref_display)]);
-      frame_distance[0] = relative_dist(
-          pf.display_order_hint, pf.ref_order_hint[0],
-          static_cast<int>(pc.order_hint_bits));
     }
 
-    std::array<int, 7> ref_order_hints{};
-    ref_order_hints[0] = pf.ref_order_hint[0];
     GpuFrameEncoder encoder(backend, frames[static_cast<std::size_t>(display)],
-                            references, frame_distance, 1, frame_options,
+                            references, frame_distance, num_refs, frame_options,
                             options.trace, pf.is_key, error, 0, 0, 0, 0, {},
                             nullptr, nullptr, ref_order_hints);
     if (!encoder.begin_ok()) {

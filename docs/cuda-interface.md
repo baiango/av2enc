@@ -175,21 +175,24 @@ Two defects were found by running this check, not by reading the code:
    `tools/bin/dav2d-macos` and reported "dav2d rejected the stream". They now
    probe the binary and exit 77 when it cannot run.
 
-Remaining gap: there is no native Linux `dav2d`, so the decode half of
-`gate_video_gpu.sh` and `gate_gpu_throughput.sh` cannot run on the GPU host. The
-gates now exit 77 there instead of failing on the macOS binary.
+Linux GPU host verification (second 3060, 2026-11-17): the decoder gap is
+closed by building it from source.
 
-Closing that gap without a Linux decoder: bring the GPU-produced IVF back to a
-host with the pinned decoder and decode it there. Done for the three streams
-above, all with `dav2d --strict 1`:
+```sh
+tools/build_dav2d_linux.sh     # static build, installs tools/bin/dav2d
+```
 
-| Stream | Decoded | CPU vs GPU decoded output |
-|---|---|---|
-| Calibration 240p QP189, 60 f | 60/60 | `01b7f25d…`, identical |
-| Video 240p QP106, 8 f | 8/8 | `3aa5284d…` |
-| 720p QP90, 24 f | 24/24 | `e98c79b6…`, identical |
+On this host it took 75 s and produced sha256 `061b79a8…`, so the gates'
+discovery finds a native decoder and their decode half runs. Results:
 
-Because the streams are byte-identical, the decode comparison is implied rather
-than independent evidence -- but it does prove the GPU bytes are a valid AV2
-stream under `--strict 1`, not merely a matching blob. The decode half matters
-if drift is ever nonzero; then a decoder is needed to compare pictures.
+| Check | Result |
+|---|---|
+| `gate_video_gpu.sh` | **PASS**, 747 s — every wired mode (temporal layers, B frames, loop filters) plus the rejection matrix |
+| `gate_gpu_throughput.sh` | **PASS**, 338 s — zero drift, identical decoded Y4M, 720p QP90 at 1.73 fps on the GPU |
+
+Running them found a real GPU defect that byte-comparison alone would have
+missed earlier: the temporal-layer encoder coded only `ref_display[0]` while the
+frame header advertised `num_refs`, and its plan omitted `ref_mode = kTwo` and
+the `order_hint_bits = 5` rule for a 16-picture GOP. `tlayers4` diverged
+(CPU `bf9526ab` vs GPU `957c3a51`). Fixed by mirroring the CPU plan and
+reference list; `tlayers4` is now byte-identical (`b06a1128`).

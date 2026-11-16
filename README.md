@@ -58,7 +58,7 @@ The parity gate enforces exact equality (`cmp` on the IVF), not a tolerance.
 (8192x4096, 2:1, bt709). The **default** CPU point is QP 189 at 480x240/30;
 the measured opt-in points are `quality` at QP 190 and `--nightly` at QP 106
 (the rate-matched 100 kbps point; QP 110 is the gate regression configuration).
-Old Shine rows are historical.
+Rows recorded on the retired unlicensed clip are historical.
 
 | Case | Device | Bitrate CPU / GPU | CVVDP | Butteraugli | SSIMULACRA2 | PSNR-Y | Encode |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -179,7 +179,7 @@ on both GPUs and on the CPU reference (MD5
 `f9b6e086aa7d9da78792cf74b9746741`, 958,023 bytes); the CPU encodes the same
 60 frames at 1.36 fps on the M4.
 
-The previous Shine 1280x720 measurements were 268.8 kbps / 9.465 JOD / 40.83 dB
+The previous 1280x720 measurements were 268.8 kbps / 9.465 JOD / 40.83 dB
 at QP 150 and 1943 kbps / 9.876 JOD / 51.76 dB at QP 90. The CPU is the quality
 reference; GPU output is byte-identical at the calibration point.
 
@@ -530,7 +530,7 @@ It also records `decode_fps` and `decode_realtime_x` from `dav2d`. The
 cross-encoder **target is SVT-AV1 v4.1.0 preset 0**, measured on the same clip,
 decoded with `dav1d` and scored with the same model: 100.3 kbps / 9.830 JOD /
 48.80 dB. The AVM CBR row in the baseline table (99.5 kbps, 8.452 JOD) is
-retained as a historical calibration point, not the target; the archived Shine
+retained as a historical calibration point, not the target; the archived retired-clip
 720p sweep is in `bench/avm_baseline/README.md`. Compare at matched bitrate, and
 always confirm `dav2d` decoded the stream first. A fast-decode
 profile is deferred until quality and encode speed are settled.
