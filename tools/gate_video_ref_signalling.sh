@@ -3,7 +3,7 @@
 #
 # What is checked:
 #   1. Flag off => the three pins are byte-identical (default 25,009
-#      a1d0dba1, quality 25,141 3984677b, nightly 24,885 7f03eb6e).
+#      a1d0dba1, quality 25,141 3984677b, nightly 24,885 1b99127a).
 #   2. The AV2ENC_TRACE_REF_BITS=1 probe reports the per-frame reference cost:
 #      the nightly chain codes 948 reference bits over 60 frames (hint 240,
 #      primary 236, cdf 59, refresh 118, map 59, num_total_refs 177,
@@ -63,8 +63,8 @@ fail() { echo "FAIL: $*" >&2; FAILED=1; }
 md5_of() { md5 -q "$1" 2>/dev/null || md5sum "$1" | awk '{print $1}'; }
 
 # Compact-form pin (60 frames at the nightly operating point).
-COMPACT_PIN_BYTES=24113
-COMPACT_PIN_MD5=7f03eb6e82d6ba4cf6666c78285f945b
+COMPACT_PIN_BYTES=23690
+COMPACT_PIN_MD5=1b99127a4cd1d386fa5600fb63c57a83
 
 # Decode `ivf` with dav2d --strict 1: require `expect` pictures, no failed
 # pictures, and (optionally) a decoded payload equal to `reference`.
@@ -131,9 +131,9 @@ if ! "$BIN" "$NASA" -o "$TMP/nightly.ivf" --video --frames 60 --qp 110 \
 else
     BYTES=$(wc -c <"$TMP/nightly.ivf" | tr -d ' ')
     MD5=$(md5_of "$TMP/nightly.ivf")
-    [ "$BYTES" = "24113" ] || fail "nightly is $BYTES B, expected 24113"
-    [ "$MD5" = "7f03eb6e82d6ba4cf6666c78285f945b" ] ||
-        fail "nightly md5 is $MD5, expected 7f03eb6e..."
+    [ "$BYTES" = "23690" ] || fail "nightly is $BYTES B, expected 23690"
+    [ "$MD5" = "1b99127a4cd1d386fa5600fb63c57a83" ] ||
+        fail "nightly md5 is $MD5, expected 1b99127a..."
 fi
 
 # --- 2. per-frame reference-bit probe ------------------------------------

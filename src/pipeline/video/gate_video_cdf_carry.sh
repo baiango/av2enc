@@ -60,10 +60,10 @@ for f in "$NASA" "$SHINE"; do
     [ -f "$f" ] || { echo "gate_video_cdf_carry: missing $f" >&2; exit 77; }
 done
 # Reference operating point with the reset-per-frame image (docs/video-nightly.md).
-RESET_PIN_BYTES=24239
+RESET_PIN_BYTES=23737
 # The carried image at the same point: same decisions, −2.77% rate.
-CARRY_PIN_BYTES=23539
-CARRY_PIN_MD5=e5bf4137d0dacd16f3cf82781bebb812
+CARRY_PIN_BYTES=23025
+CARRY_PIN_MD5=cf98ea9bad3f81bd9a20133409279318
 
 md5_of() { md5 -q "$1" 2>/dev/null || md5sum "$1" | awk '{print $1}'; }
 

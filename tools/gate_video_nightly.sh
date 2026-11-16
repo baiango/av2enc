@@ -58,15 +58,16 @@ FAILED=0
 fail() { echo "FAIL: $*" >&2; FAILED=1; }
 
 NIGHTLY_FLAGS=(--video-rd-preset quality --video-ccso-rd --video-edge-inter
-               --video-partition-rd --video-partition-rd-lambda 2.75e-6
+               --video-partition-rd
                --video-key-qp-offset -27 --video-rdoq --video-edge-mask
                --video-cdef --video-cdef-rd
+               --video-qp-lambda
                --video-tile-flush-min --video-ref-signal-compact
                --video-tile-group-compact --video-ccso-header-rd
                --video-ccso-bands 6 --video-ccso-lambda 22
                --video-ccso-refit 2 --video-ccso-unit-bits 2
                --video-bawp --video-bawp-carrier --video-leaf-rd
-               --video-subpel-eighth --video-tx-lambda 136
+               --video-subpel-eighth
                --video-key-intra-txpart
                --avg-cdf --adaptive-cdf --cdf-continuity
                --video-drift-refresh)
@@ -170,10 +171,10 @@ import hashlib, sys
 print(hashlib.md5(open(sys.argv[1], 'rb').read()).hexdigest())
 PY
 )
-        [ "$BYTES" = "24113" ] ||
-            fail "nightly stream is $BYTES B, expected 24113"
-        [ "$MD5" = "7f03eb6e82d6ba4cf6666c78285f945b" ] ||
-            fail "nightly stream md5 is $MD5, expected 7f03eb6e..."
+        [ "$BYTES" = "23690" ] ||
+            fail "nightly stream is $BYTES B, expected 23690"
+        [ "$MD5" = "1b99127a4cd1d386fa5600fb63c57a83" ] ||
+            fail "nightly stream md5 is $MD5, expected 1b99127a..."
     fi
 
     # --- CDEF params-row pricing (--video-cdef-rd) ---------------------

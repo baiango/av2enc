@@ -252,6 +252,7 @@ if [ "$QUICK" -eq 0 ]; then
     run_gate gate_video_headers src/pipeline/video/gate_video_headers.sh
     run_gate gate_video_rd_preset tools/gate_video_rd_preset.sh
     run_gate gate_video_nightly tools/gate_video_nightly.sh
+    run_gate gate_video_qp_lambda src/pipeline/video/gate_video_qp_lambda.sh
     run_gate gate_video_tile_group tools/gate_video_tile_group.sh
     run_gate gate_video_cdf_carry src/pipeline/video/gate_video_cdf_carry.sh
     run_gate gate_video_ref_signalling tools/gate_video_ref_signalling.sh

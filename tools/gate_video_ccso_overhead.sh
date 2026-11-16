@@ -2,7 +2,7 @@
 # Gate for the CCSO parameter-traffic model (--video-ccso-header-rd).
 #
 # Checks, on the 60-frame 240p30 nightly point (QP110):
-#   * the flag-off pin is byte-identical (24,885 B / 7f03eb6e...);
+#   * the flag-off pin is byte-identical (24,885 B / 1b99127a...);
 #   * the flag-on stream shrinks at the same QP and still decodes under
 #     dav2d --strict 1 with 60/60 pictures, and the visible encoder recon equals
 #     the decoded payload;
@@ -95,9 +95,9 @@ AV2ENC_TRACE_CCSO=1 "$BIN" "$NASA" -o "$TMP/hdr.ivf" --video --frames 60 \
 PIN_BYTES=$(wc -c <"$TMP/pin.ivf" | tr -d ' ')
 PIN_MD5=$(md5_of "$TMP/pin.ivf")
 HDR_BYTES=$(wc -c <"$TMP/hdr.ivf" | tr -d ' ')
-[ "$PIN_BYTES" = "24732" ] || fail "flag-off stream is $PIN_BYTES B, expected 24732"
-[ "$PIN_MD5" = "f71e36a8c8b9c6cf33d9e7532b0a5ffa" ] ||
-    fail "flag-off stream md5 is $PIN_MD5, expected f71e36a8..."
+[ "$PIN_BYTES" = "24058" ] || fail "flag-off stream is $PIN_BYTES B, expected 24058"
+[ "$PIN_MD5" = "d389d3def444dfd01a68a483b07d447f" ] ||
+    fail "flag-off stream md5 is $PIN_MD5, expected d389d3de..."
 [ "$HDR_BYTES" -lt "$PIN_BYTES" ] ||
     fail "flag-on stream ($HDR_BYTES B) is not smaller than the pin ($PIN_BYTES B)"
 

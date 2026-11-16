@@ -5,7 +5,9 @@
 #
 #   1. CALIBRATION (decision policy): 480x240 (240p), 60 frames, QP 189
 #      The GPU path must reproduce the CPU reference decode within
-#        CVVDP <= 0.05 JOD, bitrate <= 2 %, PSNR-Y <= 0.1 dB.
+#        the GPU stream is byte-identical to the CPU stream: the IVF bytes must
+#        compare equal (cmp), and every drift row must be exactly 0. There is
+#        no tolerance: any byte difference fails the gate.
 #      The current GPU pipeline is a decision-identical mirror of the CPU one,
 #      so the expected drift is exactly 0 (identical temporal units).
 #
@@ -37,9 +39,6 @@ HEIGHT=720
 CLIP=""
 QUICK=0
 JSON=""
-CVVDP_TOL=0.05
-BITRATE_TOL=2.0
-PSNR_TOL=0.1
 MIN_FPS=0
 PYTHON="${PYTHON:-python3}"
 
@@ -261,8 +260,11 @@ run_point "cal480-qp189" "$CAL_CLIP" 60 189 480 240 || status=1
 run_point "bench720-qp90" "$CLIP" "$FRAMES" 90 "$WIDTH" "$HEIGHT" || status=1
 
 # --------------------------------------------------------------- drift checks
+# The GPU path executes the same decisions as the CPU, so the correct contract
+# is exact equality, not a tolerance. Any byte difference is a failure: a drift
+# inside a tolerance band is still a divergence between the two products.
 check_drift() {
-  local label="$1" max_cvvdp="$2" max_bitrate="$3" max_psnr="$4"
+  local label="$1"
   local entry="" v
   for v in "${ROW_VALUES[@]}"; do
     case "$v" in "$label|"*) entry="$v" ;; esac
@@ -273,27 +275,32 @@ check_drift() {
   local f=($entry)
   unset IFS
   local cvvdp="${f[6]}" bitrate="${f[3]}" psnr="${f[9]}"
-  if [[ "$cvvdp" != "n/a" ]]; then
-    if ! "$PYTHON" -c "import sys;sys.exit(0 if abs($cvvdp)<=$max_cvvdp else 1)"; then
-      echo "gate_gpu_throughput: FAIL $label CVVDP drift $cvvdp > $max_cvvdp" >&2
-      return 1
-    fi
-  fi
-  if ! "$PYTHON" -c "import sys;sys.exit(0 if abs($bitrate)<=$max_bitrate else 1)"; then
-    echo "gate_gpu_throughput: FAIL $label bitrate drift $bitrate% > $max_bitrate%" >&2
+  local same_bytes="${f[11]}" same_dec="${f[12]}"
+  if [[ "$same_bytes" != "1" ]]; then
+    echo "gate_gpu_throughput: FAIL $label GPU IVF is not byte-identical to the CPU stream" >&2
     return 1
   fi
-  if [[ "$psnr" != "n/a" ]]; then
-    if ! "$PYTHON" -c "import sys;sys.exit(0 if abs($psnr)<=$max_psnr else 1)"; then
-      echo "gate_gpu_throughput: FAIL $label PSNR drift $psnr > $max_psnr" >&2
-      return 1
-    fi
+  if [[ "$same_dec" != "1" ]]; then
+    echo "gate_gpu_throughput: FAIL $label GPU decoded output is not byte-identical" >&2
+    return 1
+  fi
+  if ! "$PYTHON" -c "import sys;sys.exit(0 if abs($bitrate)==0 else 1)"; then
+    echo "gate_gpu_throughput: FAIL $label bitrate drift $bitrate% is not zero" >&2
+    return 1
+  fi
+  if [[ "$cvvdp" != "n/a" ]] && ! "$PYTHON" -c "import sys;sys.exit(0 if abs($cvvdp)==0 else 1)"; then
+    echo "gate_gpu_throughput: FAIL $label CVVDP drift $cvvdp is not zero" >&2
+    return 1
+  fi
+  if [[ "$psnr" != "n/a" ]] && ! "$PYTHON" -c "import sys;sys.exit(0 if abs($psnr)==0 else 1)"; then
+    echo "gate_gpu_throughput: FAIL $label PSNR drift $psnr is not zero" >&2
+    return 1
   fi
   return 0
 }
 
-check_drift "cal480-qp189" "$CVVDP_TOL" "$BITRATE_TOL" "$PSNR_TOL" || status=1
-check_drift "bench720-qp90" "$CVVDP_TOL" "$BITRATE_TOL" "$PSNR_TOL" || status=1
+check_drift "cal480-qp189" || status=1
+check_drift "bench720-qp90" || status=1
 
 if [[ "$MIN_FPS" != 0 ]]; then
   fps=$(printf '%s\n' "${ROW_VALUES[@]}" | sed -n 's/^bench720-qp90|.*|\([0-9.]*\)|.*/\1/p')

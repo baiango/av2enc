@@ -149,3 +149,25 @@ chain, and how much the P chain can absorb depends on motion), so it should be
 derived from a signal (rate/motion), not fixed. The leaf lambda is the one lever
 that held on both clips, which supports scaling it with QP rather than choosing a
 per-resolution constant.
+
+## QP-scaled lambdas (`--video-qp-lambda`)
+
+The audit found five sites using a constant where the RD tradeoff scales with QP.
+`--video-qp-lambda` replaces them with per-site power laws fitted at both
+operating points: leaf `step^0.72`, TX `step^0.34`, RDOQ `step^1.5`, partition
+probe `step^2.22`, and a constant 8 for the key TX weight.
+
+No single exponent fits both points (0.5 under-scales the leaf 2x at 720p, 1.0
+over-scales it 2.5x, 2.0 collapses to 4.84 JOD), which is why the constant was
+wrong in five places rather than one.
+
+| point | flag off | `--video-qp-lambda` | delta |
+|---|---:|---:|---:|
+| 240p, iso-rate 96.45 kbps | 9.7130 / 43.89 dB | 9.7249 / 44.57 | +0.012 JOD / +0.68 dB |
+| 720p, iso-rate 296.0 kbps | 7.2726 / 31.33 dB | 7.3182 | **+0.046 JOD** |
+
+The 240p gain is inside the clip's ±0.03 JOD ripple, so it does **not** justify
+re-pinning that stream; the 720p gain is outside it and is the largest single
+lever the audit produced. Use the flag for 720p work; the 240p pin stays on the
+legacy constants until a change with a signal outside the ripple warrants a
+re-pin.

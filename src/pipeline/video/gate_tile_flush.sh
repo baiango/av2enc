@@ -95,7 +95,7 @@ if [ -f "$TMP/off-nightly.ivf" ]; then
     [ "$BYTES" = "24218" ] || fail "nightly pin is $BYTES B, expected 24218"
     MD5=$(python3 -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read()).hexdigest())" "$TMP/off-nightly.ivf")
     [ "$MD5" = "d3a7bd02c692f4f9770843c19f745307" ] ||
-        fail "nightly pin md5 is $MD5, expected 7f03eb6e..."
+        fail "nightly pin md5 is $MD5, expected 1b99127a..."
 fi
 if [ -f "$TMP/off-default.ivf" ]; then
     BYTES=$(wc -c <"$TMP/off-default.ivf" | tr -d ' ')

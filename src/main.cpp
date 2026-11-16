@@ -308,8 +308,13 @@ struct Options {
   // context model yet) still matches the CPU reference byte for byte.
   bool video_tx_context_rate = false;
   double video_tx_lambda = 256.0;
-  double video_key_tx_lambda = 0.0;  // 0 = inherit --video-tx-lambda
+  double video_key_tx_lambda = 0.0;  // 0 inherits --video-tx-lambda, or the
+                                     // key fit under --video-qp-lambda
   double video_leaf_rd_lambda = 125.0;
+  // Opt-in QP-scaled RD lambdas (--video-qp-lambda): replace the leaf, TX,
+  // key-TX, RDOQ-scale and partition-fallback constants with per-site power
+  // laws measured at both operating points.  Off = historical constants.
+  bool video_qp_lambda = false;
   // Opt-in rate-aware §5.20.3.1 partition decision (CPU reference).  See
   // VideoOptions::partition_rd; --nightly enables it.
   bool video_partition_rd = false;
@@ -1028,6 +1033,11 @@ void print_usage(std::ostream& out) {
                                     "--video-tx-search)"});
   item("--video-tx-lambda <S>", {"SSE-per-bit weight for --video-tx-search",
                                   "(default 256)"});
+  item("--video-qp-lambda", {"Opt-in QP-scaled RD lambdas: the leaf, TX,",
+                             "key-TX, RDOQ-scale and partition-fallback",
+                             "weights follow per-site power laws measured at",
+                             "both operating points instead of constants",
+                             "(CPU; an explicit <S> flag stays exact)"});
   item("--video-partition-rd", {"Opt-in measured §5.20.3.1 partition tree:",
                                 "price each P-frame leaf with one NEWMV",
                                 "prediction plus a quantised residual",
@@ -1712,7 +1722,9 @@ bool apply_video_nightly(Options& options, std::string& error) {
   // RDOQ-interaction TX-search lambda.  At QP117 this is 24,939 B /
   // 99.756 kbps / 9.5868 JOD / 41.6953 dB.
   options.video_subpel_eighth = true;
-  if (!flag_given(options, "--video-tx-lambda")) {
+  // The TX lambda is QP-scaled when --video-qp-lambda is on; the historical
+  // 136 stays the value for the constant-lambda path.
+  if (!options.video_qp_lambda && !flag_given(options, "--video-tx-lambda")) {
     options.video_tx_lambda = 136.0;
   }
   // The bottom-edge residual mask: hidden decoder-invisible rows get no
@@ -1728,6 +1740,12 @@ bool apply_video_nightly(Options& options, std::string& error) {
   // (identical reconstruction, ≈2 B/frame smaller header).  See
   // docs/video-nightly.md.
   options.video_cdef_rd = true;
+  // QP-scaled RD lambdas: five sites used constants where the tradeoff scales
+  // with QP.  At 240p this is +0.7 dB PSNR / +1.1 K at iso-rate (CVVDP alone
+  // called it ripple; Butteraugli -11% and SSIMULACRA2 +1.6 show the win);
+  // at 720p it is +0.046 JOD.  See docs/qp-scaled-lambda.md.
+  options.video_qp_lambda = true;
+
   // Overhead wave (docs/video-nightly.md): all four leave the decoded picture
   // byte-identical at the same QP except the CCSO row pricing, which trades
   // ~2.4% of the rate for a measured +0.015 JOD at iso-rate.
@@ -2968,6 +2986,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-qp-lambda") {
+      options.video_qp_lambda = true;
+      continue;
+    }
+
     if (argument == "--video-tx-lambda") {
       if (i + 1 >= argc) {
         error = "missing value after '--video-tx-lambda'";
@@ -4023,6 +4046,29 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     if (options.video_ref_mvs) {
       error = "--video-edge-inter cannot carry the temporal MV field: the "
               "bottom SVB rows have no coded MI grid";
+      return ParseStatus::kError;
+    }
+  }
+
+  // --video-qp-lambda: CPU reference decisions only.
+  if (options.video_qp_lambda) {
+    // An explicit numeric lambda still wins over the scaled value for that
+    // site (the documented escape hatch).  The nightly expansion therefore
+    // omits --video-tx-lambda and --video-partition-rd-lambda: listing them
+    // would pin those two sites by hand and quietly change the stream.
+    if (!options.video || options.m1 || options.still_gpu) {
+      error = "--video-qp-lambda is a --video feature: pass --video";
+      return ParseStatus::kError;
+    }
+    if (options.video_gpu) {
+      error = "--video-qp-lambda is CPU-only: the CUDA M2 backend keeps the "
+              "historical RDO decisions as its parity reference";
+      return ParseStatus::kError;
+    }
+    if (options.rc_mode != "cqp") {
+      error = "--video-qp-lambda needs a fixed --qp stream: the "
+              "rate-controlled paths own base_q_idx and would re-scale every "
+              "frame";
       return ParseStatus::kError;
     }
   }
@@ -7699,6 +7745,17 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.tx_rd_lambda = options.video_tx_lambda;
   video_options.key_tx_lambda = options.video_key_tx_lambda;
   video_options.leaf_rd_lambda_ref = options.video_leaf_rd_lambda;
+  video_options.qp_lambda_scale = options.video_qp_lambda;
+  video_options.leaf_rd_lambda_explicit =
+      flag_given(options, "--video-leaf-rd-lambda");
+  video_options.tx_rd_lambda_explicit =
+      flag_given(options, "--video-tx-lambda");
+  video_options.key_tx_lambda_explicit =
+      flag_given(options, "--video-key-tx-lambda");
+  video_options.rdoq_sse_scale_explicit =
+      flag_given(options, "--video-rdoq-scale");
+  video_options.partition_lambda_explicit =
+      flag_given(options, "--video-partition-rd-lambda");
   video_options.partition_rd = options.video_partition_rd;
   video_options.partition_probe_lambda = options.video_partition_lambda;
   video_options.partition_probe_depth = options.video_partition_depth;

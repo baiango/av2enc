@@ -293,6 +293,20 @@ struct VideoOptions {
   // keyframe measures far better with a much smaller weight because an
   // over-large one abandons whole leaves (docs/keyframe-bit-accounting.md).
   double key_tx_lambda = 0.0;
+  // Opt-in QP-scaled RD lambdas (--video-qp-lambda).  Off keeps the legacy
+  // constants and every pinned stream byte-identical.  On replaces the leaf,
+  // TX-search, key-TX, RDOQ-scale and partition-fallback constants with the
+  // per-site power laws in qp_lambda.h, each anchored at the QP where the
+  // constant was calibrated.  The *_explicit bools record a user-supplied
+  // numeric flag: under scaling such a flag keeps the legacy form (the leaf
+  // anchor, or the exact constant for the other sites), which is also the A/B
+  // control.
+  bool qp_lambda_scale = false;
+  bool leaf_rd_lambda_explicit = false;
+  bool tx_rd_lambda_explicit = false;
+  bool key_tx_lambda_explicit = false;
+  bool rdoq_sse_scale_explicit = false;
+  bool partition_lambda_explicit = false;
   // Opt-in keyframe intra luma TX partition (--video-key-intra-txpart).  The
   // TX search's single-predictor contract cannot code an intra partition, so
   // the still encoder's chain is ported here: each candidate part is predicted

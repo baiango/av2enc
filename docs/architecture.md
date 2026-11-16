@@ -239,14 +239,21 @@ Rules:
 - Precompute may change encoder decisions, but the output must still pass
   `dav2d`; it must never reduce quality just to use memory.
 
-## Project objectives (2026-11-14)
+## Project objectives (2026-11-16)
 
-- **CPU mode:** maximize **CVVDP/JOD at 480×240 (240p, 2:1) @ 30 fps and 100 kbps**.
-  Quality is the KPI; CPU speed is not. NASA baseline: CVVDP 4.802 JOD at
-  100.0 kbps (AVM CBR: 8.452 JOD at 99.5 kbps; SVT-AV1 4.1.0: 9.756 JOD at preset 4/100.2 kbps, 9.830 JOD at preset 0/100.3 kbps).
+- **CPU mode:** maximize the composite KPI **K** at **480×240 (240p, 2:1) @ 30 fps
+  and 100 kbps**. K blends CVVDP (50%), Butteraugli (25%) and SSIMULACRA2 (25%)
+  on fixed published anchors; the definition is in `README.md`. Quality is the
+  KPI; CPU speed is not. **Target to beat: SVT-AV1 v4.1.0 preset 0.** Current
+  NASA points at ~100 kbps: default 28.5 K (4.802 JOD), `quality` 42.5 (6.302),
+  `--nightly` **80.6 K (9.713 JOD / 43.89 dB at 96.5 kbps)**, SVT preset 4 85.7,
+  SVT preset 0 **88.8 (9.830 JOD / 48.80 dB)**. AVM (8.452 JOD at 99.5 kbps) is
+  kept as a historical calibration point only.
 - **GPU calibration:** encode the CPU point (240p30, 100 kbps, QP 189) on GPU
-  and require minimal drift: CVVDP ±0.05 JOD, bitrate ±2%, PSNR-Y ±0.1 dB.
-  Current drift is zero (byte-identical stream, 4df16901...).
+  and require **exact equality**: the IVF must compare byte-identical with the
+  CPU stream, the decoded planes byte-identical, and every drift row exactly
+  zero. There is no tolerance band; a drift "inside" a tolerance is still a
+  divergence. See `gate_gpu_throughput.sh`.
 - **GPU throughput:** the GPU uses the **same decisions** calibrated at
   240p30/100 kbps and maximizes **encode fps at 1440×720**. The 720p run is a
   cross-encoder throughput benchmark, not a separate decision/quality point.

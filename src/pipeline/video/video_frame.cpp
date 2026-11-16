@@ -12,6 +12,7 @@
 #include "pipeline/video/video_lcr_ops.h"
 #include "pipeline/video/video_chroma_search.h"
 #include "pipeline/video/video_intra_search.h"
+#include "pipeline/video/qp_lambda.h"
 #include "pipeline/video/video_syntax.h"
 #include "pipeline/video/video_temporal.h"
 #include "pipeline/video/video_tx_search.h"
@@ -1220,13 +1221,67 @@ bool luma_plan_all_zero(const TxPlan& plan) {
 // reference lambda was re-calibrated to 125 when the nightly aggregate gained
 // the partition probe and luma RDOQ (those tools already price coefficients,
 // so the leaf needs less rate pressure); see docs/video-nightly.md.
-constexpr double kLeafRdLambdaRef = 125.0;
 constexpr double kLeafRdLambdaRefStep = 98.0;  // qlookup(104) / 8
 
-double leaf_rd_lambda(int qindex, double ref = kLeafRdLambdaRef) {
+double qp_luma_step(int qindex) {
   const int q = std::clamp(qindex, 0, 255);
-  const double step = static_cast<double>(rc::kQlookupQ0To255[q]) / 8.0;
-  return ref * std::sqrt(step / kLeafRdLambdaRefStep);
+  return static_cast<double>(rc::kQlookupQ0To255[q]) / 8.0;
+}
+
+double leaf_rd_lambda(int qindex, const VideoOptions& options) {
+  const double step = qp_luma_step(qindex);
+  if (!options.qp_lambda_scale || options.leaf_rd_lambda_explicit) {
+    return options.leaf_rd_lambda_ref *
+           std::sqrt(step / kLeafRdLambdaRefStep);
+  }
+  return lambda_from_fit(step, kLeafLambdaFit);
+}
+
+// --video-tx-lambda: constant in the legacy mode, power law in the QP-scaled
+// mode.  An explicit flag keeps the exact value at every QP.
+double tx_rd_lambda(const VideoOptions& options, int qindex) {
+  if (!options.qp_lambda_scale || options.tx_rd_lambda_explicit) {
+    return options.tx_rd_lambda;
+  }
+  return lambda_from_fit(qp_luma_step(qindex), kTxLambdaFit);
+}
+
+// --video-key-tx-lambda: 0 still inherits the (possibly scaled) inter weight
+// in the legacy mode.  With QP scaling on, the key site uses its own measured
+// fit instead: inheriting the inter constant is the defect being fixed.
+double key_tx_rd_lambda(const VideoOptions& options, int qindex) {
+  if (options.qp_lambda_scale && !options.key_tx_lambda_explicit) {
+    return lambda_from_fit(qp_luma_step(qindex), kKeyTxLambdaFit);
+  }
+  if (options.key_tx_lambda > 0.0) return options.key_tx_lambda;
+  return tx_rd_lambda(options, qindex);
+}
+
+// The coefficient trellis stores a scale in lambda = scale * quant_step^2.
+double rdoq_sse_scale_at(const VideoOptions& options, int qindex) {
+  if (!options.qp_lambda_scale || options.rdoq_sse_scale_explicit) {
+    return options.rdoq_sse_scale;
+  }
+  return lambda_from_fit(qp_luma_step(qindex), kRdoqSseScaleFit);
+}
+
+// The partition probe stores a scale in lambda = scale * step^2 with the full
+// qlookup() step.
+double partition_probe_scale_at(const VideoOptions& options, int qindex) {
+  if (!options.qp_lambda_scale || options.partition_lambda_explicit) {
+    return options.partition_probe_lambda;
+  }
+  const double step = rc::quant_step_from_qindex(qindex);
+  return lambda_from_fit(step, kPartitionProbeFit);
+}
+
+// Variance + syntax-bit fallback price (SSE per estimated bit).
+double partition_model_price_at(const VideoOptions& options, int qindex) {
+  if (!options.qp_lambda_scale || options.partition_lambda_explicit) {
+    return 700.0;
+  }
+  const double step = rc::quant_step_from_qindex(qindex);
+  return lambda_from_fit(step, kPartitionModelFit);
 }
 
 bool y_mode_directional(std::uint8_t mode) { return mode >= 1 && mode <= 8; }
@@ -2892,7 +2947,11 @@ class InterFrameEncoder {
     constexpr double kPartitionLeafBitsInter = 10.0;
     constexpr double kPartitionLeafBitsIntra = 6.0;
     double syntax_bit_price =
-        options_.partition_rd ? kPartitionSsePerSyntaxBit : legacy_lambda;
+        options_.partition_rd
+            ? (options_.qp_lambda_scale
+                   ? partition_model_price_at(options_, current_qindex_)
+                   : kPartitionSsePerSyntaxBit)
+            : legacy_lambda;
     const double signal_bits = kPartitionSignalBits;
     double leaf_bits = options_.partition_rd
                            ? (keyframe_ ? kPartitionLeafBitsIntra
@@ -2912,7 +2971,8 @@ class InterFrameEncoder {
     std::unordered_map<std::uint64_t, double> probe_costs;
     if (partition_probe) {
       const double step = rc::quant_step_from_qindex(options_.base_q_idx);
-      syntax_bit_price = options_.partition_probe_lambda * step * step;
+      syntax_bit_price =
+          partition_probe_scale_at(options_, options_.base_q_idx) * step * step;
       // The probe's bits are real (mode/skip syntax plus the residual rate),
       // so the leaf-level syntax estimate is inside the measured cost.
       leaf_bits = 0.0;
@@ -5411,9 +5471,7 @@ class InterFrameEncoder {
     const int y0 = r * 4;
     const int ax0 = x0 + tile_x_;
     const int ay0 = y0 + tile_y_;
-    const double lambda = options_.key_tx_lambda > 0.0
-                              ? options_.key_tx_lambda
-                              : options_.tx_rd_lambda;
+    const double lambda = key_tx_rd_lambda(options_, current_qindex_);
     const int qctx = ::av2enc::still::qctx::slice_for_base_q_idx(
         options_.tx_context_rate ? base_q_index() : current_qindex_);
     const int mi_size = static_cast<int>(size);
@@ -5549,7 +5607,8 @@ class InterFrameEncoder {
                             /*search_partition=*/false,
                             options_.tx_context_rate, /*trace=*/false,
                             /*allow_rdoq=*/false, /*rdoq_qctx=*/0,
-                            options_.rdoq_sse_scale, whole, error, mask_row)) {
+                            rdoq_sse_scale_at(options_, current_qindex_),
+                            whole, error, mask_row)) {
           return false;
         }
         trial->recon = whole.recon;
@@ -5611,7 +5670,8 @@ class InterFrameEncoder {
                   options_.enable_tcq, qctx, /*enable_inter_ddt=*/false,
                   /*search_partition=*/false, options_.tx_context_rate,
                   /*trace=*/false, /*allow_rdoq=*/false, /*rdoq_qctx=*/0,
-                  options_.rdoq_sse_scale, part_plan, error, part_mask)) {
+                  rdoq_sse_scale_at(options_, current_qindex_), part_plan,
+                  error, part_mask)) {
             return false;
           }
           if (part_plan.parts.empty()) {
@@ -5816,7 +5876,7 @@ class InterFrameEncoder {
     // MVD bits no longer shadows a NEARMV/GLOBALMV that codes zero MVD.
     const double inter_lambda =
         options_.enable_leaf_rd
-            ? leaf_rd_lambda(current_qindex_, options_.leaf_rd_lambda_ref)
+            ? leaf_rd_lambda(current_qindex_, options_)
             : 0.0;
     const auto inter_cost = [&](const InterCandidate& cand) {
       return static_cast<double>(cand.sse) +
@@ -6626,9 +6686,7 @@ class InterFrameEncoder {
                       : !search_luma_tx(
                             source_, ax0, ay0, w, h, intra_y_pred,
                             current_qindex_, txtsearch::Mode::kIntra,
-                            options_.key_tx_lambda > 0.0
-                                ? options_.key_tx_lambda
-                                : options_.tx_rd_lambda,
+                            key_tx_rd_lambda(options_, current_qindex_),
                             options_.enable_idtx_intra,
                             std::max(0, mrl_stream::mapped_intra_mode_for_mrl(
                                             intra_y_mode, intra_y_angle_delta,
@@ -6641,7 +6699,8 @@ class InterFrameEncoder {
                             /*search_partition=*/false,
                             /*context_rate=*/options_.tx_context_rate,
                             options_.trace, /*allow_rdoq=*/false,
-                            /*rdoq_qctx=*/0, options_.rdoq_sse_scale,
+                            /*rdoq_qctx=*/0,
+                            rdoq_sse_scale_at(options_, current_qindex_),
                             intra_y, error, luma_mask_row))
                : !compute_tx(source_, 0, ax0, ay0, w, h, intra_y_pred,
                              plane_quant_[0], intra_y, error,
@@ -6649,7 +6708,8 @@ class InterFrameEncoder {
                              options_.enable_tcq,
                              ::av2enc::still::qctx::slice_for_base_q_idx(current_qindex_),
                              /*is_inter=*/false, /*allow_rdoq=*/false,
-                             /*rdoq_qctx=*/0, options_.rdoq_sse_scale,
+                             /*rdoq_qctx=*/0,
+                             rdoq_sse_scale_at(options_, current_qindex_),
                              luma_mask_row))) {
         error = "intra prediction failed";
         return false;
@@ -6974,7 +7034,7 @@ class InterFrameEncoder {
                  ? !search_luma_tx(source_, ax0, ay0, w, h, inter_y,
                                    current_qindex_,
                                    txtsearch::Mode::kInter,
-                                   options_.tx_rd_lambda,
+                                   tx_rd_lambda(options_, current_qindex_),
                                    /*allow_idtx=*/false,
                                    /*intra_mapped_mode=*/0,
                                    options_.enable_tcq,
@@ -6989,8 +7049,8 @@ class InterFrameEncoder {
                                    options_.trace, options_.enable_rdoq,
                                    ::av2enc::still::qctx::slice_for_base_q_idx(
                                        static_cast<int>(options_.base_q_idx)),
-                                   options_.rdoq_sse_scale, res_y, error,
-                                   luma_mask_row)
+                                   rdoq_sse_scale_at(options_, current_qindex_),
+                                   res_y, error, luma_mask_row)
                  : !compute_tx(source_, 0, ax0, ay0, w, h, inter_y,
                                plane_quant_[0], res_y, error,
                                qm_enabled_ ? &qm_state_ : nullptr,
@@ -6999,7 +7059,8 @@ class InterFrameEncoder {
                                /*is_inter=*/true, options_.enable_rdoq,
                                ::av2enc::still::qctx::slice_for_base_q_idx(
                                    static_cast<int>(options_.base_q_idx)),
-                               options_.rdoq_sse_scale, luma_mask_row)) ||
+                               rdoq_sse_scale_at(options_, current_qindex_),
+                               luma_mask_row)) ||
             (options_.enable_cctx
                  ? !compute_chroma_cctx(source_, acx0, acy0, cw, ch, inter_u,
                                         inter_v, quant_step_, /*is_inter=*/true,
@@ -7033,7 +7094,7 @@ class InterFrameEncoder {
         // QP-derived lambda the intra/inter decision uses.
         const double kLambda =
             options_.enable_leaf_rd
-                ? leaf_rd_lambda(current_qindex_, options_.leaf_rd_lambda_ref)
+                ? leaf_rd_lambda(current_qindex_, options_)
                 : options_.inter_rd_lambda;
         const double res_bits = 3.0 + luma_plan_bits(res_y, true) +
                                 estimate_tx_bits(res_u, false) +
@@ -7117,7 +7178,7 @@ class InterFrameEncoder {
         // the same is_inter/skip base; each adds its own mode syntax and its
         // residual estimate, so a mode that is cheap to signal can win even
         // when its prediction SSE is slightly worse.
-        const double lambda = leaf_rd_lambda(current_qindex_);
+        const double lambda = leaf_rd_lambda(current_qindex_, options_);
         double intra_bits =
             2.0 + luma_plan_bits(intra_y, false) +
             estimate_tx_bits(intra_u, false) +

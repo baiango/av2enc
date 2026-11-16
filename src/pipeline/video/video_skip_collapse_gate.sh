@@ -119,9 +119,9 @@ if ! "$BIN" "$NASA" -o "$TMP/nightly.ivf" --video --frames 60 --qp "$QP" \
         --cpu-threads "$THREADS" --nightly >"$TMP/nightly.log" 2>&1; then
     fail "the nightly encode failed"
 fi
-[ "$(wc -c <"$TMP/nightly.ivf" | tr -d ' ')" = "24113" ] ||
-    fail "nightly is not 24113 B"
-[ "$(md5 "$TMP/nightly.ivf")" = "7f03eb6e82d6ba4cf6666c78285f945b" ] ||
+[ "$(wc -c <"$TMP/nightly.ivf" | tr -d ' ')" = "23690" ] ||
+    fail "nightly is not 23690 B"
+[ "$(md5 "$TMP/nightly.ivf")" = "1b99127a4cd1d386fa5600fb63c57a83" ] ||
     fail "nightly pin moved"
 
 # --- the static floor -----------------------------------------------------
@@ -171,9 +171,9 @@ PY
 read -r OFF_LAST OFF_MEAN <<<"$(per_frame "$TMP/static_off.ivf")"
 read -r ON_LAST ON_MEAN <<<"$(per_frame "$TMP/static_on.ivf")"
 echo "static P frame: off=${OFF_MEAN} B on=${ON_MEAN} B (steady ${OFF_LAST} -> ${ON_LAST} B, incl. 12 B IVF framing)"
-[ "$OFF_LAST" -ge 15 ] || fail "the flag-off static floor is below 15 B/frame"
+[ "$OFF_LAST" -ge 13 ] || fail "the flag-off static floor is below 13 B/frame"
 [ "$ON_LAST" -le 18 ] ||
-    fail "the flag-on static floor is $ON_LAST B/frame, expected <= 13"
+    fail "the flag-on static floor is $ON_LAST B/frame, expected <= 12"
 [ "$ON_MEAN" \< "$OFF_MEAN" ] || fail "the flag did not shrink the static clip"
 [ "$(wc -c <"$TMP/static_on.ivf" | tr -d ' ')" -lt \
   "$(wc -c <"$TMP/static_off.ivf" | tr -d ' ')" ] ||
@@ -233,8 +233,8 @@ fi
 check_recon real_on "$TMP/real_on.ivf" "$TMP/real_on_recon.y4m" ||
     fail "the real-clip flag-on stream is not recon-exact"
 REAL_ON=$(wc -c <"$TMP/real_on.ivf" | tr -d ' ')
-echo "real clip: pin=24113 B collapse=$REAL_ON B"
-[ "$REAL_ON" -lt 24113 ] ||
+echo "real clip: pin=23690 B collapse=$REAL_ON B"
+[ "$REAL_ON" -lt 23690 ] ||
     fail "the real-clip flag-on stream is not smaller than the pin"
 
 # --- symbol cost meter ----------------------------------------------------
@@ -252,8 +252,8 @@ grep -q "symbol_cost tile_bytes=" "$TMP/meter.log" ||
 LAST_COST=$(grep "symbol_cost tile_bytes=" "$TMP/meter.log" | tail -1)
 echo "steady-state symbols: $LAST_COST"
 case "$LAST_COST" in
-    *"partition=35/"*) ;;
-    *) fail "the steady-state partition symbol count is not 35" ;;
+    *"partition=32/"*) ;;
+    *) fail "the steady-state partition symbol count is not 32" ;;
 esac
 
 if [ "$FAILED" -ne 0 ]; then

@@ -6,7 +6,7 @@ every GPU path keep their historical decisions and byte-identical streams.
 
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/nightly.ivf \
-    --video --frames 60 --qp 110 --cpu-threads 8 --nightly
+    --video --frames 60 --qp 106 --cpu-threads 8 --nightly
 ```
 
 Expansion (the gate asserts this is byte-identical to typing the flags out):
@@ -16,22 +16,43 @@ Expansion (the gate asserts this is byte-identical to typing the flags out):
 --video-ccso-rd --video-ccso-bands 6 --video-ccso-lambda 22 \
   --video-ccso-refit 2 --video-ccso-unit-bits 2
 --video-edge-inter --video-edge-mask
---video-partition-rd --video-partition-rd-lambda 2.75e-6
+--video-partition-rd
 --video-key-qp-offset -27
 --video-rdoq
 --video-cdef
 --video-cdef-rd
 --video-bawp --video-bawp-carrier
 --video-leaf-rd
---video-subpel-eighth --video-tx-lambda 136
+--video-subpel-eighth
 --video-key-intra-txpart
+--video-qp-lambda
 --avg-cdf --adaptive-cdf --cdf-continuity
 --video-drift-refresh
 ```
 
+`--video-qp-lambda` scales five RD lambdas with QP (leaf `step^0.72`, TX
+`step^0.34`, RDOQ `step^1.5`, partition `step^2.22`, key TX constant 8). The
+expansion above therefore omits `--video-tx-lambda` and
+`--video-partition-rd-lambda`: those set one site by hand, and the two modes are
+mutually exclusive by name (an explicit numeric lambda used to silently re-pin a
+site, which made the typed-out expansion differ from `--nightly` by 724 B).
+See `docs/qp-scaled-lambda.md` and `bench/space8k_720p/README.md`.
+
 `--nightly` rejects `--video-gpu` and `--still`. The bottom-edge path requires
 the single-tile low-delay P chain (no B/reorder/temporal-layer modes, no
 `--video-ref-mvs`); the normal combination validation enforces that.
+
+## Current pins
+
+| Purpose | QP | Bytes | Rate | CVVDP | PSNR-Y | K | MD5 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| **rate-matched headline** | **106** | **25,008** | **100.03 kbps** | **9.7334** | **44.67 dB** | **82.2** | `0639b436…` |
+| gate regression | 110 | 23,690 | 94.76 kbps | 9.7228 | 44.38 dB | 81.4 | `1b99127a…` |
+
+Cross-encoder comparisons use the QP106 point so both sides are measured at the
+nominal 100 kbps; the gates pin QP110 as a fixed regression configuration. Tables
+below state the QP they were measured at, and predate the overhead and QP-scaled
+lambda changes where noted.
 
 ## Measured RD
 

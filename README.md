@@ -15,39 +15,40 @@
 ## Build provenance
 
 Token usage recorded by OpenCode for the AV2 project tree — the main session
-plus all subagent sessions — as of **2026-11-15**:
+plus all subagent sessions — as of **2026-11-16**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 171,970,840 |
-| Output | 29,335,530 |
-| Reasoning | 31,652,536 |
-| **Input + output + reasoning** | **~233.0 M** |
-| Cached context reads | 19,413,590,363 |
-| **Including cache reads** | **~19.65 B** |
+| Fresh input | 183,894,969 |
+| Output | 31,102,157 |
+| Reasoning | 33,674,421 |
+| **Input + output + reasoning** | **~248.7 M** |
+| Cached context reads | 20,389,983,067 |
+| **Including cache reads** | **~20.64 B** |
 
-445 sessions (15 top-level + 430 subagents). Cache reads dominate because every
+476 sessions (15 top-level + 461 subagents). Cache reads dominate because every
 subagent re-reads a long context; they are normally billed at a fraction of
 fresh input. Measured from `session_v2` (`tokens_input`, `tokens_output`,
 `tokens_reasoning`, `tokens_cache_read`) in the OpenCode state database.
 The figures keep growing while work continues, so treat them as a snapshot, not
 a final total.
 
-## Status (2026-11-14)
+## Status (2026-11-16)
 
 The CPU writer covers every AV2 tool that the pinned decoders (`dav2d`, plus
 `avmdec` where `dav2d` cannot parse) can validate, including the cases
 previously misdiagnosed as decoder limits (ref-MV bank,
 `mv_traj` with >=3 refs, 8-bit 4:0:0 PC-Wiener, 4:2:2 16-pixel leaves, TIP
 block references, arbitrary frame dimensions). The GPU path is the
-decision-identical M2 mirror of the CPU and is byte-identical where the same
-decisions are used.
+decision-identical M2 mirror of the CPU and produces a **byte-identical** stream.
+The parity gate enforces exact equality (`cmp` on the IVF), not a tolerance.
 
 **Objectives**
 
-- **CPU:** maximize CVVDP/JOD at **480x240 (240p, 2:1) @ 30 fps, 100 kbps**.
-  Quality is the KPI, not CPU speed. **The target to beat is SVT-AV1 v4.1.0
-  preset 0** — the mature AV1 quality reference — at matched bitrate. AVM is
+- **CPU:** maximize the composite KPI **K** (see below) at **480x240 (240p,
+  2:1) @ 30 fps, 100 kbps**. Quality is the KPI, not CPU speed; K blends CVVDP
+  (50%), Butteraugli (25%) and SSIMULACRA2 (25%). **The target to beat is
+  SVT-AV1 v4.1.0 preset 0** — the mature AV1 quality reference — at matched bitrate. AVM is
   kept only as a historical calibration point.
 - **GPU:** use the decisions calibrated at 240p30/100 kbps unchanged, and
   maximize **1440x720** encode throughput as a cross-encoder benchmark.
@@ -55,21 +56,86 @@ decisions are used.
 **Measured baselines** (NASA clip, 60 frames). The benchmark source is
 [`First-8K-Video-from-Space_orig.mp4`](https://images-assets.nasa.gov/video/First-8K-Video-from-Space/First-8K-Video-from-Space~orig.mp4)
 (8192x4096, 2:1, bt709). The **default** CPU point is QP 189 at 480x240/30;
-the measured opt-in points are `quality` at QP 190 and `--nightly` at QP 110.
+the measured opt-in points are `quality` at QP 190 and `--nightly` at QP 106
+(the rate-matched 100 kbps point; QP 110 is the gate regression configuration).
 Old Shine rows are historical.
 
-| Case | Device | Bitrate CPU / GPU | CVVDP | PSNR-Y | Encode |
-|---|---|---:|---:|---:|---:|
-| CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 24.47 dB | 23.7 fps (1 thread) / 54.6 fps (8 threads) |
-| CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 27.58 dB | 23.4 fps (8 threads) |
-| CPU 240p30, `--nightly` QP 110 | Apple M4 | 96.5 / - kbps | **9.713 JOD** | **43.89 dB** | 7.6 fps (8 threads) |
-| AVM CBR (NASA, historical) | Apple M4 | 99.5 / - kbps | 8.452 JOD | 36.53 dB | 1.94 fps |
-| SVT-AV1 4.1.0, CRF 42, preset 4 (NASA) | Apple M4 | 100.2 / - kbps | 9.756 JOD | 45.92 dB | 306 fps |
-| SVT-AV1 4.1.0, CRF 36.5, preset 0 (NASA) | Apple M4 | 100.3 / - kbps | **9.830 JOD** | **48.80 dB** | 16.6 fps |
-| CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | 49.4 fps |
-| CPU/GPU parity, QP 189 | RTX 3060 | 100.0 / 100.0 kbps | drift 0 | drift 0 | 40.0 fps |
-| GPU 1440x720 QP90 | RTX 3080 Ti | - / 7664 kbps | 9.704 JOD | 42.85 dB | 5.40 fps |
-| GPU 1440x720 QP90 | RTX 3060 | - / 7664 kbps | 9.704 JOD | 42.85 dB | 4.88 fps |
+| Case | Device | Bitrate CPU / GPU | CVVDP | Butteraugli | SSIMULACRA2 | PSNR-Y | Encode |
+|---|---|---:|---:|---:|---:|---:|---:|
+| CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 21.79 | -41.17 | 24.47 dB | 23.7 fps (1 thread) / 54.6 fps (8 threads) |
+| CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 19.73 | -4.07 | 27.58 dB | 23.4 fps (8 threads) |
+| CPU 240p30, `--nightly` QP 106 | Apple M4 | 100.0 / - kbps | **9.733 JOD** | **3.42** | **80.84** | **44.67 dB** | 7.6 fps (8 threads) |
+| AVM CBR (NASA, historical) | Apple M4 | 99.5 / - kbps | 8.452 JOD | - | - | 36.53 dB | 1.94 fps |
+| SVT-AV1 4.1.0, CRF 42, preset 4 (NASA) | Apple M4 | 100.2 / - kbps | 9.756 JOD | 2.17 | 84.63 | 45.92 dB | 306 fps |
+| SVT-AV1 4.1.0, CRF 36.5, preset 0 (NASA) | Apple M4 | 100.3 / - kbps | **9.830 JOD** | **1.51** | **88.30** | **48.80 dB** | 16.6 fps |
+| CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | drift 0 | drift 0 | 49.4 fps |
+| CPU/GPU parity, QP 189 | RTX 3060 | 100.0 / 100.0 kbps | drift 0 | drift 0 | drift 0 | drift 0 | 40.0 fps |
+| GPU 1440x720 QP90 | RTX 3080 Ti | - / 7664 kbps | 9.704 JOD | - | - | 42.85 dB | 5.40 fps |
+| GPU 1440x720 QP90 | RTX 3060 | - / 7664 kbps | 9.704 JOD | - | - | 42.85 dB | 4.88 fps |
+
+Butteraugli (lower better) and SSIMULACRA2 (higher better) are measured with
+`tools/extra_metrics.py` on the decoded stream; `-` means not measured (AVM and
+the GPU rows cannot be re-scored on this host). The GPU parity rows are exactly
+zero drift, i.e. identical streams, so they inherit their CPU row's metrics.
+
+### The KPI: composite K over three perceptual metrics
+
+The project optimises a single number, **K**, built from three full-reference
+metrics because they disagree in ways that matter. **CVVDP** (JOD, higher better)
+is the display-model measure every `--nightly` decision was tuned against.
+**Butteraugli** (distance, lower better) is a contrast-masking model that reacts
+to low-frequency error. **SSIMULACRA2** (0-100, higher better; negative means
+badly broken) is a learned multi-scale metric.
+
+Each metric is mapped onto a common 0-100 quality axis with **fixed published
+anchors** (not the min/max of the measured set, so scores stay comparable across
+runs), then the three are combined:
+
+```text
+q_cvvdp = clamp(JOD / 10, 0, 1)            # JOD 10 is the top of the scale
+q_ba    = 1 / (1 + Butteraugli / 3)        # BA 3 is "clearly visible"
+q_ss2   = clamp((SSIMULACRA2 + 50) / 150, 0, 1)   # 100 = perfect, -50 = floor
+
+K = 100 * (0.50*q_cvvdp + 0.25*q_ba + 0.25*q_ss2)
+```
+
+CVVDP carries half the weight because its `standard_fhd` display model matches
+the deployment case and every RD decision was calibrated on it. The other two
+carry a quarter each so that CVVDP's saturation near 10 JOD cannot hide real
+quality differences - which it demonstrably does: on the NASA clip CVVDP ranks
+SVT preset 0 only 1.2% ahead of us while Butteraugli says 2.7x and SSIMULACRA2
+says 9.2 points.
+
+```sh
+tools/kpi.py --cvvdp 9.713 --butteraugli 4.14 --ssimulacra2 79.08
+# or: tools/kpi.py --quality-json q.json --extra-json e.json
+```
+
+```sh
+# CVVDP: tools/quality.py (Apple MPS, standard_fhd display model)
+DAV2D=tools/bin/dav2d-macos tools/quality.py --ref <ref>.y4m --ivf <stream>.ivf
+
+# Butteraugli + SSIMULACRA2: tools/extra_metrics.py (per frame, averaged)
+# needs `butteraugli_main` (libjxl) and `ssimulacra2` on PATH
+tools/extra_metrics.py --ref <ref>.y4m --test <decoded>.y4m
+```
+
+| Stream | Rate | CVVDP | Butteraugli | SSIMULACRA2 | **K** |
+|---|---:|---:|---:|---:|---:|
+| default QP189 | 100.0 kbps | 4.802 | 21.79 | -41.17 | 28.5 |
+| `quality` QP190 | 100.6 | 6.302 | 19.73 | -4.07 | 42.5 |
+| **`--nightly` QP106** | **100.0** | **9.733** | **3.42** | **80.84** | **82.2** |
+| SVT-AV1 p4 CRF42 | 100.2 | 9.756 | 2.17 | 84.63 | 85.7 |
+| SVT-AV1 p0 CRF36.5 | 100.3 | **9.830** | **1.51** | **88.30** | **88.8** |
+
+All three rank the encoders identically, so the composite does not change the
+ordering - but it changes the *size* of the gap, which is the point. CVVDP alone
+puts us 0.097 JOD (1.0%) behind preset 0, which reads as "nearly equal"; K puts us
+6.7 points behind (82.2 vs 88.8), driven by Butteraugli and SSIMULACRA2 seeing
+sustained luma-detail error that CVVDP discounts at this display size. Track K,
+and treat a change that improves K without moving CVVDP as a real quality win
+rather than a neutral result: the QP-scaled lambdas did exactly that (+0.7 dB
+PSNR, +1.1 K, +0.02 JOD).
 
 AVM CBR was re-measured at the 100 kbps point with the current AVM source
 (`7a0c956`): target 34 kbps produced **99.5 kbps** (0.5% below target) at
@@ -261,11 +327,13 @@ decoder-gated opt-in.
 
 ## Performance expectations
 
-- **CPU mode objective:** maximize **CVVDP/JOD at 480×240 (240p, 2:1) @ 30 fps
-  and 100 kbps**. The CPU is the quality reference; speed is not its KPI.
+- **CPU mode objective:** maximize the composite **K** (CVVDP 50%, Butteraugli
+  25%, SSIMULACRA2 25%) at **480×240 (240p, 2:1) @ 30 fps and 100 kbps**, against
+  SVT-AV1 preset 0. The CPU is the quality reference; speed is not its KPI.
 - **GPU mode objective:** use the decisions calibrated at **240p30 @ 100 kbps**
-  (minimal drift: CVVDP ±0.05 JOD, bitrate ±2%, PSNR-Y ±0.1 dB) unchanged,
-  then maximize **1440×720** encode throughput. The 720p run is a benchmark
+  unchanged, with **zero drift**: the GPU stream must be byte-identical to the
+  CPU stream (the parity gate uses `cmp`, not a tolerance), then maximize
+  **1440×720** encode throughput. The 720p run is a benchmark
   against other encoders, not a separate quality-tuning point. Production
   hardware is the RTX 3080 Ti; the RTX 5090 is the maximum-speed host.
 - **Not targets:** the old 1080p ≥1 fps floor, 8 GB cards, RTX 4070 Super and
@@ -471,9 +539,9 @@ Current gates:
   (+1.50 JOD), PSNR-Y 27.58 dB (+3.11 dB)** at QP190 / 100.56 kbps; the
   interpolated 100.04 kbps point is 6.273 JOD. The per-tool table and exact
   flags are in `docs/video-rd-preset.md`.
-  Algorithmic nightly aggregate: **`--nightly` measures 9.718 JOD /
-  43.94 dB PSNR-Y at 99.5 kbps (QP110)** — +4.92 JOD over the default and
-  +3.42 JOD over the stable preset at essentially the same rate. It combines
+  Algorithmic nightly aggregate: **`--nightly` measures 9.733 JOD /
+  44.67 dB PSNR-Y at 100.0 kbps (QP106), K = 82.2** — +4.91 JOD over the default
+  and +3.41 JOD over the stable preset at essentially the same rate. It combines
   64-band/refit/priced-unit CCSO, bottom-edge inter and residual masking, the
   measured partition probe, a reference-intro key/first-P QP offset, luma
   inter RDOQ, CDEF, the BAWP carrier over inter residual, the calibrated
@@ -483,9 +551,10 @@ Current gates:
   rejects `--video-gpu`, so the default and GPU streams keep the historical CPU
   decisions (`a1d0dba1...`, 25,009 B). The measured tables, per-tool
   contributions and exact flags are in `docs/video-nightly.md`.
-- **GPU calibration:** same 240p30 decisions at QP 189; CVVDP ±0.05 JOD,
-  bitrate ±2%, PSNR-Y ±0.1 dB drift. The QP189 stream is byte-identical on both
-  GPU hosts and the CPU (`a1d0dba1...`).
+- **GPU calibration:** same 240p30 decisions at QP 189, with **zero** drift
+  allowed: the gate compares the GPU IVF against the CPU stream with `cmp` and
+  requires byte-identical output and decoded planes. The QP189 stream is
+  byte-identical on both GPU hosts and the CPU (`a1d0dba1...`).
 - **GPU benchmark:** 1440x720 QP90, 60 frames: 5.40 fps on the RTX 3080 Ti and
   4.88 fps on the RTX 3060; 7664 kbps, CVVDP 9.704 JOD, PSNR-Y 42.85 dB
   (stream identical to the CPU reference).

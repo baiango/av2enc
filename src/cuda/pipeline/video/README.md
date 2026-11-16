@@ -580,13 +580,15 @@ cross-encoder throughput benchmark.  Two points are measured separately
 
 | Point | Purpose | Gate |
 |---|---|---|
-| 480x240@30 QP189 (240p, 2:1, 100 kbps) | decision-policy calibration | CVVDP <= 0.05 JOD, bitrate <= 2 %, PSNR-Y <= 0.1 dB drift vs the CPU reference |
+| 480x240@30 QP189 (240p, 2:1, 100 kbps) | decision-policy calibration | **exact**: the GPU IVF must be byte-identical to the CPU stream (`cmp`), decoded output byte-identical, and every drift row exactly 0 |
 | 1440x720 QP90, 60 frames | throughput | fps (best of N) plus the same drift row (3080 Ti 5.40, 3060 4.88) |
 
 The calibration clip is the benchmark clip scaled to 480x240 (240p, 2:1), so
 both rows describe the same NASA content.  The GPU pipeline is a
-decision-identical mirror, so every drift row is 0 and the throughput
-optimizations below only change *how* the same decisions are executed.
+decision-identical mirror, so every drift row is exactly 0. There is no
+tolerance on that: the gate compares the two IVF files with `cmp` and fails on
+any difference, and the throughput optimizations below only change *how* the
+same decisions are executed.
 
 ### Measured stage costs (RTX 3060, 720p, 60 frames, QP 90)
 
