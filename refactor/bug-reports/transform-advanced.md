@@ -9,7 +9,7 @@ per-part recon ordering. Counts: **2 confirmed (recon mismatch), 1 confirmed
 | id | severity | class | title | repro | evidence | files | status |
 |---|---|---|---|---|---|---|---|
 | SCOUT-TXADV-01 | high | confirmed | `--still-tx-partition` + directional luma (`--still-full-intra`/`--still-rdo-intra`) gives a wrong encoder recon and a decoder/encoder mismatch | see Details | QP20 640x360: 25,955/345,600 samples differ (Y 4,819, U 14,788, V 6,348, max 10); `--no-deblock` same; `AV2ENC_STILL_NO_EDGE=1` makes it exact; tx-partition alone and full-intra alone exact | `src/pipeline/still/still_encoder.cpp:1027-1047,1102,2140,2703-2711`; spec §7.13.2.15/.16 | new |
-| SCOUT-TXADV-02 | med | confirmed | `--still-ist --still-mrl` recon mismatch: IST hardcodes `mrl_index = 0` while §7.15.3 selects the kernel from the real MRL angle | see Details | `testdata/shine_640x360_1f.y4m` qp40: 258 Y diffs, qp60: 371 Y diffs, max 1; each flag alone exact; NO_EDGE/no-deblock do not change it | `src/pipeline/still/still_encoder.cpp:1570,1896`; `src/pipeline/still/still_syntax.cpp:1841` | new |
+| SCOUT-TXADV-02 | med | confirmed | `--still-ist --still-mrl` recon mismatch: IST hardcodes `mrl_index = 0` while §7.15.3 selects the kernel from the real MRL angle | see Details | `testdata/pub_640x360_1f.y4m` qp40: 258 Y diffs, qp60: 371 Y diffs, max 1; each flag alone exact; NO_EDGE/no-deblock do not change it | `src/pipeline/still/still_encoder.cpp:1570,1896`; `src/pipeline/still/still_syntax.cpp:1841` | new |
 | SCOUT-TXADV-03 | low | confirmed | `--still-cctx` silently skips RDOQ on the chroma planes (accepted-and-ignored; CCTX gate claims the composition) | see Details | with `--no-cfl`, `--still-cctx` vs `+--still-rdoq` changes Y (2827 samples) but U/V are 0/0; RDOQ alone does change chroma on a flat-luma/noisy-chroma fixture | `src/pipeline/still/still_encoder.cpp:1749-1790,2311-2316` | new |
 | SCOUT-TXADV-04 | med | confirmed | TX partition aborts on 4x4 coding blocks (`MiSize 0`) with `--still-sub8` | `build/av2enc <64x64>.y4m -o /tmp/t.ivf --still --qp 16 --still-tx-partition --still-sub8 --still-depth 8` | `tx partition geometry failed: ... TX_PARTITION_NONE is not signallable for MiSize 0`; sub8 alone passes | `src/codec/transform/tx_partition/tx_partition.cpp:265,317-330`; `still_encoder.cpp:2110` | duplicate — SCOUT-PARTITION-08 (`bug-reports/partition.md`) |
 | SCOUT-TXADV-05 | low | doc/gap | `--still-tcq-scale` accepted and ignored without `--still-tcq` | `build/av2enc tests/data/basic_64x64_1f.y4m -o /tmp/a.ivf --frames 1 --still --still-tcq-scale 4` | exit 0; MD5 `0ef98250…` identical to plain `--still`; with `--still-tcq` the same scale changes it (`53f69411…`) | `src/main.cpp:1994-1996` (guard list omits tcq-scale) | duplicate — SCOUT-CHROMA-01 (`formats-chroma.md`) / SCOUT-FORMATS-HBD-01 |
@@ -67,7 +67,7 @@ which does not hit a smooth neighbour.
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-B=build/av2enc; I=testdata/shine_640x360_1f.y4m
+B=build/av2enc; I=testdata/pub_640x360_1f.y4m
 $B $I -o /tmp/im.ivf --recon /tmp/im.rec.y4m --frames 1 --still \
     --qp 60 --still-ist --still-mrl
 tools/bin/dav2d-macos -q -i /tmp/im.ivf -o /tmp/im.dec.y4m --threads 1 --strict 1

@@ -21,7 +21,7 @@ set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
 BIN=""
-INPUT="${AV2ENC_TESTDATA:-$ROOT/testdata}/shine_1280x720_60f.y4m"
+INPUT="${AV2ENC_TESTDATA:-$ROOT/testdata}/pub_1280x720_60f.y4m"
 DAV2D="${DAV2D:-}"
 BASE_BIN=""
 

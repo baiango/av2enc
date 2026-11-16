@@ -1,5 +1,7 @@
 #include "pipeline/still/high_bitdepth/high_bitdepth_y4m.h"
 
+#include "core/io/y4m.h"
+
 #include "pipeline/still/high_bitdepth/high_bitdepth_still.h"
 
 #include <cstring>
@@ -100,6 +102,11 @@ bool read_y4m_10bit(const std::string& path, fmt::Picture* picture,
   }
   if (width == 0 || height == 0) {
     if (error != nullptr) *error = "missing Y4M dimensions";
+    return false;
+  }
+  if (width > 0xFFFFU || height > 0xFFFFU ||
+      static_cast<std::uint64_t>(width) * height > kMaxInputPixels) {
+    if (error != nullptr) *error = "Y4M dimensions exceed the input budget";
     return false;
   }
   std::string frame_tag;

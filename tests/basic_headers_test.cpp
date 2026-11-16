@@ -98,7 +98,7 @@ constexpr std::array<std::uint8_t, 12> kSequencePayload256{
 //   01 08                           TD (leb128 size 1, header 0x08)
 //   0c 04 <11-byte payload>         SEQ (size 12, header 0x04)
 //   05 10 e2 b4 00 00               CLK + placeholder tile byte
-// The pinned sample testdata/sample_480x270_130f.ivf begins with the same
+// The pinned sample testdata/pub_480x270_130f.ivf begins with the same
 // TD bytes 01 08 and uses 0x04 / 0x10 for its sequence-header / CLK headers.
 constexpr std::array<std::uint8_t, 21> kAssembledPlaceholder64{
     0x01, 0x08, 0x0c, 0x04, 0x82, 0x7a, 0x55, 0xff, 0xf0, 0x00, 0x04,

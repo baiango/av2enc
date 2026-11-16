@@ -23,7 +23,7 @@ Usage:
 
 Defaults:
   features tools/effort/features.json
-  fixture  testdata/shine_640x360_1f.y4m   (fallback: tests/data/basic_640x360_1f.y4m)
+  fixture  testdata/pub_640x360_1f.y4m   (fallback: tests/data/basic_640x360_1f.y4m)
   anchors  300,1000,1500,2500 kbps; score anchor 1000
   qps      110,130,150,170,190,210,230
   repeats  7 (child CPU time; enabled p75 / baseline p25 bound)
@@ -54,7 +54,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "tools"
 DEFAULT_FIXTURES = [
-    ROOT / "testdata" / "shine_640x360_1f.y4m",
+    ROOT / "testdata" / "pub_640x360_1f.y4m",
     ROOT / "tests" / "data" / "basic_640x360_1f.y4m",
 ]
 
@@ -96,7 +96,7 @@ def find_fixture(path: str | None) -> Path:
     for candidate in DEFAULT_FIXTURES:
         if candidate.is_file():
             return candidate.resolve()
-    die("no 640x360 fixture found (looked for testdata/shine_640x360_1f.y4m "
+    die("no 640x360 fixture found (looked for testdata/pub_640x360_1f.y4m "
         "and tests/data/basic_640x360_1f.y4m); pass --fixture")
 
 

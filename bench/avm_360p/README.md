@@ -34,5 +34,5 @@ Notes:
   an apples-to-apples comparison because of the pad and the lack of inter
   prediction.
 - `av2enc` M0 now supports exact 640x360: 19,751 bytes, PSNR 47.20 dB, MD5
-  `56f11d4a63ff07f2356ef5064b84fe0e`. AVM is still ~1.95× smaller and ~2.8 dB
+  `0d90c958b8dd5d12c6ab2eef2a2c19bf`. AVM is still ~1.95× smaller and ~2.8 dB
   better on the same one-frame input because M0 is DC-intra only.

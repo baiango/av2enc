@@ -36,7 +36,7 @@ fi
 [ -f "$ROOT/tests/data/basic_640x360_1f.y4m" ] || {
     echo "gate_neutral_metadata: missing fixture" >&2; exit 77; }
 
-EXPECTED_STILL_MD5=5624dda84b751c7d4485d8afebe1a395
+EXPECTED_STILL_MD5=1f6c89104cf7048708cb660a01db8d86
 SCANNER=""
 scan() { "$SCANNER" --input "$1" --scan "$@"; }
 md5_of() { md5 -q "$1" 2>/dev/null || md5sum "$1" | awk '{print $1}'; }
@@ -80,7 +80,7 @@ if [ "$fail" -eq 0 ]; then
 fi
 
 # --- video -----------------------------------------------------------------
-SRC="$ROOT/testdata/shine_1280x720_60f.y4m"
+SRC="$ROOT/testdata/pub_1280x720_60f.y4m"
 if [ -f "$SRC" ]; then
     "$BIN" "$SRC" -o "$TMP/v_base.ivf" --video --p-frames 2 \
         >"$TMP/v_base.log" 2>&1 || { echo "FAIL: video base encode" >&2; fail=1; }

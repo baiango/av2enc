@@ -695,7 +695,7 @@ int main(int argc, char** argv) {
 
   // Phase 2: 720p clip when test media is present.
   const std::string hd_path =
-      input.empty() ? "testdata/shine_1280x720_60f.y4m" : input;
+      input.empty() ? "testdata/pub_1280x720_60f.y4m" : input;
   if (!skip_hd && std::filesystem::exists(hd_path)) {
     std::vector<OwnedFrame> clip;
     std::string error;

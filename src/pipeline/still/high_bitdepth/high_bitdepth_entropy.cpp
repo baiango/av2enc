@@ -20,6 +20,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <cstdlib>
 
 #include "cuda/pipeline/still/cdef/still_cdef_cdf.h"
 #include "cuda/pipeline/still/cdef/still_cdef_index_syntax.h"

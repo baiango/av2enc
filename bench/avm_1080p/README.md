@@ -1,7 +1,7 @@
 # AVM 1080p baseline
 
 Exact **1920x1080**, 60 fps, 8-bit 4:2:0. Main sweep: 10 frames from
-`testdata/shine_1920x1080_10f.y4m`. Optional steady-state check: 2 seconds
+`testdata/pub_1920x1080_10f.y4m`. Optional steady-state check: 2 seconds
 (120 frames) cut from the original 4K source at 10 s.
 
 Source clip: **[LG QNED 8K MiniLED │Shine 8K HDR 60fps](https://youtu.be/WEwgbKr5R9I)**, 10 s cut.
@@ -27,9 +27,13 @@ Source clip: **[LG QNED 8K MiniLED │Shine 8K HDR 60fps](https://youtu.be/WEwgb
 
 Every stream decoded successfully with `dav2d` before it was scored.
 
+> **Fixture swap:** the paths below were renamed to the public-domain fixtures
+> (`docs/testdata-provenance.md`); the numbers were recorded on the retired
+> promo clip and the streams now differ. Re-run before quoting.
+
 ## 10-frame sweep
 
-Source: `testdata/shine_1920x1080_10f.y4m` — 10 frames at 60 fps (1/6 s).
+Source: `testdata/pub_1920x1080_10f.y4m` — 10 frames at 60 fps (1/6 s).
 Bitrate is normalized over 1/6 s, so the single keyframe dominates these rows.
 
 | QP | IVF bytes | Bitrate (kbps) | PSNR-Y (dB) | PSNR avg (dB) | SSIM All | CVVDP (JOD) | Encode time | Encode fps | ms/frame | Decode fps |
@@ -42,7 +46,7 @@ Bitrate is normalized over 1/6 s, so the single keyframe dominates these rows.
 
 ## 2-second check (120 frames)
 
-`shine_1080p_2s.y4m` is a fresh 120-frame cut from the original 4K VP9 source at
+`legacy_1080p_2s.y4m` is a fresh 120-frame cut from the original 4K VP9 source at
 10 s (same start as the 10-frame file), not a loop of the 10 frames.
 QP 160 only.
 
@@ -62,7 +66,7 @@ Notes:
   it is not a useful operating point for this content.
 - This is easy, smooth TV-demo content. Do not generalize the absolute rates to
   hard 1080p footage.
-- `shine_1080p_2s.y4m` is 356 MB. It is local-only, ignored by Git, and can be
+- `legacy_1080p_2s.y4m` is 356 MB. It is local-only, ignored by Git, and can be
   regenerated with the command below; delete it if disk space is tight.
 
 ## Best QP for the 1 fps-at-1080p discussion
@@ -111,7 +115,7 @@ for qp in 110 135 160 200 235; do
   /usr/bin/time -p tools/bin/avm-macos/avmenc --ivf \
     --end-usage=q --qp=$qp --cpu-used=6 --threads=8 --limit=10 \
     -o bench/avm_1080p/qp${qp}_1080p_10f.ivf \
-    testdata/shine_1920x1080_10f.y4m \
+    testdata/pub_1920x1080_10f.y4m \
     > bench/avm_1080p/qp${qp}_encode.log 2>&1
 done
 ```
@@ -123,7 +127,7 @@ cd $HOME/work/av2enc
 for qp in 110 135 160 200 235; do
   sec=$(awk '/^real /{print $2}' bench/avm_1080p/qp${qp}_encode.log)
   python3 tools/quality.py \
-    --ref testdata/shine_1920x1080_10f.y4m \
+    --ref testdata/pub_1920x1080_10f.y4m \
     --ivf bench/avm_1080p/qp${qp}_1080p_10f.ivf \
     --json bench/avm_1080p/qp${qp}_1080p_10f.json \
     --encoder AVM --qp "$qp" --encode-seconds "$sec"
@@ -138,17 +142,17 @@ SRC="<media>/LG QNED 8K MiniLED │Shine 8K HDR 60fps.webm"
 
 ffmpeg -hide_banner -v error -ss 10 -i "$SRC" -frames:v 120 \
   -vf scale=1920:1080 -pix_fmt yuv420p -an -f yuv4mpegpipe \
-  bench/avm_1080p/shine_1080p_2s.y4m -y
+  bench/avm_1080p/legacy_1080p_2s.y4m -y
 
 /usr/bin/time -p tools/bin/avm-macos/avmenc --ivf \
   --end-usage=q --qp=160 --cpu-used=6 --threads=8 --limit=120 \
   -o bench/avm_1080p/qp160_1080p_2s.ivf \
-  bench/avm_1080p/shine_1080p_2s.y4m \
+  bench/avm_1080p/legacy_1080p_2s.y4m \
   > bench/avm_1080p/qp160_2s_encode.log 2>&1
 
 sec=$(awk '/^real /{print $2}' bench/avm_1080p/qp160_2s_encode.log)
 python3 tools/quality.py \
-  --ref bench/avm_1080p/shine_1080p_2s.y4m \
+  --ref bench/avm_1080p/legacy_1080p_2s.y4m \
   --ivf bench/avm_1080p/qp160_1080p_2s.ivf \
   --json bench/avm_1080p/qp160_1080p_2s.json \
   --encoder AVM --qp 160 --encode-seconds "$sec"

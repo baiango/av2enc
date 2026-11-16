@@ -122,7 +122,7 @@ run_reject() {  # name expected_stderr extra...
     local name=$1 expected=$2; shift 2
     CASES=$((CASES+1))
     local out=$TMP/$name.ivf
-    if "$BIN" "$TESTDATA/shine_640x360_1f.y4m" -o "$out" --video --frames 1 \
+    if "$BIN" "$TESTDATA/pub_640x360_1f.y4m" -o "$out" --video --frames 1 \
             "$@" >"$TMP/$name.log" 2>&1; then
         echo "FAIL $name: expected a rejection, encode succeeded"
         FAIL=$((FAIL+1)); return
@@ -135,56 +135,56 @@ run_reject() {  # name expected_stderr extra...
 }
 
 # --- sub-8 rect tree at the two gated depths ------------------------------
-EXPECT_SUB8=1 case_run sub8_64_d5 "$TESTDATA/m0_64x64_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_64_d5 "$TESTDATA/pub_64x64_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 5
-EXPECT_SUB8=1 case_run sub8_64_d6 "$TESTDATA/m0_64x64_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_64_d6 "$TESTDATA/pub_64x64_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 6
-EXPECT_SUB8=1 case_run sub8_360_d5 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_360_d5 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 5
-EXPECT_SUB8=1 case_run sub8_360_d6 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_360_d6 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 6
-EXPECT_SUB8=1 case_run sub8_360_4f_d5 "$TESTDATA/shine_640x360_4f.y4m" 4 \
+EXPECT_SUB8=1 case_run sub8_360_4f_d5 "$TESTDATA/pub_640x360_4f.y4m" 4 \
     --video --frames 4 --qp 90 --video-min-block 4 --video-max-depth 5
-EXPECT_SUB8=1 case_run sub8_360_4f_d6 "$TESTDATA/shine_640x360_4f.y4m" 4 \
+EXPECT_SUB8=1 case_run sub8_360_4f_d6 "$TESTDATA/pub_640x360_4f.y4m" 4 \
     --video --frames 4 --qp 90 --video-min-block 4 --video-max-depth 6
 
 # --- shared-chroma owners through the opt-in tools ------------------------
-EXPECT_SUB8=1 case_run sub8_360_ext_d6 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_360_ext_d6 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 6 \
     --video-ext-partitions
-EXPECT_SUB8=1 case_run sub8_360_ext_4f "$TESTDATA/shine_640x360_4f.y4m" 4 \
+EXPECT_SUB8=1 case_run sub8_360_ext_4f "$TESTDATA/pub_640x360_4f.y4m" 4 \
     --video --frames 4 --qp 90 --video-min-block 4 --video-max-depth 5 \
     --video-ext-partitions
-EXPECT_SUB8=1 case_run sub8_360_sdp_d6 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_360_sdp_d6 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 6 \
     --video-sdp
-EXPECT_SUB8=1 case_run sub8_360_intra_full_d5 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_360_intra_full_d5 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 5 \
     --video-intra-full
-EXPECT_SUB8=1 case_run sub8_64_intra_full_d6 "$TESTDATA/m0_64x64_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_64_intra_full_d6 "$TESTDATA/pub_64x64_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 6 \
     --video-intra-full
-EXPECT_SUB8=1 case_run sub8_360_deblock_d6 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_360_deblock_d6 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 6 \
     --video-deblock
-EXPECT_SUB8=1 case_run sub8_360_sb128_d6 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_360_sb128_d6 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 6 \
     --video-sb128
-EXPECT_SUB8=1 case_run sub8_360_tiles "$TESTDATA/shine_640x360_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_360_tiles "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 6 \
     --tiles 2x2
-EXPECT_SUB8=1 case_run sub8_360_tx_search "$TESTDATA/shine_640x360_1f.y4m" 1 \
+EXPECT_SUB8=1 case_run sub8_360_tx_search "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 4 --video-max-depth 6 \
     --video-tx-search
 
 # --- min-block 8 regression controls (no sub-8 leaf) ----------------------
-EXPECT_NO_SUB8=1 case_run min8_64_d6 "$TESTDATA/m0_64x64_1f.y4m" 1 \
+EXPECT_NO_SUB8=1 case_run min8_64_d6 "$TESTDATA/pub_64x64_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 8 --video-max-depth 6
-EXPECT_NO_SUB8=1 case_run min8_360_d6 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+EXPECT_NO_SUB8=1 case_run min8_360_d6 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-min-block 8 --video-max-depth 6
-EXPECT_NO_SUB8=1 case_run min8_360_4f "$TESTDATA/shine_640x360_4f.y4m" 4 \
+EXPECT_NO_SUB8=1 case_run min8_360_4f "$TESTDATA/pub_640x360_4f.y4m" 4 \
     --video --frames 4 --qp 90 --video-min-block 8 --video-max-depth 6
-EXPECT_NO_SUB8=1 case_run min8_360_ext "$TESTDATA/shine_640x360_4f.y4m" 4 \
+EXPECT_NO_SUB8=1 case_run min8_360_ext "$TESTDATA/pub_640x360_4f.y4m" 4 \
     --video --frames 4 --qp 90 --video-min-block 8 --video-max-depth 6 \
     --video-ext-partitions
 

@@ -383,25 +383,25 @@ fi
 # The known constants come from tools/still_verify/feature_gate.sh and
 # tests/basic_encode_smoke.sh.  --record refuses to re-pin them.
 STREAM_CASES=(
-    "basic_64|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 90||decoded|7efc3162bc0a4785685eba291a8096fd"
-    "basic_360|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 90||decoded|56f11d4a63ff07f2356ef5064b84fe0e"
-    "basic_64_adaptive|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 90 --adaptive-cdf||decoded|7efc3162bc0a4785685eba291a8096fd"
-    "basic_360_adaptive|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 90 --adaptive-cdf||decoded|56f11d4a63ff07f2356ef5064b84fe0e"
+    "basic_64|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 90||decoded|c9294fa48f70fc82a26c64908ddc0b12"
+    "basic_360|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 90||decoded|0d90c958b8dd5d12c6ab2eef2a2c19bf"
+    "basic_64_adaptive|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 90 --adaptive-cdf||decoded|c9294fa48f70fc82a26c64908ddc0b12"
+    "basic_360_adaptive|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 90 --adaptive-cdf||decoded|0d90c958b8dd5d12c6ab2eef2a2c19bf"
     "basic_1080p|generated|--frames 1 --qp 90|1920x1080|decoded|fbbef81e45fcff162dde6c71a0b56a7d"
-    "still_64_base|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 90 --still||encoder|0ef9825062a25c4d950ee924113c6f89"
-    "still_64_cdef|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 90 --still --still-cdef --still-cdef-strengths 1||encoder|b795a6f998c7037c95b926d6afdfc89e"
-    "still_64_rdoq|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 90 --still --still-rdoq||encoder|a7ee3a0ac75781ce2a2c7390c3503019"
-    "still_360_base|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 90 --still||encoder|e61de628b0812b716b0efa7dcafcdd06"
-    "still_360_cdef|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 90 --still --still-cdef --still-cdef-strengths 1||encoder|dec10527a779e7664ea78e53def9dbf1"
-    "still_360_rdoq|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 90 --still --still-rdoq||encoder|ac668d497012333b6aeecb82c2e70337"
-    "still_64_qp91|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 91 --still||encoder|f50e18c4e08eab3ca6437ed6283a9216"
-    "still_64_qp141|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 141 --still||encoder|c47ea7a5e8f826addb8ef90c527c917a"
-    "still_64_qp191|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 191 --still||encoder|3768deaaad9a67f7bece568d743993e5"
-    "still_64_qp255|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 255 --still||encoder|d1e1ebebf2885e575c55508f8b7157d1"
-    "still_360_qp91|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 91 --still||encoder|f5762980cda6c08ec82e131bac487a77"
-    "still_360_qp141|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 141 --still||encoder|6db7ffba200e2b90075fcb826aaef3c1"
-    "still_360_qp191|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 191 --still||encoder|df6894744772f7107cad88381ae82e2e"
-    "still_360_qp255|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 255 --still||encoder|d0c61808ae8dd6e011046bbab34256af"
+    "still_64_base|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 90 --still||encoder|2b31e378787363641c836fdf563bbd0e"
+    "still_64_cdef|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 90 --still --still-cdef --still-cdef-strengths 1||encoder|5cd9182e9d6faf86889d13f14d59dd42"
+    "still_64_rdoq|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 90 --still --still-rdoq||encoder|cc330b8b5d528da885ee2ff6c4228e1c"
+    "still_360_base|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 90 --still||encoder|8ffbe059cfeac3e6ee255f3bb7cf72b8"
+    "still_360_cdef|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 90 --still --still-cdef --still-cdef-strengths 1||encoder|086e90b1645f7d7778235fea94fba656"
+    "still_360_rdoq|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 90 --still --still-rdoq||encoder|fa5f528bc75d4d6f5039286641a24bb1"
+    "still_64_qp91|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 91 --still||encoder|d2779b50951674778c10a6fdbd644aa7"
+    "still_64_qp141|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 141 --still||encoder|ac39c106370f67cb5720280f650338a9"
+    "still_64_qp191|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 191 --still||encoder|c3feceb50ec5cfc2dc3340704ffada38"
+    "still_64_qp255|tests/data/basic_64x64_1f.y4m|--frames 1 --qp 255 --still||encoder|f41f9d1556e56b69ecd07026815f7a7c"
+    "still_360_qp91|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 91 --still||encoder|b6fdefabaf2781f62d6dae44d7a69ebd"
+    "still_360_qp141|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 141 --still||encoder|cef364ae9fe9408063208348aff4402b"
+    "still_360_qp191|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 191 --still||encoder|c2d2fed17bf56510382f2f8faadbcd75"
+    "still_360_qp255|tests/data/basic_640x360_1f.y4m|--frames 1 --qp 255 --still||encoder|a5866b16adf351580d5de21a1752f04a"
 )
 
 GEN_Y4M=""
@@ -756,25 +756,25 @@ cmp("decoder.sha256", baseline.get("decoder", {}).get("sha256"),
 bs = baseline.get("streams", {})
 cs = current.get("streams", {})
 known = {
-    "basic_64": ("decoded", "7efc3162bc0a4785685eba291a8096fd"),
-    "basic_360": ("decoded", "56f11d4a63ff07f2356ef5064b84fe0e"),
-    "basic_64_adaptive": ("decoded", "7efc3162bc0a4785685eba291a8096fd"),
-    "basic_360_adaptive": ("decoded", "56f11d4a63ff07f2356ef5064b84fe0e"),
+    "basic_64": ("decoded", "c9294fa48f70fc82a26c64908ddc0b12"),
+    "basic_360": ("decoded", "0d90c958b8dd5d12c6ab2eef2a2c19bf"),
+    "basic_64_adaptive": ("decoded", "c9294fa48f70fc82a26c64908ddc0b12"),
+    "basic_360_adaptive": ("decoded", "0d90c958b8dd5d12c6ab2eef2a2c19bf"),
     "basic_1080p": ("decoded", "fbbef81e45fcff162dde6c71a0b56a7d"),
-    "still_64_base": ("encoder", "0ef9825062a25c4d950ee924113c6f89"),
-    "still_64_cdef": ("encoder", "b795a6f998c7037c95b926d6afdfc89e"),
-    "still_64_rdoq": ("encoder", "a7ee3a0ac75781ce2a2c7390c3503019"),
-    "still_360_base": ("encoder", "e61de628b0812b716b0efa7dcafcdd06"),
-    "still_360_cdef": ("encoder", "dec10527a779e7664ea78e53def9dbf1"),
-    "still_360_rdoq": ("encoder", "ac668d497012333b6aeecb82c2e70337"),
-    "still_64_qp91": ("encoder", "f50e18c4e08eab3ca6437ed6283a9216"),
-    "still_64_qp141": ("encoder", "c47ea7a5e8f826addb8ef90c527c917a"),
-    "still_64_qp191": ("encoder", "3768deaaad9a67f7bece568d743993e5"),
-    "still_64_qp255": ("encoder", "d1e1ebebf2885e575c55508f8b7157d1"),
-    "still_360_qp91": ("encoder", "f5762980cda6c08ec82e131bac487a77"),
-    "still_360_qp141": ("encoder", "6db7ffba200e2b90075fcb826aaef3c1"),
-    "still_360_qp191": ("encoder", "df6894744772f7107cad88381ae82e2e"),
-    "still_360_qp255": ("encoder", "d0c61808ae8dd6e011046bbab34256af"),
+    "still_64_base": ("encoder", "2b31e378787363641c836fdf563bbd0e"),
+    "still_64_cdef": ("encoder", "5cd9182e9d6faf86889d13f14d59dd42"),
+    "still_64_rdoq": ("encoder", "cc330b8b5d528da885ee2ff6c4228e1c"),
+    "still_360_base": ("encoder", "8ffbe059cfeac3e6ee255f3bb7cf72b8"),
+    "still_360_cdef": ("encoder", "086e90b1645f7d7778235fea94fba656"),
+    "still_360_rdoq": ("encoder", "fa5f528bc75d4d6f5039286641a24bb1"),
+    "still_64_qp91": ("encoder", "d2779b50951674778c10a6fdbd644aa7"),
+    "still_64_qp141": ("encoder", "ac39c106370f67cb5720280f650338a9"),
+    "still_64_qp191": ("encoder", "c3feceb50ec5cfc2dc3340704ffada38"),
+    "still_64_qp255": ("encoder", "f41f9d1556e56b69ecd07026815f7a7c"),
+    "still_360_qp91": ("encoder", "b6fdefabaf2781f62d6dae44d7a69ebd"),
+    "still_360_qp141": ("encoder", "cef364ae9fe9408063208348aff4402b"),
+    "still_360_qp191": ("encoder", "c2d2fed17bf56510382f2f8faadbcd75"),
+    "still_360_qp255": ("encoder", "a5866b16adf351580d5de21a1752f04a"),
 }
 for name in sorted(set(bs) | set(cs)):
     if name not in bs:

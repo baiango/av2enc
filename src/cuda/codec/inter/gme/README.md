@@ -230,7 +230,7 @@ ssh -p <port> <user>@<host> \
 ```
 
 `tools/sync_remote.sh` excludes `testdata/`; copy
-`testdata/shine_1280x720_60f.y4m` to the remote box if you want the real-720p
+`testdata/pub_1280x720_60f.y4m` to the remote box if you want the real-720p
 cases (otherwise they print `skipped` and the synthetic cases still run).
 Use `./build_gpu_test.sh --quick` to skip pair 0/10, and
 `./build_gpu_test.sh --sanitize` for `compute-sanitizer --tool memcheck`.

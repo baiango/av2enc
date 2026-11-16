@@ -6,7 +6,7 @@
 #   ./build_and_test.sh --no-run        # build only
 #   SANITIZE=1 ./build_and_test.sh
 #   WERROR=1   ./build_and_test.sh
-#   INPUT=testdata/shine_256x256_1f.y4m ./build_and_test.sh
+#   INPUT=testdata/pub_256x256_1f.y4m ./build_and_test.sh
 #
 # The gate links the untouched M2 encoder (src/encoder/m2/) and wraps its tile
 # payloads in this layer's headers. No CMake changes, no M2 core edits.

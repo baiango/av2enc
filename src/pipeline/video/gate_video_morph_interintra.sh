@@ -127,7 +127,7 @@ w, h = 320, 192
 write("interintra.y4m", w, h, [move_frame(w, h, t) for t in range(4)])
 PY
 
-DEFAULT_PIN=ef85e55bd85357f965169051dd691612
+DEFAULT_PIN=e36b347e3fdc1d6c09059b6f94d94321
 MORPH_VGRAD_PIN=1100a99b1c8f2e20d17ec2c55fe09ebe
 MORPH_VGRAD4_PIN=596e2af5db198939b5e8fa20df1a21d5
 MORPH_REPEAT_PIN=0ddbee1a49758c3c64e15a1389687184
@@ -167,7 +167,7 @@ run_case() {
 }
 
 # Default stream must stay byte-identical.
-"$BIN" "$ROOT/testdata/shine_640x360_1f.y4m" -o "$OUT/default.ivf" \
+"$BIN" "$ROOT/testdata/pub_640x360_1f.y4m" -o "$OUT/default.ivf" \
   --video --frames 1 >"$OUT/default.log" 2>&1 ||
   { echo "gate_video_morph_interintra: default encode failed" >&2; exit 1; }
 md5=$(md5sum "$OUT/default.ivf" | cut -d' ' -f1)

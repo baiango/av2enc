@@ -25,6 +25,7 @@
 #include <limits>
 #include <utility>
 #include <vector>
+#include <cstdlib>
 
 namespace av2enc::lossless::inter {
 namespace {

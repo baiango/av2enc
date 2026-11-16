@@ -51,7 +51,7 @@
     "git_commit": "ce67ea9007d3b3eaa70bae8711cf2cbad27bef1f"
   },
   "fixture": {
-    "path": "testdata/shine_640x360_1f.y4m",
+    "path": "testdata/pub_640x360_1f.y4m",
     "md5": "dce2a9b1fb650fef1aec38470d189609",
     "width": 640,
     "height": 360,

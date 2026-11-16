@@ -112,7 +112,11 @@ Measured on the RTX 3060 host, 8-bit 4:2:0, QP 90, `f9dafbc`:
 | `--b-frames 4 --video-ref-mvs` | 6 | `694133a824ae83e1c31459f2c142a08d` | `f4b507fd446fb9313a8682afcd84759b` | 192 |
 | `--video-tlayers 4 --video-ref-mvs` | 4 | `0a879da764e4fde23b2fec59cd2b56d9` | `702fae96d994e80ba48fed9a4ca3b549` | 0 (single reference) |
 
-| case (720p, `shine_1280x720_60f.y4m`) | pictures | IVF MD5 | recon = decoded Y4M MD5 | candidates / selected leaves |
+> **Fixture swap:** the paths below were renamed to the public-domain fixtures
+> (`docs/testdata-provenance.md`); the numbers were recorded on the retired
+> promo clip and the streams now differ. Re-run before quoting.
+
+| case (720p, `pub_1280x720_60f.y4m`) | pictures | IVF MD5 | recon = decoded Y4M MD5 | candidates / selected leaves |
 |---|---:|---|---|---:|
 | `--video-refs 2 --video-ref-mvs` | 8 | `18e894f29093b15586c98930aac6aab9` | `14177f971462d911400089df98519fd6` | 4678 / 535 |
 

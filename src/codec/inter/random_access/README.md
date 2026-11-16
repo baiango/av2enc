@@ -230,7 +230,7 @@ RAS (pinned)     08 54 e2 94 5f fe 46 b4 00
 ```
 
 Default output (synthetic 128x128, then real 720p when
-`testdata/shine_1280x720_60f.y4m` is present):
+`testdata/pub_1280x720_60f.y4m` is present):
 
 ```text
 == unit tests ==

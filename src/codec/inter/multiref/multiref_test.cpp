@@ -6,7 +6,7 @@
 //   * mode decision determinism and quality on synthetic pairs
 //   * multi-reference MV stack / compound merge selection
 //   * GPU-ready batch equals the per-job path
-//   * real 720p frames when testdata/shine_1280x720_60f.y4m is present
+//   * real 720p frames when testdata/pub_1280x720_60f.y4m is present
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -737,7 +737,7 @@ void test_gpu_batch() {
 // ---------------------------------------------------------------------------
 
 void test_real_720p() {
-  const char* path = "testdata/shine_1280x720_60f.y4m";
+  const char* path = "testdata/pub_1280x720_60f.y4m";
   av2enc::Y4mReader reader(path);
   std::string error;
   if (!reader.open(error)) {

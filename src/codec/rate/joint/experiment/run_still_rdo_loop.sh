@@ -68,7 +68,7 @@ if [ ${#INPUTS[@]} -eq 0 ]; then
     "$ROOT/tests/data/basic_640x360_1f.y4m"
   )
   if [ "$DO_1080P" = 1 ]; then
-    INPUTS+=("$ROOT/testdata/shine_1920x1080_10f.y4m")
+    INPUTS+=("$ROOT/testdata/pub_1920x1080_10f.y4m")
   fi
 fi
 for input in "${INPUTS[@]}"; do

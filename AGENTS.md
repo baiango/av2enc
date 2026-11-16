@@ -40,8 +40,8 @@ leave the shared roots (`src/main.cpp`, `CMakeLists.txt`, `still_*`, `video_*`,
 
 ## Current reference bitstreams
 
-- 64x64: MD5 `7efc3162bc0a4785685eba291a8096fd`
-- 640x360: MD5 `56f11d4a63ff07f2356ef5064b84fe0e`
+- 64x64: MD5 `c9294fa48f70fc82a26c64908ddc0b12`
+- 640x360: MD5 `0d90c958b8dd5d12c6ab2eef2a2c19bf`
 
 The CPU path is the reference. The CUDA path must match it or explain exactly
 why it cannot.

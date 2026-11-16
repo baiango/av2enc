@@ -20,7 +20,7 @@ while [ ! -f "${ROOT}/CMakeLists.txt" ] && [ "${ROOT}" != "/" ]; do
 done
 OUT="${OUT:-$HERE/build}"
 CXX="${CXX:-c++}"
-TESTDATA="${TESTDATA:-$ROOT/testdata/shine_1280x720_60f.y4m}"
+TESTDATA="${TESTDATA:-$ROOT/testdata/pub_1280x720_60f.y4m}"
 SANITIZE="${SANITIZE:-0}"
 WERROR="${WERROR:-0}"
 GATE="${GATE:-0}"

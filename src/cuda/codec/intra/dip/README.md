@@ -64,7 +64,7 @@ src/cuda/dip/build_emulation_test.sh
   byte-for-byte equality.
 - `dip_emulation_test.cpp` compiles the same `dip_device.cuh` with CUDA keywords
   stubbed and compares it against the CPU reference, including real luma
-  blocks from `testdata/shine_256x256_1f.y4m`. It needs no GPU or nvcc.
+  blocks from `testdata/pub_256x256_1f.y4m`. It needs no GPU or nvcc.
 
 On the current macOS host there is no `nvcc`, so `build_and_test.sh` runs the
 host-emulation parity test only:

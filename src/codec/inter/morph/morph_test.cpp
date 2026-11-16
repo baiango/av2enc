@@ -757,9 +757,9 @@ void benchmark_mode_selection() {
   int h = 0;
   std::vector<std::uint8_t> src;
   const char* candidates[] = {
-      "../../../../testdata/shine_256x256_1f.y4m",
-      "../../../testdata/shine_256x256_1f.y4m",
-      "testdata/shine_256x256_1f.y4m",
+      "../../../../testdata/pub_256x256_1f.y4m",
+      "../../../testdata/pub_256x256_1f.y4m",
+      "testdata/pub_256x256_1f.y4m",
   };
   bool loaded = false;
   for (const char* p : candidates) {

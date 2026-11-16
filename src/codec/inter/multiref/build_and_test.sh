@@ -107,7 +107,7 @@ echo "== gate: synthetic 128x128 =="
 "${OUT_DIR}/compound_gate" --out "${OUT_DIR}/compound_gate.ivf"
 
 if [[ "${1:-}" == "--720p" || "${ALL:-0}" == "1" ]]; then
-  SRC="${ROOT}/testdata/shine_1280x720_60f.y4m"
+  SRC="${ROOT}/testdata/pub_1280x720_60f.y4m"
   if [[ -f "$SRC" ]]; then
     echo "== gate: real 720p (cropped to 1280x704) =="
     "${OUT_DIR}/compound_gate" --input "$SRC" \

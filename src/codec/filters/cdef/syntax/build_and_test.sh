@@ -6,7 +6,7 @@
 #   ./build_and_test.sh --no-run        # build only
 #   SANITIZE=1 ./build_and_test.sh
 #   WERROR=1   ./build_and_test.sh
-#   INPUT=testdata/shine_1280x720_60f.y4m ./build_and_test.sh
+#   INPUT=testdata/pub_1280x720_60f.y4m ./build_and_test.sh
 #
 # No root CMake changes, no M2 core edits.  The gate links the untouched M2
 # encoder, the verified filter/restoration header adapters and the M2 post
@@ -123,8 +123,8 @@ if [[ "$RUN" -eq 1 ]]; then
       exit 77
     fi
     if [[ -z "$INPUT" ]]; then
-      if [[ -f "$ROOT/testdata/shine_1280x720_60f.y4m" ]]; then
-        INPUT="$ROOT/testdata/shine_1280x720_60f.y4m"
+      if [[ -f "$ROOT/testdata/pub_1280x720_60f.y4m" ]]; then
+        INPUT="$ROOT/testdata/pub_1280x720_60f.y4m"
       else
         INPUT="$ROOT/tests/data/basic_640x360_1f.y4m"
       fi

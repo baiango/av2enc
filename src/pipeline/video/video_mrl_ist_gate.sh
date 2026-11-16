@@ -51,8 +51,8 @@ if [ -z "$DAV2D" ] || [ ! -x "$DAV2D" ]; then
   exit 77
 fi
 
-INPUT_64="${AV2ENC_INPUT_64:-$ROOT/testdata/m0_64x64_1f.y4m}"
-INPUT_360="${AV2ENC_INPUT_360:-$ROOT/testdata/shine_640x360_4f.y4m}"
+INPUT_64="${AV2ENC_INPUT_64:-$ROOT/testdata/pub_64x64_1f.y4m}"
+INPUT_360="${AV2ENC_INPUT_360:-$ROOT/testdata/pub_640x360_4f.y4m}"
 for path in "$INPUT_64" "$INPUT_360"; do
   if [ ! -f "$path" ]; then
     echo "video_mrl_ist_gate: missing input $path" >&2
@@ -163,36 +163,36 @@ run_case() {
 }
 
 # 64x64: one key picture.
-run_case mrl_64 "$INPUT_64" 1 1b8dec13ff2d5c343618b4b02b8f2194 0 0 \
+run_case mrl_64 "$INPUT_64" 1 efb785f83be3c3ede57aff607675c4f1 0 0 \
   --video-mrl
-run_case mrl_full_64 "$INPUT_64" 1 698ae4ee08f45a3fcea9222fe2db5f53 1 0 \
+run_case mrl_full_64 "$INPUT_64" 1 36af8a1ec5f8b83df93085c0de4d9066 1 0 \
   --video-mrl --video-intra-full
-run_case mrl_full_tx_64 "$INPUT_64" 1 9f1398fd1b295d23b23414e13384f152 1 0 \
+run_case mrl_full_tx_64 "$INPUT_64" 1 60b58762aac21626c8bc8344e803fab5 1 0 \
   --video-mrl --video-intra-full --video-tx-search
-run_case ist_64 "$INPUT_64" 1 e6c32f0f77c70c7689235600fdcbc2fc 0 0 \
+run_case ist_64 "$INPUT_64" 1 382703f3c3e9c2b40b8d1313d5c1d989 0 0 \
   --video-ist
-run_case ist_full_64 "$INPUT_64" 1 5aa715b6ea06ff14210b640f0f29dfe8 0 0 \
+run_case ist_full_64 "$INPUT_64" 1 a2d2c25b9adf0bafb9d781f6978ab3fe 0 0 \
   --video-ist --video-intra-full
-run_case ist_full_tx_64 "$INPUT_64" 1 70ff80b11b36799c31822b3b5dfa1fed 0 0 \
+run_case ist_full_tx_64 "$INPUT_64" 1 f23fcfcbecf29b8d1468bb4094a816eb 0 0 \
   --video-ist --video-intra-full --video-tx-search
-run_case both_64 "$INPUT_64" 1 e9d00d0fe8573efe497f8f83cd98dc46 1 0 \
+run_case both_64 "$INPUT_64" 1 32d8792afd87dfe8601a256550030a7b 1 0 \
   --video-mrl --video-ist --video-intra-full --video-tx-search
 
 # 640x360: four pictures (key + P), so the intra fallback blocks inside the P
 # frames exercise the same syntax on the inter path.
-run_case mrl_360 "$INPUT_360" 4 d863e1d9e5b2aaeb309d84c70e1228f7 0 0 \
+run_case mrl_360 "$INPUT_360" 4 1b470ca12b92b41cf04e1edc1f507b6a 0 0 \
   --video-mrl
-run_case mrl_full_360 "$INPUT_360" 4 bd9ab61cb3550b9ea36ed50a7d367689 1 0 \
+run_case mrl_full_360 "$INPUT_360" 4 53665b9e59368eef0231c7837b4ca3ed 1 0 \
   --video-mrl --video-intra-full
-run_case mrl_full_tx_360 "$INPUT_360" 4 860339f969e3d1c924f1a93596ec961f 1 0 \
+run_case mrl_full_tx_360 "$INPUT_360" 4 7c6e341f36e60e78e1c70c793b3228ef 1 0 \
   --video-mrl --video-intra-full --video-tx-search
-run_case ist_360 "$INPUT_360" 4 a0bcf3e78f68c53ebacf381502ecbdbb 0 1 \
+run_case ist_360 "$INPUT_360" 4 f7731e7d6f05a101af7078a365aedf32 0 1 \
   --video-ist
-run_case ist_full_360 "$INPUT_360" 4 856c18f24d47cfb4557ac39783753754 0 0 \
+run_case ist_full_360 "$INPUT_360" 4 f715f7520e25bb2761196b6cf8a95565 0 0 \
   --video-ist --video-intra-full
-run_case ist_full_tx_360 "$INPUT_360" 4 864868d274b1fbc802d91eecc14f4f3e 0 1 \
+run_case ist_full_tx_360 "$INPUT_360" 4 822892c47779371fa9aa189235385672 0 1 \
   --video-ist --video-intra-full --video-tx-search
-run_case both_360 "$INPUT_360" 4 edfc99328975fec8b37f8a2e32875dd1 1 1 \
+run_case both_360 "$INPUT_360" 4 1a6cc8664889da30fb5948b035b1b143 1 1 \
   --video-mrl --video-ist --video-intra-full --video-tx-search
 
 # Named rejections.

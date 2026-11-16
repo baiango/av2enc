@@ -3,11 +3,11 @@
 
 The gate needs at least two frames with real motion so the inter-residual path
 chooses non-DCT transform types on 8x8/16x16 blocks.  The repository's
-shine_256x256_1f.y4m is one frame; this script writes a deterministic 3-frame
+pub_256x256_1f.y4m is one frame; this script writes a deterministic 3-frame
 4:2:0 clip by shifting it horizontally by 3/6 luma samples (1/2 chroma
 samples).  No random data, no external tools.
 
-Usage: make_motion_clip.py <shine_256x256_1f.y4m> <out.y4m>
+Usage: make_motion_clip.py <pub_256x256_1f.y4m> <out.y4m>
 """
 import sys
 

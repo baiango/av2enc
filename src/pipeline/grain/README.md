@@ -262,7 +262,7 @@ total grain syntax              181 B
 per-model syntax           427-443 bits (lag 2, 12 taps, 9-point curve)
 ```
 
-On `testdata/shine_1280x720_60f.y4m` (3 frames, qp 90): base 103,140 B,
+On `testdata/pub_1280x720_60f.y4m` (3 frames, qp 90): base 103,140 B,
 film grain OBUs 189 B (**0.18%**), config 60 bits, models 475 bits each.  The
 percentage is content- and resolution-dependent; the OBU cost is fixed by the
 model syntax (point curves + AR taps), not by the picture size.

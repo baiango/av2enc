@@ -120,7 +120,7 @@ ARCH=sm_120 ./src/cuda/pipeline/still/chroma/build_still_chroma_test.sh
 ```
 
 The test script generates 64x64, 640x360 and 1920x1080 frames (`testsrc2`, and
-real content when `testdata/shine_1280x720_60f.y4m` is present), then runs the
+real content when `testdata/pub_1280x720_60f.y4m` is present), then runs the
 DC/CfL, full-UV, DC-only, and (for 64x64) full-intra + full-UV frame cases.
 The frame harness replays `still_encoder.cpp`'s block loop and compares against an
 independent `encode()` run.
@@ -169,7 +169,7 @@ RESULT: PASS
 
 ## Full-UV quality at QP 90 (CPU reference, dav2d-decoded)
 
-`shine_1280x720` frame scaled to the test size, luma DC only, `--still --qp 90`:
+`legacy_1280x720` frame scaled to the test size, luma DC only, `--still --qp 90`:
 
 | Size | tile bytes base → uv_full | chroma SSE base → uv_full | PSNR U/V | overall PSNR |
 |---|---:|---:|---:|---:|

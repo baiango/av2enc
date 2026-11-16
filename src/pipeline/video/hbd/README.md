@@ -15,7 +15,7 @@ already decodes:
 
 The default 8-bit 4:2:0 `--video` stream is **not** routed here; it keeps the
 historical `video_frame.cpp` path byte-for-byte (`c6d588647aacb2275dfaea41a00fb501`
-for 6 frames of `shine_1280x720_60f.y4m` with `--video-max-depth 3`).
+for 6 frames of `pub_1280x720_60f.y4m` with `--video-max-depth 3`).
 
 ## Layout
 

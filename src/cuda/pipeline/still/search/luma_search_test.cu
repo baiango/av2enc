@@ -14,7 +14,7 @@
 // Media defaults (first existing path wins):
 //   tests/data/basic_64x64_1f.y4m   (tracked fixture)
 //   testdata/basic_64x64_1f.y4m     (optional real-content drop)
-//   testdata/shine_640x360_1f.y4m
+//   testdata/pub_640x360_1f.y4m
 // Override with --y4m64 PATH / --y4m360 PATH, or --allow-missing-media.
 
 #include "luma_search.h"
@@ -1169,7 +1169,7 @@ struct Options {
       default_media("tests/data/basic_64x64_1f.y4m",
                     "testdata/basic_64x64_1f.y4m");
   std::string y4m360 =
-      default_media("testdata/shine_640x360_1f.y4m",
+      default_media("testdata/pub_640x360_1f.y4m",
                     "tests/data/basic_640x360_1f.y4m");
   bool allow_missing_media = false;
   bool quick = false;

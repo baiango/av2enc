@@ -60,8 +60,8 @@ make_fixture() {
 }
 
 FIX64="$OUT/clip64.y4m"
-make_fixture "$TESTDATA/shine_1280x720_60f.y4m"
-FIX360="$TESTDATA/shine_640x360_4f.y4m"
+make_fixture "$TESTDATA/pub_1280x720_60f.y4m"
+FIX360="$TESTDATA/pub_640x360_4f.y4m"
 [ -f "$FIX360" ] || {
   echo "video_short_refresh_gate: missing fixture $FIX360" >&2; exit 77; }
 

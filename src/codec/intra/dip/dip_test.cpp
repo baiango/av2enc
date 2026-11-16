@@ -773,7 +773,7 @@ void test_rejections() {
 
 int main(int argc, char** argv) {
   const char* fixture =
-      argc > 1 ? argv[1] : "testdata/shine_256x256_1f.y4m";
+      argc > 1 ? argv[1] : "testdata/pub_256x256_1f.y4m";
   test_weight_table();
   test_availability();
   test_edges_and_prediction_8bit();

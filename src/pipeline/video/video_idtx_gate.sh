@@ -51,7 +51,7 @@ if [ -z "$DAV2D" ] || [ ! -x "$DAV2D" ]; then
   exit 77
 fi
 
-INPUT="${AV2ENC_INPUT:-$ROOT/testdata/shine_1280x720_60f.y4m}"
+INPUT="${AV2ENC_INPUT:-$ROOT/testdata/pub_1280x720_60f.y4m}"
 if [ ! -f "$INPUT" ]; then
   echo "video_idtx_gate: missing input $INPUT" >&2
   exit 77
@@ -145,10 +145,10 @@ run_case() {
 }
 
 # §5.4.8 fix: the TX search must not select IDTX when the sequence bit is 0.
-run_case tx_search_4 4 - be155c435a6c4d591bb5b7ab7d084c7e --video-tx-search
-run_case tx_search_idtx_4 4 4 13c96481b49d6150d7cb9fa4240f5c69 \
+run_case tx_search_4 4 - fb53242f708479f16ba0c8e73ad851b7 --video-tx-search
+run_case tx_search_idtx_4 4 33 648be3fcb0cb1322e6765c12d48facf1 \
   --video-tx-search --video-idtx
-run_case tx_search_idtx_8 8 8 c4e7ceab9bf98e672c992b30b93aa871 \
+run_case tx_search_idtx_8 8 66 83ef6f64eefa119422a8386fe1b326a3 \
   --video-tx-search --video-idtx
 
 BASE="$TMP/base.ivf"
@@ -157,8 +157,8 @@ if ! "$AV2ENC_BIN" "$INPUT" -o "$BASE" --frames 4 --video \
   fail_case base "default encode failed"
 else
   BASE_MD5=$(md5_of "$BASE")
-  if [ "$BASE_MD5" != "e4cf72dd13ddc2c32c2f8683153b3c81" ]; then
-    fail_case base "IVF md5 $BASE_MD5, expected e4cf72dd13ddc2c32c2f8683153b3c81"
+  if [ "$BASE_MD5" != "1d32ad7564fd049941e6c90347358a18" ]; then
+    fail_case base "IVF md5 $BASE_MD5, expected 1d32ad7564fd049941e6c90347358a18"
   else
     pass_case "base (--video unchanged)"
   fi

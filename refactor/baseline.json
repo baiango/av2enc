@@ -119,182 +119,182 @@
   "feature_gate": {
     "cases": [
       {
-        "bytes": 13355,
-        "md5": "e61de628b0812b716b0efa7dcafcdd06",
+        "bytes": 35862,
+        "md5": "8ffbe059cfeac3e6ee255f3bb7cf72b8",
         "name": "still_360_base",
         "status": "passed"
       },
       {
-        "bytes": 13397,
-        "md5": "54e853e24b21bf1237b8b51a846b1c35",
+        "bytes": 35900,
+        "md5": "cd270c0e55fdb4ef75ce54aaae4abdc6",
         "name": "still_360_ccso",
         "status": "passed"
       },
       {
-        "bytes": 13397,
-        "md5": "54e853e24b21bf1237b8b51a846b1c35",
+        "bytes": 35900,
+        "md5": "cd270c0e55fdb4ef75ce54aaae4abdc6",
         "name": "still_360_ccso6",
         "status": "passed"
       },
       {
-        "bytes": 13415,
-        "md5": "a272550a72c387a8a4f8cc8d3186f8da",
+        "bytes": 35920,
+        "md5": "1a1f0d163de13f5b9f477adb9ca4fb13",
         "name": "still_360_ccso_cdef",
         "status": "passed"
       },
       {
-        "bytes": 11535,
-        "md5": "7fd7a2a0e078665614f8b6d2c5fe1b57",
+        "bytes": 30417,
+        "md5": "4d0d10514d2caf17f5797ed65444551b",
         "name": "still_360_ccso_rdoq",
         "status": "passed"
       },
       {
-        "bytes": 13358,
-        "md5": "dec10527a779e7664ea78e53def9dbf1",
+        "bytes": 35865,
+        "md5": "086e90b1645f7d7778235fea94fba656",
         "name": "still_360_cdef1",
         "status": "passed"
       },
       {
-        "bytes": 13375,
-        "md5": "b37bed7eb785d0c6b2e07219e888ff89",
+        "bytes": 35882,
+        "md5": "5bf1100af41190b447c0741bcca780dd",
         "name": "still_360_cdef4",
         "status": "passed"
       },
       {
-        "bytes": 11611,
-        "md5": "84ab3934c08e6c90b876d067bcbb3606",
+        "bytes": 30741,
+        "md5": "d7f83b6f8df0ef9b9c97a9298840065a",
         "name": "still_360_combo",
         "status": "passed"
       },
       {
-        "bytes": 3428,
-        "md5": "6db7ffba200e2b90075fcb826aaef3c1",
+        "bytes": 10704,
+        "md5": "cef364ae9fe9408063208348aff4402b",
         "name": "still_360_qp141",
         "status": "passed"
       },
       {
-        "bytes": 826,
-        "md5": "df6894744772f7107cad88381ae82e2e",
+        "bytes": 2535,
+        "md5": "c2d2fed17bf56510382f2f8faadbcd75",
         "name": "still_360_qp191",
         "status": "passed"
       },
       {
-        "bytes": 201,
-        "md5": "d0c61808ae8dd6e011046bbab34256af",
+        "bytes": 295,
+        "md5": "a5866b16adf351580d5de21a1752f04a",
         "name": "still_360_qp255",
         "status": "passed"
       },
       {
-        "bytes": 13775,
-        "md5": "f5762980cda6c08ec82e131bac487a77",
+        "bytes": 36621,
+        "md5": "b6fdefabaf2781f62d6dae44d7a69ebd",
         "name": "still_360_qp91",
         "status": "passed"
       },
       {
-        "bytes": 13152,
-        "md5": "211da270c5baf34f7bd40da019ffd84b",
+        "bytes": 34284,
+        "md5": "f7106fa0147446621528e244a9d85949",
         "name": "still_360_rdointra",
         "status": "passed"
       },
       {
-        "bytes": 11487,
-        "md5": "ac668d497012333b6aeecb82c2e70337",
+        "bytes": 30378,
+        "md5": "fa5f528bc75d4d6f5039286641a24bb1",
         "name": "still_360_rdoq",
         "status": "passed"
       },
       {
-        "bytes": 13388,
-        "md5": "21c39aec98507dba7c24e5d320e1bb3c",
+        "bytes": 35971,
+        "md5": "93f2e4cb5098f55e0991480d820a32cb",
         "name": "still_360_txtype",
         "status": "passed"
       },
       {
-        "bytes": 13368,
-        "md5": "400dd3ad02db9e0e3e366091a7e6962f",
+        "bytes": 35594,
+        "md5": "67d79e56c10ab4cf4792a5e4ee88895e",
         "name": "still_360_uvfull",
         "status": "passed"
       },
       {
-        "bytes": 936,
-        "md5": "0ef9825062a25c4d950ee924113c6f89",
+        "bytes": 1448,
+        "md5": "2b31e378787363641c836fdf563bbd0e",
         "name": "still_64_base",
         "status": "passed"
       },
       {
-        "bytes": 970,
-        "md5": "980e5c2194091faf2347e3b05dfdea69",
+        "bytes": 1481,
+        "md5": "71ca9ce6ad19fe2675419cd317361b4a",
         "name": "still_64_ccso",
         "status": "passed"
       },
       {
-        "bytes": 972,
-        "md5": "a90c525e480e8ff52db3f47f77fff887",
+        "bytes": 1482,
+        "md5": "b5e0a05a48833b59a22729de72ccc3b1",
         "name": "still_64_ccso_cdef",
         "status": "passed"
       },
       {
-        "bytes": 938,
-        "md5": "b795a6f998c7037c95b926d6afdfc89e",
+        "bytes": 1451,
+        "md5": "5cd9182e9d6faf86889d13f14d59dd42",
         "name": "still_64_cdef1",
         "status": "passed"
       },
       {
-        "bytes": 938,
-        "md5": "b795a6f998c7037c95b926d6afdfc89e",
+        "bytes": 1451,
+        "md5": "5cd9182e9d6faf86889d13f14d59dd42",
         "name": "still_64_cdef4",
         "status": "passed"
       },
       {
-        "bytes": 817,
-        "md5": "aa885652b8c57ecc25b14b87c97862d8",
+        "bytes": 1283,
+        "md5": "cbc82d8f2b19d2131d7581c666d1f86d",
         "name": "still_64_combo",
         "status": "passed"
       },
       {
-        "bytes": 259,
-        "md5": "c47ea7a5e8f826addb8ef90c527c917a",
+        "bytes": 400,
+        "md5": "ac39c106370f67cb5720280f650338a9",
         "name": "still_64_qp141",
         "status": "passed"
       },
       {
-        "bytes": 105,
-        "md5": "3768deaaad9a67f7bece568d743993e5",
+        "bytes": 167,
+        "md5": "c3feceb50ec5cfc2dc3340704ffada38",
         "name": "still_64_qp191",
         "status": "passed"
       },
       {
-        "bytes": 73,
-        "md5": "d1e1ebebf2885e575c55508f8b7157d1",
+        "bytes": 71,
+        "md5": "f41f9d1556e56b69ecd07026815f7a7c",
         "name": "still_64_qp255",
         "status": "passed"
       },
       {
-        "bytes": 982,
-        "md5": "f50e18c4e08eab3ca6437ed6283a9216",
+        "bytes": 1499,
+        "md5": "d2779b50951674778c10a6fdbd644aa7",
         "name": "still_64_qp91",
         "status": "passed"
       },
       {
-        "bytes": 965,
-        "md5": "45b4a209a8c3e889c91dfa201f26d2d4",
+        "bytes": 1428,
+        "md5": "070c452082d9b71e00abc63db4e2a959",
         "name": "still_64_rdointra",
         "status": "passed"
       },
       {
-        "bytes": 794,
-        "md5": "a7ee3a0ac75781ce2a2c7390c3503019",
+        "bytes": 1273,
+        "md5": "cc330b8b5d528da885ee2ff6c4228e1c",
         "name": "still_64_rdoq",
         "status": "passed"
       },
       {
-        "bytes": 944,
-        "md5": "15681508a144eeea88bb8223185d75e9",
+        "bytes": 1458,
+        "md5": "4965b4a03e5b456c7a364a012df417dc",
         "name": "still_64_txtype",
         "status": "passed"
       },
       {
-        "bytes": 939,
-        "md5": "2ed7f1ca8d146be8345ed95fee65f9bf",
+        "bytes": 1437,
+        "md5": "ffcb8859679f810220f36315726d9b2a",
         "name": "still_64_uvfull",
         "status": "passed"
       }
@@ -344,10 +344,10 @@
         "--qp",
         "90"
       ],
-      "decoded_md5": "56f11d4a63ff07f2356ef5064b84fe0e",
-      "encoder_md5": "460ff40bc2d0873b769f33bad1aa7166",
+      "decoded_md5": "0d90c958b8dd5d12c6ab2eef2a2c19bf",
+      "encoder_md5": "d9bfa9b91f949f731166ec9056733d25",
       "fixture": "tests/data/basic_640x360_1f.y4m",
-      "ivf_bytes": 19751,
+      "ivf_bytes": 38395,
       "name": "basic_360",
       "status": "passed",
       "validate_rc": 0
@@ -360,10 +360,10 @@
         "90",
         "--adaptive-cdf"
       ],
-      "decoded_md5": "56f11d4a63ff07f2356ef5064b84fe0e",
-      "encoder_md5": "a61cccdd2bfa43a9cf7a47b44f3bbfd3",
+      "decoded_md5": "0d90c958b8dd5d12c6ab2eef2a2c19bf",
+      "encoder_md5": "55203631e3efca286a5c5ff82ef29521",
       "fixture": "tests/data/basic_640x360_1f.y4m",
-      "ivf_bytes": 18807,
+      "ivf_bytes": 36596,
       "name": "basic_360_adaptive",
       "status": "passed",
       "validate_rc": 0
@@ -375,10 +375,10 @@
         "--qp",
         "90"
       ],
-      "decoded_md5": "7efc3162bc0a4785685eba291a8096fd",
-      "encoder_md5": "7707081a9beefb057a5823b93762a623",
+      "decoded_md5": "c9294fa48f70fc82a26c64908ddc0b12",
+      "encoder_md5": "84686a3f0fb6bd1215ba8d64d6769edf",
       "fixture": "tests/data/basic_64x64_1f.y4m",
-      "ivf_bytes": 1138,
+      "ivf_bytes": 1388,
       "name": "basic_64",
       "status": "passed",
       "validate_rc": 0
@@ -391,10 +391,10 @@
         "90",
         "--adaptive-cdf"
       ],
-      "decoded_md5": "7efc3162bc0a4785685eba291a8096fd",
-      "encoder_md5": "480f831595a091f8332e91314a316922",
+      "decoded_md5": "c9294fa48f70fc82a26c64908ddc0b12",
+      "encoder_md5": "734979b2d537e4ba2bc636556766383b",
       "fixture": "tests/data/basic_64x64_1f.y4m",
-      "ivf_bytes": 1094,
+      "ivf_bytes": 1339,
       "name": "basic_64_adaptive",
       "status": "passed",
       "validate_rc": 0
@@ -407,10 +407,10 @@
         "90",
         "--still"
       ],
-      "decoded_md5": "3e6ee93321680be6ee97a8f1d3765ab2",
-      "encoder_md5": "e61de628b0812b716b0efa7dcafcdd06",
+      "decoded_md5": "834624de454b7fa0f893740a66876552",
+      "encoder_md5": "8ffbe059cfeac3e6ee255f3bb7cf72b8",
       "fixture": "tests/data/basic_640x360_1f.y4m",
-      "ivf_bytes": 13355,
+      "ivf_bytes": 35862,
       "name": "still_360_base",
       "status": "passed",
       "validate_rc": 0
@@ -442,10 +442,10 @@
         "141",
         "--still"
       ],
-      "decoded_md5": "3c3b138fce7ab1a012d4ffb55a409359",
-      "encoder_md5": "6db7ffba200e2b90075fcb826aaef3c1",
+      "decoded_md5": "4f547d63a12f74f27078b4740702606e",
+      "encoder_md5": "cef364ae9fe9408063208348aff4402b",
       "fixture": "tests/data/basic_640x360_1f.y4m",
-      "ivf_bytes": 3428,
+      "ivf_bytes": 10704,
       "name": "still_360_qp141",
       "status": "passed",
       "validate_rc": 0
@@ -458,10 +458,10 @@
         "191",
         "--still"
       ],
-      "decoded_md5": "0d694d9160f6bdfb91639939f6f3f18a",
-      "encoder_md5": "df6894744772f7107cad88381ae82e2e",
+      "decoded_md5": "08fb0d1977dda3a9070e235a7db5b4a2",
+      "encoder_md5": "c2d2fed17bf56510382f2f8faadbcd75",
       "fixture": "tests/data/basic_640x360_1f.y4m",
-      "ivf_bytes": 826,
+      "ivf_bytes": 2535,
       "name": "still_360_qp191",
       "status": "passed",
       "validate_rc": 0
@@ -474,10 +474,10 @@
         "255",
         "--still"
       ],
-      "decoded_md5": "c93abf4fb2968c821ee246fffbeb352e",
-      "encoder_md5": "d0c61808ae8dd6e011046bbab34256af",
+      "decoded_md5": "5b4aff262e3bafdd58b41ef7d25238af",
+      "encoder_md5": "a5866b16adf351580d5de21a1752f04a",
       "fixture": "tests/data/basic_640x360_1f.y4m",
-      "ivf_bytes": 201,
+      "ivf_bytes": 295,
       "name": "still_360_qp255",
       "status": "passed",
       "validate_rc": 0
@@ -490,10 +490,10 @@
         "91",
         "--still"
       ],
-      "decoded_md5": "1f8a68d69b63f277af4f3d83537f143e",
-      "encoder_md5": "f5762980cda6c08ec82e131bac487a77",
+      "decoded_md5": "483a7f954d5820b372325ba89fa3cc44",
+      "encoder_md5": "b6fdefabaf2781f62d6dae44d7a69ebd",
       "fixture": "tests/data/basic_640x360_1f.y4m",
-      "ivf_bytes": 13775,
+      "ivf_bytes": 36621,
       "name": "still_360_qp91",
       "status": "passed",
       "validate_rc": 0
@@ -507,10 +507,10 @@
         "--still",
         "--still-rdoq"
       ],
-      "decoded_md5": "6bd45c28bb4c15da1c7e8f8bee43bfc3",
-      "encoder_md5": "ac668d497012333b6aeecb82c2e70337",
+      "decoded_md5": "8eb7f9c22476c154d562644ddfb0a6c7",
+      "encoder_md5": "fa5f528bc75d4d6f5039286641a24bb1",
       "fixture": "tests/data/basic_640x360_1f.y4m",
-      "ivf_bytes": 11487,
+      "ivf_bytes": 30378,
       "name": "still_360_rdoq",
       "status": "passed",
       "validate_rc": 0
@@ -523,10 +523,10 @@
         "90",
         "--still"
       ],
-      "decoded_md5": "41b30b8ff21d571a65fee34ebacdd6c4",
-      "encoder_md5": "0ef9825062a25c4d950ee924113c6f89",
+      "decoded_md5": "284d88a880f9600828626de2c8125925",
+      "encoder_md5": "2b31e378787363641c836fdf563bbd0e",
       "fixture": "tests/data/basic_64x64_1f.y4m",
-      "ivf_bytes": 936,
+      "ivf_bytes": 1448,
       "name": "still_64_base",
       "status": "passed",
       "validate_rc": 0
@@ -558,10 +558,10 @@
         "141",
         "--still"
       ],
-      "decoded_md5": "cf5131f23bb673fe04647e66536b9305",
-      "encoder_md5": "c47ea7a5e8f826addb8ef90c527c917a",
+      "decoded_md5": "91a89a5f6a9587955c7cd0a67361e728",
+      "encoder_md5": "ac39c106370f67cb5720280f650338a9",
       "fixture": "tests/data/basic_64x64_1f.y4m",
-      "ivf_bytes": 259,
+      "ivf_bytes": 400,
       "name": "still_64_qp141",
       "status": "passed",
       "validate_rc": 0
@@ -574,10 +574,10 @@
         "191",
         "--still"
       ],
-      "decoded_md5": "71eb7a993e13a5b5fad2308480953a06",
-      "encoder_md5": "3768deaaad9a67f7bece568d743993e5",
+      "decoded_md5": "fb322423f862feb5dbdb04c1bc961529",
+      "encoder_md5": "c3feceb50ec5cfc2dc3340704ffada38",
       "fixture": "tests/data/basic_64x64_1f.y4m",
-      "ivf_bytes": 105,
+      "ivf_bytes": 167,
       "name": "still_64_qp191",
       "status": "passed",
       "validate_rc": 0
@@ -590,10 +590,10 @@
         "255",
         "--still"
       ],
-      "decoded_md5": "007fe42558e87b3bf162d2a77c465f08",
-      "encoder_md5": "d1e1ebebf2885e575c55508f8b7157d1",
+      "decoded_md5": "875735a286efb3d11be1448eb91e9c7d",
+      "encoder_md5": "f41f9d1556e56b69ecd07026815f7a7c",
       "fixture": "tests/data/basic_64x64_1f.y4m",
-      "ivf_bytes": 73,
+      "ivf_bytes": 71,
       "name": "still_64_qp255",
       "status": "passed",
       "validate_rc": 0
@@ -606,10 +606,10 @@
         "91",
         "--still"
       ],
-      "decoded_md5": "ae4fb2ce1f6aea5f68df3c6c6e1fff9f",
-      "encoder_md5": "f50e18c4e08eab3ca6437ed6283a9216",
+      "decoded_md5": "e9a4faaf61bd1d4cf6775cd7db5edc91",
+      "encoder_md5": "d2779b50951674778c10a6fdbd644aa7",
       "fixture": "tests/data/basic_64x64_1f.y4m",
-      "ivf_bytes": 982,
+      "ivf_bytes": 1499,
       "name": "still_64_qp91",
       "status": "passed",
       "validate_rc": 0
@@ -623,10 +623,10 @@
         "--still",
         "--still-rdoq"
       ],
-      "decoded_md5": "4e2a0cf26d593d3c68263e486d4aafa3",
-      "encoder_md5": "a7ee3a0ac75781ce2a2c7390c3503019",
+      "decoded_md5": "bf97c34fc0fb001ed2cf6e36bc3fc397",
+      "encoder_md5": "cc330b8b5d528da885ee2ff6c4228e1c",
       "fixture": "tests/data/basic_64x64_1f.y4m",
-      "ivf_bytes": 794,
+      "ivf_bytes": 1273,
       "name": "still_64_rdoq",
       "status": "passed",
       "validate_rc": 0

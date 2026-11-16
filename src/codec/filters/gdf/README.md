@@ -341,7 +341,7 @@ reconstruction, and writes `base.y4m`, `gdf_frame.y4m` (per_block = 0) and
 `gdf_block.y4m` (per_block = 1).  `run_quality.sh` measures PSNR-Y with ffmpeg
 and CVVDP-JOD with `cvvdp` (`standard_fhd`, device `mps`).
 
-`shine_1280x720_60f.y4m`, first frame; 640×360 is the top-left crop.  CVVDP is
+`pub_1280x720_60f.y4m`, first frame; 640×360 is the top-left crop.  CVVDP is
 ColorVideoVDP v0.5.7 (37.84 pix/deg, `standard_fhd`, MPS) on the same Y4M files
 the gate compares.
 

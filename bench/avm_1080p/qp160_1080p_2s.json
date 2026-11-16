@@ -1,5 +1,5 @@
 {
-  "ref": "bench/avm_1080p/shine_1080p_2s.y4m",
+  "ref": "bench/avm_1080p/legacy_1080p_2s.y4m",
   "test": "bench/avm_1080p/qp160_1080p_2s.ivf",
   "frames": 120,
   "fps": "60/1",

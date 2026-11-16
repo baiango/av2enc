@@ -28,7 +28,7 @@ nvcc --version
 # Prove the sm_86 cubin executes; do not silently JIT the embedded PTX.
 export CUDA_DISABLE_PTX_JIT=1
 
-Y4M="$REPO/testdata/shine_1920x1080_10f.y4m"
+Y4M="$REPO/testdata/pub_1920x1080_10f.y4m"
 if [ -f "$Y4M" ]; then
   exec "$BUILD/cuda_dct_perf" --y4m "$Y4M" "$@"
 else

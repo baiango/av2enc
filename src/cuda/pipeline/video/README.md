@@ -342,7 +342,7 @@ Both scripts build `video_gate.cpp` and run, for each phase:
 5. the launch/transfer/timing report.
 
 Phases: 2-frame and 8-frame 64x64 synthetic, and 2-frame and 8-frame 720p from
-`testdata/shine_1280x720_60f.y4m`. 720p defaults to `--single-block` (mirrors
+`testdata/pub_1280x720_60f.y4m`. 720p defaults to `--single-block` (mirrors
 the CPU gate); `--full-tree` runs the variance-driven tree. `DAV2D=` overrides
 decoder discovery.
 
@@ -463,7 +463,7 @@ recon 0 diffs and a clean decode.  The CUDA inter-residual selftest reports
 
 ### RTX 3060 12 GB, CUDA 12.8, `sm_86` (real event times)
 
-Default run (`build_gpu_gate.sh`, 720p single-block, `testdata/shine_1280x720_60f.y4m`):
+Default run (`build_gpu_gate.sh`, 720p single-block, `testdata/pub_1280x720_60f.y4m`):
 
 ```text
 m2 inter-residual selftest: PASS (128 trials, backend=cuda, ...)

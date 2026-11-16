@@ -13,7 +13,7 @@ calibrated bundle ladder.
 ## Features
 
 Measured on **Apple M4**, 7 paired repeats, fixture
-`testdata/shine_640x360_1f.y4m` (640x360, 1 frame), CVVDP 0.5.7 with
+`testdata/pub_640x360_1f.y4m` (640x360, 1 frame), CVVDP 0.5.7 with
 `standard_fhd`, pinned `dav2d` f9dafbc. Quality is interpolated at the 1000 kbps
 anchor from the QP grid `110,130,150,170,190,210,230`; the 300/1500/2500 kbps
 points are recorded in `tools/effort/effort_table.json`.

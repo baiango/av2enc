@@ -224,7 +224,7 @@ else
 fi
 
 # --- 5. rejections -------------------------------------------------------
-SHINE="$TESTDATA/shine_640x360_4f.y4m"
+SHINE="$TESTDATA/pub_640x360_4f.y4m"
 if [ -f "$SHINE" ]; then
     if "$BIN" "$SHINE" -o "$TMP/gpu.ivf" --video --frames 2 --qp 190 \
             --video-qp-lambda --video-gpu >/dev/null 2>"$TMP/gpu.err"; then

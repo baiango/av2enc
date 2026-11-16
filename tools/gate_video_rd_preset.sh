@@ -45,8 +45,8 @@ fi
 export DAV2D
 
 NASA="$TESTDATA/nasa_480x240_30fps_60f.y4m"
-SHINE="$TESTDATA/shine_640x360_4f.y4m"
-[ -f "$SHINE" ] || SHINE="$TESTDATA/shine_640x360_1f.y4m"
+SHINE="$TESTDATA/pub_640x360_4f.y4m"
+[ -f "$SHINE" ] || SHINE="$TESTDATA/pub_640x360_1f.y4m"
 if [ ! -f "$NASA" ] && [ ! -f "$SHINE" ]; then
     echo "gate_video_rd_preset: SKIP (exit 77): no 4-frame clip in $TESTDATA" >&2
     exit 77

@@ -2,10 +2,10 @@
 
 | id | severity | class | title | repro | evidence | files | status |
 |---|---|---|---|---|---|---|---|
-| SCOUT-INTER-CORE-01 | med | confirmed | `--video-min-block 4` + `--video-max-depth >=5` aborts in the keyframe (sub-8 / 4-tall leaves) | `build/av2enc testdata/shine_640x360_1f.y4m --video --frames 1 --video-max-depth 5 --video-min-block 4` | exit 1, `keyframe encode failed: intra DC prediction failed`; depth 4 passes | src/pipeline/video/video_frame.cpp, src/pipeline/video/video_syntax.cpp | new |
-| SCOUT-INTER-CORE-02 | low | doc/gap | `--video-long-term` silently caps at 16 frames; 17+ fails after reading the input | `build/av2enc testdata/shine_1280x720_60f.y4m --video --frames 17 --video-long-term` | exit 1, `order_hint does not fit OrderHintBits`; 16 frames exact, plain `--video` 24 frames exact | src/pipeline/video/video_frames.cpp, src/codec/inter/longterm/longterm_pool.cpp | new |
-| SCOUT-INTER-CORE-03 | low | doc/gap | `--rc crf/vbr` + `--video-leading/--video-olk/--video-ras` accepted, then fails on `frame_base_q_idx` length | `build/av2enc testdata/shine_1280x720_60f.y4m --video --frames 4 --video-leading 1 --rc crf --crf 30` | exit 1, `frame_base_q_idx must be empty or have one entry per frame`; long-term/SEF/SWITCH with the same RC pass | src/pipeline/video/video_frames.cpp, src/pipeline/video/video_frame.cpp | new |
-| SCOUT-INTER-CORE-04 | low | doc/gap | inter-residual gate is vacuous on the product fixture: `--video-inter-residual` emits a byte-identical stream | `build/av2enc testdata/shine_1280x720_60f.y4m --video --frames 4 --video-inter-residual` vs without | identical MD5 `e4cf72dd13ddc2c32c2f8683153b3c81`; 0 `residual=1` of 1847 inter candidates; gate still PASSes | src/pipeline/video/video_gate.cpp, src/pipeline/video/video_cli_gate.sh, tools/run_gates.sh | new |
+| SCOUT-INTER-CORE-01 | med | confirmed | `--video-min-block 4` + `--video-max-depth >=5` aborts in the keyframe (sub-8 / 4-tall leaves) | `build/av2enc testdata/pub_640x360_1f.y4m --video --frames 1 --video-max-depth 5 --video-min-block 4` | exit 1, `keyframe encode failed: intra DC prediction failed`; depth 4 passes | src/pipeline/video/video_frame.cpp, src/pipeline/video/video_syntax.cpp | new |
+| SCOUT-INTER-CORE-02 | low | doc/gap | `--video-long-term` silently caps at 16 frames; 17+ fails after reading the input | `build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 17 --video-long-term` | exit 1, `order_hint does not fit OrderHintBits`; 16 frames exact, plain `--video` 24 frames exact | src/pipeline/video/video_frames.cpp, src/codec/inter/longterm/longterm_pool.cpp | new |
+| SCOUT-INTER-CORE-03 | low | doc/gap | `--rc crf/vbr` + `--video-leading/--video-olk/--video-ras` accepted, then fails on `frame_base_q_idx` length | `build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 4 --video-leading 1 --rc crf --crf 30` | exit 1, `frame_base_q_idx must be empty or have one entry per frame`; long-term/SEF/SWITCH with the same RC pass | src/pipeline/video/video_frames.cpp, src/pipeline/video/video_frame.cpp | new |
+| SCOUT-INTER-CORE-04 | low | doc/gap | inter-residual gate is vacuous on the product fixture: `--video-inter-residual` emits a byte-identical stream | `build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 4 --video-inter-residual` vs without | identical MD5 `e4cf72dd13ddc2c32c2f8683153b3c81`; 0 `residual=1` of 1847 inter candidates; gate still PASSes | src/pipeline/video/video_gate.cpp, src/pipeline/video/video_cli_gate.sh, tools/run_gates.sh | new |
 
 ## Details
 
@@ -13,7 +13,7 @@
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-build/av2enc testdata/shine_640x360_1f.y4m --video --frames 1 \
+build/av2enc testdata/pub_640x360_1f.y4m --video --frames 1 \
   --video-max-depth 5 --video-min-block 4 -o /tmp/sub8.ivf
 ```
 Observed:
@@ -49,9 +49,9 @@ Repro:
 ```sh
 cd /Users/arin/work/av2enc
 # 60-frame 720p fixture; keep --frames <= 16 for long-term
-build/av2enc testdata/shine_1280x720_60f.y4m --video --frames 16 \
+build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 16 \
   --video-long-term -o /tmp/lt16.ivf   # passes, recon exact
-build/av2enc testdata/shine_1280x720_60f.y4m --video --frames 17 \
+build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 17 \
   --video-long-term -o /tmp/lt17.ivf   # fails
 ```
 Observed: frame 17 fails with
@@ -72,11 +72,11 @@ key-frame refresh means hints repeat after 16).
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-build/av2enc testdata/shine_1280x720_60f.y4m --video --frames 4 \
+build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 4 \
   --video-leading 1 --rc crf --crf 30 -o /tmp/leadcrf.ivf
-build/av2enc testdata/shine_1280x720_60f.y4m --video --frames 4 \
+build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 4 \
   --video-olk --rc crf --crf 30 -o /tmp/olkcrf.ivf
-build/av2enc testdata/shine_1280x720_60f.y4m --video --frames 3 \
+build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 3 \
   --video-ras --rc crf --crf 30 -o /tmp/rascrf.ivf
 ```
 Observed: all exit 1 with
@@ -102,9 +102,9 @@ frame headers.
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-build/av2enc testdata/shine_1280x720_60f.y4m --video --frames 4 \
+build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 4 \
   --video-inter-residual -o /tmp/720res.ivf
-build/av2enc testdata/shine_1280x720_60f.y4m --video --frames 4 \
+build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 4 \
   -o /tmp/720plain.ivf
 md5 -q /tmp/720res.ivf /tmp/720plain.ivf
 ```

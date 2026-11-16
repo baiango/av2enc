@@ -338,7 +338,7 @@ Run:
 ### 720p quality/rate proxy
 
 `test_quality_rate_720p()` loads up to 24 frames from
-`testdata/shine_1280x720_60f.y4m` (override with `ME2_Y4M=/path/clip.y4m`),
+`testdata/pub_1280x720_60f.y4m` (override with `ME2_Y4M=/path/clip.y4m`),
 uses frame pairs (0/1, 8/9, 16/17), and measures every second 64x64 block.
 A 280-frame 720p file is not in the repository; point `ME2_Y4M` at one to run
 the same harness on it (the first 24 frames are used).  PSNR is computed from

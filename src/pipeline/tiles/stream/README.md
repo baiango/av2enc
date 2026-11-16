@@ -148,7 +148,7 @@ Covered without a decoder:
 cd src/encoder/m1/tiles_stream
 ./gate_dav2d_strict.sh
 DAV2D=/path/to/dav2d ./gate_dav2d_strict.sh
-./gate_dav2d_strict.sh testdata/shine_1920x1080_10f.y4m --layout 4x2
+./gate_dav2d_strict.sh testdata/pub_1920x1080_10f.y4m --layout 4x2
 ./gate_dav2d_strict.sh --deblock-diagnostic-only
 ```
 
@@ -167,12 +167,12 @@ Local result with `tools/bin/dav2d-macos` (`f9dafbc`), QP 90, deblock off:
 | `tests/data/basic_640x360_1f.y4m` | 4x2 | 8 | PASS, 0 diffs |
 | `tests/data/basic_640x360_1f.y4m` | 8x2 | 16 | PASS, 0 diffs |
 | `tests/data/basic_640x360_1f.y4m` | 16x2 | — | UNSUPPORTED (not representable) |
-| `testdata/shine_1920x1080_10f.y4m` | 1x1 | 1 | PASS, 0 diffs |
-| `testdata/shine_1920x1080_10f.y4m` | 2x1 | 2 | PASS, 0 diffs |
-| `testdata/shine_1920x1080_10f.y4m` | 2x2 | 4 | PASS, 0 diffs |
-| `testdata/shine_1920x1080_10f.y4m` | 4x2 | 8 | PASS, 0 diffs |
-| `testdata/shine_1920x1080_10f.y4m` | 8x2 | 16 | PASS, 0 diffs |
-| `testdata/shine_1920x1080_10f.y4m` | 16x2 | 32 | PASS, 0 diffs |
+| `testdata/pub_1920x1080_10f.y4m` | 1x1 | 1 | PASS, 0 diffs |
+| `testdata/pub_1920x1080_10f.y4m` | 2x1 | 2 | PASS, 0 diffs |
+| `testdata/pub_1920x1080_10f.y4m` | 2x2 | 4 | PASS, 0 diffs |
+| `testdata/pub_1920x1080_10f.y4m` | 4x2 | 8 | PASS, 0 diffs |
+| `testdata/pub_1920x1080_10f.y4m` | 8x2 | 16 | PASS, 0 diffs |
+| `testdata/pub_1920x1080_10f.y4m` | 16x2 | 32 | PASS, 0 diffs |
 
 That covers **1/2/4/8/16 tiles at both 640x360 and 1080p** (and the verified
 16x2/32-tile extra at 1080p).

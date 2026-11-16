@@ -296,7 +296,7 @@ no M1 stream can be affected.
 * the full constraint matrix (sizes, types, planes, `use_intrabc`, lossless,
   FSC, `enable_chroma_dctonly`, `reduced_tx_set`, IST conflict, TCQ/QM
   eligibility);
-* a real 16x16 luma block from `testdata/shine_256x256_1f.y4m` (pixel-128
+* a real 16x16 luma block from `testdata/pub_256x256_1f.y4m` (pixel-128
   residual, ADST_ADST, 528-step quantiser): pinned levels + pinned source
   residual, max/mean/SSE bounds, determinism, and a check that the DDT
   reconstruction differs from ADST_ADST;
@@ -322,7 +322,7 @@ unchanged and links **build-directory copies** of:
 The core files are never edited.  The gate:
 
 1. builds a deterministic 3-frame 256x256 motion clip from
-   `testdata/shine_256x256_1f.y4m`;
+   `testdata/pub_256x256_1f.y4m`;
 2. encodes it with the flag 0 and flag 1 (DDTX pass: forced TX type 1
    `ADST_DCT`/DCT_ADST; FDDT pass: forced type 4 `FLIPADST_DCT`/DCT_FLIPADST);
 3. finds the single differing bit (bit 504 in the gate stream; sequence

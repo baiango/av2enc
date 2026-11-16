@@ -376,7 +376,7 @@ double mean_sigma(const std::vector<FrameStats>& stats) {
 int main(int argc, char** argv) {
   const std::filesystem::path input =
       argc > 1 ? std::filesystem::path(argv[1])
-               : std::filesystem::path("testdata/shine_1280x720_60f.y4m");
+               : std::filesystem::path("testdata/pub_1280x720_60f.y4m");
   std::string error;
 
   std::vector<VideoFrame> frames;

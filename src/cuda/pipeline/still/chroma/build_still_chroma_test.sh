@@ -102,10 +102,10 @@ if [ "$RUN" -eq 1 ]; then
       Y4M_ARGS+=(--y4m "$out")
     done
     # Real-content frames when the (unsynced) test media is present.
-    SHINE="$ROOT/testdata/shine_1280x720_60f.y4m"
+    SHINE="$ROOT/testdata/pub_1280x720_60f.y4m"
     if [ -s "$SHINE" ]; then
       for size in 64x64 640x360 1920x1080; do
-        out="$FRAME_DIR/shine_${size}.y4m"
+        out="$FRAME_DIR/legacy_${size}.y4m"
         if [ ! -s "$out" ]; then
           w="${size%x*}"
           h="${size#*x}"

@@ -3,7 +3,7 @@
 #
 # Checks:
 #   * the default --video stream and --rc cqp are byte-identical to the pinned
-#     720p wave-2 stream (c6d588647aacb2275dfaea41a00fb501);
+#     720p wave-2 stream (65feaa8685e2d861a44a65632268ba92);
 #   * --rc crf and --rc vbr decode with `dav2d --strict 1` and their encoder
 #     reconstruction equals the decoded frames sample for sample (via the
 #     existing video CLI gate);
@@ -52,7 +52,7 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 77
 fi
 
-INPUT="$TESTDATA/shine_1280x720_60f.y4m"
+INPUT="$TESTDATA/pub_1280x720_60f.y4m"
 if [ ! -f "$INPUT" ]; then
     echo "SKIP: missing $INPUT" >&2
     exit 77
@@ -86,7 +86,7 @@ COMMON=(--video --frames 6 --video-max-depth 3)
 # --- default and CQP are the pinned stream --------------------------------
 "$BIN" "$INPUT" -o "$TMP/base.ivf" "${COMMON[@]}" >/dev/null
 base_md5=$(md5_of "$TMP/base.ivf")
-if [ "$base_md5" != "c6d588647aacb2275dfaea41a00fb501" ]; then
+if [ "$base_md5" != "65feaa8685e2d861a44a65632268ba92" ]; then
     fail "default --video MD5 moved: $base_md5"
 else
     ok "default --video 720p MD5 $base_md5"

@@ -145,8 +145,8 @@ STATUS=0
   code=$?
   if [[ "$code" -ne 77 ]]; then STATUS=1; fi
 }
-if [[ -f "$ROOT/testdata/shine_1280x720_60f.y4m" ]]; then
-  "$GATE_OUT" --input "$ROOT/testdata/shine_1280x720_60f.y4m" \
+if [[ -f "$ROOT/testdata/pub_1280x720_60f.y4m" ]]; then
+  "$GATE_OUT" --input "$ROOT/testdata/pub_1280x720_60f.y4m" \
     --out "${BUILD}/gme_gate_720.ivf" \
     --decoded "${BUILD}/gme_gate_720_decoded.y4m" || {
     code=$?

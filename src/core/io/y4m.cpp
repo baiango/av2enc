@@ -105,8 +105,10 @@ bool Y4mReader::open(std::string& error) {
   return true;
 }
 
-bool Y4mReader::parse_header_line(const std::string& line, std::string& error) {
-  std::istringstream stream(line);
+bool parse_y4m_header(std::string_view line, Y4mHeader* header_out,
+                      std::string* error_out) {
+  std::string& error = *error_out;
+  std::istringstream stream{std::string(line)};
   std::string token;
   if (!(stream >> token) || token != "YUV4MPEG2") {
     error = "not a Y4M file: missing YUV4MPEG2 signature";
@@ -188,6 +190,18 @@ bool Y4mReader::parse_header_line(const std::string& line, std::string& error) {
     error = "incomplete Y4M header: W, H and F fields are required";
     return false;
   }
+  // Bound the input before any frame buffer is sized from it.  The encoder
+  // would reject >65535 later, but only after the reader has already tried to
+  // allocate; a crafted header must fail here instead.
+  if (header.width > 0xFFFFU || header.height > 0xFFFFU) {
+    error = "Y4M dimensions exceed 65535";
+    return false;
+  }
+  if (static_cast<std::uint64_t>(header.width) * header.height >
+      kMaxInputPixels) {
+    error = "Y4M dimensions exceed the input pixel budget";
+    return false;
+  }
 
   if (!is_supported_colorspace(header.colorspace)) {
     error = "unsupported Y4M colorspace '" + header.colorspace +
@@ -202,6 +216,13 @@ bool Y4mReader::parse_header_line(const std::string& line, std::string& error) {
     return false;
   }
 
+  *header_out = std::move(header);
+  return true;
+}
+
+bool Y4mReader::parse_header_line(const std::string& line, std::string& error) {
+  Y4mHeader header;
+  if (!parse_y4m_header(line, &header, &error)) return false;
   header_ = std::move(header);
   return true;
 }
@@ -237,6 +258,13 @@ Y4mReadResult Y4mReader::read_frame(Y4mFrame& frame, std::string& error) {
 
   const std::size_t luma_size = frame.luma_size();
   const std::size_t chroma_size = frame.chroma_size();
+  // Checked sum: luma + 2*chroma can overflow size_t for extreme headers, and
+  // a wrapped total would pass the streamsize check below and resize short.
+  if (chroma_size >
+      (std::numeric_limits<std::size_t>::max() - luma_size) / 2U) {
+    error = "Y4M frame size overflows";
+    return Y4mReadResult::kError;
+  }
   const std::size_t total_size = luma_size + 2U * chroma_size;
   if (total_size > static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max())) {
     error = "Y4M frame is too large to read";

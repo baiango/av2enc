@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <string>
 
 namespace av2enc::inter::mv_stack_full {

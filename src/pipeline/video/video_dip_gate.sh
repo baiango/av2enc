@@ -66,8 +66,8 @@ if [ -z "$DAV2D" ] || [ ! -x "$DAV2D" ]; then
   exit 77
 fi
 
-INPUT_64="${INPUT_64:-${AV2ENC_INPUT_64:-$ROOT/testdata/m0_64x64_1f.y4m}}"
-INPUT_360="${INPUT_360:-${AV2ENC_INPUT_360:-$ROOT/testdata/shine_640x360_4f.y4m}}"
+INPUT_64="${INPUT_64:-${AV2ENC_INPUT_64:-$ROOT/testdata/pub_64x64_1f.y4m}}"
+INPUT_360="${INPUT_360:-${AV2ENC_INPUT_360:-$ROOT/testdata/pub_640x360_4f.y4m}}"
 for path in "$INPUT_64" "$INPUT_360"; do
   if [ ! -f "$path" ]; then
     echo "video_dip_gate: missing input $path" >&2
@@ -177,34 +177,34 @@ run_case() {
 
 # 64x64: one key picture.  The DC-only path still runs the DIP decision, so
 # --video-intra-full is not required for use_dip to appear.
-run_case dip_64 "$INPUT_64" 1 c571ca4ea12101f2331a37b056f8eeeb 1 \
+run_case dip_64 "$INPUT_64" 1 916e4ff31ee49c7196d41b9f7d1bbac6 1 \
   --video-dip
-run_case dip_full_64 "$INPUT_64" 1 e8363bca39b0c2335de22348083d1f1c 1 \
+run_case dip_full_64 "$INPUT_64" 1 4100e7a334ee9dd1cd8f24e3ecde02d4 1 \
   --video-dip --video-intra-full
-run_case dip_full_tx_64 "$INPUT_64" 1 572873b50748a340ea5543259e402f08 1 \
+run_case dip_full_tx_64 "$INPUT_64" 1 da4db4f33465fb5e5123df01995a4439 1 \
   --video-dip --video-intra-full --video-tx-search
-run_case dip_mrl_ist_64 "$INPUT_64" 1 65b9c2a7b20cfccc57d09f43a1227156 1 \
+run_case dip_mrl_ist_64 "$INPUT_64" 1 f0a5655c3c8799da867118597575095d 1 \
   --video-dip --video-mrl --video-ist --video-intra-full --video-tx-search
 
 # 640x360: four pictures (key + P).  The P-frame intra fallback blocks code
 # use_dip = 0 (the DIP decision is keyframe-only) but still carry the §5.20.7.9
 # symbol, so the syntax stays in step with the decoder.
-run_case dip_360 "$INPUT_360" 4 b10834c57c3bc8f7305d6037adaf632c 1 \
+run_case dip_360 "$INPUT_360" 4 6fca18601417a4f619373d76dd08e24f 1 \
   --video-dip
-run_case dip_full_360 "$INPUT_360" 4 d2a59aa14ede0490d6be4cf9942b49e8 1 \
+run_case dip_full_360 "$INPUT_360" 4 637a57e4fa4b29613d2d4ef7e28dad34 1 \
   --video-dip --video-intra-full
-run_case dip_full_tx_360 "$INPUT_360" 4 76e99c92dcf9f669e51799a7a88cf398 1 \
+run_case dip_full_tx_360 "$INPUT_360" 4 6753484198f1c2c1726da7d882fbd8e1 1 \
   --video-dip --video-intra-full --video-tx-search
-run_case dip_mrl_ist_360 "$INPUT_360" 4 95b7c930e711549901c7819a5ee63296 1 \
+run_case dip_mrl_ist_360 "$INPUT_360" 4 485999cc74c4d6f3018797d329d2519f 1 \
   --video-dip --video-mrl --video-ist --video-intra-full --video-tx-search
 run_case dip_avg_adaptive_360 "$INPUT_360" 4 \
-  b8f4fdc5a043af9984a72b5b4a211db2 1 \
+  6762fd0625b723b105b6b62e03d5956e 1 \
   --video-dip --video-intra-full --avg-cdf --adaptive-cdf
 
 # Defaults: no --video-dip means no sequence bit and no DIP block, and the
 # pinned IVF bytes do not move.
-run_case default_64 "$INPUT_64" 1 df6fd676b1c879b6ccc2fd3e575b24a5 0
-run_case default_360 "$INPUT_360" 4 83b34e7944346d6b3f64a460bdf1dc96 0
+run_case default_64 "$INPUT_64" 1 a26e28bacbb4872681fafa801a7f011a 0
+run_case default_360 "$INPUT_360" 4 c075872790339c40da0b0cab29147e70 0
 
 # Named rejections.
 reject_case() {

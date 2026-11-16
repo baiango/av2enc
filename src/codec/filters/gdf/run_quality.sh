@@ -28,7 +28,7 @@ QP="${QP:-90}"
 LAMBDA="${LAMBDA:-0}"
 FFMPEG="${FFMPEG:-ffmpeg}"
 CVVDP="${CVVDP:-cvvdp}"
-INPUT_720="${INPUT_720:-$ROOT/testdata/shine_1280x720_60f.y4m}"
+INPUT_720="${INPUT_720:-$ROOT/testdata/pub_1280x720_60f.y4m}"
 INPUT_640="${INPUT_640:-}"
 
 mkdir -p "$BUILD" "$OUT"

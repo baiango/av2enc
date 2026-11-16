@@ -3,7 +3,7 @@
 #
 # Cases:
 #   * default --video 720p 6-frame stream stays on the wave-2 pin
-#     (c6d588647aacb2275dfaea41a00fb501);
+#     (65feaa8685e2d861a44a65632268ba92);
 #   * 720p 6 frames at 2x1/2x2/4x2/8x2 decodes with `dav2d --strict 1` and its
 #     decoded planes equal the encoder's --video-recon output sample for
 #     sample (the per-tile splitter resets entropy/context state per tile);
@@ -55,7 +55,7 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 77
 fi
 
-INPUT="$ROOT/testdata/shine_1280x720_60f.y4m"
+INPUT="$ROOT/testdata/pub_1280x720_60f.y4m"
 if [ ! -f "$INPUT" ]; then
     echo "SKIP: missing $INPUT" >&2
     exit 77
@@ -147,7 +147,7 @@ COMMON=(--video --frames 6 --video-max-depth 3)
 # --- default stream is still the wave-2 pin ------------------------------
 "$BIN" "$INPUT" -o "$TMP/base.ivf" "${COMMON[@]}" >/dev/null
 base_md5=$(md5_of "$TMP/base.ivf")
-if [ "$base_md5" != "c6d588647aacb2275dfaea41a00fb501" ]; then
+if [ "$base_md5" != "65feaa8685e2d861a44a65632268ba92" ]; then
     fail "default --video MD5 moved: $base_md5"
 else
     ok "default --video 720p pin $base_md5"
@@ -187,7 +187,7 @@ done
 # after the keyframe payloads were already coded.
 AVG_COMMON=(--video --frames 3 --video-max-depth 3 --tiles 2x2)
 # BUG-INTER-001 pin: 2x2, 3 frames, frozen priming + §8.2.4/§7.5 adaptive.
-EXPECTED_AVG_TILES_MD5=6b395afc949bd7c45565629558fd38ff
+EXPECTED_AVG_TILES_MD5=a91f3ab1c42d4552df475e2dca3b6fdc
 AVG_BASE="$TMP/avg_base.ivf"
 AVG_IVF="$TMP/avg.ivf"
 AVG_RECON="$TMP/avg.recon.y4m"

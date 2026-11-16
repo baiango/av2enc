@@ -331,7 +331,7 @@ The suite is clean under `-fsanitize=address,undefined` and `WERROR=1`.
 ```sh
 src/encoder/frame/mfh/build_and_test.sh
 src/encoder/frame/mfh/build_and_test.sh --frames 4
-INPUT=testdata/shine_1280x720_60f.y4m src/encoder/frame/mfh/build_and_test.sh --frames 4
+INPUT=testdata/pub_1280x720_60f.y4m src/encoder/frame/mfh/build_and_test.sh --frames 4
 ```
 
 The gate:

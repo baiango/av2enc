@@ -216,7 +216,7 @@ mean), original luma, source chroma neighbours for the derived regression.
 Absolute PSNR is optimistic; the derived-vs-explicit difference is the result.
 M1's QP-90 calibration is lambda ≈ 2.18 SSE/bit, so the sweep is 0..8.
 
-`testdata/shine_256x256_1f.y4m`, 8x8 chroma blocks (256 blocks, 32,768 chroma
+`testdata/pub_256x256_1f.y4m`, 8x8 chroma blocks (256 blocks, 32,768 chroma
 samples):
 
 | Mode | SSE | PSNR |

@@ -9,7 +9,7 @@ and average-CDF. Build: `build/av2enc` (main `527738a`); decoder
 |---|---|---|---|---|---|---|---|
 | SCOUT-ENTROPY-01 | med | confirmed | `validate_dav2d.sh` passes a multi-frame stream whose later frames failed to decode | `head -c $((sz-50)) v.ivf > vcut.ivf; tools/validate_dav2d.sh vcut.ivf` | 4-frame IVF: `nb_read_frames=3`, dav2d rc 0, validator rc 0 and prints `OK`; same for a 4-frame CDF-continuity stream that decodes 1/4 | `tools/validate_dav2d.sh:55,85-92,139` | new |
 | SCOUT-ENTROPY-02 | med | suspected | packed CDF image / average-CDF bank silently omits adapted CDF arrays (CCTX, TX-partition, CDEF, palette, IBC, ext-partition, compound) | static: compare `cdf_arrays()` with the adapted members | 43 (still) / 76 (video) descriptor entries packed; `cctx_type`, `tx_partition`, `fsc_mode`, `cdef_*`, `palette_cdfs_`, `ext_cdfs_`, `ibc_cdfs_`, `lr_state_` (still) and `comp_mode`/`is_joint`/`compound_mode_non_joint` (video) are absent. Current streams stay consistent only because `--tiles` rejects those tools and every video frame resets | `src/pipeline/still/still_syntax.cpp:253-258,345-411,517,2888-2913`; `src/pipeline/video/video_syntax.cpp:275-277,379-490` | new |
-| SCOUT-ENTROPY-03 | high | duplicate | `--avg-cdf --adaptive-cdf` + B-frames / temporal layers / long-term / OLK / leading / SWITCH / RAS writes adapted tiles under headers that signal `disable_cdf_update=1` | `build/av2enc testdata/shine_1280x720_60f.y4m -o /tmp/b.ivf --video --frames 4 --b-frames 2 --avg-cdf --adaptive-cdf` | encode rc 0; dav2d rc 1, `No data decoded`; `--b-frames 2 --avg-cdf` is byte-identical to no `--avg-cdf` | `src/pipeline/video/video_frame.cpp:470-472,1234,1434`; `src/pipeline/video/video_frames.cpp:84,335,435` | duplicate — `SCOUT-FRAME-01` (`frame-types.md`), `SCOUT-INTER-ADV-01` (`inter-advanced.md`) |
+| SCOUT-ENTROPY-03 | high | duplicate | `--avg-cdf --adaptive-cdf` + B-frames / temporal layers / long-term / OLK / leading / SWITCH / RAS writes adapted tiles under headers that signal `disable_cdf_update=1` | `build/av2enc testdata/pub_1280x720_60f.y4m -o /tmp/b.ivf --video --frames 4 --b-frames 2 --avg-cdf --adaptive-cdf` | encode rc 0; dav2d rc 1, `No data decoded`; `--b-frames 2 --avg-cdf` is byte-identical to no `--avg-cdf` | `src/pipeline/video/video_frame.cpp:470-472,1234,1434`; `src/pipeline/video/video_frames.cpp:84,335,435` | duplicate — `SCOUT-FRAME-01` (`frame-types.md`), `SCOUT-INTER-ADV-01` (`inter-advanced.md`) |
 
 ## Details
 
@@ -18,7 +18,7 @@ and average-CDF. Build: `build/av2enc` (main `527738a`); decoder
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-./build/av2enc testdata/shine_1280x720_60f.y4m -o /tmp/v.ivf --video --frames 4
+./build/av2enc testdata/pub_1280x720_60f.y4m -o /tmp/v.ivf --video --frames 4
 sz=$(stat -f%z /tmp/v.ivf); head -c $((sz-50)) /tmp/v.ivf > /tmp/vcut.ivf
 ./tools/bin/dav2d-macos -q -i /tmp/vcut.ivf -o /tmp/vcut.y4m --threads 1; echo dav2d=$?
 ffprobe -v error -f yuv4mpegpipe -i /tmp/vcut.y4m -count_frames \
@@ -28,7 +28,7 @@ tools/validate_dav2d.sh /tmp/vcut.ivf; echo validate=$?           # 0
 Observed: `dav2d=0`, `nb_read_frames=3`, and the validator prints
 `ivf: 1280x720, 4 frame(s)`, `nb_read_frames=3`, `OK: dav2d decoded`, exit 0.
 The same happens for the documented entropy-only reproducer
-`AV2ENC_ENABLE_UNGATED_CDF_CONTINUITY=1 ./build/av2enc testdata/shine_1280x720_60f.y4m
+`AV2ENC_ENABLE_UNGATED_CDF_CONTINUITY=1 ./build/av2enc testdata/pub_1280x720_60f.y4m
 -o /tmp/gh.ivf --video --frames 4 --avg-cdf --adaptive-cdf --cdf-continuity`
 (4-frame IVF, dav2d decodes 1 frame with 5 `Error` lines, exit 0, validator
 reports OK).
@@ -82,10 +82,10 @@ assert/reject when a non-packed array is enabled.
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-./build/av2enc testdata/shine_1280x720_60f.y4m -o /tmp/b.ivf \
+./build/av2enc testdata/pub_1280x720_60f.y4m -o /tmp/b.ivf \
     --video --frames 4 --b-frames 2 --avg-cdf --adaptive-cdf
 ./tools/bin/dav2d-macos -q -i /tmp/b.ivf -o /tmp/b.y4m --threads 1; echo $?  # 1
-./build/av2enc testdata/shine_1280x720_60f.y4m -o /tmp/b2.ivf \
+./build/av2enc testdata/pub_1280x720_60f.y4m -o /tmp/b2.ivf \
     --video --frames 4 --b-frames 2 --avg-cdf   # byte-identical to no --avg-cdf
 ```
 Observed: encode exits 0; dav2d exits 1 with `Error parsing OBU data` /

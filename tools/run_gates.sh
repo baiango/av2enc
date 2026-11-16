@@ -88,6 +88,9 @@ if [ -z "$DAV2D" ]; then
     done
 fi
 [ -n "$DAV2D" ] && export DAV2D
+if [ -n "$DAV2D" ] && [ -x "$ROOT/tools/verify_tool_pin.sh" ]; then
+    "$ROOT/tools/verify_tool_pin.sh" "$DAV2D" || die "decoder pin verification failed"
+fi
 
 if [ -z "$JOBS" ]; then
     if command -v nproc >/dev/null 2>&1; then JOBS=$(nproc)

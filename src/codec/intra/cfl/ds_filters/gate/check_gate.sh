@@ -3,7 +3,7 @@
 # pinned dav2d (`--strict 1 --threads 1`) and require 0 reconstruction diffs.
 #
 # For every index in 0 1 2:
-#   1. encode testdata/shine_256x256_1f.y4m with the instrumented M1 build;
+#   1. encode testdata/pub_256x256_1f.y4m with the instrumented M1 build;
 #   2. assert parse_seq_index.py reads that exact index from the sequence
 #      header (i.e. the stream is not silently still index 0);
 #   3. dump the encoder reconstruction with the same instrumented build;
@@ -25,7 +25,7 @@ while [ ! -f "${ROOT}/CMakeLists.txt" ] && [ "${ROOT}" != "/" ]; do
 done
 OUT="$HERE/build"
 WORK="$OUT/gate"
-SRC="$ROOT/testdata/shine_256x256_1f.y4m"
+SRC="$ROOT/testdata/pub_256x256_1f.y4m"
 
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
   "$HERE/build_gate.sh"

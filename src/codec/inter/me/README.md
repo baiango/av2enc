@@ -153,7 +153,7 @@ Coverage (`me_test.cpp`, 3,746 checks):
 - explicit fractional predictors and spatial merge candidates;
 - batch determinism over a 20-block grid;
 - guard canaries around every plane (no out-of-bounds reads/writes);
-- real `testdata/shine_256x256_1f.y4m` with a synthetic pan (45/49 blocks reach
+- real `testdata/pub_256x256_1f.y4m` with a synthetic pan (45/49 blocks reach
   zero cost) and the real 720p frame pair (search never loses to zero MV);
 - API validation failures.
 

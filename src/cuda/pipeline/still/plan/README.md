@@ -329,7 +329,7 @@ Built with `AV2ENC_ENABLE_CUDA=OFF -DAV2ENC_ALLOW_CPU_ONLY=ON` in a private
 | `tests/data/basic_64x64_1f.y4m` | depth 4, min 8, qp 90, no gates | 11 | 21 | blocks + nodes match |
 | `tests/data/basic_640x360_1f.y4m` | depth 4, min 8, qp 90, no gates | **218** | **376** | blocks + nodes match |
 | 640x360 (`testsrc2`, different content) | same | 247 | — | blocks match |
-| 1080p (`testdata/shine_1920x1080_10f.y4m`) | same | 1,399 | — | blocks match |
+| 1080p (`testdata/pub_1920x1080_10f.y4m`) | same | 1,399 | — | blocks match |
 | 640x360 (`testsrc2`) + `--still-single` | force one block/SB | 60 | — | blocks match |
 | 640x360 (`testsrc2`) + `--still-depth 2` | depth 2 | 133 | — | blocks match |
 | 640x360 (`testsrc2`) + `AV2ENC_STILL_SQUARE_ONLY=1` | square only | 354 | — | blocks match |
@@ -371,8 +371,8 @@ On the remote RTX 3060 (`sm_86`, CUDA 13.0), with the full CUDA build
 * `build_plan_cuda_test.sh` — 6/6 CPU-vs-GPU cases, 17,270 leaves, 33,017
   nodes, exact tree/leaf/partition/cost equality.
 * Default bitstream unchanged and CPU==GPU:
-  `basic_64x64_1f` `0ef9825062a25c4d950ee924113c6f89`,
-  `basic_640x360_1f` `e61de628b0812b716b0efa7dcafcdd06` for `--still` and
+  `basic_64x64_1f` `2b31e378787363641c836fdf563bbd0e`,
+  `basic_640x360_1f` `8ffbe059cfeac3e6ee255f3bb7cf72b8` for `--still` and
   `--still-gpu`.
 * Default 64-SB plan TSV/tree TSV are byte-identical to the pre-change dumps
   (only new trailing columns differ), so the default search is untouched.
@@ -386,8 +386,8 @@ wired into `encode_still_gpu`. A private CUDA build on the 3060 host succeeds, a
 
 | Input | `--still` MD5 | `--still-gpu` MD5 |
 |---|---|---|
-| `tests/data/basic_64x64_1f.y4m` | `0ef9825062a25c4d950ee924113c6f89` | same |
-| `tests/data/basic_640x360_1f.y4m` | `e61de628b0812b716b0efa7dcafcdd06` | same |
+| `tests/data/basic_64x64_1f.y4m` | `2b31e378787363641c836fdf563bbd0e` | same |
+| `tests/data/basic_640x360_1f.y4m` | `8ffbe059cfeac3e6ee255f3bb7cf72b8` | same |
 
 The CLI still reports `frame_bytes_from_cpu=1` and `linked stage hooks: 3`
 (plan plus the stage-1 TX/recon adapters); entropy and the remaining block

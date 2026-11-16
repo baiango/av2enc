@@ -17,7 +17,7 @@
 //   * determinism under reversed input order;
 //   * the bilinear quality proxy against the CPU helper;
 //   * synthetic pan/zoom/rotate frames through a real block matcher;
-//   * a real 720p pair when testdata/shine_1280x720_60f.y4m is present;
+//   * a real 720p pair when testdata/pub_1280x720_60f.y4m is present;
 //   * required_device_bytes / allocate_checked / mark / rewind /
 //     kArenaTooSmall / stage / download.
 #include <algorithm>
@@ -1298,7 +1298,7 @@ bool LoadY4mFrames(const std::string& path, int max_frames,
 }
 
 void TestReal720p(const std::string& repo_root, bool quick) {
-  const std::string path = repo_root + "/testdata/shine_1280x720_60f.y4m";
+  const std::string path = repo_root + "/testdata/pub_1280x720_60f.y4m";
   std::vector<Plane> frames;
   if (!LoadY4mFrames(path, 11, &frames) || frames.size() < 2) {
     std::printf("  real 720p: skipped (no testdata)\n");

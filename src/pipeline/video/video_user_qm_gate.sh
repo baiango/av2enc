@@ -61,7 +61,7 @@ if [ -z "$AVM_DEC" ] || [ ! -x "$AVM_DEC" ]; then
   exit 77
 fi
 
-INPUT="${AV2ENC_INPUT:-$ROOT/testdata/shine_1280x720_60f.y4m}"
+INPUT="${AV2ENC_INPUT:-$ROOT/testdata/pub_1280x720_60f.y4m}"
 FRAMES=4
 if [ ! -f "$INPUT" ]; then
   echo "video_user_qm_gate: missing input $INPUT" >&2
@@ -168,8 +168,8 @@ run_dav2d_case_base() {
   pass_case "$name ($(wc -c <"$out" | tr -d ' ') B, md5 $expected)"
 }
 
-run_dav2d_case_base base e4cf72dd13ddc2c32c2f8683153b3c81
-run_dav2d_case_base qm 25b029a72820aa7f44eaa348468054d5 --video-qm
+run_dav2d_case_base base 1d32ad7564fd049941e6c90347358a18
+run_dav2d_case_base qm 535a28a045652127e8342541fc985e0a --video-qm
 
 # --- 2. User QM carrier ------------------------------------------------------
 USER="$TMP/user.ivf"
@@ -179,8 +179,8 @@ if ! "$AV2ENC_BIN" "$INPUT" -o "$USER" --frames "$FRAMES" --video \
   fail_case user_qm_encode "encode failed"; cat "$TMP/user.log" >&2
 else
   UMD5=$(md5_of "$USER")
-  if [ "$UMD5" != "2bba524225209c18b7af16ddf298f493" ]; then
-    fail_case user_qm_pin "IVF md5 $UMD5, expected 2bba524225209c18b7af16ddf298f493"
+  if [ "$UMD5" != "8bacb8ed992651d8e18980dd1f5cadb6" ]; then
+    fail_case user_qm_pin "IVF md5 $UMD5, expected 8bacb8ed992651d8e18980dd1f5cadb6"
   else
     pass_case "user_qm_pin (md5 $UMD5)"
   fi

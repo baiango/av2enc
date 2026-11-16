@@ -67,8 +67,8 @@ if [ -z "$DAV2D" ] || [ ! -x "$DAV2D" ]; then
   exit 77
 fi
 
-INPUT_64="${AV2ENC_INPUT_64:-$ROOT/testdata/m0_64x64_1f.y4m}"
-INPUT_360="${AV2ENC_INPUT_360:-$ROOT/testdata/shine_640x360_4f.y4m}"
+INPUT_64="${AV2ENC_INPUT_64:-$ROOT/testdata/pub_64x64_1f.y4m}"
+INPUT_360="${AV2ENC_INPUT_360:-$ROOT/testdata/pub_640x360_4f.y4m}"
 for path in "$INPUT_64" "$INPUT_360"; do
   if [ ! -f "$path" ]; then
     echo "video_ibp_gate: missing input $path" >&2
@@ -189,17 +189,17 @@ run_case() {
 
 # Default streams: pinned in this branch.  The IBP feature is default-off, so
 # these MD5s are the byte-identical pre-feature streams.
-run_case default_64 "$INPUT_64" 1 df6fd676b1c879b6ccc2fd3e575b24a5 0
-run_case default_360 "$INPUT_360" 4 83b34e7944346d6b3f64a460bdf1dc96 0
+run_case default_64 "$INPUT_64" 1 a26e28bacbb4872681fafa801a7f011a 0
+run_case default_360 "$INPUT_360" 4 c075872790339c40da0b0cab29147e70 0
 
 # DC-only path: IBP changes the header bit and the §7.13.2.12 DC post-filter.
-run_case ibp_64 "$INPUT_64" 1 57d835c78d39d0e4b13f4a9d9e0e3a8b 0 --video-ibp
-run_case ibp_360 "$INPUT_360" 4 d25bc92785ee7a8d15a7fd350345ebc3 0 --video-ibp
+run_case ibp_64 "$INPUT_64" 1 63b3ebfd67e91f88b862839f3176bb0b 0 --video-ibp
+run_case ibp_360 "$INPUT_360" 4 ea3e1037c4146e9d5d329c85accd67b8 0 --video-ibp
 
 # Full search path: directional candidates now blend (§7.13.2.9).
-run_case ibp_full_64 "$INPUT_64" 1 dc3b45d97787ebc16531cb92e2444334 1 \
+run_case ibp_full_64 "$INPUT_64" 1 cdfdc4aa5b8ca85370247e357801712d 1 \
   --video-ibp --video-intra-full
-run_case ibp_full_360 "$INPUT_360" 4 880193e82a2eacce061234fd32c0783c 1 \
+run_case ibp_full_360 "$INPUT_360" 4 dc93b31d7d0afbfe1c9edabd05593372 1 \
   --video-ibp --video-intra-full
 
 # The DC-only IBP stream must change the decoded picture, not just the header:

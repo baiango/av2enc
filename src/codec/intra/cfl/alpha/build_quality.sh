@@ -2,7 +2,7 @@
 # Build the prediction-level derived-vs-explicit quality tool.
 #
 #   ./build_quality.sh
-#   ./build_quality.sh testdata/shine_256x256_1f.y4m 8
+#   ./build_quality.sh testdata/pub_256x256_1f.y4m 8
 #
 # The second form builds and runs. Without arguments it only builds; the tool
 # then prints its own usage.

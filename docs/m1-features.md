@@ -41,7 +41,7 @@ this host).
 
 | Case | IVF bytes | IVF MD5 |
 |---|---:|---|
-| 64x64 `--still` (baseline) | 936 | `0ef9825062a25c4d950ee924113c6f89` |
+| 64x64 `--still` (baseline) | 936 | `2b31e378787363641c836fdf563bbd0e` |
 | 64x64 CDEF | 938 | `b795a6f998c7037c95b926d6afdfc89e` |
 | 64x64 RDOQ | 794 | `a7ee3a0ac75781ce2a2c7390c3503019` |
 | 64x64 TX type | 944 | `15681508a144eeea88bb8223185d75e9` |
@@ -50,7 +50,7 @@ this host).
 | 64x64 CDEF+RDOQ+TX type | 817 | `aa885652b8c57ecc25b14b87c97862d8` |
 | 64x64 CCSO | 970 | `980e5c2194091faf2347e3b05dfdea69` |
 | 64x64 CDEF+CCSO | 972 | `a90c525e480e8ff52db3f47f77fff887` |
-| 640x360 `--still` (baseline) | 13,355 | `e61de628b0812b716b0efa7dcafcdd06` |
+| 640x360 `--still` (baseline) | 13,355 | `8ffbe059cfeac3e6ee255f3bb7cf72b8` |
 | 640x360 CDEF (1 set) | 13,358 | `dec10527a779e7664ea78e53def9dbf1` |
 | 640x360 CDEF (4 sets) | 13,375 | `b37bed7eb785d0c6b2e07219e888ff89` |
 | 640x360 RDOQ | 11,487 | `ac668d497012333b6aeecb82c2e70337` |
@@ -472,8 +472,8 @@ ctest --test-dir build-m1 --output-on-failure
 ```
 
 The baseline `--still` MD5s are unchanged from `AGENTS.md`:
-64x64 `0ef9825062a25c4d950ee924113c6f89`,
-640x360 `e61de628b0812b716b0efa7dcafcdd06`.
+64x64 `2b31e378787363641c836fdf563bbd0e`,
+640x360 `8ffbe059cfeac3e6ee255f3bb7cf72b8`.
 
 ## Partition / superblock tools (branch `integration/partition`)
 

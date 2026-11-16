@@ -53,7 +53,7 @@ correct and that the full path works when those call sites are DDT-aware.
 ## What the gate runs
 
 * deterministic 3-frame 256x256 4:2:0 clip (`make_motion_clip.py`) built from
-  `testdata/shine_256x256_1f.y4m`;
+  `testdata/pub_256x256_1f.y4m`;
 * DDTX column: `AV2ENC_VIDEO_RESIDUAL_TX_TYPE=1` (type 1 `ADST_DCT`);
 * DDTX row: `AV2ENC_VIDEO_RESIDUAL_TX_TYPE=2` (type 2 `DCT_ADST`, row ADST);
 * FDDT column: `AV2ENC_VIDEO_RESIDUAL_TX_TYPE=4` (type 4 `FLIPADST_DCT`, col FDST);

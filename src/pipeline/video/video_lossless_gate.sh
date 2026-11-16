@@ -57,7 +57,7 @@ if [ -z "$DAV2D" ] || [ ! -x "$DAV2D" ]; then
   exit 77
 fi
 
-INPUT="${AV2ENC_INPUT:-$ROOT/testdata/shine_1280x720_60f.y4m}"
+INPUT="${AV2ENC_INPUT:-$ROOT/testdata/pub_1280x720_60f.y4m}"
 if [ ! -f "$INPUT" ]; then
   echo "video_lossless_gate: missing input $INPUT" >&2
   exit 77
@@ -194,14 +194,14 @@ PYGEN
 }
 
 # All-inter (IDTX/FSC on every P block), mixed DPCM/WHT, forced FSC, 8 frames.
-run_case all_inter_4 4 3569437af68c2ff640e6deda5be2b5a5
-run_case mixed_4 4 59cf90c17e97639bfd9ed8d06670a964 \
+run_case all_inter_4 4 ccaebe9ef8882c159f8ebcc48a44fd5a
+run_case mixed_4 4 48db39e18e739306395dc2e0796cc9ab \
   --video-lossless-intra-period 4
-run_case forced_fsc_4 4 31e50ec0d113cc02d1383664ff371124 \
+run_case forced_fsc_4 4 1ed488cb7cc7f0bed4c7ca6d93224e1f \
   --video-lossless-intra-period 4 --lossless-fsc
-run_case all_inter_8 8 19c4b81811692127c108fad1c6ec7f47
-run_case tlayers_4 4 f0a2ce304b609a2312822838ab4f7125 --video-tlayers 4
-run_case tlayers_8 8 1b02c94e0c0b044157e86e973261ac36 --video-tlayers 8
+run_case all_inter_8 8 d8b3ce9e42a481713b2fc9db351f24ca
+run_case tlayers_4 4 b80471deb83a2c55e9cee5a6ccf73115 --video-tlayers 4
+run_case tlayers_8 8 1423257bdc3bfa7d261e07c642c65885 --video-tlayers 8
 
 # ------------------------------------------------- hierarchical B schedule --
 # Two references per interior frame with COMPOUND_AVERAGE prediction; the
@@ -280,8 +280,8 @@ if ! "$AV2ENC_BIN" "$INPUT" -o "$BASE" --frames 4 --video \
   fail_case base "default --video encode failed"
 else
   BASE_MD5=$(md5_of "$BASE")
-  if [ "$BASE_MD5" != "e4cf72dd13ddc2c32c2f8683153b3c81" ]; then
-    fail_case base "IVF md5 $BASE_MD5, expected e4cf72dd13ddc2c32c2f8683153b3c81"
+  if [ "$BASE_MD5" != "1d32ad7564fd049941e6c90347358a18" ]; then
+    fail_case base "IVF md5 $BASE_MD5, expected 1d32ad7564fd049941e6c90347358a18"
   else
     pass_case "base (--video unchanged)"
   fi

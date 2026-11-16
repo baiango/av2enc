@@ -121,7 +121,7 @@ fi
 if [[ "$RUN" -eq 1 ]]; then
   echo "gate: spec reorder (ALWAYS) vs pinned dav2d"
   "$BUILD_DIR/drl_gate" --mode spec --out "$BUILD_DIR/drl_gate.ivf"
-  SRC="$ROOT/testdata/shine_1280x720_60f.y4m"
+  SRC="$ROOT/testdata/pub_1280x720_60f.y4m"
   if [[ -f "$SRC" ]]; then
     echo "gate: real 720p clip (cropped to 1280x704)"
     "$BUILD_DIR/drl_gate" --input "$SRC" --mode spec \

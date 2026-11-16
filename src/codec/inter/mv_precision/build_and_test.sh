@@ -120,7 +120,7 @@ fi
 if [[ "$RUN" -eq 1 ]]; then
   echo "gate: AMVD + adaptive precision vs pinned dav2d"
   "$BUILD_DIR/mv_precision_gate" --out "$BUILD_DIR/mv_precision_gate.ivf"
-  SRC="$ROOT/testdata/shine_1280x720_60f.y4m"
+  SRC="$ROOT/testdata/pub_1280x720_60f.y4m"
   if [[ -f "$SRC" ]]; then
     echo "gate: real 720p clip (cropped to 1280x704)"
     "$BUILD_DIR/mv_precision_gate" --input "$SRC" \

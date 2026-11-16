@@ -9,7 +9,7 @@
 //   * Deterministic outlier rejection, degradation and validation.
 //   * Synthetic pan / zoom / rotation, both from exact correspondences and
 //     through a real block matcher on synthetic frames.
-//   * Real 720p pairs from testdata/shine_1280x720_60f.y4m.
+//   * Real 720p pairs from testdata/pub_1280x720_60f.y4m.
 
 #include <algorithm>
 #include <cmath>
@@ -899,7 +899,7 @@ bool load_y4m_frames(const std::string& path, int max_frames, std::vector<Plane>
 }
 
 void test_real_720p(const std::string& repo_root) {
-  const std::string path = repo_root + "/testdata/shine_1280x720_60f.y4m";
+  const std::string path = repo_root + "/testdata/pub_1280x720_60f.y4m";
   std::vector<Plane> frames;
   if (!load_y4m_frames(path, 11, &frames) || frames.size() < 2) {
     std::printf("  real 720p: skipped (no testdata)\n");

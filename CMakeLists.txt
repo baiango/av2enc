@@ -84,6 +84,23 @@ function(av2enc_apply_warnings target)
 endfunction()
 
 # ---------------------------------------------------------------------------
+# Security hardening (AV2ENC_HARDEN).
+#
+# Code-generation only: no kernel, cost model or bitstream reads these flags, so
+# the pinned streams must stay byte-identical.  Applied per compile language so
+# nvcc-driven CUDA compiles are untouched; ELF link flags only on host CPU links.
+if(AV2ENC_HARDEN AND NOT MSVC)
+  add_compile_options(
+    $<$<COMPILE_LANGUAGE:CXX>:-fstack-protector-strong>
+    $<$<COMPILE_LANGUAGE:CXX>:-fPIE>
+    $<$<COMPILE_LANGUAGE:CXX>:-D_FORTIFY_SOURCE=3>)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT AV2ENC_HAVE_CUDA)
+    add_link_options(-pie -Wl,-z,relro -Wl,-z,now)
+  endif()
+  message(STATUS "av2enc: hardening enabled (stack protector, FORTIFY_SOURCE=3, PIE)")
+endif()
+
+# ---------------------------------------------------------------------------
 # Host-CPU code-generation options (opt-in, default OFF).
 #
 # The shipped encoder is the CUDA target and the CPU path is the correctness
@@ -103,6 +120,10 @@ endfunction()
 # ---------------------------------------------------------------------------
 option(AV2ENC_PCH
   "Use a precompiled header (std headers only) for the core library. Dev-only; it changes compile time, never code generation" OFF)
+option(AV2ENC_FUZZ
+  "Build the libFuzzer Y4M-parser target (needs a clang with libFuzzer; Homebrew LLVM does, Apple CLT does not)" OFF)
+option(AV2ENC_HARDEN
+  "Enable compiler/linker hardening (stack protector, FORTIFY_SOURCE, PIE, RELRO). Changes no output; on in the release preset" OFF)
 option(AV2ENC_NATIVE
   "Tune host C++ code for the build machine (-mcpu/-march=native, not portable)" OFF)
 option(AV2ENC_LTO "Enable link-time optimization for the host C++ targets" OFF)

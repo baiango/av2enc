@@ -6,9 +6,15 @@
 #include <fstream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace av2enc {
+
+// Upper bound on pixels in one input frame, checked before any allocation.
+// 2^28 = 268,435,456 (16384x16384): comfortably above 8K/16K production input
+// while keeping a crafted header from requesting a multi-gigabyte resize.
+inline constexpr std::uint64_t kMaxInputPixels = 1ull << 28;
 
 // Parsed YUV4MPEG2 file header.
 //
@@ -61,6 +67,12 @@ enum class Y4mReadResult {
   kEof = 0,
   kFrame = 1,
 };
+
+// Parses one YUV4MPEG2 header line (the reader's untrusted-input surface).
+// Exposed separately from Y4mReader so a fuzzer can drive it without a file;
+// the reader's member function is a thin wrapper.
+bool parse_y4m_header(std::string_view line, Y4mHeader* header,
+                      std::string* error);
 
 class Y4mReader {
  public:

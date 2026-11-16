@@ -85,8 +85,8 @@ check_pin() {
         failures=$((failures + 1))
     fi
 }
-check_pin tests/data/basic_64x64_1f.y4m 0ef9825062a25c4d950ee924113c6f89
-check_pin tests/data/basic_640x360_1f.y4m e61de628b0812b716b0efa7dcafcdd06
+check_pin tests/data/basic_64x64_1f.y4m 2b31e378787363641c836fdf563bbd0e
+check_pin tests/data/basic_640x360_1f.y4m 8ffbe059cfeac3e6ee255f3bb7cf72b8
 
 # --still-ddt is not signallable and must be rejected with the spec reason.
 if "$AV2ENC_BIN" "$ROOT/tests/data/basic_64x64_1f.y4m" \

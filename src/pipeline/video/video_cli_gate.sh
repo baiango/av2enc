@@ -9,7 +9,7 @@
 #
 # Usage:
 #   src/pipeline/video/video_cli_gate.sh --bin build-int/av2enc \
-#       [--input testdata/shine_1280x720_60f.y4m] [--frames 4] [--dav2d PATH]
+#       [--input testdata/pub_1280x720_60f.y4m] [--frames 4] [--dav2d PATH]
 #       [--illumination-shift] [--expect-inter-residual]
 #       [-- extra encoder args...]
 #
@@ -23,7 +23,7 @@
 # The legacy positional form is still accepted:
 #   src/pipeline/video/video_cli_gate.sh [BIN] [INPUT] [FRAMES] [extra args...]
 #
-# Defaults: BIN=build-int/av2enc, INPUT=testdata/shine_1280x720_60f.y4m,
+# Defaults: BIN=build-int/av2enc, INPUT=testdata/pub_1280x720_60f.y4m,
 # FRAMES=4.  Set OUT=/tmp/prefix to keep the streams.
 #
 # Exit codes: 0 pass, 1 failure, 2 usage, 77 missing fixture/decoder.
@@ -72,7 +72,7 @@ if [ "${#POSITIONAL[@]}" -gt 0 ]; then
 fi
 
 BIN=${BIN:-"$ROOT/build-int/av2enc"}
-INPUT=${INPUT:-"$TESTDATA/shine_1280x720_60f.y4m"}
+INPUT=${INPUT:-"$TESTDATA/pub_1280x720_60f.y4m"}
 FRAMES=${FRAMES:-4}
 
 if [ "$ILLUMINATION_SHIFT" -eq 1 ] && ! command -v python3 >/dev/null 2>&1; then

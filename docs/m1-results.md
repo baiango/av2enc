@@ -11,6 +11,10 @@ Source: **[LG QNED 8K MiniLED │Shine 8K HDR 60fps](https://youtu.be/WEwgbKr5R9
 scaled to the target resolution. AVM numbers use the same frame and the same
 quality tooling.
 
+> **Fixture swap:** the paths below were renamed to the public-domain fixtures
+> (`docs/testdata-provenance.md`); the numbers were recorded on the retired
+> promo clip and the streams now differ. Re-run before quoting.
+
 ## Verified streams (QP 90, one frame, one tile)
 
 | Still | IVF | Y / U / V PSNR | Avg | CVVDP | Verify |
@@ -21,7 +25,7 @@ quality tooling.
 
 The earlier 37,856 B / 51.41 dB "1080p" row was a **Lanczos upscale of the
 640×360 frame**; it flattered the encoder and is not used for comparisons. The
-native 1920×1080 frame (`testdata/shine_1920x1080_10f.y4m`) is authoritative.
+native 1920×1080 frame (`testdata/pub_1920x1080_10f.y4m`) is authoritative.
 
 ## M1 vs M0 vs AVM (same frame, project metrics)
 

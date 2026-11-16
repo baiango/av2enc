@@ -1,5 +1,5 @@
 {
-  "ref": "bench/avm_360p/shine_360p_2s.y4m",
+  "ref": "bench/avm_360p/legacy_360p_2s.y4m",
   "test": "bench/avm_360p/avm_exact360_2s_qp90.ivf",
   "frames": 120,
   "fps": "60/1",

@@ -3,10 +3,10 @@
 | id | severity | class | title | repro | evidence | files | status |
 |---|---|---|---|---|---|---|---|
 | SCOUT-INTRA-01 | high | confirmed | MRL hardcodes `sb_height=64`, so `--still-mrl --still-sb128/256` desyncs below y=64 | `./build/av2enc testdata/src_100x70.y4m --still -o /tmp/a.ivf --recon /tmp/a.y4m --qp 90 --still-mrl --still-sb128` | recon/decoder differ in 88 Y samples, all rows 64..69; no-sb128 control is exact | `src/pipeline/still/still_encoder.cpp:1253` | new |
-| SCOUT-INTRA-02 | high | confirmed | MRL prediction is wrong on 4-wide/4-tall luma leaves (`--still-sub8`, `--still-ext-partitions`) | `./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/b.ivf --recon /tmp/b.y4m --qp 90 --still-mrl --still-sub8 --still-depth 8` | first diff is in the 32x4 leaf at (32,8); Y/U/V differ 2341/501/504 samples. `--still-mrl --still-ext-partitions` first diff is the 4x16 leaf at (28,16) | `src/pipeline/still/still_encoder.cpp:1225-1260`, `src/codec/intra/mrl/core/mrl.cpp` | new |
-| SCOUT-INTRA-03 | high | confirmed | MHCCP + shared-chroma partitions (`--still-sub8` / `--still-ext-partitions`) emits a stream dav2d rejects | `./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/c.ivf --qp 90 --still-mhccp --still-sub8 --still-depth 8 && tools/bin/dav2d-macos -q -i /tmp/c.ivf -o /tmp/c.y4m --threads 1` | `Error decoding frame: Invalid argument`; both flags alone are exact. Same with `--still-ext-partitions` | `src/pipeline/still/still_syntax.cpp:1382-1400`, `src/codec/intra/cfl/mhccp/mhccp_cdf_tables.h:68` | new |
-| SCOUT-INTRA-04 | low | doc | `--no-cfl` does not validate CfL-only flags; `--still-cfl-explicit` is silently ignored | `./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/d.ivf --qp 90 --no-cfl --still-cfl-explicit` | byte-identical to `--no-cfl` alone (MD5 `e2dd563e...` both). `--still-mhccp --no-cfl` is rejected, so the class is expected to be validated | `src/main.cpp:2033-2036`, `src/pipeline/still/still_encoder.cpp:3824-3827` | new |
-| SCOUT-INTRA-05 | low | doc | `--still-dc --still-mrl`: force-DC path bypasses the MRL search but still sets `enable_mrls=1` | `./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/e1.ivf --qp 90 --still-dc --still-mrl` | no `mrl_index>0` block is ever coded; the stream still differs from `--still-dc` (same 1061-byte size). Conflicting combination is accepted | `src/pipeline/still/still_encoder.cpp:1296-1316`, `src/pipeline/still/still_headers.cpp:144-150` | new |
+| SCOUT-INTRA-02 | high | confirmed | MRL prediction is wrong on 4-wide/4-tall luma leaves (`--still-sub8`, `--still-ext-partitions`) | `./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/b.ivf --recon /tmp/b.y4m --qp 90 --still-mrl --still-sub8 --still-depth 8` | first diff is in the 32x4 leaf at (32,8); Y/U/V differ 2341/501/504 samples. `--still-mrl --still-ext-partitions` first diff is the 4x16 leaf at (28,16) | `src/pipeline/still/still_encoder.cpp:1225-1260`, `src/codec/intra/mrl/core/mrl.cpp` | new |
+| SCOUT-INTRA-03 | high | confirmed | MHCCP + shared-chroma partitions (`--still-sub8` / `--still-ext-partitions`) emits a stream dav2d rejects | `./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/c.ivf --qp 90 --still-mhccp --still-sub8 --still-depth 8 && tools/bin/dav2d-macos -q -i /tmp/c.ivf -o /tmp/c.y4m --threads 1` | `Error decoding frame: Invalid argument`; both flags alone are exact. Same with `--still-ext-partitions` | `src/pipeline/still/still_syntax.cpp:1382-1400`, `src/codec/intra/cfl/mhccp/mhccp_cdf_tables.h:68` | new |
+| SCOUT-INTRA-04 | low | doc | `--no-cfl` does not validate CfL-only flags; `--still-cfl-explicit` is silently ignored | `./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/d.ivf --qp 90 --no-cfl --still-cfl-explicit` | byte-identical to `--no-cfl` alone (MD5 `e2dd563e...` both). `--still-mhccp --no-cfl` is rejected, so the class is expected to be validated | `src/main.cpp:2033-2036`, `src/pipeline/still/still_encoder.cpp:3824-3827` | new |
+| SCOUT-INTRA-05 | low | doc | `--still-dc --still-mrl`: force-DC path bypasses the MRL search but still sets `enable_mrls=1` | `./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/e1.ivf --qp 90 --still-dc --still-mrl` | no `mrl_index>0` block is ever coded; the stream still differs from `--still-dc` (same 1061-byte size). Conflicting combination is accepted | `src/pipeline/still/still_encoder.cpp:1296-1316`, `src/pipeline/still/still_headers.cpp:144-150` | new |
 
 ## Details
 
@@ -36,10 +36,10 @@ Likely cause: `predict_luma_mrl()` sets `block.sb_height = 64` unconditionally (
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/b.ivf --recon /tmp/b.y4m --qp 90 --still-mrl --still-sub8 --still-depth 8
+./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/b.ivf --recon /tmp/b.y4m --qp 90 --still-mrl --still-sub8 --still-depth 8
 tools/bin/dav2d-macos -q -i /tmp/b.ivf -o /tmp/bd.y4m --threads 1
 # compare planes (ignore the Y4M header A1:1 vs A0:0): cmp reports Y 2341, U 501, V 504
-./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/b2.ivf --recon /tmp/b2.y4m --qp 90 --still-mrl --still-ext-partitions
+./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/b2.ivf --recon /tmp/b2.y4m --qp 90 --still-mrl --still-ext-partitions
 ```
 Observed: both combinations encode and decode successfully, but the samples diverge. With `AV2ENC_STILL_TRACE=1`, the first differing sample for sub8 is inside the `size=32x4` leaf at x=32,y=8 (row 8 is entirely wrong from x=38 on), and for ext inside the `size=4x16` leaf at x=28,y=16. Adding `AV2ENC_STILL_SQUARE_ONLY=1` to the ext case makes luma exact (only chroma still differs), consistent with a 4-sample-axis prediction bug. `--still-sub8`/`--still-ext-partitions` alone are exact; `--no-deblock` does not change the result.
 Expected: MRL must match dav2d on every legal leaf size it accepts (`mrl::valid_dim()` explicitly allows 4).
@@ -49,9 +49,9 @@ Likely cause: the MRL integration path (`predict_luma_mrl()` → `mrl::prepare_e
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/c.ivf --qp 90 --still-mhccp --still-sub8 --still-depth 8
+./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/c.ivf --qp 90 --still-mhccp --still-sub8 --still-depth 8
 tools/bin/dav2d-macos -q -i /tmp/c.ivf -o /tmp/c.y4m --threads 1   # rc=1
-./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/c2.ivf --qp 90 --still-mhccp --still-ext-partitions
+./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/c2.ivf --qp 90 --still-mhccp --still-ext-partitions
 tools/bin/dav2d-macos -q -i /tmp/c2.ivf -o /tmp/c2.y4m --threads 1  # rc=1
 ```
 Observed: `Error decoding frame: Invalid argument` / `No data decoded` for both. `--still-mhccp` alone, `--still-sub8` alone and `--still-ext-partitions` alone decode exactly at 64x64 and 640x360. `AV2ENC_STILL_UV_DC=1` (no CfL/MHCCP chroma) makes the sub8 stream decode, so the failure is in the CfL/MHCCP chroma syntax/decision, not the luma tree.
@@ -62,8 +62,8 @@ Likely cause: at shared-chroma leaves the chroma owner can be a 4-wide/tall leaf
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/d1.ivf --qp 90 --no-cfl
-./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/d2.ivf --qp 90 --no-cfl --still-cfl-explicit
+./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/d1.ivf --qp 90 --no-cfl
+./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/d2.ivf --qp 90 --no-cfl --still-cfl-explicit
 md5 -q /tmp/d1.ivf /tmp/d2.ivf   # identical
 ```
 Observed: byte-identical stream, exit 0. `--still-cfl-ds N --no-cfl` similarly only changes the sequence-level `cfl_ds_filter_index` field (legal on the wire but unused); `--still-mhccp --no-cfl` is rejected, so the inconsistency is specific to these two flags.
@@ -74,8 +74,8 @@ Likely cause: only the mhccp dependency is checked (`main.cpp:2033`, `still_enco
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/e1.ivf --qp 90 --still-dc
-./build/av2enc testdata/m0_64x64_1f.y4m --still -o /tmp/e2.ivf --qp 90 --still-dc --still-mrl
+./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/e1.ivf --qp 90 --still-dc
+./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/e2.ivf --qp 90 --still-dc --still-mrl
 md5 -q /tmp/e1.ivf /tmp/e2.ivf   # differ, same 1061-byte payload size
 ```
 Observed: both encode and decode exactly and have the same payload size, but the streams differ; `enable_mrls` is set in the sequence header while no `mrl_index > 0` is ever coded. The force-DC branch returns before `choose_luma_mode()` runs the MRL candidate loop.

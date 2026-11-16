@@ -73,7 +73,7 @@ cleanup() {
 trap cleanup EXIT
 
 FIX_64="$ROOT/tests/data/basic_64x64_1f.y4m"
-FIX_360="$ROOT/testdata/shine_640x360_4f.y4m"
+FIX_360="$ROOT/testdata/pub_640x360_4f.y4m"
 [ -f "$FIX_64" ] || { echo "SKIP: missing $FIX_64" >&2; exit 77; }
 [ -f "$FIX_360" ] || { echo "SKIP: missing $FIX_360" >&2; exit 77; }
 
@@ -204,33 +204,33 @@ reject_case() {
 BASE_ARGS=(--video-inter-residual --video-tx-search)
 
 # Default streams must not move (shared with the TCQ gate).
-run_case default_64_qp90 "$FIX_64" 1 582b53aa10c748cefaac54b225867bf0 \
+run_case default_64_qp90 "$FIX_64" 1 c515daae5030740716f4b6f05d23a1c2 \
     "${BASE_ARGS[@]}" --qp 90
-run_case default_360_qp90 "$FIX_360" 4 230e3d1e3501f8812020e39be418a56d \
+run_case default_360_qp90 "$FIX_360" 4 c9c10f4b14f976a5ef233dc4ef0c0750 \
     "${BASE_ARGS[@]}" --qp 90
 
 # --video-cctx at QP 60/90/120 on both fixtures.
-run_case cctx_64_qp60 "$FIX_64" 1 36d722b69b4f630863017bb501a7f6e7 \
+run_case cctx_64_qp60 "$FIX_64" 1 5872d30ffa7c5bbdd1d5cb690ef9480e \
     "${BASE_ARGS[@]}" --video-cctx --qp 60
-run_case cctx_64_qp90 "$FIX_64" 1 6b24e3b589220287e1bb682e311a4de0 \
+run_case cctx_64_qp90 "$FIX_64" 1 5676ee02ae68127a3b6b1a8e9166e558 \
     "${BASE_ARGS[@]}" --video-cctx --qp 90
-run_case cctx_64_qp120 "$FIX_64" 1 c07383c338c7873d1c5ffba42079f75e \
+run_case cctx_64_qp120 "$FIX_64" 1 4e1fea1e4428a3bc56d56cbbac109a08 \
     "${BASE_ARGS[@]}" --video-cctx --qp 120
-run_case cctx_360_qp60 "$FIX_360" 4 46bbd9a0f16b0e0fa9129c4c4823db85 \
+run_case cctx_360_qp60 "$FIX_360" 4 aa50d1075ec77acfae0ca7010417b097 \
     "${BASE_ARGS[@]}" --video-cctx --qp 60
-run_case cctx_360_qp90 "$FIX_360" 4 0704723d485161c60017d7a3115c966c \
+run_case cctx_360_qp90 "$FIX_360" 4 41cdddce98e27773c8f395867e1cf0cf \
     "${BASE_ARGS[@]}" --video-cctx --qp 90
-run_case cctx_360_qp120 "$FIX_360" 4 4adf904fec93b0e10210eda1b051ee96 \
+run_case cctx_360_qp120 "$FIX_360" 4 f74c6bde56a4eb6da9c38aa2472bce42 \
     "${BASE_ARGS[@]}" --video-cctx --qp 120
 
 # The non-search chroma path (compute_tx sizing, CCTX search) must be exact.
-run_case cctx_360_notx_qp90 "$FIX_360" 4 397f95a320b24c8fafbc3ceb51404e7a \
+run_case cctx_360_notx_qp90 "$FIX_360" 4 38673c848318413cf52fbd6c14e5e354 \
     --video-inter-residual --video-cctx --qp 90
 
 # Combined with TCQ: independent luma/chroma tools, both exact.
-run_case both_64_qp90 "$FIX_64" 1 e16382a49621b40135f728ff3754a6be \
+run_case both_64_qp90 "$FIX_64" 1 ec3d3170b3074df6a07e99e4f1f1c3f4 \
     "${BASE_ARGS[@]}" --video-tcq --video-cctx --qp 90
-run_case both_360_qp90 "$FIX_360" 4 d350428d718d97b930507d9f53b8c3a4 \
+run_case both_360_qp90 "$FIX_360" 4 7c4adcf7bce50615cbf5f01d80214b1d \
     "${BASE_ARGS[@]}" --video-tcq --video-cctx --qp 90
 
 # CCTX must change the stream and actually select a rotation (not vacuous).

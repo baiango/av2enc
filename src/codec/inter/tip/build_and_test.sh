@@ -156,11 +156,11 @@ if [[ "$RUN" -eq 1 ]]; then
     --out "$BUILD_DIR/tip_gate_360.ivf" \
     --decoded "$BUILD_DIR/tip_gate_360.y4m" \
     --control "$BUILD_DIR/tip_gate_360_control.ivf"
-  if [[ -f "$ROOT/testdata/shine_1280x720_60f.y4m" ]]; then
+  if [[ -f "$ROOT/testdata/pub_1280x720_60f.y4m" ]]; then
     echo "gate: 640x360 real content (720p clip cropped)"
     "$BUILD_DIR/tip_gate" --width 640 --height 360 \
     "${GATE_ARGS[@]+"${GATE_ARGS[@]}"}" \
-      --input "$ROOT/testdata/shine_1280x720_60f.y4m" \
+      --input "$ROOT/testdata/pub_1280x720_60f.y4m" \
       --out "$BUILD_DIR/tip_gate_real.ivf" \
       --decoded "$BUILD_DIR/tip_gate_real.y4m" \
       --control "$BUILD_DIR/tip_gate_real_control.ivf"

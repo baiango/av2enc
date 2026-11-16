@@ -128,18 +128,18 @@ run_case() {
 
 # Defaults unchanged.
 run_case still_64_base tests/data/basic_64x64_1f.y4m \
-    0ef9825062a25c4d950ee924113c6f89
+    2b31e378787363641c836fdf563bbd0e
 run_case still_360_base tests/data/basic_640x360_1f.y4m \
-    e61de628b0812b716b0efa7dcafcdd06
+    8ffbe059cfeac3e6ee255f3bb7cf72b8
 
 run_case still_64_delta_q tests/data/basic_64x64_1f.y4m \
-    8a34626bdb4c5706749805cf9c1828dd --still-dc-ac-delta-q
+    75d405dd0033f4abc11d6d8a08a2e136 --still-dc-ac-delta-q
 run_case still_360_delta_q tests/data/basic_640x360_1f.y4m \
-    d53749baca37f4b1e16786de1ba6de05 --still-dc-ac-delta-q
+    12f48787f3872577f8348475955b0be1 --still-dc-ac-delta-q
 run_case still_360_delta_q_qp141 tests/data/basic_640x360_1f.y4m \
-    843a4a2bcb259cc8a4fe6b1231ca192a --still-dc-ac-delta-q --qp 141
+    f10f9e138f2ffb0e7235b9a1b21b333b --still-dc-ac-delta-q --qp 141
 run_case still_360_delta_q_ist tests/data/basic_640x360_1f.y4m \
-    70cf5b9e7e680e39530e415119a134b4 --still-dc-ac-delta-q --still-ist
+    090ac15b74fcf47f94e3828e3a6a09d6 --still-dc-ac-delta-q --still-ist
 
 # Incompatible combinations must be rejected by name.
 for combo in "--still-qm:--still-qm" "--still-rdoq:--still-rdoq"; do

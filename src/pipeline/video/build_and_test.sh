@@ -7,7 +7,7 @@
 #
 # Usage:
 #   ./src/pipeline/video/build_and_test.sh
-#   ./src/pipeline/video/build_and_test.sh --input testdata/shine_256x256_1f.y4m
+#   ./src/pipeline/video/build_and_test.sh --input testdata/pub_256x256_1f.y4m
 #   SANITIZE=1 ./src/pipeline/video/build_and_test.sh
 #   WERROR=1   ./src/pipeline/video/build_and_test.sh
 #   OUT=/tmp/video_gate ./src/pipeline/video/build_and_test.sh
@@ -131,8 +131,8 @@ STATUS=0
 # The §7.22 warp store projection self-test (model classification + per-8x8
 # affine arithmetic, §7.22 / §7.13.3.20).
 "${OUT}" --ref-mvs-field-selftest || STATUS=1
-if [[ -f "$ROOT/testdata/shine_1280x720_60f.y4m" ]]; then
-  "${OUT}" --input "$ROOT/testdata/shine_1280x720_60f.y4m" --frames 8 \
+if [[ -f "$ROOT/testdata/pub_1280x720_60f.y4m" ]]; then
+  "${OUT}" --input "$ROOT/testdata/pub_1280x720_60f.y4m" --frames 8 \
     --single-block --out "${TMPDIR:-/tmp}/video_gate_720p.ivf" || STATUS=1
 fi
 exit $STATUS

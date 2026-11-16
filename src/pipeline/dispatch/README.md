@@ -237,7 +237,7 @@ with more than eight tiles is unvalidated.
 The product CLI exposes the planning contract as a dry run:
 
 ```sh
-av2enc testdata/shine_1920x1080_10f.y4m --gpu-plan 2
+av2enc testdata/pub_1920x1080_10f.y4m --gpu-plan 2
 av2enc tests/data/basic_640x360_1f.y4m --gpu-plan 2 --tiles 2x2
 ```
 

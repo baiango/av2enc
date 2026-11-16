@@ -341,7 +341,7 @@ Inputs (all QP90, current build):
 |---|---|---|
 | 64×64 | `tests/data/basic_64x64_1f.y4m` | `dav2d` of `--still` and `--still --still-cdef` |
 | 640×360 | `tests/data/basic_640x360_1f.y4m` | `dav2d` of `--still` and `--still --still-cdef` |
-| 256×256 | `testdata/shine_256x256_1f.y4m` | `dav2d` of `--still` and `--still --still-cdef` |
+| 256×256 | `testdata/pub_256x256_1f.y4m` | `dav2d` of `--still` and `--still --still-cdef` |
 
 `--max-band-log2 3` = 8 bands × 3×3 classes = 72 offsets/plane.
 

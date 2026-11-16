@@ -62,7 +62,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 F360="$ROOT/tests/data/basic_640x360_1f.y4m"
-F1080="$TESTDATA/shine_1920x1080_10f.y4m"
+F1080="$TESTDATA/pub_1920x1080_10f.y4m"
 if [ ! -f "$F360" ]; then
     echo "SKIP: missing $F360" >&2
     exit 77
@@ -177,7 +177,7 @@ echo "decoder: $($DAV2D --version 2>&1 | tail -1)"
 # --- default stream must not move -----------------------------------------
 "$BIN" "$F360" -o "$TMP/still.ivf" --still >/dev/null
 still_md5=$(md5_of "$TMP/still.ivf")
-if [ "$still_md5" != "e61de628b0812b716b0efa7dcafcdd06" ]; then
+if [ "$still_md5" != "8ffbe059cfeac3e6ee255f3bb7cf72b8" ]; then
     fail "default --still 640x360 MD5 moved: $still_md5"
 else
     echo "PASS default --still 640x360 MD5 $still_md5"

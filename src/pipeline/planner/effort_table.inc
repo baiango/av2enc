@@ -58,7 +58,7 @@ inline constexpr double kScoreAnchorKbps = 1000.0;
 inline constexpr double kScoreScale = 0.00103845;
 inline constexpr const char* kCalibrationHost = "Apple M4";
 inline constexpr const char* kCalibrationMetric = "cvvdp 0.5.7 (standard_fhd)";
-inline constexpr const char* kCalibrationFixture = "testdata/shine_640x360_1f.y4m (640x360, 360p)";
+inline constexpr const char* kCalibrationFixture = "testdata/pub_640x360_1f.y4m (640x360, 360p)";
 inline constexpr bool kPsnrFallback = false;
 
 inline constexpr const char* kUncalibrated[] = {

@@ -76,8 +76,11 @@ if [[ -z "$DAV2D" ]]; then
     if [[ -x "$candidate" ]]; then DAV2D="$candidate"; break; fi
   done
 fi
-if [[ -z "$DAV2D" || ! -x "$DAV2D" ]]; then
-  echo "gate_gpu_throughput: SKIP (no pinned dav2d; set DAV2D)"
+# -x is not enough: on Linux the checked-in tools/bin/dav2d-macos still has
+# mode 755 and fails with "Exec format error" at first use.  Probe it, because
+# a decoder that cannot run is the same as no decoder for this gate.
+if [[ -z "$DAV2D" || ! -x "$DAV2D" ]] || ! "$DAV2D" -v >/dev/null 2>&1; then
+  echo "gate_gpu_throughput: SKIP (no usable pinned dav2d; set DAV2D to a native build)"
   exit 77
 fi
 if ! command -v "$PYTHON" >/dev/null 2>&1; then

@@ -226,20 +226,20 @@ deblocking off:
 
 | Source | Layout | Tiles | Result |
 |---|---|---:|---|
-| `shine_256x256_1f.y4m` | 1x1 | 1 | PASS, 0 mismatches |
-| `shine_256x256_1f.y4m` | 2x1 | 2 | PASS, 0 mismatches |
-| `shine_256x256_1f.y4m` | 2x2 | 4 | PASS, 0 mismatches |
-| `shine_256x256_1f.y4m` | 4x2 | 8 | PASS, 0 mismatches |
+| `pub_256x256_1f.y4m` | 1x1 | 1 | PASS, 0 mismatches |
+| `pub_256x256_1f.y4m` | 2x1 | 2 | PASS, 0 mismatches |
+| `pub_256x256_1f.y4m` | 2x2 | 4 | PASS, 0 mismatches |
+| `pub_256x256_1f.y4m` | 4x2 | 8 | PASS, 0 mismatches |
 | `basic_640x360_1f.y4m` | 2x2 | 4 | PASS, 0 mismatches (bottom strips 192/168) |
 | `basic_640x360_1f.y4m` | 4x2 | 8 | PASS, 0 mismatches (192/192/128/128 columns) |
-| `shine_1920x1080_10f.y4m` | 4x2 | 8 | PASS, 0 mismatches |
-| `shine_1920x1080_10f.y4m` | 8x2 | 16 | PASS, 0 mismatches |
-| `shine_1920x1080_10f.y4m` | 16x2 | 32 | PASS, 0 mismatches |
+| `pub_1920x1080_10f.y4m` | 4x2 | 8 | PASS, 0 mismatches |
+| `pub_1920x1080_10f.y4m` | 8x2 | 16 | PASS, 0 mismatches |
+| `pub_1920x1080_10f.y4m` | 16x2 | 32 | PASS, 0 mismatches |
 
 Run:
 
 ```sh
-./gate_dav2d_tiled.sh ../../../testdata/shine_1920x1080_10f.y4m 8x2
+./gate_dav2d_tiled.sh ../../../testdata/pub_1920x1080_10f.y4m 8x2
 DAV2D=/path/to/dav2d OUT_DIR=/tmp/gate ./gate_dav2d_tiled.sh src.y4m 4x2
 ```
 

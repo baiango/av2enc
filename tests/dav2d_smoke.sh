@@ -8,7 +8,7 @@
 set -euo pipefail
 
 ROOT=${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
-SAMPLE="$ROOT/testdata/sample_480x270_130f.ivf"
+SAMPLE="$ROOT/testdata/pub_480x270_130f.ivf"
 VALIDATOR="$ROOT/tools/validate_dav2d.sh"
 
 DECODER=""

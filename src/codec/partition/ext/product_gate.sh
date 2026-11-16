@@ -7,7 +7,7 @@
 #   VERT_3@32x8  (16x4 + 16x4 share one 16x8 chroma block)
 #   HORZ_4A@32x32 (first three 32x4 children code no chroma; the last owns the
 #                  32x32 chroma block)
-# `testdata/shine_640x360_1f.y4m` does all three with the current SSE decision.
+# `testdata/pub_640x360_1f.y4m` does all three with the current SSE decision.
 # The gate checks the partition trace for each case, decodes with the pinned
 # dav2d and requires sample-exact Y/U/V reconstruction (deblock on and off).
 #
@@ -19,7 +19,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../../.." && pwd)
 BUILD=${1:-$ROOT/build-int}
 AV2ENC=${AV2ENC:-$BUILD/av2enc}
-SRC=${SRC:-$ROOT/testdata/shine_640x360_1f.y4m}
+SRC=${SRC:-$ROOT/testdata/pub_640x360_1f.y4m}
 
 if [ ! -x "$AV2ENC" ]; then echo "error: no encoder at $AV2ENC" >&2; exit 2; fi
 if [ ! -f "$SRC" ]; then echo "SKIP: missing $SRC" >&2; exit 77; fi

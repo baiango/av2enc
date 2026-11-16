@@ -407,7 +407,7 @@ The default run:
 2. Encodes a synthetic 64x64 two-frame stream, runs `dav2d`, and compares the
    decoded Y4M against the encoder reconstruction **sample by sample** for Y,
    U and V.
-3. If `testdata/shine_1280x720_60f.y4m` exists, encodes a 2-frame 720p stream
+3. If `testdata/pub_1280x720_60f.y4m` exists, encodes a 2-frame 720p stream
    and an 8-frame 720p clip (64x64 partition grid) and repeats the
    decode/recon comparison. The 8-frame clip exercises mixed inter/intra
    frames, GLOBALMV, NEARMV and NEWMV.
@@ -553,7 +553,7 @@ The default 720p short clip uses `--single-block` (one 64x64 leaf per
 superblock, with the bottom edge forced to 64x16). The full tree is also gated:
 
 ```sh
-./src/encoder/m2/build_and_test.sh --input testdata/shine_1280x720_60f.y4m \
+./src/encoder/m2/build_and_test.sh --input testdata/pub_1280x720_60f.y4m \
   --frames 8 --out /tmp/video_tree8.ivf
 ```
 
@@ -833,10 +833,10 @@ against `--video-recon` sample by sample for the full frame count.
 
 ```sh
 src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 8 --video-refs 2 --video-subpel-eighth
+  testdata/pub_1280x720_60f.y4m 8 --video-refs 2 --video-subpel-eighth
 ```
 
-Measured on 6 frames of `shine_1280x720_60f.y4m` (`--video-max-depth 3`, the
+Measured on 6 frames of `pub_1280x720_60f.y4m` (`--video-max-depth 3`, the
 default single-block tree is also gated by `build-int/video_gate`):
 
 | flags | IVF MD5 | bytes | recon |
@@ -907,9 +907,9 @@ Gate (CPU):
 
 ```sh
 OUT=/tmp/lt src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 6 --video-max-depth 3 --video-long-term
+  testdata/pub_1280x720_60f.y4m 6 --video-max-depth 3 --video-long-term
 OUT=/tmp/olk src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 4 --video-max-depth 3 --video-olk
+  testdata/pub_1280x720_60f.y4m 4 --video-max-depth 3 --video-olk
 build-int/video_gate --single-block --frames 5 --long-term
 build-int/video_gate --single-block --frames 4 --olk
 ```
@@ -945,7 +945,7 @@ combined with the long-term/OLK modes.
 
 ```sh
 OUT=/tmp/lead src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 8 --video-max-depth 3 --video-leading 3
+  testdata/pub_1280x720_60f.y4m 8 --video-max-depth 3 --video-leading 3
 build-int/video_gate --single-block --frames 8 --leading 3
 ```
 
@@ -972,9 +972,9 @@ cannot be combined with the long-term or leading modes.
 
 ```sh
 OUT=/tmp/sef src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 6 --video-max-depth 3 --video-sef
+  testdata/pub_1280x720_60f.y4m 6 --video-max-depth 3 --video-sef
 OUT=/tmp/sef2 src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 6 --video-max-depth 3 --video-refs 2 --video-sef
+  testdata/pub_1280x720_60f.y4m 6 --video-max-depth 3 --video-refs 2 --video-sef
 build-int/video_gate --single-block --frames 5 --sef
 ```
 
@@ -1009,9 +1009,9 @@ with the other frame-type modes.
 
 ```sh
 OUT=/tmp/sw src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 2 --video-max-depth 3 --video-switch
+  testdata/pub_1280x720_60f.y4m 2 --video-max-depth 3 --video-switch
 OUT=/tmp/ras src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 3 --video-max-depth 3 --video-ras
+  testdata/pub_1280x720_60f.y4m 3 --video-max-depth 3 --video-ras
 build-int/video_gate --single-block --frames 2 --switch
 build-int/video_gate --single-block --frames 3 --ras
 ```
@@ -1079,9 +1079,9 @@ no retained frame references a dropped one. The sequence header keeps the full
 
 ```sh
 OUT=/tmp/tl src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 8 --video-max-depth 3 --video-tlayers 8
+  testdata/pub_1280x720_60f.y4m 8 --video-max-depth 3 --video-tlayers 8
 OUT=/tmp/tl0 src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 8 --video-max-depth 3 --video-tlayers 8 \
+  testdata/pub_1280x720_60f.y4m 8 --video-max-depth 3 --video-tlayers 8 \
   --video-tlayer-drop 0
 ```
 
@@ -1135,10 +1135,10 @@ leaves in three frames.
 
 ```sh
 OUT=/tmp/cmp src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 6 --video-max-depth 3 --video-refs 2 \
+  testdata/pub_1280x720_60f.y4m 6 --video-max-depth 3 --video-refs 2 \
   --video-compound
 OUT=/tmp/cmp2 src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 6 --video-max-depth 4 --video-refs 2 \
+  testdata/pub_1280x720_60f.y4m 6 --video-max-depth 4 --video-refs 2 \
   --video-compound --video-inter-residual --qp 60
 ```
 
@@ -1474,9 +1474,9 @@ compound block (see the compound section).
 
 ```sh
 OUT=/tmp/bf src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 4 --video-max-depth 3 --b-frames 2
+  testdata/pub_1280x720_60f.y4m 4 --video-max-depth 3 --b-frames 2
 OUT=/tmp/bfc src/pipeline/video/video_cli_gate.sh build-int/av2enc \
-  testdata/shine_1280x720_60f.y4m 5 --video-max-depth 4 --b-frames 3 \
+  testdata/pub_1280x720_60f.y4m 5 --video-max-depth 4 --b-frames 3 \
   --video-compound
 ```
 

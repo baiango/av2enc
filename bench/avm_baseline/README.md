@@ -5,11 +5,15 @@
 > `cd7d8bc3db`; the current source (`7a0c956`) does not reproduce it. Keep the
 > tables below for history and methodology.
 
+> **Fixture swap:** the paths below were renamed to the public-domain fixtures
+> (`docs/testdata-provenance.md`); the numbers were recorded on the retired
+> promo clip and the streams now differ. Re-run before quoting.
+
 # AVM baseline
 
 Reference encoder baseline for the 720p test clip.
 
-- Source: `testdata/shine_1280x720_60f.y4m` (1280x720, 60 frames, 60 fps, 1 s)
+- Source: `testdata/pub_1280x720_60f.y4m` (1280x720, 60 frames, 60 fps, 1 s)
 - Encoder: AVM macOS arm64 nightly 2026-11-10, commit `cd7d8bc3db`
 - Settings: `--end-usage=q --cpu-used=6 --threads=8`, fixed QP
 - Decoder: dav2d `f9dafbc` (every stream decodes)
@@ -93,12 +97,12 @@ python3 tools/score_tradeoff.py --reference AVM \
 ## Reproduce
 
 ```sh
-tools/bin/avm-macos/avmenc testdata/shine_1280x720_60f.y4m \
+tools/bin/avm-macos/avmenc testdata/pub_1280x720_60f.y4m \
   -o bench/avm_baseline/qp160_720p_60f.ivf \
   --ivf --end-usage=q --qp=160 --cpu-used=6 --threads=8 --psnr=1
 
 python3 tools/quality.py \
-  --ref testdata/shine_1280x720_60f.y4m \
+  --ref testdata/pub_1280x720_60f.y4m \
   --ivf bench/avm_baseline/qp160_720p_60f.ivf \
   --json bench/avm_baseline/qp160_720p_60f.json
 ```

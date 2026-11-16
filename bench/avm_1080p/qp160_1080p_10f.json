@@ -1,5 +1,5 @@
 {
-  "ref": "testdata/shine_1920x1080_10f.y4m",
+  "ref": "testdata/pub_1920x1080_10f.y4m",
   "test": "bench/avm_1080p/qp160_1080p_10f.ivf",
   "frames": 10,
   "fps": "60/1",

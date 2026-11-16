@@ -28,7 +28,7 @@
 //
 // Build/run (the script handles linking):
 //   ./gate_dav2d_tiled.sh [source.y4m] [layout]
-//   DAV2D=tools/bin/dav2d-macos ./gate_dav2d_tiled.sh testdata/shine_256x256_1f.y4m 2x2
+//   DAV2D=tools/bin/dav2d-macos ./gate_dav2d_tiled.sh testdata/pub_256x256_1f.y4m 2x2
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>

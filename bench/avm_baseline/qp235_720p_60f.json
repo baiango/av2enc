@@ -1,5 +1,5 @@
 {
-  "ref": "testdata/shine_1280x720_60f.y4m",
+  "ref": "testdata/pub_1280x720_60f.y4m",
   "test": "bench/avm_baseline/qp235_720p_60f.ivf",
   "frames": 60,
   "fps": "60/1",

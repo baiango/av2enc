@@ -281,7 +281,7 @@ The M1 writer integration is now wired:
 - The search uses the 4-sample floor for the extended families, which enables
   the 1/8 subsizes.
 
-Gated rows on `testdata/shine_640x360_1f.y4m` (deblock on and off, `dav2d`
+Gated rows on `testdata/pub_640x360_1f.y4m` (deblock on and off, `dav2d`
 f9dafbc, sample-exact Y/U/V):
 
 | Row | Node | Shared chroma block | Selected |

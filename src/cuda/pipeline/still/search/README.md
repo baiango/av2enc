@@ -171,7 +171,7 @@ The reference is the **real CPU intra module** (`src/encoder/intra_modes`)
 driven through the exact candidate loop and strict-less-than tie-break of
 `choose_luma_mode`. For every block the test compares the best mode, angle,
 SSE, and the SSE of every active candidate. Media: `testdata/basic_64x64_1f.y4m`
-and a real 640x360 crop (`testdata/shine_640x360_1f.y4m`); synthetic planes are
+and a real 640x360 crop (`testdata/pub_640x360_1f.y4m`); synthetic planes are
 generated in the harness.
 
 Result (2026-11-11):

@@ -104,7 +104,7 @@ done
 defaults=()
 if [[ "${have_source}" == "0" ]]; then
   defaults+=("$ROOT/tests/data/basic_640x360_1f.y4m")
-  defaults+=("$ROOT/testdata/shine_1920x1080_10f.y4m")
+  defaults+=("$ROOT/testdata/pub_1920x1080_10f.y4m")
 fi
 
 decoder_args=()

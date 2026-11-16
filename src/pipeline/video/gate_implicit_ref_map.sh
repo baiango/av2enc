@@ -15,14 +15,14 @@
 #   * the decoded samples equal the encoder reconstruction sample for sample.
 #
 # Usage: gate_implicit_ref_map.sh --bin build-cpu/av2enc [--dav2d PATH]
-#        [--input testdata/shine_1280x720_60f.y4m]
+#        [--input testdata/pub_1280x720_60f.y4m]
 # Exit: 0 pass, 1 fail, 2 usage, 77 skip.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 BIN=""
 DAV2D="${DAV2D:-}"
-SRC="${AV2ENC_TESTDATA:-$ROOT/testdata}/shine_1280x720_60f.y4m"
+SRC="${AV2ENC_TESTDATA:-$ROOT/testdata}/pub_1280x720_60f.y4m"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 

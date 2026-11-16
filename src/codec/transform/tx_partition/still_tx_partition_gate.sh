@@ -180,23 +180,23 @@ reject_case() {
 
 # Default streams must not move.
 run_case tests/data/basic_64x64_1f.y4m still_64_base \
-    0ef9825062a25c4d950ee924113c6f89 - 
+    2b31e378787363641c836fdf563bbd0e - 
 run_case tests/data/basic_640x360_1f.y4m still_360_base \
-    e61de628b0812b716b0efa7dcafcdd06 -
+    8ffbe059cfeac3e6ee255f3bb7cf72b8 -
 
 # Natural SSE decision (small streams, only SPLIT is chosen at this QP).
 run_case tests/data/basic_64x64_1f.y4m still_64_txp \
-    78efef38377b249ba3a4d2fcd4fb0399 - --still-tx-partition
+    bd4957178f2b43d73ee9705c1b5a1704 - --still-tx-partition
 run_case tests/data/basic_640x360_1f.y4m still_360_txp \
-    29c5b0b100f512090719846eb9b3c516 - --still-tx-partition
+    8f80244270b3a753a7b09199e57211d7 - --still-tx-partition
 
 # All four signalling shapes, forced for the gate.
 run_case tests/data/basic_64x64_1f.y4m still_64_txp_split \
-    d8726d73d52d2e011996f6eab555815f split --still-tx-partition
+    7a3eb708ac2abbb852e7ef64cfec1f74 split --still-tx-partition
 run_case tests/data/basic_64x64_1f.y4m still_64_txp_horz \
-    4f311b979bab5aa56cef7b0f7dc0f452 horz --still-tx-partition
+    bd7dad57319057b0e0791536eca9b845 horz --still-tx-partition
 run_case tests/data/basic_64x64_1f.y4m still_64_txp_vert \
-    82cc7b5e92aaafbb1d9f18ffe08165a4 vert --still-tx-partition
+    07b4f25be620b0fcf29029050e64cd69 vert --still-tx-partition
 
 # Compositions are sample-exact (their own gates pin the decisions).
 run_case tests/data/basic_64x64_1f.y4m still_64_txp_rdoq - split \
@@ -216,7 +216,7 @@ run_case tests/data/basic_64x64_1f.y4m still_64_txp_rdointra - split \
 # so --still-tx-partition must fall back to one TX_4X4 part instead of aborting
 # on "TX_PARTITION_NONE is not signallable for MiSize 0".
 run_case tests/data/basic_64x64_1f.y4m still_64_txp_sub8 \
-    5e604f8bb76b5e14abb4e5521f9e2113 - --qp 16 --still-tx-partition \
+    7a94675c055fc866dfdd9932b7618d36 - --qp 16 --still-tx-partition \
     --still-sub8 --still-depth 8
 
 # SCOUT-TXADV-01: per-part prediction must read the §7.13.2.15/.16
@@ -225,10 +225,10 @@ run_case tests/data/basic_64x64_1f.y4m still_64_txp_sub8 \
 # the sensitive composition is full-intra (and its RDO variant) at QP20 on
 # 640x360; the 64x64 QP90 case above never hits a smooth neighbour.
 run_case tests/data/basic_640x360_1f.y4m still_360_txp_fullintra \
-    a56cad512a5329a0b1012ade09983b21 - --qp 20 --still-tx-partition \
+    7e2d9ce284d18a5bdb0eff13bede0b64 - --qp 20 --still-tx-partition \
     --still-full-intra
 run_case tests/data/basic_640x360_1f.y4m still_360_txp_rdointra \
-    4ee9f3e9160e5faea7a092fe88bdfd42 - --qp 20 --still-tx-partition \
+    fca04b24387e843bd3900476d094ca71 - --qp 20 --still-tx-partition \
     --still-rdo-intra
 
 reject_case reject_txp_qm \

@@ -146,7 +146,7 @@ never uses the production implementation to generate expectations. Coverage:
 - partial right/bottom blocks via reduced `max_x`/`max_y`;
 - all 6 modes x 2 transpose values;
 - 8-, 10-, and 12-bit samples;
-- real luma blocks from `testdata/shine_256x256_1f.y4m` (2880 predictions);
+- real luma blocks from `testdata/pub_256x256_1f.y4m` (2880 predictions);
 - decision selection and syntax predicate/CDF/codec roundtrips;
 - rejection of 8x8, short stride, null plane, and illegal availability.
 

@@ -45,6 +45,12 @@ if [ -z "${DAV2D:-}" ] || [ ! -x "$DAV2D" ]; then
     exit 127
 fi
 
+# The decoder is a trust anchor: it is what turns a produced stream into the
+# pixels every quality gate scores.  Verify the bytes match the recorded pin.
+if [ -x "$ROOT/tools/verify_tool_pin.sh" ]; then
+    "$ROOT/tools/verify_tool_pin.sh" "$DAV2D" || exit 1
+fi
+
 # --- container sanity (does not decode) -------------------------------------
 IVF_FRAMES=""
 if command -v python3 >/dev/null 2>&1; then

@@ -73,7 +73,7 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 77
 fi
 
-INPUT="$ROOT/testdata/shine_1280x720_60f.y4m"
+INPUT="$ROOT/testdata/pub_1280x720_60f.y4m"
 if [ ! -f "$INPUT" ]; then
     echo "SKIP: missing $INPUT" >&2
     exit 77

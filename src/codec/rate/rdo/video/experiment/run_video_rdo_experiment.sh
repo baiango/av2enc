@@ -28,7 +28,7 @@ while [ ! -f "${ROOT}/CMakeLists.txt" ] && [ "${ROOT}" != "/" ]; do
     ROOT="$(dirname -- "${ROOT}")"
 done
 CXX="${CXX:-c++}"
-INPUT="${INPUT:-$ROOT/testdata/shine_1280x720_60f.y4m}"
+INPUT="${INPUT:-$ROOT/testdata/pub_1280x720_60f.y4m}"
 OUT="${OUT:-${TMPDIR:-/tmp}/video_rdo_experiment}"
 CASES="2f_sb,2f_tree,8f_sb,8f_tree"
 RUN_QUALITY=1

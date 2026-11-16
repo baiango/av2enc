@@ -35,9 +35,9 @@ if [ -z "$DAV2D" ]; then
     done
 fi
 [ -n "$DAV2D" ] && [ -x "$DAV2D" ] || { echo "gate_mfh: no dav2d" >&2; exit 77; }
-SRC="$ROOT/testdata/shine_1280x720_60f.y4m"
+SRC="$ROOT/testdata/pub_1280x720_60f.y4m"
 [ -f "$SRC" ] || { echo "gate_mfh: missing $SRC" >&2; exit 77; }
-EXPECTED_MFH_MD5=fcd0a8808a76edff3a2f0f2b9eba1a41
+EXPECTED_MFH_MD5=5727753fe1bed325411db631b6d4534a
 
 md5_of() { md5 -q "$1" 2>/dev/null || md5sum "$1" | awk '{print $1}'; }
 dec_md5() {

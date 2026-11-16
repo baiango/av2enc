@@ -47,7 +47,7 @@ CXX=g++-16 ./build_and_test.sh
 
 The synthetic suite links only `twopass.cpp` and `../rc.cpp`. The real suite
 links the unmodified M2 CPU reference frame loop (`src/encoder/m2/`) and reads
-`testdata/shine_1280x720_60f.y4m`. It is skipped when the clip is absent.
+`testdata/pub_1280x720_60f.y4m`. It is skipped when the clip is absent.
 `DAV2D` is auto-detected from `tools/bin/` for a decode check.
 
 ## API overview
@@ -379,7 +379,7 @@ Local result: **2,586 checks, 0 failures** with Apple clang 21 and
 Homebrew g++ 16, `TWOPASS_WERROR=1`, and ASan + UBSan clean.
 
 `twopass_real_test.cpp` performs real M2 encodes of
-`testdata/shine_1280x720_60f.y4m`:
+`testdata/pub_1280x720_60f.y4m`:
 
 - 8 frames at QP 60/120/180/220 and 2 frames at QP 90/180/220;
 - a monotone rate curve built from the real payload sizes, used as the

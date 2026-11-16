@@ -304,8 +304,8 @@ std::string repo_root_from_source() {
 void test_real_recon(const std::string& root, DeviceFrame& d) {
   const std::string candidates[] = {
       root + "/decoded.y4m",
-      root + "/testdata/shine_256x256_1f.y4m",
-      root + "/testdata/shine_1280x720_60f.y4m",
+      root + "/testdata/pub_256x256_1f.y4m",
+      root + "/testdata/pub_1280x720_60f.y4m",
   };
   std::string path;
   for (const std::string& p : candidates) {

@@ -45,8 +45,8 @@ fi
 export DAV2D
 
 NASA="$TESTDATA/nasa_480x240_30fps_60f.y4m"
-SHINE="$TESTDATA/shine_640x360_4f.y4m"
-[ -f "$SHINE" ] || SHINE="$TESTDATA/shine_640x360_1f.y4m"
+SHINE="$TESTDATA/pub_640x360_4f.y4m"
+[ -f "$SHINE" ] || SHINE="$TESTDATA/pub_640x360_1f.y4m"
 if [ ! -f "$SHINE" ]; then
     echo "gate_video_nightly: SKIP (exit 77): no short clip in $TESTDATA" >&2
     exit 77

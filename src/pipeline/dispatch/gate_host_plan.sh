@@ -31,7 +31,7 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
     exit 2
 fi
 
-F1080="$TESTDATA/shine_1920x1080_10f.y4m"
+F1080="$TESTDATA/pub_1920x1080_10f.y4m"
 F360="$ROOT/tests/data/basic_640x360_1f.y4m"
 for f in "$F1080" "$F360"; do
     if [ ! -f "$f" ]; then

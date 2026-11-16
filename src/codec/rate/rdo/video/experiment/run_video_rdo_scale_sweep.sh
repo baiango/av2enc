@@ -18,7 +18,7 @@ while [ ! -f "${ROOT}/CMakeLists.txt" ] && [ "${ROOT}" != "/" ]; do
 done
 WORK="${WORK:-${TMPDIR:-/tmp}/video_rdo_experiment}"
 OUT="${OUT:-$WORK/sweep}"
-INPUT="${INPUT:-$ROOT/testdata/shine_1280x720_60f.y4m}"
+INPUT="${INPUT:-$ROOT/testdata/pub_1280x720_60f.y4m}"
 SCALES="${SCALES:-0.05,0.10,0.20,0.25,0.50}"
 
 while [ $# -gt 0 ]; do

@@ -176,7 +176,7 @@ decoded Y4Ms are identical.
 
 ## Mode-selection impact (quality / rate)
 
-**Prediction-only** on the 256×256 `testdata/shine_256x256_1f.y4m` Y plane:
+**Prediction-only** on the 256×256 `testdata/pub_256x256_1f.y4m` Y plane:
 32 candidate 64×32 blocks in raster order; each block copies the block one
 64-wide column to its left (first column wraps to the previous row); 20
 candidates have a valid `refX/refY>=1` source. The source frame is used as the

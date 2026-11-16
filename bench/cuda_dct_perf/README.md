@@ -356,7 +356,7 @@ cmake -G Ninja -S . -B build -DCMAKE_BUILD_TYPE=Release \
 cmake --build build
 
 ./build/cuda_dct_perf \
-  --y4m /workspace/av2enc/testdata/shine_1920x1080_10f.y4m
+  --y4m /workspace/av2enc/testdata/pub_1920x1080_10f.y4m
 ```
 
 Or `sh run_remote.sh` from the same directory; it builds, prints `nvidia-smi`
@@ -370,7 +370,7 @@ Clock/power logging during a run:
 ```sh
 nvidia-smi --query-gpu=timestamp,utilization.gpu,clocks.sm,clocks.mem,power.draw,temperature.gpu \
   --format=csv,noheader -l 1 > /tmp/dct_smi.csv &
-./build/cuda_dct_perf --y4m /workspace/av2enc/testdata/shine_1920x1080_10f.y4m
+./build/cuda_dct_perf --y4m /workspace/av2enc/testdata/pub_1920x1080_10f.y4m
 kill %1
 ```
 

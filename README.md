@@ -187,11 +187,11 @@ reference; GPU output is byte-identical at the calibration point.
 
 | Case | MD5 |
 |---|---|
-| Basic 64x64 | `7efc3162bc0a4785685eba291a8096fd` |
-| Basic 640x360 | `56f11d4a63ff07f2356ef5064b84fe0e` |
-| Still 64x64 | `0ef9825062a25c4d950ee924113c6f89` |
-| Still 640x360 | `e61de628b0812b716b0efa7dcafcdd06` |
-| Video 720p default | `c6d588647aacb2275dfaea41a00fb501` |
+| Basic 64x64 | `c9294fa48f70fc82a26c64908ddc0b12` |
+| Basic 640x360 | `0d90c958b8dd5d12c6ab2eef2a2c19bf` |
+| Still 64x64 | `2b31e378787363641c836fdf563bbd0e` |
+| Still 640x360 | `8ffbe059cfeac3e6ee255f3bb7cf72b8` |
+| Video 720p default | `65feaa8685e2d861a44a65632268ba92` |
 
 **Implemented surface**
 

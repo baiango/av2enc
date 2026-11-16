@@ -58,7 +58,7 @@ tools/bin/dav2d-macos -q -i /tmp/q1.ivf -o /tmp/q1.y4m --threads 1 --strict 1
 Observed: `Error decoding frame: Invalid argument` / `No data decoded` (both
 `--strict 0` and `1`).  qp 2, 3, 5, 10, 20, 40 and 90 decode; default depth 4
 fails while depths 1-3/5-7, `--still-single`, `--still-rdoq` and
-`--still-cfl-ds 1/2` pass.  `shine_640x360_1f.y4m` at qp1 decodes.  The encoder
+`--still-cfl-ds 1/2` pass.  `pub_640x360_1f.y4m` at qp1 decodes.  The encoder
 recon dump is produced successfully, so this is not an encoder-side recon
 assertion.
 

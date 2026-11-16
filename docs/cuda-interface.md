@@ -12,8 +12,8 @@ Port the working CPU M0 still-picture path to CUDA without changing the
 bitstream. End-to-end CUDA output must decode with `dav2d` and match the CPU
 reference MD5s:
 
-- 64x64: `7efc3162bc0a4785685eba291a8096fd`
-- 640x360: `56f11d4a63ff07f2356ef5064b84fe0e`
+- 64x64: `c9294fa48f70fc82a26c64908ddc0b12`
+- 640x360: `0d90c958b8dd5d12c6ab2eef2a2c19bf`
 
 If exact MD5 matching proves impossible due to FP contraction, report the
 difference and a PSNR comparison; do not silently change the test.
@@ -142,3 +142,54 @@ tools/cuda_module_suites.sh -j 5          # pass/fail table + logs
 
 `docs/cpu-cuda-matrix.md` records the last full merge run (2026-11-13:
 **96/96** suites on `sm_86`, including both M2 video suites).
+
+## Verification on RTX 3060 (2026-11-17)
+
+Host: RTX 3060 12 GB, driver 580.173.02, CUDA 13.0, `sm_86`, 32 cores.
+Clean CUDA build: **168 s** (`-j16`). Everything below is CPU vs GPU on the
+same host, `cmp` with no tolerance.
+
+| Check | Result |
+|---|---|
+| Still 64x64 (`--still` vs `--still-gpu`) | IVF `2b31e378…`, identical |
+| Video 240p QP106, 8 frames (`--video` vs `--video-gpu`) | IVF `c48cf494…`, identical |
+| Calibration 240p QP189, 60 frames | **`a1d0dba1…`, 25,009 B**, identical; `--video-recon` dumps identical |
+| 720p QP90, 24 frames (synthetic source) | identical; GPU **1.79x** faster (6.8 s -> 3.8 s) |
+| `build_runtime_test`, `build_entropy_test`, `build_intra_test`, `build_transform_test` | OK |
+| Still `build_pipeline_test.sh` | OK |
+| CPU cross-architecture (Linux x86_64 vs macOS arm64) | identical IVF |
+
+`--nightly` is CPU-only by design (the CUDA backend keeps the historical
+decisions so its streams stay CPU-reference exact) and `--cpu-threads` is a CPU
+knob; both are rejected by name with `--video-gpu`.
+
+Two defects were found by running this check, not by reading the code:
+
+1. **`AV2ENC_VIDEO_GPU_CALLABLE` was translation-unit local.** After the CLI
+   split it was defined only in `main.cpp`, while `cli/validate.cpp` tested it;
+   undefined identifiers are 0 in `#if`, so the "backend not linked" rejection
+   was compiled in unconditionally and a working CUDA build refused
+   `--video-gpu`. Fixed by `src/cli/gpu_callable.h`, included by the CLI TU.
+2. **The two product GPU gates failed instead of skipping on Linux.** They
+   accepted any `-x` decoder, so they tried to execute the macOS
+   `tools/bin/dav2d-macos` and reported "dav2d rejected the stream". They now
+   probe the binary and exit 77 when it cannot run.
+
+Remaining gap: there is no native Linux `dav2d`, so the decode half of
+`gate_video_gpu.sh` and `gate_gpu_throughput.sh` cannot run on the GPU host. The
+gates now exit 77 there instead of failing on the macOS binary.
+
+Closing that gap without a Linux decoder: bring the GPU-produced IVF back to a
+host with the pinned decoder and decode it there. Done for the three streams
+above, all with `dav2d --strict 1`:
+
+| Stream | Decoded | CPU vs GPU decoded output |
+|---|---|---|
+| Calibration 240p QP189, 60 f | 60/60 | `01b7f25d…`, identical |
+| Video 240p QP106, 8 f | 8/8 | `3aa5284d…` |
+| 720p QP90, 24 f | 24/24 | `e98c79b6…`, identical |
+
+Because the streams are byte-identical, the decode comparison is implied rather
+than independent evidence -- but it does prove the GPU bytes are a valid AV2
+stream under `--strict 1`, not merely a matching blob. The decode half matters
+if drift is ever nonzero; then a decoder is needed to compare pictures.

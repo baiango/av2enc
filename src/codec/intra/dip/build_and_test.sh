@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build/run the AV2 DIP CPU reference tests (§5.20.7.9, §7.13.2.3-.6).
 #
-#   ./build_and_test.sh              # build + run (uses shine_256x256_1f.y4m)
+#   ./build_and_test.sh              # build + run (uses pub_256x256_1f.y4m)
 #   ./build_and_test.sh --no-run
 #   SANITIZE=1 ./build_and_test.sh   # ASan + UBSan
 #   WERROR=1 ./build_and_test.sh
@@ -40,5 +40,5 @@ fi
   -o "$BUILD_DIR/dip_test"
 
 if [ "$RUN" -eq 1 ]; then
-  "$BUILD_DIR/dip_test" "$ROOT/testdata/shine_256x256_1f.y4m"
+  "$BUILD_DIR/dip_test" "$ROOT/testdata/pub_256x256_1f.y4m"
 fi

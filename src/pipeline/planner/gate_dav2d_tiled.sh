@@ -5,9 +5,9 @@
 #   ./gate_dav2d_tiled.sh [source.y4m] [layout] [--out DIR] [--dav2d PATH]
 #
 # Examples:
-#   ./gate_dav2d_tiled.sh ../../../testdata/shine_256x256_1f.y4m 2x2
-#   ./gate_dav2d_tiled.sh ../../../testdata/shine_1920x1080_10f.y4m 4x2
-#   ./gate_dav2d_tiled.sh ../../../testdata/shine_1920x1080_10f.y4m 16x2
+#   ./gate_dav2d_tiled.sh ../../../testdata/pub_256x256_1f.y4m 2x2
+#   ./gate_dav2d_tiled.sh ../../../testdata/pub_1920x1080_10f.y4m 4x2
+#   ./gate_dav2d_tiled.sh ../../../testdata/pub_1920x1080_10f.y4m 16x2
 #
 # No CMake and no core edits. The harness builds only from public M1 encoder
 # entry points plus its own tile_info()/tile-group writer. A missing pinned

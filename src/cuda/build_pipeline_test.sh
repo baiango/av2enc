@@ -140,10 +140,10 @@ run_case() {
 
 set +e
 run_case 64x64 "$ROOT/tests/data/basic_64x64_1f.y4m" \
-    7efc3162bc0a4785685eba291a8096fd
+    c9294fa48f70fc82a26c64908ddc0b12
 RC64=$?
 run_case 640x360 "$ROOT/tests/data/basic_640x360_1f.y4m" \
-    56f11d4a63ff07f2356ef5064b84fe0e
+    0d90c958b8dd5d12c6ab2eef2a2c19bf
 RC360=$?
 set -e
 

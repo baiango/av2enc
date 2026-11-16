@@ -67,7 +67,7 @@ if [ -z "$DAV2D" ] || [ ! -x "$DAV2D" ]; then
   exit 77
 fi
 
-INPUT="${AV2ENC_INPUT:-$ROOT/testdata/shine_640x360_4f.y4m}"
+INPUT="${AV2ENC_INPUT:-$ROOT/testdata/pub_640x360_4f.y4m}"
 if [ ! -f "$INPUT" ]; then
   echo "video_grain_gate: missing input $INPUT" >&2
   exit 77
@@ -286,25 +286,25 @@ PY
 }
 
 # ------------------------------------------------------------------ base -----
-BASE_INPUT="$ROOT/testdata/shine_1280x720_60f.y4m"
+BASE_INPUT="$ROOT/testdata/pub_1280x720_60f.y4m"
 BASE="$TMP/base.ivf"
 if ! "$AV2ENC_BIN" "$BASE_INPUT" -o "$BASE" --frames 4 --video \
       >"$TMP/base.log" 2>&1; then
   fail_case base "default encode failed"
 else
   BASE_MD5=$(md5_of "$BASE")
-  if [ "$BASE_MD5" != "e4cf72dd13ddc2c32c2f8683153b3c81" ]; then
-    fail_case base "IVF md5 $BASE_MD5, expected e4cf72dd13ddc2c32c2f8683153b3c81"
+  if [ "$BASE_MD5" != "1d32ad7564fd049941e6c90347358a18" ]; then
+    fail_case base "IVF md5 $BASE_MD5, expected 1d32ad7564fd049941e6c90347358a18"
   else
     pass_case "base (flag off, md5 unchanged)"
   fi
 fi
 
 # ---------------------------------------------------- historical plain chain -
-run_case plain4 e60ded0a500a856984cd1b575c89103b 4 \
-  "$ROOT/testdata/shine_1280x720_60f.y4m"
-run_case plain8 e4c9dbd7e105160aea90c66947b69bbb 8 \
-  "$ROOT/testdata/shine_1280x720_60f.y4m"
+run_case plain4 7d3741838aae3f76d144c56fabdc535b 4 \
+  "$ROOT/testdata/pub_1280x720_60f.y4m"
+run_case plain8 cb9ec2d71c5c51b0dd39d5cc0624b545 8 \
+  "$ROOT/testdata/pub_1280x720_60f.y4m"
 
 # ------------------------------------------------- B / temporal / TIP / tiles -
 # 640x360 (4 frames) and 64x64 (4 frames).

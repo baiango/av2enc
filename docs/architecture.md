@@ -392,8 +392,8 @@ Still-picture encoder, 8-bit 4:2:0, one tile:
 - output: IVF containing one frame
 
 Basic status: **achieved 2026-11-11** with the CPU reference path. A 64×64
-DC-intra stream (1,138 bytes) decodes with `dav2d` f9dafbc; MD5
-`7efc3162bc0a4785685eba291a8096fd`, PSNR 42.13 dB. The CUDA kernels are not
+DC-intra stream (1,388 bytes) decodes with `dav2d` f9dafbc; MD5
+`c9294fa48f70fc82a26c64908ddc0b12`, PSNR 42.24 dB (Y 41.05 dB). The CUDA kernels are not
 wired into the encode path yet. Adaptive CDFs are disabled for this frame.
 
 The original gate was `avmdec`; `dav2d` is the hard decoder gate now.

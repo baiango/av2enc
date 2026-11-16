@@ -111,7 +111,7 @@ echo "== gate: wedge-only 320x128 =="
 echo "== gate: diffwtd-only 320x128 =="
 "${OUT_DIR}/compound_gate" --mode diffwtd --out "${OUT_DIR}/compound_gate_diffwtd.ivf"
 
-SRC="${ROOT}/testdata/shine_1280x720_60f.y4m"
+SRC="${ROOT}/testdata/pub_1280x720_60f.y4m"
 if [[ "${1:-}" == "--720p" && -f "$SRC" ]]; then
   echo "== gate: real 720p (cropped) =="
   "${OUT_DIR}/compound_gate" --input "$SRC" \

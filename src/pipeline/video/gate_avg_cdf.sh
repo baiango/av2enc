@@ -41,9 +41,9 @@ if [ -z "$DAV2D" ]; then
 fi
 [ -n "$DAV2D" ] && [ -x "$DAV2D" ] || { echo "gate_avg_cdf: no dav2d" >&2; exit 77; }
 
-SRC="$ROOT/testdata/shine_1280x720_60f.y4m"
+SRC="$ROOT/testdata/pub_1280x720_60f.y4m"
 [ -f "$SRC" ] || { echo "gate_avg_cdf: missing $SRC" >&2; exit 77; }
-EXPECTED_AVG_MD5=b6772cc5c0d7ba3384c7943e653a606e
+EXPECTED_AVG_MD5=6824dfe26e7cc2bdbdfa864f09b83c81
 
 md5_of() { md5 -q "$1" 2>/dev/null || md5sum "$1" | awk '{print $1}'; }
 

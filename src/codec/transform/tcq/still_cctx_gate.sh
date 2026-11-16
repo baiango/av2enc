@@ -170,19 +170,19 @@ reject_case() {
 
 # Default streams must not move.
 run_case tests/data/basic_64x64_1f.y4m still_64_base \
-    0ef9825062a25c4d950ee924113c6f89
+    2b31e378787363641c836fdf563bbd0e
 run_case tests/data/basic_640x360_1f.y4m still_360_base \
-    e61de628b0812b716b0efa7dcafcdd06
+    8ffbe059cfeac3e6ee255f3bb7cf72b8
 
 # CCTX on, QP 60/90/120.
 run_case tests/data/basic_64x64_1f.y4m still_64_cctx \
-    5b8b0dcbd2ffb2a3a5afbc41c81f5329 --still-cctx
+    946a2961c01274595d1e5f31676d0358 --still-cctx
 run_case tests/data/basic_640x360_1f.y4m still_360_cctx_qp60 \
-    221172cae583919dd9becbdb9384656d --still-cctx --qp 60
+    10408f46884e442d173b78033c4166a3 --still-cctx --qp 60
 run_case tests/data/basic_640x360_1f.y4m still_360_cctx_qp90 \
-    909ee3792f3f1f1be436670a18ae2372 --still-cctx
+    92f848b6f5f7c654c9ad718422371ef0 --still-cctx
 run_case tests/data/basic_640x360_1f.y4m still_360_cctx_qp120 \
-    7fb75da63815fa03607b734977a5caf4 --still-cctx --qp 120
+    959e35857f6d8cbd60fabb302e0d8eab --still-cctx --qp 120
 
 # Compositions are sample-exact but not pinned here (their own gates pin the
 # decisions).
@@ -197,7 +197,7 @@ run_case tests/data/basic_64x64_1f.y4m still_64_cctx_txtype - \
 # chroma the two streams were byte-identical, so this pin is the regression
 # check (and the recon compare above covers §7.14.6 exactness).
 run_case tests/data/basic_64x64_1f.y4m still_64_cctx_rdoq \
-    7499edbeb1f01643b4c444017f85b87b --still-cctx --still-rdoq
+    dbf3c7457216db588b3872f597e068a8 --still-cctx --still-rdoq
 run_case tests/data/basic_64x64_1f.y4m still_64_cctx_cdef - \
     --still-cctx --still-cdef
 

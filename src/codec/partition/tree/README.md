@@ -226,7 +226,7 @@ two failure modes most likely to reach `dav2d`.
 
 - 64x64 and 128x128 superblocks.
 - 640x360: 10x6 SBs at 64, 5x3 at 128; bottom-edge root 64x64 is legal as
-  `NONE` (matches the pinned `56f11d4a63ff07f2356ef5064b84fe0e` stream's
+  `NONE` (matches the pinned `0d90c958b8dd5d12c6ab2eef2a2c19bf` stream's
   partition mode), while narrower bottom blocks follow the implied
   `HORZ`/`VERT`/`32x16`/`32x8` paths.
 - 1080p: 30x17 SBs at 64, 15x9 at 128; the 128x128 bottom row is forced

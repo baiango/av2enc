@@ -605,7 +605,7 @@ void test_search_parity() {
 
 void test_real_frame(const std::string& repo_root) {
   std::vector<TestFrame> frames;
-  const std::string path = repo_root + "/testdata/shine_256x256_1f.y4m";
+  const std::string path = repo_root + "/testdata/pub_256x256_1f.y4m";
   if (!load_y4m_frames(path, 1, &frames)) {
     std::cout << "  real 256x256: skipped (no testdata on this host)\n";
     return;

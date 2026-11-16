@@ -10,7 +10,7 @@
 #
 # The synthetic suite has no dependencies. The real-encode suite links the M2
 # CPU reference frame loop (no edits to it) and reads
-# testdata/shine_1280x720_60f.y4m when present.
+# testdata/pub_1280x720_60f.y4m when present.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -63,7 +63,7 @@ if [[ "${TWOPASS_REAL:-1}" != "1" ]]; then
   exit 0
 fi
 
-INPUT="$ROOT/testdata/shine_1280x720_60f.y4m"
+INPUT="$ROOT/testdata/pub_1280x720_60f.y4m"
 if [[ ! -f "${INPUT}" ]]; then
   echo "real-encode tests: skipped (missing ${INPUT})"
   exit 0

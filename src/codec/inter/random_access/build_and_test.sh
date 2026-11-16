@@ -114,9 +114,9 @@ STATUS=0
 echo "== gate: synthetic 128x128, 3 frames =="
 "$OUT/ras_gate" --out "$OUT/ra_gate.ivf" || STATUS=1
 
-if [[ -f "$ROOT/testdata/shine_1280x720_60f.y4m" ]]; then
+if [[ -f "$ROOT/testdata/pub_1280x720_60f.y4m" ]]; then
   echo "== gate: real 720p, 3 frames =="
-  "$OUT/ras_gate" --input "$ROOT/testdata/shine_1280x720_60f.y4m" \
+  "$OUT/ras_gate" --input "$ROOT/testdata/pub_1280x720_60f.y4m" \
     --out "$OUT/ra_gate_720p.ivf" || STATUS=1
 fi
 

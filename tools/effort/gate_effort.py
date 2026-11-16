@@ -411,7 +411,7 @@ def main() -> int:
                 gate.skip("no pinned default fixtures are present")
 
         # 6. still end-to-end: baseline vs the full ranked prefix
-        still_ref = ROOT / "testdata" / "shine_640x360_1f.y4m"
+        still_ref = ROOT / "testdata" / "pub_640x360_1f.y4m"
         if not still_ref.is_file():
             still_ref = fixture
         qp = "170"
@@ -451,7 +451,7 @@ def main() -> int:
                 gate.fail("still measurement failed", str(exc))
 
         # 7. video end-to-end (default path) and the rejected effort+video combo
-        video_src = ROOT / "testdata" / "shine_1280x720_60f.y4m"
+        video_src = ROOT / "testdata" / "pub_1280x720_60f.y4m"
         if args.quick:
             gate.skip("video measurement skipped (--quick)")
         elif not video_src.is_file():

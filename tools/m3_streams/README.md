@@ -15,7 +15,7 @@ baseline, except the baseline control.
 
 | Tool | Status | Flags added to `--still` | IVF bytes | IVF MD5 | Decoded YUV MD5 | Encoder recon |
 |---|---|---|---:|---|---|---|
-| M1 baseline (control) | **PASS** | *(none)* | 936 | `0ef9825062a25c4d950ee924113c6f89` | `41b30b8ff21d571a65fee34ebacdd6c4` | BIT-EXACT |
+| M1 baseline (control) | **PASS** | *(none)* | 936 | `2b31e378787363641c836fdf563bbd0e` | `41b30b8ff21d571a65fee34ebacdd6c4` | BIT-EXACT |
 | CDEF | **PASS** | `--still-cdef --still-cdef-strengths 1` | 938 | `b795a6f998c7037c95b926d6afdfc89e` | `5db402680605e8fce3c7485e78bbf644` | BIT-EXACT |
 | CCSO (band-offset) | **PASS** | `--still-ccso --still-ccso-bands 2` | 941 | `e6ce83aa4a7dc3afe300c0bf49e0c186` | `bdb839ee27860b1b6062875b0dcc4de0` | BIT-EXACT |
 | RDOQ | **PASS** | `--still-rdoq` | 794 | `a7ee3a0ac75781ce2a2c7390c3503019` | `4e2a0cf26d593d3c68263e486d4aafa3` | BIT-EXACT |

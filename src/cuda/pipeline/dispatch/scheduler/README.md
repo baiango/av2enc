@@ -235,8 +235,8 @@ the production path and passes the pinned MD5s:
 
 | Case | Decoded MD5 | Result |
 |---|---|---|
-| 64x64 | `7efc3162bc0a4785685eba291a8096fd` | ok |
-| 640x360 | `56f11d4a63ff07f2356ef5064b84fe0e` | ok |
+| 64x64 | `c9294fa48f70fc82a26c64908ddc0b12` | ok |
+| 640x360 | `0d90c958b8dd5d12c6ab2eef2a2c19bf` | ok |
 
 `compute-sanitizer --tool memcheck` on the 640x360 case: **0 errors**.
 `PlanCounters::dependency_violations` is 0 for every geometry.

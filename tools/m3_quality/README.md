@@ -37,8 +37,8 @@ Useful options:
 
 The defaults use the two repository benchmark clips:
 
-- 640x360: `bench/avm_360p/shine_360p_2s.y4m`
-- native 1920x1080: `bench/avm_1080p/shine_1080p_2s.y4m`
+- 640x360: `bench/avm_360p/legacy_360p_2s.y4m`
+- native 1920x1080: `bench/avm_1080p/legacy_1080p_2s.y4m`
 
 Both are the same LG QNED “Shine” 4K source at 10 s; the 640x360 fixture is a
 downscale. The harness extracts exactly one frame from each and hashes it. It

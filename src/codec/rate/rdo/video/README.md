@@ -322,7 +322,7 @@ Harness: `experiment/run_video_rdo_experiment.sh`. It:
    sample (0 diffs required);
 6. runs `tools/quality.py` for PSNR/CVVDP.
 
-The fixture is `testdata/shine_1280x720_60f.y4m`. Results (bytes are the
+The fixture is `testdata/pub_1280x720_60f.y4m`. Results (bytes are the
 gate's `total_bytes`; CVVDP is JOD):
 
 ### 2-frame, single 64x64 leaf per superblock

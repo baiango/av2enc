@@ -305,7 +305,7 @@ differences on Y, U and V:
   PASS: open-no-ltr recon exact
 ```
 
-The 720p gate with `INPUT=testdata/shine_1280x720_60f.y4m` gives the same
+The 720p gate with `INPUT=testdata/pub_1280x720_60f.y4m` gives the same
 result (43.7 kB CLK, 170 kB for the open-ltr stream). The OLK picture is not
 in the decoded output (it is a non-output key frame), so each phase compares
 the pictures the decoder must output, in coding order.
@@ -346,7 +346,7 @@ is the one real behavioural change. Everything else is header plumbing.
 ./src/encoder/inter/longterm/build_and_test.sh --no-gate    # unit tests only
 SANITIZE=1 ./src/encoder/inter/longterm/build_and_test.sh   # ASan+UBSan
 WERROR=1   ./src/encoder/inter/longterm/build_and_test.sh
-INPUT=testdata/shine_1280x720_60f.y4m ./src/encoder/inter/longterm/build_and_test.sh
+INPUT=testdata/pub_1280x720_60f.y4m ./src/encoder/inter/longterm/build_and_test.sh
 ```
 
 No CMake change is needed; the script compiles the module plus the untouched

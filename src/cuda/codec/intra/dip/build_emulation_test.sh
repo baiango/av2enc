@@ -39,5 +39,5 @@ CXX="${CXX:-c++}"
   -o "$BUILD_DIR/dip_emulation_test"
 
 if [ "$RUN" -eq 1 ]; then
-  "$BUILD_DIR/dip_emulation_test" "$ROOT/testdata/shine_256x256_1f.y4m"
+  "$BUILD_DIR/dip_emulation_test" "$ROOT/testdata/pub_256x256_1f.y4m"
 fi

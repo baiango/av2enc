@@ -270,7 +270,7 @@ bool compare_decoded(const std::vector<Frame>& decoded,
 
 bool parse_args(int argc, char** argv, std::string* input, int* frames,
                 std::string* out_dir, std::string* dav2d, bool* single_block) {
-  *input = "testdata/shine_1280x720_60f.y4m";
+  *input = "testdata/pub_1280x720_60f.y4m";
   *frames = 2;
   *out_dir = ".";
   *dav2d = "tools/bin/dav2d-macos";

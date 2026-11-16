@@ -164,45 +164,45 @@ run_case() {
 
 # --- 64x64 -----------------------------------------------------------------
 run_case tests/data/basic_64x64_1f.y4m still_64_wiener \
-    f2c005d7873c9c493e1b41473c8f3a54 --wiener -- \
+    03d7722ec7bbf0deffc7dab25b748004 --wiener -- \
     --still --still-wiener
 run_case tests/data/basic_64x64_1f.y4m still_64_chroma_lr \
-    0e291675117f627783606d4bf0b3ca43 --chroma-lr -- \
+    d67f32ff94430eff9819ce31c84da833 --chroma-lr -- \
     --still --still-chroma-lr
 run_case tests/data/basic_64x64_1f.y4m still_64_pc_wiener \
-    508ab8ec82f6b5fc0a1b6a1980eb0c50 --pc-wiener -- \
+    4ae2ccd4b28800cde774ea03d88c7bee --pc-wiener -- \
     --still --still-pc-wiener
 run_case tests/data/basic_64x64_1f.y4m still_64_gdf \
-    1714218f7dab3dbaaa334885a38c2a88 --gdf -- \
+    19cb8676d6a2f3367cf2766920fe6b9e --gdf -- \
     --still --still-gdf
 run_case tests/data/basic_64x64_1f.y4m still_64_ccso_edge \
-    b83169960ce4e75c6ee5c1d933901923 --ccso-edge -- \
+    b35555e6a4bb62ab7c422894879b2c34 --ccso-edge -- \
     --still --still-ccso-edge
 
 # --- 640x360 ---------------------------------------------------------------
 run_case tests/data/basic_640x360_1f.y4m still_360_wiener \
-    4bbede8ad74b6552a2404e5c23431adb --wiener -- \
+    f47e0f57b9bf7e630285fc40189b01ff --wiener -- \
     --still --still-wiener
 run_case tests/data/basic_640x360_1f.y4m still_360_chroma_lr \
-    e6a83f2fec7bc4537b868cbbdc389504 --chroma-lr -- \
+    476a3673836163121839b72755ec7f94 --chroma-lr -- \
     --still --still-chroma-lr
 run_case tests/data/basic_640x360_1f.y4m still_360_wiener_chroma \
-    a7a4c06967bd4704dbb72f4de8e79f91 --wiener --chroma-lr -- \
+    3d1d1cf0c4ccf7cacfec233c97ba6dfa --wiener --chroma-lr -- \
     --still --still-wiener --still-chroma-lr
 run_case tests/data/basic_640x360_1f.y4m still_360_cdef_ccso_wiener \
-    2f4ffb0c0dc62d713f5a6a9f5e236240 --cdef --ccso --wiener --chroma-lr -- \
+    0f173ffd137716f368b3944079efc2e4 --cdef --ccso --wiener --chroma-lr -- \
     --still --still-cdef --still-ccso --still-wiener --still-chroma-lr
 run_case tests/data/basic_640x360_1f.y4m still_360_pc_wiener \
-    5236b0dd917d7cd62832b9d79b88f007 --pc-wiener -- \
+    08836c1181c4fe5ce219b3658dbb8a45 --pc-wiener -- \
     --still --still-pc-wiener
 run_case tests/data/basic_640x360_1f.y4m still_360_cdef_ccso_pc_wiener \
-    cffddedb6fac60b29d38e2caf5f9b6f4 --cdef --ccso --pc-wiener -- \
+    63f4592a88a82b724819984e6bf8fa50 --cdef --ccso --pc-wiener -- \
     --still --still-cdef --still-ccso --still-pc-wiener
 run_case tests/data/basic_640x360_1f.y4m still_360_gdf \
-    b07c1327de42ec038e25dc7c74561984 --gdf -- \
+    d26304dddfeaf299190150ef4c2b872f --gdf -- \
     --still --still-gdf
 run_case tests/data/basic_640x360_1f.y4m still_360_cdef_ccso_gdf \
-    ebe9f970bd7a3a73e4b38ae8e3393354 --cdef --ccso --gdf -- \
+    cf0cc9155f9df319c6ce0ff778f5cc74 --cdef --ccso --gdf -- \
     --still --still-cdef --still-ccso --still-gdf
 
 # --- partial restoration unit at the frame edge ---------------------------
@@ -217,11 +217,11 @@ run_case testdata/src_100x70.y4m still_70_chroma_lr \
     - --chroma-lr -- --still --still-chroma-lr
 run_case testdata/src_100x70.y4m still_70_pc_wiener \
     - --pc-wiener -- --still --still-pc-wiener
-run_case "$TESTDATA/shine_1280x720_60f.y4m" still_720_wiener \
+run_case "$TESTDATA/pub_1280x720_60f.y4m" still_720_wiener \
     - --wiener -- --still --still-wiener
-run_case "$TESTDATA/shine_1280x720_60f.y4m" still_720_chroma_lr \
+run_case "$TESTDATA/pub_1280x720_60f.y4m" still_720_chroma_lr \
     - --chroma-lr -- --still --still-chroma-lr
-run_case "$TESTDATA/shine_1280x720_60f.y4m" still_720_pc_wiener \
+run_case "$TESTDATA/pub_1280x720_60f.y4m" still_720_pc_wiener \
     - --pc-wiener -- --still --still-pc-wiener
 
 # --- per-plane chroma FrameRestorationType ---------------------------------
@@ -239,25 +239,25 @@ run_case tests/data/basic_640x360_1f.y4m still_360_qp1_chroma_lr_split \
 # output is a distinct buffer from the GDF source.  These combinations were
 # rejected before the split; each one is recon-exact.
 run_case tests/data/basic_64x64_1f.y4m still_64_gdf_wiener \
-    37569cd29b22dedb926d31fad17d4aa2 --gdf --wiener -- \
+    f9b5ae5ae0dd69b297d521c8a2262a21 --gdf --wiener -- \
     --still --still-gdf --still-wiener
 run_case tests/data/basic_64x64_1f.y4m still_64_gdf_chroma \
-    a153d0b08391512160ef3ab141071895 --gdf --chroma-lr -- \
+    aaaeff190f572d357c0f4509ee234294 --gdf --chroma-lr -- \
     --still --still-gdf --still-chroma-lr
 run_case tests/data/basic_640x360_1f.y4m still_360_gdf_wiener \
-    fd67ddab058eb86485eb9cdb986ffbb2 --gdf --wiener -- \
+    f1c53f17546dc7cf300372995363c049 --gdf --wiener -- \
     --still --still-gdf --still-wiener
 run_case tests/data/basic_640x360_1f.y4m still_360_gdf_chroma \
-    636137a428463bf0a6ecf59375c09a5a --gdf --chroma-lr -- \
+    ea6e72df90453328daadb2a983b5a086 --gdf --chroma-lr -- \
     --still --still-gdf --still-chroma-lr
 run_case tests/data/basic_640x360_1f.y4m still_360_gdf_wiener_chroma \
-    a55b3f920a57d3872dd7a336d664a65f --gdf --wiener --chroma-lr -- \
+    722b602f18687db227d491c16fde232e --gdf --wiener --chroma-lr -- \
     --still --still-gdf --still-wiener --still-chroma-lr
 run_case tests/data/basic_640x360_1f.y4m still_360_cdef_ccso_gdf_lr \
-    1dfb02e1ccc42d31e8176caae1ad0f9f --cdef --ccso --gdf --wiener --chroma-lr -- \
+    0754c2b88f42dd89d4542b53da641542 --cdef --ccso --gdf --wiener --chroma-lr -- \
     --still --still-cdef --still-ccso --still-gdf --still-wiener --still-chroma-lr
 run_case tests/data/basic_640x360_1f.y4m still_360_gdf_pc_wiener \
-    6baecfd7d4ed2bd6f2328358f394a7f8 --gdf --pc-wiener -- \
+    bff046f4a1930fa1532a3285ab91ff36 --gdf --pc-wiener -- \
     --still --still-gdf --still-pc-wiener
 
 # --- PC-Wiener luma + chroma Wiener NS ------------------------------------
@@ -265,22 +265,22 @@ run_case tests/data/basic_640x360_1f.y4m still_360_gdf_pc_wiener \
 # frame header codes both rows and the tile carries use_pc_wiener for luma
 # units followed by use_wiener_ns for chroma units.
 run_case tests/data/basic_64x64_1f.y4m still_64_pc_wiener_chroma \
-    afb66bbe431d39f8a5f6867ef6a2b865 --pc-wiener --chroma-lr -- \
+    19a0f9fe8f0d2a9f80139f1449a9ec12 --pc-wiener --chroma-lr -- \
     --still --still-pc-wiener --still-chroma-lr
 run_case tests/data/basic_640x360_1f.y4m still_360_cdef_ccso_pc_wiener_chroma \
-    d23bc36b9d85ec34e70ddce53baccdfe --cdef --ccso --pc-wiener --chroma-lr -- \
+    1c59d674d282144fc178a73f6ee9d518 --cdef --ccso --pc-wiener --chroma-lr -- \
     --still --still-cdef --still-ccso --still-pc-wiener --still-chroma-lr
 run_case tests/data/basic_640x360_1f.y4m still_360_gdf_pc_wiener_chroma \
-    ba08c8ef70953cf54de375ddc8b9cdd4 --gdf --pc-wiener --chroma-lr -- \
+    343f79ae03294a44f01780e1891539f0 --gdf --pc-wiener --chroma-lr -- \
     --still --still-gdf --still-pc-wiener --still-chroma-lr
 run_case tests/data/basic_640x360_1f.y4m still_360_cdef_ccso_gdf_pc_wiener_chroma \
-    c706c3709a5ffc936f62f161e2986347 --cdef --ccso --gdf --pc-wiener --chroma-lr -- \
+    3cb418d3ce4d5e236a849386f8d52f4b --cdef --ccso --gdf --pc-wiener --chroma-lr -- \
     --still --still-cdef --still-ccso --still-gdf --still-pc-wiener --still-chroma-lr
 run_case tests/data/basic_640x360_1f.y4m still_360_ccso_edge \
-    f0f3fb9693d9cb5bf2f86cef305004bb --ccso-edge -- \
+    f79ae7d94fa2c7626bc66632577af192 --ccso-edge -- \
     --still --still-ccso-edge
 run_case tests/data/basic_640x360_1f.y4m still_360_cdef_ccso_edge \
-    a06c1765e37827cbb840ed018b154037 --cdef --ccso-edge -- \
+    d2745679d25558e095dbf4ee4e5b8ac5 --cdef --ccso-edge -- \
     --still --still-cdef --still-ccso-edge
 
 # --- CDEF cdef_on_skip_txfm frame bit (CDEF_ON_SKIP_TXFM_ADAPTIVE) --------
@@ -289,35 +289,35 @@ run_case tests/data/basic_640x360_1f.y4m still_360_cdef_ccso_edge \
 # stays exact.  The sequence-level DISABLED/ALWAYS_ON modes are not codeable
 # with single_picture_header_flag = 1; the M2 tiled gate covers those.
 run_case tests/data/basic_64x64_1f.y4m still_64_cdef_skip_txfm \
-    cf86fce480936dd5abb4ece5f4983ba4 --cdef --cdef-on-skip-txfm -- \
+    56c2ec8e60434138f6e94f5e287323fb --cdef --cdef-on-skip-txfm -- \
     --still --still-cdef --still-cdef-on-skip-txfm
 run_case tests/data/basic_640x360_1f.y4m still_360_cdef_skip_txfm \
-    8815c209c2b9e1838a7c56ebb4c3f8bd --cdef --cdef-on-skip-txfm -- \
+    498eb2182e39bcf6918bcde5464c9bc4 --cdef --cdef-on-skip-txfm -- \
     --still --still-cdef --still-cdef-on-skip-txfm
 run_case tests/data/basic_640x360_1f.y4m still_360_cdef_ccso_lr_skip_txfm \
-    5e823112b09a8feada7f0965b70c4980 --cdef --cdef-on-skip-txfm --ccso --wiener --chroma-lr -- \
+    e631b9aba5a1b5358cece27f6abb00f6 --cdef --cdef-on-skip-txfm --ccso --wiener --chroma-lr -- \
     --still --still-cdef --still-ccso --still-wiener --still-chroma-lr \
     --still-cdef-on-skip-txfm
 
 # --- optional 1080p (testdata is a gitignored symlink) --------------------
 if [ "$QUICK" -eq 0 ]; then
-    run_case "$TESTDATA/shine_1920x1080_10f.y4m" still_hd_wiener_chroma \
-        1b266d52a1a77e858a9c9b1e052a1364 --wiener --chroma-lr -- \
+    run_case "$TESTDATA/pub_1920x1080_10f.y4m" still_hd_wiener_chroma \
+        98b14b6a25db5c4c77416906b925be96 --wiener --chroma-lr -- \
         --still --still-wiener --still-chroma-lr
-    run_case "$TESTDATA/shine_1920x1080_10f.y4m" still_hd_pc_wiener \
-        448ce9a6613192fc703efba24274d19c --pc-wiener -- \
+    run_case "$TESTDATA/pub_1920x1080_10f.y4m" still_hd_pc_wiener \
+        12749d3e325192de967ab481a2e99fc6 --pc-wiener -- \
         --still --still-pc-wiener
-    run_case "$TESTDATA/shine_1920x1080_10f.y4m" still_hd_gdf \
-        1a0abbc45131695752100f6434b41b3a --gdf -- \
+    run_case "$TESTDATA/pub_1920x1080_10f.y4m" still_hd_gdf \
+        fe970eaae16606e579688386a2892811 --gdf -- \
         --still --still-gdf
-    run_case "$TESTDATA/shine_1920x1080_10f.y4m" still_hd_gdf_wiener_chroma \
-        a4cfd4cb671dd7f38ccbcdf1f76e58c5 --gdf --wiener --chroma-lr -- \
+    run_case "$TESTDATA/pub_1920x1080_10f.y4m" still_hd_gdf_wiener_chroma \
+        0a0c2dca4bb808b1b8c89ebb1ff03070 --gdf --wiener --chroma-lr -- \
         --still --still-gdf --still-wiener --still-chroma-lr
-    run_case "$TESTDATA/shine_1920x1080_10f.y4m" still_hd_pc_wiener_chroma \
-        6270eb72216b965d90584501da119680 --pc-wiener --chroma-lr -- \
+    run_case "$TESTDATA/pub_1920x1080_10f.y4m" still_hd_pc_wiener_chroma \
+        6ee1392ce2781016e8c9b2d746793cb6 --pc-wiener --chroma-lr -- \
         --still --still-pc-wiener --still-chroma-lr
-    run_case "$TESTDATA/shine_1920x1080_10f.y4m" still_hd_ccso_edge \
-        f5febd934e5e310630d9098e6794b93b --ccso-edge -- \
+    run_case "$TESTDATA/pub_1920x1080_10f.y4m" still_hd_ccso_edge \
+        812c0f027fb2442c7593836101e36c13 --ccso-edge -- \
         --still --still-ccso-edge
 else
     echo "loop_restoration_gate: --quick, skipping 1080p cases"
@@ -357,18 +357,18 @@ run_grain_case() {
 }
 
 run_grain_case tests/data/basic_64x64_1f.y4m still_64_grain \
-    2c487ae7f9abb1f51d33c335dc07feac --still --still-grain
+    54153cc8c187b7034e67aaea72237366 --still --still-grain
 run_grain_case tests/data/basic_640x360_1f.y4m still_360_grain \
-    b23601e81d0600debc5b6d84f91be11a --still --still-grain
+    1e0f2775d39764041482ebe7e052bbf1 --still --still-grain
 run_grain_case tests/data/basic_64x64_1f.y4m still_64_grain_adaptive \
-    9db402e9d668c1143451e34d47b9b2aa --still --still-grain --still-grain-adaptive
+    023216546d768a971d4a2982d6d3f534 --still --still-grain --still-grain-adaptive
 run_grain_case tests/data/basic_640x360_1f.y4m still_360_grain_adaptive \
-    78dfef3a53b7b315fa9150ad915f1ef6 --still --still-grain --still-grain-adaptive
+    05e22ce4446ac5b4bc9525c43870bf1f --still --still-grain --still-grain-adaptive
 if [ "$QUICK" -eq 0 ]; then
-    run_grain_case "$TESTDATA/shine_1920x1080_10f.y4m" still_hd_grain \
-        3b380c0cfed0f5538724465cf02297ed --still --still-grain
-    run_grain_case "$TESTDATA/shine_1920x1080_10f.y4m" still_hd_grain_adaptive \
-        80f5de0949b8800c7cff48f3447455ab --still --still-grain --still-grain-adaptive
+    run_grain_case "$TESTDATA/pub_1920x1080_10f.y4m" still_hd_grain \
+        052af22ce78f949602021ba69bc65852 --still --still-grain
+    run_grain_case "$TESTDATA/pub_1920x1080_10f.y4m" still_hd_grain_adaptive \
+        40d3199500890571624f7b9d47028c57 --still --still-grain --still-grain-adaptive
 fi
 
 echo "loop_restoration_gate: $pass passed, $failures failed"

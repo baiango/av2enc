@@ -23,7 +23,7 @@
       "encode_args": ["--still"],
       "dump_args": [],
       "expected_bytes": 936,
-      "expected_md5": "0ef9825062a25c4d950ee924113c6f89",
+      "expected_md5": "2b31e378787363641c836fdf563bbd0e",
       "expected_decoded_yuv_md5": "41b30b8ff21d571a65fee34ebacdd6c4",
       "expected_tile_bytes": 870,
       "expected_frame_bytes": 892,

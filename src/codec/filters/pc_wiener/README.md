@@ -197,7 +197,7 @@ measurement uses **1280×704**.  `1280×688` is also rejected by the fixture;
 
 ### Measured quality and bit cost
 
-Fixture: first frame of `testdata/shine_1280x720_60f.y4m`, downscaled; a
+Fixture: first frame of `testdata/pub_1280x720_60f.y4m`, downscaled; a
 16×16-leaf DC-only M2 syntax fixture (blocky by construction).  PSNR-Y “vs
 source” is therefore dominated by the fixture’s lost detail; the meaningful
 filter number is “vs denoise target”, a 3×3-smoothed version of the baseline

@@ -218,21 +218,21 @@ run_case() {
 
 # Default streams must not move.
 run_case tests/data/basic_64x64_1f.y4m still_64_base \
-    0ef9825062a25c4d950ee924113c6f89 - 
+    2b31e378787363641c836fdf563bbd0e - 
 run_case tests/data/basic_640x360_1f.y4m still_360_base \
-    e61de628b0812b716b0efa7dcafcdd06 -
+    8ffbe059cfeac3e6ee255f3bb7cf72b8 -
 
 # Spec-defined default matrices: decode exact.
 run_case tests/data/basic_64x64_1f.y4m still_64_qm \
-    421c3418520713aa6ab027ee57b1bcaf qm
+    e26cf28c5a8c73d5fc92b0d89d508ab9 qm
 run_case tests/data/basic_640x360_1f.y4m still_360_qm \
-    9c2c765e15fb746275e50113d806d374 qm
+    8f8521a1af468de3dd4482d43955f363 qm
 
 # Real user QM OBU: produced, pinned, and rejected by the pinned decoder.
 run_case tests/data/basic_64x64_1f.y4m still_64_user_qm \
-    eef240e4a944936605ca2ee4d4938241 user
+    1d6158f41835cb62a914a2e7fc810c75 user
 run_case tests/data/basic_640x360_1f.y4m still_360_user_qm \
-    6ad6d30638cce7ac8667308aed0f77b3 user
+    3c568831a501e4ee22af3fc61910393d user
 
 # Additive carrier check: with only >8x8 transforms the sequence header and
 # CLK OBU are identical, and the user stream is the default stream + type-22.

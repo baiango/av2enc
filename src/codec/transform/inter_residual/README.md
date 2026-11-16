@@ -175,7 +175,7 @@ launch sequence is in `docs/INTEGRATION.md`.
 ```sh
 ./gate/build_gate.sh --quick                     # 64x64 synthetic, depth 0
 ./gate/build_gate.sh --depth 3 --frames 3        # 64x64, mixed block sizes
-./gate/build_gate.sh --input testdata/shine_1280x720_60f.y4m --frames 3 --depth 4
+./gate/build_gate.sh --input testdata/pub_1280x720_60f.y4m --frames 3 --depth 4
 ```
 
 The gate encodes the intra keyframe with the stock `encode_video_sequence()` and

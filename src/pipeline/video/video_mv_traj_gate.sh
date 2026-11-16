@@ -52,7 +52,7 @@ CASES=0
 
 md5() { md5sum "$1" 2>/dev/null | cut -d' ' -f1 || md5 -q "$1"; }
 
-FIX360="$TESTDATA/shine_640x360_4f.y4m"
+FIX360="$TESTDATA/pub_640x360_4f.y4m"
 [ -f "$FIX360" ] || {
   echo "video_mv_traj_gate: missing fixture $FIX360" >&2; exit 77; }
 FIX64="$OUT/clip64.y4m"

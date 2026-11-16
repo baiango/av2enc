@@ -116,51 +116,51 @@ DUMP_ARGS=()
 
 # --- 64x64 -----------------------------------------------------------------
 DUMP_ARGS=(); run_case tests/data/basic_64x64_1f.y4m still_64_base \
-    0ef9825062a25c4d950ee924113c6f89 --still
+    2b31e378787363641c836fdf563bbd0e --still
 DUMP_ARGS=(--cdef --cdef-strengths 1); run_case tests/data/basic_64x64_1f.y4m still_64_cdef1 \
-    b795a6f998c7037c95b926d6afdfc89e --still --still-cdef --still-cdef-strengths 1
+    5cd9182e9d6faf86889d13f14d59dd42 --still --still-cdef --still-cdef-strengths 1
 DUMP_ARGS=(--cdef --cdef-strengths 4); run_case tests/data/basic_64x64_1f.y4m still_64_cdef4 \
-    b795a6f998c7037c95b926d6afdfc89e --still --still-cdef --still-cdef-strengths 4
+    5cd9182e9d6faf86889d13f14d59dd42 --still --still-cdef --still-cdef-strengths 4
 DUMP_ARGS=(--rdoq); run_case tests/data/basic_64x64_1f.y4m still_64_rdoq \
-    a7ee3a0ac75781ce2a2c7390c3503019 --still --still-rdoq
+    cc330b8b5d528da885ee2ff6c4228e1c --still --still-rdoq
 DUMP_ARGS=(--tx-type); run_case tests/data/basic_64x64_1f.y4m still_64_txtype \
-    15681508a144eeea88bb8223185d75e9 --still --still-tx-type
+    4965b4a03e5b456c7a364a012df417dc --still --still-tx-type
 DUMP_ARGS=(--full-intra --rdo-intra); run_case tests/data/basic_64x64_1f.y4m still_64_rdointra \
-    45b4a209a8c3e889c91dfa201f26d2d4 --still --still-full-intra --still-rdo-intra
+    070c452082d9b71e00abc63db4e2a959 --still --still-full-intra --still-rdo-intra
 DUMP_ARGS=(--uv-full); run_case tests/data/basic_64x64_1f.y4m still_64_uvfull \
-    2ed7f1ca8d146be8345ed95fee65f9bf --still --still-uv-full
+    ffcb8859679f810220f36315726d9b2a --still --still-uv-full
 DUMP_ARGS=(--cdef --rdoq --tx-type); run_case tests/data/basic_64x64_1f.y4m still_64_combo \
-    aa885652b8c57ecc25b14b87c97862d8 --still --still-cdef --still-rdoq --still-tx-type
+    cbc82d8f2b19d2131d7581c666d1f86d --still --still-cdef --still-rdoq --still-tx-type
 DUMP_ARGS=(--ccso); run_case tests/data/basic_64x64_1f.y4m still_64_ccso \
-    980e5c2194091faf2347e3b05dfdea69 --still --still-ccso
+    71ca9ce6ad19fe2675419cd317361b4a --still --still-ccso
 DUMP_ARGS=(--cdef --ccso); run_case tests/data/basic_64x64_1f.y4m still_64_ccso_cdef \
-    a90c525e480e8ff52db3f47f77fff887 --still --still-cdef --still-ccso
+    b5e0a05a48833b59a22729de72ccc3b1 --still --still-cdef --still-ccso
 
 # --- 640x360 ---------------------------------------------------------------
 DUMP_ARGS=(); run_case tests/data/basic_640x360_1f.y4m still_360_base \
-    e61de628b0812b716b0efa7dcafcdd06 --still
+    8ffbe059cfeac3e6ee255f3bb7cf72b8 --still
 DUMP_ARGS=(--cdef --cdef-strengths 1); run_case tests/data/basic_640x360_1f.y4m still_360_cdef1 \
-    dec10527a779e7664ea78e53def9dbf1 --still --still-cdef --still-cdef-strengths 1
+    086e90b1645f7d7778235fea94fba656 --still --still-cdef --still-cdef-strengths 1
 DUMP_ARGS=(--cdef --cdef-strengths 4); run_case tests/data/basic_640x360_1f.y4m still_360_cdef4 \
-    b37bed7eb785d0c6b2e07219e888ff89 --still --still-cdef --still-cdef-strengths 4
+    5bf1100af41190b447c0741bcca780dd --still --still-cdef --still-cdef-strengths 4
 DUMP_ARGS=(--rdoq); run_case tests/data/basic_640x360_1f.y4m still_360_rdoq \
-    ac668d497012333b6aeecb82c2e70337 --still --still-rdoq
+    fa5f528bc75d4d6f5039286641a24bb1 --still --still-rdoq
 DUMP_ARGS=(--tx-type); run_case tests/data/basic_640x360_1f.y4m still_360_txtype \
-    21c39aec98507dba7c24e5d320e1bb3c --still --still-tx-type
+    93f2e4cb5098f55e0991480d820a32cb --still --still-tx-type
 DUMP_ARGS=(--full-intra --rdo-intra); run_case tests/data/basic_640x360_1f.y4m still_360_rdointra \
-    211da270c5baf34f7bd40da019ffd84b --still --still-full-intra --still-rdo-intra
+    f7106fa0147446621528e244a9d85949 --still --still-full-intra --still-rdo-intra
 DUMP_ARGS=(--uv-full); run_case tests/data/basic_640x360_1f.y4m still_360_uvfull \
-    400dd3ad02db9e0e3e366091a7e6962f --still --still-uv-full
+    67d79e56c10ab4cf4792a5e4ee88895e --still --still-uv-full
 DUMP_ARGS=(--cdef --rdoq --tx-type); run_case tests/data/basic_640x360_1f.y4m still_360_combo \
-    84ab3934c08e6c90b876d067bcbb3606 --still --still-cdef --still-rdoq --still-tx-type
+    d7f83b6f8df0ef9b9c97a9298840065a --still --still-cdef --still-rdoq --still-tx-type
 DUMP_ARGS=(--ccso); run_case tests/data/basic_640x360_1f.y4m still_360_ccso \
-    54e853e24b21bf1237b8b51a846b1c35 --still --still-ccso
+    cd270c0e55fdb4ef75ce54aaae4abdc6 --still --still-ccso
 DUMP_ARGS=(--cdef --ccso); run_case tests/data/basic_640x360_1f.y4m still_360_ccso_cdef \
-    a272550a72c387a8a4f8cc8d3186f8da --still --still-cdef --still-ccso
+    1a1f0d163de13f5b9f477adb9ca4fb13 --still --still-cdef --still-ccso
 DUMP_ARGS=(--ccso --ccso-bands 6); run_case tests/data/basic_640x360_1f.y4m still_360_ccso6 \
-    54e853e24b21bf1237b8b51a846b1c35 --still --still-ccso --still-ccso-bands 6
+    cd270c0e55fdb4ef75ce54aaae4abdc6 --still --still-ccso --still-ccso-bands 6
 DUMP_ARGS=(--ccso --rdoq); run_case tests/data/basic_640x360_1f.y4m still_360_ccso_rdoq \
-    7fd7a2a0e078665614f8b6d2c5fe1b57 --still --still-ccso --still-rdoq
+    4d0d10514d2caf17f5797ed65444551b --still --still-ccso --still-rdoq
 
 # --- coefficient-CDF qctx slices 1..3 (base_q_idx > 90) -------------------
 # §8.3.1 selects one of four COEFF_CDF_Q_CTXS slices from the raw frame
@@ -169,21 +169,21 @@ DUMP_ARGS=(--ccso --rdoq); run_case tests/data/basic_640x360_1f.y4m still_360_cc
 # quantiser against the pinned decoder; the default cases above cover slice 0.
 DUMP_ARGS=()
 RUN_QP=91;  run_case tests/data/basic_64x64_1f.y4m  still_64_qp91 \
-    f50e18c4e08eab3ca6437ed6283a9216 --still
+    d2779b50951674778c10a6fdbd644aa7 --still
 RUN_QP=141; run_case tests/data/basic_64x64_1f.y4m  still_64_qp141 \
-    c47ea7a5e8f826addb8ef90c527c917a --still
+    ac39c106370f67cb5720280f650338a9 --still
 RUN_QP=191; run_case tests/data/basic_64x64_1f.y4m  still_64_qp191 \
-    3768deaaad9a67f7bece568d743993e5 --still
+    c3feceb50ec5cfc2dc3340704ffada38 --still
 RUN_QP=255; run_case tests/data/basic_64x64_1f.y4m  still_64_qp255 \
-    d1e1ebebf2885e575c55508f8b7157d1 --still
+    f41f9d1556e56b69ecd07026815f7a7c --still
 RUN_QP=91;  run_case tests/data/basic_640x360_1f.y4m still_360_qp91 \
-    f5762980cda6c08ec82e131bac487a77 --still
+    b6fdefabaf2781f62d6dae44d7a69ebd --still
 RUN_QP=141; run_case tests/data/basic_640x360_1f.y4m still_360_qp141 \
-    6db7ffba200e2b90075fcb826aaef3c1 --still
+    cef364ae9fe9408063208348aff4402b --still
 RUN_QP=191; run_case tests/data/basic_640x360_1f.y4m still_360_qp191 \
-    df6894744772f7107cad88381ae82e2e --still
+    c2d2fed17bf56510382f2f8faadbcd75 --still
 RUN_QP=255; run_case tests/data/basic_640x360_1f.y4m still_360_qp255 \
-    d0c61808ae8dd6e011046bbab34256af --still
+    a5866b16adf351580d5de21a1752f04a --still
 RUN_QP=
 
 echo "feature_gate: $pass passed, $failures failed"

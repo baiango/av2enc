@@ -276,8 +276,8 @@ with `AV2ENC_STILL_FORCE_Y=6:0` at 1080p: `--still-gpu` equals `--still`
 | 1920×1080 | PASS | PASS | PASS | PASS | PASS | PASS | PASS |
 
 Every cell compares the full IVF MD5 of `--still` and `--still --still-gpu`. Example
-64×64 default: `0ef9825062a25c4d950ee924113c6f89`; 640×360 default:
-`e61de628b0812b716b0efa7dcafcdd06`; 1080p default:
+64×64 default: `2b31e378787363641c836fdf563bbd0e`; 640×360 default:
+`8ffbe059cfeac3e6ee255f3bb7cf72b8`; 1080p default:
 `59fc458d00ab5085cdbb926184009fa6`. The 1080p input is a Lanczos upscale of
 the 640×360 fixture (`ffmpeg -vf scale=1920:1080`), matching the docs' proxy.
 
@@ -325,7 +325,7 @@ second process):
 
 - **72 PASS**: bytes identical, Y/U/V differences `0/0`, deterministic MD5,
   GPU bytes (no `frame_bytes_from_cpu` note). Covers 64x64 and 640x360 with all
-  13 options; native 1080p `testdata/shine_1920x1080_10f.y4m` with all options
+  13 options; native 1080p `testdata/pub_1920x1080_10f.y4m` with all options
   except depth 8; natural 3840x2160 with default/no-deblock/depth-0/adaptive;
   ten random even natural sizes with default/full-intra/no-CfL.
 - **17 DECODE-FAIL**: GPU bytes equal CPU bytes, but the pinned `dav2d` rejects

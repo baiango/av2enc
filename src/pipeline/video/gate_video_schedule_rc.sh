@@ -22,7 +22,7 @@ set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
 BIN=""
 DAV2D="${DAV2D:-}"
-INPUT="${AV2ENC_TESTDATA:-$ROOT/testdata}/shine_1280x720_60f.y4m"
+INPUT="${AV2ENC_TESTDATA:-$ROOT/testdata}/pub_1280x720_60f.y4m"
 
 while [ $# -gt 0 ]; do
   case "$1" in

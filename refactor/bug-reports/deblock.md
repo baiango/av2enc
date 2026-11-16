@@ -23,7 +23,7 @@ segment id, so the decoder dequantises *and deblocks* those blocks with segment 
 Repro:
 ```sh
 B=/Users/arin/work/av2enc
-$B/build/av2enc $B/testdata/shine_256x256_1f.y4m -o /tmp/ext.ivf --frames 1 \
+$B/build/av2enc $B/testdata/pub_256x256_1f.y4m -o /tmp/ext.ivf --frames 1 \
   --still --still-ext-partitions --still-per-segment-q --still-seg-delta 40 \
   --recon /tmp/ext.rec.y4m
 $B/tools/bin/dav2d-macos -q -i /tmp/ext.ivf -o /tmp/ext.dec.y4m --threads 1 --strict 1
@@ -47,7 +47,7 @@ and deblocks every extended-partition leaf as segment 0.
 Repro:
 ```sh
 B=/Users/arin/work/av2enc
-$B/build/av2enc $B/testdata/shine_256x256_1f.y4m -o /tmp/sdp.ivf --frames 1 \
+$B/build/av2enc $B/testdata/pub_256x256_1f.y4m -o /tmp/sdp.ivf --frames 1 \
   --still --still-sdp --still-per-segment-q --still-seg-delta 40 \
   --recon /tmp/sdp.rec.y4m
 $B/tools/bin/dav2d-macos -q -i /tmp/sdp.ivf -o /tmp/sdp.dec.y4m --threads 1 --strict 1
@@ -84,7 +84,7 @@ the writer hardcodes `apply_deblocking_filter[] = 0`
 ### SCOUT-DEBLOCK-04 — stale recon harness + gate gap around per-segment Q
 Repro:
 ```sh
-/Users/arin/work/av2enc/build/still_recon_dump -i /Users/arin/work/av2enc/testdata/shine_256x256_1f.y4m \
+/Users/arin/work/av2enc/build/still_recon_dump -i /Users/arin/work/av2enc/testdata/pub_256x256_1f.y4m \
   -o /tmp/r.y4m --still --still-ext-partitions
 # -> still_recon_dump: unknown option '--still-ext-partitions'
 /Users/arin/work/av2enc/build/still_recon_dump ... --still --still-sdp   # same

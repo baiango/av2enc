@@ -81,7 +81,7 @@ unaffected; only the reported metadata (and any future user of it) is wrong.
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-AV2ENC_STILL_TRACE=1 ./build/av2enc testdata/m0_64x64_1f.y4m --still \
+AV2ENC_STILL_TRACE=1 ./build/av2enc testdata/pub_64x64_1f.y4m --still \
   --still-ext-partitions --still-palette -o /tmp/p.ivf 2>&1 |
   grep -E 'size=(4x16|16x4)'
 ```

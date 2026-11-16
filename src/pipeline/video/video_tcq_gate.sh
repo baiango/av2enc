@@ -74,7 +74,7 @@ cleanup() {
 trap cleanup EXIT
 
 FIX_64="$ROOT/tests/data/basic_64x64_1f.y4m"
-FIX_360="$ROOT/testdata/shine_640x360_4f.y4m"
+FIX_360="$ROOT/testdata/pub_640x360_4f.y4m"
 [ -f "$FIX_64" ] || { echo "SKIP: missing $FIX_64" >&2; exit 77; }
 [ -f "$FIX_360" ] || { echo "SKIP: missing $FIX_360" >&2; exit 77; }
 
@@ -206,27 +206,27 @@ reject_case() {
 BASE_ARGS=(--video-inter-residual --video-tx-search)
 
 # Default streams must not move.  These are the pinned TCQ-off MD5s.
-run_case default_64_qp90 "$FIX_64" 1 582b53aa10c748cefaac54b225867bf0 \
+run_case default_64_qp90 "$FIX_64" 1 c515daae5030740716f4b6f05d23a1c2 \
     "${BASE_ARGS[@]}" --qp 90
-run_case default_360_qp90 "$FIX_360" 4 230e3d1e3501f8812020e39be418a56d \
+run_case default_360_qp90 "$FIX_360" 4 c9c10f4b14f976a5ef233dc4ef0c0750 \
     "${BASE_ARGS[@]}" --qp 90
 
 # --video-tcq with both quantiser paths at QP 60/90/120.
-run_case tcq_64_qp60 "$FIX_64" 1 4536f6b9fa27eae05d899cc26f0f3182 \
+run_case tcq_64_qp60 "$FIX_64" 1 e8ab4a3d3d82c62d5541f6b967880df2 \
     "${BASE_ARGS[@]}" --video-tcq --qp 60
-run_case tcq_64_qp90 "$FIX_64" 1 d0a69605d0137c15307520f13d6d2986 \
+run_case tcq_64_qp90 "$FIX_64" 1 e0a9d816e1730d9a3b2938e3f7f7d0e5 \
     "${BASE_ARGS[@]}" --video-tcq --qp 90
-run_case tcq_64_qp120 "$FIX_64" 1 64f30635790dc1512a8de9c900532748 \
+run_case tcq_64_qp120 "$FIX_64" 1 31a57ee5ff2502a84b079f2921f49029 \
     "${BASE_ARGS[@]}" --video-tcq --qp 120
-run_case tcq_360_qp60 "$FIX_360" 4 71c39b2839b8f9036c37340f547be03f \
+run_case tcq_360_qp60 "$FIX_360" 4 1fe892a024ed9829fe40eb7e558f171e \
     "${BASE_ARGS[@]}" --video-tcq --qp 60
-run_case tcq_360_qp90 "$FIX_360" 4 49b4db7d7f6c683c9774c57914806ff2 \
+run_case tcq_360_qp90 "$FIX_360" 4 4356edfd91d04dac7570c67afdc4b260 \
     "${BASE_ARGS[@]}" --video-tcq --qp 90
-run_case tcq_360_qp120 "$FIX_360" 4 b99fb0bceaae0e337760ea9e3cb9944e \
+run_case tcq_360_qp120 "$FIX_360" 4 5b9ade90a72ca3d48817c539dfb3ecd8 \
     "${BASE_ARGS[@]}" --video-tcq --qp 120
 
 # The non-search path (compute_tx) must also be decoder-exact.
-run_case tcq_360_notx_qp90 "$FIX_360" 4 819af3341bca6490042abf93eb667e26 \
+run_case tcq_360_notx_qp90 "$FIX_360" 4 e7dd66309d863d4418c4cc8ca64a6d37 \
     --video-inter-residual --video-tcq --qp 90
 
 # The TCQ stream must actually differ from the default one (no vacuous pass).

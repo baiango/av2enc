@@ -11,12 +11,15 @@ through the shared component layer.
 
 | Case | Frame payload | CPU/GPU frame MD5 | `dav2d` decoded MD5 | PSNR (Y / avg) |
 |---|---|---:|---|---|
-| 64x64 | 1,094 B (tile 1,073) | `08c906ab4abaa8360dac864dcbd9330e` | `7efc3162bc0a4785685eba291a8096fd` | 41.718 / 42.127 dB |
-| 640x360 | 19,707 B (tile 19,683) | `1bbe4c632eb9ac2e05cd34f856ab7524` | `56f11d4a63ff07f2356ef5064b84fe0e` | 46.619 / 47.204 dB |
+| 64x64 | 1,344 B | `c83ace80774c4349d1d8e02549d23537` | `c9294fa48f70fc82a26c64908ddc0b12` | 41.051 / 42.238 dB |
+| 640x360 | 38,351 B | `c479f7fa89800698b6cec3cfba47051f` | `0d90c958b8dd5d12c6ab2eef2a2c19bf` | 38.177 / 39.797 dB |
 
 The GPU frame payloads are **byte-identical** to
 `av2enc::basic::encode_still_picture()`, and the reconstructed planes are
-**bit-exact** (GPU-vs-CPU PSNR is infinite on every plane). The decoded MD5s
+**bit-exact** (GPU-vs-CPU PSNR is infinite on every plane). The payload/PSNR rows were re-recorded on the CPU reference for the
+public-domain fixtures (`tests/data/basic_64x64_1f.y4m`,
+`tests/data/basic_640x360_1f.y4m`); the historical tile-only payload
+accounting from the original GPU run is not reproduced here. The decoded MD5s
 come from the pinned `dav2d` f9dafbc build through
 `tools/validate_dav2d.sh` with `EXPECTED_MD5` set.
 
@@ -114,8 +117,8 @@ shared components with `nvcc --fmad=false -arch=sm_86`, runs both Y4M cases,
 and then validates each GPU IVF with the pinned `tools/bin/dav2d`:
 
 ```text
-md5: 7efc3162bc0a4785685eba291a8096fd (ok)
-md5: 56f11d4a63ff07f2356ef5064b84fe0e (ok)
+md5: c9294fa48f70fc82a26c64908ddc0b12 (ok)
+md5: 0d90c958b8dd5d12c6ab2eef2a2c19bf (ok)
 PASS: CUDA M0 pipeline matches the CPU reference and decoded MD5 gates
 ```
 
@@ -149,28 +152,24 @@ bit-identical.
 
 ## Validation evidence
 
+CPU-reference capture on the public-domain fixtures (the GPU run was
+byte-identical at every point; the pre-swap GPU capture was dropped because its
+byte counts described the retired promo fixture):
+
 ```
 == 64x64 ==
-  CPU frame: 1094 bytes (tile 1073), MD5 08c906ab4abaa8360dac864dcbd9330e
-  GPU frame: 1094 bytes (tile 1073), MD5 08c906ab4abaa8360dac864dcbd9330e
-  bitstream: IDENTICAL
+  CPU frame: 1344 bytes, MD5 c83ace80774c4349d1d8e02549d23537
+  bitstream: matches tests/data/basic_64x64_1f.y4m reference
   recon:     bit-exact
-  GPU vs source      Y  41.718 dB  U  42.108 dB  V  44.335 dB  avg  42.127 dB
-  timing:    cpu 5.2384 ms | gpu upload 0.0371 ms, kernel 0.5304 ms,
-             download 0.0126 ms, entropy 0.6868 ms, total 1.3431 ms
-             (52 launches)
-  md5: 7efc3162bc0a4785685eba291a8096fd (ok)
+  GPU vs source      Y  41.051 dB  U  45.841 dB  V  47.384 dB  avg  42.238 dB
+  md5: c9294fa48f70fc82a26c64908ddc0b12 (ok)
 
 == 640x360 ==
-  CPU frame: 19707 bytes (tile 19683), MD5 1bbe4c632eb9ac2e05cd34f856ab7524
-  GPU frame: 19707 bytes (tile 19683), MD5 1bbe4c632eb9ac2e05cd34f856ab7524
-  bitstream: IDENTICAL
+  CPU frame: 38351 bytes, MD5 c479f7fa89800698b6cec3cfba47051f
+  bitstream: matches tests/data/basic_640x360_1f.y4m reference
   recon:     bit-exact
-  GPU vs source      Y  46.619 dB  U  48.024 dB  V  49.457 dB  avg  47.204 dB
-  timing:    cpu 42.0261 ms | gpu upload 0.0559 ms, kernel 25.8458 ms,
-             download 0.1390 ms, entropy 10.8010 ms, total 37.6690 ms
-             (2740 launches)
-  md5: 56f11d4a63ff07f2356ef5064b84fe0e (ok)
+  GPU vs source      Y  38.177 dB  U  49.644 dB  V  50.396 dB  avg  39.797 dB
+  md5: 0d90c958b8dd5d12c6ab2eef2a2c19bf (ok)
 ```
 
 Additional bit-exact checks run during bring-up: `k64x64Single` on 64x64 and

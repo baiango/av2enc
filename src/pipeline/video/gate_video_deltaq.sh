@@ -26,7 +26,7 @@
 #       [--dav2d PATH] [--baseline-bin PATH] [--input 720p.y4m]
 #
 # Defaults: BIN=build/av2enc, DAV2D=tools/bin/dav2d,
-# INPUT=testdata/shine_1280x720_60f.y4m.  Set OUT=/tmp/prefix to keep streams.
+# INPUT=testdata/pub_1280x720_60f.y4m.  Set OUT=/tmp/prefix to keep streams.
 #
 # Exit codes: 0 pass, 1 failure, 2 usage, 77 missing fixture/decoder.
 set -euo pipefail
@@ -51,7 +51,7 @@ while [ $# -gt 0 ]; do
 done
 
 BIN=${BIN:-"$ROOT/build/av2enc"}
-INPUT=${INPUT:-"$ROOT/testdata/shine_1280x720_60f.y4m"}
+INPUT=${INPUT:-"$ROOT/testdata/pub_1280x720_60f.y4m"}
 if [ -z "$DAV2D" ]; then
   for candidate in "$ROOT/tools/bin/dav2d" "$ROOT/tools/bin/dav2d-macos"; do
     if [ -x "$candidate" ]; then DAV2D=$candidate; break; fi
@@ -134,7 +134,7 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # 640x360 fixture: the repository's 4-frame clip (skipped when absent).
-INPUT_360="${ROOT}/testdata/shine_640x360_4f.y4m"
+INPUT_360="${ROOT}/testdata/pub_640x360_4f.y4m"
 [ -f "$INPUT_360" ] || INPUT_360="$MIXED"
 
 # Case table: name | input | expected pictures | expected IVF MD5 | args...
@@ -142,14 +142,14 @@ INPUT_360="${ROOT}/testdata/shine_640x360_4f.y4m"
 # MD5s are the gated bytes of this tree.  The default (no new flag) row must
 # stay at the pre-change value.
 CASES=(
-  "a_base|$INPUT|4|e4cf72dd13ddc2c32c2f8683153b3c81|--video --frames 4"
-  "a_seg|$INPUT|4|a9b8be959de14d4a0c65f0b07acfd8a4|--video --frames 4 --video-segmentation"
-  "a_dq|$INPUT|4|f37b82772a194055525d7aa3eeba4e66|--video --frames 4 --video-delta-q"
-  "a_dq_r2|$INPUT|4|a8dea947e6bac38fec4fc49d3b09005c|--video --frames 4 --video-delta-q --video-delta-q-res 2 --video-inter-residual"
-  "a_dq_force|$INPUT|4|661bdb721476ba2d554b61b818c77cf0|--video --frames 4 --video-delta-q --video-force-single"
-  "a_dq_seg|$INPUT|4|c940328f8deec657294f0796c8ef67bd|--video --frames 4 --video-delta-q --video-segmentation --video-inter-residual"
-  "a_psq|$INPUT|4|9b072e470f23256bc34e7daa3ac9eb38|--video --frames 4 --video-per-segment-q"
-  "a_psq_deb|$INPUT|4|5abab13bc70deefa03a6515e66c125ae|--video --frames 4 --video-per-segment-q --video-inter-residual --video-deblock"
+  "a_base|$INPUT|4|1d32ad7564fd049941e6c90347358a18|--video --frames 4"
+  "a_seg|$INPUT|4|1df2cb3605790df838d4bd0a4e6e0795|--video --frames 4 --video-segmentation"
+  "a_dq|$INPUT|4|96d78e38edcb325b575ae5f83f475e2b|--video --frames 4 --video-delta-q"
+  "a_dq_r2|$INPUT|4|b43ad91310f7d2f179ada32b3c2f6d5b|--video --frames 4 --video-delta-q --video-delta-q-res 2 --video-inter-residual"
+  "a_dq_force|$INPUT|4|68e14ea2a31e32907ba8b39e25472b36|--video --frames 4 --video-delta-q --video-force-single"
+  "a_dq_seg|$INPUT|4|5dafb31591b399f28e1edb2f16193944|--video --frames 4 --video-delta-q --video-segmentation --video-inter-residual"
+  "a_psq|$INPUT|4|1c03890eb15f3c4efcc1fd79011b3f54|--video --frames 4 --video-per-segment-q"
+  "a_psq_deb|$INPUT|4|522b1597bc47c8d5c0c32f4ae444bcf1|--video --frames 4 --video-per-segment-q --video-inter-residual --video-deblock"
   "b_seg|$MIXED|4|ee7965ac6c950aa4bdd580a6faa3f495|--video --frames 4 --video-segmentation"
   "b_psq_deb|$MIXED|4|63ab06a9300fc8d840edf0ee5006d3a0|--video --frames 4 --video-per-segment-q --video-deblock"
   "b_psq_ir|$MIXED|4|399e3b33432cb81a319a43cc2834e140|--video --frames 4 --video-per-segment-q --video-inter-residual --video-tx-search --video-deblock"
@@ -164,13 +164,13 @@ CASES=(
   "c_seg16|$SMALL|4|39ccc68c1fe912952b64ac592a36c757|--video --frames 4 --video-segmentation --video-segments 16"
   "c_all|$SMALL|4|5227e113f091383c217646a81a897477|--video --frames 4 --video-uv-delta-q 6 --video-seg-skip --video-seg-globalmv --video-seg-temporal --video-segments 16 --video-deblock"
   # --- 640x360 UV/DC delta + segmentation extension matrix ---
-  "d_uv|$INPUT_360|4|c8b5a11a5a8c759a30f595708d8f4524|--video --frames 4 --video-uv-delta-q 6"
-  "d_uv_ir_deb|$INPUT_360|4|b5a5266c61479d2ad1ba8b441492e72b|--video --frames 4 --video-uv-delta-q 6 --video-inter-residual --video-deblock"
-  "d_skip|$INPUT_360|4|522dffd778f29255277e009ca7f3f5f3|--video --frames 4 --video-seg-skip"
-  "d_gmv|$INPUT_360|4|c162e5a6b56164e747211103d47cdcda|--video --frames 4 --video-seg-globalmv"
-  "d_temporal|$INPUT_360|4|e1784a99061078e1bf36d1bf4c56080d|--video --frames 4 --video-seg-temporal"
-  "d_seg16|$INPUT_360|4|0cd12535516759e6b3e91170c47ed1ed|--video --frames 4 --video-segmentation --video-segments 16"
-  "d_all|$INPUT_360|4|d3a7e390540604d7ca1f208219a2e25e|--video --frames 4 --video-uv-delta-q 6 --video-seg-skip --video-seg-globalmv --video-seg-temporal --video-segments 16 --video-inter-residual --video-deblock"
+  "d_uv|$INPUT_360|4|81b8f0d1d9d0fb6bb29bbc1fa57385e4|--video --frames 4 --video-uv-delta-q 6"
+  "d_uv_ir_deb|$INPUT_360|4|aa84023086619b6f608c961c819156de|--video --frames 4 --video-uv-delta-q 6 --video-inter-residual --video-deblock"
+  "d_skip|$INPUT_360|4|c30c27ff12cd652e52c98499e849f303|--video --frames 4 --video-seg-skip"
+  "d_gmv|$INPUT_360|4|037938fb8825982403e933f5bd691aa3|--video --frames 4 --video-seg-globalmv"
+  "d_temporal|$INPUT_360|4|1a47c6ee3e936c054af89c989f513684|--video --frames 4 --video-seg-temporal"
+  "d_seg16|$INPUT_360|4|41f7e6c9ae6bdb83759bf49d36bbb971|--video --frames 4 --video-segmentation --video-segments 16"
+  "d_all|$INPUT_360|4|c65a76f5404e40e8695ba9623698b818|--video --frames 4 --video-uv-delta-q 6 --video-seg-skip --video-seg-globalmv --video-seg-temporal --video-segments 16 --video-inter-residual --video-deblock"
 )
 
 echo "== video delta-Q/segmentation gate =="

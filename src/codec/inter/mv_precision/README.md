@@ -150,7 +150,7 @@ references are the M2 core's key reconstruction.
 The stream is decoded with the pinned `dav2d --strict 1 --threads 1`; every
 sample is compared with the encoder reconstruction.
 
-Current result (synthetic 128x128 and `testdata/shine_1280x720_60f.y4m`
+Current result (synthetic 128x128 and `testdata/pub_1280x720_60f.y4m`
 cropped to 1280x704):
 
 ```

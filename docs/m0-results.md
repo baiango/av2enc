@@ -7,20 +7,20 @@ Pinned decoder: `dav2d` f9dafbc. Gate: `tools/validate_dav2d.sh`.
 | | |
 |---|---|
 | Input | `tests/data/basic_64x64_1f.y4m` |
-| IVF | 1,138 bytes, FourCC AV02 |
+| IVF | 1,388 bytes, FourCC AV02 |
 | Decoded | 64x64 yuv420p, 1 frame |
-| MD5 | `7efc3162bc0a4785685eba291a8096fd` |
-| PSNR | Y 41.72 dB, average 42.13 dB |
+| MD5 | `c9294fa48f70fc82a26c64908ddc0b12` |
+| PSNR | Y 41.05 dB, average 42.24 dB |
 
 ## Exact 640x360
 
 | | |
 |---|---|
 | Input | `tests/data/basic_640x360_1f.y4m` (no padding) |
-| IVF | 19,751 bytes, FourCC AV02 |
+| IVF | 38,395 bytes, FourCC AV02 |
 | Decoded | 640x360 yuv420p, 1 frame |
-| MD5 | `56f11d4a63ff07f2356ef5064b84fe0e` |
-| PSNR | Y 46.62 dB, average 47.20 dB |
+| MD5 | `0d90c958b8dd5d12c6ab2eef2a2c19bf` |
+| PSNR | Y 38.18 dB, average 39.80 dB |
 
 The bottom partial superblock (360 = 5×64 + 40) uses `PARTITION_NONE` at the
 64×64 SB level. The 32×16 / 32×8 implied-partition paths and rectangular edge
@@ -34,12 +34,12 @@ pinned bitstreams do not change.
 
 | Frame | Mode | IVF | MD5 | PSNR avg |
 |---|---|---:|---|---:|
-| 64x64 | frozen | 1,138 B | `7efc…` | 42.13 dB |
-| 64x64 | adaptive | 1,094 B | `7efc…` | 42.13 dB |
-| 640x360 | frozen | 19,751 B | `56f1…` | 47.20 dB |
-| 640x360 | adaptive | 18,807 B | `56f1…` | 47.20 dB |
+| 64x64 | frozen | 1,388 B | `c929…` | 42.24 dB |
+| 64x64 | adaptive | 1,339 B | `c929…` | 42.24 dB |
+| 640x360 | frozen | 38,395 B | `0d90…` | 39.80 dB |
+| 640x360 | adaptive | 36,596 B | `0d90…` | 39.80 dB |
 
-Adaptive CDFs save **3.9%** at 64x64 and **4.8%** at 640x360 with identical
+Adaptive CDFs save **3.5%** at 64x64 and **4.7%** at 640x360 with identical
 reconstruction and `dav2d` decoding.
 
 ## CUDA M0 pipeline
@@ -48,8 +48,8 @@ The CUDA path is bit-identical to the CPU reference:
 
 | Case | CPU/GPU frame MD5 | `dav2d` MD5 | Recon | CUDA time |
 |---|---|---|---|---|
-| 64x64 | `08c906ab…` | `7efc3162…` | bit-exact | 1.34 ms |
-| 640x360 | `1bbe4c63…` | `56f11d4a…` | bit-exact (PSNR ∞) | 34.1 ms |
+| 64x64 | `c83ace80…` | `c9294fa4…` | bit-exact | 1.34 ms |
+| 640x360 | `c479f7fa…` | `0d90c958…` | bit-exact (PSNR ∞) | 34.1 ms |
 
 640x360 timing breakdown from the shared 3060:
 

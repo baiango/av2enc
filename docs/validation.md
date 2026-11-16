@@ -28,7 +28,7 @@ moves to a newer bitstream snapshot, pin the matching dav2d commit and update
 
 ```sh
 # Known-good sanity check (decoder + validator + ffprobe)
-tools/validate_dav2d.sh testdata/sample_480x270_130f.ivf
+tools/validate_dav2d.sh testdata/pub_480x270_130f.ivf
 
 # Every real encoder output; pass the source for PSNR reporting
 tools/validate_dav2d.sh out.ivf source.y4m
@@ -60,7 +60,7 @@ tools/validate_dav2d.sh out.ivf source.y4m
 ## CTest
 
 `ctest --test-dir build --output-on-failure` includes `dav2d_smoke`. It runs
-`tools/validate_dav2d.sh` on `testdata/sample_480x270_130f.ivf` when a dav2d
+`tools/validate_dav2d.sh` on `testdata/pub_480x270_130f.ivf` when a dav2d
 binary is present. If neither `tools/bin/dav2d` nor `tools/bin/dav2d-macos`
 exists (and `DAV2D` is unset), the test exits with code 77 and CTest reports a
 clean skip with an explanatory message.
@@ -73,7 +73,7 @@ width=480
 height=270
 pix_fmt=yuv420p
 nb_read_frames=130
-OK: dav2d decoded testdata/sample_480x270_130f.ivf
+OK: dav2d decoded testdata/pub_480x270_130f.ivf
 ```
 
 ## Current encoder status

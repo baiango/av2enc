@@ -740,7 +740,7 @@ void PrintHeader(const char* name, const pcw::DecisionResult& result,
 int main(int argc, char** argv) {
   int width = 640;
   int height = 360;
-  std::string source = "testdata/shine_1280x720_60f.y4m";
+  std::string source = "testdata/pub_1280x720_60f.y4m";
   std::string out_path = "/tmp/pc_wiener_gate.ivf";
   std::string decoder;
   double lambda = 0.0;

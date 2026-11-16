@@ -17,9 +17,13 @@ build target.
 
 ## One command
 
+> **Fixture swap:** the paths below were renamed to the public-domain fixtures
+> (`docs/testdata-provenance.md`); the numbers were recorded on the retired
+> promo clip and the streams now differ. Re-run before quoting.
+
 ```sh
 python3 tools/quality.py \
-  --ref testdata/shine_1280x720_60f.y4m \
+  --ref testdata/pub_1280x720_60f.y4m \
   --ivf bench/avm_baseline/qp160_720p_60f.ivf \
   --json bench/avm_baseline/qp160_720p_60f.json
 ```

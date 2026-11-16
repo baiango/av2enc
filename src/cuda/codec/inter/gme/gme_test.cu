@@ -9,7 +9,7 @@
 //     diagnostics);
 //   * synthetic pan / zoom / rotate / combined frames through a real block
 //     matcher;
-//   * real 720p pairs from testdata/shine_1280x720_60f.y4m when present;
+//   * real 720p pairs from testdata/pub_1280x720_60f.y4m when present;
 //   * device projection over every block size 4x4..64x64, all four
 //     precisions, full MV range and GLOBALMV usability;
 //   * device bilinear warp / SSE quality proxy against the CPU helper;
@@ -1022,7 +1022,7 @@ void TestSyntheticGpu(const dev::GmeBuffers& buffers) {
 
 void TestReal720pGpu(const dev::GmeBuffers& buffers,
                      const std::string& repo_root, bool quick) {
-  const std::string path = repo_root + "/testdata/shine_1280x720_60f.y4m";
+  const std::string path = repo_root + "/testdata/pub_1280x720_60f.y4m";
   std::vector<Plane> frames;
   if (!LoadY4mFrames(path, 11, &frames) || frames.size() < 2) {
     std::printf("  gpu real 720p: skipped (no testdata)\n");

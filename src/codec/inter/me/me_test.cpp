@@ -549,7 +549,7 @@ void test_batch_determinism() {
 void test_real_frames(const std::string& repo_root) {
   std::vector<TestFrame> frames;
   const std::string still =
-      repo_root + "/testdata/shine_256x256_1f.y4m";
+      repo_root + "/testdata/pub_256x256_1f.y4m";
   if (!load_y4m_frames(still, 1, &frames)) {
     std::cout << "  real 256x256: skipped (no testdata)\n";
   } else {
@@ -597,7 +597,7 @@ void test_real_frames(const std::string& repo_root) {
   }
 
   frames.clear();
-  const std::string video = repo_root + "/testdata/shine_1280x720_60f.y4m";
+  const std::string video = repo_root + "/testdata/pub_1280x720_60f.y4m";
   if (!load_y4m_frames(video, 2, &frames) || frames.size() < 2) {
     std::cout << "  real 720p: skipped (no testdata)\n";
   } else {

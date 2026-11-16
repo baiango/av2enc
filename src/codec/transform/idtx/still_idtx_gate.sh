@@ -150,17 +150,17 @@ run_case() {
 
 # Default streams must not move.
 run_case tests/data/basic_64x64_1f.y4m still_64_base \
-    0ef9825062a25c4d950ee924113c6f89
+    2b31e378787363641c836fdf563bbd0e
 run_case tests/data/basic_640x360_1f.y4m still_360_base \
-    e61de628b0812b716b0efa7dcafcdd06
+    8ffbe059cfeac3e6ee255f3bb7cf72b8
 
 # IDTX on: the 640x360 stream selects IDTX on long-side transform blocks.
 run_case tests/data/basic_64x64_1f.y4m still_64_idtx \
-    2f0788e54b8220897a48237bdbfe09d9 --still-idtx
+    cbc7961b116ff98a46afc64a69cc825a --still-idtx
 run_case tests/data/basic_640x360_1f.y4m still_360_idtx_qp60 \
-    e528b0a4ced436d1ca8ed2d5ab7552ed --still-idtx --qp 60
+    99673e9b614f0354d54ceb3690152d52 --still-idtx --qp 60
 run_case tests/data/basic_640x360_1f.y4m still_360_idtx \
-    858da1895d9855c9f0aae7963e7ec6dc --still-idtx
+    489e9c85eb6eb345b6d1c84903b1dc10 --still-idtx
 
 # Prove IDTX is actually reached (not just the mode-search plumbing).
 if [ -n "$STILL_RECON" ]; then

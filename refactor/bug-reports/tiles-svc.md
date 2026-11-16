@@ -19,11 +19,11 @@ MFH), SCOUT-HM-04 (SVC accepts `--video-timing`/`--video-mfh`), SCOUT-RC-04
 
 ### SCOUT-TILES-SVC-01 — SVC silently ignores refs/temporal-layer flags
 
-Repro (`in3.y4m` = three copies of `testdata/shine_640x360_1f.y4m`; any
+Repro (`in3.y4m` = three copies of `testdata/pub_640x360_1f.y4m`; any
 multi-frame 640x360 input works):
 ```sh
 python3 - <<'PY'
-s=open('/Users/arin/work/av2enc/testdata/shine_640x360_1f.y4m','rb').read()
+s=open('/Users/arin/work/av2enc/testdata/pub_640x360_1f.y4m','rb').read()
 n=s.index(b"\n"); p=s.index(b"\n",n+1)+1
 open('/tmp/in3.y4m','wb').write(s[:n+1]+(s[n+1:p]+s[p:])*3)
 PY

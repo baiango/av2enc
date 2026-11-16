@@ -32,8 +32,8 @@ set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
 TESTDATA="${AV2ENC_TESTDATA:-$ROOT/testdata}"
 BIN=""
-INPUT="$TESTDATA/shine_1280x720_60f.y4m"
-INPUT_360="$TESTDATA/shine_640x360_4f.y4m"
+INPUT="$TESTDATA/pub_1280x720_60f.y4m"
+INPUT_360="$TESTDATA/pub_640x360_4f.y4m"
 DAV2D="${DAV2D:-}"
 
 while [ $# -gt 0 ]; do

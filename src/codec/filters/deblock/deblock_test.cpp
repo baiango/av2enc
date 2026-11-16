@@ -454,8 +454,8 @@ std::string repo_root_from_source() {
 std::string find_recon_frame(const std::string& root) {
   const std::string candidates[] = {
       root + "/decoded.y4m",
-      root + "/testdata/shine_256x256_1f.y4m",
-      root + "/testdata/shine_1280x720_60f.y4m",
+      root + "/testdata/pub_256x256_1f.y4m",
+      root + "/testdata/pub_1280x720_60f.y4m",
   };
   for (const std::string& p : candidates) {
     std::ifstream in(p, std::ios::binary);

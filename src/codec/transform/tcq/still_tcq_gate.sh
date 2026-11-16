@@ -181,9 +181,9 @@ reject_case() {
 
 # Default streams must not move.
 run_case tests/data/basic_64x64_1f.y4m still_64_base \
-    0ef9825062a25c4d950ee924113c6f89
+    2b31e378787363641c836fdf563bbd0e
 run_case tests/data/basic_640x360_1f.y4m still_360_base \
-    e61de628b0812b716b0efa7dcafcdd06
+    8ffbe059cfeac3e6ee255f3bb7cf72b8
 
 # TCQ on: 64x64 QP 90 and the 640x360 QP 60/90/120 sweep.
 run_case tests/data/basic_64x64_1f.y4m still_64_tcq \

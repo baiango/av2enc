@@ -49,7 +49,7 @@ removing it. A downstream gate that only checks file existence/size sees a
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-S=testdata/shine_1280x720_60f.y4m
+S=testdata/pub_1280x720_60f.y4m
 ./build/av2enc $S -o /tmp/crf_a.ivf --video --frames 3 --rc crf --crf 40
 ./build/av2enc $S -o /tmp/crf_b.ivf --video --frames 3 --rc crf --crf 40 --qp 200
 md5 -q /tmp/crf_a.ivf /tmp/crf_b.ivf
@@ -131,7 +131,7 @@ stale alternate build dir silently invalidates the QM/TCQ coverage.
 Repro:
 ```sh
 cd /Users/arin/work/av2enc
-ffmpeg -v error -strict -1 -f yuv4mpegpipe -i testdata/shine_256x256_1f.y4m \
+ffmpeg -v error -strict -1 -f yuv4mpegpipe -i testdata/pub_256x256_1f.y4m \
   -pix_fmt yuv420p10le -strict -1 -f yuv4mpegpipe /tmp/p10.y4m
 ./build/av2enc /tmp/p10.y4m -o /tmp/x.ivf --still --bit-depth 10 --qp 0
 ./build/av2enc /tmp/p10.y4m -o /tmp/x.ivf --lossless --bit-depth 10

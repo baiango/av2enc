@@ -2,9 +2,9 @@
 # Quality/rate delta per cfl_ds_filter_index on real 4:2:0 frames.
 #
 # Inputs:
-#   640x360 : first frame of testdata/shine_1280x720_60f.y4m, scaled with
+#   640x360 : first frame of testdata/pub_1280x720_60f.y4m, scaled with
 #             lanczos (ffmpeg);
-#   720p    : first frame of testdata/shine_1280x720_60f.y4m.
+#   720p    : first frame of testdata/pub_1280x720_60f.y4m.
 #
 # For each index 0/1/2 the script encodes with the instrumented M1 build from
 # gate/build_gate.sh, decodes with the pinned dav2d, and reports file bytes,
@@ -25,7 +25,7 @@ while [ ! -f "${ROOT}/CMakeLists.txt" ] && [ "${ROOT}" != "/" ]; do
 done
 GATE="$HERE/../gate"
 OUT="$HERE/build"
-SRC720="$ROOT/testdata/shine_1280x720_60f.y4m"
+SRC720="$ROOT/testdata/pub_1280x720_60f.y4m"
 
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
   "$GATE/build_gate.sh"

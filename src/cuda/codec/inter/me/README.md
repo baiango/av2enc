@@ -89,7 +89,7 @@ Coverage (510 checks, all passing on the RTX 3060):
 - search parity for full / diamond / TZ, SAD and SATD, subpel none through
   1/16, candidate caps, partial blocks, two references;
 - device merge candidates and explicit fractional predictors;
-- 64 real `shine_256x256` blocks with a synthetic pan;
+- 64 real `legacy_256x256` blocks with a synthetic pan;
 - plane guard canaries: the kernels are read-only on frame/ref memory
   (byte-compare after every case).
 

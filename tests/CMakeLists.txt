@@ -91,3 +91,13 @@ option(AV2ENC_PRODUCT_GATES "Register the product gates as CTest tests" OFF)
 if(AV2ENC_PRODUCT_GATES)
   add_subdirectory(gates)
 endif()
+
+# libFuzzer target for the Y4M header parser (the only untrusted-input surface).
+# Not a CTest test: it runs for a bounded time via tools/fuzz_smoke.sh.
+if(AV2ENC_FUZZ)
+  add_executable(fuzz_y4m fuzz_y4m.cpp)
+  target_link_libraries(fuzz_y4m PRIVATE av2enc_core)
+  target_compile_options(fuzz_y4m PRIVATE -O1 -g
+    -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
+  target_link_options(fuzz_y4m PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()

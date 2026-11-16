@@ -166,7 +166,7 @@ per frame:
   payload                  frame_size bytes (one temporal unit)
 ```
 
-The pinned dav2d decoded `testdata/sample_480x270_130f.ivf` (fourcc `AV02`), so
+The pinned dav2d decoded `testdata/pub_480x270_130f.ivf` (fourcc `AV02`), so
 write `AV02`. See `docs/open-questions.md` §C2.
 
 ---
@@ -794,7 +794,7 @@ dav2d -q -i out.ivf -o decoded.y4m --threads 0
 ```
 
 Confirmed working against the pinned build (`f9dafbc`) with
-`testdata/sample_480x270_130f.ivf`; the output is:
+`testdata/pub_480x270_130f.ivf`; the output is:
 
 ```
 ivf:     480x270, 130 frame(s), fourcc AV02
@@ -803,7 +803,7 @@ width=480
 height=270
 pix_fmt=yuv420p
 nb_read_frames=130
-OK: dav2d decoded testdata/sample_480x270_130f.ivf
+OK: dav2d decoded testdata/pub_480x270_130f.ivf
 ```
 
 Optional: `EXPECTED_MD5=<md5>` re-decodes with `--muxer md5 -o -` and fails on

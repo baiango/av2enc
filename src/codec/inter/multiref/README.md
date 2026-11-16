@@ -214,7 +214,7 @@ The unit test covers, with ~44.6k checks:
 * GPU batch equals the per-job path and rejects out-of-range offsets;
 * decision with `enable_cwp = false` and implicit-mask blending enabled returns
   the `use_imp_mask` average (the only average the decoder can derive);
-* real 720p (when `testdata/shine_1280x720_60f.y4m` exists): two frames encoded
+* real 720p (when `testdata/pub_1280x720_60f.y4m` exists): two frames encoded
   by the M2 core, then 42 interior 64×64 blocks decided with the compound API.
   Output: `720p blocks=42 compound_beats_single=11 best_sse=3107272
   single_sse=3131052 (0.03 dB proxy gain)`.

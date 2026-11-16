@@ -20,7 +20,8 @@
       "description": "Exactly the flags the gates and pins are recorded with: -O3, strict warnings, no PCH, no compiler cache. Use this for anything whose timing or bitstream is quoted.",
       "cacheVariables": {
         "AV2ENC_WARNINGS": "ON",
-        "AV2ENC_PCH": "OFF"
+        "AV2ENC_PCH": "OFF",
+        "AV2ENC_HARDEN": "ON"
       }
     },
     {
@@ -31,7 +32,7 @@
       "cacheVariables": {
         "AV2ENC_WARNINGS": "OFF",
         "AV2ENC_PCH": "ON",
-        "CMAKE_CXX_FLAGS_RELEASE": "-O1 -DNDEBUG"
+        "CMAKE_CXX_FLAGS_RELEASE": "-O1 -DNDEBUG -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST -D_GLIBCXX_ASSERTIONS"
       }
     },
     {
@@ -42,7 +43,7 @@
       "cacheVariables": {
         "AV2ENC_WARNINGS": "OFF",
         "AV2ENC_PCH": "OFF",
-        "CMAKE_CXX_FLAGS_RELEASE": "-O1 -DNDEBUG",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O1 -DNDEBUG -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST -D_GLIBCXX_ASSERTIONS",
         "CMAKE_CXX_COMPILER_LAUNCHER": "ccache"
       }
     }

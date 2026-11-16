@@ -198,7 +198,7 @@ Measured with `build_bench.sh` (modelled rate, not bytes):
 | 191 | **+0.521 dB** | −12.0 | −1.4% |
 | 255 | **+1.729 dB** | −4.4 | −0.7% |
 
-`testdata/shine_256x256_1f.y4m`:
+`testdata/pub_256x256_1f.y4m`:
 
 | QP | ΔPSNR | Δbits | Σrate |
 |---:|---:|---:|---:|

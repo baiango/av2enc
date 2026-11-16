@@ -50,8 +50,8 @@ fi
     echo "gate_video_ref_signalling: SKIP (exit 77): no dav2d binary" >&2; exit 77; }
 
 NASA="$TESTDATA/nasa_480x240_30fps_60f.y4m"
-SHINE="$TESTDATA/shine_640x360_4f.y4m"
-[ -f "$SHINE" ] || SHINE="$TESTDATA/shine_640x360_1f.y4m"
+SHINE="$TESTDATA/pub_640x360_4f.y4m"
+[ -f "$SHINE" ] || SHINE="$TESTDATA/pub_640x360_1f.y4m"
 for f in "$NASA" "$SHINE"; do
     [ -f "$f" ] || { echo "gate_video_ref_signalling: SKIP (exit 77): missing $f" >&2; exit 77; }
 done

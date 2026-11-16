@@ -19,7 +19,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../../.." && pwd)
 BUILD=${1:-$ROOT/build-int}
 AV2ENC=${AV2ENC:-$BUILD/av2enc}
-SRC=${SRC:-$ROOT/testdata/shine_640x360_1f.y4m}
+SRC=${SRC:-$ROOT/testdata/pub_640x360_1f.y4m}
 
 if [ ! -x "$AV2ENC" ]; then echo "error: no encoder at $AV2ENC" >&2; exit 2; fi
 if [ ! -f "$SRC" ]; then echo "SKIP: missing $SRC" >&2; exit 77; fi

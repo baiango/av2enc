@@ -97,53 +97,53 @@ case_run() {  # name source expected_frames extra...
 }
 
 # --- 128x128 superblocks --------------------------------------------------
-case_run sb128_360 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+case_run sb128_360 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-sb128
-case_run sb128_360_4f "$TESTDATA/shine_640x360_4f.y4m" 4 \
+case_run sb128_360_4f "$TESTDATA/pub_640x360_4f.y4m" 4 \
     --video --frames 4 --qp 90 --video-sb128
-case_run sb128_360_single "$TESTDATA/shine_640x360_4f.y4m" 3 \
+case_run sb128_360_single "$TESTDATA/pub_640x360_4f.y4m" 3 \
     --video --frames 3 --qp 90 --video-sb128 --video-force-single
-case_run sb128_360_deblock "$TESTDATA/shine_640x360_1f.y4m" 1 \
+case_run sb128_360_deblock "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-sb128 --video-deblock
-case_run sb128_256 "$TESTDATA/shine_256x256_1f.y4m" 1 \
+case_run sb128_256 "$TESTDATA/pub_256x256_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-sb128
-case_run sb128_720 "$TESTDATA/shine_1280x720_60f.y4m" 2 \
+case_run sb128_720 "$TESTDATA/pub_1280x720_60f.y4m" 2 \
     --video --frames 2 --qp 90 --video-sb128 --video-deblock
-case_run sb128_1080 "$TESTDATA/shine_1920x1080_10f.y4m" 1 \
+case_run sb128_1080 "$TESTDATA/pub_1920x1080_10f.y4m" 1 \
     --video --frames 1 --qp 90 --video-sb128
 
 # --- 256x256 superblocks (inter frames; intra keys clamp to 128) ----------
-case_run sb256_360 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+case_run sb256_360 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-sb256
-case_run sb256_360_3f "$TESTDATA/shine_640x360_4f.y4m" 3 \
+case_run sb256_360_3f "$TESTDATA/pub_640x360_4f.y4m" 3 \
     --video --frames 3 --qp 90 --video-sb256
-case_run sb256_360_single "$TESTDATA/shine_640x360_4f.y4m" 3 \
+case_run sb256_360_single "$TESTDATA/pub_640x360_4f.y4m" 3 \
     --video --frames 3 --qp 90 --video-sb256 --video-force-single
-case_run sb256_360_deblock "$TESTDATA/shine_640x360_4f.y4m" 2 \
+case_run sb256_360_deblock "$TESTDATA/pub_640x360_4f.y4m" 2 \
     --video --frames 2 --qp 90 --video-sb256 --video-deblock
-case_run sb256_256 "$TESTDATA/shine_256x256_1f.y4m" 1 \
+case_run sb256_256 "$TESTDATA/pub_256x256_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-sb256
-case_run sb256_1080 "$TESTDATA/shine_1920x1080_10f.y4m" 1 \
+case_run sb256_1080 "$TESTDATA/pub_1920x1080_10f.y4m" 1 \
     --video --frames 1 --qp 90 --video-sb256
 
 # --- extended / uneven 4-way partitions -----------------------------------
-case_run ext_360 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+case_run ext_360 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-ext-partitions
-case_run ext_360_4f "$TESTDATA/shine_640x360_4f.y4m" 4 \
+case_run ext_360_4f "$TESTDATA/pub_640x360_4f.y4m" 4 \
     --video --frames 4 --qp 90 --video-ext-partitions
-case_run ext_360_deblock "$TESTDATA/shine_640x360_1f.y4m" 1 \
+case_run ext_360_deblock "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-ext-partitions --video-deblock
-case_run ext_360_min8 "$TESTDATA/shine_640x360_4f.y4m" 3 \
+case_run ext_360_min8 "$TESTDATA/pub_640x360_4f.y4m" 3 \
     --video --frames 3 --qp 120 --video-ext-partitions --video-min-block 8
-case_run ext_256 "$TESTDATA/shine_256x256_1f.y4m" 1 \
+case_run ext_256 "$TESTDATA/pub_256x256_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-ext-partitions
-case_run ext_720 "$TESTDATA/shine_1280x720_60f.y4m" 2 \
+case_run ext_720 "$TESTDATA/pub_1280x720_60f.y4m" 2 \
     --video --frames 2 --qp 90 --video-ext-partitions
-case_run ext_1080 "$TESTDATA/shine_1920x1080_10f.y4m" 1 \
+case_run ext_1080 "$TESTDATA/pub_1920x1080_10f.y4m" 1 \
     --video --frames 1 --qp 90 --video-ext-partitions
-case_run ext_sb128_360 "$TESTDATA/shine_640x360_1f.y4m" 1 \
+case_run ext_sb128_360 "$TESTDATA/pub_640x360_1f.y4m" 1 \
     --video --frames 1 --qp 90 --video-ext-partitions --video-sb128
-case_run ext_sb128_4f "$TESTDATA/shine_640x360_4f.y4m" 4 \
+case_run ext_sb128_4f "$TESTDATA/pub_640x360_4f.y4m" 4 \
     --video --frames 4 --qp 90 --video-ext-partitions --video-sb128 \
     --video-deblock
 
@@ -160,10 +160,10 @@ def_md5() {  # name expected source extra...
     fi
     echo "PASS $name: default 64x64 pin $want"
 }
-def_md5 default_360 ef85e55bd85357f965169051dd691612 \
-    "$TESTDATA/shine_640x360_1f.y4m" --video --frames 1 --qp 90
-def_md5 default_360_deblock 078c29e0df452c7cad625c718028cd04 \
-    "$TESTDATA/shine_640x360_1f.y4m" --video --frames 1 --qp 90 --video-deblock
+def_md5 default_360 e36b347e3fdc1d6c09059b6f94d94321 \
+    "$TESTDATA/pub_640x360_1f.y4m" --video --frames 1 --qp 90
+def_md5 default_360_deblock ea4e2a0b8b315df0153127a99fbc5f82 \
+    "$TESTDATA/pub_640x360_1f.y4m" --video --frames 1 --qp 90 --video-deblock
 
 echo
 if [ "$FAIL" -ne 0 ]; then

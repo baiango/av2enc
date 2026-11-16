@@ -2,7 +2,7 @@
 # Build/run the DC/AC delta-Q RD measurement harness.
 #
 #   ./build_bench.sh testdata/basic_64x64_1f.y4m
-#   ./build_bench.sh testdata/shine_256x256_1f.y4m 0 --max-passes 4
+#   ./build_bench.sh testdata/pub_256x256_1f.y4m 0 --max-passes 4
 set -euo pipefail
 cd "$(dirname "$0")"
 

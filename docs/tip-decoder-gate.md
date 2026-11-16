@@ -101,9 +101,13 @@ MV 0 in holes).
 
 `dav2d -q -i <ivf> -o <dec.y4m> --strict 1 --threads 1`, then byte-compare the
 decoded and encoder-recon Y4M (the Y4M MD5s are equal, so the raw frames are
-equal).  4 pictures: `testdata/shine_640x360_4f.y4m`.  8 pictures:
-`testdata/shine_1280x720_60f.y4m`.  Both fixtures are gitignored, so the
+equal).  4 pictures: `testdata/pub_640x360_4f.y4m`.  8 pictures:
+`testdata/pub_1280x720_60f.y4m`.  Both fixtures are gitignored, so the
 absolute MD5s pin this checkout's clips, not the code alone.
+
+> **Fixture swap:** the paths below were renamed to the public-domain fixtures
+> (`docs/testdata-provenance.md`); the numbers were recorded on the retired
+> promo clip and the streams now differ. Re-run before quoting.
 
 | stream | frames | IVF bytes | IVF MD5 | decoded Y4M MD5 = recon MD5 | raw-plane MD5 |
 |---|---|---:|---|---|---|

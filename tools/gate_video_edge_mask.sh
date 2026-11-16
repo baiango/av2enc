@@ -45,7 +45,7 @@ fi
     echo "gate_video_edge_mask: SKIP (exit 77): no dav2d binary" >&2; exit 77; }
 
 NASA="$TESTDATA/nasa_480x240_30fps_60f.y4m"
-ALIGNED="$TESTDATA/shine_256x256_1f.y4m"
+ALIGNED="$TESTDATA/pub_256x256_1f.y4m"
 [ -f "$NASA" ] || {
     echo "gate_video_edge_mask: SKIP (exit 77): no $NASA" >&2; exit 77; }
 [ -f "$ALIGNED" ] || {

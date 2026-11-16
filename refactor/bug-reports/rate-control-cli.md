@@ -14,12 +14,12 @@ Scope: CLI/validation + rate control (`--rc`/`--crf`/`--bitrate`, `--effort`,
 | SCOUT-RC-07 | low | confirmed | `--effort-plan` is documented to print and exit 0 without input/output, but parse requires both | `av2enc --effort 100 --effort-plan`; `av2enc in.y4m --effort 100 --effort-plan` | exit 2 `no input file specified` / `no output file specified`, no plan printed | src/main.cpp:1706-1713, 2947-2955; docs/effort.md:187 | new |
 | SCOUT-RC-08 | low | confirmed | `--gpu-plan` ignores an explicit `--tiles 1x1` (alias `1`) and plans the GPU-count default | `av2enc t360.y4m --gpu-plan 1 --tiles 1x1` | prints `layout: 4x2 (8 tiles)`; on `$T64` exits 2 `layout 4x2 rejected` although 1 tile fits | src/main.cpp:2399-2412 | new |
 | SCOUT-RC-09 | low | confirmed | `--gpu-plan 3..8` has no layout fallback: the 16x2 default is refused on 640x360 although the same 16 tiles fit as 8x2 | `av2enc t360.y4m --gpu-plan 3` | exit 2 `layout 16x2 rejected: … yields 10x2 tiles`; `--gpu-plan 3 --tiles 8x2` exits 0 with 3 GPUs | src/main.cpp:2399-2412; dispatch/planner.cpp:294-302 | new |
-| SCOUT-RC-10 | low | confirmed | `--still-sub8` silently raises `--still-depth 3` to 8 instead of rejecting the documented "needs a depth of at least 8" | `av2enc shine_640x360_1f.y4m -o a.ivf --still --still-sub8 --still-depth 3` | depth 3 and 8 with sub8 md5-identical (`8545d318…`); without sub8 depth 3 vs 8 differ (`bdfa39f4…`/`c9fdcabd…`) | src/main.cpp:393, 2119-2136; still_encoder.cpp:449-453 | new |
+| SCOUT-RC-10 | low | confirmed | `--still-sub8` silently raises `--still-depth 3` to 8 instead of rejecting the documented "needs a depth of at least 8" | `av2enc pub_640x360_1f.y4m -o a.ivf --still --still-sub8 --still-depth 3` | depth 3 and 8 with sub8 md5-identical (`8545d318…`); without sub8 depth 3 vs 8 differ (`bdfa39f4…`/`c9fdcabd…`) | src/main.cpp:393, 2119-2136; still_encoder.cpp:449-453 | new |
 
 ## Details
 
-Fixtures: `B=/Users/arin/work/av2enc/build/av2enc`, `T64=/Users/arin/work/av2enc/testdata/m0_64x64_1f.y4m`,
-`S=/Users/arin/work/av2enc/testdata/shine_640x360_1f.y4m`, `/tmp/t360.y4m`=generated 640x360 8f 30fps clip
+Fixtures: `B=/Users/arin/work/av2enc/build/av2enc`, `T64=/Users/arin/work/av2enc/testdata/pub_64x64_1f.y4m`,
+`S=/Users/arin/work/av2enc/testdata/pub_640x360_1f.y4m`, `/tmp/t360.y4m`=generated 640x360 8f 30fps clip
 (`YUV4MPEG2 W640 H360 F30:1 Ip A1:1 C420jpeg`, per frame `FRAME` + varying luma + neutral chroma).
 
 ### SCOUT-RC-01 — per-frame rate control is one uniform QP

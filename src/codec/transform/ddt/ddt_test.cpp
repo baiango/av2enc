@@ -517,7 +517,7 @@ void test_block_ddt_roundtrip() {
   check(active_cases == 100, "round-trip covers all 100 legal DDT pairs");
 }
 
-// Real coefficient blocks extracted from testdata/shine_256x256_1f.y4m:
+// Real coefficient blocks extracted from testdata/pub_256x256_1f.y4m:
 // a 16x16 luma block, DC prediction, txv forward with ADST_ADST and the shared
 // 528-step quantiser.  Kept as levels so the test exercises a real sparse
 // spectrum rather than synthetic noise.  (dq_denom = 1 for 16x16.)

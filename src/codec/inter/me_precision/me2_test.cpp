@@ -950,7 +950,7 @@ void test_quality_rate_720p(const std::string& root) {
   const std::string clip =
       (clip_env != nullptr && clip_env[0] != '\0')
           ? std::string(clip_env)
-          : root + "/testdata/shine_1280x720_60f.y4m";
+          : root + "/testdata/pub_1280x720_60f.y4m";
   std::vector<TestFrame> frames;
   if (!load_y4m_frames(clip, 24, &frames) || frames.size() < 4) {
     std::printf("  (%s absent or short; skipping quality/rate report)\n",

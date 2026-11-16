@@ -113,7 +113,7 @@ cd "$ROOT"
 
 CLIP="$OUT/shine256_motion3.y4m"
 python3 "$HERE/make_motion_clip.py" \
-  "$ROOT/testdata/shine_256x256_1f.y4m" "$CLIP"
+  "$ROOT/testdata/pub_256x256_1f.y4m" "$CLIP"
 
 # The gate clip has three frames and needs 8x8/16x16 leaves for DDT; the
 # driver defaults are 4 frames / depth 0.

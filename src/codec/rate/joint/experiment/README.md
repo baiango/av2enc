@@ -19,7 +19,7 @@ cd src/encoder/m1/rdo_loop/experiment
 Defaults:
 
 - inputs: `testdata/basic_64x64_1f.y4m`, `tests/data/basic_640x360_1f.y4m`,
-  `testdata/shine_1920x1080_10f.y4m` (first frame)
+  `testdata/pub_1920x1080_10f.y4m` (first frame)
 - scale: `0.0005`
 - core library: `build/libav2enc_core.a`
 - build/work: `build-rdo-loop/`
@@ -181,7 +181,7 @@ them only against other loop candidates, not against the IVF size.
 
 # 1080p second point
 RDO_LOOP_SCALES=0.0005,0.001 ./run_still_rdo_loop.sh \
-  --input ../../../testdata/shine_1920x1080_10f.y4m
+  --input ../../../testdata/pub_1920x1080_10f.y4m
 ```
 
 The default run also writes the committed-tree trace and the JSON reports under

@@ -132,35 +132,35 @@ run_case() {
 
 # Defaults unchanged.
 run_case still_64_base tests/data/basic_64x64_1f.y4m \
-    0ef9825062a25c4d950ee924113c6f89
+    2b31e378787363641c836fdf563bbd0e
 run_case still_360_base tests/data/basic_640x360_1f.y4m \
-    e61de628b0812b716b0efa7dcafcdd06
+    8ffbe059cfeac3e6ee255f3bb7cf72b8
 
 # IST on.  64x64 has no applicable low-EOB block, so it only pins the header
 # bit and the per-block zero symbols; 640x360 QP 90 signals real IST.
 run_case still_64_ist tests/data/basic_64x64_1f.y4m \
-    fe9b2f902d3bda45670477376836e83f --still-ist
+    4594dbe3c9ddfa93d8c86ae5d41330be --still-ist
 run_case still_360_ist tests/data/basic_640x360_1f.y4m \
-    2aa3c4a88eaedb11e4fc8fc0ec0c1964 --still-ist
+    32bee9efbd0d7a1ecc3c260ccada665e --still-ist
 run_case still_360_ist_qp141 tests/data/basic_640x360_1f.y4m \
-    76da5afd0f9e3dda9f1f9f45f95d5133 --still-ist --qp 141
+    ee1a91fa7c60c6db3aef5d0be0cdc8c4 --still-ist --qp 141
 
 # Documented interactions (signalling + reconstruction must stay exact).
 run_case still_360_ist_qm tests/data/basic_640x360_1f.y4m \
-    5a91a55c9730ba09a43eddcdd15d9b24 --still-ist --still-qm
+    b0f7c483f631f51ff2284465cd3997c6 --still-ist --still-qm
 run_case still_360_ist_txtype tests/data/basic_640x360_1f.y4m \
-    1258fc6eb42a777d106b7b31cd4c1492 --still-ist --still-tx-type
+    9c6e575901c193e3f73595bc48911973 --still-ist --still-tx-type
 run_case still_360_ist_rdoq tests/data/basic_640x360_1f.y4m \
-    952f6fd1c0e7502cfe890c7514334cb0 --still-ist --still-rdoq
+    db43b0bdad2019e53539ea714726a7ca --still-ist --still-rdoq
 
 # SCOUT-TXADV-02: §7.15.3 folds Mrl_Index_To_Delta[MrlIndex] into pAngle before
 # selecting the IST kernel, so the IST decision, the inverse and the syntax must
 # all use the block's real mrl_index.  Forcing 0 made the decoder pick a
 # different kernel/transpose on MRL blocks (QP40/60 luma drift).
-run_case still_360_ist_mrl40 testdata/shine_640x360_1f.y4m \
-    4257f259036824e8c9e429a37b30fd9c --still-ist --still-mrl --qp 40
-run_case still_360_ist_mrl60 testdata/shine_640x360_1f.y4m \
-    612183f5dd0006b44a54f1c95d631eb9 --still-ist --still-mrl --qp 60
+run_case still_360_ist_mrl40 testdata/pub_640x360_1f.y4m \
+    e1455bccf3263499b62ffcb57ed64f27 --still-ist --still-mrl --qp 40
+run_case still_360_ist_mrl60 testdata/pub_640x360_1f.y4m \
+    d256ef5a13924c6f4f99697054afe07c --still-ist --still-mrl --qp 60
 
 if [ "$failures" -ne 0 ]; then
     echo "still_ist_gate: $failures failed, $pass passed" >&2

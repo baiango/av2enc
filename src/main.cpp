@@ -1,3 +1,6 @@
+#include <exception>
+#include <new>
+
 #include "core/bitstream/basic_headers.h"
 #include "codec/entropy/lossless/lossless.h"
 #include "codec/entropy/lossless/inter/lossless_inter.h"
@@ -2493,7 +2496,7 @@ int run_svc_encode(const Options& options, av2enc::Y4mReader& reader,
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int av2enc_main(int argc, char** argv) {
   Options options;
   std::string error;
   ParseStatus status = parse_arguments(argc, argv, options, error);
@@ -3623,4 +3626,20 @@ int main(int argc, char** argv) {
     std::cout << "  ibc:     " << ibc_blocks << " exact-copy block(s)\n";
   }
   return 0;
+}
+
+// Entry point wrapper: untrusted input (a Y4M header) can still ask for an
+// allocation larger than the machine has even after the pixel budget, and a
+// malformed CLI value can throw from the standard library.  Report either as a
+// normal error instead of letting std::terminate print a SIGABRT.
+int main(int argc, char** argv) {
+  try {
+    return av2enc_main(argc, argv);
+  } catch (const std::bad_alloc&) {
+    std::cerr << "av2enc: error: out of memory\n";
+    return 1;
+  } catch (const std::exception& e) {
+    std::cerr << "av2enc: error: " << e.what() << "\n";
+    return 1;
+  }
 }

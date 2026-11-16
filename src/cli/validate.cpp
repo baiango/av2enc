@@ -2,6 +2,7 @@
 // order of the checks decides which error is reported first, so the blocks are
 // neither reordered nor merged.  apply_effort_ranking() runs before them, as
 // before, so a ranked flag obeys the same rejection rules as a typed one.
+#include "cli/gpu_callable.h"
 #include "cli/options.h"
 
 #include "pipeline/planner/effort.h"

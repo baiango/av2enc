@@ -16,7 +16,7 @@
 #
 # Usage:
 #   src/pipeline/video/wrapper_cdf_gate.sh --bin build/av2enc [--dav2d PATH]
-#       [--input testdata/shine_1280x720_60f.y4m]
+#       [--input testdata/pub_1280x720_60f.y4m]
 #
 # Exit codes: 0 pass, 1 failure, 2 usage, 77 missing fixture/decoder.
 set -euo pipefail
@@ -24,7 +24,7 @@ set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "$0")/../../.." && pwd)
 BIN=""
 DAV2D="${DAV2D:-}"
-INPUT="${AV2ENC_TESTDATA:-$ROOT/testdata}/shine_1280x720_60f.y4m"
+INPUT="${AV2ENC_TESTDATA:-$ROOT/testdata}/pub_1280x720_60f.y4m"
 GATE="$ROOT/src/pipeline/video/video_cli_gate.sh"
 
 while [ $# -gt 0 ]; do
