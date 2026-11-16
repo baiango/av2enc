@@ -89,3 +89,18 @@ that is why `dev` has no ccache and `dev-cache` has no PCH.
 Splitting `video_frame.cpp` (Phase B) turns its 8.3 s TU into ~3 s TU(s) and
 shortens the 82-TU header rebuilds that involve it. It is the only remaining
 structural win; everything else here is already at the measurement floor.
+
+## Full LTO: measured, rejected
+
+`AV2ENC_LTO=ON` (CPU-only) was built and timed on the M4 with PCH and hardening:
+
+| Workload | no LTO | LTO | Change |
+|---|---:|---:|---:|
+| 240p QP106, 1 thread | 6.28 s | 6.18 s | -1.6% |
+| 240p QP106, 8 threads | 3.37 s | 3.55 s | **+5.3%** |
+| 720p QP217, 8 threads | 27.68 s | 28.97 s | **+4.7%** |
+
+Streams are byte-identical, so this is pure codegen. The build cost is large:
+24-35 s becomes **85.6 s**, and the link step alone is 47 s for `av2enc`, 34 s
+for `video_gate`, 18 s and 17 s for the two dump harnesses. Full LTO is
+therefore off; `AV2ENC_LTO` remains as an experiment only.

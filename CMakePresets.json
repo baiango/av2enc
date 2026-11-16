@@ -17,10 +17,10 @@
       "name": "release",
       "inherits": "base",
       "displayName": "Release (pinned CI / measurement build)",
-      "description": "Exactly the flags the gates and pins are recorded with: -O3, strict warnings, no PCH, no compiler cache. Use this for anything whose timing or bitstream is quoted.",
+      "description": "The flags the gates and pins are recorded with: -O3, strict warnings, hardening, PCH (parse-only; verified byte-identical), no compiler cache. Use this for anything whose timing or bitstream is quoted.",
       "cacheVariables": {
         "AV2ENC_WARNINGS": "ON",
-        "AV2ENC_PCH": "OFF",
+        "AV2ENC_PCH": "ON",
         "AV2ENC_HARDEN": "ON"
       }
     },

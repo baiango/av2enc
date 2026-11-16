@@ -21,9 +21,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-14]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install ninja (Linux)
@@ -38,24 +38,22 @@ jobs:
         # testdata and dav2d binary, which are not part of the repo.
         run: ctest --test-dir build-release -E '^gate_' --output-on-failure
       - name: Synthetic smoke encode
-        run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            sudo apt-get install -y ffmpeg
-          fi
-          bash tools/ci_encode_smoke.sh build-release/av2enc 8 8
+        # Input is generated (ffmpeg or a Python Y4M writer), so this runs on
+        # macOS too, where the runner ships no ffmpeg.
+        run: bash tools/ci_encode_smoke.sh build-release/av2enc 8 8
 
   sanitize:
     name: ASan + UBSan (ubuntu)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build ffmpeg clang
+          sudo apt-get install -y ninja-build clang
       - name: Configure
         run: |
           cmake -S . -B build-asan -G Ninja \
@@ -79,16 +77,16 @@ jobs:
 
   tsan:
     name: TSan, trace-enabled (ubuntu)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build ffmpeg clang
+          sudo apt-get install -y ninja-build clang
       - name: Configure
         run: |
           cmake -S . -B build-tsan -G Ninja \
@@ -107,10 +105,10 @@ jobs:
 
   fuzz:
     name: Y4M parser fuzzing (ubuntu, 120 s)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install toolchain

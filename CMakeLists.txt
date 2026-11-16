@@ -126,7 +126,8 @@ option(AV2ENC_HARDEN
   "Enable compiler/linker hardening (stack protector, FORTIFY_SOURCE, PIE, RELRO). Changes no output; on in the release preset" OFF)
 option(AV2ENC_NATIVE
   "Tune host C++ code for the build machine (-mcpu/-march=native, not portable)" OFF)
-option(AV2ENC_LTO "Enable link-time optimization for the host C++ targets" OFF)
+option(AV2ENC_LTO
+  "Enable link-time optimization for the host C++ targets (measured slower on M4; see docs/build-speed.md)" OFF)
 option(AV2ENC_CPU_FAST
   "Aggregate host-CPU speed options (implies AV2ENC_NATIVE and AV2ENC_LTO)" OFF)
 
