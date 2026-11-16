@@ -20,6 +20,7 @@
 #include "codec/transform/tx_partition/tx_scan.h"
 #include "codec/transform/tx_type/tx_type.h"
 #include "codec/transform/variants/tx_variants.h"
+#include "core/parallel/parallel_for.h"
 
 namespace av2enc::video::txtsearch {
 namespace {
@@ -37,6 +38,14 @@ constexpr std::int32_t kPartBitHorz = 1 << 2;
 constexpr std::int32_t kPartBitVert = 1 << 3;
 constexpr std::int32_t kPartBitHorz4 = 1 << 4;
 constexpr std::int32_t kPartBitVert4 = 1 << 5;
+
+// Minimum candidate count before a per-block loop hands work to the worker
+// pool.  A fork-join round trip wakes `participants` threads through a
+// condition variable (a few microseconds each), so a 2-3 candidate loop --
+// the common DCT-only or kDctIdtx case -- is faster serially.  Measured on
+// 240p QP106 and 720p QP217 with --cpu-threads 8: 2 candidates lose, 4
+// candidates are a wash, 8+ win (see docs/video-candidate-parallel.md).
+constexpr std::size_t kTypeCandidateParallelMin = 4;
 
 // §9.3 CDF layout: entries [0 .. nsym-2) are cumulative probabilities scaled to
 // 32768; the next entry is the adaptation rate and the last the counter.
@@ -769,25 +778,70 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
       if (!build_leaf_types(leaf_w, leaf_h, mode, options, &types, error)) {
         return false;
       }
+      // Candidate list in evaluation order.  With `search_type` off only
+      // DCT_DCT survives, so the loop below is a single candidate.
+      std::vector<std::size_t> order;
+      order.reserve(types.size());
+      for (std::size_t t = 0; t < types.size(); ++t) {
+        if (!options.search_type && types[t].type != 0) continue;
+        order.push_back(t);
+      }
       LeafCandidate best;
       bool added = false;
-      for (const TypeEntry& entry : types) {
-        if (!options.search_type && entry.type != 0) continue;
-        LeafCandidate cand;
-        if (!evaluate_candidate(
-                residual_coded, coded_w, coded_h, geometry.parts[k].mi_col * 4,
-                geometry.parts[k].mi_row * 4, leaf_w, leaf_h, tx_size,
-                entry.type, entry, is_inter, qindex, delta_dc, delta_ac,
-                options, /*rdoq=*/false, &cand, error)) {
-          return false;
-        }
+      // Selection with the historical comparator, unchanged: it tie-breaks on
+      // (cost, sse, tx_type) and the caller feeds it in candidate order, so
+      // the first candidate wins a full tie exactly as the serial loop did.
+      const auto consider = [&](LeafCandidate& cand) {
         added = true;
-        if (!codable(cand.tx_type, cand.eob, is_inter)) continue;
+        if (!codable(cand.tx_type, cand.eob, is_inter)) return;
         if (!best.valid || cand.cost < best.cost ||
             (cand.cost == best.cost &&
              (cand.sse < best.sse ||
               (cand.sse == best.sse && cand.tx_type < best.tx_type)))) {
           best = std::move(cand);
+        }
+      };
+      if (parallel::pool_active() &&
+          order.size() >= kTypeCandidateParallelMin) {
+        // Every candidate is independent: evaluate_candidate owns all of its
+        // scratch, and each slot is written by one thread.  No shared state,
+        // no reduction (the cost is a double and must not be summed in a
+        // different order).
+        std::vector<LeafCandidate> cands(order.size());
+        std::vector<char> ok(order.size(), 1);
+        std::vector<std::string> cand_errors(order.size());
+        parallel::parallel_for_pooled(
+            order.size(), kTypeCandidateParallelMin, [&](std::size_t i) {
+              const TypeEntry& entry = types[order[i]];
+              ok[i] = evaluate_candidate(
+                          residual_coded, coded_w, coded_h,
+                          geometry.parts[k].mi_col * 4,
+                          geometry.parts[k].mi_row * 4, leaf_w, leaf_h,
+                          tx_size, entry.type, entry, is_inter, qindex,
+                          delta_dc, delta_ac, options, /*rdoq=*/false,
+                          &cands[i], &cand_errors[i])
+                          ? 1
+                          : 0;
+            });
+        for (std::size_t i = 0; i < order.size(); ++i) {
+          if (ok[i] == 0) {
+            if (error != nullptr) *error = cand_errors[i];
+            return false;
+          }
+          consider(cands[i]);
+        }
+      } else {
+        for (std::size_t t : order) {
+          LeafCandidate cand;
+          if (!evaluate_candidate(
+                  residual_coded, coded_w, coded_h,
+                  geometry.parts[k].mi_col * 4,
+                  geometry.parts[k].mi_row * 4, leaf_w, leaf_h, tx_size,
+                  types[t].type, types[t], is_inter, qindex, delta_dc, delta_ac,
+                  options, /*rdoq=*/false, &cand, error)) {
+            return false;
+          }
+          consider(cand);
         }
       }
       if (!added) {
@@ -796,10 +850,10 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
         dct.type = 0;
         dct.codes_type = 0;
         if (!evaluate_candidate(
-                residual_coded, coded_w, coded_h, geometry.parts[k].mi_col * 4,
-                geometry.parts[k].mi_row * 4, leaf_w, leaf_h, tx_size, 0, dct,
-                is_inter, qindex, delta_dc, delta_ac, options, /*rdoq=*/false,
-                &cand, error)) {
+                residual_coded, coded_w, coded_h,
+                geometry.parts[k].mi_col * 4, geometry.parts[k].mi_row * 4,
+                leaf_w, leaf_h, tx_size, 0, dct, is_inter, qindex, delta_dc,
+                delta_ac, options, /*rdoq=*/false, &cand, error)) {
           return false;
         }
         if (!codable(cand.tx_type, cand.eob, is_inter)) {

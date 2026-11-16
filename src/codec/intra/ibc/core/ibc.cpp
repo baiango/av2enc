@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <cstring>
 
+#if defined(AV2ENC_PRIMITIVES)
+#include "primitives/kernels.h"
+#endif
+
 namespace av2enc::ibc {
 namespace {
 
@@ -225,7 +229,15 @@ bool copy_block(const FrameView& frame, int mi_row, int mi_col, int bsize,
       frame.y.data + static_cast<std::size_t>(sy) *
                          static_cast<std::size_t>(frame.y.stride) +
       static_cast<std::size_t>(sx);
+#if defined(AV2ENC_PRIMITIVES)
+  primitives::kernels().block_copy(
+      src, static_cast<std::size_t>(frame.y.stride), dst_y,
+      static_cast<std::size_t>(dst_stride_y), visible_w, visible_h);
+#else
+  // Fallback for the ibc component gate, which compiles this TU without
+  // src/primitives/kernels.cpp.
   copy_plane(src, frame.y.stride, dst_y, dst_stride_y, visible_w, visible_h);
+#endif
 
   if (frame.has_chroma && dst_u != nullptr && dst_v != nullptr) {
     const int cdx = plane_offset(bv.col, frame.sub_x);
@@ -246,7 +258,13 @@ bool copy_block(const FrameView& frame, int mi_row, int mi_col, int bsize,
           p.data + static_cast<std::size_t>(cy) *
                        static_cast<std::size_t>(p.stride) +
           static_cast<std::size_t>(cx);
+#if defined(AV2ENC_PRIMITIVES)
+      primitives::kernels().block_copy(s, static_cast<std::size_t>(p.stride),
+                                       d, static_cast<std::size_t>(ds), cw,
+                                       ch);
+#else
       copy_plane(s, p.stride, d, ds, cw, ch);
+#endif
     }
   }
   return true;
@@ -370,8 +388,14 @@ Match search_block(const FrameView& frame, const IbcConfig& config,
         frame.y.data + static_cast<std::size_t>(y) *
                            static_cast<std::size_t>(frame.y.stride) +
         static_cast<std::size_t>(x);
+#if defined(AV2ENC_PRIMITIVES)
+    std::int64_t sad = static_cast<std::int64_t>(primitives::kernels().sad(
+        src, static_cast<std::size_t>(frame.y.stride), cur,
+        static_cast<std::size_t>(frame.y.stride), bw, bh));
+#else
     std::int64_t sad = sad_block(src, frame.y.stride, cur, frame.y.stride, bw,
                                  bh);
+#endif
     if (options.compare_chroma && frame.has_chroma) {
       const int cdx = plane_offset(bv.col, frame.sub_x);
       const int cdy = plane_offset(bv.row, frame.sub_y);
@@ -383,6 +407,17 @@ Match search_block(const FrameView& frame, const IbcConfig& config,
           cy + ch <= frame.u.height) {
         for (int plane = 0; plane < 2; ++plane) {
           const PlaneView& p = plane == 0 ? frame.u : frame.v;
+#if defined(AV2ENC_PRIMITIVES)
+          sad += static_cast<std::int64_t>(primitives::kernels().sad(
+              p.data + static_cast<std::size_t>(cy) *
+                            static_cast<std::size_t>(p.stride) +
+                  static_cast<std::size_t>(cx),
+              static_cast<std::size_t>(p.stride),
+              p.data + static_cast<std::size_t>(y >> frame.sub_y) *
+                            static_cast<std::size_t>(p.stride) +
+                  static_cast<std::size_t>(x >> frame.sub_x),
+              static_cast<std::size_t>(p.stride), cw, ch));
+#else
           sad += sad_block(p.data + static_cast<std::size_t>(cy) *
                                         static_cast<std::size_t>(p.stride) +
                             static_cast<std::size_t>(cx),
@@ -391,6 +426,7 @@ Match search_block(const FrameView& frame, const IbcConfig& config,
                                         static_cast<std::size_t>(p.stride) +
                               static_cast<std::size_t>(x >> frame.sub_x),
                           p.stride, cw, ch);
+#endif
         }
       }
     }

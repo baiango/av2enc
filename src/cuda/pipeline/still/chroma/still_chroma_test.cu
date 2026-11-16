@@ -57,6 +57,9 @@
 
 #define private public
 #include "pipeline/still/still_encoder.cpp"
+#include "pipeline/still/still_encoder_recon.cpp"
+#include "pipeline/still/still_encoder_quant.cpp"
+#include "pipeline/still/still_encoder_decision.cpp"
 #undef private
 
 #include "cuda/pipeline/still/chroma/still_chroma.h"

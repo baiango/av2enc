@@ -1,0 +1,55 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 19, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-${presetName}",
+      "cacheVariables": {
+        "AV2ENC_ENABLE_CUDA": "OFF",
+        "AV2ENC_ALLOW_CPU_ONLY": "ON",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "Release (pinned CI / measurement build)",
+      "description": "Exactly the flags the gates and pins are recorded with: -O3, strict warnings, no PCH, no compiler cache. Use this for anything whose timing or bitstream is quoted.",
+      "cacheVariables": {
+        "AV2ENC_WARNINGS": "ON",
+        "AV2ENC_PCH": "OFF"
+      }
+    },
+    {
+      "name": "dev",
+      "inherits": "base",
+      "displayName": "Dev: -O1 + PCH (fastest cold build and edits)",
+      "description": "Best for editing one file or starting from nothing. Bitstreams are identical to release (verified against the pins), but never quote encode timings from this build: -O1 is slower at runtime. Do not add ccache here: a PCH-including compile is uncacheable, so ccache would sit idle (measured 342/368 uncacheable calls).",
+      "cacheVariables": {
+        "AV2ENC_WARNINGS": "OFF",
+        "AV2ENC_PCH": "ON",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O1 -DNDEBUG"
+      }
+    },
+    {
+      "name": "dev-cache",
+      "inherits": "base",
+      "displayName": "Dev: -O1 + ccache, no PCH (fastest branch/worktree switch)",
+      "description": "Best when the same tree is rebuilt from scratch repeatedly, e.g. one worktree per agent. PCH must stay off or ccache is bypassed. Cold build is slower than dev; a warm rebuild is near-instant.",
+      "cacheVariables": {
+        "AV2ENC_WARNINGS": "OFF",
+        "AV2ENC_PCH": "OFF",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O1 -DNDEBUG",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "release", "configurePreset": "release" },
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "dev-cache", "configurePreset": "dev-cache" }
+  ]
+}

@@ -368,6 +368,13 @@ cmake --build build-int -j8
 tools/test.sh --build build-int
 ```
 
+For the edit/compile loop there are presets: `cmake --preset dev` (`-O1` + PCH,
+~20 s clean, ~13 s after a header edit) and `cmake --preset dev-cache` (`-O1` +
+ccache, ~1 s rebuild of an unchanged tree, e.g. per-agent worktrees). Both are
+bit-exact with `release`; quote timings and pins only from `release`. See
+`docs/build-speed.md` for the measurements and why PCH and ccache are
+alternatives rather than a stack.
+
 Measured on the M4 with the same source and interleaved runs (best of N wall
 times; the fanless host was also under other load):
 

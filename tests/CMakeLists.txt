@@ -66,6 +66,23 @@ set_tests_properties(basic_edge_smoke PROPERTIES
   SKIP_RETURN_CODE 77
   TIMEOUT 600)
 
+# Pixel-kernel layer: scalar reference kernels vs. the existing inlined loops.
+# This is a pure unit test (no stream, no decoder) but it is registered under
+# the additive `gate_` label on purpose: `tools/test.sh` runs `ctest -LE gate`
+# and must stay at the pinned 10/10 unit inventory, while
+# `tools/refactor/verify_baseline.sh --check` tolerates additive gate tests.
+# It runs in a plain `ctest` and in `tools/test.sh --all`.
+add_executable(primitives_test primitives_test.cpp)
+target_link_libraries(primitives_test PRIVATE av2enc_core)
+av2enc_apply_warnings(primitives_test)
+# The variance oracle is a transcription of the encoder's binary64 loop; it
+# must be compiled exactly like av2enc_core (no FMA contraction).
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(primitives_test PRIVATE -ffp-contract=off)
+endif()
+add_test(NAME gate_primitives COMMAND primitives_test)
+set_tests_properties(gate_primitives PROPERTIES LABELS gate)
+
 # Product gates (wave 4): additive test surface, see tests/gates/CMakeLists.txt.
 # Product gates encode real streams (1080p loop restoration, VBR video) and
 # are not unit tests. Register them only when a build explicitly asks for the

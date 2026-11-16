@@ -23,6 +23,14 @@
 #include "codec/inter/mc/mc_core.h"
 #include "formats/format.h"
 
+// The 16-bit kernels are host-only.  Component build_and_test.sh gates and the
+// CUDA backend compile this header without the primitives archive, so the
+// kernel path is opt-in through AV2ENC_PRIMITIVES and every migrated function
+// keeps its original inline body as the fallback.
+#if defined(AV2ENC_PRIMITIVES) && !defined(__CUDACC__)
+#include "primitives/kernels.h"
+#endif
+
 #if defined(__CUDACC__)
 #define AV2ENC_HBD_HD __host__ __device__ __forceinline__
 #else
@@ -229,6 +237,11 @@ AV2ENC_HBD_HD std::int64_t hbd_sad_at(const std::uint16_t* cur, int cur_stride,
                                       const std::uint16_t* ref, int ref_stride,
                                       int x, int y, int w, int h, int mv_y,
                                       int mv_x, int ref_w, int ref_h) {
+#if defined(AV2ENC_PRIMITIVES) && !defined(__CUDACC__)
+  return primitives::kernels().sad_u16_clamped(cur, cur_stride, ref, ref_stride,
+                                               x, y, w, h, mv_y, mv_x, ref_w,
+                                               ref_h);
+#else
   std::int64_t sad = 0;
   for (int r = 0; r < h; ++r) {
     const int ry = clip3_value(0, ref_h - 1, y + r + mv_y);
@@ -245,6 +258,7 @@ AV2ENC_HBD_HD std::int64_t hbd_sad_at(const std::uint16_t* cur, int cur_stride,
     }
   }
   return sad;
+#endif
 }
 
 // Deterministic diamond search plus half/quarter/eighth refinement.  `stages`
@@ -359,6 +373,12 @@ AV2ENC_HBD_HD std::int64_t hbd_variance_cost(const std::uint16_t* src,
                                              int stride, int x, int y, int w,
                                              int h) {
   if (w <= 0 || h <= 0) return 0;
+#if defined(AV2ENC_PRIMITIVES) && !defined(__CUDACC__)
+  return primitives::kernels().variance_u16(
+      src + static_cast<std::size_t>(y) * static_cast<std::size_t>(stride) +
+          static_cast<std::size_t>(x),
+      static_cast<std::size_t>(stride), w, h);
+#else
   std::int64_t sum = 0;
   for (int r = 0; r < h; ++r) {
     for (int c = 0; c < w; ++c) {
@@ -381,6 +401,7 @@ AV2ENC_HBD_HD std::int64_t hbd_variance_cost(const std::uint16_t* src,
     }
   }
   return static_cast<std::int64_t>(sse);
+#endif
 }
 
 }  // namespace av2enc::video::hbd

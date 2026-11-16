@@ -8,8 +8,63 @@
 
 #include <cstddef>
 
+#if defined(AV2ENC_PRIMITIVES)
+#include "primitives/kernels.h"
+#endif
+
 namespace av2enc::me {
 namespace {
+
+// Host cost backed by the pixel-kernel layer (src/primitives/kernels.h).
+//
+// The integer-MV path is exactly the kernels' `sad` and `satd(k8x8)`: they are
+// transcriptions of me_sad_rows() and me_cost_plane(kMeSatd) with the same
+// accumulation order, tile order and (sum + 8) >> 4 rounding, so candidate
+// costs, the search order and the tie-breaking are unchanged.  Fractional MVs
+// keep the inline me_cost_plane() path: the layer has no exact slot for a
+// subpel SAD (it would have to materialise the prediction first) and none of
+// the subpel variants are interchangeable with the integer kernels.
+//
+// `AV2ENC_PRIMITIVES` is defined for the product av2enc_core target, which
+// links src/primitives/kernels.cpp.  The per-component build_and_test.sh gates
+// compile this TU on its own, so they keep the scalar MeScalarCost functor and
+// stay bit-identical to the kernel table (the table is a transcription).
+#if defined(AV2ENC_PRIMITIVES)
+struct MeKernelCost {
+  primitives::SadFn sad = nullptr;
+  primitives::SatdFn satd = nullptr;
+
+  explicit MeKernelCost(const primitives::KernelTable& kernels)
+      : sad(kernels.sad), satd(kernels.satd) {}
+
+  std::int32_t operator()(const MeCorePlane& cur, const MeCorePlane& ref,
+                          int x, int y, int w, int h, std::int32_t mv_x,
+                          std::int32_t mv_y, int metric, int filter) const {
+    if (me_is_integer_mv(mv_x, mv_y)) {
+      const int ix = x + (mv_x >> kSubpelBits);
+      const int iy = y + (mv_y >> kSubpelBits);
+      const std::uint8_t* cur_p =
+          cur.data + static_cast<std::size_t>(y) *
+                         static_cast<std::size_t>(cur.stride) +
+          static_cast<std::size_t>(x);
+      const std::uint8_t* ref_p =
+          ref.data + static_cast<std::size_t>(iy) *
+                         static_cast<std::size_t>(ref.stride) +
+          static_cast<std::size_t>(ix);
+      if (metric == kMeSad) {
+        return static_cast<std::int32_t>(
+            sad(cur_p, static_cast<std::size_t>(cur.stride), ref_p,
+                static_cast<std::size_t>(ref.stride), w, h));
+      }
+      return static_cast<std::int32_t>(
+          satd(cur_p, static_cast<std::size_t>(cur.stride), ref_p,
+               static_cast<std::size_t>(ref.stride), w, h,
+               primitives::SatdTile::k8x8));
+    }
+    return me_cost_plane(cur, ref, x, y, w, h, mv_x, mv_y, metric, filter);
+  }
+};
+#endif
 
 bool plane_valid(const MeCorePlane& p) {
   return p.data != nullptr && p.width > 0 && p.height > 0 &&
@@ -135,7 +190,11 @@ MeStatus me_search_batch(const MeCoreFrame& cur, const MeCoreRef* refs,
     }
   }
 
+#if defined(AV2ENC_PRIMITIVES)
+  const MeKernelCost cost{primitives::kernels()};
+#else
   const MeScalarCost cost;
+#endif
   for (int j = 0; j < num_jobs; ++j) {
     results[j] =
         me_search_core(cur, refs, jobs[j], options, field, cost);
@@ -163,8 +222,13 @@ MeStatus me_cost_block(const MeCoreFrame& cur, const MeCoreRef& ref,
   if (!mv_in_bounds(ref_p, job.x, job.y, job.w, job.h, job.mv_x, job.mv_y)) {
     return MeStatus::kInvalidArgument;
   }
-  *out_cost = me_cost_plane(cur_p, ref_p, job.x, job.y, job.w, job.h, job.mv_x,
-                            job.mv_y, job.metric, job.interp);
+#if defined(AV2ENC_PRIMITIVES)
+  const MeKernelCost cost{primitives::kernels()};
+#else
+  const MeScalarCost cost;
+#endif
+  *out_cost = cost(cur_p, ref_p, job.x, job.y, job.w, job.h, job.mv_x,
+                   job.mv_y, job.metric, job.interp);
   return MeStatus::kOk;
 }
 

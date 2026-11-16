@@ -39,6 +39,7 @@
 
 #include "codec/intra/ibp/ibp.h"
 #include "codec/intra/modes/intra_modes.h"
+#include "core/parallel/parallel_for.h"
 
 namespace av2enc::video::intra_search {
 
@@ -174,6 +175,13 @@ inline bool joint_is_smooth(int joint) noexcept {
   return joint >= 1 && joint <= 3;
 }
 
+// Minimum luma leaf area (in samples) before the 61-candidate mode search
+// hands its candidates to the worker pool.  Each concurrent candidate needs
+// its own w*h predictor buffer and the fork-join costs a few microseconds, so a
+// 4x4 or 8x8 leaf (16/64 samples, ~60 candidates of a few hundred ns) stays
+// serial.  Measured on 240p QP106 and 720p QP217, --cpu-threads 8.
+constexpr std::size_t kIntraParallelMinPixels = 256;
+
 struct LumaChoice {
   int mode = 0;         // av2enc::intra::Mode / AV2 YMode value
   int angle_delta = 0;  // -3..+3
@@ -282,19 +290,57 @@ inline bool search_luma(const std::uint8_t* recon, int recon_stride, int x0,
 
   choice.sse = 0;
   bool have_best = false;
-  for (int i = 0; i < count; ++i) {
-    const intra::ModeCandidate& candidate =
-        candidates[static_cast<std::size_t>(i)];
-    if (!predict_with(candidate.mode, candidate.angle_delta, pred)) {
-      return false;
+  // The candidate set is immutable: every one of the 61 modes is evaluated and
+  // the winner is the first strict minimum in candidate order (the still
+  // encoder's rule).  Nothing is pruned or early-exited, so the candidates are
+  // independent and may be evaluated concurrently; the selection pass below
+  // still runs sequentially in candidate order, which keeps a tie with the
+  // earlier candidate.  Each concurrent candidate needs its own predictor
+  // buffer, so the pool path is only taken for blocks large enough to pay for
+  // the extra buffer and the wake-up.
+  const std::size_t block = static_cast<std::size_t>(w) *
+                            static_cast<std::size_t>(h);
+  if (parallel::pool_active() && block >= kIntraParallelMinPixels) {
+    const std::size_t total = static_cast<std::size_t>(count);
+    std::vector<std::uint8_t> preds(total * block);
+    std::vector<std::int64_t> sses(total, 0);
+    std::vector<char> ok(total, 1);
+    parallel::parallel_for_pooled(total, 1, [&](std::size_t i) {
+      const intra::ModeCandidate& candidate =
+          candidates[i];
+      std::uint8_t* dst = preds.data() + i * block;
+      if (!predict_with(candidate.mode, candidate.angle_delta, dst)) {
+        ok[i] = 0;
+        return;
+      }
+      sses[i] = detail::sse_against_source(source, source_stride, source_max_x,
+                                           source_max_y, x0, y0, w, h, dst);
+    });
+    for (std::size_t i = 0; i < total; ++i) {
+      if (ok[i] == 0) return false;
+      if (!have_best || sses[i] < choice.sse) {
+        have_best = true;
+        choice.sse = sses[i];
+        choice.mode = static_cast<int>(candidates[i].mode);
+        choice.angle_delta = candidates[i].angle_delta;
+      }
     }
-    const std::int64_t sse = detail::sse_against_source(
-        source, source_stride, source_max_x, source_max_y, x0, y0, w, h, pred);
-    if (!have_best || sse < choice.sse) {
-      have_best = true;
-      choice.sse = sse;
-      choice.mode = static_cast<int>(candidate.mode);
-      choice.angle_delta = candidate.angle_delta;
+  } else {
+    for (int i = 0; i < count; ++i) {
+      const intra::ModeCandidate& candidate =
+          candidates[static_cast<std::size_t>(i)];
+      if (!predict_with(candidate.mode, candidate.angle_delta, pred)) {
+        return false;
+      }
+      const std::int64_t sse = detail::sse_against_source(
+          source, source_stride, source_max_x, source_max_y, x0, y0, w, h,
+          pred);
+      if (!have_best || sse < choice.sse) {
+        have_best = true;
+        choice.sse = sse;
+        choice.mode = static_cast<int>(candidate.mode);
+        choice.angle_delta = candidate.angle_delta;
+      }
     }
   }
   if (!have_best) return false;

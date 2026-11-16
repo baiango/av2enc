@@ -18,6 +18,9 @@
 
 #include <cstdint>
 
+#if defined(AV2ENC_PRIMITIVES)
+#include "primitives/kernels.h"
+#endif
 #include "codec/inter/advanced/warp_common.h"
 #include "codec/inter/mc/mc_core.h"
 #include "codec/inter/temporal/temporal_math.h"
@@ -187,9 +190,24 @@ inline void compound_average(const std::int16_t* p0, int p0_stride,
 
 // SAD used by the refine-MV search: even rows only, full width, 8-bit
 // precision, then >> (BitDepth - 8) (a no-op for 8-bit).
+//
+// The row set is {2r : 0 <= 2r < h}, i.e. r in [0, ceil(h/2)).  That is the
+// `sad` kernel with both strides doubled: kernel row i reads the input's row
+// 2i.  The row count is ceil(h/2), not the truncated h/2 the shape suggests:
+// for odd h the last row (h-1) is even and h/2 would drop it.  h > 0 is
+// required for ceil to match the loop; for h <= 0 both forms return 0.
+// Strides must be non-negative, as everywhere else in the kernel layer
+// (doubling a negative stride in size_t is not the same as indexing with it).
+// The uint64 kernel sum fits int64 for every block this search evaluates.
 inline std::int64_t refine_sad(const std::uint8_t* p0, int p0_stride,
                                const std::uint8_t* p1, int p1_stride, int w,
                                int h) {
+#if defined(AV2ENC_PRIMITIVES)
+  const int rows = h > 0 ? h / 2 + (h & 1) : 0;
+  return static_cast<std::int64_t>(primitives::kernels().sad(
+      p0, 2 * static_cast<std::size_t>(p0_stride), p1,
+      2 * static_cast<std::size_t>(p1_stride), w, rows));
+#else
   std::int64_t sad = 0;
   for (int r = 0; r < h; r += 2) {
     for (int c = 0; c < w; ++c) {
@@ -203,6 +221,7 @@ inline std::int64_t refine_sad(const std::uint8_t* p0, int p0_stride,
     }
   }
   return sad;  // >> (BitDepth - 8) is zero for 8-bit
+#endif
 }
 
 }  // namespace av2enc::inter::temporal

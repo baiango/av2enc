@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 
+#if defined(AV2ENC_PRIMITIVES)
+#include "primitives/kernels.h"
+#endif
+
 namespace av2enc::rdo {
 namespace {
 
@@ -184,6 +188,13 @@ std::uint64_t sad_u8(std::span<const std::uint8_t> a,
   if (!plane_args_valid(a, b, width, height, stride)) {
     return 0;
   }
+#if defined(AV2ENC_PRIMITIVES)
+  // The span/argument checks stay here (the kernel takes raw pointers); the
+  // sum itself is the same row-major |a-b| accumulation.
+  return primitives::kernels().sad(a.data(), static_cast<std::size_t>(stride),
+                                   b.data(), static_cast<std::size_t>(stride),
+                                   width, height);
+#else
   std::uint64_t sad = 0;
   for (int y = 0; y < height; ++y) {
     const std::size_t offset =
@@ -196,6 +207,7 @@ std::uint64_t sad_u8(std::span<const std::uint8_t> a,
     }
   }
   return sad;
+#endif
 }
 
 std::uint64_t satd_u8(std::span<const std::uint8_t> a,

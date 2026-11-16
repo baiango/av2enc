@@ -63,7 +63,14 @@ else()
   message(STATUS "av2enc: CPU-only reference build (unsupported encoder target)")
 endif()
 
+option(AV2ENC_WARNINGS
+  "Enable the strict warning set (-Wall/-Wextra/-Wpedantic/-Wconversion/-Wshadow)"
+  ON)
+
 function(av2enc_apply_warnings target)
+  if(NOT AV2ENC_WARNINGS)
+    return()
+  endif()
   if(MSVC)
     target_compile_options(${target} PRIVATE /W4)
   else()
@@ -94,6 +101,8 @@ endfunction()
 # tie-breaks and therefore every pinned bitstream are unchanged. The extra FP
 # flags only drop errno/trap bookkeeping; they do not permit reassociation.
 # ---------------------------------------------------------------------------
+option(AV2ENC_PCH
+  "Use a precompiled header (std headers only) for the core library. Dev-only; it changes compile time, never code generation" OFF)
 option(AV2ENC_NATIVE
   "Tune host C++ code for the build machine (-mcpu/-march=native, not portable)" OFF)
 option(AV2ENC_LTO "Enable link-time optimization for the host C++ targets" OFF)
@@ -257,6 +266,9 @@ add_library(av2enc_core STATIC
   src/pipeline/still/still_headers.cpp
   src/pipeline/still/still_syntax.cpp
   src/pipeline/still/still_encoder.cpp
+  src/pipeline/still/still_encoder_decision.cpp
+  src/pipeline/still/still_encoder_quant.cpp
+  src/pipeline/still/still_encoder_recon.cpp
   src/pipeline/still/stream/still_stream_bridge.cpp
   # Multi-frame inter (P-frame) path, opt-in via --video.
   src/codec/inter/me/me.cpp
@@ -322,9 +334,22 @@ add_library(av2enc_core STATIC
   src/pipeline/video/video_headers.cpp
   # §5.8/§5.10 full LCR/OPS carrier for --video-lcr-full (default off).
   src/pipeline/video/video_lcr_ops.cpp
+  # AV2 M2 P-frame tile syntax writer, split by syntax role.  The private
+  # header video_syntax_writer.h carries the shared Writer state.
   src/pipeline/video/video_syntax.cpp
+  src/pipeline/video/video_syntax_block.cpp
+  src/pipeline/video/video_syntax_inter.cpp
+  src/pipeline/video/video_syntax_coeff.cpp
   src/pipeline/video/video_chroma_search.cpp
+  # Frame core split by role.  video_frame_internal.h carries the
+  # InterFrameEncoder declaration and the shared helpers.
   src/pipeline/video/video_frame.cpp
+  src/pipeline/video/video_frame_decision.cpp
+  src/pipeline/video/video_frame_me.cpp
+  src/pipeline/video/video_frame_intra.cpp
+  src/pipeline/video/video_frame_filters.cpp
+  src/pipeline/video/video_frame_write.cpp
+  src/pipeline/video/video_frame_sequence.cpp
   # Format video core (10-bit 4:2:0/4:2:2/4:4:4/4:0:0 and 8-bit 4:2:2/4:4:4/
   # 4:0:0).  The CPU reference and the shared orchestration live here; the CUDA
   # backend is under src/cuda/pipeline/video/hbd/.
@@ -367,8 +392,29 @@ add_library(av2enc_core STATIC
   # M1 CDEF stage host half (header packing, MI grids, strength search).  It is
   # CUDA-free and the CPU M1 path needs it; the M1 GPU OBJECT target excludes
   # this file so the symbols resolve from this archive.
-  src/cuda/pipeline/still/cdef/still_cdef.cpp)
+  src/cuda/pipeline/still/cdef/still_cdef.cpp
+  # Additive pixel-kernel seam: scalar reference kernels + start-up dispatch.
+  # Migration branches call it from their host pixel loops (ME cost, RDO SAD,
+  # partition variance).  The per-component build_and_test.sh gates compile a
+  # single TU without this archive, so the call sites key off AV2ENC_PRIMITIVES
+  # and keep their inlined loop there; the product build always takes the
+  # kernel path.
+  src/primitives/kernels.cpp
+  # NEON table, compiled everywhere and empty off AArch64.  Each slot is added
+  # only after it is proven bit-identical to the scalar reference
+  # (docs/simd-plan.md); no target flags are needed, AArch64 NEON is baseline.
+  src/primitives/kernels_neon.cpp)
 target_include_directories(av2enc_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+if(AV2ENC_PCH)
+  # Std headers only -- see src/pch.h for why no project header belongs here.
+  if(AV2ENC_HAVE_CUDA)
+    # nvcc drives the device compile of the same target and does not consume a
+    # host PCH; keep the CUDA build on the plain path instead of failing.
+    message(STATUS "av2enc: AV2ENC_PCH ignored for CUDA builds")
+  else()
+    target_precompile_headers(av2enc_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/pch.h")
+  endif()
+endif()
 target_compile_features(av2enc_core PUBLIC cxx_std_20)
 target_link_libraries(av2enc_core PUBLIC Threads::Threads)
 # Enable the wave-3 frame-type dispatch in video_frame.cpp.  Standalone tool
@@ -386,6 +432,20 @@ target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_GME=1)
 # Format video core dispatch for 10-bit / 4:2:2 / 4:4:4 / 4:0:0.  Standalone
 # component gates keep the 8-bit 4:2:0 path without the extra source.
 target_compile_definitions(av2enc_core PRIVATE AV2ENC_VIDEO_FORMATS=1)
+# The product core links src/primitives/kernels.cpp above, so its host pixel
+# loops take the kernel table.  Every migrated call site is guarded by this
+# define and keeps its inlined loop under #else.  That is a hard rule, not a
+# convenience: the per-component build_and_test.sh gates compile one of these
+# TUs (me.cpp / mc.cpp / rdo.cpp / refinemv.cpp / video_frame.cpp /
+# intra_modes.cpp / dip.cpp / ibc.cpp) on their own, without this define and
+# without kernels.cpp, so the #else branch is the only thing that keeps them
+# linkable.  Conversely, PRIVATE means no other target inherits the define;
+# any new target that compiles one of these TUs must either add it itself *and*
+# link kernels.cpp, or leave it off and take the fallback.  Both paths are
+# bit-identical by construction (the scalar table is a transcription of the
+# inlined loops).  tools/refactor/build_seam_check.sh proves both columns;
+# see docs/build-seam.md.
+target_compile_definitions(av2enc_core PRIVATE AV2ENC_PRIMITIVES=1)
 # Opt-in §5.18.7.1/.8 segmentation + per-superblock delta-Q on --video
 # (--video-segmentation/--video-delta-q/--video-per-segment-q).  Standalone
 # component gates compile the video writer without the deltaq adapter and keep
@@ -689,7 +749,7 @@ target_sources(av2enc_core PRIVATE
 target_sources(av2enc_core PRIVATE
   src/pipeline/planner/effort.cpp)
 
-add_executable(av2enc src/main.cpp)
+add_executable(av2enc src/main.cpp src/cli/help.cpp src/cli/parse.cpp src/cli/nightly.cpp src/cli/validate.cpp)
 target_link_libraries(av2enc PRIVATE av2enc_core)
 if(TARGET av2enc_still_gpu)
   # OBJECT library: all M1 GPU stage objects are linked directly, so weak

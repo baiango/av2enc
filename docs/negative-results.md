@@ -286,6 +286,7 @@ These three failures were encoder bugs, not decoder limits.  Each is now
 | CONFIRMED | Assume area-based tile assignment proves 2-GPU scaling | Content skew/throttling: a 10% straggler drops the modeled 1.917× to ~1.77× | Use previous-frame cost-aware LPT or finer tiles; measure per-tile time |
 | OPEN | Claim measured multi-GPU speedup | `bench/multi_gpu_plan` is an analytic model; no 2-GPU host | Label as simulation; validate on real hardware |
 | OPEN | Use 16x2 tiles without decoding them | Only 1x1 through 8x2 have been verified with `dav2d` | Test 16x2 with the pinned decoder first |
+| CONFIRMED | Parallelise TX-partition plan candidates instead of TX-type candidates | A block has ~2 plans, each dominated by its own 2-16 type candidates. Running plans concurrently makes each plan's type loop a nested serial region, so the coarse axis suppresses the fine one. Measured `--cpu-threads 8`: 240p QP106 4.12 s concurrent vs 4.10 s serial; 720p QP217 36.90 s vs 36.52 s — concurrent loses on the larger workload | Parallelise the TX-type loop (one axis, all candidates independent) and keep the plan loop serial; see `docs/video-candidate-parallel.md` |
 
 ## Input / NVDEC
 

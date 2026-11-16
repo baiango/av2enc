@@ -169,6 +169,9 @@ AV2ENC_CPU_CORE_SOURCES=(
   src/pipeline/still/high_bitdepth/high_bitdepth_headers.cpp
   src/pipeline/still/high_bitdepth/high_bitdepth_still.cpp
   src/pipeline/still/still_encoder.cpp
+  src/pipeline/still/still_encoder_recon.cpp
+  src/pipeline/still/still_encoder_quant.cpp
+  src/pipeline/still/still_encoder_decision.cpp
   src/pipeline/still/still_headers.cpp
   src/pipeline/still/still_syntax.cpp
   src/pipeline/still/stream/still_stream_bridge.cpp

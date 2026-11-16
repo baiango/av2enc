@@ -59,7 +59,10 @@ source "$ROOT/src/cuda/pipeline/cpu_reference_sources.sh"
 # linked a second time.
 av2enc_cpu_core_append HOST_SOURCES "" \
   "${HOST_SOURCES[@]+"${HOST_SOURCES[@]}"}" \
-  src/pipeline/still/still_encoder.cpp
+  src/pipeline/still/still_encoder.cpp \
+  src/pipeline/still/still_encoder_decision.cpp \
+  src/pipeline/still/still_encoder_quant.cpp \
+  src/pipeline/still/still_encoder_recon.cpp
 
 HOST_OBJECTS=()
 for src in "${HOST_SOURCES[@]}"; do

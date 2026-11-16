@@ -9,7 +9,8 @@
 #
 # Usage:
 #   tools/run_gates.sh [--bin build-int/av2enc] [--build-dir DIR]
-#       [--dav2d PATH] [--quick] [--no-ctest] [--jobs N] [--verbose]
+#       [--dav2d PATH] [--quick] [--no-ctest] [--jobs N] [--gate-jobs N]
+#       [--verbose]
 #
 #   --bin PATH       av2enc binary (default: first of build-int/build/build-cuda/
 #                    build-gpu/refactor/build/cpu)
@@ -19,6 +20,10 @@
 #                    and the 1080p cases inside gate_tiles/gate_loop_restoration
 #   --no-ctest       run only the product gates
 #   --jobs N         CTest parallelism (default: CPU count)
+#   --gate-jobs N    product-gate processes in flight (default: 1, serial).
+#                    Gates use mktemp and have no shared paths, so this is safe;
+#                    it shortens the dev loop without touching the encoder.
+#                    Do not time single encodes while using N > 1.
 #   --verbose        stream each gate's output instead of capturing it
 #
 # Env: DAV2D, AV2ENC_TESTDATA (override the gitignored testdata/ directory).
@@ -33,6 +38,7 @@ DAV2D_EXPLICIT=0
 QUICK=0
 RUN_CTEST=1
 JOBS=""
+GATE_JOBS=1
 VERBOSE=0
 
 usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -47,6 +53,7 @@ while [ $# -gt 0 ]; do
         --quick) QUICK=1; shift ;;
         --no-ctest) RUN_CTEST=0; shift ;;
         --jobs) JOBS=${2:-}; shift 2 ;;
+        --gate-jobs) GATE_JOBS=${2:-}; shift 2 ;;
         --verbose) VERBOSE=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown argument: $1 (try --help)" ;;
@@ -98,6 +105,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [ "$VERBOSE" -eq 1 ] && [ "$GATE_JOBS" -gt 1 ]; then
+    echo "run_gates: warning: --verbose forces --gate-jobs 1 (interleaved output)" >&2
+    GATE_JOBS=1
+fi
+
 STILL_RECON_DUMP="$BUILD/still_recon_dump"
 GATE_STILL_DUMP="$BUILD/still_dump"
 
@@ -142,9 +154,12 @@ PASSED=0
 SKIPPED=0
 FAILED=0
 INDEX=0
-TOTAL=35
-[ "$QUICK" -eq 1 ] && TOTAL=6
 declare -a RESULTS=()
+
+# Gates are queued during registration, then executed by a bounded pool.  That
+# keeps the summary in registration order regardless of completion order, and
+# makes the total known without a hand-maintained counter.
+declare -a Q_NAME=() Q_CMD=() Q_SKIP=()
 
 now() { date +%s; }
 
@@ -153,53 +168,93 @@ record_result() {
 }
 
 skip_gate() {
-    local name=$1 reason=$2
+    Q_NAME+=("$1"); Q_CMD+=(""); Q_SKIP+=("$2")
     INDEX=$((INDEX + 1))
-    printf '[%d/%d] %-22s SKIP  %s\n' "$INDEX" "$TOTAL" "$name" "$reason"
-    record_result "$name" SKIP "0.00" "$reason"
-    SKIPPED=$((SKIPPED + 1))
 }
 
 # run_gate <name> <script> [gate args...]
 run_gate() {
     local name=$1 script=$2
     shift 2
-    INDEX=$((INDEX + 1))
-    local label
-    label=$(printf '[%d/%d] %-22s' "$INDEX" "$TOTAL" "$name")
     local args=(--bin "$BIN")
     [ -n "$DAV2D" ] && args+=(--dav2d "$DAV2D")
     args+=("$@")
+    local cmd
+    cmd="bash $(printf '%q' "$ROOT/$script")"
+    local a
+    for a in "${args[@]}"; do cmd+=" $(printf '%q' "$a")"; done
+    Q_NAME+=("$name"); Q_CMD+=("$cmd"); Q_SKIP+=("")
+    INDEX=$((INDEX + 1))
+}
 
+# One queued gate in a worker: capture the log, time it, write "rc|secs" for
+# the ordered summary, and print a completion line as it finishes.
+run_queued() {
+    local i=$1
+    local name=${Q_NAME[i]}
     local log="$TMP/$name.log"
-    local t0 t1 secs rc
+    local t0 t1 rc secs data
     t0=$(now)
-    if [ "$VERBOSE" -eq 1 ]; then
-        bash "$ROOT/$script" "${args[@]}" 2>&1 | tee "$log"
-        rc=${PIPESTATUS[0]}
-    else
-        bash "$ROOT/$script" "${args[@]}" >"$log" 2>&1
-        rc=$?
-    fi
+    eval "${Q_CMD[i]}" >"$log" 2>&1
+    rc=$?
     t1=$(now)
     secs=$((t1 - t0))
-
+    printf '%s|%s\n' "$rc" "$secs" >"$TMP/result.$i"
+    local label
+    label=$(printf '[%d/%d] %-22s' "$((i + 1))" "${#Q_NAME[@]}" "$name")
     if [ "$rc" -eq 0 ]; then
         printf '%s PASS  %ss\n' "$label" "$secs"
-        record_result "$name" PASS "$secs.00" ""
-        PASSED=$((PASSED + 1))
     elif [ "$rc" -eq 77 ]; then
         printf '%s SKIP  %ss (prerequisites missing)\n' "$label" "$secs"
-        record_result "$name" SKIP "$secs.00" "prerequisites missing"
-        SKIPPED=$((SKIPPED + 1))
     else
         printf '%s FAIL  %ss (rc=%s)\n' "$label" "$secs" "$rc"
-        local data
         data=$(grep -E '^(FAIL|SKIP|error)' "$log" | tail -n 5)
         [ -n "$data" ] && printf '%s\n' "$data" | sed 's/^/    /'
-        record_result "$name" FAIL "$secs.00" "rc=$rc"
-        FAILED=$((FAILED + 1))
     fi
+}
+
+# Bounded concurrency without `wait -n` (bash 3.2 has no -n).
+run_gate_pool() {
+    local n=${#Q_NAME[@]}
+    local workers=$GATE_JOBS
+    [ "$workers" -lt 1 ] && workers=1
+    [ "$workers" -gt "$n" ] && workers=$n
+    local i=0
+    while [ "$i" -lt "$n" ]; do
+        if [ -n "${Q_CMD[i]}" ]; then
+            while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$workers" ]; do
+                sleep 0.2
+            done
+            run_queued "$i" &
+        fi
+        i=$((i + 1))
+    done
+    wait
+}
+
+# Populate RESULTS/PASSED/SKIPPED/FAILED in registration order.
+collect_results() {
+    local i name skip rc secs
+    for ((i = 0; i < ${#Q_NAME[@]}; i++)); do
+        name=${Q_NAME[i]}
+        skip=${Q_SKIP[i]}
+        if [ -n "$skip" ]; then
+            record_result "$name" SKIP "0.00" "$skip"
+            SKIPPED=$((SKIPPED + 1))
+            continue
+        fi
+        IFS='|' read -r rc secs <"$TMP/result.$i"
+        if [ "$rc" -eq 0 ]; then
+            record_result "$name" PASS "$secs.00" ""
+            PASSED=$((PASSED + 1))
+        elif [ "$rc" -eq 77 ]; then
+            record_result "$name" SKIP "$secs.00" "prerequisites missing"
+            SKIPPED=$((SKIPPED + 1))
+        else
+            record_result "$name" FAIL "$secs.00" "rc=$rc"
+            FAILED=$((FAILED + 1))
+        fi
+    done
 }
 
 run_gate gate_format src/formats/format_gate.sh
@@ -266,7 +321,18 @@ if [ "$QUICK" -eq 0 ]; then
         src/pipeline/video/video_drift_refresh_gate.sh
     run_gate gate_video_skip_collapse \
         src/pipeline/video/video_skip_collapse_gate.sh
+    run_gate gate_tile_flush src/pipeline/video/gate_tile_flush.sh
+    run_gate gate_video_ext_nightly \
+        src/pipeline/video/gate_video_ext_nightly.sh
+    run_gate gate_build_seam tools/refactor/build_seam_check.sh
+    run_gate gate_primitives tools/gate_primitives.sh
+    # Supersedes gate_thread_determinism: same 1-vs-8 thread comparison on the
+    # 240p and 720p streams, plus all four 480p pins and the Stage-0 dump oracle.
+    run_gate gate_wavefront_pins tools/refactor/check_wavefront_pins.sh
 fi
+
+run_gate_pool
+collect_results
 
 echo
 echo "== summary =="

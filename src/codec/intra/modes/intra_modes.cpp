@@ -6,6 +6,10 @@
 #include <algorithm>
 #include <cstdlib>
 
+#if defined(AV2ENC_PRIMITIVES)
+#include "primitives/kernels.h"
+#endif
+
 namespace av2enc::intra {
 namespace {
 
@@ -335,6 +339,11 @@ MappedAngle map_angle(Mode mode, int angle_delta, int w, int h) noexcept {
 
 int edge_filter_strength(int w, int h, bool smooth_neighbors,
                          int delta) noexcept {
+#if defined(AV2ENC_PRIMITIVES)
+  return primitives::intra_edge_filter_strength(w, h, smooth_neighbors, delta);
+#else
+  // Fallback for component build_and_test.sh gates, which compile this TU
+  // without src/primitives/kernels.cpp.
   const int d = std::abs(delta);
   const int blk_wh = w + h;
   int strength = 0;
@@ -396,9 +405,16 @@ int edge_filter_strength(int w, int h, bool smooth_neighbors,
     }
   }
   return strength;
+#endif
 }
 
 void intra_edge_filter(EdgeRow& row, int size, int strength) noexcept {
+  // §7.13.2.18: edge[i] = LeftCol[i-1] / AboveRow[i-1] is a snapshot of the
+  // original samples. Filtered outputs are written back to LeftCol/AboveRow
+  // (logical indices -1..size-2) and must not be read by later taps.
+#if defined(AV2ENC_PRIMITIVES)
+  primitives::kernels().edge_filter(&row[-1], size, strength);
+#else
   if (size <= 1 || size > EdgeRow::kMaxIndex || strength < 1 ||
       strength > 3) {
     return;
@@ -407,15 +423,10 @@ void intra_edge_filter(EdgeRow& row, int size, int strength) noexcept {
                                  {0, 5, 6, 5, 0},
                                  {2, 4, 4, 4, 2}};
   const int* taps = kKernel[strength - 1];
-
-  // §7.13.2.18: edge[i] = LeftCol[i-1] / AboveRow[i-1] is a snapshot of the
-  // original samples. Filtered outputs are written back to LeftCol/AboveRow
-  // (logical indices -1..size-2) and must not be read by later taps.
   std::array<int, EdgeRow::kMaxIndex + 1> edge{};
   for (int i = 0; i < size; ++i) {
     edge[static_cast<std::size_t>(i)] = row[i - 1];
   }
-
   for (int i = 1; i < size; ++i) {
     int sum = 0;
     for (int j = 0; j < 5; ++j) {
@@ -424,6 +435,7 @@ void intra_edge_filter(EdgeRow& row, int size, int strength) noexcept {
     }
     row[i - 1] = static_cast<std::int16_t>((sum + 8) >> 4);
   }
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -765,6 +777,12 @@ PredictionCost prediction_cost(const std::uint8_t* src, std::size_t src_stride,
   if (src == nullptr || pred == nullptr || w <= 0 || h <= 0) {
     return cost;
   }
+#if defined(AV2ENC_PRIMITIVES)
+  primitives::kernels().sad_sse(src, src_stride, pred, pred_stride, w, h,
+                                &cost.sad, &cost.sse);
+#else
+  // Fallback for component build_and_test.sh gates: the same one-pass loop the
+  // scalar kernel is transcribed from.
   for (int i = 0; i < h; ++i) {
     for (int j = 0; j < w; ++j) {
       const int diff =
@@ -777,6 +795,7 @@ PredictionCost prediction_cost(const std::uint8_t* src, std::size_t src_stride,
       cost.sse += static_cast<std::uint64_t>(magnitude * magnitude);
     }
   }
+#endif
   return cost;
 }
 

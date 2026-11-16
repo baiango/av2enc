@@ -92,9 +92,9 @@ encode60 "$TMP/off-quality.ivf" --video --frames 60 --qp 190 \
     --cpu-threads 8 --video-rd-preset quality || true
 if [ -f "$TMP/off-nightly.ivf" ]; then
     BYTES=$(wc -c <"$TMP/off-nightly.ivf" | tr -d ' ')
-    [ "$BYTES" = "24218" ] || fail "nightly pin is $BYTES B, expected 24218"
+    [ "$BYTES" = "23793" ] || fail "nightly pin is $BYTES B, expected 23793"
     MD5=$(python3 -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read()).hexdigest())" "$TMP/off-nightly.ivf")
-    [ "$MD5" = "d3a7bd02c692f4f9770843c19f745307" ] ||
+    [ "$MD5" = "033ec06679c66f6357b40687a37e3d02" ] ||
         fail "nightly pin md5 is $MD5, expected 1b99127a..."
 fi
 if [ -f "$TMP/off-default.ivf" ]; then

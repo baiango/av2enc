@@ -87,6 +87,10 @@ COMPONENT=(
 # must not also link this one.
 TEST_CORE=("${CORE[@]}" "$ROOT/src/pipeline/video/video_headers.cpp"
            "$ROOT/src/pipeline/video/video_syntax.cpp")
+           "$ROOT/src/pipeline/video/video_syntax_block.cpp")
+           "$ROOT/src/pipeline/video/video_syntax_inter.cpp")
+           "$ROOT/src/pipeline/video/video_syntax_coeff.cpp")
+  "$ROOT/src/codec/transform/delta_q/syntax.cpp"
 
 if [[ "$RUN_TESTS" == "1" ]]; then
   echo "== unit tests =="

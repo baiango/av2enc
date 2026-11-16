@@ -30,8 +30,11 @@ leave the shared roots (`src/main.cpp`, `CMakeLists.txt`, `still_*`, `video_*`,
 - Every stream must pass `tools/validate_dav2d.sh` before it is called working.
 - No `cudaMalloc` in hot paths; use `src/cuda/arena.*`.
 - No Blackwell-only instructions (TMA, clusters, `wgmma`/`tcgen05`, FP4).
-- CPU-only mode is a correctness oracle, not a performance target. Do not
-  benchmark or optimize it for speed; the product is GPU-resident on Vast.ai.
+- CPU-only mode is a correctness oracle and, on Apple silicon, a
+  development-velocity target (`docs/simd-plan.md`). NEON may be added under
+  `src/primitives/` to shorten local gate and experiment loops; it must never
+  change a pinned stream. The shipping product is still GPU-resident on
+  Vast.ai.
 - Do not edit another agent's files. Check `docs/cuda-interface.md` ownership.
 - Commit source/docs, never build dirs, test media, or `tools/bin`.
 

@@ -31,6 +31,9 @@ FLAGS=(-std=c++20 -O2 -g -ffp-contract=off -w -I"$ROOT/src")
 SOURCES=(
   "$HERE/tiled_still_gate.cpp"
   "$ROOT/src/pipeline/still/still_encoder.cpp"
+  "$ROOT/src/pipeline/still/still_encoder_recon.cpp"
+  "$ROOT/src/pipeline/still/still_encoder_quant.cpp"
+  "$ROOT/src/pipeline/still/still_encoder_decision.cpp"
   "$ROOT/src/pipeline/still/still_syntax.cpp"
   "$ROOT/src/pipeline/still/still_headers.cpp"
   "$ROOT/src/core/bitstream/bitwriter.cpp"

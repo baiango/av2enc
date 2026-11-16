@@ -103,6 +103,10 @@ CORE=(
   "$ROOT/src/formats/format.cpp"
   "$VIDEO_DIR/video_headers.cpp"
   "$VIDEO_DIR/video_syntax.cpp"
+  "$VIDEO_DIR/video_syntax_block.cpp"
+  "$VIDEO_DIR/video_syntax_inter.cpp"
+  "$VIDEO_DIR/video_syntax_coeff.cpp"
+  "$ROOT/src/codec/transform/delta_q/syntax.cpp"
   "$VIDEO_DIR/video_frame.cpp"
   "$VIDEO_DIR/video_frames.cpp"
 )

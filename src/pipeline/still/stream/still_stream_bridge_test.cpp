@@ -35,6 +35,9 @@
 // Pulls in the CPU decision/reconstruction path and, through it, the syntax
 // writer (still_syntax.cpp).  Do not link still_encoder.cpp / still_syntax.cpp separately.
 #include "pipeline/still/still_encoder.cpp"
+#include "pipeline/still/still_encoder_recon.cpp"
+#include "pipeline/still/still_encoder_quant.cpp"
+#include "pipeline/still/still_encoder_decision.cpp"
 
 namespace {
 

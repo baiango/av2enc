@@ -5,6 +5,10 @@
 #include <array>
 #include <cstddef>
 
+#if defined(AV2ENC_PRIMITIVES)
+#include "primitives/kernels.h"
+#endif
+
 namespace av2enc::inter::mc {
 namespace {
 
@@ -515,6 +519,14 @@ McStatus resolve_mode(const MvStack& stack, const MvStackParams& params,
 
 std::int64_t sad_block(const std::uint8_t* a, int a_stride,
                        const std::uint8_t* b, int b_stride, int w, int h) {
+#if defined(AV2ENC_PRIMITIVES)
+  // Merge-candidate scoring is the SAD kernel's exact shape: same row-major
+  // accumulation, same |a-b| order.  The widest block here is 128x128, so the
+  // kernel's uint64 sum fits the int64 return without loss.
+  return static_cast<std::int64_t>(
+      primitives::kernels().sad(a, static_cast<std::size_t>(a_stride), b,
+                                static_cast<std::size_t>(b_stride), w, h));
+#else
   std::int64_t sad = 0;
   for (int r = 0; r < h; ++r) {
     for (int c = 0; c < w; ++c) {
@@ -528,6 +540,7 @@ std::int64_t sad_block(const std::uint8_t* a, int a_stride,
     }
   }
   return sad;
+#endif
 }
 
 McStatus select_merge_candidate(const MvStack& stack, const RefFrame& ref,

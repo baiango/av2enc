@@ -9,6 +9,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#if defined(AV2ENC_PRIMITIVES)
+#include "primitives/kernels.h"
+#endif
+
 namespace av2enc::dip {
 namespace {
 
@@ -384,6 +388,11 @@ PredictionCost prediction_cost8(const std::uint8_t* src,
                                 int h) noexcept {
   PredictionCost cost;
   if (src == nullptr || pred == nullptr || w <= 0 || h <= 0) return cost;
+#if defined(AV2ENC_PRIMITIVES)
+  primitives::kernels().sad_sse(src, src_stride, pred, pred_stride, w, h,
+                                &cost.sad, &cost.sse);
+#else
+  // Fallback for component build_and_test.sh gates: the pre-kernel loop.
   for (int y = 0; y < h; ++y) {
     for (int x = 0; x < w; ++x) {
       const std::int64_t diff =
@@ -399,6 +408,7 @@ PredictionCost prediction_cost8(const std::uint8_t* src,
       cost.sse += static_cast<std::uint64_t>(diff * diff);
     }
   }
+#endif
   return cost;
 }
 

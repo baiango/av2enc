@@ -33,6 +33,16 @@
 #include <cstddef>
 #include <cstdint>
 
+// Host ME cost is served by the pixel-kernel layer in the product build
+// (av2enc_core links src/primitives/kernels.cpp).  The device pass of the CUDA
+// target never defines AV2ENC_PRIMITIVES, and __CUDA_ARCH__ keeps the device
+// branch on the inline code even if it ever did: the CUDA kernel must stay
+// self-contained.  Component gates compile without the define and keep the
+// inline loop, which is the oracle.
+#if defined(AV2ENC_PRIMITIVES) && !defined(__CUDA_ARCH__)
+#include "primitives/kernels.h"
+#endif
+
 #if defined(__CUDACC__)
 #define AV2ENC_ME_HD __host__ __device__ __forceinline__
 #if defined(__CUDA_ARCH__)
@@ -422,6 +432,15 @@ AV2ENC_ME_HD std::int32_t me_sad_subpel_rows(const MeCorePlane& cur,
                                              int y, int w, std::int32_t mv_x,
                                              std::int32_t mv_y, int filter,
                                              int r0, int r1, int rstep) {
+#if defined(AV2ENC_PRIMITIVES) && !defined(__CUDA_ARCH__)
+  // Host product path: the tested `subpel_sad_rows` kernel is a verbatim
+  // transcription of the loop below, so costs, search order and tie-breaking
+  // are unchanged.  Its scalar table is the oracle the test compares against.
+  return primitives::kernels().subpel_sad_rows(
+      cur.data, static_cast<std::size_t>(cur.stride), ref.data,
+      static_cast<std::size_t>(ref.stride), ref.width, ref.height, x, y, w,
+      mv_x, mv_y, filter, r0, r1, rstep);
+#else
   std::int32_t sum = 0;
   for (int r = r0; r < r1; r += rstep) {
     const std::uint8_t* cr =
@@ -435,6 +454,7 @@ AV2ENC_ME_HD std::int32_t me_sad_subpel_rows(const MeCorePlane& cur,
     }
   }
   return sum;
+#endif
 }
 
 AV2ENC_ME_HD void me_hadamard8(int* v) {
