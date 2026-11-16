@@ -57,7 +57,10 @@ rows above are superseded:
 2. **`--video-tx-lambda 136` caps the intra RD curve** (see above). Use
    `--video-key-tx-lambda 16`.
 
-Post-fix keyframe RD (lambda 16, CDEF fix, key offset 0 at low QP):
+Post-fix keyframe RD (lambda 16, CDEF fix, **nightly default key offset -27**
+for QP 120-60; QP 20/10 use `--video-key-qp-offset 0` because -27 would make the
+key QP negative. With `--video-key-qp-offset 0` at QP120 the same frame is
+10,192 B / 40.09 dB, so always state the offset with a keyframe number.)
 
 | QP | Bytes | CVVDP | PSNR-Y |
 |---:|---:|---:|---:|

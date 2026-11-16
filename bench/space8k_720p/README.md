@@ -102,3 +102,26 @@ At 240p the opposite holds: the keyframe is saturated flat in JOD above ~32 kB,
 and offsets -21..-45 are flat at iso-rate, so -27 stays correct there.
 
 After this the gap to SVT preset 0 at 300 kbps is ~1.05 JOD (7.27 vs 8.27).
+
+## Composed recipe at 300 kbps
+
+Four measured levers, none of which is a new coding tool:
+
+| Lever | Setting | Gain |
+|---|---|---|
+| key offset | `--video-key-qp-offset -57` (240p uses -27) | +0.22 JOD (7.05 -> 7.27) |
+| leaf lambda | `--video-leaf-rd-lambda 200..300` (240p keeps 125) | +0.05 JOD |
+| 3-way partitions | `--video-ext-partitions` | +0.05 JOD (iso-rate QP219: 7.3231 vs 7.2726) |
+| leaf-RD mode search | `--video-leaf-rate-search` | +0.002 (noise) |
+
+Composed expectation ~7.37-7.42 JOD at 300 kbps against SVT preset 0's 8.27, i.e.
+a gap of ~0.85-0.90 JOD (was 1.28 before the recipe).
+
+Note the constants are resolution-specific and the two operating points disagree:
+the leaf lambda wants ~125 at 240p and 200-300 at 720p, and `--video-tx-lambda
+48` is +0.018 JOD at 240p but -0.017 at 720p. A single constant cannot serve
+both; a QP-scaled lambda is the structural fix.
+
+`--video-ext-partitions` is neutral at the 240p pin (iso-rate -0.018 JOD) but
+saves 2.18% bytes and gains +0.35 dB there, so it is a 720p lever and a 240p
+Pareto trade, not a nightly default.
