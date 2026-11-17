@@ -31,16 +31,18 @@ unchanged; presets are opt-in.
 
 | Preset | Flags | Clean | Fresh-dir rebuild | Header edit (82 TUs) |
 |---|---|---:|---:|---:|
-| `release` | `-O3`, strict warnings, **hardening**, no PCH, no cache | 38.2 s | 38.2 s | 23.6 s |
-| `dev` | `-O1`, no warnings, **PCH** | **18–20 s** | ~20 s | **13.5 s** |
+| `release` | `-O3`, strict warnings, hardening, **PCH** | **24–35 s** | 24–35 s | ~14 s |
+| `release-timing` | same as `release`, `AV2ENC_HARDEN=OFF` | 24–35 s | 24–35 s | ~14 s |
+| `dev` | `-O1`, no warnings, **PCH** | **~20 s** | ~20 s | **13.5 s** |
 | `dev-cache` | `-O1`, no warnings, **ccache** | 44 s | **1.15 s** | 22.6 s |
 
-The `release` preset enables `AV2ENC_HARDEN` (`-fstack-protector-strong`,
-`_FORTIFY_SOURCE=3`, `-fPIE`; `-pie -Wl,-z,relro,-z,now` on ELF CPU links).
-The dev presets instead enable libc++ hardening
-(`_LIBCPP_HARDENING_MODE=fast`, `_GLIBCXX_ASSERTIONS`), which turns bounds
-violations into aborts during development. Neither changes code generation
-semantics: every pin is byte-identical under both.
+`release` enables `AV2ENC_HARDEN`: `-fstack-protector-strong`,
+`_FORTIFY_SOURCE=3`, `-fPIE`, bounds-checked standard containers
+(`_LIBCPP_HARDENING_MODE=fast`, `_GLIBCXX_ASSERTIONS`), and
+`-pie -Wl,-z,relro,-z,now` on ELF CPU links. `release-timing` drops only
+`AV2ENC_HARDEN`; it exists so fps/throughput rows are not depressed by the
+container checks, and it produces byte-identical streams. Neither changes code
+generation semantics: every pin is byte-identical under both.
 
 ```sh
 # Editing: fastest cold build and header edits.

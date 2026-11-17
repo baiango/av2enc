@@ -1,6 +1,10 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": { "major": 3, "minor": 19, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -23,6 +27,19 @@
         "AV2ENC_WERROR": "ON",
         "AV2ENC_PCH": "ON",
         "AV2ENC_HARDEN": "ON"
+      }
+    },
+    {
+      "name": "release-timing",
+      "inherits": "base",
+      "displayName": "Release timing (hardening off)",
+      "description": "Same -O3 / warnings / PCH as release, with AV2ENC_HARDEN=OFF. Use only for fps and throughput numbers, so container checks do not depress them; pins, gates and CI stay on the hardened release build.",
+      "binaryDir": "${sourceDir}/build-release-timing",
+      "cacheVariables": {
+        "AV2ENC_WARNINGS": "ON",
+        "AV2ENC_WERROR": "ON",
+        "AV2ENC_PCH": "ON",
+        "AV2ENC_HARDEN": "OFF"
       }
     },
     {
@@ -50,8 +67,21 @@
     }
   ],
   "buildPresets": [
-    { "name": "release", "configurePreset": "release" },
-    { "name": "dev", "configurePreset": "dev" },
-    { "name": "dev-cache", "configurePreset": "dev-cache" }
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "release-timing",
+      "configurePreset": "release-timing"
+    },
+    {
+      "name": "dev",
+      "configurePreset": "dev"
+    },
+    {
+      "name": "dev-cache",
+      "configurePreset": "dev-cache"
+    }
   ]
 }

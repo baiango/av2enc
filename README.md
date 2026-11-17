@@ -78,6 +78,10 @@ Butteraugli (lower better) and SSIMULACRA2 (higher better) are measured with
 the GPU rows cannot be re-scored on this host). The GPU parity rows are exactly
 zero drift, i.e. identical streams, so they inherit their CPU row's metrics.
 
+Encode-speed figures use the `release-timing` preset (`-O3`, `AV2ENC_HARDEN=OFF`);
+pins, gates and CI use the hardened `release` build. The two produce byte-
+identical streams, so quality rows are unaffected by the choice.
+
 ### The KPI: composite K over three perceptual metrics
 
 The project optimises a single number, **K**, built from three full-reference

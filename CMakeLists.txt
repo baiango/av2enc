@@ -98,7 +98,11 @@ if(AV2ENC_HARDEN AND NOT MSVC)
   add_compile_options(
     $<$<COMPILE_LANGUAGE:CXX>:-fstack-protector-strong>
     $<$<COMPILE_LANGUAGE:CXX>:-fPIE>
-    $<$<COMPILE_LANGUAGE:CXX>:-D_FORTIFY_SOURCE=3>)
+    $<$<COMPILE_LANGUAGE:CXX>:-D_FORTIFY_SOURCE=3>
+    # Bounds-checked standard containers. "fast" catches OOB/iterator misuse at
+    # low cost; it aborts only on a bug and never changes valid results.
+    $<$<COMPILE_LANGUAGE:CXX>:-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST>
+    $<$<COMPILE_LANGUAGE:CXX>:-D_GLIBCXX_ASSERTIONS>)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT AV2ENC_HAVE_CUDA)
     add_link_options(-pie -Wl,-z,relro -Wl,-z,now)
   endif()
