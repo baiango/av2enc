@@ -85,7 +85,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ccache
           key: ccache-${{ runner.os }}-${{ github.job }}-${{ hashFiles('src/**/*.cpp','src/**/*.h','CMakeLists.txt','tests/**/*.cpp') }}
@@ -128,7 +128,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ccache
           key: ccache-${{ runner.os }}-${{ github.job }}-${{ hashFiles('src/**/*.cpp','src/**/*.h','CMakeLists.txt','tests/**/*.cpp') }}
@@ -164,7 +164,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ccache
           key: ccache-${{ runner.os }}-${{ github.job }}-${{ hashFiles('src/**/*.cpp','src/**/*.h','CMakeLists.txt','tests/**/*.cpp') }}
@@ -185,7 +185,7 @@ jobs:
       - name: Build fuzz target
         run: cmake --build build-fuzz --target fuzz_y4m -j 4
       - name: Restore fuzz corpus
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: build-fuzz/corpus
           key: fuzz-corpus-${{ github.run_id }}
@@ -198,7 +198,7 @@ jobs:
             -max_total_time=120 -rss_limit_mb=2048 -print_final_stats=1
       - name: Upload fuzz artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-crash
           path: |
@@ -208,7 +208,7 @@ jobs:
           if-no-files-found: ignore
       - name: Save fuzz corpus
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: build-fuzz/corpus
           key: fuzz-corpus-${{ github.run_id }}
