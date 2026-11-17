@@ -48,6 +48,34 @@ jobs:
         # macOS too, where the runner ships no ffmpeg.
         run: bash tools/ci_encode_smoke.sh build-release/av2enc 8 8
 
+  arm64:
+    name: build + NEON kernel gate (ubuntu arm64, GCC)
+    # The only job where kernels_neon.cpp is non-empty and compiled by GCC:
+    # x86 covers nothing in that TU, and macOS uses clang, which accepts the
+    # vector-type conversions GCC rejects.  PCH is off here so the job tests the
+    # plain GCC path.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure
+        run: cmake --preset release -DAV2ENC_PCH=OFF
+      - name: Build
+        run: cmake --build --preset release -j 4
+      - name: Unit tests
+        run: ctest --test-dir build-release -E '^gate_' --output-on-failure
+      - name: NEON kernel gate
+        # gate_primitives compares the NEON table against the scalar oracle.
+        run: ctest --test-dir build-release -R '^gate_primitives$' --output-on-failure
+      - name: Build-seam check
+        run: bash tools/refactor/build_seam_check.sh
+      - name: Synthetic smoke encode
+        run: bash tools/ci_encode_smoke.sh build-release/av2enc 8 8
+
   sanitize:
     name: ASan + UBSan (ubuntu)
     runs-on: ubuntu-24.04
