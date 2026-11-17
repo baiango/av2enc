@@ -114,10 +114,8 @@ TemporalStatus predict_tip_plan(const TipPlan& plan, const TipConfig& tip,
       const TemporalStatus status = temporal::tip_predict_block(in);
       if (status != TemporalStatus::kOk) return status;
       for (int r = 0; r < vis_h; ++r) {
-        std::copy_n(block_scratch + static_cast<std::size_t>(r) * w, vis_w,
-                    dst[plane] +
-                        static_cast<std::ptrdiff_t>(y + r) * dst_stride[plane] +
-                        x);
+        std::copy_n(block_scratch + static_cast<std::size_t>(r) * static_cast<std::size_t>(w),
+                    vis_w, dst[plane] + static_cast<std::ptrdiff_t>(y + r) * dst_stride[plane] + x);
       }
       if (out != nullptr) {
         out->predicted_samples[plane] +=

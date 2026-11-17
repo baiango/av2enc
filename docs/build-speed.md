@@ -104,3 +104,62 @@ Streams are byte-identical, so this is pure codegen. The build cost is large:
 24-35 s becomes **85.6 s**, and the link step alone is 47 s for `av2enc`, 34 s
 for `video_gate`, 18 s and 17 s for the two dump harnesses. Full LTO is
 therefore off; `AV2ENC_LTO` remains as an experiment only.
+
+## Warning set
+
+A clean build now emits **zero** warnings with
+`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`. The route there matters:
+
+| Group | Count | Treatment |
+|---|---:|---|
+| `-Wmissing-braces` in generated CDF tables | 1,864 | pushed/ignored/popped **inside those five data headers**; not disabled for code, and the files are marked do-not-edit |
+| `-Wmissing-braces`, hand-written | 8 | fixed |
+| Other real warnings | 23 | fixed (shadowing, narrowing, dead code, unused, dead sentinel, lambda capture) |
+| `-Wsign-conversion` | **1,040** | **all fixed**, file by file with per-file pin and gate checks |
+
+The sign-conversion count was initially reported as 385 from an incremental
+build; a clean build showed 1,040. Worth remembering: incremental warning
+counts only cover recompiled TUs.
+
+`AV2ENC_WERROR` (on in the release preset) makes this a build failure. It is
+applied for **Clang only**: the tree has been observed warning-free under clang,
+and GCC's set has not yet been seen on a runner. Enable it for GCC once an
+ubuntu job has been seen to pass with it.
+
+## GCC
+
+Tested with Homebrew GCC 16.1.0 (aarch64 macOS). The build needed real fixes,
+not just casts:
+
+- **NEON ACLE strictness**: `uint32x4_t` and `int32x4_t` are not implicitly
+  convertible under GCC; `kernels_neon.cpp` declared the SAD accumulator as
+  `int32x4_t` while only ever storing unsigned results. Fixed at the declaration.
+- **GCC-only warnings**: a dead `int < 0` test on `uint16_t` mi coordinates, a
+  set-but-unused array, `__int128` under `-Wpedantic` (now an `__extension__
+  typedef`), and a `uint64 -> uint32` mask.
+- **`std::sort` false positives** on fixed 8-byte palette arrays: GCC inlines
+  introsort's `__first + 16` probe and reports an array-bounds overflow for a
+  range that is provably `[0, n)` with `n <= 8`. The two tiny sorts are now a
+  local insertion sort (and one no-op sort on a 0/1-element array was removed),
+  which is clearer than suppressing `-Warray-bounds`.
+
+Result: GCC builds with **zero warnings**, and its encoder output is
+byte-identical to clang on the nightly and 720p pins (`1b99127a`, `c4ba2813`).
+
+The ubuntu CI job already compiles with the system GCC (the workflow does not
+set `CXX`), so it exercises this; `AV2ENC_WERROR` stays Clang-only until that
+job has been observed passing with it, since the runner's GCC version differs.
+
+## Further measurements (2026-11-17)
+
+| Change | Clean build (median) | Verdict |
+|---|---:|---|
+| std-only PCH | 32.2 s | baseline after the split |
+| PCH + `bitwriter.h`, `spec_math.h`, `av2_entropy.h` | **29.4 s** | kept; ~9% faster, pins identical |
+| same, `-Wconversion`/`-Wshadow` off | 33.8 s | no gain; not worth a preset |
+| `--target av2enc` only | 24.3–29.7 s | inside host noise; tests overlap the core compile |
+| `-j12` / `-j16` instead of `-j10` | 25.4 / 27.2 s | within noise; no default change |
+
+The three added headers are macro-independent (no `AV2ENC_*` branches), which is
+the condition for PCH inclusion; the no-PCH sanitizer jobs remain the check that
+no source file was relying on them.

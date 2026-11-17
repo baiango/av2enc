@@ -598,8 +598,8 @@ bool plan_video_rate_control(
   } else {
     rc_config.rc.mode = av2enc::rc::RateControlMode::kVbr;
     rc_config.rc.vbr.target_bitrate_bps = options.rc_bitrate_kbps * 1000.0;
-    rc_config.rc.vbr.frame_rate_num = y4m.fps_num;
-    rc_config.rc.vbr.frame_rate_den = y4m.fps_den;
+    rc_config.rc.vbr.frame_rate_num = static_cast<std::int32_t>(y4m.fps_num);
+    rc_config.rc.vbr.frame_rate_den = static_cast<std::int32_t>(y4m.fps_den);
     if (pass1_payload_bits != nullptr) {
       // Calibrate against the pass-1 payload at the fixed --qp.  The encoder
       // emitted tile_bytes in coding order, so pair each payload with the
@@ -1846,7 +1846,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   // encode; --video-gpu never falls back to the CPU encoder.  For CQP the
   // historical single call below is unchanged.
   const auto encode_rc_pass =
-      [&options, &error](const std::vector<av2enc::video::VideoInputFrame>& seq,
+      [&error](const std::vector<av2enc::video::VideoInputFrame>& seq,
                          const av2enc::video::VideoOptions& opts,
                          av2enc::video::VideoSequenceResult& out) -> bool {
 #if AV2ENC_VIDEO_GPU_CALLABLE
@@ -3121,8 +3121,10 @@ static int av2enc_main(int argc, char** argv) {
     }
     const int declared_frames =
         options.max_frames != 0
-            ? options.max_frames
-            : (options.p_frames != 0 ? options.p_frames + 1 : 0);
+            ? static_cast<int>(options.max_frames)
+            : (options.p_frames != 0
+                   ? static_cast<int>(options.p_frames + 1)
+                   : 0);
     if (options.video_long_term && declared_frames > 16) {
       std::cerr << "av2enc: error: --video-long-term codes OrderHint with "
                    "OrderHintBits = 4, so it supports at most 16 coded frames "

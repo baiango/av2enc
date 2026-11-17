@@ -97,8 +97,9 @@ Encoder::Encoder(const StillPicture& picture, const StillOptions& options,
         0);
 
     for (int plane = 0; plane < 3; ++plane) {
-      decoded_[plane].reset(plane == 0 ? mi_cols_ : mi_cols_ / 2,
-                            plane == 0 ? mi_rows_ : mi_rows_ / 2);
+      decoded_[static_cast<std::size_t>(plane)].reset(
+          plane == 0 ? mi_cols_ : mi_cols_ / 2,
+          plane == 0 ? mi_rows_ : mi_rows_ / 2);
     }
 
     if (options_.palette) {
@@ -122,7 +123,7 @@ Encoder::Encoder(const StillPicture& picture, const StillOptions& options,
       deblock::DeblockMi neutral;
       neutral.qindex = options_.base_q_idx;
       for (int plane = 0; plane < 3; ++plane) {
-        deblock_mi_[plane].assign(
+        deblock_mi_[static_cast<std::size_t>(plane)].assign(
             static_cast<std::size_t>(mi_cols_) *
                 static_cast<std::size_t>(mi_rows_),
             neutral);
@@ -666,7 +667,8 @@ bool encode_still_picture(const StillPicture& picture,
             sumsq += v * v;
           }
         }
-        const std::uint64_t n = static_cast<std::uint64_t>(w) * h;
+        const std::uint64_t n =
+            static_cast<std::uint64_t>(w) * static_cast<std::uint64_t>(h);
         const std::uint64_t var =
             n == 0 ? 0 : (sumsq * n - sum * sum) / (n * n);
         variance[static_cast<std::size_t>(sby * sb_cols + sbx)] = var;

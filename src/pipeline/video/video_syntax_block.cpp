@@ -949,7 +949,7 @@ bool Writer::write_intra_leaf(const BlockSyntax& node, int w, int h, int cw, int
                             error)) {
       return false;
     }
-    level_base += luma_level_count(node);
+    level_base += static_cast<std::size_t>(luma_level_count(node));
   }
   if (!node_has_chroma) {
     if (error.empty() && !error_.empty()) error = error_;

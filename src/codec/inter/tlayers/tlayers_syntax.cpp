@@ -455,7 +455,8 @@ SequenceConfig baseline_sequence_config(std::uint16_t width,
   return c;
 }
 
-FrameHeader frame_header_for(const SequenceConfig& config, const Plan& plan,
+FrameHeader frame_header_for(const SequenceConfig& /*config*/,
+                             const Plan& plan,
                              int display_index) {
   const PlannedFrame& f =
       plan.frames[static_cast<std::size_t>(display_index)];

@@ -537,8 +537,10 @@ bool Writer::code_tx_view(const BlockSyntax& node, int plane, const TxView& view
         const int cc = col + kSigRef[idx][1];
         if (rr < adj_h && cc < adj_w) {
           const int limit = is_lf ? 5 : 3;
-          mag += std::min(
-              level_pre[static_cast<std::size_t>(rr) * adj_w + cc], limit);
+          const std::size_t level_pos =
+              static_cast<std::size_t>(rr) * static_cast<std::size_t>(adj_w) +
+              static_cast<std::size_t>(cc);
+          mag += std::min(level_pre[level_pos], limit);
         }
       }
       const int mctx = (mag + 1) >> 1;
@@ -594,8 +596,10 @@ bool Writer::code_tx_view(const BlockSyntax& node, int plane, const TxView& view
         const int rr = row + kMagRef[idx][0];
         const int cc = col + kMagRef[idx][1];
         if (rr < adj_h && cc < adj_w) {
-          mag += std::min(
-              level_pre[static_cast<std::size_t>(rr) * adj_w + cc], 5);
+          const std::size_t level_pos =
+              static_cast<std::size_t>(rr) * static_cast<std::size_t>(adj_w) +
+              static_cast<std::size_t>(cc);
+          mag += std::min(level_pre[level_pos], 5);
         }
       }
       mag = std::min((mag + 1) >> 1, 6);
@@ -834,7 +838,7 @@ bool Writer::write_inter_residual(const BlockSyntax& node, int w, int h, int cw,
     if (error.empty() && !error_.empty()) error = error_;
     return true;
   }
-  level_base += luma_level_count(node);
+  level_base += static_cast<std::size_t>(luma_level_count(node));
   const TxView u_view{node.tx_size[1], node.tx_type[1],
                       static_cast<int>(node.eob[1]), node.mi_row,
                       node.mi_col};

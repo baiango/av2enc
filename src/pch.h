@@ -41,4 +41,12 @@
 #include <utility>
 #include <vector>
 
+// Project headers that are macro-independent and included by 50-80 TUs each.
+// They must not branch on AV2ENC_* (that would bake a target's configuration
+// into the PCH); the sanitizer/TSan CI jobs build without PCH as the check that
+// a missing include has not been masked here.
+#include "core/bitstream/bitwriter.h"
+#include "spec_tables/spec_math.h"
+#include "codec/entropy/av2/av2_entropy.h"
+
 #endif  // AV2ENC_PCH_H

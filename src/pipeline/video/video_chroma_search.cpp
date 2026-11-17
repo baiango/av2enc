@@ -109,13 +109,17 @@ bool choose(const PlaneView& u_plane, const PlaneView& v_plane,
                    0);
     local_v.assign(local_u.size(), 0);
     for (int row = 0; row < u_plane.recon_height; ++row) {
-      std::memcpy(local_u.data() + static_cast<std::size_t>(row) * local_w,
+      std::memcpy(local_u.data() + static_cast<std::size_t>(row) *
+                                       static_cast<std::size_t>(local_w),
                   u_plane.recon + static_cast<std::size_t>(row) *
-                                      u_plane.recon_stride,
+                                      static_cast<std::size_t>(
+                                          u_plane.recon_stride),
                   static_cast<std::size_t>(u_plane.recon_width));
-      std::memcpy(local_v.data() + static_cast<std::size_t>(row) * local_w,
+      std::memcpy(local_v.data() + static_cast<std::size_t>(row) *
+                                       static_cast<std::size_t>(local_w),
                   v_plane.recon + static_cast<std::size_t>(row) *
-                                      v_plane.recon_stride,
+                                      static_cast<std::size_t>(
+                                          v_plane.recon_stride),
                   static_cast<std::size_t>(v_plane.recon_width));
     }
     u_view.recon = local_u.data();

@@ -479,7 +479,8 @@ inline void init_cdfs(CdfState& c, int qctx_slice,
   // §9.3 TileUseOptflowCdf[2] defaults (not generated into
   // video_cdf_tables.h; the compound component pins the same values).
   static constexpr std::uint16_t kUseOptflowCdf[2][3] = {
-      11582, 31, 0, 24076, 26, 0,
+      {11582, 31, 0},
+      {24076, 26, 0},
   };
   copy_array(c.use_optflow, kUseOptflowCdf);
   copy_array(c.comp_group_idx, multiref::gate::kCompGroupIdxCdf);
@@ -964,10 +965,10 @@ class Writer {
     for (int plane = 0; plane < kPlaneCount; ++plane) {
       const int n = (plane == 0 ? mi_cols_ : chroma_mi_cols()) + 16;
       const int m = (plane == 0 ? mi_rows_ : chroma_mi_rows()) + 16;
-      above_level_[plane].assign(static_cast<std::size_t>(n), 0);
-      left_level_[plane].assign(static_cast<std::size_t>(m), 0);
-      above_dc_[plane].assign(static_cast<std::size_t>(n), 0);
-      left_dc_[plane].assign(static_cast<std::size_t>(m), 0);
+      above_level_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(n), 0);
+      left_level_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(m), 0);
+      above_dc_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(n), 0);
+      left_dc_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(m), 0);
     }
     clear_above_context();
 #if defined(AV2ENC_VIDEO_DELTAQ)
@@ -1067,15 +1068,17 @@ class Writer {
   // ---------------------------------------------------------------------
   void clear_above_context() {
     for (int plane = 0; plane < kPlaneCount; ++plane) {
-      std::fill(above_level_[plane].begin(), above_level_[plane].end(), 0);
-      std::fill(above_dc_[plane].begin(), above_dc_[plane].end(), 0);
+      const auto p = static_cast<std::size_t>(plane);
+      std::fill(above_level_[p].begin(), above_level_[p].end(), 0);
+      std::fill(above_dc_[p].begin(), above_dc_[p].end(), 0);
     }
     std::fill(above_mi_.begin(), above_mi_.end(), 6);
   }
   void clear_left_context() {
     for (int plane = 0; plane < kPlaneCount; ++plane) {
-      std::fill(left_level_[plane].begin(), left_level_[plane].end(), 0);
-      std::fill(left_dc_[plane].begin(), left_dc_[plane].end(), 0);
+      const auto p = static_cast<std::size_t>(plane);
+      std::fill(left_level_[p].begin(), left_level_[p].end(), 0);
+      std::fill(left_dc_[p].begin(), left_dc_[p].end(), 0);
     }
     std::fill(left_mi_.begin(), left_mi_.end(), 6);
   }
@@ -1083,16 +1086,16 @@ class Writer {
   int& above_mi(int x) { return above_mi_[static_cast<std::size_t>(x)]; }
   int& left_mi(int y) { return left_mi_[static_cast<std::size_t>(y)]; }
   std::uint8_t& above_level(int plane, int x) {
-    return above_level_[plane][static_cast<std::size_t>(x)];
+    return above_level_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(x)];
   }
   std::uint8_t& left_level(int plane, int y) {
-    return left_level_[plane][static_cast<std::size_t>(y)];
+    return left_level_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(y)];
   }
   std::uint8_t& above_dc(int plane, int x) {
-    return above_dc_[plane][static_cast<std::size_t>(x)];
+    return above_dc_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(x)];
   }
   std::uint8_t& left_dc(int plane, int y) {
-    return left_dc_[plane][static_cast<std::size_t>(y)];
+    return left_dc_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(y)];
   }
   int& intra_joint(int r, int c) {
     return intra_joint_[static_cast<std::size_t>(r) *

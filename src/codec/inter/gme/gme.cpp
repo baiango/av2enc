@@ -11,7 +11,7 @@
 namespace av2enc::inter::gme {
 namespace {
 
-using i128 = __int128;
+__extension__ typedef __int128 i128;
 
 constexpr std::int64_t kI32Min = std::numeric_limits<std::int32_t>::min();
 constexpr std::int64_t kI32Max = std::numeric_limits<std::int32_t>::max();

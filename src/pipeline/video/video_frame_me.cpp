@@ -234,9 +234,11 @@ void InterFrameEncoder::update_refmvbank_leaf(const syntax::BlockSyntax& entry) 
   ctx.sb_size4 = sb_size_ / 4;
   ctx.chroma_part = false;
   if (entry.is_inter != 0) {
-    const bool compound = entry.compound != 0 &&
-                          entry.ref_index1 != merge::kRefNone &&
-                          entry.ref_index1 != merge::kIntraFrame;
+    // ref_index1 is a reference index (0..6), or 1 when not compound; it is
+    // never the int8 sentinel kRefNone, so only kIntraFrame is a real guard.
+    const bool compound =
+        entry.compound != 0 &&
+        entry.ref_index1 != static_cast<std::uint8_t>(merge::kIntraFrame);
     const int refs[2] = {
         static_cast<int>(entry.ref_index),
         compound ? static_cast<int>(entry.ref_index1)
@@ -257,9 +259,9 @@ bool InterFrameEncoder::predict_luma(int ref_index, inter::mc::Mv mv, int x0, in
                   int h, std::vector<std::uint8_t>& out) const {
   out.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
   const inter::mc::BlockRect rect{x0, y0, w, h};
-  return inter::mc::predict_plane(references_[ref_index], 0, rect, mv,
-                                  inter::mc::InterpFilter::kEighttap,
-                                  out.data(), w) ==
+  return inter::mc::predict_plane(
+             references_[static_cast<std::size_t>(ref_index)], 0, rect, mv,
+             inter::mc::InterpFilter::kEighttap, out.data(), w) ==
          inter::mc::McStatus::kOk;
 }
 
@@ -278,7 +280,7 @@ bool InterFrameEncoder::predict_all(int ref_index, inter::mc::Mv mv, int x0, int
   dst[2] = inter::mc::MutablePlane{v.data(), cw};
   const inter::mc::BlockRect rect{x0, y0, w, h};
   return inter::mc::predict_block_420(
-             references_[ref_index], rect, mv,
+             references_[static_cast<std::size_t>(ref_index)], rect, mv,
              inter::mc::InterpFilter::kEighttap, dst) ==
          inter::mc::McStatus::kOk;
 }
@@ -312,18 +314,18 @@ bool InterFrameEncoder::search_me(int ref_index, int x0, int y0, int w, int h,
   cur.plane[2] = me::MeCorePlane{source_.v.data(), frame_chroma_width,
                                  frame_chroma_width, frame_chroma_height};
   me::MeCoreRef ref;
-  ref.plane[0] =
-      me::MeCorePlane{references_[ref_index].plane[0].data,
-                      references_[ref_index].plane[0].stride,
-                      frame_mi_cols_ * 4, frame_mi_rows_ * 4};
-  ref.plane[1] =
-      me::MeCorePlane{references_[ref_index].plane[1].data,
-                      references_[ref_index].plane[1].stride,
-                      frame_mi_cols_ * 2, frame_mi_rows_ * 2};
-  ref.plane[2] =
-      me::MeCorePlane{references_[ref_index].plane[2].data,
-                      references_[ref_index].plane[2].stride,
-                      frame_mi_cols_ * 2, frame_mi_rows_ * 2};
+  ref.plane[0] = me::MeCorePlane{
+      references_[static_cast<std::size_t>(ref_index)].plane[0].data,
+      references_[static_cast<std::size_t>(ref_index)].plane[0].stride,
+      frame_mi_cols_ * 4, frame_mi_rows_ * 4};
+  ref.plane[1] = me::MeCorePlane{
+      references_[static_cast<std::size_t>(ref_index)].plane[1].data,
+      references_[static_cast<std::size_t>(ref_index)].plane[1].stride,
+      frame_mi_cols_ * 2, frame_mi_rows_ * 2};
+  ref.plane[2] = me::MeCorePlane{
+      references_[static_cast<std::size_t>(ref_index)].plane[2].data,
+      references_[static_cast<std::size_t>(ref_index)].plane[2].stride,
+      frame_mi_cols_ * 2, frame_mi_rows_ * 2};
 
   me::MeCoreJob job;
   job.x = x0;
@@ -531,7 +533,8 @@ bool InterFrameEncoder::evaluate_inter_intra(int bsize, int x0, int y0, int w, i
                      static_cast<std::size_t>(h));
     for (int i = 0; i < h; ++i) {
       for (int j = 0; j < w; ++j) {
-        luma_mask[static_cast<std::size_t>(i) * w + j] =
+        luma_mask[static_cast<std::size_t>(i) * static_cast<std::size_t>(w) +
+                  static_cast<std::size_t>(j)] =
             static_cast<std::uint8_t>(inter::adv::wedge_mask_value(
                 in.bsize, 0, index, i, j));
       }
@@ -607,8 +610,8 @@ bool InterFrameEncoder::temporal_ref_area(int sub_x, int sub_y, int x, int y, in
   in.frame_h = static_cast<int>(source_.height);
   in.num_refs = 2;
   for (int list = 0; list < 2; ++list) {
-    in.ref_mi_cols[list] = references_[list].mi_cols;
-    in.ref_mi_rows[list] = references_[list].mi_rows;
+    in.ref_mi_cols[list] = references_[static_cast<std::size_t>(list)].mi_cols;
+    in.ref_mi_rows[list] = references_[static_cast<std::size_t>(list)].mi_rows;
     in.ref_luma_w[list] = in.frame_w;
     in.ref_luma_h[list] = in.frame_h;
     in.cand_mvs[list] = temporal::Mv{mvs[list].y, mvs[list].x};
@@ -622,10 +625,12 @@ bool InterFrameEncoder::build_compound_block(const inter::mc::Mv mvs[2], int bsi
                           multiref::CompoundPrediction& prediction,
                           std::string& error, int ref0, int ref1) {
   return multiref::build_compound_prediction(
-      references_[ref0], references_[ref1], inter::mc::BlockRect{x0, y0, w, h},
-      bsize, mvs[0], mvs[1], inter::mc::InterpFilter::kEighttap,
-      references_[ref0].mi_cols, references_[ref0].mi_rows, prediction,
-      error);
+      references_[static_cast<std::size_t>(ref0)],
+      references_[static_cast<std::size_t>(ref1)],
+      inter::mc::BlockRect{x0, y0, w, h}, bsize, mvs[0], mvs[1],
+      inter::mc::InterpFilter::kEighttap,
+      references_[static_cast<std::size_t>(ref0)].mi_cols,
+      references_[static_cast<std::size_t>(ref0)].mi_rows, prediction, error);
 }
 
 bool InterFrameEncoder::store_compound_block(const multiref::CompoundPrediction& prediction,
@@ -651,21 +656,27 @@ bool InterFrameEncoder::store_compound_block(const multiref::CompoundPrediction&
   u.resize(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
   v.resize(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
   for (int yy = 0; yy < h; ++yy) {
-    std::memcpy(y.data() + static_cast<std::size_t>(yy) * w,
+    std::memcpy(y.data() + static_cast<std::size_t>(yy) *
+                               static_cast<std::size_t>(w),
                 compound_pred_[0].samples.data() +
-                    static_cast<std::size_t>(y0 + yy) * compound_pred_[0].stride +
+                    static_cast<std::size_t>(y0 + yy) *
+                        static_cast<std::size_t>(compound_pred_[0].stride) +
                     x0,
                 static_cast<std::size_t>(w));
   }
   for (int yy = 0; yy < ch; ++yy) {
-    std::memcpy(u.data() + static_cast<std::size_t>(yy) * cw,
+    std::memcpy(u.data() + static_cast<std::size_t>(yy) *
+                               static_cast<std::size_t>(cw),
                 compound_pred_[1].samples.data() +
-                    static_cast<std::size_t>(cy0 + yy) * compound_pred_[1].stride +
+                    static_cast<std::size_t>(cy0 + yy) *
+                        static_cast<std::size_t>(compound_pred_[1].stride) +
                     cx0,
                 static_cast<std::size_t>(cw));
-    std::memcpy(v.data() + static_cast<std::size_t>(yy) * cw,
+    std::memcpy(v.data() + static_cast<std::size_t>(yy) *
+                               static_cast<std::size_t>(cw),
                 compound_pred_[2].samples.data() +
-                    static_cast<std::size_t>(cy0 + yy) * compound_pred_[2].stride +
+                    static_cast<std::size_t>(cy0 + yy) *
+                        static_cast<std::size_t>(compound_pred_[2].stride) +
                     cx0,
                 static_cast<std::size_t>(cw));
   }
@@ -877,7 +888,8 @@ bool InterFrameEncoder::predict_compound_optflow(SbSink& sink, const inter::mc::
   const temporal::PlaneView l1 = temporal_plane(references_[1], 0);
   const temporal::RefArea fa0 = full_area(l0);
   const temporal::RefArea fa1 = full_area(l1);
-  std::vector<std::uint8_t> ip0(static_cast<std::size_t>(w) * h);
+  std::vector<std::uint8_t> ip0(static_cast<std::size_t>(w) *
+                                static_cast<std::size_t>(h));
   std::vector<std::uint8_t> ip1(ip0.size());
   if (!temporal::predict_plane_u8_ex(
           l0, x0, y0, w, h, temporal::Mv{mvs[0].y, mvs[0].x},
@@ -901,7 +913,8 @@ bool InterFrameEncoder::predict_compound_optflow(SbSink& sink, const inter::mc::
   const int n = (w <= 8 && h <= 8) ? 4 : 8;
   const int w4 = w / 4;
   const int h4 = h / 4;
-  std::vector<std::int16_t> opfl(static_cast<std::size_t>(w4) * h4 * 4);
+  std::vector<std::int16_t> opfl(static_cast<std::size_t>(w4) *
+                                 static_cast<std::size_t>(h4) * 4);
   std::vector<std::int16_t> delta(opfl.size());
   temporal::OpflJob job;
   job.w = w;
@@ -931,14 +944,24 @@ bool InterFrameEncoder::predict_compound_optflow(SbSink& sink, const inter::mc::
   }
   const auto cell = [&](int row4, int col4, int list, int comp) {
     return static_cast<std::size_t>(
-        ((static_cast<std::size_t>(row4) * w4 + col4) * 2 + list) * 2 + comp);
+        ((static_cast<std::size_t>(row4) * static_cast<std::size_t>(w4) +
+          static_cast<std::size_t>(col4)) *
+             2 +
+         static_cast<std::size_t>(list)) *
+            2 +
+        static_cast<std::size_t>(comp));
   };
-  sink.compound_y.assign(static_cast<std::size_t>(w) * h, 0);
+  sink.compound_y.assign(static_cast<std::size_t>(w) *
+                             static_cast<std::size_t>(h),
+                         0);
   const int cw = w / 2;
   const int ch = h / 2;
-  sink.compound_u.assign(static_cast<std::size_t>(cw) * ch, 0);
+  sink.compound_u.assign(static_cast<std::size_t>(cw) *
+                             static_cast<std::size_t>(ch),
+                         0);
   sink.compound_v.assign(sink.compound_u.size(), 0);
-  std::vector<std::int16_t> s0(static_cast<std::size_t>(n) * n);
+  std::vector<std::int16_t> s0(static_cast<std::size_t>(n) *
+                               static_cast<std::size_t>(n));
   std::vector<std::int16_t> s1(s0.size());
   for (int i2 = 0; i2 < h; i2 += n) {
     for (int j2 = 0; j2 < w; j2 += n) {
@@ -974,7 +997,10 @@ bool InterFrameEncoder::predict_compound_optflow(SbSink& sink, const inter::mc::
       }
       temporal::compound_average(
           s0.data(), n, s1.data(), n, n, n, multiref::kCwpEqual,
-          sink.compound_y.data() + static_cast<std::size_t>(i2) * w + j2, w);
+          sink.compound_y.data() +
+              static_cast<std::size_t>(i2) * static_cast<std::size_t>(w) +
+              static_cast<std::size_t>(j2),
+          w);
     }
   }
   // §7.13.3.7: luma filled OpflMvs; chroma reapplies them at 4x4 (plane>0).
@@ -1017,7 +1043,10 @@ bool InterFrameEncoder::predict_compound_optflow(SbSink& sink, const inter::mc::
         temporal::compound_average(
             cs0.data(), csub, cs1.data(), csub, csub, csub,
             multiref::kCwpEqual,
-            dst.data() + static_cast<std::size_t>(i2) * cw + j2, cw);
+            dst.data() + static_cast<std::size_t>(i2) *
+                             static_cast<std::size_t>(cw) +
+                static_cast<std::size_t>(j2),
+            cw);
       }
     }
   }
@@ -1044,10 +1073,13 @@ bool InterFrameEncoder::predict_compound_refinemv(SbSink& sink, const inter::mc:
   const int twc = tw / 2;
   const int thc = th / 2;
 
-  std::vector<temporal::MvPair> sb_mvs(static_cast<std::size_t>(rows) * cols);
-  std::vector<std::uint8_t> s0(static_cast<std::size_t>(tw + 4) * (th + 4));
+  std::vector<temporal::MvPair> sb_mvs(static_cast<std::size_t>(rows) *
+                                       static_cast<std::size_t>(cols));
+  std::vector<std::uint8_t> s0(static_cast<std::size_t>(tw + 4) *
+                               static_cast<std::size_t>(th + 4));
   std::vector<std::uint8_t> s1(s0.size());
-  std::vector<std::int16_t> r0(static_cast<std::size_t>(tw) * th);
+  std::vector<std::int16_t> r0(static_cast<std::size_t>(tw) *
+                               static_cast<std::size_t>(th));
   std::vector<std::int16_t> r1(r0.size());
   const auto predict_plane_refine = [&](int sub_x, int sub_y,
                                         const temporal::PlaneView& p0,
@@ -1087,7 +1119,9 @@ bool InterFrameEncoder::predict_compound_refinemv(SbSink& sink, const inter::mc:
            temporal::TemporalStatus::kOk;
   };
 
-  sink.compound_y.assign(static_cast<std::size_t>(w) * h, 0);
+  sink.compound_y.assign(static_cast<std::size_t>(w) *
+                             static_cast<std::size_t>(h),
+                         0);
   for (int r = 0; r < rows; ++r) {
     for (int c = 0; c < cols; ++c) {
       const int x = x0 + c * tw;
@@ -1105,8 +1139,10 @@ bool InterFrameEncoder::predict_compound_refinemv(SbSink& sink, const inter::mc:
       search.frame_w = fw;
       search.frame_h = fh;
       for (int list = 0; list < 2; ++list) {
-        search.ref_mi_cols[list] = references_[list].mi_cols;
-        search.ref_mi_rows[list] = references_[list].mi_rows;
+        search.ref_mi_cols[list] =
+            references_[static_cast<std::size_t>(list)].mi_cols;
+        search.ref_mi_rows[list] =
+            references_[static_cast<std::size_t>(list)].mi_rows;
         search.ref_luma_w[list] = fw;
         search.ref_luma_h[list] = fh;
         search.cand_mvs[list] = temporal::Mv{mvs[list].y, mvs[list].x};
@@ -1129,11 +1165,14 @@ bool InterFrameEncoder::predict_compound_refinemv(SbSink& sink, const inter::mc:
         error = "search_refinemv failed";
         return false;
       }
-      sb_mvs[static_cast<std::size_t>(r) * cols + c] = result.offset_mvs;
+      sb_mvs[static_cast<std::size_t>(r) * static_cast<std::size_t>(cols) +
+             static_cast<std::size_t>(c)] = result.offset_mvs;
       if (!predict_plane_refine(
               0, 0, l0, l1, x, y, tw, th, area, result.offset_mvs,
               sink.compound_y.data() +
-                  static_cast<std::size_t>(r * th) * w + c * tw,
+                  static_cast<std::size_t>(r * th) *
+                          static_cast<std::size_t>(w) +
+                      static_cast<std::size_t>(c * tw),
               w)) {
         error = "refine-MV luma prediction failed";
         return false;
@@ -1141,7 +1180,9 @@ bool InterFrameEncoder::predict_compound_refinemv(SbSink& sink, const inter::mc:
     }
   }
 
-  sink.compound_u.assign(static_cast<std::size_t>(cw) * ch, 0);
+  sink.compound_u.assign(static_cast<std::size_t>(cw) *
+                             static_cast<std::size_t>(ch),
+                         0);
   sink.compound_v.resize(sink.compound_u.size());
   for (int r = 0; r < rows; ++r) {
     for (int c = 0; c < cols; ++c) {
@@ -1154,14 +1195,19 @@ bool InterFrameEncoder::predict_compound_refinemv(SbSink& sink, const inter::mc:
         return false;
       }
       const temporal::MvPair& mvs_off =
-          sb_mvs[static_cast<std::size_t>(r) * cols + c];
+          sb_mvs[static_cast<std::size_t>(r) * static_cast<std::size_t>(cols) +
+                 static_cast<std::size_t>(c)];
       if (!predict_plane_refine(
               1, 1, u0, u1, x0 / 2 + x, y0 / 2 + y, twc, thc, carea, mvs_off,
-              sink.compound_u.data() + static_cast<std::size_t>(y) * cw + x,
+              sink.compound_u.data() +
+                  static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+                  static_cast<std::size_t>(x),
               cw) ||
           !predict_plane_refine(
               1, 1, v0, v1, x0 / 2 + x, y0 / 2 + y, twc, thc, carea, mvs_off,
-              sink.compound_v.data() + static_cast<std::size_t>(y) * cw + x,
+              sink.compound_v.data() +
+                  static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+                  static_cast<std::size_t>(x),
               cw)) {
         error = "refine-MV chroma prediction failed";
         return false;

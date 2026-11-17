@@ -38,7 +38,8 @@ class Md5 {
     for (int i = 0; i < 4; ++i) {
       for (int b = 0; b < 4; ++b) {
         digest[static_cast<std::size_t>(i * 4 + b)] =
-            static_cast<std::uint8_t>(state_[i] >> (8 * b));
+            static_cast<std::uint8_t>(state_[static_cast<std::size_t>(i)] >>
+                                      (8 * b));
       }
     }
     reset();

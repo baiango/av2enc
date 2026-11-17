@@ -425,7 +425,7 @@ bool block_syntax_bits(const txv::TxParams& params,
 // Full forward -> quantise -> dequantise -> inverse path for one candidate,
 // with the same coded-domain SSE and rate model as the device kernel.
 bool evaluate_candidate(const std::int16_t* residual, int block_w,
-                        int block_h, int offset_x, int offset_y, int leaf_w,
+                        int /*block_h*/, int offset_x, int offset_y, int leaf_w,
                         int leaf_h, std::int32_t tx_size, std::int32_t tx_type,
                         const TypeEntry& type, bool is_inter, int qindex,
                         int delta_dc, int delta_ac, const Options& options,
@@ -447,9 +447,12 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   std::vector<std::int16_t> coded(static_cast<std::size_t>(coded_n));
   for (int y = 0; y < leaf_h; ++y) {
     for (int x = 0; x < leaf_w; ++x) {
-      coded[static_cast<std::size_t>(y) * leaf_w + x] =
-          residual[static_cast<std::size_t>(offset_y + y) * block_w + offset_x +
-                   x];
+      coded[static_cast<std::size_t>(y) * static_cast<std::size_t>(leaf_w) +
+            static_cast<std::size_t>(x)] =
+          residual[static_cast<std::size_t>(offset_y + y) *
+                       static_cast<std::size_t>(block_w) +
+                   static_cast<std::size_t>(offset_x) +
+                   static_cast<std::size_t>(x)];
     }
   }
   std::vector<std::int16_t> adj(static_cast<std::size_t>(area));
@@ -702,7 +705,8 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   out->residual = std::move(recon);
   out->levels.assign(static_cast<std::size_t>(area), 0);
   for (int c = 0; c < area; ++c) {
-    out->levels[static_cast<std::size_t>(c)] = levels[scan[c]];
+    out->levels[static_cast<std::size_t>(c)] =
+        levels[scan[static_cast<std::size_t>(c)]];
   }
   return true;
 }
@@ -995,10 +999,15 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
         for (int x = 0; x < leaf.coded_w; ++x) {
           const int px = leaf.x + x;
           const int py = leaf.y + y;
-          const int p = prediction[static_cast<std::size_t>(py) * coded_w + px];
-          const int r =
-              src.residual[static_cast<std::size_t>(y) * leaf.coded_w + x];
-          out->recon[static_cast<std::size_t>(py) * coded_w + px] =
+          const int p = prediction[static_cast<std::size_t>(py) *
+                                       static_cast<std::size_t>(coded_w) +
+                                   static_cast<std::size_t>(px)];
+          const int r = src.residual[static_cast<std::size_t>(y) *
+                                         static_cast<std::size_t>(leaf.coded_w) +
+                                     static_cast<std::size_t>(x)];
+          out->recon[static_cast<std::size_t>(py) *
+                         static_cast<std::size_t>(coded_w) +
+                     static_cast<std::size_t>(px)] =
               static_cast<std::uint8_t>(std::clamp(p + r, 0, 255));
         }
       }

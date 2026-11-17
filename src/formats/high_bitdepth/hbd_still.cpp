@@ -88,7 +88,8 @@ void dc_predict(const PlaneView& recon, int x0, int y0, int w, int h,
   if (have_left) {
     for (int i = 0; i < h; ++i) {
       const int y = clip3(0, max_y, y0 + i);
-      sum_left += recon.samples[static_cast<std::size_t>(y) * recon.stride +
+      sum_left += recon.samples[static_cast<std::size_t>(y) *
+                                    static_cast<std::size_t>(recon.stride) +
                                 static_cast<std::size_t>(x0 - 1)];
     }
   }
@@ -96,7 +97,7 @@ void dc_predict(const PlaneView& recon, int x0, int y0, int w, int h,
     for (int j = 0; j < w; ++j) {
       const int x = clip3(0, max_x, x0 + j);
       sum_above += recon.samples[static_cast<std::size_t>(y0 - 1) *
-                                     recon.stride +
+                                     static_cast<std::size_t>(recon.stride) +
                                  static_cast<std::size_t>(x)];
     }
   }
@@ -117,7 +118,8 @@ void dc_predict(const PlaneView& recon, int x0, int y0, int w, int h,
 
 void append_scan_levels(const std::int32_t* levels, int w, int h, int eob,
                         std::vector<std::int32_t>* out) {
-  std::vector<std::uint16_t> scan(static_cast<std::size_t>(w) * h);
+  std::vector<std::uint16_t> scan(static_cast<std::size_t>(w) *
+                                  static_cast<std::size_t>(h));
   hbd::build_scan(w, h, scan.data());
   for (int c = 0; c < eob; ++c) {
     out->push_back(levels[scan[static_cast<std::size_t>(c)]]);
@@ -349,7 +351,7 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
                                                 static_cast<std::size_t>(cw) +
                                             static_cast<std::size_t>(x)]);
           recon[plane].samples[static_cast<std::size_t>(py) *
-                                   recon[plane].width +
+                                   static_cast<std::size_t>(recon[plane].width) +
                                static_cast<std::size_t>(px)] =
               static_cast<std::uint16_t>(depth::clip1(value));
         }
@@ -396,7 +398,8 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
       filter_frame.src[plane] = curr_samples[plane].data();
       filter_frame.ref[plane] = picture.planes[plane].samples.data();
       filter_frame.src_stride[plane] = recon[plane].width;
-      filter_frame.ref_stride[plane] = picture.planes[plane].stride;
+      filter_frame.ref_stride[plane] =
+          static_cast<int>(picture.planes[plane].stride);
       filter_frame.visible_w[plane] = recon[plane].visible_width;
       filter_frame.visible_h[plane] = recon[plane].visible_height;
       src_stride[plane] = recon[plane].width;
@@ -440,7 +443,8 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
       filter_frame.ref[plane] = picture.planes[plane].samples.data();
       filter_frame.curr_stride[plane] = recon[plane].width;
       filter_frame.cdef_stride[plane] = recon[plane].width;
-      filter_frame.ref_stride[plane] = picture.planes[plane].stride;
+      filter_frame.ref_stride[plane] =
+          static_cast<int>(picture.planes[plane].stride);
       filter_frame.visible_w[plane] = recon[plane].visible_width;
       filter_frame.visible_h[plane] = recon[plane].visible_height;
       cdef_stride[plane] = recon[plane].width;
@@ -480,7 +484,8 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
       lr_frame.ref[plane] = picture.planes[plane].samples.data();
       lr_frame.curr_stride[plane] = recon[plane].width;
       lr_frame.cdef_stride[plane] = recon[plane].width;
-      lr_frame.ref_stride[plane] = picture.planes[plane].stride;
+      lr_frame.ref_stride[plane] =
+          static_cast<int>(picture.planes[plane].stride);
       lr_frame.visible_w[plane] = recon[plane].visible_width;
       lr_frame.visible_h[plane] = recon[plane].visible_height;
     }
@@ -505,7 +510,9 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
             const int r = block.mi_row + yy;
             const int c = block.mi_col + xx;
             if (r < mi_rows && c < mi_cols) {
-              lr_tx_skip[static_cast<std::size_t>(r) * mi_cols + c] = 1;
+              lr_tx_skip[static_cast<std::size_t>(r) *
+                             static_cast<std::size_t>(mi_cols) +
+                         static_cast<std::size_t>(c)] = 1;
             }
           }
         }
@@ -560,7 +567,7 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
       gdf_frame.ref = picture.planes[0].samples.data();
       gdf_frame.curr_stride = recon[0].width;
       gdf_frame.cdef_stride = recon[0].width;
-      gdf_frame.ref_stride = picture.planes[0].stride;
+      gdf_frame.ref_stride = static_cast<int>(picture.planes[0].stride);
       gdf_frame.width = recon[0].visible_width;
       gdf_frame.height = recon[0].visible_height;
       gdf_frame.mi_cols = mi_cols;

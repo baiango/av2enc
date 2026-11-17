@@ -18,6 +18,22 @@ void copy_array(T (&dst)[N], const T (&src)[N]) {
   std::memcpy(dst, src, sizeof(dst));
 }
 
+// Ascending sort of at most kPaletteMaxSize bytes.  std::sort's introsort
+// inlines a __first + 16 probe that GCC 16 reports as an array-bounds overflow
+// for an 8-byte palette array, though the range is [0, n) with n <= 8.  The
+// palette is tiny, so insertion sort is clearer and provably in range.
+void sort_palette_bytes(std::uint8_t* a, int n) {
+  for (int i = 1; i < n; ++i) {
+    const std::uint8_t v = a[i];
+    int j = i - 1;
+    while (j >= 0 && a[j] > v) {
+      a[j + 1] = a[j];
+      --j;
+    }
+    a[j + 1] = v;
+  }
+}
+
 std::uint16_t* color_cdf(PaletteCdfState& cdfs, int size) {
   switch (size) {
     case 2:
@@ -104,7 +120,7 @@ void median_cut(const std::uint8_t* src, int stride, int w, int h, int max_color
     colors[static_cast<std::size_t>(i)] =
         static_cast<std::uint8_t>((sum + count / 2) / count);
   }
-  std::sort(colors.begin(), colors.begin() + size);
+  sort_palette_bytes(colors.data(), size);
 }
 
 // Fill the palette to at least min_colors with adjacent unused values so the
@@ -130,7 +146,7 @@ void fill_palette(std::array<std::uint8_t, kPaletteMaxSize>& colors, int& size,
       }
     }
     if (!added) break;
-    std::sort(colors.begin(), colors.begin() + size);
+    sort_palette_bytes(colors.data(), size);
   }
 }
 
@@ -348,7 +364,7 @@ bool analyze_palette(const std::uint8_t* src, int stride, int block_w,
     error = "palette analysis produced an illegal size";
     return false;
   }
-  std::sort(colors.begin(), colors.begin() + size);
+  sort_palette_bytes(colors.data(), size);
 
   // §5.20.8.1 delta codes palette_colors_y as a strictly increasing run, and
   // median_cut can return the same cluster value twice (two boxes with equal
@@ -366,7 +382,8 @@ bool analyze_palette(const std::uint8_t* src, int stride, int block_w,
     size = unique;
     if (size < 2) {
       fill_palette(colors, size, 2);
-      std::sort(colors.begin(), colors.begin() + size);
+      // Sorting 0 or 1 elements is a no-op; the sort also cannot be proven in
+      // range for a fixed 8-byte array by GCC's inlining.
     }
   }
 
@@ -747,7 +764,7 @@ bool encode_palette_y(av2::Encoder& enc, PaletteCdfState& cdfs,
     error = "palette syntax writes the wrong number of colours";
     return false;
   }
-  std::sort(coded, coded + coded_n);
+  sort_palette_bytes(coded, coded_n);
   for (int i = 0; i < coded_n; ++i) {
     if (coded[i] != result.colors[static_cast<std::size_t>(i)]) {
       error = "palette cache/literal run does not reproduce the palette";
@@ -833,7 +850,7 @@ bool decode_palette_y(av2::Decoder& dec, PaletteCdfState& cdfs, int w, int h,
       palette_bits = std::min(palette_bits, palette_ceil_log2(range));
     }
   }
-  std::sort(out.colors.begin(), out.colors.begin() + size);
+  sort_palette_bytes(out.colors.data(), size);
 
   int direction = 0;
   if (w < 64 && h < 64) {

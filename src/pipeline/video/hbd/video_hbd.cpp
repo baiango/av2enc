@@ -1098,7 +1098,7 @@ class FrameEncoder {
       entry.levels_offset = static_cast<std::uint32_t>(levels_.size());
       write_luma_plan(entry, intra_planes[0], levels_);
       for (int plane = 1; plane < plane_count; ++plane) {
-        write_chroma_plan(entry, plane, intra_planes[plane], levels_);
+        write_chroma_plan(entry, plane, intra_planes[static_cast<std::size_t>(plane)], levels_);
       }
       update_mv_grid(r, c, w4, h4, 0, 0, Mv{0, 0});
       ++intra_blocks_;
@@ -1134,7 +1134,7 @@ class FrameEncoder {
         entry.levels_offset = static_cast<std::uint32_t>(levels_.size());
         write_luma_plan(entry, res_planes[0], levels_);
         for (int plane = 1; plane < plane_count; ++plane) {
-          write_chroma_plan(entry, plane, res_planes[plane], levels_);
+          write_chroma_plan(entry, plane, res_planes[static_cast<std::size_t>(plane)], levels_);
         }
       }
       update_mv_grid(r, c, w4, h4, 1, best.ref_index, best.mv);
@@ -1180,7 +1180,7 @@ class FrameEncoder {
   }
 
   const VideoInputFrame& source_;
-  const std::vector<RefSlot>& refs_;
+  [[maybe_unused]] const std::vector<RefSlot>& refs_;
   std::span<const int> frame_distance_;
   int num_total_refs_ = 1;
   const Options& options_;
@@ -1677,7 +1677,8 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
     }
     if (!backend.end_frame(error)) return false;
 
-    const int write_slot = static_cast<int>(i % num_ref_frames);
+    const int write_slot =
+        static_cast<int>(i % static_cast<std::size_t>(num_ref_frames));
     VideoFrameHeader header;
     header.keyframe = false;
     header.order_hint = order_hint;

@@ -22,8 +22,6 @@ using av2enc::fmt::Format;
 
 constexpr int kMiSize = 4;
 
-int plane_shift(int plane, int sub) { return plane == 0 ? 0 : sub; }
-
 // §7.17 metadata grid for one key frame.  The key frame has no skipped leaves,
 // so every cell is an intra region with the leaf's transform size.
 bool build_deblock_grids(const Format& format,

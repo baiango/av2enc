@@ -744,7 +744,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     if (c.enable_tip) {
       tip::TipFrameSyntax ts;
       ts.use_ref_frame_mvs = h.use_ref_frame_mvs;
-      ts.num_total_refs = num_refs;
+      ts.num_total_refs = static_cast<int>(num_refs);
       ts.sb_64x64 = superblock_mi(c, key) == 16U;
       ts.enable_tip = true;
       ts.enable_tip_output = !c.disable_tip_output;

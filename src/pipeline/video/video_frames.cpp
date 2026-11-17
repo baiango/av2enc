@@ -176,7 +176,7 @@ lt::SequenceConfig long_term_config(const VideoOptions& options,
   lt::SequenceConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
-  config.base_q_idx = options.base_q_idx;
+  config.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   config.order_hint_bits = 4;
   config.num_ref_frames = num_ref_frames;
   config.long_term_frame_id_bits = 1;
@@ -499,7 +499,7 @@ bool encode_leading_sequence(std::span<const VideoInputFrame> frames,
   ld::SequenceConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(frames[0].width);
   config.max_frame_height = static_cast<std::uint16_t>(frames[0].height);
-  config.base_q_idx = options.base_q_idx;
+  config.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   config.order_hint_bits = 4;
   config.num_ref_frames = 8;
   config.max_drl_bits_minus_1 = 4;
@@ -646,7 +646,7 @@ ra::SequenceConfig random_access_config(const VideoOptions& options,
   ra::SequenceConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
-  config.base_q_idx = options.base_q_idx;
+  config.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   config.order_hint_bits = 4;
   config.num_ref_frames = num_ref_frames;
   config.max_drl_bits_minus_1 = 4;

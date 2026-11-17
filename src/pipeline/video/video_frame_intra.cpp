@@ -114,7 +114,8 @@ bool InterFrameEncoder::choose_ibc_leaf(int r, int c, int bsize, std::int64_t in
                           static_cast<std::size_t>(y0 + yy) *
                               static_cast<std::size_t>(recon_[0].stride) +
                           static_cast<std::size_t>(x0),
-                      luma.data() + static_cast<std::size_t>(yy) * w,
+                      luma.data() + static_cast<std::size_t>(yy) *
+                                        static_cast<std::size_t>(w),
                       static_cast<std::size_t>(w));
         }
         morph::MorphFit fit{};
@@ -122,7 +123,8 @@ bool InterFrameEncoder::choose_ibc_leaf(int r, int c, int bsize, std::int64_t in
           adapted.resize(luma.size());
           for (int yy = 0; yy < h; ++yy) {
             std::memcpy(
-                adapted.data() + static_cast<std::size_t>(yy) * w,
+                adapted.data() + static_cast<std::size_t>(yy) *
+                                     static_cast<std::size_t>(w),
                 out.morph_scratch.data() +
                     static_cast<std::size_t>(y0 + yy) *
                         static_cast<std::size_t>(recon_[0].stride) +
@@ -256,7 +258,8 @@ bool InterFrameEncoder::predict_intra_plane_mode(int plane, int x0, int y0, int 
   const int mi_c = plane == 0 ? mi_cols_ : mi_cols_ / 2;
   const int mi_r = plane == 0 ? mi_rows_ : mi_rows_ / 2;
   const intra_search::Availability avail = intra_search::availability(
-      st.decoded[plane], x0 / 4, y0 / 4, w / 4, h / 4, mi_c, mi_r, sb_mi);
+      st.decoded[static_cast<std::size_t>(plane)], x0 / 4, y0 / 4, w / 4,
+      h / 4, mi_c, mi_r, sb_mi);
   intra::NeighborRequest request;
   request.recon =
       intra::PlaneView{recon_[plane].samples.data(), recon_[plane].stride};

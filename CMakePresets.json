@@ -20,6 +20,7 @@
       "description": "The flags the gates and pins are recorded with: -O3, strict warnings, hardening, PCH (parse-only; verified byte-identical), no compiler cache. Use this for anything whose timing or bitstream is quoted.",
       "cacheVariables": {
         "AV2ENC_WARNINGS": "ON",
+        "AV2ENC_WERROR": "ON",
         "AV2ENC_PCH": "ON",
         "AV2ENC_HARDEN": "ON"
       }

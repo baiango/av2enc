@@ -465,11 +465,13 @@ MrlStatus predict(const Edges& edges, const Params& params, std::uint8_t* dst,
                        edges.bit_depth);
     for (int i = 0; i < edges.h; ++i) {
       for (int j = 0; j < edges.w; ++j) {
-        const std::size_t index = static_cast<std::size_t>(i) * edges.w + j;
-        const int primary =
-            dst[static_cast<std::size_t>(i) * dst_stride + j];
+        const std::size_t index = static_cast<std::size_t>(i) * static_cast<std::size_t>(edges.w) +
+                                  static_cast<std::size_t>(j);
+        const int primary = dst[static_cast<std::size_t>(i) * static_cast<std::size_t>(dst_stride) +
+                                static_cast<std::size_t>(j)];
         const int secondary = scratch[index];
-        dst[static_cast<std::size_t>(i) * dst_stride + j] =
+        dst[static_cast<std::size_t>(i) * static_cast<std::size_t>(dst_stride) +
+            static_cast<std::size_t>(j)] =
             static_cast<std::uint8_t>((primary + secondary + 1) >> 1);
       }
     }

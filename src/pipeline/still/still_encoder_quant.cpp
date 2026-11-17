@@ -266,9 +266,10 @@ bool Encoder::compute_tx(int plane, int x0, int y0, int cw, int ch,
             static_cast<std::size_t>(area));
         for (int c = 0; c < area; ++c) {
           const int pos = scan[static_cast<std::size_t>(c)];
-          scalar_scan[static_cast<std::size_t>(c)] = plan.levels[pos];
-          input[static_cast<std::size_t>(c)].original = coeff[pos];
-          input[static_cast<std::size_t>(c)].scalar_level = plan.levels[pos];
+          scalar_scan[static_cast<std::size_t>(c)] = plan.levels[static_cast<std::size_t>(pos)];
+          input[static_cast<std::size_t>(c)].original = coeff[static_cast<std::size_t>(pos)];
+          input[static_cast<std::size_t>(c)].scalar_level =
+              plan.levels[static_cast<std::size_t>(pos)];
           input[static_cast<std::size_t>(c)].level_context = 0;
         }
         av2enc::rdoq::av2::BlockInfo info;
@@ -314,13 +315,13 @@ bool Encoder::compute_tx(int plane, int x0, int y0, int cw, int ch,
           const int pos = scan[static_cast<std::size_t>(c)];
           const int row = pos / p.w;
           const int col = pos % p.w;
-          input[static_cast<std::size_t>(c)].original = coeff[pos];
+          input[static_cast<std::size_t>(c)].original = coeff[static_cast<std::size_t>(pos)];
           input[static_cast<std::size_t>(c)].level_context = 0;
           input[static_cast<std::size_t>(c)].pre_max =
               (row + col) < 4 ? 8 : 6;
           // Frozen neighbour/escape reference: the scalar level at half the
           // syntax step, exactly like the component's RD harness.
-          const std::int32_t scalar = plan.levels[pos];
+          const std::int32_t scalar = plan.levels[static_cast<std::size_t>(pos)];
           const std::int32_t magnitude = std::abs(scalar);
           const std::int32_t base = (magnitude + 1) / 2;
           reference[static_cast<std::size_t>(c)] =
@@ -355,8 +356,9 @@ bool Encoder::compute_tx(int plane, int x0, int y0, int cw, int ch,
         plan.dequant_levels.assign(static_cast<std::size_t>(area), 0);
         for (int c = 0; c < tcq_result.eob; ++c) {
           const int pos = scan[static_cast<std::size_t>(c)];
-          plan.levels[pos] = tcq_result.base_levels[static_cast<std::size_t>(c)];
-          plan.dequant_levels[pos] =
+          plan.levels[static_cast<std::size_t>(pos)] =
+              tcq_result.base_levels[static_cast<std::size_t>(c)];
+          plan.dequant_levels[static_cast<std::size_t>(pos)] =
               tcq_result.quant_levels[static_cast<std::size_t>(c)];
         }
       }

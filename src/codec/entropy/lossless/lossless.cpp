@@ -203,7 +203,8 @@ namespace {
 
 void dpcm_difference(const int* residual, int w, int h, bool vertical,
                      int* out) {
-  std::memcpy(out, residual, static_cast<std::size_t>(w) * h * sizeof(int));
+  std::memcpy(out, residual,
+              static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * sizeof(int));
   if (vertical) {
     for (int j = 0; j < w; ++j) {
       for (int i = 1; i < h; ++i) {
@@ -220,7 +221,7 @@ void dpcm_difference(const int* residual, int w, int h, bool vertical,
 }
 
 void dpcm_cumsum(const int* in, int w, int h, bool vertical, int* out) {
-  std::memcpy(out, in, static_cast<std::size_t>(w) * h * sizeof(int));
+  std::memcpy(out, in, static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * sizeof(int));
   if (vertical) {
     for (int j = 0; j < w; ++j) {
       for (int i = 1; i < h; ++i) {
@@ -442,31 +443,34 @@ struct TileContext {
     above_mi.assign(static_cast<std::size_t>(mi_cols) + 16, kSentinel256);
     left_mi.assign(static_cast<std::size_t>(mi_rows) + 16, kSentinel256);
     for (int p = 0; p < 3; ++p) {
+      const std::size_t plane_idx = static_cast<std::size_t>(p);
       const int w = p == 0 ? mi_cols : chroma_mi_cols;
       const int h = p == 0 ? mi_rows : chroma_mi_rows;
-      above_level[p].assign(static_cast<std::size_t>(w) + 16, 0);
-      left_level[p].assign(static_cast<std::size_t>(h) + 16, 0);
-      above_dc[p].assign(static_cast<std::size_t>(w) + 16, 0);
-      left_dc[p].assign(static_cast<std::size_t>(h) + 16, 0);
+      above_level[plane_idx].assign(static_cast<std::size_t>(w) + 16, 0);
+      left_level[plane_idx].assign(static_cast<std::size_t>(h) + 16, 0);
+      above_dc[plane_idx].assign(static_cast<std::size_t>(w) + 16, 0);
+      left_dc[plane_idx].assign(static_cast<std::size_t>(h) + 16, 0);
     }
-    intra_joint.assign(static_cast<std::size_t>(mi_cols) * mi_rows, 0);
-    fsc_modes.assign(static_cast<std::size_t>(mi_cols) * mi_rows, 0);
+    intra_joint.assign(static_cast<std::size_t>(mi_cols) * static_cast<std::size_t>(mi_rows), 0);
+    fsc_modes.assign(static_cast<std::size_t>(mi_cols) * static_cast<std::size_t>(mi_rows), 0);
     eob_u = 0;
     clear_above();
   }
 
   void clear_above() {
     for (int p = 0; p < 3; ++p) {
-      std::fill(above_level[p].begin(), above_level[p].end(), 0);
-      std::fill(above_dc[p].begin(), above_dc[p].end(), 0);
+      const std::size_t plane_idx = static_cast<std::size_t>(p);
+      std::fill(above_level[plane_idx].begin(), above_level[plane_idx].end(), 0);
+      std::fill(above_dc[plane_idx].begin(), above_dc[plane_idx].end(), 0);
     }
     std::fill(above_mi.begin(), above_mi.end(), kSentinel256);
   }
 
   void clear_left() {
     for (int p = 0; p < 3; ++p) {
-      std::fill(left_level[p].begin(), left_level[p].end(), 0);
-      std::fill(left_dc[p].begin(), left_dc[p].end(), 0);
+      const std::size_t plane_idx = static_cast<std::size_t>(p);
+      std::fill(left_level[plane_idx].begin(), left_level[plane_idx].end(), 0);
+      std::fill(left_dc[plane_idx].begin(), left_dc[plane_idx].end(), 0);
     }
     std::fill(left_mi.begin(), left_mi.end(), kSentinel256);
   }
@@ -486,7 +490,7 @@ struct TileContext {
       mv_row = r + h4 - 1;
     }
     if (inside(mv_row, mv_col)) {
-      return intra_joint[static_cast<std::size_t>(mv_row) * mi_cols + mv_col];
+      return intra_joint[static_cast<std::size_t>(mv_row * mi_cols + mv_col)];
     }
     return 0;
   }
@@ -630,11 +634,11 @@ struct Plane {
   void resize(int width, int height) {
     w = width;
     h = height;
-    data.assign(static_cast<std::size_t>(w) * h, 0);
+    data.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
   }
-  std::uint8_t* row(int y) { return data.data() + static_cast<std::size_t>(y) * w; }
+  std::uint8_t* row(int y) { return data.data() + static_cast<std::size_t>(y * w); }
   const std::uint8_t* row(int y) const {
-    return data.data() + static_cast<std::size_t>(y) * w;
+    return data.data() + static_cast<std::size_t>(y * w);
   }
 };
 
@@ -694,12 +698,13 @@ void reconstruct_tx(const int* levels, int w, int h, bool idtx, bool dpcm,
   if (dpcm) {
     dpcm_cumsum(tmp, w, h, vertical, residual);
   } else {
-    std::memcpy(residual, tmp, static_cast<std::size_t>(w) * h * sizeof(int));
+    std::memcpy(residual, tmp,
+                static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * sizeof(int));
   }
   for (int i = 0; i < h; ++i) {
     for (int j = 0; j < w; ++j) {
-      const int p = pred[static_cast<std::size_t>(i) * pred_stride + j];
-      recon[static_cast<std::size_t>(i) * recon_stride + j] =
+      const int p = pred[static_cast<std::size_t>(i) * pred_stride + static_cast<std::size_t>(j)];
+      recon[static_cast<std::size_t>(i) * recon_stride + static_cast<std::size_t>(j)] =
           static_cast<std::uint8_t>(clip3(0, 255, p + residual[i * w + j]));
     }
   }
@@ -839,11 +844,11 @@ int do_split_context(const TileContext& ctx, int r, int c, BlockSize bsize) {
   const int bsw = std::max(partition::mi_width_log2(bsize), 1);
   const int bsh = std::max(partition::mi_height_log2(bsize), 1);
   const int ctx1 = partition::mi_height_log2(
-                       static_cast<BlockSize>(ctx.left_mi[r])) < bsh
+                       static_cast<BlockSize>(ctx.left_mi[static_cast<std::size_t>(r)])) < bsh
                        ? 1
                        : 0;
   const int ctx2 = partition::mi_width_log2(
-                       static_cast<BlockSize>(ctx.above_mi[c])) < bsw
+                       static_cast<BlockSize>(ctx.above_mi[static_cast<std::size_t>(c)])) < bsw
                        ? 1
                        : 0;
   return partition::partition_size_adjust(bsize) * 4 + ctx1 * 2 + ctx2;
@@ -853,11 +858,11 @@ int rect_type_context(const TileContext& ctx, int r, int c, BlockSize bsize) {
   const int bsw = std::max(partition::mi_width_log2(bsize), 1);
   const int bsh = std::max(partition::mi_height_log2(bsize), 1);
   const int ctx1 = partition::mi_height_log2(
-                       static_cast<BlockSize>(ctx.left_mi[r])) < bsh
+                       static_cast<BlockSize>(ctx.left_mi[static_cast<std::size_t>(r)])) < bsh
                        ? 1
                        : 0;
   const int ctx2 = partition::mi_width_log2(
-                       static_cast<BlockSize>(ctx.above_mi[c])) < bsw
+                       static_cast<BlockSize>(ctx.above_mi[static_cast<std::size_t>(c)])) < bsw
                        ? 1
                        : 0;
   return partition::partition_size_adjust_rect_type(bsize) * 4 + ctx1 * 2 +
@@ -1102,10 +1107,10 @@ int all_zero_context(const TileContext& ctx, int plane, int x4, int y4, int w4,
     const int max_x = ctx.mi_cols;
     const int max_y = ctx.mi_rows;
     for (int k = 0; k < w4; ++k) {
-      if (x4 + k < max_x) top |= ctx.above_level[0][x4 + k];
+      if (x4 + k < max_x) top |= ctx.above_level[0][static_cast<std::size_t>(x4 + k)];
     }
     for (int k = 0; k < h4; ++k) {
-      if (y4 + k < max_y) left |= ctx.left_level[0][y4 + k];
+      if (y4 + k < max_y) left |= ctx.left_level[0][static_cast<std::size_t>(y4 + k)];
     }
     top = std::min(top, 4);
     left = std::min(left, 4);
@@ -1117,16 +1122,17 @@ int all_zero_context(const TileContext& ctx, int plane, int x4, int y4, int w4,
   int left = 0;
   const int max_x = ctx.chroma_mi_cols;
   const int max_y = ctx.chroma_mi_rows;
+  const std::size_t plane_idx = static_cast<std::size_t>(plane);
   for (int i = 0; i < w4; ++i) {
     if (x4 + i < max_x) {
-      above |= ctx.above_level[plane][x4 + i];
-      above |= ctx.above_dc[plane][x4 + i];
+      above |= ctx.above_level[plane_idx][static_cast<std::size_t>(x4 + i)];
+      above |= ctx.above_dc[plane_idx][static_cast<std::size_t>(x4 + i)];
     }
   }
   for (int i = 0; i < h4; ++i) {
     if (y4 + i < max_y) {
-      left |= ctx.left_level[plane][y4 + i];
-      left |= ctx.left_dc[plane][y4 + i];
+      left |= ctx.left_level[plane_idx][static_cast<std::size_t>(y4 + i)];
+      left |= ctx.left_dc[plane_idx][static_cast<std::size_t>(y4 + i)];
     }
   }
   int c = (above != 0 ? 1 : 0) + (left != 0 ? 1 : 0);
@@ -1141,25 +1147,31 @@ int all_zero_context(const TileContext& ctx, int plane, int x4, int y4, int w4,
 
 void clear_coeff_context(TileContext& ctx, int plane, int x4, int y4, int w4,
                          int h4) {
+  const std::size_t plane_idx = static_cast<std::size_t>(plane);
   for (int i = 0; i < w4; ++i) {
-    ctx.above_level[plane][x4 + i] = 0;
-    ctx.above_dc[plane][x4 + i] = 0;
+    ctx.above_level[plane_idx][static_cast<std::size_t>(x4 + i)] = 0;
+    ctx.above_dc[plane_idx][static_cast<std::size_t>(x4 + i)] = 0;
   }
   for (int i = 0; i < h4; ++i) {
-    ctx.left_level[plane][y4 + i] = 0;
-    ctx.left_dc[plane][y4 + i] = 0;
+    ctx.left_level[plane_idx][static_cast<std::size_t>(y4 + i)] = 0;
+    ctx.left_dc[plane_idx][static_cast<std::size_t>(y4 + i)] = 0;
   }
 }
 
 void update_coeff_context(TileContext& ctx, int plane, int x4, int y4, int w4,
                           int h4, int cul_level, int dc_category) {
+  const std::size_t plane_idx = static_cast<std::size_t>(plane);
   for (int i = 0; i < w4; ++i) {
-    ctx.above_level[plane][x4 + i] = static_cast<std::uint8_t>(cul_level);
-    ctx.above_dc[plane][x4 + i] = static_cast<std::uint8_t>(dc_category);
+    ctx.above_level[plane_idx][static_cast<std::size_t>(x4 + i)] =
+        static_cast<std::uint8_t>(cul_level);
+    ctx.above_dc[plane_idx][static_cast<std::size_t>(x4 + i)] =
+        static_cast<std::uint8_t>(dc_category);
   }
   for (int i = 0; i < h4; ++i) {
-    ctx.left_level[plane][y4 + i] = static_cast<std::uint8_t>(cul_level);
-    ctx.left_dc[plane][y4 + i] = static_cast<std::uint8_t>(dc_category);
+    ctx.left_level[plane_idx][static_cast<std::size_t>(y4 + i)] =
+        static_cast<std::uint8_t>(cul_level);
+    ctx.left_dc[plane_idx][static_cast<std::size_t>(y4 + i)] =
+        static_cast<std::uint8_t>(dc_category);
   }
 }
 
@@ -1747,7 +1759,7 @@ int fsc_context(const TileContext& ctx, int r, int c, int w4, int h4,
     if (!ctx.inside(nr, nc)) return;
     const int sb_shift = floor_log2(sb_size_mi);
     if ((r >> sb_shift) != (nr >> sb_shift)) return;
-    ctx_sum += ctx.fsc_modes[static_cast<std::size_t>(nr) * ctx.mi_cols + nc];
+    ctx_sum += ctx.fsc_modes[static_cast<std::size_t>(nr * ctx.mi_cols + nc)];
     ++nnum;
   };
   add(r + h4 - 1, c - 1);
@@ -1930,8 +1942,7 @@ class TileWriter {
           return std::numeric_limits<int>::max();
         }
         for (int i = 0; i < 16; ++i) {
-          const int src = p.data[static_cast<std::size_t>(y + i / 4) * p.w +
-                                (x + i % 4)];
+          const int src = p.data[static_cast<std::size_t>((y + i / 4) * p.w + (x + i % 4))];
           s.residual[i] = src - s.pred[i];
         }
         if (plan.use_dpcm_y) {
@@ -1958,8 +1969,7 @@ class TileWriter {
       return std::numeric_limits<int>::max();
     }
     for (int i = 0; i < 16; ++i) {
-      const int src = p.data[static_cast<std::size_t>(y + i / 4) * p.w +
-                            (x + i % 4)];
+      const int src = p.data[static_cast<std::size_t>((y + i / 4) * p.w + (x + i % 4))];
       s.residual[i] = src - s.pred[i];
     }
     if (plan.use_dpcm_uv) {
@@ -2046,8 +2056,7 @@ class TileWriter {
       const int y = r * 4;
       if (predict_tx(p, x, y, 8, 8, kDcPred, c > 0, r > 0, 8, s.pred, 8)) {
         for (int i = 0; i < 64; ++i) {
-          const int src = p.data[static_cast<std::size_t>(y + i / 8) * p.w +
-                                (x + i % 8)];
+          const int src = p.data[static_cast<std::size_t>((y + i / 8) * p.w + (x + i % 8))];
           s.residual[i] = src - s.pred[i];
         }
         int first = -1;
@@ -2174,12 +2183,12 @@ class TileWriter {
     const int joint = plan.use_dpcm_y ? (plan.dpcm_y_vertical ? 22 : 50) : 0;
     for (int y = 0; y < h4; ++y) {
       for (int x = 0; x < w4; ++x) {
-        ctx_.intra_joint[static_cast<std::size_t>(r + y) * g_.mi_cols +
-                         (c + x)] = static_cast<std::uint8_t>(joint);
-        ctx_.fsc_modes[static_cast<std::size_t>(r + y) * g_.mi_cols + (c + x)] =
+        ctx_.intra_joint[static_cast<std::size_t>((r + y) * g_.mi_cols + (c + x))] =
+            static_cast<std::uint8_t>(joint);
+        ctx_.fsc_modes[static_cast<std::size_t>((r + y) * g_.mi_cols + (c + x))] =
             static_cast<std::uint8_t>(plan.fsc ? 1 : 0);
-        ctx_.left_mi[r + y] = static_cast<int>(BlockSize::k8x8);
-        ctx_.above_mi[c + x] = static_cast<int>(BlockSize::k8x8);
+        ctx_.left_mi[static_cast<std::size_t>(r + y)] = static_cast<int>(BlockSize::k8x8);
+        ctx_.above_mi[static_cast<std::size_t>(c + x)] = static_cast<int>(BlockSize::k8x8);
       }
     }
 
@@ -2219,8 +2228,8 @@ class TileWriter {
           return false;
         }
         for (int i = 0; i < 16; ++i) {
-          const int src = srcp.data[static_cast<std::size_t>(y + i / 4) *
-                                        srcp.w + (x + i % 4)];
+          const int src =
+              srcp.data[static_cast<std::size_t>((y + i / 4) * srcp.w + (x + i % 4))];
           s.residual[i] = src - s.pred[i];
         }
         if (pre != nullptr) {
@@ -2245,8 +2254,8 @@ class TileWriter {
         reconstruct_tx(s.levels, 4, 4, false, plan.use_dpcm_y,
                        plan.dpcm_y_vertical, s.pred, 4,
                        recon_[0]->data.data() +
-                           static_cast<std::size_t>(y) * recon_[0]->w + x,
-                       recon_[0]->w);
+                           static_cast<std::size_t>(y) * static_cast<std::size_t>(recon_[0]->w) + x,
+                       static_cast<std::size_t>(recon_[0]->w));
       }
     }
     return true;
@@ -2265,8 +2274,7 @@ class TileWriter {
       return false;
     }
     for (int i = 0; i < 64; ++i) {
-      const int src = srcp.data[static_cast<std::size_t>(y + i / 8) * srcp.w +
-                                (x + i % 8)];
+      const int src = srcp.data[static_cast<std::size_t>((y + i / 8) * srcp.w + (x + i % 8))];
       s.residual[i] = src - s.pred[i];
     }
     // FSC blocks use IDTX: levels are the residual (or its DPCM difference).
@@ -2290,8 +2298,8 @@ class TileWriter {
     reconstruct_tx(s.levels, 8, 8, true, plan.use_dpcm_y,
                    plan.dpcm_y_vertical, s.pred, 8,
                    recon_[0]->data.data() +
-                       static_cast<std::size_t>(y) * recon_[0]->w + x,
-                   recon_[0]->w);
+                       static_cast<std::size_t>(y) * static_cast<std::size_t>(recon_[0]->w) + x,
+                   static_cast<std::size_t>(recon_[0]->w));
     return true;
   }
 
@@ -2310,8 +2318,8 @@ class TileWriter {
         return false;
       }
       for (int i = 0; i < 16; ++i) {
-        const int src = srcp.data[static_cast<std::size_t>(cy + i / 4) *
-                                      srcp.w + (cx + i % 4)];
+        const int src =
+            srcp.data[static_cast<std::size_t>((cy + i / 4) * srcp.w + (cx + i % 4))];
         s.residual[i] = src - s.pred[i];
       }
       if (pre != nullptr) {
@@ -2345,8 +2353,9 @@ class TileWriter {
       reconstruct_tx(s.levels, 4, 4, plan.fsc, plan.use_dpcm_uv,
                      plan.dpcm_uv_vertical, s.pred, 4,
                      recon_[plane]->data.data() +
-                         static_cast<std::size_t>(cy) * recon_[plane]->w + cx,
-                     recon_[plane]->w);
+                         static_cast<std::size_t>(cy) * static_cast<std::size_t>(recon_[plane]->w) +
+                         cx,
+                     static_cast<std::size_t>(recon_[plane]->w));
     }
     ctx_.eob_u = 0;
     return true;
@@ -2613,12 +2622,12 @@ class TileReader {
     const int joint = use_dpcm_y ? (dpcm_y_vertical ? 22 : 50) : 0;
     for (int y = 0; y < h4; ++y) {
       for (int x = 0; x < w4; ++x) {
-        ctx_.intra_joint[static_cast<std::size_t>(r + y) * g_.mi_cols +
-                         (c + x)] = static_cast<std::uint8_t>(joint);
-        ctx_.fsc_modes[static_cast<std::size_t>(r + y) * g_.mi_cols + (c + x)] =
+        ctx_.intra_joint[static_cast<std::size_t>((r + y) * g_.mi_cols + (c + x))] =
+            static_cast<std::uint8_t>(joint);
+        ctx_.fsc_modes[static_cast<std::size_t>((r + y) * g_.mi_cols + (c + x))] =
             static_cast<std::uint8_t>(fsc ? 1 : 0);
-        ctx_.left_mi[r + y] = static_cast<int>(BlockSize::k8x8);
-        ctx_.above_mi[c + x] = static_cast<int>(BlockSize::k8x8);
+        ctx_.left_mi[static_cast<std::size_t>(r + y)] = static_cast<int>(BlockSize::k8x8);
+        ctx_.above_mi[static_cast<std::size_t>(c + x)] = static_cast<int>(BlockSize::k8x8);
       }
     }
 
@@ -2705,8 +2714,8 @@ class TileReader {
     }
     reconstruct_tx(levels, 4, 4, false, dpcm, vertical, s.pred, 4,
                    recon_[0]->data.data() +
-                       static_cast<std::size_t>(y) * recon_[0]->w + x,
-                   recon_[0]->w);
+                       static_cast<std::size_t>(y) * static_cast<std::size_t>(recon_[0]->w) + x,
+                   static_cast<std::size_t>(recon_[0]->w));
     return true;
   }
 
@@ -2716,13 +2725,14 @@ class TileReader {
     const Plane& recp = *recon_[0];
     const int x = c * 4;
     const int y = r * 4;
-    if (!predict_tx(recp, x, y, w, h, y_mode, c > 0, r > 0, 8, s.pred, w)) {
+    if (!predict_tx(recp, x, y, w, h, y_mode, c > 0, r > 0, 8, s.pred,
+                    static_cast<std::size_t>(w))) {
       return false;
     }
-    reconstruct_tx(levels, w, h, idtx, dpcm, vertical, s.pred, w,
+    reconstruct_tx(levels, w, h, idtx, dpcm, vertical, s.pred, static_cast<std::size_t>(w),
                    recon_[0]->data.data() +
-                       static_cast<std::size_t>(y) * recon_[0]->w + x,
-                   recon_[0]->w);
+                       static_cast<std::size_t>(y) * static_cast<std::size_t>(recon_[0]->w) + x,
+                   static_cast<std::size_t>(recon_[0]->w));
     return true;
   }
 
@@ -2737,8 +2747,8 @@ class TileReader {
     }
     reconstruct_tx(levels, 4, 4, idtx, dpcm, vertical, s.pred, 4,
                    recon_[plane]->data.data() +
-                       static_cast<std::size_t>(y) * recon_[plane]->w + x,
-                   recon_[plane]->w);
+                       static_cast<std::size_t>(y) * static_cast<std::size_t>(recon_[plane]->w) + x,
+                   static_cast<std::size_t>(recon_[plane]->w));
     return true;
   }
 
@@ -3061,9 +3071,10 @@ bool encode_still(const StillPicture& picture, const Options& options,
                      static_cast<int>(picture.height), g, error)) {
     return false;
   }
-  const std::size_t y_size = static_cast<std::size_t>(g.width) * g.height;
-  const std::size_t c_size =
-      static_cast<std::size_t>(g.chroma_w) * g.chroma_h;
+  const std::size_t y_size =
+      static_cast<std::size_t>(g.width) * static_cast<std::size_t>(g.height);
+  const std::size_t c_size = static_cast<std::size_t>(g.chroma_w) *
+                             static_cast<std::size_t>(g.chroma_h);
   if (picture.y.size() < y_size || picture.u.size() < c_size ||
       picture.v.size() < c_size) {
     error = "source plane spans are smaller than the picture geometry";
@@ -3074,13 +3085,16 @@ bool encode_still(const StillPicture& picture, const Options& options,
   Plane recon[3];
   src[0].w = g.width;
   src[0].h = g.height;
-  src[0].data.assign(picture.y.begin(), picture.y.begin() + y_size);
+  src[0].data.assign(picture.y.begin(),
+                     picture.y.begin() + static_cast<std::ptrdiff_t>(y_size));
   src[1].w = g.chroma_w;
   src[1].h = g.chroma_h;
-  src[1].data.assign(picture.u.begin(), picture.u.begin() + c_size);
+  src[1].data.assign(picture.u.begin(),
+                     picture.u.begin() + static_cast<std::ptrdiff_t>(c_size));
   src[2].w = g.chroma_w;
   src[2].h = g.chroma_h;
-  src[2].data.assign(picture.v.begin(), picture.v.begin() + c_size);
+  src[2].data.assign(picture.v.begin(),
+                     picture.v.begin() + static_cast<std::ptrdiff_t>(c_size));
   for (int p = 0; p < 3; ++p) recon[p].resize(src[p].w, src[p].h);
 
   CdfState cdfs;

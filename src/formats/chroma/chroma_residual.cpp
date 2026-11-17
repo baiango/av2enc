@@ -190,9 +190,11 @@ void forward_dct(const std::int16_t* residual, int adj_width, int adj_height,
       for (int j = 0; j < width; ++j) {
         sum += static_cast<double>(kw[v * width + j]) *
                static_cast<double>(
-                   residual[static_cast<std::size_t>(i) * width + j]);
+                   residual[static_cast<std::size_t>(i) * static_cast<std::size_t>(width) +
+                            static_cast<std::size_t>(j)]);
       }
-      tmp[static_cast<std::size_t>(i) * width + v] = sum * scale_w;
+      tmp[static_cast<std::size_t>(i) * static_cast<std::size_t>(width) +
+          static_cast<std::size_t>(v)] = sum * scale_w;
     }
   }
   for (int u = 0; u < height; ++u) {
@@ -200,9 +202,11 @@ void forward_dct(const std::int16_t* residual, int adj_width, int adj_height,
       double sum = 0.0;
       for (int i = 0; i < height; ++i) {
         sum += static_cast<double>(kh[u * height + i]) *
-               tmp[static_cast<std::size_t>(i) * width + v];
+               tmp[static_cast<std::size_t>(i) * static_cast<std::size_t>(width) +
+                   static_cast<std::size_t>(v)];
       }
-      coeff[static_cast<std::size_t>(u) * width + v] = sum * scale_h;
+      coeff[static_cast<std::size_t>(u) * static_cast<std::size_t>(width) +
+            static_cast<std::size_t>(v)] = sum * scale_h;
     }
   }
   if (odd_rect) {
@@ -237,11 +241,12 @@ void inverse_dct(const int* dequant, const TxShape& shape, int* residual) {
       std::int64_t sum = 0;
       for (int j = 0; j < width; ++j) {
         sum += static_cast<std::int64_t>(kw[j * width + oj]) *
-               prescale(dequant[static_cast<std::size_t>(i) * width + j]);
+               prescale(dequant[static_cast<std::size_t>(i) * static_cast<std::size_t>(width) +
+                                static_cast<std::size_t>(j)]);
       }
-      intermediate[static_cast<std::size_t>(i) * width + oj] = clip3(
-          -(1 << 15), (1 << 15) - 1,
-          round2(static_cast<int>(sum), row_shift));
+      intermediate[static_cast<std::size_t>(i) * static_cast<std::size_t>(width) +
+                   static_cast<std::size_t>(oj)] =
+          clip3(-(1 << 15), (1 << 15) - 1, round2(static_cast<int>(sum), row_shift));
     }
   }
   for (int oi = 0; oi < height; ++oi) {
@@ -249,9 +254,11 @@ void inverse_dct(const int* dequant, const TxShape& shape, int* residual) {
       std::int64_t sum = 0;
       for (int i = 0; i < height; ++i) {
         sum += static_cast<std::int64_t>(kh[i * height + oi]) *
-               intermediate[static_cast<std::size_t>(i) * width + j];
+               intermediate[static_cast<std::size_t>(i) * static_cast<std::size_t>(width) +
+                            static_cast<std::size_t>(j)];
       }
-      residual[static_cast<std::size_t>(oi) * width + j] =
+      residual[static_cast<std::size_t>(oi) * static_cast<std::size_t>(width) +
+               static_cast<std::size_t>(j)] =
           clip3(-256, 255, round2(static_cast<int>(sum), col_shift));
     }
   }

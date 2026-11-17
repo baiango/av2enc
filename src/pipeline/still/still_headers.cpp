@@ -251,7 +251,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
     std::string scc_error;
     scc_flags::FrameSccState frame_state;
     std::size_t scc_bits = 0;
-    const bool scc_ok = scc_flags::write_frame_scc_params(
+    [[maybe_unused]] const bool scc_ok = scc_flags::write_frame_scc_params(
         writer, seq_state, ctx, scc, /*seq_max_bvp_drl_bits_minus_1=*/0,
         /*allow_frame_max_bvp_drl_bits=*/false, &frame_state, &scc_bits,
         scc_error);
@@ -511,7 +511,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
     ctx.immediate_output_frame = true;
     ctx.implicit_output_frame = false;
     std::string grain_error;
-    const bool ok =
+    [[maybe_unused]] const bool ok =
         grain::WriteFilmGrainConfig(writer, config, ctx, &grain_error);
     assert(ok);
     assert(grain_error.empty());

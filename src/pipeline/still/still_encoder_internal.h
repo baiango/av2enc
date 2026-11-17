@@ -368,7 +368,7 @@ class Encoder {
   int deblock_cols() const { return deblock_cols_; }
   int deblock_rows() const { return deblock_rows_; }
   const deblock::DeblockMi* deblock_mi(int plane) const {
-    return deblock_mi_[plane].data();
+    return deblock_mi_[static_cast<std::size_t>(plane)].data();
   }
 
  private:
@@ -422,8 +422,9 @@ class Encoder {
   template <typename Node>
   void begin_superblock(const Node& sb) {
     for (int plane = 0; plane < 3; ++plane) {
-      decoded_[plane].reset(plane == 0 ? mi_cols_ : mi_cols_ / 2,
-                            plane == 0 ? mi_rows_ : mi_rows_ / 2);
+      decoded_[static_cast<std::size_t>(plane)].reset(
+          plane == 0 ? mi_cols_ : mi_cols_ / 2,
+          plane == 0 ? mi_rows_ : mi_rows_ / 2);
     }
     sb_mi_row_ = sb.mi_row;
     sb_mi_col_ = sb.mi_col;

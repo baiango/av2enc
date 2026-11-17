@@ -1113,8 +1113,9 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // Per-frame quantizer selection: an empty vector means the historical
   // fixed-QP stream, so the default path does not construct any extra state.
   const auto frame_qp = [&options](std::size_t index) -> std::uint8_t {
-    return options.frame_base_q_idx.empty() ? options.base_q_idx
-                                            : options.frame_base_q_idx[index];
+    return static_cast<std::uint8_t>(
+        options.frame_base_q_idx.empty() ? options.base_q_idx
+                                         : options.frame_base_q_idx[index]);
   };
   // The opt-in loop filters run per whole frame.  Multi-tile filtering is not
   // wired yet, and the frame-type wrapper headers are written by the shared
@@ -2324,8 +2325,9 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   inter::mv_stack_full::RefSlotBank ref_bank;
   ref_bank.num_ref_frames = num_ref_frames;
   if (options.implicit_ref_map) {
-    if (!ref_bank.refresh(key_header.refresh_frame_flags,
-                          key_header.order_hint, static_cast<int>(width),
+    if (!ref_bank.refresh(static_cast<int>(key_header.refresh_frame_flags),
+                          static_cast<int>(key_header.order_hint),
+                          static_cast<int>(width),
                           static_cast<int>(height), frame_qp(0),
                           /*key_frame=*/true, 0, 0, true, true, -1, &error)) {
       error = "keyframe reference bank: " + error;
@@ -2338,12 +2340,15 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
 
   const auto make_reference = [&](int slot) {
     inter::mc::RefFrame ref;
-    ref.plane[0] = inter::mc::PlaneView{slots[slot].plane[0].samples.data(),
-                                        slots[slot].plane[0].stride};
-    ref.plane[1] = inter::mc::PlaneView{slots[slot].plane[1].samples.data(),
-                                        slots[slot].plane[1].stride};
-    ref.plane[2] = inter::mc::PlaneView{slots[slot].plane[2].samples.data(),
-                                        slots[slot].plane[2].stride};
+    ref.plane[0] = inter::mc::PlaneView{
+        slots[static_cast<std::size_t>(slot)].plane[0].samples.data(),
+        slots[static_cast<std::size_t>(slot)].plane[0].stride};
+    ref.plane[1] = inter::mc::PlaneView{
+        slots[static_cast<std::size_t>(slot)].plane[1].samples.data(),
+        slots[static_cast<std::size_t>(slot)].plane[1].stride};
+    ref.plane[2] = inter::mc::PlaneView{
+        slots[static_cast<std::size_t>(slot)].plane[2].samples.data(),
+        slots[static_cast<std::size_t>(slot)].plane[2].stride};
     ref.mi_cols = recon_mi_cols;
     ref.mi_rows = ref_mi_rows;
     return ref;
@@ -2422,8 +2427,10 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       frame_distance[static_cast<std::size_t>(r)] =
           options.implicit_ref_map
               ? derived_distance[static_cast<std::size_t>(r)]
-              : relative_dist(order_hint, slots[slot].order_hint,
-                              order_hint_bits);
+              : relative_dist(
+                    order_hint,
+                    slots[static_cast<std::size_t>(slot)].order_hint,
+                    order_hint_bits);
     }
 
     VideoOptions frame_options = options_for_frame(i);
@@ -2507,8 +2514,8 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       std::vector<int> ref_distance(static_cast<std::size_t>(ref_count));
       for (int r = 0; r < ref_count; ++r) {
         const int slot = frame_ref_slots[static_cast<std::size_t>(r)];
-        ref_order_hint[static_cast<std::size_t>(r)] =
-            static_cast<int>(slots[slot].order_hint);
+        ref_order_hint[static_cast<std::size_t>(r)] = static_cast<int>(
+            slots[static_cast<std::size_t>(slot)].order_hint);
         ref_slots[static_cast<std::size_t>(r)] =
             static_cast<std::uint8_t>(slot);
         ref_distance[static_cast<std::size_t>(r)] =
@@ -2542,14 +2549,16 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       }
     }
 #endif
-    std::vector<std::uint16_t> cdf_seed;
-    if (cdf_chain) cdf_seed = cdf_tile;  // §8.2.2 FrameCdf seed per tile
-    [[maybe_unused]] std::uint32_t cdf_tile_index = 0;
+    std::vector<std::uint16_t> tile_cdf_seed;
+    if (cdf_chain) tile_cdf_seed = cdf_tile;  // §8.2.2 FrameCdf seed per tile
+    [[maybe_unused]] std::uint32_t tile_cdf_index = 0;
     // §7.20.1 needs the reference OrderHints for the GDF table derivation.
     std::array<int, 7> ref_order_hints{};
     for (int r = 0; r < ref_count; ++r) {
       ref_order_hints[static_cast<std::size_t>(r)] = static_cast<int>(
-          slots[frame_ref_slots[static_cast<std::size_t>(r)]].order_hint);
+          slots[static_cast<std::size_t>(
+              frame_ref_slots[static_cast<std::size_t>(r)])]
+              .order_hint);
     }
     // §7.9 + §7.12.2.7/.8: project this frame's reference motion fields into
     // the current frame's motion field for the temporal MV candidates.
@@ -2563,7 +2572,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
         const int slot = recent_slots[static_cast<std::size_t>(r)];
         ref_fields[r] = make_saved_ref(slot_fields[static_cast<std::size_t>(slot)]);
         ref_slots[r] = slot;
-        ref_is_key[r] = slots[slot].is_key ? 1U : 0U;
+        ref_is_key[r] = slots[static_cast<std::size_t>(slot)].is_key ? 1U : 0U;
       }
       if (!estimate_motion_field(
               ref_fields, ref_slots, ref_order_hints.data(), ref_is_key,
@@ -2591,7 +2600,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     parallel::parallel_for(tile_sources.size(), tile_workers,
                            [&](std::size_t t) {
       CodedTile& tile = tile_sources[t];
-      if (cdf_chain) cdf_tile = cdf_seed;
+      if (cdf_chain) cdf_tile = tile_cdf_seed;
       std::string& tile_error = tile_errors[t];
       auto encoder = std::make_unique<InterFrameEncoder>(
           frames[i], references, frame_distance, ref_count, frame_options,
@@ -2718,7 +2727,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     for (std::size_t t = 0; t < tile_sources.size(); ++t) {
       CodedTile& tile = tile_sources[t];
       InterFrameEncoder& encoder = *tile_encoders[t];
-      if (cdf_chain) cdf_tile = cdf_seed;
+      if (cdf_chain) cdf_tile = tile_cdf_seed;
       if (!encoder.write(tile.payload, tile.blocks, tile.levels,
                          frame_filters.any() ? &frame_filters : nullptr,
                          error)) {
@@ -2743,7 +2752,9 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
 
     const int write_slot = options.fixed_write_slot >= 0
                                ? options.fixed_write_slot
-                               : static_cast<int>(i % num_ref_frames);
+                               : static_cast<int>(
+                                     i % static_cast<std::size_t>(
+                                             num_ref_frames));
 #if defined(AV2ENC_VIDEO_CDF_CHAIN)
     if (cdf_chain) {
       // save_tile_cdfs() already ran per tile; §7.5 frame_end_update_cdf(),
@@ -2897,17 +2908,18 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     }
 
     // Store the reconstruction and refresh the rotating slot.
-    slots[write_slot].valid = true;
-    slots[write_slot].is_key = false;
-    slots[write_slot].order_hint = order_hint;
+    slots[static_cast<std::size_t>(write_slot)].valid = true;
+    slots[static_cast<std::size_t>(write_slot)].is_key = false;
+    slots[static_cast<std::size_t>(write_slot)].order_hint = order_hint;
     slot_source_index[static_cast<std::size_t>(write_slot)] = i;
     for (int plane = 0; plane < 3; ++plane) {
-      slots[write_slot].plane[plane] = frame_recon[plane];
+      slots[static_cast<std::size_t>(write_slot)].plane[plane] =
+          frame_recon[plane];
     }
     // §7.23: the next frame's implicit mapping must see this frame exactly as
     // the decoder stores it.
     if (options.implicit_ref_map &&
-        !ref_bank.refresh(header.refresh_frame_flags,
+        !ref_bank.refresh(static_cast<int>(header.refresh_frame_flags),
                           static_cast<int>(order_hint),
                           static_cast<int>(width), static_cast<int>(height),
                           static_cast<std::uint8_t>(effective_frame_qp),
@@ -2928,8 +2940,10 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
         error = "P-frame " + std::to_string(i) + ": " + error;
         return false;
       }
-      result.ref_mvs_warp_cells += store_stats.warp_cells;
-      result.ref_mvs_wedge_dropped += store_stats.wedge_dropped;
+      result.ref_mvs_warp_cells +=
+          static_cast<std::uint64_t>(store_stats.warp_cells);
+      result.ref_mvs_wedge_dropped +=
+          static_cast<std::uint64_t>(store_stats.wedge_dropped);
       field.order_hint = static_cast<int>(order_hint);
       field.num_saved_refs = ref_count;
       for (int r = 0; r < ref_count; ++r) {

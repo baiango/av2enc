@@ -1637,7 +1637,7 @@ bool WriteBlock(av2::Encoder& encoder, TileState& state, int mi_row,
         if (cursor >= static_cast<int>(decisions.size())) {
           return fail(error, "read_lr decision count too small");
         }
-        if (!WriteUnit(encoder, state, plane, r, c, decisions[cursor],
+        if (!WriteUnit(encoder, state, plane, r, c, decisions[static_cast<std::size_t>(cursor)],
                        error)) {
           return false;
         }
@@ -1708,7 +1708,7 @@ bool MakePcLuma(const DecisionPlanes& planes, PcLumaBuffers* out,
   out->width = planes.width;
   out->height = planes.height;
   const std::size_t count =
-      static_cast<std::size_t>(out->width) * out->height;
+      static_cast<std::size_t>(out->width) * static_cast<std::size_t>(out->height);
   out->curr.assign(count, 0);
   out->cdef.assign(count, 0);
   if (planes.curr[0] == nullptr || planes.cdef[0] == nullptr) {
@@ -1716,14 +1716,12 @@ bool MakePcLuma(const DecisionPlanes& planes, PcLumaBuffers* out,
   }
   for (int y = 0; y < out->height; ++y) {
     for (int x = 0; x < out->width; ++x) {
-      out->curr[static_cast<std::size_t>(y) * out->width + x] =
-          planes.curr[0][static_cast<std::ptrdiff_t>(y) *
-                              planes.curr_stride[0] +
-                          x];
-      out->cdef[static_cast<std::size_t>(y) * out->width + x] =
-          planes.cdef[0][static_cast<std::ptrdiff_t>(y) *
-                              planes.cdef_stride[0] +
-                          x];
+      out->curr[static_cast<std::size_t>(y) * static_cast<std::size_t>(out->width) +
+                static_cast<std::size_t>(x)] =
+          planes.curr[0][static_cast<std::ptrdiff_t>(y) * planes.curr_stride[0] + x];
+      out->cdef[static_cast<std::size_t>(y) * static_cast<std::size_t>(out->width) +
+                static_cast<std::size_t>(x)] =
+          planes.cdef[0][static_cast<std::ptrdiff_t>(y) * planes.cdef_stride[0] + x];
     }
   }
   return true;
@@ -1748,7 +1746,7 @@ void SetupPcFrame(const DecisionPlanes& planes, PcLumaBuffers* luma,
   frame->filter_class = filter_class;
   frame->filter_class_stride = filter_class_stride;
 
-  zero_skip->assign(static_cast<std::size_t>(mi_cols) * mi_rows, 0);
+  zero_skip->assign(static_cast<std::size_t>(mi_cols) * static_cast<std::size_t>(mi_rows), 0);
   *cfg = spec::PcWienerConfig{};
   cfg->base_q_idx = planes.base_q_idx;
   cfg->bit_depth = planes.bit_depth;
@@ -1775,7 +1773,7 @@ void FilterAllBlocks(const DecisionPlanes& planes, PcLumaBuffers* luma,
                      int dst_stride) {
   std::vector<std::uint8_t> zero_skip;
   std::vector<std::uint8_t> class_grid(
-      static_cast<std::size_t>(mi_cols) * mi_rows, 0);
+      static_cast<std::size_t>(mi_cols) * static_cast<std::size_t>(mi_rows), 0);
   spec::PcWienerFrame frame;
   spec::PcWienerConfig cfg;
   SetupPcFrame(planes, luma, mi_cols, mi_rows, class_grid.data(), mi_cols, dst,
@@ -1876,7 +1874,7 @@ void BuildFilterClassGrid(const DecisionPlanes& planes,
   }
   const int mi_cols = (planes.width + kMiSize - 1) / kMiSize;
   const int mi_rows = (planes.height + kMiSize - 1) / kMiSize;
-  filter_class->assign(static_cast<std::size_t>(mi_cols) * mi_rows, 0);
+  filter_class->assign(static_cast<std::size_t>(mi_cols) * static_cast<std::size_t>(mi_rows), 0);
   std::vector<std::uint8_t> zero_skip;
   spec::PcWienerFrame frame;
   spec::PcWienerConfig cfg;
@@ -1892,8 +1890,8 @@ void BuildFilterClassGrid(const DecisionPlanes& planes,
       const int x = col * kMiSize;
       const int y = row * kMiSize;
       const int cls = spec::PcWienerClass(frame, cfg, x, y);
-      (*filter_class)[static_cast<std::size_t>(row) * mi_cols + col] =
-          static_cast<std::uint8_t>(cls);
+      (*filter_class)[static_cast<std::size_t>(row) * static_cast<std::size_t>(mi_cols) +
+                      static_cast<std::size_t>(col)] = static_cast<std::uint8_t>(cls);
     }
   }
 }
@@ -1912,16 +1910,18 @@ int ApplyPerUnitPcWiener(const DecisionPlanes& planes,
   if (static_cast<int>(unit_type.size()) != unit_cols * unit_rows) return 0;
 
   std::vector<std::uint16_t> out(
-      static_cast<std::size_t>(planes.width) * planes.height, 0);
+      static_cast<std::size_t>(planes.width) * static_cast<std::size_t>(planes.height), 0);
   for (int y = 0; y < planes.height; ++y) {
     for (int x = 0; x < planes.width; ++x) {
-      out[static_cast<std::size_t>(y) * planes.width + x] =
-          luma.cdef[static_cast<std::size_t>(y) * planes.width + x];
+      out[static_cast<std::size_t>(y) * static_cast<std::size_t>(planes.width) +
+          static_cast<std::size_t>(x)] =
+          luma.cdef[static_cast<std::size_t>(y) * static_cast<std::size_t>(planes.width) +
+                    static_cast<std::size_t>(x)];
     }
   }
   std::vector<std::uint8_t> zero_skip;
   std::vector<std::uint8_t> class_grid(
-      static_cast<std::size_t>(mi_cols) * mi_rows, 0);
+      static_cast<std::size_t>(mi_cols) * static_cast<std::size_t>(mi_rows), 0);
   spec::PcWienerFrame frame;
   spec::PcWienerConfig cfg;
   SetupPcFrame(planes, &luma, mi_cols, mi_rows, class_grid.data(), mi_cols,
@@ -1938,7 +1938,7 @@ int ApplyPerUnitPcWiener(const DecisionPlanes& planes,
           UnitIndexForBlock(row, col, unit_size, unit_rows, unit_cols);
       if (unit_index < 0 ||
           unit_index >= static_cast<int>(unit_type.size()) ||
-          unit_type[unit_index] != kRestorePcWiener) {
+          unit_type[static_cast<std::size_t>(unit_index)] != kRestorePcWiener) {
         continue;
       }
       const int x = col * kMiSize;
@@ -1952,7 +1952,8 @@ int ApplyPerUnitPcWiener(const DecisionPlanes& planes,
   }
   for (int y = 0; y < planes.height; ++y) {
     for (int x = 0; x < planes.width; ++x) {
-      const int v = out[static_cast<std::size_t>(y) * planes.width + x];
+      const int v = out[static_cast<std::size_t>(y) * static_cast<std::size_t>(planes.width) +
+                        static_cast<std::size_t>(x)];
       dst[static_cast<std::ptrdiff_t>(y) * dst_stride + x] =
           static_cast<std::uint8_t>(std::max(0, std::min(255, v)));
     }
@@ -2028,7 +2029,7 @@ bool DecidePerUnitPcWiener(const DecisionPlanes& planes, double lambda,
   if (!MakePcLuma(planes, &luma, error)) return false;
 
   std::vector<std::uint16_t> filtered(
-      static_cast<std::size_t>(planes.width) * planes.height, 0);
+      static_cast<std::size_t>(planes.width) * static_cast<std::size_t>(planes.height), 0);
   FilterAllBlocks(planes, &luma, mi_cols, mi_rows, filtered.data(),
                   planes.width);
 
@@ -2056,7 +2057,8 @@ bool DecidePerUnitPcWiener(const DecisionPlanes& planes, double lambda,
                                   planes.cdef_stride[0] +
                               sx];
           const double f =
-              filtered[static_cast<std::size_t>(sy) * planes.width + sx];
+              filtered[static_cast<std::size_t>(sy) * static_cast<std::size_t>(planes.width) +
+                       static_cast<std::size_t>(sx)];
           sse_off[static_cast<std::size_t>(unit_index)] +=
               (base - t) * (base - t);
           sse_on[static_cast<std::size_t>(unit_index)] +=
@@ -2081,10 +2083,10 @@ bool DecidePerUnitPcWiener(const DecisionPlanes& planes, double lambda,
           (kRestorationTileSizeMax >> std::max(planes.sub_x, planes.sub_y)) >>
               planes.chroma_shift,
           planes.width >> planes.sub_x)) *
-          CountUnits(
+          static_cast<std::size_t>(CountUnits(
               (kRestorationTileSizeMax >> std::max(planes.sub_x, planes.sub_y)) >>
                   planes.chroma_shift,
-              planes.height >> planes.sub_y),
+              planes.height >> planes.sub_y)),
       0);
   result->unit_type[2] = result->unit_type[1];
 
@@ -2142,7 +2144,8 @@ bool DecidePerUnitPcWiener(const DecisionPlanes& planes, double lambda,
   for (int r = 0; r < unit_rows; ++r) {
     for (int c = 0; c < unit_cols; ++c) {
       UnitDecision decision;
-      decision.type = unit_type[static_cast<std::size_t>(r) * unit_cols + c];
+      decision.type = unit_type[static_cast<std::size_t>(r) * static_cast<std::size_t>(unit_cols) +
+                                static_cast<std::size_t>(c)];
       if (!WriteUnit(encoder, state, 0, r, c, decision, error)) return false;
     }
   }
@@ -2186,7 +2189,8 @@ bool DecideFrameClassPcWiener(const DecisionPlanes& planes, int num_classes,
   for (int row = 0; row < mi_rows; ++row) {
     for (int col = 0; col < mi_cols; ++col) {
       const int cls =
-          result->filter_class[static_cast<std::size_t>(row) * mi_cols + col];
+          result->filter_class[static_cast<std::size_t>(row) * static_cast<std::size_t>(mi_cols) +
+                               static_cast<std::size_t>(col)];
       const int sub = lookup[cls];
       if (sub >= 0 && sub < num_classes) {
         cells[static_cast<std::size_t>(sub)].emplace_back(row, col);
@@ -2282,7 +2286,7 @@ bool DecideFrameClassPcWiener(const DecisionPlanes& planes, int num_classes,
   result->identity_sse = 0.0;
   result->filtered_sse = 0.0;
   std::vector<std::uint8_t> filtered(
-      static_cast<std::size_t>(planes.width) * planes.height, 0);
+      static_cast<std::size_t>(planes.width) * static_cast<std::size_t>(planes.height), 0);
   ApplyFrameClassWiener(planes, params.frame_coeffs[0], result->filter_class.data(),
                         lookup, num_classes, filtered.data(), planes.width);
   result->identity_sse = LumaSse(planes.cdef[0], planes.cdef_stride[0],
@@ -2325,7 +2329,8 @@ bool DecideFrameClassPcWiener(const DecisionPlanes& planes, int num_classes,
     for (int c = 0; c < unit_cols; ++c) {
       UnitDecision decision;
       decision.type =
-          result->unit_type[0][static_cast<std::size_t>(r) * unit_cols + c];
+          result->unit_type[0][static_cast<std::size_t>(r) * static_cast<std::size_t>(unit_cols) +
+                               static_cast<std::size_t>(c)];
       if (!WriteUnit(encoder, state, 0, r, c, decision, error)) return false;
     }
   }

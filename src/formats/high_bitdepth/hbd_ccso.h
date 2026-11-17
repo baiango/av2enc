@@ -156,7 +156,8 @@ inline FitResult fit_plane(const HbdCcsoFrame16& f, int plane,
     const int x_luma = x3 << sub_x;
     const int y_luma = y3 << sub_y;
     const int centre = static_cast<int>(
-        f.curr[0][static_cast<std::size_t>(y_luma) * luma_stride + x_luma]);
+        f.curr[0][static_cast<std::size_t>(y_luma) * luma_stride +
+                  static_cast<std::size_t>(x_luma)]);
     *band_out = centre >> shift;
     *cls0_out = 0;
     *cls1_out = 0;
@@ -182,9 +183,11 @@ inline FitResult fit_plane(const HbdCcsoFrame16& f, int plane,
       const std::size_t cell = static_cast<std::size_t>(
           restoration::ccso_offset_index(band, cls0, cls1));
       const int dst = static_cast<int>(
-          f.cdef[plane][static_cast<std::size_t>(y) * dst_stride + x]);
+          f.cdef[plane][static_cast<std::size_t>(y) * dst_stride +
+                        static_cast<std::size_t>(x)]);
       const int ref = static_cast<int>(
-          f.ref[plane][static_cast<std::size_t>(y) * ref_stride + x]);
+          f.ref[plane][static_cast<std::size_t>(y) * ref_stride +
+                       static_cast<std::size_t>(x)]);
       sum[cell] += ref - dst;
       ++count[cell];
     }
@@ -228,9 +231,11 @@ inline FitResult fit_plane(const HbdCcsoFrame16& f, int plane,
       const std::size_t cell = static_cast<std::size_t>(
           restoration::ccso_offset_index(band, cls0, cls1));
       const int dst = static_cast<int>(
-          f.cdef[plane][static_cast<std::size_t>(y) * dst_stride + x]);
+          f.cdef[plane][static_cast<std::size_t>(y) * dst_stride +
+                        static_cast<std::size_t>(x)]);
       const int ref = static_cast<int>(
-          f.ref[plane][static_cast<std::size_t>(y) * ref_stride + x]);
+          f.ref[plane][static_cast<std::size_t>(y) * ref_stride +
+                       static_cast<std::size_t>(x)]);
       const int filtered = std::clamp(
           dst + static_cast<int>(out.offsets[cell]), 0, max_value);
       const std::int64_t d0 = static_cast<std::int64_t>(dst - ref);
@@ -354,8 +359,9 @@ inline bool plan_ccso(const HbdCcsoFrame16& frame, int ccso_luma_size_log2,
     plane_cfg.max_band_log2 = c.max_band_log2;
     const int interval = fit.interval;
     const int bands = fit.bands;
-    plane_cfg.offset_idx.assign(static_cast<std::size_t>(bands) * interval *
-                                    interval,
+    plane_cfg.offset_idx.assign(static_cast<std::size_t>(bands) *
+                                    static_cast<std::size_t>(interval) *
+                                    static_cast<std::size_t>(interval),
                                 0);
     std::size_t k = 0;
     for (int d0 = 0; d0 < interval; ++d0) {

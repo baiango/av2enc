@@ -1115,12 +1115,12 @@ bool Encoder::encode_block(int r, int c, partition::BlockSize size,
         for (int xx = 0; xx < w4; ++xx) {
           const int cc = c + xx;
           if (cc >= mi_cols_) break;
-          const std::size_t index =
+          const std::size_t cell =
               static_cast<std::size_t>(rr) *
                   static_cast<std::size_t>(mi_cols_) +
               static_cast<std::size_t>(cc);
-          luma_mode_[index] = static_cast<std::uint8_t>(y.av2_mode);
-          luma_angle_[index] = static_cast<std::int8_t>(y.angle_delta);
+          luma_mode_[cell] = static_cast<std::uint8_t>(y.av2_mode);
+          luma_angle_[cell] = static_cast<std::int8_t>(y.angle_delta);
         }
       }
     }
@@ -1232,9 +1232,11 @@ bool Encoder::encode_block(int r, int c, partition::BlockSize size,
           for (int yy = 0; yy < ch; ++yy) {
             for (int xx = 0; xx < cw; ++xx) {
               recon_[1].at(cx0 + xx, cy0 + yy) =
-                  u_pred[static_cast<std::size_t>(yy) * cw + xx];
+                  u_pred[static_cast<std::size_t>(yy) * static_cast<std::size_t>(cw) +
+                         static_cast<std::size_t>(xx)];
               recon_[2].at(cx0 + xx, cy0 + yy) =
-                  v_pred[static_cast<std::size_t>(yy) * cw + xx];
+                  v_pred[static_cast<std::size_t>(yy) * static_cast<std::size_t>(cw) +
+                         static_cast<std::size_t>(xx)];
             }
           }
           cfl::Scratch scratch;
@@ -1265,10 +1267,10 @@ bool Encoder::encode_block(int r, int c, partition::BlockSize size,
           }
           for (int yy = 0; yy < ch; ++yy) {
             for (int xx = 0; xx < cw; ++xx) {
-              u_pred[static_cast<std::size_t>(yy) * cw + xx] =
-                  recon_[1].at(cx0 + xx, cy0 + yy);
-              v_pred[static_cast<std::size_t>(yy) * cw + xx] =
-                  recon_[2].at(cx0 + xx, cy0 + yy);
+              u_pred[static_cast<std::size_t>(yy) * static_cast<std::size_t>(cw) +
+                     static_cast<std::size_t>(xx)] = recon_[1].at(cx0 + xx, cy0 + yy);
+              v_pred[static_cast<std::size_t>(yy) * static_cast<std::size_t>(cw) +
+                     static_cast<std::size_t>(xx)] = recon_[2].at(cx0 + xx, cy0 + yy);
             }
           }
         } else {
@@ -1596,9 +1598,11 @@ bool Encoder::choose_uv_mode(int cx0, int cy0, int cw, int ch, int y_mode,
       for (int yy = 0; yy < ch; ++yy) {
         for (int xx = 0; xx < cw; ++xx) {
           recon_[1].at(cx0 + xx, cy0 + yy) =
-              u_dc[static_cast<std::size_t>(yy) * cw + xx];
+              u_dc[static_cast<std::size_t>(yy) * static_cast<std::size_t>(cw) +
+                   static_cast<std::size_t>(xx)];
           recon_[2].at(cx0 + xx, cy0 + yy) =
-              v_dc[static_cast<std::size_t>(yy) * cw + xx];
+              v_dc[static_cast<std::size_t>(yy) * static_cast<std::size_t>(cw) +
+                   static_cast<std::size_t>(xx)];
         }
       }
       cfl::Scratch scratch;

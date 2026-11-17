@@ -51,7 +51,8 @@ constexpr int kSizeGroup[29] = {
     0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3,
     3, 3, 3, 0, 0, 1, 1, 2, 2, 1, 1, 2, 2};
 
-// §8.3.2 coefficient context offsets.
+// §8.3.2 coefficient context offsets.  Both tables are non-negative, so a
+// context position is row/col + offset and never underflows.
 constexpr int kSigRefDiff[5][2] = {{0, 1}, {1, 0}, {1, 1}, {0, 2}, {2, 0}};
 constexpr int kMagRef[3][2] = {{0, 1}, {1, 0}, {1, 1}};
 
@@ -122,21 +123,25 @@ namespace {
 bool is_pow2_dim(int v) { return v == 4 || v == 8 || v == 16 || v == 32; }
 
 void forward_wht_2d(const int* residual, int w, int h, int* levels) {
-  std::vector<int> tmp(static_cast<std::size_t>(w) * h);
+  std::vector<int> tmp(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
   for (int c = 0; c < w; ++c) {
     int col[4];
     int out[4];
     for (int r = 0; r < h; r += 4) {
       for (int k = 0; k < 4; ++k) col[k] = residual[(r + k) * w + c];
       forward_wht4(col, out);
-      for (int k = 0; k < 4; ++k) tmp[(r + k) * w + c] = out[k];
+      for (int k = 0; k < 4; ++k) {
+        tmp[static_cast<std::size_t>((r + k) * w + c)] = out[k];
+      }
     }
   }
   for (int r = 0; r < h; ++r) {
     int row[4];
     int out[4];
     for (int c = 0; c < w; c += 4) {
-      for (int k = 0; k < 4; ++k) row[k] = tmp[r * w + c + k];
+      for (int k = 0; k < 4; ++k) {
+        row[k] = tmp[static_cast<std::size_t>(r * w + c + k)];
+      }
       forward_wht4(row, out);
       for (int k = 0; k < 4; ++k) levels[r * w + c + k] = out[k];
     }
@@ -144,21 +149,25 @@ void forward_wht_2d(const int* residual, int w, int h, int* levels) {
 }
 
 void inverse_wht_2d(const int* levels, int w, int h, int* residual) {
-  std::vector<int> tmp(static_cast<std::size_t>(w) * h);
+  std::vector<int> tmp(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
   for (int r = 0; r < h; ++r) {
     int row[4];
     int out[4];
     for (int c = 0; c < w; c += 4) {
       for (int k = 0; k < 4; ++k) row[k] = levels[r * w + c + k] * 8;
       inverse_wht4(row, 3, out);
-      for (int k = 0; k < 4; ++k) tmp[r * w + c + k] = out[k];
+      for (int k = 0; k < 4; ++k) {
+        tmp[static_cast<std::size_t>(r * w + c + k)] = out[k];
+      }
     }
   }
   for (int c = 0; c < w; ++c) {
     int col[4];
     int out[4];
     for (int r = 0; r < h; r += 4) {
-      for (int k = 0; k < 4; ++k) col[k] = tmp[(r + k) * w + c];
+      for (int k = 0; k < 4; ++k) {
+        col[k] = tmp[static_cast<std::size_t>((r + k) * w + c)];
+      }
       inverse_wht4(col, 0, out);
       for (int k = 0; k < 4; ++k) residual[(r + k) * w + c] = out[k];
     }
@@ -174,7 +183,9 @@ void forward_lossless_block(const int* residual, int w, int h, bool dct_dct,
     forward_wht_2d(residual, w, h, levels);
     return;
   }
-  std::memcpy(levels, residual, static_cast<std::size_t>(w) * h * sizeof(int));
+  std::memcpy(levels, residual,
+              static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
+                  sizeof(int));
 }
 
 void inverse_lossless_block(const int* levels, int w, int h, bool dct_dct,
@@ -184,14 +195,18 @@ void inverse_lossless_block(const int* levels, int w, int h, bool dct_dct,
     inverse_wht_2d(levels, w, h, residual);
     return;
   }
-  std::memcpy(residual, levels, static_cast<std::size_t>(w) * h * sizeof(int));
+  std::memcpy(residual, levels,
+              static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
+                  sizeof(int));
 }
 
 namespace {
 
 void dpcm_difference(const int* residual, int w, int h, bool vertical,
                      int* out) {
-  std::memcpy(out, residual, static_cast<std::size_t>(w) * h * sizeof(int));
+  std::memcpy(out, residual,
+              static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
+                  sizeof(int));
   if (vertical) {
     for (int j = 0; j < w; ++j) {
       for (int i = 1; i < h; ++i) {
@@ -208,7 +223,9 @@ void dpcm_difference(const int* residual, int w, int h, bool vertical,
 }
 
 void dpcm_cumsum(const int* in, int w, int h, bool vertical, int* out) {
-  std::memcpy(out, in, static_cast<std::size_t>(w) * h * sizeof(int));
+  std::memcpy(out, in,
+              static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
+                  sizeof(int));
   if (vertical) {
     for (int j = 0; j < w; ++j) {
       for (int i = 1; i < h; ++i) out[i * w + j] += out[(i - 1) * w + j];
@@ -589,13 +606,15 @@ struct Plane {
   void resize(int width, int height) {
     w = width;
     h = height;
-    data.assign(static_cast<std::size_t>(w) * h, 0);
+    data.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
   }
   std::uint16_t* row(int y) {
-    return data.data() + static_cast<std::size_t>(y) * w;
+    return data.data() +
+           static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
   }
   const std::uint16_t* row(int y) const {
-    return data.data() + static_cast<std::size_t>(y) * w;
+    return data.data() +
+           static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
   }
 };
 
@@ -654,31 +673,33 @@ struct Edges16 {
 void prepare_edges16(const Plane& plane, int x, int y, int w, int h,
                      int bit_depth, bool have_left, bool have_above,
                      Edges16* edges) {
+  // have_left / have_above mean x > 0 / y > 0, so every index here is >= 0.
   const int mid = 1 << (bit_depth - 1);
   const int num_needed = w + h;
   const int max_x = plane.w - 1;
   const int max_y = plane.h - 1;
   for (int i = 0; i < num_needed; ++i) {
     if (!have_left && have_above) {
-      edges->left[i] = plane.data[static_cast<std::size_t>(y - 1) * plane.w + x];
+      edges->left[static_cast<std::size_t>(i)] =
+          plane.data[static_cast<std::size_t>((y - 1) * plane.w + x)];
     } else if (!have_left) {
-      edges->left[i] = mid + 1;
+      edges->left[static_cast<std::size_t>(i)] = mid + 1;
     } else {
       const int row = std::min(y + i, max_y);
-      edges->left[i] =
-          plane.data[static_cast<std::size_t>(row) * plane.w + (x - 1)];
+      edges->left[static_cast<std::size_t>(i)] =
+          plane.data[static_cast<std::size_t>(row * plane.w + (x - 1))];
     }
   }
   for (int i = 0; i < num_needed; ++i) {
     if (!have_above && have_left) {
-      edges->above[i] =
-          plane.data[static_cast<std::size_t>(y) * plane.w + (x - 1)];
+      edges->above[static_cast<std::size_t>(i)] =
+          plane.data[static_cast<std::size_t>(y * plane.w + (x - 1))];
     } else if (!have_above) {
-      edges->above[i] = mid - 1;
+      edges->above[static_cast<std::size_t>(i)] = mid - 1;
     } else {
       const int col = std::min(x + i, max_x);
-      edges->above[i] =
-          plane.data[static_cast<std::size_t>(y - 1) * plane.w + col];
+      edges->above[static_cast<std::size_t>(i)] =
+          plane.data[static_cast<std::size_t>((y - 1) * plane.w + col)];
     }
   }
 }
@@ -695,23 +716,31 @@ bool predict_intra_block(const Plane& plane, int x, int y, int w, int h,
       int value = 0;
       if (have_left && have_above) {
         int sum = 0;
-        for (int k = 0; k < h; ++k) sum += edges.left[k];
-        for (int k = 0; k < w; ++k) sum += edges.above[k];
+        for (int k = 0; k < h; ++k) {
+          sum += edges.left[static_cast<std::size_t>(k)];
+        }
+        for (int k = 0; k < w; ++k) {
+          sum += edges.above[static_cast<std::size_t>(k)];
+        }
         value = clip1_depth(approx_divide_lossless(sum, w + h), bit_depth);
       } else if (have_left) {
         int sum = 0;
-        for (int k = 0; k < h; ++k) sum += edges.left[k];
+        for (int k = 0; k < h; ++k) {
+          sum += edges.left[static_cast<std::size_t>(k)];
+        }
         value = round2_shift(sum, floor_log2(h));
       } else if (have_above) {
         int sum = 0;
-        for (int k = 0; k < w; ++k) sum += edges.above[k];
+        for (int k = 0; k < w; ++k) {
+          sum += edges.above[static_cast<std::size_t>(k)];
+        }
         value = round2_shift(sum, floor_log2(w));
       } else {
         value = 1 << (bit_depth - 1);
       }
       for (int i = 0; i < h; ++i) {
         for (int j = 0; j < w; ++j) {
-          dst[static_cast<std::size_t>(i) * dst_stride + j] =
+          dst[static_cast<std::size_t>(i) * dst_stride + static_cast<std::size_t>(j)] =
               static_cast<std::uint16_t>(value);
         }
       }
@@ -720,16 +749,16 @@ bool predict_intra_block(const Plane& plane, int x, int y, int w, int h,
     case kV:
       for (int i = 0; i < h; ++i) {
         for (int j = 0; j < w; ++j) {
-          dst[static_cast<std::size_t>(i) * dst_stride + j] =
-              static_cast<std::uint16_t>(edges.above[j]);
+          dst[static_cast<std::size_t>(i) * dst_stride + static_cast<std::size_t>(j)] =
+              static_cast<std::uint16_t>(edges.above[static_cast<std::size_t>(j)]);
         }
       }
       return true;
     case kH:
       for (int i = 0; i < h; ++i) {
         for (int j = 0; j < w; ++j) {
-          dst[static_cast<std::size_t>(i) * dst_stride + j] =
-              static_cast<std::uint16_t>(edges.left[i]);
+          dst[static_cast<std::size_t>(i) * dst_stride + static_cast<std::size_t>(j)] =
+              static_cast<std::uint16_t>(edges.left[static_cast<std::size_t>(i)]);
         }
       }
       return true;
@@ -741,8 +770,8 @@ bool predict_intra_block(const Plane& plane, int x, int y, int w, int h,
 void predict_inter_zero(const Plane& ref, int x, int y, int w, int h,
                         std::uint16_t* dst, std::size_t dst_stride) {
   for (int i = 0; i < h; ++i) {
-    const std::uint16_t* src = ref.data.data() +
-                               static_cast<std::size_t>(y + i) * ref.w + x;
+    const std::uint16_t* src =
+        ref.data.data() + static_cast<std::size_t>((y + i) * ref.w + x);
     std::uint16_t* d = dst + static_cast<std::size_t>(i) * dst_stride;
     std::memcpy(d, src, static_cast<std::size_t>(w) * sizeof(std::uint16_t));
   }
@@ -756,10 +785,10 @@ void predict_inter_compound(const Plane& ref0, const Plane& ref1, int x,
                             int y, int w, int h, int bit_depth,
                             std::uint16_t* dst, std::size_t dst_stride) {
   for (int i = 0; i < h; ++i) {
-    const std::uint16_t* a = ref0.data.data() +
-                             static_cast<std::size_t>(y + i) * ref0.w + x;
-    const std::uint16_t* b = ref1.data.data() +
-                             static_cast<std::size_t>(y + i) * ref1.w + x;
+    const std::uint16_t* a =
+        ref0.data.data() + static_cast<std::size_t>((y + i) * ref0.w + x);
+    const std::uint16_t* b =
+        ref1.data.data() + static_cast<std::size_t>((y + i) * ref1.w + x);
     std::uint16_t* d = dst + static_cast<std::size_t>(i) * dst_stride;
     for (int j = 0; j < w; ++j) {
       d[j] = static_cast<std::uint16_t>(
@@ -774,21 +803,25 @@ void reconstruct_block(const int* levels, int w, int h, bool dct_dct, bool dpcm,
                        bool vertical, const std::uint16_t* pred,
                        std::size_t pred_stride, std::uint16_t* recon,
                        std::size_t recon_stride, int bit_depth) {
-  std::vector<int> tmp(static_cast<std::size_t>(w) * h);
-  std::vector<int> residual(static_cast<std::size_t>(w) * h);
+  std::vector<int> tmp(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+  std::vector<int> residual(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
   inverse_lossless_block(levels, w, h, dct_dct, tmp.data());
   if (dpcm) {
     dpcm_cumsum(tmp.data(), w, h, vertical, residual.data());
   } else {
     std::memcpy(residual.data(), tmp.data(),
-                static_cast<std::size_t>(w) * h * sizeof(int));
+                static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
+                    sizeof(int));
   }
   for (int i = 0; i < h; ++i) {
     for (int j = 0; j < w; ++j) {
-      const int p = pred[static_cast<std::size_t>(i) * pred_stride + j];
-      recon[static_cast<std::size_t>(i) * recon_stride + j] =
+      const int p = pred[static_cast<std::size_t>(i) * pred_stride +
+                         static_cast<std::size_t>(j)];
+      recon[static_cast<std::size_t>(i) * recon_stride +
+            static_cast<std::size_t>(j)] =
           static_cast<std::uint16_t>(
-              clip1_depth(p + residual[i * w + j], bit_depth));
+              clip1_depth(p + residual[static_cast<std::size_t>(i * w + j)],
+                          bit_depth));
     }
   }
 }
@@ -824,7 +857,7 @@ struct TileContext {
     g = &geo;
     above_mi.assign(static_cast<std::size_t>(geo.mi_cols) + 16, kSentinel256);
     left_mi.assign(static_cast<std::size_t>(geo.mi_rows) + 16, kSentinel256);
-    for (int p = 0; p < 3; ++p) {
+    for (std::size_t p = 0; p < 3; ++p) {
       const int w = p == 0 ? geo.mi_cols : geo.chroma_mi_cols;
       const int h = p == 0 ? geo.mi_rows : geo.chroma_mi_rows;
       above_level[p].assign(static_cast<std::size_t>(w) + 16, 0);
@@ -832,8 +865,8 @@ struct TileContext {
       above_dc[p].assign(static_cast<std::size_t>(w) + 16, 0);
       left_dc[p].assign(static_cast<std::size_t>(h) + 16, 0);
     }
-    const std::size_t cells =
-        static_cast<std::size_t>(geo.mi_cols) * geo.mi_rows;
+    const std::size_t cells = static_cast<std::size_t>(geo.mi_cols) *
+                              static_cast<std::size_t>(geo.mi_rows);
     intra_joint.assign(cells, 0);
     fsc_modes.assign(cells, 0);
     is_inter.assign(cells, 0);
@@ -846,14 +879,14 @@ struct TileContext {
   }
 
   void clear_above() {
-    for (int p = 0; p < 3; ++p) {
+    for (std::size_t p = 0; p < 3; ++p) {
       std::fill(above_level[p].begin(), above_level[p].end(), 0);
       std::fill(above_dc[p].begin(), above_dc[p].end(), 0);
     }
     std::fill(above_mi.begin(), above_mi.end(), kSentinel256);
   }
   void clear_left() {
-    for (int p = 0; p < 3; ++p) {
+    for (std::size_t p = 0; p < 3; ++p) {
       std::fill(left_level[p].begin(), left_level[p].end(), 0);
       std::fill(left_dc[p].begin(), left_dc[p].end(), 0);
     }
@@ -864,7 +897,8 @@ struct TileContext {
     return r >= 0 && r < g->mi_rows && c >= 0 && c < g->mi_cols;
   }
   std::size_t cell(int r, int c) const {
-    return static_cast<std::size_t>(r) * g->mi_cols + c;
+    // mi coordinates are non-negative at every call site.
+    return static_cast<std::size_t>(r * g->mi_cols + c);
   }
 
   int joint_mode(int r, int c, int w4, int h4, int dir) const {
@@ -1121,11 +1155,11 @@ int do_split_context(const TileContext& ctx, int r, int c, BlockSize bsize) {
   const int bsw = std::max(partition::mi_width_log2(bsize), 1);
   const int bsh = std::max(partition::mi_height_log2(bsize), 1);
   const int ctx1 = partition::mi_height_log2(
-                       static_cast<BlockSize>(ctx.left_mi[r])) < bsh
+                       static_cast<BlockSize>(ctx.left_mi[static_cast<std::size_t>(r)])) < bsh
                        ? 1
                        : 0;
   const int ctx2 = partition::mi_width_log2(
-                       static_cast<BlockSize>(ctx.above_mi[c])) < bsw
+                       static_cast<BlockSize>(ctx.above_mi[static_cast<std::size_t>(c)])) < bsw
                        ? 1
                        : 0;
   return partition::partition_size_adjust(bsize) * 4 + ctx1 * 2 + ctx2;
@@ -1135,11 +1169,11 @@ int rect_type_context(const TileContext& ctx, int r, int c, BlockSize bsize) {
   const int bsw = std::max(partition::mi_width_log2(bsize), 1);
   const int bsh = std::max(partition::mi_height_log2(bsize), 1);
   const int ctx1 = partition::mi_height_log2(
-                       static_cast<BlockSize>(ctx.left_mi[r])) < bsh
+                       static_cast<BlockSize>(ctx.left_mi[static_cast<std::size_t>(r)])) < bsh
                        ? 1
                        : 0;
   const int ctx2 = partition::mi_width_log2(
-                       static_cast<BlockSize>(ctx.above_mi[c])) < bsw
+                       static_cast<BlockSize>(ctx.above_mi[static_cast<std::size_t>(c)])) < bsw
                        ? 1
                        : 0;
   return partition::partition_size_adjust_rect_type(bsize) * 4 + ctx1 * 2 +
@@ -1170,11 +1204,11 @@ int eob_multisize(int w, int h) {
 }
 
 void build_scan(int w, int h, std::vector<int>* out) {
-  out->assign(static_cast<std::size_t>(w) * h, 0);
+  out->assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
   int x = 0;
   int y = 0;
   for (int c = 0; c < w * h; ++c) {
-    (*out)[c] = y * w + x;
+    (*out)[static_cast<std::size_t>(c)] = y * w + x;
     x += 1;
     y -= 1;
     if (y < 0 || x >= w) {
@@ -1239,10 +1273,14 @@ int all_zero_context(const TileContext& ctx, int plane, int x4, int y4, int w4,
     const int max_x = ctx.g->mi_cols;
     const int max_y = ctx.g->mi_rows;
     for (int k = 0; k < w4; ++k) {
-      if (x4 + k < max_x) top |= ctx.above_level[0][x4 + k];
+      if (x4 + k < max_x) {
+        top |= ctx.above_level[0][static_cast<std::size_t>(x4 + k)];
+      }
     }
     for (int k = 0; k < h4; ++k) {
-      if (y4 + k < max_y) left |= ctx.left_level[0][y4 + k];
+      if (y4 + k < max_y) {
+        left |= ctx.left_level[0][static_cast<std::size_t>(y4 + k)];
+      }
     }
     top = std::min(top, 4);
     left = std::min(left, 4);
@@ -1252,18 +1290,19 @@ int all_zero_context(const TileContext& ctx, int plane, int x4, int y4, int w4,
   }
   int above = 0;
   int left = 0;
+  const std::size_t p = static_cast<std::size_t>(plane);
   const int max_x = ctx.g->chroma_mi_cols;
   const int max_y = ctx.g->chroma_mi_rows;
   for (int i = 0; i < w4; ++i) {
     if (x4 + i < max_x) {
-      above |= ctx.above_level[plane][x4 + i];
-      above |= ctx.above_dc[plane][x4 + i];
+      above |= ctx.above_level[p][static_cast<std::size_t>(x4 + i)];
+      above |= ctx.above_dc[p][static_cast<std::size_t>(x4 + i)];
     }
   }
   for (int i = 0; i < h4; ++i) {
     if (y4 + i < max_y) {
-      left |= ctx.left_level[plane][y4 + i];
-      left |= ctx.left_dc[plane][y4 + i];
+      left |= ctx.left_level[p][static_cast<std::size_t>(y4 + i)];
+      left |= ctx.left_dc[p][static_cast<std::size_t>(y4 + i)];
     }
   }
   int c = (above != 0 ? 1 : 0) + (left != 0 ? 1 : 0);
@@ -1278,25 +1317,31 @@ int all_zero_context(const TileContext& ctx, int plane, int x4, int y4, int w4,
 
 void clear_coeff_context(TileContext& ctx, int plane, int x4, int y4, int w4,
                          int h4) {
+  const std::size_t p = static_cast<std::size_t>(plane);
   for (int i = 0; i < w4; ++i) {
-    ctx.above_level[plane][x4 + i] = 0;
-    ctx.above_dc[plane][x4 + i] = 0;
+    ctx.above_level[p][static_cast<std::size_t>(x4 + i)] = 0;
+    ctx.above_dc[p][static_cast<std::size_t>(x4 + i)] = 0;
   }
   for (int i = 0; i < h4; ++i) {
-    ctx.left_level[plane][y4 + i] = 0;
-    ctx.left_dc[plane][y4 + i] = 0;
+    ctx.left_level[p][static_cast<std::size_t>(y4 + i)] = 0;
+    ctx.left_dc[p][static_cast<std::size_t>(y4 + i)] = 0;
   }
 }
 
 void update_coeff_context(TileContext& ctx, int plane, int x4, int y4, int w4,
                           int h4, int cul_level, int dc_category) {
+  const std::size_t p = static_cast<std::size_t>(plane);
   for (int i = 0; i < w4; ++i) {
-    ctx.above_level[plane][x4 + i] = static_cast<std::uint8_t>(cul_level);
-    ctx.above_dc[plane][x4 + i] = static_cast<std::uint8_t>(dc_category);
+    ctx.above_level[p][static_cast<std::size_t>(x4 + i)] =
+        static_cast<std::uint8_t>(cul_level);
+    ctx.above_dc[p][static_cast<std::size_t>(x4 + i)] =
+        static_cast<std::uint8_t>(dc_category);
   }
   for (int i = 0; i < h4; ++i) {
-    ctx.left_level[plane][y4 + i] = static_cast<std::uint8_t>(cul_level);
-    ctx.left_dc[plane][y4 + i] = static_cast<std::uint8_t>(dc_category);
+    ctx.left_level[p][static_cast<std::size_t>(y4 + i)] =
+        static_cast<std::uint8_t>(cul_level);
+    ctx.left_dc[p][static_cast<std::size_t>(y4 + i)] =
+        static_cast<std::uint8_t>(dc_category);
   }
 }
 
@@ -1540,7 +1585,7 @@ CoeffResult write_coeff_normal(CdfState& c, SymWriter& sw, TileContext& ctx,
   build_scan(w, h, &scan);
   int eob = 0;
   for (int i = seg_eob - 1; i >= 0; --i) {
-    if (levels[scan[i]] != 0) {
+    if (levels[scan[static_cast<std::size_t>(i)]] != 0) {
       eob = i + 1;
       break;
     }
@@ -1562,11 +1607,11 @@ CoeffResult write_coeff_normal(CdfState& c, SymWriter& sw, TileContext& ctx,
     return out;
   }
 
-  std::vector<int> level_pre(static_cast<std::size_t>(w) * h, 0);
+  std::vector<int> level_pre(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
   int hr_level_avg = 0;
 
   for (int ci = eob - 1; ci >= 0; --ci) {
-    const int pos = scan[ci];
+    const int pos = scan[static_cast<std::size_t>(ci)];
     const int row = pos / w;
     const int col = pos % w;
     const bool lf = plane == 0 ? ((row + col) < 4) : ((row + col) < 1);
@@ -1621,7 +1666,8 @@ CoeffResult write_coeff_normal(CdfState& c, SymWriter& sw, TileContext& ctx,
         const int cc = col + kSigRefDiff[idx][1];
         if (rr < h && cc < w) {
           const int limit = lf ? 5 : 3;
-          mag += std::min(level_pre[rr * w + cc], limit);
+          mag += std::min(level_pre[static_cast<std::size_t>(rr * w + cc)],
+                          limit);
         }
       }
       const int mctx = (mag + 1) >> 1;
@@ -1664,7 +1710,7 @@ CoeffResult write_coeff_normal(CdfState& c, SymWriter& sw, TileContext& ctx,
         const int rr = row + kMagRef[idx][0];
         const int cc = col + kMagRef[idx][1];
         if (rr < h && cc < w) {
-          mag += std::min(level_pre[rr * w + cc], 5);
+          mag += std::min(level_pre[static_cast<std::size_t>(rr * w + cc)], 5);
         }
       }
       mag = std::min((mag + 1) >> 1, 6);
@@ -1684,14 +1730,14 @@ CoeffResult write_coeff_normal(CdfState& c, SymWriter& sw, TileContext& ctx,
         }
       }
     }
-    level_pre[pos] = pre_level;
+    level_pre[static_cast<std::size_t>(pos)] = pre_level;
   }
 
   for (int ci = eob - 1; ci >= 0; --ci) {
-    const int pos = scan[ci];
+    const int pos = scan[static_cast<std::size_t>(ci)];
     const int row = pos / w;
     const int col = pos % w;
-    const int pre_level = level_pre[pos];
+    const int pre_level = level_pre[static_cast<std::size_t>(pos)];
     const int absv = abs_int(levels[pos]);
     const bool negative = levels[pos] < 0;
     if (pre_level != 0) {
@@ -1732,7 +1778,7 @@ CoeffResult write_coeff_fsc(CdfState& c, SymWriter& sw, TileContext& ctx,
   build_scan(w, h, &scan);
   int first = -1;
   for (int i = 0; i < seg_eob; ++i) {
-    if (levels[scan[i]] != 0) {
+    if (levels[scan[static_cast<std::size_t>(i)]] != 0) {
       first = i;
       break;
     }
@@ -1754,11 +1800,11 @@ CoeffResult write_coeff_fsc(CdfState& c, SymWriter& sw, TileContext& ctx,
     return out;
   }
 
-  std::vector<int> level_grid(static_cast<std::size_t>(w) * h, 0);
-  std::vector<int> sign_grid(static_cast<std::size_t>(w) * h, 0);
+  std::vector<int> level_grid(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
+  std::vector<int> sign_grid(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
   int hr_level_avg = 0;
   for (int ci = bob; ci < seg_eob; ++ci) {
-    const int pos = scan[ci];
+    const int pos = scan[static_cast<std::size_t>(ci)];
     const int row = pos / w;
     const int col = pos % w;
     const int absv = abs_int(levels[pos]);
@@ -1775,8 +1821,12 @@ CoeffResult write_coeff_fsc(CdfState& c, SymWriter& sw, TileContext& ctx,
       }
     } else {
       int mag = 0;
-      if (col > 0) mag += std::min(3, level_grid[row * w + col - 1]);
-      if (row > 0) mag += std::min(3, level_grid[(row - 1) * w + col]);
+      if (col > 0) {
+        mag += std::min(3, level_grid[static_cast<std::size_t>(row * w + col - 1)]);
+      }
+      if (row > 0) {
+        mag += std::min(3, level_grid[static_cast<std::size_t>((row - 1) * w + col)]);
+      }
       base_symbol = absv >= 3 ? 3 : absv;
       coarse = base_symbol;
       if (!sw.sym(&c.coeff.coeff_base_idtx[std::min(2, tsc)][mag][0], 4,
@@ -1786,8 +1836,12 @@ CoeffResult write_coeff_fsc(CdfState& c, SymWriter& sw, TileContext& ctx,
     }
     if (coarse > 2) {
       int mag = 0;
-      if (col > 0) mag += std::min(5, level_grid[row * w + col - 1]);
-      if (row > 0) mag += std::min(5, level_grid[(row - 1) * w + col]);
+      if (col > 0) {
+        mag += std::min(5, level_grid[static_cast<std::size_t>(row * w + col - 1)]);
+      }
+      if (row > 0) {
+        mag += std::min(5, level_grid[static_cast<std::size_t>((row - 1) * w + col)]);
+      }
       mag = std::min(mag, 6);
       const int br = std::min(3, std::max(0, absv - coarse));
       if (!sw.sym(&c.coeff.coeff_br_idtx[std::min(2, tsc)][mag][0], 4, br)) {
@@ -1795,19 +1849,25 @@ CoeffResult write_coeff_fsc(CdfState& c, SymWriter& sw, TileContext& ctx,
       }
       coarse += br;
     }
-    level_grid[row * w + col] = coarse;
+    level_grid[static_cast<std::size_t>(row * w + col)] = coarse;
   }
 
   for (int ci = 0; ci < seg_eob; ++ci) {
-    const int pos = scan[ci];
+    const int pos = scan[static_cast<std::size_t>(ci)];
     const int row = pos / w;
     const int col = pos % w;
-    const int coarse = level_grid[row * w + col];
+    const int coarse = level_grid[static_cast<std::size_t>(row * w + col)];
     if (coarse == 0) continue;
     int signc = 0;
-    if (col > 0) signc += sign_grid[row * w + col - 1];
-    if (row > 0) signc += sign_grid[(row - 1) * w + col];
-    if (col > 0 && row > 0) signc += sign_grid[(row - 1) * w + col - 1];
+    if (col > 0) {
+      signc += sign_grid[static_cast<std::size_t>(row * w + col - 1)];
+    }
+    if (row > 0) {
+      signc += sign_grid[static_cast<std::size_t>((row - 1) * w + col)];
+    }
+    if (col > 0 && row > 0) {
+      signc += sign_grid[static_cast<std::size_t>((row - 1) * w + col - 1)];
+    }
     int sign_ctx = 0;
     if (signc > 2) sign_ctx = 5;
     else if (signc < -2) sign_ctx = 6;
@@ -1821,7 +1881,7 @@ CoeffResult write_coeff_fsc(CdfState& c, SymWriter& sw, TileContext& ctx,
                 negative ? 1 : 0)) {
       return out;
     }
-    sign_grid[row * w + col] = negative ? -1 : 1;
+    sign_grid[static_cast<std::size_t>(row * w + col)] = negative ? -1 : 1;
     if (absv >= 6) {
       if (!write_quant_escape(sw, absv - coarse, hr_level_avg)) return out;
     }
@@ -1931,11 +1991,13 @@ bool read_coeff_block(CdfState& c, SymReader& r, TileContext& ctx, int plane,
 
   if (use_fsc) {
     const int bob = seg_eob - eob;
-    std::vector<int> level_grid(static_cast<std::size_t>(w) * h, 0);
-    std::vector<int> sign_grid(static_cast<std::size_t>(w) * h, 0);
+    std::vector<int> level_grid(static_cast<std::size_t>(w) * static_cast<std::size_t>(h),
+                                0);
+    std::vector<int> sign_grid(static_cast<std::size_t>(w) * static_cast<std::size_t>(h),
+                               0);
     int hr_level_avg = 0;
     for (int ci = bob; ci < seg_eob; ++ci) {
-      const int pos = scan[ci];
+      const int pos = scan[static_cast<std::size_t>(ci)];
       const int row = pos / w;
       const int col = pos % w;
       int coarse = 0;
@@ -1948,8 +2010,12 @@ bool read_coeff_block(CdfState& c, SymReader& r, TileContext& ctx, int plane,
         coarse = symbol + 1;
       } else {
         int mag = 0;
-        if (col > 0) mag += std::min(3, level_grid[row * w + col - 1]);
-        if (row > 0) mag += std::min(3, level_grid[(row - 1) * w + col]);
+        if (col > 0) {
+          mag += std::min(3, level_grid[static_cast<std::size_t>(row * w + col - 1)]);
+        }
+        if (row > 0) {
+          mag += std::min(3, level_grid[static_cast<std::size_t>((row - 1) * w + col)]);
+        }
         int symbol = 0;
         if (!r.sym(&c.coeff.coeff_base_idtx[std::min(2, tsc)][mag][0], 4,
                    &symbol)) return false;
@@ -1957,8 +2023,12 @@ bool read_coeff_block(CdfState& c, SymReader& r, TileContext& ctx, int plane,
       }
       if (coarse > 2) {
         int mag = 0;
-        if (col > 0) mag += std::min(5, level_grid[row * w + col - 1]);
-        if (row > 0) mag += std::min(5, level_grid[(row - 1) * w + col]);
+        if (col > 0) {
+          mag += std::min(5, level_grid[static_cast<std::size_t>(row * w + col - 1)]);
+        }
+        if (row > 0) {
+          mag += std::min(5, level_grid[static_cast<std::size_t>((row - 1) * w + col)]);
+        }
         mag = std::min(mag, 6);
         int br = 0;
         if (!r.sym(&c.coeff.coeff_br_idtx[std::min(2, tsc)][mag][0], 4, &br)) {
@@ -1966,18 +2036,24 @@ bool read_coeff_block(CdfState& c, SymReader& r, TileContext& ctx, int plane,
         }
         coarse += br;
       }
-      level_grid[row * w + col] = coarse;
+      level_grid[static_cast<std::size_t>(row * w + col)] = coarse;
     }
     for (int ci = 0; ci < seg_eob; ++ci) {
-      const int pos = scan[ci];
+      const int pos = scan[static_cast<std::size_t>(ci)];
       const int row = pos / w;
       const int col = pos % w;
-      const int coarse = level_grid[row * w + col];
+      const int coarse = level_grid[static_cast<std::size_t>(row * w + col)];
       if (coarse == 0) continue;
       int signc = 0;
-      if (col > 0) signc += sign_grid[row * w + col - 1];
-      if (row > 0) signc += sign_grid[(row - 1) * w + col];
-      if (col > 0 && row > 0) signc += sign_grid[(row - 1) * w + col - 1];
+      if (col > 0) {
+        signc += sign_grid[static_cast<std::size_t>(row * w + col - 1)];
+      }
+      if (row > 0) {
+        signc += sign_grid[static_cast<std::size_t>((row - 1) * w + col)];
+      }
+      if (col > 0 && row > 0) {
+        signc += sign_grid[static_cast<std::size_t>((row - 1) * w + col - 1)];
+      }
       int sign_ctx = 0;
       if (signc > 2) sign_ctx = 5;
       else if (signc < -2) sign_ctx = 6;
@@ -1989,7 +2065,7 @@ bool read_coeff_block(CdfState& c, SymReader& r, TileContext& ctx, int plane,
       if (!r.sym(&c.coeff.idtx_sign[std::min(2, tsc)][sign_ctx][0], 2,
                  &sign)) return false;
       const bool negative = sign != 0;
-      sign_grid[row * w + col] = negative ? -1 : 1;
+      sign_grid[static_cast<std::size_t>(row * w + col)] = negative ? -1 : 1;
       int absv = coarse;
       if (coarse >= 6) {
         int x = 0;
@@ -2006,10 +2082,10 @@ bool read_coeff_block(CdfState& c, SymReader& r, TileContext& ctx, int plane,
     return true;
   }
 
-  std::vector<int> level_pre(static_cast<std::size_t>(w) * h, 0);
+  std::vector<int> level_pre(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
   int hr_level_avg = 0;
   for (int ci = eob - 1; ci >= 0; --ci) {
-    const int pos = scan[ci];
+    const int pos = scan[static_cast<std::size_t>(ci)];
     const int row = pos / w;
     const int col = pos % w;
     const bool lf = plane == 0 ? ((row + col) < 4) : ((row + col) < 1);
@@ -2052,7 +2128,8 @@ bool read_coeff_block(CdfState& c, SymReader& r, TileContext& ctx, int plane,
         const int cc = col + kSigRefDiff[idx][1];
         if (rr < h && cc < w) {
           const int limit = lf ? 5 : 3;
-          mag += std::min(level_pre[rr * w + cc], limit);
+          mag += std::min(level_pre[static_cast<std::size_t>(rr * w + cc)],
+                          limit);
         }
       }
       const int mctx = (mag + 1) >> 1;
@@ -2097,7 +2174,7 @@ bool read_coeff_block(CdfState& c, SymReader& r, TileContext& ctx, int plane,
         const int rr = row + kMagRef[idx][0];
         const int cc = col + kMagRef[idx][1];
         if (rr < h && cc < w) {
-          mag += std::min(level_pre[rr * w + cc], 5);
+          mag += std::min(level_pre[static_cast<std::size_t>(rr * w + cc)], 5);
         }
       }
       mag = std::min((mag + 1) >> 1, 6);
@@ -2117,14 +2194,14 @@ bool read_coeff_block(CdfState& c, SymReader& r, TileContext& ctx, int plane,
       }
       pre_level += br;
     }
-    level_pre[pos] = pre_level;
+    level_pre[static_cast<std::size_t>(pos)] = pre_level;
   }
 
   for (int ci = eob - 1; ci >= 0; --ci) {
-    const int pos = scan[ci];
+    const int pos = scan[static_cast<std::size_t>(ci)];
     const int row = pos / w;
     const int col = pos % w;
-    const int pre_level = level_pre[pos];
+    const int pre_level = level_pre[static_cast<std::size_t>(pos)];
     if (pre_level == 0) continue;
     const bool lf = plane == 0 ? ((row + col) < 4) : ((row + col) < 1);
     bool negative = false;
@@ -2578,8 +2655,10 @@ class TileWriter {
         ctx_.ref1[idx] = static_cast<std::uint8_t>(
             plan.is_inter && plan.compound ? 1 : 0xff);
         ctx_.skip[idx] = 0;
-        ctx_.left_mi[r + y] = static_cast<int>(bsize);
-        ctx_.above_mi[c + x] = static_cast<int>(bsize);
+        ctx_.left_mi[static_cast<std::size_t>(r + y)] =
+            static_cast<int>(bsize);
+        ctx_.above_mi[static_cast<std::size_t>(c + x)] =
+            static_cast<int>(bsize);
       }
     }
 
@@ -2608,7 +2687,7 @@ class TileWriter {
     const int y = r * 4;
     const int tw4 = bw / 4;
     const int th4 = bh / 4;
-    luma_idtx->assign(static_cast<std::size_t>(tw4) * th4, 0);
+    luma_idtx->assign(static_cast<std::size_t>(tw4) * static_cast<std::size_t>(th4), 0);
     PredictionScratch s;
 
     auto code_one = [&](int tx, int ty, int w, int h, bool idtx,
@@ -2618,27 +2697,32 @@ class TileWriter {
       if (plan.is_inter) {
         if (plan.compound) {
           predict_inter_compound(*ref_[0], *ref1_[0], px, py, w, h,
-                                 opt_.bit_depth, s.pred.data(), w);
+                                 opt_.bit_depth, s.pred.data(),
+                                 static_cast<std::size_t>(w));
         } else {
-          predict_inter_zero(*ref_[0], px, py, w, h, s.pred.data(), w);
+          predict_inter_zero(*ref_[0], px, py, w, h, s.pred.data(),
+                             static_cast<std::size_t>(w));
         }
       } else if (!predict_intra_block(*recon_[0], px, py, w, h, plan.y_mode,
-                                      px > 0, py > 0, opt_.bit_depth, s.pred.data(), w)) {
+                                      px > 0, py > 0, opt_.bit_depth,
+                                      s.pred.data(), static_cast<std::size_t>(w))) {
         *error = "luma intra prediction failed";
         return false;
       }
       for (int i = 0; i < h; ++i) {
         for (int j = 0; j < w; ++j) {
-          const int src = src_[0]->data[static_cast<std::size_t>(py + i) *
-                                            src_[0]->w + (px + j)];
-          s.residual[i * w + j] = src - s.pred[i * w + j];
+          const int src = src_[0]->data[static_cast<std::size_t>(
+              (py + i) * src_[0]->w + (px + j))];
+          s.residual[static_cast<std::size_t>(i * w + j)] =
+              src - s.pred[static_cast<std::size_t>(i * w + j)];
         }
       }
       if (dpcm) {
         dpcm_difference(s.residual.data(), w, h, vertical, s.tmp.data());
       } else {
         std::memcpy(s.tmp.data(), s.residual.data(),
-                    static_cast<std::size_t>(w) * h * sizeof(int));
+                    static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
+                        sizeof(int));
       }
       forward_lossless_block(s.tmp.data(), w, h, !idtx, s.levels.data());
       const int x4 = px >> 2;
@@ -2659,10 +2743,11 @@ class TileWriter {
         return false;
       }
       reconstruct_block(s.levels.data(), w, h, !idtx, dpcm, vertical,
-                        s.pred.data(), w,
+                        s.pred.data(), static_cast<std::size_t>(w),
                         recon_[0]->data.data() +
-                            static_cast<std::size_t>(py) * recon_[0]->w + px,
-                        recon_[0]->w, opt_.bit_depth);
+                            static_cast<std::size_t>(py * recon_[0]->w + px),
+                        static_cast<std::size_t>(recon_[0]->w),
+                        opt_.bit_depth);
       return true;
     };
 
@@ -2680,9 +2765,11 @@ class TileWriter {
           // symbol and the decoder infers TxTypes = DCT_DCT.  Store the
           // effective type so the chroma tx type derivation matches.
           bool nonzero = false;
-          for (int q = 0; q < 16; ++q) nonzero |= s.levels[q] != 0;
+          for (int q = 0; q < 16; ++q) {
+            nonzero |= s.levels[static_cast<std::size_t>(q)] != 0;
+          }
           const bool effective_idtx = nonzero && idtx;
-          (*luma_idtx)[static_cast<std::size_t>(ty / 4) * tw4 + tx / 4] =
+          (*luma_idtx)[static_cast<std::size_t>((ty / 4) * tw4 + tx / 4)] =
               effective_idtx ? 1 : 0;
           if (effective_idtx) ++stats_->idtx_4x4;
           else ++stats_->dct_dct_4x4;
@@ -2744,7 +2831,7 @@ class TileWriter {
               const int lx = (cx << g_.sub_x) >> 2;
               const int ly = (cy << g_.sub_y) >> 2;
               const std::size_t li =
-                  static_cast<std::size_t>(ly) * luma_w4 + lx;
+                  static_cast<std::size_t>(ly * luma_w4 + lx);
               idtx = li < luma_idtx.size() && luma_idtx[li] != 0;
             }
           } else {
@@ -2765,9 +2852,10 @@ class TileWriter {
           }
           for (int i = 0; i < 4; ++i) {
             for (int j = 0; j < 4; ++j) {
-              const int src = src_[plane]->data[static_cast<std::size_t>(py + i) *
-                                                    src_[plane]->w + (px + j)];
-              s.residual[i * 4 + j] = src - s.pred[i * 4 + j];
+              const int src = src_[plane]->data[static_cast<std::size_t>(
+                  (py + i) * src_[plane]->w + (px + j))];
+              s.residual[static_cast<std::size_t>(i * 4 + j)] =
+                  src - s.pred[static_cast<std::size_t>(i * 4 + j)];
             }
           }
           const bool dpcm = !plan.is_inter && plan.use_dpcm_uv;
@@ -2795,9 +2883,10 @@ class TileWriter {
           reconstruct_block(s.levels.data(), 4, 4, !idtx, dpcm,
                             plan.dpcm_uv_vertical, s.pred.data(), 4,
                             recon_[plane]->data.data() +
-                                static_cast<std::size_t>(py) * recon_[plane]->w +
-                                px,
-                            recon_[plane]->w, opt_.bit_depth);
+                                static_cast<std::size_t>(py * recon_[plane]->w +
+                                                         px),
+                            static_cast<std::size_t>(recon_[plane]->w),
+                            opt_.bit_depth);
         }
       }
     }
@@ -3185,8 +3274,10 @@ class TileReader {
         ctx_.ref1[idx] = static_cast<std::uint8_t>(
             plan.is_inter && plan.compound ? 1 : 0xff);
         ctx_.skip[idx] = 0;
-        ctx_.left_mi[r + y] = static_cast<int>(bsize);
-        ctx_.above_mi[c + x] = static_cast<int>(bsize);
+        ctx_.left_mi[static_cast<std::size_t>(r + y)] =
+            static_cast<int>(bsize);
+        ctx_.above_mi[static_cast<std::size_t>(c + x)] =
+            static_cast<int>(bsize);
       }
     }
 
@@ -3215,9 +3306,9 @@ class TileReader {
     const int y = r * 4;
     const int tw4 = bw / 4;
     const int th4 = bh / 4;
-    luma_idtx->assign(static_cast<std::size_t>(tw4) * th4, 0);
+    luma_idtx->assign(static_cast<std::size_t>(tw4) * static_cast<std::size_t>(th4), 0);
     PredictionScratch s;
-    std::vector<int> levels(static_cast<std::size_t>(bw) * bh, 0);
+    std::vector<int> levels(static_cast<std::size_t>(bw) * static_cast<std::size_t>(bh), 0);
 
     auto read_one = [&](int tx, int ty, int w, int h, bool* idtx,
                         bool dpcm, bool vertical) -> bool {
@@ -3226,12 +3317,15 @@ class TileReader {
       if (plan.is_inter) {
         if (plan.compound) {
           predict_inter_compound(*ref_[0], *ref1_[0], px, py, w, h,
-                                 opt_.bit_depth, s.pred.data(), w);
+                                 opt_.bit_depth, s.pred.data(),
+                                 static_cast<std::size_t>(w));
         } else {
-          predict_inter_zero(*ref_[0], px, py, w, h, s.pred.data(), w);
+          predict_inter_zero(*ref_[0], px, py, w, h, s.pred.data(),
+                             static_cast<std::size_t>(w));
         }
       } else if (!predict_intra_block(*recon_[0], px, py, w, h, plan.y_mode,
-                                      px > 0, py > 0, opt_.bit_depth, s.pred.data(), w)) {
+                                      px > 0, py > 0, opt_.bit_depth,
+                                      s.pred.data(), static_cast<std::size_t>(w))) {
         *error = "luma intra prediction failed";
         return false;
       }
@@ -3246,10 +3340,11 @@ class TileReader {
       // symbol is only present for a non-zero block.
       if (cr.eob == 0) *idtx = false;
       reconstruct_block(levels.data(), w, h, !*idtx, dpcm, vertical,
-                        s.pred.data(), w,
+                        s.pred.data(), static_cast<std::size_t>(w),
                         recon_[0]->data.data() +
-                            static_cast<std::size_t>(py) * recon_[0]->w + px,
-                        recon_[0]->w, opt_.bit_depth);
+                            static_cast<std::size_t>(py * recon_[0]->w + px),
+                        static_cast<std::size_t>(recon_[0]->w),
+                        opt_.bit_depth);
       return true;
     };
 
@@ -3258,7 +3353,7 @@ class TileReader {
         for (int tx = 0; tx < bw; tx += 4) {
           bool idtx = true;
           if (!read_one(tx, ty, 4, 4, &idtx, false, false)) return false;
-          (*luma_idtx)[static_cast<std::size_t>(ty / 4) * tw4 + tx / 4] =
+          (*luma_idtx)[static_cast<std::size_t>((ty / 4) * tw4 + tx / 4)] =
               idtx ? 1 : 0;
           if (idtx) ++stats_->idtx_4x4;
           else ++stats_->dct_dct_4x4;
@@ -3317,7 +3412,7 @@ class TileReader {
               const int lx = (cx << g_.sub_x) >> 2;
               const int ly = (cy << g_.sub_y) >> 2;
               const std::size_t li =
-                  static_cast<std::size_t>(ly) * luma_w4 + lx;
+                  static_cast<std::size_t>(ly * luma_w4 + lx);
               idtx = li < luma_idtx.size() && luma_idtx[li] != 0;
             }
           } else {
@@ -3351,9 +3446,10 @@ class TileReader {
           reconstruct_block(levels.data(), 4, 4, !idtx, dpcm,
                             plan.dpcm_uv_vertical, s.pred.data(), 4,
                             recon_[plane]->data.data() +
-                                static_cast<std::size_t>(py) * recon_[plane]->w +
-                                px,
-                            recon_[plane]->w, opt_.bit_depth);
+                                static_cast<std::size_t>(py * recon_[plane]->w +
+                                                         px),
+                            static_cast<std::size_t>(recon_[plane]->w),
+                            opt_.bit_depth);
         }
       }
     }
@@ -4230,16 +4326,17 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
 
 bool planes_from_picture(const Picture& p, const Geometry& g, Plane* out,
                          std::string* error) {
-  const std::size_t y_size = static_cast<std::size_t>(g.width) * g.height;
-  const std::size_t c_size =
-      static_cast<std::size_t>(g.chroma_w) * g.chroma_h;
+  const std::size_t y_size =
+      static_cast<std::size_t>(g.width) * static_cast<std::size_t>(g.height);
+  const std::size_t c_size = static_cast<std::size_t>(g.chroma_w) *
+                             static_cast<std::size_t>(g.chroma_h);
   if (p.y.size() < y_size) {
     *error = "picture plane spans are smaller than the geometry";
     return false;
   }
   out[0].w = g.width;
   out[0].h = g.height;
-  out[0].data.assign(p.y.begin(), p.y.begin() + y_size);
+  out[0].data.assign(p.y.data(), p.y.data() + y_size);
   if (!g.has_chroma) {
     for (int plane = 1; plane < 3; ++plane) {
       out[plane].w = 0;
@@ -4254,10 +4351,10 @@ bool planes_from_picture(const Picture& p, const Geometry& g, Plane* out,
   }
   out[1].w = g.chroma_w;
   out[1].h = g.chroma_h;
-  out[1].data.assign(p.u.begin(), p.u.begin() + c_size);
+  out[1].data.assign(p.u.data(), p.u.data() + c_size);
   out[2].w = g.chroma_w;
   out[2].h = g.chroma_h;
-  out[2].data.assign(p.v.begin(), p.v.begin() + c_size);
+  out[2].data.assign(p.v.data(), p.v.data() + c_size);
   return true;
 }
 
@@ -4743,7 +4840,7 @@ bool fsc_coeff_roundtrip(const int* levels, const CoeffContext& context,
   rtc.reset(g);
   SymReader sr;
   if (!sr.init(out.data(), out.size(), bytes, false, error)) return false;
-  std::vector<int> got(static_cast<std::size_t>(w) * h, 0);
+  std::vector<int> got(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
   CoeffResult cr;
   bool idtx = true;
   if (any) {
@@ -4766,7 +4863,8 @@ bool fsc_coeff_roundtrip(const int* levels, const CoeffContext& context,
     return false;
   }
   std::memcpy(decoded, got.data(),
-              static_cast<std::size_t>(w) * h * sizeof(int));
+              static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
+                  sizeof(int));
   return true;
 }
 

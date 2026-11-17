@@ -227,7 +227,7 @@ bool encode_svc_sequence(std::span<const video::VideoInputFrame> frames,
   std::vector<std::vector<OwnedFrame>> scaled(layer_count);
   // encoded[x][m]
   std::vector<std::vector<LayerEncoded>> encoded(
-      layer_count, std::vector<LayerEncoded>(embedded_count));
+      layer_count, std::vector<LayerEncoded>(static_cast<std::size_t>(embedded_count)));
   for (std::size_t x = 0; x < layer_count; ++x) {
     const SpatialLayerSpec& spec = plan.config.spatial_layers[x];
     if (spec.width % 8 != 0 || spec.height % 8 != 0) {
@@ -556,7 +556,7 @@ bool encode_svc_sequence(std::span<const video::VideoInputFrame> frames,
     out.xlayer_id = plan.config.spatial_layers[x].xlayer_id;
     out.width = encoded[x][0].width;
     out.height = encoded[x][0].height;
-    out.mlayer_recon.resize(embedded_count);
+    out.mlayer_recon.resize(static_cast<std::size_t>(embedded_count));
     for (int m = 0; m < embedded_count; ++m) {
       out.mlayer_recon[static_cast<std::size_t>(m)] =
           std::move(encoded[x][static_cast<std::size_t>(m)].recon);

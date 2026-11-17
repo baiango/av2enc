@@ -63,6 +63,8 @@ else()
   message(STATUS "av2enc: CPU-only reference build (unsupported encoder target)")
 endif()
 
+option(AV2ENC_WERROR
+  "Treat warnings as errors (Clang only; the GCC warning set has not been observed on a runner)" OFF)
 option(AV2ENC_WARNINGS
   "Enable the strict warning set (-Wall/-Wextra/-Wpedantic/-Wconversion/-Wshadow)"
   ON)
@@ -80,6 +82,9 @@ function(av2enc_apply_warnings target)
       -Wpedantic
       -Wconversion
       -Wshadow)
+    if(AV2ENC_WERROR AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+      target_compile_options(${target} PRIVATE -Werror)
+    endif()
   endif()
 endfunction()
 

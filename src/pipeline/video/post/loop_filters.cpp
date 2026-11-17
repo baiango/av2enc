@@ -61,10 +61,10 @@ bool VideoPostFilterFrame::init_from_recon(const VideoReconFrame& recon,
   const int vis_luma_h = static_cast<int>(recon.height);
   const int vis_chroma_w = vis_luma_w / 2;
   const int vis_chroma_h = vis_luma_h / 2;
-  const std::size_t vis_luma =
-      static_cast<std::size_t>(vis_luma_w) * vis_luma_h;
-  const std::size_t vis_chroma =
-      static_cast<std::size_t>(vis_chroma_w) * vis_chroma_h;
+  const std::size_t vis_luma = static_cast<std::size_t>(vis_luma_w) *
+                               static_cast<std::size_t>(vis_luma_h);
+  const std::size_t vis_chroma = static_cast<std::size_t>(vis_chroma_w) *
+                                 static_cast<std::size_t>(vis_chroma_h);
   if (recon.y.size() != vis_luma || recon.u.size() != vis_chroma ||
       recon.v.size() != vis_chroma) {
     return fail(error, "m2 post: reconstruction plane size mismatch");

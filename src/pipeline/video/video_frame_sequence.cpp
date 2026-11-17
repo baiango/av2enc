@@ -69,7 +69,7 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   VideoConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
-  config.base_q_idx = options.base_q_idx;
+  config.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   config.order_hint_bits = static_cast<std::uint8_t>(plan.order_hint_bits);
   config.num_ref_frames = static_cast<std::uint8_t>(plan.num_slots);
   config.explicit_ref_frame_map = !options.implicit_ref_map;
@@ -351,7 +351,8 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
         encoder.recon(0), encoder.recon(1), encoder.recon(2), width, height);
     if (options.implicit_ref_map) {
       // §7.23: the next frame's derivation reads this frame's slot state.
-      if (!ref_bank.refresh(hf.refresh_frame_flags, fp->display_order_hint,
+      if (!ref_bank.refresh(static_cast<int>(hf.refresh_frame_flags),
+                            fp->display_order_hint,
                             static_cast<int>(width), static_cast<int>(height),
                             base_q, hf.keyframe, /*tlayer_id=*/0,
                             /*mlayer_id=*/0, hf.implicit_output_frame,
@@ -401,8 +402,10 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
           error = "B-frame display " + std::to_string(display) + ": " + error;
           return false;
         }
-        result.ref_mvs_warp_cells += store_stats.warp_cells;
-        result.ref_mvs_wedge_dropped += store_stats.wedge_dropped;
+        result.ref_mvs_warp_cells +=
+            static_cast<std::uint64_t>(store_stats.warp_cells);
+        result.ref_mvs_wedge_dropped +=
+            static_cast<std::uint64_t>(store_stats.wedge_dropped);
         field.order_hint = fp->display_order_hint;
         field.num_saved_refs = num_refs;
         for (int r = 0; r < num_refs; ++r) {
@@ -470,7 +473,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   // modulo reconstruction cannot resolve with 4 bits.
   pc.order_hint_bits = gop >= 16 ? 5 : 4;
   pc.num_slots = gop;
-  pc.base_q_idx = options.base_q_idx;
+  pc.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   tl::Plan plan;
   tl::PlanError plan_error = tl::PlanError::kOk;
   if (!tl::build_plan(pc, plan, &plan_error)) {
@@ -514,7 +517,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   VideoConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
-  config.base_q_idx = options.base_q_idx;
+  config.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   config.order_hint_bits = static_cast<std::uint8_t>(pc.order_hint_bits);
   config.num_ref_frames = static_cast<std::uint8_t>(plan.num_slots);
   config.explicit_ref_frame_map = !options.implicit_ref_map;
@@ -619,7 +622,8 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       inter::mv_stack_full::ImplicitRefMap implicit;
       const inter::mv_stack_full::DependencyMaps deps =
           implicit_dependency_maps(config, tlayer_id);
-      if (!derive_implicit_fields(ref_bank, pf.display_order_hint,
+      if (!derive_implicit_fields(ref_bank,
+                                  static_cast<int>(pf.display_order_hint),
                                   static_cast<int>(pc.order_hint_bits),
                                   static_cast<int>(width),
                                   static_cast<int>(height), tlayer_id, deps,
@@ -653,7 +657,8 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
             static_cast<int>(relative_dist(pf.display_order_hint,
                                            pf.ref_order_hint[r],
                                            static_cast<int>(pc.order_hint_bits)));
-        ref_order_hints[static_cast<std::size_t>(r)] = pf.ref_order_hint[r];
+        ref_order_hints[static_cast<std::size_t>(r)] =
+            static_cast<int>(pf.ref_order_hint[r]);
       }
     }
     const int num_refs = static_cast<int>(map_slots.size());
@@ -702,7 +707,8 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       }
       if (!estimate_motion_field(
               ref_fields, ref_slots, ref_order_hints.data(), ref_is_key,
-              /*ref_valid=*/true, pf.num_refs, pf.display_order_hint,
+              /*ref_valid=*/true, pf.num_refs,
+              static_cast<int>(pf.display_order_hint),
               static_cast<int>(width), static_cast<int>(height), mi_cols,
               mi_rows, /*proj_step=*/1, /*enable_mv_traj=*/false,
               &motion_field, error)) {
@@ -808,7 +814,8 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
     recon_by_display[static_cast<std::size_t>(display)] = to_recon_frame(
         encoder.recon(0), encoder.recon(1), encoder.recon(2), width, height);
     if (options.implicit_ref_map) {
-      if (!ref_bank.refresh(pf.refresh_frame_flags, pf.display_order_hint,
+      if (!ref_bank.refresh(static_cast<int>(pf.refresh_frame_flags),
+                            static_cast<int>(pf.display_order_hint),
                             static_cast<int>(width), static_cast<int>(height),
                             base_q, pf.is_key, tlayer_id,
                             /*mlayer_id=*/0, pf.implicit_output_frame,
@@ -852,8 +859,10 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
                   error;
           return false;
         }
-        result.ref_mvs_warp_cells += store_stats.warp_cells;
-        result.ref_mvs_wedge_dropped += store_stats.wedge_dropped;
+        result.ref_mvs_warp_cells +=
+            static_cast<std::uint64_t>(store_stats.warp_cells);
+        result.ref_mvs_wedge_dropped +=
+            static_cast<std::uint64_t>(store_stats.wedge_dropped);
         field.order_hint = static_cast<int>(pf.display_order_hint);
         field.num_saved_refs = pf.num_refs;
         for (int r = 0; r < pf.num_refs; ++r) {
@@ -952,7 +961,7 @@ bool encode_video_refinement_sequence(
   VideoConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
-  config.base_q_idx = options.base_q_idx;
+  config.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   config.order_hint_bits = 4;
   config.num_ref_frames = static_cast<std::uint8_t>(refinement.num_ref_frames);
   config.num_total_refs = 1;
@@ -1191,7 +1200,7 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
   VideoConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
-  config.base_q_idx = options.base_q_idx;
+  config.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   config.order_hint_bits = static_cast<std::uint8_t>(kOrderHintBits);
   config.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);
   config.explicit_ref_frame_map = !options.implicit_ref_map;
@@ -1681,8 +1690,12 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
       tip.num_past_refs = motion_field.config.num_past_refs;
       tip.num_future_refs = motion_field.config.num_future_refs;
       tip.order_hint = hint;
-      tip.closest_past_order_hint = ref_order_hints[motion_field.result.closest_past];
-      tip.closest_future_order_hint = ref_order_hints[motion_field.result.closest_future];
+      tip.closest_past_order_hint =
+          ref_order_hints[static_cast<std::size_t>(
+              motion_field.result.closest_past)];
+      tip.closest_future_order_hint =
+          ref_order_hints[static_cast<std::size_t>(
+              motion_field.result.closest_future)];
       const std::size_t cells = static_cast<std::size_t>(motion_field.mi_cols / 2) *
                                 static_cast<std::size_t>(motion_field.mi_rows / 2);
       std::vector<std::int32_t> avg_mv(cells * 2, 0);

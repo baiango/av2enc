@@ -335,7 +335,6 @@ class Packer {
     }
     const TreeNode& node = tree[tree_index];
     const auto bsize = static_cast<BlockSize>(node.bsize);
-    const auto partition = static_cast<PartitionType>(node.partition);
     const bool is_ext = node.partition_is_ext != 0;
     if (!partition::is_valid_block_size(bsize)) {
       error = "partition tree node has an invalid block size";

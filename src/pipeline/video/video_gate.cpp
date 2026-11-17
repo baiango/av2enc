@@ -66,20 +66,24 @@ std::vector<OwnedFrame> make_synthetic_clip(int frames, int width, int height) {
     OwnedFrame frame;
     frame.width = static_cast<std::uint32_t>(width);
     frame.height = static_cast<std::uint32_t>(height);
-    frame.y.resize(static_cast<std::size_t>(width) * height);
-    frame.u.resize(static_cast<std::size_t>(cw) * ch);
-    frame.v.resize(static_cast<std::size_t>(cw) * ch);
+    frame.y.resize(static_cast<std::size_t>(width) *
+                   static_cast<std::size_t>(height));
+    frame.u.resize(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
+    frame.v.resize(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
     for (int y = 0; y < height; ++y) {
       for (int x = 0; x < width; ++x) {
-        frame.y[static_cast<std::size_t>(y) * width + x] =
+        frame.y[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                static_cast<std::size_t>(x)] =
             square_sample(x, y, f, 0);
       }
     }
     for (int y = 0; y < ch; ++y) {
       for (int x = 0; x < cw; ++x) {
-        frame.u[static_cast<std::size_t>(y) * cw + x] =
+        frame.u[static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+                static_cast<std::size_t>(x)] =
             square_sample(x * 2, y * 2, f, 1);
-        frame.v[static_cast<std::size_t>(y) * cw + x] =
+        frame.v[static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+                static_cast<std::size_t>(x)] =
             square_sample(x * 2, y * 2, f, 2);
       }
     }
@@ -102,9 +106,12 @@ std::vector<OwnedFrame> make_illumination_clip(int frames, int width,
     OwnedFrame frame;
     frame.width = static_cast<std::uint32_t>(width);
     frame.height = static_cast<std::uint32_t>(height);
-    frame.y.resize(static_cast<std::size_t>(width) * height);
-    frame.u.assign(static_cast<std::size_t>(cw) * ch, 128);
-    frame.v.assign(static_cast<std::size_t>(cw) * ch, 128);
+    frame.y.resize(static_cast<std::size_t>(width) *
+                   static_cast<std::size_t>(height));
+    frame.u.assign(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch),
+                   128);
+    frame.v.assign(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch),
+                   128);
     const int offset = 15 * f;
     for (int y = 0; y < height; ++y) {
       for (int x = 0; x < width; ++x) {
@@ -113,7 +120,8 @@ std::vector<OwnedFrame> make_illumination_clip(int frames, int width,
         int sample = static_cast<int>(value);
         if (sample < 1) sample = 1;
         if (sample > 255) sample = 255;
-        frame.y[static_cast<std::size_t>(y) * width + x] =
+        frame.y[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                static_cast<std::size_t>(x)] =
             static_cast<std::uint8_t>(sample);
       }
     }
@@ -646,8 +654,9 @@ int main(int argc, char** argv) {
       return 2;
     }
     const std::size_t four = std::min<std::size_t>(4, frames_owned.size());
-    std::vector<OwnedFrame> four_frames(frames_owned.begin(),
-                                        frames_owned.begin() + four);
+    std::vector<OwnedFrame> four_frames(
+        frames_owned.begin(),
+        frames_owned.begin() + static_cast<std::ptrdiff_t>(four));
     tip_ok = run_phase("TIP 4 pics (key + anchor + 2 TIP)", four_frames,
                        options, out_path + ".tip4.ivf", true);
     if (tip_ok && frames_owned.size() >= 8) {
@@ -719,7 +728,8 @@ int main(int argc, char** argv) {
     std::vector<OwnedFrame> two(
         frames_owned.begin(),
         frames_owned.begin() +
-            std::min<std::size_t>(2, frames_owned.size()));
+            static_cast<std::ptrdiff_t>(
+                std::min<std::size_t>(2, frames_owned.size())));
     two_ok = run_phase("two-frame P-frame", two, options, out_path, true);
 
     // Phase 2: short clip.

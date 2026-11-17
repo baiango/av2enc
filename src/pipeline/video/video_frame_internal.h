@@ -1474,8 +1474,11 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
     const bool hidden = mask_row >= 0 && y >= mask_row;
     for (int x = 0; x < cw; ++x) {
       const int src = source_sample(frame, 0, x0 + x, y0 + y);
-      const int p = pred[static_cast<std::size_t>(y) * cw + x];
-      residual[static_cast<std::size_t>(y) * cw + x] =
+      const int p =
+          pred[static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+               static_cast<std::size_t>(x)];
+      residual[static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+               static_cast<std::size_t>(x)] =
           static_cast<std::int16_t>(hidden ? 0 : src - p);
     }
   }
@@ -1639,7 +1642,8 @@ inline bool refine_luma_ist(const VideoInputFrame& frame, int ax0, int ay0, int 
     syntax::build_scan(params_opt->w, params_opt->h, scan);
     full.assign(static_cast<std::size_t>(area), 0);
     for (int c = 0; c < eob; ++c) {
-      full[scan[static_cast<std::size_t>(c)]] = part->levels[c];
+      full[scan[static_cast<std::size_t>(c)]] =
+          part->levels[static_cast<std::size_t>(c)];
     }
     plan.tx_size = tx_size;
   } else {
@@ -1717,9 +1721,14 @@ inline bool refine_luma_ist(const VideoInputFrame& frame, int ax0, int ay0, int 
         static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
     for (int y = 0; y < ch; ++y) {
       for (int x = 0; x < cw; ++x) {
-        const int p = pred[static_cast<std::size_t>(y) * cw + x];
-        const int r = rr[static_cast<std::size_t>(y) * cw + x];
-        recon[static_cast<std::size_t>(y) * cw + x] =
+        const int p =
+            pred[static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+                 static_cast<std::size_t>(x)];
+        const int r =
+            rr[static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+               static_cast<std::size_t>(x)];
+        recon[static_cast<std::size_t>(y) * static_cast<std::size_t>(cw) +
+              static_cast<std::size_t>(x)] =
             static_cast<std::uint8_t>(clip1(p + r));
       }
     }
@@ -3142,15 +3151,21 @@ inline VideoReconFrame to_recon_frame(const Plane& y, const Plane& u, const Plan
   out.v.resize(static_cast<std::size_t>(cw) * ch);
   for (std::uint32_t row = 0; row < height; ++row) {
     std::memcpy(out.y.data() + static_cast<std::size_t>(row) * width,
-                y.samples.data() + static_cast<std::size_t>(row) * y.stride,
+                y.samples.data() +
+                    static_cast<std::size_t>(row) *
+                        static_cast<std::size_t>(y.stride),
                 width);
   }
   for (std::uint32_t row = 0; row < ch; ++row) {
     std::memcpy(out.u.data() + static_cast<std::size_t>(row) * cw,
-                u.samples.data() + static_cast<std::size_t>(row) * u.stride,
+                u.samples.data() +
+                    static_cast<std::size_t>(row) *
+                        static_cast<std::size_t>(u.stride),
                 cw);
     std::memcpy(out.v.data() + static_cast<std::size_t>(row) * cw,
-                v.samples.data() + static_cast<std::size_t>(row) * v.stride,
+                v.samples.data() +
+                    static_cast<std::size_t>(row) *
+                        static_cast<std::size_t>(v.stride),
                 cw);
   }
   return out;

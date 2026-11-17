@@ -502,14 +502,16 @@ class TileEncoder {
     recon_[2].resize((padded_width + 1) / 2, (padded_height + 1) / 2, 128);
 
     for (int plane = 0; plane < 3; ++plane) {
-      above_level_[plane].assign(static_cast<std::size_t>(mi_cols_) + 8U, 0);
-      left_level_[plane].assign(static_cast<std::size_t>(mi_rows_) + 8U, 0);
-      above_dc_[plane].assign(static_cast<std::size_t>(mi_cols_) + 8U, 0);
-      left_dc_[plane].assign(static_cast<std::size_t>(mi_rows_) + 8U, 0);
+      above_level_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(mi_cols_) + 8U,
+                                                           0);
+      left_level_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(mi_rows_) + 8U,
+                                                          0);
+      above_dc_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(mi_cols_) + 8U, 0);
+      left_dc_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(mi_rows_) + 8U, 0);
     }
     for (int plane = 0; plane < 2; ++plane) {
-      above_mi_[plane].assign(static_cast<std::size_t>(mi_cols_) + 8U, 6);
-      left_mi_[plane].assign(static_cast<std::size_t>(mi_rows_) + 8U, 6);
+      above_mi_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(mi_cols_) + 8U, 6);
+      left_mi_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(mi_rows_) + 8U, 6);
     }
     intra_joint_.assign(static_cast<std::size_t>(padded_mi_rows) *
                             static_cast<std::size_t>(padded_mi_cols),
@@ -590,41 +592,47 @@ class TileEncoder {
 
   void clear_above_context() {
     for (int plane = 0; plane < 3; ++plane) {
-      std::fill(above_level_[plane].begin(), above_level_[plane].end(), 0);
-      std::fill(above_dc_[plane].begin(), above_dc_[plane].end(), 0);
+      std::fill(above_level_[static_cast<std::size_t>(plane)].begin(),
+                above_level_[static_cast<std::size_t>(plane)].end(), 0);
+      std::fill(above_dc_[static_cast<std::size_t>(plane)].begin(),
+                above_dc_[static_cast<std::size_t>(plane)].end(), 0);
     }
     for (int plane = 0; plane < 2; ++plane) {
-      std::fill(above_mi_[plane].begin(), above_mi_[plane].end(), 6);
+      std::fill(above_mi_[static_cast<std::size_t>(plane)].begin(),
+                above_mi_[static_cast<std::size_t>(plane)].end(), 6);
     }
   }
 
   void clear_left_context() {
     for (int plane = 0; plane < 3; ++plane) {
-      std::fill(left_level_[plane].begin(), left_level_[plane].end(), 0);
-      std::fill(left_dc_[plane].begin(), left_dc_[plane].end(), 0);
+      std::fill(left_level_[static_cast<std::size_t>(plane)].begin(),
+                left_level_[static_cast<std::size_t>(plane)].end(), 0);
+      std::fill(left_dc_[static_cast<std::size_t>(plane)].begin(),
+                left_dc_[static_cast<std::size_t>(plane)].end(), 0);
     }
     for (int plane = 0; plane < 2; ++plane) {
-      std::fill(left_mi_[plane].begin(), left_mi_[plane].end(), 6);
+      std::fill(left_mi_[static_cast<std::size_t>(plane)].begin(),
+                left_mi_[static_cast<std::size_t>(plane)].end(), 6);
     }
   }
 
   std::uint8_t& above_level(int plane, int x) {
-    return above_level_[plane][static_cast<std::size_t>(x)];
+    return above_level_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(x)];
   }
   std::uint8_t& left_level(int plane, int y) {
-    return left_level_[plane][static_cast<std::size_t>(y)];
+    return left_level_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(y)];
   }
   std::uint8_t& above_dc(int plane, int x) {
-    return above_dc_[plane][static_cast<std::size_t>(x)];
+    return above_dc_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(x)];
   }
   std::uint8_t& left_dc(int plane, int y) {
-    return left_dc_[plane][static_cast<std::size_t>(y)];
+    return left_dc_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(y)];
   }
   std::uint8_t& above_mi(int plane, int x) {
-    return above_mi_[plane][static_cast<std::size_t>(x)];
+    return above_mi_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(x)];
   }
   std::uint8_t& left_mi(int plane, int y) {
-    return left_mi_[plane][static_cast<std::size_t>(y)];
+    return left_mi_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(y)];
   }
   std::uint8_t& intra_joint(int r, int c) {
     return intra_joint_[static_cast<std::size_t>(r) * static_cast<std::size_t>(intra_joint_cols_) +
@@ -1321,16 +1329,19 @@ class TileEncoder {
     const std::int16_t* kh = dct_kernel(h);
     const double scale_w = 1.0 / (64.0 * std::sqrt(static_cast<double>(w)));
     const double scale_h = 1.0 / (64.0 * std::sqrt(static_cast<double>(h)));
-    std::vector<double> tmp(static_cast<std::size_t>(w) * h, 0.0);
-    out->assign(static_cast<std::size_t>(w) * h, 0.0);
+    std::vector<double> tmp(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0.0);
+    out->assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0.0);
     for (int i = 0; i < h; ++i) {
       for (int v = 0; v < w; ++v) {
         double sum = 0.0;
         for (int j = 0; j < w; ++j) {
-          sum += static_cast<double>(kw[v * w + j]) *
-                 static_cast<double>(block[static_cast<std::size_t>(i) * w + j]);
+          sum +=
+              static_cast<double>(kw[v * w + j]) *
+              static_cast<double>(block[static_cast<std::size_t>(i) * static_cast<std::size_t>(w) +
+                                        static_cast<std::size_t>(j)]);
         }
-        tmp[static_cast<std::size_t>(i) * w + v] = sum * scale_w;
+        tmp[static_cast<std::size_t>(i) * static_cast<std::size_t>(w) +
+            static_cast<std::size_t>(v)] = sum * scale_w;
       }
     }
     for (int u = 0; u < h; ++u) {
@@ -1338,9 +1349,11 @@ class TileEncoder {
         double sum = 0.0;
         for (int i = 0; i < h; ++i) {
           sum += static_cast<double>(kh[u * h + i]) *
-                 tmp[static_cast<std::size_t>(i) * w + v];
+                 tmp[static_cast<std::size_t>(i) * static_cast<std::size_t>(w) +
+                     static_cast<std::size_t>(v)];
         }
-        (*out)[static_cast<std::size_t>(u) * w + v] = sum * scale_h;
+        (*out)[static_cast<std::size_t>(u) * static_cast<std::size_t>(w) +
+               static_cast<std::size_t>(v)] = sum * scale_h;
       }
     }
     if (odd_rect_transform(w, h)) {
@@ -1368,35 +1381,38 @@ class TileEncoder {
                           12)
                  : value;
     };
-    std::vector<int> intermediate(static_cast<std::size_t>(w) * h, 0);
+    std::vector<int> intermediate(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
     for (int i = 0; i < h; ++i) {
       for (int oj = 0; oj < w; ++oj) {
         std::int64_t sum = 0;
         for (int j = 0; j < w; ++j) {
           sum += static_cast<std::int64_t>(kw[j * w + oj]) *
-                 prescale(dequant[static_cast<std::size_t>(i) * w + j]);
+                 prescale(dequant[static_cast<std::size_t>(i) * static_cast<std::size_t>(w) +
+                                  static_cast<std::size_t>(j)]);
         }
-        intermediate[static_cast<std::size_t>(i) * w + oj] = clip3(
-            -(1 << 15), (1 << 15) - 1,
-            round2(static_cast<int>(sum), row_shift));
+        intermediate[static_cast<std::size_t>(i) * static_cast<std::size_t>(w) +
+                     static_cast<std::size_t>(oj)] =
+            clip3(-(1 << 15), (1 << 15) - 1, round2(static_cast<int>(sum), row_shift));
       }
     }
-    residual->assign(static_cast<std::size_t>(w) * h, 0);
+    residual->assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
     for (int oi = 0; oi < h; ++oi) {
       for (int j = 0; j < w; ++j) {
         std::int64_t sum = 0;
         for (int i = 0; i < h; ++i) {
           sum += static_cast<std::int64_t>(kh[i * h + oi]) *
-                 intermediate[static_cast<std::size_t>(i) * w + j];
+                 intermediate[static_cast<std::size_t>(i) * static_cast<std::size_t>(w) +
+                              static_cast<std::size_t>(j)];
         }
-        (*residual)[static_cast<std::size_t>(oi) * w + j] =
+        (*residual)[static_cast<std::size_t>(oi) * static_cast<std::size_t>(w) +
+                    static_cast<std::size_t>(j)] =
             clip3(-256, 255, round2(static_cast<int>(sum), col_shift));
       }
     }
   }
 
   static void build_diagonal_scan(int w, int h, std::vector<std::uint16_t>* scan) {
-    scan->resize(static_cast<std::size_t>(w) * h);
+    scan->resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
     int x = 0;
     int y = 0;
     for (int c = 0; c < w * h; ++c) {
@@ -1730,7 +1746,7 @@ class TileEncoder {
         8.0 * static_cast<double>(dq_denom) /
         (inv_scale * static_cast<double>(kQuantStep));
 
-    std::vector<int> residual_block(static_cast<std::size_t>(tw) * th, 0);
+    std::vector<int> residual_block(static_cast<std::size_t>(tw) * static_cast<std::size_t>(th), 0);
     if (upscale_x == 2 && upscale_y == 2) {
       for (int j = 0; j < th; ++j) {
         for (int i = 0; i < tw; ++i) {
@@ -1742,22 +1758,22 @@ class TileEncoder {
                      pred_value;
             }
           }
-          residual_block[static_cast<std::size_t>(j) * tw + i] =
-              round2(sum, 2);
+          residual_block[static_cast<std::size_t>(j) * static_cast<std::size_t>(tw) +
+                         static_cast<std::size_t>(i)] = round2(sum, 2);
         }
       }
     } else {
       for (int j = 0; j < th; ++j) {
         for (int i = 0; i < tw; ++i) {
-          residual_block[static_cast<std::size_t>(j) * tw + i] =
-              static_cast<int>(source_sample(plane, x0 + i, y0 + j)) -
-              pred_value;
+          residual_block[static_cast<std::size_t>(j) * static_cast<std::size_t>(tw) +
+                         static_cast<std::size_t>(i)] =
+              static_cast<int>(source_sample(plane, x0 + i, y0 + j)) - pred_value;
         }
       }
     }
     std::vector<double> coeff;
     forward_dct(residual_block, tw, th, &coeff);
-    std::vector<int> quantized(static_cast<std::size_t>(tw) * th, 0);
+    std::vector<int> quantized(static_cast<std::size_t>(tw) * static_cast<std::size_t>(th), 0);
     for (int pos = 0; pos < tw * th; ++pos) {
       quantized[static_cast<std::size_t>(pos)] = static_cast<int>(
           std::lround(coeff[static_cast<std::size_t>(pos)] * quant_factor));
@@ -1766,7 +1782,7 @@ class TileEncoder {
     build_diagonal_scan(tw, th, &scan);
     int eob = 0;
     for (int c = tw * th - 1; c >= 0; --c) {
-      if (quantized[scan[c]] != 0) {
+      if (quantized[scan[static_cast<std::size_t>(c)]] != 0) {
         eob = c + 1;
         break;
       }
@@ -1810,12 +1826,12 @@ class TileEncoder {
         {0, 1}, {1, 0}, {1, 1}, {0, 2}, {2, 0}};
     static constexpr int kMagRef[3][2] = {{0, 1}, {1, 0}, {1, 1}};
 
-    std::vector<int> level_pre(static_cast<std::size_t>(tw) * th, 0);
+    std::vector<int> level_pre(static_cast<std::size_t>(tw) * static_cast<std::size_t>(th), 0);
     for (int c = eob - 1; c >= 0; --c) {
-      const int pos = scan[c];
+      const int pos = scan[static_cast<std::size_t>(c)];
       const int row = pos / tw;
       const int col = pos % tw;
-      const int abs_value = std::abs(quantized[pos]);
+      const int abs_value = std::abs(quantized[static_cast<std::size_t>(pos)]);
       const bool is_lf = plane == 0 ? (row + col) < 4 : (row + col) < 1;
       const int base_levels = is_lf ? 4 : 2;
       const int base_max = is_lf ? 5 : 3;
@@ -1877,27 +1893,28 @@ class TileEncoder {
           const int cc = col + kSigRef[idx][1];
           if (rr < th && cc < tw) {
             const int limit = is_lf ? 5 : 3;
-            mag += std::min(level_pre[static_cast<std::size_t>(rr) * tw + cc],
+            mag += std::min(level_pre[static_cast<std::size_t>(rr) * static_cast<std::size_t>(tw) +
+                                      static_cast<std::size_t>(cc)],
                             limit);
           }
         }
-        const int ctx = (mag + 1) >> 1;
+        const int base_ctx = (mag + 1) >> 1;
         if (plane == 0) {
           if (is_lf) {
             int lf_ctx = 0;
             if (c == 0) {
-              lf_ctx = std::min(ctx, 8);
+              lf_ctx = std::min(base_ctx, 8);
             } else if (row + col < 2) {
-              lf_ctx = std::min(ctx, 6) + 9;
+              lf_ctx = std::min(base_ctx, 6) + 9;
             } else {
-              lf_ctx = std::min(ctx, 4) + 16;
+              lf_ctx = std::min(base_ctx, 4) + 16;
             }
             if (!sym(&cdfs_.coeff_base_lf[tx_sz_ctx][lf_ctx][0][0], 6,
                      base_level)) {
               return false;
             }
           } else {
-            const int ctx2 = std::min(ctx, 4);
+            const int ctx2 = std::min(base_ctx, 4);
             int hf_ctx = ctx2;
             if (row + col >= 6 && row + col < 8) {
               hf_ctx = ctx2 + 5;
@@ -1909,7 +1926,7 @@ class TileEncoder {
             }
           }
         } else {
-          const int ctx2 = std::min(ctx, 3);
+          const int ctx2 = std::min(base_ctx, 3);
           const int uv_ctx = plane == 1 ? ctx2 : ctx2 + 4;
           if (is_lf) {
             if (!sym(&cdfs_.coeff_base_lf_uv[uv_ctx][0], 6, base_level)) {
@@ -1930,7 +1947,8 @@ class TileEncoder {
           const int rr = row + kMagRef[idx][0];
           const int cc = col + kMagRef[idx][1];
           if (rr < th && cc < tw) {
-            mag += std::min(level_pre[static_cast<std::size_t>(rr) * tw + cc],
+            mag += std::min(level_pre[static_cast<std::size_t>(rr) * static_cast<std::size_t>(tw) +
+                                      static_cast<std::size_t>(cc)],
                             5);
           }
         }
@@ -1963,12 +1981,12 @@ class TileEncoder {
     int cul_level = 0;
     int dc_category = 0;
     for (int c = eob - 1; c >= 0; --c) {
-      const int pos = scan[c];
+      const int pos = scan[static_cast<std::size_t>(c)];
       const int row = pos / tw;
       const int col = pos % tw;
       const int pre_level = level_pre[static_cast<std::size_t>(pos)];
-      const int abs_value = std::abs(quantized[pos]);
-      const bool negative = quantized[pos] < 0;
+      const int abs_value = std::abs(quantized[static_cast<std::size_t>(pos)]);
+      const bool negative = quantized[static_cast<std::size_t>(pos)] < 0;
       if (pre_level != 0) {
         if (row == 0 && col == 0 && plane == 0) {
           const int sign_ctx = dc_sign_context(x4, y4, w4, h4);
@@ -1995,9 +2013,9 @@ class TileEncoder {
     }
 
     // Dequant + normative 2D inverse transform, then add the prediction.
-    std::vector<int> dequant(static_cast<std::size_t>(tw) * th, 0);
+    std::vector<int> dequant(static_cast<std::size_t>(tw) * static_cast<std::size_t>(th), 0);
     for (int pos = 0; pos < tw * th; ++pos) {
-      const int qc = quantized[pos];
+      const int qc = quantized[static_cast<std::size_t>(pos)];
       if (qc == 0) {
         continue;
       }
@@ -2010,8 +2028,9 @@ class TileEncoder {
     inverse_dct(dequant, tw, th, &residual);
     for (int j = 0; j < th; ++j) {
       for (int i = 0; i < tw; ++i) {
-        const int value = clip1(
-            pred_value + residual[static_cast<std::size_t>(j) * tw + i]);
+        const int value =
+            clip1(pred_value + residual[static_cast<std::size_t>(j) * static_cast<std::size_t>(tw) +
+                                        static_cast<std::size_t>(i)]);
         for (int dy = 0; dy < upscale_y; ++dy) {
           for (int dx = 0; dx < upscale_x; ++dx) {
             recon_[plane].at(x0 + i * upscale_x + dx,
@@ -2037,7 +2056,7 @@ class TileEncoder {
   }
 
   const StillPicture& picture_;
-  const StillPictureConfig& config_;
+  [[maybe_unused]] const StillPictureConfig& config_;
   BasicPartitionMode partition_mode_ = BasicPartitionMode::k32x32;
   bool real_coeffs_ = false;
   int mi_cols_ = 0;

@@ -121,8 +121,12 @@ inline bool plan_gdf(const HbdGdfFrame16& frame, HbdGdfPlan* plan,
       // the CdefFrame copy (the decoder's LrFrame := CdefFrame step).
       for (int y = 0; y < frame.mi_rows * 4; ++y) {
         for (int x = 0; x < frame.mi_cols * 4; ++x) {
-          out[static_cast<std::size_t>(y) * frame.curr_stride + x] =
-              frame.cdef[static_cast<std::size_t>(y) * frame.cdef_stride + x];
+          out[static_cast<std::size_t>(y) *
+                  static_cast<std::size_t>(frame.curr_stride) +
+              static_cast<std::size_t>(x)] =
+              frame.cdef[static_cast<std::size_t>(y) *
+                             static_cast<std::size_t>(frame.cdef_stride) +
+                         static_cast<std::size_t>(x)];
         }
       }
       if (!gdf::ApplyGdfToFrame(source, inputs, plan->context, params, {}, out.data(),
@@ -133,9 +137,13 @@ inline bool plan_gdf(const HbdGdfFrame16& frame, HbdGdfPlan* plan,
       for (int y = 0; y < frame.height; ++y) {
         for (int x = 0; x < frame.width; ++x) {
           const int ref = static_cast<int>(
-              frame.ref[static_cast<std::size_t>(y) * frame.ref_stride + x]);
+              frame.ref[static_cast<std::size_t>(y) *
+                            static_cast<std::size_t>(frame.ref_stride) +
+                        static_cast<std::size_t>(x)]);
           const int value = static_cast<int>(
-              out[static_cast<std::size_t>(y) * frame.curr_stride + x]);
+              out[static_cast<std::size_t>(y) *
+                      static_cast<std::size_t>(frame.curr_stride) +
+                  static_cast<std::size_t>(x)]);
           const int diff = value - ref;
           sse += static_cast<std::int64_t>(diff) * diff;
         }
@@ -158,9 +166,13 @@ inline bool plan_gdf(const HbdGdfFrame16& frame, HbdGdfPlan* plan,
   for (int y = 0; y < frame.height; ++y) {
     for (int x = 0; x < frame.width; ++x) {
       const int ref = static_cast<int>(
-          frame.ref[static_cast<std::size_t>(y) * frame.ref_stride + x]);
+          frame.ref[static_cast<std::size_t>(y) *
+                        static_cast<std::size_t>(frame.ref_stride) +
+                    static_cast<std::size_t>(x)]);
       const int value = static_cast<int>(
-          frame.cdef[static_cast<std::size_t>(y) * frame.cdef_stride + x]);
+          frame.cdef[static_cast<std::size_t>(y) *
+                         static_cast<std::size_t>(frame.cdef_stride) +
+                     static_cast<std::size_t>(x)]);
       const int diff = value - ref;
       before += static_cast<std::int64_t>(diff) * diff;
     }

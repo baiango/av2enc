@@ -49,7 +49,8 @@ int Encoder::count_top_right(int plane, int abs_x4, int abs_y4, int w4) const {
       const int x = rel_x + w4 + i;
       if (x >= (rel_y == 0 ? border_w : sb_w)) break;
       if (rel_y - 1 >= 0 &&
-          !decoded_[plane].at(sb_c0 + x, sb_r0 + rel_y - 1)) {
+          !decoded_[static_cast<std::size_t>(plane)].at(sb_c0 + x,
+                                                        sb_r0 + rel_y - 1)) {
         break;
       }
       ++count;
@@ -72,7 +73,8 @@ int Encoder::count_bottom_left(int plane, int abs_x4, int abs_y4, int h4) const 
       const int y = rel_y + h4 + i;
       if (y >= sb_h) break;
       if (rel_x - 1 >= 0 &&
-          !decoded_[plane].at(sb_c0 + rel_x - 1, sb_r0 + y)) {
+          !decoded_[static_cast<std::size_t>(plane)].at(sb_c0 + rel_x - 1,
+                                                        sb_r0 + y)) {
         break;
       }
       ++count;

@@ -60,7 +60,8 @@ void dc_predict(const PlaneView& recon, int x0, int y0, int w, int h,
   if (have_left) {
     for (int i = 0; i < h; ++i) {
       const int y = clip3(0, max_y, y0 + i);
-      sum_left += recon.samples[static_cast<std::size_t>(y) * recon.stride +
+      sum_left += recon.samples[static_cast<std::size_t>(y) *
+                                    static_cast<std::size_t>(recon.stride) +
                                 static_cast<std::size_t>(x0 - 1)];
     }
   }
@@ -68,7 +69,7 @@ void dc_predict(const PlaneView& recon, int x0, int y0, int w, int h,
     for (int j = 0; j < w; ++j) {
       const int x = clip3(0, max_x, x0 + j);
       sum_above += recon.samples[static_cast<std::size_t>(y0 - 1) *
-                                     recon.stride +
+                                     static_cast<std::size_t>(recon.stride) +
                                  static_cast<std::size_t>(x)];
     }
   }
@@ -89,7 +90,8 @@ void dc_predict(const PlaneView& recon, int x0, int y0, int w, int h,
 
 void append_scan_levels(const std::int32_t* levels, int w, int h, int eob,
                         std::vector<std::int32_t>* out) {
-  std::vector<std::uint16_t> scan(static_cast<std::size_t>(w) * h);
+  std::vector<std::uint16_t> scan(static_cast<std::size_t>(w) *
+                                  static_cast<std::size_t>(h));
   hbd::build_scan(w, h, scan.data());
   for (int c = 0; c < eob; ++c) {
     out->push_back(levels[scan[static_cast<std::size_t>(c)]]);
@@ -282,9 +284,11 @@ bool encode_high_bitdepth_cpu(const fmt::Picture& picture, const HighBitDepthOpt
           const int px = px0 + x;
           if (px >= recon[plane].coded_width) break;
           recon[plane].samples[static_cast<std::size_t>(py) *
-                                   recon[plane].width +
+                                   static_cast<std::size_t>(recon[plane].width) +
                                static_cast<std::size_t>(px)] =
-              br.recon[static_cast<std::size_t>(y) * coded_w[plane] + x];
+              br.recon[static_cast<std::size_t>(y) *
+                           static_cast<std::size_t>(coded_w[plane]) +
+                       static_cast<std::size_t>(x)];
         }
       }
     }

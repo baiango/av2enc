@@ -210,10 +210,10 @@ class Writer {
       const int shift_y = plane == 0 ? 0 : sub_y_;
       const int n = (mi_cols_ >> shift_x) + 16;
       const int m = (mi_rows_ >> shift_y) + 16;
-      above_level_[plane].assign(static_cast<std::size_t>(n), 0);
-      left_level_[plane].assign(static_cast<std::size_t>(m), 0);
-      above_dc_[plane].assign(static_cast<std::size_t>(n), 0);
-      left_dc_[plane].assign(static_cast<std::size_t>(m), 0);
+      above_level_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(n), 0);
+      left_level_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(m), 0);
+      above_dc_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(n), 0);
+      left_dc_[static_cast<std::size_t>(plane)].assign(static_cast<std::size_t>(m), 0);
     }
     clear_above_context();
   }
@@ -319,30 +319,34 @@ class Writer {
 
   void clear_above_context() {
     for (int plane = 0; plane < 3; ++plane) {
-      std::fill(above_level_[plane].begin(), above_level_[plane].end(), 0);
-      std::fill(above_dc_[plane].begin(), above_dc_[plane].end(), 0);
+      std::fill(above_level_[static_cast<std::size_t>(plane)].begin(),
+                above_level_[static_cast<std::size_t>(plane)].end(), 0);
+      std::fill(above_dc_[static_cast<std::size_t>(plane)].begin(),
+                above_dc_[static_cast<std::size_t>(plane)].end(), 0);
     }
     std::fill(above_mi_.begin(), above_mi_.end(), 6);
   }
   void clear_left_context() {
     for (int plane = 0; plane < 3; ++plane) {
-      std::fill(left_level_[plane].begin(), left_level_[plane].end(), 0);
-      std::fill(left_dc_[plane].begin(), left_dc_[plane].end(), 0);
+      std::fill(left_level_[static_cast<std::size_t>(plane)].begin(),
+                left_level_[static_cast<std::size_t>(plane)].end(), 0);
+      std::fill(left_dc_[static_cast<std::size_t>(plane)].begin(),
+                left_dc_[static_cast<std::size_t>(plane)].end(), 0);
     }
     std::fill(left_mi_.begin(), left_mi_.end(), 6);
   }
 
   std::uint8_t& above_level(int plane, int x) {
-    return above_level_[plane][static_cast<std::size_t>(x)];
+    return above_level_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(x)];
   }
   std::uint8_t& left_level(int plane, int y) {
-    return left_level_[plane][static_cast<std::size_t>(y)];
+    return left_level_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(y)];
   }
   std::uint8_t& above_dc(int plane, int x) {
-    return above_dc_[plane][static_cast<std::size_t>(x)];
+    return above_dc_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(x)];
   }
   std::uint8_t& left_dc(int plane, int y) {
-    return left_dc_[plane][static_cast<std::size_t>(y)];
+    return left_dc_[static_cast<std::size_t>(plane)][static_cast<std::size_t>(y)];
   }
   std::uint8_t& above_mi(int x) { return above_mi_[static_cast<std::size_t>(x)]; }
   std::uint8_t& left_mi(int y) { return left_mi_[static_cast<std::size_t>(y)]; }
@@ -690,7 +694,10 @@ class Writer {
           if (rr < th && cc < tw) {
             const int limit = is_lf ? 5 : 3;
             mag += std::min(
-                level_pre[static_cast<std::size_t>(rr) * tw + cc], limit);
+                level_pre[static_cast<std::size_t>(rr) *
+                              static_cast<std::size_t>(tw) +
+                          static_cast<std::size_t>(cc)],
+                limit);
           }
         }
         const int mctx = (mag + 1) >> 1;
@@ -744,7 +751,10 @@ class Writer {
           const int cc = col + kMagRef[idx][1];
           if (rr < th && cc < tw) {
             mag += std::min(
-                level_pre[static_cast<std::size_t>(rr) * tw + cc], 5);
+                level_pre[static_cast<std::size_t>(rr) *
+                              static_cast<std::size_t>(tw) +
+                          static_cast<std::size_t>(cc)],
+                5);
           }
         }
         mag = std::min((mag + 1) >> 1, 6);

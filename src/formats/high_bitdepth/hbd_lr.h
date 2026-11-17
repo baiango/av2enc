@@ -173,7 +173,9 @@ inline std::int64_t unit_sse(const av2enc::restoration::LrCoreFrame16& core,
           const int out = std::clamp(v, 0, (1 << core.bit_depth) - 1);
           const int diff =
               out - static_cast<int>(
-                        target[static_cast<std::size_t>(sy) * target_stride + sx]);
+                        target[static_cast<std::size_t>(sy) *
+                                   static_cast<std::size_t>(target_stride) +
+                               static_cast<std::size_t>(sx)]);
           sse += static_cast<std::int64_t>(diff) * diff;
         }
       }
@@ -446,9 +448,12 @@ inline void plan_pc_wiener16(const HbdLrFrame16& frame, HbdLrPlan* plan,
       // Copy CdefFrame into the scratch plane.
       for (int y = 0; y < height; ++y) {
         for (int x = 0; x < stride; ++x) {
-          scratch[static_cast<std::size_t>(y) * stride + x] =
+          scratch[static_cast<std::size_t>(y) *
+                      static_cast<std::size_t>(stride) +
+                  static_cast<std::size_t>(x)] =
               frame.cdef[0][static_cast<std::size_t>(y) *
-                                frame.cdef_stride[0] + x];
+                                static_cast<std::size_t>(frame.cdef_stride[0]) +
+                            static_cast<std::size_t>(x)];
         }
       }
       pc_wiener_unit(frame, cfg, lr_tx_skip, ur, uc, scratch, stride);
@@ -463,12 +468,16 @@ inline void plan_pc_wiener16(const HbdLrFrame16& frame, HbdLrPlan* plan,
         for (int x = x0; x < x1; ++x) {
           const int ref = static_cast<int>(
               frame.ref[0][static_cast<std::size_t>(y) *
-                               frame.ref_stride[0] + x]);
+                               static_cast<std::size_t>(frame.ref_stride[0]) +
+                           static_cast<std::size_t>(x)]);
           const int cdef = static_cast<int>(
               frame.cdef[0][static_cast<std::size_t>(y) *
-                                frame.cdef_stride[0] + x]);
+                                static_cast<std::size_t>(frame.cdef_stride[0]) +
+                            static_cast<std::size_t>(x)]);
           const int out = static_cast<int>(
-              scratch[static_cast<std::size_t>(y) * stride + x]);
+              scratch[static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(stride) +
+                      static_cast<std::size_t>(x)]);
           const std::int64_t d0 = cdef - ref;
           const std::int64_t d1 = out - ref;
           before += d0 * d0;
@@ -528,9 +537,12 @@ inline bool apply_wiener16(const HbdLrFrame16& frame,
     const int h = (frame.mi_rows * 4) >> (p == 0 ? 0 : frame.sub_y);
     for (int y = 0; y < h; ++y) {
       for (int x = 0; x < w; ++x) {
-        lr[p][static_cast<std::size_t>(y) * lr_stride[p] + x] =
-            frame.cdef[p][static_cast<std::size_t>(y) * frame.cdef_stride[p] +
-                          x];
+        lr[p][static_cast<std::size_t>(y) *
+                  static_cast<std::size_t>(lr_stride[p]) +
+              static_cast<std::size_t>(x)] =
+            frame.cdef[p][static_cast<std::size_t>(y) *
+                              static_cast<std::size_t>(frame.cdef_stride[p]) +
+                          static_cast<std::size_t>(x)];
       }
     }
   }

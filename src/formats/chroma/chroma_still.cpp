@@ -223,12 +223,14 @@ class TileWriter {
       recon_[plane].resize(p.padded_width, p.padded_height, 128);
       const int plane_mi_cols = p.padded_width >> 2;
       const int plane_mi_rows = p.padded_height >> 2;
-      above_level_[plane].assign(static_cast<std::size_t>(plane_mi_cols) + 8U,
-                                 0);
-      left_level_[plane].assign(static_cast<std::size_t>(plane_mi_rows) + 8U,
-                                0);
-      above_dc_[plane].assign(static_cast<std::size_t>(plane_mi_cols) + 8U, 0);
-      left_dc_[plane].assign(static_cast<std::size_t>(plane_mi_rows) + 8U, 0);
+      above_level_[static_cast<std::size_t>(plane)].assign(
+          static_cast<std::size_t>(plane_mi_cols) + 8U, 0);
+      left_level_[static_cast<std::size_t>(plane)].assign(
+          static_cast<std::size_t>(plane_mi_rows) + 8U, 0);
+      above_dc_[static_cast<std::size_t>(plane)].assign(
+          static_cast<std::size_t>(plane_mi_cols) + 8U, 0);
+      left_dc_[static_cast<std::size_t>(plane)].assign(
+          static_cast<std::size_t>(plane_mi_rows) + 8U, 0);
     }
     above_mi_.assign(static_cast<std::size_t>(mi_cols_) + 8U, 6);
     left_mi_.assign(static_cast<std::size_t>(mi_rows_) + 8U, 6);
@@ -307,30 +309,34 @@ class TileWriter {
 
   void clear_above_context() {
     for (int p = 0; p < 3; ++p) {
-      std::fill(above_level_[p].begin(), above_level_[p].end(), 0);
-      std::fill(above_dc_[p].begin(), above_dc_[p].end(), 0);
+      std::fill(above_level_[static_cast<std::size_t>(p)].begin(),
+                above_level_[static_cast<std::size_t>(p)].end(), 0);
+      std::fill(above_dc_[static_cast<std::size_t>(p)].begin(),
+                above_dc_[static_cast<std::size_t>(p)].end(), 0);
     }
     std::fill(above_mi_.begin(), above_mi_.end(), 6);
   }
   void clear_left_context() {
     for (int p = 0; p < 3; ++p) {
-      std::fill(left_level_[p].begin(), left_level_[p].end(), 0);
-      std::fill(left_dc_[p].begin(), left_dc_[p].end(), 0);
+      std::fill(left_level_[static_cast<std::size_t>(p)].begin(),
+                left_level_[static_cast<std::size_t>(p)].end(), 0);
+      std::fill(left_dc_[static_cast<std::size_t>(p)].begin(),
+                left_dc_[static_cast<std::size_t>(p)].end(), 0);
     }
     std::fill(left_mi_.begin(), left_mi_.end(), 6);
   }
 
   std::uint8_t& above_level(int p, int x) {
-    return above_level_[p][static_cast<std::size_t>(x)];
+    return above_level_[static_cast<std::size_t>(p)][static_cast<std::size_t>(x)];
   }
   std::uint8_t& left_level(int p, int y) {
-    return left_level_[p][static_cast<std::size_t>(y)];
+    return left_level_[static_cast<std::size_t>(p)][static_cast<std::size_t>(y)];
   }
   std::uint8_t& above_dc(int p, int x) {
-    return above_dc_[p][static_cast<std::size_t>(x)];
+    return above_dc_[static_cast<std::size_t>(p)][static_cast<std::size_t>(x)];
   }
   std::uint8_t& left_dc(int p, int y) {
-    return left_dc_[p][static_cast<std::size_t>(y)];
+    return left_dc_[static_cast<std::size_t>(p)][static_cast<std::size_t>(y)];
   }
   std::uint8_t& above_mi(int x) {
     return above_mi_[static_cast<std::size_t>(x)];
@@ -909,7 +915,8 @@ class TileWriter {
                      pred_value;
             }
           }
-          residual_adj[static_cast<std::size_t>(j) * tx.adj_w + i] =
+          residual_adj[static_cast<std::size_t>(j) * static_cast<std::size_t>(tx.adj_w) +
+                       static_cast<std::size_t>(i)] =
               static_cast<std::int16_t>(round2(sum, upscale_shift));
         }
       }
@@ -1041,7 +1048,8 @@ class TileWriter {
           if (rr < tx.adj_h && cc < tx.adj_w) {
             const int limit = is_lf ? 5 : 3;
             mag += std::min(
-                level_pre[static_cast<std::size_t>(rr) * tx.adj_w + cc],
+                level_pre[static_cast<std::size_t>(rr) * static_cast<std::size_t>(tx.adj_w) +
+                          static_cast<std::size_t>(cc)],
                 limit);
           }
         }
@@ -1096,7 +1104,9 @@ class TileWriter {
           const int cc = col + kMagRef[idx][1];
           if (rr < tx.adj_h && cc < tx.adj_w) {
             mag += std::min(
-                level_pre[static_cast<std::size_t>(rr) * tx.adj_w + cc], 5);
+                level_pre[static_cast<std::size_t>(rr) * static_cast<std::size_t>(tx.adj_w) +
+                          static_cast<std::size_t>(cc)],
+                5);
           }
         }
         mag = std::min((mag + 1) >> 1, 6);
@@ -1179,9 +1189,10 @@ class TileWriter {
 
       for (int j = 0; j < tx.adj_h; ++j) {
         for (int i = 0; i < tx.adj_w; ++i) {
-          const int value = clip1(
-              pred_value +
-              residual_back[static_cast<std::size_t>(j) * tx.adj_w + i]);
+          const int value =
+              clip1(pred_value +
+                    residual_back[static_cast<std::size_t>(j) * static_cast<std::size_t>(tx.adj_w) +
+                                  static_cast<std::size_t>(i)]);
           for (int dy = 0; dy < tx.upscale_y; ++dy) {
             for (int dx = 0; dx < tx.upscale_x; ++dx) {
               recon_[plane].at(x0 + i * tx.upscale_x + dx,
@@ -1261,7 +1272,7 @@ bool make_chroma_picture(int width, int height, ChromaFormat chroma,
   const std::uint32_t chroma_width = (static_cast<std::uint32_t>(width) + 1U) / 2U;
   const std::uint32_t chroma_height =
       (static_cast<std::uint32_t>(height) + 1U) / 2U;
-  if (y.size() < static_cast<std::size_t>(width) * height ||
+  if (y.size() < static_cast<std::size_t>(width) * static_cast<std::size_t>(height) ||
       u.size() < static_cast<std::size_t>(chroma_width) * chroma_height ||
       v.size() < static_cast<std::size_t>(chroma_width) * chroma_height) {
     error = "source planes are smaller than the requested dimensions";

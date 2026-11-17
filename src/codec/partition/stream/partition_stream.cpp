@@ -66,8 +66,8 @@ bool validate_node_geometry(const base::FrameGeometry& geometry,
     error = "node has an invalid partition";
     return false;
   }
-  if (node.mi_row < 0 || node.mi_col < 0 ||
-      node.mi_row >= base::mi_rows(geometry) ||
+  // mi_row/mi_col are unsigned, so only the upper bounds are meaningful.
+  if (node.mi_row >= base::mi_rows(geometry) ||
       node.mi_col >= base::mi_cols(geometry)) {
     error = "node origin is outside the frame";
     return false;

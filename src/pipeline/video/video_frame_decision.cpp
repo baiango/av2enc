@@ -547,7 +547,8 @@ void InterFrameEncoder::record_leaf_dump(SbSink& sink, const syntax::BlockSyntax
     record.palette_size = palette.has_palette ? palette.size : 0;
     record.palette_direction = palette.direction;
     for (int i = 0; i < record.palette_size && i < 8; ++i) {
-      record.palette_colors[i] = palette.colors[i];
+      record.palette_colors[static_cast<std::size_t>(i)] =
+          palette.colors[static_cast<std::size_t>(i)];
     }
   }
   sink.leaf_dump.push_back(record);
@@ -576,7 +577,8 @@ void InterFrameEncoder::dump_leaf_decisions() {
                    record.palette_direction);
       for (int i = 0; i < record.palette_size; ++i) {
         std::fprintf(file, "%s%02x", i == 0 ? "" : ",",
-                     static_cast<unsigned>(record.palette_colors[i]));
+                     static_cast<unsigned>(
+                         record.palette_colors[static_cast<std::size_t>(i)]));
       }
     }
     std::fputc('\n', file);
@@ -1104,8 +1106,8 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
           std::string warp_error;
           predicted = warp_predict_plane(
               gm_plan_->params[static_cast<std::size_t>(ref_index)],
-              references_[ref_index], 0, ax0, ay0, w, h, r, c, w4, h4,
-              luma, warp_error);
+              references_[static_cast<std::size_t>(ref_index)], 0, ax0, ay0, w,
+              h, r, c, w4, h4, luma, warp_error);
         }
 #endif
         if (!predicted) {
@@ -1220,13 +1222,13 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
             bool use_amvd = false;
             int target = frame_prec;
             if (options_.enable_adaptive_mvd && (mvd.y != 0 || mvd.x != 0)) {
-              int index = 0;
+              int amvd_index = 0;
               const bool row_ok =
                   mvd.y == 0 ||
-                  inter::mvprec::amvd_index_for_magnitude(mvd.y, &index);
+                  inter::mvprec::amvd_index_for_magnitude(mvd.y, &amvd_index);
               const bool col_ok =
                   mvd.x == 0 ||
-                  inter::mvprec::amvd_index_for_magnitude(mvd.x, &index);
+                  inter::mvprec::amvd_index_for_magnitude(mvd.x, &amvd_index);
               use_amvd = row_ok && col_ok;
             }
             // §5.20.7.6 flexible MV resolution: pick the coarsest
@@ -1411,26 +1413,32 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                                static_cast<std::size_t>(ch));
         for (int yy = 0; yy < h; ++yy) {
           std::memcpy(sink.compound_y.data() +
-                          static_cast<std::size_t>(yy) * w,
+                          static_cast<std::size_t>(yy) *
+                              static_cast<std::size_t>(w),
                       compound_pred_[0].samples.data() +
                           static_cast<std::size_t>(y0 + yy) *
-                              compound_pred_[0].stride +
+                              static_cast<std::size_t>(
+                                  compound_pred_[0].stride) +
                           x0,
                       static_cast<std::size_t>(w));
         }
         for (int yy = 0; yy < ch; ++yy) {
           std::memcpy(sink.compound_u.data() +
-                          static_cast<std::size_t>(yy) * cw,
+                          static_cast<std::size_t>(yy) *
+                              static_cast<std::size_t>(cw),
                       compound_pred_[1].samples.data() +
                           static_cast<std::size_t>(cy0 + yy) *
-                              compound_pred_[1].stride +
+                              static_cast<std::size_t>(
+                                  compound_pred_[1].stride) +
                           cx0,
                       static_cast<std::size_t>(cw));
           std::memcpy(sink.compound_v.data() +
-                          static_cast<std::size_t>(yy) * cw,
+                          static_cast<std::size_t>(yy) *
+                              static_cast<std::size_t>(cw),
                       compound_pred_[2].samples.data() +
                           static_cast<std::size_t>(cy0 + yy) *
-                              compound_pred_[2].stride +
+                              static_cast<std::size_t>(
+                                  compound_pred_[2].stride) +
                           cx0,
                       static_cast<std::size_t>(cw));
         }
@@ -2104,8 +2112,8 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       if (gm_plan_ == nullptr || best.ref_index >= gm_plan_->num_refs ||
           !warp_predict_420(
               gm_plan_->params[static_cast<std::size_t>(best.ref_index)],
-              references_[best.ref_index], ax0, ay0, w, h, r, c, w4, h4,
-              inter_y, inter_u, inter_v, warp_error)) {
+              references_[static_cast<std::size_t>(best.ref_index)], ax0, ay0,
+              w, h, r, c, w4, h4, inter_y, inter_u, inter_v, warp_error)) {
         error = "inter warp prediction failed: " + warp_error;
         return false;
       }
@@ -2143,7 +2151,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       std::vector<std::uint8_t> adapted = inter_y;
       inter::adv::BawpFit fit{};
       const inter::mc::PlaneView& ref_y =
-          references_[best.ref_index].plane[0];
+          references_[static_cast<std::size_t>(best.ref_index)].plane[0];
       if (bawp_adapt_luma(recon_[0].samples.data(), recon_[0].stride,
                           ref_y.data, ref_y.stride, mi_cols_, mi_rows_, r,
                           c, x0, y0, w, h, best.mv.y, best.mv.x, adapted,
@@ -2822,7 +2830,9 @@ bool InterFrameEncoder::predict_tip_leaf(int x0, int y0, int w, int h, int unit,
                       std::string& error) {
   const int units_x = (w + unit - 1) / unit;
   const int units_y = (h + unit - 1) / unit;
-  unit_mvs->assign(static_cast<std::size_t>(units_x) * units_y, temporal::MvPair{});
+  unit_mvs->assign(static_cast<std::size_t>(units_x) *
+                       static_cast<std::size_t>(units_y),
+                   temporal::MvPair{});
   std::vector<std::int16_t> scratch(2U * 16U * 16U, 0);
   std::vector<std::uint8_t> block(16U * 16U, 0);
   const int frame_w = mi_cols_ * 4;
@@ -2834,7 +2844,9 @@ bool InterFrameEncoder::predict_tip_leaf(int x0, int y0, int w, int h, int unit,
       const int unit_mi_row = py / 4;
       const int unit_mi_col = px / 4;
       const temporal::MvPair mvs = tip_unit_mvs(unit_mi_row, unit_mi_col, block_mv, tip);
-      (*unit_mvs)[static_cast<std::size_t>(uy) * units_x + ux] = mvs;
+      (*unit_mvs)[static_cast<std::size_t>(uy) *
+                      static_cast<std::size_t>(units_x) +
+                  static_cast<std::size_t>(ux)] = mvs;
       for (int plane = 0; plane < 3; ++plane) {
         const int sub_x = plane == 0 ? 0 : 1;
         const int sub_y = plane == 0 ? 0 : 1;
@@ -2874,7 +2886,9 @@ bool InterFrameEncoder::predict_tip_leaf(int x0, int y0, int w, int h, int unit,
         const int vis_w = std::min(bw, recon_[plane].width - bx);
         const int vis_h = std::min(bh, recon_[plane].height - by);
         for (int r = 0; r < vis_h; ++r) {
-          std::copy_n(block.data() + static_cast<std::size_t>(r) * bw, vis_w,
+          std::copy_n(block.data() + static_cast<std::size_t>(r) *
+                                          static_cast<std::size_t>(bw),
+                      vis_w,
                       recon_[plane].samples.data() +
                           static_cast<std::ptrdiff_t>(by + r) * recon_[plane].stride + bx);
         }
@@ -3021,7 +3035,10 @@ bool InterFrameEncoder::encode_tip_leaf(SbSink& sink, const PartitionNode& node,
       for (int xx = 0; xx < vis_w; ++xx) {
         const int d = static_cast<int>(recon_[0].at(x0 + xx, y0 + yy)) -
                       static_cast<int>(
-                          source_.y[static_cast<std::size_t>(y0 + yy) * source_.width + x0 + xx]);
+                          source_.y[static_cast<std::size_t>(y0 + yy) *
+                                        static_cast<std::size_t>(
+                                            source_.width) +
+                                    static_cast<std::size_t>(x0 + xx)]);
         sse += d * d;
       }
     }
@@ -3067,7 +3084,10 @@ bool InterFrameEncoder::encode_tip_leaf(SbSink& sink, const PartitionNode& node,
     for (int xx = 0; xx < w4 && c + xx < mi_cols_; ++xx) {
       const int ux = (xx * 4) / unit;
       const int uy = (yy * 4) / unit;
-      const temporal::MvPair& mvs = unit_mvs[static_cast<std::size_t>(uy) * units_x + ux];
+      const temporal::MvPair& mvs =
+          unit_mvs[static_cast<std::size_t>(uy) *
+                       static_cast<std::size_t>(units_x) +
+                   static_cast<std::size_t>(ux)];
       inter::mc::MiInfo& mi =
           mv_grid_[static_cast<std::size_t>(r + yy) * static_cast<std::size_t>(mi_cols_) +
                    static_cast<std::size_t>(c + xx)];

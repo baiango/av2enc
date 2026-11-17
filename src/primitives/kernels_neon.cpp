@@ -249,7 +249,7 @@ std::int32_t neon_subpel_sad_rows(const std::uint8_t* cur,
     row_tag[i] = -1;
   }
 
-  int32x4_t sad_acc = vdupq_n_u32(0);
+  uint32x4_t sad_acc = vdupq_n_u32(0);
   const int vec_w = w & ~7;
 
   for (int r = r0; r < r1; ++r) {

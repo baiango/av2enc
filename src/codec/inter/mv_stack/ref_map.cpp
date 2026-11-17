@@ -114,7 +114,6 @@ bool get_ref_frames(const RefMapParams& params, RefMap* out,
 
   // §7.7 mapOrderHint / first_slot_with_ref / valid_ref_frame_size.
   int max_disp = 0;
-  bool map_base_q[kMaxNumRefSlots] = {};
   int map_base_q_idx[kMaxNumRefSlots] = {};
   for (int i = 0; i < n; ++i) {
     map.map_order_hint[i] = -1;
@@ -142,7 +141,6 @@ bool get_ref_frames(const RefMapParams& params, RefMap* out,
                   params.frame_height <= 16 * slot.frame_height;
       }
       if (size_ok) map.map_order_hint[i] = slot.order_hint;
-      map_base_q[i] = true;
       map_base_q_idx[i] = slot.base_q_idx;
       max_disp = std::max(max_disp, slot.order_hint);
     }

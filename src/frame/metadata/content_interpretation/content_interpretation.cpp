@@ -199,7 +199,8 @@ bool put_uvlc(BitWriter& writer, std::uint32_t value) {
 // §4.11.10 rg(2) writer.
 void put_rg(BitWriter& writer, std::uint32_t value, unsigned n) {
   const std::uint32_t q = value >> n;
-  const std::uint32_t remainder = value & ((1UL << n) - 1UL);
+  const std::uint32_t remainder =
+      value & static_cast<std::uint32_t>((1UL << n) - 1UL);
   for (std::uint32_t index = 0; index < q; ++index) {
     writer.put_bit(true);
   }

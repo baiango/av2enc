@@ -358,7 +358,6 @@ bool read_sequence_filter_config(BitReader& reader,
                                  SequenceFilterConfig* config,
                                  std::string* error) {
   if (config == nullptr) return fail(error, "null SequenceFilterConfig");
-  bool gdf_unit_matches = false;
   bool bit = false;
   if (!reader.read_bit(&bit)) return fail(error, "truncated sequence filter");
   config->disable_loopfilters_across_tiles = bit;
