@@ -96,6 +96,29 @@ A winning patch stays on its branch for review. It never becomes a default or a
 pin change automatically. A negative result is committed as evidence and the
 code is reverted.
 
+## First run (2026-11-18)
+
+The first 10-attempt run finished with **no kept patch**. Best arm CDEF strength
+4 was +0.065 K but sign-inconsistent; the rest were negative. Ledger:
+`docs/tool-improvement-queue.md`.
+
+The run targeted shallow flag/patch changes. The per-tool probes
+(`docs/tool-quality.md`) then identified the actual gaps:
+
+1. **Key/intra coefficient coding** — similar key bytes to AVM (22,995 vs
+   23,500 B) but 8.4 dB behind on a static detail key. Coefficient
+   quantisation/entropy, not TX size. Do not repeat the intra-trellis patch
+   that lost -0.76 K.
+2. **Leaf-RD skip pricing** — nightly skips 76-91% of inter leaves on the
+   fractional-MV probes; disabling `--video-leaf-rd` gains +4.1 K there because
+   it codes residual instead of skipping. Test on natural 240p, then make the
+   skip decision rate-aware rather than disabling the tool.
+3. **BAWP rate-aware acceptance** — BAWP selection is SSE-only; disabling it
+   raises K on a fade. Price its rate, not just its SSE.
+
+The next loop must start from these targets; a tool-toggle sweep is not the
+work.
+
 ## What this loop is not
 
 - It is not a new-tool or new-codec program.

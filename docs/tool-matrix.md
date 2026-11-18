@@ -103,11 +103,11 @@ deblock, CCSO, TX search, full intra.
 | `--video-edge-inter` | prediction | off/off/on/on | FP, bottom rows | B/TL/TIP/W; tiles; ref-mvs; GPU | gated (`gate_video_edge_inter.sh`) | +2.39 JOD over the old quality preset; edge pair −4.10 K marginal (`video-rd-preset.md`, `nightly-ablation.md`) | FP | in aggregate |
 | `--video-edge-mask` | allocation | off/off/on/on | FP + edge-inter | needs edge-inter; tiles; GPU | gated (`gate_video_edge_mask.sh`) | +0.07 JOD; −1.00 K marginal (`video-rd-preset.md`) | FP | in aggregate |
 | `--video-intra-full` | prediction | off/on/on/on | FP | SDP; SSE-only mode decision | part of `quality` | +4.9% rate / −0.016 dB at QP90 default (`negative-results.md`); no isolated nightly K | FP, B, TL | mode RD already negative; no |
-| `--video-cfl` | prediction | off/off/off/off | FP | IBP; SDP; no CDF conflict | gated | no composite K | FP, B, TL | **untested with nightly; rank 3** |
+| `--video-cfl` | prediction | off/off/off/off | FP | IBP; SDP; no CDF conflict | gated | **−0.497 K** with nightly, QP104/106/108 (`tool-improvement-queue.md` attempt 4) | FP, B, TL | measured negative |
 | `--video-mhccp` | prediction | off/off/off/off | FP | `--avg-cdf/--adaptive-cdf`; W | gated | no K; implies CfL | FP with `--video-cdf-chain-off` | CDF-reset composition untested |
 | `--video-mrl` | prediction | off/off/off/off | FP | GPU; tiles; SVC; IBP; needs intra-full | gated (`video_mrl_ist_gate.sh`) | RD selects it on 64/189 key leaves without a measured win (`negative-results.md`) | FP, B, TL | measured neutral/negative |
-| `--video-ibp` | prediction | off/off/off/off | FP | CfL/MHCCP; MRL; SC; inter-intra; B/TL/TIP/W; GPU/tiles/SVC | gated (`video_ibp_gate.sh`) | no K | FP | **untested with nightly; rank 5** |
-| `--video-dip` | prediction | off/off/off/off | FP | SDP; lossless; B/TL/TIP/SVC; GPU/tiles | gated (`video_dip_gate.sh`) | no K | FP | untested with nightly |
+| `--video-ibp` | prediction | off/off/off/off | FP | CfL/MHCCP; MRL; SC; inter-intra; B/TL/TIP/W; GPU/tiles/SVC | gated (`video_ibp_gate.sh`) | **−0.820 K** with nightly (`tool-improvement-queue.md` attempt 6) | FP | measured negative |
+| `--video-dip` | prediction | off/off/off/off | FP | SDP; lossless; B/TL/TIP/SVC; GPU/tiles | gated (`video_dip_gate.sh`) | **−0.391 K** with nightly (`tool-improvement-queue.md` attempt 8) | FP | measured negative |
 | `--video-palette` | prediction | off/off/off/off | SC | CDF chain; TX search; tiles; B/TL/TIP/W; GPU | gated (`gate_video_scc.sh`) | no K | SC | screen-content only; nightly needs ~11.5 K of ablations |
 | `--video-ibc` | prediction | off/off/off/off | SC | CDF chain; segmentation/per-seg; DRL_ALWAYS; tiles; B; GPU | gated (`gate_video_scc.sh`) | no K; inert at 64x64 (`negative-results.md`) | SC | same; needs ≥2 SB rows |
 | `--video-scc-force` | prediction | off/off/off/off | SC | needs palette/IBC/morph; GPU | gated | forced §5.4.7 form | SC | untested |
@@ -126,7 +126,7 @@ deblock, CCSO, TX search, full intra.
 | `--video-gme` / `--video-warp` | prediction | off/off/off/off | skip-only FP | inter-residual; B/TL/W; compound; DRL; tiles | gated (`video_ref_mvs_gate.sh`) | −0.75 K at 720p after removing blockers (`gme-720p.md`) | FP skip-only | measured dead |
 | `--video-bawp` | prediction | off/off/on/on | FP | B/TL/W; compound; GME; residual needs carrier; tiles | gated | −0.36 K marginal (`nightly-ablation.md`) | FP | in aggregate |
 | `--video-bawp-carrier` | prediction | off/off/on/on | FP | same; CPU only | gated | +0.04 JOD over residual path (`video-nightly.md`) | FP | in aggregate |
-| `--video-adaptive-mvd` | prediction | off/off/off/off | FP | BAWP; compound; GME; OPFL/refine; §5.20.7.6 order | gated (`video_adaptive_mvd_gate.sh`) | neutral on quality preset (`video-rd-preset.md`) | FP with `--video-bawp-off` | **untested trio; rank 4** |
+| `--video-adaptive-mvd` | prediction | off/off/off/off | FP | BAWP; compound; GME; OPFL/refine; §5.20.7.6 order | gated (`video_adaptive_mvd_gate.sh`) | neutral on quality preset (`video-rd-preset.md`); with the BAWP-off/quarter-pel rescue it is **−2.486 K** (`tool-improvement-queue.md` attempt 9) | FP with `--video-bawp-off` | measured negative via the rescue |
 | `--video-mvd-sign-derive` | prediction | off/off/off/off | FP quarter+flex | BAWP; compound; GME; needs flex at quarter | gated (`video_mvd_sign_derive_gate.sh`) | no K | FP with `--video-bawp-off` | untested trio |
 | `--video-flex-mvres` | prediction | off/off/off/off | FP | BAWP; compound; GME | gated (`video_flex_mvres_gate.sh`) | no K | FP with `--video-bawp-off` | untested trio |
 | `--video-mv-precision` | prediction | eighth | FP, B, TL | ref-mvs; W; force-integer; GME | gated | coarser precision exact; no RD | FP, B, TL | — |
@@ -142,9 +142,9 @@ deblock, CCSO, TX search, full intra.
 | `--video-tx-context-rate` | entropy | off/off/off/off | FP | needs TX search; GPU | gated | +0.044 JOD on quality at 100.04; measured negative stacked on nightly (`video-tx-context-rate.md`, `video-nightly.md`) | FP | measured dead combination |
 | `--video-tx-lambda S` | transform | 256/256/—/— | FP | needs TX search | gated | 128/512/1024 all plateau (`video-rd-preset.md`) | FP, B, TL | nightly scales by QP |
 | `--video-key-tx-lambda S` | transform | 0/0/—/— | FP | needs TX search; 0 inherits | gated | no standalone K | FP | — |
-| `--video-idtx` | transform | off/off/off/off | TX search FP/B/TL | GPU; `--video-min-block 4`; needs TX search | gated (`video_idtx_gate.sh`) | no K | FP, B, TL | untested with nightly |
+| `--video-idtx` | transform | off/off/off/off | TX search FP/B/TL | GPU; `--video-min-block 4`; needs TX search | gated (`video_idtx_gate.sh`) | **−0.219 K** with nightly (`tool-improvement-queue.md` attempt 7) | FP, B, TL | measured negative |
 | `--video-idtx-1d` | transform | off/off/off/off | none | one-axis V/H_DCT needs `dc_sign_horz_vert`; pinned dav2d rejects negative values | rejected by name (`negative-results.md`) | decoder rejection | none | closed |
-| `--video-ist` | transform | off/off/off/off | FP/B/TL | GPU; tiles; SVC; QM | gated (`video_mrl_ist_gate.sh`) | no K | FP, B, TL | untested with nightly |
+| `--video-ist` | transform | off/off/off/off | FP/B/TL | GPU; tiles; SVC; QM | gated (`video_mrl_ist_gate.sh`) | **−0.008 K** with nightly (+11 B at QP106, inert) (`tool-improvement-queue.md` attempt 5) | FP, B, TL | measured inert |
 | `--video-tcq` | transform | off/off/off/off | FP/B/TL | RDOQ; QM; segmentation/UV; LL; tiles; W; TIP; SVC | gated (`video_tcq_gate.sh`) | 6.223 JOD at 98.1 kbps, 60x cost for ~+0.01 JOD (`video-rd-preset.md`) | FP, B, TL with `--video-rdoq-off` | TCQ+CCTX untested |
 | `--video-cctx` | transform | off/off/off/off | FP/B/TL | same family as TCQ | gated (`video_cctx_gate.sh`) | neutral (`video-rd-preset.md`) | FP, B, TL with `--video-rdoq-off` | TCQ+CCTX untested |
 | `--video-ddt` | transform | off/off/off/off | FP/B/TL/T | TIP; SVC; LL; GPU | gated (`gate_video_sdp_ddt.sh`) | −1.22 K matched rate (`partition-tools.md`) | FP, B, TL, T | measured dead alone |
@@ -167,7 +167,7 @@ deblock, CCSO, TX search, full intra.
 | `--video-cdef` | filter | off/off/on/on | FP, B, TL, T | W | gated | +0.20 JOD (`video-nightly.md`); loop-filter stack −5.85 K | FP, B, TL, T | in aggregate |
 | `--video-cdef-rd` | filter/entropy | off/off/on/on | same as CDEF | same | gated | −63 B / −0.25% at identical pixels (`video-nightly.md`) | FP, B, TL, T | in aggregate |
 | `--video-cdef-rd-lambda L` | filter | 0/0/0/0 | CDEF | changes padded reconstruction when >0 | gated | no iso-rate K | FP, B, TL, T | **untested priced form** |
-| `--video-cdef-strength N` | filter | 1/1/1/1 | CDEF | `step`/`fast` search need 1 | gated | 4 sets costs ~6.4 B/frame; no K (`video-nightly.md`) | FP, B, TL, T | **untested multi-strength; rank 2** |
+| `--video-cdef-strength N` | filter | 1/1/1/1 | CDEF | `step`/`fast` search need 1 | gated | 4 sets costs ~6.4 B/frame (`video-nightly.md`); **+0.065 K** matched but 80.164/82.230/81.936 per QP, sign-inconsistent (`tool-improvement-queue.md` attempt 2) | FP, B, TL, T | measured inside the ripple |
 | `--video-cdef-damping N` | filter | 3/3/3/3 | CDEF | 3..6 | gated | no K | FP, B, TL, T | untested |
 | `--video-cdef-search M` | filter | full | CDEF | `step`/`fast` need strength 1 | gated | speed only | FP, B, TL, T | — |
 | `--video-ccso` | filter | off/on/on/on | FP, B, TL, T | W | gated | +0.15 JOD with rate-aware CCSO (`video-nightly.md`) | FP, B, TL, T | in aggregate |
@@ -441,13 +441,13 @@ have **no composite-K measurement**. They are not claims.
 | # | combination | carrier | why untested | expected |
 |---|---|---|---|---|
 | 1 | `--nightly --video-tip` plus the flat-P strip (`--video-edge-inter-off --video-edge-mask-off --video-bawp-off --video-drift-refresh-off --video-cdf-chain-off --video-key-qp-offset-off --video-rdoq-off --video-partition-rd-off --video-ref-signal-off --video-tile-group-off --video-tile-flush-off --video-loop-filters-off --video-tx-search-off`) | TIP, 3–8 frames | only decoder-gated; the oracle queue's one open prediction class | highest structural headroom; expensive and not a 60-frame sequence |
-| 2 | `--nightly --video-cdef-strength 4` | FP | only the header cost (≈6.4 B/frame) is measured | possible BA gain from per-block CDEF; small |
-| 3 | `--nightly --video-cfl` | FP | accepted, never measured on the nightly aggregate | chroma SS2; small on this fixture |
-| 4 | `--nightly --video-bawp-off --video-adaptive-mvd --video-flex-mvres --video-mvd-sign-derive --video-mv-precision quarter` | FP | each is gated alone; the trio is untested | small syntax saving; very cheap |
-| 5 | `--nightly --video-ibp` | FP | gated alone; no K | intra-leaf prediction change; small on P tail |
-| 6 | `--nightly --video-ist` | FP | gated alone; no K | key/intra coefficient coding; small |
-| 7 | `--nightly --video-dip` | FP | gated alone; no K | keyframe DC alternative; small |
-| 8 | `--nightly --video-idtx` | FP/B/TL | gated alone; no K | TX-type diversity; small |
+| 2 | ~~`--nightly --video-cdef-strength 4`~~ | FP | **measured: +0.065 K matched, per-QP 80.164/82.230/81.936 (sign-inconsistent)** | closed (`tool-improvement-queue.md` attempt 2) |
+| 3 | ~~`--nightly --video-cfl`~~ | FP | **measured: −0.497 K** | closed (`tool-improvement-queue.md` attempt 4) |
+| 4 | ~~`--nightly --video-bawp-off --video-adaptive-mvd --video-flex-mvres --video-mvd-sign-derive --video-mv-precision quarter`~~ | FP | **measured: −2.486 K** (the BAWP/quarter-pel rescue dominates) | closed (`tool-improvement-queue.md` attempt 9) |
+| 5 | ~~`--nightly --video-ibp`~~ | FP | **measured: −0.820 K** | closed (`tool-improvement-queue.md` attempt 6) |
+| 6 | ~~`--nightly --video-ist`~~ | FP | **measured: −0.008 K (inert)** | closed (`tool-improvement-queue.md` attempt 5) |
+| 7 | ~~`--nightly --video-dip`~~ | FP | **measured: −0.391 K** | closed (`tool-improvement-queue.md` attempt 8) |
+| 8 | ~~`--nightly --video-idtx`~~ | FP/B/TL | **measured: −0.219 K** | closed (`tool-improvement-queue.md` attempt 7) |
 | 9 | `--nightly --video-rdoq-off --video-tcq --video-cctx` | FP/B/TL | TCQ and CCTX are individually neutral; the pair composes and is untested | low; TCQ costs ~60x |
 | 10 | `--nightly --video-cdf-chain-off --video-mhccp` | FP | only blocker-free form; no K | low; pays −4.51 K for the CDF chain |
 
