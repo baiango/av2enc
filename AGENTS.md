@@ -25,8 +25,10 @@ leave the shared roots (`src/main.cpp`, `CMakeLists.txt`, `still_*`, `video_*`,
 - VRAM arena is sized from the device: `min(total, free) - 512 MiB`, optionally
   bounded by `--vram-cap <MiB>`. There is no fixed 7,500 MB preset. Do not tune
   for one specific larger card.
-- No encoder code from AVM, SVT-AV1/AV2, clave, or av2-turbo. Use the AV2 v1.0.0
-  spec. `dav2d`/`avmdec` are black-box validators only.
+- No encoder code from AVM, SVT-AV1/AV2, clave, or av2-turbo. Do **not** read,
+  copy, transcribe, translate, or vendor their source or code snippets. Use the
+  AV2 v1.0.0 spec or an original design. `dav2d`/`avmdec` are black-box
+  validators only: invoke the binaries, never add their source to the tree.
 - Every stream must pass `tools/validate_dav2d.sh` before it is called working.
 - No `cudaMalloc` in hot paths; use `src/cuda/arena.*`.
 - No Blackwell-only instructions (TMA, clusters, `wgmma`/`tcgen05`, FP4).
