@@ -332,3 +332,10 @@ done
 python3 tools/oracle.py --ref $P --ivf b@142=... --ivf z@150=/tmp/meh150.ivf \
   --ivf z@152=/tmp/meh152.ivf --no-segments
 ```
+
+> **Key/intra is closed (2026-11-19).** 20 attempts, all negative. The 8.4 dB
+> key gap is a PSNR/bytes statement, not a K lever: a perfect key is +0.00 K.
+> The error is 6.7-10.3x AVM in every DCT ring (a ~2.6x coarser quantiser step),
+> not prediction or entropy. The 5.2x coefficient-rate underprice is worth at
+> most 0.35 dB and fails on natural content. Do not target key/intra; see
+> `docs/tool-improvement-queue-3.md`.

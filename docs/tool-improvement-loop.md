@@ -158,6 +158,19 @@ gap remains open: the trellis moves the key RD curve by tenths of a dB, not the
 8 dB the probe reports.
 
 
+
+## Third run: key/intra closed (2026-11-19)
+
+The key/intra lane ran 20 attempts and kept nothing. Diagnosis: the 8.4 dB key
+gap is not prediction (<=2-3 dB headroom, mostly outside syntax), not band
+shape (error is 6.7-10.3x AVM in every DCT ring, i.e. a ~2.6x coarser quantiser
+step), and not the entropy coder (the key field at matched quality is larger
+than AVM's entire key). The largest measured defect, a 5.2x coefficient-rate
+underprice in the intra TX search, is worth <=0.35 dB and fails on natural
+content. A perfect key is worth +0.00 K, so key work is not a K lever. Do not
+target key/intra unless it is a dependent-quantiser research project. See
+`docs/tool-improvement-queue-3.md`.
+
 ## What this loop is not
 
 - It is not a new-tool or new-codec program.
