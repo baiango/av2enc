@@ -19,11 +19,11 @@ all top-level sessions and their subagents — as of **2026-11-18**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 242,957,981 |
-| Output | 37,006,061 |
-| Reasoning | 40,231,825 |
+| Fresh input | 242,977,492 |
+| Output | 37,010,864 |
+| Reasoning | 40,240,639 |
 | **Input + output + reasoning** | **~320.2 M** |
-| Cached context reads | 24,257,853,787 |
+| Cached context reads | 24,263,045,083 |
 | **Including cache reads** | **~24.58 B** |
 
 571 sessions (12 top-level + 559 subagents). Cache reads dominate because every
@@ -65,7 +65,7 @@ Rows recorded on the retired unlicensed clip are historical.
 | CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 21.79 | -41.17 | 24.47 dB | 23.7 fps (1 thread) / 54.6 fps (8 threads) |
 | CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 19.73 | -4.07 | 27.58 dB | 23.4 fps (8 threads) |
 | CPU 240p30, `--nightly` QP 106 | Apple M4 | 100.0 / - kbps | **9.733 JOD** | **3.42** | **80.84** | **44.67 dB** | 7.6 fps (8 threads) |
-| CPU 240p30, nightly + `AV2ENC_EFF_PERC=1` | Apple M4 | 100.0 / - kbps | 9.771 JOD | 2.26 | 82.44 | 44.46 dB | - |
+| CPU 240p30, nightly + `AV2ENC_EFF_PERC=1` | Apple M4 | 100.0 / - kbps | 9.771 JOD | 2.26 | 82.44 | 44.46 dB | 7.5 fps (8 threads) ‡ |
 | AVM e6f99d3, QP 124 (NASA) | Apple M4 | 99.3 / - kbps | 9.862 JOD | 1.29 | 90.38 | 50.27 dB | 1.4 fps (8 threads) |
 | SVT-AV1 4.3.0, CRF 42, preset 4 (NASA) | Apple M4 | 98.6 / - kbps | 9.740 JOD | 2.15 | 85.04 | 45.81 dB | 300 fps |
 | SVT-AV1 4.3.0, CRF 36.5, preset 0 (NASA) | Apple M4 | 100.0 / - kbps | **9.828 JOD** | **1.55** | **88.89** | **48.88 dB** | 19.1 fps |
@@ -75,7 +75,10 @@ Rows recorded on the retired unlicensed clip are historical.
 | GPU 1440x720 QP90 | RTX 3080 Ti | - / 7664 kbps | 9.704 JOD | - | - | 42.85 dB | 5.40 fps |
 | GPU 1440x720 QP90 | RTX 3060 | - / 7664 kbps | 9.704 JOD | - | - | 42.85 dB | 4.88 fps |
 
-† Clean upstream AVM build; see the AVM note below.
+† AVM is a clean upstream build of `e6f99d3`, with no local patch. Commit,
+binary SHA-256, commands and stream MD5s: `bench/avm_baseline/README.md`.
+‡ eff-perc fps is measured at the QP119 recipe (100.92 kbps); the 100.0 kbps
+quality point is interpolated.
 
 Butteraugli (lower better) and SSIMULACRA2 (higher better) are measured with
 `tools/extra_metrics.py` on the decoded stream; `-` means not measured (the GPU
@@ -159,7 +162,8 @@ and treat a change that improves K without moving CVVDP as a real quality win
 rather than a neutral result: the QP-scaled lambdas did exactly that (+0.7 dB
 PSNR, +1.1 K, +0.02 JOD).
 
-† AVM is built clean from upstream commit `e6f99d3` (2026-11-12) with
+**AVM measurements.** AVM is built clean from upstream commit `e6f99d3`
+(2026-11-12) with
 `--end-usage=q --cpu-used=6 --threads=8`; no local patch is applied. CBR
 undershoots at low targets, so these are constant-QP runs; the exact command
 and binary SHA-256 are in `bench/avm_baseline/README.md`. QP 122/123/124 measured
@@ -192,12 +196,15 @@ build and the full ladder: `bench/space8k_720p/README.md`.
 | Encoder | Setting | Rate | CVVDP | Butteraugli | SSIMULACRA2 | K | Encode |
 |---|---|---:|---:|---:|---:|---:|---:|
 | av2enc `--nightly` | QP217, key -57, leaf 250, ext-partitions | 292.6 kbps | 7.324 | 28.87 | -10.15 | **45.6** | 2.3 fps |
-| AVM e6f99d3 | QP203 | 293.3 | 8.130 | 22.03 | 22.83 | **55.8** | 0.17 fps |
+| AVM e6f99d3† | QP203 | 293.3 | 8.130 | 22.03 | 22.83 | **55.8** | 0.17 fps |
 | SVT-AV1 4.3.0 p0 | CRF63/62 interpolated to 292.6 | 292.6 | 8.244 | 20.89 | 23.21 | **56.6** | 1.7 fps |
 | rav1e 0.8.1 speed 2 | Q209/210 interpolated to 292.6 | 292.6 | 7.788 | 20.12 | 14.90 | **53.0** | 2.3 fps |
 
 Encode figures are 60 frames divided by wall time at 8 threads. AVM 720p takes
 344.0 s (0.17 fps) at QP203.
+
+† Clean upstream AVM `e6f99d3`; provenance and commands:
+`bench/avm_baseline/README.md`.
 
 
 SVT-AV1 v4.3.0 was measured at two presets, decoded with `dav1d`, and scored

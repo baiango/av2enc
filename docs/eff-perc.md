@@ -261,6 +261,10 @@ python3 tools/extra_metrics.py --ref "$REF" --test /tmp/ep.y4m --json /tmp/e.jso
 python3 tools/kpi.py --quality-json /tmp/q.json --extra-json /tmp/e.json
 ```
 
+The README speed point uses `build-release-timing` (the `release-timing`
+preset) with the same command: **7.5 fps** at QP119 on Apple M4 with 8 threads
+(three runs 7.3-7.6 fps; stream 25,230 B / 100.92 kbps).
+
 ## Env knobs (no CLI flags)
 
 | Variable | Default | Meaning |
