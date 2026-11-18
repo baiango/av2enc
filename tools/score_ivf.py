@@ -2,10 +2,10 @@
 """Score IVF files produced by tools/modal_rd.py on this Mac.
 
 The Modal half only encodes: it returns the IVF bytes and a manifest. This
-script decodes each stream with the pinned `dav2d-macos` and runs the same
-quality pipeline every local measurement uses (CVVDP on MPS, Butteraugli and
-SSIMULACRA2 from the local libjxl), so cloud-encoded arms are scored with the
-exact metric implementation the pins were recorded against.
+script decodes each stream with the AVM reference decoder (`avmdec`) and runs
+the same quality pipeline every local measurement uses (CVVDP on MPS,
+Butteraugli and SSIMULACRA2 from the local libjxl), so cloud-encoded arms are
+scored with the exact metric implementation the pins were recorded against.
 
 Usage
 -----
@@ -31,6 +31,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+import quality  # noqa: E402  (shares the AVM decode/Y4M wrapper)
 
 CLIPS = {
     "240p": ROOT / "testdata/nasa_480x240_30fps_60f.y4m",
@@ -56,35 +58,17 @@ def score_one(job: dict) -> dict:
     ref = CLIPS.get(clip)
     if ref is None:
         raise RuntimeError(f"{ivf}: unknown clip {clip!r}")
-    env = os.environ.copy()
-    env["DAV2D"] = str(ROOT / "tools/bin/dav2d-macos")
-
     with tempfile.TemporaryDirectory(prefix="score-ivf-") as td:
         td = Path(td)
         y4m = td / "out.y4m"
-        decoded = _run(
-            [
-                str(ROOT / "tools/bin/dav2d-macos"),
-                "--strict",
-                "1",
-                "-i",
-                str(ivf),
-                "-o",
-                str(y4m),
-                "--muxer",
-                "yuv4mpeg2",
-            ]
-        )
-        log = (decoded.stdout or "") + (decoded.stderr or "")
-        if decoded.returncode != 0 or "Error decoding" in log:
-            raise RuntimeError(f"{ivf}: decode failed: {log[-400:]}")
+        quality.decode_avm(quality.find_avmdec(), ivf, ref, y4m)
 
         q = td / "q.json"
         e = td / "e.json"
         k = td / "k.json"
         for cmd in (
             [sys.executable, str(ROOT / "tools/quality.py"), "--ref", str(ref),
-             "--ivf", str(ivf), "--json", str(q)],
+             "--test", str(y4m), "--json", str(q)],
             [sys.executable, str(ROOT / "tools/extra_metrics.py"), "--ref", str(ref),
              "--test", str(y4m), "--json", str(e)],
             [sys.executable, str(ROOT / "tools/kpi.py"), "--quality-json", str(q),

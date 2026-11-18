@@ -7,8 +7,8 @@ Computes:
   - SSIM (ffmpeg)
   - ColorVideoVDP / CVVDP (JOD, PyTorch, MPS on Apple Silicon)
 
-The decoder is dav2d. CVVDP is run with a fixed display model so numbers are
-comparable across encoder revisions.
+The decoder is AVM `avmdec`. CVVDP is run with a fixed display model so numbers
+are comparable across encoder revisions.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_DAV2D = ROOT / "tools" / "bin" / "dav2d"
-DEFAULT_DAV2D_MACOS = ROOT / "tools" / "bin" / "dav2d-macos"
+DEFAULT_AVM = ROOT / "tools" / "bin" / "avmdec"
+DEFAULT_AVM_MACOS = ROOT / "tools" / "bin" / "avmdec-macos"
 
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
@@ -130,16 +130,18 @@ def host_info() -> dict:
     return info
 
 
-def find_dav2d() -> str:
-    if os.environ.get("DAV2D"):
-        return os.environ["DAV2D"]
-    for p in (DEFAULT_DAV2D, DEFAULT_DAV2D_MACOS):
+def find_avmdec() -> str:
+    for name in ("AVMDEC", "AVM_DEC"):
+        path = os.environ.get(name)
+        if path:
+            return path
+    for p in (DEFAULT_AVM, DEFAULT_AVM_MACOS):
         if p.is_file() and os.access(p, os.X_OK):
             return str(p)
-    found = shutil.which("dav2d")
+    found = shutil.which("avmdec")
     if found:
         return found
-    raise SystemExit("dav2d not found; set DAV2D=/path/to/dav2d")
+    raise SystemExit("avmdec not found; set AVMDEC=/path/to/avmdec")
 
 
 def y4m_header(path: Path) -> str:
@@ -199,6 +201,35 @@ def write_y4m(path: Path, header: str, frames: list[bytes]) -> None:
         for fr in frames:
             f.write(b"FRAME\n")
             f.write(fr)
+
+
+def decode_avm(avmdec: str, ivf: Path, ref: Path, out_y4m: Path,
+               threads: str | None = None) -> int:
+    """Decode an IVF with AVM to 8-bit I420 and wrap it as Y4M."""
+    header = y4m_header(ref)
+    if re.search(r"C[0-9A-Za-z]*p(10|12|16)", header):
+        raise SystemExit("quality.py: AVM path currently supports 8-bit Y4M only")
+    if not re.search(r"C420", header) and re.search(r"C(422|444)", header):
+        raise SystemExit("quality.py: AVM path currently supports 4:2:0 Y4M only")
+    raw = out_y4m.with_suffix(".i420")
+    cmd = [avmdec, "--i420", "--summary", "-o", str(raw)]
+    if threads:
+        cmd += ["-t", str(threads)]
+    cmd.append(str(ivf))
+    p = run(cmd)
+    if p.returncode != 0 or not raw.is_file():
+        sys.stderr.write(p.stdout or "")
+        sys.stderr.write(p.stderr or "")
+        raise SystemExit("avmdec failed")
+    data = raw.read_bytes()
+    size = frame_bytes(header)
+    if size <= 0 or len(data) == 0 or len(data) % size != 0:
+        raise SystemExit(
+            f"avmdec output {len(data)} B is not a whole number of "
+            f"{header.split()[1] if len(header.split()) > 1 else '?'} frames")
+    frames = [data[i:i + size] for i in range(0, len(data), size)]
+    write_y4m(out_y4m, header, frames)
+    return len(frames)
 
 
 def normalize_pair(ref: Path, test: Path, outdir: Path) -> tuple[Path, Path, int, str]:
@@ -294,7 +325,7 @@ def main() -> int:
     ap.add_argument("--ref", required=True, type=Path, help="reference Y4M")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--test", type=Path, help="distorted Y4M")
-    src.add_argument("--ivf", type=Path, help="AV2 IVF; decoded with dav2d")
+    src.add_argument("--ivf", type=Path, help="AV2 IVF; decoded with AVM")
     ap.add_argument("--json", type=Path, help="write JSON report")
     ap.add_argument("--keep", action="store_true", help="keep normalized Y4M files")
     ap.add_argument("--encoder", help="encoder name for score_speed.py")
@@ -314,16 +345,13 @@ def main() -> int:
             if not args.ivf.is_file():
                 raise SystemExit(f"missing ivf: {args.ivf}")
             test_y4m = tmp / "decoded.y4m"
-            dav2d = find_dav2d()
-            decoder_name = Path(dav2d).name
+            avmdec = find_avmdec()
+            decoder_name = Path(avmdec).name
+            threads = (os.environ.get("AVMDEC_THREADS") or
+                       os.environ.get("AVM_DEC_THREADS"))
             t0 = time.perf_counter()
-            p = run([dav2d, "-q", "-i", str(args.ivf), "-o", str(test_y4m),
-                     "--threads", os.environ.get("DAV2D_THREADS", "0")])
+            decode_avm(avmdec, args.ivf, args.ref, test_y4m, threads)
             decode_seconds = time.perf_counter() - t0
-            if p.returncode != 0 or not test_y4m.is_file():
-                sys.stderr.write(p.stdout or "")
-                sys.stderr.write(p.stderr or "")
-                raise SystemExit("dav2d failed")
         else:
             test_y4m = args.test
             if not test_y4m.is_file():
@@ -385,7 +413,8 @@ def main() -> int:
             num, den = (int(x) for x in fps.split("/"))
             video_seconds = n * den / num
             report["decoder"] = decoder_name
-            report["decode_threads"] = os.environ.get("DAV2D_THREADS", "0")
+            report["decode_threads"] = (os.environ.get("AVMDEC_THREADS") or
+                                        os.environ.get("AVM_DEC_THREADS") or "0")
             report["decode_seconds"] = decode_seconds
             report["decode_fps"] = n / decode_seconds if decode_seconds > 0 else None
             report["decode_realtime_x"] = (

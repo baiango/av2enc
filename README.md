@@ -35,8 +35,9 @@ a final total.
 
 ## Status (2026-11-18)
 
-The CPU writer covers every AV2 tool that the pinned decoders (`dav2d`, plus
-`avmdec` where `dav2d` cannot parse) can validate, including the cases
+The CPU writer covers every AV2 tool that the pinned reference decoder
+(`avmdec`; legacy conformance gates still exercise `dav2d`) can validate,
+including the cases
 previously misdiagnosed as decoder limits (ref-MV bank,
 `mv_traj` with >=3 refs, 8-bit 4:0:0 PC-Wiener, 4:2:2 16-pixel leaves, TIP
 block references, arbitrary frame dimensions). The GPU path is the
@@ -126,13 +127,16 @@ tools/kpi.py --cvvdp 9.713 --butteraugli 4.14 --ssimulacra2 79.08
 ```
 
 ```sh
-# CVVDP: tools/quality.py (Apple MPS, standard_fhd display model)
-DAV2D=tools/bin/dav2d-macos tools/quality.py --ref <ref>.y4m --ivf <stream>.ivf
+# CVVDP: tools/quality.py (AVM avmdec, Apple MPS, standard_fhd display model)
+AVMDEC=tools/bin/avmdec tools/quality.py --ref <ref>.y4m --ivf <stream>.ivf
 
 # Butteraugli + SSIMULACRA2: tools/extra_metrics.py (per frame, averaged)
 # needs `butteraugli_main` (libjxl) and `ssimulacra2` on PATH
 tools/extra_metrics.py --ref <ref>.y4m --test <decoded>.y4m
 ```
+
+Quality scoring uses the AVM decoder; set `AVMDEC` when it is not in
+`tools/bin`. Legacy recon gates still invoke `dav2d` and are being migrated.
 
 | Stream | Rate | CVVDP | Butteraugli | SSIMULACRA2 | **K** |
 |---|---:|---:|---:|---:|---:|
@@ -277,9 +281,8 @@ reference; GPU output is byte-identical at the calibration point.
   3080 Ti benchmark hosts; the earlier full GPU product matrix was green on the
   RTX 3060 before those boxes were retired. The old 100-suite CUDA batch was
   98/100 (pre-existing test-only `tx_partition` and still `recon` harnesses).
-- Every accepted stream is checked with pinned `dav2d --strict 1` and decoded
-  picture counts; AVM is used only where `dav2d` cannot parse a spec tool
-  (user QM, CDF continuity, layered SVC).
+- Every accepted stream is checked with the reference decoder (`avmdec`;
+  legacy recon gates still use `dav2d`) and decoded picture counts.
 
 ## CLI
 
@@ -558,9 +561,10 @@ remaining limits are explicit decoder or product limits, not hidden fallbacks:
 - **GPU:** M2 mirror of the 8-bit 4:2:0 CPU decisions. CPU-only tools (morph,
   OPFL/refine-MV, inter-intra, TIP block references, segmentation, implicit
   maps, DRL reorder, CDF continuity, SVC, user QM) are rejected by name.
-- **Pinned `dav2d` limits:** user QM OBUs, cross-frame CDF carry, the nested
+- **Legacy `dav2d` limits:** user QM OBUs, cross-frame CDF carry, the nested
   decoder model and multi-layer SVC need `avmdec`; 1-D negative H/V_DCT is
-  rejected. Cross-xlayer SVC prediction is spec-forbidden (§6.8.2).
+  rejected. Quality measurements now use `avmdec`; these gates are being
+  migrated. Cross-xlayer SVC prediction is spec-forbidden (§6.8.2).
 - **Not signalable in AV2 v1.0.0:** 12-bit.
 
 See `docs/cuda-gap-analysis.md` for the per-tool CUDA matrix and
@@ -583,14 +587,14 @@ Agent worktrees and branches live outside the main checkout.
 ## Quality
 
 `tools/quality.py` computes bitrate, PSNR, SSIM, and CVVDP (JOD) for an IVF.
-It also records `decode_fps` and `decode_realtime_x` from `dav2d`. The
+It also records `decode_fps` and `decode_realtime_x` from the decoder. The
 cross-encoder **target is SVT-AV1 v4.3.0 preset 0**, measured on the same clip,
 decoded with `dav1d` and scored with the same model: 100.0 kbps / 9.828 JOD /
 48.88 dB. The AVM row in the baseline table is built clean from upstream
 `e6f99d3` (see the note above): the current QP-mode measurement (90.2 K at
 240p); the older CBR point and the archived retired-clip 720p sweep
 are in `bench/avm_baseline/README.md`. Compare at matched bitrate, and
-always confirm `dav2d` decoded the stream first. A fast-decode
+always confirm the decoder decoded the stream first. A fast-decode
 profile is deferred until quality and encode speed are settled.
 
 `tools/score_speed.py` reports speed vs CVVDP. `tools/score_tradeoff.py` enforces
@@ -656,8 +660,8 @@ Third-party material keeps its own terms:
 - **Specification PDF and attachments**: not redistributed. The PDF must be
   obtained separately, and the normative attachment headers are fetched on
   demand and SHA-256 verified by the table generator.
-- **Reference decoders**: `dav2d` and `avmdec` are AOM reference software used
-  only as black-box validators. They are not redistributed; `tools/bin/` is
-  ignored by git.
+- **Reference decoders**: `avmdec` is the quality oracle; `dav2d` remains in
+  legacy recon gates. Both are AOM reference software used only as black-box
+  validators. They are not redistributed; `tools/bin/` is ignored by git.
 - **Test media**: fixtures under `tests/data/` are generated, and `testdata/`
   is local-only and not required by the build.
