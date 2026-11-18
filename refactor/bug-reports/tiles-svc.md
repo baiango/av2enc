@@ -23,11 +23,11 @@ Repro (`in3.y4m` = three copies of `testdata/pub_640x360_1f.y4m`; any
 multi-frame 640x360 input works):
 ```sh
 python3 - <<'PY'
-s=open('/Users/arin/work/av2enc/testdata/pub_640x360_1f.y4m','rb').read()
+s=open('<repo>/testdata/pub_640x360_1f.y4m','rb').read()
 n=s.index(b"\n"); p=s.index(b"\n",n+1)+1
 open('/tmp/in3.y4m','wb').write(s[:n+1]+(s[n+1:p]+s[p:])*3)
 PY
-B=/Users/arin/work/av2enc/build/av2enc
+B=<repo>/build/av2enc
 $B /tmp/in3.y4m -o /tmp/a.ivf --video --frames 3 --svc-layers x0=320x120,x1=640x360
 $B /tmp/in3.y4m -o /tmp/b.ivf --video --frames 3 --svc-layers x0=320x120,x1=640x360 --video-refs 2
 $B /tmp/in3.y4m -o /tmp/c.ivf --video --frames 3 --svc-layers x0=320x120,x1=640x360 --video-tlayers 4
@@ -66,7 +66,7 @@ int main(){
     }
 }
 EOF
-cd /Users/arin/work/av2enc
+cd <repo>
 clang++ -std=c++17 -I src -I src/pipeline/tiles /tmp/p.cpp \
   src/pipeline/tiles/tile_layout.cpp src/core/conformance/conformance_tables.cpp -o /tmp/p
 /tmp/p
@@ -110,7 +110,7 @@ int main(){
   }
 }
 EOF
-cd /Users/arin/work/av2enc
+cd <repo>
 clang++ -std=c++17 -I src /tmp/c.cpp src/core/conformance/conformance.cpp \
   src/core/conformance/conformance_tables.cpp src/core/conformance/known_plans.cpp -o /tmp/c
 /tmp/c

@@ -50,7 +50,7 @@ using the clamped unit range.
 ### SCOUT-LR-04 — qp=1 chroma-LR stream rejected by the decoder
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc tests/data/basic_640x360_1f.y4m -o /tmp/q1.ivf \
   --frames 1 --still --qp 1 --still-chroma-lr
 tools/bin/dav2d-macos -q -i /tmp/q1.ivf -o /tmp/q1.y4m --threads 1 --strict 1

@@ -12,7 +12,7 @@
 ### SCOUT-INTER-CORE-01 — sub-8 / 4-tall leaves abort the video keyframe
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 build/av2enc testdata/pub_640x360_1f.y4m --video --frames 1 \
   --video-max-depth 5 --video-min-block 4 -o /tmp/sub8.ivf
 ```
@@ -47,7 +47,7 @@ every leaf.
 ### SCOUT-INTER-CORE-02 — long-term mode order-hint limit (16 frames)
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 # 60-frame 720p fixture; keep --frames <= 16 for long-term
 build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 16 \
   --video-long-term -o /tmp/lt16.ivf   # passes, recon exact
@@ -71,7 +71,7 @@ key-frame refresh means hints repeat after 16).
 ### SCOUT-INTER-CORE-03 — RC + open-GOP frame-type modes rejected late
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 4 \
   --video-leading 1 --rc crf --crf 30 -o /tmp/leadcrf.ivf
 build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 4 \
@@ -101,7 +101,7 @@ frame headers.
 ### SCOUT-INTER-CORE-04 — inter-residual gate does not exercise a residual
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 4 \
   --video-inter-residual -o /tmp/720res.ivf
 build/av2enc testdata/pub_1280x720_60f.y4m --video --frames 4 \

@@ -110,7 +110,7 @@ not on raising fps.
 ### 10-frame sweep
 
 ```sh
-cd $HOME/work/av2enc
+cd <repo>
 mkdir -p bench/avm_1080p
 
 for qp in 110 135 160 200 235; do
@@ -125,7 +125,7 @@ done
 ### Metrics
 
 ```sh
-cd $HOME/work/av2enc
+cd <repo>
 for qp in 110 135 160 200 235; do
   sec=$(awk '/^real /{print $2}' bench/avm_1080p/qp${qp}_encode.log)
   python3 tools/quality.py \
@@ -139,7 +139,7 @@ done
 ### 2-second clip
 
 ```sh
-cd $HOME/work/av2enc
+cd <repo>
 SRC="<media>/First-8K-Video-from-Space_orig.mp4"
 
 ffmpeg -hide_banner -v error -ss 10 -i "$SRC" -frames:v 120 \
@@ -163,7 +163,7 @@ python3 tools/quality.py \
 ### 1 fps budget check
 
 ```sh
-cd $HOME/work/av2enc
+cd <repo>
 python3 tools/score_tradeoff.py --reference AVM \
   --q-min 5.0 --r-max 4000 --min-encode-fps 1.0 --source-fps 60 \
   bench/avm_1080p/qp110_1080p_10f.json \

@@ -425,7 +425,7 @@ run_matrix() {
 
     say "== M3 GPU feature matrix =="
     say "encoder:  $ENCODER"
-    say "decoder:  $DECODER"
+    say "decoder:  ${DECODER#"$ROOT"/}"
     say "cpu-only: $CPU_ONLY"
     say "attest:   $ATTEST_MODE"
 
@@ -764,7 +764,7 @@ fi
 
 say "== M3 GPU feature gate =="
 say "encoder:  $ENCODER"
-say "decoder:  $DECODER"
+say "decoder:  ${DECODER#"$ROOT"/}"
 say "input:    $INPUT ($DIMS)"
 say "features: ${FEATURES:--}"
 say "m3 args:  ${M3_ARGS:--}"

@@ -5,7 +5,7 @@ SWITCH/RAS, hidden pictures, reference-slot refresh/invalidation, RAP
 boundaries. Read-only; `build/av2enc`, `build/video_gate`,
 `tools/bin/dav2d-macos`; 360p only.
 
-Fixtures: `$B=/Users/arin/work/av2enc/build/av2enc`, `$IN=/tmp/f8.y4m` —
+Fixtures: `$B=<repo>/build/av2enc`, `$IN=/tmp/f8.y4m` —
 640x360 C420jpeg, 8 frames (4-px horizontal pan derived from
 `testdata/src_640x360.y4m`; `/tmp/f9.y4m` and `/tmp/f17.y4m` extend the pan to
 9 and 17 frames). All commands below were run against these.
@@ -22,7 +22,7 @@ Fixtures: `$B=/Users/arin/work/av2enc/build/av2enc`, `$IN=/tmp/f8.y4m` —
 ### SCOUT-FRAME-01 — adaptive-CDF mode is accepted but the rebuilt sequence headers say it is off
 Repro:
 ```sh
-B=/Users/arin/work/av2enc/build/av2enc
+B=<repo>/build/av2enc
 # controls: both decode
 $B /tmp/f8.y4m -o /tmp/ok1.ivf --video --frames 8 --video-max-depth 3 --avg-cdf --adaptive-cdf
 $B /tmp/f8.y4m -o /tmp/ok2.ivf --video --frames 6 --video-max-depth 3 --video-sef --avg-cdf --adaptive-cdf
@@ -56,7 +56,7 @@ works because it keeps the M2 sequence header instead of rebuilding one.
 ### SCOUT-FRAME-02 — the OLK random-access point is not decodable from the OLK
 Repro:
 ```sh
-B=/Users/arin/work/av2enc/build/av2enc
+B=<repo>/build/av2enc
 $B /tmp/f8.y4m -o /tmp/olk.ivf --video --frames 4 --video-max-depth 3 --video-olk
 python3 - <<'PY'
 import struct

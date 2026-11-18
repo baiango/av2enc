@@ -32,12 +32,12 @@ cap. The 8 GB claim is **12 GB emulation, actual 8 GB hardware pending**.
 
 ## Commands
 
-### Sync (from the Mac)
+### Sync (from the Mac, repository root)
 
 ```sh
 ssh -p <port> <user>@<host> 'mkdir -p /workspace/av2enc/bench/hello_cuda'
 rsync -az --exclude build -e "ssh -p <port> -o BatchMode=yes" \
-  $HOME/work/av2enc/bench/hello_cuda/ \
+  "$PWD/bench/hello_cuda/" \
   <user>@<host>:/workspace/av2enc/bench/hello_cuda/
 ```
 

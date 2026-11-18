@@ -22,8 +22,10 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$(dirname "${BASH_SOURCE[0]}")")" && pwd)
 TD=${AV2ENC_TESTDATA:-"$ROOT/testdata"}
 FFMPEG=${FFMPEG:-ffmpeg}
-SPACE_SRC=${SPACE_SRC:-/Users/arin/pctransfer/First-8K-Video-from-Space_orig.mp4}
-TRAIN_SRC=${TRAIN_SRC:-/Users/arin/pctransfer/loral_ohara_training_orig.mp4}
+SPACE_SRC=${SPACE_SRC:-}
+TRAIN_SRC=${TRAIN_SRC:-}
+: "${SPACE_SRC:?set SPACE_SRC to the 8K space source clip}"
+: "${TRAIN_SRC:?set TRAIN_SRC to the training source clip}"
 
 CHECK=0
 case "${1:-}" in

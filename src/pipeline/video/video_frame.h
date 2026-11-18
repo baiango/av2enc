@@ -119,6 +119,21 @@ struct VideoOptions {
   // charged its payload minus the running mean inter payload; once the
   // allowance is exhausted no further frame refreshes.
   int drift_refresh_budget = 1200;
+  // Internal, env-gated replacement for the PSNR trigger above
+  // (`AV2ENC_PIPE_LPL_REFRESH=1`).  When active, `encode_video_sequence` runs
+  // the drift-refresh plumbing with an lpl36 planner instead of the luma-PSNR
+  // threshold.  No CLI flag maps to these fields.
+  // `AV2ENC_PIPE_LPL_DEEP=1` runs the same planner with the scheduled anchors
+  // dropped to the key's quantizer depth (`drift_refresh_qp`, default the
+  // measured key offset), so the planner prices the deep floor.
+  bool lpl_refresh = false;
+  // One entry per input frame; 1 codes that inter frame as a refresh.
+  std::vector<std::uint8_t> lpl_refresh_schedule;
+  // Record the per-frame lpl36 error into VideoSequenceResult.
+  bool lpl_refresh_measure = false;
+  // Probe pass: refresh every inter frame regardless of the budget and record
+  // its cost and quality.  Never used for the output stream.
+  bool lpl_refresh_probe_all = false;
   // Opt-in §7.17 deblocking of every reconstructed frame (--video-deblock).
   // Off keeps every historical stream byte-identical.  When on, the frame
   // header signals all four apply flags with zero df_delta_q, and the
@@ -758,6 +773,14 @@ struct VideoSequenceResult {
   // inter payload).
   std::uint64_t drift_refresh_frames = 0;
   std::uint64_t drift_refresh_bytes = 0;
+  // Per-frame lpl36 error of the reconstruction against its source (lower is
+  // better), one entry per coded frame, when VideoOptions::lpl_refresh_measure
+  // is set.
+  std::vector<double> lpl_error_frame;
+  // One entry per coded frame: 1 when the perceptual planner actually coded
+  // that inter frame as a refresh (a scheduled refresh can be dropped by the
+  // payload cap).  Empty outside the gated pipeline.
+  std::vector<std::uint8_t> lpl_refresh_applied;
 };
 
 // §5.4.6 NumRefFrames actually signalled for these options: the explicit

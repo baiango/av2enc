@@ -134,7 +134,7 @@ frame pool; the per-leaf ME/TX work is parallel.
 
 ```sh
 BIN=build-a/av2enc
-DAV2D=/Users/arin/work/av2enc/tools/bin/dav2d-macos
+DAV2D=$PWD/tools/bin/dav2d-macos
 $BIN testdata/nasa_480x240_30fps_60f.y4m -o /tmp/n.ivf --video --frames 60 \
      --qp 136 --cpu-threads 8 --nightly --video-recon /tmp/n.y4m
 tools/validate_dav2d.sh /tmp/n.ivf                 # OK, 60 frames

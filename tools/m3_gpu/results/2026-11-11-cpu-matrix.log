@@ -1,6 +1,6 @@
 == M3 GPU feature matrix ==
 encoder:  build-m1/av2enc
-decoder:  /Users/arin/work/av2enc/tools/bin/dav2d-macos
+decoder:  tools/bin/dav2d-macos
 cpu-only: 1
 attest:   nsys
 sizes:    64x64 640x360 1280x720 1920x1080

@@ -14,8 +14,8 @@
 Repro:
 ```sh
 cd /tmp/hbdscout
-BIN=/Users/arin/work/av2enc/build/av2enc
-python3 /Users/arin/work/av2enc/src/pipeline/still/high_bitdepth/gen_y4m_10bit.py 64 64 y64_420.y4m
+BIN=<repo>/build/av2enc
+python3 <repo>/src/pipeline/still/high_bitdepth/gen_y4m_10bit.py 64 64 y64_420.y4m
 $BIN y64_420.y4m -o base.ivf --still --bit-depth 10 --qp 90
 $BIN y64_420.y4m -o sdp.ivf  --still --bit-depth 10 --qp 90 --still-sdp
 $BIN y64_420.y4m -o sub8.ivf --still --bit-depth 10 --qp 90 --still-sub8
@@ -45,8 +45,8 @@ copied from the tile list and missed these two fields.
 Repro:
 ```sh
 cd /tmp/hbdscout
-BIN=/Users/arin/work/av2enc/build/av2enc
-python3 /Users/arin/work/av2enc/src/pipeline/still/high_bitdepth/gen_y4m_10bit.py 64 64 y64_444.y4m 444
+BIN=<repo>/build/av2enc
+python3 <repo>/src/pipeline/still/high_bitdepth/gen_y4m_10bit.py 64 64 y64_444.y4m 444
 python3 - <<'PY'
 d = open('y64_444.y4m','rb').read().replace(b'C444p10', b'C420p10', 1)
 open('mm.y4m','wb').write(d)
@@ -96,7 +96,7 @@ instead of a checked range conversion (as `src/main.cpp:545` does for `--qp`).
 Build a tiny harness linked against `build/libav2enc_core.a` that calls
 `fmt::read_y4m_picture()` → `hbd::encode_still()` → `hbd::parse_stream()` for
 the four 64x64 generators (source kept at `/tmp/hbdscout/parse_test.cpp`,
-compiled with `c++ -I/Users/arin/work/av2enc/src ... build/libav2enc_core.a`):
+compiled with `c++ -I<repo>/src ... build/libav2enc_core.a`):
 ```text
 y64_420.y4m: ok idc=0 chroma=0 depth_idc=0 64x64
 y64_422.y4m: PARSE FAILED: sequence is not 4:2:0

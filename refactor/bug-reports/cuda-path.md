@@ -16,7 +16,7 @@
 ### SCOUT-CUDA-01 — GPU-supported tools are still documented as CPU-only
 Repro:
 ```sh
-cd /Users/arin/work/av2enc && build/av2enc --help | grep -E -- '--still-(cdef|ccso|grain)'
+cd <repo> && build/av2enc --help | grep -E -- '--still-(cdef|ccso|grain)'
 ```
 Observed: `--still-cdef`, `--still-ccso`, `--still-ccso-edge` and `--still-grain` are labelled `(CPU-only)`, while `--still-gpu` accepts each of them (no entry in the `--still-gpu` rejection list at `src/main.cpp:3060-3108`, and `gpu_m3_options_supported()` deliberately keeps them accepted). The code has real device stages: `still_cdef_filter` / `ccso_frame` are invoked at `still_gpu.cu:1951,2013`, and grain is emitted through the copied CPU `StillConfig`.
 Expected: `--help` (declared "the contract" in `README.md:101`) and `README.md:87-97` should not tell users these tools are CPU-only when the GPU path runs/passes them through.
@@ -25,7 +25,7 @@ Likely cause: the help table and README predate the CDEF/CCSO/grain landing; onl
 ### SCOUT-CUDA-02 — m3 GPU readiness table contradicts the code and its own gate
 Repro:
 ```sh
-cd /Users/arin/work/av2enc && sed -n '190,215p' tools/m3_gpu/README.md
+cd <repo> && sed -n '190,215p' tools/m3_gpu/README.md
 ```
 Observed: CDEF is described as `SKIP-REJECTED` at `src/cuda/m1/still_gpu.cu:1049` (file does not exist; today's orchestrator accepts CDEF and applies §7.18 on device). CCSO is described as "not plumbed at all — GpuOptions has no CCSO field", although `GpuOptions::enable_ccso/ccso_bands_log2/ccso_edge` exist and are mapped. UV-full is called a "candidate for READY" although `gpu_m3_options_supported()` rejects it. `ALL_FEATURES`/`MODES` in the gate have no film-grain case at all, so `--still-gpu --still-grain` (accepted) is never gated.
 Expected: the readiness table must match `gpu_m3_options_supported()` and every accepted M3 flag needs a feature mode (or a documented rejection).
@@ -44,7 +44,7 @@ Likely cause: the `--still-gpu` branch was written as a separate mode while the 
 ### SCOUT-CUDA-04 — stats-JSON attestation is documented but not implemented
 Repro:
 ```sh
-cd /Users/arin/work/av2enc && grep -rn "AV2ENC_STILL_GPU_STATS\|AV2ENC_GPU_STATS" src
+cd <repo> && grep -rn "AV2ENC_STILL_GPU_STATS\|AV2ENC_GPU_STATS" src
 # (no hits outside tools/docs)
 AV2ENC_GPU_STATS=/tmp/s.json build/av2enc testdata/src_100x70.y4m -o /tmp/s.ivf --still; ls /tmp/s.json
 ```
@@ -55,7 +55,7 @@ Likely cause: only the standalone `still_gpu_probe` implements `--stats`; the CL
 ### SCOUT-CUDA-05 — `--video` is CPU-only although the CUDA M2 backend exists
 Repro:
 ```sh
-cd /Users/arin/work/av2enc && grep -n 'pipeline/video\|video_backend' CMakeLists.txt
+cd <repo> && grep -n 'pipeline/video\|video_backend' CMakeLists.txt
 nm build/av2enc | grep -c encode_video_sequence_gpu   # 0
 build/av2enc --help | grep -i 'video.*gpu'             # empty
 ```
@@ -66,7 +66,7 @@ Likely cause: the M2 device backend was built only for `build_gpu_gate.sh`; prod
 ### SCOUT-CUDA-06 — stale `src/cuda/m1/` (and `m2/`) paths
 Repro:
 ```sh
-cd /Users/arin/work/av2enc && ls src/cuda/m1 src/cuda/m2   # both missing
+cd <repo> && ls src/cuda/m1 src/cuda/m2   # both missing
 grep -rn "src/cuda/m1\|cuda/m2" src/main.cpp docs/m1-gpu.md src/cuda/pipeline/still/README.md | head
 ```
 Observed: the actual tree is `src/cuda/pipeline/still/` and `src/cuda/pipeline/video/`. `main.cpp:3003` emits a user-facing error naming `src/cuda/m1/still_gpu.cu`; the same stale root appears in the contract header, plan/stream bridge headers, `docs/m1-gpu.md` (ownership table and build commands) and `src/cuda/pipeline/still/README.md` ("BUILD_DIR=... src/cuda/m1/build_still_gpu_test.sh"). `docs/gpu-coverage.md:26` names `src/cuda/m2/`.
@@ -76,7 +76,7 @@ Likely cause: directory move `src/cuda/m1|m2` -> `src/cuda/pipeline/{still,video
 ### SCOUT-CUDA-07 — documented profiler is not wired (confirmed)
 Repro:
 ```sh
-cd /Users/arin/work/av2enc && rm -f /tmp/p.jsonl*
+cd <repo> && rm -f /tmp/p.jsonl*
 AV2ENC_PROFILE=/tmp/p.jsonl build/av2enc testdata/src_100x70.y4m -o /tmp/p.ivf --still
 ls -l /tmp/p.jsonl*        # "No such file"
 ```
@@ -87,7 +87,7 @@ Likely cause: profiler component landed with a demo, product wiring pending; the
 ### SCOUT-CUDA-08 — still-GPU arena sizing departs from the documented device-derived rule
 Repro:
 ```sh
-cd /Users/arin/work/av2enc && sed -n '916,948p' src/cuda/pipeline/still/still_gpu.cu
+cd <repo> && sed -n '916,948p' src/cuda/pipeline/still/still_gpu.cu
 ```
 Observed: `desired = max(kArenaFloorBytes (256 MiB), 1.5*need_device + 16 MiB)`, then `min(desired, device_budget)` and `min(desired, --vram-cap)`. On any device larger than ~256 MiB the reservation is therefore not `min(total,free) - 512 MiB`; it is a fixed small multiple of the still working set. The still path also never consults `Arena::capacity_cap_bytes()` (the global set by `apply_vram_cap`), unlike `basic_pipeline.cu:383` and `video_backend_cuda.cu:1082`.
 Expected: per `docs/cuda-interface.md:46-48` and the `AGENTS.md` non-negotiable, the persistent arena is sized from the device (optionally bounded), or the doc must state the still-specific working-set clamp. This is a policy/documentation mismatch, not a proven over/under-allocation (the 1.5x slack covers the still set).

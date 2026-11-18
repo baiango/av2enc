@@ -2,7 +2,7 @@
 
 Scope: AV2 v1.0.0 specification pages **560–579** (`§7.21`–`§7.23`), plus the
 syntax clauses those processes consume (`§5.14`, `§5.18.10`, `§6.13`,
-`§6.17.10`). Read-only audit of `/Users/arin/work/av2enc` at commit `ae7ffd8`.
+`§6.17.10`). Read-only audit of the repository at commit `ae7ffd8`.
 
 Spec identity: `spec/AV2_Spec_v1.0.0.pdf`, AV2 Bitstream & Decoding Process
 Specification, v1.0.0, 2026-05-28, commit `38f28e7`. Page numbers below are

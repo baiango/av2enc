@@ -52,8 +52,7 @@ if [[ -z "$DAV2D" ]]; then
 fi
 if [[ -z "$AVMDEC" ]]; then
   for candidate in "$ROOT/tools/bin/avmdec" \
-                   "$ROOT/tools/bin/avm-macos/avmdec" \
-                   /Users/arin/work/avm_src/build/avmdec; do
+                   "$ROOT/tools/bin/avm-macos/avmdec"; do
     if [[ -x "$candidate" ]]; then AVMDEC="$candidate"; break; fi
   done
 fi

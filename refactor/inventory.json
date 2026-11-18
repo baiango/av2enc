@@ -2,7 +2,7 @@
   "schema": 1,
   "tool": "tools/refactor/inventory.py",
   "generated_at": "2026-11-12T12:08:00+08:00",
-  "root": "/Users/arin/work/av2enc",
+  "root": ".",
   "src": "src",
   "summary": {
     "source_files": 1126,

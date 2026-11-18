@@ -281,6 +281,9 @@ run_gate gate_host_plan src/pipeline/dispatch/gate_host_plan.sh
 run_gate gate_10bit_filters src/formats/high_bitdepth/gate_10bit_filters.sh
 run_gate gate_video_short_refresh src/pipeline/video/video_short_refresh_gate.sh
 run_gate gate_video_same_ref_compound src/pipeline/video/video_same_ref_compound_gate.sh
+# Metric parity is cheap (a short encode, a decode and two scalar metric
+# passes), so it runs in the quick subset too.
+run_gate gate_lpl36_parity src/pipeline/video/video_lpl36_parity_gate.sh
 run_gate gate_video_mv_traj src/pipeline/video/video_mv_traj_gate.sh
 if [ "$QUICK" -eq 0 ]; then
     run_gate gate_rc src/pipeline/video/post/gate_cli_rc.sh
@@ -323,6 +326,10 @@ if [ "$QUICK" -eq 0 ]; then
     run_gate gate_video_ccso_overhead tools/gate_video_ccso_overhead.sh
     run_gate gate_video_drift_refresh \
         src/pipeline/video/video_drift_refresh_gate.sh
+    run_gate gate_video_lpl_refresh \
+        src/pipeline/video/video_lpl_refresh_gate.sh
+    run_gate gate_video_lpl_deep \
+        src/pipeline/video/video_lpl_deep_gate.sh
     run_gate gate_video_pipe_perc \
         src/pipeline/video/gate_video_pipe_perc.sh
     run_gate gate_video_eff_perc \

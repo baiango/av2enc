@@ -42,11 +42,11 @@
     "cuda": false
   },
   "decoder": {
-    "path": "/Users/arin/work/av2enc-wt/effort/tools/bin/dav2d-macos",
+    "path": "tools/bin/dav2d-macos",
     "name": "dav2d-macos"
   },
   "encoder": {
-    "path": "/Users/arin/work/av2enc-wt/effort/build-int/av2enc",
+    "path": "build-int/av2enc",
     "sha256": "0931631b952c01cff9debcb822f9834199b9c368a02ac15de74a55ac4c0c5aa0",
     "git_commit": "ce67ea9007d3b3eaa70bae8711cf2cbad27bef1f"
   },

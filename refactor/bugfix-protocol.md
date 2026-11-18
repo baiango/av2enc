@@ -56,9 +56,9 @@ git branch -a --list '*<BUG-ID>*' '*<slug>*'
 git log --all --oneline --grep='<BUG-ID>\|<symptom>'
 ```
 
-Also inspect existing worktrees (`av2enc-wt/*`, `av2enc-fix/*`, `merge-*`) with
-read-only git commands. If the fix already exists, add a reviewer note instead
-of duplicating it. Cross-inspection is encouraged; cross-editing is forbidden.
+Also inspect existing worktrees (`git worktree list`) with read-only git
+commands. If the fix already exists, add a reviewer note instead of duplicating
+it. Cross-inspection is encouraged; cross-editing is forbidden.
 
 ## 4. Worktrees and branches
 

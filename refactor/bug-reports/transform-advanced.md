@@ -1,6 +1,6 @@
 # transform-advanced bug scout
 
-Repo: `/Users/arin/work/av2enc` @ `527738a` (read-only). Lane: TCQ/parity
+Repo: this checkout @ `527738a` (read-only). Lane: TCQ/parity
 hiding/CCTX, IST, IDTX, DDT/DDTX/FDDT, per-part TX partition; focus on
 TCQ+CCTX, IST+RDOQ/TX-type, TX-partition+palette/IBC, state/context resets,
 per-part recon ordering. Counts: **2 confirmed (recon mismatch), 1 confirmed
@@ -20,7 +20,7 @@ per-part recon ordering. Counts: **2 confirmed (recon mismatch), 1 confirmed
 
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 B=build/av2enc; I=tests/data/basic_640x360_1f.y4m
 $B $I -o /tmp/txp.ivf --recon /tmp/txp.rec.y4m --frames 1 --still \
     --qp 20 --still-tx-partition --still-full-intra
@@ -66,7 +66,7 @@ which does not hit a smooth neighbour.
 
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 B=build/av2enc; I=testdata/pub_640x360_1f.y4m
 $B $I -o /tmp/im.ivf --recon /tmp/im.rec.y4m --frames 1 --still \
     --qp 60 --still-ist --still-mrl
@@ -96,7 +96,7 @@ reject the pair. The IST gate and MRL gates never cross-compose.
 
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 B=build/av2enc; I=tests/data/basic_64x64_1f.y4m
 $B $I -o /tmp/cc.ivf  --recon /tmp/cc.rec.y4m  --frames 1 --still --still-cctx --no-cfl
 $B $I -o /tmp/ccr.ivf --recon /tmp/ccr.rec.y4m --frames 1 --still --still-cctx --still-rdoq --no-cfl

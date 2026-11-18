@@ -18,8 +18,8 @@ Scope: CLI/validation + rate control (`--rc`/`--crf`/`--bitrate`, `--effort`,
 
 ## Details
 
-Fixtures: `B=/Users/arin/work/av2enc/build/av2enc`, `T64=/Users/arin/work/av2enc/testdata/pub_64x64_1f.y4m`,
-`S=/Users/arin/work/av2enc/testdata/pub_640x360_1f.y4m`, `/tmp/t360.y4m`=generated 640x360 8f 30fps clip
+Fixtures: `B=<repo>/build/av2enc`, `T64=testdata/pub_64x64_1f.y4m`,
+`S=testdata/pub_640x360_1f.y4m`, `/tmp/t360.y4m`=generated 640x360 8f 30fps clip
 (`YUV4MPEG2 W640 H360 F30:1 Ip A1:1 C420jpeg`, per frame `FRAME` + varying luma + neutral chroma).
 
 ### SCOUT-RC-01 — per-frame rate control is one uniform QP

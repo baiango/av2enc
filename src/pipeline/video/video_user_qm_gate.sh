@@ -51,8 +51,7 @@ fi
 AVM_DEC="${AVM_DEC:-${AV2ENC_AVMDEC:-}}"
 if [ -z "$AVM_DEC" ]; then
   for candidate in "$ROOT/tools/bin/avm-macos/avmdec" \
-                   "$ROOT/tools/bin/avmdec" \
-                   /Users/arin/work/avm_src/build/avmdec; do
+                   "$ROOT/tools/bin/avmdec"; do
     if [ -x "$candidate" ]; then AVM_DEC="$candidate"; break; fi
   done
 fi

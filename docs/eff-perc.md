@@ -290,4 +290,7 @@ python3 tools/kpi.py --quality-json /tmp/q.json --extra-json /tmp/e.json
 * The interval coefficient model is exact arithmetic over the §8.3 symbol
   sequence but its CDF state is the frame-start image, not the leaf-start live
   state; the live-slice variant is available (`RATE` bit 1) and measured.
-* No 720p tuning is claimed. The 720p pin is only a gate-off identity check.
+* No 720p tuning is claimed, and the 240p gain does not transfer: at QP225 the
+  gate measures 293.7 kbps, JOD 7.1183, BA 32.4072, SS2 -14.899, **K 43.56**
+  against the 45.61 pin; QP224 (299.2 kbps) is 44.07. The 720p pin is a
+  gate-off identity check only.

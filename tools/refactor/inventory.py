@@ -689,7 +689,7 @@ def build_inventory(root: Path, src_rel: str) -> dict:
         "tool": "tools/refactor/inventory.py",
         "generated_at": __import__("datetime").datetime.now().astimezone().isoformat(
             timespec="seconds"),
-        "root": str(root),
+        "root": ".",
         "src": src_rel,
         "summary": summary,
         "plan_vs_observed": {

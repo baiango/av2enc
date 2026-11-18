@@ -26,7 +26,7 @@ python3 tools/modal/rd_encode.py --qps 189
 A candidate from a worktree:
 
 ```sh
-AV2ENC_MODAL_ROOT=/Users/arin/work/av2enc-wt/rd-quality \
+AV2ENC_MODAL_ROOT=<worktree-root>/rd-quality \
 python3 tools/modal/rd_encode.py \
   --qps 187,189,191 \
   --extra "--video-rd-preset quality" \

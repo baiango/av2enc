@@ -4,7 +4,7 @@ Scope: AV2 v1.0.0 PDF pages **52–93** (`§5.2`–`§5.17`, every OBU type, OBU
 header/extension, trailing bits, sequence-header config groups, metadata,
 layer config, operating points, BRT, QM, film grain, content interpretation,
 padding, atlas, MSDO) and pages **255–319** (`§6.2`–`§6.16`, the matching
-semantics). Read-only audit of `/Users/arin/work/av2enc`.
+semantics). Read-only audit of the repository.
 
 Spec identity: `spec/AV2_Spec_v1.0.0.pdf`, AV2 Bitstream & Decoding Process
 Specification v1.0.0, 2026-05-28, commit `38f28e7`. Page numbers are physical

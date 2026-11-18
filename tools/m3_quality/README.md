@@ -14,7 +14,7 @@ BD-rate.
 ## Run
 
 ```sh
-cd $HOME/work/av2enc
+cd <repo>
 
 python3 tools/m3_quality/run_m3_quality.py \
   --encoder build-m1/av2enc \

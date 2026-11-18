@@ -14,7 +14,7 @@ reintroduce profile ids (`m0/m1/m2/m10`) or `src/encoder/`. Every workstream get
 its own `integration/<slug>` branch checked out in its own worktree, so two
 agents can never edit the same file at the same time.
 
-| Branch | Worktree (`/Users/arin/work/av2enc-wt/…`) | Scope (refactor-plan §8) | Wave |
+| Branch | Worktree (`<worktree-root>/…`) | Scope (refactor-plan §8) | Wave |
 |---|---|---|---|
 | `integration/primitives` | `primitives` | shared `spec_math`, CDF registry, qlookup; no stream change | 1 |
 | `integration/intra` | `intra` | MRL, palette, IntraBC, DIP, IBP, CfL variants, MHCCP, DC-subsampled | 1 |
@@ -38,7 +38,7 @@ assistant owns merge, CUDA verification and the final re-baseline.
 ## 2. Hard rules for integration agents
 
 1. **Stay in your worktree.** All commands run with `workdir=<your worktree>`.
-   Never edit `/Users/arin/work/av2enc` (the main checkout) or another worktree.
+   Never edit the main checkout or another worktree.
 2. **Do not restructure.** No directory moves/renames/deletes, no new top-level
    trees, no `src/encoder/`. Add files only inside the existing leaf directory
    for the tool.
@@ -81,7 +81,7 @@ Do not claim end-to-end integration for a tool without a passing stream.
 ## 4. Local gate commands
 
 ```sh
-cd /Users/arin/work/av2enc-wt/<slug>
+cd <worktree-root>/<slug>
 cmake -S . -B build-int -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DAV2ENC_ENABLE_CUDA=OFF -DAV2ENC_ALLOW_CPU_ONLY=ON
 cmake --build build-int -j8

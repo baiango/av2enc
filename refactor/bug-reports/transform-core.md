@@ -17,7 +17,7 @@ sources into `/tmp` (`c++ -std=c++20 -I src ...`, no repo edits).
 ### SCOUT-TRANSFORM-01 — INTER_2 membership table drops four legal types
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 cat > /tmp/p1.cpp <<'CPP'
 #include "codec/transform/inter_residual/inter_tx_type.h"
 #include <cstdio>

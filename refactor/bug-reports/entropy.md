@@ -17,7 +17,7 @@ and average-CDF. Build: `build/av2enc` (main `527738a`); decoder
 
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc testdata/pub_1280x720_60f.y4m -o /tmp/v.ivf --video --frames 4
 sz=$(stat -f%z /tmp/v.ivf); head -c $((sz-50)) /tmp/v.ivf > /tmp/vcut.ivf
 ./tools/bin/dav2d-macos -q -i /tmp/vcut.ivf -o /tmp/vcut.y4m --threads 1; echo dav2d=$?
@@ -46,7 +46,7 @@ frame 0 only.
 
 Repro (static; grep the packed descriptor list and the adapted members):
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 sed -n '345,411p' src/pipeline/still/still_syntax.cpp   # cdf_arrays()
 sed -n '251,258p;2888,2913p' src/pipeline/still/still_syntax.cpp
 sed -n '373,490p' src/pipeline/video/video_syntax.cpp   # cdf_arrays()
@@ -81,7 +81,7 @@ assert/reject when a non-packed array is enabled.
 
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc testdata/pub_1280x720_60f.y4m -o /tmp/b.ivf \
     --video --frames 4 --b-frames 2 --avg-cdf --adaptive-cdf
 ./tools/bin/dav2d-macos -q -i /tmp/b.ivf -o /tmp/b.y4m --threads 1; echo $?  # 1

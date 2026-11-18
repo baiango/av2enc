@@ -14,7 +14,7 @@
 ### SCOUT-QUANT-01 — still combination validation gap leaves a 32-byte IVF
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 for c in "--still-qm --still-tcq" "--still-qm --still-cctx" "--still-qm --still-tx-partition" \
          "--still-qm --still-per-segment-q" "--still-tcq --still-ist" \
          "--still-dc-ac-delta-q --still-cctx" "--still-sdp --still-cdef" \
@@ -48,7 +48,7 @@ removing it. A downstream gate that only checks file existence/size sees a
 ### SCOUT-QUANT-02 — `--rc crf` accepts and ignores `--qp`
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 S=testdata/pub_1280x720_60f.y4m
 ./build/av2enc $S -o /tmp/crf_a.ivf --video --frames 3 --rc crf --crf 40
 ./build/av2enc $S -o /tmp/crf_b.ivf --video --frames 3 --rc crf --crf 40 --qp 200
@@ -63,7 +63,7 @@ never does.
 ### SCOUT-QUANT-03 — VBR's per-frame QP plan is thrown away
 Repro (4-frame 128x128: flat / noise / flat / noise, so complexity differs 300x):
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 python3 - <<'PY'
 import random; random.seed(7); W=H=128
 def pl(n): return bytes(random.randrange(256) for _ in range(n))
@@ -96,7 +96,7 @@ user-facing rate-control help, which calls CRF "per-frame rate control".)
 ### SCOUT-QUANT-04 — `still_recon_dump --qp` wraps instead of rejecting
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 R=build/still_recon_dump; S=tests/data/basic_640x360_1f.y4m
 $R -i $S -o /tmp/r300.y4m --still --qp 300; echo rc=$?
 $R -i $S -o /tmp/r44.y4m  --still --qp 44
@@ -115,7 +115,7 @@ quantizer instead of failing.
 ### SCOUT-QUANT-05 — quant gates pick a pre-rename binary
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 src/codec/transform/qm/still_qm_gate.sh        # 6 failed, 0 passed
 src/codec/transform/tcq/still_tcq_gate.sh      # 13 failed, 0 passed
 AV2ENC_BIN=build/av2enc STILL_DUMP=build/still_dump src/codec/transform/qm/still_qm_gate.sh
@@ -130,7 +130,7 @@ stale alternate build dir silently invalidates the QM/TCQ coverage.
 ### SCOUT-QUANT-06 — 10-bit QP 0 diagnostic is a dead end
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ffmpeg -v error -strict -1 -f yuv4mpegpipe -i testdata/pub_256x256_1f.y4m \
   -pix_fmt yuv420p10le -strict -1 -f yuv4mpegpipe /tmp/p10.y4m
 ./build/av2enc /tmp/p10.y4m -o /tmp/x.ivf --still --bit-depth 10 --qp 0

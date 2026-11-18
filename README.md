@@ -138,8 +138,13 @@ tools/extra_metrics.py --ref <ref>.y4m --test <decoded>.y4m
 | rav1e speed 2 Q120 | 100.1 | 9.717 | 2.71 | 81.67 | 83.7 |
 
 One opt-in pipeline improves on `--nightly` without changing its defaults: the
-perceptual RD core (`AV2ENC_EFF_PERC=1`) at **85.1 K**. It is environment-gated,
-off by default, and not part of `--nightly`.
+perceptual RD core (`AV2ENC_EFF_PERC=1`) at **85.1 K** at 240p/100 kbps (it is
+negative at 720p: **43.6 K** at 293.7 kbps against the 45.61 pin). It is
+environment-gated, off by default, and not part of `--nightly`. The lpl36 refresh
+(`AV2ENC_PIPE_LPL_REFRESH=1`) revives the frame-refresh allocator with a
+first-party metric: **83.9 K** at 240p/100 kbps (at the 83.80 wall) and flat at
+the 720p pin, so it is a metric experiment rather than a new best; see
+`docs/pipe-lpl-refresh.md`.
 
 With AVM and rav1e included the metrics no longer rank identically: CVVDP puts
 av2enc slightly ahead of rav1e (9.733 vs 9.717), while Butteraugli and
@@ -502,8 +507,8 @@ ssh -p <port> <user>@<host>
 /workspace/av2enc
 ```
 
-`/workspace` is **not** a persistent volume. The local repo at
-`$HOME/work/av2enc` is the source of truth; sync to the box before builds.
+`/workspace` is **not** a persistent volume. The local checkout is the source
+of truth; sync it to the box before builds.
 Disk is 16GB: keep test media tiny (<100MB total), prefer 64x64/256x256 frames.
 
 ## Platforms

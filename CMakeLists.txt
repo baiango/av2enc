@@ -823,6 +823,14 @@ target_link_libraries(video_gate PRIVATE av2enc_core)
 av2enc_apply_warnings(video_gate)
 av2enc_apply_cpu_options(video_gate)
 
+# lpl36 parity harness: scores two Y4M luma planes with the header-only metric.
+# Test-only, not registered with CTest, so the pinned test inventory is
+# unchanged; `video_lpl36_parity_gate.sh` compares it with the Python package.
+add_executable(lpl36_dump tools/lpl36_dump.cpp)
+target_link_libraries(lpl36_dump PRIVATE av2enc_core)
+av2enc_apply_warnings(lpl36_dump)
+av2enc_apply_cpu_options(lpl36_dump)
+
 include(CTest)
 if(BUILD_TESTING)
   add_subdirectory(tests)

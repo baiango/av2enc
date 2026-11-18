@@ -16,7 +16,7 @@ SEF/OLK fields, SVC/OPS headers). Read-only; `build/av2enc` and the pinned
 
 Fixtures used below (all from repo testdata; short, local):
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ffmpeg -v error -f yuv4mpegpipe -i testdata/pub_1280x720_60f.y4m \
   -frames:v 8 -vf scale=256:256 -pix_fmt yuv420p -f yuv4mpegpipe /tmp/hm256_8f.y4m -y
 ffmpeg -v error -f yuv4mpegpipe -i testdata/pub_1280x720_60f.y4m \

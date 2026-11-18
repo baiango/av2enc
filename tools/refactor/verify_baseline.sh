@@ -230,11 +230,12 @@ else
     CUDA_REASON="--no-build"
 fi
 
+CPU_BINARY_REC=${BIN#"$ROOT"/}
 write_flat_json "$TMP/parts/build.json" \
     "cpu_ok=$CPU_OK" \
     "cpu_configure_seconds=$CPU_CONFIGURE_SECONDS" \
     "cpu_build_seconds=$CPU_BUILD_SECONDS" \
-    "cpu_binary=$BIN" \
+    "cpu_binary=$CPU_BINARY_REC" \
     "cuda_available=$CUDA_AVAILABLE" \
     "cuda_ok=$CUDA_OK" \
     "cuda_skipped=$CUDA_SKIPPED" \

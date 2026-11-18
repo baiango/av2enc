@@ -13,7 +13,7 @@
 ### SCOUT-INTRA-01 — MRL `sb_height` is hardcoded to 64
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc testdata/src_100x70.y4m --still -o /tmp/a.ivf --recon /tmp/a.y4m --qp 90 --still-mrl --still-sb128
 tools/bin/dav2d-macos -q -i /tmp/a.ivf -o /tmp/d.y4m --threads 1
 python3 - <<'PY'
@@ -35,7 +35,7 @@ Likely cause: `predict_luma_mrl()` sets `block.sb_height = 64` unconditionally (
 ### SCOUT-INTRA-02 — MRL is wrong on 4-wide/4-tall leaves
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/b.ivf --recon /tmp/b.y4m --qp 90 --still-mrl --still-sub8 --still-depth 8
 tools/bin/dav2d-macos -q -i /tmp/b.ivf -o /tmp/bd.y4m --threads 1
 # compare planes (ignore the Y4M header A1:1 vs A0:0): cmp reports Y 2341, U 501, V 504
@@ -48,7 +48,7 @@ Likely cause: the MRL integration path (`predict_luma_mrl()` → `mrl::prepare_e
 ### SCOUT-INTRA-03 — MHCCP + sub8/ext produces an undecodable stream
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/c.ivf --qp 90 --still-mhccp --still-sub8 --still-depth 8
 tools/bin/dav2d-macos -q -i /tmp/c.ivf -o /tmp/c.y4m --threads 1   # rc=1
 ./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/c2.ivf --qp 90 --still-mhccp --still-ext-partitions
@@ -61,7 +61,7 @@ Likely cause: at shared-chroma leaves the chroma owner can be a 4-wide/tall leaf
 ### SCOUT-INTRA-04 — CfL-only flags are not validated against `--no-cfl`
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/d1.ivf --qp 90 --no-cfl
 ./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/d2.ivf --qp 90 --no-cfl --still-cfl-explicit
 md5 -q /tmp/d1.ivf /tmp/d2.ivf   # identical
@@ -73,7 +73,7 @@ Likely cause: only the mhccp dependency is checked (`main.cpp:2033`, `still_enco
 ### SCOUT-INTRA-05 — `--still-dc --still-mrl` silently drops MRL
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/e1.ivf --qp 90 --still-dc
 ./build/av2enc testdata/pub_64x64_1f.y4m --still -o /tmp/e2.ivf --qp 90 --still-dc --still-mrl
 md5 -q /tmp/e1.ivf /tmp/e2.ivf   # differ, same 1061-byte payload size

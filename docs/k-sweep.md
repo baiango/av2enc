@@ -402,10 +402,10 @@ what selects the frames, and the budget must be large enough to finish them.
 ## Reproduction
 
 ```sh
-git worktree add /Users/arin/work/av2enc-wt/k-sweep -b exp/k-sweep main
-cd /Users/arin/work/av2enc-wt/k-sweep
-ln -s /Users/arin/work/av2enc/testdata testdata
-ln -s /Users/arin/work/av2enc/tools/bin tools/bin
+git worktree add <worktree-root>/k-sweep -b exp/k-sweep main
+cd <worktree-root>/k-sweep
+ln -s <repo>/testdata testdata
+ln -s <repo>/tools/bin tools/bin
 cmake --preset dev && cmake --build build-dev -j2
 
 REF=testdata/nasa_480x240_30fps_60f.y4m

@@ -5,14 +5,17 @@ current `main`; do not refactor or implement fixes.
 
 ## Hard limits
 
-- Do **not** edit any file under `/Users/arin/work/av2enc` (or any worktree).
+In the commands below, `<repo>` is the absolute path to this checkout and
+`<bug-reports-dir>` is the output directory.
+
+- Do **not** edit any file in this checkout (or any worktree).
 - Do **not** create branches/worktrees, commit, push, or run `git` write
   commands.
 - Do **not** run `cmake --build`, `ctest`, or long gate suites. Use the
-  existing binaries in `/Users/arin/work/av2enc/build`.
+  existing binaries in `build`.
 - Do **not** use the 3060, ssh, or the network.
 - Keep commands short (< ~5 s each) and avoid large encodes/1080p loops.
-- Write only to `/Users/arin/work/bug-reports/` and `/tmp`.
+- Write only to `<bug-reports-dir>/` and `/tmp`.
 
 ## What counts
 
@@ -32,9 +35,9 @@ speculative cleanups.
 Before finalising, check:
 
 ```sh
-grep -n '<keyword>' /Users/arin/work/av2enc/refactor/bugs.csv
-git -C /Users/arin/work/av2enc log --all --oneline --grep='<keyword>'
-ls /Users/arin/work/bug-reports/
+grep -n '<keyword>' refactor/bugs.csv
+git log --all --oneline --grep='<keyword>'
+ls <bug-reports-dir>/
 ```
 
 If another report/board row already covers it, mark it `duplicate` and cite the
@@ -42,7 +45,7 @@ ID/file instead of re-reporting.
 
 ## Output
 
-Write exactly one file: `/Users/arin/work/bug-reports/<lane>.md` (replace
+Write exactly one file: `<bug-reports-dir>/<lane>.md` (replace
 `<lane>` with your assigned lane). Use:
 
 ```markdown

@@ -1,6 +1,6 @@
 # intra-modes bug scout
 
-Repo: `/Users/arin/work/av2enc` @ `527738a` (read-only). Lane: intra mode
+Repo: this checkout @ `527738a` (read-only). Lane: intra mode
 decisions (full intra search, `--still-rdo-intra`, `--still-tx-type`, directional
 modes, mode-context/CDF derivation, `--no-cfl`/`--still-uv-full`).
 
@@ -17,7 +17,7 @@ modes, mode-context/CDF derivation, `--no-cfl`/`--still-uv-full`).
 
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc tests/data/basic_64x64_1f.y4m -o /tmp/sdp.ivf --frames 1 \
     --still --still-sdp --still-full-intra
 ./tools/bin/dav2d-macos -q -i /tmp/sdp.ivf -o /tmp/sdp.y4m --threads 1 --strict 1
@@ -54,7 +54,7 @@ also sample (32,8), inside the `size=32x4 y=8/-2` leaf emitted by `--still-sub8`
 Repro (64x64 shown; same on `tests/data/basic_640x360_1f.y4m`, 131412 diff,
 max 210):
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc tests/data/basic_64x64_1f.y4m -o /tmp/s.ivf --frames 1 \
     --still --still-sub8 --still-full-intra --recon /tmp/s.recon.y4m
 ./tools/bin/dav2d-macos -q -i /tmp/s.ivf -o /tmp/s.dec.y4m --threads 1 --strict 1
@@ -91,7 +91,7 @@ which may be a second, ext-shared-chroma-side issue.
 
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 for d in 0 2 5; do ./build/av2enc tests/data/basic_64x64_1f.y4m \
     -o /tmp/d$d.ivf --frames 1 --still --still-sdp --still-depth $d; done
 md5 -q /tmp/d0.ivf /tmp/d2.ivf /tmp/d5.ivf

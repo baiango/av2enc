@@ -18,7 +18,7 @@ Read-only; `build/av2enc`, the prebuilt `chroma_test`/format unit binaries,
 Repro:
 ```sh
 python3 -c "open('/tmp/c422.y4m','wb').write(b'YUV4MPEG2 W64 H64 F1:1 Ip C422\nFRAME\n'+bytes(4096+2048+2048))"
-B=/Users/arin/work/av2enc/build/av2enc
+B=<repo>/build/av2enc
 $B /tmp/c422.y4m -o /tmp/a.ivf --still --chroma 422
 $B /tmp/c422.y4m -o /tmp/b.ivf --still --chroma 422 --still-sub8
 md5 -q /tmp/a.ivf /tmp/b.ivf
@@ -43,7 +43,7 @@ Repro:
 ```sh
 python3 -c "open('/tmp/c444.y4m','wb').write(b'YUV4MPEG2 W64 H64 F1:1 Ip C444\nFRAME\n'+bytes(4096*3))"
 python3 -c "d=open('/tmp/c444.y4m','rb').read().replace(b'C444',b'C422',1);open('/tmp/c444_as422.y4m','wb').write(d)"
-/Users/arin/work/av2enc/build/av2enc /tmp/c444_as422.y4m -o /tmp/c.ivf --still --chroma 422
+<repo>/build/av2enc /tmp/c444_as422.y4m -o /tmp/c.ivf --still --chroma 422
 ```
 Observed: `Format still-picture encode complete`, `input: ... (64x64, C422)`;
 the reader consumes 4,096 B of the 12,288 B body and encodes it as 4:2:2.
@@ -55,7 +55,7 @@ the 8-bit `--chroma` path is affected identically. Duplicate.
 ### SCOUT-CHROMA-03 — pre-refactor paths in code, docs and goldens
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ls src/encoder                       # No such file or directory
 ls src/cuda/chroma_formats           # No such file or directory
 ls src/cuda/m1/hbd                   # No such file or directory
@@ -81,7 +81,7 @@ misleading. Not covered by SCOUT-FORMATS-HBD-05 (which is hbd doc drift).
 ### SCOUT-CHROMA-04 — gate coverage for 8-bit chroma geometry / rejection
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 grep -n 'run_case\|gen_8bit_source' src/formats/format_gate.sh | tail -20
 grep -n 'run_case' src/formats/chroma/gate.sh
 ./src/formats/format_gate.sh --bin build/av2enc   # PASS in ~5 s

@@ -115,7 +115,7 @@ measured probe costs ~25% wall time on top of the edge+CCSO path (see
 
 ```sh
 BIN=build-a/av2enc
-DAV2D=/Users/arin/work/av2enc/tools/bin/dav2d-macos
+DAV2D=$PWD/tools/bin/dav2d-macos
 $BIN testdata/nasa_480x240_30fps_60f.y4m -o /tmp/p.ivf --video --frames 60 \
      --qp 190 --cpu-threads 8 --video-rd-preset quality --video-recon /tmp/p.y4m
 tools/validate_dav2d.sh /tmp/p.ivf                 # OK, 60 frames
@@ -184,7 +184,7 @@ Verification for the new path:
 
 ```sh
 BIN=build-g/av2enc
-DAV2D=/Users/arin/work/av2enc/tools/bin/dav2d-macos
+DAV2D=$PWD/tools/bin/dav2d-macos
 $BIN testdata/nasa_480x240_30fps_60f.y4m -o /tmp/e.ivf --video --frames 60 \
      --qp 142 --cpu-threads 8 --video-rd-preset quality --video-edge-inter \
      --video-recon /tmp/e.y4m --video-trace 2>/tmp/e.trace

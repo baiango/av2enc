@@ -53,6 +53,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "tools"
+
+
+def repo_relative(path):
+    """Record paths relative to the checkout; keep external paths as-is."""
+    if path is None:
+        return None
+    try:
+        return str(Path(path).resolve().relative_to(ROOT))
+    except (TypeError, ValueError):
+        return str(path)
+
+
 DEFAULT_FIXTURES = [
     ROOT / "testdata" / "pub_640x360_1f.y4m",
     ROOT / "tests" / "data" / "basic_640x360_1f.y4m",
@@ -133,7 +145,7 @@ def y4m_info(path: Path) -> dict:
             else:
                 die(f"expected FRAME in {path}, got {line[:16]!r}")
     return {
-        "path": str(path),
+        "path": repo_relative(path),
         "md5": md5_file(path),
         "width": width,
         "height": height,
@@ -841,9 +853,9 @@ def main() -> int:
                 "psnr_fallback": metric_name == "psnr_fallback",
             },
             "host": host_info(),
-            "decoder": {"path": find_decoder(), "name": Path(find_decoder()).name
+            "decoder": {"path": repo_relative(find_decoder()), "name": Path(find_decoder()).name
                         if find_decoder() else None},
-            "encoder": {"path": str(binary), "sha256": hashlib.sha256(
+            "encoder": {"path": repo_relative(binary), "sha256": hashlib.sha256(
                 binary.read_bytes()).hexdigest(),
                 "git_commit": run(["git", "-C", str(ROOT), "rev-parse", "HEAD"]).stdout.strip()},
             "fixture": finfo,

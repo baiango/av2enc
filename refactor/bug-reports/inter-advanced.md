@@ -33,7 +33,7 @@ while `--avg-cdf --adaptive-cdf` makes those wrappers undecodable.
 ### SCOUT-INTER-ADV-01 — adaptive CDF flags are lost when the wave-3/4 wrapper rewrites the headers
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc testdata/pub_1280x720_60f.y4m -o /tmp/a.ivf --video \
   --frames 3 --video-max-depth 3 --video-long-term --avg-cdf --adaptive-cdf
 tools/bin/dav2d-macos -q -i /tmp/a.ivf -o /tmp/a.y4m --strict 1 --threads 1
@@ -64,7 +64,7 @@ the tile payload while the header says no adaptation.
 ### SCOUT-INTER-ADV-02 — mode/frame-count validation happens after `writer.open`
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc testdata/pub_1280x720_60f.y4m -o /tmp/keep.ivf --video --frames 2
 ls -l /tmp/keep.ivf                                  # valid stream
 ./build/av2enc testdata/pub_1280x720_60f.y4m -o /tmp/keep.ivf --video --frames 3 --video-olk
@@ -85,7 +85,7 @@ other “usage errors reported before the output file is opened” checks
 ### SCOUT-INTER-ADV-03 — `--video-min-block 4` cannot code 4-wide leaves
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 ./build/av2enc testdata/pub_1280x720_60f.y4m -o /tmp/m.ivf --video \
   --frames 2 --video-min-block 4 --video-max-depth 8
 ```

@@ -1,8 +1,45 @@
 #include "pipeline/video/video_frame_internal.h"
 
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+
+#include "pipeline/video/video_lpl36.h"
+#include "pipeline/video/video_lpl_refresh.h"
+
 namespace av2enc::video {
 
 namespace {
+
+// Per-frame lpl36 error of one coded reconstruction against its source.  Lower
+// is better; the planner consumes this value directly.  Only called from the
+// env-gated perceptual refresh pipeline, so the default encode path never
+// enters it and pinned streams and their cost are unchanged.
+double perceptual_frame_lpl(const VideoInputFrame& source,
+                            const Plane recon[3], int width, int height,
+                            lpl36::Metric& metric) {
+  if (!metric.ready() ||
+      source.width != static_cast<std::uint32_t>(width) ||
+      source.height != static_cast<std::uint32_t>(height) ||
+      recon[0].width < width || recon[0].height < height) {
+    // Dimensions are fixed for a sequence; this guard only keeps a malformed
+    // caller from reading the wrong plane.  A large error makes the frame
+    // look unusable to the planner instead of silently perfect.
+    return std::numeric_limits<double>::max() / 4.0;
+  }
+  return metric.Error(source.y.data(), width, recon[0].samples.data(),
+                      recon[0].stride);
+}
+
+bool env_flag(const char* name) {
+  const char* value = std::getenv(name);
+  if (value == nullptr || *value == '\0') return false;
+  if (std::strcmp(value, "0") == 0 || std::strcmp(value, "false") == 0 ||
+      std::strcmp(value, "off") == 0 || std::strcmp(value, "no") == 0) {
+    return false;
+  }
+  return true;
+}
 
 }  // namespace
 
@@ -780,7 +817,7 @@ void InterFrameEncoder::update_plane_quant(SbSink::State& st) const {
   frame_plane_quant(st.current_qindex, st.plane_quant, st.quant_step);
 }
 
-bool encode_video_sequence(std::span<const VideoInputFrame> frames,
+bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
                         const VideoOptions& options, VideoSequenceResult& result,
                         std::string& error) {
   // One persistent fork-join pool per encode, sized from --cpu-threads.  This
@@ -1071,6 +1108,11 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     error = "no input frames";
     return false;
   }
+  if (options.lpl_refresh && !options.lpl_refresh_schedule.empty() &&
+      options.lpl_refresh_schedule.size() != frames.size()) {
+    error = "lpl_refresh_schedule must have one entry per input frame";
+    return false;
+  }
   const std::uint32_t width = frames[0].width;
   const std::uint32_t height = frames[0].height;
   // §5.18.4.4 codes MiCols x MiRows = 2*((W+7)>>3) x 2*((H+7)>>3) 4x4 units,
@@ -1089,6 +1131,13 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   if (width > 0xFFFFU || height > 0xFFFFU) {
     error = "M2 dimensions exceed the sequence header field width";
     return false;
+  }
+  // The lpl36 scratch planes are sized once per encode pass; the per-frame
+  // Error() call below performs no allocation.  Only the env-gated perceptual
+  // refresh passes set `lpl_refresh_measure`.
+  lpl36::Metric lpl_metric;
+  if (options.lpl_refresh_measure) {
+    lpl_metric.Init(static_cast<int>(width), static_cast<int>(height));
   }
   // §5.4.6 reference-management tools.  Each is wired on the flat key+P chain
   // with an explicit reference map and a single tile; every wrapper that owns
@@ -2439,6 +2488,14 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   result.recon.push_back(
       to_recon_frame(frame_recon[0], frame_recon[1], frame_recon[2], width,
                      height));
+  if (options.lpl_refresh_measure) {
+    result.lpl_error_frame.push_back(perceptual_frame_lpl(
+        frames[0], frame_recon, static_cast<int>(width),
+        static_cast<int>(height), lpl_metric));
+  }
+  if (options.lpl_refresh) {
+    result.lpl_refresh_applied.push_back(0);
+  }
   result.frame_bytes.push_back(
       static_cast<std::uint32_t>(result.units.back().size()));
   result.tile_bytes.push_back(key_payload_bytes);
@@ -2514,7 +2571,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // The drift anchor is the key picture's own measured reconstruction PSNR, so
   // the allowance follows the operating point instead of an absolute dB.
   const double drift_anchor_psnr =
-      options.drift_refresh
+      options.drift_refresh && !options.lpl_refresh
           ? reference_luma_psnr(slots[0].plane[0], frames[0],
                                 static_cast<int>(width),
                                 static_cast<int>(height))
@@ -2591,7 +2648,30 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     // quantiser; without the flag it is exactly frame_qp(i).
     int effective_frame_qp = static_cast<int>(frame_options.base_q_idx);
     bool drift_refresh_frame = false;
-    if (options.drift_refresh && !frame_ref_slots.empty()) {
+    if (options.lpl_refresh && !frame_ref_slots.empty()) {
+      // Perceptual refresh: the two-pass planner already measured this
+      // frame's lpl36 error with and without the refresh and priced its
+      // payload, so the schedule is the decision.  The probe pass forces every
+      // frame; the output pass keeps the payload cap as a safety net so a
+      // schedule whose measured costs drifted cannot overrun the sequence
+      // allowance.
+      const bool scheduled =
+          options.lpl_refresh_probe_all ||
+          (i < options.lpl_refresh_schedule.size() &&
+           options.lpl_refresh_schedule[i] != 0);
+      const bool budget_ok =
+          options.lpl_refresh_probe_all ||
+          drift_spent_bytes <
+              static_cast<double>(options.drift_refresh_budget);
+      drift_refresh_frame = scheduled && budget_ok;
+      if (options.trace) {
+        std::cerr << "lpl_refresh frame=" << i
+                  << " scheduled=" << (scheduled ? 1 : 0)
+                  << " spent=" << drift_spent_bytes
+                  << " budget=" << options.drift_refresh_budget
+                  << " refresh=" << (drift_refresh_frame ? 1 : 0) << "\n";
+      }
+    } else if (options.drift_refresh && !frame_ref_slots.empty()) {
       const RefSlot& primary =
           slots[static_cast<std::size_t>(frame_ref_slots.front())];
       const std::size_t source_index =
@@ -2631,7 +2711,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       // coefficients.
       frame_options.force_inter_residual = true;
       if (options.trace) {
-        std::cerr << "ba_anchor frame=" << i
+        std::cerr << "lpl_anchor frame=" << i
                   << " qp=" << effective_frame_qp
                   << " depth=" << options.drift_refresh_qp << "\n";
       }
@@ -3039,6 +3119,14 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     result.recon.push_back(
         to_recon_frame(frame_recon[0], frame_recon[1], frame_recon[2], width,
                        height));
+    if (options.lpl_refresh_measure) {
+      result.lpl_error_frame.push_back(perceptual_frame_lpl(
+          frames[i], frame_recon, static_cast<int>(width),
+          static_cast<int>(height), lpl_metric));
+    }
+    if (options.lpl_refresh) {
+      result.lpl_refresh_applied.push_back(drift_refresh_frame ? 1 : 0);
+    }
     result.frame_bytes.push_back(
         static_cast<std::uint32_t>(result.units.back().size()));
     result.tile_bytes.push_back(payload_bytes);
@@ -3128,5 +3216,185 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   return true;
 }
 
+// Env-gated perceptual refresh pipeline (`AV2ENC_PIPE_LPL_REFRESH=1`, deep
+// anchors `AV2ENC_PIPE_LPL_DEEP=1`).
+//
+// Replaces the drift-refresh PSNR trigger with an lpl36-driven two-pass
+// allocation.  Pass 1 measures the no-refresh chain, pass 2 probes the
+// refresh cost/floor on every inter frame, the planner picks the set with the
+// largest predicted lpl36 error reduction per payload byte under the existing
+// `drift_refresh_budget`, and pass 3 emits the scheduled stream through the
+// unchanged drift-refresh plumbing.  `AV2ENC_PIPE_LPL_DEEP=1` runs the same
+// pipeline with the anchors coded at the key picture's quantizer depth
+// (default: the measured key offset, 27 QP at the nightly recipe; override
+// with --video-drift-refresh-qp).  Off (or without an enabled
+// `--video-drift-refresh` chain) this is a direct call to the implementation,
+// so every pinned stream is byte-identical.
+bool encode_video_sequence(std::span<const VideoInputFrame> frames,
+                        const VideoOptions& options, VideoSequenceResult& result,
+                        std::string& error) {
+  const bool pipe_deep = env_flag("AV2ENC_PIPE_LPL_DEEP");
+  if ((!env_flag("AV2ENC_PIPE_LPL_REFRESH") && !pipe_deep) ||
+      !options.drift_refresh ||
+      options.format.depth != fmt::BitDepth::k8 ||
+      options.format.chroma != fmt::ChromaFormat::k420) {
+    return encode_video_sequence_impl(frames, options, result, error);
+  }
+
+  // The deep anchor is the *same* schedule and budget with a deeper floor:
+  // every refresh frame drops by `drift_refresh_qp` and forces the inter
+  // residual (the existing drift-refresh plumbing).  The default is the gap
+  // between the operating inter QP and the key's QP, so the anchors land on
+  // the key picture's measured depth (-27 at the nightly 84/111 recipe).
+  int deep_default = 0;
+  int deep_inter_qp = static_cast<int>(options.base_q_idx);
+  if (pipe_deep) {
+    int key_qp = static_cast<int>(options.base_q_idx);
+    int inter_qp = key_qp;
+    if (!options.frame_base_q_idx.empty()) {
+      key_qp = static_cast<int>(options.frame_base_q_idx.front());
+      inter_qp = key_qp;
+      for (const std::uint8_t qp : options.frame_base_q_idx) {
+        inter_qp = std::max(inter_qp, static_cast<int>(qp));
+      }
+    }
+    deep_default = std::max(0, inter_qp - key_qp);
+    deep_inter_qp = inter_qp;
+  }
+
+  VideoOptions baseline = options;
+  baseline.lpl_refresh = true;
+  baseline.lpl_refresh_measure = true;
+  baseline.lpl_refresh_probe_all = false;
+  baseline.lpl_refresh_schedule.assign(frames.size(), 0);
+  if (pipe_deep) {
+    baseline.drift_refresh_qp =
+        options.drift_refresh_qp > 0 ? options.drift_refresh_qp : deep_default;
+    if (options.trace) {
+      std::cerr << "pipe_lpl_deep anchor_qp_depth="
+                << baseline.drift_refresh_qp
+                << " inter_qp=" << deep_inter_qp
+                << " anchor_qp="
+                << std::max(1, deep_inter_qp - baseline.drift_refresh_qp)
+                << "\n";
+    }
+  }
+  VideoSequenceResult base;
+  if (!encode_video_sequence_impl(frames, baseline, base, error)) {
+    error = "lpl36 refresh pass 1: " + error;
+    return false;
+  }
+
+  VideoOptions probe = baseline;
+  probe.lpl_refresh_probe_all = true;
+  probe.lpl_refresh_schedule.assign(frames.size(), 1);
+  VideoSequenceResult probe_result;
+  if (!encode_video_sequence_impl(frames, probe, probe_result, error)) {
+    error = "lpl36 refresh pass 2: " + error;
+    return false;
+  }
+
+  lpl_refresh::Measurements measurements;
+  measurements.error_no_refresh = base.lpl_error_frame;
+  measurements.error_all_refresh = probe_result.lpl_error_frame;
+  measurements.payload_no_refresh = base.tile_bytes;
+  measurements.payload_all_refresh = probe_result.tile_bytes;
+  const lpl_refresh::Plan plan =
+      lpl_refresh::plan(measurements, options.drift_refresh_budget);
+  if (options.trace) {
+    for (std::size_t i = 0; i < measurements.error_no_refresh.size(); ++i) {
+      std::cerr << "lpl_refresh_measure frame=" << i
+                << " error_no_refresh=" << measurements.error_no_refresh[i]
+                << " error_all_refresh=" << measurements.error_all_refresh[i]
+                << " payload_no_refresh=" << measurements.payload_no_refresh[i]
+                << " payload_all_refresh="
+                << measurements.payload_all_refresh[i] << "\n";
+    }
+    std::cerr << "lpl_refresh_plan frames=";
+    for (std::size_t i = 0; i < plan.refresh_frames.size(); ++i) {
+      if (i != 0) std::cerr << ",";
+      std::cerr << plan.refresh_frames[i];
+    }
+    std::cerr << " estimated_bytes=" << plan.estimated_bytes
+              << " budget=" << options.drift_refresh_budget
+              << " predicted_mean_error=" << plan.predicted_mean_error
+              << " predicted_no_refresh_mean_error="
+              << plan.predicted_no_refresh_mean_error << "\n";
+  }
+  if (plan.refresh_frames.empty()) {
+    // The planner declined every candidate: the measured no-refresh stream is
+    // the output, so no third pass is needed.
+    result = std::move(base);
+    return true;
+  }
+
+  VideoOptions final = baseline;
+  final.lpl_refresh_probe_all = false;
+  final.lpl_refresh_schedule = plan.schedule;
+  final.lpl_refresh_measure = false;
+  if (!encode_video_sequence_impl(frames, final, result, error)) {
+    error = "lpl36 refresh pass 3: " + error;
+    return false;
+  }
+
+  // The probe measures each refresh against an always-fresh reference, so it
+  // under-prices an isolated refresh in the scheduled chain.  When that bias
+  // made the payload cap drop scheduled refreshes (typically the late, most
+  // valuable ones), re-plan with the measured cost ratio and emit one
+  // refinement pass.  This keeps the allocation inside the byte budget instead
+  // of spending it front-to-back.
+  bool skipped = false;
+  double estimated_applied = 0.0;
+  for (std::size_t i = 0; i < plan.schedule.size(); ++i) {
+    if (plan.schedule[i] == 0) continue;
+    const bool applied =
+        i < result.lpl_refresh_applied.size() &&
+        result.lpl_refresh_applied[i] != 0;
+    if (!applied) {
+      skipped = true;
+    } else {
+      estimated_applied += static_cast<double>(plan.costs[i]);
+    }
+  }
+  if (skipped && estimated_applied > 0.0) {
+    const double actual = static_cast<double>(result.drift_refresh_bytes);
+    const double scale = std::clamp(actual / estimated_applied, 1.0, 4.0);
+    if (options.trace) {
+      std::cerr << "lpl_refresh_refine scale=" << scale
+                << " actual_bytes=" << result.drift_refresh_bytes
+                << " estimated_applied=" << estimated_applied << "\n";
+    }
+    const lpl_refresh::Plan refined =
+        lpl_refresh::plan(measurements, options.drift_refresh_budget, scale);
+    bool changed = refined.schedule != plan.schedule;
+    if (changed) {
+      VideoOptions refined_options = final;
+      refined_options.lpl_refresh_schedule = refined.schedule;
+      VideoSequenceResult refined_result;
+      if (!encode_video_sequence_impl(frames, refined_options,
+                                      refined_result, error)) {
+        error = "lpl36 refresh refinement pass: " + error;
+        return false;
+      }
+      if (options.trace) {
+        std::cerr << "lpl_refresh_refined frames=";
+        for (std::size_t i = 0; i < refined.refresh_frames.size(); ++i) {
+          if (i != 0) std::cerr << ",";
+          std::cerr << refined.refresh_frames[i];
+        }
+        std::cerr << " estimated_bytes=" << refined.estimated_bytes
+                  << " actual_frames=" << refined_result.drift_refresh_frames
+                  << " actual_bytes=" << refined_result.drift_refresh_bytes
+                  << "\n";
+      }
+      result = std::move(refined_result);
+    }
+  }
+  if (options.trace) {
+    std::cerr << "lpl_refresh actual_frames=" << result.drift_refresh_frames
+              << " actual_bytes=" << result.drift_refresh_bytes << "\n";
+  }
+  return true;
+}
 
 }  // namespace av2enc::video

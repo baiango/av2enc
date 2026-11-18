@@ -15,7 +15,7 @@ Lane: palette (§5.20.8), IntraBC (§5.20.5.3/.4), SCC flags, `--still-palette` 
 ### SCOUT-SCREEN-01 — narrow frames never get an IBC block (and the gate does not notice)
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 # 128x384, 32x32 constant cells (exact copies are available 5 SB64 rows above)
 python3 - <<'PY'
 def mk(p,w,h,bs=32,pal=(20,80,140,220)):
@@ -80,7 +80,7 @@ unaffected; only the reported metadata (and any future user of it) is wrong.
 ### SCOUT-SCREEN-03 — palette eligibility is stricter than §5.20.5.5 for uneven leaves
 Repro:
 ```sh
-cd /Users/arin/work/av2enc
+cd <repo>
 AV2ENC_STILL_TRACE=1 ./build/av2enc testdata/pub_64x64_1f.y4m --still \
   --still-ext-partitions --still-palette -o /tmp/p.ivf 2>&1 |
   grep -E 'size=(4x16|16x4)'

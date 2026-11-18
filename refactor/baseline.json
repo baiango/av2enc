@@ -1,7 +1,7 @@
 {
   "build": {
     "cpu": {
-      "binary": "/Users/arin/work/av2enc/refactor/build/cpu/av2enc",
+      "binary": "refactor/build/cpu/av2enc",
       "build_seconds": 26.499,
       "configure_seconds": 0.639,
       "ok": true
@@ -112,7 +112,7 @@
     "total": 17
   },
   "decoder": {
-    "path": "/Users/arin/work/av2enc/tools/bin/dav2d-macos",
+    "path": "tools/bin/dav2d-macos",
     "sha256": "d17e7cf7294093bdc410258b9abeba866f1c73ab295c91715deb88e9b725bbe0",
     "version": "f9dafbc"
   },
