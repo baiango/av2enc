@@ -3,6 +3,7 @@
 #include "codec/transform/tx_partition/tx_scan.h"
 #include "pipeline/video/video_perceptual.h"
 #include "pipeline/video/video_pipe_perc.h"
+#include "pipeline/video/video_skip_drift.h"
 
 namespace av2enc::video {
 
@@ -2620,6 +2621,9 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                           ref_y.data, ref_y.stride, mi_cols_, mi_rows_, r,
                           c, x0, y0, w, h, out.cand.mv.y, out.cand.mv.x,
                           adapted, &fit)) {
+        // Keep the fit even when BAWP is not selected: the fade gate uses it
+        // as the per-leaf illumination-ramp evidence.
+        out.fit = fit;
         const std::int64_t adapted_sse =
             sse_vis(0, ax0, ay0, w, h, adapted);
         if (adapted_sse < out.luma_sse) {
@@ -2774,11 +2778,44 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
           3.0 + luma_plan_bits(out.res_y, true) +
           estimate_tx_bits(out.res_u, false) +
           estimate_tx_bits(out.res_v, false);
+      // AV2ENC_SKIP_DRIFT: a skip leaf does not just take this frame's
+      // prediction error, it installs that error in the reference and the
+      // following frames copy it through subpel MC.  Charge the frozen error
+      // in the skip arm of every comparison below.  Off by default; the
+      // zero-MV skip is an exact copy, so its factor can be held at 1.
+      const bool zero_mv_skip = out.cand.mv.y == 0 && out.cand.mv.x == 0;
+      double drift_mv_factor =
+          zero_mv_skip ? skip_drift::zero_mv_factor()
+                       : skip_drift::nz_mv_factor();
+      if (drift_mv_factor == 0.0 && zero_mv_skip && skip_drift::fade_enabled()) {
+        // Illumination-ramp evidence: a zero-MV skip on a fade freezes a
+        // signed DC bias in the reference.  Static content and sensor noise
+        // have a near-zero leaf mean error, a fade does not.
+        std::int64_t signed_sum = 0;
+        for (int yy = 0; yy < h; ++yy) {
+          for (int xx = 0; xx < w; ++xx) {
+            const int s = source_sample(source_, 0, ax0 + xx, ay0 + yy);
+            signed_sum += s - static_cast<int>(
+                                  out.y[static_cast<std::size_t>(yy) *
+                                            static_cast<std::size_t>(w) +
+                                        static_cast<std::size_t>(xx)]);
+          }
+        }
+        const double bias =
+            static_cast<double>(signed_sum) / static_cast<double>(w * h);
+        if (std::abs(bias) >= skip_drift::fade_threshold()) {
+          drift_mv_factor = 1.0;
+        }
+      }
+      const double drift_factor =
+          skip_drift::enabled() ? skip_drift::alpha() * drift_mv_factor : 0.0;
+      const double skip_drift_cost = drift_factor * pred_total;
       const bool hist_want =
           options_.force_inter_residual ||
           (!all_zero &&
            static_cast<double>(res_total) + kLambda * hist_res_bits <
-               static_cast<double>(pred_total) + kLambda * 2.0);
+               static_cast<double>(pred_total) + skip_drift_cost +
+                   kLambda * 2.0);
       // R09 bar: skip_flag = 0 pays the coefficient rate, skip_flag = 1 pays
       // the exact -log2 P(skip=1); the difference replaces the fixed 2.0/3.0
       // pair.  Both candidates pay the same is_inter/mode syntax, so it
@@ -2800,7 +2837,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
           options_.force_inter_residual ||
           (!all_zero &&
            res_total + kLambda * res_bits <
-               pred_total + kLambda * skip_syntax);
+               pred_total + skip_drift_cost + kLambda * skip_syntax);
       if (pipe_on) {
         // Joint skip/residual choice with the pipeline objective.  Both forms
         // pay the exact is_inter/skip/mode syntax; only the residual form
@@ -2823,7 +2860,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
               coeff_bits(out.res_v, 2, true);
           const double full_skip_bits = skip_terms.total();
           const double skip_cost =
-              pred_total + pipe_lambda * full_skip_bits;
+              pred_total + skip_drift_cost + pipe_lambda * full_skip_bits;
           const double exact_res_cost =
               res_total + pipe_lambda * full_res_bits;
           want = options_.force_inter_residual ||

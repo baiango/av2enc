@@ -119,6 +119,25 @@ The run targeted shallow flag/patch changes. The per-tool probes
 The next loop must start from these targets; a tool-toggle sweep is not the
 work.
 
+## Second run (2026-11-18)
+
+Ten attempts from the per-tool benchmark, branch `exp/tool-loop2`, ledger
+`docs/tool-improvement-queue-2.md`. Two default-off gates were kept:
+
+* `AV2ENC_SKIP_DRIFT` (+`AV2ENC_SKIP_DRIFT_FADE`) — future-error surcharge on
+  skips, non-zero-MV always and zero-MV when the leaf shows a DC fade bias.
+  `me_half` 76.105 (was 71.615), `fade` 84.128 (82.701), natural 240p 83.473
+  (82.149); `static_repeat` and `near_static` byte-identical.
+* `AV2ENC_DECISION_EXACT_RATE` — the leaf decisions charge the TX plan's own
+  §8.3 rate instead of the historical heuristic. Natural 240p 83.112, `me_half`
+  73.012; composes with the skip gate to 83.790 on natural.
+
+The intra/key trellis (even with an SSE guard), rate-aware BAWP acceptance and
+the eff-perc stack all measured negative and were reverted. The key coefficient
+gap remains open: the trellis moves the key RD curve by tenths of a dB, not the
+8 dB the probe reports.
+
+
 ## What this loop is not
 
 - It is not a new-tool or new-codec program.

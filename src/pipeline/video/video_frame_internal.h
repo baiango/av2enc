@@ -26,6 +26,7 @@
 #include "pipeline/video/video_eff_perc.h"
 #include "pipeline/video/video_temporal.h"
 #include "pipeline/video/video_tx_search.h"
+#include "pipeline/video/video_decision_rate.h"
 #include "codec/partition/tree/partition.h"
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
 #include "codec/partition/ext/partition_ext.h"
@@ -1373,6 +1374,10 @@ inline double decision_coeff_bits(const TxPlan& plan, bool is_inter_luma) {
   if (rate_hybrid::enabled() && rate_hybrid::coeff_enabled()) {
     return laplacian_plan_bits(plan, is_inter_luma);
   }
+  // AV2ENC_DECISION_EXACT_RATE: the searched plan already carries the §8.3
+  // coefficient model's own bit count (the TX search priced it), so the leaf
+  // decision can charge that instead of the historical heuristic.
+  if (decision_rate::exact() && plan.searched) return plan.rate_bits;
   return plan.searched ? search_plan_estimate_bits(plan, is_inter_luma)
                        : estimate_tx_bits(plan, is_inter_luma);
 }
