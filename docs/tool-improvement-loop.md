@@ -232,6 +232,15 @@ See `docs/agent-loop-oracle-check.md`.
 No patch is kept on matched K alone. It must report a matched-rate envelope and
 its segment ceilings; a segment ceiling above the wall is not a stream.
 
+
+## Objective: the oracle ceiling
+
+The loop improves the **oracle**, not a single K point. A tool is progress only
+if the best matched-rate K over its knobs (its envelope) rises. A single arm
+that gains 0.2 K under the same ceiling is a **realization gain**, not an oracle
+gain, and is not kept on that basis. Segment/source ceilings are reported but
+are pooling bounds, not streams. See `docs/agent-loop-oracle-check.md`.
+
 ## What this loop is not
 
 - It is not a new-tool or new-codec program.

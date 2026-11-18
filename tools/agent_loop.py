@@ -50,8 +50,12 @@ Perform EXACTLY ONE iteration. Do not start a second one.
    Before calling a patch kept, run tools/oracle.py on the ladder and record
    matched K plus segment ceilings. A segment ceiling is not a stream; only a
    matched-rate envelope opens a path.
-4. Keep only a sign-consistent >= +0.15 K gain or a clear probe-gap closure;
-   otherwise commit the diagnostic and revert the code.
+4. The objective is the ORACLE, not a single K point. Measure the candidate's
+   matched-rate envelope (best K over its knobs at 100 kbps) and compare it to
+   the baseline envelope. Keep only if the envelope rises by >= +0.15 K and the
+   segment ceilings are reported. A single-arm gain under the same ceiling is a
+   realization gain; record it and revert unless it composes into a higher
+   envelope.
 5. Update {{ledger}} with target, patch, probe/K, kept/negative, and blockers.
    Commit the ledger and any kept patch.
 6. Run the gate-off pins and tools/test.sh; they must pass.
