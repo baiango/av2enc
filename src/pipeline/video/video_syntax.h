@@ -260,6 +260,24 @@ struct BlockSyntax {
   std::int16_t tx_part_mi_col[4] = {0, 0, 0, 0};
   std::uint32_t tx_part_eob[4] = {0, 0, 0, 0};
   std::uint32_t tx_part_levels_offset[4] = {0, 0, 0, 0};
+
+  // R09 (AV2ENC_RATE_HYBRID_S) diagnostics.  Never coded and never read by the
+  // writer except by the opt-in report: the decision stores the rate it
+  // charged for this leaf so the writer can compare it with the measured
+  // range-coder bits.  `valid` is zero on every historical stream.
+  struct RateDiag {
+    float syntax_old = 0.0f;  // 2.0 + inter_syntax_bits()
+    float syntax_new = 0.0f;  // exact CDF probe
+    float coeff_old = 0.0f;   // estimate_tx_bits()/luma_plan_bits()
+    float coeff_new = 0.0f;   // Laplacian magnitude term
+    float term[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    float bawp = 0.0f;
+    float eob = 0.0f;
+    float nonzero = 0.0f;
+    float sum_abs = 0.0f;
+    std::uint8_t valid = 0;
+    std::uint8_t fallback = 0;
+  } rate_diag;
 };
 
 // §7.9/§7.12.2 frame-level temporal state the syntax writer needs to rebuild
@@ -449,5 +467,34 @@ bool cdf_image_tables(std::vector<std::uint16_t>& frame,
 
 int y_mode_joint(int av2_mode, int angle_delta);
 void build_scan(int w, int h, std::span<std::uint16_t> scan);
+
+// Inter syntax CDF rows the R09 rate probe prices (AV2ENC_RATE_HYBRID_S).
+// `export_inter_rate_cdfs()` copies them out of the frame's §8.2 CDF image;
+// an empty image means the §9.3 defaults + the base_q_idx coefficient slice,
+// which is exactly what the writer constructs for a frame without a seed.
+struct InterRateCdfRows {
+  std::uint16_t is_inter[4][3];
+  std::uint16_t skip[6][3];
+  std::uint16_t comp_mode[5][3];
+  std::uint16_t single_ref[3][6][3];
+  std::uint16_t single_mode[5][4];
+  std::uint16_t drl_mode[3][5][3];
+  std::uint16_t use_bawp[3];
+  std::uint16_t explicit_bawp[3][3];
+  std::uint16_t use_bawp_chroma[3];
+  std::uint16_t shell_set[3];
+  std::uint16_t shell6_class0[9];
+  std::uint16_t shell6_class1[9];
+  std::uint16_t shell_last_two[3];
+  std::uint16_t offset_low[2][3];
+  std::uint16_t offset_class2[3];
+  std::uint16_t offset_other[16][3];
+  std::uint16_t col_mv_greater[2][3];
+  std::uint16_t col_mv_index[4][3];
+};
+
+void export_inter_rate_cdfs(int base_q_idx,
+                            std::span<const std::uint16_t> cdf_image,
+                            InterRateCdfRows* out);
 
 }  // namespace av2enc::video::syntax

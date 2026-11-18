@@ -400,6 +400,79 @@ void test_real_frame(const std::string& path) {
               static_cast<long long>(plan.sse_total), ms);
 }
 
+// Perceptual (local-structure) ranking: the opt-in arm must be deterministic,
+// keep the reported SSE exact, and never rank worse than the identity set on
+// its own metric.  The SSE arm's new cost fields must stay equal to its SSE.
+void test_perceptual_ranking() {
+  using namespace av2enc::cdef;
+  // Window metric: identical windows are perfect; a flat-vs-edge pair is not.
+  {
+    std::vector<std::uint8_t> flat(16, 128);
+    std::vector<std::uint8_t> edge(16);
+    for (int i = 0; i < 16; ++i) edge[static_cast<std::size_t>(i)] = i < 8 ? 0 : 255;
+    const std::int64_t zero = cdef_structure_window(flat.data(), 4,
+                                                    flat.data(), 4, 0);
+    const std::int64_t differ = cdef_structure_window(flat.data(), 4,
+                                                      edge.data(), 4, 0);
+    check(zero == 0, "identical 4x4 window has zero structure cost");
+    check(differ > 0, "flat vs edge window has positive structure cost");
+    const std::int64_t weighted =
+        cdef_structure_window(flat.data(), 4, edge.data(), 4, 2);
+    check(weighted >= differ, "edge weighting never lowers structure cost");
+  }
+
+  TestFrame f = test::make_frame(8, 8);
+  test::fill_pattern(f, test::Pattern::kSoftEdge);
+  TestFrame ref = make_ref_like(f);
+  build_ref(ref, f, f.mi_cols * 4, f.mi_rows * 4, 11);
+  CdefSearchFrame view = search_view(f, ref);
+
+  CdefSearchOptions sse_options;
+  sse_options.num_strengths = 2;
+  sse_options.include_off = true;
+  CdefSearchResult sse_plan;
+  std::string error;
+  check(cdef_search_plan(view, sse_options, &sse_plan, &error),
+        "SSE plan succeeds");
+  check(sse_plan.cost_total == sse_plan.sse_total &&
+            sse_plan.cost_off_total == sse_plan.sse_off_total,
+        "SSE arm reports cost == SSE");
+
+  CdefSearchOptions perceptual = sse_options;
+  perceptual.perceptual = true;
+  CdefSearchResult a;
+  CdefSearchResult b;
+  check(cdef_search_plan(view, perceptual, &a, &error),
+        "perceptual plan succeeds");
+  check(cdef_search_plan(view, perceptual, &b, &error),
+        "perceptual plan is repeatable");
+  check(a.num_strengths == b.num_strengths && a.cdef_idx == b.cdef_idx &&
+            a.cost_total == b.cost_total,
+        "perceptual plan is deterministic");
+  check(a.cost_total <= a.cost_off_total,
+        "perceptual selection never worse than identity on its own metric");
+  const std::int64_t actual =
+      apply_plan(f, ref, a, f.mi_cols * 4, f.mi_rows * 4);
+  check(actual == a.sse_total,
+        "perceptual plan SSE equals the filtered SSE");
+
+  CdefSearchOptions edged = perceptual;
+  edged.perceptual_edge_weight = 2;
+  CdefSearchResult c;
+  check(cdef_search_plan(view, edged, &c, &error),
+        "edge-weighted perceptual plan succeeds");
+  check(c.cost_total <= c.cost_off_total,
+        "edge-weighted selection never worse than identity");
+  check(apply_plan(f, ref, c, f.mi_cols * 4, f.mi_rows * 4) == c.sse_total,
+        "edge-weighted plan SSE equals the filtered SSE");
+
+  CdefSearchOptions bad = perceptual;
+  bad.perceptual_edge_weight = 9;
+  CdefSearchResult rejected;
+  check(!cdef_search_plan(view, bad, &rejected, &error),
+        "perceptual edge weight above 8 rejected");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -409,6 +482,7 @@ int main(int argc, char** argv) {
   test_skip_and_chroma_branches();
   test_determinism_and_weights();
   test_off_selection();
+  test_perceptual_ranking();
   std::string real = argc > 1 ? argv[1] : "decoded.y4m";
   test_real_frame(real);
   std::printf("cdef_search_test: %d checks, %d failures\n", g_checks,

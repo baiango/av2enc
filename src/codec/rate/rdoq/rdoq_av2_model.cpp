@@ -130,6 +130,21 @@ void build_scan(std::int32_t w, std::int32_t h,
   }
 }
 
+const av2enc::still::qctx::CoeffCdfSlice& Model::slice() const {
+  if (info_.cdf_override != nullptr) return *info_.cdf_override;
+  return av2enc::still::qctx::tables_for_slice(qctx_);
+}
+
+double Model::cost_symbol(const std::uint16_t* cdf, int n,
+                          int symbol) const {
+  if (sink_ != nullptr) return sink_->symbol(cdf, n, symbol);
+  return symbol_bits(cdf, n, symbol);
+}
+
+double Model::cost_literal(double bits) const {
+  return sink_ != nullptr ? sink_->literal(bits) : bits;
+}
+
 bool Model::init(const BlockInfo& info,
                  std::span<const std::int32_t> scalar_levels_scan,
                  std::string* error) {
@@ -357,7 +372,7 @@ std::int32_t Model::scalar_level(std::int32_t scan_pos) const {
 }
 
 const std::uint16_t* Model::txb_skip_cdf() const {
-  const av2enc::still::qctx::CoeffCdfSlice& q = av2enc::still::qctx::tables_for_slice(qctx_);
+  const av2enc::still::qctx::CoeffCdfSlice& q = slice();
   if (info_.plane == 2) {
     return &(*q.v_txb_skip)[info_.txb_skip_context][0];
   }
@@ -402,7 +417,7 @@ double Model::coefficient_bits(std::int32_t scan_pos,
   if (scan_pos < 0 || scan_pos >= area_) {
     return kImpossibleBits;
   }
-  const av2enc::still::qctx::CoeffCdfSlice& q = av2enc::still::qctx::tables_for_slice(qctx_);
+  const av2enc::still::qctx::CoeffCdfSlice& q = slice();
   const Position& p = positions_[static_cast<std::size_t>(scan_pos)];
   const std::int32_t tsc =
       (av2enc::still::kTxSizeSqr[info_.params.tx_size] +
@@ -415,17 +430,17 @@ double Model::coefficient_bits(std::int32_t scan_pos,
     double bits = 0.0;
     if (p.is_lf != 0) {
       if (info_.plane == 0) {
-        bits += symbol_bits(&(*q.coeff_base_lf)[tsc][p.base_ctx][0][0],
+        bits += cost_symbol(&(*q.coeff_base_lf)[tsc][p.base_ctx][0][0],
                             6, 0);
       } else {
-        bits += symbol_bits(&(*q.coeff_base_lf_uv)[p.base_ctx][0], 6, 0);
+        bits += cost_symbol(&(*q.coeff_base_lf_uv)[p.base_ctx][0], 6, 0);
       }
     } else {
       if (info_.plane == 0) {
-        bits += symbol_bits(&(*q.coeff_base)[tsc][p.base_ctx][0][0],
+        bits += cost_symbol(&(*q.coeff_base)[tsc][p.base_ctx][0][0],
                             4, 0);
       } else {
-        bits += symbol_bits(&(*q.coeff_base_uv)[p.base_ctx][0], 4, 0);
+        bits += cost_symbol(&(*q.coeff_base_uv)[p.base_ctx][0], 4, 0);
       }
     }
     return bits;
@@ -450,37 +465,37 @@ double Model::coefficient_bits(std::int32_t scan_pos,
     const std::int32_t symbol = base_level - 1;
     if (info_.plane == 0) {
       if (p.is_lf != 0) {
-        bits += symbol_bits(
+        bits += cost_symbol(
             &(*q.coeff_base_lf_eob)[tsc][p.eob_ctx][0], 5,
             symbol);
       } else {
-        bits += symbol_bits(
+        bits += cost_symbol(
             &(*q.coeff_base_eob)[tsc][p.eob_ctx][0], 3,
             symbol);
       }
     } else {
       if (p.is_lf != 0) {
-        bits += symbol_bits(&(*q.coeff_base_lf_eob_uv)[p.eob_ctx][0], 5, symbol);
+        bits += cost_symbol(&(*q.coeff_base_lf_eob_uv)[p.eob_ctx][0], 5, symbol);
       } else {
-        bits += symbol_bits(&(*q.coeff_base_eob_uv)[p.eob_ctx][0], 3, symbol);
+        bits += cost_symbol(&(*q.coeff_base_eob_uv)[p.eob_ctx][0], 3, symbol);
       }
     }
   } else {
     if (info_.plane == 0) {
       if (p.is_lf != 0) {
-        bits += symbol_bits(
+        bits += cost_symbol(
             &(*q.coeff_base_lf)[tsc][p.base_ctx][0][0], 6,
             base_level);
       } else {
-        bits += symbol_bits(
+        bits += cost_symbol(
             &(*q.coeff_base)[tsc][p.base_ctx][0][0], 4,
             base_level);
       }
     } else {
       if (p.is_lf != 0) {
-        bits += symbol_bits(&(*q.coeff_base_lf_uv)[p.base_ctx][0], 6, base_level);
+        bits += cost_symbol(&(*q.coeff_base_lf_uv)[p.base_ctx][0], 6, base_level);
       } else {
-        bits += symbol_bits(&(*q.coeff_base_uv)[p.base_ctx][0], 4, base_level);
+        bits += cost_symbol(&(*q.coeff_base_uv)[p.base_ctx][0], 4, base_level);
       }
     }
   }
@@ -488,34 +503,34 @@ double Model::coefficient_bits(std::int32_t scan_pos,
   if (pre_level > base_levels && !(p.is_lf != 0 && info_.plane > 0)) {
     if (info_.plane == 0) {
       if (p.is_lf != 0) {
-        bits += symbol_bits(&(*q.coeff_br_lf)[p.br_ctx][0], 4, br_level);
+        bits += cost_symbol(&(*q.coeff_br_lf)[p.br_ctx][0], 4, br_level);
       } else {
-        bits += symbol_bits(&(*q.coeff_br)[p.br_ctx][0], 4, br_level);
+        bits += cost_symbol(&(*q.coeff_br)[p.br_ctx][0], 4, br_level);
       }
     } else {
-      bits += symbol_bits(&(*q.coeff_br_uv)[p.br_ctx][0], 4, br_level);
+      bits += cost_symbol(&(*q.coeff_br_uv)[p.br_ctx][0], 4, br_level);
     }
   }
 
   if (abs_value >= p.max_level) {
-    bits += escape_bits(abs_value - pre_level, p.hr_pred);
+    bits += cost_literal(escape_bits(abs_value - pre_level, p.hr_pred));
   }
 
   if (p.is_dc != 0) {
-    bits += symbol_bits(&(*q.dc_sign)[0][0][info_.dc_sign_context][0], 2,
+    bits += cost_symbol(&(*q.dc_sign)[0][0][info_.dc_sign_context][0], 2,
                         signed_level < 0 ? 1 : 0);
   } else {
-    bits += 1.0;  // sign_bit literal
+    bits += cost_literal(1.0);  // sign_bit literal
   }
   return bits;
 }
 
 double Model::eob_bits(std::int32_t eob) const {
-  const av2enc::still::qctx::CoeffCdfSlice& q = av2enc::still::qctx::tables_for_slice(qctx_);
+  const av2enc::still::qctx::CoeffCdfSlice& q = slice();
   if (eob < 0 || eob > area_) {
     return kImpossibleBits;
   }
-  double bits = symbol_bits(txb_skip_cdf(), 2, eob == 0 ? 1 : 0);
+  double bits = cost_symbol(txb_skip_cdf(), 2, eob == 0 ? 1 : 0);
   if (eob == 0) {
     return bits;
   }
@@ -581,18 +596,18 @@ double Model::eob_bits(std::int32_t eob) const {
   } else {
     symbol = n - 1;
   }
-  bits += symbol_bits(cdf, n, symbol);
+  bits += cost_symbol(cdf, n, symbol);
   if (symbol == n - 1 && escape_raw_bits > 0) {
-    bits += static_cast<double>(escape_raw_bits);
+    bits += cost_literal(static_cast<double>(escape_raw_bits));
   }
 
   if (eob_pt >= 3) {
     const std::int32_t base = (1 << (eob_pt - 2)) + 1;
     const std::int32_t extra = eob - base;
     const std::int32_t eob_extra = (extra >> (eob_pt - 3)) & 1;
-    bits += symbol_bits(&(*q.eob_extra)[0], 2, eob_extra);
+    bits += cost_symbol(&(*q.eob_extra)[0], 2, eob_extra);
     for (std::int32_t i = eob_pt - 4; i >= 0; --i) {
-      bits += 1.0;
+      bits += cost_literal(1.0);
     }
   }
   return bits;

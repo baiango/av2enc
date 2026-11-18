@@ -36,10 +36,29 @@
 #include <string>
 #include <vector>
 
+#include "codec/entropy/qctx/qctx.h"
 #include "codec/transform/variants/tx_variants.h"
 #include "rdoq.h"
 
 namespace av2enc::rdoq::av2 {
+
+// Optional per-symbol sink.
+//
+// The default model charges every symbol with the ideal `-log2 p` of the
+// static CDF.  An ablation (the R19 interval-width estimate) needs the *same
+// symbol sequence* priced by a different coder: an interval accumulator or a
+// real §8.2 encoder.  A sink receives one call per emitted symbol (with the
+// CDF row the writer would use) and one call per raw literal bit group, and
+// returns the bits it charged.  With no sink installed the model is bit-exact
+// with its historical arithmetic.
+class SymbolSink {
+ public:
+  virtual ~SymbolSink() = default;
+  // `cdf` has n+1 entries (n-1 boundaries, base rate, use count).
+  virtual double symbol(const std::uint16_t* cdf, int n, int symbol) = 0;
+  // `bits` raw literal bits (no CDF), e.g. §5.20.7.28 escape bits.
+  virtual double literal(double bits) = 0;
+};
 
 // Per-block inputs the writer already knows.
 struct BlockInfo {
@@ -61,6 +80,10 @@ struct BlockInfo {
   // plane context is `plane > 0 ? 2 : (is_inter ? 1 : 0)`.  False keeps the
   // intra tables, so every still/single-picture caller is unchanged.
   bool is_inter = false;
+  // Optional coefficient CDF slice the model reads instead of the §9.3 static
+  // slice `qctx`.  The R19 experiment points this at a copied §8.2 CDF image
+  // (the live frame-start state).  Null keeps the static slice.
+  const av2enc::still::qctx::CoeffCdfSlice* cdf_override = nullptr;
 };
 
 // Static, per-block coefficient cost model.  Build it from the scalar levels,
@@ -82,6 +105,11 @@ class Model {
 
   // Diagnostics: estimated bits for the scalar path (coefficients + EOB).
   double scalar_bits() const;
+
+  // Optional alternative coder.  Null (the default) restores the built-in
+  // `-log2 p` accounting; see SymbolSink.  The sink is per-block: install it
+  // after init() and call scalar_bits() once.
+  void set_symbol_sink(SymbolSink* sink) noexcept { sink_ = sink; }
 
   // Direct callbacks (exposed for tests).
   static double coefficient_rate(void* context,
@@ -125,6 +153,14 @@ class Model {
   std::vector<std::int32_t> levels_scan_;
   std::int32_t area_ = 0;
   std::int32_t scalar_eob_ = 0;
+  SymbolSink* sink_ = nullptr;
+
+  // Coefficient CDF slice: the caller override when present, else the static
+  // §9.3 qctx slice.
+  const av2enc::still::qctx::CoeffCdfSlice& slice() const;
+  // One symbol / one raw-bit group through the sink, or the static model.
+  double cost_symbol(const std::uint16_t* cdf, int n, int symbol) const;
+  double cost_literal(double bits) const;
 };
 
 // Diagonal (up-right) scan from §5.20.7.30 for a 2D transform class.  Exposed

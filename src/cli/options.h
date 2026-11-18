@@ -214,6 +214,13 @@ struct Options {
   bool video_segmentation = false;
   bool video_delta_q = false;
   int video_delta_q_res = 0;
+  // Opt-in per-superblock adaptive quantisation (--video-aq): an
+  // activity-driven delta-Q plan (implies delta_q_present).
+  bool video_aq = false;
+  double video_aq_strength = 1.0;
+  int video_aq_clamp = 3;
+  int video_aq_bias = 0;
+  bool video_aq_bias_given = false;
   bool video_per_segment_q = false;
   int video_seg_delta = 8;
   // Opt-in §5.4.8/§5.18.6.1 separate UV/DC delta-Q (--video-uv-delta-q D).
@@ -403,6 +410,22 @@ struct Options {
   bool video_ref_signal_off = false;
   bool video_tile_group_off = false;
   bool video_ccso_header_off = false;
+  // Ablation switches for the remaining --nightly-implied tools that a
+  // reference-structure experiment has to drop (each owns a header field or a
+  // block mode that the reference tools reject by name).  Off flags keep the
+  // default and every pinned stream byte-identical; see
+  // docs/reference-structure.md.
+  bool video_edge_inter_off = false;
+  bool video_edge_mask_off = false;
+  bool video_bawp_off = false;
+  bool video_drift_refresh_off = false;
+  bool video_cdf_chain_off = false;
+  bool video_key_qp_offset_off = false;
+  bool video_deblock_off = false;
+  bool video_loop_filters_off = false;
+  bool video_tx_search_off = false;
+  bool video_rdoq_off = false;
+  bool video_partition_rd_off = false;
   std::uint64_t vram_cap_mib = 0;  // 0 = largest reservation the device can serve
   int bit_depth = 8;               // 8 (default) or 10; 12-bit is not signalable
   std::string chroma = "420";      // 420 (default), 422, 444, 400

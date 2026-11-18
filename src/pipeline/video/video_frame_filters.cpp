@@ -54,7 +54,7 @@ bool InterFrameEncoder::apply_loop_filters(std::string& error) {
         // fully skipped 8x8 block unfiltered.
         block.skip = (leaf.is_inter && leaf.skip_flag != 0) ||
                      (leaf.flags & syntax::kFlagIsIbc) != 0;
-        block.luma_eob_zero = leaf.eob[0] == 0;
+        vf_detail::fill_filter_block_tx(leaf, &block);
         filter_blocks.push_back(block);
       }
     }

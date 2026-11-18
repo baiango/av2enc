@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "cuda/pipeline/still/cdef/still_cdef.h"
+#include "codec/filters/cdef/cdef_search.h"
 
 namespace av2enc::video::cdef_adapter {
 namespace {
@@ -128,59 +129,149 @@ bool plan(const FrameView& frame, const Options& options, Plan* out,
                 "CdefOnSkipTxfm ALWAYS_ON requires on_skip_txfm");
   }
 
-  CdefStageFrame view{};
-  for (int plane = 0; plane < 3; ++plane) {
-    view.plane[plane].src = frame.recon[plane].data;
-    view.plane[plane].dst = nullptr;  // planning only
-    view.plane[plane].stride = frame.recon[plane].stride;
-    view.plane[plane].height =
-        (frame.mi_rows * mx4()) >> plane_shift(plane);
-    view.ref[plane] = frame.source[plane].data;
-    view.ref_stride[plane] = frame.source[plane].stride;
+  if (options.perceptual) {
+    // Opt-in perceptual ranking: run the search core directly with the
+    // local-structure metric.  The syntax, the filter and the header/index
+    // writers below are the same code paths the SSE arm uses.
+    av2enc::cdef::CdefSearchFrame search{};
+    for (int plane = 0; plane < 3; ++plane) {
+      search.src[plane].data = frame.recon[plane].data;
+      search.src[plane].stride = frame.recon[plane].stride;
+      search.ref[plane].data = frame.source[plane].data;
+      search.ref[plane].stride = frame.source[plane].stride;
+    }
+    search.width = frame.width;
+    search.height = frame.height;
+    search.mi_cols = frame.mi_cols;
+    search.mi_rows = frame.mi_rows;
+    search.subsampling_x = 1;
+    search.subsampling_y = 1;
+    search.skip = frame.skip;
+    search.lossless = frame.lossless;
+    search.lossless_chroma = frame.lossless_chroma;
+    search.tile_col_starts = frame.tile_col_starts;
+    search.num_tile_cols = frame.num_tile_cols;
+    search.tile_row_starts = frame.tile_row_starts;
+    search.num_tile_rows = frame.num_tile_rows;
+
+    av2enc::cdef::CdefSearchOptions search_options;
+    search_options.damping = options.damping;
+    search_options.num_strengths = options.num_strengths;
+    search_options.on_skip_txfm = options.on_skip_txfm;
+    search_options.disable_loopfilters_across_tiles =
+        options.disable_loopfilters_across_tiles;
+    // Keep the identity set so "leave this block unfiltered" is always
+    // expressible (a signalled stream has no -1 index).  A frame whose winner
+    // is the copy set is then priced by the caller's `cdef_rd` identity check.
+    search_options.include_off = true;
+    search_options.chroma_weight = options.chroma_weight;
+    search_options.candidates = options.candidates;
+    search_options.candidate_count = options.candidate_count;
+    search_options.eval_step = 1;
+    search_options.perceptual = true;
+    search_options.perceptual_edge_weight = options.perceptual_edge_weight;
+    search_options.perceptual_detail_weight = options.perceptual_detail_weight;
+
+    av2enc::cdef::CdefStrength veto_pool[2] = {};
+    if (options.perceptual_veto) {
+      // Conservative form: the historical SSE search picks the one global set
+      // for this frame (CdefStrengths == 1, no identity in the pool), then the
+      // perceptual metric decides per 64x64 block whether to apply that set.
+      // The header therefore carries at most {identity, SSE set} and the
+      // pixel result is never a strength the SSE arm would not have used.
+      av2enc::cdef::CdefSearchOptions sse_options = search_options;
+      sse_options.perceptual = false;
+      sse_options.num_strengths = 1;
+      sse_options.include_off = false;
+      av2enc::cdef::CdefSearchResult sse_result;
+      if (!av2enc::cdef::cdef_search_plan(search, sse_options, &sse_result,
+                                          error)) {
+        return false;
+      }
+      veto_pool[0] = sse_result.options.strengths[0];
+      veto_pool[1] = av2enc::cdef::CdefStrength{};
+      search_options.num_strengths = 2;
+      search_options.candidates = veto_pool;
+      search_options.candidate_count = 2;
+    }
+
+    av2enc::cdef::CdefSearchResult result;
+    if (!av2enc::cdef::cdef_search_plan(search, search_options, &result,
+                                        error)) {
+      return false;
+    }
+    out->options = result.options;
+    out->num_strengths = result.num_strengths;
+    out->mi_cols = frame.mi_cols;
+    out->mi_rows = frame.mi_rows;
+    out->n64_cols = result.n64_cols;
+    out->n64_rows = result.n64_rows;
+    out->cdef_idx = result.cdef_idx;
+    out->sse_before = result.sse_off_total;
+    out->sse_after = result.sse_total;
+    out->cost_before = result.cost_off_total;
+    out->cost_after = result.cost_total;
+    out->blocks_off = result.blocks_off;
+    out->forced_single_strength = result.forced_single_strength;
+    out->header_only_emittable = result.num_strengths == 1;
+    out->params = make_params(out->options);
+  } else {
+    CdefStageFrame view{};
+    for (int plane = 0; plane < 3; ++plane) {
+      view.plane[plane].src = frame.recon[plane].data;
+      view.plane[plane].dst = nullptr;  // planning only
+      view.plane[plane].stride = frame.recon[plane].stride;
+      view.plane[plane].height =
+          (frame.mi_rows * mx4()) >> plane_shift(plane);
+      view.ref[plane] = frame.source[plane].data;
+      view.ref_stride[plane] = frame.source[plane].stride;
+    }
+    view.width = frame.width;
+    view.height = frame.height;
+    view.mi_cols = frame.mi_cols;
+    view.mi_rows = frame.mi_rows;
+    view.skip = frame.skip;
+    view.lossless = frame.lossless;
+    view.lossless_chroma = frame.lossless_chroma;
+    view.tile_col_starts = frame.tile_col_starts;
+    view.num_tile_cols = frame.num_tile_cols;
+    view.tile_row_starts = frame.tile_row_starts;
+    view.num_tile_rows = frame.num_tile_rows;
+
+    CdefStageOptions stage_options;
+    stage_options.damping = options.damping;
+    stage_options.num_strengths = options.num_strengths;
+    stage_options.on_skip_txfm = options.on_skip_txfm;
+    stage_options.disable_loopfilters_across_tiles =
+        options.disable_loopfilters_across_tiles;
+    stage_options.include_off = options.include_off;
+    stage_options.chroma_weight = options.chroma_weight;
+    stage_options.candidates = options.candidates;
+    stage_options.candidate_count = options.candidate_count;
+    stage_options.search_step = options.search_step;
+
+    CdefStagePlan stage_plan;
+    if (!av2enc::cuda::still::still_cdef_plan(view, stage_options, &stage_plan,
+                                              error)) {
+      return false;
+    }
+
+    out->options = stage_plan.search.options;
+    out->num_strengths = stage_plan.num_strengths;
+    out->mi_cols = frame.mi_cols;
+    out->mi_rows = frame.mi_rows;
+    out->n64_cols = stage_plan.n64_cols;
+    out->n64_rows = stage_plan.n64_rows;
+    out->cdef_idx = stage_plan.cdef_idx;
+    out->sse_before = stage_plan.sse_off_total;
+    out->sse_after = stage_plan.sse_total;
+    out->cost_before = out->sse_before;
+    out->cost_after = out->sse_after;
+    out->blocks_off = stage_plan.search.blocks_off;
+    out->forced_single_strength = stage_plan.forced_single_strength;
+    out->header_only_emittable = stage_plan.num_strengths == 1;
+    out->params = make_params(out->options);
   }
-  view.width = frame.width;
-  view.height = frame.height;
-  view.mi_cols = frame.mi_cols;
-  view.mi_rows = frame.mi_rows;
-  view.skip = frame.skip;
-  view.lossless = frame.lossless;
-  view.lossless_chroma = frame.lossless_chroma;
-  view.tile_col_starts = frame.tile_col_starts;
-  view.num_tile_cols = frame.num_tile_cols;
-  view.tile_row_starts = frame.tile_row_starts;
-  view.num_tile_rows = frame.num_tile_rows;
-
-  CdefStageOptions stage_options;
-  stage_options.damping = options.damping;
-  stage_options.num_strengths = options.num_strengths;
-  stage_options.on_skip_txfm = options.on_skip_txfm;
-  stage_options.disable_loopfilters_across_tiles =
-      options.disable_loopfilters_across_tiles;
-  stage_options.include_off = options.include_off;
-  stage_options.chroma_weight = options.chroma_weight;
-  stage_options.candidates = options.candidates;
-  stage_options.candidate_count = options.candidate_count;
-  stage_options.search_step = options.search_step;
-
-  CdefStagePlan stage_plan;
-  if (!av2enc::cuda::still::still_cdef_plan(view, stage_options, &stage_plan,
-                                      error)) {
-    return false;
-  }
-
-  out->options = stage_plan.search.options;
-  out->num_strengths = stage_plan.num_strengths;
-  out->mi_cols = frame.mi_cols;
-  out->mi_rows = frame.mi_rows;
-  out->n64_cols = stage_plan.n64_cols;
-  out->n64_rows = stage_plan.n64_rows;
-  out->cdef_idx = stage_plan.cdef_idx;
-  out->sse_before = stage_plan.sse_off_total;
-  out->sse_after = stage_plan.sse_total;
-  out->blocks_off = stage_plan.search.blocks_off;
-  out->forced_single_strength = stage_plan.forced_single_strength;
-  out->header_only_emittable = stage_plan.num_strengths == 1;
-  out->params = make_params(out->options);
 
   // Header bits: measured by the shared §5.18.7.10 writer in the M2 context.
   {

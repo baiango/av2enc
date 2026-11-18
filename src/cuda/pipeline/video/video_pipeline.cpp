@@ -968,7 +968,9 @@ class GpuFrameEncoder {
   }
 
   // §7.12.2.2 GLOBALMV projection.  Mirrors the CPU encoder: a non-identity
-  // model selects the warped predictor for blocks >= 8x8 (§7.13.3.14).
+  // model selects the warped predictor for blocks >= 8x8 (§7.13.3.14).  The
+  // default plan only carries translation-only models (make_gm_frame_plan
+  // flattens a warp model), which project the same centre MV every 8x8.
   void global_mv_for_block(int ref_index, int mi_row, int mi_col, int bw4,
                            int bh4, bool& use_warp,
                            inter::mc::Mv& mv) const {

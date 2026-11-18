@@ -61,6 +61,10 @@ bool apply_video_nightly(Options& options, std::string& error) {
     return false;
   }
   if (!apply_video_rd_preset(options, error)) return false;
+  // Explicit ablation switches (docs/reference-structure.md).  They only
+  // suppress the matching element below and are off by default, so every
+  // pinned nightly stream is byte-identical.
+  if (options.video_deblock_off) options.video_deblock = false;
   // Only the decisions that measured positive in combination on the CPU
   // benchmark.  The TX context rate stays a separate opt-in: it helps the old
   // 64x64 tree but measured negative when stacked on the bottom-edge path (see
@@ -68,7 +72,10 @@ bool apply_video_nightly(Options& options, std::string& error) {
   // variance tree with a per-leaf NEWMV + quantised-residual RD cost; its
   // quarter-scale lambda and first-level bound are the measured combination.
   options.video_ccso_rd = true;
-  options.video_edge_inter = true;
+  // The compound/ref-mvs arms cannot carry the bottom-edge inter path, the
+  // compound arms cannot carry BAWP, and the reference-management tools
+  // reject the carried-CDF chain; those entries below read the same switches.
+  options.video_edge_inter = !options.video_edge_inter_off;
   options.video_partition_rd = true;
   if (!flag_given(options, "--video-partition-rd-lambda")) {
     options.video_partition_lambda = 2.75e-6;
@@ -83,7 +90,8 @@ bool apply_video_nightly(Options& options, std::string& error) {
   // at the 240p30 / 100 kbps point; see docs/video-nightly.md.  A
   // caller-supplied offset wins, and the rate-controlled paths (--rc crf/vbr)
   // own base_q_idx, so they are skipped.
-  if (!options.video_key_qp_offset_given && options.rc_mode == "cqp") {
+  if (!options.video_key_qp_offset_given && options.rc_mode == "cqp" &&
+      !options.video_key_qp_offset_off) {
     options.video_key_qp_offset = -27;
     options.video_key_qp_offset_given = true;
   }
@@ -98,7 +106,7 @@ bool apply_video_nightly(Options& options, std::string& error) {
   // At QP110 the combination is 24,904 B / 99.616 kbps / 9.7069 JOD /
   // 43.8667 dB (8, 6.9 fps).  The rate-controlled paths keep the historical
   // decisions because they own base_q_idx.
-  if (options.rc_mode == "cqp") {
+  if (options.rc_mode == "cqp" && !options.video_cdf_chain_off) {
     options.avg_cdf = true;
     options.adaptive_cdf = true;
     // --cdf-continuity carries the §7.4.4/§7.5 image instead of re-deriving
@@ -109,7 +117,7 @@ bool apply_video_nightly(Options& options, std::string& error) {
     const bool user_reset = flag_given(options, "--video-cdf-per-frame-qp");
     options.cdf_continuity = !user_reset;
     options.video_cdf_per_frame_qp = user_reset;
-    options.video_drift_refresh = true;
+    options.video_drift_refresh = !options.video_drift_refresh_off;
   }
   // Measured with the final aggregate: 1/8-pel ME refinement and the
   // RDOQ-interaction TX-search lambda.  At QP117 this is 24,939 B /
@@ -122,7 +130,7 @@ bool apply_video_nightly(Options& options, std::string& error) {
   }
   // The bottom-edge residual mask: hidden decoder-invisible rows get no
   // residual and the bottom-leaf decisions score only the visible rows.
-  options.video_edge_mask = true;
+  options.video_edge_mask = !options.video_edge_mask_off;
   // §7.18 CDEF on every reconstructed frame.  Re-measured on top of the edge +
   // rate-aware-CCSO path: it is the largest algorithmic gain left and, unlike
   // the old --video-cdef --video-gdf pair, affordable (docs/video-nightly.md).
@@ -166,13 +174,31 @@ bool apply_video_nightly(Options& options, std::string& error) {
   // §7.13.3.25 fitted BAWP over the inter-residual path, with the CPU carrier
   // that re-expresses a GLOBALMV winner so use_bawp can be coded.  Measured
   // positive at iso-rate on the 240p fade clip; see docs/video-nightly.md.
-  options.video_bawp = true;
-  options.video_bawp_carrier = true;
+  options.video_bawp = !options.video_bawp_off;
+  options.video_bawp_carrier = !options.video_bawp_off;
   // One calibrated leaf cost (--video-leaf-rd) for the inter-candidate search,
   // the skip/residual decision and the intra/inter leaf decision.  Re-measured
   // on top of the aggregate above: +0.054 JOD / +0.21 dB at the 100 kbps point
   // and ≈-8% BD-rate; see docs/video-nightly.md.
   options.video_leaf_rd = true;
+  // Ablation switches that must win over the assignments above: RDOQ, the
+  // partition probe, TX search and the loop-filter stack are all rejected by
+  // the frame-type wrappers, and the compound arms drop the CDF chain in the
+  // earlier block.  Applied last so an unset switch changes nothing.
+  if (options.video_rdoq_off) options.video_rdoq = false;
+  if (options.video_partition_rd_off) options.video_partition_rd = false;
+  if (options.video_tx_search_off) {
+    options.video_tx_search = false;
+    options.video_key_intra_txpart = false;
+  }
+  if (options.video_loop_filters_off) {
+    options.video_deblock = false;
+    options.video_cdef = false;
+    options.video_cdef_rd = false;
+    options.video_ccso = false;
+    options.video_ccso_rd = false;
+    options.video_ccso_header_rd = false;
+  }
   // The §8.3.2 context rate is a separate opt-in: it helps the old tree but
   // measured worse when stacked on the full nightly aggregate.
   return true;

@@ -9,6 +9,14 @@
 # stream must also report at least one temporal candidate, otherwise the gate
 # would pass on an inert feature.
 #
+# The GME carriers include a pure-zoom clip.  The default GME path must not
+# signal a model the decoder warps (the §7.13.3.19-.24 mirror is not
+# conformance-proven; docs/gme-720p.md), so the fitted model is flattened to
+# its translation-only projection and the decoded payload must equal
+# --video-recon byte for byte.  AV2ENC_GME_UNPROVEN_WARP=1 restores the
+# historical warped predictor; the gate only uses it to prove the fixture
+# really fits a non-identity linear model.
+#
 # When --base-bin points at a pre-change binary (the commit before the feature),
 # the default invocations must be byte-identical; that is the "flag off" check.
 #
@@ -110,6 +118,120 @@ run_case() {
   STREAMS+=("$label")
 }
 
+# Strict decode plus byte-for-byte payload equality against --video-recon.
+# Strips the Y4M header line and FRAME markers; reports the first differing
+# frame and the total differing-byte count so a warp-mirror regression is
+# diagnosable (run_case's Y4M MD5 would also differ, but this names the frames).
+decode_payload_exact() {
+  local ivf=$1 recon=$2 frames=$3 label=$4
+  local dec="$OUT/$label.dec.y4m" log="$OUT/$label.dec.log"
+  if ! "$DAV2D" -q --strict 1 -i "$ivf" -o "$dec" --threads 1 \
+      >"$log" 2>&1; then
+    echo "FAIL($label): dav2d --strict 1 rejected the stream"
+    tail -5 "$log"
+    FAIL=1
+    return 1
+  fi
+  if ! python3 - "$recon" "$dec" "$frames" "$label" <<'PY'
+import sys
+
+def split(path):
+    data = open(path, 'rb').read()
+    end = data.index(b'\n') + 1
+    body = data[end:].replace(b'FRAME\n', b'')
+    return body
+
+recon_path, dec_path, want, label = sys.argv[1:5]
+want = int(want)
+a = split(recon_path)
+b = split(dec_path)
+if len(a) != len(b):
+    print(f"FAIL({label}): recon payload {len(a)} B != decoded {len(b)} B",
+          file=sys.stderr)
+    sys.exit(1)
+size = len(a) // want
+dec = open(dec_path, 'rb').read()
+end = dec.index(b'\n') + 1
+got = dec[end:].count(b'FRAME\n')
+if got != want:
+    print(f"FAIL({label}): decoded {got} of {want} picture(s)", file=sys.stderr)
+    sys.exit(1)
+diff = 0
+bad_frames = []
+for i in range(0, len(a), size):
+    chunk = a[i:i + size]
+    ref = b[i:i + size]
+    d = sum(1 for x, y in zip(chunk, ref) if x != y)
+    if d:
+        bad_frames.append((i // size, d))
+    diff += d
+if diff:
+    frames = ",".join(f"{f}:{d}" for f, d in bad_frames[:6])
+    print(f"FAIL({label}): decoded payload differs from --video-recon in "
+          f"{diff} of {len(a)} bytes (frame:diff {frames})", file=sys.stderr)
+    sys.exit(1)
+print(f"  PASS({label}): payload exact, {want} picture(s), {len(a)} bytes")
+PY
+  then
+    FAIL=1
+    return 1
+  fi
+}
+
+# GME warp fallback.  The zoom fixture fits a model with a non-identity linear
+# part (proved by the escape-hatch arm below, which produces a different
+# stream).  The default must signal only the translation-only projection and
+# must decode payload-exactly through the §7.12.2.2 centre-MV path.  The
+# escape hatch restores the fitted warp model; if it ever produced the same
+# bytes as the default, the fixture would no longer exercise the fallback.
+check_gme_zoom_fallback() {
+  local clip=$1 frames=$2 label=$3
+  local ivf="$OUT/$label.ivf" recon="$OUT/$label.recon.y4m"
+  local log="$OUT/$label.log"
+  echo "== $label: --video-gme --video-warp (safe translation fallback)"
+  if ! "$BIN" "$clip" -o "$ivf" --video --frames "$frames" \
+      --video-gme --video-warp --video-recon "$recon" --video-trace \
+      >"$log" 2>&1; then
+    echo "FAIL($label): encode failed"
+    tail -5 "$log"
+    FAIL=1
+    return
+  fi
+  if ! grep -q "global mv=" "$log"; then
+    echo "FAIL($label): no GLOBALMV candidate evaluated"
+    FAIL=1
+    return
+  fi
+  decode_payload_exact "$ivf" "$recon" "$frames" "$label" || return
+  # Escape hatch: the fitted model is kept (including its linear part) and the
+  # §7.13.3.19/.20 predictor runs.  This arm is conformance-unproven, so it is
+  # only checked for liveness and to keep the default arm from passing on a
+  # clip whose fit degraded to purely translational content.
+  local hatch_ivf="$OUT/$label-hatch.ivf" hatch_log="$OUT/$label-hatch.log"
+  if ! env AV2ENC_GME_UNPROVEN_WARP=1 "$BIN" "$clip" -o "$hatch_ivf" \
+      --video --frames "$frames" --video-gme --video-warp --video-trace \
+      >"$hatch_log" 2>&1; then
+    echo "FAIL($label): escape-hatch encode failed"
+    tail -5 "$hatch_log"
+    FAIL=1
+    return
+  fi
+  if cmp -s "$ivf" "$hatch_ivf"; then
+    echo "FAIL($label): escape hatch left the stream unchanged (fixture inert)"
+    FAIL=1
+    return
+  fi
+  local hatch_warped
+  hatch_warped=$(grep -c "warp=1" "$hatch_log" || true)
+  if [ "${hatch_warped:-0}" -le 0 ]; then
+    echo "FAIL($label): escape hatch selected no warped candidate"
+    FAIL=1
+    return
+  fi
+  echo "  PASS($label): translation fallback active (hatch warps $hatch_warped candidate(s))"
+  STREAMS+=("$label")
+}
+
 # --- temporal cases --------------------------------------------------------
 run_case p8_refs1 8 no no --video-ref-mvs
 run_case p8_refs2 8 yes no --video-refs 2 --video-ref-mvs
@@ -137,14 +259,15 @@ PAN64="$OUT/fixture_pan64.y4m"
 PAN360="$OUT/fixture_pan360.y4m"
 WEDGE64="$OUT/fixture_wedge64.y4m"
 WEDGE360="$OUT/fixture_wedge360.y4m"
+ZOOM360="$OUT/fixture_zoom360.y4m"
 
 if [ ! -s "$PAN64" ] || [ ! -s "$PAN360" ] || [ ! -s "$WEDGE64" ] ||
-   [ ! -s "$WEDGE360" ]; then
-  python3 - "$PAN64" "$PAN360" "$WEDGE64" "$WEDGE360" <<'PY'
+   [ ! -s "$WEDGE360" ] || [ ! -s "$ZOOM360" ]; then
+  python3 - "$PAN64" "$PAN360" "$WEDGE64" "$WEDGE360" "$ZOOM360" <<'PY'
 import math
 import sys
 
-pan64, pan360, wedge64, wedge360 = sys.argv[1:5]
+pan64, pan360, wedge64, wedge360, zoom360 = sys.argv[1:6]
 
 def write(path, w, h, frames):
     cw, ch = w // 2, h // 2
@@ -238,10 +361,31 @@ def wedge_fixture(w, h):
     return [wrap(a), wrap(b), wrap(wedge), wrap(b),
             wrap(a), wrap(b), wrap(wedge), wrap(b)]
 
+def zoom_fixture(rate):
+    # Pure zoom about the frame origin.  Each picture is sampled from the same
+    # continuous texture at rate**f, so the fitted current->reference model has
+    # a non-identity linear part (no panning content).  This is the shape whose
+    # §7.13.3.19/.20 warp predictor does not mirror the decoder exactly.
+    def sample(x, y, f, plane, w, h):
+        scale = rate ** f
+        xx, yy = x / scale, y / scale
+        if plane == 0:
+            v = 128 + 55 * math.sin(xx * 0.09 + 0.3) + \
+                40 * math.cos(yy * 0.11) + 20 * math.sin((xx + yy) * 0.05)
+        elif plane == 1:
+            v = 128 + 35 * math.sin(xx * 0.07 + 1.0) + \
+                20 * math.cos(yy * 0.09)
+        else:
+            v = 128 + 30 * math.cos(xx * 0.08) + \
+                25 * math.sin(yy * 0.06 + 0.5)
+        return max(0, min(255, int(v + 0.5)))
+    return [sample] * 4
+
 write(pan64, 64, 64, [pan(1)] * 8)
 write(pan360, 640, 360, [pan(3)] * 8)
 write(wedge64, 64, 64, wedge_fixture(64, 64))
 write(wedge360, 640, 360, wedge_fixture(640, 360))
+write(zoom360, 640, 360, zoom_fixture(1.01))
 PY
 fi
 
@@ -267,6 +411,9 @@ CASE_INPUT="$PAN360"
 run_case gme360 8 yes no --video-gme --video-refs 2 --video-ref-mvs
 run_case gme360_refs3 8 yes no --video-gme --video-refs 3 --video-ref-mvs
 run_case warp360 8 yes no --video-warp --video-refs 2 --video-ref-mvs
+# Default GME must not emit a warped prediction for a genuinely affine fit;
+# the zoom clip decodes byte-exactly through the translation-only fallback.
+check_gme_zoom_fallback "$ZOOM360" 4 gme-zoom-fallback
 CASE_INPUT="$WEDGE64"
 run_case wedge64 8 yes no --video-refs 2 --video-compound \
   --video-compound-wedge --video-ref-mvs

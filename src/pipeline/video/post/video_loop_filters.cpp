@@ -1,6 +1,7 @@
 #include "pipeline/video/post/video_loop_filters.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -30,6 +31,117 @@ bool fail(std::string* error, const std::string& text) {
 }
 
 int plane_shift(int plane) { return plane == 0 ? 0 : 1; }
+
+// Opt-in perceptual loop-filter ranking (`AV2ENC_PERCEPTUAL_FILTER`).
+//
+// The default CDEF strength search minimises squared error.  SSE is blind to
+// *where* the error sits, so a filter that removes a little ringing on a strong
+// edge and one that washes out flat texture can score the same; Butteraugli and
+// SSIMULACRA2 both reward preserved local structure.  Setting this variable
+// ranks the same candidate ladder by a local-structure (SSIM-style) distance
+// instead.  Nothing is signalled differently: same header, same index syntax,
+// same filter.
+//
+// Values:
+//   "" / "0" / "off"      off (byte-identical to the SSE search)
+//   "cdef"                perceptual CDEF ranking, CLI CdefStrengths
+//   "cdef:N"              also request N CdefStrengths (1..8)
+//   "cdef:N:W"            add the edge-emphasis weight W (0..8)
+//   "cdef:N:W:D"          add the detail-preservation weight D (0..8)
+//   "veto"                keep the SSE frame-level set, let the perceptual
+//                         metric veto it per 64x64 block
+//   "veto:W:D"            the same with the edge/detail weights
+//
+// A malformed value is an encode error, not a silent fallback, so a typo
+// cannot be measured as the baseline.
+struct PerceptualFilterSetting {
+  bool any = false;   // any perceptual mode is on
+  bool cdef = false;  // rank the full candidate pool perceptually
+  bool veto = false;  // SSE strength, perceptual per-block veto
+  int strengths = 0;  // 0 keeps the CLI value
+  int edge_weight = 0;
+  int detail_weight = 0;
+};
+
+bool parse_env_int(const char* text, int lo, int hi, int* out) {
+  if (text == nullptr || *text == '\0') return false;
+  char* end = nullptr;
+  const long value = std::strtol(text, &end, 10);
+  if (end == text || *end != '\0' || value < lo || value > hi) return false;
+  *out = static_cast<int>(value);
+  return true;
+}
+
+bool parse_perceptual_filter(PerceptualFilterSetting* out, std::string* error) {
+  *out = PerceptualFilterSetting{};
+  const char* raw = std::getenv("AV2ENC_PERCEPTUAL_FILTER");
+  if (raw == nullptr || *raw == '\0') return true;
+  std::string text(raw);
+  std::string lower(text);
+  for (char& ch : lower) {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  if (lower == "0" || lower == "off") return true;
+  // Split on ':' into at most four fields.
+  std::string fields[4];
+  int count = 0;
+  std::size_t start = 0;
+  while (start <= lower.size() && count < 4) {
+    const std::size_t colon = lower.find(':', start);
+    fields[count++] = lower.substr(
+        start, colon == std::string::npos ? std::string::npos : colon - start);
+    if (colon == std::string::npos) break;
+    start = colon + 1;
+  }
+  if (count == 0 || (fields[0] != "cdef" && fields[0] != "veto")) {
+    return fail(error,
+                "AV2ENC_PERCEPTUAL_FILTER: expected "
+                "'cdef[:strengths[:edge[:detail]]]' or 'veto[:edge[:detail]]', "
+                "got '" + text + "'");
+  }
+  out->any = true;
+  if (fields[0] == "cdef") {
+    out->cdef = true;
+    if (count >= 2) {
+      if (!parse_env_int(fields[1].c_str(), 1, 8, &out->strengths)) {
+        return fail(error,
+                    "AV2ENC_PERCEPTUAL_FILTER: strengths must be 1..8 in '" +
+                        text + "'");
+      }
+    }
+    if (count >= 3) {
+      if (!parse_env_int(fields[2].c_str(), 0, 8, &out->edge_weight)) {
+        return fail(error,
+                    "AV2ENC_PERCEPTUAL_FILTER: edge weight must be 0..8 in '" +
+                        text + "'");
+      }
+    }
+    if (count >= 4) {
+      if (!parse_env_int(fields[3].c_str(), 0, 8, &out->detail_weight)) {
+        return fail(error,
+                    "AV2ENC_PERCEPTUAL_FILTER: detail weight must be 0..8 in '" +
+                        text + "'");
+      }
+    }
+  } else {
+    out->veto = true;
+    if (count >= 2) {
+      if (!parse_env_int(fields[1].c_str(), 0, 8, &out->edge_weight)) {
+        return fail(error,
+                    "AV2ENC_PERCEPTUAL_FILTER: edge weight must be 0..8 in '" +
+                        text + "'");
+      }
+    }
+    if (count >= 3) {
+      if (!parse_env_int(fields[2].c_str(), 0, 8, &out->detail_weight)) {
+        return fail(error,
+                    "AV2ENC_PERCEPTUAL_FILTER: detail weight must be 0..8 in '" +
+                        text + "'");
+      }
+    }
+  }
+  return true;
+}
 
 bool validate_frame(const VideoLoopFilterFrame& frame, bool need_source,
                     std::string* error) {
@@ -134,10 +246,17 @@ bool prepare_cdef(const VideoLoopFilterFrame& frame,
                   const VideoLoopFilterOptions& options,
                   VideoCdefPlan* plan, std::string* error) {
   *plan = VideoCdefPlan{};
+  PerceptualFilterSetting perceptual;
+  if (!parse_perceptual_filter(&perceptual, error)) return false;
+  // The opt-in perceptual arm may override the requested CdefStrengths; the
+  // CLI value stays in charge when the knob is absent.
+  const int num_strengths = perceptual.strengths > 0
+                                ? perceptual.strengths
+                                : options.cdef_num_strengths;
   if (options.cdef_damping < 3 || options.cdef_damping > 6) {
     return fail(error, "video CDEF: damping must be in [3, 6]");
   }
-  if (options.cdef_num_strengths < 1 || options.cdef_num_strengths > 8) {
+  if (num_strengths < 1 || num_strengths > 8) {
     return fail(error, "video CDEF: strength count must be in [1, 8]");
   }
   if (options.cdef_on_skip_txfm_mode != 0) {
@@ -177,16 +296,21 @@ bool prepare_cdef(const VideoLoopFilterFrame& frame,
   cdef_adapter::FrameView view = make_cdef_view(frame, *plan);
   cdef_adapter::Options cdef_options;
   cdef_options.damping = options.cdef_damping;
-  cdef_options.num_strengths = options.cdef_num_strengths;
+  cdef_options.num_strengths = num_strengths;
   cdef_options.on_skip_txfm = false;
   cdef_options.cdef_on_skip_txfm = options.cdef_on_skip_txfm_mode;
   cdef_options.disable_loopfilters_across_tiles = false;
+  cdef_options.perceptual = perceptual.cdef || perceptual.veto;
+  cdef_options.perceptual_veto = perceptual.veto;
+  cdef_options.perceptual_edge_weight = perceptual.edge_weight;
+  cdef_options.perceptual_detail_weight = perceptual.detail_weight;
   // With >1 strength the all-zero set must exist so a block can be left
   // unfiltered: §5.20.10.1 has no "off" index outside the strength table.
-  // The rate-priced arm (cdef_rd_lambda > 0) also keeps it for
-  // CdefStrengths == 1 so "filter nothing" is a candidate at all.
-  cdef_options.include_off =
-      options.cdef_num_strengths > 1 || options.cdef_rd_lambda > 0.0;
+  // The rate-priced arm (cdef_rd_lambda > 0) and the perceptual arms also keep
+  // it for CdefStrengths == 1 so "filter nothing" is a candidate at all.
+  cdef_options.include_off = num_strengths > 1 ||
+                             options.cdef_rd_lambda > 0.0 ||
+                             perceptual.any;
 
   // Bounded strength search (--video-cdef-search).  The compact ladder and the
   // block-grid decimation only change how the frame-level strength set is
@@ -199,7 +323,7 @@ bool prepare_cdef(const VideoLoopFilterFrame& frame,
   const bool decimate =
       mode == VideoLoopFilterOptions::CdefSearchMode::kStep ||
       mode == VideoLoopFilterOptions::CdefSearchMode::kFast;
-  if (decimate && options.cdef_num_strengths != 1) {
+  if (decimate && num_strengths != 1) {
     return fail(error,
                 "video CDEF: a decimated strength search requires "
                 "CdefStrengths == 1");
@@ -246,6 +370,9 @@ bool prepare_cdef(const VideoLoopFilterFrame& frame,
   plan->index = adapter_plan.cdef_idx;
   plan->sse_before = adapter_plan.sse_before;
   plan->sse_after = adapter_plan.sse_after;
+  plan->cost_before = adapter_plan.cost_before;
+  plan->cost_after = adapter_plan.cost_after;
+  plan->perceptual = perceptual.any;
   plan->header_bits = adapter_plan.header_bits;
   plan->index_bits = adapter_plan.index_bits;
   plan->blocks_off = adapter_plan.blocks_off;
@@ -263,8 +390,14 @@ bool prepare_cdef(const VideoLoopFilterFrame& frame,
   // A frame whose filtered plane is *worse* than the unfiltered one must not
   // pay for CDEF at all.  At low QP the strength search can still select a
   // filter that raises SSE (measured: -1.02 dB on a QP20 keyframe for +2 B),
-  // so code the one-bit "off" form here, before the filter runs.
-  if (options.cdef && plan->sse_after > plan->sse_before) {
+  // so code the one-bit "off" form here, before the filter runs.  In the
+  // perceptual arm "worse" is the ranking the search actually minimised; the
+  // opt-in is what makes that trade measurable.
+  const std::int64_t cost_after =
+      plan->perceptual ? plan->cost_after : plan->sse_after;
+  const std::int64_t cost_before =
+      plan->perceptual ? plan->cost_before : plan->sse_before;
+  if (options.cdef && cost_after > cost_before) {
     plan->enabled = false;
     std::fill(plan->index.begin(), plan->index.end(), 0);
   }
@@ -282,12 +415,14 @@ bool prepare_cdef(const VideoLoopFilterFrame& frame,
     std::fprintf(stderr,
                  "cdef frame=%d enabled=%d strengths=%d damping=%d sse=%lld "
                  "off=%lld gain=%lld header_bits=%d index_bits=%d "
-                 "blocks_off=%d set=",
+                 "blocks_off=%d perceptual=%d cost_gain=%lld set=",
                  trace_frame++, plan->enabled ? 1 : 0, plan->num_strengths,
                  plan->damping, static_cast<long long>(plan->sse_after),
                  static_cast<long long>(plan->sse_before),
                  static_cast<long long>(plan->sse_before - plan->sse_after),
-                 plan->header_bits, plan->index_bits, plan->blocks_off);
+                 plan->header_bits, plan->index_bits, plan->blocks_off,
+                 plan->perceptual ? 1 : 0,
+                 static_cast<long long>(plan->cost_before - plan->cost_after));
     for (int i = 0; i < plan->num_strengths; ++i) {
       std::fprintf(stderr, "%s%d/%d/%d/%d", i ? "," : "",
                    plan->strength[i].y_pri, plan->strength[i].y_sec,
@@ -1098,18 +1233,33 @@ std::vector<std::uint8_t> build_lr_tx_skip(const VideoLoopFilterFrame& frame) {
       static_cast<std::size_t>(frame.mi_cols) *
           static_cast<std::size_t>(frame.mi_rows),
       0);
+  const auto set_cell = [&lr_tx_skip, &frame](int rr, int cc, bool value) {
+    if (rr < 0 || cc < 0 || rr >= frame.mi_rows || cc >= frame.mi_cols) {
+      return;
+    }
+    lr_tx_skip[static_cast<std::size_t>(rr) *
+                   static_cast<std::size_t>(frame.mi_cols) +
+               static_cast<std::size_t>(cc)] = value ? 1 : 0;
+  };
   for (const VideoLoopFilterBlock& block : frame.blocks) {
-    const bool tx_skip = block.skip || block.luma_eob_zero;
-    for (int yy = 0; yy < block.h4; ++yy) {
-      for (int xx = 0; xx < block.w4; ++xx) {
-        const int rr = block.mi_row + yy;
-        const int cc = block.mi_col + xx;
-        if (rr < 0 || cc < 0 || rr >= frame.mi_rows || cc >= frame.mi_cols) {
-          continue;
+    if (block.tx_count == 0) {
+      const bool tx_skip = block.skip || block.luma_eob_zero;
+      for (int yy = 0; yy < block.h4; ++yy) {
+        for (int xx = 0; xx < block.w4; ++xx) {
+          set_cell(block.mi_row + yy, block.mi_col + xx, tx_skip);
         }
-        lr_tx_skip[static_cast<std::size_t>(rr) *
-                       static_cast<std::size_t>(frame.mi_cols) +
-                   static_cast<std::size_t>(cc)] = tx_skip ? 1 : 0;
+      }
+      continue;
+    }
+    // §5.20.6 TX_MODE_SELECT: skip_flag still wins over the transform eob, but
+    // each 4x4 cell takes its own transform's eob==0 state.
+    for (int i = 0; i < block.tx_count; ++i) {
+      const VideoLoopFilterBlock::LumaTx& tx = block.tx[i];
+      const bool tx_skip = block.skip || (tx.eob_zero != 0);
+      for (int yy = 0; yy < tx.h4; ++yy) {
+        for (int xx = 0; xx < tx.w4; ++xx) {
+          set_cell(tx.mi_row + yy, tx.mi_col + xx, tx_skip);
+        }
       }
     }
   }

@@ -8,6 +8,11 @@
 # refinement overlays (--video-opfl, --video-refine-mv) have their own gate in
 # gate_video_opfl_refine.sh.
 #
+# Every case also decodes under dav2d --strict 1 and requires the decoded
+# payload to equal --video-recon byte for byte.  Case p5r adds
+# --video-inter-residual: compound leaves are skip-only, so the encoder must
+# not reconstruct them with a residual the writer never codes.
+#
 # Usage:
 #   src/pipeline/video/gate_video_near_near.sh --bin build/av2enc \
 #       [--dav2d /path/to/dav2d]
@@ -81,22 +86,28 @@ PY
 
 fail() { echo "gate_video_near_near: FAIL: $*" >&2; exit 1; }
 
-# name | input | expected frames | depth | expected MD5 | min near-near blocks
+# name | input | expected frames | depth | expected MD5 | min near-near blocks | extra flags
 CASES=(
-  "p3|pan3.y4m|1|3|7c9b6213ee3eb5c16a25fcbe9e799466|1"
-  "p5|pan5.y4m|3|3|8baef2a99f13a16b3df21440c678ff41|1"
-  "p3d4|pan3.y4m|1|4|e961f4e3af862c7e8cde83e6c83b2f67|1"
+  "p3|pan3.y4m|1|3|7c9b6213ee3eb5c16a25fcbe9e799466|1|"
+  "p5|pan5.y4m|3|3|8baef2a99f13a16b3df21440c678ff41|1|"
+  "p3d4|pan3.y4m|1|4|e961f4e3af862c7e8cde83e6c83b2f67|1|"
+  # --video-inter-residual must not reconstruct a compound leaf with a
+  # residual: the §5.20.7.16 writer codes every compound leaf skip-only, so
+  # the decoder reconstructs the plain blend.  Evaluating the residual for the
+  # winner replaced the encoder recon with pred + dequantised residual and
+  # drifted from the payload on every frame that coded such a leaf.
+  "p5r|pan5.y4m|3|3|dcff9d0f64d666065d42e871b09feb3f|1|--video-inter-residual"
 )
 
 for spec in "${CASES[@]}"; do
-  IFS='|' read -r name input bframes depth md5 min_nn <<<"$spec"
+  IFS='|' read -r name input bframes depth md5 min_nn extra <<<"$spec"
   ivf="$TMP/$name.ivf"
   recon="$TMP/$name.recon.y4m"
   dec="$TMP/$name.dec.y4m"
   trace="$TMP/$name.trace"
   "$BIN" "$TMP/$input" -o "$ivf" --video --b-frames "$bframes" \
       --video-compound --video-compound-near-near \
-      --video-max-depth "$depth" --video-recon "$recon" --video-trace \
+      --video-max-depth "$depth" $extra --video-recon "$recon" --video-trace \
       >/dev/null 2>"$trace" || fail "$name: encode failed"
 
   got=$(md5sum "$ivf" | cut -d' ' -f1)

@@ -132,6 +132,18 @@ the whole row and picks `ccso_max_band_log2` with the table, cutting it to
 the QP ripple; `docs/video-ccso-overhead.md` has the bit split, the reuse
 measurement and the QP 108-112 curves.
 
+Per-superblock adaptive quantisation (`--video-aq`, `docs/video-aq.md`) was
+re-measured on the composite K and is **not** included. At iso-rate 100.0 kbps
+the best strength (3.0) is +0.05 K (JOD −0.003, BA −0.090, SS2 −0.530), inside
+the control curve's own ±0.2–0.5 K QP ripple; a denser QP scan flips the best
+strength. It also cannot carry the CDF image: delta-Q requires
+`--video-cdf-per-frame-qp`, which costs 2.9% rate, so enabling AQ on this
+aggregate is −0.47 K versus the pin. The same work made delta-Q compose with
+the chain (RDOQ, the measured partition probe, the per-superblock plan and
+`--video-drift-refresh-qp 0`); with a zero plan the stream is recon-identical
+to `--nightly --video-cdf-per-frame-qp`, and `tools/gate_video_aq.sh` checks
+that composition.
+
 Positive changes that did **not** stack and are therefore explicit opt-ins,
 not part of nightly: the §8.3.2 TX context rate (it needs
 `--video-tx-lambda 48` and then loses to this aggregate), the MV mode-RD

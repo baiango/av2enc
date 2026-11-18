@@ -48,7 +48,7 @@ The parity gate enforces exact equality (`cmp` on the IVF), not a tolerance.
 - **CPU:** maximize the composite KPI **K** (see below) at **480x240 (240p,
   2:1) @ 30 fps, 100 kbps**. Quality is the KPI, not CPU speed; K blends CVVDP
   (50%), Butteraugli (25%) and SSIMULACRA2 (25%). **The target to beat is
-  SVT-AV1 v4.1.0 preset 0** — the mature AV1 quality reference — at matched bitrate. AVM is
+  SVT-AV1 v4.3.0 preset 0** — the mature AV1 quality reference — at matched bitrate. AVM is
   kept only as a historical calibration point.
 - **GPU:** use the decisions calibrated at 240p30/100 kbps unchanged, and
   maximize **1440x720** encode throughput as a cross-encoder benchmark.
@@ -65,17 +65,19 @@ Rows recorded on the retired unlicensed clip are historical.
 | CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 21.79 | -41.17 | 24.47 dB | 23.7 fps (1 thread) / 54.6 fps (8 threads) |
 | CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 19.73 | -4.07 | 27.58 dB | 23.4 fps (8 threads) |
 | CPU 240p30, `--nightly` QP 106 | Apple M4 | 100.0 / - kbps | **9.733 JOD** | **3.42** | **80.84** | **44.67 dB** | 7.6 fps (8 threads) |
-| AVM CBR (NASA, historical) | Apple M4 | 99.5 / - kbps | 8.452 JOD | - | - | 36.53 dB | 1.94 fps |
-| SVT-AV1 4.1.0, CRF 42, preset 4 (NASA) | Apple M4 | 100.2 / - kbps | 9.756 JOD | 2.17 | 84.63 | 45.92 dB | 306 fps |
-| SVT-AV1 4.1.0, CRF 36.5, preset 0 (NASA) | Apple M4 | 100.3 / - kbps | **9.830 JOD** | **1.51** | **88.30** | **48.80 dB** | 16.6 fps |
+| CPU 240p30, nightly + `AV2ENC_EFF_PERC=1` | Apple M4 | 100.0 / - kbps | 9.771 JOD | 2.26 | 82.44 | 44.46 dB | - |
+| AVM `7a0c956`+local, QP 123 (NASA) | Apple M4 | 100.0 / - kbps | 9.855 JOD | 1.32 | 90.33 | 50.15 dB | 1.0 fps (8 threads) |
+| SVT-AV1 4.3.0, CRF 42, preset 4 (NASA) | Apple M4 | 98.6 / - kbps | 9.740 JOD | 2.15 | 85.04 | 45.81 dB | 300 fps |
+| SVT-AV1 4.3.0, CRF 36.5, preset 0 (NASA) | Apple M4 | 100.0 / - kbps | **9.828 JOD** | **1.55** | **88.89** | **48.88 dB** | 19.1 fps |
+| rav1e 0.8.1, speed 2, Q120 (NASA) | Apple M4 | 100.1 / - kbps | 9.717 JOD | 2.71 | 81.67 | 42.81 dB | 12.8 fps |
 | CPU/GPU parity, QP 189 | RTX 3080 Ti | 100.0 / 100.0 kbps | drift 0 | drift 0 | drift 0 | drift 0 | 49.4 fps |
 | CPU/GPU parity, QP 189 | RTX 3060 | 100.0 / 100.0 kbps | drift 0 | drift 0 | drift 0 | drift 0 | 40.0 fps |
 | GPU 1440x720 QP90 | RTX 3080 Ti | - / 7664 kbps | 9.704 JOD | - | - | 42.85 dB | 5.40 fps |
 | GPU 1440x720 QP90 | RTX 3060 | - / 7664 kbps | 9.704 JOD | - | - | 42.85 dB | 4.88 fps |
 
 Butteraugli (lower better) and SSIMULACRA2 (higher better) are measured with
-`tools/extra_metrics.py` on the decoded stream; `-` means not measured (AVM and
-the GPU rows cannot be re-scored on this host). The GPU parity rows are exactly
+`tools/extra_metrics.py` on the decoded stream; `-` means not measured (the GPU
+parity rows inherit their CPU row, and AVM is measured with the current binary). The GPU parity rows are exactly
 zero drift, i.e. identical streams, so they inherit their CPU row's metrics.
 
 Encode-speed figures use the `release-timing` preset (`-O3`, `AV2ENC_HARDEN=OFF`);
@@ -129,11 +131,20 @@ tools/extra_metrics.py --ref <ref>.y4m --test <decoded>.y4m
 | default QP189 | 100.0 kbps | 4.802 | 21.79 | -41.17 | 28.5 |
 | `quality` QP190 | 100.6 | 6.302 | 19.73 | -4.07 | 42.5 |
 | **`--nightly` QP106** | **100.0** | **9.733** | **3.42** | **80.84** | **82.2** |
-| SVT-AV1 p4 CRF42 | 100.2 | 9.756 | 2.17 | 84.63 | 85.7 |
-| SVT-AV1 p0 CRF36.5 | 100.3 | **9.830** | **1.51** | **88.30** | **88.8** |
+| **`--nightly` + `AV2ENC_EFF_PERC=1`** | 100.0 | 9.771 | 2.26 | 82.44 | **85.1** |
+| AVM `7a0c956`+local QP123 | 100.0 | 9.855 | 1.32 | 90.33 | **90.0** |
+| SVT-AV1 p4 CRF42 | 98.6 | 9.740 | 2.15 | 85.04 | 85.8 |
+| SVT-AV1 p0 CRF36.5 | 100.0 | **9.828** | **1.55** | **88.89** | **88.8** |
+| rav1e speed 2 Q120 | 100.1 | 9.717 | 2.71 | 81.67 | 83.7 |
 
-All three rank the encoders identically, so the composite does not change the
-ordering - but it changes the *size* of the gap, which is the point. CVVDP alone
+One opt-in pipeline improves on `--nightly` without changing its defaults: the
+perceptual RD core (`AV2ENC_EFF_PERC=1`) at **85.1 K**. It is environment-gated,
+off by default, and not part of `--nightly`.
+
+With AVM and rav1e included the metrics no longer rank identically: CVVDP puts
+av2enc slightly ahead of rav1e (9.733 vs 9.717), while Butteraugli and
+SSIMULACRA2 put rav1e ahead (2.71 vs 3.42; 81.67 vs 80.84). K makes the
+disagreement explicit instead of letting one metric hide it. CVVDP alone
 puts us 0.097 JOD (1.0%) behind preset 0, which reads as "nearly equal"; K puts us
 6.7 points behind (82.2 vs 88.8), driven by Butteraugli and SSIMULACRA2 seeing
 sustained luma-detail error that CVVDP discounts at this display size. Track K,
@@ -141,12 +152,14 @@ and treat a change that improves K without moving CVVDP as a real quality win
 rather than a neutral result: the QP-scaled lambdas did exactly that (+0.7 dB
 PSNR, +1.1 K, +0.02 JOD).
 
-AVM CBR was re-measured at the 100 kbps point with the current AVM source
-(`7a0c956`): target 34 kbps produced **99.5 kbps** (0.5% below target) at
-8.452 JOD / 36.53 dB, 1.94 fps. CBR undershoots at low targets (target 30 →
-93.5 kbps, target 35 → 101.4 kbps), so 34 is the closest integer target. The
-previous 92.1 kbps / 8.791 JOD row used the older AVM nightly `cd7d8bc3db`; it
-is superseded because the binaries are not directly comparable. `quality` and
+AVM was measured in constant-QP mode with source commit `7a0c956`
+(2026-11-04) plus 100 lines of local build/decoder fixes (diff SHA-256
+`a106cb7b…`, binary built 2026-11-10), because CBR undershoots at low targets.
+The patch is not part of this repository; only the hash identifies it. QP 122/123 bracket 100 kbps:
+**102.4 / 97.9 kbps at 9.855 JOD, 1.30 / 1.33 BA, 90.44 / 90.24 SS2**, i.e.
+**90.0 K** at 100.0 kbps / 50.15 dB. The older CBR row (99.5 kbps / 8.452 JOD)
+and the retired-clip sweep are kept in `bench/avm_baseline/README.md` for
+history; the binaries and modes are not directly comparable. `quality` and
 `--nightly` are CPU-only; the default and GPU paths keep the historical
 25,009-byte stream / MD5 `a1d0dba1259b20a4b628d4cd1e14c33c`. The `quality`
 stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP110
@@ -158,19 +171,32 @@ identical decisions, which pays for a `-25` key offset instead of `-16`) and the
 drift-triggered inter refresh. See `docs/video-nightly.md`.
 
 On **real detail** the picture changes: with a 1440x720/60 clip derived from an
-8192x4096 8K master at 300 kbps, SVT preset 0 is **1.26 JOD / 3.3 dB ahead**
-(7.01 vs 8.27 JOD). The smooth NASA 720p upscale gives the opposite sign
+8192x4096 8K master at 300 kbps, SVT preset 0 is **0.92 JOD / 3.3 dB ahead**
+(7.32 vs 8.24 JOD). The smooth NASA 720p upscale gives the opposite sign
 (+0.16 JOD for av2enc), so 720p numbers must name their content. Method, clip
 build and the full ladder: `bench/space8k_720p/README.md`.
 
-SVT-AV1 v4.1.0 was measured at two presets, decoded with `dav1d`, and scored
+**K at 1440x720/60, ~300 kbps (native-detail clip, 60 frames = 1 s):**
+
+| Encoder | Setting | Rate | CVVDP | Butteraugli | SSIMULACRA2 | K | Encode |
+|---|---|---:|---:|---:|---:|---:|---:|
+| av2enc `--nightly` | QP217, key -57, leaf 250, ext-partitions | 292.6 kbps | 7.324 | 28.87 | -10.15 | **45.6** | 2.3 fps |
+| AVM `7a0c956`+local | QP203 | 293.3 | 8.130 | 22.03 | 22.83 | **55.8** | 0.15 fps |
+| SVT-AV1 4.3.0 p0 | CRF63/62 interpolated to 292.6 | 292.6 | 8.244 | 20.89 | 23.21 | **56.6** | 1.7 fps |
+| rav1e 0.8.1 speed 2 | Q209/210 interpolated to 292.6 | 292.6 | 7.788 | 20.12 | 14.90 | **53.0** | 2.3 fps |
+
+Encode figures are 60 frames divided by wall time at 8 threads. AVM 720p takes
+403.6 s (0.15 fps) at this setting.
+
+
+SVT-AV1 v4.3.0 was measured at two presets, decoded with `dav1d`, and scored
 with the same `tools/quality.py` CVVDP model. **Preset 4 / CRF 42** gives
-100.16 kbps / 9.756 JOD / 45.92 dB at 306 fps. **Preset 0 / CRF 36.5** gives
-**100.26 kbps / 9.830 JOD / 48.80 dB** at 16.6 fps (CRF 35 = 106.0, 36 = 101.7,
-36.5 = 100.26, 37 = 97.7). Preset 0 is the quality reference; preset 4 is the
-speed reference. AV1 is not AV2, so these are cross-encoder calibration points,
-not codec-parity claims. At this rate the nightly AV2 stream is **−0.043 JOD /
-−1.90 dB** versus preset 4 and **−0.117 JOD / −4.78 dB** versus preset 0.
+98.6 kbps / 9.740 JOD / 45.81 dB at 300 fps. **Preset 0 / CRF 36.5** gives
+**100.0 kbps / 9.828 JOD / 48.88 dB** at 19.1 fps. Preset 0 is the quality
+reference; preset 4 is the speed reference. AV1 is not AV2, so these are
+cross-encoder calibration points, not codec-parity claims. At this rate the
+nightly AV2 stream is **−0.007 JOD / −1.14 dB** versus preset 4 and
+**−0.095 JOD / −4.21 dB** versus preset 0.
 
 The QP 189 GPU bitrate matches the CPU exactly: both hosts produce the same
 25,009-byte stream as the CPU reference (`100.0 / 100.0 kbps`, MD5
@@ -531,11 +557,11 @@ Agent worktrees and branches live outside the main checkout.
 
 `tools/quality.py` computes bitrate, PSNR, SSIM, and CVVDP (JOD) for an IVF.
 It also records `decode_fps` and `decode_realtime_x` from `dav2d`. The
-cross-encoder **target is SVT-AV1 v4.1.0 preset 0**, measured on the same clip,
-decoded with `dav1d` and scored with the same model: 100.3 kbps / 9.830 JOD /
-48.80 dB. The AVM CBR row in the baseline table (99.5 kbps, 8.452 JOD) is
-retained as a historical calibration point, not the target; the archived retired-clip
-720p sweep is in `bench/avm_baseline/README.md`. Compare at matched bitrate, and
+cross-encoder **target is SVT-AV1 v4.3.0 preset 0**, measured on the same clip,
+decoded with `dav1d` and scored with the same model: 100.0 kbps / 9.828 JOD /
+48.88 dB. The AVM row in the baseline table is the current QP-mode measurement
+(90.0 K at 240p); the older CBR point and the archived retired-clip 720p sweep
+are in `bench/avm_baseline/README.md`. Compare at matched bitrate, and
 always confirm `dav2d` decoded the stream first. A fast-decode
 profile is deferred until quality and encode speed are settled.
 

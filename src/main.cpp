@@ -1717,8 +1717,13 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.partition_probe_depth = options.video_partition_depth;
   video_options.enable_deblock = options.video_deblock;
   video_options.enable_segmentation = options.video_segmentation;
-  video_options.enable_delta_q = options.video_delta_q;
+  video_options.enable_delta_q = options.video_delta_q || options.video_aq;
   video_options.delta_q_res = options.video_delta_q_res;
+  video_options.enable_aq = options.video_aq;
+  video_options.aq_strength = options.video_aq_strength;
+  video_options.aq_clamp = options.video_aq_clamp;
+  video_options.aq_bias = options.video_aq_bias;
+  video_options.aq_bias_auto = !options.video_aq_bias_given;
   video_options.per_segment_q = options.video_per_segment_q;
   video_options.seg_q_delta = options.video_seg_delta;
   video_options.enable_uv_delta_q = options.video_uv_delta_q;
@@ -2869,7 +2874,8 @@ static int av2enc_main(int argc, char** argv) {
       return 2;
     }
     if (options.video_segmentation || options.video_delta_q ||
-        options.video_per_segment_q || options.video_uv_delta_q) {
+        options.video_per_segment_q || options.video_uv_delta_q ||
+        options.video_aq) {
       std::cerr << "av2enc: error: segmentation/delta-Q is only wired on the "
                    "8-bit 4:2:0 video core; use --bit-depth 8 --chroma 420\n";
       return 2;

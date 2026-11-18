@@ -133,10 +133,11 @@ stream (`c090fc079bef453957536c01117c7e60`): all `cmp`-identical.
 
 ### Composition cases: GME/warp and wedge compound
 
-The gate generates four deterministic fixtures (`fixture_pan64/pan360`,
-`fixture_wedge64/wedge360`) so the tool is actually selected; each case is
-encoded through the CLI, decoded by `dav2d --strict 1`, and compared
-sample-for-sample.  Measured on macOS arm64 with `f9dafbc` (2026-11-14):
+The gate generates five deterministic fixtures (`fixture_pan64/pan360`,
+`fixture_wedge64/wedge360`, `fixture_zoom360`) so the tool is actually
+selected; each case is encoded through the CLI, decoded by `dav2d --strict 1`,
+and compared sample-for-sample.  Measured on macOS arm64 with `f9dafbc`
+(2026-11-14):
 
 | case | pictures | recon = decoded Y4M MD5 | temporal candidates | §7.22 evidence |
 |---|---:|---|---:|---|
@@ -145,8 +146,20 @@ sample-for-sample.  Measured on macOS arm64 with `f9dafbc` (2026-11-14):
 | 360p pan, `--video-gme --video-refs 2 --video-ref-mvs` | 8 | `051a7807ca210b4023b47b39861c5b04` | 7336 (2557 selected) | idem |
 | 360p pan, `--video-gme --video-refs 3 --video-ref-mvs` | 8 | `135503a867b689fffadba987ecb05553` | 10182 (2338 selected) | idem |
 | 360p pan, `--video-warp --video-refs 2 --video-ref-mvs` | 8 | `051a7807ca210b4023b47b39861c5b04` | 7336 | `--video-warp` is the GME alias |
+| 360p pure zoom, `--video-gme --video-warp` | 4 | payload exact (1,382,400 B) | — | translation-only fallback |
 | 64×64 wedge blend, `--video-refs 2 --video-compound --video-compound-wedge --video-ref-mvs` | 8 | `73bfea61be447e97ed535d30a5420b99` | 40 | 60 8×8 cells lost a list |
 | 360p wedge blend, same flags | 8 | `55ee53f43120ac805f87ff2e12825423` | 2426 (60 selected) | 3050 8×8 cells lost a list |
+
+The zoom case is the GME fail-safe regression.  The clip is a 640×360 pure
+zoom (1.01× per picture); the §5.18.9 fit has a non-identity linear part, and
+the encoder's §7.13.3.19–.24 warp mirror is not decoder-exact (see
+`docs/gme-720p.md`).  The default flattens that model to its translation-only
+projection, and the gate compares the decoded payload with `--video-recon` byte
+for byte and requires zero differences.  On the pre-fix tree the same clip
+differed in 120,823 of 1,382,400 payload bytes (frames 1–3, max 35).  The gate
+also runs the clip with `AV2ENC_GME_UNPROVEN_WARP=1` and requires a different
+stream plus at least one warped candidate: that escape hatch restores the
+previous, conformance-unproven behaviour and is never the default.
 
 The wedge allow-list counters are per-sequence and appear in the summary as
 `§7.22 wedge allow-list cells N`; the gate fails if a wedge case reports 0.

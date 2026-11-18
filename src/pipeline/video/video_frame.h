@@ -519,9 +519,12 @@ struct VideoOptions {
   // historical stream keeps `enable_global_motion = 0` and every GLOBALMV
   // candidate uses a zero MV.  `enable_gme` estimates one model per explicit
   // reference from a deterministic integer block-MV grid and signals it in the
-  // frame header.  `enable_warp` additionally predicts GLOBALMV blocks with the
-  // §7.13.3.19/.20 warped predictor when the model is non-identity (otherwise
-  // the projected §7.12.2.2 centre MV drives ordinary translational MC).
+  // frame header.  The default is fail-safe: `make_gm_frame_plan()` flattens a
+  // model whose linear part is not the identity (zoom/rotation/shear/affine)
+  // to its translation-only projection, so the decoder never applies warp
+  // geometry and GLOBALMV takes the conformant §7.12.2.2 centre MV.  The
+  // historical warped predictor is available only with
+  // AV2ENC_GME_UNPROVEN_WARP=1 and is conformance-unproven (docs/gme-720p.md).
   bool enable_gme = false;
   bool enable_warp = false;
   // §5.20.7.6 / §7.13.3.25 block adaptive weighted prediction (--video-bawp).
@@ -643,6 +646,23 @@ struct VideoOptions {
   bool enable_segmentation = false;
   bool enable_delta_q = false;
   int delta_q_res = 0;  // 0..3
+  // Opt-in activity-driven per-superblock delta-Q (--video-aq).  The planner
+  // replaces the --video-delta-q staircase with an offset derived from the
+  // superblock's source luma variance relative to the frame mean:
+  //   raw  = clamp(round(strength * (mean - act) / mean), -clamp, +clamp)
+  //   bias = -round(sum(act * raw) / sum(act))       (aq_bias_auto)
+  //   target_qindex = clamp(base_q_idx + (raw + bias) << delta_q_res, 1, 255)
+  // so a textured superblock codes at a lower qindex (more bits) and a flat
+  // one at a higher qindex.  `enable_delta_q` is implied by the CLI.
+  bool enable_aq = false;
+  double aq_strength = 1.0;
+  int aq_clamp = 3;  // max |offset| in reduced-delta steps
+  // Constant offset added to every superblock offset (reduced-delta steps).
+  // Negative spends rate, positive saves it.  `aq_bias_auto` (the default)
+  // ignores `aq_bias` and centres the plan on its activity-weighted mean, so
+  // the finer textured superblocks are paid for by the flatter ones.
+  int aq_bias = 0;
+  bool aq_bias_auto = true;
   // Opt-in real SEG_LVL_ALT_Q planning (--video-per-segment-q): segment 1 is
   // the low-variance superblocks and uses base_q_idx + seg_q_delta.
   // The block quantizer, reconstruction and deblocking metadata all use the

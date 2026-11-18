@@ -29,6 +29,7 @@
 
 #include "core/bitstream/bitwriter.h"
 #include "cuda/pipeline/still/cdef/still_cdef_index_syntax.h"
+#include "codec/filters/loop_restoration/lr_cdf_image.h"
 #include "codec/filters/loop_restoration/restoration.h"
 #include "codec/filters/loop_restoration/restoration_common.h"
 #include "codec/filters/stream/bit_io.h"
@@ -383,6 +384,16 @@ struct LrState {
 bool lr_state_init(LrState* state, const LrParams& params, int mi_cols,
                    int mi_rows, int sub_x, int sub_y, int sb_size,
                    std::string* error);
+
+// §8.2.2: seed the tile LR CDFs from the §8.2 frame image, and after the tile
+// export the adapted values back into it.  Without these a writer that carries
+// CDFs across frames (§7.4.4 load_cdfs / §7.5 save_cdfs) restarts every frame
+// from the §9.3 defaults while the decoder starts from the reference frame's
+// adapted rows.
+void lr_state_seed_cdfs(
+    LrState* state, const ::av2enc::filters::lr_cdf::Image& image);
+void lr_state_store_cdfs(
+    const LrState& state, ::av2enc::filters::lr_cdf::Image* image);
 
 // §5.20.10.4 read_lr(): the restoration units covered by one superblock.
 // `w4`/`h4` are Num_4x4_Blocks_Wide/High of the block (16 for a 64x64 SB).

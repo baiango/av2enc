@@ -31,6 +31,10 @@ void InterFrameEncoder::global_mv_for_block(int ref_index, int mi_row, int mi_co
   // predictor for blocks at least 8x8 (an invalid shear falls back to the
   // extended warp).  --video-warp is therefore the explicit alias for
   // --video-gme; using translational MC here would desync the decoder.
+  // The default plan never carries a warp model (make_gm_frame_plan flattens
+  // it to its translation-only projection), so for translation models this
+  // kernel projects the same constant centre MV every 8x8 and takes the
+  // conformant rounding path the gated pan fixture already proves.
   use_warp = bw4 * 4 >= 8 && bh4 * 4 >= 8;
 #else
   (void)ref_index;

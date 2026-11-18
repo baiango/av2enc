@@ -216,6 +216,142 @@ AV2ENC_CDEF_HD CdefBlockSse cdef_eval_block_params(
   return sse;
 }
 
+// ---------------------------------------------------------------------------
+// Opt-in perceptual ranking (AV2ENC_PERCEPTUAL_FILTER)
+//
+// The default search minimises squared error.  SSE is blind to *where* the
+// error sits: a filter that removes a little ringing on a strong edge and one
+// that washes out flat texture can score the same.  Butteraugli and
+// SSIMULACRA2 both reward preserved local structure, so the opt-in path ranks
+// candidates by a single-scale SSIM-style distance instead.
+//
+// The distance is computed on the filtered block against the original picture
+// in non-overlapping 4x4 windows.  It is integer-exact: the SSIM ratio is
+// evaluated with unnormalised moments and scaled by 2^10, so the ranking is
+// deterministic and the SSE path (used by the CUDA search) is untouched.
+// ---------------------------------------------------------------------------
+
+// (1 - SSIM) * 1024 for one 4x4 window.  `edge_weight` scales the term by the
+// source window's structure (0 keeps the plain SSIM distance).  `detail_weight`
+// adds a one-sided variance-loss term so smoothing fine texture is penalised
+// even when SSIM stays high (SSIM is contrast-normalised, which is exactly why
+// it alone can reward blur).
+inline std::int64_t cdef_structure_window(const std::uint8_t* ref,
+                                          std::size_t ref_stride,
+                                          const std::uint8_t* out,
+                                          std::size_t out_stride,
+                                          int edge_weight,
+                                          int detail_weight = 0) {
+  constexpr std::int64_t kN = 16;      // 4x4 samples
+  constexpr std::int64_t kC1 = 1665;   // round((0.01*255)^2 * N^2)
+  constexpr std::int64_t kC2 = 14982;  // round((0.03*255)^2 * N^2)
+  std::int64_t sr = 0;
+  std::int64_t sf = 0;
+  std::int64_t srr = 0;
+  std::int64_t sff = 0;
+  std::int64_t srf = 0;
+  for (int y = 0; y < 4; ++y) {
+    for (int x = 0; x < 4; ++x) {
+      const std::int64_t r = ref[static_cast<std::size_t>(y) * ref_stride +
+                                 static_cast<std::size_t>(x)];
+      const std::int64_t f = out[static_cast<std::size_t>(y) * out_stride +
+                                 static_cast<std::size_t>(x)];
+      sr += r;
+      sf += f;
+      srr += r * r;
+      sff += f * f;
+      srf += r * f;
+    }
+  }
+  const std::int64_t a = 2 * sr * sf + kC1;
+  const std::int64_t b = 2 * (kN * srf - sr * sf) + kC2;
+  const std::int64_t c = sr * sr + sf * sf + kC1;
+  const std::int64_t d = kN * (srr + sff) - sr * sr - sf * sf + kC2;
+  const std::int64_t den = c * d;  // strictly positive
+  std::int64_t num = den - a * b;
+  if (num < 0) num = 0;  // SSIM <= 1; keep rounding from going negative
+  std::int64_t cost = (num * 1024 + den / 2) / den;
+  if (edge_weight > 0) {
+    // var_r * N^2 of the original window, capped at a two-level 0/255 window.
+    std::int64_t activity = (kN * srr - sr * sr) >> 12;
+    if (activity > 1016) activity = 1016;
+    const std::int64_t weight = 1024 + edge_weight * activity;
+    cost = (cost * weight + 512) >> 10;
+  }
+  if (detail_weight > 0) {
+    const std::int64_t var_r = kN * srr - sr * sr;
+    const std::int64_t var_f = kN * sff - sf * sf;
+    if (var_r > var_f) {
+      cost += ((var_r - var_f) >> 12) * detail_weight;
+    }
+  }
+  return cost;
+}
+
+// Structural distance of the filtered 8x8 block written into `dst` against the
+// original picture.  Four luma windows plus one 4x4 window per chroma plane.
+// Windows that are not fully inside the visible area are skipped; the ranking
+// tie-break (SSE) still orders such blocks.
+inline std::int64_t cdef_block_structure_cost(
+    const CdefSearchFrame& frame, std::uint8_t* const dst[3], int r, int c,
+    int edge_weight, int detail_weight = 0) {
+  std::int64_t cost = 0;
+  const int x0 = c * kMiSize;
+  const int y0 = r * kMiSize;
+  const std::size_t src_stride =
+      static_cast<std::size_t>(frame.src[0].stride);
+  const std::size_t ref_stride =
+      static_cast<std::size_t>(frame.ref[0].stride);
+  for (int wy = 0; wy < 2; ++wy) {
+    for (int wx = 0; wx < 2; ++wx) {
+      const int yy = y0 + wy * 4;
+      const int xx = x0 + wx * 4;
+      if (xx + 4 > frame.width || yy + 4 > frame.height) continue;
+      cost += cdef_structure_window(
+          frame.ref[0].data + static_cast<std::size_t>(yy) * ref_stride +
+              static_cast<std::size_t>(xx),
+          ref_stride,
+          dst[0] + static_cast<std::size_t>(yy) * src_stride +
+              static_cast<std::size_t>(xx),
+          src_stride, edge_weight, detail_weight);
+    }
+  }
+  const int cx0 = x0 >> frame.subsampling_x;
+  const int cy0 = y0 >> frame.subsampling_y;
+  const int vis_w = (frame.width + 1) >> 1;
+  const int vis_h = (frame.height + 1) >> 1;
+  if (cx0 + 4 <= vis_w && cy0 + 4 <= vis_h) {
+    for (int plane = 1; plane < 3; ++plane) {
+      const std::size_t s_stride =
+          static_cast<std::size_t>(frame.src[plane].stride);
+      const std::size_t r_stride =
+          static_cast<std::size_t>(frame.ref[plane].stride);
+      cost += cdef_structure_window(
+          frame.ref[plane].data + static_cast<std::size_t>(cy0) * r_stride +
+              static_cast<std::size_t>(cx0),
+          r_stride,
+          dst[plane] + static_cast<std::size_t>(cy0) * s_stride +
+              static_cast<std::size_t>(cx0),
+          s_stride, edge_weight, detail_weight);
+    }
+  }
+  return cost;
+}
+
+// Ranking value for one candidate on one 8x8 block: the local-structure term
+// dominates and SSE breaks ties (and orders blocks whose 4x4 windows are not
+// fully visible).  The scale keeps the SSIM term ~25x the SSE term for typical
+// QP106 blocks; the SSE path never calls this function.
+inline std::int64_t cdef_block_rank(const CdefSearchFrame& frame,
+                                    std::uint8_t* const dst[3], int r, int c,
+                                    const CdefBlockSse& sse,
+                                    std::int64_t chroma_weight,
+                                    int edge_weight, int detail_weight) {
+  const std::int64_t structure = cdef_block_structure_cost(
+      frame, dst, r, c, edge_weight, detail_weight);
+  return structure * 256 + sse.luma + chroma_weight * sse.chroma;
+}
+
 // Self-contained single-block evaluation: derives the block skip flags and the
 // §7.18.2 direction/variance, then runs the filter.  Convenience wrapper around
 // cdef_eval_block_params(); the search uses the split form to compute those
@@ -265,6 +401,18 @@ struct CdefSearchOptions {
   int eval_step = 1;
   // Weight applied to chroma SSE when ranking.  1 = sample-weighted total SSE.
   std::int64_t chroma_weight = 1;
+  // Opt-in perceptual ranking (`AV2ENC_PERCEPTUAL_FILTER`).  When true the
+  // candidate/strength selection minimises a local-structure (SSIM-style)
+  // distance instead of squared error.  The reported SSE stays the exact SSE
+  // of the chosen plan, the header/index syntax is unchanged, and the default
+  // SSE ranking is byte-identical when this is false.
+  bool perceptual = false;
+  // Extra weight on windows whose source has structure (0 = plain SSIM).
+  int perceptual_edge_weight = 0;
+  // One-sided penalty on lost local variance (0 = SSIM only).  SSIM is
+  // contrast-normalised, so a smoothing filter can keep its score while erasing
+  // fine texture; this term makes that loss count.
+  int perceptual_detail_weight = 0;
 };
 
 struct CdefSearchResult {
@@ -285,6 +433,10 @@ struct CdefSearchResult {
   // True when CdefStrengths == 1: the stream cannot signal per-block indices,
   // so cdef_idx must be treated as "all zero" by the writer.
   bool forced_single_strength = false;
+  // Ranking cost of the chosen plan and of the identity set.  Equal to the SSE
+  // totals unless `perceptual` is on.
+  std::int64_t cost_total = 0;
+  std::int64_t cost_off_total = 0;
 };
 
 namespace search_detail {
@@ -398,13 +550,20 @@ inline bool build_pool(const CdefSearchOptions& options,
 // `[candidate][block]`, block-major in raster order; `off_sse` is the identity
 // set's SSE per block (reporting only).
 //
+// `rank` (optional, same shape as `sse`) is the table the decisions minimise;
+// it differs from `sse` only in the opt-in perceptual mode.  The reported
+// SSE/gain always comes from `sse`, so header pricing and the frame-level
+// enable decision keep their documented meaning.
+//
 // The CUDA search produces the same table, so this function is the single
 // decision rule for both paths.
 inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
                    int n64_rows, const std::vector<std::int64_t>& sse,
                    const std::vector<std::int64_t>& off_sse,
                    const CdefSearchOptions& options,
-                   CdefSearchResult* result, std::string* error) {
+                   CdefSearchResult* result, std::string* error,
+                   const std::vector<std::int64_t>* rank = nullptr,
+                   const std::vector<std::int64_t>* off_rank = nullptr) {
   auto fail = [error](const char* text) {
     if (error != nullptr) {
       *error = text;
@@ -421,9 +580,21 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
       off_sse.size() != nb) {
     return fail("search table size mismatch");
   }
+  if (rank != nullptr &&
+      rank->size() != static_cast<std::size_t>(ncand) * nb) {
+    return fail("perceptual search table size mismatch");
+  }
+  if (off_rank != nullptr && off_rank->size() != nb) {
+    return fail("perceptual off table size mismatch");
+  }
   auto at = [&sse, nb](int k, int block) -> std::int64_t {
     return sse[static_cast<std::size_t>(k) * nb +
                static_cast<std::size_t>(block)];
+  };
+  auto rank_at = [&at, rank, nb](int k, int block) -> std::int64_t {
+    if (rank == nullptr) return at(k, block);
+    return (*rank)[static_cast<std::size_t>(k) * nb +
+                   static_cast<std::size_t>(block)];
   };
 
   const int requested = options.num_strengths;
@@ -434,7 +605,7 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
     for (int k = 0; k < ncand; ++k) {
       std::int64_t sum = 0;
       for (int b = 0; b < nblocks; ++b) {
-        sum += at(k, b);
+        sum += rank_at(k, b);
       }
       if (best_total < 0 || sum < best_total) {
         best_total = sum;
@@ -443,7 +614,7 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
     }
     chosen.push_back(best);
   } else {
-    // Greedy: keep the best achievable per-block SSE and add the candidate
+    // Greedy: keep the best achievable per-block cost and add the candidate
     // that reduces the total the most.  Start from the identity set when it is
     // in the pool (it is the only way to leave a block unfiltered).
     std::vector<std::int64_t> best(nb, 0);
@@ -452,7 +623,7 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
       if (cdef_is_zero_strength(pool[static_cast<std::size_t>(k)])) {
         chosen.push_back(k);
         for (int b = 0; b < nblocks; ++b) {
-          best[static_cast<std::size_t>(b)] = at(k, b);
+          best[static_cast<std::size_t>(b)] = rank_at(k, b);
         }
         have_baseline = true;
         break;
@@ -465,7 +636,7 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
       for (int k = 0; k < ncand; ++k) {
         std::int64_t sum = 0;
         for (int b = 0; b < nblocks; ++b) {
-          sum += at(k, b);
+          sum += rank_at(k, b);
         }
         if (best_total < 0 || sum < best_total) {
           best_total = sum;
@@ -474,7 +645,7 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
       }
       chosen.push_back(best_k);
       for (int b = 0; b < nblocks; ++b) {
-        best[static_cast<std::size_t>(b)] = at(best_k, b);
+        best[static_cast<std::size_t>(b)] = rank_at(best_k, b);
       }
       have_baseline = true;
     }
@@ -491,7 +662,7 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
         }
         std::int64_t gain = 0;
         for (int b = 0; b < nblocks; ++b) {
-          const std::int64_t value = at(k, b);
+          const std::int64_t value = rank_at(k, b);
           if (value < best[static_cast<std::size_t>(b)]) {
             gain += best[static_cast<std::size_t>(b)] - value;
           }
@@ -506,7 +677,7 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
       }
       chosen.push_back(best_k);
       for (int b = 0; b < nblocks; ++b) {
-        const std::int64_t value = at(best_k, b);
+        const std::int64_t value = rank_at(best_k, b);
         if (value < best[static_cast<std::size_t>(b)]) {
           best[static_cast<std::size_t>(b)] = value;
         }
@@ -539,11 +710,13 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
   result->blocks_off = 0;
   std::int64_t chosen_total = 0;
   std::int64_t off_total = 0;
+  std::int64_t cost_total = 0;
+  std::int64_t cost_off_total = 0;
   for (int b = 0; b < nblocks; ++b) {
     int best_i = 0;
     std::int64_t best_v = std::numeric_limits<std::int64_t>::max();
     for (int i = 0; i < result->num_strengths; ++i) {
-      const std::int64_t v = at(chosen[static_cast<std::size_t>(i)], b);
+      const std::int64_t v = rank_at(chosen[static_cast<std::size_t>(i)], b);
       if (v < best_v) {
         best_v = v;
         best_i = i;
@@ -553,9 +726,14 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
         static_cast<std::int8_t>(best_i);
     result->cdef_idx[static_cast<std::size_t>(b)] =
         static_cast<std::int8_t>(best_i);
-    result->block_sse[static_cast<std::size_t>(b)] = best_v;
-    chosen_total += best_v;
+    result->block_sse[static_cast<std::size_t>(b)] =
+        at(chosen[static_cast<std::size_t>(best_i)], b);
+    chosen_total += result->block_sse[static_cast<std::size_t>(b)];
+    cost_total += best_v;
     off_total += off_sse[static_cast<std::size_t>(b)];
+    cost_off_total +=
+        off_rank != nullptr ? (*off_rank)[static_cast<std::size_t>(b)]
+                            : off_sse[static_cast<std::size_t>(b)];
     if (cdef_is_zero_strength(
             result->strengths[static_cast<std::size_t>(best_i)])) {
       ++result->blocks_off;
@@ -618,6 +796,8 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
   }
   result->sse_total = chosen_total;
   result->sse_off_total = off_total;
+  result->cost_total = cost_total;
+  result->cost_off_total = cost_off_total;
   result->forced_single_strength = result->num_strengths == 1;
   return true;
 }
@@ -660,6 +840,14 @@ inline bool cdef_search_plan(const CdefSearchFrame& frame,
         "decimated CDEF search requires CdefStrengths == 1 (a per-block index "
         "grid needs every block's SSE)");
   }
+  if (options.perceptual_edge_weight < 0 ||
+      options.perceptual_edge_weight > 8) {
+    return fail("perceptual_edge_weight outside 0..8");
+  }
+  if (options.perceptual_detail_weight < 0 ||
+      options.perceptual_detail_weight > 8) {
+    return fail("perceptual_detail_weight outside 0..8");
+  }
   std::vector<CdefStrength> pool;
   if (!search_detail::build_pool(options, &pool, error)) {
     return false;
@@ -671,11 +859,22 @@ inline bool cdef_search_plan(const CdefSearchFrame& frame,
   const int ncand = static_cast<int>(pool.size());
   const std::int64_t chroma_weight = options.chroma_weight;
   const std::size_t nb = static_cast<std::size_t>(nblocks);
+  const bool perceptual = options.perceptual;
 
   // Evaluate every candidate over every 8x8 block once.  sse[k*nblocks + b].
   std::vector<std::int64_t> sse(static_cast<std::size_t>(ncand) * nb, 0);
+  // Perceptual ranking table (same shape).  Only allocated when enabled, so the
+  // default path keeps its exact allocation and arithmetic behaviour.
+  std::vector<std::int64_t> cost;
+  if (perceptual) {
+    cost.assign(static_cast<std::size_t>(ncand) * nb, 0);
+  }
   CdefStrength identity{0, 0, 0, 0};
   std::vector<std::int64_t> off_sse(nb, 0);
+  std::vector<std::int64_t> off_cost;
+  if (perceptual) {
+    off_cost.assign(nb, 0);
+  }
   int off_index = -1;
   for (int k = 0; k < ncand; ++k) {
     if (cdef_is_zero_strength(pool[static_cast<std::size_t>(k)])) {
@@ -683,6 +882,24 @@ inline bool cdef_search_plan(const CdefSearchFrame& frame,
       break;
     }
   }
+
+  // The perceptual metric needs the filtered samples, so the evaluation writes
+  // this frame's block into a scratch copy of the unfiltered planes.
+  std::vector<std::uint8_t> scratch[3];
+  std::uint8_t* dst[3] = {nullptr, nullptr, nullptr};
+  if (perceptual) {
+    for (int plane = 0; plane < 3; ++plane) {
+      const int shift = plane == 0 ? 0 : 1;
+      const int h = (frame.mi_rows * kMiSize) >> shift;
+      scratch[plane].assign(
+          static_cast<std::size_t>(frame.src[plane].stride) *
+              static_cast<std::size_t>(h),
+          0);
+      dst[plane] = scratch[plane].data();
+    }
+  }
+  std::uint8_t* const no_dst[3] = {nullptr, nullptr, nullptr};
+  std::uint8_t* const* eval_dst = perceptual ? dst : no_dst;
 
   const int eval_step = options.eval_step;
   const bool decimate = eval_step > 1;
@@ -694,7 +911,6 @@ inline bool cdef_search_plan(const CdefSearchFrame& frame,
       const int bc = c / kCdefBlock4;
       if (decimate && (bc % eval_step) != 0) continue;
       const int block = (r / kCdefSize4) * n64_cols + (c / kCdefSize4);
-      std::uint8_t* const no_dst[3] = {nullptr, nullptr, nullptr};
       // The §7.18.1 skip flags and the §7.18.2 direction/variance depend only on
       // the block, not on the strength set: derive them once per block.
       bool skip = false;
@@ -714,18 +930,31 @@ inline bool cdef_search_plan(const CdefSearchFrame& frame,
         const CdefBlockSse off = cdef_eval_block_params(
             frame, identity, options.damping,
             options.disable_loopfilters_across_tiles, r, c, y_dir, var, skip,
-            skip_chroma, no_dst);
+            skip_chroma, eval_dst);
         off_sse[static_cast<std::size_t>(block)] +=
             off.luma + chroma_weight * off.chroma;
+        if (perceptual) {
+          off_cost[static_cast<std::size_t>(block)] +=
+              cdef_block_rank(frame, dst, r, c, off, chroma_weight,
+                              options.perceptual_edge_weight,
+                              options.perceptual_detail_weight);
+        }
       }
       for (int k = 0; k < ncand; ++k) {
         const CdefBlockSse one = cdef_eval_block_params(
             frame, pool[static_cast<std::size_t>(k)], options.damping,
             options.disable_loopfilters_across_tiles, r, c, y_dir, var, skip,
-            skip_chroma, no_dst);
+            skip_chroma, eval_dst);
+        const std::int64_t sse_value = one.luma + chroma_weight * one.chroma;
         sse[static_cast<std::size_t>(k) * nb +
-            static_cast<std::size_t>(block)] +=
-            one.luma + chroma_weight * one.chroma;
+            static_cast<std::size_t>(block)] += sse_value;
+        if (perceptual) {
+          cost[static_cast<std::size_t>(k) * nb +
+               static_cast<std::size_t>(block)] +=
+              cdef_block_rank(frame, dst, r, c, one, chroma_weight,
+                              options.perceptual_edge_weight,
+                              options.perceptual_detail_weight);
+        }
       }
     }
   }
@@ -735,10 +964,16 @@ inline bool cdef_search_plan(const CdefSearchFrame& frame,
     for (int b = 0; b < nblocks; ++b) {
       off_sse[static_cast<std::size_t>(b)] =
           sse[row + static_cast<std::size_t>(b)];
+      if (perceptual) {
+        off_cost[static_cast<std::size_t>(b)] =
+            cost[row + static_cast<std::size_t>(b)];
+      }
     }
   }
   if (!search_detail::select(pool, n64_cols, n64_rows, sse, off_sse, options,
-                             result, error)) {
+                             result, error,
+                             perceptual ? &cost : nullptr,
+                             perceptual ? &off_cost : nullptr)) {
     return false;
   }
   if (error != nullptr) {

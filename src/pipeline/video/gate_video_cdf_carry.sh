@@ -17,7 +17,12 @@
 #    image decodes all 60 pictures (dav2d --strict 1, frame count not exit
 #    status) and the decoded payload equals --video-recon byte for byte.  The
 #    same decisions with the reset-per-frame image are 24,904 B, so the carry
-#    must be smaller at identical reconstruction.
+#    must be smaller at identical reconstruction.  The same 60-frame stream
+#    with each loop-restoration tool (--video-wiener, --video-chroma-lr,
+#    --video-pc-wiener) must decode 60/60 too: the six §6.17.2 LR CDF rows are
+#    part of the carried image.  The same holds for the fourteen compound rows
+#    (§5.20.7.10/.6): a 60-frame compound P chain with --cdf-continuity must
+#    decode 60/60, reproduce the encoder recon and stay below its reset image.
 # 3. Static-clip floor.  With every picture identical the carried image needs no
 #    per-frame re-seed, so the per-P-frame IVF size must be well below the
 #    reset path's (measured 20.5 B vs 31.0 B).
@@ -123,6 +128,122 @@ if [ "$CARRY_MD5" != "$CARRY_PIN_MD5" ]; then
     echo "FAIL: carried stream md5 is $CARRY_MD5, expected $CARRY_PIN_MD5" >&2
     exit 1
 fi
+
+# --- 2b. §6.17.2 loop-restoration CDF rows ride the carried image ----------
+# init_non_coeff_cdfs() names UseWienerNsCdf, WienerNsLengthCdf,
+# WienerNsUvSymCdf, WienerNsBaseCdf, UsePcWienerCdf and FlexRestorationTypeCdf,
+# so §7.4.4 load_cdfs()/§7.5 save_cdfs() must copy them like every other row.
+# When they were missing from the encoder's image, every frame restarted its
+# tile LR CDFs at the §9.3 defaults while the decoder started from the
+# reference frame's adapted rows: the first frame that coded an LR unit symbol
+# after that (frame 3 here) desynchronised and dav2d reported
+# "Error decoding frame: Invalid argument" for every later picture.
+# Each arm must decode all 60 pictures under --strict 1.  The Wiener and
+# chroma-LR reconstructions must also match --video-recon exactly.  PC-Wiener
+# is decode-checked only: pinned dav2d's pixel classifier differs from the
+# v1.0.0 §7.20.4 box features on a few samples where the 6x6 feature window
+# crosses a 64x64 restoration-unit edge (pre-existing; the same stream decodes,
+# see docs/negative-results.md).
+decode_count() {
+    local ivf=$1 expect=$2 tag=$3
+    "$DAV2D" --strict 1 -i "$ivf" -o "$TMP/$tag.dec.y4m" \
+        >"$TMP/$tag.dec.log" 2>&1 || true
+    local got
+    got=$(sed -n 's/^Decoded \([0-9]*\)\/\([0-9]*\) frames.*/\1 \2/p' \
+              "$TMP/$tag.dec.log" | tail -1 | awk '{print $1}')
+    if [ "${got:-0}" != "$expect" ]; then
+        echo "FAIL $tag: dav2d decoded ${got:-0}/$expect pictures" >&2
+        tail -5 "$TMP/$tag.dec.log" >&2
+        exit 1
+    fi
+    if grep -q "Invalid argument" "$TMP/$tag.dec.log"; then
+        echo "FAIL $tag: dav2d reported failed pictures" >&2
+        exit 1
+    fi
+}
+for lr in wiener chroma-lr pc-wiener; do
+    case "$lr" in
+        wiener) LR_FLAG=--video-wiener ;;
+        chroma-lr) LR_FLAG=--video-chroma-lr ;;
+        pc-wiener) LR_FLAG=--video-pc-wiener ;;
+    esac
+    if ! "$BIN" "$NASA" -o "$TMP/lr-$lr.ivf" --video --frames 60 \
+            --qp 110 --cpu-threads 8 --nightly --cdf-continuity \
+            --video-key-qp-offset -25 "$LR_FLAG" \
+            --video-recon "$TMP/lr-$lr.y4m" >"$TMP/lr-$lr.log" 2>&1; then
+        echo "FAIL: --nightly --cdf-continuity $LR_FLAG encode" >&2
+        cat "$TMP/lr-$lr.log" >&2
+        exit 1
+    fi
+    if cmp -s "$TMP/lr-$lr.ivf" "$TMP/carry.ivf"; then
+        echo "FAIL: $LR_FLAG did not change the carried stream" >&2
+        exit 1
+    fi
+    if [ "$lr" = pc-wiener ]; then
+        decode_count "$TMP/lr-$lr.ivf" 60 "lr-$lr"
+        echo "PASS cdf-carry LR pc-wiener: 60/60 pictures (decode only)"
+    else
+        decode_exact "$TMP/lr-$lr.ivf" "$TMP/lr-$lr.y4m" 60 "lr-$lr"
+        echo "PASS cdf-carry LR $lr: 60/60 pictures, recon exact"
+    fi
+done
+
+# --- 2c. §5.20.7.10/.6 compound CDF rows ride the carried image ------------
+# read_compound_mode_info()/read_inter_block_mode_info() also adapt
+# CompModeCdf, CompRef0Cdf, CompRef1Cdf, IsJointCdf, CompoundModeNonJointCdf,
+# CompoundModeSameRefsCdf, UseOptflowCdf, CompGroupIdxCdf, CompoundTypeCdf,
+# CwpIdxCdf and the four wedge rows; §7.4.4 load_cdfs()/§7.5 save_cdfs() name
+# every one of them.  When they were missing from the encoder's packed image,
+# --cdf-continuity + --video-compound restarted each frame at the §9.3
+# defaults while the decoder loaded the reference frame's adapted rows: only
+# 3/60 pictures decoded and every later frame reported "Error decoding frame:
+# Invalid argument".  The masked P-chain carrier codes comp_mode,
+# comp_group_idx, compound_type and the wedge_* rows (256 wedge + 69 diffwtd
+# leaves at this point), so this arm exercises the mask rows as well as the
+# plain AVERAGE mode.
+COMPOUND_CARRY_PIN_BYTES=15780
+COMPOUND_CARRY_PIN_MD5=de29f3112fe5f7716937cd63c7b73b46
+if ! "$BIN" "$NASA" -o "$TMP/compound.ivf" --video --frames 60 \
+        --cpu-threads 8 --qp 197 --video-refs 2 --video-compound \
+        --video-compound-wedge --video-compound-diffwtd \
+        --avg-cdf --adaptive-cdf --cdf-continuity \
+        --video-recon "$TMP/compound.y4m" >"$TMP/compound.log" 2>&1; then
+    echo "FAIL: compound carry encode" >&2
+    cat "$TMP/compound.log" >&2
+    exit 1
+fi
+decode_exact "$TMP/compound.ivf" "$TMP/compound.y4m" 60 compound
+COMPOUND_BYTES=$(wc -c <"$TMP/compound.ivf" | tr -d ' ')
+if [ "$COMPOUND_BYTES" != "$COMPOUND_CARRY_PIN_BYTES" ]; then
+    echo "FAIL: compound carried stream is $COMPOUND_BYTES B, expected" \
+         "$COMPOUND_CARRY_PIN_BYTES B" >&2
+    exit 1
+fi
+COMPOUND_MD5=$(md5_of "$TMP/compound.ivf")
+if [ "$COMPOUND_MD5" != "$COMPOUND_CARRY_PIN_MD5" ]; then
+    echo "FAIL: compound carried stream md5 is $COMPOUND_MD5, expected" \
+         "$COMPOUND_CARRY_PIN_MD5" >&2
+    exit 1
+fi
+# Same decisions with the reset-per-frame image (17,304 B measured): the
+# carried image must stay below it, exactly like the §8.2 nightly arm.
+if ! "$BIN" "$NASA" -o "$TMP/compound-reset.ivf" --video --frames 60 \
+        --cpu-threads 8 --qp 197 --video-refs 2 --video-compound \
+        --video-compound-wedge --video-compound-diffwtd \
+        --avg-cdf --adaptive-cdf \
+        --video-recon "$TMP/compound-reset.y4m" >"$TMP/compound-reset.log" 2>&1; then
+    echo "FAIL: compound reset encode" >&2
+    cat "$TMP/compound-reset.log" >&2
+    exit 1
+fi
+COMPOUND_RESET_BYTES=$(wc -c <"$TMP/compound-reset.ivf" | tr -d ' ')
+if [ "$COMPOUND_BYTES" -ge "$COMPOUND_RESET_BYTES" ]; then
+    echo "FAIL: compound carried image is $COMPOUND_BYTES B, not below the" \
+         "$COMPOUND_RESET_BYTES B reset stream" >&2
+    exit 1
+fi
+echo "PASS cdf-carry compound: 60/60 pictures, recon exact," \
+     "$COMPOUND_BYTES B (reset $COMPOUND_RESET_BYTES B)"
 
 # --- 3. static-clip per-P-frame floor -------------------------------------
 python3 - "$PUB_CLIP" "$TMP/static.y4m" 16 <<'PY'

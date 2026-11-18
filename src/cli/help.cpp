@@ -344,6 +344,19 @@ void print_usage(std::ostream& out) {
   item("--video-delta-q", {"Opt-in §5.18.7.8 delta-Q: per-superblock",
                            "CurrentQIndex updates move the block quantizer"});
   item("--video-delta-q-res <N>", {"§5.18.7.8 delta_q_res 0..3 (default 0)"});
+  item("--video-aq", {"Opt-in per-superblock adaptive quantisation: an",
+                      "activity-driven §5.18.7.8 delta-Q plan (textured",
+                      "superblocks get a lower qindex, flat ones a higher",
+                      "one); implies delta_q_present"});
+  item("--video-aq-strength <S>", {"Adaptive-Q strength: multiplier on the",
+                                   "normalised activity deviation in",
+                                   "reduced-delta steps (default 1.0)"});
+  item("--video-aq-clamp <N>", {"Maximum |adaptive-Q offset| in reduced-delta",
+                                "steps, 1..8 (default 3)"});
+  item("--video-aq-bias <N>", {"Constant offset added to every adaptive-Q",
+                               "superblock in reduced-delta steps, -8..8",
+                               "(default: centre the plan on its",
+                               "activity-weighted mean, i.e. rate-neutral)"});
   item("--video-per-segment-q", {"Opt-in real SEG_LVL_ALT_Q: segment 1 (low",
                                  "variance) uses base + --video-seg-delta in",
                                  "the block quantizer and deblock metadata"});
@@ -364,7 +377,11 @@ void print_usage(std::ostream& out) {
                                 "segmentation is enabled); N > 8 signals",
                                 "enable_ext_seg = 1"});
   item("--video-gme", {"Estimate and signal §5.18.9 global motion per",
-                       "reference; GLOBALMV uses the projected §7.12.2.2 MV"});
+                       "reference; GLOBALMV uses the projected §7.12.2.2 MV.",
+                       "Default is translation-only: a fitted zoom/rotation/",
+                       "affine model is flattened to its translation",
+                       "projection (the warp mirror is not conformance-",
+                       "proven; AV2ENC_GME_UNPROVEN_WARP=1 opts in)"});
   item("--video-tip", {"Encode 3..8 frames as key + future anchor P +",
                        "TIP_FRAME_AS_OUTPUT pictures (§7.10, §7.13.3.2);",
                        "hole fill (§7.10.3/.4) on; opt-in, CPU reference"}),
@@ -375,9 +392,11 @@ void print_usage(std::ostream& out) {
   item("--video-tip-no-hole-fill", {"Gate control: signal",
                                     "enable_tip_hole_fill = 0 on the TIP",
                                     "sequence (pre-fix A/B stream)"}),
-  item("--video-warp", {"Predict GLOBALMV blocks with the §7.13.3.19/.20",
-                        "block/extended warp when a global model is accepted",
-                        "(implies --video-gme)"});
+  item("--video-warp", {"Alias for --video-gme (the per-block warp flag is",
+                        "derived from the model, not signalled).  The fitted",
+                        "warp model is still flattened to translation-only",
+                        "unless AV2ENC_GME_UNPROVEN_WARP=1 opts into the",
+                        "conformance-unproven §7.13.3.19/.20 predictor"});
   item("--video-bawp", {"Opt-in §7.13.3.25 block adaptive weighted prediction:",
                         "eligible inter blocks signal use_bawp and adapt the",
                         "luma prediction from the current/previous template",

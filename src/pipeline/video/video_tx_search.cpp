@@ -1,10 +1,13 @@
 #include "pipeline/video/video_tx_search.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
+#include <string>
 #include <vector>
 
 #include "codec/rate/rc/rc_tables.h"
@@ -21,6 +24,7 @@
 #include "codec/transform/tx_type/tx_type.h"
 #include "codec/transform/variants/tx_variants.h"
 #include "core/parallel/parallel_for.h"
+#include "pipeline/video/video_tx_scratch.h"
 
 namespace av2enc::video::txtsearch {
 namespace {
@@ -359,6 +363,45 @@ struct LeafCandidate {
   std::vector<std::int16_t> residual; // coded size
 };
 
+// One evaluated candidate: the scalar decision inputs plus spans into the
+// payload ring.  Candidates that lose the comparator never own heap storage;
+// the winner is copied into a LeafCandidate by `materialize_candidate()`.
+struct CandidateSlot {
+  bool valid = false;
+  std::int32_t tx_size = 0;
+  std::int32_t tx_type = 0;
+  TypeEntry type;
+  int eob = 0;
+  int nonzero = 0;
+  double sse = 0.0;
+  double rate_bits = 0.0;
+  double cost = 0.0;
+  std::span<std::int32_t> levels;   // scan order, area entries
+  std::span<std::int16_t> residual; // coded size
+};
+
+// Largest candidate list any leaf can produce: the inter SET_1 inverse table
+// has 16 entries, and every other set is shorter.  The array is doubled so a
+// future set enlargement cannot overflow the stack slots silently.
+constexpr std::size_t kMaxTypeSlots = 32;
+
+// Copies a scored candidate's payload into the winner storage.  Identical
+// bytes to the previous `best = std::move(cand)`, but the candidate itself
+// stays in the ring.
+void materialize_candidate(const CandidateSlot& src, LeafCandidate* dst) {
+  dst->valid = true;
+  dst->tx_size = src.tx_size;
+  dst->tx_type = src.tx_type;
+  dst->type = src.type;
+  dst->eob = src.eob;
+  dst->nonzero = src.nonzero;
+  dst->sse = src.sse;
+  dst->rate_bits = src.rate_bits;
+  dst->cost = src.cost;
+  dst->levels.assign(src.levels.begin(), src.levels.end());
+  dst->residual.assign(src.residual.begin(), src.residual.end());
+}
+
 // §8.3.2 coefficient syntax cost for one candidate leaf, from the static
 // §9.3 CDF slice.  This is the same syntax the writer emits (`txb_skip`, the
 // EOB prefix/extra bits, `coeff_base`/`coeff_base_eob`, `coeff_br`, the
@@ -379,17 +422,20 @@ struct LeafCandidate {
 constexpr double kModelRateScale = 0.4;
 
 bool block_syntax_bits(const txv::TxParams& params,
-                       const std::vector<std::int32_t>& levels_raster,
-                       const std::vector<std::uint16_t>& scan, int qctx,
+                       std::span<const std::int32_t> levels_raster,
+                       std::span<const std::uint16_t> scan, int qctx,
                        bool is_inter, bool tcq, int txb_skip_ctx,
-                       int dc_sign_ctx, double* out_bits) {
+                       int dc_sign_ctx, int plane, TxScratch& scratch,
+                       const av2enc::still::qctx::CoeffCdfSlice* cdf_slice,
+                       double* out_bits) {
   const int area = params.w * params.h;
   if (area <= 0 ||
       levels_raster.size() < static_cast<std::size_t>(area) ||
       scan.size() < static_cast<std::size_t>(area)) {
     return false;
   }
-  std::vector<std::int32_t> scan_levels(static_cast<std::size_t>(area));
+  const std::span<std::int32_t> scan_levels(
+      scratch.syntax_scan, static_cast<std::size_t>(area));
   for (int c = 0; c < area; ++c) {
     scan_levels[static_cast<std::size_t>(c)] =
         levels_raster[scan[static_cast<std::size_t>(c)]];
@@ -397,39 +443,42 @@ bool block_syntax_bits(const txv::TxParams& params,
   std::string error;
   if (tcq) {
     av2enc::tcq::av2::BlockInfo info;
-    info.plane = 0;
+    info.plane = plane;
     info.params = params;
     info.txb_skip_context = std::clamp(txb_skip_ctx, 0, 9);
     info.dc_sign_context = std::clamp(dc_sign_ctx, 0, 2);
     info.qctx = qctx;
     info.is_inter = is_inter;
     info.tx_class_2d = true;
-    av2enc::tcq::av2::Model model;
+    av2enc::tcq::av2::Model& model = scratch.tcq_model;
     if (!model.init(info, scan_levels, &error)) return false;
     *out_bits = model.reference_bits();
     return true;
   }
   av2enc::rdoq::av2::BlockInfo info;
-  info.plane = 0;
+  info.plane = plane;
   info.params = params;
   info.txb_skip_context = std::clamp(txb_skip_ctx, 0, 9);
   info.dc_sign_context = std::clamp(dc_sign_ctx, 0, 2);
   info.qctx = qctx;
   info.is_inter = is_inter;
-  av2enc::rdoq::av2::Model model;
+  info.cdf_override = cdf_slice;
+  av2enc::rdoq::av2::Model& model = scratch.rdoq_model;
   if (!model.init(info, scan_levels, &error)) return false;
   *out_bits = model.scalar_bits();
   return true;
 }
 
 // Full forward -> quantise -> dequantise -> inverse path for one candidate,
-// with the same coded-domain SSE and rate model as the device kernel.
+// with the same coded-domain SSE and rate model as the device kernel.  All
+// buffers come from the per-thread scratch and the candidate's payload spans;
+// the arithmetic is unchanged.
 bool evaluate_candidate(const std::int16_t* residual, int block_w,
                         int /*block_h*/, int offset_x, int offset_y, int leaf_w,
                         int leaf_h, std::int32_t tx_size, std::int32_t tx_type,
                         const TypeEntry& type, bool is_inter, int qindex,
                         int delta_dc, int delta_ac, const Options& options,
-                        bool rdoq, LeafCandidate* out, std::string* error) {
+                        bool rdoq, CandidateSlot* out, std::string* error) {
   const auto params_opt = txv::make_tx_params(
       static_cast<txv::TxSize>(tx_size), static_cast<txv::TxType>(tx_type));
   if (!params_opt.has_value()) {
@@ -443,8 +492,13 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   }
   const int area = params.w * params.h;
   const int coded_n = leaf_w * leaf_h;
+  // The ring is sized from tx_scan_area(tx_size), which is exactly the
+  // adjusted grid params.w * params.h for all 25 sizes.
+  assert(out->levels.size() == static_cast<std::size_t>(area));
+  assert(out->residual.size() == static_cast<std::size_t>(coded_n));
+  TxScratch& scratch = tx_scratch();
 
-  std::vector<std::int16_t> coded(static_cast<std::size_t>(coded_n));
+  std::int16_t* coded = scratch.coded;
   for (int y = 0; y < leaf_h; ++y) {
     for (int x = 0; x < leaf_w; ++x) {
       coded[static_cast<std::size_t>(y) * static_cast<std::size_t>(leaf_w) +
@@ -455,8 +509,8 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
                    static_cast<std::size_t>(x)];
     }
   }
-  std::vector<std::int16_t> adj(static_cast<std::size_t>(area));
-  txv::downsample_residual(coded.data(), params, adj.data());
+  std::int16_t* adj = scratch.adj;
+  txv::downsample_residual(coded, params, adj);
   // §7.15.4.1: when enable_inter_ddt derives DDTX/FDDT for this block, the
   // decoder reconstructs with the DDT kernels, so the search must forward and
   // inverse-transform with the same kernels.  Non-DDT candidates keep the
@@ -467,21 +521,21 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   ddt_ctx.use_intrabc = false;
   ddt_ctx.bit_depth = 8;
   const bool use_ddt = ddt::plan_has_ddt(params, ddt_ctx);
-  std::vector<std::int32_t> coeff_i;
-  std::vector<double> coeff;
+  double* coeff = scratch.coeff;
+  std::int32_t* coeff_i = scratch.coeff_i;
   double scaled = params.quant_factor * 528.0;
   if (use_ddt) {
-    coeff_i.assign(static_cast<std::size_t>(area), 0);
-    ddt::forward_block(adj.data(), params, ddt_ctx, coeff_i.data());
+    std::fill(coeff_i, coeff_i + area, 0);
+    ddt::forward_block(adj, params, ddt_ctx, coeff_i);
     scaled = ddt::quant_factor(params) * 528.0;
   } else {
-    coeff.assign(static_cast<std::size_t>(area), 0.0);
-    txv::forward_block(adj.data(), params, coeff.data());
+    std::fill(coeff, coeff + area, 0.0);
+    txv::forward_block(adj, params, coeff);
   }
 
   const int dcq = get_q(qindex, delta_dc);
   const int acq = get_q(qindex, delta_ac);
-  std::vector<std::int32_t> levels(static_cast<std::size_t>(area));
+  std::int32_t* levels = scratch.levels;
   for (int i = 0; i < area; ++i) {
     const int q = i == 0 ? dcq : acq;
     const double factor = scaled / static_cast<double>(q);
@@ -495,8 +549,10 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
 
   const txpart::TxScanClass cls =
       txpart::tx_class_of(static_cast<int>(tx_type));
-  std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
-  if (!txpart::get_scan(tx_size, cls, scan)) {
+  bool scan_ok = false;
+  const std::span<const std::uint16_t> scan =
+      scratch.scan_table(tx_size, cls, &scan_ok);
+  if (!scan_ok || scan.size() < static_cast<std::size_t>(area)) {
     if (error != nullptr) *error = "scan table generation failed";
     return false;
   }
@@ -504,12 +560,13 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   // §5.20.7.27 TCQ.  Luma-only (the search is luma-only), no FSC/lossless, and
   // TX_CLASS_2D only.  The trellis replaces the scalar levels with the site
   // syntax base levels and returns the mapped Quant[] the dequant consumes.
-  std::vector<std::int32_t> dequant_levels;
+  std::int32_t* dequant_levels = scratch.dequant_levels;
   const bool use_tcq = options.tcq && dcq == acq && tx_type <= 9;
   if (use_tcq) {
-    std::vector<av2enc::tcq::Coefficient> input(
-        static_cast<std::size_t>(area));
-    std::vector<std::int32_t> reference(static_cast<std::size_t>(area));
+    const std::span<av2enc::tcq::Coefficient> input(
+        scratch.tcq_input, static_cast<std::size_t>(area));
+    const std::span<std::int32_t> reference(
+        scratch.aux, static_cast<std::size_t>(area));
     for (int c = 0; c < area; ++c) {
       const int pos = scan[static_cast<std::size_t>(c)];
       const int row = pos / params.w;
@@ -532,7 +589,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     info.qctx = options.tcq_qctx;
     info.is_inter = is_inter;
     info.tx_class_2d = true;
-    av2enc::tcq::av2::Model model;
+    av2enc::tcq::av2::Model& model = scratch.tcq_model;
     std::string tcq_error;
     if (!model.init(info, reference, &tcq_error)) {
       if (error != nullptr) *error = "tcq model init failed: " + tcq_error;
@@ -549,8 +606,8 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
       if (error != nullptr) *error = "tcq quantize failed: " + tcq_error;
       return false;
     }
-    std::fill(levels.begin(), levels.end(), 0);
-    dequant_levels.assign(static_cast<std::size_t>(area), 0);
+    std::fill(levels, levels + area, 0);
+    std::fill(dequant_levels, dequant_levels + area, 0);
     for (int c = 0; c < result.eob; ++c) {
       const int pos = scan[static_cast<std::size_t>(c)];
       levels[static_cast<std::size_t>(pos)] =
@@ -568,9 +625,10 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   const bool use_rdoq = rdoq && !use_tcq && options.rdoq && is_inter &&
                         dcq == acq && tx_type <= 9 && !use_ddt;
   if (use_rdoq) {
-    std::vector<std::int32_t> scalar_scan(static_cast<std::size_t>(area));
-    std::vector<av2enc::rdoq::Coefficient> input(
-        static_cast<std::size_t>(area));
+    const std::span<std::int32_t> scalar_scan(
+        scratch.aux, static_cast<std::size_t>(area));
+    const std::span<av2enc::rdoq::Coefficient> input(
+        scratch.rdoq_input, static_cast<std::size_t>(area));
     for (int c = 0; c < area; ++c) {
       const int pos = scan[static_cast<std::size_t>(c)];
       scalar_scan[static_cast<std::size_t>(c)] =
@@ -588,7 +646,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     info.dc_sign_context = 0;
     info.qctx = options.rdoq_qctx;
     info.is_inter = true;
-    av2enc::rdoq::av2::Model model;
+    av2enc::rdoq::av2::Model& model = scratch.rdoq_model;
     std::string rdoq_error;
     if (!model.init(info, scalar_scan, &rdoq_error)) {
       if (error != nullptr) *error = "rdoq model init failed: " + rdoq_error;
@@ -605,7 +663,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
       if (error != nullptr) *error = "rdoq quantize failed: " + rdoq_error;
       return false;
     }
-    std::fill(levels.begin(), levels.end(), 0);
+    std::fill(levels, levels + area, 0);
     for (int c = 0; c < result.eob; ++c) {
       const int pos = scan[static_cast<std::size_t>(c)];
       levels[static_cast<std::size_t>(pos)] =
@@ -622,7 +680,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
       options.rdoq && is_inter && dcq == acq && tx_type <= 9 && !use_ddt &&
       !use_tcq;
 
-  std::vector<std::int32_t> dequant(static_cast<std::size_t>(area));
+  std::int32_t* dequant = scratch.dequant;
   const int dq_denom = use_tcq ? (params.dq_denom << 1) : params.dq_denom;
   for (int i = 0; i < area; ++i) {
     const int q = i == 0 ? dcq : acq;
@@ -636,11 +694,11 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
         std::max(-(1 << 15),
                  std::min((1 << 15) - 1, level < 0 ? -dq : dq));
   }
-  std::vector<std::int16_t> recon(static_cast<std::size_t>(coded_n));
+  std::int16_t* recon = scratch.recon;
   if (use_ddt) {
-    ddt::inverse_block(dequant.data(), params, ddt_ctx, recon.data());
+    ddt::inverse_block(dequant, params, ddt_ctx, recon);
   } else {
-    txv::inverse_block(dequant.data(), params, recon.data());
+    txv::inverse_block(dequant, params, recon);
   }
 
   std::int64_t sse_i = 0;
@@ -649,6 +707,68 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
         static_cast<std::int64_t>(recon[static_cast<std::size_t>(i)]) -
         coded[static_cast<std::size_t>(i)];
     sse_i += d * d;
+  }
+  // AV2ENC_PIPE_PERC: apply the source-driven per-sample weights to the
+  // candidate distortion.  The plan's SSE is what the leaf comparison and the
+  // plan-vs-plan tie-break read, so the TX choice and the leaf J use the same
+  // number.  Null keeps the historical integer SSE.
+  double sse_value = static_cast<double>(sse_i);
+  if (options.distortion_weight != nullptr || options.lowpass_gain > 0.0 ||
+      options.lowpass2_gain > 0.0) {
+    double weighted = 0.0;
+    for (int i = 0; i < coded_n; ++i) {
+      const std::int64_t d =
+          static_cast<std::int64_t>(recon[static_cast<std::size_t>(i)]) -
+          coded[static_cast<std::size_t>(i)];
+      const double weight =
+          options.distortion_weight != nullptr
+              ? static_cast<double>(
+                    options.distortion_weight[static_cast<std::size_t>(i)])
+              : 256.0;
+      double value = static_cast<double>(d * d);
+      if (options.lowpass_gain > 0.0 || options.lowpass2_gain > 0.0) {
+        const int x = i % leaf_w;
+        const int y = i / leaf_w;
+        std::int64_t low = 0;
+        int used = 0;
+        for (int dy = -1; dy <= 1; ++dy) {
+          const int py = y + dy;
+          if (py < 0 || py >= leaf_h) continue;
+          for (int dx = -1; dx <= 1; ++dx) {
+            const int px = x + dx;
+            if (px < 0 || px >= leaf_w) continue;
+            const int j = py * leaf_w + px;
+            low += static_cast<std::int64_t>(
+                       recon[static_cast<std::size_t>(j)]) -
+                   coded[static_cast<std::size_t>(j)];
+            ++used;
+          }
+        }
+        const double mean_low = static_cast<double>(low) / used;
+        value += options.lowpass_gain * mean_low * mean_low;
+        if (options.lowpass2_gain > 0.0) {
+          std::int64_t low2 = 0;
+          int used2 = 0;
+          for (int dy = -3; dy <= 3; ++dy) {
+            const int py = y + dy;
+            if (py < 0 || py >= leaf_h) continue;
+            for (int dx = -3; dx <= 3; ++dx) {
+              const int px = x + dx;
+              if (px < 0 || px >= leaf_w) continue;
+              const int j = py * leaf_w + px;
+              low2 += static_cast<std::int64_t>(
+                          recon[static_cast<std::size_t>(j)]) -
+                      coded[static_cast<std::size_t>(j)];
+              ++used2;
+            }
+          }
+          const double mean_low2 = static_cast<double>(low2) / used2;
+          value += options.lowpass2_gain * mean_low2 * mean_low2;
+        }
+      }
+      weighted += weight * value;
+    }
+    sse_value = weighted / 256.0;
   }
 
   int eob = 0;
@@ -669,6 +789,8 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
                                       static_cast<double>(nonzero);
   const auto tx_class =
       txpart::tx_class_of(static_cast<int>(tx_type));
+  const std::span<const std::int32_t> levels_span(
+      levels, static_cast<std::size_t>(area));
   if (model_rate && tx_class == txpart::TxScanClass::k2D) {
     // The RDOQ trellis already priced its own levels with the static §8.3
     // model; scalar candidates are priced here.  `rdoq_qctx` and `tcq_qctx`
@@ -676,8 +798,9 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     double syntax_bits = rdoq_level_bits;
     if (!use_rdoq) syntax_bits = 0.0;
     if (use_rdoq || block_syntax_bits(
-                        params, levels, scan, options.rdoq_qctx, is_inter,
+                        params, levels_span, scan, options.rdoq_qctx, is_inter,
                         use_tcq, /*txb_skip_ctx=*/0, /*dc_sign_ctx=*/0,
+                        /*plane=*/0, scratch, options.cdf_slice,
                         &syntax_bits)) {
       rate = syntax_bits * kModelRateScale + type_bits;
     }
@@ -686,8 +809,9 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     // The measured `--video-tx-context-rate` path prices the static §8.3
     // model directly (its own calibration lived in the TX lambda).
     double syntax_bits = 0.0;
-    if (block_syntax_bits(params, levels, scan, options.tcq_qctx, is_inter,
+    if (block_syntax_bits(params, levels_span, scan, options.tcq_qctx, is_inter,
                           use_tcq, /*txb_skip_ctx=*/0, /*dc_sign_ctx=*/0,
+                          /*plane=*/0, scratch, options.cdf_slice,
                           &syntax_bits)) {
       rate = syntax_bits + type_bits;
     }
@@ -699,11 +823,10 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   out->type = type;
   out->eob = eob;
   out->nonzero = nonzero;
-  out->sse = static_cast<double>(sse_i);
+  out->sse = sse_value;
   out->rate_bits = rate;
   out->cost = out->sse + options.lambda * rate;
-  out->residual = std::move(recon);
-  out->levels.assign(static_cast<std::size_t>(area), 0);
+  std::copy(recon, recon + coded_n, out->residual.begin());
   for (int c = 0; c < area; ++c) {
     out->levels[static_cast<std::size_t>(c)] =
         levels[scan[static_cast<std::size_t>(c)]];
@@ -795,61 +918,68 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
       // Selection with the historical comparator, unchanged: it tie-breaks on
       // (cost, sse, tx_type) and the caller feeds it in candidate order, so
       // the first candidate wins a full tie exactly as the serial loop did.
-      const auto consider = [&](LeafCandidate& cand) {
+      const auto consider = [&](const CandidateSlot& cand) {
         added = true;
         if (!codable(cand.tx_type, cand.eob, is_inter)) return;
         if (!best.valid || cand.cost < best.cost ||
             (cand.cost == best.cost &&
              (cand.sse < best.sse ||
               (cand.sse == best.sse && cand.tx_type < best.tx_type)))) {
-          best = std::move(cand);
+          materialize_candidate(cand, &best);
         }
       };
-      if (parallel::pool_active() &&
-          order.size() >= kTypeCandidateParallelMin) {
-        // Every candidate is independent: evaluate_candidate owns all of its
-        // scratch, and each slot is written by one thread.  No shared state,
-        // no reduction (the cost is a double and must not be summed in a
-        // different order).
-        std::vector<LeafCandidate> cands(order.size());
-        std::vector<char> ok(order.size(), 1);
-        std::vector<std::string> cand_errors(order.size());
-        parallel::parallel_for_pooled(
-            order.size(), kTypeCandidateParallelMin, [&](std::size_t i) {
-              const TypeEntry& entry = types[order[i]];
-              ok[i] = evaluate_candidate(
-                          residual_coded, coded_w, coded_h,
-                          geometry.parts[k].mi_col * 4,
-                          geometry.parts[k].mi_row * 4, leaf_w, leaf_h,
-                          tx_size, entry.type, entry, is_inter, qindex,
-                          delta_dc, delta_ac, options, /*rdoq=*/false,
-                          &cands[i], &cand_errors[i])
-                          ? 1
-                          : 0;
-            });
-        for (std::size_t i = 0; i < order.size(); ++i) {
-          if (ok[i] == 0) {
-            if (error != nullptr) *error = cand_errors[i];
-            return false;
-          }
-          consider(cands[i]);
-        }
-      } else {
+      // Payload slots: every candidate of this leaf gets its own span while
+      // the (sequential) selection pass decides, so no candidate heap-allocs.
+      // The serial loop only ever needs one slot.
+      const bool pooled = parallel::pool_active() &&
+                          order.size() >= kTypeCandidateParallelMin;
+      CandidatePayloadRing& ring = candidate_ring();
+      ring.prepare(pooled ? order.size() : 1, txpart::tx_scan_area(tx_size),
+                   leaf_w * leaf_h);
+      const std::size_t n_candidates = order.size();
+      assert(n_candidates <= kMaxTypeSlots);
+      CandidateSlot slots[kMaxTypeSlots];
+      for (std::size_t i = 0; i < n_candidates; ++i) {
+        slots[i].levels = ring.levels(i);
+        slots[i].residual = ring.residual(i);
+      }
+      if (!pooled) {
         for (std::size_t t : order) {
-          LeafCandidate cand;
           if (!evaluate_candidate(
                   residual_coded, coded_w, coded_h,
                   geometry.parts[k].mi_col * 4,
                   geometry.parts[k].mi_row * 4, leaf_w, leaf_h, tx_size,
                   types[t].type, types[t], is_inter, qindex, delta_dc, delta_ac,
-                  options, /*rdoq=*/false, &cand, error)) {
+                  options, /*rdoq=*/false, &slots[0], error)) {
             return false;
           }
-          consider(cand);
+          consider(slots[0]);
+        }
+      } else {
+        // Every candidate is independent: evaluate_candidate owns all of its
+        // work scratch, and each slot is written by one thread.  No shared
+        // state, no reduction (the cost is a double and must not be summed in
+        // a different order).
+        std::string cand_errors[kMaxTypeSlots];
+        parallel::parallel_for_pooled(
+            n_candidates, kTypeCandidateParallelMin, [&](std::size_t i) {
+              const TypeEntry& entry = types[order[i]];
+              evaluate_candidate(residual_coded, coded_w, coded_h,
+                                 geometry.parts[k].mi_col * 4,
+                                 geometry.parts[k].mi_row * 4, leaf_w, leaf_h,
+                                 tx_size, entry.type, entry, is_inter, qindex,
+                                 delta_dc, delta_ac, options, /*rdoq=*/false,
+                                 &slots[i], &cand_errors[i]);
+            });
+        for (std::size_t i = 0; i < n_candidates; ++i) {
+          if (!slots[i].valid) {
+            if (error != nullptr) *error = cand_errors[i];
+            return false;
+          }
+          consider(slots[i]);
         }
       }
       if (!added) {
-        LeafCandidate cand;
         TypeEntry dct;
         dct.type = 0;
         dct.codes_type = 0;
@@ -857,14 +987,14 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
                 residual_coded, coded_w, coded_h,
                 geometry.parts[k].mi_col * 4, geometry.parts[k].mi_row * 4,
                 leaf_w, leaf_h, tx_size, 0, dct, is_inter, qindex, delta_dc,
-                delta_ac, options, /*rdoq=*/false, &cand, error)) {
+                delta_ac, options, /*rdoq=*/false, &slots[0], error)) {
           return false;
         }
-        if (!codable(cand.tx_type, cand.eob, is_inter)) {
+        if (!codable(slots[0].tx_type, slots[0].eob, is_inter)) {
           plan.valid = false;
           break;
         }
-        best = std::move(cand);
+        materialize_candidate(slots[0], &best);
       } else if (!best.valid) {
         plan.valid = false;
         break;
@@ -942,7 +1072,11 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
       const LeafCandidate& scalar = best->leaves[k];
       const int leaf_w = txpart::tx_width(best->geometry.parts[k].tx_size);
       const int leaf_h = txpart::tx_height(best->geometry.parts[k].tx_size);
-      LeafCandidate refined;
+      CandidatePayloadRing& ring = candidate_ring();
+      ring.prepare(1, txpart::tx_scan_area(scalar.tx_size), leaf_w * leaf_h);
+      CandidateSlot refined;
+      refined.levels = ring.levels(0);
+      refined.residual = ring.residual(0);
       if (!evaluate_candidate(
               residual_coded, coded_w, coded_h,
               best->geometry.parts[k].mi_col * 4,
@@ -954,7 +1088,7 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
       const LeafCandidate& incumbent = best->leaves[k];
       if (refined.valid && codable(refined.tx_type, refined.eob, is_inter) &&
           refined.cost <= incumbent.cost) {
-        best->leaves[k] = std::move(refined);
+        materialize_candidate(refined, &best->leaves[k]);
         changed = true;
       }
     }
@@ -1014,6 +1148,51 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
     }
   }
   return true;
+}
+
+bool scan_coefficient_bits(std::int32_t tx_size, std::int32_t tx_type,
+                           std::int32_t plane,
+                           const std::int32_t* levels_scan,
+                           std::int32_t area, std::int32_t qctx,
+                           bool is_inter, double* out_bits) {
+  return scan_coefficient_bits(tx_size, tx_type, plane, levels_scan, area,
+                               qctx, is_inter, /*slice=*/nullptr, out_bits);
+}
+
+bool scan_coefficient_bits(std::int32_t tx_size, std::int32_t tx_type,
+                           std::int32_t plane,
+                           const std::int32_t* levels_scan,
+                           std::int32_t area, std::int32_t qctx,
+                           bool is_inter,
+                           const av2enc::still::qctx::CoeffCdfSlice* slice,
+                           double* out_bits) {
+  if (levels_scan == nullptr || out_bits == nullptr || area <= 0) return false;
+  const auto params_opt = txv::make_tx_params(
+      static_cast<txv::TxSize>(tx_size), static_cast<txv::TxType>(tx_type));
+  if (!params_opt.has_value()) return false;
+  const txv::TxParams& params = *params_opt;
+  if (txpart::tx_class_of(tx_type) != txpart::TxScanClass::k2D) return false;
+  const int scan_area = txpart::tx_scan_area(tx_size);
+  if (area != scan_area ||
+      area > params.w * params.h) {
+    return false;
+  }
+  std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
+  if (!txpart::get_scan(tx_size, txpart::TxScanClass::k2D, scan)) {
+    return false;
+  }
+  std::vector<std::int32_t> raster(
+      static_cast<std::size_t>(params.w) * static_cast<std::size_t>(params.h),
+      0);
+  for (int c = 0; c < area; ++c) {
+    raster[scan[static_cast<std::size_t>(c)]] =
+        levels_scan[static_cast<std::size_t>(c)];
+  }
+  TxScratch scratch;
+  return block_syntax_bits(params, raster, scan, qctx, is_inter,
+                           /*tcq=*/false, /*txb_skip_ctx=*/0,
+                           /*dc_sign_ctx=*/0, plane, scratch, slice,
+                           out_bits);
 }
 
 }  // namespace av2enc::video::txtsearch

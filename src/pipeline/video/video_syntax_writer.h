@@ -13,9 +13,11 @@
 #pragma once
 
 #include "pipeline/video/video_syntax.h"
+#include "pipeline/video/video_rate_interval.h"
 
 #include "codec/inter/mv_precision/mv_precision.h"
 #include "codec/inter/drl_reorder/video_stack_adapter.h"
+#include "pipeline/video/video_rate_hybrid.h"
 #include "codec/filters/stream/filters_stream.h"
 #include "codec/filters/pc_wiener/pc_wiener_stream.h"
 #include "cuda/pipeline/still/cdef/still_cdef_cdf.h"
@@ -391,6 +393,13 @@ struct CdfState {
   std::uint16_t cdef_minus1_7[7];
   std::uint16_t cdef_minus1_8[8];
   std::uint16_t ccso_index[3][4][3];
+  // §6.17.2 loop-restoration CDFs (§5.20.10.4/.5).  load_cdfs()/save_cdfs()
+  // copy every array init_non_coeff_cdfs() names, so the LR rows belong to the
+  // frame image exactly like cdef_index0/ccso_index.  Omitting them made
+  // --cdf-continuity + --video-wiener/--video-chroma-lr/--video-pc-wiener
+  // restart each frame at the §9.3 defaults while the decoder started from the
+  // previous frame's adapted rows.
+  ::av2enc::filters::lr_cdf::Image lr_cdfs;
 };
 
 template <typename T, std::size_t N>
@@ -527,6 +536,7 @@ inline void init_cdfs(CdfState& c, int qctx_slice,
   copy_array(c.cdef_minus1_8,
              av2enc::cuda::still::kCdefIndexMinus1With8Cdf);
   copy_array(c.ccso_index, still::filters_stream::kCcsoBlkCdf);
+  ::av2enc::filters::lr_cdf::SetDefaults(&c.lr_cdfs);
 }
 
 // §9.3 `Default_Cdef_Index_Minus1_With{N}_Cdf` slot of the frame image for a
@@ -709,6 +719,39 @@ inline const std::vector<CdfArrayDesc>& cdf_arrays() {
     add(probe.cdef_minus1_7, sizeof(probe.cdef_minus1_7), 6);
     add(probe.cdef_minus1_8, sizeof(probe.cdef_minus1_8), 7);
     AV2ENC_ADD_CDF(ccso_index, 2);
+    // §5.20.10.4/.5 loop-restoration rows.  All but wiener_ns_base are binary
+    // S() symbols; wiener_ns_base is a 4-way decode_4part code.
+    AV2ENC_ADD_CDF(lr_cdfs.use_wiener_ns, 2);
+    add(probe.lr_cdfs.wiener_ns_length,
+        sizeof(probe.lr_cdfs.wiener_ns_length), 2);
+    AV2ENC_ADD_CDF(lr_cdfs.wiener_ns_uv_sym, 2);
+    add(probe.lr_cdfs.wiener_ns_base, sizeof(probe.lr_cdfs.wiener_ns_base), 4);
+    AV2ENC_ADD_CDF(lr_cdfs.use_pc_wiener, 2);
+    add(probe.lr_cdfs.flex_restoration_type,
+        sizeof(probe.lr_cdfs.flex_restoration_type), 2);
+    // §5.20.7.10/.6 compound block rows.  read_inter_block_mode_info() adapts
+    // every one of them, and §7.4.4/§7.5 save/load them with the rest of the
+    // tile CDFs, so they belong in the §8.2 image like cdef_index0/ccso_index.
+    // Omitting them made --cdf-continuity + --video-compound restart each
+    // frame at the §9.3 defaults while the decoder loaded the reference
+    // frame's adapted rows: the first frame that codes comp_mode/comp_ref1
+    // desynchronises (3/60 decoded, then "Error decoding frame").
+    // Symbol counts are the `n` of each sym() call in
+    // video_syntax_inter.cpp write_compound_mode_info().
+    AV2ENC_ADD_CDF(comp_mode, 2);
+    AV2ENC_ADD_CDF(comp_ref0, 2);
+    AV2ENC_ADD_CDF(comp_ref1, 2);
+    AV2ENC_ADD_CDF(is_joint, 2);
+    AV2ENC_ADD_CDF(compound_mode_non_joint, 5);
+    AV2ENC_ADD_CDF(compound_mode_same_refs, 4);
+    AV2ENC_ADD_CDF(use_optflow, 2);
+    AV2ENC_ADD_CDF(comp_group_idx, 2);
+    AV2ENC_ADD_CDF(compound_type, 2);
+    AV2ENC_ADD_CDF(cwp_idx, 2);
+    AV2ENC_ADD_CDF(wedge_quad, 4);
+    AV2ENC_ADD_CDF(wedge_angle, 5);
+    AV2ENC_ADD_CDF(wedge_dist1, 4);
+    AV2ENC_ADD_CDF(wedge_dist2, 3);
 #undef AV2ENC_ADD_CDF
     return out;
   }();
@@ -997,7 +1040,9 @@ class Writer {
     }
 #endif
     trace_ = std::getenv("AV2ENC_VIDEO_TRACE") != nullptr;
-    cost_meter_.active = std::getenv("AV2ENC_SYMBOL_COST") != nullptr;
+    cost_meter_.active = std::getenv("AV2ENC_SYMBOL_COST") != nullptr ||
+                         rate_interval::detail::stats_enabled();
+    rate_tags_active_ = rate_hybrid::report::active();
   }
 
   bool run(std::size_t* tile_bytes, std::string& error);
@@ -1029,6 +1074,9 @@ class Writer {
   bool sym(std::uint16_t* cdf, int n, int symbol) {
     const double cost =
         cost_meter_.active ? symbol_cost_bits(cdf, n, symbol) : 0.0;
+    if (rate_tags_active_ && rate_tag_ >= 0) {
+      rate_tag_bits_[rate_tag_] += symbol_cost_bits(cdf, n, symbol);
+    }
     const int tag = cost_meter_.active ? cost_tag_for(cdf) : kCostOther;
     const av2::Status status = enc_.encode_symbol(cdf, n, symbol);
     if (status != av2::Status::kOk) {
@@ -1393,6 +1441,35 @@ class Writer {
   int eob_u_ = 0;
   bool trace_ = false;
   CostMeter cost_meter_;
+  // R09 (AV2ENC_RATE_HYBRID_S[_MEASURE]) report: accumulate the write-time
+  // -log2(p) of the inter syntax symbols by group.  `rate_tag_` is set around
+  // the calls in write_block()/write_inter_mode_info(); -1 is untagged.
+  bool rate_tags_active_ = false;
+  int rate_tag_ = -1;
+  double rate_tag_bits_[rate_hybrid::report::kTagCount] = {};
+  void set_rate_tag(int tag) { rate_tag_ = tag; }
+  void clear_rate_tags() {
+    for (double& bits : rate_tag_bits_) bits = 0.0;
+  }
+
+  // ---------------------------------------------------------------------
+  // R19 diagnostic (AV2ENC_RATE_INTERVAL_STATS=1).  The per-leaf report
+  // re-runs the interval model on the emitted leaf from the frame-start CDF
+  // copy and compares it with the live `-log2 p` the writer just charged.
+  // ---------------------------------------------------------------------
+  const rate_interval::CdfStore& rate_store() {
+    if (!rate_store_ready_) {
+      rate_store_ready_ = true;
+      rate_interval::load_store_from_image(
+          cdf_seed_, static_cast<int>(config_.base_q_idx), rate_store_);
+    }
+    return rate_store_;
+  }
+  void record_rate_interval_leaf(const BlockSyntax& leaf,
+                                 const double* meter_before,
+                                 std::uint64_t prefix_before);
+  rate_interval::CdfStore rate_store_{};
+  bool rate_store_ready_ = false;
 };
 
 }  // namespace detail

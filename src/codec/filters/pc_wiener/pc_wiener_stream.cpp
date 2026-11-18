@@ -5,7 +5,6 @@
 #include <cstring>
 #include <limits>
 
-#include "codec/filters/loop_restoration/classes/wiener_cdfs.h"
 #include "codec/filters/loop_restoration/restoration_common.h"
 #include "codec/filters/loop_restoration/wiener_core.h"
 #include "codec/filters/tables/pc_wiener.h"
@@ -266,10 +265,6 @@ bool DecodeSigned4Part(av2::Decoder& decoder, std::uint16_t* base_cdf, int low,
   }
   *target = low + Unsigned4PartValue(k, r - low, code.value);
   return true;
-}
-
-void CopyCdf(std::uint16_t* dst, const std::uint16_t* src, int n) {
-  for (int i = 0; i < n; ++i) dst[i] = src[i];
 }
 
 int NumCoeffs(int plane) {
@@ -1158,18 +1153,11 @@ bool InitTileState(TileState* state, const LrParams& params, int mi_cols,
   state->sub_x = sub_x;
   state->sub_y = sub_y;
 
-  CopyCdf(state->use_wiener_ns, rcls::kUseWienerNsCdf, 3);
-  CopyCdf(state->use_pc_wiener, rcls::kUsePcWienerCdf, 3);
-  for (int tool = 0; tool < 3; ++tool) {
-    for (int plane = 0; plane < 3; ++plane) {
-      CopyCdf(state->flex_restoration_type[tool][plane],
-              rcls::kFlexRestorationTypeCdf[tool][plane], 3);
-    }
-  }
-  CopyCdf(state->wiener_ns_length[0], rcls::kWienerNsLengthCdf[0], 3);
-  CopyCdf(state->wiener_ns_length[1], rcls::kWienerNsLengthCdf[1], 3);
-  CopyCdf(state->wiener_ns_uv_sym, rcls::kWienerNsUvSymCdf, 3);
-  CopyCdf(state->wiener_ns_base, rcls::kWienerNsBaseCdf, 5);
+  // §6.17.2 defaults; a caller that carries CDFs across frames seeds the
+  // frame image over these (TileStateSeedCdfs).
+  lr_cdf::Image cdf_defaults;
+  lr_cdf::SetDefaults(&cdf_defaults);
+  TileStateSeedCdfs(state, cdf_defaults);
 
   const int sub = std::max(sub_x, sub_y);
   state->unit_size[0] = kRestorationTileSizeMax >> params.luma_shift;
@@ -1213,6 +1201,36 @@ bool InitTileState(TileState* state, const LrParams& params, int mi_cols,
     }
   }
   return true;
+}
+
+void TileStateSeedCdfs(TileState* state, const lr_cdf::Image& image) {
+  std::memcpy(state->use_wiener_ns, image.use_wiener_ns,
+              sizeof(state->use_wiener_ns));
+  std::memcpy(state->use_pc_wiener, image.use_pc_wiener,
+              sizeof(state->use_pc_wiener));
+  std::memcpy(state->flex_restoration_type, image.flex_restoration_type,
+              sizeof(state->flex_restoration_type));
+  std::memcpy(state->wiener_ns_length, image.wiener_ns_length,
+              sizeof(state->wiener_ns_length));
+  std::memcpy(state->wiener_ns_uv_sym, image.wiener_ns_uv_sym,
+              sizeof(state->wiener_ns_uv_sym));
+  std::memcpy(state->wiener_ns_base, image.wiener_ns_base,
+              sizeof(state->wiener_ns_base));
+}
+
+void TileStateStoreCdfs(const TileState& state, lr_cdf::Image* image) {
+  std::memcpy(image->use_wiener_ns, state.use_wiener_ns,
+              sizeof(image->use_wiener_ns));
+  std::memcpy(image->use_pc_wiener, state.use_pc_wiener,
+              sizeof(image->use_pc_wiener));
+  std::memcpy(image->flex_restoration_type, state.flex_restoration_type,
+              sizeof(image->flex_restoration_type));
+  std::memcpy(image->wiener_ns_length, state.wiener_ns_length,
+              sizeof(image->wiener_ns_length));
+  std::memcpy(image->wiener_ns_uv_sym, state.wiener_ns_uv_sym,
+              sizeof(image->wiener_ns_uv_sym));
+  std::memcpy(image->wiener_ns_base, state.wiener_ns_base,
+              sizeof(image->wiener_ns_base));
 }
 
 namespace {

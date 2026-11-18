@@ -436,7 +436,17 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
                           options_.tx_context_rate, /*trace=*/false,
                           /*allow_rdoq=*/false, /*rdoq_qctx=*/0,
                           rdoq_sse_scale_at(options_, st.current_qindex),
-                          whole, error, mask_row)) {
+                          whole, error, mask_row,
+                          /*distortion_weight=*/nullptr,
+                          (eff_perc::enabled() &&
+                           (eff_perc::rate_mode() & 2) != 0 && !keyframe_)
+                              ? eff_cdf_slice()
+                              : nullptr,
+                          eff_perc::enabled()
+                              ? (keyframe_ ? eff_perc::key_csf_gain()
+                                           : eff_perc::csf_gain())
+                              : 0.0,
+                          eff_perc::enabled() ? eff_perc::csf2_gain() : 0.0)) {
         return false;
       }
       trial->recon = whole.recon;
@@ -499,7 +509,17 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
                 /*search_partition=*/false, options_.tx_context_rate,
                 /*trace=*/false, /*allow_rdoq=*/false, /*rdoq_qctx=*/0,
                 rdoq_sse_scale_at(options_, st.current_qindex), part_plan,
-                error, part_mask)) {
+                error, part_mask,
+                /*distortion_weight=*/nullptr,
+                (eff_perc::enabled() &&
+                 (eff_perc::rate_mode() & 2) != 0 && !keyframe_)
+                    ? eff_cdf_slice()
+                    : nullptr,
+                eff_perc::enabled()
+                    ? (keyframe_ ? eff_perc::key_csf_gain()
+                                 : eff_perc::csf_gain())
+                    : 0.0,
+                eff_perc::enabled() ? eff_perc::csf2_gain() : 0.0)) {
           return false;
         }
         if (part_plan.parts.empty()) {

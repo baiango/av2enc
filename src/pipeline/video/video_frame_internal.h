@@ -12,6 +12,8 @@
 #include "codec/transform/secondary/tx_secondary.h"
 #include "frame/metadata/content_interpretation/content_interpretation.h"
 #include "frame/mfh/mfh.h"
+#include "pipeline/video/video_exact_rd.h"
+#include "pipeline/video/video_rate_interval.h"
 #include "pipeline/video/video_frames.h"
 #include "pipeline/video/video_headers.h"
 #include "pipeline/video/video_lcr_ops.h"
@@ -19,6 +21,9 @@
 #include "pipeline/video/video_intra_search.h"
 #include "pipeline/video/qp_lambda.h"
 #include "pipeline/video/video_syntax.h"
+#include "pipeline/video/video_rate_hybrid.h"
+#include "pipeline/video/video_pipe_perc.h"
+#include "pipeline/video/video_eff_perc.h"
 #include "pipeline/video/video_temporal.h"
 #include "pipeline/video/video_tx_search.h"
 #include "codec/partition/tree/partition.h"
@@ -472,6 +477,32 @@ inline int clip3(int low, int high, int value) {
 }
 inline int clip1(int value) { return clip3(0, 255, value); }
 
+// §7.20.1 LrTxSkip input for one coded leaf.  The decoder sets a 4x4 cell when
+// its luma transform block has eob == 0 (or the leaf is skipped); a
+// TX_MODE_SELECT leaf therefore needs its per-transform eob map, not the
+// coding leaf's first transform.  `block->mi_row/mi_col` must already be set
+// (including any tile offset).
+inline void fill_filter_block_tx(const syntax::BlockSyntax& leaf,
+                                 post::VideoLoopFilterBlock* block) {
+  block->luma_eob_zero = leaf.eob[0] == 0;
+  block->tx_count = 0;
+  if (leaf.tx_part_count == 0) return;
+  const int count = std::min<int>(leaf.tx_part_count, 4);
+  block->tx_count = static_cast<std::uint8_t>(count);
+  for (int i = 0; i < count; ++i) {
+    post::VideoLoopFilterBlock::LumaTx& tx = block->tx[i];
+    tx.mi_row = static_cast<std::int16_t>(block->mi_row +
+                                          leaf.tx_part_mi_row[i]);
+    tx.mi_col = static_cast<std::int16_t>(block->mi_col +
+                                          leaf.tx_part_mi_col[i]);
+    tx.w4 = static_cast<std::uint8_t>(std::max(
+        1, txpartition::tx_width(leaf.tx_part_tx_size[i]) / 4));
+    tx.h4 = static_cast<std::uint8_t>(std::max(
+        1, txpartition::tx_height(leaf.tx_part_tx_size[i]) / 4));
+    tx.eob_zero = leaf.tx_part_eob[i] == 0 ? 1 : 0;
+  }
+}
+
 // §7.7 dependency maps for the implicit reference mapping.  The M2 sequence
 // headers either omit TLayerDependencyMap (default `ref_tlayer <=
 // obu_tlayer_id`) or code it explicitly; MLayerDependencyMap is the default
@@ -863,7 +894,8 @@ inline bool build_video_frame_qp(const VideoOptions& options, int base_q_idx,
   header.qp.seq_seg_info_present = options.seq_seg_info_present;
   header.qp.seq_allow_seg_info_change = options.seq_allow_seg_info_change;
   if (!options.enable_segmentation && !options.per_segment_q &&
-      !options.enable_delta_q && !options.enable_uv_delta_q) {
+      !options.enable_delta_q && !options.enable_uv_delta_q &&
+      !options.enable_aq) {
     return true;
   }
   if (options.enable_segmentation || options.per_segment_q) {
@@ -872,8 +904,9 @@ inline bool build_video_frame_qp(const VideoOptions& options, int base_q_idx,
       return false;
     }
   }
-  header.qp.delta_q.present = options.enable_delta_q;
-  header.qp.delta_q.res = options.enable_delta_q ? options.delta_q_res : 0;
+  header.qp.delta_q.present = options.enable_delta_q || options.enable_aq;
+  header.qp.delta_q.res =
+      (options.enable_delta_q || options.enable_aq) ? options.delta_q_res : 0;
   if (options.seq_seg_info_present && header.qp.segmentation.enabled) {
     // §5.18.7.1: reuse_seg_info = 1 matches the decoded SeqFeature* table, so
     // the frame table must equal the sequence table feature for feature.
@@ -1273,6 +1306,78 @@ inline bool luma_plan_all_zero(const TxPlan& plan) {
 }
 
 // ---------------------------------------------------------------------------
+// R09 (AV2ENC_RATE_HYBRID_S) coefficient model
+//
+// `decision_coeff_bits()` is the per-leaf coefficient price the skip/residual
+// and intra/inter decisions charge.  Gate off it is byte-for-byte the
+// historical `luma_plan_bits()` / `estimate_tx_bits()` pair.  Gate on, the
+// EOB/TX-type overhead stays and the per-nonzero + per-EOB constants are
+// replaced by the analytic two-sided-Laplacian rate of the coded scan prefix.
+// ---------------------------------------------------------------------------
+inline double laplacian_raster_prefix(std::span<const std::int32_t> levels,
+                                      int w, int h, int eob) {
+  if (eob <= 0 || w <= 0 || h <= 0) return 0.0;
+  int nonzero = 0;
+  std::int64_t sum_abs = 0;
+  int x = 0;
+  int y = 0;
+  for (int c = 0; c < eob; ++c) {
+    const std::size_t index =
+        static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+        static_cast<std::size_t>(x);
+    if (index < levels.size()) {
+      const std::int64_t v = levels[index];
+      if (v != 0) {
+        ++nonzero;
+        sum_abs += v < 0 ? -v : v;
+      }
+    }
+    ++x;
+    --y;
+    if (y < 0 || x >= w) {
+      ++x;
+      const int s = std::min(x, h - 1 - y);
+      x -= s;
+      y += s;
+    }
+  }
+  if (nonzero == 0) return 0.0;
+  const double b = static_cast<double>(sum_abs) / nonzero;
+  const double p = std::exp(-1.0 / b);
+  const double mag =
+      static_cast<double>(nonzero) *
+      std::log2(std::exp(1.0) * (1.0 + p) / (1.0 - p));
+  return mag + 0.5 * static_cast<double>(eob);
+}
+
+inline double laplacian_plan_bits(const TxPlan& plan, bool is_inter_luma) {
+  if (!plan.searched) {
+    if (plan.eob == 0) return 1.0;
+    return 8.0 + (is_inter_luma ? 4.0 : 0.0) +
+           laplacian_raster_prefix(plan.levels, plan.adj_w, plan.adj_h,
+                                   plan.eob);
+  }
+  double bits = 0.0;
+  for (const TxPlan::Part& part : plan.parts) {
+    if (part.eob == 0) {
+      bits += 1.0;
+      continue;
+    }
+    bits += 8.0 + (is_inter_luma ? 4.0 : 0.0) +
+            rate_hybrid::laplacian_bits(part.levels, part.eob);
+  }
+  return bits;
+}
+
+inline double decision_coeff_bits(const TxPlan& plan, bool is_inter_luma) {
+  if (rate_hybrid::enabled() && rate_hybrid::coeff_enabled()) {
+    return laplacian_plan_bits(plan, is_inter_luma);
+  }
+  return plan.searched ? search_plan_estimate_bits(plan, is_inter_luma)
+                       : estimate_tx_bits(plan, is_inter_luma);
+}
+
+// ---------------------------------------------------------------------------
 // Leaf RD cost (--video-leaf-rd)
 //
 // The historical intra/inter decision compared coded SSE with a fixed
@@ -1465,7 +1570,11 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
                     bool enable_inter_ddt, bool search_partition,
                     bool context_rate, bool trace, bool allow_rdoq,
                     int rdoq_qctx, double rdoq_sse_scale, TxPlan& plan,
-                    std::string& error, int mask_row = -1) {
+                    std::string& error, int mask_row = -1,
+                    const std::uint16_t* distortion_weight = nullptr,
+                    const still::qctx::CoeffCdfSlice* cdf_slice = nullptr,
+                    double lowpass_gain = 0.0,
+                    double lowpass2_gain = 0.0) {
   std::vector<std::int16_t> residual(
       static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
   for (int y = 0; y < ch; ++y) {
@@ -1497,6 +1606,13 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   // search keep the historical heuristic rate, byte-identical to the CUDA
   // device TX module.
   options.use_context_rate = context_rate;
+  // AV2ENC_PIPE_PERC: the same source-driven per-sample weights the leaf
+  // objective applies.  Null on every historical call, so the CUDA reference
+  // contract and all pinned streams keep the SSE arithmetic.
+  options.distortion_weight = distortion_weight;
+  options.cdf_slice = cdf_slice;
+  options.lowpass_gain = lowpass_gain;
+  options.lowpass2_gain = lowpass2_gain;
   // §5.20.7.24 predicts per *transform block*, in decode order, and each part's
   // reconstruction feeds the next part's prediction.  A fixed block prediction
   // is only equivalent when the transform block covers the coding block, so the
@@ -2076,6 +2192,10 @@ class InterFrameEncoder {
     std::vector<post::VideoSubPuRect> sub_pus;
     // Stage-0 diagnosis records for this superblock.
     std::vector<LeafDumpRecord> leaf_dump;
+    // AV2ENC_EXACT_RD diagnosis: one measured (D, R) per emitted leaf, indexed
+    // like blocks.  Internal nodes keep an invalid record.  Only written when
+    // the gate is on, so gate-off streams never touch it.
+    std::vector<exact_rd::LeafCost> leaf_costs;
     // Prediction scratch that must be private to a scheduling worker
     // (docs/wavefront-plan.md §3, §5 D5: the sharpest naive-parallel bug in
     // the file).  Every use assigns or resizes before it reads, so owning it
@@ -2147,6 +2267,7 @@ class InterFrameEncoder {
       palettes.clear();
       sub_pus.clear();
       leaf_dump.clear();
+      leaf_costs.clear();
       state.clear();
     }
   };
@@ -2204,11 +2325,59 @@ class InterFrameEncoder {
     bool partition_probe_fits(int mi_row, int mi_col,
                             partition::BlockSize size) const;
 
+  // SSE price of one estimated syntax bit for the node at (mi_row, mi_col).
+  // The historical formula reads the frame base_q_idx; with a per-superblock
+  // delta-Q plan (--video-delta-q / --video-aq) the node must be priced with
+  // its own superblock quantizer, exactly like the probe's residual (which
+  // already quantises with the current superblock's plane_quant_).
+    double probe_syntax_price(int mi_row, int mi_col) const {
+      int qindex = static_cast<int>(options_.base_q_idx);
+#if defined(AV2ENC_VIDEO_DELTAQ)
+      qindex = base_q_index();
+      if (qp_tools_active() && !sb_qindex_.empty()) {
+        const int sb =
+            (mi_row / qp_sb_mi()) * qp_sb_cols() + mi_col / qp_sb_mi();
+        if (sb >= 0 && static_cast<std::size_t>(sb) < sb_qindex_.size()) {
+          qindex = sb_qindex_[static_cast<std::size_t>(sb)];
+        }
+      }
+#else
+      (void)mi_row;
+      (void)mi_col;
+#endif
+      const double step = rc::quant_step_from_qindex(qindex);
+      return partition_probe_scale_at(options_, qindex) * step * step;
+    }
+
   // Returns true and fills `cost` when the probe can model this leaf.  Nodes
   // that cannot be predicted (sub-8, right/bottom edges outside the coded
   // extent, ME failure) are left to the caller's historical estimate.
     bool partition_probe_leaf_cost(const partition::PartitionNodeInfo& info,
                                  double lambda, double& cost) const;
+
+  // ---------------------------------------------------------------------
+  // R19 interval-width rate model (AV2ENC_RATE_INTERVAL, default off).
+  //
+  // `plan_rate_bits` prices one plane of a decided TX plan with the §8.3
+  // coefficient symbol sequence through the §8.2.6 coder interval arithmetic.
+  // It replaces the historical `estimate_tx_bits` heuristic at the decision
+  // sites; gate off keeps the historical call verbatim so every pinned
+  // stream is byte-identical.
+  // ---------------------------------------------------------------------
+    void ensure_rate_interval_cdfs() const;
+    double plan_rate_bits(const TxPlan& plan, int plane, bool is_inter,
+                          int bsize) const;
+    // AV2ENC_EFF_PERC: live frame-start coefficient CDF rows in the shape the
+    // §8.3 model reads.  Used by the TX search when the gate selects the live
+    // CDF rate variant.
+    const still::qctx::CoeffCdfSlice* eff_cdf_slice() const {
+      ensure_rate_interval_cdfs();
+      if (!eff_cdf_slice_ready_) {
+        eff_cdf_slice_ = rate_interval::slice_of(rate_interval_cdfs_);
+        eff_cdf_slice_ready_ = true;
+      }
+      return &eff_cdf_slice_;
+    }
 
   // Enumerates every node the bounded probe may price: the superblock root plus
   // its partition children down to `max_depth`.  Costs are looked up by
@@ -2221,7 +2390,7 @@ class InterFrameEncoder {
       std::vector<PartitionProbeJob>& jobs) const;
 
     std::unordered_map<std::uint64_t, double> build_partition_probe_costs(
-      int max_depth, int floor_px, double lambda) const;
+      int max_depth, int floor_px) const;
 
   // --video-edge-mask: number of coded rows of a plane block that lie above
   // the visible picture bottom.  The tail rows are reconstructed by the
@@ -3036,6 +3205,13 @@ class InterFrameEncoder {
   std::span<const std::uint16_t> cdf_seed_;
   std::vector<std::uint16_t>* cdf_final_ = nullptr;
   const GmFramePlan* gm_plan_ = nullptr;
+  // R19 (AV2ENC_RATE_INTERVAL): per-frame scratch copy of the §8.2 CDF image
+  // the writer starts from, plus the freshly-walked rate estimate.  Built once
+  // per tile (call_once) so the wavefront workers share a read-only state.
+  mutable rate_interval::CdfStore rate_interval_cdfs_{};
+  mutable std::once_flag rate_interval_once_;
+  mutable still::qctx::CoeffCdfSlice eff_cdf_slice_{};
+  mutable bool eff_cdf_slice_ready_ = false;
   int quant_step_ = txv::kQuantStep;  // §7.14.2 qlookup(base_q_idx)
   // §7.14.2 per-plane DC/AC steps.  The default keeps all three planes at
   // qlookup(qindex); --video-uv-delta-q resolves U/V from the frame deltas.
@@ -3089,6 +3265,22 @@ class InterFrameEncoder {
   std::vector<post::VideoSubPuRect> sub_pus_;
   inter::mc::RefFrame ref_frame_;
   std::vector<inter::mc::MiInfo> mv_grid_;
+  // R09 (AV2ENC_RATE_HYBRID_S): exact inter-syntax CDF probe.  It owns a copy
+  // of the inter CDF rows seeded from `cdf_seed_` and the neighbour grids the
+  // writer derives its contexts from, advanced in coded order.  Empty and
+  // unused unless the gate (or the measure switch) is on.
+  rate_hybrid::SyntaxProbe rate_probe_;
+  bool rate_probe_ready_ = false;
+  // AV2ENC_PIPE_PERC: source-driven 8x8 luma weights for the current frame,
+  // and the exact-syntax probe advanced in coded order.  Both are inert
+  // unless the gate is on.
+  pipe_perc::FrameWeights pipe_weights_;
+  rate_hybrid::SyntaxProbe pipe_probe_;
+  bool pipe_probe_ready_ = false;
+  // AV2ENC_EFF_PERC: per-pixel multi-scale weights.  Inert when the gate is
+  // off; the probe above is shared with pipe-perc because both gates use the
+  // same exact-syntax front end.
+  eff_perc::FrameWeights eff_weights_;
   std::vector<std::uint8_t> intra_joint_;
   // §5.20.5.3/.4 IBC + §7.13.3.26 morph state (intra keyframe only).
   bool ibc_enabled_ = false;

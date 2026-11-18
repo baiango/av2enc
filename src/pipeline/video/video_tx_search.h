@@ -38,6 +38,8 @@
 #include <string>
 #include <vector>
 
+#include "codec/entropy/qctx/qctx_cdf_tables.h"
+
 namespace av2enc::video::txtsearch {
 
 // §5.20.6.3 legal_splits() returns at most 8 options; every coding block in the
@@ -95,6 +97,22 @@ struct Options {
   std::int32_t rdoq_qctx = 0;
   // SSE-domain lambda calibration; see video_frame.h kVideoRdoqSseScale.
   double rdoq_sse_scale = 0.1;
+  // AV2ENC_PIPE_PERC: per-coded-sample distortion weights in Q8 (256 neutral),
+  // raster order over the coding block.  When non-null the candidate cost is
+  // `weighted_sse + lambda * rate` and the returned SSE is the weighted sum, so
+  // TX size/type/partition is selected against the same local distortion the
+  // leaf decision uses.  Null keeps the historical SSE arithmetic.
+  const std::uint16_t* distortion_weight = nullptr;
+  // AV2ENC_EFF_PERC: coefficient CDF rows to price the §8.3 syntax against
+  // (a live frame-start image) instead of the static §9.3 slice selected by
+  // `tcq_qctx`.  Null keeps the historical model.
+  const av2enc::still::qctx::CoeffCdfSlice* cdf_slice = nullptr;
+  // AV2ENC_EFF_PERC: error-domain CSF gain.  The candidate SSE adds
+  // `gain * mean_3x3(error)^2` per sample, pricing low/mid-frequency error
+  // above the high-frequency tail.  0 keeps the plain (weighted) SSE.
+  double lowpass_gain = 0.0;
+  // Second, lower CSF band (7x7 box mean error squared).
+  double lowpass2_gain = 0.0;
 };
 
 // One winning transform block.
@@ -126,6 +144,28 @@ struct Result {
   // when `prediction` is non-null.
   std::vector<std::uint8_t> recon;
 };
+
+// Static §8.3.2 coefficient syntax cost for one transform block supplied in
+// §5.20.7.30 scan order.  This is the same static-CDF model the context-rate
+// TX search uses (`txb_skip`, EOB prefix/extra, coeff_base/coeff_base_eob,
+// coeff_br, the read_quant escape and the sign), exposed so a decision can
+// price an already-quantised plan (for example the intra candidate) without
+// re-running the search.  Returns false for a non-2D transform class or an
+// unsupported geometry; the caller then keeps its historical estimate.
+bool scan_coefficient_bits(std::int32_t tx_size, std::int32_t tx_type,
+                           std::int32_t plane,
+                           const std::int32_t* levels_scan,
+                           std::int32_t area, std::int32_t qctx,
+                           bool is_inter, double* out_bits);
+
+// Same model against explicit CDF rows (AV2ENC_EFF_PERC live-slice variant).
+bool scan_coefficient_bits(std::int32_t tx_size, std::int32_t tx_type,
+                           std::int32_t plane,
+                           const std::int32_t* levels_scan,
+                           std::int32_t area, std::int32_t qctx,
+                           bool is_inter,
+                           const av2enc::still::qctx::CoeffCdfSlice* slice,
+                           double* out_bits);
 
 // Runs the whole search for one luma coding block.
 //

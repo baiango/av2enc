@@ -120,7 +120,21 @@ struct VideoLoopFilterBlock {
   int h4 = 1;
   bool skip = false;
   // Luma eob == 0 (no coefficients).  §7.20.1 LrTxSkip = skip || eob == 0.
+  // With tx_count == 0 this covers the whole leaf.
   bool luma_eob_zero = false;
+  // §5.20.6 TX_MODE_SELECT luma transform leaves inside this coding leaf.
+  // LrTxSkip is per 4x4 cell, so a partitioned leaf needs one entry per
+  // transform: the decoder marks a cell from its own transform block's eob,
+  // not from the coding leaf's first transform.
+  struct LumaTx {
+    std::int16_t mi_row = 0;
+    std::int16_t mi_col = 0;
+    std::uint8_t w4 = 0;
+    std::uint8_t h4 = 0;
+    std::uint8_t eob_zero = 0;
+  };
+  std::uint8_t tx_count = 0;  // 0 = one transform covering the leaf
+  LumaTx tx[4];
 };
 
 // MI-aligned reconstruction plus the visible source picture (SSE metric only).

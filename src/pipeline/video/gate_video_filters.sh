@@ -197,6 +197,8 @@ run_case ccso-rd-l256 --video-ccso-rd --video-ccso-lambda 256
 #    CDEF -> CCSO -> LR chain.
 run_case wiener --video-wiener
 run_case chroma-lr --video-chroma-lr
+run_case pc-wiener --video-pc-wiener
+run_case pc-wiener-chroma-lr --video-pc-wiener --video-chroma-lr
 run_case wiener-chroma-lr --video-wiener --video-chroma-lr
 run_case lr-chain --video-cdef --video-ccso --video-wiener --video-chroma-lr
 

@@ -168,6 +168,21 @@ bool Writer::write_node(std::size_t index, std::size_t* next, std::string& error
   if (plan_.frame_sdp) {
     return write_node_sdp(index, next, error);
   }
+  // R19 diagnostic: every coded leaf runs through this wrapper so the report
+  // can compare the model's prediction with the symbols the writer charged.
+  const auto write_leaf = [&](const BlockSyntax& leaf) -> bool {
+    if (!rate_interval::detail::stats_enabled()) {
+      return write_block(leaf, error);
+    }
+    double before[kCostTagCount];
+    for (int tag = 0; tag < kCostTagCount; ++tag) {
+      before[tag] = cost_meter_.bits[tag];
+    }
+    const std::uint64_t prefix_before = enc_.prefix_bits;
+    if (!write_block(leaf, error)) return false;
+    record_rate_interval_leaf(leaf, before, prefix_before);
+    return true;
+  };
   const BlockSyntax& node = blocks_[index];
   const auto size = static_cast<BlockSize>(node.bsize);
   const auto partition = static_cast<PartitionType>(node.partition);
@@ -213,7 +228,7 @@ bool Writer::write_node(std::size_t index, std::size_t* next, std::string& error
                   " has a non-zero subtree";
           return false;
         }
-        if (!write_block(node, error)) return false;
+        if (!write_leaf(node)) return false;
         *next = index + 1;
         return true;
       }
@@ -226,7 +241,7 @@ bool Writer::write_node(std::size_t index, std::size_t* next, std::string& error
                 " has a non-zero subtree";
         return false;
       }
-      if (!write_block(node, error)) return false;
+      if (!write_leaf(node)) return false;
       *next = index + 1;
       return true;
     }
@@ -260,7 +275,7 @@ bool Writer::write_node(std::size_t index, std::size_t* next, std::string& error
               " has a non-zero subtree";
       return false;
     }
-    if (!write_block(node, error)) return false;
+    if (!write_leaf(node)) return false;
     *next = index + 1;
     return true;
   }
@@ -1107,6 +1122,97 @@ bool Writer::write_ccso_index(const BlockSyntax& node, std::string& error) {
   return true;
 }
 
+// R19 diagnostic (AV2ENC_RATE_INTERVAL_STATS=1).  Re-runs the interval model
+// on the leaf the writer just emitted and compares it with the information
+// cost the live CDF actually charged (`AV2ENC_SYMBOL_COST` meter).  Predicted
+// and actual cover the same symbol groups:
+//   * inter leaf: is_inter + skip + inter mode (mode), residual syntax;
+//   * intra leaf: residual only (the neighbour-derived y_mode inversion lives
+//     here in the writer and is not part of the model).
+// The exact (R05) column is the same symbol sequence through a real §8.2
+// encoder, reported for the error/cost trade-off.
+void Writer::record_rate_interval_leaf(const BlockSyntax& leaf,
+                                       const double* meter_before,
+                                       std::uint64_t prefix_before) {
+  using namespace rate_interval;
+  if ((leaf.flags & kFlagIsIbc) != 0 || leaf.palette_index != BlockSyntax::kNoPalette) {
+    return;
+  }
+  const auto delta = [&](int tag) {
+    return cost_meter_.bits[tag] - meter_before[tag];
+  };
+  LeafSample sample;
+  sample.bsize = leaf.bsize;
+  sample.is_inter = leaf.is_inter != 0 ? 1 : 0;
+  sample.inter_frame = plan_.inter_frame ? 1 : 0;
+  sample.skip = leaf.skip_flag != 0 ? 1 : 0;
+  sample.actual_mode =
+      delta(kCostIsInter) + delta(kCostSkip) + delta(kCostInterMode);
+  sample.actual_intra_mode = delta(kCostIntra);
+  sample.actual_residual = delta(kCostResidual);
+  (void)prefix_before;
+
+  LeafRateInput in;
+  LeafLevelStorage storage;
+  const bool adapt = config_.disable_cdf_update == 0;
+  if (!build_from_syntax(leaf, levels_, plan_.tx_mode_select, adapt,
+                         static_cast<int>(config_.base_q_idx), &in, &storage)) {
+    return;
+  }
+  // Historical heuristic on the same leaf: the error the model must reduce.
+  double legacy = 0.0;
+  for (int i = 0; i < in.part_count; ++i) {
+    const LeafPart& part = in.parts[i];
+    if (part.eob == 0) {
+      legacy += 1.0;
+      continue;
+    }
+    int nonzero = 0;
+    for (int c = 0; c < part.eob; ++c) {
+      if (part.levels[static_cast<std::size_t>(c)] != 0) ++nonzero;
+    }
+    legacy += 8.0 + (part.plane == 0 && in.is_inter ? 4.0 : 0.0) +
+              2.5 * static_cast<double>(nonzero) +
+              0.5 * static_cast<double>(part.eob);
+  }
+  sample.legacy_residual = legacy;
+
+  using clock = std::chrono::steady_clock;
+  const clock::time_point t0 = clock::now();
+  const LeafRate rate = estimate(in, rate_store(), Mode::kInterval, false);
+  const clock::time_point t1 = clock::now();
+  const LeafRate exact = estimate(in, rate_store(), Mode::kExact, false);
+  const clock::time_point t2 = clock::now();
+  sample.predicted_mode = rate.mode_bits;
+  sample.predicted_residual = rate.residual_bits;
+  sample.exact_mode = exact.mode_bits;
+  // In exact mode `residual_bits` is still the interval number (the shipped
+  // model); the trial encoder reports its unmaterialized prefix bits here.
+  sample.exact_residual = exact.exact_prefix_bits;
+  sample.exact_valid = !exact.failed;
+  sample.ns_interval =
+      std::chrono::duration<double, std::micro>(t1 - t0).count();
+  sample.ns_exact =
+      std::chrono::duration<double, std::micro>(t2 - t1).count();
+  static const bool trace = std::getenv("AV2ENC_RATE_INTERVAL_TRACE") != nullptr;
+  if (trace) {
+    std::fprintf(stderr,
+                 "ri_leaf mi=%d,%d bsize=%d inter=%d skip=%d parts=%d eob0=%d "
+                 "eob1=%d eob2=%d pred=%.1f/%.1f exact=%.1f/%.1f "
+                 "actual=%.1f/%.1f intra=%.1f\n",
+                 static_cast<int>(leaf.mi_row), static_cast<int>(leaf.mi_col),
+                 static_cast<int>(leaf.bsize), sample.is_inter, sample.skip,
+                 in.part_count, static_cast<int>(leaf.eob[0]),
+                 static_cast<int>(leaf.eob[1]), static_cast<int>(leaf.eob[2]),
+                 sample.predicted_mode, sample.predicted_residual,
+                 sample.exact_mode, sample.exact_residual, sample.actual_mode,
+                 sample.actual_residual, sample.actual_intra_mode);
+  }
+  record(sample);
+  stats().exact_runs.fetch_add(sample.exact_valid ? 1 : 0,
+                               std::memory_order_relaxed);
+}
+
 bool Writer::write_block(const BlockSyntax& node, std::string& error) {
 #if defined(AV2ENC_VIDEO_DELTAQ)
   // Mirrors src/codec/entropy/deltaq/video/video_deltaq.cpp::
@@ -1200,6 +1306,23 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
   cur_chroma_c_ =
       chroma_info ? (node.chroma_mi_col >> 1) : (c >> sub_x_);
 
+  // R09 report: per-leaf range-coder bit snapshots around the syntax groups
+  // the model prices.  `act_is_inter_skip` = is_inter + skip_flag,
+  // `act_mode_info` = read_ref_frames + mode/DRL/MVD, `act_residual` = the
+  // transform/coefficient syntax.  CDEF/CCSO/delta-Q bits sit between the
+  // groups and belong to neither.
+  const bool rate_report =
+      rate_tags_active_ && node.rate_diag.valid != 0 && plan_.inter_frame;
+  std::uint32_t rate_bit0 = 0;
+  std::uint32_t rate_bit2 = 0;
+  std::uint32_t rate_bit3 = 0;
+  std::uint32_t rate_bit4 = 0;
+  std::uint32_t rate_bit5 = 0;
+  if (rate_report) {
+    clear_rate_tags();
+    rate_bit0 = enc_.prefix_bits;
+  }
+
 #if defined(AV2ENC_VIDEO_DELTAQ)
   // §5.20.5.7/.8 / §5.20.7.2 / §5.20.5.11 ordering state for this leaf.
   // `first_leaf` is set at each superblock root: only that leaf calls
@@ -1250,7 +1373,9 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
       return false;
     }
 #endif
+    set_rate_tag(rate_hybrid::report::kTagIsInter);
     if (!code_is_inter(node.is_inter != 0)) {
+      set_rate_tag(-1);
       error = error_;
       return false;
     }
@@ -1262,10 +1387,14 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
       }
       if (!seg_skip)
 #endif
+      set_rate_tag(rate_hybrid::report::kTagSkip);
       if (!code_skip_flag(node.skip_flag != 0)) {
+        set_rate_tag(-1);
         error = error_;
         return false;
       }
+      set_rate_tag(-1);
+      if (rate_report) rate_bit2 = enc_.prefix_bits;
 #if defined(AV2ENC_VIDEO_DELTAQ)
       if (dqp && !seg_pre_skip &&
           !video::deltaq::write_inter_segment_id_post(
@@ -1283,6 +1412,7 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
         return false;
       }
 #endif
+      if (rate_report) rate_bit3 = enc_.prefix_bits;
 #if defined(AV2ENC_VIDEO_DELTAQ)
       // §5.20.7.6/.10: the forced GLOBALMV path codes ref_frames, mode,
       // BAWP, motion mode and DRL as inferred values (no bits).
@@ -1296,12 +1426,25 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
       } else
 #endif
       if (!write_inter_mode_info(node, error)) return false;
+      if (rate_report) {
+        rate_bit4 = enc_.prefix_bits;
+        rate_bit5 = enc_.prefix_bits;
+      }
       if (node.skip_flag) {
         reset_coeff_contexts(r, c, w4, h4);
-      } else if (!write_inter_residual(node, w, h, cw, ch, error)) {
-        return false;
+      } else {
+        if (rate_report) set_rate_tag(rate_hybrid::report::kTagResid);
+        if (!write_inter_residual(node, w, h, cw, ch, error)) {
+          set_rate_tag(-1);
+          return false;
+        }
+        if (rate_report) {
+          set_rate_tag(-1);
+          rate_bit5 = enc_.prefix_bits;
+        }
       }
     } else {
+      if (rate_report) rate_bit2 = enc_.prefix_bits;
 #if defined(AV2ENC_VIDEO_DELTAQ)
       if (dqp && !seg_pre_skip &&
           !video::deltaq::write_inter_segment_id_post(
@@ -1460,6 +1603,30 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
     ibcs::finish_ibc_block(
         ibc_buffer_, ibc_neighbours_, r, c, node.bsize, is_ibc_block,
         ibc::BlockVector{node.ibc_bv_row, node.ibc_bv_col});
+  }
+  if (rate_report && node.rate_diag.fallback == 0) {
+    rate_hybrid::report::Sample sample;
+    sample.is_inter = 1;
+    sample.inter_mode = node.inter_mode;
+    sample.bsize = node.bsize;
+    sample.skip = node.skip_flag;
+    sample.pred_syntax_old = node.rate_diag.syntax_old;
+    sample.pred_syntax_new = node.rate_diag.syntax_new;
+    sample.pred_coeff_old = node.rate_diag.coeff_old;
+    sample.pred_coeff_new = node.rate_diag.coeff_new;
+    for (int i = 0; i < 6; ++i) sample.pred_term[i] = node.rate_diag.term[i];
+    sample.pred_bawp = node.rate_diag.bawp;
+    sample.eob = node.rate_diag.eob;
+    sample.nonzero = node.rate_diag.nonzero;
+    sample.sum_abs = node.rate_diag.sum_abs;
+    sample.act_is_inter_skip =
+        static_cast<float>(rate_bit2 - rate_bit0);
+    sample.act_mode_info = static_cast<float>(rate_bit4 - rate_bit3);
+    sample.act_residual = static_cast<float>(rate_bit5 - rate_bit4);
+    for (int tag = 0; tag < rate_hybrid::report::kTagCount; ++tag) {
+      sample.exact[tag] = static_cast<float>(rate_tag_bits_[tag]);
+    }
+    rate_hybrid::report::add(sample);
   }
   return true;
 }

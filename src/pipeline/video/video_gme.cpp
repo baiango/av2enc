@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 #include <vector>
 
 #include "codec/inter/me/me.h"
@@ -16,6 +18,7 @@ using inter::gme::GmEstimate;
 using inter::gme::GmOptions;
 using inter::gme::GmParams;
 using inter::gme::GmType;
+using inter::gme::kGmOne;
 using inter::mc::RefFrame;
 
 // 16x16 luma blocks give a dense, deterministic correspondence set at 360p
@@ -41,7 +44,40 @@ bool make_me_ref(const RefFrame& reference, me::MeCoreRef& out) {
   return true;
 }
 
+// Collapses a warp model onto the §5.18.9 translation grid: keep the fitted
+// origin translation, make the linear part the identity.  This is the model
+// the decoder will treat as TRANSLATION, so both sides project the same
+// §7.12.2.2 centre MV.  A zero-translation model becomes plain IDENTITY so the
+// header does not signal global motion for nothing.
+GmParams translation_only_projection(const GmParams& params) {
+  if (params.p[0] == 0 && params.p[1] == 0) {
+    return inter::gme::make_identity_gm();
+  }
+  GmParams out;
+  // ROTZOOM codes the linear part implicitly (p4 = -p3, p5 = p2) and is the
+  // smallest syntax form that carries p0/p1 with an identity linear part.
+  out.type = GmType::kRotZoom;
+  out.p = {params.p[0], params.p[1], kGmOne, 0, 0, kGmOne};
+  return out;
+}
+
 }  // namespace
+
+bool gme_unproven_warp_enabled() {
+  static const bool enabled = [] {
+    const char* env = std::getenv("AV2ENC_GME_UNPROVEN_WARP");
+    if (env == nullptr || *env == '\0') return false;
+    char* end = nullptr;
+    const long parsed = std::strtol(env, &end, 10);
+    return end != env && parsed != 0;
+  }();
+  return enabled;
+}
+
+bool gm_params_have_warp_linear(const GmParams& params) {
+  return params.p[2] != kGmOne || params.p[3] != 0 || params.p[4] != 0 ||
+         params.p[5] != kGmOne;
+}
 
 GmOptions make_gm_options(const VideoInputFrame& source,
                           const VideoOptions& options) {
@@ -160,6 +196,7 @@ GmFramePlan make_gm_frame_plan(std::span<const GmEstimate> estimates,
   GmFramePlan plan;
   plan.num_refs = static_cast<int>(
       std::min<std::size_t>(estimates.size(), static_cast<std::size_t>(kGmMaxRefs)));
+  const bool allow_unproven_warp = gme_unproven_warp_enabled();
   for (int r = 0; r < plan.num_refs; ++r) {
     const std::size_t i = static_cast<std::size_t>(r);
     plan.params[i] = estimates[i].params;
@@ -167,6 +204,20 @@ GmFramePlan make_gm_frame_plan(std::span<const GmEstimate> estimates,
         i < frame_distance.size() && frame_distance[i] == 0;
     if (zero_distance || !estimates[i].diag.accepted) {
       plan.params[i] = inter::gme::make_identity_gm();
+    } else if (!allow_unproven_warp &&
+               gm_params_have_warp_linear(plan.params[i])) {
+      // Fail-safe default: the §7.13.3.19-.24 warp geometry is not
+      // decoder-exact, so never signal a model with a non-identity linear
+      // part.  The translation-only projection keeps the fitted origin
+      // translation and takes the conformant §7.12.2.2 centre-MV path.
+      //
+      // Do not also clear the per-block warp flag for this model: the pinned
+      // decoder's GLOBALMV rounding for an identity-linear model matches the
+      // §7.13.3.19 kernel (the pan fixture decodes exactly that way), while
+      // routing it to predict_luma()'s EIGHTTAP path reconstructs differently.
+      // Warp geometry is gone because the linear part is the identity, not
+      // because the predictor is switched off.
+      plan.params[i] = translation_only_projection(plan.params[i]);
     }
     if (i < ref_order_hint.size()) plan.ref_order_hint[i] = ref_order_hint[i];
     if (i < ref_frame_idx.size()) plan.ref_frame_idx[i] = ref_frame_idx[i];

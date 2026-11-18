@@ -124,6 +124,20 @@ struct Options {
   // 2x2 MI decimation for the frame-level strength choice (CdefStrengths == 1
   // only): evaluate every `search_step`-th 8x8 block row/column.
   int search_step = 1;
+  // Opt-in perceptual ranking (`AV2ENC_PERCEPTUAL_FILTER`).  Routes the
+  // strength search through cdef::cdef_search_plan() with a local-structure
+  // (SSIM-style) metric instead of the SSE-only still_cdef_plan() wrapper.
+  // Off keeps the historical decisions and the exact per-frame SSE ranking.
+  bool perceptual = false;
+  // Conservative form: first take the historical SSE frame-level strength
+  // (CdefStrengths == 1), then use the perceptual metric only to veto that set
+  // on individual 64x64 blocks.  Costs at most two strength sets plus the index
+  // grid; identity is always selectable.
+  bool perceptual_veto = false;
+  // Extra weight on windows whose source has structure (0 = plain SSIM).
+  int perceptual_edge_weight = 0;
+  // One-sided penalty on lost local variance (0 = SSIM only).
+  int perceptual_detail_weight = 0;
 };
 
 // Result of the per-frame decision.
@@ -139,6 +153,9 @@ struct Plan {
   std::vector<std::int8_t> cdef_idx;
   std::int64_t sse_before = 0;  // unfiltered
   std::int64_t sse_after = 0;   // chosen plan
+  // Ranking totals (equal to the SSE totals unless the perceptual mode ran).
+  std::int64_t cost_before = 0;
+  std::int64_t cost_after = 0;
   int blocks_off = 0;
   bool forced_single_strength = false;
   bool header_only_emittable = false;

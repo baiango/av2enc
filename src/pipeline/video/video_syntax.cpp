@@ -58,6 +58,9 @@ bool Writer::run(std::size_t* tile_bytes, std::string& error) {
     pc_ready_ = pcw::InitTileState(&pc_state_, pc_params, mi_cols_, mi_rows_,
                                    /*sub_x=*/1, /*sub_y=*/1, &error);
     if (!pc_ready_) return false;
+    // §8.2.2: the tile LR CDFs come from the frame image, which §7.4.4/
+    // §7.5 carries across frames under --cdf-continuity.
+    pcw::TileStateSeedCdfs(&pc_state_, cdfs_.lr_cdfs);
     pc_state_.unit_type[0] = filters_->lr.plane[0].unit_type;
     const bool chroma_lr = filters_->lr.plane[1].enabled ||
                            filters_->lr.plane[2].enabled;
@@ -80,6 +83,7 @@ bool Writer::run(std::size_t* tile_bytes, std::string& error) {
                                          &error)) {
         return false;
       }
+      filters_stream::lr_state_seed_cdfs(&lr_state_, cdfs_.lr_cdfs);
       for (int plane = 1; plane < 3; ++plane) {
         const post::VideoLrPlane& src = filters_->lr.plane[plane];
         if (!src.enabled) continue;
@@ -114,6 +118,7 @@ bool Writer::run(std::size_t* tile_bytes, std::string& error) {
                                        &error)) {
       return false;
     }
+    filters_stream::lr_state_seed_cdfs(&lr_state_, cdfs_.lr_cdfs);
     // Seed the per-unit decision grids from the encoder plan: read_lr() must
     // signal the same LrType/coefficients that were applied to the pixels.
     for (int plane = 0; plane < 3; ++plane) {
@@ -299,6 +304,16 @@ bool Writer::run(std::size_t* tile_bytes, std::string& error) {
   if (ccso_active) {
     std::memcpy(cdfs_.ccso_index, ccso_state_.cdf,
                 sizeof(cdfs_.ccso_index));
+  }
+  // §7.5/§8.2.4: the LR CDFs adapted by this tile belong to the tile image.
+  if (lr_active && filters_->lr.pc_wiener) {
+    ::av2enc::filters::pc_wiener_stream::TileStateStoreCdfs(
+        pc_state_, &cdfs_.lr_cdfs);
+    if (lr_chroma_ready_) {
+      filters_stream::lr_state_store_cdfs(lr_state_, &cdfs_.lr_cdfs);
+    }
+  } else if (lr_active) {
+    filters_stream::lr_state_store_cdfs(lr_state_, &cdfs_.lr_cdfs);
   }
   if (cdf_final_ != nullptr) {
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
@@ -539,4 +554,64 @@ void build_scan(int w, int h, std::span<std::uint16_t> scan) {
   }
 }
 
+void export_inter_rate_cdfs(int base_q_idx,
+                            std::span<const std::uint16_t> cdf_image,
+                            InterRateCdfRows* out) {
+  if (out == nullptr) return;
+  detail::CdfState state;
+  detail::init_cdfs(state,
+                    ::av2enc::still::qctx::slice_for_base_q_idx(base_q_idx),
+                    /*reduced_tx_part_set=*/false);
+  if (!cdf_image.empty()) {
+    detail::import_cdf_image(state, cdf_image.data());
+  }
+  std::memcpy(out->is_inter, state.is_inter, sizeof(out->is_inter));
+  std::memcpy(out->skip, state.skip, sizeof(out->skip));
+  std::memcpy(out->comp_mode, state.comp_mode, sizeof(out->comp_mode));
+  std::memcpy(out->single_ref, state.single_ref, sizeof(out->single_ref));
+  std::memcpy(out->single_mode, state.single_mode, sizeof(out->single_mode));
+  std::memcpy(out->drl_mode, state.drl_mode, sizeof(out->drl_mode));
+  std::memcpy(out->use_bawp, state.use_bawp, sizeof(out->use_bawp));
+  std::memcpy(out->explicit_bawp, state.explicit_bawp,
+              sizeof(out->explicit_bawp));
+  std::memcpy(out->use_bawp_chroma, state.use_bawp_chroma,
+              sizeof(out->use_bawp_chroma));
+  std::memcpy(out->shell_set, state.shell_set, sizeof(out->shell_set));
+  std::memcpy(out->shell6_class0, state.shell6_class0,
+              sizeof(out->shell6_class0));
+  std::memcpy(out->shell6_class1, state.shell6_class1,
+              sizeof(out->shell6_class1));
+  std::memcpy(out->shell_last_two, state.shell_last_two,
+              sizeof(out->shell_last_two));
+  std::memcpy(out->offset_low, state.offset_low, sizeof(out->offset_low));
+  std::memcpy(out->offset_class2, state.offset_class2,
+              sizeof(out->offset_class2));
+  std::memcpy(out->offset_other, state.offset_other,
+              sizeof(out->offset_other));
+  std::memcpy(out->col_mv_greater, state.col_mv_greater,
+              sizeof(out->col_mv_greater));
+  std::memcpy(out->col_mv_index, state.col_mv_index,
+              sizeof(out->col_mv_index));
+}
+
 }  // namespace av2enc::video::syntax
+
+namespace av2enc::video::rate_interval {
+
+// R19: the §8.2 image → scratch store bridge.  `image` is the packed word
+// array the tile writer imports (frame-start live state); empty selects the
+// §9.3 defaults for `base_q_idx`.
+bool load_store_from_image(std::span<const std::uint16_t> image,
+                           int base_q_idx, CdfStore& out) {
+  if (image.empty()) {
+    load_defaults(out, base_q_idx);
+    return true;
+  }
+  if (image.size() != syntax::cdf_image_words_impl()) return false;
+  syntax::detail::CdfState state{};
+  syntax::detail::import_cdf_image(state, image.data());
+  load_from_state(out, state);
+  return true;
+}
+
+}  // namespace av2enc::video::rate_interval

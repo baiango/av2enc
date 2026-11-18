@@ -1226,6 +1226,61 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-edge-inter-off") {
+      options.video_edge_inter_off = true;
+      continue;
+    }
+
+    if (argument == "--video-edge-mask-off") {
+      options.video_edge_mask_off = true;
+      continue;
+    }
+
+    if (argument == "--video-bawp-off") {
+      options.video_bawp_off = true;
+      continue;
+    }
+
+    if (argument == "--video-drift-refresh-off") {
+      options.video_drift_refresh_off = true;
+      continue;
+    }
+
+    if (argument == "--video-cdf-chain-off") {
+      options.video_cdf_chain_off = true;
+      continue;
+    }
+
+    if (argument == "--video-key-qp-offset-off") {
+      options.video_key_qp_offset_off = true;
+      continue;
+    }
+
+    if (argument == "--video-deblock-off") {
+      options.video_deblock_off = true;
+      continue;
+    }
+
+    if (argument == "--video-loop-filters-off") {
+      options.video_loop_filters_off = true;
+      continue;
+    }
+
+    if (argument == "--video-tx-search-off") {
+      options.video_tx_search_off = true;
+      continue;
+    }
+
+    if (argument == "--video-rdoq-off") {
+      options.video_rdoq_off = true;
+      continue;
+    }
+
+    if (argument == "--video-partition-rd-off") {
+      options.video_partition_rd_off = true;
+      continue;
+    }
+
     if (argument == "--video-tile-group-off") {
       options.video_tile_group_off = true;
       continue;
@@ -1306,6 +1361,40 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
           !parse_int(argv[++i], options.video_delta_q_res) ||
           options.video_delta_q_res < 0 || options.video_delta_q_res > 3) {
         error = "--video-delta-q-res must be an integer in [0, 3]";
+        return ParseStatus::kError;
+      }
+      continue;
+    }
+
+    if (argument == "--video-aq") {
+      options.video_aq = true;
+      continue;
+    }
+
+    if (argument == "--video-aq-strength") {
+      if (i + 1 >= argc || !parse_double(argv[++i], options.video_aq_strength) ||
+          !(options.video_aq_strength >= 0.0) ||
+          options.video_aq_strength > 16.0) {
+        error = "--video-aq-strength must be a number in [0, 16]";
+        return ParseStatus::kError;
+      }
+      continue;
+    }
+
+    if (argument == "--video-aq-bias") {
+      options.video_aq_bias_given = true;
+      if (i + 1 >= argc || !parse_int(argv[++i], options.video_aq_bias) ||
+          options.video_aq_bias < -8 || options.video_aq_bias > 8) {
+        error = "--video-aq-bias must be an integer in [-8, 8]";
+        return ParseStatus::kError;
+      }
+      continue;
+    }
+
+    if (argument == "--video-aq-clamp") {
+      if (i + 1 >= argc || !parse_int(argv[++i], options.video_aq_clamp) ||
+          options.video_aq_clamp < 1 || options.video_aq_clamp > 8) {
+        error = "--video-aq-clamp must be an integer in [1, 8]";
         return ParseStatus::kError;
       }
       continue;

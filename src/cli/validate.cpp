@@ -304,21 +304,25 @@ ParseStatus validate_options(Options& options, std::string& error) {
       error = "--video-drift-refresh is wired for 8-bit 4:2:0";
       return ParseStatus::kError;
     }
-    // A run-time base_q_idx change would desynchronise the §9.3 image from
-    // the static per-frame plan, so the CDF chain is only allowed while the
-    // refresh keeps every frame's QP (--video-drift-refresh-qp 0).  The forced
-    // residual is decision-level and does not touch the CDF seeding.
+    // A run-time base_q_idx change requires the §9.3 seed to follow the coded
+    // QP.  --cdf-continuity carries the image and only a reset frame
+    // (§5.18.2) derives defaults from its own base_q_idx; the per-frame-QP
+    // reset form re-seeds every frame.  Both are exact with that seed, so the
+    // chain composes; only the mixed form (carry without continuity, no
+    // per-frame reset) keeps the static plan's slice and is rejected.
     if ((options.avg_cdf || options.adaptive_cdf || options.cdf_continuity) &&
-        options.video_drift_refresh_qp != 0) {
-      error = "--video-drift-refresh composes with the CDF chain only at "
-              "--video-drift-refresh-qp 0: a run-time base_q_idx change would "
-              "desynchronise the per-frame §9.3 CDF image";
+        options.video_drift_refresh_qp != 0 && !options.cdf_continuity &&
+        !options.video_cdf_per_frame_qp) {
+      error = "--video-drift-refresh composes with the CDF chain only with "
+              "--cdf-continuity or --video-cdf-per-frame-qp: a run-time "
+              "base_q_idx change needs the §9.3 CDF image re-seeded from the "
+              "coded QP";
       return ParseStatus::kError;
     }
     // --cdf-continuity composes with --video-drift-refresh: the carried image
     // follows the symbols actually coded, so a refresh frame's extra residual
-    // needs no §9.3 re-derivation.  The per-frame-QP reset form above is the
-    // one that depends on base_q_idx.
+    // needs no §9.3 re-derivation.  The per-frame-QP reset form re-seeds from
+    // the coded QP; see seed_frame_cdfs().
   }
   // --video-drift-refresh block end.
 
@@ -1047,10 +1051,44 @@ ParseStatus validate_options(Options& options, std::string& error) {
         options.video_segmentation || options.video_delta_q ||
         options.video_per_segment_q || options.video_uv_delta_q ||
         options.video_seg_skip || options.video_seg_globalmv ||
-        options.video_seg_temporal || options.video_segments != 0;
-    if (flag_given(options, "--video-delta-q-res") && !options.video_delta_q) {
-      error = "--video-delta-q-res requires --video-delta-q";
+        options.video_seg_temporal || options.video_segments != 0 ||
+        options.video_aq;
+    if (flag_given(options, "--video-delta-q-res") && !options.video_delta_q &&
+        !options.video_aq) {
+      error = "--video-delta-q-res requires --video-delta-q or --video-aq";
       return ParseStatus::kError;
+    }
+    if ((flag_given(options, "--video-aq-strength") ||
+         flag_given(options, "--video-aq-clamp") ||
+         flag_given(options, "--video-aq-bias")) &&
+        !options.video_aq) {
+      error = "--video-aq-strength/--video-aq-clamp/--video-aq-bias require "
+              "--video-aq";
+      return ParseStatus::kError;
+    }
+    if (options.video_aq && options.video_delta_q) {
+      error = "--video-aq replaces the --video-delta-q staircase with an "
+              "activity-driven plan; pass only one of them";
+      return ParseStatus::kError;
+    }
+    if (options.video_aq &&
+        (options.video_segmentation || options.video_per_segment_q ||
+         options.video_seg_skip || options.video_seg_globalmv ||
+         options.video_seg_temporal || options.video_segments != 0)) {
+      error = "--video-aq does not compose with the segmentation surfaces: "
+              "both plumb a per-superblock quantizer plan";
+      return ParseStatus::kError;
+    }
+    if (options.video_aq && options.video_uv_delta_q) {
+      error = "--video-aq does not compose with --video-uv-delta-q";
+      return ParseStatus::kError;
+    }
+    if (options.video_aq && !flag_given(options, "--video-delta-q-res")) {
+      // §5.18.7.8 delta_q_res 1 (one coded step = 2 qindex) is the measured
+      // operating point for the activity plan; res 0 makes every extra
+      // qindex a full symbol, and res 2/3 make one step too coarse to reach
+      // an iso-rate point without a large rate overshoot.
+      options.video_delta_q_res = 1;
     }
     if (options.video_uv_delta_q &&
         (options.bit_depth != 8 || options.chroma != "420")) {
@@ -1140,9 +1178,12 @@ ParseStatus validate_options(Options& options, std::string& error) {
       return ParseStatus::kError;
     }
     if (video_qp_tools &&
-        (options.avg_cdf || options.adaptive_cdf || options.cdf_continuity)) {
-      error = "segmentation/delta-Q does not compose with the CDF chain: the "
-              "per-tile delta/segment CDFs are not part of the §8.2.4 image";
+        (options.avg_cdf || options.adaptive_cdf || options.cdf_continuity) &&
+        !options.video_cdf_per_frame_qp) {
+      error = "segmentation/delta-Q composes with the CDF chain only under "
+              "--video-cdf-per-frame-qp: the per-tile delta/segment CDFs are "
+              "not part of the §8.2.4 image, so the image is re-derived from "
+              "the §9.3 defaults per frame rather than carried";
       return ParseStatus::kError;
     }
     if (video_qp_tools &&
@@ -1410,7 +1451,8 @@ ParseStatus validate_options(Options& options, std::string& error) {
         return ParseStatus::kError;
       }
       if (options.video_segmentation || options.video_delta_q ||
-          options.video_per_segment_q || options.video_uv_delta_q) {
+          options.video_per_segment_q || options.video_uv_delta_q ||
+          options.video_aq) {
         error = "--video-sdp does not compose with segmentation/delta-Q";
         return ParseStatus::kError;
       }
@@ -1543,7 +1585,8 @@ ParseStatus validate_options(Options& options, std::string& error) {
         return ParseStatus::kError;
       }
       if (options.video_segmentation || options.video_delta_q ||
-          options.video_per_segment_q || options.video_uv_delta_q) {
+          options.video_per_segment_q || options.video_uv_delta_q ||
+          options.video_aq) {
         error = std::string(tool) + " does not compose with segmentation/"
                 "delta-Q: the per-block quantiser differs from the frame "
                 "base_q_idx the TCQ/CCTX decision uses";
@@ -1633,10 +1676,16 @@ ParseStatus validate_options(Options& options, std::string& error) {
                 "trellis distorts against";
         return ParseStatus::kError;
       }
-      if (options.video_segmentation || options.video_delta_q ||
-          options.video_per_segment_q || options.video_uv_delta_q) {
-        error = "--video-rdoq does not compose with segmentation/delta-Q: the "
-                "trellis uses the frame base_q_idx CDF slice";
+      // The trellis quantises against the per-block scalar step (params.
+      // quant_factor carries the §7.14.2 qindex) and prices coefficients in
+      // the raw base_q_idx §8.3.1 CDF slice, so a per-superblock delta-Q
+      // qindex is consistent.  Segmentation changes the quantizer through
+      // ALT_Q, which the trellis model does not replay.
+      if (options.video_segmentation || options.video_per_segment_q ||
+          options.video_uv_delta_q) {
+        error = "--video-rdoq does not compose with segmentation/"
+                "--video-uv-delta-q: the trellis does not replay the "
+                "§7.14.2 ALT_Q or per-plane step";
         return ParseStatus::kError;
       }
       if (options.video_lossless || options.qp == 0) {
@@ -1915,9 +1964,11 @@ ParseStatus validate_options(Options& options, std::string& error) {
       if (options.video_segmentation || options.video_delta_q ||
           options.video_per_segment_q || options.video_uv_delta_q ||
           options.video_seg_skip || options.video_seg_globalmv ||
-          options.video_seg_temporal || options.video_segments != 0) {
+          options.video_seg_temporal || options.video_segments != 0 ||
+          options.video_aq) {
         return reject_gpu("--video-segmentation/--video-delta-q/"
-                          "--video-per-segment-q/--video-uv-delta-q "
+                          "--video-aq/--video-per-segment-q/"
+                          "--video-uv-delta-q "
                           "(CPU reference only)");
       }
       if (options.svc_given) return reject_gpu("--svc-layers");
@@ -1964,6 +2015,10 @@ ParseStatus validate_options(Options& options, std::string& error) {
         flag_given(options, "--video-segmentation") ||
         flag_given(options, "--video-delta-q") ||
         flag_given(options, "--video-delta-q-res") ||
+        flag_given(options, "--video-aq") ||
+        flag_given(options, "--video-aq-strength") ||
+        flag_given(options, "--video-aq-clamp") ||
+        flag_given(options, "--video-aq-bias") ||
         flag_given(options, "--video-per-segment-q") ||
         flag_given(options, "--video-seg-delta") ||
         flag_given(options, "--video-uv-delta-q") ||

@@ -45,6 +45,12 @@ struct VideoCdefPlan {
   // `header_bits` includes the `cdef_frame_enable` bit the M2 header writes.
   std::int64_t sse_before = 0;
   std::int64_t sse_after = 0;
+  // Ranking totals of the same plans.  Equal to the SSE totals on the default
+  // SSE search; the opt-in perceptual search ranks by local structure.
+  std::int64_t cost_before = 0;
+  std::int64_t cost_after = 0;
+  // True when the opt-in perceptual ranking produced this plan.
+  bool perceptual = false;
   int header_bits = 0;
   int index_bits = 0;
   int blocks_off = 0;

@@ -41,6 +41,7 @@
 
 #include "core/bitstream/bitwriter.h"
 #include "codec/entropy/av2/av2_entropy.h"
+#include "codec/filters/loop_restoration/lr_cdf_image.h"
 
 namespace av2enc::filters::pc_wiener_stream {
 
@@ -249,6 +250,13 @@ struct TileState {
 
 bool InitTileState(TileState* state, const LrParams& params, int mi_cols,
                    int mi_rows, int sub_x, int sub_y, std::string* error);
+
+// §8.2.2: seed the tile LR CDFs from the §8.2 frame image and store the
+// adapted values back after the tile.  Same contract as
+// filters_stream::lr_state_seed_cdfs(); the PC-Wiener tile state owns the
+// extra §5.20.10.5 use_pc_wiener row.
+void TileStateSeedCdfs(TileState* state, const lr_cdf::Image& image);
+void TileStateStoreCdfs(const TileState& state, lr_cdf::Image* image);
 
 bool WriteUnit(av2::Encoder& encoder, TileState& state, int plane,
                int unit_row, int unit_col, const UnitDecision& decision,

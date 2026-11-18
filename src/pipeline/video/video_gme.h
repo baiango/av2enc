@@ -43,11 +43,31 @@ inter::gme::GmOptions make_gm_options(const VideoInputFrame& source,
 // zero distance are forced to IDENTITY because §5.18.9.1 codes no model for
 // them.  `use_global_motion` is set when at least one accepted model is
 // non-identity.
+//
+// Fail-safe warp policy: a model whose linear part is not the identity (zoom,
+// rotation, shear or a general affine) is flattened to its translation-only
+// projection (p[0]/p[1] with an identity linear part) before it is placed in
+// the plan.  The §7.13.3.19-.24 predictor's warp geometry is not decoder-exact
+// (see docs/gme-720p.md), so the default stream never signals a model with a
+// non-identity linear part; GLOBALMV then takes the §7.12.2.2 projected centre
+// MV, which both sides derive identically.  AV2ENC_GME_UNPROVEN_WARP=1 restores
+// the historical behaviour and must be treated as conformance-unproven.
 GmFramePlan make_gm_frame_plan(
     std::span<const inter::gme::GmEstimate> estimates,
     std::span<const int> ref_order_hint,
     std::span<const std::uint8_t> ref_frame_idx,
     std::span<const int> frame_distance);
+
+// AV2ENC_GME_UNPROVEN_WARP=1 (parsed once per process) opts back into emitting
+// the fitted warp model and the §7.13.3.19/.20 predictor.  Default false.
+bool gme_unproven_warp_enabled();
+
+// True when the model has a non-identity linear part (rotation, zoom, shear or
+// a general affine).  This is the condition that applies warp geometry in the
+// §7.13.3.19-.24 predictor; the §7.13.3.21 shear check is deliberately not part
+// of this predicate: an invalid-shear affine still runs the extended warp, so
+// it is not safe to treat as translational.
+bool gm_params_have_warp_linear(const inter::gme::GmParams& params);
 
 // CPU reference: collect + fit + plan for one frame.
 bool estimate_gm_plan_cpu(

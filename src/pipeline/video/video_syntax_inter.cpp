@@ -664,6 +664,7 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
     error = "use_optflow set outside the §5.20.7.6 gate";
     return false;
   }
+  set_rate_tag(rate_hybrid::report::kTagCompMode);
   if (!sym(&cdfs_.comp_mode[comp_mode_context()][0], 2, 1)) {
     error = error_;
     return false;
@@ -671,10 +672,12 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
   // §5.20.7.11 read_compound_ref(): NumTotalRefs == 2 with
   // num_same_ref_compound == 0 implies (0, 1) with no bits; enabling the
   // same-reference carrier codes one comp_ref symbol.
+  set_rate_tag(rate_hybrid::report::kTagSingleRef);
   if (!code_compound_ref(node)) {
     error = "write compound_ref failed";
     return false;
   }
+  set_rate_tag(-1);
   merge::NewMvContextParams nparams;
   nparams.mi_row = node.mi_row;
   nparams.mi_col = node.mi_col;
@@ -1124,15 +1127,19 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
     // §5.20.7.10 read_ref_frames(): when reference_select is on and the
     // block may be compound, comp_mode is coded first (0 = single ref).
     if (plan_.reference_select && cur_w4_ * 4 >= 8 && cur_h4_ * 4 >= 8) {
+      set_rate_tag(rate_hybrid::report::kTagCompMode);
       if (!sym(&cdfs_.comp_mode[comp_mode_context()][0], 2, 0)) {
         error = error_;
         return false;
       }
+      set_rate_tag(-1);
     }
+    set_rate_tag(rate_hybrid::report::kTagSingleRef);
     if (!code_single_ref(node.ref_index)) {
       error = "write single_ref failed";
       return false;
     }
+    set_rate_tag(-1);
   }
 
   int ctx = 0;
@@ -1162,10 +1169,12 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
       node.inter_mode == kInterGlobalMv
           ? 1
           : (node.inter_mode == kInterNearMv ? 0 : 2);
+  set_rate_tag(rate_hybrid::report::kTagSingleMode);
   if (!code_single_mode(ctx, single_mode)) {
     error = error_;
     return false;
   }
+  set_rate_tag(-1);
   // §5.20.7.6 use_amvd.  Present only for a NEWMV YMode (allow_amvd_mode()
   // covers NEWMV / NEW_NEWMV / NEAR_NEWMV / NEW_NEARMV / JOINT_NEWMV); this
   // writer produces single-reference NEWMV only.  The spec places it
@@ -1194,10 +1203,12 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
       plan_.allow_bawp && cur_w4_ * 4 >= 8 && cur_h4_ * 4 >= 8 &&
       node.inter_mode != kInterGlobalMv;
   if (bawp_available) {
+    set_rate_tag(rate_hybrid::report::kTagBawp);
     if (!code_bawp(node)) {
       error = error_;
       return false;
     }
+    set_rate_tag(-1);
   } else if (node.use_bawp || node.explicit_bawp ||
              node.use_bawp_chroma) {
     error = "BAWP symbols set outside the §5.20.7.6 gate";
@@ -1239,12 +1250,15 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
     // §5.20.7.6: read_drl_idx() is present for both NEARMV and NEWMV.
     // M2 NEWMV always uses DRL index 0 (the predictor resolve_mode used).
     const int drl = node.inter_mode == kInterNewMv ? 0 : node.drl_index;
+    set_rate_tag(rate_hybrid::report::kTagDrl);
     if (!code_drl_index(ctx, drl)) {
       error = "write drl_idx failed";
       return false;
     }
+    set_rate_tag(-1);
   }
   if (node.inter_mode == kInterNewMv) {
+    set_rate_tag(rate_hybrid::report::kTagMvd);
     inter::mvprec::MvResConfig res_config;
     res_config.enable_adaptive_mvd = plan_.enable_adaptive_mvd;
     res_config.enable_mvd_sign_derive = plan_.enable_mvd_sign_derive;
@@ -1322,6 +1336,7 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
         return false;
       }
     }
+    set_rate_tag(-1);
   }
   return true;
 }

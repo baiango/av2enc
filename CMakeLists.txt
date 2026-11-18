@@ -371,6 +371,9 @@ add_library(av2enc_core STATIC
   src/pipeline/video/video_syntax_block.cpp
   src/pipeline/video/video_syntax_inter.cpp
   src/pipeline/video/video_syntax_coeff.cpp
+  # R09 rate-model branch: exact inter syntax probe + Laplacian coefficients
+  # (AV2ENC_RATE_HYBRID_S).  Diagnostics live in video_rate_hybrid.cpp.
+  src/pipeline/video/video_rate_hybrid.cpp
   src/pipeline/video/video_chroma_search.cpp
   # Frame core split by role.  video_frame_internal.h carries the
   # InterFrameEncoder declaration and the shared helpers.

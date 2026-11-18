@@ -1,6 +1,88 @@
 #include "pipeline/video/video_frame_internal.h"
 
+#include "codec/transform/tx_partition/tx_scan.h"
+#include "pipeline/video/video_perceptual.h"
+#include "pipeline/video/video_pipe_perc.h"
+
 namespace av2enc::video {
+
+namespace {
+
+// AV2ENC_PIPE_PERC coefficient price for one already-quantised plan.  The
+// inter luma TX search already filled `rate_bits` from the same static §8.3.2
+// context model, so that value is reused (it also carries the partition and
+// TX-type symbols the search priced).  Every other plan (intra luma, chroma)
+// is priced here from its scan-order levels; a model failure falls back to the
+// historical 8 + 2.5*nz + 0.5*eob estimate for consistency.
+double pipe_plan_coefficient_bits(
+    const TxPlan& plan, int plane, bool is_inter, int qctx,
+    const still::qctx::CoeffCdfSlice* cdf_slice = nullptr) {
+  if (plan.searched && is_inter && plane == 0 && cdf_slice == nullptr) {
+    return plan.rate_bits;
+  }
+  const auto part_bits = [&](int tx_size, int tx_type,
+                             const std::int32_t* levels_scan, int area,
+                             int eob) {
+    if (eob == 0) {
+      std::vector<std::int32_t> zeros(static_cast<std::size_t>(area), 0);
+      double bits = 0.0;
+      if (area > 0 &&
+          txtsearch::scan_coefficient_bits(tx_size, tx_type, plane,
+                                           zeros.data(), area, qctx, is_inter,
+                                           cdf_slice, &bits)) {
+        return bits;
+      }
+      return 1.0;
+    }
+    double bits = 0.0;
+    if (area > 0 &&
+        txtsearch::scan_coefficient_bits(tx_size, tx_type, plane, levels_scan,
+                                         area, qctx, is_inter, cdf_slice,
+                                         &bits)) {
+      return bits;
+    }
+    int nonzero = 0;
+    for (int c = 0; c < eob; ++c) {
+      if (levels_scan[c] != 0) ++nonzero;
+    }
+    return 8.0 + 2.5 * static_cast<double>(nonzero) +
+           0.5 * static_cast<double>(eob);
+  };
+  if (!plan.searched) {
+    const int area = plan.adj_w * plan.adj_h;
+    if (area <= 0) return plan.eob == 0 ? 1.0 : 0.0;
+    std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));
+    if (!::av2enc::video::txpartition::get_scan(
+            plan.tx_size, ::av2enc::video::txpartition::TxScanClass::k2D,
+            scan)) {
+      return plan.eob == 0 ? 1.0 : 0.0;
+    }
+    std::vector<std::int32_t> scan_levels(static_cast<std::size_t>(area), 0);
+    for (int c = 0; c < area; ++c) {
+      const std::size_t pos =
+          static_cast<std::size_t>(c) < plan.levels.size()
+              ? static_cast<std::size_t>(scan[static_cast<std::size_t>(c)])
+              : 0U;
+      scan_levels[static_cast<std::size_t>(c)] =
+          pos < plan.levels.size() ? plan.levels[pos] : 0;
+    }
+    double bits = part_bits(plan.tx_size, plan.tx_type, scan_levels.data(),
+                            area, plan.eob);
+    if (is_inter && plane == 0 && plan.eob > 0) bits += 4.0;
+    return bits;
+  }
+  double bits = plan.parts.size() > 1 ? 3.0 : 0.0;
+  for (const TxPlan::Part& part : plan.parts) {
+    const int area =
+        ::av2enc::video::txpartition::tx_scan_area(part.tx_size);
+    bits += part_bits(part.tx_size, part.tx_type, part.levels.data(), area,
+                      part.eob);
+    if (is_inter && plane == 0 && part.eob > 0) bits += 4.0;
+  }
+  return bits;
+}
+
+}  // namespace
 
 bool InterFrameEncoder::decide_sdp(std::string& error) {
   sdpp::Tools tools;
@@ -140,15 +222,12 @@ bool InterFrameEncoder::decide(std::string& error) {
   // gets exactly the cost the rect tree charges a same-shaped child.
   const bool partition_probe =
       options_.partition_rd && !keyframe_ && !options_.force_single_block &&
-      !options_.enable_segmentation && !options_.enable_delta_q &&
-      !options_.per_segment_q &&
+      !options_.enable_segmentation &&
       width_ == static_cast<int>(source_.width) &&
       height_ == static_cast<int>(source_.height);
   std::unordered_map<std::uint64_t, double> probe_costs;
   if (partition_probe) {
-    const double step = rc::quant_step_from_qindex(options_.base_q_idx);
-    syntax_bit_price =
-        partition_probe_scale_at(options_, options_.base_q_idx) * step * step;
+    syntax_bit_price = probe_syntax_price(0, 0);
     // The probe's bits are real (mode/skip syntax plus the residual rate),
     // so the leaf-level syntax estimate is inside the measured cost.
     leaf_bits = 0.0;
@@ -157,10 +236,16 @@ bool InterFrameEncoder::decide(std::string& error) {
                  std::clamp(options_.partition_probe_depth, 1, 3));
     probe_costs = build_partition_probe_costs(
         poptions.max_depth,
-        std::max(poptions.min_block_size_px, partition::kMinBlockPixels),
-        syntax_bit_price);
+        std::max(poptions.min_block_size_px, partition::kMinBlockPixels));
   }
   const double signal_cost = syntax_bit_price * signal_bits;
+  // AV2ENC_EXACT_RD partition refinement: when non-null, a node's leaf cost
+  // comes from the measured (D, R) of the mode the leaf encoder actually chose
+  // in the first pass.  Nodes the first pass did not encode (the alternative
+  // side of a depth-1 split) keep the NEWMV probe as the early bound.  The
+  // pointer is only ever set while a refinement solve runs, so the historical
+  // probe-only path is bit-for-bit unchanged when the gate is off.
+  const std::unordered_map<std::uint64_t, double>* exact_costs = nullptr;
   // One leaf model for both solvers.  It is exactly the historical keyframe
   // / P-frame estimate (variance + price * leaf_bits) or, when the measured
   // probe is active, the probe's measured residual RD on the node's own
@@ -168,8 +253,8 @@ bool InterFrameEncoder::decide(std::string& error) {
   // code path that prices a NONE/HORZ/VERT/SPLIT child of the same shape,
   // including its leaf coder's transform size and chroma ownership.
   const auto partition_leaf_cost =
-      [this, syntax_bit_price, leaf_bits, partition_probe, &probe_costs](
-          const partition::PartitionNodeInfo& info) {
+      [this, syntax_bit_price, leaf_bits, partition_probe, &probe_costs,
+       &exact_costs](const partition::PartitionNodeInfo& info) {
         // The leaf coder handles coding blocks up to 64x64.  A larger node
         // must split (the 128/256 root and its rectangular children); the
         // spec never implies NONE at those sizes, so the solver always has a
@@ -180,13 +265,20 @@ bool InterFrameEncoder::decide(std::string& error) {
         double leaf = static_cast<double>(block_variance_cost_at(info)) +
                       syntax_bit_price * leaf_bits;
         if (partition_probe) {
-          const auto it = probe_costs.find(
-              partition_probe_key(info.mi_row, info.mi_col, info.size));
+          const std::uint64_t key =
+              partition_probe_key(info.mi_row, info.mi_col, info.size);
+          if (exact_costs != nullptr) {
+            const auto exact = exact_costs->find(key);
+            if (exact != exact_costs->end()) return exact->second;
+          }
+          const auto it = probe_costs.find(key);
           if (it != probe_costs.end()) {
             leaf = it->second;
           } else {
             double measured = 0.0;
-            if (partition_probe_leaf_cost(info, syntax_bit_price, measured)) {
+            if (partition_probe_leaf_cost(
+                    info, probe_syntax_price(info.mi_row, info.mi_col),
+                    measured)) {
               leaf = measured;
             }
           }
@@ -207,6 +299,11 @@ bool InterFrameEncoder::decide(std::string& error) {
   std::vector<PartitionNode> base_superblocks;
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
   std::vector<pe::PartitionNode> ext_superblocks;
+#endif
+  // Re-runnable so the exact partition refinement can solve the same tree
+  // with measured leaf costs.  Gate off: called exactly once, as before.
+  const auto solve_partition = [&]() -> bool {
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
   if (options_.ext_partitions) {
     pe::Tools tools;
     tools.enable_ext_partitions = true;
@@ -305,6 +402,9 @@ bool InterFrameEncoder::decide(std::string& error) {
       std::fflush(tree_file);
     }
   }
+  return true;
+  };
+  if (!solve_partition()) return false;
 
   // The partition tree is final, so the pure NEWMV searches can run ahead
   // of the coding-order walk on the host worker pool.  Serial at 1 thread.
@@ -333,6 +433,85 @@ bool InterFrameEncoder::decide(std::string& error) {
     merge_sinks();
     return true;
   };
+
+  // AV2ENC_EXACT_RD partition refinement (one pass).  The historical probe
+  // prices a node with one NEWMV + quantised residual before the mode search.
+  // The first encode pass now records the real (D, R) of the mode each leaf
+  // actually chose (encode_leaf -> sink.leaf_costs).  Re-solve the tree with
+  // those exact costs where the node was encoded, keeping the probe only for
+  // the alternative geometry the first pass did not visit (the early bound).
+  // If the tree changes, encode once more with it.  This is deliberately not
+  // iterated: a full exact cost per partition node would need every candidate
+  // layout encoded, and the one refinement pass captures the dominant error
+  // (the probe's NEWMV-only residual vs the leaf's chosen mode) at <=2x cost.
+  const auto leaf_signature =
+      [](const std::vector<PartitionNode>& superblocks) {
+        std::vector<std::uint64_t> leaves;
+        const auto walk = [&leaves](auto&& self,
+                                    const PartitionNode& node) -> void {
+          if (node.partition != partition::PartitionType::kNone) {
+            for (const PartitionNode& child : node.children) {
+              self(self, child);
+            }
+            return;
+          }
+          leaves.push_back(
+              (static_cast<std::uint64_t>(node.mi_row) & 0xFFFFU) |
+              ((static_cast<std::uint64_t>(node.mi_col) & 0xFFFFU) << 16U) |
+              ((static_cast<std::uint64_t>(node.size) & 0xFFU) << 32U) |
+              ((static_cast<std::uint64_t>(node.depth) & 0xFFU) << 40U));
+        };
+        for (const PartitionNode& sb : superblocks) walk(walk, sb);
+        return leaves;
+      };
+  bool exact_partition_done = false;
+  const auto collect_frame_refined = [&]() -> bool {
+    if (!collect_frame()) return false;
+    if (!exact_rd::partition_refine() || !partition_probe ||
+        exact_partition_done || options_.ext_partitions ||
+        qp_tools_active()) {
+      return true;
+    }
+    exact_partition_done = true;
+    std::unordered_map<std::uint64_t, double> measured;
+    for (const SbSink& sink : sb_sinks_) {
+      const std::size_t count = std::min(sink.blocks.size(),
+                                         sink.leaf_costs.size());
+      for (std::size_t i = 0; i < count; ++i) {
+        const syntax::BlockSyntax& block = sink.blocks[i];
+        const exact_rd::LeafCost& leaf = sink.leaf_costs[i];
+        if (!leaf.valid) continue;
+        if (block.partition !=
+            static_cast<std::uint8_t>(partition::PartitionType::kNone)) {
+          continue;
+        }
+        if (block.subtree != 0) continue;
+        const partition::BlockSize size =
+            static_cast<partition::BlockSize>(block.bsize);
+        const double lambda =
+            probe_syntax_price(block.mi_row, block.mi_col);
+        measured[partition_probe_key(block.mi_row, block.mi_col, size)] =
+            leaf.distortion + lambda * leaf.bits;
+      }
+    }
+    if (measured.empty()) return true;
+    ++exact_rd::counters().partition_refine_runs;
+    exact_rd::counters().partition_overrides += measured.size();
+    std::vector<PartitionNode> probe_tree = base_superblocks;
+    exact_costs = &measured;
+    const bool solved = solve_partition();
+    exact_costs = nullptr;
+    if (!solved) return false;
+    if (leaf_signature(probe_tree) == leaf_signature(base_superblocks)) {
+      base_superblocks = std::move(probe_tree);
+      return true;
+    }
+    ++exact_rd::counters().partition_tree_changed;
+    if (!base_superblocks.empty()) {
+      precompute_leaf_me(base_superblocks, options_.cpu_threads);
+    }
+    return collect_frame();
+  };
 #if defined(AV2ENC_VIDEO_DELTAQ)
   if (qp_tools_active()) {
     if (delta_q_enabled_) {
@@ -341,7 +520,7 @@ bool InterFrameEncoder::decide(std::string& error) {
       bool converged = false;
       for (int pass = 0; pass < 8; ++pass) {
         sb_qindex_ = effective;
-        if (!collect_frame()) return false;
+        if (!collect_frame_refined()) return false;
         std::vector<int> actual;
         if (!plan_delta_q_steps(actual, error)) return false;
         if (actual == effective) {
@@ -359,7 +538,7 @@ bool InterFrameEncoder::decide(std::string& error) {
                             base_q_index());
         sb_qindex_.assign(static_cast<std::size_t>(qp_sb_count()),
                           base_q_index());
-        if (!collect_frame()) return false;
+        if (!collect_frame_refined()) return false;
         std::vector<int> actual;
         if (!plan_delta_q_steps(actual, error)) return false;
         if (actual != sb_qindex_) {
@@ -368,14 +547,14 @@ bool InterFrameEncoder::decide(std::string& error) {
           return false;
         }
       }
-    } else if (!collect_frame()) {
+    } else if (!collect_frame_refined()) {
       return false;
     }
-  } else if (!collect_frame()) {
+  } else if (!collect_frame_refined()) {
     return false;
   }
 #else
-  if (!collect_frame()) return false;
+  if (!collect_frame_refined()) return false;
 #endif
   // --video-skip-collapse: rewrite all-static superblocks to one skip leaf
   // and re-collect.  Default off (returns immediately).
@@ -692,6 +871,14 @@ bool InterFrameEncoder::wavefront_diagonals(std::size_t count,
 
 bool InterFrameEncoder::wavefront_allowed() const {
   if (keyframe_) return false;
+  // AV2ENC_PIPE_PERC / AV2ENC_EFF_PERC: the exact syntax probe advances one
+  // shared CDF/grid state in coded order; concurrent superblocks would race
+  // it.
+  if (pipe_perc::enabled() || eff_perc::enabled()) return false;
+  // R09: the syntax probe advances one shared CDF/grid state in coded order;
+  // concurrent superblocks would race it.  Serial decisions keep the probe
+  // deterministic and match the writer's serial tile walk.
+  if (rate_hybrid::reporting()) return false;
 #if defined(AV2ENC_VIDEO_DELTAQ)
   if (seg_enabled_ || delta_q_enabled_) return false;
 #endif
@@ -734,6 +921,74 @@ void InterFrameEncoder::plan_pass() {
   // from the writer's.
   mv_grid_.assign(mv_grid_.size(), inter::mc::MiInfo{});
   intra_joint_.assign(intra_joint_.size(), 0);
+  // AV2ENC_PIPE_PERC / AV2ENC_EFF_PERC: source-driven detail weights for this
+  // frame and a fresh exact-syntax probe seeded from the same CDF image the
+  // writer starts from.  Both are skipped when the gates are off, so the
+  // historical pass does no work.
+  if ((pipe_perc::enabled() || eff_perc::enabled()) && !keyframe_) {
+    if (eff_perc::enabled()) {
+      eff_perc::init();
+      eff_perc::build_frame_weights(
+          source_.y.data(), static_cast<int>(source_.width),
+          static_cast<int>(source_.width), static_cast<int>(source_.height),
+          &eff_weights_);
+    }
+    if (pipe_perc::enabled()) {
+      pipe_perc::init();
+      pipe_perc::build_frame_weights(
+          source_.y.data(), static_cast<int>(source_.width),
+          static_cast<int>(source_.width), static_cast<int>(source_.height),
+          &pipe_weights_);
+    }
+    pipe_probe_ready_ = false;
+    rate_hybrid::ProbeConfig config;
+    config.base_q_idx = static_cast<int>(options_.base_q_idx);
+    config.mi_cols = mi_cols_;
+    config.mi_rows = mi_rows_;
+    config.num_refs = num_total_refs_;
+    config.max_drl_bits_minus_1 = 4;
+    for (int i = 0; i < 7; ++i) {
+      config.frame_distance[i] = frame_distance_[static_cast<std::size_t>(i)];
+    }
+    config.reference_select = options_.compound && num_total_refs_ > 1;
+    config.allow_bawp =
+        (options_.enable_bawp || options_.enable_morph) && !keyframe_;
+    config.enable_interintra = options_.enable_interintra && !keyframe_;
+    config.enable_adaptive_mvd = options_.enable_adaptive_mvd;
+    config.enable_flex_mvres = options_.enable_flex_mvres;
+    config.enable_mvd_sign_derive = options_.enable_mvd_sign_derive;
+    config.mv_precision =
+        options_.seq_force_integer_mv ? 3 : options_.mv_precision;
+    config.disable_cdf_update = !options_.adaptive_cdf;
+    pipe_probe_.reset(config, cdf_seed_);
+    pipe_probe_ready_ = true;
+  }
+  // R09: every decision pass starts from the same frame/tile CDF seed and an
+  // empty neighbour grid, exactly like the writer does.
+  rate_probe_ready_ = false;
+  if (rate_hybrid::reporting() && !keyframe_) {
+    rate_hybrid::ProbeConfig config;
+    config.base_q_idx = static_cast<int>(options_.base_q_idx);
+    config.mi_cols = mi_cols_;
+    config.mi_rows = mi_rows_;
+    config.num_refs = num_total_refs_;
+    config.max_drl_bits_minus_1 = 4;
+    for (int i = 0; i < 7; ++i) {
+      config.frame_distance[i] = frame_distance_[static_cast<std::size_t>(i)];
+    }
+    config.reference_select = options_.compound && num_total_refs_ > 1;
+    config.allow_bawp =
+        (options_.enable_bawp || options_.enable_morph) && !keyframe_;
+    config.enable_interintra = options_.enable_interintra && !keyframe_;
+    config.enable_adaptive_mvd = options_.enable_adaptive_mvd;
+    config.enable_flex_mvres = options_.enable_flex_mvres;
+    config.enable_mvd_sign_derive = options_.enable_mvd_sign_derive;
+    config.mv_precision =
+        options_.seq_force_integer_mv ? 3 : options_.mv_precision;
+    config.disable_cdf_update = !options_.adaptive_cdf;
+    rate_probe_.reset(config, cdf_seed_);
+    rate_probe_ready_ = true;
+  }
   for (int plane = 0; plane < 3; ++plane) {
     std::fill(recon_[plane].samples.begin(), recon_[plane].samples.end(),
               static_cast<std::uint8_t>(0));
@@ -984,6 +1239,24 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
   // levels are spent on samples the decoder discards after filtering.
   const int luma_mask_row = visible_rows(0, y0, h);
   const int chroma_mask_row = visible_rows(1, cy0, ch);
+  // AV2ENC_PERCEPTUAL_RD: opt-in detail-aware TX distortion.  The weight map
+  // is built from the source luma of this leaf's extent; strength 0 leaves it
+  // invalid and both TX lambdas below pass through unchanged.  The proxy is
+  // confined to the TX search: weighting the leaf-level candidate/skip SSE on
+  // top of it measured worse, so only the TX cost is re-weighted (by dividing
+  // lambda, which is the same as weighting the TX search's SSE).  A
+  // CHROMA_PART leaf codes no luma, so it has no luma activity to score.  See
+  // `video_perceptual.h` for the model and why the frame mean normalises it.
+  const double perceptual_strength = perceptual::rd_strength();
+  perceptual::LeafWeights perceptual_weights;
+  if (perceptual_strength > 0.0 && !chroma_part &&
+      source_.y.size() >= static_cast<std::size_t>(source_.width) *
+                               static_cast<std::size_t>(source_.height)) {
+    perceptual_weights = perceptual::make_leaf_weights(
+        source_.y.data(), static_cast<int>(source_.width),
+        static_cast<int>(source_.width), static_cast<int>(source_.height),
+        ax0, ay0, w, h, perceptual_strength);
+  }
   // --video-edge-mask: the decision metrics score only the rows the decoder
   // can see.  Removing the hidden-row bits is not enough on its own: the
   // skip/residual and mode comparisons would still charge a coded residual
@@ -994,6 +1267,86 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                            const std::vector<std::uint8_t>& samples) {
     return sse_against_source(source_, plane, sx, sy, sw, sh, samples,
                               plane == 0 ? luma_mask_row : chroma_mask_row);
+  };
+  // AV2ENC_PIPE_PERC / AV2ENC_EFF_PERC: one objective for the leaf and the TX
+  // search.
+  //   D  = local perceptual luma SSE + weighted chroma SSE
+  //   R  = exact inter syntax probe + coefficient model
+  //   J  = D + lambda * R
+  // `pipe_leaf_weights` is the per-pixel map handed to the TX candidate
+  // search, so the TX size/type/partition choice minimizes the same J.
+  const bool eff_on =
+      eff_perc::enabled() && !keyframe_ && pipe_probe_ready_;
+  const bool pipe_on =
+      (pipe_perc::enabled() || eff_on) && !keyframe_ && pipe_probe_ready_;
+  const double pipe_lambda =
+      pipe_on
+          ? leaf_rd_lambda(st.current_qindex, options_) *
+                (eff_on ? eff_perc::lambda_scale()
+                        : pipe_perc::lambda_scale())
+          : 0.0;
+  const int pipe_qctx = ::av2enc::still::qctx::slice_for_base_q_idx(
+      static_cast<int>(options_.base_q_idx));
+  std::vector<std::uint16_t> pipe_leaf_weights;
+  if (pipe_on && !chroma_part) {
+    if (eff_on) {
+      eff_perc::fill_leaf_weights(eff_weights_, ax0, ay0, w, h,
+                                  &pipe_leaf_weights);
+    } else {
+      pipe_perc::fill_leaf_weights(pipe_weights_, ax0, ay0, w, h,
+                                   &pipe_leaf_weights);
+    }
+  }
+  const auto sse_pipe = [&](int plane, int sx, int sy, int sw, int sh,
+                            const std::vector<std::uint8_t>& samples) {
+    if (!pipe_on || pipe_leaf_weights.empty()) {
+      return static_cast<double>(sse_vis(plane, sx, sy, sw, sh, samples));
+    }
+    if (plane != 0) {
+      if (eff_on && eff_perc::csf_gain() > 0.0) {
+        const std::span<const std::uint8_t> src_plane =
+            plane == 1 ? source_.u : source_.v;
+        if (!src_plane.empty()) {
+          const double csf = eff_perc::weighted_sse(
+              nullptr, sw, sh, src_plane.data(),
+              static_cast<int>(source_.width) / 2, sx, sy, samples.data(), sw,
+              0, 0, chroma_mask_row, eff_perc::csf_gain(),
+              eff_perc::csf2_gain());
+          return csf * eff_perc::chroma_weight();
+        }
+      }
+      const double plain =
+          static_cast<double>(sse_vis(plane, sx, sy, sw, sh, samples));
+      return eff_on ? plain * eff_perc::chroma_weight() : plain;
+    }
+    if (eff_on) {
+      return eff_perc::weighted_sse(
+          pipe_leaf_weights.data(), sw, sh, source_.y.data(),
+          static_cast<int>(source_.width), sx, sy, samples.data(), sw, 0, 0,
+          luma_mask_row, eff_perc::csf_gain(), eff_perc::csf2_gain());
+    }
+    return pipe_perc::weighted_sse(
+        pipe_leaf_weights.data(), sw, sh, source_.y.data(),
+        static_cast<int>(source_.width), sx, sy, samples.data(), sw, 0, 0,
+        luma_mask_row);
+  };
+  // AV2ENC_EFF_PERC: coefficient term selection.  Rate 1 prices the emitted
+  // plan with the R19 interval width against the live frame-start CDF image;
+  // rate 0 keeps the static §8.3 context model pipe-perc shipped with.
+  const bool eff_interval =
+      eff_on && (eff_perc::rate_mode() & 1) != 0;
+  const bool eff_live_cdf =
+      eff_on && (eff_perc::rate_mode() & 2) != 0;
+  const still::qctx::CoeffCdfSlice* eff_slice =
+      eff_live_cdf ? eff_cdf_slice() : nullptr;
+  const auto coeff_bits = [&](const TxPlan& plan, int plane, bool is_inter) {
+    if (eff_interval) {
+      ++eff_perc::counters().rate_interval;
+      return plan_rate_bits(plan, plane, is_inter,
+                            static_cast<int>(node.size));
+    }
+    return pipe_plan_coefficient_bits(plan, plane, is_inter, pipe_qctx,
+                                      eff_slice);
   };
   if (ibc_enabled_) {
     // §5.20.4.1 decode_block(): update_ibc_buffers() runs at the start of
@@ -1052,14 +1405,98 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       options_.enable_leaf_rd
           ? leaf_rd_lambda(st.current_qindex, options_)
           : 0.0;
+  const bool exact_on = exact_rd::enabled();
+  // R09 (AV2ENC_RATE_HYBRID_S): when the model drives the decision, the
+  // candidate ranking and the skip/residual bar use the exact CDF probe and
+  // the Laplacian coefficient rate.  The measure switch keeps the historical
+  // decisions and only records the model's prediction error.
+  const bool rate_model_on = rate_hybrid::enabled() &&
+                            rate_hybrid::syntax_enabled() &&
+                            rate_probe_ready_;
+  const bool rate_reporting = rate_hybrid::reporting() && rate_probe_ready_;
+  // Minimal BlockSyntax view of one candidate, for the syntax probe.  The
+  // probe only reads the mode/ref/DRL/MVD fields and the block geometry.
+  const auto probe_node_for = [&](const InterCandidate& cand) {
+    syntax::BlockSyntax probe{};
+    probe.mi_row = static_cast<std::uint16_t>(r);
+    probe.mi_col = static_cast<std::uint16_t>(c);
+    probe.bsize = static_cast<std::uint8_t>(node.size);
+    probe.is_inter = 1;
+    probe.inter_mode = static_cast<std::uint8_t>(cand.mode);
+    probe.ref_index = static_cast<std::uint8_t>(cand.ref_index);
+    probe.drl_index = static_cast<std::uint8_t>(cand.drl_index);
+    probe.mvd_y = cand.mvd.y;
+    probe.mvd_x = cand.mvd.x;
+    probe.compound = cand.compound ? 1 : 0;
+    probe.compound_mode = static_cast<std::uint8_t>(cand.compound_mode);
+    probe.ref_index1 = static_cast<std::uint8_t>(cand.ref_index1);
+    probe.use_amvd = cand.use_amvd ? 1 : 0;
+    probe.block_mv_precision = static_cast<std::int8_t>(cand.block_mv_precision);
+    probe.mvd_sign_derived = cand.mvd_sign_derived ? 1 : 0;
+    return probe;
+  };
+  // Exact mode/ref/DRL/MVD price, or the historical constant formula when the
+  // probe cannot model this candidate.
+  const auto candidate_syntax_bits = [&](const InterCandidate& cand) {
+    if (pipe_on) {
+      rate_hybrid::Terms terms;
+      if (pipe_probe_.price_mode(probe_node_for(cand), &terms)) {
+        return terms.mode_info();
+      }
+      ++(eff_on ? eff_perc::counters().fallbacks
+                : pipe_perc::counters().fallbacks);
+    }
+    if (rate_model_on) {
+      rate_hybrid::Terms terms;
+      if (rate_probe_.price_mode(probe_node_for(cand), &terms)) {
+        return terms.mode_info();
+      }
+    }
+    return inter_syntax_bits(cand.mode, cand.drl_index, cand.mvd.y,
+                             cand.mvd.x, cand.use_amvd);
+  };
   const auto inter_cost = [&](const InterCandidate& cand) {
     return static_cast<double>(cand.sse) +
-           inter_lambda * inter_syntax_bits(cand.mode, cand.drl_index,
-                                            cand.mvd.y, cand.mvd.x,
-                                            cand.use_amvd);
+           (pipe_on ? pipe_lambda : inter_lambda) *
+               candidate_syntax_bits(cand);
   };
+  // AV2ENC_EXACT_RD: the candidates the cheap search considered, with the
+  // exact cost key the proxy used.  `order` makes the ranking total: equal
+  // costs keep the historical search order.  Gate off leaves this empty.
+  struct RankedCandidate {
+    InterCandidate cand;
+    double cost = 0.0;
+    std::size_t order = 0;
+  };
+  std::vector<RankedCandidate> ranked_candidates;
+  // The historical ranking, kept in parallel under the R09 gate so the report
+  // can count how many winners the model changed.
+  InterCandidate best_hist;
   const auto consider = [&](InterCandidate cand) {
     if (!cand.valid) return;
+    if (exact_on || pipe_on) {
+      ranked_candidates.push_back(
+          RankedCandidate{cand, inter_cost(cand), ranked_candidates.size()});
+    }
+    if (rate_reporting) {
+      if (!best_hist.valid) {
+        best_hist = cand;
+      } else if (inter_lambda > 0.0
+                     ? static_cast<double>(cand.sse) +
+                               inter_lambda *
+                                   inter_syntax_bits(cand.mode, cand.drl_index,
+                                                     cand.mvd.y, cand.mvd.x,
+                                                     cand.use_amvd) <
+                           static_cast<double>(best_hist.sse) +
+                               inter_lambda *
+                                   inter_syntax_bits(
+                                       best_hist.mode, best_hist.drl_index,
+                                       best_hist.mvd.y, best_hist.mvd.x,
+                                       best_hist.use_amvd)
+                     : cand.sse < best_hist.sse) {
+        best_hist = cand;
+      }
+    }
     if (!best.valid) {
       best = cand;
     } else if (inter_lambda > 0.0 ? inter_cost(cand) < inter_cost(best)
@@ -1871,7 +2308,8 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                     : !search_luma_tx(
                           source_, ax0, ay0, w, h, intra_y_pred,
                           st.current_qindex, txtsearch::Mode::kIntra,
-                          key_tx_rd_lambda(options_, st.current_qindex),
+                          key_tx_rd_lambda(options_, st.current_qindex) *
+                              perceptual::tx_lambda_scale(perceptual_weights),
                           options_.enable_idtx_intra,
                           std::max(0, mrl_stream::mapped_intra_mode_for_mrl(
                                           intra_y_mode, intra_y_angle_delta,
@@ -2048,72 +2486,99 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
   // motion search; when enabled, a quantised residual is coded for Y/U/V and
   // the reconstructed block is pred + dequantised residual.  The decision is
   // an SSE + lambda * estimated-bits comparison against skip_flag = 1.
-  std::vector<std::uint8_t> inter_y;
-  std::vector<std::uint8_t> inter_u;
-  std::vector<std::uint8_t> inter_v;
-  bool inter_residual = false;
-  TxPlan res_y;
-  TxPlan res_u;
-  TxPlan res_v;
-  int inter_cctx_type = 0;
-  bool bawp_applied = false;
-  inter::adv::BawpFit bawp_fit{};
-  bool inter_intra_applied = false;
-  int inter_intra_mode = 0;
-  bool inter_intra_wedge = false;
-  int inter_intra_index = 0;
-  std::int64_t inter_intra_sse = 0;
-  std::int64_t inter_luma_sse = best.sse;
-  if (!keyframe_ && best.valid) {
-    if (best.compound) {
+  // One fully evaluated inter candidate.  The proxy search ranks candidates by
+  // prediction SSE + static mode syntax; this structure holds what the real
+  // predict -> TX -> quantise -> reconstruct -> rate path produced for one of
+  // them, including the measured D and R used by AV2ENC_EXACT_RD.
+  struct InterLeafResult {
+    InterCandidate cand;
+    std::vector<std::uint8_t> y;
+    std::vector<std::uint8_t> u;
+    std::vector<std::uint8_t> v;
+    bool residual = false;
+    TxPlan res_y;
+    TxPlan res_u;
+    TxPlan res_v;
+    int cctx = 0;
+    bool bawp = false;
+    inter::adv::BawpFit fit{};
+    bool interintra = false;
+    int ii_mode = 0;
+    bool ii_wedge = false;
+    int ii_index = 0;
+    std::int64_t ii_sse = 0;
+    std::int64_t luma_sse = 0;
+    // Measured objective terms.  Only filled when AV2ENC_EXACT_RD is on.
+    double distortion = 0.0;
+    double bits = 0.0;
+    // AV2ENC_PIPE_PERC objective terms of the emitted form.  `pipe_bits`
+    // includes the exact syntax (is_inter/skip/mode/ref/DRL/MVD) and the
+    // context-coded residual; `pipe_distortion` is the local weighted D.
+    double pipe_distortion = 0.0;
+    double pipe_bits = 0.0;
+    bool pipe_modeled = false;
+  };
+
+  // Real leaf path for one candidate.  This is the historical winner-only
+  // block, parameterised by the candidate instead of `best`: predict, apply
+  // BAWP / inter-intra, run the shared luma TX search and chroma transform /
+  // quantise / reconstruct, and decide skip vs residual.  With the gate off it
+  // runs exactly once for the proxy winner, so every historical stream keeps
+  // its bytes.
+  const auto evaluate_inter_leaf =
+      [&](const InterCandidate& input, InterLeafResult& out) -> bool {
+    out = InterLeafResult{};
+    out.cand = input;
+    out.luma_sse = input.sse;
+    if (out.cand.compound) {
 #if defined(AV2ENC_VIDEO_FRAMES)
-      // Re-run the winning candidate: the compound scratch planes hold the
-      // last evaluated candidate, not necessarily this one.
-      const inter::mc::Mv mvs[2] = {best.mv, best.mv1};
+      // Re-run the candidate: the compound scratch planes hold the last
+      // evaluated candidate, not necessarily this one.
+      const inter::mc::Mv mvs[2] = {out.cand.mv, out.cand.mv1};
       bool predicted = false;
-      if (best.use_optflow) {
+      if (out.cand.use_optflow) {
         predicted =
             predict_compound_optflow(sink, mvs, ax0, ay0, w, h, error);
-      } else if (best.use_refinemv) {
+      } else if (out.cand.use_refinemv) {
         predicted =
             predict_compound_refinemv(sink, mvs, ax0, ay0, w, h, error);
       } else {
         multiref::CompoundModeParams wparams;
-        wparams.cwp_weight = best.cwp_weight;
-        wparams.cwp_index = static_cast<int>(best.cwp_index);
-        wparams.use_imp_mask = best.use_imp_mask;
-        wparams.type = best.compound_type == 0
+        wparams.cwp_weight = out.cand.cwp_weight;
+        wparams.cwp_index = static_cast<int>(out.cand.cwp_index);
+        wparams.use_imp_mask = out.cand.use_imp_mask;
+        wparams.type = out.cand.compound_type == 0
                            ? inter::adv::CompoundType::kWedge
-                           : (best.compound_type == 1
+                           : (out.cand.compound_type == 1
                                   ? inter::adv::CompoundType::kDiffWtd
                                   : inter::adv::CompoundType::kAverage);
-        if (best.compound_mode == 0) {
+        if (out.cand.compound_mode == 0) {
           wparams.type = inter::adv::CompoundType::kAverage;
         }
-        wparams.wedge_index = best.wedge_index;
-        wparams.wedge_sign = best.wedge_sign;
-        wparams.mask_type = best.mask_type;
+        wparams.wedge_index = out.cand.wedge_index;
+        wparams.wedge_sign = out.cand.wedge_sign;
+        wparams.mask_type = out.cand.mask_type;
         predicted = compound_plain(
             mvs, static_cast<int>(node.size), ax0, ay0, w, h,
             sink.compound_y, sink.compound_u, sink.compound_v, error,
-            &wparams, 0, best.same_ref ? 0 : 1);
+            &wparams, 0, out.cand.same_ref ? 0 : 1);
       }
       if (!predicted) {
         error = "compound prediction failed";
         return false;
       }
 #endif
-      inter_y = sink.compound_y;
-      inter_u = sink.compound_u;
-      inter_v = sink.compound_v;
-    } else if (best.use_warp) {
+      out.y = sink.compound_y;
+      out.u = sink.compound_u;
+      out.v = sink.compound_v;
+    } else if (out.cand.use_warp) {
 #if defined(AV2ENC_VIDEO_GME)
       std::string warp_error;
-      if (gm_plan_ == nullptr || best.ref_index >= gm_plan_->num_refs ||
+      if (gm_plan_ == nullptr || out.cand.ref_index >= gm_plan_->num_refs ||
           !warp_predict_420(
-              gm_plan_->params[static_cast<std::size_t>(best.ref_index)],
-              references_[static_cast<std::size_t>(best.ref_index)], ax0, ay0,
-              w, h, r, c, w4, h4, inter_y, inter_u, inter_v, warp_error)) {
+              gm_plan_->params[static_cast<std::size_t>(out.cand.ref_index)],
+              references_[static_cast<std::size_t>(out.cand.ref_index)], ax0,
+              ay0, w, h, r, c, w4, h4, out.y, out.u, out.v, warp_error)) {
         error = "inter warp prediction failed: " + warp_error;
         return false;
       }
@@ -2121,13 +2586,12 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       error = "inter warp prediction is not linked in this build";
       return false;
 #endif
-    } else if (!predict_all(best.ref_index, best.mv, ax0, ay0, w, h, inter_y,
-                            inter_u, inter_v)) {
+    } else if (!predict_all(out.cand.ref_index, out.cand.mv, ax0, ay0, w, h,
+                            out.y, out.u, out.v)) {
       error = "inter prediction failed";
       return false;
     }
-    inter_luma_sse =
-        sse_vis(0, ax0, ay0, w, h, inter_y);
+    out.luma_sse = sse_vis(0, ax0, ay0, w, h, out.y);
     // §5.20.7.6 / §7.13.3.25: evaluate the fitted BAWP predictor for an
     // eligible single-prediction block (>= 8x8, not GLOBALMV, no warp).
     // The decoder applies the same fit before the residual, so a selected
@@ -2139,111 +2603,126 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     // swap never changes the MV or reference.  Segment-forced GLOBALMV
     // leaves keep their forced mode.
     const bool bawp_carrier_ok =
-        best.mode != syntax::kInterGlobalMv ||
+        out.cand.mode != syntax::kInterGlobalMv ||
         (options_.bawp_carrier && !seg_forced_inter &&
          bawp_carrier.valid &&
-         bawp_carrier.ref_index == best.ref_index &&
-         bawp_carrier.mv == best.mv);
-    if (options_.enable_bawp && options_.tile_cols == 0 && !best.compound &&
-        !best.use_warp && bawp_carrier_ok && w >= 8 && h >= 8 &&
+         bawp_carrier.ref_index == out.cand.ref_index &&
+         bawp_carrier.mv == out.cand.mv);
+    if (options_.enable_bawp && options_.tile_cols == 0 && !out.cand.compound &&
+        !out.cand.use_warp && bawp_carrier_ok && w >= 8 && h >= 8 &&
         mi_cols_ * 4 == static_cast<int>(source_.width) &&
         mi_rows_ * 4 == static_cast<int>(source_.height)) {
-      std::vector<std::uint8_t> adapted = inter_y;
+      std::vector<std::uint8_t> adapted = out.y;
       inter::adv::BawpFit fit{};
       const inter::mc::PlaneView& ref_y =
-          references_[static_cast<std::size_t>(best.ref_index)].plane[0];
+          references_[static_cast<std::size_t>(out.cand.ref_index)].plane[0];
       if (bawp_adapt_luma(recon_[0].samples.data(), recon_[0].stride,
                           ref_y.data, ref_y.stride, mi_cols_, mi_rows_, r,
-                          c, x0, y0, w, h, best.mv.y, best.mv.x, adapted,
-                          &fit)) {
+                          c, x0, y0, w, h, out.cand.mv.y, out.cand.mv.x,
+                          adapted, &fit)) {
         const std::int64_t adapted_sse =
             sse_vis(0, ax0, ay0, w, h, adapted);
-        if (adapted_sse < inter_luma_sse) {
-          if (best.mode == syntax::kInterGlobalMv) {
-            best = bawp_carrier;
+        if (adapted_sse < out.luma_sse) {
+          if (out.cand.mode == syntax::kInterGlobalMv) {
+            out.cand = bawp_carrier;
           }
-          bawp_applied = true;
-          bawp_fit = fit;
-          inter_y = adapted;
-          inter_luma_sse = adapted_sse;
+          out.bawp = true;
+          out.fit = fit;
+          out.y = adapted;
+          out.luma_sse = adapted_sse;
         }
       }
       if (trace_) {
-        std::cerr << "  cand bawp alpha=" << bawp_fit.alpha
-                  << " count=" << bawp_fit.count
-                  << " carrier=" << static_cast<int>(best.mode)
-                  << " applied=" << (bawp_applied ? 1 : 0) << "\n";
+        std::cerr << "  cand bawp alpha=" << out.fit.alpha
+                  << " count=" << out.fit.count
+                  << " carrier=" << static_cast<int>(out.cand.mode)
+                  << " applied=" << (out.bawp ? 1 : 0) << "\n";
       }
     }
     // §5.20.7.14/.15 + §7.13.3.29/.30 single-reference inter-intra.  The
     // blended block is skip-only (no residual) in this gated surface, and it
     // is evaluated after BAWP so the §5.20.7.14 use_bawp early return can
     // never be violated.
-    if (options_.enable_interintra && !best.compound && !best.use_warp &&
-        !bawp_applied && best.mode != syntax::kInterGlobalMv && w >= 8 &&
-        h >= 8 && w <= 64 && h <= 64 && !options_.force_inter_residual) {
+    if (options_.enable_interintra && !out.cand.compound &&
+        !out.cand.use_warp && !out.bawp &&
+        out.cand.mode != syntax::kInterGlobalMv && w >= 8 && h >= 8 &&
+        w <= 64 && h <= 64 && !options_.force_inter_residual) {
       std::vector<std::uint8_t> ii_y;
       std::vector<std::uint8_t> ii_u;
       std::vector<std::uint8_t> ii_v;
       if (!evaluate_inter_intra(static_cast<int>(node.size), x0, y0, w, h,
-                                inter_y, inter_u, inter_v, ii_y, ii_u, ii_v,
-                                inter_intra_mode, inter_intra_wedge,
-                                inter_intra_index, inter_intra_sse,
-                                sink.state, error)) {
+                                out.y, out.u, out.v, ii_y, ii_u, ii_v,
+                                out.ii_mode, out.ii_wedge, out.ii_index,
+                                out.ii_sse, sink.state, error)) {
         return false;
       }
       const std::int64_t plain_sse =
-          sse_vis(0, ax0, ay0, w, h, inter_y) +
-          sse_vis(1, acx0, acy0, cw, ch, inter_u) +
-          sse_vis(2, acx0, acy0, cw, ch, inter_v);
-      if (inter_intra_sse < plain_sse) {
-        inter_intra_applied = true;
-        inter_y = ii_y;
-        inter_u = ii_u;
-        inter_v = ii_v;
-        inter_luma_sse =
-            sse_vis(0, ax0, ay0, w, h, inter_y);
+          sse_vis(0, ax0, ay0, w, h, out.y) +
+          sse_vis(1, acx0, acy0, cw, ch, out.u) +
+          sse_vis(2, acx0, acy0, cw, ch, out.v);
+      if (out.ii_sse < plain_sse) {
+        out.interintra = true;
+        out.y = ii_y;
+        out.u = ii_u;
+        out.v = ii_v;
+        out.luma_sse = sse_vis(0, ax0, ay0, w, h, out.y);
       }
       if (trace_) {
         std::cerr << "  cand interintra applied="
-                  << (inter_intra_applied ? 1 : 0)
-                  << " mode=" << inter_intra_mode
-                  << " wedge=" << (inter_intra_wedge ? 1 : 0)
-                  << " index=" << inter_intra_index
-                  << " sse=" << inter_intra_sse
+                  << (out.interintra ? 1 : 0)
+                  << " mode=" << out.ii_mode
+                  << " wedge=" << (out.ii_wedge ? 1 : 0)
+                  << " index=" << out.ii_index
+                  << " sse=" << out.ii_sse
                   << " plain=" << plain_sse << "\n";
       }
     }
-    if (options_.enable_inter_residual && !inter_intra_applied &&
-        !seg_skip_leaf) {
-      const std::int64_t pred_total =
-          inter_luma_sse +
-          sse_vis(1, acx0, acy0, cw, ch, inter_u) +
-          sse_vis(2, acx0, acy0, cw, ch, inter_v);
+    // A compound leaf is coded skip-only in the gated subset: the writer
+    // forces skip_flag = 1 below and never codes the residual.  Running the
+    // residual search here would replace the prediction with
+    // pred + dequantised residual in the encoder recon while the decoder
+    // reconstructs the plain compound prediction, so the recon drifts from
+    // the bitstream.  Leave compound leaves prediction-only, as emitted.
+    if (options_.enable_inter_residual && !out.cand.compound &&
+        !out.interintra && !seg_skip_leaf) {
+      const double pred_total =
+          sse_pipe(0, ax0, ay0, w, h, out.y) +
+          sse_pipe(1, acx0, acy0, cw, ch, out.u) +
+          sse_pipe(2, acx0, acy0, cw, ch, out.v);
       if (((options_.enable_tx_search || options_.enable_inter_ddt)
-               ? !search_luma_tx(source_, ax0, ay0, w, h, inter_y,
+               ? !search_luma_tx(source_, ax0, ay0, w, h, out.y,
                                  st.current_qindex,
                                  txtsearch::Mode::kInter,
-                                 tx_rd_lambda(options_, st.current_qindex),
+                                 (pipe_on
+                                      ? pipe_lambda
+                                      : tx_rd_lambda(options_,
+                                                     st.current_qindex) *
+                                            perceptual::tx_lambda_scale(
+                                                perceptual_weights)),
                                  /*allow_idtx=*/false,
                                  /*intra_mapped_mode=*/0,
                                  options_.enable_tcq,
                                  ::av2enc::still::qctx::slice_for_base_q_idx(
-                                     options_.tx_context_rate
+                                     (pipe_on || options_.tx_context_rate)
                                          ? base_q_index()
                                          : st.current_qindex),
                                  options_.enable_inter_ddt,
                                  /*search_partition=*/
                                  options_.enable_tx_search,
-                                 /*context_rate=*/options_.tx_context_rate,
+                                 /*context_rate=*/
+                                 pipe_on || options_.tx_context_rate,
                                  options_.trace, options_.enable_rdoq,
                                  ::av2enc::still::qctx::slice_for_base_q_idx(
                                      static_cast<int>(options_.base_q_idx)),
                                  rdoq_sse_scale_at(options_,
                                                    st.current_qindex),
-                                 res_y, error, luma_mask_row)
-               : !compute_tx(source_, 0, ax0, ay0, w, h, inter_y,
-                             st.plane_quant[0], res_y, error,
+                                 out.res_y, error, luma_mask_row,
+                                 pipe_on ? pipe_leaf_weights.data() : nullptr,
+                                 eff_slice,
+                                 eff_on ? eff_perc::csf_gain() : 0.0,
+                                 eff_on ? eff_perc::csf2_gain() : 0.0)
+               : !compute_tx(source_, 0, ax0, ay0, w, h, out.y,
+                             st.plane_quant[0], out.res_y, error,
                              qm_enabled_ ? &qm_state_ : nullptr,
                              options_.enable_tcq,
                              ::av2enc::still::qctx::slice_for_base_q_idx(
@@ -2254,19 +2733,19 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                              rdoq_sse_scale_at(options_, st.current_qindex),
                              luma_mask_row)) ||
           (options_.enable_cctx
-               ? !compute_chroma_cctx(source_, acx0, acy0, cw, ch, inter_u,
-                                      inter_v, st.quant_step,
+               ? !compute_chroma_cctx(source_, acx0, acy0, cw, ch, out.u,
+                                      out.v, st.quant_step,
                                       /*is_inter=*/true,
-                                      res_u, res_v, &inter_cctx_type, error,
+                                      out.res_u, out.res_v, &out.cctx, error,
                                       chroma_mask_row)
-               : (!compute_tx(source_, 1, acx0, acy0, cw, ch, inter_u,
-                              st.plane_quant[1], res_u, error,
+               : (!compute_tx(source_, 1, acx0, acy0, cw, ch, out.u,
+                              st.plane_quant[1], out.res_u, error,
                               qm_enabled_ ? &qm_state_ : nullptr,
                               /*allow_tcq=*/false, /*qctx_slice=*/0,
                               /*is_inter=*/true, /*allow_rdoq=*/false,
                               /*rdoq_qctx=*/0, 0.0, chroma_mask_row) ||
-                  !compute_tx(source_, 2, acx0, acy0, cw, ch, inter_v,
-                              st.plane_quant[2], res_v, error,
+                  !compute_tx(source_, 2, acx0, acy0, cw, ch, out.v,
+                              st.plane_quant[2], out.res_v, error,
                               qm_enabled_ ? &qm_state_ : nullptr,
                               /*allow_tcq=*/false, /*qctx_slice=*/0,
                               /*is_inter=*/true, /*allow_rdoq=*/false,
@@ -2274,14 +2753,15 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
         return false;
       }
       if (trace_ && options_.enable_cctx) {
-        std::cerr << "  cand inter cctx=" << inter_cctx_type << "\n";
+        std::cerr << "  cand inter cctx=" << out.cctx << "\n";
       }
-      const std::int64_t res_total =
-          sse_vis(0, ax0, ay0, w, h, res_y.recon) +
-          sse_vis(1, acx0, acy0, cw, ch, res_u.recon) +
-          sse_vis(2, acx0, acy0, cw, ch, res_v.recon);
+      const double res_total =
+          sse_pipe(0, ax0, ay0, w, h, out.res_y.recon) +
+          sse_pipe(1, acx0, acy0, cw, ch, out.res_u.recon) +
+          sse_pipe(2, acx0, acy0, cw, ch, out.res_v.recon);
       const bool all_zero =
-          luma_plan_all_zero(res_y) && res_u.eob == 0 && res_v.eob == 0;
+          luma_plan_all_zero(out.res_y) && out.res_u.eob == 0 &&
+          out.res_v.eob == 0;
       // Reconstruction step is qlookup/8 (66 at QP 90); sse_scale 0.5 is
       // the M1 calibrated value.  --video-leaf-rd swaps in the same
       // QP-derived lambda the intra/inter decision uses.
@@ -2289,37 +2769,104 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
           options_.enable_leaf_rd
               ? leaf_rd_lambda(st.current_qindex, options_)
               : options_.inter_rd_lambda;
-      const double res_bits = 3.0 + luma_plan_bits(res_y, true) +
-                              estimate_tx_bits(res_u, false) +
-                              estimate_tx_bits(res_v, false);
-      const bool want =
+      // Historical bar: 3.0 bits of residual syntax vs a 2.0-bit skip.
+      const double hist_res_bits =
+          3.0 + luma_plan_bits(out.res_y, true) +
+          estimate_tx_bits(out.res_u, false) +
+          estimate_tx_bits(out.res_v, false);
+      const bool hist_want =
           options_.force_inter_residual ||
           (!all_zero &&
-           static_cast<double>(res_total) + kLambda * res_bits <
+           static_cast<double>(res_total) + kLambda * hist_res_bits <
                static_cast<double>(pred_total) + kLambda * 2.0);
+      // R09 bar: skip_flag = 0 pays the coefficient rate, skip_flag = 1 pays
+      // the exact -log2 P(skip=1); the difference replaces the fixed 2.0/3.0
+      // pair.  Both candidates pay the same is_inter/mode syntax, so it
+      // cancels at this comparison.
+      double res_syntax = 3.0;
+      double skip_syntax = 2.0;
+      if (rate_model_on) {
+        double delta = 0.0;
+        if (rate_probe_.skip_delta(probe_node_for(out.cand), &delta)) {
+          res_syntax = 0.0;
+          skip_syntax = delta;
+        }
+      }
+      const double res_bits = res_syntax +
+                              decision_coeff_bits(out.res_y, true) +
+                              decision_coeff_bits(out.res_u, false) +
+                              decision_coeff_bits(out.res_v, false);
+      bool want =
+          options_.force_inter_residual ||
+          (!all_zero &&
+           res_total + kLambda * res_bits <
+               pred_total + kLambda * skip_syntax);
+      if (pipe_on) {
+        // Joint skip/residual choice with the pipeline objective.  Both forms
+        // pay the exact is_inter/skip/mode syntax; only the residual form
+        // adds the context-coded coefficients.  This happens inside every
+        // re-scored candidate, not after the candidate has been chosen.
+        syntax::BlockSyntax probe = probe_node_for(out.cand);
+        probe.use_bawp = out.bawp ? 1 : 0;
+        probe.motion_mode = out.interintra ? 1 : 0;
+        probe.skip_flag = 1;
+        rate_hybrid::Terms skip_terms;
+        const bool skip_ok = pipe_probe_.price_full(probe, &skip_terms);
+        probe.skip_flag = 0;
+        rate_hybrid::Terms res_terms;
+        const bool res_ok = pipe_probe_.price_full(probe, &res_terms);
+        if (skip_ok && res_ok) {
+          const double full_res_bits =
+              res_terms.total() +
+              coeff_bits(out.res_y, 0, true) +
+              coeff_bits(out.res_u, 1, true) +
+              coeff_bits(out.res_v, 2, true);
+          const double full_skip_bits = skip_terms.total();
+          const double skip_cost =
+              pred_total + pipe_lambda * full_skip_bits;
+          const double exact_res_cost =
+              res_total + pipe_lambda * full_res_bits;
+          want = options_.force_inter_residual ||
+                 (!all_zero && exact_res_cost < skip_cost);
+          if (want != hist_want) {
+            ++(eff_on ? eff_perc::counters().skip_flips
+                      : pipe_perc::counters().skip_flips);
+          }
+          out.pipe_modeled = true;
+          out.pipe_distortion = want ? res_total : pred_total;
+          out.pipe_bits = want ? full_res_bits : full_skip_bits;
+        } else {
+          ++(eff_on ? eff_perc::counters().fallbacks
+                : pipe_perc::counters().fallbacks);
+        }
+      }
+      if (rate_hybrid::enabled() && rate_reporting && want != hist_want) {
+        rate_hybrid::report::count_decision("skip");
+      }
       if (trace_) {
         std::cerr << "  ileaf " << w << "x" << h << " at " << x0 << ","
-                  << y0 << " mv=" << best.mv.y << "," << best.mv.x
-                  << " ref=" << static_cast<int>(best.ref_index)
+                  << y0 << " mv=" << out.cand.mv.y << "," << out.cand.mv.x
+                  << " ref=" << static_cast<int>(out.cand.ref_index)
                   << " pred=" << pred_total << " res=" << res_total
-                  << " rbits=" << res_bits << " parts=" << res_y.parts.size()
-                  << " eob=" << res_y.eob << " zero=" << (all_zero ? 1 : 0)
+                  << " rbits=" << res_bits
+                  << " parts=" << out.res_y.parts.size()
+                  << " eob=" << out.res_y.eob
+                  << " zero=" << (all_zero ? 1 : 0)
                   << " want=" << (want ? 1 : 0);
-        for (const TxPlan::Part& part : res_y.parts) {
+        for (const TxPlan::Part& part : out.res_y.parts) {
           std::cerr << " [" << part.coded_w << "x" << part.coded_h << "/e"
                     << part.eob << "]";
         }
         std::cerr << "\n";
       }
       if (want) {
-        inter_residual = true;
-        inter_y = res_y.recon;
-        inter_u = res_u.recon;
-        inter_v = res_v.recon;
-        inter_luma_sse =
-            sse_vis(0, ax0, ay0, w, h, inter_y);
+        out.residual = true;
+        out.y = out.res_y.recon;
+        out.u = out.res_u.recon;
+        out.v = out.res_v.recon;
+        out.luma_sse = sse_vis(0, ax0, ay0, w, h, out.y);
         if (trace_ && options_.enable_inter_ddt) {
-          for (const TxPlan::Part& part : res_y.parts) {
+          for (const TxPlan::Part& part : out.res_y.parts) {
             const auto part_params = txv::make_tx_params(
                 static_cast<txv::TxSize>(part.tx_size),
                 static_cast<txv::TxType>(part.tx_type));
@@ -2337,9 +2884,259 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       }
     }
     if (trace_) {
-      std::cerr << "  cand inter final sse=" << inter_luma_sse
-                << " residual=" << (inter_residual ? 1 : 0) << "\n";
+      std::cerr << "  cand inter final sse=" << out.luma_sse
+                << " residual=" << (out.residual ? 1 : 0) << "\n";
     }
+    // Measured objective terms for AV2ENC_EXACT_RD.  D is the reconstruction
+    // distortion of the block the leaf would actually emit (all owned
+    // planes); R is the same syntax + coefficient estimate the leaf decision
+    // charges, with the mode the candidate ended up carrying after the BAWP
+    // carrier swap and the skip-only inter-intra / compound forms.  Gate off
+    // does not compute this, so the historical path is untouched.
+    if (exact_rd::enabled()) {
+      out.distortion = 0.0;
+      if (!chroma_part) {
+        out.distortion +=
+            static_cast<double>(sse_vis(0, ax0, ay0, w, h, out.y));
+      }
+      if (owns_chroma) {
+        out.distortion +=
+            static_cast<double>(sse_vis(1, acx0, acy0, cw, ch, out.u));
+        out.distortion +=
+            static_cast<double>(sse_vis(2, acx0, acy0, cw, ch, out.v));
+      }
+      out.bits = 2.0 + inter_syntax_bits(out.cand.mode, out.cand.drl_index,
+                                         out.cand.mvd.y, out.cand.mvd.x,
+                                         out.cand.use_amvd);
+      if (rate_model_on) {
+        syntax::BlockSyntax probe = probe_node_for(out.cand);
+        probe.skip_flag = out.residual ? 0 : 1;
+        probe.use_bawp = out.bawp ? 1 : 0;
+        probe.motion_mode = out.interintra ? 1 : 0;
+        rate_hybrid::Terms terms;
+        if (rate_probe_.price_full(probe, &terms)) out.bits = terms.total();
+      }
+      if (out.bawp && !rate_model_on) out.bits += 1.0;          // use_bawp
+      if (out.interintra && !rate_model_on) out.bits += 2.0;    // motion_mode
+      if (out.residual) {
+        out.bits += decision_coeff_bits(out.res_y, true) +
+                    decision_coeff_bits(out.res_u, false) +
+                    decision_coeff_bits(out.res_v, false);
+      }
+    }
+    return true;
+  };
+
+  // The gate-off path evaluates exactly the proxy winner.  With the gate on,
+  // the cheap ranking is re-scored: the proxy winner first (preserving the
+  // historical strict-< tie-break), then the next cheapest candidates in the
+  // same order.  N=all would therefore visit a deterministic total order.
+  std::vector<const InterCandidate*> exact_eval_order;
+  if ((exact_on || pipe_on) && !ranked_candidates.empty()) {
+    std::stable_sort(
+        ranked_candidates.begin(), ranked_candidates.end(),
+        [](const RankedCandidate& a, const RankedCandidate& b) {
+          if (a.cost != b.cost) return a.cost < b.cost;
+          return a.order < b.order;
+        });
+    const auto same_candidate = [](const InterCandidate& a,
+                                   const InterCandidate& b) {
+      return a.mode == b.mode && a.ref_index == b.ref_index &&
+             a.mv.y == b.mv.y && a.mv.x == b.mv.x &&
+             a.compound == b.compound && a.same_ref == b.same_ref &&
+             a.compound_mode == b.compound_mode && a.drl_index == b.drl_index &&
+             a.mv1.y == b.mv1.y && a.mv1.x == b.mv1.x &&
+             a.use_warp == b.use_warp;
+    };
+    if (best.valid) exact_eval_order.push_back(&best);
+    const std::size_t top_n = static_cast<std::size_t>(
+        eff_on ? eff_perc::top_n()
+               : (pipe_on ? pipe_perc::top_n() : exact_rd::top_n()));
+    for (const RankedCandidate& ranked : ranked_candidates) {
+      if (exact_eval_order.size() >= top_n) break;
+      bool duplicate = false;
+      for (const InterCandidate* already : exact_eval_order) {
+        if (same_candidate(*already, ranked.cand)) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (!duplicate) exact_eval_order.push_back(&ranked.cand);
+    }
+  } else if (best.valid) {
+    exact_eval_order.push_back(&best);
+  }
+
+  std::vector<std::uint8_t> inter_y;
+  std::vector<std::uint8_t> inter_u;
+  std::vector<std::uint8_t> inter_v;
+  bool inter_residual = false;
+  TxPlan res_y;
+  TxPlan res_u;
+  TxPlan res_v;
+  int inter_cctx_type = 0;
+  bool bawp_applied = false;
+  inter::adv::BawpFit bawp_fit{};
+  bool inter_intra_applied = false;
+  int inter_intra_mode = 0;
+  bool inter_intra_wedge = false;
+  int inter_intra_index = 0;
+  std::int64_t inter_luma_sse = best.sse;
+  // Exact objective of the selected inter candidate.  Only read when the gate
+  // is on (the intra/inter comparison below).
+  double exact_inter_distortion = 0.0;
+  double exact_inter_bits = 0.0;
+  // Pipeline objective of the selected inter candidate (D and R are the
+  // emitted form, so the intra/inter comparison below uses one J).
+  double pipe_inter_distortion = 0.0;
+  double pipe_inter_bits = 0.0;
+  bool pipe_inter_valid = false;
+  // R09 report: the model's candidate ranking vs the historical constants.
+  // Both rankings are over the same candidate set; a changed winner is one of
+  // the decisions the model moves.
+  if (rate_model_on && rate_reporting && best.valid && best_hist.valid) {
+    const auto same_candidate = [](const InterCandidate& a,
+                                   const InterCandidate& b) {
+      return a.mode == b.mode && a.ref_index == b.ref_index &&
+             a.mv.y == b.mv.y && a.mv.x == b.mv.x &&
+             a.compound == b.compound && a.same_ref == b.same_ref &&
+             a.compound_mode == b.compound_mode &&
+             a.drl_index == b.drl_index && a.mv1.y == b.mv1.y &&
+             a.mv1.x == b.mv1.x && a.use_warp == b.use_warp;
+    };
+    if (!same_candidate(best, best_hist)) {
+      rate_hybrid::report::count_decision("candidate");
+    }
+  }
+  if (!keyframe_ && best.valid && !exact_eval_order.empty()) {
+    InterLeafResult chosen;
+    double chosen_cost = 0.0;
+    bool have_chosen = false;
+    // The proxy winner after its own evaluation (it may have swapped to the
+    // BAWP carrier).  This is what the historical path would have emitted, so
+    // the "exact differs from proxy" counter compares against it rather than
+    // against the pre-evaluation candidate.
+    InterCandidate proxy_after_eval;
+    const double exact_lambda =
+        leaf_rd_lambda(st.current_qindex, options_);
+    for (const InterCandidate* candidate : exact_eval_order) {
+      InterLeafResult result;
+      if (!evaluate_inter_leaf(*candidate, result)) return false;
+      if (pipe_on) {
+        if (!result.pipe_modeled) {
+          // The probe cannot model this carrier (compound / TIP / AMVD /
+          // flex precision).  Price the emitted form with the local D and the
+          // historical syntax estimate, and count the fallback.
+          result.pipe_distortion =
+              sse_pipe(0, ax0, ay0, w, h, result.y) +
+              sse_pipe(1, acx0, acy0, cw, ch, result.u) +
+              sse_pipe(2, acx0, acy0, cw, ch, result.v);
+          result.pipe_bits =
+              inter_syntax_bits(result.cand.mode, result.cand.drl_index,
+                                result.cand.mvd.y, result.cand.mvd.x,
+                                result.cand.use_amvd) +
+              (result.bawp ? 1.0 : 0.0) +
+              (result.interintra ? 2.0 : 0.0) +
+              (result.residual
+                   ? (luma_plan_bits(result.res_y, true) +
+                      estimate_tx_bits(result.res_u, false) +
+                      estimate_tx_bits(result.res_v, false))
+                   : 2.0);
+        }
+        const double cost =
+            result.pipe_distortion + pipe_lambda * result.pipe_bits;
+        ++(eff_on ? eff_perc::counters().rescored
+                  : pipe_perc::counters().rescored);
+        if (!have_chosen) {
+          proxy_after_eval = result.cand;
+        }
+        if (!have_chosen || cost < chosen_cost) {
+          chosen = std::move(result);
+          chosen_cost = cost;
+          have_chosen = true;
+        }
+      } else if (exact_on) {
+        const double cost =
+            result.distortion + exact_lambda * result.bits;
+        ++exact_rd::counters().rescored;
+        if (!have_chosen) {
+          proxy_after_eval = result.cand;
+          if (result.residual) ++exact_rd::counters().proxy_residual;
+        }
+        if (!have_chosen || cost < chosen_cost) {
+          chosen = std::move(result);
+          chosen_cost = cost;
+          have_chosen = true;
+        }
+      } else {
+        chosen = std::move(result);
+        chosen_cost = 0.0;
+        have_chosen = true;
+      }
+      if (!exact_on && !pipe_on) break;
+    }
+    if (!have_chosen) {
+      error = "exact RD produced no inter candidate";
+      return false;
+    }
+    if (exact_on) {
+      ++exact_rd::counters().leaves;
+      const auto same_candidate = [](const InterCandidate& a,
+                                     const InterCandidate& b) {
+        return a.mode == b.mode && a.ref_index == b.ref_index &&
+               a.mv.y == b.mv.y && a.mv.x == b.mv.x &&
+               a.compound == b.compound && a.same_ref == b.same_ref &&
+               a.compound_mode == b.compound_mode &&
+               a.drl_index == b.drl_index && a.mv1.y == b.mv1.y &&
+               a.mv1.x == b.mv1.x && a.use_warp == b.use_warp;
+      };
+      if (!same_candidate(chosen.cand, proxy_after_eval)) {
+        ++exact_rd::counters().inter_winner_changed;
+      }
+      if (chosen.residual) ++exact_rd::counters().exact_residual;
+      exact_inter_distortion = chosen.distortion;
+      exact_inter_bits = chosen.bits;
+    }
+    if (pipe_on) {
+      ++(eff_on ? eff_perc::counters().leaves
+                : pipe_perc::counters().leaves);
+      const auto same_candidate = [](const InterCandidate& a,
+                                     const InterCandidate& b) {
+        return a.mode == b.mode && a.ref_index == b.ref_index &&
+               a.mv.y == b.mv.y && a.mv.x == b.mv.x &&
+               a.compound == b.compound && a.same_ref == b.same_ref &&
+               a.compound_mode == b.compound_mode &&
+               a.drl_index == b.drl_index && a.mv1.y == b.mv1.y &&
+               a.mv1.x == b.mv1.x && a.use_warp == b.use_warp;
+      };
+      if (!same_candidate(chosen.cand, proxy_after_eval)) {
+        ++(eff_on ? eff_perc::counters().inter_winner_changed
+                  : pipe_perc::counters().inter_winner_changed);
+      }
+      if (chosen.residual) {
+        ++(eff_on ? eff_perc::counters().residual_leaves
+                  : pipe_perc::counters().residual_leaves);
+      }
+      pipe_inter_distortion = chosen.pipe_distortion;
+      pipe_inter_bits = chosen.pipe_bits;
+      pipe_inter_valid = true;
+    }
+    best = chosen.cand;
+    inter_y = std::move(chosen.y);
+    inter_u = std::move(chosen.u);
+    inter_v = std::move(chosen.v);
+    inter_residual = chosen.residual;
+    res_y = std::move(chosen.res_y);
+    res_u = std::move(chosen.res_u);
+    res_v = std::move(chosen.res_v);
+    inter_cctx_type = chosen.cctx;
+    bawp_applied = chosen.bawp;
+    bawp_fit = chosen.fit;
+    inter_intra_applied = chosen.interintra;
+    inter_intra_mode = chosen.ii_mode;
+    inter_intra_wedge = chosen.ii_wedge;
+    inter_intra_index = chosen.ii_index;
+    inter_luma_sse = chosen.luma_sse;
   }
 
   bool use_intra = keyframe_ || options_.force_intra || !best.valid;
@@ -2365,7 +3162,118 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     use_palette = false;
   }
   if (!use_intra && have_intra && !seg_forced_inter) {
-    if (options_.enable_leaf_rd) {
+    if (pipe_on && pipe_inter_valid) {
+      // Joint intra/inter comparison with the pipeline objective.  The intra
+      // candidate pays its own is_inter symbol, mode/MRL/DIP/CfL syntax and
+      // the context-coded coefficients; the inter side's terms were recorded
+      // by evaluate_inter_leaf() for the emitted skip or residual form.
+      syntax::BlockSyntax intra_probe = probe_node_for(best);
+      intra_probe.is_inter = 0;
+      intra_probe.skip_flag = 0;
+      double intra_is_inter = 2.0;
+      double unused_skip = 0.0;
+      if (!pipe_probe_.price_leaf_flags(intra_probe, &intra_is_inter,
+                                        &unused_skip)) {
+        intra_is_inter = 2.0;
+        ++(eff_on ? eff_perc::counters().fallbacks
+                : pipe_perc::counters().fallbacks);
+      }
+      const double intra_bits =
+          intra_is_inter +
+          intra_luma_syntax_bits(intra_y_mode, intra_y_angle_delta,
+                                 intra_mrl_index, intra_mrl_sec_index,
+                                 intra_use_dip) +
+          intra_chroma_syntax_bits(intra_is_cfl, options_.enable_cctx) +
+          coeff_bits(intra_y, 0, false) +
+          coeff_bits(intra_u, 1, false) +
+          coeff_bits(intra_v, 2, false);
+      double intra_distortion = 0.0;
+      if (!chroma_part) {
+        intra_distortion += sse_pipe(0, ax0, ay0, w, h, intra_y.recon);
+      }
+      if (owns_chroma) {
+        intra_distortion += sse_pipe(1, acx0, acy0, cw, ch, intra_u.recon);
+        intra_distortion += sse_pipe(2, acx0, acy0, cw, ch, intra_v.recon);
+      }
+      use_intra =
+          intra_distortion + pipe_lambda * intra_bits <
+          pipe_inter_distortion + pipe_lambda * pipe_inter_bits;
+      if (trace_) {
+        std::cerr << "  pipe leafrd intra=" << intra_distortion << "+"
+                  << pipe_lambda << "*" << intra_bits << " inter="
+                  << pipe_inter_distortion << "+" << pipe_lambda << "*"
+                  << pipe_inter_bits << " use_intra="
+                  << (use_intra ? 1 : 0) << "\n";
+      }
+      {
+        // Decision-change count against the historical constants computed on
+        // exactly the same intra and inter plans.
+        const double lambda = leaf_rd_lambda(st.current_qindex, options_);
+        const double hist_intra_bits =
+            2.0 + luma_plan_bits(intra_y, false) +
+            estimate_tx_bits(intra_u, false) +
+            estimate_tx_bits(intra_v, false) +
+            intra_luma_syntax_bits(intra_y_mode, intra_y_angle_delta,
+                                   intra_mrl_index, intra_mrl_sec_index,
+                                   intra_use_dip) +
+            intra_chroma_syntax_bits(intra_is_cfl, options_.enable_cctx);
+        double hist_inter_bits =
+            2.0 + inter_syntax_bits(best.mode, best.drl_index, best.mvd.y,
+                                    best.mvd.x, best.use_amvd) +
+            (bawp_applied ? 1.0 : 0.0) +
+            (inter_intra_applied ? 2.0 : 0.0);
+        if (inter_residual) {
+          hist_inter_bits += luma_plan_bits(res_y, true) +
+                             estimate_tx_bits(res_u, false) +
+                             estimate_tx_bits(res_v, false);
+        }
+        const bool use_intra_hist =
+            static_cast<double>(intra_sse) + lambda * hist_intra_bits <
+            static_cast<double>(inter_luma_sse) +
+                lambda * hist_inter_bits;
+        if (use_intra != use_intra_hist) {
+          ++(eff_on ? eff_perc::counters().intra_flips
+                    : pipe_perc::counters().intra_flips);
+        }
+      }
+    } else if (exact_on) {
+      // Exact intra/inter comparison: both sides are priced with the same
+      // QP-derived leaf lambda, the reconstruction distortion of every plane
+      // the leaf owns and the same syntax + coefficient estimate the leaf
+      // decision charges.  The inter side's terms were recorded by
+      // evaluate_inter_leaf(), including the residual plan it chose.
+      const double lambda = leaf_rd_lambda(st.current_qindex, options_);
+      double intra_distortion = 0.0;
+      if (!chroma_part) {
+        intra_distortion +=
+            static_cast<double>(sse_vis(0, ax0, ay0, w, h, intra_y.recon));
+      }
+      if (owns_chroma) {
+        intra_distortion += static_cast<double>(
+            sse_vis(1, acx0, acy0, cw, ch, intra_u.recon));
+        intra_distortion += static_cast<double>(
+            sse_vis(2, acx0, acy0, cw, ch, intra_v.recon));
+      }
+      const double intra_bits =
+          2.0 + decision_coeff_bits(intra_y, false) +
+          decision_coeff_bits(intra_u, false) +
+          decision_coeff_bits(intra_v, false) +
+          intra_luma_syntax_bits(intra_y_mode, intra_y_angle_delta,
+                                 intra_mrl_index, intra_mrl_sec_index,
+                                 intra_use_dip) +
+          intra_chroma_syntax_bits(intra_is_cfl, options_.enable_cctx);
+      use_intra =
+          intra_distortion + lambda * intra_bits <
+          exact_inter_distortion + lambda * exact_inter_bits;
+      if (use_intra) ++exact_rd::counters().intra_flipped;
+      if (trace_) {
+        std::cerr << "  leafrd exact intra=" << intra_distortion << "+"
+                  << lambda << "*" << intra_bits << " inter="
+                  << exact_inter_distortion << "+" << lambda << "*"
+                  << exact_inter_bits << " use_intra="
+                  << (use_intra ? 1 : 0) << "\n";
+      }
+    } else if (options_.enable_leaf_rd) {
       // One leaf cost for the intra/inter decision: coded SSE plus one
       // QP-derived lambda times the real-ish syntax rate.  Both sides pay
       // the same is_inter/skip base; each adds its own mode syntax and its
@@ -2373,9 +3281,9 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       // when its prediction SSE is slightly worse.
       const double lambda = leaf_rd_lambda(st.current_qindex, options_);
       double intra_bits =
-          2.0 + luma_plan_bits(intra_y, false) +
-          estimate_tx_bits(intra_u, false) +
-          estimate_tx_bits(intra_v, false) +
+          2.0 + decision_coeff_bits(intra_y, false) +
+          decision_coeff_bits(intra_u, false) +
+          decision_coeff_bits(intra_v, false) +
           intra_luma_syntax_bits(intra_y_mode, intra_y_angle_delta,
                                  intra_mrl_index, intra_mrl_sec_index,
                                  intra_use_dip) +
@@ -2384,12 +3292,67 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
           2.0 + inter_syntax_bits(best.mode, best.drl_index, best.mvd.y,
                                   best.mvd.x, best.use_amvd);
       if (inter_residual) {
-        inter_bits += luma_plan_bits(res_y, true) +
-                      estimate_tx_bits(res_u, false) +
-                      estimate_tx_bits(res_v, false);
+        inter_bits += decision_coeff_bits(res_y, true) +
+                      decision_coeff_bits(res_u, false) +
+                      decision_coeff_bits(res_v, false);
+      }
+      const double hist_intra_bits =
+          2.0 + luma_plan_bits(intra_y, false) +
+          estimate_tx_bits(intra_u, false) +
+          estimate_tx_bits(intra_v, false) +
+          intra_luma_syntax_bits(intra_y_mode, intra_y_angle_delta,
+                                 intra_mrl_index, intra_mrl_sec_index,
+                                 intra_use_dip) +
+          intra_chroma_syntax_bits(intra_is_cfl, options_.enable_cctx);
+      double hist_inter_bits =
+          2.0 + inter_syntax_bits(best.mode, best.drl_index, best.mvd.y,
+                                  best.mvd.x, best.use_amvd);
+      if (inter_residual) {
+        hist_inter_bits += luma_plan_bits(res_y, true) +
+                           estimate_tx_bits(res_u, false) +
+                           estimate_tx_bits(res_v, false);
+      }
+      const bool intra_hist =
+          static_cast<double>(intra_sse) + lambda * hist_intra_bits <
+          static_cast<double>(inter_luma_sse) + lambda * hist_inter_bits;
+      if (rate_model_on) {
+        // is_inter is coded on both sides: the inter leaf pays -log2 P(1)
+        // (plus skip), the intra leaf -log2 P(0).  The mode information and
+        // the residual then use the exact probe / Laplacian.
+        syntax::BlockSyntax probe = probe_node_for(best);
+        probe.skip_flag = inter_residual ? 0 : 1;
+        probe.use_bawp = bawp_applied ? 1 : 0;
+        probe.motion_mode = inter_intra_applied ? 1 : 0;
+        rate_hybrid::Terms inter_terms;
+        if (rate_probe_.price_full(probe, &inter_terms)) {
+          inter_bits = inter_terms.total();
+          if (inter_residual) {
+            inter_bits += decision_coeff_bits(res_y, true) +
+                          decision_coeff_bits(res_u, false) +
+                          decision_coeff_bits(res_v, false);
+          }
+        }
+        double intra_is_inter = 2.0;
+        double unused_skip = 0.0;
+        probe.is_inter = 0;
+        if (rate_probe_.price_leaf_flags(probe, &intra_is_inter,
+                                         &unused_skip)) {
+          intra_bits = intra_is_inter + decision_coeff_bits(intra_y, false) +
+                       decision_coeff_bits(intra_u, false) +
+                       decision_coeff_bits(intra_v, false) +
+                       intra_luma_syntax_bits(
+                           intra_y_mode, intra_y_angle_delta, intra_mrl_index,
+                           intra_mrl_sec_index, intra_use_dip) +
+                       intra_chroma_syntax_bits(intra_is_cfl,
+                                                options_.enable_cctx);
+        }
       }
       use_intra = static_cast<double>(intra_sse) + lambda * intra_bits <
                   static_cast<double>(inter_luma_sse) + lambda * inter_bits;
+      if (rate_hybrid::enabled() && rate_reporting &&
+          use_intra != intra_hist) {
+        rate_hybrid::report::count_decision("intra");
+      }
       if (trace_) {
         std::cerr << "  leafrd intra=" << intra_sse << "+" << lambda << "*"
                   << intra_bits << " inter=" << inter_luma_sse << "+"
@@ -2791,6 +3754,176 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     }
   }
 #endif
+
+  // AV2ENC_EXACT_RD partition input: record the measured (D, R) of the leaf
+  // the encoder will actually emit.  D is the reconstruction SSE of every
+  // plane the leaf owns; R is the same syntax + coefficient estimate the leaf
+  // decision charges.  The partition refinement later prices these with the
+  // node's own partition lambda and compares them with the NEWMV probe on
+  // nodes that were not encoded in the first pass.  Gate off: no record, no
+  // extra work.
+  if (exact_rd::enabled()) {
+    exact_rd::LeafCost measured;
+    if (use_ibc) {
+      if (!chroma_part) {
+        measured.distortion += static_cast<double>(
+            sse_vis(0, ax0, ay0, w, h, ibc_choice.luma));
+      }
+      if (owns_chroma) {
+        measured.distortion += static_cast<double>(
+            sse_vis(1, acx0, acy0, cw, ch, ibc_choice.u));
+        measured.distortion += static_cast<double>(
+            sse_vis(2, acx0, acy0, cw, ch, ibc_choice.v));
+      }
+      // is_inter/is_ibc + mode/BV syntax: coarse but consistent with the
+      // probe's constant mode/skip terms.  IBC is keyframe-only, so this never
+      // enters the P-frame partition refinement.
+      measured.bits = 8.0;
+    } else if (use_palette) {
+      if (!chroma_part) {
+        measured.distortion += static_cast<double>(
+            sse_vis(0, ax0, ay0, w, h, palette_choice.luma));
+      }
+      if (owns_chroma) {
+        measured.distortion += static_cast<double>(
+            sse_vis(1, acx0, acy0, cw, ch, intra_u.recon));
+        measured.distortion += static_cast<double>(
+            sse_vis(2, acx0, acy0, cw, ch, intra_v.recon));
+      }
+      measured.bits =
+          2.0 + 4.0 + estimate_tx_bits(intra_y, false) +
+          estimate_tx_bits(intra_u, false) +
+          estimate_tx_bits(intra_v, false) +
+          intra_chroma_syntax_bits(intra_is_cfl, options_.enable_cctx);
+    } else if (use_intra) {
+      if (!chroma_part) {
+        measured.distortion += static_cast<double>(
+            sse_vis(0, ax0, ay0, w, h, intra_y.recon));
+      }
+      if (owns_chroma) {
+        measured.distortion += static_cast<double>(
+            sse_vis(1, acx0, acy0, cw, ch, intra_u.recon));
+        measured.distortion += static_cast<double>(
+            sse_vis(2, acx0, acy0, cw, ch, intra_v.recon));
+      }
+      measured.bits =
+          2.0 + luma_plan_bits(intra_y, false) +
+          estimate_tx_bits(intra_u, false) +
+          estimate_tx_bits(intra_v, false) +
+          intra_luma_syntax_bits(intra_y_mode, intra_y_angle_delta,
+                                 intra_mrl_index, intra_mrl_sec_index,
+                                 intra_use_dip) +
+          intra_chroma_syntax_bits(intra_is_cfl, options_.enable_cctx);
+    } else {
+      if (!chroma_part) {
+        measured.distortion +=
+            static_cast<double>(sse_vis(0, ax0, ay0, w, h, inter_y));
+      }
+      if (owns_chroma) {
+        measured.distortion += static_cast<double>(
+            sse_vis(1, acx0, acy0, cw, ch, inter_u));
+        measured.distortion += static_cast<double>(
+            sse_vis(2, acx0, acy0, cw, ch, inter_v));
+      }
+      measured.bits =
+          2.0 + inter_syntax_bits(best.mode, best.drl_index, best.mvd.y,
+                                  best.mvd.x, best.use_amvd);
+      if (bawp_applied) measured.bits += 1.0;
+      if (inter_intra_applied) measured.bits += 2.0;
+      if (inter_residual) {
+        measured.bits += luma_plan_bits(res_y, true) +
+                         estimate_tx_bits(res_u, false) +
+                         estimate_tx_bits(res_v, false);
+      }
+    }
+    measured.valid = true;
+    if (sink.leaf_costs.size() < sink.blocks.size()) {
+      sink.leaf_costs.resize(sink.blocks.size());
+    }
+    sink.leaf_costs[index] = measured;
+  }
+
+  // R09 (AV2ENC_RATE_HYBRID_S): record the decision-side rate for this leaf
+  // and advance the probe.  Measurement runs (gate off, measure on) also come
+  // here, so the report covers the historical decisions byte-identically.
+  if (rate_reporting) {
+    syntax::BlockSyntax probe = entry;
+    rate_hybrid::Terms terms;
+    const bool priced = rate_probe_.price_full(probe, &terms);
+    if (entry.is_inter) {
+      syntax::BlockSyntax::RateDiag& diag = entry.rate_diag;
+      double old_syntax =
+          2.0 + inter_syntax_bits(entry.inter_mode, entry.drl_index,
+                                  entry.mvd_y, entry.mvd_x,
+                                  entry.use_amvd != 0);
+      if (entry.use_bawp) old_syntax += 1.0;
+      if (entry.motion_mode == 1) old_syntax += 2.0;
+      diag.syntax_old = static_cast<float>(old_syntax);
+      diag.syntax_new =
+          static_cast<float>(priced ? terms.total() : old_syntax);
+      diag.term[0] = static_cast<float>(terms.is_inter);
+      diag.term[1] = static_cast<float>(terms.skip);
+      diag.term[2] = static_cast<float>(terms.mode);
+      diag.term[3] = static_cast<float>(terms.ref + terms.comp_mode);
+      diag.term[4] = static_cast<float>(terms.drl);
+      diag.term[5] = static_cast<float>(terms.mvd);
+      diag.bawp = static_cast<float>(terms.bawp);
+      if (entry.skip_flag == 0) {
+        float eob_sum = 0.0f;
+        float nz_sum = 0.0f;
+        float abs_sum = 0.0f;
+        const auto accumulate = [&](const TxPlan& plan) {
+          if (!plan.searched) {
+            eob_sum += static_cast<float>(plan.eob);
+            std::vector<std::uint16_t> scan(
+                static_cast<std::size_t>(plan.adj_w * plan.adj_h));
+            syntax::build_scan(plan.adj_w, plan.adj_h, scan);
+            for (int c2 = 0; c2 < plan.eob; ++c2) {
+              const std::int32_t v =
+                  plan.levels[scan[static_cast<std::size_t>(c2)]];
+              if (v != 0) {
+                nz_sum += 1.0f;
+                abs_sum += static_cast<float>(v < 0 ? -v : v);
+              }
+            }
+            return;
+          }
+          for (const TxPlan::Part& part : plan.parts) {
+            eob_sum += static_cast<float>(part.eob);
+            for (int c2 = 0; c2 < part.eob; ++c2) {
+              const std::int32_t v = part.levels[static_cast<std::size_t>(c2)];
+              if (v != 0) {
+                nz_sum += 1.0f;
+                abs_sum += static_cast<float>(v < 0 ? -v : v);
+              }
+            }
+          }
+        };
+        accumulate(res_y);
+        accumulate(res_u);
+        accumulate(res_v);
+        diag.eob = eob_sum;
+        diag.nonzero = nz_sum;
+        diag.sum_abs = abs_sum;
+        diag.coeff_old =
+            static_cast<float>(luma_plan_bits(res_y, true) +
+                               estimate_tx_bits(res_u, false) +
+                               estimate_tx_bits(res_v, false));
+        diag.coeff_new =
+            static_cast<float>(laplacian_plan_bits(res_y, true) +
+                               laplacian_plan_bits(res_u, false) +
+                               laplacian_plan_bits(res_v, false));
+      }
+      diag.valid = 1;
+      diag.fallback = priced ? 0 : 1;
+      if (!priced) rate_hybrid::report::count_fallback();
+    }
+    rate_probe_.commit(entry);
+  }
+
+  // AV2ENC_PIPE_PERC: advance the exact-syntax probe with the leaf the writer
+  // will code, in coded order, so the next leaf's contexts match the writer.
+  if (pipe_on && !chroma_part) pipe_probe_.commit(entry);
 
   // §6.19.2.3: this leaf's cells are now decoded for the availability of the
   // following leaves in this superblock.

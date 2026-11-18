@@ -83,6 +83,15 @@ endif()
 add_test(NAME gate_primitives COMMAND primitives_test)
 set_tests_properties(gate_primitives PROPERTIES LABELS gate)
 
+# §6.17.2 loop-restoration CDF rows in the §8.2 frame image.  Decoder-free:
+# catches an omitted LR row before the 60-frame dav2d gate sees the
+# frame-3 desynchronisation.
+add_executable(lr_cdf_image_test lr_cdf_image_test.cpp)
+target_link_libraries(lr_cdf_image_test PRIVATE av2enc_core)
+av2enc_apply_warnings(lr_cdf_image_test)
+add_test(NAME gate_lr_cdf_image COMMAND lr_cdf_image_test)
+set_tests_properties(gate_lr_cdf_image PROPERTIES LABELS gate)
+
 # Product gates (wave 4): additive test surface, see tests/gates/CMakeLists.txt.
 # Product gates encode real streams (1080p loop restoration, VBR video) and
 # are not unit tests. Register them only when a build explicitly asks for the

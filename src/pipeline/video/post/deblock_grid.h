@@ -30,6 +30,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -497,6 +499,51 @@ inline bool apply_video_deblock_host(const VideoDeblockGrid& grid,
                deblock::deblock_status_string(status);
     }
     return false;
+  }
+  // Diagnostic: the §7.17 filter size/threshold is *derived* state (qindex, TX
+  // sizes, edge classes); the encoder makes no strength search here.  Count the
+  // edges that actually filtered and the width distribution so a filter
+  // experiment can show whether deblocking is even a decision space.
+  if (std::getenv("AV2ENC_TRACE_DEBLOCK") != nullptr) {
+    static int trace_frame = 0;
+    int considered = 0;
+    int applied = 0;
+    int widths[16] = {0};
+    long long width_sum = 0;
+    for (int trace_plane = 0; trace_plane < 3; ++trace_plane) {
+      // Mirror deblock_frame_core()'s traversal: chroma edges sit on the
+      // subsampled grid, so odd MI coordinates are not valid inspect inputs.
+      const int row_step = (trace_plane == 0) ? 1 : 2;
+      const int col_step = (trace_plane == 0) ? 1 : 2;
+      for (int pass = 0; pass < 2; ++pass) {
+        for (int row = 0; row < grid.mi_rows; row += row_step) {
+          for (int col = 0; col < grid.mi_cols; col += col_step) {
+            const deblock::DeblockEdgeInfo info =
+                deblock::deblock_inspect_edge(frame, grid.options, trace_plane,
+                                              pass, row, col);
+            if (!info.on_screen) continue;
+            ++considered;
+            if (!info.apply_filter) continue;
+            ++applied;
+            const int w = info.width < 15 ? info.width : 15;
+            ++widths[w];
+            width_sum += info.width;
+          }
+        }
+      }
+    }
+    std::fprintf(stderr,
+                 "deblock frame=%d edges=%d filtered=%d mean_width=%.2f "
+                 "widths=",
+                 trace_frame++, considered, applied,
+                 applied > 0 ? static_cast<double>(width_sum) / applied : 0.0);
+    bool first = true;
+    for (int w = 1; w < 16; ++w) {
+      if (widths[w] == 0) continue;
+      std::fprintf(stderr, "%s%d:%d", first ? "" : ",", w, widths[w]);
+      first = false;
+    }
+    std::fprintf(stderr, "\n");
   }
   return true;
 }

@@ -69,7 +69,30 @@ static clip decodes.
    (`src/pipeline/video/video_syntax.cpp`: the new members, `init_cdfs()`, the
    `cdf_arrays()` descriptors, and the per-tile import/export around
    `cdef_tile_init`/`ccso_tile_init`).
-3. **Composition.** `--cdf-continuity` no longer needs the reset-per-frame
+3. **Loop restoration has the same six rows.** §6.17.2 also lists
+   `UseWienerNsCdf`, `WienerNsLengthCdf`, `WienerNsUvSymCdf`,
+   `WienerNsBaseCdf`, `UsePcWienerCdf` and `FlexRestorationTypeCdf`. They live
+   in the LR tile states, so `--video-wiener`, `--video-chroma-lr` and
+   `--video-pc-wiener` desynchronised on the first carried frame that coded an
+   LR unit symbol (frame 3; 2/60 pictures) until they were added to the image
+   (`src/codec/filters/loop_restoration/lr_cdf_image.h`, the seed/store helpers
+   in `filters_stream`/`pc_wiener_stream`, and the `CdfState::lr_cdfs`
+   descriptors).
+4. **Compound blocks have the same fourteen rows.** §5.20.7.10
+   `read_compound_mode_info()` and §5.20.7.6 `read_inter_block_mode_info()`
+   adapt `CompModeCdf`, `CompRef0Cdf`, `CompRef1Cdf`, `IsJointCdf`,
+   `CompoundModeNonJointCdf`, `CompoundModeSameRefsCdf`, `UseOptflowCdf`,
+   `CompGroupIdxCdf`, `CompoundTypeCdf`, `CwpIdxCdf`, `WedgeQuadCdf`,
+   `WedgeAngleCdf`, `WedgeDist1Cdf` and `WedgeDist2Cdf`. They were in
+   `CdfState` and `init_cdfs()`, but not in `cdf_arrays()`, so the packed image
+   omitted them: `--cdf-continuity --video-compound` (P carrier) decoded
+   **3/60** pictures, then `Error decoding frame: Invalid argument` for every
+   later frame. The fourteen descriptors now ride the §8.2 image like the
+   CDEF/CCSO/LR rows. The 60-frame masked P carrier (256 wedge + 69 diffwtd
+   leaves at QP 197) decodes 60/60 and reproduces `--video-recon` byte for
+   byte; carry is 15,780 B against 17,304 B for the same decisions with the
+   reset-per-frame image.
+5. **Composition.** `--cdf-continuity` no longer needs the reset-per-frame
    opt-in, so `--nightly` stops implying `--video-cdf-per-frame-qp` when the
    carry is on, and the drift-refresh prohibition is gone (`--video-drift-refresh`
    is allowed: the carried image follows the coded symbols, so a refresh

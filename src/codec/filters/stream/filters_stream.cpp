@@ -1670,12 +1670,11 @@ bool lr_state_init(LrState* state, const LrParams& params, int mi_cols,
   state->sub_y = sub_y;
   state->sb_size = sb_size;
 
-  copy_array(state->use_wiener_ns, kUseWienerNsCdf);
-  copy_array(state->wiener_ns_length, kWienerNsLengthCdf);
-  copy_array(state->wiener_ns_uv_sym, kWienerNsUvSymCdf);
-  copy_array(state->wiener_ns_base, kWienerNsBaseCdf);
-  std::memcpy(state->flex_restoration_type, kFlexRestorationTypeCdf,
-              sizeof(state->flex_restoration_type));
+  // §6.17.2 defaults.  The caller seeds the frame image over these when it
+  // carries CDFs across frames (lr_state_seed_cdfs).
+  ::av2enc::filters::lr_cdf::Image cdf_defaults;
+  ::av2enc::filters::lr_cdf::SetDefaults(&cdf_defaults);
+  lr_state_seed_cdfs(state, cdf_defaults);
 
   int luma_size = lr_unit_size_luma(params);
   int chroma_size = lr_unit_size_chroma(params, sub_x, sub_y);
@@ -1758,6 +1757,34 @@ bool lr_state_init(LrState* state, const LrParams& params, int mi_cols,
     }
   }
   return true;
+}
+
+void lr_state_seed_cdfs(
+    LrState* state, const ::av2enc::filters::lr_cdf::Image& image) {
+  std::memcpy(state->use_wiener_ns, image.use_wiener_ns,
+              sizeof(state->use_wiener_ns));
+  std::memcpy(state->wiener_ns_length, image.wiener_ns_length,
+              sizeof(state->wiener_ns_length));
+  std::memcpy(state->wiener_ns_uv_sym, image.wiener_ns_uv_sym,
+              sizeof(state->wiener_ns_uv_sym));
+  std::memcpy(state->wiener_ns_base, image.wiener_ns_base,
+              sizeof(state->wiener_ns_base));
+  std::memcpy(state->flex_restoration_type, image.flex_restoration_type,
+              sizeof(state->flex_restoration_type));
+}
+
+void lr_state_store_cdfs(
+    const LrState& state, ::av2enc::filters::lr_cdf::Image* image) {
+  std::memcpy(image->use_wiener_ns, state.use_wiener_ns,
+              sizeof(image->use_wiener_ns));
+  std::memcpy(image->wiener_ns_length, state.wiener_ns_length,
+              sizeof(image->wiener_ns_length));
+  std::memcpy(image->wiener_ns_uv_sym, state.wiener_ns_uv_sym,
+              sizeof(image->wiener_ns_uv_sym));
+  std::memcpy(image->wiener_ns_base, state.wiener_ns_base,
+              sizeof(image->wiener_ns_base));
+  std::memcpy(image->flex_restoration_type, state.flex_restoration_type,
+              sizeof(image->flex_restoration_type));
 }
 
 // ===========================================================================

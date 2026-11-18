@@ -2,6 +2,10 @@
 
 namespace av2enc::video {
 
+namespace {
+
+}  // namespace
+
 InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
                   std::vector<inter::mc::RefFrame> references,
                   std::array<int, 7> frame_distance, int num_total_refs,
@@ -236,6 +240,80 @@ bool InterFrameEncoder::partition_probe_fits(int mi_row, int mi_col,
   return true;
 }
 
+void InterFrameEncoder::ensure_rate_interval_cdfs() const {
+  std::call_once(rate_interval_once_, [this]() {
+    // The §8.2 image the tile writer will start from: the carried live state
+    // on a CDF-chain frame, the §9.3 defaults otherwise.
+    rate_interval::load_store_from_image(
+        cdf_seed_, static_cast<int>(options_.base_q_idx),
+        rate_interval_cdfs_);
+  });
+}
+
+// R19: price one plane of a decided TX plan with the §8.3 coefficient symbol
+// sequence through the §8.2.6 interval arithmetic.  The historical heuristic
+// stays the gate-off answer verbatim.
+double InterFrameEncoder::plan_rate_bits(const TxPlan& plan, int plane,
+                                         bool is_inter, int bsize) const {
+  // Historical call convention: `estimate_tx_bits(plan, is_inter_luma)`
+  // charges the 4-bit inter TX-type term on the luma plane only.
+  const bool is_inter_luma = is_inter && plane == 0;
+  const auto legacy = [&]() {
+    return plane == 0 ? luma_plan_bits(plan, is_inter)
+                      : estimate_tx_bits(plan, is_inter_luma);
+  };
+  const rate_interval::Mode m =
+      (rate_interval::mode() == rate_interval::Mode::kOff &&
+       eff_perc::enabled() && (eff_perc::rate_mode() & 1) != 0)
+          ? rate_interval::Mode::kInterval
+          : rate_interval::mode();
+  if (m == rate_interval::Mode::kOff) return legacy();
+  // TCQ changes the coded level semantics (§7.14.4) and the §8.3 model here
+  // prices plain scalar levels; do not silently misprice it.
+  if (!plan.dequant_levels.empty()) return legacy();
+  ensure_rate_interval_cdfs();
+  rate_interval::LeafRateInput in;
+  in.is_inter = is_inter;
+  in.adapt = options_.adaptive_cdf;
+  in.base_q_idx = static_cast<int>(options_.base_q_idx);
+  in.tx_mode_select = options_.enable_tx_search;
+  in.bsize = bsize;
+  in.tx_partition = plan.partition;
+  in.skip_flag = false;
+  in.inter_mode = -1;  // mode syntax is not part of this estimate
+  rate_interval::LeafLevelStorage storage;
+  int count = 0;
+  if (plane == 0) {
+    if (plan.searched && !plan.parts.empty()) {
+      for (const TxPlan::Part& part : plan.parts) {
+        if (count >= 6 || part.eob < 0) return legacy();
+        rate_interval::set_part_scan(
+            in, count++, 0, part.tx_size, part.tx_type, part.eob, part.levels,
+            storage);
+      }
+    } else {
+      if (plan.eob < 0) return legacy();
+      rate_interval::set_part_raster(in, count++, 0, plan.tx_size, plan.tx_type,
+                                     plan.eob, plan.levels, plan.adj_w,
+                                     plan.adj_h, storage);
+    }
+  } else {
+    if (plan.eob < 0) return legacy();
+    rate_interval::set_part_raster(in, count++, plane, plan.tx_size,
+                                   /*tx_type=*/0, plan.eob, plan.levels,
+                                   plan.adj_w, plan.adj_h, storage);
+  }
+  in.part_count = count;
+  const rate_interval::LeafRate rate =
+      rate_interval::estimate(in, rate_interval_cdfs_, m);
+  if (rate.failed ||
+      !(rate.residual_bits < rate_interval::detail::kImpossibleBits)) {
+    return legacy();
+  }
+  rate_interval::stats().estimates.fetch_add(1, std::memory_order_relaxed);
+  return rate.residual_bits;
+}
+
 bool InterFrameEncoder::partition_probe_leaf_cost(const partition::PartitionNodeInfo& info,
                                double lambda, double& cost) const {
   if (!partition_probe_fits(info.mi_row, info.mi_col, info.size)) {
@@ -261,7 +339,9 @@ bool InterFrameEncoder::partition_probe_leaf_cost(const partition::PartitionNode
                  /*qctx_slice=*/0, /*is_inter=*/true)) {
     const double res_sse = static_cast<double>(
         sse_against_source(source_, 0, ax0, ay0, bw, bh, plan.recon));
-    const double bits = kPartitionProbeModeBits + luma_plan_bits(plan, true);
+    const double bits =
+        kPartitionProbeModeBits +
+        plan_rate_bits(plan, 0, true, static_cast<int>(info.size));
     best = std::min(best, res_sse + lambda * bits);
   }
   cost = best;
@@ -334,7 +414,7 @@ void InterFrameEncoder::collect_partition_probe_jobs(
 }
 
 std::unordered_map<std::uint64_t, double> InterFrameEncoder::build_partition_probe_costs(
-    int max_depth, int floor_px, double lambda) const {
+    int max_depth, int floor_px) const {
   std::vector<PartitionProbeJob> jobs;
   const int sb_mi = partition::sb_size_mi(geometry_);
   const int cols = partition::sb_cols(geometry_);
@@ -357,7 +437,8 @@ std::unordered_map<std::uint64_t, double> InterFrameEncoder::build_partition_pro
     info.mi_col = jobs[i].mi_col;
     info.size = jobs[i].size;
     double cost = partition::kInfiniteCost;
-    if (partition_probe_leaf_cost(info, lambda, cost)) {
+    if (partition_probe_leaf_cost(
+            info, probe_syntax_price(info.mi_row, info.mi_col), cost)) {
       costs[i] = cost;
       modeled[i] = 1;
     }
@@ -399,7 +480,7 @@ int InterFrameEncoder::base_q_index() const { return static_cast<int>(options_.b
 
 bool InterFrameEncoder::qp_tools_active() const {
   return options_.enable_segmentation || options_.enable_delta_q ||
-         options_.per_segment_q;
+         options_.per_segment_q || options_.enable_aq;
 }
 
 bool InterFrameEncoder::build_sb_maps(std::string& error) {
@@ -475,6 +556,55 @@ bool InterFrameEncoder::build_sb_maps(std::string& error) {
     std::fill(sb_segment_.begin(), sb_segment_.end(),
               static_cast<std::uint8_t>(0));
   }
+  if (options_.enable_aq) {
+    // --video-aq: activity-driven target.  `variance` is the superblock's
+    // source luma variance and `mean` the frame mean over the tile.  The
+    // relative deviation is dimensionless, so the same strength means the
+    // same thing on flat and textured frames.  The offset is quantised to
+    // whole reduced-delta steps (1 << delta_q_res qindex), i.e. exactly a
+    // reachable plan step, and clamped to --video-aq-clamp steps.
+    std::vector<int> steps(static_cast<std::size_t>(count), 0);
+    for (int i = 0; i < count; ++i) {
+      const double act = static_cast<double>(variance[static_cast<std::size_t>(i)]);
+      const double ref = static_cast<double>(mean);
+      double relative = 0.0;
+      if (ref > 0.0) relative = (ref - act) / ref;
+      const double scaled = options_.aq_strength * relative;
+      int value = static_cast<int>(scaled >= 0.0 ? std::floor(scaled + 0.5)
+                                                 : std::ceil(scaled - 0.5));
+      steps[static_cast<std::size_t>(i)] =
+          std::clamp(value, -options_.aq_clamp, options_.aq_clamp);
+    }
+    // Rate neutrality: a distributed quantizer is only comparable at a fixed
+    // rate if the plan does not simply spend bytes, and the rate cost of one
+    // qindex step grows with the bits a superblock already codes.  Unless
+    // --video-aq-bias asks for a constant, centre the plan on the activity-
+    // weighted mean offset (variance is the per-superblock bit proxy), so
+    // the textured superblocks that go finer are paid for by the flat ones
+    // that go coarser.  The offset stays in reduced-delta steps, so the
+    // centring only moves whole plan steps.
+    int bias = options_.aq_bias;
+    if (options_.aq_bias_auto) {
+      double weight = 0.0;
+      double weighted = 0.0;
+      for (int i = 0; i < count; ++i) {
+        const double w =
+            static_cast<double>(variance[static_cast<std::size_t>(i)]);
+        weight += w;
+        weighted += w * steps[static_cast<std::size_t>(i)];
+      }
+      bias = weight > 0.0 ? static_cast<int>(std::llround(-weighted / weight))
+                          : 0;
+    }
+    for (int i = 0; i < count; ++i) {
+      const int value = std::clamp(steps[static_cast<std::size_t>(i)] + bias,
+                                   -8, 8);
+      const int offset = value * (1 << options_.delta_q_res);
+      sb_target_q_[static_cast<std::size_t>(i)] =
+          std::clamp(base_q_index() + offset, 1, 255);
+    }
+    return true;
+  }
   for (int i = 0; i < count; ++i) {
     if (options_.enable_delta_q) {
       // The delta-Q ramp is a deterministic per-superblock staircase so the
@@ -502,7 +632,7 @@ bool InterFrameEncoder::build_segmentation(std::string& error) {
 
 bool InterFrameEncoder::prepare_qp_plan(std::string& error) {
   seg_enabled_ = options_.enable_segmentation || options_.per_segment_q;
-  delta_q_enabled_ = options_.enable_delta_q;
+  delta_q_enabled_ = options_.enable_delta_q || options_.enable_aq;
   skip_seg_id_ = seg_enabled_ ? video_skip_segment(options_) : -1;
   globalmv_seg_id_ = seg_enabled_ ? video_globalmv_segment(options_) : -1;
   if (!seg_enabled_ && !delta_q_enabled_) return true;
@@ -687,7 +817,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       return false;
     }
     if (options.enable_segmentation || options.enable_delta_q ||
-        options.per_segment_q) {
+        options.per_segment_q || options.enable_aq) {
       error = "--video-sb128/--video-sb256 do not compose with "
               "segmentation/delta-Q yet";
       return false;
@@ -731,7 +861,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     // --avg-cdf/--adaptive-cdf/--cdf-continuity carry chain is bit-exact with
     // the extended writer; nothing to reject here.
     if (options.enable_segmentation || options.enable_delta_q ||
-        options.per_segment_q) {
+        options.per_segment_q || options.enable_aq) {
       error = "--video-ext-partitions does not compose with "
               "segmentation/delta-Q yet";
       return false;
@@ -899,25 +1029,34 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
               "prediction";
       return false;
     }
-    // The CDF chain composes only while the refresh keeps every frame's QP:
-    // with drift_refresh_qp == 0 the §9.3 image still follows the static
-    // per-frame plan, and the forced residual is decision-level only.
+    // The CDF chain composes only while the §9.3 seed matches the frame the
+    // decoder resets on.  With --cdf-continuity the image is carried and only
+    // a reset frame (§5.18.2) derives its defaults from its own base_q_idx;
+    // with --video-cdf-per-frame-qp every frame resets.  Both seed from the
+    // coded QP below, so a runtime drift-refresh QP change is legal there.
     if ((options.avg_cdf || options.adaptive_cdf ||
          options.cdf_continuity) &&
-        options.drift_refresh_qp != 0) {
-      error = "--video-drift-refresh composes with the CDF chain only at "
-              "--video-drift-refresh-qp 0: a run-time base_q_idx change would "
-              "desynchronise the per-frame §9.3 image";
+        options.drift_refresh_qp != 0 && !options.cdf_continuity &&
+        !options.cdf_per_frame_qp) {
+      error = "--video-drift-refresh composes with the CDF chain only with "
+              "--cdf-continuity or --video-cdf-per-frame-qp: a run-time "
+              "base_q_idx change needs the §9.3 image re-seeded from the "
+              "coded QP";
       return false;
     }
     // --cdf-continuity composes with --video-drift-refresh: the carried image
     // follows the symbols actually coded, so a refresh frame's extra residual
-    // needs no §9.3 re-derivation.  Only the per-frame-QP reset form depends on
-    // base_q_idx, and that is checked above.
-    if (options.enable_segmentation || options.per_segment_q ||
-        options.enable_delta_q) {
+    // needs no §9.3 re-derivation.  A frame that resets (§5.18.2) seeds that
+    // image from its coded QP; the per-frame-QP reset form does the same for
+    // every frame.
+    // Segmentation/delta-Q instead own the per-frame effective qindex, so a
+    // run-time refresh QP change does not compose with them.
+    if ((options.enable_segmentation || options.per_segment_q ||
+         options.enable_delta_q || options.enable_aq) &&
+        options.drift_refresh_qp != 0) {
       error = "--video-drift-refresh does not compose with segmentation/"
-              "delta-Q: both own the per-frame effective qindex";
+              "delta-Q unless --video-drift-refresh-qp 0: both own the "
+              "per-frame effective qindex";
       return false;
     }
     if (options.sb128 || options.sb256) {
@@ -1085,7 +1224,8 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
         options.sef || options.ra_switch || options.ras ||
         options.enable_tip || options.enable_morph || options.enable_cfl ||
         options.enable_mhccp || options.enable_segmentation ||
-        options.enable_delta_q || options.per_segment_q) {
+        options.enable_delta_q || options.per_segment_q ||
+        options.enable_aq) {
       error = "--video-sdp does not compose with the frame-type wrappers, "
               "morph/CfL/MHCCP or segmentation/delta-Q";
       return false;
@@ -1295,7 +1435,8 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
             "field and TIP block only model the plain §7.9 chain";
         return false;
       }
-      if (options.enable_segmentation || options.enable_delta_q) {
+      if (options.enable_segmentation || options.enable_delta_q ||
+          options.enable_aq) {
         error =
             "--video-tip-block-ref does not compose with §5.18.7 "
             "segmentation/delta-Q";
@@ -1368,7 +1509,8 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   // block decision is not replayed by the segmentation planner out of the
   // gated surface.
   const bool qp_tools = options.enable_segmentation || options.enable_delta_q ||
-                        options.per_segment_q || options.enable_uv_delta_q;
+                        options.per_segment_q || options.enable_uv_delta_q ||
+                        options.enable_aq;
   if (qp_tools) {
 #if !defined(AV2ENC_VIDEO_DELTAQ)
     error = "segmentation/delta-Q (--video-segmentation/--video-delta-q/"
@@ -1413,15 +1555,16 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
               "tiled frame-header writer does not signal the §5.18.7 rows";
       return false;
     }
-    if (!options.frame_base_q_idx.empty()) {
+    if (!options.frame_base_q_idx.empty() && !options.cdf_per_frame_qp) {
       error = "segmentation/delta-Q requires a fixed base_q_idx "
               "(no --rc crf/vbr per-frame QP)";
       return false;
     }
-    if (options.adaptive_cdf || options.cdf_continuity) {
-      error = "segmentation/delta-Q does not compose with --adaptive-cdf/"
-              "--cdf-continuity: the per-tile delta/segment CDFs are not part "
-              "of the §8.2.4 CDF image";
+    if (options.cdf_continuity) {
+      error = "segmentation/delta-Q does not compose with --cdf-continuity: "
+              "the per-tile delta/segment CDFs are not part of the §8.2.4 "
+              "image, so the frame image must be re-derived from the §9.3 "
+              "defaults (--video-cdf-per-frame-qp)";
       return false;
     }
 #endif
@@ -1760,10 +1903,15 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
     // primary_ref_frame = PRIMARY_REF_NONE).
     cdf_bank.begin_frame(/*reset_to_defaults=*/true);
   }
-  // Re-derive the §9.3 image for one frame and reset the bank to it.
-  const auto seed_frame_cdfs = [&](std::size_t frame_index) -> bool {
-    if (!syntax::cdf_image_defaults_for_base_q_idx(
-            static_cast<int>(frame_qp(frame_index)), cdf_defaults, &error)) {
+  // Re-derive the §9.3 image for one frame and reset the bank to it.  The
+  // slice must come from the frame's *coded* base_q_idx, not the static plan:
+  // a drift refresh lowers the frame QP, the frame header signals that lower
+  // value, and §8.3.1 makes the decoder install the §9.3 image of that
+  // slice.  Seeding the plan's slice instead desynchronised the carried image
+  // on the first reset frame of a deep-anchor stream.
+  const auto seed_frame_cdfs = [&](int coded_base_q_idx) -> bool {
+    if (!syntax::cdf_image_defaults_for_base_q_idx(coded_base_q_idx,
+                                                   cdf_defaults, &error)) {
       return false;
     }
     cdf_bank.begin_frame(/*reset_to_defaults=*/true);
@@ -2094,40 +2242,39 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
       lf.source[plane] = key_source.data[plane];
       lf.source_stride[plane] = key_source.stride[plane];
     }
-    // §7.18.1 Skips[] / §7.20.1 LrTxSkip for the screen-content keyframe.  An
-    // IBC skip leaf codes skip_flag = 1, and the real decoder leaves such a
-    // block out of CDEF and LR; ordinary intra leaves (including palette
-    // leaves, which code eob = 0) contribute nothing to Skips[].  Only build
-    // the list on a screen-content carrier so every historical keyframe keeps
-    // the previous all-zero grid.
-    if (config.screen_content_tools_enabled()) {
-      std::vector<post::VideoLoopFilterBlock> key_blocks;
-      for (std::size_t t = 0; t < tile_sources.size(); ++t) {
-        const CodedTile& tile = tile_sources[t];
-        const int tile_mi_row = tile.y / 4;
-        const int tile_mi_col = tile.x / 4;
-        for (const syntax::BlockSyntax& leaf : key_encoders[t]->blocks()) {
-          if (leaf.partition !=
-              static_cast<std::uint8_t>(PartitionType::kNone)) {
-            continue;
-          }
-          post::VideoLoopFilterBlock block;
-          block.mi_row = tile_mi_row + static_cast<int>(leaf.mi_row);
-          block.mi_col = tile_mi_col + static_cast<int>(leaf.mi_col);
-          block.w4 = partition::block_width(
-                         static_cast<partition::BlockSize>(leaf.bsize)) >>
-                     2;
-          block.h4 = partition::block_height(
-                         static_cast<partition::BlockSize>(leaf.bsize)) >>
-                     2;
-          block.skip = (leaf.flags & syntax::kFlagIsIbc) != 0;
-          // Palette / ordinary intra leaves keep LrTxSkip = 0 even at eob 0.
-          block.luma_eob_zero = false;
-          key_blocks.push_back(block);
+    // §7.18.1 Skips[] and §7.20.1 LrTxSkip for the keyframe.  An IBC skip leaf
+    // codes skip_flag = 1, and the real decoder leaves such a block out of
+    // CDEF and LR; ordinary intra leaves contribute nothing to Skips[] but
+    // they do contribute their real eob == 0 rows to LrTxSkip, which the
+    // PC-Wiener classifier reads through get_qval_given_tskip().  Passing an
+    // empty list here left the whole keyframe grid at zero and changed 1-LSB
+    // boundary samples on textured 480x240 content (the still writer always
+    // builds the real map).
+    std::vector<post::VideoLoopFilterBlock> key_blocks;
+    for (std::size_t t = 0; t < tile_sources.size(); ++t) {
+      const CodedTile& tile = tile_sources[t];
+      const int tile_mi_row = tile.y / 4;
+      const int tile_mi_col = tile.x / 4;
+      for (const syntax::BlockSyntax& leaf : key_encoders[t]->blocks()) {
+        if (leaf.partition !=
+            static_cast<std::uint8_t>(PartitionType::kNone)) {
+          continue;
         }
+        post::VideoLoopFilterBlock block;
+        block.mi_row = tile_mi_row + static_cast<int>(leaf.mi_row);
+        block.mi_col = tile_mi_col + static_cast<int>(leaf.mi_col);
+        block.w4 = partition::block_width(
+                       static_cast<partition::BlockSize>(leaf.bsize)) >>
+                   2;
+        block.h4 = partition::block_height(
+                       static_cast<partition::BlockSize>(leaf.bsize)) >>
+                   2;
+        block.skip = (leaf.flags & syntax::kFlagIsIbc) != 0;
+        vf_detail::fill_filter_block_tx(leaf, &block);
+        key_blocks.push_back(block);
       }
-      lf.blocks = key_blocks;
     }
+    lf.blocks = key_blocks;
     if (!post::run_video_loop_filters(lf, options.loop_filters, &key_filters,
                                       nullptr, &error)) {
       return false;
@@ -2469,16 +2616,24 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                   << " spent=" << drift_spent_bytes
                   << " refresh=" << (drift_refresh_frame ? 1 : 0) << "\n";
       }
-      if (drift_refresh_frame) {
-        effective_frame_qp =
-            std::max(1, std::min(255, effective_frame_qp -
-                                          options.drift_refresh_qp));
-        frame_options.base_q_idx =
-            static_cast<std::uint16_t>(effective_frame_qp);
-        // Code the residual of every inter leaf: the leaf RD price refuses it
-        // at these QPs (the error is a few LSB per sample), so the refresh has
-        // to bypass that decision for the frame whose job is to reset it.
-        frame_options.force_inter_residual = true;
+    }
+    if (drift_refresh_frame) {
+      effective_frame_qp =
+          std::max(1, std::min(255, effective_frame_qp -
+                                        options.drift_refresh_qp));
+      frame_options.base_q_idx =
+          static_cast<std::uint16_t>(effective_frame_qp);
+      // Code the residual of every inter leaf: the leaf RD price refuses it
+      // at these QPs (the error is a few LSB per sample), so the refresh has
+      // to bypass that decision for the frame whose job is to reset it.  The
+      // flag covers all three planes; at the deep anchor the chroma
+      // quantizer is fine enough for the forced chroma transform to keep
+      // coefficients.
+      frame_options.force_inter_residual = true;
+      if (options.trace) {
+        std::cerr << "ba_anchor frame=" << i
+                  << " qp=" << effective_frame_qp
+                  << " depth=" << options.drift_refresh_qp << "\n";
       }
     }
     // §5.14: plan this picture's grain model in coding order before the frame
@@ -2544,7 +2699,7 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                   cdf_slots[static_cast<std::size_t>(primary_slot)].end(),
                   cdf_frame.begin());
         cdf_bank.begin_frame(/*reset_to_defaults=*/false);
-      } else if (!seed_frame_cdfs(i)) {
+      } else if (!seed_frame_cdfs(effective_frame_qp)) {
         return false;
       }
     }
@@ -2972,5 +3127,6 @@ bool encode_video_sequence(std::span<const VideoInputFrame> frames,
   }
   return true;
 }
+
 
 }  // namespace av2enc::video

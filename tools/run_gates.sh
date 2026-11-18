@@ -319,9 +319,14 @@ if [ "$QUICK" -eq 0 ]; then
     run_gate gate_video_rdoq tools/gate_video_rdoq.sh
     run_gate gate_video_edge_inter tools/gate_video_edge_inter.sh
     run_gate gate_video_edge_mask tools/gate_video_edge_mask.sh
+    run_gate gate_video_aq tools/gate_video_aq.sh
     run_gate gate_video_ccso_overhead tools/gate_video_ccso_overhead.sh
     run_gate gate_video_drift_refresh \
         src/pipeline/video/video_drift_refresh_gate.sh
+    run_gate gate_video_pipe_perc \
+        src/pipeline/video/gate_video_pipe_perc.sh
+    run_gate gate_video_eff_perc \
+        src/pipeline/video/gate_video_eff_perc.sh
     run_gate gate_video_skip_collapse \
         src/pipeline/video/video_skip_collapse_gate.sh
     run_gate gate_tile_flush src/pipeline/video/gate_tile_flush.sh

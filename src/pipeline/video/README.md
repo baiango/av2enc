@@ -805,7 +805,15 @@ Wiring:
   coefficients are mirrored in the plan because the shared writer codes the
   pairs once (`wiener_ns_uv_sym`).
 * LR reads `CurrFrame` (pre-CDEF) for samples outside the current stripe and
-  filters `CdefFrame`; the output `LrFrame` is a separate buffer.
+  filters `CdefFrame`; the output `LrFrame` is a separate buffer.  Under
+  `--cdf-continuity` the six §6.17.2 LR CDF rows (`use_wiener_ns`,
+  `wiener_ns_length`, `wiener_ns_uv_sym`, `wiener_ns_base`, `use_pc_wiener`,
+  `flex_restoration_type`) ride the §8.2 image; omitting them desynchronised
+  every frame after the first adapted LR symbol (`gate_video_cdf_carry.sh`).
+  `--video-pc-wiener` is decode-gated 60/60 but not recon-pinned: with the
+  exact §7.20.1 LrTxSkip grid, a few 60-frame P frames still differ from
+  pinned dav2d by ±1 LSB inside a 64-wide block's §7.20.4 classifier window
+  (`docs/negative-results.md`).
 * Frame `§5.18.7.9 gdf_params()` sits between the deblocking row and
   `cdef_params()`; GDF runs last (§7.20.1) on the `LrFrame` while sampling
   `CdefFrame`, in the header-only mode (`gdf_per_block = 0`), so
