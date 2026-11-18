@@ -20,6 +20,12 @@ JOD/SS2 would cap at 92.49, and 95 requires BA <= 0.44. `docs/target-95.md`
 concludes that 95 needs a new codec class, not another AV2 tool/flag sweep.
 The immediate target is SVT parity (88.8), then AVM parity (~90).
 
+**4:2:0 oracle (`docs/oracle-420.md`).** Exact lossless is 3,631 kbps / K=100.
+At 100 kbps: best decodable AVM 90.19, best allocation 90.97, strongest
+single-segment source 94.07. A free perfect-luma hybrid reaches 96.14 (AVM) /
+95.80 (SVT), but is not a stream; perfect chroma buys only +0.46..+0.93 K. The
+95 gap is a luma-coding-class gap, not chroma and not AV2 knob tuning.
+
 Component requirements at SVT's JOD/SS2:
 
 | Target | JOD | BA | SS2 |
