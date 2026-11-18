@@ -9,6 +9,14 @@
 > (`docs/testdata-provenance.md`); the numbers were recorded on the retired
 > promo clip and the streams now differ. Re-run before quoting.
 
+> **Not reproducible from upstream.** The 240p/720p AVM rows in the main README
+> use a local build of upstream commit
+> `7a0c95657c25efb8c32db98f0ec9a783b26022cb` plus 100 lines of uncommitted
+> build/decoder changes (diff SHA-256
+> `a106cb7b936e8e47cc651a67bef4c5e5b0e57581b3f5da3bf0c784f99398df04`). No AVM
+> commit or released binary reproduces those numbers; treat them as an internal
+> comparison.
+
 # AVM baseline
 
 Reference encoder baseline for the 720p test clip.

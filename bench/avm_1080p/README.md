@@ -15,6 +15,10 @@ historical and should be re-measured before quoting.
 > `tools/check_target_host.py`. Use this page only as a quality/bitrate anchor
 > and as a same-machine AVM speed reference.
 
+> **Different build.** These 1080p rows use the archived nightly
+> `cd7d8bc3db`; the 240p/720p AVM rows use a local patched build (`7a0c956`
+> plus uncommitted changes), not this binary.
+
 ## Setup
 
 | Item | Value |
