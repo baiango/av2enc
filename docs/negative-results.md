@@ -11,6 +11,12 @@ Status legend:
 - **DEFERRED** — deliberately out of scope for now
 - **OPEN** — not yet measured; do not cite as a result
 
+> **Correction (2026-11-18):** the keyframe `44.71 / 60.44 dB` figures in this
+> document are stale. On current main the nightly key is **48.48 dB full-res /
+> 64.75 dB lp8**: a **1.68 dB** gap to SVT, not 5.4 dB, with the crossover at
+> ~3 px. The stream gap is the P tail, not the keyframe. See
+> `docs/luma-audit.md` for the current per-segment attribution.
+
 ## Bitstream / encoder
 
 | Status | Do not do | Why | Do instead |
