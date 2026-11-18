@@ -15,16 +15,17 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-LANES=${LANES:-5}
-ITERATIONS=${ITERATIONS:-10}
+LANES=${AV2ENC_LANES:-${LANES:-5}}
+ITERATIONS=${AV2ENC_ITERATIONS:-${ITERATIONS:-10}}
 MODEL=${OPENCODE_MODEL:-opencode-go/deepseek-v4.1-flash#max}
 AGENT=${OPENCODE_AGENT:-general}
-MAX_STALE=${MAX_STALE:-5}
-TIMEOUT=${TIMEOUT:-3600}
-STOP=${STOP:-$ROOT/../agent-loop/STOP}
+MAX_STALE=${AV2ENC_MAX_STALE:-5}
+TIMEOUT=${AV2ENC_TIMEOUT:-3600}
+STOP=${AV2ENC_STOP:-$ROOT/../agent-loop/STOP}
 LOG=$ROOT/build/agent-loop
 PROMPT=$ROOT/docs/agent-loop-lane-prompt.md
 
+DRY=${AV2ENC_DRY_RUN:-${DRY_RUN:-0}}
 mkdir -p "$LOG"
 
 lane_target() {
@@ -48,10 +49,10 @@ while [ "$i" -le "$LANES" ]; do
     prompt="$LOG/lane-$i-prompt.txt"
     sed -e "s|{{lane}}|$i|g" -e "s|{{target}}|$target|g" "$PROMPT" > "$prompt"
 
-    if [ "${DRY_RUN:-0}" = "1" ]; then
+    if [ "$DRY" = "1" ]; then
         echo "lane $i: $target"
         echo "  worktree=$worktree branch=$branch ledger=$ledger"
-        echo "  prompt=$prompt"
+        echo "  prompt=$prompt agent=$AGENT model=$MODEL iterations=$ITERATIONS"
     else
         python3 "$ROOT/tools/agent_loop.py" \
             --iterations "$ITERATIONS" \
@@ -64,7 +65,7 @@ while [ "$i" -le "$LANES" ]; do
             --max-stale "$MAX_STALE" \
             --iteration-timeout "$TIMEOUT" \
             --stop-file "$STOP" \
-            --sleep 2 >> "$LOG/lane-$i.log" 2>&1 &
+            --sleep 2 > "$LOG/lane-$i.log" 2>&1 &
         pids="$pids $!"
         echo "lane $i pid $! target: $target"
         sleep 20
@@ -72,7 +73,7 @@ while [ "$i" -le "$LANES" ]; do
     i=$((i + 1))
 done
 
-if [ "${DRY_RUN:-0}" != "1" ]; then
+if [ "$DRY" != "1" ]; then
     wait $pids
     echo "all lanes finished"
 fi

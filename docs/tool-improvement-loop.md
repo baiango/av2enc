@@ -129,7 +129,7 @@ worktree, branch, ledger and fixed target, so code edits cannot collide:
 
 ```sh
 tools/agent_loop_multi.sh
-# optional: LANES=5 ITERATIONS=10 MAX_STALE=5 TIMEOUT=3600
+# optional: AV2ENC_LANES=5 AV2ENC_ITERATIONS=10 AV2ENC_MAX_STALE=5 AV2ENC_TIMEOUT=3600
 ```
 
 Targets: P-head residual, P-tail residual/allocation, inter transform/quant,

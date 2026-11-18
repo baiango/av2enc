@@ -103,7 +103,7 @@ def link_fixtures(repo: Path, worktree: Path) -> None:
     for name in ("testdata", "tools/bin"):
         dst = worktree / name
         src = repo / name
-        if dst.exists() or not src.exists():
+        if dst.exists() or dst.is_symlink() or not src.exists():
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.symlink_to(src)
@@ -169,7 +169,8 @@ def main() -> int:
     args = ap.parse_args()
 
     repo = args.repo.resolve()
-    if not (repo / ".git").exists():
+    check = run(["git", "-C", str(repo), "rev-parse", "--is-inside-work-tree"], repo)
+    if check.returncode != 0:
         raise SystemExit(f"not a git repository: {repo}")
     worktree = (args.worktree or (repo.parent / "agent-loop")).resolve()
     ensure_worktree(repo, worktree, args.branch)
