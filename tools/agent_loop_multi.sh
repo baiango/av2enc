@@ -34,8 +34,8 @@ lane_target() {
         1) echo "P-head inter residual/prediction coding (f0-32), excluding the closed skip variants" ;;
         2) echo "P-tail residual/allocation (f33-59), preserving the kept skip/exact-rate composition" ;;
         3) echo "inter transform/quantisation/coefficient coding (non-trellis, non-key)" ;;
-        4) echo "inter entropy/context/rate implementation (non-trellis)" ;;
-        5) echo "head prediction/ME/reference-selection implementation (existing syntax only)" ;;
+        4) echo "loop-filter strength: deblock df_delta_q, CDEF strength/index, per-frame LR/CCSO choice" ;;
+        5) echo "per-block switchable interp filter and MC prediction (frame-global form is closed)" ;;
         *) echo "P-tail residual coding without a closed mechanism" ;;
     esac
 }
@@ -65,6 +65,9 @@ while [ "$i" -le "$LANES" ]; do
             --agent "$AGENT" \
             --max-stale "$MAX_STALE" \
             --iteration-timeout "$TIMEOUT" \
+            --envelope-gate \
+            --envelope-threshold "${AV2ENC_ENVELOPE_DELTA:-0.15}" \
+            --envelope-revert \
             --stop-file "$STOP" \
             --sleep 2 > "$LOG/lane-$i.log" 2>&1 &
         pids="$pids $!"

@@ -46,18 +46,20 @@ Perform EXACTLY ONE iteration. Do not start a second one.
    kept skip/exact-rate composition.
 2. Baseline, then ONE contained default-off implementation change. No new
    syntax, no preset/pin change, no third-party code or source copying.
-3. Measure the target probe and natural 240p QP104/106/108 with the AVM oracle.
-   Before calling a patch kept, run tools/oracle.py on the ladder and record
-   matched K plus segment ceilings. A segment ceiling is not a stream; only a
-   matched-rate envelope opens a path.
-4. The objective is the ORACLE, not a single K point. Measure the candidate's
-   matched-rate envelope (best K over its knobs at 100 kbps) and compare it to
-   the baseline envelope. Keep only if the envelope rises by >= +0.15 K and the
-   segment ceilings are reported. A single-arm gain under the same ceiling is a
-   realization gain; record it and revert unless it composes into a higher
-   envelope.
-5. Update {{ledger}} with target, patch, probe/K, kept/negative, and blockers.
-   Commit the ledger and any kept patch.
+3. Write build/agent-loop/spec.json for the script's envelope gate:
+   {"ref": ..., "bin": "build-release/av2enc", "frames": 60,
+    "base_args": ["--video","--frames","60","--cpu-threads","8","--nightly"],
+    "qp": 106, "target_kbps": 100.0,
+    "arms": [{"name":"base","env":{}},
+             {"name":"cand","env":{"AV2ENC_TOOL":"1"}}]}
+   `base` must be present with an empty env and every gate must be default-off.
+   Put every knob value of the candidate in arms; the script computes the
+   envelope (max K over arms) and the delta against the base arm itself.
+4. Do NOT decide keep/revert from your own K numbers. Leave source changes
+   uncommitted; the script runs tools/envelope.py after this call, records the
+   result, keeps the patch on PASS and reverts src/ on FAIL.
+5. Update {{ledger}} with target, patch, the measured bracket, and blockers.
+   Do not claim an oracle gain the script did not measure.
 6. Run the gate-off pins and tools/test.sh; they must pass.
 
 Do not push or merge. 4:2:0 only. End with one line: ITERATION RESULT: ...
@@ -139,6 +141,49 @@ def last_text(stdout: str) -> str:
     return text.strip()
 
 
+def run_envelope(worktree: Path, args, iteration: int, log_dir: Path) -> str:
+    spec = worktree / args.envelope_spec
+    if not spec.is_file():
+        if args.envelope_revert:
+            run(["git", "-C", str(worktree), "checkout", "--", "src"], worktree)
+            run(["git", "-C", str(worktree), "clean", "-fd", "src"], worktree)
+        return "MISSING (no spec; src/ reverted)"
+    out = log_dir / f"envelope-{iteration:03d}.json"
+    cmd = [sys.executable, str(Path(__file__).resolve().parent / "envelope.py"),
+           "--spec", str(spec), "--worktree", str(worktree),
+           "--threshold", str(args.envelope_threshold), "--json", str(out)]
+    proc = run(cmd, worktree)
+    text = (proc.stdout or "") + (proc.stderr or "")
+    verdict = "ERROR" if proc.returncode == 0 else "FAIL"
+    report = None
+    if out.is_file():
+        try:
+            report = json.loads(out.read_text())
+            verdict = report.get("verdict", "ERROR")
+        except json.JSONDecodeError:
+            pass
+    record = {
+        "iteration": iteration,
+        "verdict": verdict,
+        "exit": proc.returncode,
+        "report": report,
+    }
+    ledger = worktree / args.envelope_log
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    with ledger.open("a") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+    if verdict in ("FAIL", "MISSING") and args.envelope_revert:
+        run(["git", "-C", str(worktree), "checkout", "--", "src"], worktree)
+        run(["git", "-C", str(worktree), "clean", "-fd", "src"], worktree)
+        return (f"FAIL {report.get('delta', 0.0):+.3f} K; reverted src/")
+    if verdict == "PASS":
+        return (f"PASS {report.get('delta', 0.0):+.3f} K "
+                f"({report.get('best_arm')})")
+    if verdict == "SKIP":
+        return "SKIP (no spec)"
+    return text.strip().splitlines()[-1] if text.strip() else "ERROR"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -169,6 +214,16 @@ def main() -> int:
                     help="seconds between iterations")
     ap.add_argument("--stop-file", type=Path, default=None,
                     help="stop before the next iteration when this file exists")
+    ap.add_argument("--envelope-gate", action="store_true",
+                    help="run tools/envelope.py after each agent call")
+    ap.add_argument("--envelope-spec", default="build/agent-loop/spec.json",
+                    help="candidate spec, relative to the worktree")
+    ap.add_argument("--envelope-threshold", type=float, default=0.15,
+                    help="required envelope delta (default 0.15 K)")
+    ap.add_argument("--envelope-log", default="build/agent-loop/envelope.jsonl",
+                    help="append-only gate ledger, relative to the worktree")
+    ap.add_argument("--envelope-revert", action="store_true",
+                    help="on FAIL revert src/ in the worktree")
     ap.add_argument("--fail-fast", action="store_true",
                     help="stop on the first agent failure")
     ap.add_argument("--dry-run", action="store_true",
@@ -233,6 +288,8 @@ def main() -> int:
                   f"<prompt {len(prompt)} chars>", flush=True)
             continue
 
+        if args.envelope_gate:
+            (worktree / args.envelope_spec).unlink(missing_ok=True)
         before = ledger_hash(ledger)
         log = log_dir / f"{i:03d}.json"
         print(f"[{label}] {title} ({len(prompt)} char prompt)", flush=True)
@@ -265,6 +322,12 @@ def main() -> int:
             stale = 0
         else:
             stale += 1
+        if args.envelope_gate and proc.returncode == 0:
+            try:
+                gate = run_envelope(worktree, args, i, log_dir)
+                print(f"  envelope: {gate}", flush=True)
+            except Exception as exc:  # noqa: BLE001 - never kill the loop
+                print(f"  envelope: measurement error: {exc}", flush=True)
         if proc.returncode != 0:
             failed += 1
             if args.fail_fast:

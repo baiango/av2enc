@@ -233,6 +233,61 @@ No patch is kept on matched K alone. It must report a matched-rate envelope and
 its segment ceilings; a segment ceiling above the wall is not a stream.
 
 
+## Mechanical envelope gate (2026-11-19)
+
+The loop no longer accepts a keep/revert judgement written in prose. After every
+agent call the script runs `tools/envelope.py` and the **script** decides:
+
+```
+agent edits src/ + writes build/agent-loop/spec.json
+        ↓
+tools/envelope.py   auto-brackets each arm around 100 kbps
+        ↓
+tools/oracle.py     matched K per arm (AVM decoder)
+        ↓
+envelope = max K over arms; baseline = the "base" arm
+        ↓
+delta >= 0.15 K ? keep src/ : revert src/
+```
+
+The spec is one JSON object:
+
+```json
+{"ref": "testdata/nasa_480x240_30fps_60f.y4m",
+ "bin": "build-release/av2enc", "frames": 60,
+ "base_args": ["--video","--frames","60","--cpu-threads","8","--nightly"],
+ "qp": 106, "target_kbps": 100.0,
+ "arms": [{"name": "base", "env": {}},
+          {"name": "cand", "env": {"AV2ENC_TOOL": "1"}}]}
+```
+
+Rules the script enforces, not the prompt:
+
+- `base` must exist and have an empty env, so the baseline is measured on the
+  same build and a default-on patch cannot hide in a second tree.
+- Every knob value of the candidate is an arm. The envelope is the best arm;
+  one winning arm under an unchanged envelope is not progress.
+- QP is bracketed automatically (`qp` is only a start) and a candidate that
+  cannot bracket is reported, not scored.
+- On FAIL the runner reverts `src/` (`git checkout -- src` + `git clean -fd
+  src`) and keeps the ledger. On PASS it leaves the patch in place.
+- A missing spec is a FAIL. An iteration that does not produce a spec cannot be
+  kept.
+- Every result is appended to `build/agent-loop/envelope.jsonl`
+  (`base_k`, `envelope_k`, `delta`, `best_arm`, per-arm brackets).
+
+Run it directly:
+
+```sh
+tools/envelope.py --spec build/agent-loop/spec.json --threshold 0.15
+```
+
+The five-lane launcher passes `--envelope-gate --envelope-revert` and
+`AV2ENC_ENVELOPE_DELTA`, so every lane is judged by the same mechanical gate.
+This was smoke-tested end to end: a stub agent wrote a base-only spec and touched
+`src/`; the gate measured base 82.149 / envelope 82.149 / delta +0.000, returned
+FAIL, and `src/` was reverted while the ledger and `envelope.jsonl` were kept.
+
 ## Objective: the oracle ceiling
 
 The loop improves the **oracle**, not a single K point. A tool is progress only
