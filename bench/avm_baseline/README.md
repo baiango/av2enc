@@ -43,6 +43,11 @@ At 100.0 kbps, QP124/QP122 interpolate to **K 90.17** (9.860 JOD, 1.29 BA,
 byte-identical to the old local diagnostic build, so the diagnostics did not
 affect encoding.
 
+Stream MD5: 240p QP122 `74ed334f35ff72260e7f4588bb598697`, QP123
+`616f5176f66450509f029dad3687644d`, QP124
+`5776897670651249831fbb852021e9d8`; 720p QP203
+`4518c5100b9f0b07262729f3a8291510`.
+
 ```sh
 <avm-build>/avmenc testdata/nasa_480x240_30fps_60f.y4m \
   -o /tmp/avm_240p_qp124.ivf --ivf --end-usage=q --qp=124 \
