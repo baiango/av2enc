@@ -599,6 +599,8 @@ profile is deferred until quality and encode speed are settled.
 
 `tools/score_speed.py` reports speed vs CVVDP. `tools/score_tradeoff.py` enforces
 a three-way budget (max CVVDP subject to a bitrate cap and a speed floor).
+`tools/oracle.py` scores a candidate's QP ladder at the matched 100 kbps point
+and reports segment ceilings; see `docs/oracle-search.md`.
 
 Current gates:
 

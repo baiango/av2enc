@@ -1,5 +1,9 @@
 # K oracle for pipeline experiments
 
+> The automated version of this oracle is `tools/oracle.py`; the definition,
+> the standing candidate queue and the go/no-go rule are in
+> `docs/oracle-search.md`.
+
 Two walls:
 
 - **Internal best: K 83.80** at 240p/100 kbps (tuned drift), now **85.10** with
