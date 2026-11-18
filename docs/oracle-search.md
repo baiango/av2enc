@@ -215,7 +215,133 @@ also closed: the guarded inter half is −0.143 K at g=0.2 and the most favourab
 unguarded point is +0.094 K with sign flips; the eff-perc point is byte-identical
 (`docs/video-rdoq-hf.md`). Do not queue it as an open path.
 
-## 5. Current measured oracles
+## 5. Composition graph
+
+The per-tool matrix is `docs/tool-matrix.md` (flag, family, preset state,
+carrier, named rejection, measured result, legal carriers, untapped
+potential). This section condenses it into what can coexist, what needs a
+structural carrier, and what is dead as a single toggle but untested in
+combination. **This is a graph, not a cap.** A rejected composition is a
+carrier mismatch. An untested pair is a budget item, not a closed path.
+
+### 5.1 Families and carriers
+
+`Y` = legal and gated; `C` = legal only after the named ablation; `N` =
+rejected by name or decoder; `—` = not applicable.
+
+| family | FP | B | TIP | TL | T | SVC | W | SC | LL |
+|---|---|---|---|---|---|---|---|---|---|
+| Flat-P decisions (edge path, key QP offset, drift refresh, partition probe, RDOQ, BAWP, CDF carry) | Y | N | N | N | C | N | N | N | N |
+| Intra prediction add-ons (CFL, MRL, IBP, DIP, IST, IDTX) | Y | Y | C | Y | C | N | N | N | N |
+| Transform/quant add-ons (TX search, key intra TX part, TCQ, CCTX, DDT) | Y | Y | C | Y | C | N | N | N | N |
+| QM (`--video-qm/--video-user-qm`) | C | C | N | C | N | N | N | N | N |
+| Loop filters (deblock, CDEF, CCSO, GDF) | Y | Y | C | Y | Y1 | N | N | N | N |
+| Loop restoration (Wiener, PC-Wiener, chroma LR) | Y | Y | C | Y | N | N | N | N | N |
+| Delta-Q / AQ / segmentation | C2 | N | N | N | N | N | N | N | N |
+| Reference structure (B, TL, TIP, refs >1, compound) | C3 | Y | N | Y | C | Y4 | N | N | N |
+| Screen content (palette, IBC, morph) | C5 | N | N | N | N | N | N | Y | N |
+| Tiles | C6 | C6 | C6 | C6 | Y | N | N | N | N |
+| SVC layers | C7 | N | N | N | N | Y | N | N | N |
+| Header/overhead levers (tile flush, tile-group compact, ref compact, CCSO header RD) | Y | C | C | C | C | N | C | N | N |
+
+1. CDEF/CCSO/GDF only. Deblock, Wiener, PC-Wiener and chroma LR reject
+   `--tiles > 1x1` (`validate.cpp` and `docs/negative-results.md`).
+2. Only with `--video-cdf-per-frame-qp`; the carried image does not include the
+   §5.18.7 delta/segment CDFs. Segmentation and per-segment Q additionally need
+   `--video-rdoq-off`; delta-Q and AQ compose with RDOQ.
+3. `--video-refs > 1` needs `--video-ref-signal-off`; compound also needs
+   `--video-bawp-off --video-drift-refresh-off --video-cdf-chain-off` (the
+   carried CDF image desynchronises the pinned decoder with compound syntax:
+   3/60 pictures).
+4. Single-layer SVC only; `--video-refs/--video-tlayers` are not wired into the
+   SVC path.
+5. Needs the CDF chain off, loop filters off, TX search off (palette) and
+   single tile; morph also rejects DRL_ALWAYS and segmentation.
+6. `--tiles` needs the edge pair, deblock, drift, probe and RDOQ off. CDEF,
+   CCSO and GDF compose with tiles.
+7. SVC rejects key-QP offset, drift refresh, TX search, partition probe, RDOQ,
+   refs, tlayers and tiles.
+
+### 5.2 Coexistence rules
+
+* **The nightly stack is one locked flat-P object.** It simultaneously owns
+  the bottom-edge path, the key/first-P QP offset, the drift refresh, the
+  partition probe, RDOQ, BAWP, the compact reference/tile/CCSO headers and the
+  carried CDF image. A tool that changes the reference structure (B, TL, TIP,
+  W), the writer (lossless), the layer model (SVC) or the tile grid must drop
+  most of that stack. The measured value of the dropped elements is 13.4 K of
+  marginal (`docs/nightly-ablation.md`), which is why none of those carriers is
+  a cheap composition.
+* **Entropy is the most exclusive family.** `--cdf-continuity` cannot ride
+  delta-Q, AQ, segmentation, MHCCP, reference-management tools, palette/IBC or
+  compound. The reset form `--video-cdf-per-frame-qp` costs 2.9 % rate but makes
+  delta-Q/AQ/segmentation expressible. `--video-tile-group-compact`,
+  `--video-ref-signal-compact` and `--video-tile-flush-min` are flat-P,
+  single-tile header levers and are cheap to drop (0.04–0.11 K each).
+* **Prediction locks.** BAWP excludes compound, GME, inter-intra and adaptive
+  MVD/flex precision. Compound excludes BAWP, drift refresh, compact reference
+  signalling and the CDF carry. Inter-intra excludes BAWP and morph. IBP
+  excludes CfL, MHCCP, MRL, screen content and inter-intra. GME excludes
+  inter residual, B/TL/W, compound and DRL.
+* **Transform locks.** RDOQ excludes TCQ, QM, segmentation, UV delta-Q and
+  lossless. TX search excludes QM, frame-type wrappers and SVC. TCQ and CCTX
+  compose with each other and with TX search; DDT is independent but measured
+  negative alone.
+* **Filter locks.** Deblock/CDEF/CCSO/GDF compose on FP, B and TL. Frame-type
+  wrappers reject every filter row because their component headers do not
+  write it. Tiles keep CDEF/CCSO/GDF but reject deblock and loop restoration.
+  Wiener and PC-Wiener are mutually exclusive.
+* **Allocation locks.** Key-QP offset and drift refresh are flat-P cqp only.
+  The partition probe is flat-P, single-tile, 8-bit 4:2:0 and rejects B/TL/TIP/W,
+  SVC, tiles and the 128/256 trees. AQ/segmentation/delta-Q need the CDF reset
+  and reject frame schedules. `--video-qp-lambda` needs cqp; `--rc crf/vbr` is
+  therefore hard-blocked inside `--nightly` (nightly always sets qp-lambda and
+  has no off switch).
+* **Structural carriers.** Compound overlays need B (or refs 2 on P);
+  OPFL/refine-MV/CWP/IMP need B + `--video-compound-near-near`; TIP needs its
+  own 3–8-frame key/anchor/TIP schedule and rejects loop filters and TX search;
+  palette/IBC/morph need the single-tile screen-content keyframe; SVC needs
+  `--svc-layers`; the frame-type wrappers own their §5.18.2 header writers.
+
+### 5.3 Dead as a single toggle, untested in combination
+
+| tool | single-toggle result | untested combination |
+|---|---|---|
+| `--video-tcq` | +0.01 JOD for ~60x encode on the quality preset (`video-rd-preset.md`) | TCQ + CCTX on `--nightly --video-rdoq-off` |
+| `--video-cctx` | neutral on the quality preset | same |
+| `--video-ddt` | −1.22 K matched rate (`partition-tools.md`) | SDP+DDT already measured below its control; no open pair |
+| `--video-mrl` | selected 64/189 key leaves without a measured win (`negative-results.md`) | MRL on the nightly aggregate, with the keyframe TX part |
+| `--video-aq` | +0.05 K inside ripple; −0.47 K under nightly (`video-aq.md`) | AQ with the drift/partition relaxations at a different strength — measured null, not a path |
+| `--video-delta-q` | 6.161 JOD vs 6.302 preset (`video-rd-preset.md`) | delta-Q with the probe + drift at `--video-drift-refresh-qp 0`; the zero-plan stream is recon-identical |
+| `--video-adaptive-mvd` | neutral on the quality preset | adaptive MVD + flex precision + sign derivation on `--nightly --video-bawp-off` |
+| `--video-ext-partitions` | −0.47 K on tuned recipe | ext + `--video-min-block 4` together (both compose with nightly) |
+| `--video-min-block 4` | −0.74 K on tuned recipe | same pair |
+| `--video-idtx`, `--video-ist`, `--video-ibp`, `--video-dip`, `--video-cfl` | no composite K | each on the full nightly aggregate |
+| `--video-cdef-strength 4` | header cost only (~6.4 B/frame) | multi-strength CDEF on nightly |
+| `--video-cdef-rd-lambda` | changes padded reconstruction; no iso-rate sweep | priced CDEF-row drop on nightly |
+| `--video-mhccp` | no K; blocked by the CDF bank | MHCCP + `--video-cdf-chain-off` |
+| `--video-palette/--video-ibc/--video-morph` | no K; screen-content only | stripped nightly + screen carrier, ≥2 SB rows |
+
+### 5.4 Composition candidates (ranked, not a cap)
+
+Ranked by expected oracle headroom. Full flag lists and carriers are in
+`docs/tool-matrix.md` §10.
+
+| rank | candidate | carrier | status | next |
+|---:|---|---|---|---|
+| 1 | TIP future anchor on the stripped flat-P carrier | TIP (3–8 pictures) | untested; decoder-gated only | intermediate gate K > 86.0, then a matched ladder |
+| 2 | CDEF per-block strength (`--nightly --video-cdef-strength 4`) | FP | untested on K; CDEF is 60-frame gated | one ladder; stop if below the local control |
+| 3 | CfL on the nightly tree (`--nightly --video-cfl`) | FP | accepted in a 2-frame probe; 60-frame composition untested | one ladder; chroma owns 0.61 K of the gap |
+| 4 | Adaptive MVD + flex precision + sign derivation (`--nightly --video-bawp-off ...`) | FP | gated alone, untested together | one ladder; costs 0.36 K to make legal |
+| 5 | IBP on every intra leaf (`--nightly --video-ibp`) | FP | gated alone; 60-frame composition untested | one ladder; keyframe-weighted |
+
+Every measured dead combination (B, compound, multi-ref, GME, SDP, AQ,
+delta-Q, ext partitions, min-block 4, skip collapse, Wiener/PC-Wiener/
+chroma-LR/GDF, TX context rate, sb128/256) stays closed at 240p/100 kbps.
+None of the five candidates above is claimed to clear the 88.8 wall; they are
+the remaining legal selections that have not had an oracle ladder.
+
+## 6. Current measured oracles
 
 All at 240p / 100 kbps unless noted. "Ceiling" is rate-free or allocation, not
 an encodable 100 kbps stream.
@@ -243,7 +369,7 @@ honest starting point for the queue. The decoded hybrid attributes 3.32 K of
 the 3.93 K gap to luma and 0.61 K to chroma; it is an attribution tool, not an
 encodable candidate, so it is not in the oracle table.
 
-## 6. Go/no-go rule
+## 7. Go/no-go rule
 
 1. **No tuning below SVT 88.8.** If the matched-rate oracle of an architecture
    is below 88.8, stop. Report the envelope and the ceiling; do not sweep λ,
@@ -262,7 +388,7 @@ to 88.8 at 100.0. AVM is 24,836 B / 99.344 kbps / K 90.192, which rounds to
 90.2 at 100.0. The walls are quoted at the deployment point, not at each
 encoder's incidental rate.
 
-## 7. Caveats
+## 8. Caveats
 
 - **QP ripple.** The same recipe can move 0.3-1.5 K between adjacent QPs. That
   is why the ladder must bracket the target and why a single fixed-QP "win" is
@@ -281,7 +407,7 @@ encoder's incidental rate.
   The harness works on any 8-bit 4:2:0 Y4M, but the segment rows and the walls
   are pinned to this clip until the queue is ported to the 720p point.
 
-## 8. Candidate hand-off
+## 9. Candidate hand-off
 
 1. Freeze every knob except QP. Encode at least two QPs that bracket 100 kbps;
    three is better.
