@@ -265,10 +265,11 @@ The README speed point uses `build-release-timing` (the `release-timing`
 preset) with the same command: **7.5 fps** at QP119 on Apple M4 with 8 threads
 (three runs 7.3-7.6 fps; stream 25,230 B / 100.92 kbps).
 
-That is not an iso-QP comparison. At the same QP the gate is about **2.2x
-slower** than the control: 6.8 vs 14.6 fps at QP106, and 7.6 vs 16.5 fps at
-QP119. It re-scores the top-N inter candidates and prices the interval rate;
-the QP119 point is faster than QP106 only because the quantiser is coarser.
+That is not an iso-QP comparison. On the same drift-recipe command the gate is
+about **2.2x slower** than the control: 6.8 vs 14.6 fps at QP106, and 7.6 vs
+16.5 fps at QP119. It re-scores the top-N inter candidates and prices the
+interval rate; the QP119 point is faster than QP106 only because the quantiser
+is coarser.
 
 ## Env knobs (no CLI flags)
 
