@@ -17,8 +17,8 @@ set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 LANES=${LANES:-5}
 ITERATIONS=${ITERATIONS:-10}
-MODEL=${MODEL:-opencode-go/deepseek-v4.1-flash#max}
-AGENT=${AGENT:-general}
+MODEL=${OPENCODE_MODEL:-opencode-go/deepseek-v4.1-flash#max}
+AGENT=${OPENCODE_AGENT:-general}
 MAX_STALE=${MAX_STALE:-5}
 TIMEOUT=${TIMEOUT:-3600}
 STOP=${STOP:-$ROOT/../agent-loop/STOP}
