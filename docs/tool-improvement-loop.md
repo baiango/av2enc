@@ -84,6 +84,26 @@ binaries only); 4:2:0 only; gate-off pins byte-identical; warning-free build;
 tests 10/10; no push, no merge; no history rewrite.
 ```
 
+## Scripted runner
+
+The script owns the iteration count. It calls the OpenCode agent once per
+iteration and never stops after the first one:
+
+```sh
+python3 tools/agent_loop.py \
+  --iterations 20 \
+  --worktree ../agent-loop \
+  --branch exp/agent-loop
+```
+
+It finds the OpenCode CLI automatically (`OPENCODE_CLI` overrides it), creates
+the worktree from `main` if missing, symlinks `testdata`/`tools/bin`, and logs
+each run under `build/agent-loop/`. Each call performs exactly one iteration;
+the ledger is the memory between calls.
+
+Useful flags: `--model`, `--agent`, `--prompt-file`, `--ledger`,
+`--max-hours`, `--stop-file`, `--sleep`, `--fail-fast`, `--dry-run`.
+
 ## Inspect progress
 
 ```sh
