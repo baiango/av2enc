@@ -119,7 +119,9 @@ python3 tools/agent_loop.py \
 
 `--iterations 0` means until stopped; `--max-hours 0` means no wall-clock cap;
 `--max-stale 5` stops only after five consecutive agent calls leave the ledger
-unchanged; `--iteration-timeout` kills a stuck call and continues. Stop it with
+unchanged; `--iteration-timeout` kills a stuck call and continues. The five-lane
+default is 10,800 s (3 h), not 1 h: under five concurrent lanes a single
+build/measure iteration can take close to an hour. Stop it with
 the stop file (`--stop-file`) or Ctrl-C.
 
 ## Five parallel lanes
@@ -129,7 +131,7 @@ worktree, branch, ledger and fixed target, so code edits cannot collide:
 
 ```sh
 tools/agent_loop_multi.sh
-# optional: AV2ENC_LANES=5 AV2ENC_ITERATIONS=10 AV2ENC_MAX_STALE=5 AV2ENC_TIMEOUT=3600
+# optional: AV2ENC_LANES=5 AV2ENC_ITERATIONS=10 AV2ENC_MAX_STALE=5 AV2ENC_TIMEOUT=10800
 ```
 
 Targets: P-head residual, P-tail residual/allocation, inter transform/quant,
