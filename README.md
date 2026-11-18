@@ -78,7 +78,9 @@ Rows recorded on the retired unlicensed clip are historical.
 † AVM is a clean upstream build of `e6f99d3`, with no local patch. Commit,
 binary SHA-256, commands and stream MD5s: `bench/avm_baseline/README.md`.
 ‡ eff-perc fps is measured at the QP119 recipe (100.92 kbps); the 100.0 kbps
-quality point is interpolated.
+quality point is interpolated. This is not an iso-QP comparison: at the same QP
+the gate is ~2.2x slower (6.8 vs 14.6 fps at QP106; 7.6 vs 16.5 fps at QP119)
+because it re-scores top-N candidates and prices the interval rate.
 
 Butteraugli (lower better) and SSIMULACRA2 (higher better) are measured with
 `tools/extra_metrics.py` on the decoded stream; `-` means not measured (the GPU
