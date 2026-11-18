@@ -13,6 +13,13 @@ Two walls:
   does not compete, regardless of its gain over 83.80.
 - **Stage 2 wall: K 95.0** (stretch).
 
+**95 feasibility (2026-11-18).** No measured first-party mechanism exceeds
+90.2 at 100 kbps; the conventional AV2 class crosses 95 only at ~0.6–0.8 Mbps
+(SVT 777.6 kbps; AVM 188.9 kbps reaches 92.76). With AVM's BA 1.29, perfect
+JOD/SS2 would cap at 92.49, and 95 requires BA <= 0.44. `docs/target-95.md`
+concludes that 95 needs a new codec class, not another AV2 tool/flag sweep.
+The immediate target is SVT parity (88.8), then AVM parity (~90).
+
 Component requirements at SVT's JOD/SS2:
 
 | Target | JOD | BA | SS2 |
