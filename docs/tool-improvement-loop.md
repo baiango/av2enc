@@ -219,6 +219,19 @@ placement cannot remove prediction error. Decision/refresh/rate queues are
 exhausted for both mechanisms. Remaining: per-frame/head P prediction and
 residual coding efficiency. See `docs/realization-gaps.md`.
 
+
+## Oracle check rule (2026-11-19)
+
+The kept P-tail stack measures **84.508 matched K**, with segment ceilings
+**89.603** (f0-32) and **88.654** (f44-59); the old nightly ceilings were
+85.855 and 88.066, the old eff-perc ceilings 90.197 and 88.995. The source
+replacement bound moved, but the matched-rate point did not; `tools/oracle.py`
+returns NO-GO (<88.8). This is a **realization gain**, not a higher oracle.
+See `docs/agent-loop-oracle-check.md`.
+
+No patch is kept on matched K alone. It must report a matched-rate envelope and
+its segment ceilings; a segment ceiling above the wall is not a stream.
+
 ## What this loop is not
 
 - It is not a new-tool or new-codec program.

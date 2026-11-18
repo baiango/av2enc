@@ -47,6 +47,9 @@ Perform EXACTLY ONE iteration. Do not start a second one.
 2. Baseline, then ONE contained default-off implementation change. No new
    syntax, no preset/pin change, no third-party code or source copying.
 3. Measure the target probe and natural 240p QP104/106/108 with the AVM oracle.
+   Before calling a patch kept, run tools/oracle.py on the ladder and record
+   matched K plus segment ceilings. A segment ceiling is not a stream; only a
+   matched-rate envelope opens a path.
 4. Keep only a sign-consistent >= +0.15 K gain or a clear probe-gap closure;
    otherwise commit the diagnostic and revert the code.
 5. Update {{ledger}} with target, patch, probe/K, kept/negative, and blockers.
