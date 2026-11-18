@@ -203,6 +203,7 @@ matched K at 100 kbps unless marked as a ceiling.
 | candidate | status | owner | result | next |
 |---|---|---|---|---|
 | Hidden future anchor / alt-ref | **running** | inter / alt-ref workstream | pending; no committed oracle | The one untested prediction class (audit §9): a one-key hidden-ARF pyramid, not the closed-GOP B family already measured negative. Intermediate gate K > 86.0 to continue; the standing wall is 88.8. Run the ladder and post the JSON. |
+| Multi-reference P (2-3 past refs, per-block selection) | closed (measured) | `exp/luma-multiref` | **81.38 / 81.19** (refs 2/3 @100) | Plain single-prediction P chain over the N most recent past slots; every leaf picks its reference. Requires `--video-ref-signal-off` (the compact map needs one ref). Against the nightly pin (82.05) the arms lose 0.67/0.86 K; the explicit-map refs-1 control is a tie inside a 1.65 K QP ripple (+0.16/−0.03). On the eff-perc drift recipe 84.82/84.76 against 85.08. The ref-MV bank cannot ride the carried-CDF chain. Details in `docs/video-multiref-p.md`. Do not queue. |
 | Hierarchical B/P | closed (measured) | `exp/eff-hierb` | **84.40** | Two-sided interiors + BA allocation; BAWP composes (+0.33 same-QP, +0.50 iso), but the anchor cost leaves it 0.45 below the P chain. Reopen only with a free anchor / hidden-ARF budget. |
 | Two-sided + anchor | closed (measured) | `exp/eff-twosided` | **84.49** | Predictor wins at the same QP (83.29 → 84.65, BA 2.455); the reordered-anchor penalty (+6.7% stream) eats it. +0.50 iso with BAWP. Combine only with a cost-free anchor. |
 | Learned / tool-class | closed (bound) | metrics workstream | **0 at 100 kbps** | Encoder-side learned predictors need coded residual; the normative learned filters (Wiener/PC-Wiener/GDF) are negative at 240p. The 95 wall is a new-codec program. Do not queue for 100 kbps. |
@@ -228,6 +229,10 @@ an encodable 100 kbps stream.
 | eff-twosided | two-sided prediction + anchor | envelope | **84.49** | — | −4.31 |
 | eff-joint | affordable joint search | envelope | **84.59** | 84.65 exhaustive | −4.21 |
 | **eff-perc** | error-CSF + interval rate + λ refit | 2 points | **85.10** | — | −3.70 |
+| multi-ref P refs 2 | nightly + `--video-ref-signal-off --video-refs 2` | 4 points | **81.38** | — | −7.42 |
+| multi-ref P refs 3 | nightly + `--video-ref-signal-off --video-refs 3` | 4 points | **81.19** | — | −7.61 |
+| eff-perc + refs 2 | eff-perc + `--video-ref-signal-off --video-refs 2` | 2 points | **84.82** | — | −3.98 |
+| eff-perc + refs 3 | eff-perc + `--video-ref-signal-off --video-refs 3` | 2 points | **84.76** | — | −4.04 |
 | deep inter | anchor depth envelope | — | 84.02 | **87.69** allocation (2.4× rate) | −4.78 (ceiling −1.11) |
 | SVT-AV1 4.3.0 p0 | CRF 36.5 | 2 points | **88.8** | — | wall |
 | AVM e6f99d3 | QP 124 | 2 points | **90.2** | — | target |

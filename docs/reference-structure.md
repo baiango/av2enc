@@ -343,7 +343,11 @@ compound arm QP116 (`92763046…`) and for ref-mvs QP128 (`d3618250…`).
 
 ## 4. Verdict
 
-**Nothing beats 83.80.**
+**Nothing beats 83.80.** Re-confirmed with the AVM oracle on `exp/luma-multiref`
+(`docs/video-multiref-p.md`): refs2/refs3 interpolate to **81.377 / 81.191** at
+100.0 kbps and reproduce this document's QP107 points exactly; the nightly
+matched K is 82.048 and the eff-perc drift recipe loses 0.26-0.32 K when
+references are added.
 
 * Multi-reference single prediction loses **2.4–2.8 K**. The reference tools
   are not being held back by a missing tune; at this point extra references
