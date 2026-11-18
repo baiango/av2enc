@@ -1,0 +1,1235 @@
+{
+  "schema": "oracle-search/1",
+  "fixture": {
+    "ref": "testdata/nasa_480x240_30fps_60f.y4m",
+    "frames": 60,
+    "target_kbps": 100.0,
+    "threads": 8
+  },
+  "walls": {
+    "svt": 88.8,
+    "avm": 90.2
+  },
+  "policy": {
+    "screen_qps": 2,
+    "max_screen_qps": 4,
+    "max_screen_arms": 8,
+    "max_finalists": 2,
+    "promotion_margin_k": 0.5,
+    "gate_probes": 2,
+    "acquisition": "ei",
+    "expand_above_wall": true,
+    "segments": true
+  },
+  "oracle": {
+    "path": "../av2enc/tools/oracle.py",
+    "sha256": "31637270281c7783a9565ed455258e6e71b7d912e961c1ed7a22f25e06854414"
+  },
+  "bin": "../av2enc/build-release/av2enc",
+  "candidates": [
+    {
+      "name": "nightly",
+      "status": "open",
+      "notes": "Flat key+P nightly baseline. No inner knobs; one architecture point. The source-segment ceiling is expected to close the gate below 88.8.",
+      "source": {
+        "kind": "binary",
+        "note": "The main build-release binary passed with --bin.",
+        "commit": "0bf1d001"
+      },
+      "build": null,
+      "env": {},
+      "flags": [
+        "{bin}",
+        "{ref}",
+        "-o",
+        "{out}",
+        "--video",
+        "--frames",
+        "{frames}",
+        "--cpu-threads",
+        "{threads}",
+        "--qp",
+        "{qp}",
+        "--nightly"
+      ],
+      "qp_ladder": [
+        105,
+        106,
+        107
+      ],
+      "knobs": {},
+      "gate": {
+        "state": "closed",
+        "ceiling_k": 87.9588,
+        "wall_k": 88.8,
+        "max_ceiling_k": 87.9588,
+        "margin_k": -0.8412,
+        "probes": [
+          {
+            "k": 87.9588,
+            "method": "source",
+            "segment": "f44-59",
+            "delta_k": 5.911,
+            "base_k": 82.0479,
+            "rows": [
+              {
+                "kind": "source",
+                "segment": "key f0",
+                "delta_k": 0.0845,
+                "k": 82.1323,
+                "base_k": 82.0479,
+                "base_kbps": 100.0,
+                "arm": "default",
+                "qps": [
+                  105,
+                  106,
+                  107
+                ]
+              },
+              {
+                "kind": "source",
+                "segment": "f0-32",
+                "delta_k": 3.6997,
+                "k": 85.7476,
+                "base_k": 82.0479,
+                "base_kbps": 100.0,
+                "arm": "default",
+                "qps": [
+                  105,
+                  106,
+                  107
+                ]
+              },
+              {
+                "kind": "source",
+                "segment": "f33-43",
+                "delta_k": 2.2123,
+                "k": 84.2602,
+                "base_k": 82.0479,
+                "base_kbps": 100.0,
+                "arm": "default",
+                "qps": [
+                  105,
+                  106,
+                  107
+                ]
+              },
+              {
+                "kind": "source",
+                "segment": "f44-59",
+                "delta_k": 5.911,
+                "k": 87.9588,
+                "base_k": 82.0479,
+                "base_kbps": 100.0,
+                "arm": "default",
+                "qps": [
+                  105,
+                  106,
+                  107
+                ]
+              }
+            ],
+            "declared_k": null,
+            "invalid_rate": false,
+            "reason": ""
+          }
+        ],
+        "reason": "ceiling 87.959 < SVT 88.8"
+      },
+      "screen": {
+        "arms": [
+          {
+            "arm": "default",
+            "arm_key": {},
+            "qps": [
+              105,
+              106,
+              107
+            ],
+            "k": 82.0479,
+            "kbps": 100.0,
+            "method": "linear",
+            "out_of_range": false,
+            "ceiling_k": 87.9588,
+            "from_cache": true
+          }
+        ],
+        "envelope_k": 82.0479,
+        "envelope_arm": "default",
+        "envelope_qps": [
+          105,
+          106,
+          107
+        ]
+      },
+      "full": {
+        "arms": [],
+        "envelope_k": null,
+        "envelope_arm": null
+      },
+      "envelope_k": 82.0479,
+      "envelope_arm": "default",
+      "envelope_arm_key": {},
+      "envelope_source": "screen",
+      "ceiling_k": 87.9588,
+      "gap_svt": -6.7521,
+      "gap_avm": -8.1521,
+      "ceiling_gap_svt": -0.8412,
+      "verdict": "gate closed below SVT 88.8",
+      "stopped": "gate",
+      "decisions": [
+        {
+          "step": "gate-probe",
+          "arm": "default",
+          "arm_key": {},
+          "decision": "measure-ceiling",
+          "reason": "probe with source replacement (QP set extended to bracket 100 kbps)",
+          "qps": [
+            105,
+            106,
+            107
+          ],
+          "matched_k": 82.0479,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4,
+          "ceiling_k": 87.9588,
+          "ceiling_method": "source",
+          "ceiling_segment": "f44-59"
+        },
+        {
+          "step": "gate",
+          "arm": "default",
+          "arm_key": {},
+          "decision": "close",
+          "reason": "ceiling 87.959 < SVT 88.8",
+          "qps": [
+            105,
+            106,
+            107
+          ],
+          "matched_k": 82.0479,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4,
+          "ceiling_k": 87.9588
+        }
+      ],
+      "compute": {
+        "arms": 1,
+        "screens": 1,
+        "full_ladders": 0,
+        "brute_force_full_ladders": 1,
+        "saved_full_ladders": 1
+      },
+      "sweep": {
+        "state": "skipped",
+        "reason": "gate closed below the SVT wall; no full sweep"
+      },
+      "validation_record": {
+        "candidate": "nightly",
+        "note": "docs/luma-audit.md source ceiling: 82.155 + 5.911 = 88.066 at the f44-59 segment.",
+        "observed_k": 82.0479,
+        "gate_state": "closed",
+        "full_ladders_run": 0,
+        "brute_force_full_ladders": 1,
+        "saved_full_ladders": 1,
+        "expected_gate": "closed",
+        "gate_check": "pass",
+        "passed": true
+      }
+    },
+    {
+      "name": "eff-perc",
+      "status": "open",
+      "notes": "Extended perceptual RD core (AV2ENC_EFF_PERC=1) on the drift recipe. Inner sweep: lambda scale. Known best lambda 0.18 at 85.10 matched K.",
+      "source": {
+        "kind": "binary",
+        "note": "Main build-release contains the env-gated eff-perc core.",
+        "commit": "0bf1d001"
+      },
+      "build": null,
+      "env": {
+        "AV2ENC_EFF_PERC": "1",
+        "AV2ENC_EFF_PERC_SCALE": "{lambda}"
+      },
+      "flags": [
+        "{bin}",
+        "{ref}",
+        "-o",
+        "{out}",
+        "--video",
+        "--frames",
+        "{frames}",
+        "--cpu-threads",
+        "{threads}",
+        "--qp",
+        "{qp}",
+        "--nightly",
+        "--video-drift-refresh-threshold",
+        "1.5",
+        "--video-drift-refresh-budget",
+        "3250"
+      ],
+      "qp_ladder": [
+        118,
+        119,
+        120,
+        121
+      ],
+      "knobs": {
+        "lambda": {
+          "values": [
+            0.15,
+            0.18,
+            0.2,
+            0.25,
+            0.3
+          ],
+          "default": 0.18,
+          "note": "AV2ENC_EFF_PERC_SCALE; docs/eff-perc.md K vs lambda table."
+        }
+      },
+      "gate": {
+        "state": "open",
+        "ceiling_k": 90.1162,
+        "wall_k": 88.8,
+        "max_ceiling_k": 90.1162,
+        "margin_k": 1.3162,
+        "probes": [
+          {
+            "k": 90.1162,
+            "method": "source",
+            "segment": "f0-32",
+            "delta_k": 5.0168,
+            "base_k": 85.0994,
+            "rows": [
+              {
+                "kind": "source",
+                "segment": "key f0",
+                "delta_k": 0.1246,
+                "k": 85.2239,
+                "base_k": 85.0994,
+                "base_kbps": 100.0,
+                "arm": "lambda=0.18",
+                "qps": [
+                  119,
+                  120
+                ]
+              },
+              {
+                "kind": "source",
+                "segment": "f0-32",
+                "delta_k": 5.0168,
+                "k": 90.1162,
+                "base_k": 85.0994,
+                "base_kbps": 100.0,
+                "arm": "lambda=0.18",
+                "qps": [
+                  119,
+                  120
+                ]
+              },
+              {
+                "kind": "source",
+                "segment": "f33-43",
+                "delta_k": 2.1192,
+                "k": 87.2186,
+                "base_k": 85.0994,
+                "base_kbps": 100.0,
+                "arm": "lambda=0.18",
+                "qps": [
+                  119,
+                  120
+                ]
+              },
+              {
+                "kind": "source",
+                "segment": "f44-59",
+                "delta_k": 3.8149,
+                "k": 88.9143,
+                "base_k": 85.0994,
+                "base_kbps": 100.0,
+                "arm": "lambda=0.18",
+                "qps": [
+                  119,
+                  120
+                ]
+              }
+            ],
+            "declared_k": null,
+            "invalid_rate": false,
+            "reason": ""
+          },
+          {
+            "k": null,
+            "method": "unknown",
+            "segment": null,
+            "delta_k": null,
+            "base_k": null,
+            "rows": [],
+            "declared_k": null,
+            "invalid_rate": true,
+            "reason": "rate not bracketed"
+          }
+        ],
+        "reason": "ceiling 90.116 >= SVT 88.8"
+      },
+      "screen": {
+        "arms": [
+          {
+            "arm": "lambda=0.18",
+            "arm_key": {
+              "lambda": 0.18
+            },
+            "qps": [
+              119,
+              120
+            ],
+            "k": 85.0994,
+            "kbps": 100.0,
+            "method": "linear",
+            "out_of_range": false,
+            "ceiling_k": 90.1162,
+            "from_cache": true
+          },
+          {
+            "arm": "lambda=0.3",
+            "arm_key": {
+              "lambda": 0.3
+            },
+            "qps": [
+              118,
+              119,
+              120,
+              121
+            ],
+            "k": 84.7399,
+            "kbps": 99.056,
+            "method": "nearest",
+            "out_of_range": true,
+            "ceiling_k": null,
+            "from_cache": true
+          },
+          {
+            "arm": "lambda=0.15",
+            "arm_key": {
+              "lambda": 0.15
+            },
+            "qps": [
+              119,
+              120
+            ],
+            "k": 84.8582,
+            "kbps": 100.0,
+            "method": "linear",
+            "out_of_range": false,
+            "ceiling_k": null,
+            "from_cache": true
+          },
+          {
+            "arm": "lambda=0.2",
+            "arm_key": {
+              "lambda": 0.2
+            },
+            "qps": [
+              118,
+              119,
+              120
+            ],
+            "k": 84.8011,
+            "kbps": 100.0,
+            "method": "linear",
+            "out_of_range": false,
+            "ceiling_k": null,
+            "from_cache": true
+          },
+          {
+            "arm": "lambda=0.25",
+            "arm_key": {
+              "lambda": 0.25
+            },
+            "qps": [
+              118,
+              119,
+              120
+            ],
+            "k": 84.968,
+            "kbps": 100.0,
+            "method": "linear",
+            "out_of_range": false,
+            "ceiling_k": null,
+            "from_cache": true
+          }
+        ],
+        "envelope_k": 85.0994,
+        "envelope_arm": "lambda=0.18",
+        "envelope_qps": [
+          119,
+          120
+        ]
+      },
+      "full": {
+        "arms": [
+          {
+            "arm": "lambda=0.18",
+            "arm_key": {
+              "lambda": 0.18
+            },
+            "qps": [
+              118,
+              119,
+              120,
+              121
+            ],
+            "k": 85.0994,
+            "kbps": 100.0,
+            "method": "linear",
+            "out_of_range": false,
+            "from_cache": true
+          },
+          {
+            "arm": "lambda=0.25",
+            "arm_key": {
+              "lambda": 0.25
+            },
+            "qps": [
+              118,
+              119,
+              120,
+              121
+            ],
+            "k": 84.968,
+            "kbps": 100.0,
+            "method": "linear",
+            "out_of_range": false,
+            "from_cache": true
+          }
+        ],
+        "envelope_k": 85.0994,
+        "envelope_arm": "lambda=0.18"
+      },
+      "envelope_k": 85.0994,
+      "envelope_arm": "lambda=0.18",
+      "envelope_arm_key": {
+        "lambda": 0.18
+      },
+      "envelope_source": "full",
+      "ceiling_k": 90.1647,
+      "gap_svt": -3.7006,
+      "gap_avm": -5.1006,
+      "ceiling_gap_svt": 1.3647,
+      "verdict": "NO-GO: below SVT 88.8",
+      "stopped": null,
+      "decisions": [
+        {
+          "step": "gate-probe",
+          "arm": "lambda=0.18",
+          "arm_key": {
+            "lambda": 0.18
+          },
+          "decision": "measure-ceiling",
+          "reason": "probe with source replacement",
+          "qps": [
+            119,
+            120
+          ],
+          "matched_k": 85.0994,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4,
+          "ceiling_k": 90.1162,
+          "ceiling_method": "source",
+          "ceiling_segment": "f0-32"
+        },
+        {
+          "step": "gate-probe",
+          "arm": "lambda=0.3",
+          "arm_key": {
+            "lambda": 0.3
+          },
+          "decision": "invalid-probe",
+          "reason": "probe did not bracket the target rate",
+          "qps": [
+            118,
+            119,
+            120,
+            121
+          ],
+          "matched_k": 84.7399,
+          "matched_kbps": 99.056,
+          "method": "nearest",
+          "out_of_range": true,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4,
+          "ceiling_k": null,
+          "ceiling_method": "unknown",
+          "ceiling_segment": null
+        },
+        {
+          "step": "screen",
+          "arm": "lambda=0.15",
+          "arm_key": {
+            "lambda": 0.15
+          },
+          "decision": "screen",
+          "reason": "screen without segments",
+          "qps": [
+            119,
+            120
+          ],
+          "matched_k": 84.8582,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 0,
+          "ceiling_k": null
+        },
+        {
+          "step": "screen",
+          "arm": "lambda=0.2",
+          "arm_key": {
+            "lambda": 0.2
+          },
+          "decision": "screen",
+          "reason": "screen without segments (QP set extended to bracket 100 kbps)",
+          "qps": [
+            118,
+            119,
+            120
+          ],
+          "matched_k": 84.8011,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 0,
+          "ceiling_k": null
+        },
+        {
+          "step": "screen",
+          "arm": "lambda=0.25",
+          "arm_key": {
+            "lambda": 0.25
+          },
+          "decision": "screen",
+          "reason": "screen without segments (QP set extended to bracket 100 kbps)",
+          "qps": [
+            118,
+            119,
+            120
+          ],
+          "matched_k": 84.968,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 0,
+          "ceiling_k": null
+        },
+        {
+          "step": "promote",
+          "arm": "lambda=0.18",
+          "arm_key": {
+            "lambda": 0.18
+          },
+          "decision": "promote",
+          "reason": "screen best 85.099; margin 0.50 keeps 4; finalist budget 2",
+          "qps": [
+            119,
+            120
+          ],
+          "matched_k": 85.0994,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4,
+          "screened": 4,
+          "within": [
+            "lambda=0.18",
+            "lambda=0.25",
+            "lambda=0.15",
+            "lambda=0.2"
+          ],
+          "finalists": [
+            "lambda=0.18",
+            "lambda=0.25"
+          ]
+        },
+        {
+          "step": "full-ladder",
+          "arm": "lambda=0.18",
+          "arm_key": {
+            "lambda": 0.18
+          },
+          "decision": "measure-full",
+          "reason": "full QP ladder with source segments",
+          "qps": [
+            118,
+            119,
+            120,
+            121
+          ],
+          "matched_k": 85.0994,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4,
+          "ceiling_k": 90.1162,
+          "full_qps": [
+            118,
+            119,
+            120,
+            121
+          ]
+        },
+        {
+          "step": "full-ladder",
+          "arm": "lambda=0.25",
+          "arm_key": {
+            "lambda": 0.25
+          },
+          "decision": "measure-full",
+          "reason": "full QP ladder with source segments",
+          "qps": [
+            118,
+            119,
+            120,
+            121
+          ],
+          "matched_k": 84.968,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4,
+          "ceiling_k": 90.1647,
+          "full_qps": [
+            118,
+            119,
+            120,
+            121
+          ]
+        },
+        {
+          "step": "decide",
+          "arm": "lambda=0.18",
+          "arm_key": {
+            "lambda": 0.18
+          },
+          "decision": "no-go",
+          "reason": "full envelope 85.099 < SVT 88.8; stop, no full sweep",
+          "qps": [
+            118,
+            119,
+            120,
+            121
+          ],
+          "matched_k": 85.0994,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4
+        }
+      ],
+      "compute": {
+        "arms": 5,
+        "screens": 5,
+        "full_ladders": 2,
+        "brute_force_full_ladders": 5,
+        "saved_full_ladders": 3
+      },
+      "surrogate": {
+        "method": "gp-rbf",
+        "acquisition": "ei",
+        "arms": {
+          "lambda=0.15": {
+            "mean": 84.859867,
+            "sigma": 0.003595,
+            "ei": 0.0,
+            "ucb": 84.867058,
+            "acquisition": 0.0,
+            "method": "gp-rbf"
+          },
+          "lambda=0.18": {
+            "mean": 85.09547,
+            "sigma": 0.003578,
+            "ei": 0.0,
+            "ucb": 85.102626,
+            "acquisition": 0.0,
+            "method": "gp-rbf"
+          },
+          "lambda=0.2": {
+            "mean": 84.80424,
+            "sigma": 0.003586,
+            "ei": 0.0,
+            "ucb": 84.811411,
+            "acquisition": 0.0,
+            "method": "gp-rbf"
+          },
+          "lambda=0.25": {
+            "mean": 84.967333,
+            "sigma": 0.003599,
+            "ei": 0.0,
+            "ucb": 84.974531,
+            "acquisition": 0.0,
+            "method": "gp-rbf"
+          },
+          "lambda=0.3": {
+            "mean": 85.136565,
+            "sigma": 0.101997,
+            "ei": 0.055717,
+            "ucb": 85.340558,
+            "acquisition": 0.055717,
+            "method": "gp-rbf"
+          }
+        }
+      },
+      "sweep": {
+        "state": "skipped",
+        "reason": "full envelope 85.099 < SVT 88.8; no full sweep"
+      },
+      "validation_record": {
+        "candidate": "eff-perc",
+        "note": "docs/eff-perc.md: lambda 0.18 is the measured peak; 0.15/0.20/0.25/0.30 are below it.",
+        "observed_k": 85.0994,
+        "gate_state": "open",
+        "full_ladders_run": 2,
+        "brute_force_full_ladders": 5,
+        "saved_full_ladders": 3,
+        "known_best": {
+          "lambda": 0.18
+        },
+        "selected_best": {
+          "lambda": 0.18
+        },
+        "found_known_best": true,
+        "passed": true
+      }
+    },
+    {
+      "name": "eff-hierb",
+      "status": "open",
+      "notes": "Hierarchical B with the merged full tool set, BA refresh allocation and two-sided AVERAGE compound. Reference envelope 84.4 K from docs/eff-hierb.md. Uses the existing worktree binary; the tool never builds in or modifies that worktree.",
+      "source": {
+        "kind": "worktree",
+        "worktree": "../eff-hierb",
+        "binary": "build-release/av2enc",
+        "commit": "fd59a737",
+        "note": "Prebuilt exp/eff-hierb binary; read-only use."
+      },
+      "build": null,
+      "env": {
+        "AV2ENC_EFF_HIERB": "1",
+        "AV2ENC_EFF_HIERB_BUDGET": "3250",
+        "AV2ENC_PIPE_PERC": "1",
+        "AV2ENC_PIPE_PERC_SCALE": "0.3",
+        "AV2ENC_EFF_HIERB_MAXLAYER": "2"
+      },
+      "flags": [
+        "{bin}",
+        "{ref}",
+        "-o",
+        "{out}",
+        "--video",
+        "--frames",
+        "{frames}",
+        "--cpu-threads",
+        "{threads}",
+        "--qp",
+        "{qp}",
+        "--video-rd-preset",
+        "quality",
+        "--video-ccso-rd",
+        "--video-ccso-bands",
+        "6",
+        "--video-ccso-lambda",
+        "22",
+        "--video-ccso-refit",
+        "2",
+        "--video-ccso-unit-bits",
+        "2",
+        "--video-rdoq",
+        "--video-cdef",
+        "--video-cdef-rd",
+        "--video-leaf-rd",
+        "--video-subpel-eighth",
+        "--video-key-intra-txpart",
+        "--video-qp-lambda",
+        "--avg-cdf",
+        "--adaptive-cdf",
+        "--cdf-continuity",
+        "--video-tile-flush-min",
+        "--video-ccso-header-rd",
+        "--video-edge-inter",
+        "--video-edge-mask",
+        "--video-bawp",
+        "--video-bawp-carrier",
+        "--video-partition-rd",
+        "--video-tile-group-compact",
+        "--video-partition-rd-lambda",
+        "2.75e-6",
+        "--video-key-qp-offset",
+        "-24",
+        "--video-compound",
+        "--b-frames",
+        "4",
+        "--video-open-gop"
+      ],
+      "qp_ladder": [
+        117,
+        118,
+        119
+      ],
+      "knobs": {},
+      "gate": {
+        "state": "open",
+        "ceiling_k": 89.2005,
+        "wall_k": 88.8,
+        "max_ceiling_k": 89.2005,
+        "margin_k": 0.4005,
+        "probes": [
+          {
+            "k": 89.2005,
+            "method": "source",
+            "segment": "f0-32",
+            "delta_k": 4.7881,
+            "base_k": 84.4123,
+            "rows": [
+              {
+                "kind": "source",
+                "segment": "key f0",
+                "delta_k": 0.1373,
+                "k": 84.5496,
+                "base_k": 84.4123,
+                "base_kbps": 100.0,
+                "arm": "default",
+                "qps": [
+                  117,
+                  118
+                ]
+              },
+              {
+                "kind": "source",
+                "segment": "f0-32",
+                "delta_k": 4.7881,
+                "k": 89.2005,
+                "base_k": 84.4123,
+                "base_kbps": 100.0,
+                "arm": "default",
+                "qps": [
+                  117,
+                  118
+                ]
+              },
+              {
+                "kind": "source",
+                "segment": "f33-43",
+                "delta_k": 2.2061,
+                "k": 86.6185,
+                "base_k": 84.4123,
+                "base_kbps": 100.0,
+                "arm": "default",
+                "qps": [
+                  117,
+                  118
+                ]
+              },
+              {
+                "kind": "source",
+                "segment": "f44-59",
+                "delta_k": 4.1925,
+                "k": 88.6049,
+                "base_k": 84.4123,
+                "base_kbps": 100.0,
+                "arm": "default",
+                "qps": [
+                  117,
+                  118
+                ]
+              }
+            ],
+            "declared_k": null,
+            "invalid_rate": false,
+            "reason": ""
+          }
+        ],
+        "reason": "ceiling 89.201 >= SVT 88.8"
+      },
+      "screen": {
+        "arms": [
+          {
+            "arm": "default",
+            "arm_key": {},
+            "qps": [
+              117,
+              118
+            ],
+            "k": 84.4123,
+            "kbps": 100.0,
+            "method": "linear",
+            "out_of_range": false,
+            "ceiling_k": 89.2005,
+            "from_cache": true
+          }
+        ],
+        "envelope_k": 84.4123,
+        "envelope_arm": "default",
+        "envelope_qps": [
+          117,
+          118
+        ]
+      },
+      "full": {
+        "arms": [
+          {
+            "arm": "default",
+            "arm_key": {},
+            "qps": [
+              117,
+              118,
+              119
+            ],
+            "k": 84.4123,
+            "kbps": 100.0,
+            "method": "linear",
+            "out_of_range": false,
+            "from_cache": true
+          }
+        ],
+        "envelope_k": 84.4123,
+        "envelope_arm": "default"
+      },
+      "envelope_k": 84.4123,
+      "envelope_arm": "default",
+      "envelope_arm_key": {},
+      "envelope_source": "full",
+      "ceiling_k": 89.2005,
+      "gap_svt": -4.3877,
+      "gap_avm": -5.7877,
+      "ceiling_gap_svt": 0.4005,
+      "verdict": "NO-GO: below SVT 88.8",
+      "stopped": null,
+      "decisions": [
+        {
+          "step": "gate-probe",
+          "arm": "default",
+          "arm_key": {},
+          "decision": "measure-ceiling",
+          "reason": "probe with source replacement",
+          "qps": [
+            117,
+            118
+          ],
+          "matched_k": 84.4123,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4,
+          "ceiling_k": 89.2005,
+          "ceiling_method": "source",
+          "ceiling_segment": "f0-32"
+        },
+        {
+          "step": "promote",
+          "arm": "default",
+          "arm_key": {},
+          "decision": "promote",
+          "reason": "screen best 84.412; margin 0.50 keeps 1; finalist budget 1",
+          "qps": [
+            117,
+            118
+          ],
+          "matched_k": 84.4123,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4,
+          "screened": 1,
+          "within": [
+            "default"
+          ],
+          "finalists": [
+            "default"
+          ]
+        },
+        {
+          "step": "full-ladder",
+          "arm": "default",
+          "arm_key": {},
+          "decision": "measure-full",
+          "reason": "full QP ladder with source segments",
+          "qps": [
+            117,
+            118,
+            119
+          ],
+          "matched_k": 84.4123,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4,
+          "ceiling_k": 89.2005,
+          "full_qps": [
+            117,
+            118,
+            119
+          ]
+        },
+        {
+          "step": "decide",
+          "arm": "default",
+          "arm_key": {},
+          "decision": "no-go",
+          "reason": "full envelope 84.412 < SVT 88.8; stop, no full sweep",
+          "qps": [
+            117,
+            118,
+            119
+          ],
+          "matched_k": 84.4123,
+          "matched_kbps": 100.0,
+          "method": "linear",
+          "out_of_range": false,
+          "from_ladder_cache": true,
+          "oracle_call": false,
+          "segments": 4
+        }
+      ],
+      "compute": {
+        "arms": 1,
+        "screens": 1,
+        "full_ladders": 1,
+        "brute_force_full_ladders": 1,
+        "saved_full_ladders": 0
+      },
+      "surrogate": {
+        "method": "fallback",
+        "acquisition": "ei",
+        "arms": {
+          "default": {
+            "mean": 84.41234613549713,
+            "sigma": null,
+            "acquisition": null,
+            "method": "fallback"
+          }
+        }
+      },
+      "sweep": {
+        "state": "skipped",
+        "reason": "full envelope 84.412 < SVT 88.8; no full sweep"
+      },
+      "validation_record": {
+        "candidate": "eff-hierb",
+        "note": "Architecture-candidate validation: same code and flags as the recorded 84.4 envelope, re-scored through the loop.",
+        "observed_k": 84.4123,
+        "gate_state": "open",
+        "full_ladders_run": 1,
+        "brute_force_full_ladders": 1,
+        "saved_full_ladders": 0,
+        "reference_k": 84.4,
+        "reference": "docs/eff-hierb.md",
+        "reference_delta": 0.0123,
+        "reproduced": true,
+        "passed": true
+      }
+    }
+  ],
+  "summary": {
+    "candidates_run": 3,
+    "best_envelope_k": 85.0994,
+    "best_candidate": "eff-perc",
+    "any_candidate_clears_svt": false,
+    "any_candidate_clears_avm": false,
+    "any_ceiling_clears_svt": true,
+    "no_candidate_clears_88_8": true,
+    "statement": "No candidate clears 88.8."
+  },
+  "validation": {
+    "records": [
+      {
+        "candidate": "nightly",
+        "note": "docs/luma-audit.md source ceiling: 82.155 + 5.911 = 88.066 at the f44-59 segment.",
+        "observed_k": 82.0479,
+        "gate_state": "closed",
+        "full_ladders_run": 0,
+        "brute_force_full_ladders": 1,
+        "saved_full_ladders": 1,
+        "expected_gate": "closed",
+        "gate_check": "pass",
+        "passed": true
+      },
+      {
+        "candidate": "eff-perc",
+        "note": "docs/eff-perc.md: lambda 0.18 is the measured peak; 0.15/0.20/0.25/0.30 are below it.",
+        "observed_k": 85.0994,
+        "gate_state": "open",
+        "full_ladders_run": 2,
+        "brute_force_full_ladders": 5,
+        "saved_full_ladders": 3,
+        "known_best": {
+          "lambda": 0.18
+        },
+        "selected_best": {
+          "lambda": 0.18
+        },
+        "found_known_best": true,
+        "passed": true
+      },
+      {
+        "candidate": "eff-hierb",
+        "note": "Architecture-candidate validation: same code and flags as the recorded 84.4 envelope, re-scored through the loop.",
+        "observed_k": 84.4123,
+        "gate_state": "open",
+        "full_ladders_run": 1,
+        "brute_force_full_ladders": 1,
+        "saved_full_ladders": 0,
+        "reference_k": 84.4,
+        "reference": "docs/eff-hierb.md",
+        "reference_delta": 0.0123,
+        "reproduced": true,
+        "passed": true
+      }
+    ],
+    "passed": true,
+    "note": "Validation is a harness check on a known grid, not a claim that the grid clears the wall.",
+    "errors": []
+  },
+  "cache": {
+    "path": ".oracle-cache/scores.json",
+    "hits": 15,
+    "misses": 0,
+    "encodes": 0,
+    "encode_cache_hits": 41,
+    "oracle_calls": 0,
+    "oracle_cache_hits": 15,
+    "score_cache_hits": 0
+  }
+}

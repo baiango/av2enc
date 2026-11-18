@@ -1,0 +1,294 @@
+{
+  "schema": "oracle-candidates/1",
+  "description": "Architecture candidates for tools/oracle_search.py. A candidate is a code source plus flags; knobs are only its inner sweep. See docs/oracle-search.md section 9.",
+  "fixture": {
+    "ref": "testdata/nasa_480x240_30fps_60f.y4m",
+    "frames": 60,
+    "target_kbps": 100.0,
+    "threads": 8
+  },
+  "walls": {
+    "svt": 88.8,
+    "avm": 90.2
+  },
+  "defaults": {
+    "screen_qps": 2,
+    "max_screen_qps": 4,
+    "max_screen_arms": 8,
+    "max_finalists": 2,
+    "promotion_margin_k": 0.5,
+    "gate_probes": 2,
+    "acquisition": "ei",
+    "expand_above_wall": true,
+    "segments": true
+  },
+  "candidates": [
+    {
+      "name": "nightly",
+      "status": "open",
+      "notes": "Flat key+P nightly baseline. No inner knobs; one architecture point. The source-segment ceiling is expected to close the gate below 88.8.",
+      "source": {
+        "kind": "binary",
+        "note": "The main build-release binary passed with --bin.",
+        "commit": "0bf1d001"
+      },
+      "build": null,
+      "flags": [
+        "{bin}",
+        "{ref}",
+        "-o",
+        "{out}",
+        "--video",
+        "--frames",
+        "{frames}",
+        "--cpu-threads",
+        "{threads}",
+        "--qp",
+        "{qp}",
+        "--nightly"
+      ],
+      "env": {},
+      "qp_ladder": [
+        105,
+        106,
+        107
+      ],
+      "knobs": {},
+      "ceiling": {
+        "kind": "source-segment"
+      },
+      "validation": {
+        "expect_gate": "closed",
+        "note": "docs/luma-audit.md source ceiling: 82.155 + 5.911 = 88.066 at the f44-59 segment."
+      }
+    },
+    {
+      "name": "eff-perc",
+      "status": "open",
+      "notes": "Extended perceptual RD core (AV2ENC_EFF_PERC=1) on the drift recipe. Inner sweep: lambda scale. Known best lambda 0.18 at 85.10 matched K.",
+      "source": {
+        "kind": "binary",
+        "note": "Main build-release contains the env-gated eff-perc core.",
+        "commit": "0bf1d001"
+      },
+      "build": null,
+      "flags": [
+        "{bin}",
+        "{ref}",
+        "-o",
+        "{out}",
+        "--video",
+        "--frames",
+        "{frames}",
+        "--cpu-threads",
+        "{threads}",
+        "--qp",
+        "{qp}",
+        "--nightly",
+        "--video-drift-refresh-threshold",
+        "1.5",
+        "--video-drift-refresh-budget",
+        "3250"
+      ],
+      "env": {
+        "AV2ENC_EFF_PERC": "1",
+        "AV2ENC_EFF_PERC_SCALE": "{lambda}"
+      },
+      "qp_ladder": [
+        118,
+        119,
+        120,
+        121
+      ],
+      "knobs": {
+        "lambda": {
+          "values": [
+            0.15,
+            0.18,
+            0.2,
+            0.25,
+            0.3
+          ],
+          "default": 0.18,
+          "note": "AV2ENC_EFF_PERC_SCALE; docs/eff-perc.md K vs lambda table."
+        }
+      },
+      "ceiling": {
+        "kind": "source-segment"
+      },
+      "validation": {
+        "known_best": {
+          "lambda": 0.18
+        },
+        "brute_force_full_ladders": 5,
+        "note": "docs/eff-perc.md: lambda 0.18 is the measured peak; 0.15/0.20/0.25/0.30 are below it."
+      }
+    },
+    {
+      "name": "eff-hierb",
+      "status": "open",
+      "notes": "Hierarchical B with the merged full tool set, BA refresh allocation and two-sided AVERAGE compound. Reference envelope 84.4 K from docs/eff-hierb.md. Uses the existing worktree binary; the tool never builds in or modifies that worktree.",
+      "source": {
+        "kind": "worktree",
+        "worktree": "../eff-hierb",
+        "binary": "build-release/av2enc",
+        "commit": "fd59a737",
+        "note": "Prebuilt exp/eff-hierb binary; read-only use."
+      },
+      "build": null,
+      "flags": [
+        "{bin}",
+        "{ref}",
+        "-o",
+        "{out}",
+        "--video",
+        "--frames",
+        "{frames}",
+        "--cpu-threads",
+        "{threads}",
+        "--qp",
+        "{qp}",
+        "--video-rd-preset",
+        "quality",
+        "--video-ccso-rd",
+        "--video-ccso-bands",
+        "6",
+        "--video-ccso-lambda",
+        "22",
+        "--video-ccso-refit",
+        "2",
+        "--video-ccso-unit-bits",
+        "2",
+        "--video-rdoq",
+        "--video-cdef",
+        "--video-cdef-rd",
+        "--video-leaf-rd",
+        "--video-subpel-eighth",
+        "--video-key-intra-txpart",
+        "--video-qp-lambda",
+        "--avg-cdf",
+        "--adaptive-cdf",
+        "--cdf-continuity",
+        "--video-tile-flush-min",
+        "--video-ccso-header-rd",
+        "--video-edge-inter",
+        "--video-edge-mask",
+        "--video-bawp",
+        "--video-bawp-carrier",
+        "--video-partition-rd",
+        "--video-tile-group-compact",
+        "--video-partition-rd-lambda",
+        "2.75e-6",
+        "--video-key-qp-offset",
+        "-24",
+        "--video-compound",
+        "--b-frames",
+        "4",
+        "--video-open-gop"
+      ],
+      "env": {
+        "AV2ENC_EFF_HIERB": "1",
+        "AV2ENC_EFF_HIERB_BUDGET": "3250",
+        "AV2ENC_PIPE_PERC": "1",
+        "AV2ENC_PIPE_PERC_SCALE": "0.3",
+        "AV2ENC_EFF_HIERB_MAXLAYER": "2"
+      },
+      "qp_ladder": [
+        117,
+        118,
+        119
+      ],
+      "knobs": {},
+      "ceiling": {
+        "kind": "source-segment"
+      },
+      "validation": {
+        "reference_k": 84.4,
+        "reference": "docs/eff-hierb.md",
+        "note": "Architecture-candidate validation: same code and flags as the recorded 84.4 envelope, re-scored through the loop."
+      }
+    },
+    {
+      "name": "eff-twosided",
+      "status": "measured",
+      "notes": "Two-sided prediction plus anchor. Closed at 84.49 in docs/pipeline-results.md; kept in the registry as a measured architecture, not scheduled by default.",
+      "source": {
+        "kind": "worktree",
+        "worktree": "../av2enc-eff-twosided",
+        "binary": "build-release/av2enc",
+        "commit": "4986c742"
+      },
+      "build": null,
+      "flags": [
+        "{bin}",
+        "{ref}",
+        "-o",
+        "{out}",
+        "--video",
+        "--frames",
+        "{frames}",
+        "--cpu-threads",
+        "{threads}",
+        "--qp",
+        "{qp}",
+        "--nightly"
+      ],
+      "env": {
+        "AV2ENC_EFF_TWOSIDED": "1"
+      },
+      "qp_ladder": [
+        117,
+        118,
+        119
+      ],
+      "knobs": {},
+      "ceiling": {
+        "kind": "declared",
+        "k": 84.49,
+        "note": "Measured matched-rate envelope; no new rate-free ceiling claimed."
+      }
+    },
+    {
+      "name": "multi-ref-p",
+      "status": "closed",
+      "notes": "Multi-reference P, closed at 81.38/81.19. Kept to show the registry carries closed architectures without spending compute.",
+      "source": {
+        "kind": "worktree",
+        "worktree": "../luma-multiref",
+        "binary": "build-release/av2enc",
+        "commit": "b4dde989"
+      },
+      "build": null,
+      "flags": [
+        "{bin}",
+        "{ref}",
+        "-o",
+        "{out}",
+        "--video",
+        "--frames",
+        "{frames}",
+        "--cpu-threads",
+        "{threads}",
+        "--qp",
+        "{qp}",
+        "--nightly",
+        "--video-ref-signal-off",
+        "--video-refs",
+        "2"
+      ],
+      "env": {},
+      "qp_ladder": [
+        104,
+        105,
+        106,
+        107
+      ],
+      "knobs": {},
+      "ceiling": {
+        "kind": "declared",
+        "k": 81.38,
+        "note": "Measured matched-rate envelope; closed in docs/video-multiref-p.md."
+      }
+    }
+  ]
+}

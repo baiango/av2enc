@@ -1,7 +1,10 @@
 # Oracle search: automatic candidate scoring
 
-Status: **automation.** Branch `exp/luma-oracle`, base `a0aa1097`. This change
-adds a scoring harness and this document; it does not change encoder code.
+Status: **automation + self-driving architecture loop.** Branch
+`exp/luma-search`, base `0bf1d001`. This change adds a scoring loop and this
+document; it does not change encoder code. The candidate unit is an
+**architecture** (source + flags); a parameter grid is only that
+architecture's inner sweep.
 
 The harness exists because the K oracle was a manual one-off after every
 experiment. A candidate now hands over its IVF ladder and gets the same
@@ -195,6 +198,10 @@ to equal the audit's +0.91/+1.11/+3.76 numbers**; they are a stronger bound.
 Pass the SVT frames with `--decoded` to reproduce the audit exactly.
 
 ## 4. Standing candidate queue
+
+> **Scheduling is now registry-driven.** This section is the measured result
+> table and the historical queue. `docs/oracle-candidates.json` +
+> `tools/oracle_search.py` decide what runs next (section 9).
 
 A queue entry without a matched-rate oracle is a question, not a candidate.
 The owner is the branch or workstream that can answer it. Results below are
@@ -419,3 +426,297 @@ encoder's incidental rate.
    Do not tune inside the candidate.
 5. If the matched K is above 88.8, state the headroom to 90.2 and the segment
    row that owns it. A segment ceiling alone is not a claim.
+
+## 9. Self-driving loop
+
+`tools/oracle_search.py` runs the architecture oracle without a person choosing
+the next encode. It reads `docs/oracle-candidates.json`, probes ceilings, gates
+compute, screens inner knobs, promotes finalists, and writes the decision log.
+The oracle itself is architecture-agnostic: any candidate that can emit an IVF
+ladder goes through the same `tools/oracle.py` call.
+
+### 9.1 Candidate = architecture, not a parameter point
+
+A registry entry is one architecture. Its knobs are an inner sweep of that
+architecture, never a comparison across architectures. A 0.18 lambda point and
+a 0.20 lambda point are the same architecture; a hierarchical-B branch and a
+flat-P branch are different architectures.
+
+```json
+{
+  "name": "eff-perc",
+  "status": "open",
+  "source": {
+    "kind": "binary",
+    "note": "main build-release"
+  },
+  "build": null,
+  "flags": ["{bin}", "{ref}", "-o", "{out}", "--video", "--frames",
+            "{frames}", "--cpu-threads", "{threads}", "--qp", "{qp}",
+            "--nightly", "--video-drift-refresh-threshold", "1.5",
+            "--video-drift-refresh-budget", "3250"],
+  "env": {
+    "AV2ENC_EFF_PERC": "1",
+    "AV2ENC_EFF_PERC_SCALE": "{lambda}"
+  },
+  "qp_ladder": [118, 119, 120, 121],
+  "knobs": {
+    "lambda": {"values": [0.15, 0.18, 0.20, 0.25, 0.30], "default": 0.18}
+  },
+  "ceiling": {"kind": "source-segment"}
+}
+```
+
+Fields:
+
+| field | meaning |
+|---|---|
+| `name` | stable candidate id; also the oracle label prefix |
+| `status` | `open`, `measured`, `closed` or `blocked`; the default run selects `open` |
+| `source.kind` | `binary` (use `--bin`), `worktree` (read-only prebuilt binary), `commit`/`branch` (build a commit or branch), or `patch` (build a base commit + patch) |
+| `source.binary` | binary path for `worktree`; optional override for `binary` |
+| `source.worktree` | existing tree for `worktree`; the tool never builds in or modifies it |
+| `source.commit` / `source.branch` / `source.base_commit` | tree to build for `commit`/`branch`/`patch` sources |
+| `source.patch` | patch file for `patch`; applied to a `git archive` extraction in the cache, not to another worktree |
+| `build.command` | build argv for `commit`/`patch`; placeholders `{src}`, `{build}`, `{bin}`, `{jobs}`, `{root}` |
+| `build.binary` | binary path template produced by the build |
+| `flags` | argv template; `{bin}`, `{ref}`, `{out}`, `{frames}`, `{threads}`, `{qp}` plus knob names |
+| `env` | environment template; all `AV2ENC_*` variables are cleared before this map is applied, so a candidate cannot inherit another candidate's gate |
+| `qp_ladder` | sorted QPs available to the architecture; the screen takes the middle `--screen-qps` and extends only when 100 kbps is not bracketed |
+| `knobs` | inner sweep; each knob is a list or `{values, default}`; the cross product is capped at 64 arms |
+| `ceiling` | `source-segment` (default), `decoded` (use `--replacement`), or `declared` with a measured `k` |
+| `validation` | optional known-best / expected-gate / reference-K record |
+
+A non-scalar knob value is not supported. Use a separate knob for each
+independent flag. The QP is the rate axis, not a knob.
+
+### 9.2 Architecture oracle: three numbers
+
+For each architecture the loop reports:
+
+1. **Ideal/rate-free ceiling.** The default is the source-segment replacement
+   from `tools/oracle.py`: replace one frame range with the source and re-pool
+   the 60-frame sequence. The reported ceiling is the matched-rate K plus the
+   largest source `delta_k`. This is the optimistic budget gate. It is a
+   pooling bound, not an encodable stream. A decoded-domain replacement (for
+   example SVT frames standing in for an ideal future reference) enters with
+   `--replacement LABEL=Y4M`; a previously measured allocation or rate-free
+   bound enters as `"ceiling": {"kind": "declared", "k": 87.69}`. The
+   replacement is a run-level flag; use `--only` when one architecture needs a
+   distinct ideal-future or decoded-domain reference.
+2. **Matched-rate envelope over the inner knobs.** The best matched-rate K
+   across the architecture's arms, at 100.000 kbps. Screens use two QPs and a
+   short ladder extension; finalists use the full `qp_ladder`.
+3. **Gap to the walls.** `envelope - 88.8` and `envelope - 90.2`. A ceiling's
+   gap is reported separately and is never mixed into the result column.
+
+The three are deliberately different. A ceiling can clear 88.8 while the
+envelope does not; that is a statement about where the mechanism could go, not
+a result. Only the matched-rate envelope decides go/no-go.
+
+### 9.3 Selection policy
+
+Deterministic, in registry order:
+
+1. **Gate probe.** Probe the default arm and the far end of the knob grid at
+   two QPs, with source segments. Compute the ceiling. A probe whose ladder
+   does not bracket 100 kbps is not an oracle and is excluded.
+2. **Hard gate.** If no valid probe ceiling reaches 88.8, close the
+   architecture. Do not screen the remaining knobs, do not run a full ladder,
+   do not sweep. The decision log records the ceiling and the missing margin.
+3. **Screen.** If the gate opens, screen the remaining arms at two QPs. Extend
+   the QP set only when the target rate is not bracketed. The default screen is
+   `--screen-qps 2`; `--max-screen-qps` caps extension.
+4. **Promote.** Rank the valid screens. Keep arms within
+   `--promotion-margin` of the best and cap at `--max-finalists`. This is
+   successive halving over the knob grid: a wide grid is cut to a small
+   finalist set before any full ladder.
+5. **Full ladder.** Run the complete QP ladder only for finalists, with source
+   segments. The full matched K is the envelope. If it is below 88.8, stop; the
+   decision log says `no full sweep` and the remaining arms stay unmeasured.
+6. **Above-wall sweep.** Only a confirmed envelope at or above 88.8 unlocks
+   the remaining arms and full ladders. This is the only path to an exhaustive
+   inner sweep. `--no-expand-above-wall` disables even that.
+
+The surrogate is a small pure-Python GP with an RBF kernel, standardized
+inputs and EI or UCB acquisition (`--acquisition ei|ucb`). It orders a large
+grid before screening and logs its mean/sigma/acquisition for every arm. It
+does **not** replace a measurement: the envelope is always the measured
+matched-rate K. With fewer than two measured arms it falls back to registry
+order.
+
+### 9.4 Wall rules
+
+1. **88.8 is the SVT wall; 90.2 is the AVM wall.** Both are quoted at
+   100.000 kbps.
+2. **A ceiling is a compute gate, not a claim.** It answers "could this
+   architecture be worth a full ladder?" It never answers "does it clear
+   88.8?".
+3. **No full sweep below 88.8.** A candidate whose screen/ceiling cannot clear
+   the wall gets no exhaustive knob sweep. A finalist full ladder is still
+   allowed because it is the measurement that decides go/no-go.
+4. **No tuning inside a closed architecture.** If the full envelope is below
+   88.8, the loop stops and reports the envelope and ceiling. It does not try
+   another lambda to find a local win.
+5. **No claim without a bracketing ladder.** A single point, a nearest-rate
+   point, a segment ceiling, or a trend line is not an oracle.
+6. **State the plain result.** When the run finishes below the wall, the
+   Markdown and JSON say `No candidate clears 88.8.` There is no rounding up.
+
+### 9.5 Proposal hook: how code enters
+
+A proposal is a new architecture, not a new knob. The loop accepts it through
+the same oracle:
+
+1. Put the implementation in a patch file (or a worktree with a prebuilt
+   binary). Do not edit the search worktree's encoder source.
+2. Add a registry entry with `status: "open"`, the source (`patch` with
+   `base_commit` + `patch`, or `worktree` with `binary`), the build command for
+   a patch, the flag template, env, QP ladder, knobs, and a ceiling policy:
+
+   ```json
+   {
+     "name": "hidden-arf",
+     "status": "open",
+     "source": {
+       "kind": "patch",
+       "base_commit": "<main commit>",
+       "patch": "../proposals/hidden-arf.patch"
+     },
+     "build": {
+       "command": ["cmake", "-S", "{src}", "-B", "{build}",
+                   "-DCMAKE_BUILD_TYPE=Release"],
+       "binary": "{build}/av2enc"
+     },
+     "flags": ["{bin}", "{ref}", "-o", "{out}", "--video", "--frames",
+               "{frames}", "--cpu-threads", "{threads}", "--qp", "{qp}",
+               "--nightly", "<proposal flags>"],
+     "env": {"AV2ENC_HIDDEN_ARF": "1"},
+     "qp_ladder": [118, 119, 120, 121],
+     "knobs": {},
+     "ceiling": {"kind": "source-segment"}
+   }
+   ```
+
+3. Run `tools/oracle_search.py --only <name> --bin <clean-av2enc>`.
+4. The proposal gets the same gate probe and ceiling. If the ceiling cannot
+   clear 88.8, it is closed before a full ladder. If it can, finalists get the
+   full ladder; below-wall envelopes stop the sweep.
+5. Attach `docs/oracle-results.json` and the per-candidate decision log.
+
+Patch builds are extracted with `git archive` into `.oracle-cache/builds/` and
+built there. The tool never applies a patch to, or builds in, another agent's
+worktree. A patch that fails to build is a registry error, not a result.
+
+The oracle is architecture-agnostic: any encoder that can write an IVF ladder
+can be added. It does not need to know what the code does.
+
+### 9.6 Determinism, resume and outputs
+
+- Arms are generated in registry order in the cross-product order; ties break
+  on the canonical arm JSON. No random seed is used.
+- Scores cache by `(candidate, qp, md5)`; complete ladders cache by the sorted
+  `(qp, md5)` list, target, oracle hash, segment mode and replacements. Encode
+  blobs live in `.oracle-cache/blobs/` and are reused only when the md5 matches.
+- A rerun of a completed registry is a cache read: on this host the three
+  validation candidates replayed in 0.26 s with 15 ladder-cache hits and zero
+  oracle calls.
+- Outputs: `docs/oracle-results.json` (schema `oracle-search/1`),
+  `docs/oracle-search.md` (the marked generated section), and
+  `docs/oracle-decisions/<name>.md` per candidate.
+- `--dry-run` prints the resolved arms without running. `--only` and
+  `--status` select candidates. `--keep-work` keeps encoder scratch dirs.
+
+### 9.7 Validation run
+
+Command used on this host:
+
+```sh
+BIN=${AV2ENC_BIN:-../av2enc/build-release/av2enc}
+ORACLE=${AV2ENC_ORACLE:-../av2enc/tools/oracle.py}
+python3 tools/oracle_search.py \
+  --only nightly,eff-perc,eff-hierb \
+  --bin "$BIN" --oracle "$ORACLE"
+```
+
+The fixture is `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, 8-bit 4:2:0,
+target 100.000 kbps, 8 threads. The results below are measured, not copied from
+the earlier tables.
+
+| candidate | architecture | gate | gate ceiling K | matched envelope K | gap SVT | full ladders | result |
+|---|---|---|---:|---:|---:|---:|---|
+| nightly | flat key+P baseline | closed | 87.959 | 82.048 (screen) | −6.752 | 0/1 | gate closed; no full ladder |
+| eff-perc | perceptual RD core + drift recipe, lambda inner sweep | open | 90.116 | **85.099** | −3.701 | 2/5 | lambda 0.18 is the best full arm; below wall, stop |
+| eff-hierb | hierarchical B, BA refresh, two-sided compound | open | 89.201 | **84.412** | −4.388 | 1/1 | reproduces the 84.4 reference; below wall, stop |
+
+The selector found the known eff-perc best point with **two** full ladders out
+of five arms: it screened all five under the two-QP policy, extending the QP
+set only where 100 kbps was not bracketed, promoted lambda 0.18 and 0.25, and
+the full ladders confirmed lambda 0.18 at 85.099. Brute force would have run
+all five full ladders. The lambda 0.30 gate probe did not bracket 100 kbps at
+QPs 118-121 (its nearest matched rate was 99.056), so it was excluded from the
+gate and from promotion; it was not rounded into a result.
+
+Nightly's source ceiling is **87.959**, just below the wall, so the gate closed
+before any full ladder. The earlier manual source-replacement table gives
+88.066 for the same mechanism (82.155 + 5.911) at an incidental rate; the
+matched-rate probe here is 82.048 and its ceiling is 87.959. Both are below
+88.8. This is the expected near-miss, not a new result.
+
+The eff-hierb run used the existing `../eff-hierb/build-release/av2enc` binary
+read-only and reproduced the recorded **84.4** envelope at **84.412**
+(Δ +0.012). No encoder source was modified. Hidden ARF is not available as a
+code candidate on this tree, and `--video-tip` codes only 3-8 pictures, so it
+cannot produce the 60-frame matched-rate ladder; eff-hierb is the available
+architecture candidate. A hidden-ARF patch can enter through section 9.5 when
+one exists.
+
+**No candidate clears 88.8.** The best measured envelope is eff-perc at
+**85.099**, 3.701 K short of SVT and 5.101 K short of AVM. Two ceilings clear
+88.8 (eff-perc 90.116, eff-hierb 89.201), which is exactly why the gate spent
+finalist ladders on them; the envelopes did not, so neither is a path.
+
+### 9.8 Limitation
+
+The loop allocates experiments, screens candidates, tunes inner
+parameters/structures, and updates its beliefs from measured results. It
+**cannot invent a new coding tool**. A registry entry without an
+implementation is a question, not a candidate; the oracle can rank a
+hierarchical-B branch, a patch, or a new predictor only after a proposal agent
+writes the code. The next layer is that proposal/implementation agent: it
+generates patches, the same gate probe and full ladder rank them, and no patch
+gets a different oracle or a lower wall. Until then, the honest statement is
+the one in the generated table: no candidate clears 88.8.
+
+<!-- oracle-search:generated:begin -->
+## 10. Generated architecture search
+
+Fixture: `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, target 100.000 kbps. Walls: SVT 88.8, AVM 90.2. Oracle: `../av2enc/tools/oracle.py`.
+
+| candidate | gate | gate ceiling | screen envelope | full envelope | gap SVT | gap AVM | full ladders | verdict |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| **nightly** | closed | 87.959 | 82.048 | — | -6.752 | -8.152 | 0/1 | gate closed below SVT 88.8 |
+| **eff-perc** | open | 90.116 | 85.099 | 85.099 | -3.701 | -5.101 | 2/5 | NO-GO: below SVT 88.8 |
+| **eff-hierb** | open | 89.201 | 84.412 | 84.412 | -4.388 | -5.788 | 1/1 | NO-GO: below SVT 88.8 |
+
+**No candidate clears 88.8.**
+
+A ceiling above the wall is not a claim: only the matched-rate K from a bracketing ladder is. The gate uses the ceiling to decide whether an architecture is worth a full ladder; it never promotes a ceiling row into the result column.
+
+### Validation
+
+| candidate | check | observed | result |
+|---|---|---|---|
+| nightly | gate expected closed | closed | pass |
+| eff-perc | known best `{"lambda":0.18}` | `{"lambda":0.18}` | pass |
+| eff-hierb | reference K 84.40 | 84.412 | pass |
+
+- nightly: 0 full ladder(s) vs 1 for brute force; saved 1.
+- eff-perc: 2 full ladder(s) vs 5 for brute force; saved 3.
+- eff-hierb: 1 full ladder(s) vs 1 for brute force; saved 0.
+
+### Decision logs
+
+Per-candidate logs: [`nightly.md`](oracle-decisions/nightly.md), [`eff-perc.md`](oracle-decisions/eff-perc.md), [`eff-hierb.md`](oracle-decisions/eff-hierb.md).
+
+<!-- oracle-search:generated:end -->
