@@ -122,6 +122,22 @@ python3 tools/agent_loop.py \
 unchanged; `--iteration-timeout` kills a stuck call and continues. Stop it with
 the stop file (`--stop-file`) or Ctrl-C.
 
+## Five parallel lanes
+
+`tools/agent_loop_multi.sh` starts five isolated lanes. Each lane has its own
+worktree, branch, ledger and fixed target, so code edits cannot collide:
+
+```sh
+tools/agent_loop_multi.sh
+# optional: LANES=5 ITERATIONS=10 MAX_STALE=5 TIMEOUT=3600
+```
+
+Targets: P-head residual, P-tail residual/allocation, inter transform/quant,
+inter entropy/context, and head prediction/ME. Logs are
+`build/agent-loop/lane-N.log`; each lane writes
+`docs/agent-loop-ledger-N.md`. Stop all lanes with the shared stop file
+(`../agent-loop/STOP`). A kept patch stays on its lane branch for review.
+
 ## Inspect progress
 
 ```sh

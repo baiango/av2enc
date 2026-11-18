@@ -86,6 +86,61 @@ inline double fade_threshold() {
   return value;
 }
 
+// AV2ENC_SKIP_DRIFT_ILLUM: frame-level illumination-drift latch.  The
+// per-leaf fade test above only fires on a leaf whose *mean* error exceeds 1
+// LSB, so a fade leaf whose local mean sits near the fade pivot shows no bias
+// even though its texture is being rescaled, and it stays skip-only.  The
+// frame-level evidence is cheaper and stronger: on a fade the source's luma
+// mean and contrast both move every frame (the 240p clip moves ~1.0 LSB of
+// mean and ~0.9 LSB of std per tail frame), while exact-static and
+// sensor-noise content move neither (~0.01).  When the frame's own source
+// statistics moved by at least the threshold, every zero-MV skip in that
+// frame pays the same future-error surcharge a subpel skip pays.
+inline bool illum_enabled() {
+  const char* value = std::getenv("AV2ENC_SKIP_DRIFT_ILLUM");
+  if (value == nullptr) return false;
+  if (value[0] == '\0' || value[0] == '0') return false;
+  if (value[0] == 'n' || value[0] == 'N') return false;
+  return true;
+}
+
+// LSB of |mean delta| + |std delta| between consecutive source frames.
+inline double illum_threshold() {
+  static const double value =
+      env_double("AV2ENC_SKIP_DRIFT_ILLUM_T", 0.35);
+  return value;
+}
+
+// AV2ENC_SKIP_DRIFT_REFDEF: frame-level reference-deficit latch.  The fade and
+// illumination gates above fire on a *known* drift cause; a P chain also adds
+// error with no such signature (subpel MC on a moving reference, BAWP, loop
+// filters).  The direct evidence is the measured coding error of the picture
+// this frame predicts from: compare the primary reference's stored
+// reconstruction against the source picture it was coded from, and the key's
+// own reconstruction against its source as the anchor.  When the reference has
+// lost at least the threshold against that anchor, the chain itself has added
+// error beyond the key's deliberate QP choice, and a zero-MV skip would freeze
+// it.  Exact-repeat content measures zero against the anchor; sensor-noise
+// content measures the source noise floor (~1.3 dB at QP139, below the
+// default threshold), so both stay skip-only.
+inline bool refdef_enabled() {
+  const char* value = std::getenv("AV2ENC_SKIP_DRIFT_REFDEF");
+  if (value == nullptr) return false;
+  if (value[0] == '\0' || value[0] == '0') return false;
+  if (value[0] == 'n' || value[0] == 'N') return false;
+  return true;
+}
+
+// dB of reference coding loss against the key anchor that arms the latch.
+// 1.5 dB is above the near_static noise floor (1.27-1.32 dB at QP139) and
+// below the natural head's first real drift (1.63 dB at f5), so exact/noise
+// content stays untouched.
+inline double refdef_threshold() {
+  static const double value =
+      env_double("AV2ENC_SKIP_DRIFT_REFDEF_T", 1.5);
+  return value;
+}
+
 }  // namespace av2enc::video::skip_drift
 
 #endif  // AV2ENC_PIPELINE_VIDEO_SKIP_DRIFT_H_

@@ -2807,6 +2807,19 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
           drift_mv_factor = 1.0;
         }
       }
+      if (drift_mv_factor == 0.0 && zero_mv_skip && illum_active_) {
+        // AV2ENC_SKIP_DRIFT_ILLUM: the whole frame is moving under an
+        // illumination ramp, so a zero-MV skip freezes the previous frame's
+        // illumination even where the leaf's own mean error is below the
+        // per-leaf bias bar.
+        drift_mv_factor = 1.0;
+      }
+      if (drift_mv_factor == 0.0 && zero_mv_skip && ref_deficit_active_) {
+        // AV2ENC_SKIP_DRIFT_REFDEF: the primary reference has already lost
+        // more than the threshold against the key anchor, so the zero-MV skip
+        // would freeze chain-added error, not the key's priced error.
+        drift_mv_factor = 1.0;
+      }
       const double drift_factor =
           skip_drift::enabled() ? skip_drift::alpha() * drift_mv_factor : 0.0;
       const double skip_drift_cost = drift_factor * pred_total;

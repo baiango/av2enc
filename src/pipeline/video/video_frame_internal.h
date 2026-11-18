@@ -2293,7 +2293,9 @@ class InterFrameEncoder {
                     std::array<int, 7> ref_order_hints = {},
                     bool primary_ref_is_none = true,
                     const TemporalFrameContext* temporal = nullptr,
-                    std::span<const std::uint8_t> prev_segment_ids = {});
+                    std::span<const std::uint8_t> prev_segment_ids = {},
+                    double illum_delta = 0.0,
+                    double ref_deficit_db = 0.0);
 
     std::int64_t block_variance_cost_at(
       const partition::PartitionNodeInfo& info) const;
@@ -3197,6 +3199,17 @@ class InterFrameEncoder {
   const VideoOptions& options_;
   bool trace_ = false;
   bool keyframe_ = false;
+  // AV2ENC_SKIP_DRIFT_ILLUM: this frame's source illumination change against
+  // the previous source frame (|d mean| + |d std| in LSB) and whether it is
+  // large enough to charge every zero-MV skip.  Both are inert when the gate
+  // is off.
+  double illum_delta_ = 0.0;
+  bool illum_active_ = false;
+  // AV2ENC_SKIP_DRIFT_REFDEF: measured coding loss (dB) of the primary
+  // reference against the key anchor, and whether it arms the zero-MV skip
+  // surcharge.  Inert when the gate is off.
+  double ref_deficit_db_ = 0.0;
+  bool ref_deficit_active_ = false;
   // Deterministic batch results for the pure NEWMV search, keyed by
   // (reference index, absolute block origin, block size).  Empty unless
   // precompute_leaf_me() ran for a whole-frame P frame.

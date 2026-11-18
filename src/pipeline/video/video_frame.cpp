@@ -2,10 +2,12 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <limits>
 
 #include "pipeline/video/video_lpl36.h"
 #include "pipeline/video/video_lpl_refresh.h"
+#include "pipeline/video/video_skip_drift.h"
 
 namespace av2enc::video {
 
@@ -41,6 +43,32 @@ bool env_flag(const char* name) {
   return true;
 }
 
+// AV2ENC_SKIP_DRIFT_ILLUM frame evidence: the source luma mean and standard
+// deviation over the visible picture.  A fade moves both every frame; exact
+// static content and sensor noise move neither.
+bool source_luma_stats(const VideoInputFrame& frame, double* mean,
+                       double* stddev) {
+  const int w = static_cast<int>(frame.width);
+  const int h = static_cast<int>(frame.height);
+  if (w <= 0 || h <= 0) return false;
+  const std::int64_t n = static_cast<std::int64_t>(w) * h;
+  std::int64_t sum = 0;
+  std::int64_t sum_sq = 0;
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      const int v = source_sample(frame, 0, x, y);
+      sum += v;
+      sum_sq += static_cast<std::int64_t>(v) * v;
+    }
+  }
+  const double m = static_cast<double>(sum) / static_cast<double>(n);
+  const double var =
+      static_cast<double>(sum_sq) / static_cast<double>(n) - m * m;
+  *mean = m;
+  *stddev = var > 0.0 ? std::sqrt(var) : 0.0;
+  return true;
+}
+
 }  // namespace
 
 InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
@@ -54,7 +82,9 @@ InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
                   std::array<int, 7> ref_order_hints,
                   bool primary_ref_is_none,
                   const TemporalFrameContext* temporal,
-                  std::span<const std::uint8_t> prev_segment_ids)
+                  std::span<const std::uint8_t> prev_segment_ids,
+                  double illum_delta,
+                  double ref_deficit_db)
     : source_(source),
       references_(std::move(references)),
       frame_distance_(frame_distance),
@@ -88,6 +118,19 @@ InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
   tile_mi_col_ = tile_x_ / 4;
   chroma_width_ = width_ / 2;
   chroma_height_ = height_ / 2;
+
+  // AV2ENC_SKIP_DRIFT_ILLUM: the caller measured this source frame's
+  // illumination movement against the previous source frame.  Inert when the
+  // gate is off (the caller then passes 0).
+  illum_delta_ = illum_delta;
+  illum_active_ = skip_drift::illum_enabled() && !keyframe_ &&
+                  illum_delta_ >= skip_drift::illum_threshold();
+
+  // AV2ENC_SKIP_DRIFT_REFDEF: the caller measured the primary reference's
+  // coding loss against the key anchor.  Inert when the gate is off.
+  ref_deficit_db_ = ref_deficit_db;
+  ref_deficit_active_ = skip_drift::refdef_enabled() && !keyframe_ &&
+                        ref_deficit_db_ >= skip_drift::refdef_threshold();
 
   geometry_.width = width_;
   geometry_.height = height_;
@@ -2576,7 +2619,34 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
                                 static_cast<int>(width),
                                 static_cast<int>(height))
           : 0.0;
+  // AV2ENC_SKIP_DRIFT_ILLUM: source illumination statistics for this frame
+  // against the previous source frame.  Computed only when the gate is on.
+  double prev_src_mean = 0.0;
+  double prev_src_std = 0.0;
+  if (skip_drift::illum_enabled()) {
+    source_luma_stats(frames[0], &prev_src_mean, &prev_src_std);
+  }
+  // AV2ENC_SKIP_DRIFT_REFDEF: the key picture's own coding error is the
+  // anchor.  Captured once, while slots[0] still holds the key; a later frame
+  // may reuse the slot.
+  const double refdef_anchor_psnr =
+      skip_drift::refdef_enabled()
+          ? reference_luma_psnr(slots[0].plane[0], frames[0],
+                                static_cast<int>(width),
+                                static_cast<int>(height))
+          : 0.0;
   for (std::size_t i = 1; i < frames.size(); ++i) {
+    double illum_delta = 0.0;
+    if (skip_drift::illum_enabled()) {
+      double src_mean = 0.0;
+      double src_std = 0.0;
+      if (source_luma_stats(frames[i], &src_mean, &src_std)) {
+        illum_delta = std::abs(src_mean - prev_src_mean) +
+                      std::abs(src_std - prev_src_std);
+        prev_src_mean = src_mean;
+        prev_src_std = src_std;
+      }
+    }
     const std::uint32_t order_hint =
         static_cast<std::uint32_t>(i) &
         static_cast<std::uint32_t>((1U << order_hint_bits) - 1U);
@@ -2638,6 +2708,36 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
     }
 
     VideoOptions frame_options = options_for_frame(i);
+    // AV2ENC_SKIP_DRIFT_REFDEF: measure how much coding error the primary
+    // reference has accumulated against the source picture it was coded from,
+    // relative to the key anchor.  Exact-repeat content keeps the key plane,
+    // so its deficit is zero; a chain that adds error beyond the key's own QP
+    // choice arms the zero-MV skip surcharge.
+    double ref_deficit_db = 0.0;
+    if (skip_drift::refdef_enabled() && !frame_ref_slots.empty()) {
+      const int ref_slot = frame_ref_slots.front();
+      const RefSlot& primary = slots[static_cast<std::size_t>(ref_slot)];
+      const std::size_t source_index =
+          slot_source_index[static_cast<std::size_t>(ref_slot)];
+      if (primary.valid && source_index < frames.size() &&
+          frames[source_index].width == width &&
+          frames[source_index].height == height) {
+        const double ref_psnr =
+            reference_luma_psnr(primary.plane[0], frames[source_index],
+                                static_cast<int>(width),
+                                static_cast<int>(height));
+        ref_deficit_db = refdef_anchor_psnr - ref_psnr;
+        if (options.trace) {
+          std::cerr << "refdef frame=" << i << " slot=" << ref_slot
+                    << " anchor=" << refdef_anchor_psnr
+                    << " ref_psnr=" << ref_psnr
+                    << " deficit=" << ref_deficit_db
+                    << " active="
+                    << (ref_deficit_db >= skip_drift::refdef_threshold() ? 1 : 0)
+                    << "\n";
+        }
+      }
+    }
     // --video-drift-refresh: measure the primary reference's actual
     // reconstruction error (stored reference plane against the source picture
     // that produced it) and, when it is below the threshold and the sequence
@@ -2845,7 +2945,8 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
           cdf_chain ? &cdf_scratch : nullptr, gm_ptr, ref_order_hints,
           /*primary_ref_is_none=*/i == 1, &temporal_ctx,
           i == 1 ? std::span<const std::uint8_t>()
-                 : std::span<const std::uint8_t>(prev_segment_map));
+                 : std::span<const std::uint8_t>(prev_segment_map),
+          illum_delta, ref_deficit_db);
       if (!encoder->decide(tile_error) || !encoder->deblock(tile_error)) {
         return;
       }
