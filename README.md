@@ -19,12 +19,12 @@ all top-level sessions and their subagents — as of **2026-11-18**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 242,900,590 |
-| Output | 36,991,346 |
-| Reasoning | 40,207,672 |
-| **Input + output + reasoning** | **~320.1 M** |
-| Cached context reads | 24,241,475,803 |
-| **Including cache reads** | **~24.56 B** |
+| Fresh input | 242,957,981 |
+| Output | 37,006,061 |
+| Reasoning | 40,231,825 |
+| **Input + output + reasoning** | **~320.2 M** |
+| Cached context reads | 24,257,853,787 |
+| **Including cache reads** | **~24.58 B** |
 
 571 sessions (12 top-level + 559 subagents). Cache reads dominate because every
 subagent re-reads a long context; they are normally billed at a fraction of
@@ -49,7 +49,7 @@ The parity gate enforces exact equality (`cmp` on the IVF), not a tolerance.
   2:1) @ 30 fps, 100 kbps**. Quality is the KPI, not CPU speed; K blends CVVDP
   (50%), Butteraugli (25%) and SSIMULACRA2 (25%). **The target to beat is
   SVT-AV1 v4.3.0 preset 0** — the mature AV1 quality reference — at matched bitrate. AVM is
-  kept only as a historical calibration point.
+  kept as a reproducible calibration point.
 - **GPU:** use the decisions calibrated at 240p30/100 kbps unchanged, and
   maximize **1440x720** encode throughput as a cross-encoder benchmark.
 
@@ -66,7 +66,7 @@ Rows recorded on the retired unlicensed clip are historical.
 | CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 19.73 | -4.07 | 27.58 dB | 23.4 fps (8 threads) |
 | CPU 240p30, `--nightly` QP 106 | Apple M4 | 100.0 / - kbps | **9.733 JOD** | **3.42** | **80.84** | **44.67 dB** | 7.6 fps (8 threads) |
 | CPU 240p30, nightly + `AV2ENC_EFF_PERC=1` | Apple M4 | 100.0 / - kbps | 9.771 JOD | 2.26 | 82.44 | 44.46 dB | - |
-| AVM local build†, QP 123 (NASA) | Apple M4 | 100.0 / - kbps | 9.855 JOD | 1.32 | 90.33 | 50.15 dB | 1.0 fps (8 threads) |
+| AVM e6f99d3, QP 124 (NASA) | Apple M4 | 99.3 / - kbps | 9.862 JOD | 1.29 | 90.38 | 50.27 dB | 1.4 fps (8 threads) |
 | SVT-AV1 4.3.0, CRF 42, preset 4 (NASA) | Apple M4 | 98.6 / - kbps | 9.740 JOD | 2.15 | 85.04 | 45.81 dB | 300 fps |
 | SVT-AV1 4.3.0, CRF 36.5, preset 0 (NASA) | Apple M4 | 100.0 / - kbps | **9.828 JOD** | **1.55** | **88.89** | **48.88 dB** | 19.1 fps |
 | rav1e 0.8.1, speed 2, Q120 (NASA) | Apple M4 | 100.1 / - kbps | 9.717 JOD | 2.71 | 81.67 | 42.81 dB | 12.8 fps |
@@ -75,7 +75,7 @@ Rows recorded on the retired unlicensed clip are historical.
 | GPU 1440x720 QP90 | RTX 3080 Ti | - / 7664 kbps | 9.704 JOD | - | - | 42.85 dB | 5.40 fps |
 | GPU 1440x720 QP90 | RTX 3060 | - / 7664 kbps | 9.704 JOD | - | - | 42.85 dB | 4.88 fps |
 
-† Local patched AVM build, not an upstream release; see the AVM note below.
+† Clean upstream AVM build; see the AVM note below.
 
 Butteraugli (lower better) and SSIMULACRA2 (higher better) are measured with
 `tools/extra_metrics.py` on the decoded stream; `-` means not measured (the GPU
@@ -134,7 +134,7 @@ tools/extra_metrics.py --ref <ref>.y4m --test <decoded>.y4m
 | `quality` QP190 | 100.6 | 6.302 | 19.73 | -4.07 | 42.5 |
 | **`--nightly` QP106** | **100.0** | **9.733** | **3.42** | **80.84** | **82.2** |
 | **`--nightly` + `AV2ENC_EFF_PERC=1`** | 100.0 | 9.771 | 2.26 | 82.44 | **85.1** |
-| AVM local build† QP123 | 100.0 | 9.855 | 1.32 | 90.33 | **90.0** |
+| AVM e6f99d3 QP124 | 99.3 | 9.862 | 1.29 | 90.38 | **90.2** |
 | SVT-AV1 p4 CRF42 | 98.6 | 9.740 | 2.15 | 85.04 | 85.8 |
 | SVT-AV1 p0 CRF36.5 | 100.0 | **9.828** | **1.55** | **88.89** | **88.8** |
 | rav1e speed 2 Q120 | 100.1 | 9.717 | 2.71 | 81.67 | 83.7 |
@@ -159,15 +159,16 @@ and treat a change that improves K without moving CVVDP as a real quality win
 rather than a neutral result: the QP-scaled lambdas did exactly that (+0.7 dB
 PSNR, +1.1 K, +0.02 JOD).
 
-† AVM was measured in constant-QP mode with a **local build**, not an upstream
-release: upstream commit `7a0c956` (2026-11-04) plus 100 lines of uncommitted
-build/decoder changes (diff SHA-256 `a106cb7b…`, binary built 2026-11-10),
-because CBR undershoots at low targets. That build is not a commit in the AVM
-repository; the patch is not distributed, so the numbers are not reproducible
-from upstream and are an internal comparison, not an official AVM baseline.
-QP 122/123 bracket 100 kbps:
-**102.4 / 97.9 kbps at 9.855 JOD, 1.30 / 1.33 BA, 90.44 / 90.24 SS2**, i.e.
-**90.0 K** at 100.0 kbps / 50.15 dB. The older CBR row (99.5 kbps / 8.452 JOD)
+† AVM is built clean from upstream commit `e6f99d3` (2026-11-12) with
+`--end-usage=q --cpu-used=6 --threads=8`; no local patch is applied. CBR
+undershoots at low targets, so these are constant-QP runs; the exact command
+and binary SHA-256 are in `bench/avm_baseline/README.md`. QP 122/123/124 measured
+**102.4 / 97.9 / 99.3 kbps at 9.855 / 9.855 / 9.862 JOD, 1.30 / 1.33 / 1.29 BA,
+90.44 / 90.24 / 90.38 SS2**; QP 124 lands at 99.3 kbps and interpolates to
+100.0 at **90.2 K** (9.860 JOD, 1.29 BA, 90.39 SS2, 50.27 dB). The 240p
+QP 122/123 and 720p QP 203 streams are byte-identical to the old local
+diagnostic build, so the instrumentation did not affect encoding. The older
+CBR row (99.5 kbps / 8.452 JOD)
 and the retired-clip sweep are kept in `bench/avm_baseline/README.md` for
 history; the binaries and modes are not directly comparable. `quality` and
 `--nightly` are CPU-only; the default and GPU paths keep the historical
@@ -191,12 +192,12 @@ build and the full ladder: `bench/space8k_720p/README.md`.
 | Encoder | Setting | Rate | CVVDP | Butteraugli | SSIMULACRA2 | K | Encode |
 |---|---|---:|---:|---:|---:|---:|---:|
 | av2enc `--nightly` | QP217, key -57, leaf 250, ext-partitions | 292.6 kbps | 7.324 | 28.87 | -10.15 | **45.6** | 2.3 fps |
-| AVM local build† | QP203 | 293.3 | 8.130 | 22.03 | 22.83 | **55.8** | 0.15 fps |
+| AVM e6f99d3 | QP203 | 293.3 | 8.130 | 22.03 | 22.83 | **55.8** | 0.17 fps |
 | SVT-AV1 4.3.0 p0 | CRF63/62 interpolated to 292.6 | 292.6 | 8.244 | 20.89 | 23.21 | **56.6** | 1.7 fps |
 | rav1e 0.8.1 speed 2 | Q209/210 interpolated to 292.6 | 292.6 | 7.788 | 20.12 | 14.90 | **53.0** | 2.3 fps |
 
 Encode figures are 60 frames divided by wall time at 8 threads. AVM 720p takes
-403.6 s (0.15 fps) at this setting.
+344.0 s (0.17 fps) at QP203.
 
 
 SVT-AV1 v4.3.0 was measured at two presets, decoded with `dav1d`, and scored
@@ -569,9 +570,9 @@ Agent worktrees and branches live outside the main checkout.
 It also records `decode_fps` and `decode_realtime_x` from `dav2d`. The
 cross-encoder **target is SVT-AV1 v4.3.0 preset 0**, measured on the same clip,
 decoded with `dav1d` and scored with the same model: 100.0 kbps / 9.828 JOD /
-48.88 dB. The AVM row in the baseline table is a local patched build, not an
-upstream release (see the note above): the current QP-mode measurement
-(90.0 K at 240p); the older CBR point and the archived retired-clip 720p sweep
+48.88 dB. The AVM row in the baseline table is built clean from upstream
+`e6f99d3` (see the note above): the current QP-mode measurement (90.2 K at
+240p); the older CBR point and the archived retired-clip 720p sweep
 are in `bench/avm_baseline/README.md`. Compare at matched bitrate, and
 always confirm `dav2d` decoded the stream first. A fast-decode
 profile is deferred until quality and encode speed are settled.

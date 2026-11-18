@@ -2,24 +2,64 @@
 > 2026-11-10. The current benchmark uses the NASA 8192x4096 (2:1) clip; the AVM
 > 240p30 point is 99.5 kbps / 8.452 JOD / 1.94 fps and is recorded in the main
 > README. The older 92.1 kbps / 8.791 JOD value came from the AVM nightly
-> `cd7d8bc3db`; the current source (`7a0c956`) does not reproduce it. Keep the
+> `cd7d8bc3db`; the current upstream (`e6f99d3`) does not reproduce it. Keep the
 > tables below for history and methodology.
 
 > **Fixture swap:** the paths below were renamed to the public-domain fixtures
 > (`docs/testdata-provenance.md`); the numbers were recorded on the retired
 > promo clip and the streams now differ. Re-run before quoting.
 
-> **Not reproducible from upstream.** The 240p/720p AVM rows in the main README
-> use a local build of upstream commit
-> `7a0c95657c25efb8c32db98f0ec9a783b26022cb` plus 100 lines of uncommitted
-> build/decoder changes (diff SHA-256
-> `a106cb7b936e8e47cc651a67bef4c5e5b0e57581b3f5da3bf0c784f99398df04`). No AVM
-> commit or released binary reproduces those numbers; treat them as an internal
-> comparison.
+> **Current reproducible baseline (2026-11-18).** The 240p/720p AVM rows in the
+> main README use upstream commit
+> `e6f99d3deb880b570a01dbec9e50d28d13fc3943` built clean from the AVM
+> repository; see "Current baseline" below for the command and binary hash. The
+> older `7a0c956` + diagnostic-patch numbers are superseded.
 
 # AVM baseline
 
-Reference encoder baseline for the 720p test clip.
+## Current baseline (upstream e6f99d3)
+
+- Sources: `testdata/nasa_480x240_30fps_60f.y4m` (480x240, 60 frames, 30 fps,
+  2 s) and `testdata/space8k_1440x720_60f.y4m` (1440x720, 60 frames, 60 fps,
+  1 s).
+- Encoder: upstream AVM `e6f99d3deb880b570a01dbec9e50d28d13fc3943`
+  (2026-11-12), built clean with CMake `Release` and
+  `CONFIG_12BIT_PROFILE=1`; binary SHA-256
+  `20503ec8d48b368747bf6f6dfae9bcb3ce5fe3d22411dd50255ec2b5b3d14b1c`.
+- Settings: `--ivf --end-usage=q --cpu-used=6 --threads=8 --limit=60 --psnr=1`,
+  fixed QP.
+- Decoder: dav2d `f9dafbc`; every stream decodes 60/60 with `--strict 1`.
+- Host: Apple M4, 10 cores, 16 GiB.
+
+| Clip | QP | kbps | CVVDP | BA | SS2 | K | PSNR-Y | fps |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 240p | 122 | 102.4 | 9.855 | 1.30 | 90.44 | 90.11 | 50.28 | 1.40 |
+| 240p | 123 | 97.9 | 9.855 | 1.33 | 90.24 | 89.96 | 50.04 | 1.43 |
+| 240p | 124 | 99.3 | 9.862 | 1.29 | 90.38 | 90.19 | 50.27 | 1.39 |
+| 720p | 203 | 293.3 | 8.130 | 22.03 | 22.83 | 55.79 | 34.87 | 0.17 |
+
+At 100.0 kbps, QP124/QP122 interpolate to **K 90.17** (9.860 JOD, 1.29 BA,
+90.39 SS2, 50.27 dB). The 240p QP122/123 and 720p QP203 streams are
+byte-identical to the old local diagnostic build, so the diagnostics did not
+affect encoding.
+
+```sh
+<avm-build>/avmenc testdata/nasa_480x240_30fps_60f.y4m \
+  -o /tmp/avm_240p_qp124.ivf --ivf --end-usage=q --qp=124 \
+  --cpu-used=6 --threads=8 --limit=60 --psnr=1
+
+<avm-build>/avmenc testdata/space8k_1440x720_60f.y4m \
+  -o /tmp/avm_720p_qp203.ivf --ivf --end-usage=q --qp=203 \
+  --cpu-used=6 --threads=8 --limit=60 --psnr=1
+```
+
+The 720p point is 293.3 kbps against the 292.6 kbps target (0.25% above); the
+240p QP124 point is 99.3 kbps (0.7% below). K uses the direct points in the
+table; the 100.0 kbps 240p value is interpolated from QP124/QP122.
+
+## Historical 720p sweep (2026-11-10)
+
+Reference encoder baseline for the retired 720p test clip.
 
 - Source: `testdata/pub_1280x720_60f.y4m` (1280x720, 60 frames, 60 fps, 1 s)
 - Encoder: AVM macOS arm64 nightly 2026-11-10, commit `cd7d8bc3db`
