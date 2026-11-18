@@ -1,5 +1,7 @@
 #include "pipeline/video/post/tiled_frame.h"
 
+#include "pipeline/video/video_interp_filter.h"
+
 #include "core/bitstream/basic_headers.h"
 #include "pipeline/video/post/bit_depth_checklist.h"
 #include "pipeline/video/post/rc_adapter.h"
@@ -443,7 +445,7 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
     writer.put_bit(false);  // use_qtr_precision_mv
     writer.put_bit(true);   // allow_high_precision_mv -> 1/8 pel
     writer.put_bit(false);  // is_filter_switchable
-    writer.put_bits(0U, 2U);  // interpolation_filter = EIGHTTAP
+    writer.put_bits(static_cast<unsigned>(frame_interp_filter_index()), 2U);
   }
 
   writer.put_bit(config.disable_cdf_update);  // disable_cdf_update

@@ -15,6 +15,7 @@
 #include "codec/inter/tip/tip_signalling.h"
 #include "pipeline/grain/film_grain_syntax.h"
 #include "pipeline/video/post/loop_filters.h"
+#include "pipeline/video/video_interp_filter.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -818,7 +819,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
         writer.put_bit(h.allow_high_precision_mv);  // allow_high_precision_mv
       }
     }    writer.put_bit(false);  // is_filter_switchable
-    writer.put_bits(0U, 2U);  // interpolation_filter = EIGHTTAP
+    writer.put_bits(static_cast<unsigned>(frame_interp_filter_index()), 2U);
     // frame_enabled_motion_modes[] all zero -> no bits.
   }
 

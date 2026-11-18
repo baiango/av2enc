@@ -1,5 +1,7 @@
 #include "pipeline/video/video_frame_internal.h"
 
+#include "pipeline/video/video_interp_filter.h"
+
 namespace av2enc::video {
 
 void InterFrameEncoder::global_mv_for_block(int ref_index, int mi_row, int mi_col, int bw4,
@@ -265,7 +267,7 @@ bool InterFrameEncoder::predict_luma(int ref_index, inter::mc::Mv mv, int x0, in
   const inter::mc::BlockRect rect{x0, y0, w, h};
   return inter::mc::predict_plane(
              references_[static_cast<std::size_t>(ref_index)], 0, rect, mv,
-             inter::mc::InterpFilter::kEighttap, out.data(), w) ==
+             frame_interp_filter(), out.data(), w) ==
          inter::mc::McStatus::kOk;
 }
 
@@ -285,7 +287,7 @@ bool InterFrameEncoder::predict_all(int ref_index, inter::mc::Mv mv, int x0, int
   const inter::mc::BlockRect rect{x0, y0, w, h};
   return inter::mc::predict_block_420(
              references_[static_cast<std::size_t>(ref_index)], rect, mv,
-             inter::mc::InterpFilter::kEighttap, dst) ==
+             frame_interp_filter(), dst) ==
          inter::mc::McStatus::kOk;
 }
 
@@ -632,7 +634,7 @@ bool InterFrameEncoder::build_compound_block(const inter::mc::Mv mvs[2], int bsi
       references_[static_cast<std::size_t>(ref0)],
       references_[static_cast<std::size_t>(ref1)],
       inter::mc::BlockRect{x0, y0, w, h}, bsize, mvs[0], mvs[1],
-      inter::mc::InterpFilter::kEighttap,
+      frame_interp_filter(),
       references_[static_cast<std::size_t>(ref0)].mi_cols,
       references_[static_cast<std::size_t>(ref0)].mi_rows, prediction, error);
 }

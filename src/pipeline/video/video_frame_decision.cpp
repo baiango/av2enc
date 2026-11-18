@@ -1,6 +1,7 @@
 #include "pipeline/video/video_frame_internal.h"
 
 #include "codec/transform/tx_partition/tx_scan.h"
+#include "pipeline/video/video_interp_filter.h"
 #include "pipeline/video/video_perceptual.h"
 #include "pipeline/video/video_pipe_perc.h"
 #include "pipeline/video/video_skip_drift.h"
@@ -1781,7 +1782,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     if (multiref::build_compound_prediction(
             references_[0], references_[1], rect,
             static_cast<int>(node.size), inter::mc::Mv{0, 0},
-            inter::mc::Mv{0, 0}, inter::mc::InterpFilter::kEighttap,
+            inter::mc::Mv{0, 0}, frame_interp_filter(),
             mi_cols_, mi_rows_, prediction, comp_error)) {
       std::uint8_t* dst[3] = {compound_pred_[0].samples.data(),
                               compound_pred_[1].samples.data(),
