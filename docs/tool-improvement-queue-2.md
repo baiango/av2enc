@@ -339,3 +339,10 @@ python3 tools/oracle.py --ref $P --ivf b@142=... --ivf z@150=/tmp/meh150.ivf \
 > not prediction or entropy. The 5.2x coefficient-rate underprice is worth at
 > most 0.35 dB and fails on natural content. Do not target key/intra; see
 > `docs/tool-improvement-queue-3.md`.
+
+> **eff-perc/filter decision queues are closed (2026-11-19).** 21 attempts,
+> 0 kept. The eff gap is per-frame/head P coding efficiency: f0-32 +5.017 K
+> ceiling, key +0.125, tail +3.815; the head is 4.9 dB behind at ~45 B/frame.
+> The filter ceiling is f44-59, but nightly's tail error is 91% uncoded skip
+> error; filters/refresh cannot remove prediction error. Do not target
+> decision/refresh/rate knobs. See `docs/realization-gaps.md`.

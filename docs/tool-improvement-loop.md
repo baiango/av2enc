@@ -104,6 +104,24 @@ the ledger is the memory between calls.
 Useful flags: `--model`, `--agent`, `--prompt-file`, `--ledger`,
 `--max-hours`, `--stop-file`, `--sleep`, `--fail-fast`, `--dry-run`.
 
+For a continuous run, drop the caps:
+
+```sh
+python3 tools/agent_loop.py \
+  --iterations 0 \
+  --max-hours 0 \
+  --max-stale 5 \
+  --iteration-timeout 3600 \
+  --worktree ../agent-loop \
+  --branch exp/agent-loop \
+  --sleep 2
+```
+
+`--iterations 0` means until stopped; `--max-hours 0` means no wall-clock cap;
+`--max-stale 5` stops only after five consecutive agent calls leave the ledger
+unchanged; `--iteration-timeout` kills a stuck call and continues. Stop it with
+the stop file (`--stop-file`) or Ctrl-C.
+
 ## Inspect progress
 
 ```sh
@@ -170,6 +188,18 @@ underprice in the intra TX search, is worth <=0.35 dB and fails on natural
 content. A perfect key is worth +0.00 K, so key work is not a K lever. Do not
 target key/intra unless it is a dependent-quantiser research project. See
 `docs/tool-improvement-queue-3.md`.
+
+
+## Fourth run: eff-perc/filter decisions closed (2026-11-19)
+
+21 attempts, 0 kept. The eff-perc 90.12 ceiling is the f0-32 source row
+(90.197), not the key: key +0.125, f0-32 +5.017, f33-43 +2.119, f44-59
++3.815. The head P frames are 4.9 dB behind at ~45 B/frame; the tail is 69%
+coded residual and rate-bound. Filter/allocation's 88.96 ceiling is f44-59,
+but 91% of nightly's tail error is uncoded skip error; filters and refresh
+placement cannot remove prediction error. Decision/refresh/rate queues are
+exhausted for both mechanisms. Remaining: per-frame/head P prediction and
+residual coding efficiency. See `docs/realization-gaps.md`.
 
 ## What this loop is not
 

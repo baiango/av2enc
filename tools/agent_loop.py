@@ -34,11 +34,16 @@ DEFAULT_PROMPT = """You are one iteration of an autonomous tool-improvement loop
 Work in {{worktree}}.
 
 Read {{ledger}}, docs/tool-quality.md, docs/tool-improvement-queue-2.md,
+docs/tool-improvement-queue-3.md, docs/realization-gaps.md,
 docs/negative-results.md and docs/tool-improvement-loop.md first.
 
 Perform EXACTLY ONE iteration. Do not start a second one.
 1. Pick the next unblocked target from {{ledger}} if it has one; otherwise from
    docs/tool-quality.md and docs/tool-improvement-queue-2.md.
+   Do NOT target key/intra (closed: +0.00 K), eff-perc/filter decision,
+   refresh or rate knobs (closed: 21 attempts, 0 kept), or HF RDOQ/trellis
+   (closed). Prioritize P-tail prediction/residual/coefficient coding and the
+   kept skip/exact-rate composition.
 2. Baseline, then ONE contained default-off implementation change. No new
    syntax, no preset/pin change, no third-party code or source copying.
 3. Measure the target probe and natural 240p QP104/106/108 with the AVM oracle.
@@ -75,8 +80,9 @@ def find_cli(explicit: str | None) -> str:
     raise SystemExit("opencode CLI not found; set OPENCODE_CLI")
 
 
-def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=str(cwd), text=True, capture_output=True)
+def run(cmd: list[str], cwd: Path, timeout: float | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, cwd=str(cwd), text=True, capture_output=True,
+                          timeout=timeout)
 
 
 def ensure_worktree(repo: Path, worktree: Path, branch: str) -> None:
@@ -130,7 +136,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--iterations", type=int, default=10,
-                    help="number of agent calls (default 10)")
+                    help="agent calls; 0 = until stopped (default 10)")
     ap.add_argument("--repo", type=Path, default=Path.cwd(),
                     help="source repository (default: cwd)")
     ap.add_argument("--worktree", type=Path, default=None,
@@ -148,6 +154,10 @@ def main() -> int:
                     help="log directory (default: <worktree>/build/agent-loop)")
     ap.add_argument("--max-hours", type=float, default=0.0,
                     help="wall-clock budget; 0 means no limit")
+    ap.add_argument("--max-stale", type=int, default=0,
+                    help="stop after N unchanged ledgers; 0 means no stale stop")
+    ap.add_argument("--iteration-timeout", type=float, default=0.0,
+                    help="seconds per agent call; 0 means no timeout")
     ap.add_argument("--sleep", type=float, default=2.0,
                     help="seconds between iterations")
     ap.add_argument("--stop-file", type=Path, default=None,
@@ -182,14 +192,21 @@ def main() -> int:
     log_dir = (args.log_dir or (worktree / "build" / "agent-loop")).resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
 
+    if args.dry_run and args.iterations <= 0:
+        raise SystemExit("--dry-run needs --iterations > 0")
+
     started = time.monotonic()
-    completed = failed = 0
-    for i in range(1, args.iterations + 1):
+    completed = failed = stale = 0
+    i = 0
+    while True:
+        if args.iterations > 0 and i >= args.iterations:
+            break
+        i += 1
         if args.stop_file and args.stop_file.exists():
-            print(f"stop file present: {args.stop_file}")
+            print(f"stop file present: {args.stop_file}", flush=True)
             break
         if args.max_hours > 0 and (time.monotonic() - started) / 3600 >= args.max_hours:
-            print("wall-clock budget reached")
+            print("wall-clock budget reached", flush=True)
             break
 
         prompt = (template
@@ -200,35 +217,60 @@ def main() -> int:
         cmd = [cli, "run", "--auto", "--format", "json", "--archived",
                "--model", args.model, "--agent", args.agent,
                "--title", title, prompt]
+        label = f"{i}/{args.iterations}" if args.iterations > 0 else f"{i}/inf"
 
         if args.dry_run:
-            print(f"[{i}] {cli} run --auto --format json --archived "
+            print(f"[{label}] {cli} run --auto --format json --archived "
                   f"--model {args.model} --agent {args.agent} --title {title!r} "
-                  f"<prompt {len(prompt)} chars>")
+                  f"<prompt {len(prompt)} chars>", flush=True)
             continue
 
         before = ledger_hash(ledger)
         log = log_dir / f"{i:03d}.json"
-        print(f"[{i}/{args.iterations}] {title} ({len(prompt)} char prompt)")
+        print(f"[{label}] {title} ({len(prompt)} char prompt)", flush=True)
         t0 = time.monotonic()
-        proc = run(cmd, worktree)
+        try:
+            proc = run(cmd, worktree, timeout=args.iteration_timeout or None)
+        except subprocess.TimeoutExpired as exc:
+            elapsed = time.monotonic() - t0
+            log.write_text((exc.stdout or "") + (exc.stderr or ""))
+            print(f"  timeout after {elapsed:.1f}s; continuing", flush=True)
+            failed += 1
+            stale += 1
+            if args.fail_fast:
+                break
+            if args.max_stale and stale >= args.max_stale:
+                print("stale ledger limit reached", flush=True)
+                break
+            if args.sleep:
+                time.sleep(args.sleep)
+            continue
         elapsed = time.monotonic() - t0
         log.write_text((proc.stdout or "") + (proc.stderr or ""))
         after = ledger_hash(ledger)
         result = last_text(proc.stdout or "") or "(no text event)"
-        print(f"  rc={proc.returncode} {elapsed:.1f}s ledger={'changed' if before != after else 'UNCHANGED'}")
-        print(f"  {result[:1000]}")
+        changed = before != after
+        print(f"  rc={proc.returncode} {elapsed:.1f}s ledger={'changed' if changed else 'UNCHANGED'}",
+              flush=True)
+        print(f"  {result[:1000]}", flush=True)
+        if changed:
+            stale = 0
+        else:
+            stale += 1
         if proc.returncode != 0:
             failed += 1
             if args.fail_fast:
                 break
         else:
             completed += 1
+        if args.max_stale and stale >= args.max_stale:
+            print("stale ledger limit reached", flush=True)
+            break
         if args.sleep:
             time.sleep(args.sleep)
 
     print(f"summary: completed={completed} failed={failed} "
-          f"logs={log_dir} ledger={ledger}")
+          f"logs={log_dir} ledger={ledger}", flush=True)
     return 0 if failed == 0 else 1
 
 
