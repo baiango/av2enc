@@ -22,6 +22,7 @@ AGENT=${OPENCODE_AGENT:-general}
 MAX_STALE=${AV2ENC_MAX_STALE:-5}
 TIMEOUT=${AV2ENC_TIMEOUT:-3600}
 STOP=${AV2ENC_STOP:-$ROOT/../agent-loop/STOP}
+PREFIX=${AV2ENC_LANE_PREFIX:-agent-loop}
 LOG=$ROOT/build/agent-loop
 PROMPT=$ROOT/docs/agent-loop-lane-prompt.md
 
@@ -43,8 +44,8 @@ i=1
 pids=""
 while [ "$i" -le "$LANES" ]; do
     target=$(lane_target "$i")
-    worktree="$ROOT/../agent-loop-$i"
-    branch="exp/agent-loop-$i"
+    worktree="$ROOT/../$PREFIX-$i"
+    branch="exp/$PREFIX-$i"
     ledger="docs/agent-loop-ledger-$i.md"
     prompt="$LOG/lane-$i-prompt.txt"
     sed -e "s|{{lane}}|$i|g" -e "s|{{target}}|$target|g" "$PROMPT" > "$prompt"
