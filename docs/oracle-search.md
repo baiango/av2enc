@@ -36,6 +36,14 @@ A segment ceiling above the wall is **not** a claim. Infinite bits on 33 frames
 can exceed 90 K without saying anything about an encoder. The only number that
 can open a path is the matched-rate K.
 
+### Chroma format
+
+The optimization target is **4:2:0**. A 4:4:4 or 4:2:2 stream is a **separate
+oracle**: never mix formats in one QP ladder, never interpolate K across them,
+and never compare a 4:2:0 row to a 4:4:4 row. `tools/quality.py` and
+`tools/extra_metrics.py` reject a reference/test chroma mismatch; the AVM
+decode path is 4:2:0-only. Every current baseline and table is 4:2:0.
+
 ## 2. Run it
 
 ### Requirements

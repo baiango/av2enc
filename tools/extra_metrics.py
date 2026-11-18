@@ -27,6 +27,23 @@ def have(tool: str) -> bool:
     return shutil.which(tool) is not None
 
 
+def y4m_chroma(path: Path) -> str:
+    with path.open("rb") as f:
+        header = f.readline().decode("ascii", "replace")
+    m = re.search(r"C([0-9A-Za-z]+)", header)
+    return m.group(1) if m else "420"
+
+
+def chroma_family(chroma: str) -> str:
+    if chroma.startswith("420"):
+        return "420"
+    if chroma.startswith("422"):
+        return "422"
+    if chroma.startswith("444"):
+        return "444"
+    return chroma
+
+
 def extract(y4m: Path, out_dir: Path, limit: int | None) -> int:
     cmd = ["ffmpeg", "-v", "error", "-i", str(y4m)]
     if limit:
@@ -62,6 +79,14 @@ def main() -> int:
         print("extra_metrics: missing " + ", ".join(missing), file=sys.stderr)
         return 77
 
+    ref_chroma = chroma_family(y4m_chroma(args.ref))
+    test_chroma = chroma_family(y4m_chroma(args.test))
+    if ref_chroma != test_chroma:
+        print(f"extra_metrics: chroma mismatch: ref 4:{ref_chroma} vs test "
+              f"4:{test_chroma}; score 4:2:0 and 4:4:4 separately",
+              file=sys.stderr)
+        return 2
+
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         (tmp / "ref").mkdir()
@@ -77,6 +102,7 @@ def main() -> int:
 
     out = {
         "frames": n,
+        "chroma": ref_chroma,
         "butteraugli_mean": sum(butters) / len(butters) if butters else None,
         "ssimulacra2_mean": sum(ssimus) / len(ssimus) if ssimus else None,
     }

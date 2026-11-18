@@ -163,6 +163,16 @@ def y4m_geometry(header: str) -> tuple[int, int, str, int, int]:
     return w, h, chroma, fps_num, fps_den
 
 
+def chroma_family(chroma: str) -> str:
+    if chroma.startswith("420"):
+        return "420"
+    if chroma.startswith("422"):
+        return "422"
+    if chroma.startswith("444"):
+        return "444"
+    return chroma
+
+
 def frame_bytes(header: str) -> int:
     w, h, chroma, _, _ = y4m_geometry(header)
     if chroma.startswith("420"):
@@ -236,10 +246,15 @@ def normalize_pair(ref: Path, test: Path, outdir: Path) -> tuple[Path, Path, int
     ref_header, ref_frames = read_frames(ref)
     test_header, test_frames = read_frames(test)
 
-    rw, rh, _, rfps_n, rfps_d = y4m_geometry(ref_header)
-    tw, th, _, _, _ = y4m_geometry(test_header)
+    rw, rh, rchroma, rfps_n, rfps_d = y4m_geometry(ref_header)
+    tw, th, tchroma, _, _ = y4m_geometry(test_header)
     if (rw, rh) != (tw, th):
         raise SystemExit(f"dimension mismatch: ref {rw}x{rh}, test {tw}x{th}")
+    if chroma_family(rchroma) != chroma_family(tchroma):
+        raise SystemExit(
+            f"chroma mismatch: ref {chroma_family(rchroma)} vs test "
+            f"{chroma_family(tchroma)}; 4:2:0 and 4:4:4 must be scored "
+            f"separately")
 
     n = min(len(ref_frames), len(test_frames))
     if n == 0:
@@ -358,6 +373,8 @@ def main() -> int:
                 raise SystemExit(f"missing test: {test_y4m}")
 
         ref_n, test_n, n, fps = normalize_pair(args.ref, test_y4m, tmp)
+        ref_chroma = y4m_geometry(y4m_header(args.ref))[2]
+        test_chroma = y4m_geometry(y4m_header(test_y4m))[2]
 
         psnr_out = run([
             "ffmpeg", "-hide_banner", "-v", "info", "-i", str(test_n),
@@ -389,6 +406,9 @@ def main() -> int:
             "test": str(args.ivf or args.test),
             "frames": n,
             "fps": fps,
+            "chroma": chroma_family(ref_chroma),
+            "ref_chroma": ref_chroma,
+            "test_chroma": test_chroma,
             "psnr": psnr,
             "ssim": ssim,
             "cvvdp_jod": jod,

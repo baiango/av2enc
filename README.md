@@ -136,7 +136,10 @@ tools/extra_metrics.py --ref <ref>.y4m --test <decoded>.y4m
 ```
 
 Quality scoring uses the AVM decoder; set `AVMDEC` when it is not in
-`tools/bin`. Legacy recon gates still invoke `dav2d` and are being migrated.
+`tools/bin`. All K/PSNR tables in this document are **4:2:0**. A 4:4:4 or
+4:2:2 stream is a separate oracle: do not mix formats or interpolate across
+them. `tools/quality.py` and `tools/extra_metrics.py` reject chroma mismatches.
+Legacy recon gates still invoke `dav2d` and are being migrated.
 
 | Stream | Rate | CVVDP | Butteraugli | SSIMULACRA2 | **K** |
 |---|---:|---:|---:|---:|---:|
