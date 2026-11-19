@@ -43,7 +43,7 @@ exact plan-rate machinery, and keep the winner. No other change.
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
   --base-env '{"AV2ENC_EFF_PERC":"1"}' \
-  --ceiling-segment f0-32 --ceiling-floor 90.197
+  --ceiling-segment f44-59 --ceiling-floor 88.995
 ```
 5. PASS only if the last line says `PASS`: envelope delta at least +0.15 K
    **and** ceiling delta vs the base arm at least +0.15 K. Anything else is FAIL.

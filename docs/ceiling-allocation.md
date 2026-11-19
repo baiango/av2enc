@@ -39,3 +39,11 @@ the key reconstruction and the tail QP raise costs the tail row.
   the only open lever for lanes 1/3/5.
 - `AV2ENC_FRAME_QP_PLAN` stays default-off; unset keeps every pin byte-identical
   (verified: nightly QP106 25,008 B `0639b43630abb454f7be5ac494d2efb4`).
+
+## Direction of the ceiling
+
+The ceiling replaces the named segment with source, so it measures the **rest**
+of the stream. A head tool can only raise the f44-59 ceiling; a tail tool can
+only raise the f0-32 ceiling. Passing a head tool on f0-32 is a logic error:
+the head is the segment being replaced. Lane 1's head allocator demonstrates
+it: f0-32 86.365, but f44-59 **88.685 vs nightly 88.066 (+0.62)**.

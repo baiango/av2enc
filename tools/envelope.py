@@ -152,17 +152,30 @@ def bracket_arm(worktree: Path, spec: dict, arm: dict, outdir: Path) -> dict:
     }
 
 
+def ensure_point(worktree: Path, spec: dict, arm: dict, outdir: Path,
+                 qp: int) -> None:
+    """Encode one arm at `qp` if the bracket did not already cover it."""
+    path = outdir / f"{arm['name']}-qp{qp}.ivf"
+    if path.is_file():
+        return
+    bin_path = (worktree / spec.get("bin", "build-release/av2enc")).resolve()
+    ref = (worktree / spec["ref"]).resolve()
+    cmd = [str(bin_path), str(ref), "-o", str(path),
+           *list(spec.get("base_args", [])), "--qp", str(qp)]
+    proc = run(cmd, worktree, dict(arm.get("env") or {}))
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"{arm['name']} qp{qp}: encode failed: "
+            f"{(proc.stderr or proc.stdout or '').strip()[-200:]}")
+
+
 def measure_ceiling(worktree: Path, spec: dict, arm: dict, outdir: Path,
-                    segment: str) -> float | None:
-    """Source-replacement K for one segment of the arm's primary stream."""
-    result = arm.get("_result")
-    above, below = result["above"], result["below"]
-    if above is None or below is None:
-        return None
-    point = below
+                    segment: str, point: int) -> float | None:
+    """Source-replacement K for one segment of the arm at the same QP point."""
+    ensure_point(worktree, spec, arm, outdir, point)
     cmd = [sys.executable, str(ORACLE),
            "--ref", str((worktree / spec["ref"]).resolve()),
-           "--target-kbps", str(result["target_kbps"]),
+           "--target-kbps", str(spec.get("target_kbps", 100.0)),
            "--json", str(outdir / f"{arm['name']}.segments.json"),
            "--ivf", f"{arm['name']}@{point}="
            + str(outdir / f"{arm['name']}-qp{point}.ivf")]
@@ -271,16 +284,17 @@ def main() -> int:
     envelope_ceiling = None
     base_ceiling = None
     if args.ceiling_floor is not None:
+        point = best["below"] if best["below"] is not None else best["above"]
         envelope_ceiling = measure_ceiling(
-            worktree, spec, {"_result": best, "name": best["arm"]}, outdir,
-            args.ceiling_segment)
+            worktree, spec, {"name": best["arm"], "env": best["env"]}, outdir,
+            args.ceiling_segment, point)
         # Compare like for like: the base arm's ceiling is measured on the
-        # same bracket point as the candidate.  The published floor was taken
-        # on a different stream (QP119 vs the bracket's lower point), so using
-        # it as an absolute gate adds ~0.17 of measurement bias.
+        # same QP point as the candidate.  The published floor was taken on a
+        # different stream (QP119 vs the bracket's lower point), so using it as
+        # an absolute gate adds ~0.17 of measurement bias.
         base_ceiling = measure_ceiling(
-            worktree, spec, {"_result": base, "name": "base"}, outdir,
-            args.ceiling_segment)
+            worktree, spec, {"name": "base", "env": base["env"]}, outdir,
+            args.ceiling_segment, point)
     gate_ok = delta >= args.threshold
     ceiling_delta = None
     if args.ceiling_floor is not None:

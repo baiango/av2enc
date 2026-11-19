@@ -35,9 +35,11 @@ lane_base_env() {
     echo '{"AV2ENC_EFF_PERC":"1"}'
 }
 
+# The ceiling replaces the named segment with source, so it is set by the
+# REST of the stream.  A head tool raises f44-59; a tail tool raises f0-32.
 lane_ceiling() {
     case "$1" in
-        2|4) echo "f44-59 88.995" ;;
+        1) echo "f44-59 88.995" ;;
         *) echo "f0-32 90.197" ;;
     esac
 }
