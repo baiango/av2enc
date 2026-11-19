@@ -15,7 +15,8 @@ Each iteration:
 Hard rules:
 - Do not read documents the task does not list.
 - Do not run `git log`, `git branch`, `git remote`.
-- Do not edit `tools/`, presets, defaults or pins.
+- Do not edit the gate/scoring tools (`tools/envelope.py`, `tools/oracle.py`, `tools/quality.py`, `tools/kpi.py`, `tools/extra_metrics.py`) or any pin.
+- You may add first-party analysis tooling under `tools/lane-{{lane}}/` (stdlib only) and must report what it measured.
 - Default-off env gate only; no new syntax beyond AV2 spec.
 - The gate is mechanical: envelope ≥ 85.249 (best known 85.099 + 0.15),
   at least three knob arms, and the f0-32 ceiling delta vs the base arm ≥ +0.15.

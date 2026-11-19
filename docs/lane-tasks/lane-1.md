@@ -14,12 +14,19 @@ a program, not a single patch.
 - this file; last 15 lines of `docs/agent-loop-ledger-1.md`;
 - `docs/pipe-perc.md`, `docs/eff-perc.md`.
 
-Do not run `git log`/`branch`/`remote`. Do not edit `tools/`.
+Do not run `git log`/`branch`/`remote`. You may **add** first-party analysis tooling under `tools/lane-1/` (stdlib only). Do **not** edit the gate or scoring tools: `tools/envelope.py`, `tools/oracle.py`, `tools/quality.py`, `tools/kpi.py`, `tools/extra_metrics.py`, or any pin.
 
 ## Allowed files
 new `src/pipeline/video/video_pipe_exact.h/.cpp`,
 `video_frame_decision.cpp`, `video_frame_internal.h`,
 `docs/agent-loop-ledger-1.md`.
+
+## Tooling you may improve
+Add only analysis/measurement helpers under `tools/lane-1/`:
+- per-frame/per-segment K, JOD, BA, SS2 attribution for a stream;
+- decision counters for the new pipeline (leaves, mode changes, cost);
+- a rate/distortion scatter or horizon-error profiler.
+Each tool must be first-party, import only the Python stdlib, and be reported in the ledger with what it measured. Never modify the gate.
 
 ## Gate
 At least three knob arms of the new pipeline (e.g. lambda 0.15/0.20/0.30) on

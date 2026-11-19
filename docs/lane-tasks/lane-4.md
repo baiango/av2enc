@@ -13,12 +13,19 @@ gate, record.
 - this file; last 15 lines of `docs/agent-loop-ledger-4.md`;
 - `docs/eff-perc.md` (the D term), `docs/negative-results.md` dead-zone row.
 
-Do not run `git log`/`branch`/`remote`. Do not edit `tools/`.
+Do not run `git log`/`branch`/`remote`. You may **add** first-party analysis tooling under `tools/lane-4/` (stdlib only). Do **not** edit the gate or scoring tools: `tools/envelope.py`, `tools/oracle.py`, `tools/quality.py`, `tools/kpi.py`, `tools/extra_metrics.py`, or any pin.
 
 ## Allowed files
 new `src/pipeline/video/video_pipe_ba.h/.cpp`,
 `video_frame_decision.cpp`, `video_frame_internal.h`, `video_eff_perc.h`,
 `docs/agent-loop-ledger-4.md`.
+
+## Tooling you may improve
+Add only analysis/measurement helpers under `tools/lane-4/`:
+- per-frame/per-segment K, JOD, BA, SS2 attribution for a stream;
+- decision counters for the new pipeline (leaves, mode changes, cost);
+- a rate/distortion scatter or horizon-error profiler.
+Each tool must be first-party, import only the Python stdlib, and be reported in the ledger with what it measured. Never modify the gate.
 
 ## Gate
 Arms BA weight 0.5/1.0/2.0 under `AV2ENC_PIPE_BA`,
