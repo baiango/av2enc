@@ -1,29 +1,31 @@
-# Lane 1 — PIPE-EXACT + BA-targeted interp tool
+# Lane 1 — new pipeline + TX/partition tool
 
-Two-part program, both required:
-1. **Pipeline**: a new exhaustive per-leaf RD path under `AV2ENC_PIPE_EXACT`
-   (skip / inter / intra, exact syntax rate, perceptual D), not eff-perc's
-   branch stack.
-2. **Tool**: per-block switchable interp selection scored by a
-   Butteraugli-shaped error (local masking, low-frequency emphasis, chroma)
-   instead of CSF, under `AV2ENC_INTERP_BLOCK_BA`; sweep 0.5/1.0/2.0.
+**New pipeline (from scratch)**: exhaustive per-leaf RD driver:
+`AV2ENC_PIPE_EXACT`. Own frame/leaf loop; no `encode_leaf`.
+**Tool it may improve**: the inter TX search / partition cost
+(`video_tx_search.*`): finer TX where the 1-4 px band is high, exact rate.
+Knob: `AV2ENC_TX_DETAIL_MIN` 0.2/0.35/0.5 plus the pipeline scale.
 
-Each iteration advances one part. Keep the exact-rate model, CDF carry,
-per-block interp and decoder-exact fixes.
+## Mandate
+Build a **new encoding pipeline from scratch**: its own frame/leaf loop, its
+own partition/RD order, calling the existing coding tools. The new path must
+**not call `encode_leaf`**; prove it (counter/print) in the ledger. You may also
+**improve the existing coding tools** it calls (listed under Allowed files):
+first-party only, decoder-exact, keep every bug fix.
 
-## Read only
-this file; last 15 lines of `docs/agent-loop-ledger-1.md`; `docs/interp-filter.md`,
-`docs/pipe-perc.md`.
-
-Do not run `git log`/`branch`/`remote`. You may add analysis tooling under `tools/lane-N/`; never edit the gate/scoring tools or pins.
+## Rules
+Do not run `git log`/`branch`/`remote`. You may add analysis tooling under
+`tools/lane-N/`; never edit the gate/scoring tools or pins. Default-off gate
+only; no new syntax beyond AV2 spec; no third-party code.
 
 ## Allowed files
-new `video_pipe_exact.h/.cpp`, `video_interp_filter.h`, `video_frame_me.cpp`,
-`video_frame_decision.cpp`, `video_frame_internal.h`, `video_headers.cpp`,
+new `video_pipeline_exact.h/.cpp`, `video_frame_sequence.cpp`,
+`video_frame_internal.h`, `video_frame_decision.cpp`,
+`video_tx_search.cpp`, `video_tx_search.h`,
 `docs/agent-loop-ledger-1.md`.
 
 ## Gate
-Three knob arms (pipeline and/or tool). Spec:
+Three knob arms. Spec:
 ```json
 {"ref":"testdata/nasa_480x240_30fps_60f.y4m","bin":"build-release/av2enc",
  "frames":60,
@@ -35,11 +37,9 @@ Three knob arms (pipeline and/or tool). Spec:
 Fill a1/a2/a3 with the knob values named above. Run:
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \\
-  --base-env '{"AV2ENC_PIPE_EXACT":"1"}' --min-arms 3 \\
+  --base-env '{"AV2ENC_PIPE_X":"1"}' --min-arms 3 \\
   --ceiling-segment f0-32 --ceiling-floor 90.197
 ```
-PASS only if `PASS`: the envelope beats the **pipeline's own base arm**
-(tool off) by ≥ +0.15 K, with ≥3 arms, and the f0-32 ceiling delta vs that
-base is ≥ +0.15. 85.099 is the end target, not this gate.
-Continue the program after a failure; append one ledger row per iteration.
+PASS only if `PASS`: envelope beats the pipeline base arm by +0.15, >=3 arms,
+f0-32 ceiling delta >= +0.15. Append one ledger row per iteration.
 

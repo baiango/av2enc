@@ -1,26 +1,31 @@
-# Lane 3 — PIPE-TRELLIS + CDEF strength tool
+# Lane 3 — new pipeline + loop-filter tool
 
-Two-part program, both required:
-1. **Pipeline**: a per-frame dynamic program over legal partition/mode leaves
-   under `AV2ENC_PIPE_TRELLIS` (exact syntax rate + perceptual D), not greedy.
-2. **Tool**: a per-frame CDEF strength search (`AV2ENC_CDEF_SEARCH`) instead
-   of the fixed strength set; sweep the search range.
+**New pipeline (from scratch)**: per-frame trellis/DP over partition and mode
+`AV2ENC_PIPE_TRELLIS`. Own loop; no `encode_leaf`.
+**Tool it may improve**: loop filters (`post/loop_filters.*`,
+`video_frame_filters.cpp`): per-frame CDEF strength search and deblock delta.
+Knob: `AV2ENC_CDEF_SEARCH` range / `AV2ENC_DEBLOCK_DELTA`.
 
-Each iteration advances one part. Keep the fixes.
+## Mandate
+Build a **new encoding pipeline from scratch**: its own frame/leaf loop, its
+own partition/RD order, calling the existing coding tools. The new path must
+**not call `encode_leaf`**; prove it (counter/print) in the ledger. You may also
+**improve the existing coding tools** it calls (listed under Allowed files):
+first-party only, decoder-exact, keep every bug fix.
 
-## Read only
-this file; last 15 lines of `docs/agent-loop-ledger-3.md`; `docs/video-partition-rd.md`,
-`docs/video-nightly.md` CDEF section.
-
-Do not run `git log`/`branch`/`remote`. You may add analysis tooling under `tools/lane-N/`; never edit the gate/scoring tools or pins.
+## Rules
+Do not run `git log`/`branch`/`remote`. You may add analysis tooling under
+`tools/lane-N/`; never edit the gate/scoring tools or pins. Default-off gate
+only; no new syntax beyond AV2 spec; no third-party code.
 
 ## Allowed files
-new `video_pipe_trellis.h/.cpp`, `video_frame_decision.cpp`,
-`video_frame_internal.h`, `video_frame_filters.cpp`, `video_headers.cpp`,
-`post/loop_filters.*`, `docs/agent-loop-ledger-3.md`.
+new `video_pipeline_trellis.h/.cpp`, `video_frame_sequence.cpp`,
+`video_frame_internal.h`, `video_frame_decision.cpp`,
+`video_frame_filters.cpp`, `video_headers.cpp`, `post/loop_filters.*`,
+`docs/agent-loop-ledger-3.md`.
 
 ## Gate
-Three knob arms (pipeline and/or tool). Spec:
+Three knob arms. Spec:
 ```json
 {"ref":"testdata/nasa_480x240_30fps_60f.y4m","bin":"build-release/av2enc",
  "frames":60,
@@ -32,11 +37,9 @@ Three knob arms (pipeline and/or tool). Spec:
 Fill a1/a2/a3 with the knob values named above. Run:
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \\
-  --base-env '{"AV2ENC_PIPE_TRELLIS":"1"}' --min-arms 3 \\
+  --base-env '{"AV2ENC_PIPE_X":"1"}' --min-arms 3 \\
   --ceiling-segment f0-32 --ceiling-floor 90.197
 ```
-PASS only if `PASS`: the envelope beats the **pipeline's own base arm**
-(tool off) by ≥ +0.15 K, with ≥3 arms, and the f0-32 ceiling delta vs that
-base is ≥ +0.15. 85.099 is the end target, not this gate.
-Continue the program after a failure; append one ledger row per iteration.
+PASS only if `PASS`: envelope beats the pipeline base arm by +0.15, >=3 arms,
+f0-32 ceiling delta >= +0.15. Append one ledger row per iteration.
 

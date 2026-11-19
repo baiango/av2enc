@@ -53,11 +53,11 @@ lane_ceiling() {
 
 lane_target() {
     case "$1" in
-        1) echo "PIPE-EXACT + BA-targeted interp tool" ;;
-        2) echo "PIPE-HORIZON + true lookahead skip tool" ;;
-        3) echo "PIPE-TRELLIS + CDEF strength tool" ;;
-        4) echo "PIPE-BA + Butteraugli-shaped D tool" ;;
-        5) echo "PIPE-2PASS + adaptive MVD tool" ;;
+        1) echo "new pipeline + TX/partition tool" ;;
+        2) echo "new pipeline + prediction/MC tool" ;;
+        3) echo "new pipeline + loop-filter tool" ;;
+        4) echo "new pipeline + distortion/quant tool" ;;
+        5) echo "new pipeline + motion tool" ;;
         *) echo "new decision pipeline" ;;
     esac
 }

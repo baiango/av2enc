@@ -1,24 +1,31 @@
-# Lane 4 — PIPE-BA + Butteraugli-shaped D tool
+# Lane 4 — new pipeline + distortion/quant tool
 
-Two-part program, both required:
-1. **Pipeline**: a decision path under `AV2ENC_PIPE_BA` whose distortion is a
-   Butteraugli-shaped error (local masking, low-frequency emphasis, chroma).
-2. **Tool**: that error model itself, replacing the current CSF in the leaf and
-   TX decision; sweep the weight 0.5/1.0/2.0.
+**New pipeline (from scratch)**: Butteraugli-shaped distortion driver
+`AV2ENC_PIPE_BA`. Own loop; no `encode_leaf`.
+**Tool it may improve**: the distortion/quantisation path
+(`video_eff_perc.h`, `video_tx_search.cpp`): BA-shaped error in the leaf and
+TX decisions, weight 0.5/1.0/2.0.
 
-Each iteration advances one part. Keep the fixes.
+## Mandate
+Build a **new encoding pipeline from scratch**: its own frame/leaf loop, its
+own partition/RD order, calling the existing coding tools. The new path must
+**not call `encode_leaf`**; prove it (counter/print) in the ledger. You may also
+**improve the existing coding tools** it calls (listed under Allowed files):
+first-party only, decoder-exact, keep every bug fix.
 
-## Read only
-this file; last 15 lines of `docs/agent-loop-ledger-4.md`; `docs/eff-perc.md`.
-
-Do not run `git log`/`branch`/`remote`. You may add analysis tooling under `tools/lane-N/`; never edit the gate/scoring tools or pins.
+## Rules
+Do not run `git log`/`branch`/`remote`. You may add analysis tooling under
+`tools/lane-N/`; never edit the gate/scoring tools or pins. Default-off gate
+only; no new syntax beyond AV2 spec; no third-party code.
 
 ## Allowed files
-new `video_pipe_ba.h/.cpp`, `video_frame_decision.cpp`,
-`video_frame_internal.h`, `video_eff_perc.h`, `docs/agent-loop-ledger-4.md`.
+new `video_pipeline_ba.h/.cpp`, `video_frame_sequence.cpp`,
+`video_frame_internal.h`, `video_frame_decision.cpp`,
+`video_eff_perc.h`, `video_tx_search.cpp`, `video_tx_search.h`,
+`docs/agent-loop-ledger-4.md`.
 
 ## Gate
-Three knob arms (pipeline and/or tool). Spec:
+Three knob arms. Spec:
 ```json
 {"ref":"testdata/nasa_480x240_30fps_60f.y4m","bin":"build-release/av2enc",
  "frames":60,
@@ -30,11 +37,9 @@ Three knob arms (pipeline and/or tool). Spec:
 Fill a1/a2/a3 with the knob values named above. Run:
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \\
-  --base-env '{"AV2ENC_PIPE_BA":"1"}' --min-arms 3 \\
+  --base-env '{"AV2ENC_PIPE_X":"1"}' --min-arms 3 \\
   --ceiling-segment f0-32 --ceiling-floor 90.197
 ```
-PASS only if `PASS`: the envelope beats the **pipeline's own base arm**
-(tool off) by ≥ +0.15 K, with ≥3 arms, and the f0-32 ceiling delta vs that
-base is ≥ +0.15. 85.099 is the end target, not this gate.
-Continue the program after a failure; append one ledger row per iteration.
+PASS only if `PASS`: envelope beats the pipeline base arm by +0.15, >=3 arms,
+f0-32 ceiling delta >= +0.15. Append one ledger row per iteration.
 

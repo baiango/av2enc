@@ -1,10 +1,11 @@
 You are lane {{lane}} of the five-lane tool loop. Work in {{worktree}}.
 
 Your task is `docs/lane-tasks/lane-{{lane}}.md`: a **multi-iteration program**
-that has two required parts: a **new decision pipeline** of its own and a
-**better coding tool** inside it, keeping the exact-rate probe, CDF carry,
-per-block interp and every decoder-exact fix. Neither a wrapper alone nor a
-knob alone counts. Advance one part per iteration.
+that has three required parts: (1) a **new encoding pipeline from scratch**
+(own frame/leaf loop, partition/RD order) that **must not call `encode_leaf`**,
+(2) it may **improve the existing coding tools** it calls, and (3) every
+change keeps the exact-rate probe, CDF carry and decoder-exact fixes. Prove in
+the ledger that the new path does not enter `encode_leaf`.
 
 Each iteration:
 - advance the program by one stage (plumbing, cost model, decision, wiring),
