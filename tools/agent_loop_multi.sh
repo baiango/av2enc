@@ -32,7 +32,14 @@ mkdir -p "$LOG"
 # Every lane is measured on top of the current best recipe; re-enabling it is
 # the baseline, never a gain.
 lane_base_env() {
-    echo '{"AV2ENC_EFF_PERC":"1"}'
+    case "$1" in
+        1) echo '{"AV2ENC_PIPE_EXACT":"1"}' ;;
+        2) echo '{"AV2ENC_PIPE_HORIZON":"1"}' ;;
+        3) echo '{"AV2ENC_PIPE_TRELLIS":"1"}' ;;
+        4) echo '{"AV2ENC_PIPE_BA":"1"}' ;;
+        5) echo '{"AV2ENC_PIPE_2PASS":"1"}' ;;
+        *) echo '{}' ;;
+    esac
 }
 
 # The ceiling replaces the named segment with source, so it is set by the
@@ -88,7 +95,6 @@ while [ "$i" -le "$LANES" ]; do
             --iteration-timeout "$TIMEOUT" \
             --envelope-gate \
             --envelope-threshold "${AV2ENC_ENVELOPE_DELTA:-0.15}" \
-            --envelope-best-known "${AV2ENC_BEST_KNOWN:-85.099}" \
             --envelope-min-arms 3 \
             --envelope-base-env "$(lane_base_env "$i")" \
             --envelope-ceiling-segment "$(set -- $(lane_ceiling "$i"); echo "$1")" \

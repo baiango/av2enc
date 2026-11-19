@@ -32,9 +32,11 @@ Three knob arms (pipeline and/or tool). Spec:
 Fill a1/a2/a3 with the knob values named above. Run:
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \\
-  --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3 \\
+  --base-env '{"AV2ENC_PIPE_TRELLIS":"1"}' --min-arms 3 \\
   --ceiling-segment f0-32 --ceiling-floor 90.197
 ```
-PASS only if `PASS`: envelope ≥ 85.249, ≥3 arms, f0-32 ceiling delta ≥ +0.15.
+PASS only if `PASS`: the envelope beats the **pipeline's own base arm**
+(tool off) by ≥ +0.15 K, with ≥3 arms, and the f0-32 ceiling delta vs that
+base is ≥ +0.15. 85.099 is the end target, not this gate.
 Continue the program after a failure; append one ledger row per iteration.
 

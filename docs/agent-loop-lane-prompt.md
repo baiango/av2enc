@@ -18,9 +18,10 @@ Hard rules:
 - Do not edit the gate/scoring tools (`tools/envelope.py`, `tools/oracle.py`, `tools/quality.py`, `tools/kpi.py`, `tools/extra_metrics.py`) or any pin.
 - You may add first-party analysis tooling under `tools/lane-{{lane}}/` (stdlib only) and must report what it measured.
 - Default-off env gate only; no new syntax beyond AV2 spec.
-- The gate is mechanical: envelope ≥ 85.249 (best known 85.099 + 0.15),
-  at least three knob arms, and the f0-32 ceiling delta vs the base arm ≥ +0.15.
-  The runner measures it again after this call.
+- The gate is mechanical and **relative to your pipeline**: the envelope must
+  beat your pipeline's own base arm (tool off) by ≥ +0.15 K, with ≥3 knob arms,
+  and the f0-32 ceiling delta vs that base must be ≥ +0.15. 85.099 is the end
+  target, not the per-iteration gate. The runner re-measures after this call.
 - 4:2:0 only. Do not push or merge. Do not write a new codec.
 
 End with one line: ITERATION RESULT: <stage> PASS|FAIL + one sentence.
