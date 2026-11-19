@@ -29,11 +29,10 @@ PROMPT=$ROOT/docs/agent-loop-lane-prompt.md
 DRY=${AV2ENC_DRY_RUN:-${DRY_RUN:-0}}
 mkdir -p "$LOG"
 
+# Every lane is measured on top of the current best recipe; re-enabling it is
+# the baseline, never a gain.
 lane_base_env() {
-    case "$1" in
-        2) echo '{"AV2ENC_SKIP_DRIFT":"1","AV2ENC_SKIP_DRIFT_FADE":"1","AV2ENC_SKIP_DRIFT_ILLUM":"1","AV2ENC_SKIP_DRIFT_REFDEF":"1","AV2ENC_DECISION_EXACT_RATE":"1"}' ;;
-        *) echo '{}' ;;
-    esac
+    echo '{"AV2ENC_EFF_PERC":"1"}'
 }
 
 lane_ceiling() {
@@ -63,6 +62,11 @@ while [ "$i" -le "$LANES" ]; do
     ledger="docs/agent-loop-ledger-$i.md"
     prompt="$LOG/lane-$i-prompt.txt"
     sed -e "s|{{lane}}|$i|g" -e "s|{{target}}|$target|g" "$PROMPT" > "$prompt"
+    # The worktree predates these files; give the agent the current task and
+    # the current gate, not a stale copy.
+    mkdir -p "$worktree/docs/lane-tasks" "$worktree/tools"
+    cp "$ROOT/docs/lane-tasks/lane-$i.md" "$worktree/docs/lane-tasks/lane-$i.md"
+    cp "$ROOT/tools/envelope.py" "$worktree/tools/envelope.py"
 
     if [ "$DRY" = "1" ]; then
         echo "lane $i: $target"

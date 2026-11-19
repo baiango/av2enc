@@ -129,16 +129,23 @@ def main() -> int:
         runner = next((pid for pid, _e, cmd in procs if owns(cmd)), None)
         if runner:
             live += 1
-        prompt = repo / "build" / "agent-loop" / f"lane-{i}-prompt.txt"
         target = ""
+        task = worktree / "docs" / "lane-tasks" / f"lane-{i}.md"
         try:
-            for line in prompt.read_text().splitlines():
-                match = TARGET.search(line)
-                if match:
-                    target = match.group(1)[:90]
+            for line in task.read_text().splitlines():
+                if line.startswith("# "):
+                    target = line[2:].strip()[:90]
                     break
         except OSError:
-            pass
+            prompt = repo / "build" / "agent-loop" / f"lane-{i}-prompt.txt"
+            try:
+                for line in prompt.read_text().splitlines():
+                    match = TARGET.search(line)
+                    if match:
+                        target = match.group(1)[:90]
+                        break
+            except OSError:
+                pass
 
         logs = sorted((worktree / "build" / "agent-loop").glob("[0-9][0-9][0-9].json"),
                       key=lambda p: p.stat().st_mtime, reverse=True) \
