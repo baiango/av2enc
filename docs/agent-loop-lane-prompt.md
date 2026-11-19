@@ -24,6 +24,9 @@ Perform EXACTLY ONE iteration. Do not start a second one.
    the base environment, so do NOT put that stack in an arm: arms are the NEW
    mechanism's knobs only. The envelope is the best K over those arms; a
    re-enabled committed stack is the baseline, not a gain.
+   The gate also computes the source-replacement ceiling of the target segment
+   and requires it to beat the best known ceiling (f0-32 90.197, f44-59 88.995).
+   A higher envelope under an unchanged ceiling is a realization gain and FAILs.
 4. Do NOT decide keep/revert from your own numbers. Leave source changes
    uncommitted. After this call the script runs tools/envelope.py, records
    base/best/delta, keeps src/ on PASS and reverts src/ on FAIL. Use

@@ -153,6 +153,9 @@ def run_envelope(worktree: Path, args, iteration: int, log_dir: Path) -> str:
            "--spec", str(spec), "--worktree", str(worktree),
            "--threshold", str(args.envelope_threshold),
            "--base-env", args.envelope_base_env, "--json", str(out)]
+    if args.envelope_ceiling_floor is not None:
+        cmd += ["--ceiling-floor", str(args.envelope_ceiling_floor),
+                "--ceiling-segment", args.envelope_ceiling_segment]
     proc = run(cmd, worktree)
     text = (proc.stdout or "") + (proc.stderr or "")
     verdict = "ERROR" if proc.returncode == 0 else "FAIL"
@@ -223,6 +226,10 @@ def main() -> int:
                     help="required envelope delta (default 0.15 K)")
     ap.add_argument("--envelope-base-env", default="{}",
                     help="JSON env shared by every arm (the established recipe)")
+    ap.add_argument("--envelope-ceiling-floor", type=float, default=None,
+                    help="best known segment ceiling; PASS must beat it")
+    ap.add_argument("--envelope-ceiling-segment", default="f0-32",
+                    help="segment whose ceiling is gated")
     ap.add_argument("--envelope-log", default="build/agent-loop/envelope.jsonl",
                     help="append-only gate ledger, relative to the worktree")
     ap.add_argument("--envelope-revert", action="store_true",

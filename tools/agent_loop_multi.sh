@@ -36,6 +36,13 @@ lane_base_env() {
     esac
 }
 
+lane_ceiling() {
+    case "$1" in
+        2|4) echo "f44-59 88.995" ;;
+        *) echo "f0-32 90.197" ;;
+    esac
+}
+
 lane_target() {
     case "$1" in
         1) echo "P-head inter residual/prediction coding (f0-32), excluding the closed skip variants" ;;
@@ -75,6 +82,8 @@ while [ "$i" -le "$LANES" ]; do
             --envelope-gate \
             --envelope-threshold "${AV2ENC_ENVELOPE_DELTA:-0.15}" \
             --envelope-base-env "$(lane_base_env "$i")" \
+            --envelope-ceiling-segment "$(set -- $(lane_ceiling "$i"); echo "$1")" \
+            --envelope-ceiling-floor "$(set -- $(lane_ceiling "$i"); echo "$2")" \
             --envelope-revert \
             --stop-file "$STOP" \
             --sleep 2 > "$LOG/lane-$i.log" 2>&1 &

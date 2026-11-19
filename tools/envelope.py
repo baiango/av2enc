@@ -152,6 +152,30 @@ def bracket_arm(worktree: Path, spec: dict, arm: dict, outdir: Path) -> dict:
     }
 
 
+def measure_ceiling(worktree: Path, spec: dict, arm: dict, outdir: Path,
+                    segment: str) -> float | None:
+    """Source-replacement K for one segment of the arm's primary stream."""
+    result = arm.get("_result")
+    above, below = result["above"], result["below"]
+    if above is None or below is None:
+        return None
+    point = below
+    cmd = [sys.executable, str(ORACLE),
+           "--ref", str((worktree / spec["ref"]).resolve()),
+           "--target-kbps", str(result["target_kbps"]),
+           "--json", str(outdir / f"{arm['name']}.segments.json"),
+           "--ivf", f"{arm['name']}@{point}="
+           + str(outdir / f"{arm['name']}-qp{point}.ivf")]
+    proc = run(cmd, worktree)
+    if proc.returncode != 0:
+        return None
+    report = json.loads((outdir / f"{arm['name']}.segments.json").read_text())
+    for row in report["candidates"][0].get("segments", []):
+        if row.get("replacement") == "source" and row.get("segment") == segment:
+            return float(row["kpi"])
+    return None
+
+
 def score_arm(worktree: Path, spec: dict, arm: dict, outdir: Path) -> dict:
     result = bracket_arm(worktree, spec, arm, outdir)
     if not result["bracket"]:
@@ -186,6 +210,11 @@ def main() -> int:
     ap.add_argument("--spec", type=Path, required=True)
     ap.add_argument("--worktree", type=Path, default=Path.cwd())
     ap.add_argument("--threshold", type=float, default=THRESHOLD)
+    ap.add_argument("--ceiling-floor", type=float, default=None,
+                    help="best known source-replacement ceiling for the target "
+                         "segment; PASS also requires beating it")
+    ap.add_argument("--ceiling-segment", default="f0-32",
+                    help="segment whose source-replacement ceiling is gated")
     ap.add_argument("--base-env", default="{}",
                     help="JSON env shared by every arm; the established recipe "
                          "is the baseline instead of being an arm that wins")
@@ -239,7 +268,20 @@ def main() -> int:
     measured = [row for row in scored if row["k"] is not None]
     best = max(measured, key=lambda row: row["k"])
     delta = best["k"] - base["k"]
-    verdict = "PASS" if delta >= args.threshold else "FAIL"
+    envelope_ceiling = None
+    if args.ceiling_floor is not None:
+        envelope_ceiling = measure_ceiling(
+            worktree, spec, {"_result": best, "name": best["arm"]}, outdir,
+            args.ceiling_segment)
+    gate_ok = delta >= args.threshold
+    ceiling_delta = None
+    if args.ceiling_floor is not None:
+        if envelope_ceiling is None:
+            gate_ok = False
+        else:
+            ceiling_delta = envelope_ceiling - args.ceiling_floor
+            gate_ok = gate_ok and ceiling_delta >= args.threshold
+    verdict = "PASS" if gate_ok else "FAIL"
 
     report = {
         "schema": "av2enc-envelope/1",
@@ -251,6 +293,12 @@ def main() -> int:
         "envelope_k": round(best["k"], 4),
         "delta": round(delta, 4),
         "best_arm": best["arm"],
+        "ceiling_segment": args.ceiling_segment,
+        "ceiling_floor": args.ceiling_floor,
+        "envelope_ceiling": (round(envelope_ceiling, 4)
+                             if envelope_ceiling is not None else None),
+        "ceiling_delta": (round(ceiling_delta, 4)
+                          if ceiling_delta is not None else None),
         "verdict": verdict,
         "arms": scored,
     }
@@ -259,8 +307,12 @@ def main() -> int:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(text + "\n")
     print(text)
+    ceiling = ("" if envelope_ceiling is None else
+               f"  ceiling[{args.ceiling_segment}] {envelope_ceiling:.3f}"
+               f" vs {args.ceiling_floor:.3f}")
     print(f"envelope: base {base['k']:.3f}  best {best['k']:.3f} "
-          f"({best['arm']})  delta {delta:+.3f}  {verdict}", flush=True)
+          f"({best['arm']})  delta {delta:+.3f}{ceiling}  {verdict}",
+          flush=True)
     return 0 if verdict == "PASS" else 1
 
 
