@@ -230,6 +230,11 @@ InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
   intra_joint_.assign(static_cast<std::size_t>(mi_rows_) *
                           static_cast<std::size_t>(mi_cols_),
                       0);
+  // §7.13.2.15/.16 UV smooth flags on the chroma 4x4 grid, used only by the
+  // AV2ENC_RD_UVFULL chroma mode search.
+  uv_smooth_.assign(static_cast<std::size_t>(mi_rows_ / 2) *
+                        static_cast<std::size_t>(mi_cols_ / 2),
+                    0);
   // §6.19.2.3 BlockDecoded maps are superblock-local and now live in the
   // per-superblock sink state (SbSink::State::decoded), so there is no
   // frame-level map to size here.

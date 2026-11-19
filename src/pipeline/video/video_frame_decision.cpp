@@ -6,6 +6,7 @@
 #include "pipeline/video/video_perceptual.h"
 #include "pipeline/video/video_pipe_perc.h"
 #include "pipeline/video/video_skip_drift.h"
+#include "pipeline/video/video_uv_search.h"
 
 namespace av2enc::video {
 
@@ -83,6 +84,85 @@ double pipe_plan_coefficient_bits(
     if (is_inter && plane == 0 && part.eob > 0) bits += 4.0;
   }
   return bits;
+}
+
+}  // namespace
+
+namespace {
+
+// AV2ENC_RD_UVFULL: port the still product's full chroma intra mode search
+// (`--still-uv-full`, `Encoder::choose_uv_mode()`) to the video key path.
+// Env only, default off: unset (or 0/false/off) leaves every decision and every
+// pinned stream byte-identical.
+bool rd_uvfull_enabled() {
+  static const bool value = [] {
+    const char* env = std::getenv("AV2ENC_RD_UVFULL");
+    if (env == nullptr || *env == '\0') return false;
+    if (std::strcmp(env, "0") == 0) return false;
+    const auto equal = [env](const char* word) {
+      for (std::size_t i = 0; word[i] != '\0'; ++i) {
+        if (std::tolower(static_cast<unsigned char>(env[i])) != word[i]) {
+          return false;
+        }
+      }
+      return env[std::strlen(word)] == '\0';
+    };
+    return !(equal("false") || equal("off") || equal("no"));
+  }();
+  return value;
+}
+
+// AV2ENC_RD_UVFULL_TOPN: chroma candidates re-scored on the real transform
+// (default 3).  0 keeps the prediction-only ranking; clamped to 0..8.
+int rd_uvfull_top_n() {
+  static const int value = [] {
+    const char* env = std::getenv("AV2ENC_RD_UVFULL_TOPN");
+    if (env == nullptr || *env == '\0') return 3;
+    char* end = nullptr;
+    const long parsed = std::strtol(env, &end, 10);
+    if (end == env || parsed < 0 || parsed > 8) return 3;
+    return static_cast<int>(parsed);
+  }();
+  return value;
+}
+
+// AV2ENC_RD_UVFULL_STATS: sum the winning key-picture chroma coefficient
+// information bits (static §8.3 model) and the UVMode histogram.  Diagnostic
+// only; it never feeds a decision and is printed at exit.
+struct UvFullStats {
+  double u_bits = 0.0;
+  double v_bits = 0.0;
+  int leaves = 0;
+  int modes[13] = {};
+  int cfl = 0;
+};
+
+UvFullStats& uvfull_stats() {
+  static UvFullStats stats;
+  return stats;
+}
+
+void uvfull_print() {
+  const UvFullStats& stats = uvfull_stats();
+  std::fprintf(stderr,
+               "uv-full key leaves=%d cfl=%d u_coef_bits=%.1f "
+               "v_coef_bits=%.1f modes=",
+               stats.leaves, stats.cfl, stats.u_bits, stats.v_bits);
+  for (int i = 0; i < 13; ++i) {
+    std::fprintf(stderr, "%s%d", i == 0 ? "" : ",", stats.modes[i]);
+  }
+  std::fprintf(stderr, "\n");
+}
+
+bool uvfull_stats_enabled() {
+  static const bool value = [] {
+    const char* env = std::getenv("AV2ENC_RD_UVFULL_STATS");
+    if (env == nullptr || *env == '\0') return false;
+    if (std::strcmp(env, "0") == 0) return false;
+    std::atexit(&uvfull_print);
+    return true;
+  }();
+  return value;
 }
 
 }  // namespace
@@ -974,6 +1054,7 @@ void InterFrameEncoder::plan_pass() {
   // from the writer's.
   mv_grid_.assign(mv_grid_.size(), inter::mc::MiInfo{});
   intra_joint_.assign(intra_joint_.size(), 0);
+  uv_smooth_.assign(uv_smooth_.size(), 0);
   // AV2ENC_PIPE_BA: the Butteraugli-shaped frame mask (local-contrast masking
   // blended with the tool weight).  Built once per picture, key included, so
   // every surface that prices distortion reads one map.  With the tool weight
@@ -1081,6 +1162,7 @@ void InterFrameEncoder::plan_sdp_pass() {
   sdp_chroma_sizes_.reset(geometry_);
   mv_grid_.assign(mv_grid_.size(), inter::mc::MiInfo{});
   intra_joint_.assign(intra_joint_.size(), 0);
+  uv_smooth_.assign(uv_smooth_.size(), 0);
   for (int plane = 0; plane < 3; ++plane) {
     std::fill(recon_[plane].samples.begin(), recon_[plane].samples.end(),
               static_cast<std::uint8_t>(0));
@@ -2240,6 +2322,9 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
   bool intra_is_cfl = false;
   int intra_cfl_index = 1;
   int intra_cfl_mh_dir = 0;
+  // AV2ENC_RD_UVFULL: the coded UVMode (DC unless the chroma search wins with a
+  // directional/smooth/Paeth mode).  CfL keeps DC_PRED as its base mode.
+  int intra_uv_mode = 0;
   // The reconstruction planes are tile-local, so plain bounds give the
   // decoder's §5.20.9.1 availability at every tile edge.  The bottom bound
   // is the coded MI extent, not the SB-aligned --video-edge-inter buffer.
@@ -2480,9 +2565,13 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       error = "intra prediction failed";
       return false;
     }
-    if (options_.enable_cfl) {
-      // Opt-in CfL chroma decision (§7.13.5).  The candidate set is the M1
-      // still product's default {DC, CfL} with derived alpha.
+    // IBP changes the DC candidate (§7.13.2.12 post-filter) and the CLI already
+    // rejects --video-ibp with --video-cfl, so the search does not run there.
+    const bool uv_full = rd_uvfull_enabled() && !options_.enable_ibp;
+    if (options_.enable_cfl || uv_full) {
+      // Opt-in CfL chroma decision (§7.13.5).  Without AV2ENC_RD_UVFULL the
+      // candidate set is the M1 still product's default {DC, CfL} with derived
+      // alpha; with it, CfL is one candidate of the full UV search below.
       const std::int64_t dc_sse_u =
           sse_vis(1, acx0, acy0, cw, ch, intra_u_pred);
       const int frame_chroma_width = static_cast<int>((source_.width + 1U) / 2U);
@@ -2520,13 +2609,19 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       chroma_options.ds_filter = 0;
       chroma_options.enable_mhccp = options_.enable_mhccp;
       chroma_search::Choice choice;
+      // AV2ENC_RD_UVFULL needs the CfL prediction even when the helper's own
+      // U-only SSE test would prefer plain DC: the full search ranks every
+      // candidate on one perceptual-RD scale, so the CfL hypothesis is forced
+      // into the returned `choice` by an unreachable DC score.
+      const std::int64_t choose_dc_sse =
+          uv_full ? std::numeric_limits<std::int64_t>::max() / 4 : dc_sse_u;
       if (!chroma_search::choose(
               u_plane, v_plane, recon_[0].samples.data(), recon_[0].stride,
               mi_cols_ * 4 - 1, mi_rows_ * 4 - 1, (cy0 * 2 / 64) * 64, cx0,
               cy0, cw, ch, mi_cols_ * 2, mi_rows_ * 2,
               chroma_avail.num4_above_right, chroma_avail.num4_below_left,
-              intra_u_pred, intra_v_pred, dc_sse_u, chroma_options, choice,
-              error)) {
+              intra_u_pred, intra_v_pred, choose_dc_sse, chroma_options,
+              choice, error)) {
         return false;
       }
       intra_is_cfl = choice.is_cfl;
@@ -2534,6 +2629,93 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       intra_cfl_mh_dir = choice.cfl_mh_dir;
       intra_u_pred = choice.u;
       intra_v_pred = choice.v;
+      if (uv_full) {
+        // AV2ENC_RD_UVFULL: the 13 §5.20.5.6 base modes plus CfL, ranked by the
+        // eff-perc perceptual D and the §8.2 symbol information bits
+        // (src/pipeline/video/video_uv_search.h).
+        uv_search::Params up;
+        up.x = cx0;
+        up.y = cy0;
+        up.w = cw;
+        up.h = ch;
+        // §5.20.5.6 CTX_UV: the derived AngleDeltaUV and the uv_mode context
+        // read the *coded* YMode, which is DC on a CHROMA_PART leaf.
+        up.y_mode = chroma_part ? 0 : static_cast<int>(intra_y_mode);
+        up.y_angle_delta = chroma_part ? 0
+                                       : static_cast<int>(intra_y_angle_delta);
+        up.avail = chroma_avail;
+        chroma_neighbor_smooth(cy0 / 4, cx0 / 4, up.above_smooth,
+                               up.left_smooth);
+        up.enable_edge_filter = true;  // §5.4.8 always signals 1 here
+        up.recon[0] = recon_[1].samples.data();
+        up.recon_stride[0] = recon_[1].stride;
+        up.recon[1] = recon_[2].samples.data();
+        up.recon_stride[1] = recon_[2].stride;
+        up.src[0] = uv_search::PlaneSrc{
+            source_.u.data() +
+                static_cast<std::size_t>(tile_cy) *
+                    static_cast<std::size_t>(frame_chroma_width) +
+                static_cast<std::size_t>(tile_cx),
+            frame_chroma_width, frame_chroma_width - 1 - tile_cx,
+            frame_chroma_height - 1 - tile_cy};
+        up.src[1] = uv_search::PlaneSrc{
+            source_.v.data() +
+                static_cast<std::size_t>(tile_cy) *
+                    static_cast<std::size_t>(frame_chroma_width) +
+                static_cast<std::size_t>(tile_cx),
+            frame_chroma_width, frame_chroma_width - 1 - tile_cx,
+            frame_chroma_height - 1 - tile_cy};
+        up.csf_gain = eff_perc::csf_gain();
+        up.csf2_gain = eff_perc::csf2_gain();
+        up.chroma_weight = eff_perc::chroma_weight();
+        up.mask_row = chroma_mask_row;
+        // One lambda for the chroma mode decision: the leaf RD weight the
+        // eff-perc pipeline uses for its D + lambda * R objective.
+        up.lambda = leaf_rd_lambda(st.current_qindex, options_) *
+                    (eff_perc::enabled() ? eff_perc::lambda_scale() : 1.0);
+        up.top_n = rd_uvfull_top_n();
+        if (choice.is_cfl) {
+          up.have_cfl = true;
+          up.cfl_u = choice.u;
+          up.cfl_v = choice.v;
+          up.cfl_index = choice.cfl_index;
+          up.cfl_mh_dir = choice.cfl_mh_dir;
+        }
+        const int uv_qctx = ::av2enc::still::qctx::slice_for_base_q_idx(
+            static_cast<int>(options_.base_q_idx));
+        const auto uv_tx = [&](int plane,
+                               const std::vector<std::uint8_t>& pred,
+                               TxPlan& plan) {
+          return compute_tx(source_, plane + 1, acx0, acy0, cw, ch, pred,
+                            st.plane_quant[plane + 1], plan, error,
+                            qm_enabled_ ? &qm_state_ : nullptr,
+                            /*allow_tcq=*/false, /*qctx_slice=*/0,
+                            /*is_inter=*/false, chroma_mask_row);
+        };
+        const auto uv_bits = [&](int plane, const TxPlan& plan, double& bits) {
+          bits = pipe_plan_coefficient_bits(plan, plane + 1,
+                                            /*is_inter=*/false, uv_qctx);
+          return true;
+        };
+        uv_search::Result uv_result;
+        if (!uv_search::search(up, uv_tx, uv_bits, uv_result, error)) {
+          return false;
+        }
+        intra_uv_mode = uv_result.mode;
+        intra_is_cfl = uv_result.is_cfl;
+        intra_cfl_index = uv_result.cfl_index;
+        intra_cfl_mh_dir = uv_result.cfl_mh_dir;
+        intra_u_pred = uv_result.u;
+        intra_v_pred = uv_result.v;
+        if (trace_) {
+          std::cerr << "  uv-full mode=" << intra_uv_mode
+                    << " cfl=" << (intra_is_cfl ? 1 : 0)
+                    << " cand=" << uv_result.candidates
+                    << " rescored=" << uv_result.tx_rescored
+                    << " D=" << uv_result.distortion
+                    << " R=" << uv_result.bits << "\n";
+        }
+      }
     }
     if (options_.enable_cctx) {
       // §5.4.8 enable_cctx / §7.14.6: joint U/V search.  is_cctx_allowed()
@@ -2556,6 +2738,26 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                            /*allow_tcq=*/false, /*qctx_slice=*/0,
                            /*is_inter=*/false, chroma_mask_row)) {
       return false;
+    }
+    if (keyframe_ && uvfull_stats_enabled()) {
+      // AV2ENC_RD_UVFULL_STATS: key-picture chroma split and mode histogram.
+      UvFullStats& stats = uvfull_stats();
+      ++stats.leaves;
+      if (intra_is_cfl) {
+        ++stats.cfl;
+      } else if (intra_uv_mode >= 0 && intra_uv_mode < 13) {
+        ++stats.modes[intra_uv_mode];
+      }
+      if (!options_.enable_cctx) {
+        const int stats_qctx = ::av2enc::still::qctx::slice_for_base_q_idx(
+            static_cast<int>(options_.base_q_idx));
+        stats.u_bits +=
+            pipe_plan_coefficient_bits(intra_u, 1, /*is_inter=*/false,
+                                       stats_qctx);
+        stats.v_bits +=
+            pipe_plan_coefficient_bits(intra_v, 2, /*is_inter=*/false,
+                                       stats_qctx);
+      }
     }
     }  // owns_chroma
     intra_sse = chroma_part
@@ -3794,7 +3996,9 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     entry.use_dip = intra_use_dip ? 1 : 0;
     entry.dip_transpose = intra_dip_transpose ? 1 : 0;
     entry.dip_mode = static_cast<std::uint8_t>(intra_dip_mode);
-    entry.uv_mode = 0;  // DC_PRED (also the CfL base mode)
+    // DC_PRED unless the AV2ENC_RD_UVFULL chroma search picked a directional /
+    // smooth / Paeth mode; CfL keeps DC_PRED as its base mode.
+    entry.uv_mode = static_cast<std::uint8_t>(intra_uv_mode);
     if (intra_is_cfl) {
       entry.flags |= syntax::kFlagIsCfl;
       entry.cfl_index = static_cast<std::uint8_t>(intra_cfl_index);
@@ -3829,6 +4033,13 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       set_intra_joint(r, c, w4, h4,
                       syntax::intra_joint_mode(intra_y_mode,
                                                intra_y_angle_delta));
+    }
+    if (owns_chroma) {
+      // §7.13.2.15/.16: record this block's UVMode for the following leaves'
+      // chroma filterTypeAbove/Left.  Inert (all zero) unless AV2ENC_RD_UVFULL
+      // codes a smooth chroma mode.
+      set_uv_smooth(cy0 / 4, cx0 / 4, cw / 4, ch / 4, intra_uv_mode,
+                    intra_is_cfl);
     }
     ++st.intra_blocks;
     if (trace_) {

@@ -3072,6 +3072,16 @@ class InterFrameEncoder {
 
     void set_intra_joint(int r, int c, int w4, int h4, int joint);
 
+  // §7.13.2.15/.16 chroma neighbour smooth flags at the chroma coding-block
+  // origin (4x4 chroma units).  Only the AV2ENC_RD_UVFULL chroma mode search
+  // needs them: with directional chroma prediction the edge filter reads
+  // filterTypeAbove/Left from the neighbouring UVMode, exactly like the still
+  // encoder's uv_smooth_ map.  Every non-intra leaf (and every CfL leaf) writes
+  // 0, which is the §5.20.7.32 default.
+    void chroma_neighbor_smooth(int r, int c, bool& above_smooth,
+                              bool& left_smooth) const;
+    void set_uv_smooth(int r, int c, int w4, int h4, int uv_mode, bool is_cfl);
+
   // ---------------------------------------------------------------------
   // §5.20.5.3/.4 intra block copy + §7.13.3.26 morphological prediction
   // ---------------------------------------------------------------------
@@ -3427,6 +3437,10 @@ class InterFrameEncoder {
   // neutral when the gate is off.
   pipe_ba::FrameMask pipe_ba_mask_;
   std::vector<std::uint8_t> intra_joint_;
+  // §7.13.2.15/.16 UV smooth flags per chroma 4x4 cell (UVMode is
+  // SMOOTH/SMOOTH_V/SMOOTH_H and not CfL).  Inert unless the
+  // AV2ENC_RD_UVFULL chroma search codes a non-DC chroma mode.
+  std::vector<std::uint8_t> uv_smooth_;
   // §5.20.5.3/.4 IBC + §7.13.3.26 morph state (intra keyframe only).
   bool ibc_enabled_ = false;
   bool plan_morph_ = false;

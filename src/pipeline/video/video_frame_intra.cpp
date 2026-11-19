@@ -35,6 +35,50 @@ void InterFrameEncoder::set_intra_joint(int r, int c, int w4, int h4, int joint)
   }
 }
 
+void InterFrameEncoder::chroma_neighbor_smooth(int r, int c,
+                                               bool& above_smooth,
+                                               bool& left_smooth) const {
+  above_smooth = false;
+  left_smooth = false;
+  const int cols = std::max(1, mi_cols_ / 2);
+  const int rows = std::max(1, mi_rows_ / 2);
+  if (uv_smooth_.size() <
+      static_cast<std::size_t>(cols) * static_cast<std::size_t>(rows)) {
+    return;
+  }
+  if (r > 0 && c < cols) {
+    above_smooth = uv_smooth_[static_cast<std::size_t>(r - 1) *
+                                  static_cast<std::size_t>(cols) +
+                              static_cast<std::size_t>(c)] != 0;
+  }
+  if (c > 0 && r < rows) {
+    left_smooth = uv_smooth_[static_cast<std::size_t>(r) *
+                                 static_cast<std::size_t>(cols) +
+                             static_cast<std::size_t>(c - 1)] != 0;
+  }
+}
+
+void InterFrameEncoder::set_uv_smooth(int r, int c, int w4, int h4, int uv_mode,
+                                      bool is_cfl) {
+  // §7.13.2.15/.16: only SMOOTH / SMOOTH_V / SMOOTH_H neighbours set the flag,
+  // and a CfL block is UVMode = DC_PRED.
+  const bool smooth =
+      !is_cfl && (uv_mode == 9 || uv_mode == 10 || uv_mode == 11);
+  const int cols = std::max(1, mi_cols_ / 2);
+  const int rows = std::max(1, mi_rows_ / 2);
+  for (int yy = 0; yy < h4; ++yy) {
+    const int rr = r + yy;
+    if (rr < 0 || rr >= rows) continue;
+    for (int xx = 0; xx < w4; ++xx) {
+      const int cc = c + xx;
+      if (cc < 0 || cc >= cols) continue;
+      uv_smooth_[static_cast<std::size_t>(rr) * static_cast<std::size_t>(cols) +
+                 static_cast<std::size_t>(cc)] =
+          static_cast<std::uint8_t>(smooth ? 1 : 0);
+    }
+  }
+}
+
 ibc::FrameView InterFrameEncoder::ibc_frame_view() const {
   ibc::FrameView view;
   view.y = ibc::PlaneView{recon_[0].samples.data(), recon_[0].stride,
