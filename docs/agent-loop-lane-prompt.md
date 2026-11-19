@@ -1,10 +1,10 @@
 You are lane {{lane}} of the five-lane tool loop. Work in {{worktree}}.
 
 Your task is `docs/lane-tasks/lane-{{lane}}.md`: a **multi-iteration program**
-that implements one better **coding tool** on the eff-perc harness, keeping
-the exact-rate probe, CDF carry, per-block interp and every decoder-exact fix.
-A new pipeline wrapper alone cannot beat the gate; the tool must. This is not a
-one-patch hypothesis and not a knob sweep on eff-perc.
+that has two required parts: a **new decision pipeline** of its own and a
+**better coding tool** inside it, keeping the exact-rate probe, CDF carry,
+per-block interp and every decoder-exact fix. Neither a wrapper alone nor a
+knob alone counts. Advance one part per iteration.
 
 Each iteration:
 - advance the program by one stage (plumbing, cost model, decision, wiring),

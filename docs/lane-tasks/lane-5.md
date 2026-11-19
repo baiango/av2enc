@@ -1,24 +1,26 @@
-# Lane 5 — tool: true lookahead skip cost
+# Lane 5 — PIPE-2PASS + adaptive MVD tool
 
-The tail cost is drift: skips install error that later frames repay. The kept
-`AV2ENC_SKIP_DRIFT` charge is a causal decay. Implement the tool with actual
-future source frames: project the leaf MV onto the next K source frames, charge
-the measured error, default off, `AV2ENC_SKIP_LOOKAHEAD`, swept K=2/4/8. The
-per-frame encoder may need the future frames plumbed from the sequence encoder.
+Two-part program, both required:
+1. **Pipeline**: a measured two-pass per-frame path under `AV2ENC_PIPE_2PASS`
+   (pass 1 measures exact rates/errors, pass 2 re-decides and re-encodes).
+2. **Tool**: adaptive MVD on the eff-perc path (`AV2ENC_ADAPTIVE_MVD`), never
+   composed yet; sweep the precision/strength.
+
+Each iteration advances one part. Keep the fixes.
 
 ## Read only
-this file; last 15 lines of `docs/agent-loop-ledger-5.md`; `docs/agent-loop-ledger.md`
-future-error rows.
+this file; last 15 lines of `docs/agent-loop-ledger-5.md`; `docs/combo-pred.md`
+rows with `amvd`.
 
-Do not run `git log`/`branch`/`remote`. Analysis tooling under `tools/lane-5/`;
-never edit the gate/scoring tools or pins.
+Do not run `git log`/`branch`/`remote`. You may add analysis tooling under `tools/lane-N/`; never edit the gate/scoring tools or pins.
 
 ## Allowed files
-`video_frame_decision.cpp`, `video_frame_internal.h`, `video_frame.cpp`,
-`video_frame_sequence.cpp`, `video_skip_drift.h`, `docs/agent-loop-ledger-5.md`.
+new `video_pipe_2pass.h/.cpp`, `video_frame_decision.cpp`,
+`video_frame_internal.h`, `video_frame_me.cpp`, `video_syntax_inter.cpp`,
+`docs/agent-loop-ledger-5.md`.
 
 ## Gate
-Three knob arms of the tool on the eff-perc base env. Spec:
+Three knob arms (pipeline and/or tool). Spec:
 ```json
 {"ref":"testdata/nasa_480x240_30fps_60f.y4m","bin":"build-release/av2enc",
  "frames":60,
@@ -27,13 +29,12 @@ Three knob arms of the tool on the eff-perc base env. Spec:
  "qp":119,"target_kbps":100.0,
  "arms":[{"name":"base","env":{}},{"name":"a1","env":{}},{"name":"a2","env":{}},{"name":"a3","env":{}}]}
 ```
-Fill a1/a2/a3 with the tool knob values named above. Run:
+Fill a1/a2/a3 with the knob values named above. Run:
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \\
   --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3 \\
   --ceiling-segment f0-32 --ceiling-floor 90.197
 ```
 PASS only if `PASS`: envelope ≥ 85.249, ≥3 arms, f0-32 ceiling delta ≥ +0.15.
-On FAIL keep the tool code and continue next iteration; the runner reverts only
-on regression. Append one ledger row per iteration.
+Continue the program after a failure; append one ledger row per iteration.
 

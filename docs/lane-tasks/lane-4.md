@@ -1,23 +1,24 @@
-# Lane 4 — tool: deblock delta search (fix the inert wiring)
+# Lane 4 — PIPE-BA + Butteraugli-shaped D tool
 
-Lane 4's earlier deblock attempt was inert (byte-identical arms). Fix the tool:
-signal the §5.18.7.9 df_delta_q row and search the luma delta, default off,
-gated `AV2ENC_DEBLOCK_SEARCH`, swept over the delta set. This is a coding tool;
-if it cannot make the stream differ, record that and stop.
+Two-part program, both required:
+1. **Pipeline**: a decision path under `AV2ENC_PIPE_BA` whose distortion is a
+   Butteraugli-shaped error (local masking, low-frequency emphasis, chroma).
+2. **Tool**: that error model itself, replacing the current CSF in the leaf and
+   TX decision; sweep the weight 0.5/1.0/2.0.
+
+Each iteration advances one part. Keep the fixes.
 
 ## Read only
-this file; last 15 lines of `docs/agent-loop-ledger-4.md`; `docs/negative-results.md`
-deblock row.
+this file; last 15 lines of `docs/agent-loop-ledger-4.md`; `docs/eff-perc.md`.
 
-Do not run `git log`/`branch`/`remote`. Analysis tooling under `tools/lane-4/`;
-never edit the gate/scoring tools or pins.
+Do not run `git log`/`branch`/`remote`. You may add analysis tooling under `tools/lane-N/`; never edit the gate/scoring tools or pins.
 
 ## Allowed files
-`video_frame_filters.cpp`, `video_headers.cpp`, `post/loop_filters.*`,
-`post/tiled_frame.cpp`, `docs/agent-loop-ledger-4.md`.
+new `video_pipe_ba.h/.cpp`, `video_frame_decision.cpp`,
+`video_frame_internal.h`, `video_eff_perc.h`, `docs/agent-loop-ledger-4.md`.
 
 ## Gate
-Three knob arms of the tool on the eff-perc base env. Spec:
+Three knob arms (pipeline and/or tool). Spec:
 ```json
 {"ref":"testdata/nasa_480x240_30fps_60f.y4m","bin":"build-release/av2enc",
  "frames":60,
@@ -26,13 +27,12 @@ Three knob arms of the tool on the eff-perc base env. Spec:
  "qp":119,"target_kbps":100.0,
  "arms":[{"name":"base","env":{}},{"name":"a1","env":{}},{"name":"a2","env":{}},{"name":"a3","env":{}}]}
 ```
-Fill a1/a2/a3 with the tool knob values named above. Run:
+Fill a1/a2/a3 with the knob values named above. Run:
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \\
   --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3 \\
   --ceiling-segment f0-32 --ceiling-floor 90.197
 ```
 PASS only if `PASS`: envelope ≥ 85.249, ≥3 arms, f0-32 ceiling delta ≥ +0.15.
-On FAIL keep the tool code and continue next iteration; the runner reverts only
-on regression. Append one ledger row per iteration.
+Continue the program after a failure; append one ledger row per iteration.
 

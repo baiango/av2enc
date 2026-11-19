@@ -46,11 +46,11 @@ lane_ceiling() {
 
 lane_target() {
     case "$1" in
-        1) echo "tool: BA-targeted per-block interp selection" ;;
-        2) echo "tool: adaptive MVD composed with eff-perc" ;;
-        3) echo "tool: CDEF strength search" ;;
-        4) echo "tool: deblock delta search (fix the inert wiring)" ;;
-        5) echo "tool: true lookahead skip cost" ;;
+        1) echo "PIPE-EXACT + BA-targeted interp tool" ;;
+        2) echo "PIPE-HORIZON + true lookahead skip tool" ;;
+        3) echo "PIPE-TRELLIS + CDEF strength tool" ;;
+        4) echo "PIPE-BA + Butteraugli-shaped D tool" ;;
+        5) echo "PIPE-2PASS + adaptive MVD tool" ;;
         *) echo "new decision pipeline" ;;
     esac
 }
