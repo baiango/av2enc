@@ -2412,7 +2412,8 @@ class InterFrameEncoder {
                     std::span<const std::uint8_t> prev_segment_ids = {},
                     double illum_delta = 0.0,
                     double ref_deficit_db = 0.0,
-                    int census_frame = -1);
+                    int census_frame = -1,
+                    std::span<const VideoInputFrame> horizon_future = {});
     // Diagnostic frame ordinal for the census/decision dumps; never coded.
     void set_census_frame(int frame) { census_frame_ = frame; }
 
@@ -3311,6 +3312,10 @@ class InterFrameEncoder {
                       int wedge_sign = 0, int bsize = 0);
 
   const VideoInputFrame& source_;
+  // AV2ENC_PORT_HORIZON: the source pictures after this one, so the skipped/
+  // residual leaf cost can include the error the choice installs in the next K
+  // real source frames.  Empty by default and unused when the gate is off.
+  std::span<const VideoInputFrame> horizon_future_;
   std::vector<inter::mc::RefFrame> references_;
   std::array<int, 7> frame_distance_{};
   int num_total_refs_ = 1;

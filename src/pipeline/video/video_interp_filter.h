@@ -15,6 +15,7 @@
 // filter is threaded through the device kernels and parity is proven.
 #pragma once
 
+#include <cstdint>
 #include <cstdlib>
 
 #include "codec/inter/mc/mc_types.h"
@@ -81,5 +82,38 @@ inline inter::mc::InterpFilter leaf_interp_filter() {
   return static_cast<inter::mc::InterpFilter>(
       filter >= 0 && filter <= 2 ? filter : 0);
 }
+
+// Integer-MV (zero displacement) prediction copy used by the lane-2
+// frame-horizon pipeline (src/pipeline/video/video_pipeline_horizon.cpp).  The
+// tool is a pure prediction primitive: it copies one reference rectangle into
+// `out` with the reference extent clamp the decoder's MC applies, so the
+// horizon driver can price skip/residual candidates without entering the
+// existing P-frame decision path.  Defined in video_frame_me.cpp.
+void horizon_predict_zero_mv(const std::uint8_t* ref, int ref_stride,
+                             int ref_width, int ref_height, int x0, int y0,
+                             int w, int h, std::uint8_t* out);
+
+// Lane-2 frame-horizon MC primitive: the normative §7.13.3 prediction of one
+// 4:2:0 block at an integer-pel displacement.  `mv_y`/`mv_x` are in 1/8 luma
+// samples (the horizon search only produces multiples of 8).  The luma phase is
+// then 0 and an 8-tap convolution is an exact copy, while the chroma planes run
+// the half-pel phase the decoder derives for an integer luma displacement.  The
+// primitive calls the shared `inter::mc` kernel instead of copying by hand, so
+// the horizon reconstruction stays decoder-exact for a non-zero MV.
+//
+// `ref` planes are the previous reconstruction at its MI-aligned extent
+// (4 * MiCols x 4 * MiRows).  `out[0]` receives w*h luma samples, `out[1]` and
+// `out[2]` receive (w/2)*(h/2) chroma samples each; all are tightly packed (the
+// destination stride is w or w/2).  Returns false when the rectangle or the
+// plane extent is not representable.
+struct HorizonRefPlanes {
+  const std::uint8_t* data[3] = {nullptr, nullptr, nullptr};
+  int stride[3] = {0, 0, 0};
+  int width = 0;   // luma MI-aligned width (4 * MiCols)
+  int height = 0;  // luma MI-aligned height (4 * MiRows)
+};
+
+bool horizon_predict_mv(const HorizonRefPlanes& ref, int x0, int y0, int w,
+                        int h, int mv_y, int mv_x, std::uint8_t* out[3]);
 
 }  // namespace av2enc::video

@@ -2,6 +2,7 @@
 
 #include "codec/transform/tx_partition/tx_scan.h"
 #include "pipeline/video/video_interp_filter.h"
+#include "pipeline/video/video_horizon_port.h"
 #include "pipeline/video/video_perceptual.h"
 #include "pipeline/video/video_pipe_perc.h"
 #include "pipeline/video/video_skip_drift.h"
@@ -2886,6 +2887,25 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       const bool all_zero =
           luma_plan_all_zero(out.res_y) && out.res_u.eob == 0 &&
           out.res_v.eob == 0;
+      // AV2ENC_PORT_HORIZON (default off): price the error the skip and the
+      // residual arm install in the next K real source pictures, not only the
+      // current one.  Same decaying aggregation as the lane-2 driver
+      // (w_k = 0.5^k); the prediction IS the skipped reconstruction, so the
+      // two arms are measured against the same future frames.  Zero when the
+      // gate is off, which leaves every decision below untouched.
+      double horizon_skip = 0.0;
+      double horizon_res = 0.0;
+      if (horizon_port::enabled() && !horizon_future_.empty()) {
+        const int horizon = horizon_port::horizon_k();
+        horizon_skip = horizon_port::future_distortion(
+            horizon_future_, horizon, ax0, ay0, w, h, out.y.data(),
+            out.u.data(), out.v.data());
+        horizon_res = horizon_port::future_distortion(
+            horizon_future_, horizon, ax0, ay0, w, h, out.res_y.recon.data(),
+            out.res_u.recon.data(), out.res_v.recon.data());
+      }
+      const double skip_distortion = pred_total + horizon_skip;
+      const double res_distortion = res_total + horizon_res;
       // Reconstruction step is qlookup/8 (66 at QP 90); sse_scale 0.5 is
       // the M1 calibrated value.  --video-leaf-rd swaps in the same
       // QP-derived lambda the intra/inter decision uses.
@@ -2946,9 +2966,8 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       const bool hist_want =
           options_.force_inter_residual ||
           (!all_zero &&
-           static_cast<double>(res_total) + kLambda * hist_res_bits <
-               static_cast<double>(pred_total) + skip_drift_cost +
-                   kLambda * 2.0);
+           res_distortion + kLambda * hist_res_bits <
+               skip_distortion + skip_drift_cost + kLambda * 2.0);
       // R09 bar: skip_flag = 0 pays the coefficient rate, skip_flag = 1 pays
       // the exact -log2 P(skip=1); the difference replaces the fixed 2.0/3.0
       // pair.  Both candidates pay the same is_inter/mode syntax, so it
@@ -2969,8 +2988,8 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       bool want =
           options_.force_inter_residual ||
           (!all_zero &&
-           res_total + kLambda * res_bits <
-               pred_total + skip_drift_cost + kLambda * skip_syntax);
+           res_distortion + kLambda * res_bits <
+               skip_distortion + skip_drift_cost + kLambda * skip_syntax);
       if (pipe_on) {
         // Joint skip/residual choice with the pipeline objective.  Both forms
         // pay the exact is_inter/skip/mode syntax; only the residual form
@@ -2993,9 +3012,9 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
               coeff_bits(out.res_v, 2, true);
           const double full_skip_bits = skip_terms.total();
           const double skip_cost =
-              pred_total + skip_drift_cost + pipe_lambda * full_skip_bits;
+              skip_distortion + skip_drift_cost + pipe_lambda * full_skip_bits;
           const double exact_res_cost =
-              res_total + pipe_lambda * full_res_bits;
+              res_distortion + pipe_lambda * full_res_bits;
           want = options_.force_inter_residual ||
                  (!all_zero && exact_res_cost < skip_cost);
           if (want != hist_want) {

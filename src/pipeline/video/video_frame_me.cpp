@@ -1263,4 +1263,63 @@ void InterFrameEncoder::update_mv_grid(int r, int c, int w4, int h4, int is_inte
   }
 }
 
+// Lane-2 frame-horizon prediction tool: integer-MV copy with the reference
+// extent clamp.  The decoder's §7.13.3.1 MC at MV = 0 reads the reference at
+// the same position and clips every tap to the reference picture bounds, so a
+// block whose coded extent runs past the MiRows/MiCols edge replicates the
+// last row/column.  This primitive is the whole prediction for a zero-MV leaf
+// (GLOBALMV), including the edge case, and is shared only with the new
+// horizon pipeline.
+void horizon_predict_zero_mv(const std::uint8_t* ref, int ref_stride,
+                             int ref_width, int ref_height, int x0, int y0,
+                             int w, int h, std::uint8_t* out) {
+  if (ref == nullptr || out == nullptr || ref_width <= 0 || ref_height <= 0 ||
+      w <= 0 || h <= 0) {
+    return;
+  }
+  for (int y = 0; y < h; ++y) {
+    const int sy = std::clamp(y0 + y, 0, ref_height - 1);
+    const std::uint8_t* src_row =
+        ref + static_cast<std::size_t>(sy) * static_cast<std::size_t>(ref_stride);
+    std::uint8_t* dst_row = out + static_cast<std::size_t>(y) *
+                                      static_cast<std::size_t>(w);
+    for (int x = 0; x < w; ++x) {
+      const int sx = std::clamp(x0 + x, 0, ref_width - 1);
+      dst_row[x] = src_row[sx];
+    }
+  }
+}
+
+bool horizon_predict_mv(const HorizonRefPlanes& ref, int x0, int y0, int w,
+                        int h, int mv_y, int mv_x, std::uint8_t* out[3]) {
+  if (out == nullptr || out[0] == nullptr || out[1] == nullptr ||
+      out[2] == nullptr) {
+    return false;
+  }
+  if (ref.width <= 0 || ref.height <= 0 || (ref.width & 3) != 0 ||
+      (ref.height & 3) != 0) {
+    return false;
+  }
+  if (w <= 0 || h <= 0 || (w & 1) != 0 || (h & 1) != 0) return false;
+  if (x0 < 0 || y0 < 0 || (x0 & 1) != 0 || (y0 & 1) != 0) return false;
+  if (x0 + w > ref.width || y0 + h > ref.height) return false;
+  inter::mc::RefFrame frame;
+  for (int plane = 0; plane < 3; ++plane) {
+    if (ref.data[plane] == nullptr || ref.stride[plane] <= 0) return false;
+    frame.plane[plane].data = ref.data[plane];
+    frame.plane[plane].stride = ref.stride[plane];
+  }
+  frame.mi_cols = ref.width / inter::mc::kMiSize;
+  frame.mi_rows = ref.height / inter::mc::kMiSize;
+  inter::mc::MutablePlane dst[3];
+  dst[0] = inter::mc::MutablePlane{out[0], w};
+  dst[1] = inter::mc::MutablePlane{out[1], w / 2};
+  dst[2] = inter::mc::MutablePlane{out[2], w / 2};
+  const inter::mc::BlockRect rect{x0, y0, w, h};
+  const inter::mc::McStatus status = inter::mc::predict_block_420(
+      frame, rect, inter::mc::Mv{mv_y, mv_x},
+      inter::mc::InterpFilter::kEighttap, dst);
+  return status == inter::mc::McStatus::kOk;
+}
+
 }  // namespace av2enc::video

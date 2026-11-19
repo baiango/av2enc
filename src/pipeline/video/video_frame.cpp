@@ -85,8 +85,10 @@ InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
                   std::span<const std::uint8_t> prev_segment_ids,
                   double illum_delta,
                   double ref_deficit_db,
-                  int census_frame)
+                  int census_frame,
+                  std::span<const VideoInputFrame> horizon_future)
     : source_(source),
+      horizon_future_(horizon_future),
       references_(std::move(references)),
       frame_distance_(frame_distance),
       num_total_refs_(num_total_refs),
@@ -2949,7 +2951,8 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
           /*primary_ref_is_none=*/i == 1, &temporal_ctx,
           i == 1 ? std::span<const std::uint8_t>()
                  : std::span<const std::uint8_t>(prev_segment_map),
-          illum_delta, ref_deficit_db);
+          illum_delta, ref_deficit_db, /*census_frame=*/-1,
+          /*horizon_future=*/frames.subspan(i + 1));
       encoder->set_census_frame(static_cast<int>(i));
       if (!encoder->decide(tile_error) || !encoder->deblock(tile_error)) {
         return;
