@@ -38,9 +38,11 @@ threshold** (`AV2ENC_TX_DETAIL_MIN`). One mechanism, three arms.
 4. Run from the worktree root:
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
-  --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3
+  --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3 \
+  --ceiling-segment f44-59 --ceiling-floor 88.995
 ```
-5. PASS only if the last line says `PASS`: envelope ≥ 85.249 with ≥3 knob arms.
+5. PASS only if `PASS`: envelope ≥ 85.249, ≥3 knob arms, and the
+   ceiling[f44-59] delta vs the base arm is at least +0.15 K.
 6. On FAIL: `git checkout -- src && git clean -fd src`. On PASS: leave `src/`
    uncommitted. Never commit source.
 7. Append one ledger row: hypothesis, envelope, best arm, PASS/FAIL.

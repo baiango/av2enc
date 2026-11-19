@@ -37,9 +37,11 @@ priced by the existing exact plan rate. Non-trellis, no RDOQ. Sweep the set.
 4. Run:
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
-  --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3
+  --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3 \
+  --ceiling-segment f0-32 --ceiling-floor 90.197
 ```
-5. PASS only if `PASS`: envelope ≥ 85.249 with ≥3 arms.
+5. PASS only if `PASS`: envelope ≥ 85.249, ≥3 arms, and the
+   ceiling[f0-32] delta vs the base arm is at least +0.15 K.
 6. On FAIL: `git checkout -- src && git clean -fd src`. On PASS: leave `src/`.
 7. One ledger row; stop.
 

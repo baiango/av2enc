@@ -280,12 +280,13 @@ Rules the script enforces, not the prompt:
   kept.
 - Every result is appended to `build/agent-loop/envelope.jsonl`
   (`base_k`, `envelope_k`, `delta`, `best_arm`, per-arm brackets).
-- **The gate is the 100 kbps K envelope.** "Possible K" is `sup_θ K(θ)`: the
-  best matched-rate K over the tool's **knob settings**, currently **85.099**.
-  PASS requires `envelope >= 85.099 + 0.15 = 85.249` and at least **3 knob
-  arms** (a sweep, not one setting). A relative gain over a noisy base bracket
-  is not enough; the absolute target must be met. The source-replacement
-  segment rows are diagnostics/pooling bounds and are reported, not gated.
+- **The gate is the maximum possible K at 100 kbps.** Two numbers, both
+  required, both over at least **3 knob arms**: the matched-K envelope must
+  reach **85.249** (85.099 + 0.15), and the source-replacement ceiling of the
+  target segment, measured **per arm on its own bracket point**, must beat the
+  base arm's ceiling by **+0.15 K** (the ceiling is maximized over the arms).
+  The published floors are f0-32 90.197 and f44-59 88.995. The ceiling replaces
+  the named segment, so a tail tool gates f0-32 and a head tool gates f44-59.
 
 Run it directly:
 

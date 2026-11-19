@@ -288,33 +288,39 @@ def main() -> int:
     delta = best["k"] - base["k"]
     envelope_ceiling = None
     base_ceiling = None
+    ceiling_delta = None
+    ceiling_arm = None
     if args.ceiling_floor is not None:
-        point = best["below"] if best["below"] is not None else best["above"]
-        envelope_ceiling = measure_ceiling(
-            worktree, spec, {"name": best["arm"], "env": best["env"]}, outdir,
-            args.ceiling_segment, point)
-        # Compare like for like: the base arm's ceiling is measured on the
-        # same QP point as the candidate.  The published floor was taken on a
-        # different stream (QP119 vs the bracket's lower point), so using it as
-        # an absolute gate adds ~0.17 of measurement bias.
-        base_ceiling = measure_ceiling(
-            worktree, spec, {"name": "base", "env": base["env"]}, outdir,
-            args.ceiling_segment, point)
-    # The target is the 100 kbps K ceiling: the best matched-rate K over the
-    # arms.  The source-replacement segment rows are diagnostics (pooling
-    # bounds), not a gate.
+        # Maximum possible K at the target = the best ceiling over the knob
+        # arms, each on its own bracket point.  This is the ceiling envelope.
+        ceilings = {}
+        for row in scored:
+            if row["k"] is None:
+                continue
+            point = row["below"] if row["below"] is not None else row["above"]
+            value = measure_ceiling(
+                worktree, spec, {"name": row["arm"], "env": row["env"]},
+                outdir, args.ceiling_segment, point)
+            if value is not None:
+                ceilings[row["arm"]] = value
+                row["ceiling"] = round(value, 4)
+        if ceilings:
+            ceiling_arm = max(ceilings, key=ceilings.get)
+            envelope_ceiling = ceilings[ceiling_arm]
+            base_ceiling = ceilings.get("base")
+            if base_ceiling is not None:
+                ceiling_delta = envelope_ceiling - base_ceiling
     gate_ok = delta >= args.threshold
     candidate_arms = [row for row in scored if row["arm"] != "base"]
     if args.min_arms and len(candidate_arms) < args.min_arms:
         gate_ok = False
+    if args.ceiling_floor is not None:
+        gate_ok = (ceiling_delta is not None
+                   and ceiling_delta >= args.threshold and gate_ok)
     target_k = None
     if args.best_known is not None:
         target_k = args.best_known + args.threshold
         gate_ok = gate_ok and best["k"] >= target_k
-    ceiling_delta = None
-    if args.ceiling_floor is not None and envelope_ceiling is not None \
-            and base_ceiling is not None:
-        ceiling_delta = envelope_ceiling - base_ceiling
     verdict = "PASS" if gate_ok else "FAIL"
 
     report = {
@@ -338,6 +344,7 @@ def main() -> int:
                          if base_ceiling is not None else None),
         "envelope_ceiling": (round(envelope_ceiling, 4)
                              if envelope_ceiling is not None else None),
+        "ceiling_arm": ceiling_arm,
         "ceiling_delta": (round(ceiling_delta, 4)
                           if ceiling_delta is not None else None),
         "verdict": verdict,
