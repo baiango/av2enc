@@ -158,6 +158,18 @@ bool InterFrameEncoder::decide_sdp(std::string& error) {
 }
 
 bool InterFrameEncoder::decide(std::string& error) {
+  // AV2ENC_TX_DETAIL_SEARCH_TAIL: one picture ordinal per input frame.  The
+  // key picture is picture 0, every P picture advances it, the TIP second pass
+  // re-decides the same picture, and tiled encodes (tile_w_ < the frame width)
+  // leave the state alone.
+  const bool whole_picture =
+      tile_w_ <= 0 || tile_w_ >= static_cast<int>(source_.width);
+  if (!tip_leaf_armed_ && whole_picture) tx_detail::begin_picture();
+  if (options_.trace && whole_picture && !tip_leaf_armed_) {
+    std::cerr << "  tx-detail picture " << tx_detail::picture_ordinal()
+              << " tail=" << (tx_detail::tail_armed() ? 1 : 0)
+              << " min=" << tx_detail::config().min_share << "\n";
+  }
   if (keyframe_ && options_.enable_sdp) {
     if (!decide_sdp(error)) return false;
     dump_leaf_decisions();
@@ -236,6 +248,14 @@ bool InterFrameEncoder::decide(std::string& error) {
     poptions.max_depth =
         std::min(poptions.max_depth,
                  std::clamp(options_.partition_probe_depth, 1, 3));
+    // AV2ENC_TX_DETAIL_SEARCH_TAIL: the measured probe clamps the P tree to
+    // its first-level bound, which cannot reach a 16x16 coding block.  The
+    // armed tail opens the four rect levels (64 -> 32 -> 16) it needs; the
+    // per-node band gate below decides which nodes actually descend.
+    if (tx_detail::tail_armed()) {
+      poptions.max_depth =
+          std::min(options_.max_partition_depth, 4);
+    }
     probe_costs = build_partition_probe_costs(
         poptions.max_depth,
         std::max(poptions.min_block_size_px, partition::kMinBlockPixels));
@@ -248,6 +268,12 @@ bool InterFrameEncoder::decide(std::string& error) {
   // pointer is only ever set while a refinement solve runs, so the historical
   // probe-only path is bit-for-bit unchanged when the gate is off.
   const std::unordered_map<std::uint64_t, double>* exact_costs = nullptr;
+  // AV2ENC_TX_DETAIL_SEARCH_TAIL: the band-gated descent.  `detail_descent`
+  // is only true on an armed tail picture; `detail_max_depth` is the depth the
+  // probe was just built for, and `detail_min_share` the swept threshold.
+  const bool detail_descent = !keyframe_ && tx_detail::tail_armed();
+  const int detail_max_depth = poptions.max_depth;
+  const double detail_min_share = tx_detail::config().min_share;
   // One leaf model for both solvers.  It is exactly the historical keyframe
   // / P-frame estimate (variance + price * leaf_bits) or, when the measured
   // probe is active, the probe's measured residual RD on the node's own
@@ -256,7 +282,8 @@ bool InterFrameEncoder::decide(std::string& error) {
   // including its leaf coder's transform size and chroma ownership.
   const auto partition_leaf_cost =
       [this, syntax_bit_price, leaf_bits, partition_probe, &probe_costs,
-       &exact_costs](const partition::PartitionNodeInfo& info) {
+       &exact_costs, detail_descent, detail_max_depth,
+       detail_min_share](const partition::PartitionNodeInfo& info) {
         // The leaf coder handles coding blocks up to 64x64.  A larger node
         // must split (the 128/256 root and its rectangular children); the
         // spec never implies NONE at those sizes, so the solver always has a
@@ -264,6 +291,29 @@ bool InterFrameEncoder::decide(std::string& error) {
         const int bw = partition::block_width(info.size);
         const int bh = partition::block_height(info.size);
         if (bw > 64 || bh > 64) return partition::kInfiniteCost;
+        // AV2ENC_TX_DETAIL_SEARCH_TAIL: in the armed tail, a node that is
+        // strictly larger than 16x16 on at least one axis and carries the
+        // 2-4 px source band is not allowed to stay a coding block.  The rect
+        // solver then has to split it, so a band-rich region descends to the
+        // 16x16 block whose legal §5.20.6.3 SPLIT is four 8x8 transforms.  The
+        // gate is skipped when the remaining depth cannot place a 16x16 leaf
+        // or when the spec allows no rect partition, so it can never make a
+        // node unsolvable.
+        if (detail_descent && bw >= 16 && bh >= 16 &&
+            (bw > 16 || bh > 16) && info.depth + 1 <= detail_max_depth &&
+            (info.allowed.is_allowed(partition::PartitionType::kHorz) ||
+             info.allowed.is_allowed(partition::PartitionType::kVert))) {
+          const partition::BlockRect rect = partition::block_rect(
+              geometry_, info.mi_row, info.mi_col, info.size);
+          if (rect.visible_width > 0 && rect.visible_height > 0 &&
+              tx_detail::source_band_share(source_, tile_x_ + rect.x,
+                                           tile_y_ + rect.y,
+                                           rect.visible_width,
+                                           rect.visible_height) >=
+                  detail_min_share) {
+            return partition::kInfiniteCost;
+          }
+        }
         double leaf = static_cast<double>(block_variance_cost_at(info)) +
                       syntax_bit_price * leaf_bits;
         if (partition_probe) {
@@ -873,10 +923,10 @@ bool InterFrameEncoder::wavefront_diagonals(std::size_t count,
 
 bool InterFrameEncoder::wavefront_allowed() const {
   if (keyframe_) return false;
-  // AV2ENC_PIPE_PERC / AV2ENC_EFF_PERC: the exact syntax probe advances one
-  // shared CDF/grid state in coded order; concurrent superblocks would race
-  // it.
-  if (pipe_perc::enabled() || eff_perc::enabled()) return false;
+  // AV2ENC_PIPE_PERC / AV2ENC_EFF_PERC / AV2ENC_PIPE_BA: the exact syntax probe
+  // advances one shared CDF/grid state in coded order; concurrent superblocks
+  // would race it.
+  if (pipe_perc::enabled() || eff_perc::enabled() || pipe_ba::enabled()) return false;
   // R09: the syntax probe advances one shared CDF/grid state in coded order;
   // concurrent superblocks would race it.  Serial decisions keep the probe
   // deterministic and match the writer's serial tile walk.
@@ -923,11 +973,28 @@ void InterFrameEncoder::plan_pass() {
   // from the writer's.
   mv_grid_.assign(mv_grid_.size(), inter::mc::MiInfo{});
   intra_joint_.assign(intra_joint_.size(), 0);
+  // AV2ENC_PIPE_BA: the Butteraugli-shaped frame mask (local-contrast masking
+  // blended with the tool weight).  Built once per picture, key included, so
+  // every surface that prices distortion reads one map.  With the tool weight
+  // at 0 the map is neutral (256 everywhere) and the pipeline still runs its
+  // exact-rate decisions: that is the gate's base arm.
+  if (pipe_ba::enabled()) {
+    pipe_ba::init();
+    pipe_ba::build_frame_mask(source_.y.data(), static_cast<int>(source_.width),
+                              static_cast<int>(source_.width),
+                              static_cast<int>(source_.height), &pipe_ba_mask_);
+    if (options_.trace) {
+      std::cerr << "  pipe-ba mask " << pipe_ba_mask_.width << "x"
+                << pipe_ba_mask_.height << " weight=" << pipe_ba::weight()
+                << " low_band=" << pipe_ba::config().low_band_gain << "\n";
+    }
+  }
   // AV2ENC_PIPE_PERC / AV2ENC_EFF_PERC: source-driven detail weights for this
   // frame and a fresh exact-syntax probe seeded from the same CDF image the
   // writer starts from.  Both are skipped when the gates are off, so the
   // historical pass does no work.
-  if ((pipe_perc::enabled() || eff_perc::enabled()) && !keyframe_) {
+  if ((pipe_perc::enabled() || eff_perc::enabled() || pipe_ba::enabled()) &&
+      !keyframe_) {
     if (eff_perc::enabled()) {
       eff_perc::init();
       eff_perc::build_frame_weights(
@@ -1277,21 +1344,36 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
   //   J  = D + lambda * R
   // `pipe_leaf_weights` is the per-pixel map handed to the TX candidate
   // search, so the TX size/type/partition choice minimizes the same J.
+  // AV2ENC_PIPE_BA: the Butteraugli-shaped model replaces the CSF on the leaf
+  // and TX distortion.  `ba_on` is the tool (weight > 0, mask built); the
+  // pipeline itself (`pipe_on`) stays on at weight 0 so the gate's base arm
+  // keeps the exact-rate decisions with plain SSE.
+  const bool ba_on =
+      pipe_ba::tool_on() && !keyframe_ && pipe_probe_ready_ && pipe_ba_mask_.valid();
+  // PIPE_BA owns the distortion whenever it is on; the eff-perc branch only
+  // runs for the EFF_PERC gate itself.
   const bool eff_on =
-      eff_perc::enabled() && !keyframe_ && pipe_probe_ready_;
+      !pipe_ba::enabled() && eff_perc::enabled() && !keyframe_ && pipe_probe_ready_;
   const bool pipe_on =
-      (pipe_perc::enabled() || eff_on) && !keyframe_ && pipe_probe_ready_;
+      (pipe_perc::enabled() || eff_perc::enabled() || pipe_ba::enabled()) &&
+      !keyframe_ && pipe_probe_ready_;
   const double pipe_lambda =
       pipe_on
           ? leaf_rd_lambda(st.current_qindex, options_) *
-                (eff_on ? eff_perc::lambda_scale()
-                        : pipe_perc::lambda_scale())
+                (pipe_ba::enabled() ? pipe_ba::config().lambda
+                                    : (eff_on ? eff_perc::lambda_scale()
+                                              : pipe_perc::lambda_scale()))
           : 0.0;
   const int pipe_qctx = ::av2enc::still::qctx::slice_for_base_q_idx(
       static_cast<int>(options_.base_q_idx));
   std::vector<std::uint16_t> pipe_leaf_weights;
+  std::vector<std::uint16_t> pipe_chroma_weights;
   if (pipe_on && !chroma_part) {
-    if (eff_on) {
+    if (ba_on) {
+      pipe_ba::fill_leaf_weights(pipe_ba_mask_, ax0, ay0, w, h,
+                                 &pipe_leaf_weights);
+      ++pipe_ba::counters().luma_leaves;
+    } else if (eff_on) {
       eff_perc::fill_leaf_weights(eff_weights_, ax0, ay0, w, h,
                                   &pipe_leaf_weights);
     } else {
@@ -1299,8 +1381,34 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                                    &pipe_leaf_weights);
     }
   }
+  if (pipe_on && ba_on && !luma_part) {
+    pipe_ba::fill_chroma_leaf_weights(pipe_ba_mask_, acx0, acy0, cw, ch,
+                                      &pipe_chroma_weights);
+    ++pipe_ba::counters().chroma_leaves;
+  }
   const auto sse_pipe = [&](int plane, int sx, int sy, int sw, int sh,
                             const std::vector<std::uint8_t>& samples) {
+    if (ba_on) {
+      if (plane == 0) {
+        return pipe_ba::plane_distortion(
+            pipe_leaf_weights.empty() ? nullptr : pipe_leaf_weights.data(), sw,
+            sh, source_.y.data(), static_cast<int>(source_.width), sx, sy,
+            samples.data(), sw, 0, 0, luma_mask_row,
+            pipe_ba::config().low_band_gain);
+      }
+      const std::span<const std::uint8_t> src_plane =
+          plane == 1 ? source_.u : source_.v;
+      if (src_plane.empty()) {
+        return static_cast<double>(sse_vis(plane, sx, sy, sw, sh, samples));
+      }
+      return pipe_ba::plane_distortion(
+                 pipe_chroma_weights.empty() ? nullptr
+                                             : pipe_chroma_weights.data(),
+                 sw, sh, src_plane.data(), static_cast<int>(source_.width) / 2,
+                 sx, sy, samples.data(), sw, 0, 0, chroma_mask_row,
+                 pipe_ba::config().chroma_low_band_gain) *
+             pipe_ba::config().chroma_scale;
+    }
     if (!pipe_on || pipe_leaf_weights.empty()) {
       return static_cast<double>(sse_vis(plane, sx, sy, sw, sh, samples));
     }
@@ -1335,10 +1443,15 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
   // AV2ENC_EFF_PERC: coefficient term selection.  Rate 1 prices the emitted
   // plan with the R19 interval width against the live frame-start CDF image;
   // rate 0 keeps the static §8.3 context model pipe-perc shipped with.
+  // AV2ENC_PIPE_BA inherits the same front end at every tool weight, so the
+  // base arm and the knob arms differ only in D.  The key picture keeps the
+  // historical estimate in both gates (its probe is not seeded).
+  const bool pipe_rate_on =
+      eff_perc::enabled() && !keyframe_ && pipe_probe_ready_;
   const bool eff_interval =
-      eff_on && (eff_perc::rate_mode() & 1) != 0;
+      pipe_rate_on && (eff_perc::rate_mode() & 1) != 0;
   const bool eff_live_cdf =
-      eff_on && (eff_perc::rate_mode() & 2) != 0;
+      pipe_rate_on && (eff_perc::rate_mode() & 2) != 0;
   const still::qctx::CoeffCdfSlice* eff_slice =
       eff_live_cdf ? eff_cdf_slice() : nullptr;
   const auto coeff_bits = [&](const TxPlan& plan, int plane, bool is_inter) {
@@ -2693,6 +2806,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     // the bitstream.  Leave compound leaves prediction-only, as emitted.
     if (options_.enable_inter_residual && !out.cand.compound &&
         !out.interintra && !seg_skip_leaf) {
+      if (ba_on) ++pipe_ba::counters().tx_calls;
       const double pred_total =
           sse_pipe(0, ax0, ay0, w, h, out.y) +
           sse_pipe(1, acx0, acy0, cw, ch, out.u) +
@@ -2727,8 +2841,10 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                                  out.res_y, error, luma_mask_row,
                                  pipe_on ? pipe_leaf_weights.data() : nullptr,
                                  eff_slice,
-                                 eff_on ? eff_perc::csf_gain() : 0.0,
-                                 eff_on ? eff_perc::csf2_gain() : 0.0)
+                                 ba_on ? pipe_ba::config().low_band_gain
+                                       : (eff_on ? eff_perc::csf_gain() : 0.0),
+                                 ba_on ? 0.0
+                                       : (eff_on ? eff_perc::csf2_gain() : 0.0))
                : !compute_tx(source_, 0, ax0, ay0, w, h, out.y,
                              st.plane_quant[0], out.res_y, error,
                              qm_enabled_ ? &qm_state_ : nullptr,

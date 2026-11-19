@@ -113,6 +113,11 @@ struct Options {
   double lowpass_gain = 0.0;
   // Second, lower CSF band (7x7 box mean error squared).
   double lowpass2_gain = 0.0;
+  // AV2ENC_TX_DETAIL_SEARCH_TAIL: 2-4 px error-domain band.  The candidate
+  // distortion adds `detail_band_gain * (mean_2x2(error) - mean_5x5(error))^2`
+  // per sample, the frequency slice the tail audit calls the useful target
+  // (`docs/luma-audit.md` §5).  0 keeps every historical stream unchanged.
+  double detail_band_gain = 0.0;
 };
 
 // One winning transform block.

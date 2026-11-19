@@ -51,6 +51,8 @@
 #include <cstring>
 #include <vector>
 
+#include "pipeline/video/video_pipe_ba.h"
+
 namespace av2enc::video::eff_perc {
 
 inline bool parse_off(const char* value) {
@@ -68,7 +70,15 @@ inline bool parse_off(const char* value) {
 }
 
 inline bool enabled() {
-  static const bool value = [] { return !parse_off(std::getenv("AV2ENC_EFF_PERC")); }();
+  static const bool value = [] {
+    // AV2ENC_PIPE_BA is a superset pipeline: it reuses this exact-rate front
+    // end (the live-CDF probe, the R19 interval coefficient term, top-2
+    // re-scoring) and the keyframe intra TX surface, and replaces the CSF with
+    // its own Butteraugli-shaped model.  `video_frame_decision.cpp` branches on
+    // PIPE_BA first, so this alias never makes the eff-perc *distortion* run.
+    return !parse_off(std::getenv("AV2ENC_EFF_PERC")) ||
+           pipe_ba::enabled();
+  }();
   return value;
 }
 
@@ -108,6 +118,9 @@ inline double chroma_weight() {
 // measured Butteraugli gap lives in; g > 0 prices it above the high-frequency
 // tail.  0 keeps the plain weighted SSE.
 inline double csf_gain() {
+  // PIPE_BA replaces the CSF: the low-band gain is its Butteraugli-shaped
+  // gain, scaled by the tool weight (0 at the tool-off base arm).
+  if (pipe_ba::enabled()) return pipe_ba::config().low_band_gain;
   static const double value = [] {
     const char* env = std::getenv("AV2ENC_EFF_PERC_CSF");
     if (env == nullptr || *env == '\0') return 1.5;
@@ -123,6 +136,7 @@ inline double csf_gain() {
 // 240p point, so its TX search has its own gain.  Default follows the inter
 // gain; 0 is the plain-SSE key ablation.
 inline double key_csf_gain() {
+  if (pipe_ba::enabled()) return pipe_ba::config().low_band_gain;
   static const double value = [] {
     const char* env = std::getenv("AV2ENC_EFF_PERC_KEY_CSF");
     if (env == nullptr || *env == '\0') return csf_gain();
@@ -138,6 +152,10 @@ inline double key_csf_gain() {
 // is high-mid; the 7x7 term is the 2-4 cycles/degree band Butteraugli's low/mid
 // gap lives in.  0 keeps the single-band model.
 inline double csf2_gain() {
+  // PIPE_BA has no second band at this stage: the Butteraugli shape is the
+  // masked 3x3 low/mid term, measured separately from the 7x7 band that
+  // eff-perc found negative.
+  if (pipe_ba::enabled()) return 0.0;
   static const double value = [] {
     const char* env = std::getenv("AV2ENC_EFF_PERC_CSF2");
     if (env == nullptr || *env == '\0') return 0.0;
@@ -179,6 +197,8 @@ inline int top_n() {
 
 // Bit 0 = R19 interval width, bit 1 = live frame-start CDF rows.
 inline int rate_mode() {
+  // PIPE_BA reuses exactly this front end: interval width on, live slice off.
+  if (pipe_ba::enabled()) return 1;
   static const int value = [] {
     const char* env = std::getenv("AV2ENC_EFF_PERC_RATE");
     if (env == nullptr || *env == '\0') return 1;

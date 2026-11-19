@@ -24,6 +24,7 @@
 #include "pipeline/video/video_rate_hybrid.h"
 #include "pipeline/video/video_pipe_perc.h"
 #include "pipeline/video/video_eff_perc.h"
+#include "pipeline/video/video_pipe_ba.h"
 #include "pipeline/video/video_temporal.h"
 #include "pipeline/video/video_tx_search.h"
 #include "pipeline/video/video_decision_rate.h"
@@ -1564,6 +1565,113 @@ inline void write_luma_plan(syntax::BlockSyntax& entry, const TxPlan& plan,
   entry.eob[0] = entry.tx_part_eob[0];
 }
 
+// AV2ENC_TX_DETAIL_SEARCH_TAIL (default off): frequency-aware TX on the
+// P-frame tail.  `docs/luma-audit.md` §4.3 puts 69% of the eff-perc f44-59
+// luma error in coded residual leaves, and §5 puts the useful target at the
+// 2-4 px band rather than the high-frequency rings.  This gate therefore
+// (a) lets the partition tree reach a 16x16 coding block where the 2-4 px
+// source energy is high (the only surface whose legal §5.20.6.3 SPLIT is four
+// 8x8 transforms), and (b) prices the 2-4 px error band in the luma TX search
+// there, so an 8x8 plan can win on RD instead of being forced.  Nothing runs
+// unless the env var is set; tiled encodes, the key picture and the TIP second
+// pass are inert, and the ABI/CUDA reference path never sees the state.
+namespace tx_detail {
+
+struct Config {
+  bool enabled = false;
+  double min_share = 0.5;
+};
+
+inline const Config& config() {
+  static const Config cfg = [] {
+    Config out;
+    const char* on = std::getenv("AV2ENC_TX_DETAIL_SEARCH_TAIL");
+    out.enabled = on != nullptr && on[0] != '\0' && std::strcmp(on, "0") != 0;
+    if (const char* share = std::getenv("AV2ENC_TX_DETAIL_MIN")) {
+      const double value = std::atof(share);
+      if (value > 0.0) out.min_share = value;
+    }
+    return out;
+  }();
+  return cfg;
+}
+
+// One input picture ordinal, assigned once per `decide()` call.  The 60-frame
+// clip's tail is frames 33-59 inclusive.
+inline int& picture_ordinal() {
+  static int ordinal = -1;
+  return ordinal;
+}
+
+inline void begin_picture() { ++picture_ordinal(); }
+
+inline bool tail_armed() {
+  const Config& cfg = config();
+  const int ordinal = picture_ordinal();
+  return cfg.enabled && ordinal >= 33 && ordinal <= 59;
+}
+
+// 2-4 px source band share of one luma block:
+//   sum((mean_2x2 - mean_5x5)^2) / sum((src - mean_5x5)^2)
+// over the block's visible rect.  The 2x2 mean is the aligned 2x2 cell that
+// contains the sample and the 5x5 mean is centered on it; both are clipped to
+// the rect.  A flat block has no band energy and returns 0.
+inline double source_band_share(const VideoInputFrame& frame, int x0, int y0,
+                                int w, int h) {
+  if (w <= 0 || h <= 0) return 0.0;
+  double band = 0.0;
+  double all = 0.0;
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      const int cell_x = x & ~1;
+      const int cell_y = y & ~1;
+      int sum2 = 0;
+      int used2 = 0;
+      for (int dy = 0; dy < 2; ++dy) {
+        const int py = cell_y + dy;
+        if (py >= h) break;
+        for (int dx = 0; dx < 2; ++dx) {
+          const int px = cell_x + dx;
+          if (px >= w) break;
+          sum2 += source_sample(frame, 0, x0 + px, y0 + py);
+          ++used2;
+        }
+      }
+      int sum5 = 0;
+      int used5 = 0;
+      for (int dy = -2; dy <= 2; ++dy) {
+        const int py = y + dy;
+        if (py < 0 || py >= h) continue;
+        for (int dx = -2; dx <= 2; ++dx) {
+          const int px = x + dx;
+          if (px < 0 || px >= w) continue;
+          sum5 += source_sample(frame, 0, x0 + px, y0 + py);
+          ++used5;
+        }
+      }
+      const double mean2 = static_cast<double>(sum2) / used2;
+      const double mean5 = static_cast<double>(sum5) / used5;
+      const double delta = mean2 - mean5;
+      const double residual =
+          static_cast<double>(source_sample(frame, 0, x0 + x, y0 + y)) -
+          mean5;
+      band += delta * delta;
+      all += residual * residual;
+    }
+  }
+  if (all <= 1e-9) return 0.0;
+  return band / all;
+}
+
+inline bool band_high(const VideoInputFrame& frame, int x0, int y0, int w,
+                      int h) {
+  const Config& cfg = config();
+  return cfg.enabled &&
+         source_band_share(frame, x0, y0, w, h) >= cfg.min_share;
+}
+
+}  // namespace tx_detail
+
 // Opt-in luma TX size/type/partition search.  Builds the coded-size residual
 // from the source and prediction and runs the shared CPU reference
 // (`pipeline/video/video_tx_search.h`), which mirrors the device module under
@@ -1618,6 +1726,14 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   options.cdf_slice = cdf_slice;
   options.lowpass_gain = lowpass_gain;
   options.lowpass2_gain = lowpass2_gain;
+  // AV2ENC_TX_DETAIL_SEARCH_TAIL: inter luma only, and only where an 8x8 TX
+  // leaf is legal (a coding block at most 16x16 on both axes).  The 2-4 px
+  // price then lets the legal 16x16 -> four 8x8 SPLIT win on RD where the
+  // source carries that band; the plan is never forced.
+  if (mode == txtsearch::Mode::kInter && cw <= 16 && ch <= 16 &&
+      tx_detail::tail_armed() && tx_detail::band_high(frame, x0, y0, cw, ch)) {
+    options.detail_band_gain = 4.0;
+  }
   // §5.20.7.24 predicts per *transform block*, in decode order, and each part's
   // reconstruction feeds the next part's prediction.  A fixed block prediction
   // is only equivalent when the transform block covers the coding block, so the
@@ -3299,6 +3415,10 @@ class InterFrameEncoder {
   // off; the probe above is shared with pipe-perc because both gates use the
   // same exact-syntax front end.
   eff_perc::FrameWeights eff_weights_;
+  // AV2ENC_PIPE_BA: the Butteraugli-shaped frame mask (Q8, already blended
+  // with the tool weight).  Built once per picture in plan_pass(), inert and
+  // neutral when the gate is off.
+  pipe_ba::FrameMask pipe_ba_mask_;
   std::vector<std::uint8_t> intra_joint_;
   // §5.20.5.3/.4 IBC + §7.13.3.26 morph state (intra keyframe only).
   bool ibc_enabled_ = false;

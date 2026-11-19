@@ -714,7 +714,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   // number.  Null keeps the historical integer SSE.
   double sse_value = static_cast<double>(sse_i);
   if (options.distortion_weight != nullptr || options.lowpass_gain > 0.0 ||
-      options.lowpass2_gain > 0.0) {
+      options.lowpass2_gain > 0.0 || options.detail_band_gain > 0.0) {
     double weighted = 0.0;
     for (int i = 0; i < coded_n; ++i) {
       const std::int64_t d =
@@ -726,44 +726,92 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
                     options.distortion_weight[static_cast<std::size_t>(i)])
               : 256.0;
       double value = static_cast<double>(d * d);
-      if (options.lowpass_gain > 0.0 || options.lowpass2_gain > 0.0) {
+      if (options.lowpass_gain > 0.0 || options.lowpass2_gain > 0.0 ||
+          options.detail_band_gain > 0.0) {
         const int x = i % leaf_w;
         const int y = i / leaf_w;
-        std::int64_t low = 0;
-        int used = 0;
-        for (int dy = -1; dy <= 1; ++dy) {
-          const int py = y + dy;
-          if (py < 0 || py >= leaf_h) continue;
-          for (int dx = -1; dx <= 1; ++dx) {
-            const int px = x + dx;
-            if (px < 0 || px >= leaf_w) continue;
-            const int j = py * leaf_w + px;
-            low += static_cast<std::int64_t>(
-                       recon[static_cast<std::size_t>(j)]) -
-                   coded[static_cast<std::size_t>(j)];
-            ++used;
-          }
-        }
-        const double mean_low = static_cast<double>(low) / used;
-        value += options.lowpass_gain * mean_low * mean_low;
-        if (options.lowpass2_gain > 0.0) {
-          std::int64_t low2 = 0;
+        // AV2ENC_TX_DETAIL_SEARCH_TAIL: 2-4 px error band, the difference of
+        // an aligned 2x2 mean and the centered 5x5 mean (both clipped to the
+        // transform leaf).  A 16x16 -> four 8x8 split changes how much of
+        // this band the quantiser can localise, so the price is applied to the
+        // reconstruction error the leaf decision already sees.
+        if (options.detail_band_gain > 0.0) {
+          const int cell_x = x & ~1;
+          const int cell_y = y & ~1;
+          std::int64_t sum2 = 0;
           int used2 = 0;
-          for (int dy = -3; dy <= 3; ++dy) {
-            const int py = y + dy;
-            if (py < 0 || py >= leaf_h) continue;
-            for (int dx = -3; dx <= 3; ++dx) {
-              const int px = x + dx;
-              if (px < 0 || px >= leaf_w) continue;
+          for (int dy = 0; dy < 2; ++dy) {
+            const int py = cell_y + dy;
+            if (py >= leaf_h) break;
+            for (int dx = 0; dx < 2; ++dx) {
+              const int px = cell_x + dx;
+              if (px >= leaf_w) break;
               const int j = py * leaf_w + px;
-              low2 += static_cast<std::int64_t>(
+              sum2 += static_cast<std::int64_t>(
                           recon[static_cast<std::size_t>(j)]) -
                       coded[static_cast<std::size_t>(j)];
               ++used2;
             }
           }
-          const double mean_low2 = static_cast<double>(low2) / used2;
-          value += options.lowpass2_gain * mean_low2 * mean_low2;
+          std::int64_t sum5 = 0;
+          int used5 = 0;
+          for (int dy = -2; dy <= 2; ++dy) {
+            const int py = y + dy;
+            if (py < 0 || py >= leaf_h) continue;
+            for (int dx = -2; dx <= 2; ++dx) {
+              const int px = x + dx;
+              if (px < 0 || px >= leaf_w) continue;
+              const int j = py * leaf_w + px;
+              sum5 += static_cast<std::int64_t>(
+                          recon[static_cast<std::size_t>(j)]) -
+                      coded[static_cast<std::size_t>(j)];
+              ++used5;
+            }
+          }
+          const double mean2 = static_cast<double>(sum2) /
+                               static_cast<double>(used2);
+          const double mean5 = static_cast<double>(sum5) /
+                               static_cast<double>(used5);
+          const double band = mean2 - mean5;
+          value += options.detail_band_gain * band * band;
+        }
+        if (options.lowpass_gain > 0.0 || options.lowpass2_gain > 0.0) {
+          std::int64_t low = 0;
+          int used = 0;
+          for (int dy = -1; dy <= 1; ++dy) {
+            const int py = y + dy;
+            if (py < 0 || py >= leaf_h) continue;
+            for (int dx = -1; dx <= 1; ++dx) {
+              const int px = x + dx;
+              if (px < 0 || px >= leaf_w) continue;
+              const int j = py * leaf_w + px;
+              low += static_cast<std::int64_t>(
+                         recon[static_cast<std::size_t>(j)]) -
+                     coded[static_cast<std::size_t>(j)];
+              ++used;
+            }
+          }
+          const double mean_low = static_cast<double>(low) / used;
+          value += options.lowpass_gain * mean_low * mean_low;
+          if (options.lowpass2_gain > 0.0) {
+            std::int64_t low2 = 0;
+            int used2 = 0;
+            for (int dy = -3; dy <= 3; ++dy) {
+              const int py = y + dy;
+              if (py < 0 || py >= leaf_h) continue;
+              for (int dx = -3; dx <= 3; ++dx) {
+                const int px = x + dx;
+                if (px < 0 || px >= leaf_w) continue;
+                const int j = py * leaf_w + px;
+                low2 += static_cast<std::int64_t>(
+                            recon[static_cast<std::size_t>(j)]) -
+                        coded[static_cast<std::size_t>(j)];
+                ++used2;
+              }
+            }
+            const double mean_low2 = static_cast<double>(low2) / used2;
+            value += options.lowpass2_gain * mean_low2 * mean_low2;
+          }
         }
       }
       weighted += weight * value;
