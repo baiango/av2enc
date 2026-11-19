@@ -1,53 +1,39 @@
-# Lane 1 — PIPE-EXACT: a new exhaustive-RD pipeline
+# Lane 1 — tool: BA-targeted per-block interp selection
 
-Program (multi-iteration): build a **new decision pipeline** from scratch under
-`AV2ENC_PIPE_EXACT`, default off. Do not extend eff-perc's branch stack: write a
-new leaf decision path that enumerates skip / inter-residual / intra for every
-leaf, prices each with the exact syntax probe (`rate_probe_`/`pipe_probe_`),
-uses the perceptual D, and picks min J. Reuse the decoder-exact primitives, the
-CDF carry and the per-block interp; keep every bug fix.
-
-Each iteration: advance one stage, build, run the gate, and record it. This is
-a program, not a single patch.
+The per-block switchable filter already passes (K 85.230, ceiling 90.500) with
+a CSF rule. It improves BA only 2.273 -> 2.251; AVM is 1.29. Improve the tool's
+selection rule: score each candidate filter with a Butteraugli-shaped error
+(local masking, low-frequency emphasis, chroma) instead of the current CSF, so
+the block filter is chosen for the BA term. Gate `AV2ENC_INTERP_BLOCK` +
+`AV2ENC_INTERP_BLOCK_BA` swept at 0.5/1.0/2.0.
 
 ## Read only
-- this file; last 15 lines of `docs/agent-loop-ledger-1.md`;
-- `docs/pipe-perc.md`, `docs/eff-perc.md`.
+this file; last 15 lines of `docs/agent-loop-ledger-1.md`; `docs/interp-filter.md`.
 
-Do not run `git log`/`branch`/`remote`. You may **add** first-party analysis tooling under `tools/lane-1/` (stdlib only). Do **not** edit the gate or scoring tools: `tools/envelope.py`, `tools/oracle.py`, `tools/quality.py`, `tools/kpi.py`, `tools/extra_metrics.py`, or any pin.
+Do not run `git log`/`branch`/`remote`. You may add analysis tooling under
+`tools/lane-1/`; never edit the gate/scoring tools or pins.
 
 ## Allowed files
-new `src/pipeline/video/video_pipe_exact.h/.cpp`,
-`video_frame_decision.cpp`, `video_frame_internal.h`,
-`docs/agent-loop-ledger-1.md`.
-
-## Tooling you may improve
-Add only analysis/measurement helpers under `tools/lane-1/`:
-- per-frame/per-segment K, JOD, BA, SS2 attribution for a stream;
-- decision counters for the new pipeline (leaves, mode changes, cost);
-- a rate/distortion scatter or horizon-error profiler.
-Each tool must be first-party, import only the Python stdlib, and be reported in the ledger with what it measured. Never modify the gate.
+`video_interp_filter.h`, `video_frame_me.cpp`, `video_frame_decision.cpp`,
+`video_headers.cpp`, `video_syntax_inter.cpp`, `docs/agent-loop-ledger-1.md`.
 
 ## Gate
-At least three knob arms of the new pipeline (e.g. lambda 0.15/0.20/0.30) on
-top of the eff-perc base env. Spec:
+Three knob arms of the tool on the eff-perc base env. Spec:
 ```json
 {"ref":"testdata/nasa_480x240_30fps_60f.y4m","bin":"build-release/av2enc",
  "frames":60,
  "base_args":["--video","--frames","60","--cpu-threads","8","--nightly",
   "--video-drift-refresh-threshold","1.5","--video-drift-refresh-budget","3250"],
  "qp":119,"target_kbps":100.0,
- "arms":[{"name":"base","env":{}},
-  {"name":"l15","env":{"AV2ENC_PIPE_EXACT":"1","AV2ENC_PIPE_EXACT_LAMBDA":"0.15"}},
-  {"name":"l20","env":{"AV2ENC_PIPE_EXACT":"1","AV2ENC_PIPE_EXACT_LAMBDA":"0.20"}},
-  {"name":"l30","env":{"AV2ENC_PIPE_EXACT":"1","AV2ENC_PIPE_EXACT_LAMBDA":"0.30"}}]}
+ "arms":[{"name":"base","env":{}},{"name":"a1","env":{}},{"name":"a2","env":{}},{"name":"a3","env":{}}]}
 ```
-Run:
+Fill a1/a2/a3 with the tool knob values named above. Run:
 ```
-python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
-  --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3 \
+python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \\
+  --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3 \\
   --ceiling-segment f0-32 --ceiling-floor 90.197
 ```
-PASS only if `PASS`: envelope ≥ 85.249, ≥3 arms, ceiling delta vs base ≥ +0.15.
-On FAIL leave the pipeline code uncommitted and continue the program next
-iteration; the runner reverts only if the iteration regresses the base.
+PASS only if `PASS`: envelope ≥ 85.249, ≥3 arms, f0-32 ceiling delta ≥ +0.15.
+On FAIL keep the tool code and continue next iteration; the runner reverts only
+on regression. Append one ledger row per iteration.
+

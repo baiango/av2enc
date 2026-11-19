@@ -1,34 +1,38 @@
-# Lane 4 — PIPE-BA: Butteraugli-targeted decision pipeline
+# Lane 4 — tool: deblock delta search (fix the inert wiring)
 
-Program (multi-iteration): build a decision pipeline under `AV2ENC_PIPE_BA`,
-default off, whose distortion term is a **Butteraugli-shaped error model**
-(local masking, low-frequency emphasis, chroma coupling), not the current CSF.
-Reuse the exact-rate probe, CDF carry, per-block interp and bug fixes; write a
-new decision path. The target is the BA term: 2.25 now vs AVM 1.29.
-
-Each iteration: one stage (error model, weight map, decision wiring), build,
-gate, record.
+Lane 4's earlier deblock attempt was inert (byte-identical arms). Fix the tool:
+signal the §5.18.7.9 df_delta_q row and search the luma delta, default off,
+gated `AV2ENC_DEBLOCK_SEARCH`, swept over the delta set. This is a coding tool;
+if it cannot make the stream differ, record that and stop.
 
 ## Read only
-- this file; last 15 lines of `docs/agent-loop-ledger-4.md`;
-- `docs/eff-perc.md` (the D term), `docs/negative-results.md` dead-zone row.
+this file; last 15 lines of `docs/agent-loop-ledger-4.md`; `docs/negative-results.md`
+deblock row.
 
-Do not run `git log`/`branch`/`remote`. You may **add** first-party analysis tooling under `tools/lane-4/` (stdlib only). Do **not** edit the gate or scoring tools: `tools/envelope.py`, `tools/oracle.py`, `tools/quality.py`, `tools/kpi.py`, `tools/extra_metrics.py`, or any pin.
+Do not run `git log`/`branch`/`remote`. Analysis tooling under `tools/lane-4/`;
+never edit the gate/scoring tools or pins.
 
 ## Allowed files
-new `src/pipeline/video/video_pipe_ba.h/.cpp`,
-`video_frame_decision.cpp`, `video_frame_internal.h`, `video_eff_perc.h`,
-`docs/agent-loop-ledger-4.md`.
-
-## Tooling you may improve
-Add only analysis/measurement helpers under `tools/lane-4/`:
-- per-frame/per-segment K, JOD, BA, SS2 attribution for a stream;
-- decision counters for the new pipeline (leaves, mode changes, cost);
-- a rate/distortion scatter or horizon-error profiler.
-Each tool must be first-party, import only the Python stdlib, and be reported in the ledger with what it measured. Never modify the gate.
+`video_frame_filters.cpp`, `video_headers.cpp`, `post/loop_filters.*`,
+`post/tiled_frame.cpp`, `docs/agent-loop-ledger-4.md`.
 
 ## Gate
-Arms BA weight 0.5/1.0/2.0 under `AV2ENC_PIPE_BA`,
-`AV2ENC_PIPE_BA_WEIGHT`. Same gate command, base env eff, 3 arms,
-`--ceiling-segment f0-32 --ceiling-floor 90.197`.
-PASS only if `PASS`: envelope ≥ 85.249, ≥3 arms, ceiling delta ≥ +0.15.
+Three knob arms of the tool on the eff-perc base env. Spec:
+```json
+{"ref":"testdata/nasa_480x240_30fps_60f.y4m","bin":"build-release/av2enc",
+ "frames":60,
+ "base_args":["--video","--frames","60","--cpu-threads","8","--nightly",
+  "--video-drift-refresh-threshold","1.5","--video-drift-refresh-budget","3250"],
+ "qp":119,"target_kbps":100.0,
+ "arms":[{"name":"base","env":{}},{"name":"a1","env":{}},{"name":"a2","env":{}},{"name":"a3","env":{}}]}
+```
+Fill a1/a2/a3 with the tool knob values named above. Run:
+```
+python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \\
+  --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3 \\
+  --ceiling-segment f0-32 --ceiling-floor 90.197
+```
+PASS only if `PASS`: envelope ≥ 85.249, ≥3 arms, f0-32 ceiling delta ≥ +0.15.
+On FAIL keep the tool code and continue next iteration; the runner reverts only
+on regression. Append one ledger row per iteration.
+

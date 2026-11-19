@@ -1,10 +1,10 @@
 You are lane {{lane}} of the five-lane tool loop. Work in {{worktree}}.
 
 Your task is `docs/lane-tasks/lane-{{lane}}.md`: a **multi-iteration program**
-that builds a new decision pipeline from scratch under its own `AV2ENC_PIPE_*`
-gate, reusing the exact-rate probe, CDF carry, per-block interp and every
-decoder-exact fix. This is not a one-patch hypothesis and not a knob on
-eff-perc.
+that implements one better **coding tool** on the eff-perc harness, keeping
+the exact-rate probe, CDF carry, per-block interp and every decoder-exact fix.
+A new pipeline wrapper alone cannot beat the gate; the tool must. This is not a
+one-patch hypothesis and not a knob sweep on eff-perc.
 
 Each iteration:
 - advance the program by one stage (plumbing, cost model, decision, wiring),

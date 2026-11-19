@@ -46,11 +46,11 @@ lane_ceiling() {
 
 lane_target() {
     case "$1" in
-        1) echo "PIPE-EXACT: exhaustive per-leaf RD pipeline (new)" ;;
-        2) echo "PIPE-HORIZON: future-source decision pipeline (new)" ;;
-        3) echo "PIPE-TRELLIS: non-greedy partition/mode pipeline (new)" ;;
-        4) echo "PIPE-BA: Butteraugli-targeted decision pipeline (new)" ;;
-        5) echo "PIPE-2PASS: measured two-pass frame pipeline (new)" ;;
+        1) echo "tool: BA-targeted per-block interp selection" ;;
+        2) echo "tool: adaptive MVD composed with eff-perc" ;;
+        3) echo "tool: CDEF strength search" ;;
+        4) echo "tool: deblock delta search (fix the inert wiring)" ;;
+        5) echo "tool: true lookahead skip cost" ;;
         *) echo "new decision pipeline" ;;
     esac
 }
