@@ -1782,7 +1782,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     if (multiref::build_compound_prediction(
             references_[0], references_[1], rect,
             static_cast<int>(node.size), inter::mc::Mv{0, 0},
-            inter::mc::Mv{0, 0}, frame_interp_filter(),
+            inter::mc::Mv{0, 0}, leaf_interp_filter(),
             mi_cols_, mi_rows_, prediction, comp_error)) {
       std::uint8_t* dst[3] = {compound_pred_[0].samples.data(),
                               compound_pred_[1].samples.data(),
@@ -2519,6 +2519,9 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     double pipe_distortion = 0.0;
     double pipe_bits = 0.0;
     bool pipe_modeled = false;
+    // §5.20.7.6 switchable interp_filter (0..2) carried by this evaluation.
+    int filter = 0;
+    bool filter_coded = false;
   };
 
   // Real leaf path for one candidate.  This is the historical winner-only
@@ -2978,6 +2981,106 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     return true;
   };
 
+  // §5.20.7.6 switchable interp_filter selection.  One candidate is evaluated
+  // under each of the three TileInterpFilterCdf symbols and the perceptual RD
+  // rule picks the winner:
+  //   D = plain SSE + w * (perceptual SSE - plain SSE)
+  //   J = D + lambda * (syntax/coefficients + filter symbol)
+  // `w` is AV2ENC_INTERP_BLOCK_CSF; w = 1 is exactly the eff-perc D the leaf
+  // and TX search use, and larger values price low/mid-band error harder.
+  // Gate off: one evaluation, filter 0, byte-identical to the historical path.
+  constexpr double kInterpFilterSymbolBits = 1.585;  // -log2(1/3)
+  const auto evaluate_inter_leaf_filtered =
+      [&](const InterCandidate& input, InterLeafResult& out) -> bool {
+    out = InterLeafResult{};
+    const auto filter_y_mode = [](int mode) {
+      return mode == syntax::kInterGlobalMv
+                 ? inter::mvprec::kYModeGlobalMv
+                 : (mode == syntax::kInterNearMv
+                        ? inter::mvprec::kYModeNearMv
+                        : inter::mvprec::kYModeNewMv);
+    };
+    const bool eligible =
+        interp_block_enabled() && !input.compound && !input.use_warp &&
+        inter::mvprec::needs_interp_filter(w >= 8 && h >= 8,
+                                           filter_y_mode(input.mode),
+                                           /*motion_mode=*/0);
+    if (!eligible) {
+      if (!evaluate_inter_leaf(input, out)) return false;
+      out.filter = 0;
+      return true;
+    }
+    const double lambda =
+        pipe_on ? pipe_lambda
+                : (exact_on ? leaf_rd_lambda(st.current_qindex, options_)
+                            : inter_lambda);
+    const double csf_weight = interp_block_csf_weight();
+    const auto filter_cost = [&](const InterLeafResult& result) {
+      double plain = 0.0;
+      if (!chroma_part) {
+        plain += static_cast<double>(sse_vis(0, ax0, ay0, w, h, result.y));
+      }
+      if (owns_chroma) {
+        plain += static_cast<double>(sse_vis(1, acx0, acy0, cw, ch, result.u));
+        plain += static_cast<double>(sse_vis(2, acx0, acy0, cw, ch, result.v));
+      }
+      double perceptual = plain;
+      if (pipe_on) {
+        perceptual = sse_pipe(0, ax0, ay0, w, h, result.y) +
+                     sse_pipe(1, acx0, acy0, cw, ch, result.u) +
+                     sse_pipe(2, acx0, acy0, cw, ch, result.v);
+      }
+      const double distortion = plain + csf_weight * (perceptual - plain);
+      double bits = 0.0;
+      if (pipe_on && result.pipe_modeled) {
+        bits = result.pipe_bits;
+      } else if (exact_on) {
+        bits = result.bits;
+      } else {
+        bits = inter_syntax_bits(result.cand.mode, result.cand.drl_index,
+                                 result.cand.mvd.y, result.cand.mvd.x,
+                                 result.cand.use_amvd) +
+               (result.bawp ? 1.0 : 0.0) +
+               (result.interintra ? 2.0 : 0.0) +
+               (result.residual
+                    ? (luma_plan_bits(result.res_y, true) +
+                       estimate_tx_bits(result.res_u, false) +
+                       estimate_tx_bits(result.res_v, false))
+                    : 2.0);
+      }
+      return distortion + lambda * (bits + kInterpFilterSymbolBits);
+    };
+    const int saved_override = interp_block_filter_override();
+    InterLeafResult chosen;
+    double chosen_cost = 0.0;
+    bool have_chosen = false;
+    for (int filter = 0; filter <= 2; ++filter) {
+      interp_block_filter_override() = filter;
+      InterLeafResult result;
+      if (!evaluate_inter_leaf(input, result)) {
+        interp_block_filter_override() = saved_override;
+        return false;
+      }
+      const double cost = filter_cost(result);
+      if (!have_chosen || cost < chosen_cost) {
+        chosen = std::move(result);
+        chosen.filter = filter;
+        chosen_cost = cost;
+        have_chosen = true;
+      }
+    }
+    interp_block_filter_override() = saved_override;
+    if (!have_chosen) {
+      error = "interp filter evaluation produced no candidate";
+      return false;
+    }
+    out = std::move(chosen);
+    out.filter_coded = true;
+    out.pipe_bits += kInterpFilterSymbolBits;
+    out.bits += kInterpFilterSymbolBits;
+    return true;
+  };
+
   // The gate-off path evaluates exactly the proxy winner.  With the gate on,
   // the cheap ranking is re-scored: the proxy winner first (preserving the
   // historical strict-< tie-break), then the next cheapest candidates in the
@@ -3021,6 +3124,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
   std::vector<std::uint8_t> inter_y;
   std::vector<std::uint8_t> inter_u;
   std::vector<std::uint8_t> inter_v;
+  int inter_filter = 0;
   bool inter_residual = false;
   TxPlan res_y;
   TxPlan res_u;
@@ -3072,7 +3176,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
         leaf_rd_lambda(st.current_qindex, options_);
     for (const InterCandidate* candidate : exact_eval_order) {
       InterLeafResult result;
-      if (!evaluate_inter_leaf(*candidate, result)) return false;
+      if (!evaluate_inter_leaf_filtered(*candidate, result)) return false;
       if (pipe_on) {
         if (!result.pipe_modeled) {
           // The probe cannot model this carrier (compound / TIP / AMVD /
@@ -3092,7 +3196,8 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                    ? (luma_plan_bits(result.res_y, true) +
                       estimate_tx_bits(result.res_u, false) +
                       estimate_tx_bits(result.res_v, false))
-                   : 2.0);
+                   : 2.0) +
+              (result.filter_coded ? kInterpFilterSymbolBits : 0.0);
         }
         const double cost =
             result.pipe_distortion + pipe_lambda * result.pipe_bits;
@@ -3176,6 +3281,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     inter_y = std::move(chosen.y);
     inter_u = std::move(chosen.u);
     inter_v = std::move(chosen.v);
+    inter_filter = chosen.filter;
     inter_residual = chosen.residual;
     res_y = std::move(chosen.res_y);
     res_u = std::move(chosen.res_u);
@@ -3683,6 +3789,11 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     entry.block_mv_precision =
         static_cast<std::int8_t>(best.block_mv_precision);
     entry.mvd_sign_derived = best.mvd_sign_derived ? 1 : 0;
+    // §5.20.7.6 switchable interp_filter carried on the inter leaf.  The
+    // writer codes it where needs_interp_filter() is true; for every other
+    // carrier (compound, warp, large GLOBALMV) it is 0 = EIGHTTAP and no
+    // symbol is coded.  The intra-only mrl fields are unused here.
+    entry.mrl_index = static_cast<std::uint8_t>(inter_filter);
     entry.use_bawp = bawp_applied ? 1 : 0;
     entry.bawp_alpha = static_cast<std::int16_t>(bawp_fit.alpha);
     if (inter_intra_applied) {
@@ -3737,6 +3848,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                 << " skip=" << static_cast<int>(entry.skip_flag)
                 << " comp=" << static_cast<int>(entry.compound)
                 << " cm=" << static_cast<int>(entry.compound_mode)
+                << " ifilter=" << static_cast<int>(entry.mrl_index)
                 << " optflow=" << static_cast<int>(entry.use_optflow)
                 << " refinemv=" << static_cast<int>(entry.use_refinemv)
                 << " ct=" << static_cast<int>(entry.compound_type)

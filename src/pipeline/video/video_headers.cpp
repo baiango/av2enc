@@ -818,8 +818,16 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
       if (!h.use_qtr_precision_mv) {
         writer.put_bit(h.allow_high_precision_mv);  // allow_high_precision_mv
       }
-    }    writer.put_bit(false);  // is_filter_switchable
-    writer.put_bits(static_cast<unsigned>(frame_interp_filter_index()), 2U);
+    }
+    // §5.18.5.1 read_interpolation_filter(): the switchable form codes the
+    // single bit and derives every per-block filter from TileInterpFilterCdf;
+    // it does not code the two-bit frame filter.  AV2ENC_INTERP_BLOCK is a
+    // CPU experiment and default off, so this stays byte-identical.
+    const bool switchable_filter = interp_block_enabled();
+    writer.put_bit(switchable_filter);  // is_filter_switchable
+    if (!switchable_filter) {
+      writer.put_bits(static_cast<unsigned>(frame_interp_filter_index()), 2U);
+    }
     // frame_enabled_motion_modes[] all zero -> no bits.
   }
 

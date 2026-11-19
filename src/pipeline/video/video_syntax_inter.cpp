@@ -3,6 +3,8 @@
 // and the §8.3 context grids they maintain.
 #include "pipeline/video/video_syntax_writer.h"
 
+#include "pipeline/video/video_interp_filter.h"
+
 namespace av2enc::video::syntax {
 namespace detail {
 
@@ -854,6 +856,30 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
       if (bit == 0) break;
     }
   }
+  // §5.20.7.6 switchable interp_filter, after the compound mode/type/CWP
+  // symbols.  Compound leaves predict with EIGHTTAP here, so the decision
+  // stores 0 in the carrier field; the symbol is still coded whenever the
+  // §5.20.7.6 predicate requires it.
+  if (interp_block_enabled()) {
+    const bool large = cur_w4_ * 4 >= 8 && cur_h4_ * 4 >= 8;
+    const int y_mode =
+        inter::mvprec::kYModeNearNearMv + node.compound_mode;
+    if (inter::mvprec::needs_interp_filter(large, y_mode,
+                                           /*motion_mode=*/0)) {
+      const int filter_ctx = inter::mvprec::interp_filter_ctx(
+          mv_res_neighbours(), node.ref_index, /*is_compound=*/true);
+      std::string filter_error;
+      if (!inter::mvprec::write_block_interp_filter(
+              enc_, cdfs_.mv_precision, filter_ctx, node.mrl_index,
+              &filter_error)) {
+        error = "write_block_interp_filter failed: " + filter_error;
+        return false;
+      }
+    } else if (node.mrl_index != 0) {
+      error = "interp filter set outside the §5.20.7.6 gate";
+      return false;
+    }
+  }
   return true;
 }
 
@@ -1338,6 +1364,35 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
     }
     set_rate_tag(-1);
   }
+  // §5.18.5.1 / §5.20.7.6 switchable per-block interpolation filter.  The
+  // frame header signed is_filter_switchable = 1; every leaf that passes
+  // needs_interp_filter() codes one of the three TileInterpFilterCdf symbols.
+  // On an inter leaf `mrl_index` carries the filter the decision chose (the
+  // field is intra-only in every other consumer).  Gate off: no symbol and
+  // the historical bitstream is untouched.
+  if (interp_block_enabled()) {
+    const bool large = cur_w4_ * 4 >= 8 && cur_h4_ * 4 >= 8;
+    const int y_mode = node.inter_mode == kInterGlobalMv
+                           ? inter::mvprec::kYModeGlobalMv
+                           : (node.inter_mode == kInterNearMv
+                                  ? inter::mvprec::kYModeNearMv
+                                  : inter::mvprec::kYModeNewMv);
+    if (inter::mvprec::needs_interp_filter(large, y_mode,
+                                           node.motion_mode)) {
+      const int filter_ctx = inter::mvprec::interp_filter_ctx(
+          mv_res_neighbours(), node.ref_index, /*is_compound=*/false);
+      std::string filter_error;
+      if (!inter::mvprec::write_block_interp_filter(
+              enc_, cdfs_.mv_precision, filter_ctx, node.mrl_index,
+              &filter_error)) {
+        error = "write_block_interp_filter failed: " + filter_error;
+        return false;
+      }
+    } else if (node.mrl_index != 0) {
+      error = "interp filter set outside the §5.20.7.6 gate";
+      return false;
+    }
+  }
   return true;
 }
 
@@ -1493,7 +1548,16 @@ void Writer::update_mode_grids(const BlockSyntax& node) {
       } else {
         prec.use_most_probable_precision = node.is_inter != 0;
       }
-      prec.interp_filter = 3;  // fixed EIGHTTAP frame filter
+      // §8.3 interp_filter context state.  With the switchable frame filter an
+      // inter leaf stores its coded block filter (0..2); intra cells and the
+      // frame-global form keep the "unavailable" sentinel.  Ineligible inter
+      // leaves (warp / large GLOBALMV / TIP) predict with EIGHTTAP and the
+      // decision stores 0 in `mrl_index`, which is what the decoder leaves in
+      // its MiMv entry for a block that codes no filter.
+      prec.interp_filter =
+          node.is_inter
+              ? (interp_block_enabled() ? static_cast<int>(node.mrl_index) : 3)
+              : 3;
     }
   }
 }

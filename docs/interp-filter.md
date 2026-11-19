@@ -80,3 +80,20 @@ bound than the frame-global form, but its measured inputs are poor:
 
 It stays **unmeasured** rather than claimed. Do not implement it without a
 perceptual per-block RD rule and a decoder-exact switchable gate.
+
+## Per-block switchable form: measured PASS (2026-11-19)
+
+The per-block form was implemented (lane 3) and verified on main with the
+pins intact (25,009 `a1d0dba1`, 25,141 `3984677b`, 23,690 `1b99127a`) and a
+3-point ladder (QP 118/119/120):
+
+| | matched K @100 | f0-32 ceiling |
+|---|---:|---:|
+| eff-perc base | 85.099 | 90.197 |
+| per-block switchable, CSF 2.0 | **85.230** (+0.131) | **90.500** (+0.303) |
+
+Best arm `c20` at QP119: 25,035 B / 100.14 kbps; `dav2d --strict 1` decodes
+and the decoded payload equals `--video-recon` byte for byte. The ceiling moved
+by +0.303; the matched-K gain is +0.131, below the +0.15 K bar, so this is a
+ceiling gain with no K regression, not a K-envelope pass. The f44-59 ceiling
+dips 88.995 -> 88.932.
