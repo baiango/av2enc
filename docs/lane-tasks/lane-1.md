@@ -12,16 +12,16 @@ Do not read other docs. Do not run `git log`, `git branch`, `git remote`, or
 explore the repository. Do not edit `tools/`.
 
 ## One hypothesis
-This worktree already has the head allocator (`AV2ENC_HEAD_REPAIR_ALLOC`), and
-it is **inert under eff-perc**: `effh` and `eff` encode byte-identically
-(25,230 / 24,674 B). Wire it into the eff-perc decision path so a head leaf
-whose prediction SSE is high can spend the rank it would otherwise skip, then
-measure. No other change.
+Allocation is closed (`docs/ceiling-allocation.md`): do not move QP, budget or
+key offset. The head P frames code residual with the leaf's inter TX plan. Add
+a default-off **head-only TX-partition search** (`AV2ENC_HEAD_TX_PART`) for
+inter luma leaves in frames 1-32: try NONE/SPLIT/HORZ/VERT with the existing
+exact plan-rate machinery, and keep the winner. No other change.
 
 ## Allowed files
-`src/pipeline/video/video_head_repair_alloc.h`,
+`src/pipeline/video/video_tx_search.cpp`,
+`src/pipeline/video/video_tx_search.h`,
 `src/pipeline/video/video_frame_decision.cpp`,
-`src/pipeline/video/video_eff_perc.h`,
 `src/pipeline/video/video_frame_internal.h`,
 `docs/agent-loop-ledger-1.md`.
 
@@ -37,7 +37,7 @@ measure. No other change.
   "--video-drift-refresh-threshold","1.5","--video-drift-refresh-budget","3250"],
  "qp":119,"target_kbps":100.0,
  "arms":[{"name":"base","env":{}},
-         {"name":"cand","env":{"AV2ENC_HEAD_REPAIR_ALLOC":"1"}}]}
+         {"name":"cand","env":{"AV2ENC_HEAD_TX_PART":"1"}}]}
 ```
 4. Run from the worktree root:
 ```
@@ -55,3 +55,6 @@ python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
 ## Closed
 Key/intra, RDOQ/trellis, multi-reference P, TIP, BAWP, frame-global subpel
 filter, AQ, delta-Q, skip-drift variants on nightly.
+
+## Measured closed: allocation
+Static head/tail QP plans, key-offset spends and larger refresh budgets were measured and do not raise the f0-32 ceiling at 100 kbps (`docs/ceiling-allocation.md`). Do not retry them; the ceiling is coding-efficiency-bound.

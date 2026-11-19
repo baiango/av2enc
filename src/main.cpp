@@ -1901,6 +1901,42 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
     video_options.frame_base_q_idx = frame_qp;
     video_options.base_q_idx = frame_qp.front();
   }
+  // AV2ENC_FRAME_QP_PLAN=<head>:<tail> adds a per-frame QP offset to the head
+  // (frames 1-32) and the tail (frames 33-59) on the fixed-QP path.  This is
+  // the head/tail allocation probe: a per-frame base_q_idx is legal with the
+  // carried CDF image (--cdf-continuity, which --nightly enables), unlike
+  // delta-Q/segmentation.  Unset leaves every pin byte-identical.
+  if (options.rc_mode == "cqp" && !options.video_gpu) {
+    if (const char* env_plan = std::getenv("AV2ENC_FRAME_QP_PLAN")) {
+      char* end = nullptr;
+      const long head_off = std::strtol(env_plan, &end, 10);
+      long tail_off = 0;
+      bool parsed = end != env_plan && end != nullptr && *end == ':';
+      if (parsed) {
+        const char* tail = end + 1;
+        char* tail_end = nullptr;
+        tail_off = std::strtol(tail, &tail_end, 10);
+        parsed = tail_end != tail;
+      }
+      if (parsed) {
+        if (frame_qp.empty()) {
+          frame_qp.assign(inputs.size(),
+                          static_cast<std::uint8_t>(video_options.base_q_idx));
+        }
+        const std::size_t head_end = std::min<std::size_t>(33, frame_qp.size());
+        for (std::size_t i = 1; i < frame_qp.size(); ++i) {
+          const long off = i < head_end ? head_off : tail_off;
+          frame_qp[i] = static_cast<std::uint8_t>(std::clamp<long>(
+              static_cast<long>(frame_qp[i]) + off, 1, 255));
+        }
+        video_options.frame_base_q_idx = frame_qp;
+        video_options.base_q_idx = frame_qp.front();
+      } else {
+        std::cerr << "av2enc: error: AV2ENC_FRAME_QP_PLAN expects <head>:<tail>\n";
+        return 1;
+      }
+    }
+  }
 
   av2enc::video::VideoSequenceResult result;
   int vbr_iterations = 0;

@@ -61,3 +61,6 @@ python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
 ## Closed
 Frame-global EIGHTTAP/SMOOTH/SHARP/BILINEAR (measured negative), OBMC (not in
 AV2), TIP, multi-ref, warp.
+
+## Measured closed: allocation
+Static head/tail QP plans, key-offset spends and larger refresh budgets were measured and do not raise the f0-32 ceiling at 100 kbps (`docs/ceiling-allocation.md`). Do not retry them; the ceiling is coding-efficiency-bound.
