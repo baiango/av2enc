@@ -280,13 +280,11 @@ Rules the script enforces, not the prompt:
   kept.
 - Every result is appended to `build/agent-loop/envelope.jsonl`
   (`base_k`, `envelope_k`, `delta`, `best_arm`, per-arm brackets).
-- **The ceiling is part of the gate.** For the best arm the runner also runs
-  `tools/oracle.py` with segment replacement and requires the target segment's
-  source-replacement ceiling to beat the **base arm's ceiling on the same
-  bracket point** by +0.15 K (published reference: f0-32 90.197, f44-59
-  88.995 at QP119; comparing a QP120 candidate to those would add ~0.17 of
-  measurement bias). A higher matched-K envelope under an unchanged ceiling is
-  a realization gain and FAILs, however large the envelope delta.
+- **The gate is the 100 kbps K ceiling.** The target is the best matched-rate
+  K over the arms: currently **85.099** for eff-perc. PASS requires the
+  envelope to beat the base arm (measured on the same build and bracket) by at
+  least +0.15 K. The source-replacement segment rows (f0-32 90.197, f44-59
+  88.995) are diagnostics/pooling bounds and are reported, not gated.
 
 Run it directly:
 

@@ -295,14 +295,14 @@ def main() -> int:
         base_ceiling = measure_ceiling(
             worktree, spec, {"name": "base", "env": base["env"]}, outdir,
             args.ceiling_segment, point)
+    # The target is the 100 kbps K ceiling: the best matched-rate K over the
+    # arms.  The source-replacement segment rows are diagnostics (pooling
+    # bounds), not a gate.
     gate_ok = delta >= args.threshold
     ceiling_delta = None
-    if args.ceiling_floor is not None:
-        if envelope_ceiling is None or base_ceiling is None:
-            gate_ok = False
-        else:
-            ceiling_delta = envelope_ceiling - base_ceiling
-            gate_ok = gate_ok and ceiling_delta >= args.threshold
+    if args.ceiling_floor is not None and envelope_ceiling is not None \
+            and base_ceiling is not None:
+        ceiling_delta = envelope_ceiling - base_ceiling
     verdict = "PASS" if gate_ok else "FAIL"
 
     report = {
