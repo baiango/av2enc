@@ -43,8 +43,8 @@ python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
   --base-env '{"AV2ENC_EFF_PERC":"1"}' \
   --ceiling-segment f44-59 --ceiling-floor 88.995
 ```
-5. PASS only if the last line says `PASS` **and** the printed f44-59 ceiling is
-   at least 88.995. Anything else is FAIL.
+5. PASS only if the last line says `PASS`: envelope delta at least +0.15 K
+   **and** ceiling delta vs the base arm at least +0.15 K. Anything else is FAIL.
 6. On FAIL: `git checkout -- src && git clean -fd src`. On PASS: leave `src/`
    uncommitted. Never commit source.
 7. Append one row to the ledger: hypothesis, envelope, ceiling, PASS/FAIL.

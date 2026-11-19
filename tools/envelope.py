@@ -269,17 +269,25 @@ def main() -> int:
     best = max(measured, key=lambda row: row["k"])
     delta = best["k"] - base["k"]
     envelope_ceiling = None
+    base_ceiling = None
     if args.ceiling_floor is not None:
         envelope_ceiling = measure_ceiling(
             worktree, spec, {"_result": best, "name": best["arm"]}, outdir,
             args.ceiling_segment)
+        # Compare like for like: the base arm's ceiling is measured on the
+        # same bracket point as the candidate.  The published floor was taken
+        # on a different stream (QP119 vs the bracket's lower point), so using
+        # it as an absolute gate adds ~0.17 of measurement bias.
+        base_ceiling = measure_ceiling(
+            worktree, spec, {"_result": base, "name": "base"}, outdir,
+            args.ceiling_segment)
     gate_ok = delta >= args.threshold
     ceiling_delta = None
     if args.ceiling_floor is not None:
-        if envelope_ceiling is None:
+        if envelope_ceiling is None or base_ceiling is None:
             gate_ok = False
         else:
-            ceiling_delta = envelope_ceiling - args.ceiling_floor
+            ceiling_delta = envelope_ceiling - base_ceiling
             gate_ok = gate_ok and ceiling_delta >= args.threshold
     verdict = "PASS" if gate_ok else "FAIL"
 
@@ -295,6 +303,8 @@ def main() -> int:
         "best_arm": best["arm"],
         "ceiling_segment": args.ceiling_segment,
         "ceiling_floor": args.ceiling_floor,
+        "base_ceiling": (round(base_ceiling, 4)
+                         if base_ceiling is not None else None),
         "envelope_ceiling": (round(envelope_ceiling, 4)
                              if envelope_ceiling is not None else None),
         "ceiling_delta": (round(ceiling_delta, 4)
@@ -309,7 +319,8 @@ def main() -> int:
     print(text)
     ceiling = ("" if envelope_ceiling is None else
                f"  ceiling[{args.ceiling_segment}] {envelope_ceiling:.3f}"
-               f" vs {args.ceiling_floor:.3f}")
+               f" base {base_ceiling:.3f} d {ceiling_delta:+.3f}"
+               f" (published {args.ceiling_floor:.3f})")
     print(f"envelope: base {base['k']:.3f}  best {best['k']:.3f} "
           f"({best['arm']})  delta {delta:+.3f}{ceiling}  {verdict}",
           flush=True)

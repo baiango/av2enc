@@ -12,9 +12,10 @@ Do not read other docs. Do not run `git log`, `git branch`, `git remote`, or
 explore the repository. Do not edit `tools/`.
 
 ## One hypothesis
-This worktree already has `AV2ENC_INTER_TX_PLAN_RDOQ` (top-2 plans, one TX
-type). It was measured on nightly (+0.346 envelope). Wire that same top-2
-re-quantisation into the eff-perc TX search path and measure. No other change.
+First run `git grep -n AV2ENC_INTER_TX_PLAN_RDOQ`. If it exists, wire that
+top-2 plan re-quantisation into the eff-perc TX search path. If it does not
+exist in this tree, implement a minimal top-2 inter TX-plan re-quantisation in
+the allowed files. Either way, one mechanism only.
 
 ## Allowed files
 `src/pipeline/video/video_tx_search.cpp`,
@@ -44,8 +45,8 @@ python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
   --base-env '{"AV2ENC_EFF_PERC":"1"}' \
   --ceiling-segment f0-32 --ceiling-floor 90.197
 ```
-5. PASS only if the last line says `PASS` **and** the printed f0-32 ceiling is
-   at least 90.197. Anything else is FAIL.
+5. PASS only if the last line says `PASS`: envelope delta at least +0.15 K
+   **and** ceiling delta vs the base arm at least +0.15 K. Anything else is FAIL.
 6. On FAIL: `git checkout -- src && git clean -fd src`. On PASS: leave `src/`
    uncommitted. Never commit source.
 7. Append one row to the ledger: hypothesis, envelope, ceiling, PASS/FAIL.

@@ -282,10 +282,11 @@ Rules the script enforces, not the prompt:
   (`base_k`, `envelope_k`, `delta`, `best_arm`, per-arm brackets).
 - **The ceiling is part of the gate.** For the best arm the runner also runs
   `tools/oracle.py` with segment replacement and requires the target segment's
-  source-replacement ceiling to beat the best known value: **f0-32 90.197**,
-  **f44-59 88.995** (eff-perc). A higher matched-K envelope under an unchanged
-  ceiling is a realization gain and FAILs, however large the envelope delta.
-  The floors are floor values: update them only when a stream beats them.
+  source-replacement ceiling to beat the **base arm's ceiling on the same
+  bracket point** by +0.15 K (published reference: f0-32 90.197, f44-59
+  88.995 at QP119; comparing a QP120 candidate to those would add ~0.17 of
+  measurement bias). A higher matched-K envelope under an unchanged ceiling is
+  a realization gain and FAILs, however large the envelope delta.
 
 Run it directly:
 

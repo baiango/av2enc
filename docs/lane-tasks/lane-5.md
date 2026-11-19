@@ -12,10 +12,11 @@ Do not read other docs. Do not run `git log`, `git branch`, `git remote`, or
 explore the repository. Do not edit `tools/`.
 
 ## One hypothesis
-This worktree already has the per-block switchable filter (`AV2ENC_INTERP_BLOCK`,
-`form_b2`, +0.205 envelope on nightly). It was measured on nightly. Wire it into
-the eff-perc prediction path and measure whether it survives there. No other
-change.
+First run `git grep -n AV2ENC_INTERP_BLOCK`. If it exists, wire it into the
+eff-perc prediction path. If it does not exist in this tree, implement a
+default-off per-block switchable filter in the allowed files: keep the
+frame-global gate as the control and select the block filter per leaf. One
+mechanism only.
 
 ## Allowed files
 `src/pipeline/video/video_interp_filter.h`,
@@ -51,8 +52,8 @@ python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
   --base-env '{"AV2ENC_EFF_PERC":"1"}' \
   --ceiling-segment f0-32 --ceiling-floor 90.197
 ```
-6. PASS only if the last line says `PASS` **and** the printed f0-32 ceiling is
-   at least 90.197. Anything else is FAIL.
+6. PASS only if the last line says `PASS`: envelope delta at least +0.15 K
+   **and** ceiling delta vs the base arm at least +0.15 K. Anything else is FAIL.
 7. On FAIL: `git checkout -- src && git clean -fd src`. On PASS: leave `src/`
    uncommitted. Never commit source.
 8. Append one row to the ledger: hypothesis, envelope, ceiling, PASS/FAIL.
