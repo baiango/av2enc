@@ -164,6 +164,14 @@ struct Params {
   double lambda = 0.0;
   // Stage-2 re-score count (0 disables the transform re-score).
   int top_n = 3;
+  // Chroma coefficient-level RD (AV2ENC_RD_UVLEVEL): the number of trellis
+  // proposals per plane on top of the scalar plan.  0 keeps the M4 behaviour.
+  int level_variants = 0;
+  // D units per bit for choosing between coefficient-level proposals.  The
+  // level site is calibrated separately from the mode site (`lambda`): the
+  // static coefficient model overprices chroma levels, so its measured weight
+  // is lower.  A negative value keeps `lambda` (M4 behaviour).
+  double level_lambda = -1.0;
   // Optional CfL candidate (caller supplies the derived-alpha prediction).
   bool have_cfl = false;
   std::vector<std::uint8_t> cfl_u;
@@ -180,11 +188,20 @@ struct Result {
   int cfl_mh_dir = 0;
   std::vector<std::uint8_t> u;
   std::vector<std::uint8_t> v;
+  // Winning chroma plans from stage 2 (including a winning level variant).
+  // `have_plans` is false on the prediction-only path (top_n == 0), where the
+  // caller must run its own transform.  When true the caller can emit these
+  // plans directly, so the coded coefficients are exactly the scored ones.
+  TxPlan u_plan;
+  TxPlan v_plan;
+  bool have_plans = false;
   double cost = 0.0;
   double distortion = 0.0;
   double bits = 0.0;
   int candidates = 0;
   int tx_rescored = 0;
+  int level_plans = 0;
+  int level_wins = 0;  // winning plans that replaced the scalar plan
 };
 
 namespace detail {
@@ -209,12 +226,19 @@ inline double perceptual_d(const Params& p,
 
 }  // namespace detail
 
-// Runs the search.  `tx(plane, pred, plan)` must produce the real chroma
-// transform plan for a prediction (the caller's compute_tx).  `coef_bits(plane,
-// plan)` must return the static §8.3 coefficient information bits of that plan.
-template <typename TxFn, typename BitsFn>
-bool search(const Params& p, TxFn&& tx, BitsFn&& coef_bits, Result& out,
-            std::string& error) {
+// Runs the search with an optional coefficient-level stage.
+//
+// `tx(plane, pred, plan)` produces the real chroma transform plan for a
+// prediction (the caller's compute_tx).  `coef_bits(plane, plan)` returns the
+// static §8.3 coefficient information bits of that plan.  `level(plane, pred,
+// scalar, variant, out)` proposes an alternative coefficient set for the same
+// prediction (the chroma trellis, variant 1..`p.level_variants`); returning
+// false keeps the scalar plan.  A proposal is only a candidate: it is scored
+// on the same D_perc + lambda * R as the scalar plan, so a proposal can never
+// win on its own model.
+template <typename TxFn, typename BitsFn, typename LevelFn>
+bool search_with_levels(const Params& p, TxFn&& tx, BitsFn&& coef_bits,
+                        LevelFn&& level, Result& out, std::string& error) {
   out = Result{};
   if (p.w <= 0 || p.h <= 0 || p.w > 32 || p.h > 32 ||
       p.recon[0] == nullptr || p.recon[1] == nullptr || p.src[0].data == nullptr ||
@@ -270,6 +294,8 @@ bool search(const Params& p, TxFn&& tx, BitsFn&& coef_bits, Result& out,
     int cfl_mh_dir = 0;
     std::vector<std::uint8_t> u;
     std::vector<std::uint8_t> v;
+    TxPlan u_plan;
+    TxPlan v_plan;
     double pred_cost = 0.0;
     double cost = 0.0;
     double distortion = 0.0;
@@ -371,14 +397,45 @@ bool search(const Params& p, TxFn&& tx, BitsFn&& coef_bits, Result& out,
       for (int plane = 0; plane < 2; ++plane) {
         const std::vector<std::uint8_t>& pred =
             plane == 0 ? candidate.u : candidate.v;
-        TxPlan plan;
-        if (!tx(plane, pred, plan)) {
+        TxPlan scalar;
+        if (!tx(plane, pred, scalar)) {
           error = "uv search: chroma transform failed";
           return false;
         }
-        distortion += detail::perceptual_d(p, src_block[plane], plan.recon);
-        double coefficient_bits = 0.0;
-        if (coef_bits(plane, plan, coefficient_bits)) bits += coefficient_bits;
+        TxPlan best = scalar;
+        double best_distortion =
+            detail::perceptual_d(p, src_block[plane], scalar.recon);
+        double best_coef_bits = 0.0;
+        if (!coef_bits(plane, scalar, best_coef_bits)) best_coef_bits = 0.0;
+        const double level_lambda =
+            p.level_lambda >= 0.0 ? p.level_lambda : p.lambda;
+        double best_cost = best_distortion + level_lambda * best_coef_bits;
+        bool level_won = false;
+        for (int variant = 1; variant <= p.level_variants; ++variant) {
+          TxPlan proposal;
+          if (!level(plane, pred, scalar, variant, proposal)) continue;
+          ++out.level_plans;
+          const double d =
+              detail::perceptual_d(p, src_block[plane], proposal.recon);
+          double r = 0.0;
+          if (!coef_bits(plane, proposal, r)) r = 0.0;
+          const double cost = d + level_lambda * r;
+          if (cost < best_cost) {
+            best_cost = cost;
+            best_distortion = d;
+            best_coef_bits = r;
+            best = std::move(proposal);
+            level_won = true;
+          }
+        }
+        if (level_won) ++out.level_wins;
+        distortion += best_distortion;
+        bits += best_coef_bits;
+        if (plane == 0) {
+          candidate.u_plan = std::move(best);
+        } else {
+          candidate.v_plan = std::move(best);
+        }
       }
       candidate.distortion = distortion;
       candidate.bits = bits;
@@ -407,6 +464,9 @@ bool search(const Params& p, TxFn&& tx, BitsFn&& coef_bits, Result& out,
     out.cfl_mh_dir = winner->cfl_mh_dir;
     out.u = winner->u;
     out.v = winner->v;
+    out.u_plan = winner->u_plan;
+    out.v_plan = winner->v_plan;
+    out.have_plans = true;
     out.cost = winner->cost;
     out.distortion = winner->distortion;
     out.bits = winner->bits;
@@ -428,6 +488,16 @@ bool search(const Params& p, TxFn&& tx, BitsFn&& coef_bits, Result& out,
   out.distortion = winner->distortion;
   out.bits = winner->bits;
   return true;
+}
+
+// Prediction + transform search without a coefficient-level stage.  Keeps the
+// M4 call surface (and the `p.level_variants == 0` behaviour) unchanged.
+template <typename TxFn, typename BitsFn>
+bool search(const Params& p, TxFn&& tx, BitsFn&& coef_bits, Result& out,
+            std::string& error) {
+  const auto no_levels = [](int, const std::vector<std::uint8_t>&,
+                            const TxPlan&, int, TxPlan&) { return false; };
+  return search_with_levels(p, tx, coef_bits, no_levels, out, error);
 }
 
 }  // namespace av2enc::video::uv_search

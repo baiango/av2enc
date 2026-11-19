@@ -6,6 +6,7 @@
 #include "pipeline/video/video_perceptual.h"
 #include "pipeline/video/video_pipe_perc.h"
 #include "pipeline/video/video_skip_drift.h"
+#include "pipeline/video/video_uv_rd.h"
 #include "pipeline/video/video_uv_search.h"
 
 namespace av2enc::video {
@@ -2311,6 +2312,10 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
   TxPlan intra_y;
   TxPlan intra_u;
   TxPlan intra_v;
+  // AV2ENC_RD_UVLEVEL: the chroma search scored these plans (including the
+  // winning coefficient-level variant), so the leaf emits them directly
+  // instead of re-running compute_tx and coding a different coefficient set.
+  bool intra_chroma_ready = false;
   int intra_cctx_type = 0;
   std::uint8_t intra_y_mode = 0;  // AV2 YMode (0 = DC_PRED)
   std::int8_t intra_y_angle_delta = 0;
@@ -2671,9 +2676,18 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
         up.mask_row = chroma_mask_row;
         // One lambda for the chroma mode decision: the leaf RD weight the
         // eff-perc pipeline uses for its D + lambda * R objective.
+        // AV2ENC_RD_UVLAMBDA is the chroma mode-site calibration multiplier;
+        // unset it is 1.0, so every M4 result keeps its bytes.
         up.lambda = leaf_rd_lambda(st.current_qindex, options_) *
-                    (eff_perc::enabled() ? eff_perc::lambda_scale() : 1.0);
+                    (eff_perc::enabled() ? eff_perc::lambda_scale() : 1.0) *
+                    uv_rd::lambda_multiplier();
+        up.level_lambda = up.lambda * uv_rd::level_lambda_multiplier();
         up.top_n = rd_uvfull_top_n();
+        if (uv_rd::enabled() && uv_rd::trellis_variants() > 0) {
+          // The level stage can make a lower-ranked mode win, so re-score the
+          // wider measured candidate set.
+          up.top_n = std::max(up.top_n, uv_rd::level_top_n());
+        }
         if (choice.is_cfl) {
           up.have_cfl = true;
           up.cfl_u = choice.u;
@@ -2697,9 +2711,75 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                                             /*is_inter=*/false, uv_qctx);
           return true;
         };
+        // AV2ENC_RD_UVLEVEL: chroma coefficient-level RD.  The trellis needs
+        // the scalar quantiser (QM and split DC/AC are excluded) and the
+        // per-plane prediction in a tightly packed block.  The candidate is
+        // re-scored on the exact J inside the search, so only the winning
+        // plan is emitted.
+        const bool uv_level_ok =
+            uv_rd::enabled() && uv_rd::trellis_variants() > 0 &&
+            !options_.enable_cctx && !qm_enabled_ &&
+            st.plane_quant[1].dc == st.plane_quant[1].ac &&
+            st.plane_quant[2].dc == st.plane_quant[2].ac &&
+            st.plane_quant[1].ac > 0 && st.plane_quant[2].ac > 0;
+        int level_variants = 0;
+        std::vector<std::uint8_t> level_src[2];
+        uv_rd::LevelParams level_params;
+        if (uv_level_ok) {
+          (void)uv_rd::stats_enabled();
+          level_variants = uv_rd::trellis_variants();
+          level_params.w = cw;
+          level_params.h = ch;
+          level_params.qctx = uv_qctx;
+          level_params.mask_row = chroma_mask_row;
+          for (int plane = 0; plane < 2; ++plane) {
+            level_src[plane].resize(static_cast<std::size_t>(cw) *
+                                    static_cast<std::size_t>(ch));
+            for (int y = 0; y < ch; ++y) {
+              for (int x = 0; x < cw; ++x) {
+                level_src[plane][static_cast<std::size_t>(y) *
+                                     static_cast<std::size_t>(cw) +
+                                 static_cast<std::size_t>(x)] =
+                    static_cast<std::uint8_t>(
+                        up.src[plane].sample(up.x + x, up.y + y));
+              }
+            }
+          }
+        }
+        up.level_variants = level_variants;
+        const auto uv_level = [&](int plane,
+                                  const std::vector<std::uint8_t>& pred,
+                                  const TxPlan& /*scalar*/, int variant,
+                                  TxPlan& plan) {
+          if (!uv_level_ok) return false;
+          level_params.plane = plane + 1;
+          level_params.dc = st.plane_quant[plane + 1].dc;
+          level_params.ac = st.plane_quant[plane + 1].ac;
+          std::string level_error;
+          const bool ok = uv_rd::trellis_plan(
+              level_params, level_src[plane].data(), pred.data(),
+              uv_rd::trellis_scale() * uv_rd::variant_weight(variant), plan,
+              level_error);
+          ++uv_rd::counters().plans;
+          if (ok) {
+            ++uv_rd::counters().trellis_runs;
+          } else {
+            ++uv_rd::counters().trellis_failures;
+          }
+          return ok;
+        };
         uv_search::Result uv_result;
-        if (!uv_search::search(up, uv_tx, uv_bits, uv_result, error)) {
+        if (!uv_search::search_with_levels(up, uv_tx, uv_bits, uv_level,
+                                           uv_result, error)) {
           return false;
+        }
+        if (level_variants > 0 && uv_result.have_plans) {
+          intra_u = uv_result.u_plan;
+          intra_v = uv_result.v_plan;
+          intra_chroma_ready = true;
+          ++uv_rd::counters().blocks;
+          uv_rd::counters().flips +=
+              static_cast<unsigned long long>(uv_result.level_wins);
         }
         intra_uv_mode = uv_result.mode;
         intra_is_cfl = uv_result.is_cfl;
@@ -2717,7 +2797,10 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
         }
       }
     }
-    if (options_.enable_cctx) {
+    if (intra_chroma_ready) {
+      // AV2ENC_RD_UVLEVEL already emitted the scored plans; re-running
+      // compute_tx here would code a coefficient set the RD did not choose.
+    } else if (options_.enable_cctx) {
       // §5.4.8 enable_cctx / §7.14.6: joint U/V search.  is_cctx_allowed()
       // is true for 4:2:0; the CLI rejects the other formats with CCTX.
       if (!compute_chroma_cctx(source_, acx0, acy0, cw, ch, intra_u_pred,
@@ -3078,6 +3161,81 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                               /*is_inter=*/true, /*allow_rdoq=*/false,
                               /*rdoq_qctx=*/0, 0.0, chroma_mask_row)))) {
         return false;
+      }
+      // AV2ENC_RD_UVLEVEL: coefficient-level RD on the inter chroma residual.
+      // The scalar plan is one candidate; the trellis proposals are scored on
+      // the same J = D_perc + lambda * exact_bits the inter leaf already uses
+      // for its skip/residual decision.  The winner replaces out.res_u/v, so
+      // the emitted levels are exactly the scored ones.
+      const bool inter_level_ok =
+          uv_rd::enabled() && uv_rd::inter_enabled() &&
+          !options_.enable_cctx && !qm_enabled_ &&
+          st.plane_quant[1].dc == st.plane_quant[1].ac &&
+          st.plane_quant[2].dc == st.plane_quant[2].ac &&
+          st.plane_quant[1].ac > 0 && st.plane_quant[2].ac > 0;
+      if (inter_level_ok) {
+        (void)uv_rd::stats_enabled();
+        const double level_lambda =
+            (pipe_on ? pipe_lambda
+                     : (options_.enable_leaf_rd
+                            ? leaf_rd_lambda(st.current_qindex, options_)
+                            : options_.inter_rd_lambda)) *
+            uv_rd::level_lambda_multiplier();
+        uv_rd::LevelParams lp;
+        lp.w = cw;
+        lp.h = ch;
+        lp.qctx = pipe_qctx;
+        lp.is_inter = true;
+        lp.mask_row = chroma_mask_row;
+        for (int plane = 1; plane <= 2; ++plane) {
+          TxPlan& scalar = plane == 1 ? out.res_u : out.res_v;
+          const std::vector<std::uint8_t>& pred =
+              plane == 1 ? out.u : out.v;
+          std::vector<std::uint8_t> src(static_cast<std::size_t>(cw) *
+                                        static_cast<std::size_t>(ch));
+          for (int y = 0; y < ch; ++y) {
+            for (int x = 0; x < cw; ++x) {
+              src[static_cast<std::size_t>(y) *
+                      static_cast<std::size_t>(cw) +
+                  static_cast<std::size_t>(x)] = static_cast<std::uint8_t>(
+                  source_sample(source_, plane, acx0 + x, acy0 + y));
+            }
+          }
+          lp.plane = plane;
+          lp.dc = st.plane_quant[plane].dc;
+          lp.ac = st.plane_quant[plane].ac;
+          TxPlan best = scalar;
+          const double best_d =
+              sse_pipe(plane, acx0, acy0, cw, ch, scalar.recon);
+          const double scalar_r = coeff_bits(scalar, plane, true);
+          double best_cost = best_d + level_lambda * scalar_r;
+          const int tries = uv_rd::trellis_variants();
+          for (int variant = 1; variant <= tries; ++variant) {
+            TxPlan proposal;
+            std::string level_error;
+            const bool ok = uv_rd::trellis_plan(
+                lp, src.data(), pred.data(),
+                uv_rd::trellis_scale() * uv_rd::variant_weight(variant),
+                proposal, level_error);
+            ++uv_rd::counters().plans;
+            if (!ok) {
+              ++uv_rd::counters().trellis_failures;
+              continue;
+            }
+            ++uv_rd::counters().trellis_runs;
+            const double alt_d =
+                sse_pipe(plane, acx0, acy0, cw, ch, proposal.recon);
+            const double alt_bits = coeff_bits(proposal, plane, true);
+            const double cost = alt_d + level_lambda * alt_bits;
+            if (cost < best_cost) {
+              best_cost = cost;
+              best = std::move(proposal);
+              ++uv_rd::counters().flips;
+            }
+          }
+          scalar = std::move(best);
+        }
+        ++uv_rd::counters().blocks;
       }
       if (trace_ && options_.enable_cctx) {
         std::cerr << "  cand inter cctx=" << out.cctx << "\n";

@@ -97,6 +97,15 @@ struct Options {
   std::int32_t rdoq_qctx = 0;
   // SSE-domain lambda calibration; see video_frame.h kVideoRdoqSseScale.
   double rdoq_sse_scale = 0.1;
+  // AV2ENC_RD_KEY_TX: run the coefficient-level trellis on intra leaves as
+  // well as inter ones.  The trellis arithmetic and the §8.3 model are the
+  // same; only the `is_inter` table select changes.  Default off keeps every
+  // historical intra search (and the CUDA reference contract) unchanged.
+  bool intra_rdoq = false;
+  // Scale applied to the static §8.3 model in the RDOQ branch.  The inter
+  // integration compensates the adaptive tile CDFs with 0.4 (measured); an
+  // exact-rate search uses 1.0.  The historical default is unchanged.
+  double model_rate_scale = 0.4;
   // AV2ENC_PIPE_PERC: per-coded-sample distortion weights in Q8 (256 neutral),
   // raster order over the coding block.  When non-null the candidate cost is
   // `weighted_sse + lambda * rate` and the returned SSE is the weighted sum, so

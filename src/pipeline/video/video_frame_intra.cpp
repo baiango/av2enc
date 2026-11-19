@@ -1,6 +1,146 @@
 #include "pipeline/video/video_frame_internal.h"
 
+#include <algorithm>
+#include <numeric>
+
 namespace av2enc::video {
+namespace {
+
+// AV2ENC_RD_KEY_TX (default off): one J for the key picture's intra luma
+// transform plan.  The historical key-in-TX path ranks partitions by plain
+// coded SSE plus an estimated rate; this gate ranks them by the eff-perc key
+// distortion and the exact §8.3 plan rate, screens every candidate cheaply and
+// re-scores the top-K exactly (docs/rd-lane3.md).
+struct KeyTxRdConfig {
+  bool on = false;
+  int top_k = 4;
+  bool level = true;
+  // The measured matched-K point is 0.25 (docs/rd-lane3.md): the key TX
+  // weight is a content-calibrated fraction of the inter/eff-perc weight.
+  double tx_scale = 0.25;
+  // < 0 selects 0.25 * rdoq_sse_scale_at(): the measured key/inter ratio.
+  double level_scale = -1.0;
+  // Score the exact-stage plan distortion with the eff-perc key CSF (1) or
+  // plain coded SSE (0).  The base partition cost is plain SSE; the CSF
+  // weights low-band error and therefore tolerates more high-frequency error,
+  // which is the band inter prediction reads.
+  double plan_csf = 1.0;
+  // Report the plan histogram even on the historical (gate-off) path.
+  bool stats = false;
+};
+
+inline const KeyTxRdConfig& key_tx_rd_config() {
+  static const KeyTxRdConfig cfg = [] {
+    KeyTxRdConfig out;
+    if (const char* on = std::getenv("AV2ENC_RD_KEY_TX")) {
+      out.on = on[0] != '\0' && std::strcmp(on, "0") != 0;
+    }
+    if (const char* v = std::getenv("AV2ENC_RD_KEY_TX_TOP")) {
+      const int k = std::atoi(v);
+      if (k >= 1) out.top_k = std::min(k, 8);
+    }
+    if (const char* v = std::getenv("AV2ENC_RD_KEY_LEVEL")) {
+      out.level = v[0] != '\0' && std::strcmp(v, "0") != 0;
+    }
+    if (const char* v = std::getenv("AV2ENC_RD_KEY_TX_SCALE")) {
+      const double s = std::atof(v);
+      if (s > 0.0) out.tx_scale = s;
+    }
+    if (const char* v = std::getenv("AV2ENC_RD_KEY_LEVEL_SCALE")) {
+      const double s = std::atof(v);
+      if (s > 0.0) out.level_scale = s;
+    }
+    if (const char* v = std::getenv("AV2ENC_RD_KEY_TX_D")) {
+      out.plan_csf = std::atof(v) > 0.0 ? 1.0 : 0.0;
+    }
+    if (const char* v = std::getenv("AV2ENC_RD_KEY_STATS")) {
+      out.stats = v[0] != '\0' && std::strcmp(v, "0") != 0;
+    }
+    return out;
+  }();
+  return cfg;
+}
+
+// Plan/level counters for the required report.  Printed once at process exit
+// when the gate is on (stderr; the key picture is one frame per stream).
+struct KeyTxRdStats {
+  long long leaves = 0;
+  long long plans[8] = {};
+  long long sizes[25] = {};
+  long long types[16] = {};
+  long long screen_flips = 0;
+  long long screen_kept = 0;
+  long long parts = 0;
+  long long level_candidates = 0;
+  double bits = 0.0;
+  double distortion = 0.0;
+
+  ~KeyTxRdStats() {
+    const KeyTxRdConfig& cfg = key_tx_rd_config();
+    if (!cfg.on && !cfg.stats) return;
+    long long s4 = sizes[0];
+    long long s8 = sizes[1];
+    long long s16 = sizes[2];
+    long long s32 = sizes[3];
+    long long s64 = sizes[4];
+    long long t_dct = types[0];
+    long long t_adst = 0;
+    for (int t = 1; t < 9; ++t) t_adst += types[t];
+    long long t_idtx = types[9];
+    std::fprintf(
+        stderr,
+        "key-tx-rd: leaves=%lld plans[none=%lld split=%lld horz=%lld "
+        "vert=%lld] tx4=%lld tx8=%lld tx16=%lld tx32=%lld tx64=%lld "
+        "dct=%lld adst=%lld idtx=%lld parts=%lld screen_flips=%lld "
+        "screen_kept=%lld trellis_parts=%lld bits=%.1f d=%.1f\n",
+        leaves, plans[0], plans[1], plans[2], plans[3], s4, s8, s16, s32,
+        s64, t_dct, t_adst, t_idtx, parts, screen_flips, screen_kept,
+        level_candidates, bits, distortion);
+  }
+};
+
+inline KeyTxRdStats& key_tx_rd_stats() {
+  static KeyTxRdStats stats;
+  return stats;
+}
+
+// §5.20.6.3 partition signalling cost from the §9.3 initial CDF rows, walked
+// by the real writer so the symbols (do_partition, tx_partition_type,
+// tx_2or3_partition_type) and their contexts cannot drift from the bitstream.
+class PartitionBitSink : public txpartition::SymbolSink {
+ public:
+  double bits = 0.0;
+
+  bool symbol(std::uint16_t* cdf, int n, int value,
+              std::string& /*error*/) override {
+    if (cdf == nullptr || n < 2 || value < 0 || value >= n) return false;
+    const int lo = value == 0 ? 0 : static_cast<int>(cdf[value - 1]);
+    const int hi = value == n - 1 ? 32768 : static_cast<int>(cdf[value]);
+    const int range = hi > lo ? hi - lo : 1;
+    bits += -std::log2(static_cast<double>(range) / 32768.0);
+    return true;
+  }
+};
+
+double exact_partition_bits(int mi_size, txpartition::TxPartition part) {
+  txpartition::TxPartitionCdfs cdfs;
+  cdfs.reset(/*reduced_tx_part_set=*/false);
+  txpartition::BlockTxContext ctx;
+  ctx.mi_size = mi_size;
+  ctx.is_inter = false;
+  ctx.fsc_mode = false;
+  ctx.reduced_tx_part_set = false;
+  PartitionBitSink sink;
+  txpartition::SplitGeometry geometry;
+  std::string error;
+  if (!txpartition::write_tx_partition(sink, cdfs, ctx, part, &geometry,
+                                       error)) {
+    return -1.0;
+  }
+  return sink.bits;
+}
+
+}  // namespace
 
 void InterFrameEncoder::luma_neighbor_smooth(int r, int c, bool& above_smooth,
                           bool& left_smooth) const {
@@ -343,10 +483,21 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
   const int y0 = r * 4;
   const int ax0 = x0 + tile_x_;
   const int ay0 = y0 + tile_y_;
+  const KeyTxRdConfig& kcfg = key_tx_rd_config();
   const double lambda = key_tx_rd_lambda(options_, st.current_qindex);
+  const double exact_lambda = lambda * kcfg.tx_scale;
   const int qctx = ::av2enc::still::qctx::slice_for_base_q_idx(
       options_.tx_context_rate ? base_q_index() : st.current_qindex);
   const int mi_size = static_cast<int>(size);
+  // AV2ENC_RD_KEY_TX: the key picture's distortion is the same eff-perc D the
+  // leaf and its TX search use.  The source weight map is neutral at the
+  // shipped shape (0), so the error-domain CSF carries the perceptual model.
+  const double key_csf = eff_perc::enabled() ? eff_perc::key_csf_gain() : 0.0;
+  const double key_csf2 = eff_perc::enabled() ? eff_perc::csf2_gain() : 0.0;
+  const double level_scale =
+      kcfg.level_scale > 0.0
+          ? kcfg.level_scale
+          : 0.25 * rdoq_sse_scale_at(options_, st.current_qindex);
 
   // §5.20.6.3 legal partitions.  HORZ4/VERT4 only appear in the 2or3 branch
   // (one legal direction); the still encoder's chain enumerates NONE/SPLIT/
@@ -454,48 +605,64 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
     }
   };
 
-  // Runs one candidate against the real planes and leaves its plan, its
-  // block-sized reconstruction and its RD cost in `trial`.
   struct Trial {
     txpart::TxPartition part = txpart::TxPartition::kNone;
     TxPlan plan;
     std::vector<std::uint8_t> recon;
     double cost = std::numeric_limits<double>::infinity();
+    double distortion = 0.0;
+    double rate = 0.0;
   };
-  const auto evaluate = [&](txpart::TxPartition part,
+
+  // One transform-leaf search.  The screen (`exact == false`) is the
+  // historical call: heuristic rate, plain SSE, the configured TX lambda.  The
+  // exact stage turns on the §8.3 coefficient model, the key TX lambda and the
+  // coefficient trellis.
+  const auto search_part = [&](int px, int py, int tw, int th, int part_mask,
+                               const std::vector<std::uint8_t>& pred,
+                               bool exact, double search_lambda,
+                               TxPlan* out) {
+    const int mapped_mode = std::max(
+        0, mrl_stream::mapped_intra_mode_for_mrl(
+               y_mode, angle_delta, mrl_index, tw, th));
+    return search_luma_tx(
+        source_, px, py, tw, th, pred, st.current_qindex,
+        txtsearch::Mode::kIntra, search_lambda, options_.enable_idtx_intra,
+        mapped_mode, options_.enable_tcq, qctx,
+        /*enable_inter_ddt=*/false, /*search_partition=*/false,
+        exact ? true : options_.tx_context_rate, /*trace=*/false,
+        /*allow_rdoq=*/exact && kcfg.level, /*rdoq_qctx=*/qctx,
+        level_scale, *out, error, part_mask,
+        /*distortion_weight=*/nullptr, /*cdf_slice=*/nullptr, key_csf,
+        key_csf2,
+        /*intra_rdoq=*/exact && kcfg.level,
+        /*model_rate_scale=*/1.0);
+  };
+
+  // Runs one candidate against the real planes and leaves its plan, its
+  // block-sized reconstruction and its RD cost in `trial`.
+  const auto evaluate = [&](txpart::TxPartition part, bool exact,
                             Trial* trial) -> bool {
     trial->part = part;
     trial->plan = TxPlan{};
+    const double search_lambda = exact ? exact_lambda : lambda;
+    double partition_bits = 3.0;
+    if (exact) {
+      partition_bits = exact_partition_bits(mi_size, part);
+      if (partition_bits < 0.0) {
+        error = "exact TX partition signalling cost failed";
+        return false;
+      }
+    }
     if (part == txpart::TxPartition::kNone) {
       TxPlan whole;
-      const int mapped_mode = std::max(
-          0, mrl_stream::mapped_intra_mode_for_mrl(
-                 y_mode, angle_delta, mrl_index, w, h));
-      if (!search_luma_tx(source_, ax0, ay0, w, h, block_pred,
-                          st.current_qindex, txtsearch::Mode::kIntra, lambda,
-                          options_.enable_idtx_intra, mapped_mode,
-                          options_.enable_tcq, qctx,
-                          /*enable_inter_ddt=*/false,
-                          /*search_partition=*/false,
-                          options_.tx_context_rate, /*trace=*/false,
-                          /*allow_rdoq=*/false, /*rdoq_qctx=*/0,
-                          rdoq_sse_scale_at(options_, st.current_qindex),
-                          whole, error, mask_row,
-                          /*distortion_weight=*/nullptr,
-                          (eff_perc::enabled() &&
-                           (eff_perc::rate_mode() & 2) != 0 && !keyframe_)
-                              ? eff_cdf_slice()
-                              : nullptr,
-                          eff_perc::enabled()
-                              ? (keyframe_ ? eff_perc::key_csf_gain()
-                                           : eff_perc::csf_gain())
-                              : 0.0,
-                          eff_perc::enabled() ? eff_perc::csf2_gain() : 0.0)) {
+      if (!search_part(ax0, ay0, w, h, mask_row, block_pred, exact,
+                       search_lambda, &whole)) {
         return false;
       }
       trial->recon = whole.recon;
+      trial->rate = whole.rate_bits + (exact ? partition_bits : 0.0);
       trial->plan = std::move(whole);
-      trial->cost = lambda * trial->plan.rate_bits;
     } else {
       txpart::SplitGeometry geometry;
       std::string geometry_error;
@@ -508,10 +675,7 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
       merged.searched = true;
       merged.partition = static_cast<int>(part);
       merged.rate_bits = 0.0;
-      // §5.20.6.3: the partition symbols cost ~3 bits; the exact shared rate
-      // model is the writer's, so the decision uses the still encoder's
-      // constant estimate.
-      double rate = 3.0;
+      double rate = partition_bits;
       std::vector<std::uint8_t> block(
           static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
       for (int k = 0; k < geometry.count; ++k) {
@@ -538,32 +702,13 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
           error = "intra TX-part prediction failed";
           return false;
         }
-        const int mapped_mode = std::max(
-            0, mrl_stream::mapped_intra_mode_for_mrl(
-                   y_mode, angle_delta, mrl_index, tw, th));
         const int part_mask =
             mask_row < 0 ? -1
                          : std::clamp(mask_row - split.mi_row * 4, 0, th);
         TxPlan part_plan;
-        if (!search_luma_tx(
-                source_, ax0 + split.mi_col * 4, ay0 + split.mi_row * 4,
-                tw, th, pred, st.current_qindex, txtsearch::Mode::kIntra,
-                lambda, options_.enable_idtx_intra, mapped_mode,
-                options_.enable_tcq, qctx, /*enable_inter_ddt=*/false,
-                /*search_partition=*/false, options_.tx_context_rate,
-                /*trace=*/false, /*allow_rdoq=*/false, /*rdoq_qctx=*/0,
-                rdoq_sse_scale_at(options_, st.current_qindex), part_plan,
-                error, part_mask,
-                /*distortion_weight=*/nullptr,
-                (eff_perc::enabled() &&
-                 (eff_perc::rate_mode() & 2) != 0 && !keyframe_)
-                    ? eff_cdf_slice()
-                    : nullptr,
-                eff_perc::enabled()
-                    ? (keyframe_ ? eff_perc::key_csf_gain()
-                                 : eff_perc::csf_gain())
-                    : 0.0,
-                eff_perc::enabled() ? eff_perc::csf2_gain() : 0.0)) {
+        if (!search_part(ax0 + split.mi_col * 4, ay0 + split.mi_row * 4, tw,
+                         th, part_mask, pred, exact, search_lambda,
+                         &part_plan)) {
           return false;
         }
         if (part_plan.parts.empty()) {
@@ -600,35 +745,95 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
       merged.tx_size = merged.parts[0].tx_size;
       merged.eob = merged.parts[0].eob;
       merged.tx_type = merged.parts[0].tx_type;
-      merged.rate_bits = rate - 3.0;
+      merged.rate_bits = rate - partition_bits;
       trial->recon = std::move(block);
       trial->plan = std::move(merged);
-      trial->cost = lambda * rate;
+      trial->rate = rate;
     }
-    const std::int64_t sse = sse_against_source(
-        source_, 0, ax0, ay0, w, h, trial->recon, mask_row);
-    trial->cost += static_cast<double>(sse);
+    if (exact) {
+      const double d_csf = kcfg.plan_csf > 0.0 ? key_csf : 0.0;
+      const double d_csf2 = kcfg.plan_csf > 0.0 ? key_csf2 : 0.0;
+      trial->distortion = eff_perc::weighted_sse(
+          /*weights=*/nullptr, w, h, source_.y.data(),
+          static_cast<int>(source_.width), ax0, ay0, trial->recon.data(), w,
+          0, 0, mask_row, d_csf, d_csf2);
+      trial->cost = trial->distortion + exact_lambda * trial->rate;
+    } else {
+      trial->distortion = static_cast<double>(
+          sse_against_source(source_, 0, ax0, ay0, w, h, trial->recon,
+                             mask_row));
+      trial->cost = trial->distortion + lambda * trial->rate;
+    }
     return true;
   };
 
+  // Stage 1: screen every legal partition with the historical cost.
+  std::vector<Trial> screen(options.size());
+  for (std::size_t i = 0; i < options.size(); ++i) {
+    restore();
+    if (!evaluate(options[i], /*exact=*/false, &screen[i])) return false;
+  }
+  std::vector<std::size_t> order(options.size());
+  std::iota(order.begin(), order.end(), 0);
+  std::stable_sort(order.begin(), order.end(),
+                   [&](std::size_t a, std::size_t b) {
+                     return screen[a].cost < screen[b].cost;
+                   });
+
   Trial best;
   bool have_best = false;
-  for (const txpart::TxPartition option : options) {
-    restore();
-    Trial trial;
-    if (!evaluate(option, &trial)) return false;
-    if (!have_best || trial.cost < best.cost) {
-      best = std::move(trial);
-      have_best = true;
+  const std::size_t screen_winner = order[0];
+  if (!kcfg.on) {
+    best = std::move(screen[screen_winner]);
+    have_best = true;
+  } else {
+    // Stage 2: exact plan rate + eff-perc D on the top-K screen candidates.
+    const std::size_t top =
+        std::min(order.size(), static_cast<std::size_t>(kcfg.top_k));
+    for (std::size_t j = 0; j < top; ++j) {
+      restore();
+      Trial trial;
+      if (!evaluate(options[order[j]], /*exact=*/true, &trial)) return false;
+      if (!have_best || trial.cost < best.cost) {
+        best = std::move(trial);
+        have_best = true;
+      }
     }
+  }
+  if (kcfg.on || kcfg.stats) {
+    KeyTxRdStats& stats = key_tx_rd_stats();
+    ++stats.leaves;
+    if (kcfg.on) {
+      if (best.part == screen[screen_winner].part) {
+        ++stats.screen_kept;
+      } else {
+        ++stats.screen_flips;
+      }
+    }
+    ++stats.plans[static_cast<int>(best.part)];
+    for (const TxPlan::Part& part : best.plan.parts) {
+      const int tw = txpartition::tx_width(part.tx_size);
+      const int th = txpartition::tx_height(part.tx_size);
+      if (tw == th && tw >= 4 && tw <= 64) {
+        ++stats.sizes[static_cast<int>(part.tx_size)];
+      }
+      if (part.tx_type >= 0 && part.tx_type < 16) {
+        ++stats.types[part.tx_type];
+      }
+      ++stats.parts;
+    }
+    stats.level_candidates +=
+        kcfg.level ? static_cast<long long>(best.plan.parts.size()) : 0;
+    stats.bits += best.plan.rate_bits;
+    stats.distortion += best.distortion;
   }
   if (!have_best) {
     error = "intra TX-part search selected no candidate";
     return false;
   }
   restore();
-  // Commit the winner: the whole block is written in one go (the parts
-  // tile it), so the post-block state matches a whole-block reconstruction.
+  // Commit the winner: the whole block is written in one go (the parts tile
+  // it), so the post-block state matches a whole-block reconstruction.
   write_plane_block(recon_[0], x0, y0, w, h, best.recon);
   st.decoded[0].fill(c, r, w / 4, h / 4);
   *plan = std::move(best.plan);

@@ -1687,7 +1687,9 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
                     const std::uint16_t* distortion_weight = nullptr,
                     const still::qctx::CoeffCdfSlice* cdf_slice = nullptr,
                     double lowpass_gain = 0.0,
-                    double lowpass2_gain = 0.0) {
+                    double lowpass2_gain = 0.0,
+                    bool intra_rdoq = false,
+                    double model_rate_scale = 0.4) {
   std::vector<std::int16_t> residual(
       static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
   for (int y = 0; y < ch; ++y) {
@@ -1726,6 +1728,8 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   options.cdf_slice = cdf_slice;
   options.lowpass_gain = lowpass_gain;
   options.lowpass2_gain = lowpass2_gain;
+  options.intra_rdoq = intra_rdoq;
+  options.model_rate_scale = model_rate_scale;
   // AV2ENC_TX_DETAIL_SEARCH_TAIL: inter luma only, and only where an 8x8 TX
   // leaf is legal (a coding block at most 16x16 on both axes).  The 2-4 px
   // price then lets the legal 16x16 -> four 8x8 SPLIT win on RD where the

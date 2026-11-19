@@ -417,9 +417,9 @@ void materialize_candidate(const CandidateSlot& src, LeafCandidate* dst) {
 // Under `--video-rdoq` the static §8.3 model prices the default (non-adaptive)
 // CDF tables while the tile coder adapts its CDFs, so the real syntax cost is
 // roughly this fraction of the estimate.  The RDOQ cost model therefore scales
-// the static bits by this value; `kModelRateScale` is the measured calibration
-// from the `--video-rdoq` integration (`docs/video-rdoq.md`).
-constexpr double kModelRateScale = 0.4;
+// the static bits by `Options::model_rate_scale` (0.4, the measured
+// calibration from the `--video-rdoq` integration; an exact-rate search sets
+// 1.0).
 
 bool block_syntax_bits(const txv::TxParams& params,
                        std::span<const std::int32_t> levels_raster,
@@ -622,7 +622,8 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   // The trellis returns syntax levels, so the reconstruction below and the
   // syntax writer see exactly the same coefficients.
   double rdoq_level_bits = -1.0;
-  const bool use_rdoq = rdoq && !use_tcq && options.rdoq && is_inter &&
+  const bool intra_rdoq_ok = is_inter || options.intra_rdoq;
+  const bool use_rdoq = rdoq && !use_tcq && options.rdoq && intra_rdoq_ok &&
                         dcq == acq && tx_type <= 9 && !use_ddt;
   if (use_rdoq) {
     const std::span<std::int32_t> scalar_scan(
@@ -645,7 +646,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     info.txb_skip_context = 0;
     info.dc_sign_context = 0;
     info.qctx = options.rdoq_qctx;
-    info.is_inter = true;
+    info.is_inter = is_inter;
     av2enc::rdoq::av2::Model& model = scratch.rdoq_model;
     std::string rdoq_error;
     if (!model.init(info, scalar_scan, &rdoq_error)) {
@@ -677,8 +678,8 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   // magnitudes, EOB or the skip symbol; when RDOQ is on the search prices
   // every inter luma candidate with the same static model the trellis uses.
   const bool model_rate =
-      options.rdoq && is_inter && dcq == acq && tx_type <= 9 && !use_ddt &&
-      !use_tcq;
+      options.rdoq && intra_rdoq_ok && dcq == acq && tx_type <= 9 &&
+      !use_ddt && !use_tcq;
 
   std::int32_t* dequant = scratch.dequant;
   const int dq_denom = use_tcq ? (params.dq_denom << 1) : params.dq_denom;
@@ -850,7 +851,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
                         use_tcq, /*txb_skip_ctx=*/0, /*dc_sign_ctx=*/0,
                         /*plane=*/0, scratch, options.cdf_slice,
                         &syntax_bits)) {
-      rate = syntax_bits * kModelRateScale + type_bits;
+      rate = syntax_bits * options.model_rate_scale + type_bits;
     }
   } else if (options.use_context_rate &&
              tx_class == txpart::TxScanClass::k2D) {
@@ -1108,8 +1109,9 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
   // every coded leaf of the winning plan is re-quantised with the trellis.  A
   // leaf whose refined levels would make the block non-codable (an all-zero
   // inter leaf still codes its TX_TYPE; an intra leaf with eob <= 1 infers
-  // DCT_DCT) keeps its scalar candidate.
-  if (options.rdoq && is_inter) {
+  // DCT_DCT) keeps its scalar candidate.  `intra_rdoq` extends the same
+  // contract to intra leaves (AV2ENC_RD_KEY_TX).
+  if (options.rdoq && (is_inter || options.intra_rdoq)) {
     double scalar_leaf_bits = 0.0;
     for (int k = 0; k < best->geometry.count; ++k) {
       scalar_leaf_bits += best->leaves[k].rate_bits;
