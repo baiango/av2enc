@@ -69,6 +69,7 @@ while [ "$i" -le "$LANES" ]; do
         echo "  worktree=$worktree branch=$branch ledger=$ledger"
         echo "  prompt=$prompt agent=$AGENT model=$MODEL iterations=$ITERATIONS"
     else
+        echo "=== run $(date '+%Y-%m-%d %H:%M:%S') prefix=$PREFIX lane=$i iterations=$ITERATIONS ===" >> "$LOG/lane-$i.log"
         python3 "$ROOT/tools/agent_loop.py" \
             --iterations "$ITERATIONS" \
             --worktree "$worktree" \
@@ -86,7 +87,7 @@ while [ "$i" -le "$LANES" ]; do
             --envelope-ceiling-floor "$(set -- $(lane_ceiling "$i"); echo "$2")" \
             --envelope-revert \
             --stop-file "$STOP" \
-            --sleep 2 > "$LOG/lane-$i.log" 2>&1 &
+            --sleep 2 >> "$LOG/lane-$i.log" 2>&1 &
         pids="$pids $!"
         echo "lane $i pid $! target: $target"
         sleep 20

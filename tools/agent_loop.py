@@ -22,6 +22,7 @@ import glob
 import hashlib
 import json
 import os
+import selectors
 import shutil
 import subprocess
 import sys
@@ -118,6 +119,46 @@ def link_fixtures(repo: Path, worktree: Path) -> None:
         dst.symlink_to(src)
 
 
+def run_agent(cmd: list[str], cwd: Path, log: Path,
+              timeout: float | None) -> tuple[int, str]:
+    """Run the agent and stream its JSON lines to `log` as they arrive.
+
+    The old loop wrote the log only after the call returned, so a running
+    iteration was invisible.  Streaming makes the status view real and keeps
+    the same artifact (`<iteration>.json`) for the gate and post-mortems.
+    """
+    log.parent.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    out: list[str] = []
+    with log.open("w") as handle:
+        proc = subprocess.Popen(cmd, cwd=str(cwd), text=True,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, bufsize=1)
+        assert proc.stdout is not None
+        sel = selectors.DefaultSelector()
+        sel.register(proc.stdout, selectors.EVENT_READ)
+        try:
+            while True:
+                if timeout and time.monotonic() - started >= timeout:
+                    proc.kill()
+                    break
+                events = sel.select(timeout=2.0)
+                if not events:
+                    if proc.poll() is not None:
+                        break
+                    continue
+                line = proc.stdout.readline()
+                if line == "":
+                    break
+                handle.write(line)
+                handle.flush()
+                out.append(line)
+            proc.wait(timeout=10)
+        finally:
+            sel.close()
+    return proc.returncode, "".join(out)
+
+
 def ledger_hash(path: Path) -> str | None:
     if not path.is_file():
         return None
@@ -167,6 +208,7 @@ def run_envelope(worktree: Path, args, iteration: int, log_dir: Path) -> str:
         except json.JSONDecodeError:
             pass
     record = {
+        "at": time.time(),
         "iteration": iteration,
         "verdict": verdict,
         "exit": proc.returncode,
@@ -305,11 +347,12 @@ def main() -> int:
         print(f"[{label}] {title} ({len(prompt)} char prompt)", flush=True)
         t0 = time.monotonic()
         try:
-            proc = run(cmd, worktree, timeout=args.iteration_timeout or None)
-        except subprocess.TimeoutExpired as exc:
+            rc, captured = run_agent(
+                cmd, worktree, log, args.iteration_timeout or None)
+        except Exception as exc:  # noqa: BLE001 - a broken call must not stop the loop
             elapsed = time.monotonic() - t0
-            log.write_text((exc.stdout or "") + (exc.stderr or ""))
-            print(f"  timeout after {elapsed:.1f}s; continuing", flush=True)
+            print(f"  agent call failed after {elapsed:.1f}s: {exc}; continuing",
+                  flush=True)
             failed += 1
             stale += 1
             if args.fail_fast:
@@ -321,24 +364,23 @@ def main() -> int:
                 time.sleep(args.sleep)
             continue
         elapsed = time.monotonic() - t0
-        log.write_text((proc.stdout or "") + (proc.stderr or ""))
         after = ledger_hash(ledger)
-        result = last_text(proc.stdout or "") or "(no text event)"
+        result = last_text(captured) or "(no text event)"
         changed = before != after
-        print(f"  rc={proc.returncode} {elapsed:.1f}s ledger={'changed' if changed else 'UNCHANGED'}",
+        print(f"  rc={rc} {elapsed:.1f}s ledger={'changed' if changed else 'UNCHANGED'}",
               flush=True)
         print(f"  {result[:1000]}", flush=True)
         if changed:
             stale = 0
         else:
             stale += 1
-        if args.envelope_gate and proc.returncode == 0:
+        if args.envelope_gate and rc == 0:
             try:
                 gate = run_envelope(worktree, args, i, log_dir)
                 print(f"  envelope: {gate}", flush=True)
             except Exception as exc:  # noqa: BLE001 - never kill the loop
                 print(f"  envelope: measurement error: {exc}", flush=True)
-        if proc.returncode != 0:
+        if rc != 0:
             failed += 1
             if args.fail_fast:
                 break
