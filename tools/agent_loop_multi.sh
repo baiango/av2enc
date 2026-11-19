@@ -46,12 +46,12 @@ lane_ceiling() {
 
 lane_target() {
     case "$1" in
-        1) echo "P-head inter residual/prediction coding (f0-32), excluding the closed skip variants" ;;
-        2) echo "P-tail residual/allocation (f33-59), preserving the kept skip/exact-rate composition" ;;
-        3) echo "inter transform/quantisation/coefficient coding (non-trellis, non-key)" ;;
-        4) echo "loop-filter strength: deblock df_delta_q, CDEF strength/index, per-frame LR/CCSO choice" ;;
-        5) echo "per-block switchable interp filter and MC prediction (frame-global form is closed)" ;;
-        *) echo "P-tail residual coding without a closed mechanism" ;;
+        1) echo "PIPE-EXACT: exhaustive per-leaf RD pipeline (new)" ;;
+        2) echo "PIPE-HORIZON: future-source decision pipeline (new)" ;;
+        3) echo "PIPE-TRELLIS: non-greedy partition/mode pipeline (new)" ;;
+        4) echo "PIPE-BA: Butteraugli-targeted decision pipeline (new)" ;;
+        5) echo "PIPE-2PASS: measured two-pass frame pipeline (new)" ;;
+        *) echo "new decision pipeline" ;;
     esac
 }
 

@@ -1,29 +1,29 @@
-# Lane 1 — frequency-aware inter TX size/type enumeration
+# Lane 1 — PIPE-EXACT: a new exhaustive-RD pipeline
 
-Target: raise the 100 kbps K envelope. The bar is the possible K over the
-tool's knobs: **envelope ≥ 85.249** (best known 85.099 + 0.15).
+Program (multi-iteration): build a **new decision pipeline** from scratch under
+`AV2ENC_PIPE_EXACT`, default off. Do not extend eff-perc's branch stack: write a
+new leaf decision path that enumerates skip / inter-residual / intra for every
+leaf, prices each with the exact syntax probe (`rate_probe_`/`pipe_probe_`),
+uses the perceptual D, and picks min J. Reuse the decoder-exact primitives, the
+CDF carry and the per-block interp; keep every bug fix.
+
+Each iteration: advance one stage, build, run the gate, and record it. This is
+a program, not a single patch.
 
 ## Read only
-- this file; the last 15 lines of `docs/agent-loop-ledger-1.md`;
-- `docs/luma-audit.md` section on the 1-4 px band (grep `1-4 px`).
+- this file; last 15 lines of `docs/agent-loop-ledger-1.md`;
+- `docs/pipe-perc.md`, `docs/eff-perc.md`.
 
 Do not run `git log`/`branch`/`remote`. Do not edit `tools/`.
 
-## Hypothesis
-The inter TX menu is chosen globally. Allow 4x4/8x8 TX where the leaf's 2-4 px
-energy is high, gated by `AV2ENC_TX_DETAIL_SEARCH`, and **sweep the detail
-threshold** (`AV2ENC_TX_DETAIL_MIN`). One mechanism, three arms.
-
 ## Allowed files
-`src/pipeline/video/video_tx_search.cpp`, `video_tx_search.h`,
+new `src/pipeline/video/video_pipe_exact.h/.cpp`,
 `video_frame_decision.cpp`, `video_frame_internal.h`,
 `docs/agent-loop-ledger-1.md`.
 
-## Steps
-1. Edit only the allowed files. Default off, env-gated, no preset/pin change,
-   no new syntax, no third-party code.
-2. Build: `cmake --build build-release -j8`.
-3. Write `build/agent-loop/spec.json` with a **knob sweep**:
+## Gate
+At least three knob arms of the new pipeline (e.g. lambda 0.15/0.20/0.30) on
+top of the eff-perc base env. Spec:
 ```json
 {"ref":"testdata/nasa_480x240_30fps_60f.y4m","bin":"build-release/av2enc",
  "frames":60,
@@ -31,23 +31,16 @@ threshold** (`AV2ENC_TX_DETAIL_MIN`). One mechanism, three arms.
   "--video-drift-refresh-threshold","1.5","--video-drift-refresh-budget","3250"],
  "qp":119,"target_kbps":100.0,
  "arms":[{"name":"base","env":{}},
-   {"name":"t20","env":{"AV2ENC_TX_DETAIL_SEARCH":"1","AV2ENC_TX_DETAIL_MIN":"0.20"}},
-   {"name":"t35","env":{"AV2ENC_TX_DETAIL_SEARCH":"1","AV2ENC_TX_DETAIL_MIN":"0.35"}},
-   {"name":"t50","env":{"AV2ENC_TX_DETAIL_SEARCH":"1","AV2ENC_TX_DETAIL_MIN":"0.50"}}]}
+  {"name":"l15","env":{"AV2ENC_PIPE_EXACT":"1","AV2ENC_PIPE_EXACT_LAMBDA":"0.15"}},
+  {"name":"l20","env":{"AV2ENC_PIPE_EXACT":"1","AV2ENC_PIPE_EXACT_LAMBDA":"0.20"}},
+  {"name":"l30","env":{"AV2ENC_PIPE_EXACT":"1","AV2ENC_PIPE_EXACT_LAMBDA":"0.30"}}]}
 ```
-4. Run from the worktree root:
+Run:
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
   --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3 \
-  --ceiling-segment f44-59 --ceiling-floor 88.995
+  --ceiling-segment f0-32 --ceiling-floor 90.197
 ```
-5. PASS only if `PASS`: envelope ≥ 85.249, ≥3 knob arms, and the
-   ceiling[f44-59] delta vs the base arm is at least +0.15 K.
-6. On FAIL: `git checkout -- src && git clean -fd src`. On PASS: leave `src/`
-   uncommitted. Never commit source.
-7. Append one ledger row: hypothesis, envelope, best arm, PASS/FAIL.
-8. Stop. No second hypothesis.
-
-## Closed
-Key/intra, HF RDOQ/trellis, dead-zone quantisers, multi-ref, TIP, BAWP,
-frame-global interp, head/tail QP allocation, skip variants.
+PASS only if `PASS`: envelope ≥ 85.249, ≥3 arms, ceiling delta vs base ≥ +0.15.
+On FAIL leave the pipeline code uncommitted and continue the program next
+iteration; the runner reverts only if the iteration regresses the base.
