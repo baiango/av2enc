@@ -29,8 +29,9 @@ PROMPT=$ROOT/docs/agent-loop-lane-prompt.md
 DRY=${AV2ENC_DRY_RUN:-${DRY_RUN:-0}}
 mkdir -p "$LOG"
 
-# Every lane is measured on top of the current best recipe; re-enabling it is
-# the baseline, never a gain.
+# Zero tool flags: base_args carry only --video/--frames/--cpu-threads, so the
+# lane's new pipeline builds its tool set up from scratch. The gate's base arm
+# is that same pipeline with the new tool off, not the nightly stack.
 lane_base_env() {
     case "$1" in
         1) echo '{"AV2ENC_PIPE_EXACT":"1"}' ;;
@@ -71,6 +72,25 @@ while [ "$i" -le "$LANES" ]; do
     ledger="docs/agent-loop-ledger-$i.md"
     prompt="$LOG/lane-$i-prompt.txt"
     sed -e "s|{{lane}}|$i|g" -e "s|{{target}}|$target|g" "$PROMPT" > "$prompt"
+    # A fresh prefix has no worktree yet; create it before writing the task and
+    # the gate into it. agent_loop.py refuses a pre-existing plain directory, so
+    # the mkdir/copy below must not run first.
+    if [ -e "$worktree" ] &&
+       ! git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "lane $i: $worktree exists and is not a git worktree; remove it first" >&2
+        i=$((i+1))
+        continue
+    fi
+    if [ ! -e "$worktree" ]; then
+        git -C "$ROOT" worktree add "$worktree" -b "exp/$PREFIX-$i" main \
+            >/dev/null 2>&1 ||
+            git -C "$ROOT" worktree add "$worktree" "exp/$PREFIX-$i" \
+                >/dev/null 2>&1 || {
+                echo "lane $i: cannot create worktree $worktree" >&2
+                i=$((i+1))
+                continue
+            }
+    fi
     # The worktree predates these files; give the agent the current task and
     # the current gate, not a stale copy.
     mkdir -p "$worktree/docs/lane-tasks" "$worktree/tools"

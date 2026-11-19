@@ -224,8 +224,9 @@ def main() -> int:
     ap.add_argument("--worktree", type=Path, default=Path.cwd())
     ap.add_argument("--threshold", type=float, default=THRESHOLD)
     ap.add_argument("--ceiling-floor", type=float, default=None,
-                    help="best known source-replacement ceiling for the target "
-                         "segment; PASS also requires beating it")
+                    help="reference ceiling for the target segment "
+                         "(diagnostic, reported only; the gated quantity is "
+                         "the ceiling delta vs the base arm)")
     ap.add_argument("--ceiling-segment", default="f0-32",
                     help="segment whose source-replacement ceiling is gated")
     ap.add_argument("--best-known", type=float, default=None,
