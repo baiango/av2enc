@@ -1,35 +1,29 @@
-# Lane 1 task — head f0-32 on top of eff-perc
+# Lane 1 — frequency-aware inter TX size/type enumeration
 
-Target: P-head inter residual/prediction, frames 1-32.
+Target: raise the 100 kbps K envelope. The bar is the possible K over the
+tool's knobs: **envelope ≥ 85.249** (best known 85.099 + 0.15).
 
 ## Read only
-- this file;
-- the last 15 lines of `docs/agent-loop-ledger-1.md`;
-- `docs/negative-results.md`, the rows containing `inter leaf residual`,
-  `frame-level subpel`, and `intra`.
+- this file; the last 15 lines of `docs/agent-loop-ledger-1.md`;
+- `docs/luma-audit.md` section on the 1-4 px band (grep `1-4 px`).
 
-Do not read other docs. Do not run `git log`, `git branch`, `git remote`, or
-explore the repository. Do not edit `tools/`.
+Do not run `git log`/`branch`/`remote`. Do not edit `tools/`.
 
-## One hypothesis
-Allocation is closed (`docs/ceiling-allocation.md`): do not move QP, budget or
-key offset. The head P frames code residual with the leaf's inter TX plan. Add
-a default-off **head-only TX-partition search** (`AV2ENC_HEAD_TX_PART`) for
-inter luma leaves in frames 1-32: try NONE/SPLIT/HORZ/VERT with the existing
-exact plan-rate machinery, and keep the winner. No other change.
+## Hypothesis
+The inter TX menu is chosen globally. Allow 4x4/8x8 TX where the leaf's 2-4 px
+energy is high, gated by `AV2ENC_TX_DETAIL_SEARCH`, and **sweep the detail
+threshold** (`AV2ENC_TX_DETAIL_MIN`). One mechanism, three arms.
 
 ## Allowed files
-`src/pipeline/video/video_tx_search.cpp`,
-`src/pipeline/video/video_tx_search.h`,
-`src/pipeline/video/video_frame_decision.cpp`,
-`src/pipeline/video/video_frame_internal.h`,
+`src/pipeline/video/video_tx_search.cpp`, `video_tx_search.h`,
+`video_frame_decision.cpp`, `video_frame_internal.h`,
 `docs/agent-loop-ledger-1.md`.
 
 ## Steps
-1. Edit only the allowed files. Default off, env-gated, no preset or pin change,
+1. Edit only the allowed files. Default off, env-gated, no preset/pin change,
    no new syntax, no third-party code.
 2. Build: `cmake --build build-release -j8`.
-3. Write `build/agent-loop/spec.json`:
+3. Write `build/agent-loop/spec.json` with a **knob sweep**:
 ```json
 {"ref":"testdata/nasa_480x240_30fps_60f.y4m","bin":"build-release/av2enc",
  "frames":60,
@@ -37,26 +31,21 @@ exact plan-rate machinery, and keep the winner. No other change.
   "--video-drift-refresh-threshold","1.5","--video-drift-refresh-budget","3250"],
  "qp":119,"target_kbps":100.0,
  "arms":[{"name":"base","env":{}},
-         {"name":"cand","env":{"AV2ENC_HEAD_TX_PART":"1"}}]}
+   {"name":"t20","env":{"AV2ENC_TX_DETAIL_SEARCH":"1","AV2ENC_TX_DETAIL_MIN":"0.20"}},
+   {"name":"t35","env":{"AV2ENC_TX_DETAIL_SEARCH":"1","AV2ENC_TX_DETAIL_MIN":"0.35"}},
+   {"name":"t50","env":{"AV2ENC_TX_DETAIL_SEARCH":"1","AV2ENC_TX_DETAIL_MIN":"0.50"}}]}
 ```
 4. Run from the worktree root:
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
-  --base-env '{"AV2ENC_EFF_PERC":"1"}' \
-  --ceiling-segment f44-59 --ceiling-floor 88.995
+  --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3
 ```
-5. PASS only if the last line says `PASS`: the envelope (best K at 100 kbps
-   over your arms) must beat the base arm (eff-perc) by at least +0.15 K.
-   The segment ceiling lines are diagnostics; they do not gate. Anything else
-   is FAIL.
+5. PASS only if the last line says `PASS`: envelope ≥ 85.249 with ≥3 knob arms.
 6. On FAIL: `git checkout -- src && git clean -fd src`. On PASS: leave `src/`
    uncommitted. Never commit source.
-7. Append one row to the ledger: hypothesis, envelope, ceiling, PASS/FAIL.
-8. Stop. Do not try a second hypothesis.
+7. Append one ledger row: hypothesis, envelope, best arm, PASS/FAIL.
+8. Stop. No second hypothesis.
 
 ## Closed
-Key/intra, RDOQ/trellis, multi-reference P, TIP, BAWP, frame-global subpel
-filter, AQ, delta-Q, skip-drift variants on nightly.
-
-## Measured closed: allocation
-Static head/tail QP plans, key-offset spends and larger refresh budgets were measured and do not raise the f0-32 ceiling at 100 kbps (`docs/ceiling-allocation.md`). Do not retry them; the ceiling is coding-efficiency-bound.
+Key/intra, HF RDOQ/trellis, dead-zone quantisers, multi-ref, TIP, BAWP,
+frame-global interp, head/tail QP allocation, skip variants.

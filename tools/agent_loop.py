@@ -197,6 +197,10 @@ def run_envelope(worktree: Path, args, iteration: int, log_dir: Path) -> str:
     if args.envelope_ceiling_floor is not None:
         cmd += ["--ceiling-floor", str(args.envelope_ceiling_floor),
                 "--ceiling-segment", args.envelope_ceiling_segment]
+    if args.envelope_best_known is not None:
+        cmd += ["--best-known", str(args.envelope_best_known)]
+    if args.envelope_min_arms:
+        cmd += ["--min-arms", str(args.envelope_min_arms)]
     proc = run(cmd, worktree)
     text = (proc.stdout or "") + (proc.stderr or "")
     verdict = "ERROR" if proc.returncode == 0 else "FAIL"
@@ -268,8 +272,12 @@ def main() -> int:
                     help="required envelope delta (default 0.15 K)")
     ap.add_argument("--envelope-base-env", default="{}",
                     help="JSON env shared by every arm (the established recipe)")
+    ap.add_argument("--envelope-best-known", type=float, default=None,
+                    help="current best matched K; PASS must beat it + delta")
+    ap.add_argument("--envelope-min-arms", type=int, default=0,
+                    help="minimum non-base arms (a knob sweep)")
     ap.add_argument("--envelope-ceiling-floor", type=float, default=None,
-                    help="best known segment ceiling; PASS must beat it")
+                    help="diagnostic segment ceiling (not gated)")
     ap.add_argument("--envelope-ceiling-segment", default="f0-32",
                     help="segment whose ceiling is gated")
     ap.add_argument("--envelope-log", default="build/agent-loop/envelope.jsonl",

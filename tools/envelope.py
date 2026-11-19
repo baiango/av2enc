@@ -228,6 +228,11 @@ def main() -> int:
                          "segment; PASS also requires beating it")
     ap.add_argument("--ceiling-segment", default="f0-32",
                     help="segment whose source-replacement ceiling is gated")
+    ap.add_argument("--best-known", type=float, default=None,
+                    help="current best matched K at the target (85.099); PASS "
+                         "requires envelope >= best-known + threshold")
+    ap.add_argument("--min-arms", type=int, default=0,
+                    help="minimum non-base arms (a knob sweep, not one point)")
     ap.add_argument("--base-env", default="{}",
                     help="JSON env shared by every arm; the established recipe "
                          "is the baseline instead of being an arm that wins")
@@ -299,6 +304,13 @@ def main() -> int:
     # arms.  The source-replacement segment rows are diagnostics (pooling
     # bounds), not a gate.
     gate_ok = delta >= args.threshold
+    candidate_arms = [row for row in scored if row["arm"] != "base"]
+    if args.min_arms and len(candidate_arms) < args.min_arms:
+        gate_ok = False
+    target_k = None
+    if args.best_known is not None:
+        target_k = args.best_known + args.threshold
+        gate_ok = gate_ok and best["k"] >= target_k
     ceiling_delta = None
     if args.ceiling_floor is not None and envelope_ceiling is not None \
             and base_ceiling is not None:
@@ -315,6 +327,11 @@ def main() -> int:
         "envelope_k": round(best["k"], 4),
         "delta": round(delta, 4),
         "best_arm": best["arm"],
+        "best_known": args.best_known,
+        "target_k": target_k,
+        "candidate_arms": len(candidate_arms),
+        "gap_svt": round(88.8 - best["k"], 3),
+        "gap_avm": round(90.2 - best["k"], 3),
         "ceiling_segment": args.ceiling_segment,
         "ceiling_floor": args.ceiling_floor,
         "base_ceiling": (round(base_ceiling, 4)
@@ -335,9 +352,12 @@ def main() -> int:
                f"  ceiling[{args.ceiling_segment}] {envelope_ceiling:.3f}"
                f" base {base_ceiling:.3f} d {ceiling_delta:+.3f}"
                f" (published {args.ceiling_floor:.3f})")
+    target_text = ("" if target_k is None else
+                   f"  target {target_k:.3f} (best known "
+                   f"{args.best_known:.3f})")
     print(f"envelope: base {base['k']:.3f}  best {best['k']:.3f} "
-          f"({best['arm']})  delta {delta:+.3f}{ceiling}  {verdict}",
-          flush=True)
+          f"({best['arm']}, {len(candidate_arms)} knob arms)  "
+          f"delta {delta:+.3f}{target_text}{ceiling}  {verdict}", flush=True)
     return 0 if verdict == "PASS" else 1
 
 

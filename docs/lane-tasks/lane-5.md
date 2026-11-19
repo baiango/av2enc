@@ -1,37 +1,28 @@
-# Lane 5 task — per-block switchable interp filter on top of eff-perc
+# Lane 5 — per-leaf inter TX type search with exact plan rate
 
-Target: per-block switchable interp filter and MC prediction. The frame-global
-form is closed.
+Target: raise the 100 kbps K envelope. Bar: **envelope ≥ 85.249**.
 
 ## Read only
-- this file;
-- the last 15 lines of `docs/agent-loop-ledger-5.md`;
-- `docs/negative-results.md`, the row containing `frame-level subpel`.
+- this file; last 15 lines of `docs/agent-loop-ledger-5.md`;
+- `docs/negative-results.md`, the row on intra TX-type sets.
 
-Do not read other docs. Do not run `git log`, `git branch`, `git remote`, or
-explore the repository. Do not edit `tools/`.
+Do not run `git log`/`branch`/`remote`. Do not edit `tools/`.
 
-## One hypothesis
-First run `git grep -n AV2ENC_INTERP_BLOCK`. If it exists, wire it into the
-eff-perc prediction path. If it does not exist in this tree, implement a
-default-off per-block switchable filter in the allowed files: keep the
-frame-global gate as the control and select the block filter per leaf. One
-mechanism only.
+## Hypothesis
+The inter TX type is inherited from the TX search, not chosen per leaf against
+the exact plan rate. Add a default-off per-leaf type search over a selectable
+candidate set (`AV2ENC_INTER_TX_TYPE_SEARCH`, `AV2ENC_INTER_TX_TYPE_SET` 1/2/3),
+priced by the existing exact plan rate. Non-trellis, no RDOQ. Sweep the set.
 
 ## Allowed files
-`src/pipeline/video/video_interp_filter.h`,
-`src/pipeline/video/video_frame_me.cpp`,
-`src/pipeline/video/video_frame_decision.cpp`,
-`src/pipeline/video/video_headers.cpp`,
+`src/pipeline/video/video_tx_search.cpp`, `video_tx_search.h`,
+`video_frame_decision.cpp`, `video_frame_internal.h`,
 `docs/agent-loop-ledger-5.md`.
 
 ## Steps
-1. Edit only the allowed files. Default off, env-gated, no preset or pin change,
-   no new syntax, no third-party code.
-2. Build: `cmake --build build-release -j8`.
-3. Validate one stream: filter on and off must decode `dav2d --strict 1` and
-   match `--video-recon` byte for byte.
-4. Write `build/agent-loop/spec.json`:
+1. Default off, env-gated, no preset/pin change, no new syntax.
+2. Build.
+3. Spec:
 ```json
 {"ref":"testdata/nasa_480x240_30fps_60f.y4m","bin":"build-release/av2enc",
  "frames":60,
@@ -39,31 +30,18 @@ mechanism only.
   "--video-drift-refresh-threshold","1.5","--video-drift-refresh-budget","3250"],
  "qp":119,"target_kbps":100.0,
  "arms":[{"name":"base","env":{}},
-         {"name":"cand","env":{"AV2ENC_INTERP_BLOCK":"1",
-          "AV2ENC_INTERP_BLOCK_ALPHABET":"0",
-          "AV2ENC_INTERP_BLOCK_BITS":"2",
-          "AV2ENC_INTERP_BLOCK_CHROMA":"1",
-          "AV2ENC_INTERP_BLOCK_CSF":"0",
-          "AV2ENC_INTERP_BLOCK_EMIT_BITS":"1"}}]}
+   {"name":"ty1","env":{"AV2ENC_INTER_TX_TYPE_SEARCH":"1","AV2ENC_INTER_TX_TYPE_SET":"1"}},
+   {"name":"ty2","env":{"AV2ENC_INTER_TX_TYPE_SEARCH":"1","AV2ENC_INTER_TX_TYPE_SET":"2"}},
+   {"name":"ty3","env":{"AV2ENC_INTER_TX_TYPE_SEARCH":"1","AV2ENC_INTER_TX_TYPE_SET":"3"}}]}
 ```
-5. Run from the worktree root:
+4. Run:
 ```
 python3 tools/envelope.py --spec build/agent-loop/spec.json --worktree "$PWD" \
-  --base-env '{"AV2ENC_EFF_PERC":"1"}' \
-  --ceiling-segment f0-32 --ceiling-floor 90.197
+  --base-env '{"AV2ENC_EFF_PERC":"1"}' --best-known 85.099 --min-arms 3
 ```
-6. PASS only if the last line says `PASS`: the envelope (best K at 100 kbps
-   over your arms) must beat the base arm (eff-perc) by at least +0.15 K.
-   The segment ceiling lines are diagnostics; they do not gate. Anything else
-   is FAIL.
-7. On FAIL: `git checkout -- src && git clean -fd src`. On PASS: leave `src/`
-   uncommitted. Never commit source.
-8. Append one row to the ledger: hypothesis, envelope, ceiling, PASS/FAIL.
-9. Stop. Do not try a second hypothesis.
+5. PASS only if `PASS`: envelope ≥ 85.249 with ≥3 arms.
+6. On FAIL: `git checkout -- src && git clean -fd src`. On PASS: leave `src/`.
+7. One ledger row; stop.
 
 ## Closed
-Frame-global EIGHTTAP/SMOOTH/SHARP/BILINEAR (measured negative), OBMC (not in
-AV2), TIP, multi-ref, warp.
-
-## Measured closed: allocation
-Static head/tail QP plans, key-offset spends and larger refresh budgets were measured and do not raise the f0-32 ceiling at 100 kbps (`docs/ceiling-allocation.md`). Do not retry them; the ceiling is coding-efficiency-bound.
+RDOQ/trellis, key/intra, dead-zone quantisers, allocation, filters, multi-ref.

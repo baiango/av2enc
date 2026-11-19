@@ -88,6 +88,8 @@ while [ "$i" -le "$LANES" ]; do
             --iteration-timeout "$TIMEOUT" \
             --envelope-gate \
             --envelope-threshold "${AV2ENC_ENVELOPE_DELTA:-0.15}" \
+            --envelope-best-known "${AV2ENC_BEST_KNOWN:-85.099}" \
+            --envelope-min-arms 3 \
             --envelope-base-env "$(lane_base_env "$i")" \
             --envelope-ceiling-segment "$(set -- $(lane_ceiling "$i"); echo "$1")" \
             --envelope-ceiling-floor "$(set -- $(lane_ceiling "$i"); echo "$2")" \
