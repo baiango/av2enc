@@ -186,6 +186,9 @@ def main() -> int:
     ap.add_argument("--spec", type=Path, required=True)
     ap.add_argument("--worktree", type=Path, default=Path.cwd())
     ap.add_argument("--threshold", type=float, default=THRESHOLD)
+    ap.add_argument("--base-env", default="{}",
+                    help="JSON env shared by every arm; the established recipe "
+                         "is the baseline instead of being an arm that wins")
     ap.add_argument("--json", type=Path, default=None)
     ap.add_argument("--keep", action="store_true",
                     help="keep encoded streams (default: temporary directory)")
@@ -193,13 +196,29 @@ def main() -> int:
 
     worktree = args.worktree.resolve()
     spec = json.loads(args.spec.read_text())
-    arms = spec.get("arms") or []
+    try:
+        base_env = json.loads(args.base_env)
+    except json.JSONDecodeError as exc:
+        print(f"envelope: --base-env is not JSON: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(base_env, dict):
+        print("envelope: --base-env must be a JSON object", file=sys.stderr)
+        return 2
+    # Every arm is the established recipe plus its own knob.  The established
+    # recipe is the baseline, never an arm: otherwise a lane can "discover" the
+    # already-committed stack and report it as a new envelope gain.
+    arms = []
+    for arm in spec.get("arms") or []:
+        merged = dict(arm)
+        merged["env"] = {**base_env, **dict(arm.get("env") or {})}
+        merged["knobs"] = dict(arm.get("env") or {})
+        arms.append(merged)
     names = [arm.get("name") for arm in arms]
     if "base" not in names:
         print("envelope: spec must contain an arm named 'base' with empty env",
               file=sys.stderr)
         return 2
-    if arms[names.index("base")].get("env"):
+    if arms[names.index("base")].get("knobs"):
         print("envelope: the base arm must have an empty env", file=sys.stderr)
         return 2
 
@@ -226,7 +245,9 @@ def main() -> int:
         "schema": "av2enc-envelope/1",
         "target_kbps": spec.get("target_kbps", 100.0),
         "threshold": args.threshold,
+        "base_env": base_env,
         "baseline_k": round(base["k"], 4),
+        "base_k": round(base["k"], 4),
         "envelope_k": round(best["k"], 4),
         "delta": round(delta, 4),
         "best_arm": best["arm"],

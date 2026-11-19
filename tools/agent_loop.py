@@ -151,7 +151,8 @@ def run_envelope(worktree: Path, args, iteration: int, log_dir: Path) -> str:
     out = log_dir / f"envelope-{iteration:03d}.json"
     cmd = [sys.executable, str(Path(__file__).resolve().parent / "envelope.py"),
            "--spec", str(spec), "--worktree", str(worktree),
-           "--threshold", str(args.envelope_threshold), "--json", str(out)]
+           "--threshold", str(args.envelope_threshold),
+           "--base-env", args.envelope_base_env, "--json", str(out)]
     proc = run(cmd, worktree)
     text = (proc.stdout or "") + (proc.stderr or "")
     verdict = "ERROR" if proc.returncode == 0 else "FAIL"
@@ -220,6 +221,8 @@ def main() -> int:
                     help="candidate spec, relative to the worktree")
     ap.add_argument("--envelope-threshold", type=float, default=0.15,
                     help="required envelope delta (default 0.15 K)")
+    ap.add_argument("--envelope-base-env", default="{}",
+                    help="JSON env shared by every arm (the established recipe)")
     ap.add_argument("--envelope-log", default="build/agent-loop/envelope.jsonl",
                     help="append-only gate ledger, relative to the worktree")
     ap.add_argument("--envelope-revert", action="store_true",

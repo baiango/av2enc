@@ -19,9 +19,11 @@ Perform EXACTLY ONE iteration. Do not start a second one.
     "qp": 106, "target_kbps": 100.0,
     "arms": [{"name":"base","env":{}},
              {"name":"cand","env":{"AV2ENC_TOOL":"1"}}]}
-   `base` must be present with an empty env. Put EVERY knob value of the
-   candidate in arms: the envelope is the best K over those arms. Gates must be
-   default-off, so the base arm is byte-identical to main on the same build.
+   `base` must be present with an empty env. The runner supplies the
+   lane's established recipe (for lane 2: the kept skip/exact-rate stack) as
+   the base environment, so do NOT put that stack in an arm: arms are the NEW
+   mechanism's knobs only. The envelope is the best K over those arms; a
+   re-enabled committed stack is the baseline, not a gain.
 4. Do NOT decide keep/revert from your own numbers. Leave source changes
    uncommitted. After this call the script runs tools/envelope.py, records
    base/best/delta, keeps src/ on PASS and reverts src/ on FAIL. Use

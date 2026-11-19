@@ -265,6 +265,11 @@ Rules the script enforces, not the prompt:
 
 - `base` must exist and have an empty env, so the baseline is measured on the
   same build and a default-on patch cannot hide in a second tree.
+- The runner supplies the lane's **established recipe** with `--base-env`
+  (lane 2: the kept skip/exact-rate stack). That recipe is the baseline and is
+  applied to every arm. It must never be an arm of its own: re-enabling the
+  committed stack is not a new tool, and without this rule the first batch
+  reported the stack as a +2.614 K "envelope gain".
 - Every knob value of the candidate is an arm. The envelope is the best arm;
   one winning arm under an unchanged envelope is not progress.
 - QP is bracketed automatically (`qp` is only a start) and a candidate that

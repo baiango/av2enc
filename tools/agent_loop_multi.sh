@@ -29,6 +29,13 @@ PROMPT=$ROOT/docs/agent-loop-lane-prompt.md
 DRY=${AV2ENC_DRY_RUN:-${DRY_RUN:-0}}
 mkdir -p "$LOG"
 
+lane_base_env() {
+    case "$1" in
+        2) echo '{"AV2ENC_SKIP_DRIFT":"1","AV2ENC_SKIP_DRIFT_FADE":"1","AV2ENC_SKIP_DRIFT_ILLUM":"1","AV2ENC_SKIP_DRIFT_REFDEF":"1","AV2ENC_DECISION_EXACT_RATE":"1"}' ;;
+        *) echo '{}' ;;
+    esac
+}
+
 lane_target() {
     case "$1" in
         1) echo "P-head inter residual/prediction coding (f0-32), excluding the closed skip variants" ;;
@@ -67,6 +74,7 @@ while [ "$i" -le "$LANES" ]; do
             --iteration-timeout "$TIMEOUT" \
             --envelope-gate \
             --envelope-threshold "${AV2ENC_ENVELOPE_DELTA:-0.15}" \
+            --envelope-base-env "$(lane_base_env "$i")" \
             --envelope-revert \
             --stop-file "$STOP" \
             --sleep 2 > "$LOG/lane-$i.log" 2>&1 &
