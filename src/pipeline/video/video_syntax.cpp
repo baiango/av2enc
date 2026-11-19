@@ -3,8 +3,16 @@
 // see video_syntax_writer.h for the class and video_syntax.h for the contract.
 #include "pipeline/video/video_syntax_writer.h"
 
+#include <fstream>
+#include <mutex>
+
 namespace av2enc::video::syntax {
 namespace detail {
+namespace {
+// Parallel tile writers append to the same diagnostic file; one lock keeps
+// every JSON object on its own line.  Uncontended when the diagnostics are off.
+std::mutex g_census_mutex;
+}  // namespace
 
 bool Writer::run(std::size_t* tile_bytes, std::string& error) {
 #if defined(AV2ENC_VIDEO_DELTAQ)
@@ -339,6 +347,9 @@ bool Writer::run(std::size_t* tile_bytes, std::string& error) {
     }
     std::cerr << "\n";
   }
+  if (census_active_ && !append_census(payload_bytes)) {
+    std::cerr << "bit_census: cannot append to " << census_path_ << "\n";
+  }
   return true;
 }
 
@@ -403,6 +414,108 @@ int Writer::cost_tag_for(const std::uint16_t* p) const {
     return kCostIntra;
   }
   return kCostOther;
+}
+
+// Finer split for the residual bucket (AV2ENC_BIT_CENSUS).  Only called when
+// the coarse tag is kCostResidual, so the CDF identity checks below cover the
+// coefficient/TX families that the coarse meter folds together.
+int Writer::cost_fine_tag_for(const std::uint16_t* p, int coarse) const {
+  if (coarse != kCostResidual) return kFineNone;
+  const auto in = [p](const auto& arr) {
+    const auto* b = reinterpret_cast<const std::uint16_t*>(&arr);
+    return p >= b && p < b + sizeof(arr) / sizeof(std::uint16_t);
+  };
+  if (in(cdfs_.txb_skip) || in(cdfs_.v_txb_skip)) return kFineTxbSkip;
+  if (in(cdfs_.eob_pt_1024) || in(cdfs_.eob_pt_512) ||
+      in(cdfs_.eob_pt_256) || in(cdfs_.eob_pt_128) ||
+      in(cdfs_.eob_pt_64) || in(cdfs_.eob_pt_32) ||
+      in(cdfs_.eob_pt_16) || in(cdfs_.eob_extra)) {
+    return kFineEob;
+  }
+  if (in(cdfs_.coeff_base) || in(cdfs_.coeff_base_lf) ||
+      in(cdfs_.coeff_base_eob) || in(cdfs_.coeff_base_lf_eob) ||
+      in(cdfs_.coeff_base_uv) || in(cdfs_.coeff_base_lf_uv) ||
+      in(cdfs_.coeff_base_eob_uv) || in(cdfs_.coeff_base_lf_eob_uv)) {
+    return kFineCoeffBase;
+  }
+  if (in(cdfs_.coeff_br) || in(cdfs_.coeff_br_lf) || in(cdfs_.coeff_br_uv)) {
+    return kFineCoeffBr;
+  }
+  if (in(cdfs_.dc_sign)) return kFineSign;
+  if (in(cdfs_.tx_partition)) return kFineTxPartition;
+  if (in(cdfs_.cctx_type) || in(cdfs_.inter_tx_type_set1) ||
+      in(cdfs_.inter_tx_type_set2) || in(cdfs_.inter_tx_type_set3) ||
+      in(cdfs_.inter_tx_type_long) ||
+      in(cdfs_.inter_tx_type_index_set1) ||
+      in(cdfs_.inter_tx_type_offset_set1) ||
+      in(cdfs_.inter_tx_type_index_set2) ||
+      in(cdfs_.inter_tx_type_offset_set2)) {
+    return kFineTxType;
+  }
+  return kFineOtherResidual;
+}
+
+bool Writer::append_census(std::size_t payload_bytes) {
+  if (!census_active_) return true;
+  std::lock_guard<std::mutex> lock(g_census_mutex);
+  std::ofstream out(census_path_, std::ios::app);
+  if (!out) return false;
+  out.setf(std::ios::fixed);
+  out.precision(3);
+  out << "{\"order_hint\":" << plan_.census_frame
+      << ",\"tile_mi_row\":" << plan_.tile_mi_row
+      << ",\"tile_mi_col\":" << plan_.tile_mi_col
+      << ",\"payload_bytes\":" << payload_bytes
+      << ",\"info_bits\":" << cost_meter_.total_bits() << ",\"classes\":{";
+  bool first = true;
+  for (int tag = 0; tag < kCostTagCount; ++tag) {
+    if (cost_meter_.count[tag] == 0) continue;
+    if (!first) out << ",";
+    first = false;
+    out << "\"" << cost_tag_name(tag) << "\":["
+        << cost_meter_.count[tag] << "," << cost_meter_.bits[tag] << "]";
+  }
+  out << "},\"fine\":{";
+  first = true;
+  for (int tag = 1; tag < kFineCount; ++tag) {
+    if (cost_meter_.fine_count[tag] == 0) continue;
+    if (!first) out << ",";
+    first = false;
+    out << "\"" << cost_fine_tag_name(tag) << "\":["
+        << cost_meter_.fine_count[tag] << "," << cost_meter_.fine_bits[tag]
+        << "]";
+  }
+  out << "}}\n";
+  return out.good();
+}
+
+void Writer::dump_decision(const BlockSyntax& node) const {
+  if (!decision_dump_active_) return;
+  std::lock_guard<std::mutex> lock(g_census_mutex);
+  std::ofstream out(decision_dump_path_, std::ios::app);
+  if (!out) return;
+  out << "{\"order_hint\":" << plan_.census_frame
+      << ",\"tile_mi_row\":" << plan_.tile_mi_row
+      << ",\"tile_mi_col\":" << plan_.tile_mi_col
+      << ",\"mi_row\":" << node.mi_row << ",\"mi_col\":" << node.mi_col
+      << ",\"bsize\":" << static_cast<int>(node.bsize)
+      << ",\"partition\":" << static_cast<int>(node.partition)
+      << ",\"is_inter\":" << static_cast<int>(node.is_inter)
+      << ",\"skip\":" << static_cast<int>(node.skip_flag)
+      << ",\"inter_mode\":" << static_cast<int>(node.inter_mode)
+      << ",\"ref\":" << static_cast<int>(node.ref_index)
+      << ",\"compound\":" << static_cast<int>(node.compound)
+      << ",\"mv_y\":" << node.mv_y << ",\"mv_x\":" << node.mv_x
+      << ",\"mvd_y\":" << node.mvd_y << ",\"mvd_x\":" << node.mvd_x
+      << ",\"y_mode\":" << static_cast<int>(node.y_mode)
+      << ",\"uv_mode\":" << static_cast<int>(node.uv_mode)
+      << ",\"tx_size\":" << static_cast<int>(node.tx_size[0])
+      << ",\"tx_type\":" << static_cast<int>(node.tx_type[0])
+      << ",\"tx_partition\":" << static_cast<int>(node.tx_partition)
+      << ",\"eob_y\":" << node.eob[0] << ",\"eob_u\":" << node.eob[1]
+      << ",\"eob_v\":" << node.eob[2]
+      << ",\"segment\":" << static_cast<int>(node.segment_id)
+      << ",\"qindex\":" << static_cast<int>(node.qindex) << "}\n";
 }
 
 }  // namespace detail

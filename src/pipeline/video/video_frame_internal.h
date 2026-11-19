@@ -2411,11 +2411,13 @@ class InterFrameEncoder {
                     const TemporalFrameContext* temporal = nullptr,
                     std::span<const std::uint8_t> prev_segment_ids = {},
                     double illum_delta = 0.0,
-                    double ref_deficit_db = 0.0);
+                    double ref_deficit_db = 0.0,
+                    int census_frame = -1);
+    // Diagnostic frame ordinal for the census/decision dumps; never coded.
+    void set_census_frame(int frame) { census_frame_ = frame; }
 
     std::int64_t block_variance_cost_at(
       const partition::PartitionNodeInfo& info) const;
-
   // ---------------------------------------------------------------------
   // Rate-aware partition probe (--video-partition-rd)
   //
@@ -3444,6 +3446,7 @@ class InterFrameEncoder {
   sdpp::MiSizeGrid sdp_chroma_sizes_;
   std::array<int, 7> ref_order_hints_{};
   TemporalFrameContext temporal_ctx_;
+  int census_frame_ = -1;
   std::vector<std::int32_t> levels_;
   std::uint32_t inter_blocks_ = 0;
   std::uint32_t intra_blocks_ = 0;

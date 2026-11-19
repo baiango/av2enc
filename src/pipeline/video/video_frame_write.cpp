@@ -15,6 +15,7 @@ bool InterFrameEncoder::write(std::vector<std::uint8_t>& tile_payload,
   plan.frame_mi_rows = frame_mi_rows_;
   plan.tile_mi_row = tile_mi_row_;
   plan.tile_mi_col = tile_mi_col_;
+  plan.census_frame = census_frame_;
   plan.inter_frame = !keyframe_;
   plan.enable_sdp = options_.enable_sdp;
   plan.frame_sdp = keyframe_ && options_.enable_sdp;

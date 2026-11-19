@@ -6,6 +6,7 @@ namespace av2enc::video::syntax {
 namespace detail {
 
 bool Writer::write_eob(int eob, int plane, int coded_w, int coded_h, bool is_inter) {
+  RawScope raw_scope(this, kFineEob);
   int eob_pt = 1;
   if (eob == 2) {
     eob_pt = 2;
@@ -226,6 +227,7 @@ bool Writer::code_tx_view(const BlockSyntax& node, int plane, const TxView& view
                   std::size_t level_base, int bsize_w, int bsize_h,
                   std::size_t levels_end, bool is_inter,
                   std::string& error) {
+  RawScope raw_scope(this, kFineCoeffMag);
   const int tx_size = view.tx_size;
   if (tx_size >= 25) {
     error = "invalid tx_size " + std::to_string(tx_size) + " on plane " +

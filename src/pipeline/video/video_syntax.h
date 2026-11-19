@@ -415,6 +415,10 @@ struct FramePlan {
   int frame_mi_rows = 0;
   int tile_mi_row = 0;
   int tile_mi_col = 0;
+  // Diagnostic-only frame ordinal for AV2ENC_BIT_CENSUS / AV2ENC_DECISION_DUMP
+  // (-1 = not supplied).  Never coded and never read by the writer except when
+  // dumping.
+  int census_frame = -1;
 
   // §5.18.7.1/.8 opt-in segmentation + delta-Q state for this tile.  The
   // fields are inert (disabled/empty) on every default stream, so the writer

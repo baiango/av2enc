@@ -1214,6 +1214,7 @@ void Writer::record_rate_interval_leaf(const BlockSyntax& leaf,
 }
 
 bool Writer::write_block(const BlockSyntax& node, std::string& error) {
+  if (decision_dump_active_) dump_decision(node);
 #if defined(AV2ENC_VIDEO_DELTAQ)
   // Mirrors src/codec/entropy/deltaq/video/video_deltaq.cpp::
   // write_superblock_delta_q(): verify the planned tile state before the

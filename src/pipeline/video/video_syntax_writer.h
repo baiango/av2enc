@@ -806,18 +806,43 @@ enum CostTag : int {
   kCostCcso,
   kCostDeltaQ,
   kCostIntra,
+  kCostRaw,
   kCostOther,
   kCostTagCount
+};
+
+// Finer split of the coarse tags, used by the machine-readable census
+// (AV2ENC_BIT_CENSUS).  kCostResidual is one bucket in the coarse view; the
+// fine view separates the symbol families that decision work actually moves
+// (EOB, coefficient base/br, sign, TX type/partition).
+enum CostFineTag : int {
+  kFineNone = 0,
+  kFineTxbSkip,
+  kFineEob,
+  kFineCoeffBase,
+  kFineCoeffBr,
+  kFineSign,
+  kFineTxType,
+  kFineTxPartition,
+  kFineCoeffMag,
+  kFineOtherResidual,
+  kFineCount
 };
 
 struct CostMeter {
   std::uint64_t count[kCostTagCount] = {};
   double bits[kCostTagCount] = {};
+  std::uint64_t fine_count[kFineCount] = {};
+  double fine_bits[kFineCount] = {};
   bool active = false;
 
-  void add(int tag, double value) {
+  void add(int tag, int fine, double value) {
     ++count[tag];
     bits[tag] += value;
+    if (fine > kFineNone && fine < kFineCount) {
+      ++fine_count[fine];
+      fine_bits[fine] += value;
+    }
   }
   void add_prefix(int tag, std::uint64_t before, std::uint64_t after) {
     ++count[tag];
@@ -841,7 +866,23 @@ inline const char* cost_tag_name(int tag) {
     case kCostCcso: return "ccso_blk";
     case kCostDeltaQ: return "delta_q";
     case kCostIntra: return "intra_mode";
+    case kCostRaw: return "raw_bits";
     default: return "other";
+  }
+}
+
+inline const char* cost_fine_tag_name(int tag) {
+  switch (tag) {
+    case kFineTxbSkip: return "txb_skip";
+    case kFineEob: return "eob";
+    case kFineCoeffBase: return "coeff_base";
+    case kFineCoeffBr: return "coeff_br";
+    case kFineSign: return "sign";
+    case kFineTxType: return "tx_type";
+    case kFineTxPartition: return "tx_partition";
+    case kFineCoeffMag: return "coeff_mag";
+    case kFineOtherResidual: return "other_residual";
+    default: return "none";
   }
 }
 
@@ -1040,7 +1081,19 @@ class Writer {
     }
 #endif
     trace_ = std::getenv("AV2ENC_VIDEO_TRACE") != nullptr;
-    cost_meter_.active = std::getenv("AV2ENC_SYMBOL_COST") != nullptr ||
+    // Machine-readable diagnostics (default off; they never touch the
+    // bitstream).  AV2ENC_BIT_CENSUS appends one JSON line per tile with the
+    // information bits split by symbol family; AV2ENC_DECISION_DUMP appends
+    // one JSON line per coded leaf with the decision fields, so two runs can
+    // be diffed.
+    const char* census = std::getenv("AV2ENC_BIT_CENSUS");
+    census_active_ = census != nullptr && *census != '\0';
+    if (census_active_) census_path_ = census;
+    const char* decision_dump = std::getenv("AV2ENC_DECISION_DUMP");
+    decision_dump_active_ = decision_dump != nullptr && *decision_dump != '\0';
+    if (decision_dump_active_) decision_dump_path_ = decision_dump;
+    cost_meter_.active = census_active_ ||
+                         std::getenv("AV2ENC_SYMBOL_COST") != nullptr ||
                          rate_interval::detail::stats_enabled();
     rate_tags_active_ = rate_hybrid::report::active();
   }
@@ -1070,6 +1123,7 @@ class Writer {
   }
 
   int cost_tag_for(const std::uint16_t* p) const;
+  int cost_fine_tag_for(const std::uint16_t* p, int coarse) const;
 
   bool sym(std::uint16_t* cdf, int n, int symbol) {
     const double cost =
@@ -1078,6 +1132,8 @@ class Writer {
       rate_tag_bits_[rate_tag_] += symbol_cost_bits(cdf, n, symbol);
     }
     const int tag = cost_meter_.active ? cost_tag_for(cdf) : kCostOther;
+    const int fine = cost_meter_.active ? cost_fine_tag_for(cdf, tag)
+                                        : kFineNone;
     const av2::Status status = enc_.encode_symbol(cdf, n, symbol);
     if (status != av2::Status::kOk) {
       error_ = std::string("entropy encode_symbol failed: ") +
@@ -1090,7 +1146,7 @@ class Writer {
                 std::to_string(cur_c_) + ")";
       return false;
     }
-    if (cost_meter_.active) cost_meter_.add(tag, cost);
+    if (cost_meter_.active) cost_meter_.add(tag, fine, cost);
     return true;
   }
   bool raw_bit(bool bit) {
@@ -1100,6 +1156,7 @@ class Writer {
                av2::status_name(status);
       return false;
     }
+    if (cost_meter_.active) cost_meter_.add(kCostRaw, raw_fine_, 1.0);
     return true;
   }
   bool write_literal(int bits, std::uint32_t value) {
@@ -1441,6 +1498,26 @@ class Writer {
   int eob_u_ = 0;
   bool trace_ = false;
   CostMeter cost_meter_;
+  bool census_active_ = false;
+  std::string census_path_;
+  bool decision_dump_active_ = false;
+  std::string decision_dump_path_;
+  // Fine class the next raw bit belongs to (kFineNone = unattributed literal).
+  // Set around the residual coder so signs/golomb tails land in coeff_mag
+  // instead of the generic raw bucket.
+  int raw_fine_ = kFineNone;
+  struct RawScope {
+    Writer* writer;
+    int previous;
+    RawScope(Writer* w, int fine) : writer(w), previous(w->raw_fine_) {
+      writer->raw_fine_ = fine;
+    }
+    ~RawScope() { writer->raw_fine_ = previous; }
+    RawScope(const RawScope&) = delete;
+    RawScope& operator=(const RawScope&) = delete;
+  };
+  bool append_census(std::size_t payload_bytes);
+  void dump_decision(const BlockSyntax& node) const;
   // R09 (AV2ENC_RATE_HYBRID_S[_MEASURE]) report: accumulate the write-time
   // -log2(p) of the inter syntax symbols by group.  `rate_tag_` is set around
   // the calls in write_block()/write_inter_mode_info(); -1 is untagged.

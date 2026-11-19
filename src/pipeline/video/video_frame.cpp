@@ -84,7 +84,8 @@ InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
                   const TemporalFrameContext* temporal,
                   std::span<const std::uint8_t> prev_segment_ids,
                   double illum_delta,
-                  double ref_deficit_db)
+                  double ref_deficit_db,
+                  int census_frame)
     : source_(source),
       references_(std::move(references)),
       frame_distance_(frame_distance),
@@ -108,6 +109,7 @@ InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
   (void)prev_segment_ids;
 #endif
   if (temporal != nullptr) temporal_ctx_ = *temporal;
+  census_frame_ = census_frame;
   // Coded (tile-local) geometry.  A zero tile_w/tile_h means "whole frame",
   // which keeps the historical single-tile path untouched.  Source reads and
   // motion-compensated predictions add tile_x_/tile_y_ so the reference frame
@@ -2291,6 +2293,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
         cdf_chain ? std::span<const std::uint16_t>(cdf_tile)
                   : std::span<const std::uint16_t>(),
         cdf_chain ? &cdf_scratch : nullptr);
+    encoder->set_census_frame(0);
     if (!encoder->decide(tile_error) || !encoder->deblock(tile_error)) {
       return;
     }
@@ -2947,6 +2950,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
           i == 1 ? std::span<const std::uint8_t>()
                  : std::span<const std::uint8_t>(prev_segment_map),
           illum_delta, ref_deficit_db);
+      encoder->set_census_frame(static_cast<int>(i));
       if (!encoder->decide(tile_error) || !encoder->deblock(tile_error)) {
         return;
       }
