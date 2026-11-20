@@ -130,6 +130,85 @@ int rd_uvfull_top_n() {
   return value;
 }
 
+// AV2ENC_COMPOUND_NEWMV enables the §5.20.7.6 compound NEWMV carrier:
+// NEAR_NEWMV (list-0 stack + list-1 MVD), NEW_NEARMV (mirror) and
+// JOINT_NEWMV (one joint MVD, §5.20.7.13 projMv).  It also makes the exact
+// rate probe price the compound symbol set.  Default off: every pinned stream
+// is byte-identical.
+bool compound_newmv_enabled() {
+  static const bool value = [] {
+    const char* env = std::getenv("AV2ENC_COMPOUND_NEWMV");
+    if (env == nullptr || *env == '\0') return false;
+    if (std::strcmp(env, "0") == 0) return false;
+    const auto equal = [env](const char* word) {
+      for (std::size_t i = 0; word[i] != '\0'; ++i) {
+        if (std::tolower(static_cast<unsigned char>(env[i])) != word[i]) {
+          return false;
+        }
+      }
+      return env[std::strlen(word)] == '\0';
+    };
+    return !(equal("false") || equal("off") || equal("no"));
+  }();
+  return value;
+}
+
+// Bitmask of the modes the carrier searches: 1 = NEAR_NEWMV, 2 = NEW_NEARMV,
+// 4 = JOINT_NEWMV.  0 keeps the depth-arm candidate set while the exact
+// compound pricing stays on.  Default 7.
+int compound_newmv_modes() {
+  static const int value = [] {
+    const char* env = std::getenv("AV2ENC_COMPOUND_NEWMV_MODES");
+    if (env == nullptr || *env == '\0') return 7;
+    char* end = nullptr;
+    const long parsed = std::strtol(env, &end, 10);
+    if (end == env || parsed < 0 || parsed > 7) return 7;
+    return static_cast<int>(parsed);
+  }();
+  return value;
+}
+
+// AV2ENC_COMPOUND_EXACT_RATE: make the SyntaxProbe price the compound symbol
+// set exactly (comp_mode / is_joint / compound_mode_non_joint /
+// jmvd_scale_mode / DRL / MVD / comp_group_idx / cwp_idx / interp_filter).
+// Default on with AV2ENC_COMPOUND_NEWMV (that carrier must be priced
+// exactly), otherwise off so every pinned stream is byte-identical.
+bool compound_exact_rate_enabled() {
+  static const bool value = [] {
+    const char* env = std::getenv("AV2ENC_COMPOUND_EXACT_RATE");
+    if (env != nullptr) {
+      return !(env[0] == '0' && env[1] == '\0');
+    }
+    return compound_newmv_enabled();
+  }();
+  return value;
+}
+
+// Largest refinement offset in 1/8 luma samples (default 8 = one pel).  The
+// search always tries 1/8, 1/4, 1/2 and one pel on each axis up to this bound.
+int compound_newmv_radius() {
+  static const int value = [] {
+    const char* env = std::getenv("AV2ENC_COMPOUND_NEWMV_RADIUS");
+    if (env == nullptr || *env == '\0') return 8;
+    char* end = nullptr;
+    const long parsed = std::strtol(env, &end, 10);
+    if (end == env || parsed < 0 || parsed > 16) return 8;
+    return static_cast<int>(parsed);
+  }();
+  return value;
+}
+
+// AV2ENC_COMPOUND_NEWMV_REFINE=0 keeps the raw plan ME MV and disables the
+// per-ref refinement (ablation).
+bool compound_newmv_refine() {
+  static const bool value = [] {
+    const char* env = std::getenv("AV2ENC_COMPOUND_NEWMV_REFINE");
+    if (env == nullptr || *env == '\0') return true;
+    return !(env[0] == '0' && env[1] == '\0');
+  }();
+  return value;
+}
+
 // AV2ENC_RD_UVFULL_STATS: sum the winning key-picture chroma coefficient
 // information bits (static §8.3 model) and the UVMode histogram.  Diagnostic
 // only; it never feeds a decision and is printed at exit.
@@ -1274,6 +1353,12 @@ void InterFrameEncoder::plan_pass() {
     config.enable_adaptive_mvd = options_.enable_adaptive_mvd;
     config.enable_flex_mvres = options_.enable_flex_mvres;
     config.enable_mvd_sign_derive = options_.enable_mvd_sign_derive;
+    config.compound_exact = compound_exact_rate_enabled();
+    config.enable_masked_compound =
+        options_.compound &&
+        (options_.compound_wedge || options_.compound_diffwtd);
+    config.enable_cwp = options_.enable_cwp_weighted;
+    config.num_same_ref_compound = options_.same_ref_compound ? 1 : 0;
     config.mv_precision =
         options_.seq_force_integer_mv ? 3 : options_.mv_precision;
     config.disable_cdf_update = !options_.adaptive_cdf;
@@ -1300,6 +1385,12 @@ void InterFrameEncoder::plan_pass() {
     config.enable_adaptive_mvd = options_.enable_adaptive_mvd;
     config.enable_flex_mvres = options_.enable_flex_mvres;
     config.enable_mvd_sign_derive = options_.enable_mvd_sign_derive;
+    config.compound_exact = compound_exact_rate_enabled();
+    config.enable_masked_compound =
+        options_.compound &&
+        (options_.compound_wedge || options_.compound_diffwtd);
+    config.enable_cwp = options_.enable_cwp_weighted;
+    config.num_same_ref_compound = options_.same_ref_compound ? 1 : 0;
     config.mv_precision =
         options_.seq_force_integer_mv ? 3 : options_.mv_precision;
     config.disable_cdf_update = !options_.adaptive_cdf;
@@ -1820,19 +1911,110 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     probe.mvd_y = cand.mvd.y;
     probe.mvd_x = cand.mvd.x;
     probe.compound = cand.compound ? 1 : 0;
+    probe.compound_joint = cand.compound ? (cand.compound_joint ? 1 : 0) : 0;
     probe.compound_mode = static_cast<std::uint8_t>(cand.compound_mode);
     probe.ref_index1 = static_cast<std::uint8_t>(cand.ref_index1);
+    probe.drl_index1 = static_cast<std::uint8_t>(cand.drl_index1);
+    probe.mv_y = cand.mv.y;
+    probe.mv_x = cand.mv.x;
+    probe.mv1_y = cand.mv1.y;
+    probe.mv1_x = cand.mv1.x;
+    probe.compound_masked = cand.compound ? (cand.compound_type != 2 ? 1 : 0) : 0;
+    probe.compound_type =
+        probe.compound_masked ? static_cast<std::uint8_t>(cand.compound_type)
+                              : 0;
+    probe.cwp_index = static_cast<std::uint8_t>(cand.cwp_index);
+    probe.cwp_weight = static_cast<std::int8_t>(cand.cwp_weight);
+    probe.use_optflow = cand.use_optflow ? 1 : 0;
+    probe.use_refinemv = cand.use_refinemv ? 1 : 0;
     probe.use_amvd = cand.use_amvd ? 1 : 0;
     probe.block_mv_precision = static_cast<std::int8_t>(cand.block_mv_precision);
     probe.mvd_sign_derived = cand.mvd_sign_derived ? 1 : 0;
     return probe;
   };
+  // AV2ENC_COMPOUND_RATE: the historical proxy prices a compound block with
+  // the single-prediction YMode/DRL formula, so comp_mode/is_joint/
+  // compound_mode/comp_group_idx, the second DRL index and the compound
+  // interp-filter symbol are free.  Charge the §5.20.7.6/.8/.16 symbol set so
+  // the weighted pair search is not biased toward the most expensive syntax.
+  const bool compound_rate_on =
+      std::getenv("AV2ENC_COMPOUND_RATE") != nullptr;
+  const double compound_rate_scale = [] {
+    const char* value = std::getenv("AV2ENC_COMPOUND_RATE_SCALE");
+    return value != nullptr ? std::atof(value) : 1.0;
+  }();
+  const auto compound_syntax_bits = [&](const InterCandidate& cand) {
+    if (!compound_rate_on || !cand.compound) return 0.0;
+    const bool joint = cand.compound_joint;
+    const bool near_near = !joint && cand.compound_mode == 0;
+    const bool near_new = !joint && cand.compound_mode == 1;
+    const bool new_near = !joint && cand.compound_mode == 2;
+    if (joint || near_new || new_near) {
+      // Fallback for the compound NEWMV carriers when the exact probe is not
+      // available: comp_mode + is_joint, then either compound_mode_non_joint
+      // or jmvd_scale_mode, the DRL chain(s), the coded MVD and (joint /
+      // NEAR_NEAR only) cwp_idx.
+      double bits = 1.0;  // comp_mode
+      bits += 1.0;        // is_joint
+      if (joint) {
+        bits += 2.3;      // jmvd_scale_mode (5 symbols)
+        bits += 0.7 * static_cast<double>(cand.drl_index);
+      } else {
+        bits += 4.0;      // compound_mode_non_joint (5 symbols)
+        if (near_new) {
+          bits += 0.7 * static_cast<double>(cand.drl_index) +
+                  0.7 * static_cast<double>(cand.drl_index1);
+        } else {
+          bits += 0.7 * static_cast<double>(cand.drl_index);
+        }
+      }
+      const int shell = std::abs(cand.mvd.y) + std::abs(cand.mvd.x);
+      if (shell > 0) {
+        bits += 4.0 + std::floor(std::log2(static_cast<double>(shell)));
+      }
+      if (near_near || joint) {
+        bits += 1.0;  // comp_group_idx (AVERAGE; enable_masked_compound)
+        bits += 0.7 * static_cast<double>(cand.cwp_index);
+      }
+      if (interp_block_enabled()) bits += 1.585;  // interp_filter symbol
+      return bits * compound_rate_scale;
+    }
+    multiref::CompoundModeParams params;
+    params.type = cand.compound_mode == 0
+                      ? inter::adv::CompoundType::kAverage
+                      : (cand.compound_type == 0
+                             ? inter::adv::CompoundType::kWedge
+                             : (cand.compound_type == 1
+                                    ? inter::adv::CompoundType::kDiffWtd
+                                    : inter::adv::CompoundType::kAverage));
+    params.cwp_weight = cand.cwp_weight;
+    params.cwp_index = cand.cwp_index;
+    params.use_imp_mask = cand.use_imp_mask;
+    params.wedge_index = cand.wedge_index;
+    params.wedge_sign = cand.wedge_sign;
+    params.mask_type = cand.mask_type;
+    const bool same_side = (frame_distance_[0] >= 0) ==
+                           (frame_distance_[1] >= 0);
+    double bits = multiref::compound_mode_bits(params, same_side, true);
+    if (near_near) {
+      // §5.20.7.8 read_drl_idx() twice; the second list starts at 0 for the
+      // opposite-reference pair.
+      bits += 0.7 * static_cast<double>(cand.drl_index) +
+              0.7 * static_cast<double>(cand.drl_index1);
+    }
+    if (interp_block_enabled()) bits += 1.585;  // interp_filter symbol
+    return bits * compound_rate_scale;
+  };
   // Exact mode/ref/DRL/MVD price, or the historical constant formula when the
-  // probe cannot model this candidate.
-  const auto candidate_syntax_bits = [&](const InterCandidate& cand) {
+  // probe cannot model this candidate.  `modeled` reports whether the exact
+  // probe covered the candidate (including the compound symbol set).
+  const auto base_candidate_syntax_bits = [&](const InterCandidate& cand,
+                                              bool* modeled) {
+    *modeled = false;
     if (pipe_on) {
       rate_hybrid::Terms terms;
       if (pipe_probe_.price_mode(probe_node_for(cand), &terms)) {
+        *modeled = true;
         return terms.mode_info();
       }
       ++(eff_on ? eff_perc::counters().fallbacks
@@ -1841,11 +2023,18 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     if (rate_model_on) {
       rate_hybrid::Terms terms;
       if (rate_probe_.price_mode(probe_node_for(cand), &terms)) {
+        *modeled = true;
         return terms.mode_info();
       }
     }
     return inter_syntax_bits(cand.mode, cand.drl_index, cand.mvd.y,
                              cand.mvd.x, cand.use_amvd);
+  };
+  const auto candidate_syntax_bits = [&](const InterCandidate& cand) {
+    bool modeled = false;
+    double bits = base_candidate_syntax_bits(cand, &modeled);
+    if (!modeled) bits += compound_syntax_bits(cand);
+    return bits;
   };
   const auto inter_cost = [&](const InterCandidate& cand) {
     return static_cast<double>(cand.sse) +
@@ -2466,10 +2655,13 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       }
     }
     if (have0 && have1) {
-      const int limit0 =
-          std::min(l0.count, block_refine ? 2 : m);
-      const int limit1 =
-          std::min(l1.count, block_refine ? 2 : m);
+      int pair_limit = block_refine ? 2 : m;
+      if (const char* limit = std::getenv("AV2ENC_COMPOUND_PAIR_LIMIT")) {
+        const int value = std::atoi(limit);
+        if (value > 0) pair_limit = std::min(pair_limit, value);
+      }
+      const int limit0 = std::min(l0.count, pair_limit);
+      const int limit1 = std::min(l1.count, pair_limit);
       for (int i = 0; i < limit0; ++i) {
         for (int j = 0; j < limit1; ++j) {
           merge::MvStack pair[2] = {l0, l1};
@@ -2479,6 +2671,326 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
             continue;
           }
           evaluate(resolve[0], resolve[1], i, j, /*use_optflow=*/false);
+        }
+      }
+    }
+  }
+
+  // §5.20.7.6 compound NEWMV carrier (AV2ENC_COMPOUND_NEWMV).  The depth arm
+  // could only code the per-list stack pair because NEAR_NEARMV has no MVD
+  // symbol.  These modes code the plan search MV:
+  //   NEAR_NEWMV  list-0 stack entry + list-1 MVD (two DRL indices),
+  //   NEW_NEARMV  list-0 MVD + list-1 two-list stack entry (one DRL index),
+  //   JOINT_NEWMV one MVD, §5.20.7.13 projMv derives the other list.
+  // The search is the plan ME MV per reference plus a small on-axis
+  // ±1/8..1-pel refinement.  Every candidate is priced by the same leaf RD
+  // as the NEAR_NEARMV carrier.
+  if (!keyframe_ && options_.compound && options_.compound_near_near &&
+      compound_newmv_enabled() && !options_.force_global_mv &&
+      num_total_refs_ >= 2 && w >= 8 && h >= 8 && !options_.force_intra &&
+      inter_fits && options_.mv_precision == 0 &&
+      !options_.seq_force_integer_mv && !options_.enable_adaptive_mvd &&
+      !options_.enable_flex_mvres && !options_.enable_mvd_sign_derive &&
+      !options_.enable_refinemv && options_.opfl_refine_type == 0) {
+    merge::StackParams p0;
+    merge::StackParams p1;
+    merge::MvStack l0;
+    merge::MvStack l1;
+    const bool have0 = load_stack(r, c, w4, h4, 0, sink.state, p0, l0);
+    const bool have1 = load_stack(r, c, w4, h4, 1, sink.state, p1, l1);
+    // The two-list stack the decoder builds for the single-DRL compound modes.
+    merge::StackParams cparams = make_stack_params(r, c, w4, h4, 0, sink.state);
+    cparams.ref_frame[1] = 1;
+    cparams.is_compound = true;
+    bool gm_warp = false;
+    inter::mc::Mv gm_mv1{};
+    global_mv_for_block(1, r, c, w4, h4, gm_warp, gm_mv1);
+    cparams.global_mv[1] = gm_mv1;
+    merge::MvStack compound_stack;
+    const bool have_compound =
+        merge::build_stack_checked(cparams, &compound_stack) ==
+            merge::Status::kOk &&
+        compound_stack.count > 0;
+    // The plan ME MV for each reference is already cached by the single-ref
+    // NEWMV search.  A missing/failed search simply drops that reference's
+    // NEWMV candidates.
+    inter::mc::Mv me[2];
+    bool have_me[2] = {false, false};
+    for (int ref = 0; ref < 2; ++ref) {
+      if (run_me(ref, ax0, ay0, w, h, me[ref], error)) {
+        me[ref] = quantize_mv(me[ref], options_.mv_precision);
+        have_me[ref] = true;
+      }
+    }
+    // Compound-coupled refinement.  The near list is fixed by the stack, so
+    // the coded new MV is searched against the actual pairwise blend rather
+    // than each reference's single-prediction SSE.  The seed is the better of
+    // the plan ME MV and the zero-delta stack predictor; the on-axis
+    // ±1/8..1-pel offsets around it are the small refinement.
+    const int radius = compound_newmv_radius();
+    std::vector<inter::mc::Mv> offsets;
+    offsets.push_back(inter::mc::Mv{0, 0});
+    if (compound_newmv_refine()) {
+      for (int step : {1, 2, 4, 8}) {
+        if (step > radius) continue;
+        offsets.push_back(inter::mc::Mv{step, 0});
+        offsets.push_back(inter::mc::Mv{-step, 0});
+        offsets.push_back(inter::mc::Mv{0, step});
+        offsets.push_back(inter::mc::Mv{0, -step});
+      }
+    }
+    const bool imp_mask_on = options_.enable_imp_msk_bld;
+    const auto blend_sse = [&](inter::mc::Mv a, inter::mc::Mv b,
+                               std::int64_t& sse) -> bool {
+      const inter::mc::Mv mvs[2] = {a, b};
+      multiref::CompoundModeParams eq;
+      eq.type = inter::adv::CompoundType::kAverage;
+      eq.cwp_index = 0;
+      eq.cwp_weight = multiref::kCwpEqual;
+      eq.use_imp_mask =
+          imp_mask_on &&
+          multiref::implicit_mask_eligible(
+              /*seq_enable_imp_msk_bld=*/true, eq,
+              /*global_global_mv=*/false, /*refs_scaled=*/false,
+              /*compound_warp=*/false);
+      if (!compound_plain(mvs, static_cast<int>(node.size), ax0, ay0, w, h,
+                          sink.compound_y, sink.compound_u, sink.compound_v,
+                          error, &eq, 0, 1)) {
+        return false;
+      }
+      sse = sse_vis(0, ax0, ay0, w, h, sink.compound_y);
+      return true;
+    };
+    const auto mv_shell = [](inter::mc::Mv a, inter::mc::Mv b) {
+      return std::abs(a.y - b.y) + std::abs(a.x - b.x);
+    };
+    // Searches the coded list's MV against a fixed partner.  `new_is_list1`
+    // selects NEAR_NEWMV (list 0 fixed) or NEW_NEARMV (list 1 fixed).
+    const auto refine_pair = [&](bool new_is_list1, inter::mc::Mv fixed0,
+                                 inter::mc::Mv fixed1,
+                                 inter::mc::Mv me_target,
+                                 inter::mc::Mv pred_target,
+                                 inter::mc::Mv* best_target) {
+      std::int64_t sse_me = -1;
+      std::int64_t sse_pred = -1;
+      const bool have_me =
+          blend_sse(new_is_list1 ? fixed0 : me_target,
+                    new_is_list1 ? me_target : fixed1, sse_me);
+      const bool have_pred =
+          blend_sse(new_is_list1 ? fixed0 : pred_target,
+                    new_is_list1 ? pred_target : fixed1, sse_pred);
+      if (!have_me && !have_pred) return false;
+      inter::mc::Mv center = pred_target;
+      inter::mc::Mv best = pred_target;
+      std::int64_t best_sse = sse_pred;
+      if (have_me && (!have_pred || sse_me < sse_pred)) {
+        center = me_target;
+        best = me_target;
+        best_sse = sse_me;
+      }
+      const auto consider_target = [&](inter::mc::Mv target) {
+        std::int64_t sse = 0;
+        if (!blend_sse(new_is_list1 ? fixed0 : target,
+                       new_is_list1 ? target : fixed1, sse)) {
+          return;
+        }
+        if (sse < best_sse ||
+            (sse == best_sse &&
+             mv_shell(target, pred_target) <
+                 mv_shell(best, pred_target))) {
+          best_sse = sse;
+          best = target;
+        }
+      };
+      for (const inter::mc::Mv& off : offsets) {
+        consider_target(inter::mc::Mv{center.y + off.y, center.x + off.x});
+      }
+      *best_target = best;
+      return true;
+    };
+    struct SeenPair {
+      int mode;
+      bool joint;
+      inter::mc::Mv a;
+      inter::mc::Mv b;
+    };
+    std::vector<SeenPair> seen_pairs;
+    const auto already_seen = [&](int mode, bool joint, inter::mc::Mv a,
+                                  inter::mc::Mv b) {
+      for (const SeenPair& s : seen_pairs) {
+        if (s.mode == mode && s.joint == joint && s.a.y == a.y &&
+            s.a.x == a.x && s.b.y == b.y && s.b.x == b.x) {
+          return true;
+        }
+      }
+      seen_pairs.push_back(SeenPair{mode, joint, a, b});
+      return false;
+    };
+    const auto add_new = [&](int mode, bool joint, inter::mc::Mv mv0,
+                             inter::mc::Mv mv1, inter::mc::Mv mvd, int drl0,
+                             int drl1) {
+      if (already_seen(mode, joint, mv0, mv1)) return;
+      const inter::mc::Mv mvs[2] = {mv0, mv1};
+      multiref::CompoundModeParams chosen;
+      std::int64_t chosen_sse = -1;
+      bool ok = false;
+      if (joint && (options_.enable_cwp_weighted ||
+                    options_.enable_imp_msk_bld)) {
+        ok = compound_search_average(
+            mvs, static_cast<int>(node.size), ax0, ay0, w, h,
+            sink.compound_y, sink.compound_u, sink.compound_v, chosen,
+            chosen_sse, error);
+      } else {
+        // NEAR_NEWMV / NEW_NEARMV never code cwp_idx, so the only prediction
+        // is the equal-weight AVERAGE blend (or its derived implicit mask).
+        chosen.type = inter::adv::CompoundType::kAverage;
+        chosen.cwp_index = 0;
+        chosen.cwp_weight = multiref::kCwpEqual;
+        chosen.use_imp_mask =
+            imp_mask_on &&
+            multiref::implicit_mask_eligible(
+                /*seq_enable_imp_msk_bld=*/true, chosen,
+                /*global_global_mv=*/false, /*refs_scaled=*/false,
+                /*compound_warp=*/false);
+        ok = compound_plain(mvs, static_cast<int>(node.size), ax0, ay0, w, h,
+                            sink.compound_y, sink.compound_u, sink.compound_v,
+                            error, &chosen, 0, 1);
+      }
+      if (!ok) return;
+      InterCandidate cand;
+      cand.valid = true;
+      cand.compound = true;
+      cand.mode = syntax::kInterNearMv;
+      cand.ref_index = 0;
+      cand.ref_index1 = 1;
+      cand.mv = mv0;
+      cand.mv1 = mv1;
+      cand.mvd = mvd;
+      cand.drl_index = drl0;
+      cand.drl_index1 = drl1;
+      cand.compound_mode = mode;
+      cand.compound_joint = joint;
+      cand.compound_type = 2;  // AVERAGE
+      cand.cwp_index = chosen.cwp_index;
+      cand.cwp_weight = chosen.cwp_weight;
+      cand.use_imp_mask = chosen.use_imp_mask;
+      cand.sse = chosen_sse >= 0
+                     ? chosen_sse
+                     : sse_vis(0, ax0, ay0, w, h, sink.compound_y);
+      if (trace_) {
+        std::cerr << "  cand compound new mode=" << mode
+                  << " joint=" << (joint ? 1 : 0) << " mv0=(" << mv0.y << ","
+                  << mv0.x << ") mv1=(" << mv1.y << "," << mv1.x
+                  << ") mvd=(" << mvd.y << "," << mvd.x << ") drl=(" << drl0
+                  << "," << drl1 << ") cwp=" << cand.cwp_index << " sse="
+                  << cand.sse << "\n";
+      }
+      consider(cand);
+    };
+    const int mode_mask = compound_newmv_modes();
+    // NEAR_NEWMV: list 0 is the first per-list stack entry; the new MV is
+    // list 1 and its predictor is that list's first stack entry.
+    if ((mode_mask & 1) && have0 && have1 && l0.count > 0 && l1.count > 0 &&
+        have_me[1]) {
+      const inter::mc::Mv near0 =
+          merge::clamp_mv_to_integer(l0.cand[0].mv[0]);
+      const inter::mc::Mv pred1 =
+          merge::clamp_mv_to_integer(l1.cand[0].mv[0]);
+      inter::mc::Mv best_target = pred1;
+      if (refine_pair(/*new_is_list1=*/true, near0, pred1, me[1], pred1,
+                      &best_target)) {
+        const auto add_target = [&](inter::mc::Mv target) {
+          const inter::mc::Mv actual = merge::clamp_mv_to_integer(
+              inter::mc::Mv{target.y, target.x});
+          add_new(1, false, near0, actual,
+                  inter::mc::Mv{actual.y - pred1.y, actual.x - pred1.x},
+                  /*drl0=*/0, /*drl1=*/0);
+        };
+        add_target(pred1);
+        add_target(me[1]);
+        add_target(best_target);
+      }
+    }
+    // NEW_NEARMV / JOINT_NEWMV read the two-list stack at one DRL index.
+    if ((mode_mask & (2 | 4)) && have_compound &&
+        compound_stack.count > 0) {
+      const inter::mc::Mv pred0 =
+          merge::clamp_mv_to_integer(compound_stack.cand[0].mv[0]);
+      const inter::mc::Mv pred1 =
+          merge::clamp_mv_to_integer(compound_stack.cand[0].mv[1]);
+      if ((mode_mask & 2) && have_me[0]) {
+        inter::mc::Mv best_target = pred0;
+        if (refine_pair(/*new_is_list1=*/false, pred0, pred1, me[0], pred0,
+                        &best_target)) {
+          const auto add_target = [&](inter::mc::Mv target) {
+            const inter::mc::Mv actual =
+                merge::clamp_mv_to_integer(inter::mc::Mv{target.y, target.x});
+            add_new(2, false, actual, pred1,
+                    inter::mc::Mv{actual.y - pred0.y, actual.x - pred0.x},
+                    /*drl0=*/0, /*drl1=*/0);
+          };
+          add_target(pred0);
+          add_target(me[0]);
+          add_target(best_target);
+        }
+      }
+      if ((mode_mask & 4) && have_me[0] && have_me[1]) {
+        const int d0 = frame_distance_[0];
+        const int d1 = frame_distance_[1];
+        const inter::mvprec::JointMvdPlan plan =
+            inter::mvprec::joint_mvd_plan(-d0, -d1, false, false);
+        inter::mc::Mv pred[2] = {pred0, pred1};
+        const int base = plan.base_list;
+        const auto joint_pair = [&](inter::mc::Mv target,
+                                    inter::mc::Mv pair[2]) {
+          const inter::mc::Mv diff{target.y - pred[base].y,
+                                   target.x - pred[base].x};
+          inter::mvprec::assign_joint_mvd(pred, diff, plan,
+                                          /*jmvd_scale_mode=*/0,
+                                          /*use_amvd=*/false, pair);
+          return diff;
+        };
+        std::int64_t sse_me = -1;
+        std::int64_t sse_pred = -1;
+        inter::mc::Mv pair_me[2];
+        inter::mc::Mv pair_pred[2];
+        joint_pair(me[base], pair_me);
+        joint_pair(pred[base], pair_pred);
+        const bool have_me_sse = blend_sse(pair_me[0], pair_me[1], sse_me);
+        const bool have_pred_sse =
+            blend_sse(pair_pred[0], pair_pred[1], sse_pred);
+        if (have_me_sse || have_pred_sse) {
+          inter::mc::Mv center = pred[base];
+          inter::mc::Mv best_target = pred[base];
+          std::int64_t best_sse = sse_pred;
+          if (have_me_sse && (!have_pred_sse || sse_me < sse_pred)) {
+            center = me[base];
+            best_target = me[base];
+            best_sse = sse_me;
+          }
+          for (const inter::mc::Mv& off : offsets) {
+            const inter::mc::Mv target{center.y + off.y, center.x + off.x};
+            inter::mc::Mv pair[2];
+            joint_pair(target, pair);
+            std::int64_t sse = 0;
+            if (!blend_sse(pair[0], pair[1], sse)) continue;
+            if (sse < best_sse ||
+                (sse == best_sse &&
+                 mv_shell(target, pred[base]) <
+                     mv_shell(best_target, pred[base]))) {
+              best_sse = sse;
+              best_target = target;
+            }
+          }
+          const auto add_joint = [&](inter::mc::Mv target) {
+            inter::mc::Mv jpair[2];
+            const inter::mc::Mv diff = joint_pair(target, jpair);
+            add_new(0, true, jpair[0], jpair[1], diff, /*drl0=*/0,
+                    /*drl1=*/0);
+          };
+          add_joint(pred[base]);
+          add_joint(me[base]);
+          add_joint(best_target);
         }
       }
     }
@@ -3822,9 +4334,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
         out.distortion +=
             static_cast<double>(sse_vis(2, acx0, acy0, cw, ch, out.v));
       }
-      out.bits = 2.0 + inter_syntax_bits(out.cand.mode, out.cand.drl_index,
-                                         out.cand.mvd.y, out.cand.mvd.x,
-                                         out.cand.use_amvd);
+      out.bits = 2.0 + candidate_syntax_bits(out.cand);
       if (rate_model_on) {
         syntax::BlockSyntax probe = probe_node_for(out.cand);
         probe.skip_flag = out.residual ? 0 : 1;
@@ -3985,7 +4495,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       return a.mode == b.mode && a.ref_index == b.ref_index &&
              a.mv.y == b.mv.y && a.mv.x == b.mv.x &&
              a.compound == b.compound && a.same_ref == b.same_ref &&
-             a.compound_mode == b.compound_mode && a.drl_index == b.drl_index &&
+             a.compound_mode == b.compound_mode && a.compound_joint == b.compound_joint && a.drl_index == b.drl_index &&
              a.mv1.y == b.mv1.y && a.mv1.x == b.mv1.x &&
              a.use_warp == b.use_warp;
     };
@@ -4042,7 +4552,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       return a.mode == b.mode && a.ref_index == b.ref_index &&
              a.mv.y == b.mv.y && a.mv.x == b.mv.x &&
              a.compound == b.compound && a.same_ref == b.same_ref &&
-             a.compound_mode == b.compound_mode &&
+             a.compound_mode == b.compound_mode && a.compound_joint == b.compound_joint &&
              a.drl_index == b.drl_index && a.mv1.y == b.mv1.y &&
              a.mv1.x == b.mv1.x && a.use_warp == b.use_warp;
     };
@@ -4084,7 +4594,8 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                       estimate_tx_bits(result.res_u, false) +
                       estimate_tx_bits(result.res_v, false))
                    : 2.0) +
-              (result.filter_coded ? kInterpFilterSymbolBits : 0.0);
+              (result.filter_coded ? kInterpFilterSymbolBits : 0.0) +
+              compound_syntax_bits(result.cand);
         }
         const double cost =
             result.pipe_distortion + pipe_lambda * result.pipe_bits;
@@ -4129,7 +4640,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
         return a.mode == b.mode && a.ref_index == b.ref_index &&
                a.mv.y == b.mv.y && a.mv.x == b.mv.x &&
                a.compound == b.compound && a.same_ref == b.same_ref &&
-               a.compound_mode == b.compound_mode &&
+               a.compound_mode == b.compound_mode && a.compound_joint == b.compound_joint &&
                a.drl_index == b.drl_index && a.mv1.y == b.mv1.y &&
                a.mv1.x == b.mv1.x && a.use_warp == b.use_warp;
       };
@@ -4148,7 +4659,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
         return a.mode == b.mode && a.ref_index == b.ref_index &&
                a.mv.y == b.mv.y && a.mv.x == b.mv.x &&
                a.compound == b.compound && a.same_ref == b.same_ref &&
-               a.compound_mode == b.compound_mode &&
+               a.compound_mode == b.compound_mode && a.compound_joint == b.compound_joint &&
                a.drl_index == b.drl_index && a.mv1.y == b.mv1.y &&
                a.mv1.x == b.mv1.x && a.use_warp == b.use_warp;
       };
@@ -4642,15 +5153,17 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     entry.compound = best.compound ? 1 : 0;
     entry.ref_index1 = static_cast<std::uint8_t>(
         best.compound ? best.ref_index1 : 1);
-    entry.compound_joint = 0;
+    entry.compound_joint = best.compound && best.compound_joint ? 1 : 0;
     entry.compound_mode = static_cast<std::uint8_t>(best.compound_mode);
     entry.drl_index1 = static_cast<std::uint8_t>(best.drl_index1);
     if (best.compound) {
       // A compound leaf never carries a residual in the gated subset.
       entry.skip_flag = 1;
       inter_residual = false;
+      // §5.20.7.16 comp_group_idx: only an explicitly masked candidate sets
+      // it.  AVERAGE (compound_type 2) and the new compound modes code 0.
       entry.compound_masked =
-          best.compound_mode == 0 ? 0 : (best.compound_type != 2 ? 1 : 0);
+          best.compound_type == 0 || best.compound_type == 1 ? 1 : 0;
       // §5.20.7.16: without comp_group_idx = 1 there is no compound_type
       // symbol, so the AVERAGE sentinel is 0 for the writer.
       entry.compound_type = static_cast<std::uint8_t>(
@@ -4668,7 +5181,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                         best.use_refinemv);
       }
     }
-    if (best.compound && best.compound_mode == 0) {
+    if (best.compound) {
       entry.mv_y = best.mv.y;
       entry.mv_x = best.mv.x;
       entry.mv1_y = best.mv1.y;
@@ -4731,7 +5244,8 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                    /*warp0=*/best.use_warp, /*warp1=*/false,
                    /*is_wedge=*/best.compound && best.compound_type == 0,
                    best.wedge_index, best.wedge_sign,
-                   static_cast<int>(node.size));
+                   static_cast<int>(node.size),
+                   best.compound ? best.cwp_index : 0);
     set_intra_joint(r, c, w4, h4, 0);  // inter_block_mode_info(): DC
     ++st.inter_blocks;
     if (trace_) {
@@ -4744,6 +5258,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                 << " skip=" << static_cast<int>(entry.skip_flag)
                 << " comp=" << static_cast<int>(entry.compound)
                 << " cm=" << static_cast<int>(entry.compound_mode)
+                << " cj=" << static_cast<int>(entry.compound_joint)
                 << " ifilter=" << static_cast<int>(entry.mrl_index)
                 << " optflow=" << static_cast<int>(entry.use_optflow)
                 << " refinemv=" << static_cast<int>(entry.use_refinemv)

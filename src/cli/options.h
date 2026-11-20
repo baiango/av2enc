@@ -456,6 +456,9 @@ struct Options {
   // --video-compound-off: the A/B control for the compound arm that
   // --nightly-b enables (the pre-2026-11-21 85.472 B baseline).
   bool video_compound_off = false;
+  // --video-compound-depth-off: the A/B control for the NEAR_NEARMV/CWP depth
+  // arm on top of compound (restores the 86.805 TIP-only preset).
+  bool video_compound_depth_off = false;
   bool video_drift_refresh_off = false;
   bool video_cdf_chain_off = false;
   bool video_key_qp_offset_off = false;

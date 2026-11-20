@@ -486,6 +486,14 @@ struct InterRateCdfRows {
   std::uint16_t use_bawp[3];
   std::uint16_t explicit_bawp[3][3];
   std::uint16_t use_bawp_chroma[3];
+  // §5.20.7.6 / §5.20.7.8 / §5.20.7.16 compound block layer.
+  std::uint16_t is_joint[2][3];
+  std::uint16_t compound_mode_non_joint[5][6];
+  std::uint16_t comp_group_idx[12][3];
+  std::uint16_t compound_type[3];
+  std::uint16_t cwp_idx[4][3];
+  std::uint16_t jmvd_scale_mode[6];
+  std::uint16_t interp_filter[16][3];
   std::uint16_t shell_set[3];
   std::uint16_t shell6_class0[9];
   std::uint16_t shell6_class1[9];

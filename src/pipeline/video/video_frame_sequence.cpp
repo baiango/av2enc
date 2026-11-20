@@ -1252,12 +1252,46 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
         };
         const double sse_tip = luma_sse(tip_plane[0]);
         const double sse_coded = luma_sse(probe.recon(0));
+        // Research guard: a reference §7.22 field that stores a compound
+        // block with a non-zero MV makes the encoder's TIP motion field
+        // diverge from the pinned decoder's.  Keep the coded B instead.
+        bool field_guard_hit = false;
+        int guard_mode = 0;
+        if (const char* guard = std::getenv("AV2ENC_TIP_LEAF_FIELD_GUARD")) {
+          guard_mode = std::atoi(guard);
+        }
+        if (guard_mode != 0) {
+          const SlotField* guards[2] = {&past, &future};
+          for (const SlotField* slot : guards) {
+            if (guard_mode == 3 && slot->has_cwp_compound) {
+              field_guard_hit = true;
+              break;
+            }
+            const temporal::SavedMvField saved_field = slot->saved();
+            const std::size_t cells =
+                static_cast<std::size_t>(saved_field.w8) *
+                static_cast<std::size_t>(saved_field.h8);
+            for (std::size_t i = 0; i < cells && !field_guard_hit; ++i) {
+              const int ref0 = saved_field.ref[i * 2 + 0];
+              const int ref1 = saved_field.ref[i * 2 + 1];
+              if (ref0 < 0 || ref1 < 0 || ref0 == ref1) continue;
+              if (guard_mode >= 2 ||
+                  saved_field.mv[i * 4 + 0] != 0 ||
+                  saved_field.mv[i * 4 + 1] != 0 ||
+                  saved_field.mv[i * 4 + 2] != 0 ||
+                  saved_field.mv[i * 4 + 3] != 0) {
+                field_guard_hit = true;
+              }
+            }
+            if (field_guard_hit) break;
+          }
+        }
         double margin_db = 0.30;
         if (const char* margin = std::getenv("AV2ENC_TIP_LEAF_PSNR_MARGIN")) {
           margin_db = std::atof(margin);
         }
         const double limit = std::pow(10.0, margin_db / 10.0);
-        keep_tip = sse_tip <= sse_coded * limit;
+        keep_tip = sse_tip <= sse_coded * limit && !field_guard_hit;
         if (options.trace) {
           std::cerr << "tip-leaf decide display=" << display
                     << " sse_tip=" << sse_tip << " sse_coded=" << sse_coded

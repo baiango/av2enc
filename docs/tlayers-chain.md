@@ -50,18 +50,36 @@ pictures already hold a true past/future pair, so compound uses it: compound
 measured **K 86.607 at 100.0 kbps** (QP125, 24,988 B), **+1.135 K** over the
 85.472 single-prediction arm and **+0.375 K** over the flat 86.232 aggregate.
 
-**TIP output on the dead ends is the promoted point (2026-11-21).** The
-temporal-layer leaves no planned frame references are now
-`TIP_FRAME_AS_OUTPUT` pictures synthesized from their two plan references
-(mode 1, with a 0.30 dB coded-leaf PSNR floor). The product preset
-`--nightly-b` measures **K 86.805 at 100.0 kbps** (QP121/122, 25,299/24,918 B):
+**TIP output on the dead ends (2026-11-21).** The temporal-layer leaves no
+planned frame references are now `TIP_FRAME_AS_OUTPUT` pictures synthesized
+from their two plan references (mode 1, with a 0.30 dB coded-leaf PSNR floor).
+TIP measured **K 86.805 at 100.0 kbps** (QP121/122, 25,299/24,918 B):
 **+0.198 K** over the 86.607 compound arm and **+0.573 K** over the flat
-86.232 aggregate — the best measured point in the tree. The 16-picture proof
-is exact on both decoders; the 60-picture streams are `avmdec`-only until the
-pinned dav2d §7.21.6 drain fix lands, so B remains **research-only** and the
-shipped flat `--fast-decode` aggregate is unchanged. `--video-compound-off`
-restores the 85.472 arm byte for byte; an explicit `AV2ENC_TIP_LEAF=0` keeps
-compound and restores the 86.607/24,988 arm.
+86.232 aggregate.
+
+**The CWP compound-depth + exact-rate arm is the promoted point
+(2026-11-21).** One NEAR_NEARMV stack pair per list with the five CWP weights
+takes the TIP arm to 87.023; pricing the compound symbol set exactly
+(`comp_mode`/`is_joint`/`compound_mode`/`jmvd_scale_mode`/both DRLs/
+`comp_group_idx`/`cwp_idx`/the compound filter, with the CWP index alphabet
+fixed to 0..4) takes the preset to **K 87.284 at 100.0 kbps** (QP121/122/123,
+25,163/24,859/24,598 B): **+0.261 K** over the depth arm, **+0.479 K** over the
+86.805 TIP arm and **+1.052 K** over the flat 86.232. The arm needs
+`AV2ENC_TIP_LEAF_FIELD_GUARD=3`: unguarded TIP+compound is not
+encoder/decoder-exact at 60 pictures (2-31 LSB on displays 20/30/35/42), so
+the guarding fallback to the coded B is part of the measured point, and the
+unguarded K 87.363 is invalid. The 16-picture proof is exact on both decoders;
+the 60-picture streams are `avmdec`-only until the pinned dav2d §7.21.6 drain
+fix lands, so B remains **research-only** and the shipped flat `--fast-decode`
+aggregate is unchanged. The compound NEWMV modes are signallable and exact but
+measure 87.077 (+0.054) and stay off. Controls are byte-exact:
+`AV2ENC_COMPOUND_EXACT_RATE=0` restores the 87.023 depth arm,
+`--video-compound-depth-off` restores the 86.805 TIP arm,
+`AV2ENC_TIP_LEAF=0` with the depth off restores the 86.607/24,988 compound
+arm, and `--video-compound-off` restores the 85.472 arm.  The implicit mask is
+**not** in the promoted arm: it selects no different block but changes the
+reconstructed blend and re-keys the pins at the same byte lengths
+(`docs/compound-depth.md`).
 
 Default-off env gates (the raw spike flags; `--nightly-b` sets the same
 options):
@@ -540,17 +558,19 @@ tree: the 16-picture chained proof is `dav2d --strict 1` exact and every
 measured 60-picture stream is `avmdec` 60/60 with `--video-recon` equality.
 The documented b4/QP197 reproducer is also exact now (25,592 B).
 
-Each arm is measured on the compound-legal chained B carrier (the AVERAGE arm
-is what `--nightly-b` now expands to) and rate-matched to 100.0 kbps with
-`tools/oracle.py` (first 60 frames of the NASA clip, `--video-gops 7`). `Δ` is
-against the 85.472 single-prediction baseline; the gate is +0.15 K.
+Each arm is measured on the compound-legal chained B carrier and rate-matched
+to 100.0 kbps with `tools/oracle.py` (first 60 frames of the NASA clip,
+`--video-gops 7`). `Δ` is against the 85.472 single-prediction baseline; the
+gate is +0.15 K.  This table is the compound-mode sweep before TIP; the
+promoted preset is AVERAGE + TIP + the CWP depth arm + the exact compound
+price (87.284).
 
 | arm | QP bracket | kbps | JOD | BA | SS2 | K | Δ | decision |
 |---|---|---|---:|---:|---:|---:|---:|---|
 | `--nightly-b --video-compound-off` (baseline) | 130/131 | 100.000 | 9.8353 | 2.316 | 83.112 | 85.472 | — | control |
-| **`--nightly-b`** (AVERAGE compound) | 124/125 | 100.000 | 9.8632 | 2.057 | 84.763 | **86.607** | **+1.135** | in the preset; TIP then adds +0.198 |
+| **`--nightly-b`** (AVERAGE compound) | 124/125 | 100.000 | 9.8632 | 2.057 | 84.763 | **86.607** | **+1.135** | TIP adds +0.198; depth +0.218 |
 | + wedge + diffwtd | 126/128 | 100.000 | 9.8527 | 2.058 | 84.637 | 86.533 | +1.061 | −0.074 vs AVERAGE; drop |
-| + near-near | 124/125 | 100.000 | 9.8430 | 2.061 | 84.723 | 86.488 | +1.016 | −0.119 vs AVERAGE |
+| + unweighted near-near | 124/125 | 100.000 | 9.8430 | 2.061 | 84.723 | 86.488 | +1.016 | −0.119 vs AVERAGE; CWP depth is separate |
 | + near-near + `--video-opfl` | 124/125 | 100.000 | 9.8463 | 2.042 | 84.756 | 86.567 | +1.095 | +0.079 vs near-near; drop |
 | + near-near + `--video-refine-mv` | 124/125 | 100.000 | 9.8435 | 2.061 | 84.717 | 86.490 | +1.018 | +0.002 vs near-near; drop |
 
@@ -561,9 +581,11 @@ against the 85.472 single-prediction baseline; the gate is +0.15 K.
   QP125 than AVERAGE and scores 86.533, inside the QP ripple and below
   AVERAGE. The §7.13.3.27 mask syntax is exact but the clip does not ask for
   it.
-* **NEAR_NEARMV / OPFL / refine-MV are sub-gate.** Near-near alone is −0.119
-  against AVERAGE; OPFL adds +0.079 over its own near-near carrier and
-  refine-MV +0.002. Neither clears +0.15, so both stay out of the preset.
+* **NEAR_NEARMV / OPFL / refine-MV are sub-gate on the unweighted carrier.**
+  Unweighted near-near alone is −0.119 against AVERAGE; OPFL adds +0.079 over
+  its own near-near carrier and refine-MV +0.002. Neither clears +0.15, so
+  both stay out.  The **CWP-weighted** NEAR_NEARMV pair on the TIP carrier is
+  a different arm and clears the gate (+0.218, `docs/compound-depth.md`).
   (They remain available and decoder-exact for future content.)
 * **Promoted 2026-11-21, then extended by TIP.** Compound entered
   `--nightly-b` at 86.607 and the TIP-output composition below raised the
@@ -606,8 +628,9 @@ a tile-coded B). No TIP picture is a reference in this composition, so the
 reference map, the §7.22 slot store and every other picture's prediction are
 untouched.
 
-`--nightly-b` sets mode 1 and the 0.30 dB floor when they are unset, so the
-preset is the 86.805 point. The env gates stay available (an explicit value,
+`--nightly-b` sets mode 1, the 0.30 dB floor and the depth arm's field guard
+when they are unset, so the TIP step is 86.805 inside the 87.284 preset
+(`docs/compound-depth.md`). The env gates stay available (an explicit value,
 including `0`, wins) and are not reachable from `--fast-decode`:
 
 ```sh
@@ -616,6 +639,11 @@ AV2ENC_TIP_LEAF=0        # control: the 86.607 compound arm (24,988 B at QP125)
 AV2ENC_TIP_LEAF=2        # mode 2: layer >= 2 pictures; the TIP is a reference
 AV2ENC_TIP_LEAF_SKIP=<d,d,...>     # research control: keep those B pictures
 AV2ENC_TIP_LEAF_PSNR_MARGIN=0.30   # quality floor, dB (preset default)
+AV2ENC_TIP_LEAF_FIELD_GUARD=3      # preset: fall back on a CWP/compound field
+AV2ENC_COMPOUND_PAIR_LIMIT=1       # preset: first NEAR_NEARMV stack pair
+AV2ENC_COMPOUND_RATE=1             # preset: charge the compound-mode syntax
+AV2ENC_COMPOUND_EXACT_RATE=1       # preset: exact §5.20.7.6 symbol pricing
+AV2ENC_COMPOUND_NEWMV=1            # NOT in the preset (sub-gate modes)
 ```
 
 **Sequence and header delta.** Mode 1 sets `enable_tip = 1`,
@@ -744,7 +772,17 @@ pins are 25,008 B `0639b436…` (QP106) and 23,690 B `1b99127a…` (QP110).
    diffwtd) is 86.533 and NEAR_NEARMV / OPFL / refine-MV are
    86.488 / 86.567 / 86.490. Only the AVERAGE arm clears the +0.15 gate, so it
    is in `--nightly-b` and the others stay off. The old closed-GOP B result
-   (+0.04 K) is a different schedule and does not apply.
+   (+0.04 K) is a different schedule and does not apply. **Depth follow-up
+   (same day):** a CWP-weighted NEAR_NEARMV pair plus the TIP field guard is
+   **87.023 K (+0.218 over 86.805)**, decoder-exact; see
+   `docs/compound-depth.md`. The unguarded CWP point (87.363) is not
+   recon-exact at 60 pictures. **Exact compound price (same day):**
+   `AV2ENC_COMPOUND_EXACT_RATE=1` makes the eff-perc probe walk the real
+   comp_mode/is_joint/compound_mode/DRL/MVD/comp_group_idx/cwp_idx/
+   interp_filter set on the same candidate set and measures **87.284
+   (+0.261 over the depth arm)**; the compound NEWMV modes are signallable and
+   exact but measure 87.077 (+0.054) and stay off. `gate_video_compound_exact.sh`
+   pins both.
 4. **Reference selection.** The P chained plan's `kTwo` carrier is
    anchor-biased; the B plan already uses the true past/future pair. A local
    predictor for the P plan would make the P control fairer, not the B arm

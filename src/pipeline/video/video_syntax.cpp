@@ -689,6 +689,18 @@ void export_inter_rate_cdfs(int base_q_idx,
               sizeof(out->explicit_bawp));
   std::memcpy(out->use_bawp_chroma, state.use_bawp_chroma,
               sizeof(out->use_bawp_chroma));
+  std::memcpy(out->is_joint, state.is_joint, sizeof(out->is_joint));
+  std::memcpy(out->compound_mode_non_joint, state.compound_mode_non_joint,
+              sizeof(out->compound_mode_non_joint));
+  std::memcpy(out->comp_group_idx, state.comp_group_idx,
+              sizeof(out->comp_group_idx));
+  std::memcpy(out->compound_type, state.compound_type,
+              sizeof(out->compound_type));
+  std::memcpy(out->cwp_idx, state.cwp_idx, sizeof(out->cwp_idx));
+  std::memcpy(out->jmvd_scale_mode, state.mv_precision.jmvd_scale_mode,
+              sizeof(out->jmvd_scale_mode));
+  std::memcpy(out->interp_filter, state.mv_precision.interp_filter,
+              sizeof(out->interp_filter));
   std::memcpy(out->shell_set, state.shell_set, sizeof(out->shell_set));
   std::memcpy(out->shell6_class0, state.shell6_class0,
               sizeof(out->shell6_class0));

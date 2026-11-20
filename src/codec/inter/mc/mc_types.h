@@ -143,6 +143,9 @@ struct MiInfo {
   // the store samples for its per-8x8 allow-list.  `bsize` is a
   // partition::BlockSize value.
   std::int8_t warp[2] = {0, 0};
+  // CWP index of a compound block (0 = CWP_EQUAL).  Instrumentation for the
+  // §7.22 store guard; the merge stack does not read it.
+  std::int8_t cwp_index = 0;
   std::int8_t is_wedge = 0;
   std::int8_t wedge_index = 0;
   std::int8_t wedge_sign = 0;

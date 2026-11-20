@@ -5,7 +5,9 @@
 #include <inttypes.h>
 
 #include "codec/entropy/av2/av2_entropy.h"
+#include "codec/inter/mv_precision/mv_precision.h"
 #include "codec/partition/tree/partition.h"
+#include "pipeline/video/video_interp_filter.h"
 
 namespace av2enc::video::rate_hybrid {
 
@@ -298,6 +300,8 @@ void SyntaxProbe::reset(const ProbeConfig& config,
   mi_.assign(cells, inter::mc::MiInfo{});
   skip_grid_.assign(cells, 0);
   ymode_grid_.assign(cells, 0);
+  comp_group_grid_.assign(cells, 0);
+  filter_grid_.assign(cells, 3);
 }
 
 double SyntaxProbe::cost(const std::uint16_t* cdf, int n, int symbol) const {
@@ -379,6 +383,85 @@ bool SyntaxProbe::ref_backward(int ref) const {
          config_.frame_distance[ref] < 0;
 }
 
+int SyntaxProbe::is_joint_context(int ref0, int ref1) const {
+  const int d0 = std::abs(config_.frame_distance[ref0]);
+  const int d1 = std::abs(config_.frame_distance[ref1]);
+  const bool same_side =
+      (config_.frame_distance[ref0] >= 0) ==
+      (config_.frame_distance[ref1] >= 0);
+  return (same_side || d0 != d1) ? 1 : 0;
+}
+
+int SyntaxProbe::comp_group_context(int r, int c, int w4, int h4, int ref0,
+                                    int ref1) const {
+  const int bck = std::abs(config_.frame_distance[ref1]);
+  const int fwd = std::abs(config_.frame_distance[ref0]);
+  const int offset = (fwd == bck) ? 1 : 0;
+  int pos[2][2] = {};
+  const int n = neighbor_positions(pos, r, c, w4, h4);
+  int ctxs[2] = {0, 0};
+  int furthest = -1;
+  for (int ref = 0; ref < config_.num_refs; ++ref) {
+    if (config_.frame_distance[ref] >= 0) continue;
+    if (furthest < 0 ||
+        config_.frame_distance[ref] > config_.frame_distance[furthest]) {
+      furthest = ref;
+    }
+  }
+  for (int i = 0; i < n && i < 2; ++i) {
+    const std::size_t idx = cell_index(pos[i][0], pos[i][1]);
+    const inter::mc::MiInfo& mi = mi_[idx];
+    if (mi.ref[1] >= 0 && mi.ref[1] < 8) {
+      ctxs[i] = comp_group_grid_[idx] ? 1 : 0;
+    } else if (furthest >= 0 && mi.ref[0] == furthest) {
+      ctxs[i] = 2;
+    }
+  }
+  return ctxs[1] + ctxs[0] + (std::min(ctxs[1], ctxs[0]) > 0 ? 1 : 0) +
+         offset * 6;
+}
+
+int SyntaxProbe::interp_filter_context(int r, int c, int w4, int h4, int ref0,
+                                       bool is_compound) const {
+  int ctx = is_compound ? 4 : 0;
+  int left_type = 3;
+  int above_type = 3;
+  const struct {
+    int row;
+    int col;
+  } positions[2] = {{r + h4 - 1, c - 1}, {r - 1, c + w4 - 1}};
+  for (int i = 0; i < 2; ++i) {
+    const int row = positions[i].row;
+    const int col = positions[i].col;
+    if (row < 0 || col < 0 || row >= config_.mi_rows ||
+        col >= config_.mi_cols) {
+      continue;
+    }
+    if ((r >> 4) != (row >> 4)) continue;  // NPos: same superblock row
+    const std::size_t idx = cell_index(row, col);
+    const inter::mc::MiInfo& mi = mi_[idx];
+    if (!mi.is_inter) continue;
+    if (mi.ref[0] == ref0 || mi.ref[1] == ref0) {
+      const int filter = static_cast<int>(filter_grid_[idx]);
+      if (i == 0) {
+        left_type = filter;
+      } else {
+        above_type = filter;
+      }
+    }
+  }
+  if (left_type == above_type) {
+    ctx += left_type;
+  } else if (left_type == 3) {
+    ctx += above_type;
+  } else if (above_type == 3) {
+    ctx += left_type;
+  } else {
+    ctx += 3;
+  }
+  return std::clamp(ctx, 0, 15);
+}
+
 int SyntaxProbe::comp_mode_context(int r, int c, int w4, int h4) const {
   int pos[2][2] = {};
   const int n = neighbor_positions(pos, r, c, w4, h4);
@@ -453,10 +536,146 @@ bool SyntaxProbe::walk_flags(const syntax::BlockSyntax& node, Terms* out,
   return true;
 }
 
+bool SyntaxProbe::walk_compound_mode_info(const syntax::BlockSyntax& node,
+                                          Terms* out, bool commit) {
+  // The exact model covers the signalled (0,1) compound pair with the plain
+  // 1/8-pel MVD path.  Unsupported carriers fall back to the historical
+  // estimate and stop the probe (the CDF state would no longer match).
+  if (!config_.compound_exact || config_.num_refs != 2 ||
+      config_.mv_precision != 0) {
+    return false;
+  }
+  if (node.ref_index != 0 || node.ref_index1 != 1) return false;
+  if (node.use_optflow || node.use_refinemv || node.compound_masked) {
+    return false;
+  }
+  const bool joint = node.compound_joint != 0;
+  if (!joint && node.compound_mode > 3) return false;
+  const auto size = static_cast<partition::BlockSize>(node.bsize);
+  const int w4 = partition::block_width(size) >> 2;
+  const int h4 = partition::block_height(size) >> 2;
+  if (w4 <= 0 || h4 <= 0) return false;
+  const int r = node.mi_row;
+  const int c = node.mi_col;
+  const int bw = w4 * 4;
+  const int bh = h4 * 4;
+  if (bw < 8 || bh < 8) return false;
+
+  // §5.20.7.10 comp_mode.  This is a compound block, so the symbol is 1.
+  const int comp_ctx = comp_mode_context(r, c, w4, h4);
+  if (out != nullptr) out->comp_mode += cost(cdf_.comp_mode[comp_ctx], 2, 1);
+  if (commit) adapt(cdf_.comp_mode[comp_ctx], 2, 1);
+  // read_compound_ref(): NumTotalRefs == 2 and the (0,1) pair is implied.
+  // §5.20.7.6 compound mode context from the same grid the writer uses.
+  merge::NewMvContextParams nparams;
+  nparams.mi_row = r;
+  nparams.mi_col = c;
+  nparams.bw4 = w4;
+  nparams.bh4 = h4;
+  nparams.sb_h4 = 16;
+  nparams.mi_cols = config_.mi_cols;
+  nparams.mi_rows = config_.mi_rows;
+  nparams.mi = mi_.data();
+  nparams.y_mode = ymode_grid_.data();
+  nparams.is_compound = true;
+  nparams.ref_frame[0] = static_cast<std::int8_t>(node.ref_index);
+  nparams.ref_frame[1] = static_cast<std::int8_t>(node.ref_index1);
+  int ctx = 0;
+  if (merge::derive_new_mv_context(nparams, &ctx) != merge::Status::kOk) {
+    return false;
+  }
+  const int jctx = is_joint_context(0, 1);
+  const int jsym = joint ? 1 : 0;
+  if (out != nullptr) out->mode += cost(cdf_.is_joint[jctx], 2, jsym);
+  if (commit) adapt(cdf_.is_joint[jctx], 2, jsym);
+  if (!joint) {
+    if (out != nullptr) {
+      out->mode += cost(cdf_.compound_mode_non_joint[ctx], 5,
+                        node.compound_mode);
+    }
+    if (commit) {
+      adapt(cdf_.compound_mode_non_joint[ctx], 5, node.compound_mode);
+    }
+  } else {
+    // §5.20.7.6 jmvd_scale_mode precedes the DRL index.  The carried
+    // candidates always use scale mode 0.
+    if (out != nullptr) out->mvd += cost(cdf_.jmvd_scale_mode, 5, 0);
+    if (commit) adapt(cdf_.jmvd_scale_mode, 5, 0);
+  }
+  // §5.20.7.8 read_drl_idx(): two indices for NEAR_NEARMV / NEAR_NEWMV,
+  // one for NEW_NEARMV / JOINT_NEWMV, none for GLOBAL_GLOBALMV.
+  const int m = config_.max_drl_bits_minus_1 + 1;
+  const auto drl_one = [&](int index, int start) -> bool {
+    if (index < start || index > m) return false;
+    for (int idx = start; idx < m; ++idx) {
+      const int mode_bit = idx < index ? 1 : 0;
+      std::uint16_t* row = cdf_.drl_mode[std::min(idx, 2)][ctx];
+      if (out != nullptr) out->drl += cost(row, 2, mode_bit);
+      if (commit) adapt(row, 2, mode_bit);
+      if (mode_bit == 0) break;
+    }
+    return true;
+  };
+  if (!joint && (node.compound_mode == 0 || node.compound_mode == 1)) {
+    if (!drl_one(node.drl_index, 0)) return false;
+    if (!drl_one(node.drl_index1, 0)) return false;
+  } else if (joint || node.compound_mode == 2) {
+    if (!drl_one(node.drl_index, 0)) return false;
+  }
+  // §5.20.7.13 assign_mv(): one MVD on the NEWMV list.
+  if (joint || node.compound_mode == 1 || node.compound_mode == 2) {
+    if (!walk_shell(node.mvd_y, node.mvd_x, out, commit)) return false;
+  }
+  // §5.20.7.16 read_compound_type(): comp_group_idx = 0 (AVERAGE).
+  if (config_.enable_masked_compound) {
+    const int cg = comp_group_context(r, c, w4, h4, 0, 1);
+    if (out != nullptr) out->mode += cost(cdf_.comp_group_idx[cg], 2, 0);
+    if (commit) adapt(cdf_.comp_group_idx[cg], 2, 0);
+  }
+  // §5.20.7.6 cwp_idx is signalled for NEAR_NEARMV and JOINT_NEWMV (scale 0).
+  const bool cwp_eligible = joint || node.compound_mode == 0;
+  if (config_.enable_cwp && cwp_eligible) {
+    if (node.cwp_index < 0 || node.cwp_index >= 5) return false;
+    for (int idx = 0; idx < 4; ++idx) {
+      const int bit = idx < node.cwp_index ? 1 : 0;
+      if (out != nullptr) out->mode += cost(cdf_.cwp_idx[idx], 2, bit);
+      if (commit) adapt(cdf_.cwp_idx[idx], 2, bit);
+      if (bit == 0) break;
+    }
+  } else if (node.cwp_index != 0) {
+    return false;
+  }
+  // §5.20.7.6 / §5.20.7.17 compound interp_filter symbol.
+  if (interp_block_enabled()) {
+    const bool large = bw >= 8 && bh >= 8;
+    const int y_mode =
+        joint ? inter::mvprec::kYModeJointNewMv
+              : inter::mvprec::kYModeNearNearMv + node.compound_mode;
+    if (inter::mvprec::needs_interp_filter(large, y_mode,
+                                           /*motion_mode=*/0)) {
+      if (node.mrl_index < 0 || node.mrl_index > 2) return false;
+      const int fctx =
+          interp_filter_context(r, c, w4, h4, node.ref_index, true);
+      if (out != nullptr) {
+        out->mode += cost(cdf_.interp_filter[fctx], 3, node.mrl_index);
+      }
+      if (commit) adapt(cdf_.interp_filter[fctx], 3, node.mrl_index);
+    } else if (node.mrl_index != 0) {
+      return false;
+    }
+  } else if (node.mrl_index != 0) {
+    return false;
+  }
+  return true;
+}
+
 bool SyntaxProbe::walk_mode_info(const syntax::BlockSyntax& node, Terms* out,
                                  bool include_bawp, bool commit) {
   if (!node.is_inter) return true;
-  if (node.tip_mode || node.compound) return false;
+  if (node.tip_mode) return false;
+  if (node.compound) {
+    return walk_compound_mode_info(node, out, commit);
+  }
   if (node.inter_mode > syntax::kInterNewMv) return false;
   if (config_.enable_interintra) return false;
   const bool new_mv = node.inter_mode == syntax::kInterNewMv;
@@ -712,7 +931,8 @@ void SyntaxProbe::update_grids(const syntax::BlockSyntax& node) {
     if (tip) {
       ymode = node.tip_pred_mode ? 16 : 14;
     } else if (node.compound) {
-      ymode = static_cast<std::uint8_t>(19 + node.compound_mode);
+      ymode = static_cast<std::uint8_t>(
+          node.compound_joint ? 24 : 19 + node.compound_mode);
     } else if (node.inter_mode == syntax::kInterGlobalMv) {
       ymode = 15;
     } else if (node.inter_mode == syntax::kInterNearMv) {
@@ -750,6 +970,13 @@ void SyntaxProbe::update_grids(const syntax::BlockSyntax& node) {
       mi.row_base = static_cast<std::int16_t>(r);
       skip_grid_[idx] = node.skip_flag ? 1 : 0;
       ymode_grid_[idx] = ymode;
+      comp_group_grid_[idx] = (node.compound && node.compound_masked) ? 1 : 0;
+      filter_grid_[idx] =
+          node.is_inter
+              ? static_cast<std::uint8_t>(interp_block_enabled()
+                                              ? node.mrl_index
+                                              : 3)
+              : 3;
     }
   }
 }
@@ -768,6 +995,15 @@ void SyntaxProbe::commit(const syntax::BlockSyntax& node) {
   if (node.is_inter &&
       !walk_mode_info(node, &scratch, /*include_bawp=*/true,
                       /*commit=*/true)) {
+    if (std::getenv("AV2ENC_RATE_HYBRID_DEBUG") != nullptr) {
+      std::fprintf(stderr,
+                   "probe degrade mi=%d,%d cmpd=%d mode=%d cmode=%d cj=%d "
+                   "tip=%d cwp=%d mrl=%d opt=%d ref=%d ref1=%d\n",
+                   node.mi_row, node.mi_col, node.compound,
+                   node.inter_mode, node.compound_mode, node.compound_joint,
+                   node.tip_mode, node.cwp_index, node.mrl_index,
+                   node.use_optflow, node.ref_index, node.ref_index1);
+    }
     degraded_ = true;
   }
   update_grids(node);

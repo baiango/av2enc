@@ -519,7 +519,7 @@ struct InterCandidate {
   inter::mc::Mv mvd{};
   std::int64_t sse = 0;
   // §5.20.7.16 masked compound parameters (ignored for AVERAGE).
-  int compound_type = 0;  // 0 = WEDGE, 1 = DIFFWTD
+  int compound_type = 2;  // 0 = WEDGE, 1 = DIFFWTD, 2 = AVERAGE
   int wedge_index = 0;
   int wedge_sign = 0;
   int mask_type = 0;
@@ -534,6 +534,8 @@ struct InterCandidate {
   bool from_refmvbank = false;
   // NEAR_NEARMV / optflow / refine-MV compound carrier.
   int compound_mode = 3;  // 0 = NEAR_NEARMV, 3 = GLOBAL_GLOBALMV
+  // §5.20.7.6 is_joint: JOINT_NEWMV (compound_mode_non_joint is not coded).
+  bool compound_joint = false;
   inter::mc::Mv mv1{};
   int drl_index1 = 0;
   bool use_optflow = false;
@@ -3542,7 +3544,8 @@ class InterFrameEncoder {
                       const inter::mc::Mv* mv1 = nullptr,
                       bool warp0 = false, bool warp1 = false,
                       bool is_wedge = false, int wedge_index = 0,
-                      int wedge_sign = 0, int bsize = 0);
+                      int wedge_sign = 0, int bsize = 0,
+                      int cwp_index = 0);
 
   const VideoInputFrame& source_;
   // AV2ENC_PORT_HORIZON: the source pictures after this one, so the skipped/
@@ -3762,6 +3765,10 @@ struct SlotField {
   int w8 = 0;
   int h8 = 0;
   int num_saved_refs = 0;
+  // True when this frame's grid contains a CWP-weighted compound block.  The
+  // TIP field guard uses it to fall back to the coded B instead of relying on
+  // a field the pinned decoder derives differently.
+  bool has_cwp_compound = false;
   int saved_order_hint[7] = {temporal::kRestrictedOrderHint,
                              temporal::kRestrictedOrderHint,
                              temporal::kRestrictedOrderHint,
@@ -3787,6 +3794,7 @@ inline void init_slot_field(SlotField* slot, int mi_cols, int mi_rows) {
   slot->w8 = mi_cols / 2;
   slot->h8 = mi_rows / 2;
   slot->num_saved_refs = 0;
+  slot->has_cwp_compound = false;
   for (int i = 0; i < 7; ++i) {
     slot->saved_order_hint[i] = temporal::kRestrictedOrderHint;
   }
@@ -3921,6 +3929,12 @@ inline bool store_slot_field(const InterFrameEncoder& encoder, int order_hint,
                       SlotField* slot, std::string& error,
                       RefMvsStoreStats* stats = nullptr) {
   init_slot_field(slot, encoder.mv_mi_cols(), encoder.mv_mi_rows());
+  for (const inter::mc::MiInfo& mi : encoder.mv_grid()) {
+    if (mi.is_inter != 0 && mi.ref[0] != mi.ref[1] && mi.cwp_index != 0) {
+      slot->has_cwp_compound = true;
+      break;
+    }
+  }
   temporal::RefMvField view;
   view.w8 = slot->w8;
   view.h8 = slot->h8;

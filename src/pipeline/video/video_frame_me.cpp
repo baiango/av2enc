@@ -1229,7 +1229,7 @@ void InterFrameEncoder::update_mv_grid(int r, int c, int w4, int h4, int is_inte
                     const inter::mc::Mv* mv1,
                     bool warp0, bool warp1,
                     bool is_wedge, int wedge_index,
-                    int wedge_sign, int bsize) {
+                    int wedge_sign, int bsize, int cwp_index) {
   for (int yy = 0; yy < h4; ++yy) {
     const int rr = r + yy;
     if (rr >= mi_rows_) break;
@@ -1255,6 +1255,7 @@ void InterFrameEncoder::update_mv_grid(int r, int c, int w4, int h4, int is_inte
       mi.row_base = static_cast<std::int16_t>(r);
       mi.warp[0] = static_cast<std::int8_t>(warp0 && is_inter ? 1 : 0);
       mi.warp[1] = static_cast<std::int8_t>(warp1 && is_inter ? 1 : 0);
+      mi.cwp_index = static_cast<std::int8_t>(cwp_index);
       mi.is_wedge = static_cast<std::int8_t>(is_wedge && is_inter ? 1 : 0);
       mi.wedge_index = static_cast<std::int8_t>(wedge_index);
       mi.wedge_sign = static_cast<std::int8_t>(wedge_sign);

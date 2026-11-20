@@ -332,9 +332,23 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   // AVERAGE compound on the interior B pictures: the plan's (0,1) past/future
   // pair is a true two-reference pair, and §5.20.7.6 codes use_bawp only on
   // single-prediction leaves, so the BAWP carrier above coexists per leaf.
-  // Measured +1.135 K (85.472 -> 86.607).  Wedge/diffwtd, NEAR_NEARMV, OPFL
-  // and refine-MV are below the +0.15 gate and stay off (docs/tlayers-chain.md).
+  // The depth arm adds the first NEAR_NEARMV stack pair per list with the
+  // five CWP weights; it is +0.218 over TIP (86.805 -> 87.023).  The implicit
+  // mask is NOT in the measured arm: it selects no different block but does
+  // change the reconstructed blend, so it re-keys the 16/60-picture pins at
+  // the same byte lengths and was excluded from the 87.023 measurement
+  // (docs/compound-depth.md).  Wedge/diffwtd, OPFL and refine-MV stay off.
+  // --video-compound-off drops compound and the depth arm; the TIP-only
+  // control is --video-compound-depth-off.  Explicit depth flags win.
   options.video_compound = !options.video_compound_off;
+  const bool compound_depth =
+      options.video_compound && !options.video_compound_depth_off;
+  if (!flag_given(options, "--video-compound-near-near")) {
+    options.video_compound_near_near = compound_depth;
+  }
+  if (!flag_given(options, "--video-cwp-weighted")) {
+    options.video_cwp_weighted = compound_depth;
+  }
   options.video_partition_rd = !options.video_partition_rd_off;
   // Nightly base lambda; with --video-qp-lambda the probe uses the measured
   // QP fit (the explicit flag would pin the constant instead).
@@ -382,12 +396,27 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   // TIP output on the chained-B dead ends (docs/tlayers-chain.md): the leaves
   // no planned frame references become TIP_FRAME_AS_OUTPUT pictures.  Mode 1
   // is the measured arm, and the coded-leaf probe keeps TIP only when its luma
-  // PSNR is within 0.30 dB of the tile-coded alternative.  It is gated on
-  // compound: --video-compound-off is therefore the exact 86.607 control.
-  // An explicit AV2ENC_TIP_LEAF (including 0) wins.
+  // PSNR is within 0.30 dB of the tile-coded alternative.  Field guard 3
+  // falls back to the coded B when a reference §7.22 field carries a CWP
+  // compound block or a compound cell with a non-zero MV (the unguarded
+  // composition is not decoder-exact).  Gated on compound:
+  // --video-compound-off is therefore the exact 85.472 control.  An explicit
+  // env value (including 0) wins.
   if (options.video_compound) {
     set_gate("AV2ENC_TIP_LEAF", "1");
     set_gate("AV2ENC_TIP_LEAF_PSNR_MARGIN", "0.30");
+    if (compound_depth) {
+      set_gate("AV2ENC_TIP_LEAF_FIELD_GUARD", "3");
+      set_gate("AV2ENC_COMPOUND_RATE", "1");
+      set_gate("AV2ENC_COMPOUND_PAIR_LIMIT", "1");
+      // Exact compound symbol pricing in the eff-perc leaf RD: comp_mode /
+      // is_joint / compound_mode / jmvd_scale_mode / both DRLs /
+      // comp_group_idx / cwp_idx / the compound filter.  Measured +0.261 over
+      // the heuristic price (87.023 -> 87.284).  The compound NEWMV modes are
+      // NOT enabled (AV2ENC_COMPOUND_NEWMV is left unset; they measure +0.054,
+      // below the gate).
+      set_gate("AV2ENC_COMPOUND_EXACT_RATE", "1");
+    }
   }
   return true;
 }

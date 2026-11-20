@@ -586,25 +586,55 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
     error = "compound reference pair must be (0, 1)";
     return false;
   }
-  if (node.compound_joint != 0) {
-    error = "joint compound is not wired";
-    return false;
-  }
   if (!node.skip_flag) {
     error = "compound inter residual is not wired";
     return false;
   }
-  const bool near_near = node.compound_mode == 0;
-  const bool global_global = node.compound_mode == 3;
-  if (!near_near && !global_global) {
+  // §5.20.7.6 non-joint values: 0 = NEAR_NEARMV (two per-list DRL indices),
+  // 1 = NEAR_NEWMV (list-1 MVD), 2 = NEW_NEARMV (list-0 MVD), 3 =
+  // GLOBAL_GLOBALMV.  is_joint = 1 selects JOINT_NEWMV and codes one joint
+  // MVD instead of compound_mode_non_joint.
+  const bool joint = node.compound_joint != 0;
+  const bool near_near = !joint && node.compound_mode == 0;
+  const bool near_new = !joint && node.compound_mode == 1;
+  const bool new_near = !joint && node.compound_mode == 2;
+  const bool global_global = !joint && node.compound_mode == 3;
+  if (!joint && !near_near && !near_new && !new_near && !global_global) {
     error = "unsupported compound mode " +
             std::to_string(static_cast<int>(node.compound_mode));
     return false;
   }
-  if (!near_near && (node.inter_mode != kInterGlobalMv || node.mv_y != 0 ||
-                     node.mv_x != 0 || node.mv1_y != 0 || node.mv1_x != 0 ||
-                     node.use_optflow || node.use_refinemv)) {
-    error = "only GLOBAL_GLOBALMV compound is wired without MVs";
+  if ((joint || near_new || new_near) && same_refs) {
+    error = "compound NEWMV modes require two distinct references";
+    return false;
+  }
+  if ((joint || near_new || new_near) && plan_.enable_refinemv) {
+    error = "compound NEWMV modes are not wired with enable_refinemv";
+    return false;
+  }
+  if ((joint || near_new || new_near) && plan_.opfl_refine_type != 0) {
+    error = "compound NEWMV modes are not wired with opfl_refine_type";
+    return false;
+  }
+  if ((joint || near_new || new_near) &&
+      (plan_.mv_precision != 0 || plan_.frame_force_integer_mv ||
+       plan_.enable_adaptive_mvd || plan_.enable_flex_mvres ||
+       plan_.enable_mvd_sign_derive)) {
+    error = "compound NEWMV modes are wired for the plain 1/8-pel MVD path";
+    return false;
+  }
+  if (!near_near && node.use_optflow) {
+    error = "use_optflow is wired only on the NEAR_NEARMV carrier";
+    return false;
+  }
+  if ((near_new || new_near || joint) && node.use_refinemv) {
+    error = "compound refine-MV is wired only on the NEAR_NEARMV carrier";
+    return false;
+  }
+  if (global_global && (node.inter_mode != kInterGlobalMv || node.mv_y != 0 ||
+                        node.mv_x != 0 || node.mv1_y != 0 ||
+                        node.mv1_x != 0)) {
+    error = "GLOBAL_GLOBALMV compound must have zero MVs";
     return false;
   }
   // Validate the decision against the decoder's MV stack(s).  This is the
@@ -642,6 +672,72 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
     if (resolve[0].y != node.mv_y || resolve[0].x != node.mv_x ||
         resolve[1].y != node.mv1_y || resolve[1].x != node.mv1_x) {
       error = "compound MV does not match the stack candidates";
+      return false;
+    }
+  } else if (near_new) {
+    // §5.20.7.6 has_second_drl(): RefMvIdx0 selects the near list-0 entry
+    // and RefMvIdx1 the list-1 predictor the new MV is coded against.
+    merge::MvStack stacks[2];
+    merge::StackParams params[2];
+    if (!build_mode_stack(node, 0, false, node, params[0], stacks[0]) ||
+        !build_mode_stack(node, 1, false, node, params[1], stacks[1])) {
+      error = "build_mv_stack (NEAR_NEWMV) failed";
+      return false;
+    }
+    if (node.drl_index < 0 || node.drl_index >= stacks[0].count ||
+        node.drl_index1 < 0 || node.drl_index1 >= stacks[1].count) {
+      error = "NEAR_NEWMV DRL index outside the per-list stacks";
+      return false;
+    }
+    const inter::mc::Mv pred0 =
+        merge::clamp_mv_to_integer(stacks[0].cand[node.drl_index].mv[0]);
+    const inter::mc::Mv pred1 =
+        merge::clamp_mv_to_integer(stacks[1].cand[node.drl_index1].mv[0]);
+    const inter::mc::Mv expect0 = pred0;
+    const inter::mc::Mv expect1 = merge::clamp_mv_to_integer(
+        inter::mc::Mv{pred1.y + node.mvd_y, pred1.x + node.mvd_x});
+    if (expect0.y != node.mv_y || expect0.x != node.mv_x ||
+        expect1.y != node.mv1_y || expect1.x != node.mv1_x) {
+      error = "NEAR_NEWMV MVs do not match the signalled MVD";
+      return false;
+    }
+  } else if (new_near || joint) {
+    // §5.20.7.6: NEW_NEARMV and JOINT_NEWMV have one RefMvIdx and read the
+    // two-list stack (skip_mode form); both predictors come from that entry.
+    merge::MvStack compound;
+    merge::StackParams cparams;
+    if (!build_mode_stack(node, 0, true, node, cparams, compound)) {
+      error = "build_mv_stack (compound NEWMV) failed";
+      return false;
+    }
+    if (node.drl_index < 0 || node.drl_index >= compound.count) {
+      error = "compound NEWMV DRL index outside the two-list stack";
+      return false;
+    }
+    inter::mc::Mv pred[2] = {
+        merge::clamp_mv_to_integer(compound.cand[node.drl_index].mv[0]),
+        merge::clamp_mv_to_integer(compound.cand[node.drl_index].mv[1])};
+    inter::mc::Mv expect[2];
+    if (new_near) {
+      expect[0] = merge::clamp_mv_to_integer(
+          inter::mc::Mv{pred[0].y + node.mvd_y, pred[0].x + node.mvd_x});
+      expect[1] = pred[1];
+    } else {
+      const int d0 =
+          plan_.frame_distance[static_cast<std::size_t>(node.ref_index)];
+      const int d1 =
+          plan_.frame_distance[static_cast<std::size_t>(node.ref_index1)];
+      // §5.20.7.13 works in FrameDistance[] sign convention (negative = past);
+      // this encoder stores OrderHint - OrderHints[ref], so negate it.
+      const inter::mvprec::JointMvdPlan jmvd =
+          inter::mvprec::joint_mvd_plan(-d0, -d1, false, false);
+      inter::mvprec::assign_joint_mvd(
+          pred, inter::mc::Mv{node.mvd_y, node.mvd_x}, jmvd,
+          /*jmvd_scale_mode=*/0, /*use_amvd=*/false, expect);
+    }
+    if (expect[0].y != node.mv_y || expect[0].x != node.mv_x ||
+        expect[1].y != node.mv1_y || expect[1].x != node.mv1_x) {
+      error = "compound NEWMV MVs do not match the signalled MVD";
       return false;
     }
   }
@@ -716,7 +812,8 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
       error = error_;
       return false;
     }
-    if (!sym(&cdfs_.compound_mode_non_joint[ctx][0], 5,
+    if (!joint &&
+        !sym(&cdfs_.compound_mode_non_joint[ctx][0], 5,
              node.compound_mode)) {
       error = error_;
       return false;
@@ -728,18 +825,34 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
     error = error_;
     return false;
   }
-  if (near_near) {
+  // §5.20.7.6 jmvd_scale_mode is coded before the DRL index for
+  // JOINT_NEWMV.  This writer only produces scale mode 0 (the raw
+  // §7.9.4 projection).
+  if (joint) {
+    set_rate_tag(rate_hybrid::report::kTagMvd);
+    std::string jmvd_error;
+    if (!inter::mvprec::write_jmvd_scale_mode(
+            enc_, cdfs_.mv_precision, /*use_amvd=*/false,
+            /*mode=*/0, &jmvd_error)) {
+      error = "write_jmvd_scale_mode failed: " + jmvd_error;
+      return false;
+    }
+    set_rate_tag(-1);
+  }
+  if (near_near || near_new) {
     // §5.20.7.8 read_drl_idx(): has_second_drl() is true for a non-skip
-    // NEAR_NEARMV block without use_optflow, so both list indices are coded.
+    // NEAR_NEARMV/NEAR_NEWMV block without use_optflow, so both list indices
+    // are coded.
     if (!code_drl_index(ctx, node.drl_index)) {
       error = "write drl_idx failed";
       return false;
     }
     if (!node.use_optflow) {
       int start = 0;
+      const int drl_y_mode =
+          near_near ? merge::kYModeNearNearMv : merge::kYModeNearNewMv;
       if (merge::derive_second_drl_start(
-              merge::kYModeNearNearMv,
-              node.ref_index == node.ref_index1, node.drl_index,
+              drl_y_mode, node.ref_index == node.ref_index1, node.drl_index,
               &start) != merge::Status::kOk) {
         error = "derive_second_drl_start failed";
         return false;
@@ -751,6 +864,23 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
     }
     // §5.20.7.17 read_refinemv(): only the switchable form codes a bit, and
     // NEAR_NEARMV is not switchable, so the decision above is implicit.
+  } else if (new_near || joint) {
+    // §5.20.7.6: NEW_NEARMV and JOINT_NEWMV code one RefMvIdx into the
+    // two-list stack; there is no second DRL index.
+    if (!code_drl_index(ctx, node.drl_index)) {
+      error = "write drl_idx failed";
+      return false;
+    }
+  }
+  // §5.20.7.13 assign_mv(): NEAR_NEWMV codes the list-1 MVD, NEW_NEARMV the
+  // list-0 MVD and JOINT_NEWMV one MVD for the derived base list.
+  if (near_new || new_near || joint) {
+    set_rate_tag(rate_hybrid::report::kTagMvd);
+    if (!write_mv(node.mvd_y, node.mvd_x)) {
+      error = error_;
+      return false;
+    }
+    set_rate_tag(-1);
   }
   // §5.20.7.16 read_compound_type().  use_optflow (and the switchable
   // refine-MV form) select COMPOUND_AVERAGE and code no symbols.  Otherwise,
@@ -832,11 +962,16 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
   }
   // §5.20.7.6 CwpIdx.  enable_cwp=1 codes cwp_idx for a compound
   // COMPOUND_AVERAGE SIMPLE-motion block that neither uses optflow nor
-  // refine-MV, and only when YMode == NEAR_NEARMV (or joint MVD coding).
-  // The writer only produces the NEAR_NEARMV form.  With enable_cwp=0 the
-  // decoder infers CWP_EQUAL and no bit is coded.
-  const bool cwp_eligible = near_near && !node.use_optflow &&
-                            !node.use_refinemv && !node.compound_masked;
+  // refine-MV, and only when YMode == NEAR_NEARMV (or JOINT_NEWMV with
+  // jmvd_scale_mode == 0).  NEAR_NEWMV / NEW_NEARMV infer CWP_EQUAL and code
+  // no bit.  With enable_cwp=0 the decoder infers CWP_EQUAL everywhere.
+  if (!near_near && !joint && node.cwp_index != 0) {
+    error = "cwp_idx is not signalled for this compound mode";
+    return false;
+  }
+  const bool cwp_eligible =
+      (near_near || joint) && !node.use_optflow && !node.use_refinemv &&
+      !node.compound_masked;
   if (!plan_.enable_cwp) {
     if (node.cwp_index != 0) {
       error = "cwp_idx cannot be signalled when enable_cwp = 0";
@@ -863,7 +998,8 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
   if (interp_block_enabled()) {
     const bool large = cur_w4_ * 4 >= 8 && cur_h4_ * 4 >= 8;
     const int y_mode =
-        inter::mvprec::kYModeNearNearMv + node.compound_mode;
+        joint ? inter::mvprec::kYModeJointNewMv
+              : inter::mvprec::kYModeNearNearMv + node.compound_mode;
     if (inter::mvprec::needs_interp_filter(large, y_mode,
                                            /*motion_mode=*/0)) {
       const int filter_ctx = inter::mvprec::interp_filter_ctx(
@@ -1478,10 +1614,13 @@ void Writer::update_mode_grids(const BlockSyntax& node) {
           node.is_inter
               ? static_cast<std::uint8_t>(
                     tip ? (node.tip_pred_mode ? 16 : 14)
-                        : (node.compound ? 19 + node.compound_mode
-                                         : (node.inter_mode == kInterGlobalMv
-                                                ? 15
-                                                : (node.inter_mode == kInterNearMv ? 14 : 16))))
+                        : (node.compound
+                               ? (node.compound_joint
+                                      ? 24
+                                      : 19 + node.compound_mode)
+                               : (node.inter_mode == kInterGlobalMv
+                                      ? 15
+                                      : (node.inter_mode == kInterNearMv ? 14 : 16))))
               : node.y_mode;
       inter::mc::MiInfo& mi = mv_grid_[idx];
       mi = inter::mc::MiInfo{};

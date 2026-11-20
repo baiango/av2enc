@@ -1565,6 +1565,29 @@ the expected picture count and byte-exact recon; the implicit-mask stream's
 reconstruction is asserted different from the equal-weight carrier, so the
 mask path is exercised rather than merely signalled.
 
+## Compound exact rate and NEWMV modes (CPU)
+
+The eff-perc `SyntaxProbe` prices a compound leaf with the real
+§5.20.7.6/.8/.13/.16 symbol sequence when `AV2ENC_COMPOUND_EXACT_RATE=1`:
+`comp_mode`, `is_joint`, `compound_mode_non_joint`, `jmvd_scale_mode`, both
+DRL indices, the shell-coded MVD(s), `comp_group_idx`, `cwp_idx` and the
+compound interp-filter symbol.  Measured **87.284 K** at 100 kbps on the
+CWP-weighted depth carrier (+0.261 over the heuristic price) and promoted into
+`--nightly-b`; `AV2ENC_COMPOUND_EXACT_RATE=0` is the 87.023 control.  The probe
+falls back to the historical constant for masked / same-reference /
+non-1/8-pel compound leaves, so those carriers keep a conservative price.
+
+`AV2ENC_COMPOUND_NEWMV=1` additionally wires `NEAR_NEWMV`, `NEW_NEARMV` and
+`JOINT_NEWMV` on the (0,1) pair: a single MVD against the per-list stack
+(`NEAR_NEWMV`), the two-list stack (`NEW_NEARMV`) or the §5.20.7.13 joint
+projection (`JOINT_NEWMV`), with a plan-ME seed and an on-axis ±1/8..1-pel
+refinement scored by the compound blend SSE.  All three are decoder-exact but
+measure **87.077 K** (+0.054), below the +0.15 gate, so the carrier is
+default-off and not in the preset.  `AV2ENC_COMPOUND_NEWMV_MODES` (bit 1/2/4),
+`..._RADIUS` and `..._REFINE=0` are the ablations.  Gate:
+`src/pipeline/video/gate_video_compound_exact.sh` (exact-rate 16/60, the
+signallable-NEWMV trace, and the controls).
+
 ## DF sub-PU (opt-in, CPU)
 
 `--video-df-sub-pu` signals sequence `enable_df_sub_pu = 1` and frame

@@ -158,6 +158,14 @@ struct ProbeConfig {
   bool enable_adaptive_mvd = false;
   bool enable_flex_mvres = false;
   bool enable_mvd_sign_derive = false;
+  // §5.20.7.6 compound block layer.  `compound_exact` turns the probe's
+  // compound pricing on (AV2ENC_COMPOUND_EXACT_RATE): comp_mode, is_joint,
+  // compound_mode_non_joint, jmvd_scale_mode, the DRL indices, the MVD(s),
+  // comp_group_idx, cwp_idx and the compound interp_filter symbol.
+  bool compound_exact = false;
+  bool enable_masked_compound = false;
+  bool enable_cwp = false;
+  int num_same_ref_compound = 0;
   int mv_precision = 0;  // 0 = eighth pel (raw shell), else coarser
   bool disable_cdf_update = false;
 };
@@ -301,7 +309,14 @@ class SyntaxProbe {
   bool walk_flags(const syntax::BlockSyntax& node, Terms* out, bool commit);
   bool walk_mode_info(const syntax::BlockSyntax& node, Terms* out,
                       bool include_bawp, bool commit);
+  bool walk_compound_mode_info(const syntax::BlockSyntax& node, Terms* out,
+                               bool commit);
   bool walk_shell(int dy, int dx, Terms* out, bool commit);
+  int is_joint_context(int ref0, int ref1) const;
+  int comp_group_context(int r, int c, int w4, int h4, int ref0,
+                         int ref1) const;
+  int interp_filter_context(int r, int c, int w4, int h4, int ref0,
+                            bool is_compound) const;
   void update_grids(const syntax::BlockSyntax& node);
 
   ProbeConfig config_{};
@@ -309,6 +324,8 @@ class SyntaxProbe {
   std::vector<inter::mc::MiInfo> mi_;
   std::vector<std::uint8_t> skip_grid_;
   std::vector<std::uint8_t> ymode_grid_;
+  std::vector<std::uint8_t> comp_group_grid_;
+  std::vector<std::uint8_t> filter_grid_;
   bool degraded_ = false;
 };
 

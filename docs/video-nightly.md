@@ -55,13 +55,17 @@ adjacent-QP ripple and sharing the driver headroom with the head/tail TX).
 
 `--nightly-b` (`docs/tlayers-chain.md`) is a separate **research** preset, not
 part of this aggregate: the chained single-key hierarchical-B stream with
-AVERAGE compound and TIP output on the dead-end leaves measures **K 86.805 at
-100 kbps (+0.573 over the 86.232 flat aggregate, +0.198 over its own 86.607
-compound control, +1.333 over the 85.472 single-prediction control)**. Its
+AVERAGE compound, TIP output on the dead-end leaves, the CWP NEAR_NEARMV depth
+pair and the exact compound-rate probe measures **K 87.284 at 100 kbps
+(+1.052 over the 86.232 flat aggregate, +0.261 over its 87.023 depth control,
++0.479 over its 86.805 TIP control, +1.812 over the 85.472 single-prediction
+control)**.  The compound NEWMV modes are exact but +0.054 and stay off.  Its
 60-picture chains are `avmdec`-validated only (the pinned `dav2d` has the
 §7.21.6 drain defect), so it stays opt-in and the shipped flat decisions here
-are unchanged. The compound control is `AV2ENC_TIP_LEAF=0`; the
-single-prediction control is `--video-compound-off`. See the same doc.
+are unchanged.  The depth control is `AV2ENC_COMPOUND_EXACT_RATE=0`; the TIP
+control is `--video-compound-depth-off`; the compound control is that plus
+`AV2ENC_TIP_LEAF=0`; the single-prediction control is `--video-compound-off`.
+See the same doc and `docs/compound-depth.md`.
 
 ## Current pins
 
