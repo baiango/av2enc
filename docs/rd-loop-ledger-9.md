@@ -1,4 +1,10 @@
 
+## Closed by lane 9 (per-block MC)
+
+- Per-block MC filter (`AV2ENC_INTERP_BLOCK`, CSF 2): KEEP +0.341, merged,
+  default off; agent ceiling f0-32 91.513. Do not duplicate (lane 3 picks the
+  next queue item).
+
 ## Closed by the tail lane
 
 - Tail exact-rate TX (`AV2ENC_RD_TAIL_TX`): KEEP for the f0-32 ceiling
