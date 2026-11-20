@@ -1150,6 +1150,31 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--nightly-b") {
+      options.nightly_b = true;
+      continue;
+    }
+
+    if (argument == "--video-rd-driver") {
+      options.video_rd_driver = true;
+      continue;
+    }
+
+    if (argument == "--video-eff-perc") {
+      options.video_eff_perc = true;
+      continue;
+    }
+
+    if (argument == "--video-tail-tx") {
+      options.video_tail_tx = true;
+      continue;
+    }
+
+    if (argument == "--video-head-tx") {
+      options.video_head_tx = true;
+      continue;
+    }
+
     if (argument == "--video-rd-preset") {
       if (i + 1 >= argc) {
         error = "missing value after '--video-rd-preset'";
@@ -1937,6 +1962,85 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
         return ParseStatus::kError;
       }
       options.video_tlayers = value;
+      continue;
+    }
+
+    if (argument == "--video-tlayer-qp-offsets") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-tlayer-qp-offsets'";
+        return ParseStatus::kError;
+      }
+      const std::string_view value = argv[++i];
+      std::size_t start = 0;
+      for (int layer = 0; layer < 4; ++layer) {
+        const std::size_t comma = value.find(',', start);
+        const std::string_view part =
+            value.substr(start, comma == std::string_view::npos
+                                    ? std::string_view::npos
+                                    : comma - start);
+        int offset = 0;
+        if (!parse_int(part, offset) || offset < -63 || offset > 63) {
+          error = "--video-tlayer-qp-offsets expects four comma-separated "
+                  "integers in [-63, 63] (layers 0..3)";
+          return ParseStatus::kError;
+        }
+        options.video_tlayer_qp_offset[static_cast<std::size_t>(layer)] =
+            offset;
+        if (comma == std::string_view::npos) {
+          if (layer != 3) {
+            error = "--video-tlayer-qp-offsets expects four comma-separated "
+                    "integers (layers 0..3)";
+            return ParseStatus::kError;
+          }
+          break;
+        }
+        if (layer == 3) {
+          error = "--video-tlayer-qp-offsets expects exactly four values "
+                  "(layers 0..3)";
+          return ParseStatus::kError;
+        }
+        start = comma + 1;
+      }
+      options.video_tlayer_qp_given = true;
+      continue;
+    }
+
+    if (argument == "--video-tlayer-anchor-residual") {
+      options.video_tlayer_anchor_residual = true;
+      continue;
+    }
+
+    if (argument == "--video-tlayer-refresh-threshold") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-tlayer-refresh-threshold'";
+        return ParseStatus::kError;
+      }
+      char* end = nullptr;
+      const double value = std::strtod(argv[++i], &end);
+      if (end == argv[i] || *end != '\0' || value < 0.0 ||
+          value >= 30.0) {
+        error = "--video-tlayer-refresh-threshold needs a number in [0, 30) "
+                "dB (0 forces every layer-0 anchor)";
+        return ParseStatus::kError;
+      }
+      options.video_tlayer_refresh_threshold = value;
+      options.video_tlayer_anchor_residual = true;
+      continue;
+    }
+
+    if (argument == "--video-tlayer-refresh-budget") {
+      if (i + 1 >= argc) {
+        error = "missing value after '--video-tlayer-refresh-budget'";
+        return ParseStatus::kError;
+      }
+      int value = 0;
+      if (!parse_int(argv[++i], value) || value < 0) {
+        error = "--video-tlayer-refresh-budget needs a non-negative integer "
+                "(extra payload bytes)";
+        return ParseStatus::kError;
+      }
+      options.video_tlayer_refresh_budget = value;
+      options.video_tlayer_anchor_residual = true;
       continue;
     }
 

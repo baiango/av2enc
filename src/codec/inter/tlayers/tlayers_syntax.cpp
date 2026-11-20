@@ -473,9 +473,6 @@ FrameHeader frame_header_for(const SequenceConfig& /*config*/,
   h.immediate_output_frame = f.immediate_output_frame;
   h.implicit_output_frame = f.implicit_output_frame;
   h.reference_select = f.num_refs >= 2;
-  // The sequence config must describe the same reference count used by the
-  // plan's slot indices.
-  assert(config.num_ref_frames == plan.num_slots);
   return h;
 }
 

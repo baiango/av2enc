@@ -182,6 +182,30 @@ const std::vector<std::uint8_t>& InterFrameEncoder::segment_map() const {
 
 const Plane& InterFrameEncoder::recon(int plane) const { return recon_[plane]; }
 
+void InterFrameEncoder::pad_edge_recon() {
+  // Mirrors the whole-frame pad_recon_bottom() in encode_video_sequence():
+  // the decoder reconstructs the full bottom block but extends the reference
+  // from the coded MI edge before the picture becomes a reference.  The edge
+  // is MiRows*4 (luma), not the visible height, so rows inside the last MI row
+  // stay real samples and rows beyond it are replicated.
+  if (edge_pad_rows_ <= 0 || edge_pad_rows_ <= mi_rows_ * 4) return;
+  for (int plane = 0; plane < 3; ++plane) {
+    Plane& dst = recon_[plane];
+    const int mi_edge_h = plane == 0 ? mi_rows_ * 4 : mi_rows_ * 2;
+    if (mi_edge_h <= 0 || mi_edge_h > dst.height) continue;
+    const std::uint8_t* src_row =
+        dst.samples.data() +
+        static_cast<std::size_t>(mi_edge_h - 1) *
+            static_cast<std::size_t>(dst.stride);
+    for (int y = mi_edge_h; y < dst.height; ++y) {
+      std::memcpy(dst.samples.data() +
+                      static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(dst.stride),
+                  src_row, static_cast<std::size_t>(dst.stride));
+    }
+  }
+}
+
 const std::vector<inter::mc::MiInfo>& InterFrameEncoder::mv_grid() const { return mv_grid_; }
 
 const GmFramePlan* InterFrameEncoder::gm_plan() const { return gm_plan_; }

@@ -5,6 +5,7 @@
 #include "cli/gpu_callable.h"
 #include "cli/options.h"
 
+#include "codec/inter/tlayers/tlayers.h"
 #include "pipeline/planner/effort.h"
 
 #include <string>
@@ -129,8 +130,16 @@ ParseStatus validate_options(Options& options, std::string& error) {
     if (!apply_video_nightly_b(options, error)) {
       return ParseStatus::kError;
     }
-  }
-  if (options.fast_decode) {
+  } else if (options.video_rd_preset == "best") {
+    // 'best' is the --fast-decode aggregate plus the env-only lead tools; the
+    // preset sets the flag and the expansion below is the one implementation.
+    if (!apply_video_rd_preset(options, error)) {
+      return ParseStatus::kError;
+    }
+    if (!apply_video_nightly(options, error)) {
+      return ParseStatus::kError;
+    }
+  } else if (options.fast_decode) {
     if (!apply_video_nightly(options, error)) {
       return ParseStatus::kError;
     }
@@ -168,12 +177,21 @@ ParseStatus validate_options(Options& options, std::string& error) {
               "path keeps its tile-local reconstruction";
       return ParseStatus::kError;
     }
-    if (options.b_frames != 0 || options.video_tlayers != 0 ||
+    // The chained single-key hierarchical form (default-off env gate) is the
+    // one reordering schedule whose reference bank keeps the padded bottom
+    // rows, so it can carry the edge path.  Every other reorder/B mode still
+    // rejects it.
+    const bool chained_tlayers =
+        options.video_tlayers != 0 && options.video_gops > 1 &&
+        tlayers_chain_enabled(options);
+    if (options.b_frames != 0 ||
+        (options.video_tlayers != 0 && !chained_tlayers) ||
         options.video_long_term || options.video_olk ||
         options.video_leading != 0 || options.video_sef ||
         options.video_switch || options.video_ras || options.video_tip) {
       error = "--video-edge-inter is measured on the low-delay P chain; drop "
-              "the B-frame / reorder / temporal-layer mode";
+              "the B-frame / reorder / temporal-layer mode (the chained "
+              "--video-tlayers --video-gops form is the exception)";
       return ParseStatus::kError;
     }
     if (options.video_ref_mvs) {
@@ -244,13 +262,17 @@ ParseStatus validate_options(Options& options, std::string& error) {
               "not the SVC layers";
       return ParseStatus::kError;
     }
-    if (options.b_frames != 0 || options.video_tlayers != 0 ||
+    if (options.b_frames != 0 ||
+        (options.video_tlayers != 0 &&
+         !(options.video_gops > 1 &&
+           tlayers_chain_enabled(options))) ||
         options.video_tip || options.video_long_term || options.video_olk ||
         options.video_leading != 0 || options.video_sef ||
         options.video_switch || options.video_ras) {
       error = "--video-key-qp-offset is wired for the flat key+P chain; drop "
               "the B-frame / reorder / temporal-layer / frame-type wrapper "
-              "mode";
+              "mode (the chained --video-tlayers --video-gops form is the "
+              "exception)";
       return ParseStatus::kError;
     }
     if (options.avg_cdf || options.adaptive_cdf || options.cdf_continuity) {
@@ -699,18 +721,25 @@ ParseStatus validate_options(Options& options, std::string& error) {
     if (options.video_tile_group_compact) {
       // §5.4.2: only the single-tile plain chain knows the sequence grid up
       // front; the tiled and frame-type wrappers build their own sequence
-      // headers and would ignore the flag.
+      // headers and would ignore the flag.  The chained tlayers carrier
+      // builds a single-tile sequence header too, so it can carry it.
       if (options.tiles != "1x1") {
         error = "--video-tile-group-compact is gated on a single tile (the "
                 "tiled sequence-header copy carries no sequence tile_params)";
         return ParseStatus::kError;
       }
-      if (options.b_frames != 0 || options.video_tlayers != 0 ||
+      const bool chained_tlayers =
+          options.video_tlayers != 0 && options.video_gops > 1 &&
+          tlayers_chain_enabled(options);
+      if (options.b_frames != 0 ||
+          (options.video_tlayers != 0 && !chained_tlayers) ||
           options.video_tip || options.video_long_term || options.video_olk ||
           options.video_leading != 0 || options.video_sef ||
           options.video_switch || options.video_ras) {
         error = "--video-tile-group-compact is gated on the plain key+P chain: "
-                "the B/TIP/frame-type wrappers build their own sequence header";
+                "the B/TIP/frame-type wrappers build their own sequence header "
+                "(the chained --video-tlayers --video-gops form is the "
+                "exception)";
         return ParseStatus::kError;
       }
     }
@@ -1760,14 +1789,19 @@ ParseStatus validate_options(Options& options, std::string& error) {
       // residual exactly.  Plain --video-bawp stays skip-only.
       const bool residual_ok =
           !options.video_inter_residual || options.video_bawp_carrier;
-      if (options.b_frames != 0 || options.video_tlayers != 0 ||
+      const bool chained_tlayers =
+          options.video_tlayers != 0 && options.video_gops > 1 &&
+          tlayers_chain_enabled(options);
+      if (options.b_frames != 0 ||
+          (options.video_tlayers != 0 && !chained_tlayers) ||
           frame_modes != 0 || options.video_compound ||
           options.video_gme || options.video_warp ||
           options.video_switch || options.video_ras || options.video_olk ||
           options.video_leading != 0 || options.video_sef || !residual_ok) {
         error = "--video-bawp is gated on the plain "
                 "single-prediction P chain: it cannot be combined with "
-                "--b-frames, --video-tlayers, a frame-type wrapper, "
+                "--b-frames, --video-tlayers (except the chained "
+                "--video-gops form), a frame-type wrapper, "
                 "--video-compound or --video-gme/--video-warp"
                 " (and --video-inter-residual needs "
                 "--video-bawp-carrier)";
@@ -1848,8 +1882,11 @@ ParseStatus validate_options(Options& options, std::string& error) {
               "--video-compound";
       return ParseStatus::kError;
     }
-    if (options.video_gops != 1 && options.b_frames == 0) {
-      error = "--video-gops only applies to the --b-frames schedule";
+    if (options.video_gops != 1 && options.b_frames == 0 &&
+        !(options.video_tlayers != 0 &&
+          tlayers_chain_enabled(options))) {
+      error = "--video-gops only applies to the --b-frames schedule (or the "
+              "env-gated chained --video-tlayers plan)";
       return ParseStatus::kError;
     }
     if (options.b_frames != 0) {
@@ -1901,6 +1938,32 @@ ParseStatus validate_options(Options& options, std::string& error) {
     } else if (options.video_tlayer_drop >= 0) {
       error = "--video-tlayer-drop requires --video-tlayers";
       return ParseStatus::kError;
+    }
+
+    if (options.video_tlayer_qp_given) {
+      const bool chained_tlayers =
+          options.video_tlayers != 0 && options.video_gops > 1 &&
+          tlayers_chain_enabled(options);
+      if (!chained_tlayers) {
+        error = "--video-tlayer-qp-offsets needs the chained --video-tlayers "
+                "--video-gops form";
+        return ParseStatus::kError;
+      }
+      if (options.video_tlayers != 8) {
+        error = "--video-tlayer-qp-offsets expects --video-tlayers 8 (the "
+                "plan has layers 0..3)";
+        return ParseStatus::kError;
+      }
+    }
+    if (options.video_tlayer_anchor_residual) {
+      const bool chained_tlayers =
+          options.video_tlayers != 0 && options.video_gops > 1 &&
+          tlayers_chain_enabled(options);
+      if (!chained_tlayers) {
+        error = "--video-tlayer-anchor-residual needs the chained "
+                "--video-tlayers --video-gops form";
+        return ParseStatus::kError;
+      }
     }
 
     if (options.video_tip_no_hole_fill && !options.video_tip) {
@@ -2499,17 +2562,52 @@ ParseStatus validate_options(Options& options, std::string& error) {
               "frame-level pass and cannot nest the tiled worker pools";
       return ParseStatus::kError;
     }
-    if (options.b_frames > 0 || options.video_tlayers > 0 ||
+    const bool chained_tlayers =
+        options.video_tlayers > 0 && options.video_gops > 1 &&
+        tlayers_chain_enabled(options);
+    if (options.b_frames > 0 ||
+        (options.video_tlayers > 0 && !chained_tlayers) ||
         options.video_tip || options.video_long_term || options.video_olk ||
         options.video_leading != 0 || options.video_sef ||
         options.video_switch || options.video_ras) {
       error = "--video-partition-rd does not compose with the B/temporal-"
-              "layer/random-access/TIP frame schedules";
+              "layer/random-access/TIP frame schedules (the chained "
+              "--video-tlayers --video-gops form is the exception)";
       return ParseStatus::kError;
     }
     if (options.video_sb128 || options.video_sb256) {
       error = "--video-partition-rd does not compose with the 128/256 "
               "superblock trees";
+      return ParseStatus::kError;
+    }
+  }
+  if (options.video_rd_driver) {
+    if (!options.video || options.m1 || options.still_gpu) {
+      error = "--video-rd-driver is the CPU --video key-frame decision; pass "
+              "--video";
+      return ParseStatus::kError;
+    }
+    if (options.video_gpu) {
+      error = "--video-rd-driver is CPU-only: --video-gpu keeps the "
+              "historical key tree";
+      return ParseStatus::kError;
+    }
+  }
+  if (options.video_eff_perc || options.video_tail_tx ||
+      options.video_head_tx) {
+    if (!options.video || options.m1 || options.still_gpu) {
+      error = "--video-eff-perc/--video-tail-tx/--video-head-tx are CPU "
+              "--video decisions; pass --video";
+      return ParseStatus::kError;
+    }
+    if (options.video_gpu) {
+      error = "--video-eff-perc/--video-tail-tx/--video-head-tx are CPU-only";
+      return ParseStatus::kError;
+    }
+    if ((options.video_tail_tx || options.video_head_tx) &&
+        !options.video_eff_perc && !std::getenv("AV2ENC_EFF_PERC")) {
+      error = "--video-tail-tx/--video-head-tx need --video-eff-perc (the "
+              "exact-rate pipe they arm inside)";
       return ParseStatus::kError;
     }
   }

@@ -216,6 +216,61 @@ PY
         fi
         echo "CDEF params-row pricing: $NORD_BYTES -> $RD_BYTES B, decoded identical"
     fi
+
+    # --- best preset byte-identity --------------------------------------
+    # --video-rd-preset best is the measured flat lead stack: the --fast-decode
+    # aggregate plus the nine env-only RD tools, the drift-refresh allocation
+    # point and --video-key-qp-offset -39.  It is a LEAD (K 86.33, +0.097 over
+    # the 86.232 flat aggregate), not a KEEP.  The preset must reproduce the
+    # explicit command byte for byte at the three measured QPs.
+    echo "== best preset: --video-rd-preset best vs the explicit env command"
+    BEST_QPS="114 116 118"
+    for q in $BEST_QPS; do
+        if ! "$BIN" "$NASA" -o "$TMP/best-$q.ivf" --frames 60 --qp "$q" \
+                --cpu-threads 8 --video-rd-preset best \
+                >"$TMP/best-$q.log" 2>&1; then
+            fail "the --video-rd-preset best encode failed at QP$q"
+            tail -4 "$TMP/best-$q.log" >&2
+            continue
+        fi
+        if ! env AV2ENC_EFF_PERC=1 AV2ENC_RD_UVFULL=1 \
+                AV2ENC_TX_DETAIL_SEARCH_TAIL=1 AV2ENC_TX_DETAIL_MIN=0.50 \
+                AV2ENC_RD_KEY_TX=1 AV2ENC_RD_UVLEVEL=1 AV2ENC_RD_DRIVER=1 \
+                AV2ENC_RD_HEAD_TX=1 AV2ENC_RD_TAIL_TX=1 \
+                "$BIN" "$NASA" -o "$TMP/best-explicit-$q.ivf" --video \
+                --frames 60 --qp "$q" --cpu-threads 8 --fast-decode \
+                --video-drift-refresh-threshold 1.5 \
+                --video-drift-refresh-budget 3250 \
+                --video-key-qp-offset -39 \
+                >"$TMP/best-explicit-$q.log" 2>&1; then
+            fail "the explicit best-stack encode failed at QP$q"
+            tail -4 "$TMP/best-explicit-$q.log" >&2
+            continue
+        fi
+        if ! cmp -s "$TMP/best-$q.ivf" "$TMP/best-explicit-$q.ivf"; then
+            fail "--video-rd-preset best differs from the explicit stack at QP$q"
+        else
+            echo "  QP$q: $(wc -c <"$TMP/best-$q.ivf" | tr -d ' ') B, preset identical"
+        fi
+    done
+    # An explicit env value wins over the preset, including 0 for an ablation.
+    if ! env AV2ENC_RD_UVLEVEL=0 "$BIN" "$NASA" \
+            -o "$TMP/best-116-uvlevel0.ivf" --frames 60 --qp 116 \
+            --cpu-threads 8 --video-rd-preset best \
+            >"$TMP/best-116-uvlevel0.log" 2>&1; then
+        fail "the --video-rd-preset best AV2ENC_RD_UVLEVEL=0 encode failed"
+    elif cmp -s "$TMP/best-116.ivf" "$TMP/best-116-uvlevel0.ivf"; then
+        fail "the best preset overrode an explicit AV2ENC_RD_UVLEVEL=0"
+    else
+        echo "  explicit AV2ENC_RD_UVLEVEL=0 wins over the preset"
+    fi
+    # The lead stack is still a flat key+P stream: the pinned dav2d must
+    # decode it (this is not an avmdec-only research stream).
+    if ! "$DAV2D" -q --strict 1 -i "$TMP/best-116.ivf" \
+            -o "$TMP/best-116-dec.y4m" --threads 1 \
+            >"$TMP/best-116-strict.log" 2>&1; then
+        fail "--video-rd-preset best failed dav2d --strict 1 at QP116"
+    fi
 fi
 
 # --- strict decode + visible recon ---------------------------------------

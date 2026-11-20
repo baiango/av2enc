@@ -237,6 +237,26 @@ void print_usage(std::ostream& out) {
                             "each GOP starts with a CLK slot reset"});
   item("--video-tlayers <N>", {"Hierarchical P GOP with N = 4 or 8 temporal",
                               "layers; coding order differs from display order"});
+  item("--video-tlayer-qp-offsets <a,b,c,d>", {"Per-temporal-layer base_q_idx",
+                              "offsets for layers 0..3 on the chained",
+                              "--video-tlayers --video-gops form (default off)"});
+  item("--video-tlayer-anchor-residual", {"Force the inter residual on the",
+                              "chained layer-0 anchors (drift refresh probe)",
+                              "on the chained --video-tlayers --video-gops form"});
+  item("--video-tlayer-refresh-threshold <dB>", {"Selective anchor refresh:",
+                              "force only when the anchor's primary reference",
+                              "is that far below the key (0 = force all)"});
+  item("--video-tlayer-refresh-budget <B>", {"Extra-payload budget for the",
+                              "selective chained anchor refresh (default 3250)"});
+  item("--video-rd-driver", {"Sequential key-frame RD driver: measures every",
+                              "candidate key layout in the reconstruction it",
+                              "builds. Key picture only; --nightly-b sets it"});
+  item("--video-eff-perc", {"Exact-rate / BA-shaped perceptual pipe on the",
+                              "inter leaves (AV2ENC_EFF_PERC); --nightly-b sets it"});
+  item("--video-tail-tx", {"Exact-rate TX refinement on the display-order",
+                              "tail pictures; needs --video-eff-perc"});
+  item("--video-head-tx", {"Exact-rate TX refinement on the display-order",
+                              "head pictures; needs --video-eff-perc"});
   item("--video-tlayer-drop <L>", {"Encode only temporal layers <= L (dropped-",
                                   "layer substream); implies --video-tlayers"});
   item("--video-compound", {"Compound GLOBAL_GLOBALMV/AVERAGE prediction;",
@@ -294,11 +314,18 @@ void print_usage(std::ostream& out) {
                        "--video-gpu is rejected; the default and GPU paths keep",
                        "the historical CPU decisions and byte-identical streams.",
                        "--nightly (the pre-2026-11-20 name) is an exact alias."});
-  item("--nightly-b", {"Chained single-key B research path (docs/tlayers-chain.md):",
-                       "pairs with --video-tlayers 8 --video-gops M. Decoder-exact",
-                       "under tools/validate_avmdec.py (the pinned dav2d has the",
-                       "§7.21.6 drain defect on this structure). Measured below",
-                       "the flat --fast-decode aggregate; not the default"});
+  item("--nightly-b", {"Measured chained single-key hierarchical-B aggregate:",
+                       "the reordering-legal tool set plus the chained-form",
+                       "bottom-edge path, key-QP offset -50, BAWP/carrier, the",
+                       "partition probe, the layer-0 anchor residual, the key",
+                       "RD driver, the eff-perc pipe, the tail exact-rate TX,",
+                       "the key TX/UV RD gates and the band-gated TX descent.",
+                       "Pass --video-gops M > 1 (M 8-frame blocks; a 4-frame",
+                       "tail is allowed) and the matching --frames. CPU only.",
+                       "Research opt-in (docs/tlayers-chain.md): decoder-exact",
+                       "under tools/validate_avmdec.py while the pinned dav2d",
+                       "has the §7.21.6 drain defect; not the default"});
+
   item("--video-rd-preset <name>", {"Expand a measured CPU RD preset:",
                                      "'quality' = --video-inter-residual",
                                      "--video-deblock --video-ccso",
@@ -306,7 +333,15 @@ void print_usage(std::ostream& out) {
                                      "--video-intra-full",
                                      "(default off; the flags stay",
                                      "individually available).  The TX",
-                                     "context rate is a separate opt-in"});
+                                     "context rate is a separate opt-in;",
+                                     "'best' = the flat --fast-decode",
+                                     "aggregate plus the measured lead",
+                                     "stack (eff-perc, RD_UVFULL/UVLEVEL,",
+                                     "RD_KEY_TX, the tail band descent,",
+                                     "RD_DRIVER, head/tail exact-rate TX) and",
+                                     "--video-key-qp-offset -39 (a LEAD,",
+                                     "not a KEEP: +0.097 over the flat",
+                                     "aggregate)"});
   item("--video-tx-search", {"Opt-in §5.18.8 TX_MODE_SELECT luma TX size/type/",
                                 "partition search (changes the bitstream)"});
   item("--video-key-intra-txpart", {"Opt-in keyframe intra luma TX",

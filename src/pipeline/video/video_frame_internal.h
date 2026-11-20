@@ -181,12 +181,21 @@ inline bool parse_off(const char* value) {
   return equal("false") || equal("off") || equal("no");
 }
 
-inline bool enabled() {
-  static const bool value = [] {
-    const char* env = std::getenv("AV2ENC_RD_DRIVER");
-    return !parse_off(env);
-  }();
+// Process-wide CLI flag set by the InterFrameEncoder constructor from
+// VideoOptions::rd_driver (--video-rd-driver / --nightly-b).
+inline bool& cli_flag() {
+  static bool value = false;
   return value;
+}
+
+inline bool enabled() {
+  static const bool env = [] {
+    const char* env_var = std::getenv("AV2ENC_RD_DRIVER");
+    return !parse_off(env_var);
+  }();
+  // --video-rd-driver / --nightly-b sets the process-wide CLI flag from the
+  // encoder constructor; the env form stays for the raw gates.
+  return env || cli_flag();
 }
 
 inline double env_positive(const char* name, double fallback) {
@@ -1701,9 +1710,20 @@ inline int& picture_ordinal() {
 
 inline void begin_picture() { ++picture_ordinal(); }
 
+// Display-order ordinal for the chained B carrier (set by the encoder from
+// VideoOptions::display_ordinal; -1 keeps the flat chain's coding order).
+inline int& display_ordinal() {
+  static int value = -1;
+  return value;
+}
+
+inline int arming_ordinal() {
+  return display_ordinal() >= 0 ? display_ordinal() : picture_ordinal();
+}
+
 inline bool tail_armed() {
   const Config& cfg = config();
-  const int ordinal = picture_ordinal();
+  const int ordinal = arming_ordinal();
   return cfg.enabled && ordinal >= 33 && ordinal <= 59;
 }
 
@@ -1726,7 +1746,7 @@ inline int head_part_last() { return 32; }
 // Armed pictures for the *band-gated descent*: the tail window under the
 // historical gate, or pictures 1-32 under AV2ENC_RD_HEAD_PART.
 inline bool band_descent_armed() {
-  const int ordinal = picture_ordinal();
+  const int ordinal = arming_ordinal();
   if (config().enabled && ordinal >= 33 && ordinal <= 59) return true;
   if (head_part_enabled()) return ordinal >= 1 && ordinal <= head_part_last();
   return false;
@@ -2542,6 +2562,14 @@ class InterFrameEncoder {
                     std::span<const VideoInputFrame> horizon_future = {});
     // Diagnostic frame ordinal for the census/decision dumps; never coded.
     void set_census_frame(int frame) { census_frame_ = frame; }
+    // Display-order ordinal for the head/tail exact-rate TX arming windows.
+    // The chained B coding order is not display order; -1 keeps the historical
+    // coding-order `picture_ordinal()`.
+    void set_display_ordinal(int display) { display_ordinal_ = display; }
+    int arming_ordinal() const {
+      return display_ordinal_ >= 0 ? display_ordinal_
+                                   : tx_detail::picture_ordinal();
+    }
 
     std::int64_t block_variance_cost_at(
       const partition::PartitionNodeInfo& info) const;
@@ -2906,6 +2934,11 @@ class InterFrameEncoder {
 #endif
 
     const Plane& recon(int plane) const;
+  // --video-edge-inter: after the in-loop filters, extend the reconstruction
+  // past the coded MI edge (MiRows*4 luma) by replicating the last MI row, so
+  // this frame can enter a reference bank with the same padded extent the
+  // decoder uses.  No-op when the edge path is off or the recon is not padded.
+    void pad_edge_recon();
   // §7.22 motion-field source: the per-4x4 coded mode/MV grid and its extent.
   // Used by the opt-in TIP path to store a reference frame's SavedMvField.
     const std::vector<inter::mc::MiInfo>& mv_grid() const;
@@ -3656,6 +3689,7 @@ class InterFrameEncoder {
   std::array<int, 7> ref_order_hints_{};
   TemporalFrameContext temporal_ctx_;
   int census_frame_ = -1;
+  int display_ordinal_ = -1;
   std::vector<std::int32_t> levels_;
   std::uint32_t inter_blocks_ = 0;
   std::uint32_t intra_blocks_ = 0;

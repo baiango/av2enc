@@ -9,7 +9,9 @@
 #include "pipeline/video/video_frame.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <ostream>
 #include <string>
@@ -180,10 +182,26 @@ struct Options {
   // It is deliberately not the default and is rejected on --video-gpu, so the
   // GPU path keeps the historical CPU decisions and stream bytes.
   bool fast_decode = false;
-  // --nightly-b: the chained single-key B structure (opt-in research path,
-  // validated with tools/validate_avmdec.py while the dav2d pin has the
-  // §7.21.6 drain defect).
+  // --nightly-b: the measured chained single-key hierarchical-B aggregate
+  // (edge path, key-QP offset, BAWP, partition-RD, per-layer QP, anchor
+  // refresh).  Implies the chained --video-tlayers 8 form; the caller still
+  // supplies --video-gops and the frame count.  Research opt-in, validated
+  // with tools/validate_avmdec.py while the dav2d pin has the §7.21.6 drain
+  // defect.
   bool nightly_b = false;
+  // The chained tlayers form / B block selection. --nightly-b sets both; the
+  // AV2ENC_TLAYERS_CHAIN / _B env gates remain for the raw spike flags.
+  bool video_tlayers_chain = false;
+  bool video_tlayers_b = false;
+  // Sequential key-frame RD driver (AV2ENC_RD_DRIVER=1 is the env form; this
+  // is the CLI/product form, set by --nightly-b). Key picture only.
+  bool video_rd_driver = false;
+  // Exact-rate / BA-shaped perceptual pipe (AV2ENC_EFF_PERC) and the
+  // head/tail exact-rate TX windows (AV2ENC_RD_HEAD_TX / _TAIL_TX) as CLI
+  // forms; --nightly-b sets the measured pipe + tail.
+  bool video_eff_perc = false;
+  bool video_tail_tx = false;
+  bool video_head_tx = false;
   // Opt-in measured CPU RD preset (--video-rd-preset <name>).  Empty means no
   // expansion, so the default stream stays byte-identical.  The expansion only
   // sets existing CLI options and then the normal validation runs.
@@ -332,6 +350,18 @@ struct Options {
   bool video_switch = false;
   bool video_ras = false;
   int video_tlayers = 0;   // 0 = off; N = one closed hierarchical-P GOP
+  // Per-temporal-layer base_q_idx offsets (layers 0..3). Default off; the
+  // chained --video-tlayers --video-gops form applies them in coding order.
+  std::array<int, 4> video_tlayer_qp_offset = {0, 0, 0, 0};
+  bool video_tlayer_qp_given = false;
+  // Force the inter residual on the chained layer-0 anchors (drift refresh
+  // probe; default off).
+  bool video_tlayer_anchor_residual = false;
+  // Selective anchor refresh: trigger the forced residual only when the
+  // anchor's primary reference PSNR is below the key anchor by this threshold,
+  // within a byte budget. 0 threshold = force every layer-0 anchor.
+  double video_tlayer_refresh_threshold = 0.0;
+  int video_tlayer_refresh_budget = 3250;
   bool video_lossless_b = false;  // --video-lossless: use the B schedule
   int video_tlayer_drop = -1;  // -1 = keep every layer
   int video_gops = 1;      // consecutive closed B-frame GOPs (default 1)
@@ -493,6 +523,21 @@ inline bool video_format_wired(int bit_depth, const std::string& chroma) {
   if (bit_depth != 8 && bit_depth != 10) return false;
   return chroma == "420" || chroma == "422" || chroma == "444" ||
          chroma == "400";
+}
+
+// The chained single-key tlayers form: --nightly-b sets the option; the
+// AV2ENC_TLAYERS_CHAIN env gate keeps the raw spike flags off the default
+// surface.  The B block selection has the same two entry points.
+inline bool tlayers_chain_enabled(const Options& options) {
+  if (options.video_tlayers_chain) return true;
+  const char* value = std::getenv("AV2ENC_TLAYERS_CHAIN");
+  return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+inline bool tlayers_b_enabled(const Options& options) {
+  if (options.video_tlayers_b) return true;
+  const char* value = std::getenv("AV2ENC_TLAYERS_B");
+  return value != nullptr && value[0] != '\0' && value[0] != '0';
 }
 
 // cli/parse.cpp

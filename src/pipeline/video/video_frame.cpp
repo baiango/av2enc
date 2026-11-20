@@ -112,6 +112,10 @@ InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
 #endif
   if (temporal != nullptr) temporal_ctx_ = *temporal;
   census_frame_ = census_frame;
+  if (options_.rd_driver) rd_driver::cli_flag() = true;
+  if (options_.eff_perc) eff_perc::cli_flag() = true;
+  if (options_.tail_tx) tail_tx::cli_mode() |= 1;
+  if (options_.head_tx) tail_tx::cli_mode() |= 2;
   // Coded (tile-local) geometry.  A zero tile_w/tile_h means "whole frame",
   // which keeps the historical single-tile path untouched.  Source reads and
   // motion-compensated predictions add tile_x_/tile_y_ so the reference frame
@@ -412,26 +416,41 @@ bool InterFrameEncoder::partition_probe_leaf_cost(const partition::PartitionNode
   const int bh = partition::block_height(info.size);
   const int ax0 = info.mi_col * 4 + tile_x_;
   const int ay0 = info.mi_row * 4 + tile_y_;
-  std::string probe_error;
-  inter::mc::Mv mv{};
-  std::vector<std::uint8_t> pred;
-  if (!search_me(0, ax0, ay0, bw, bh, mv, probe_error) ||
-      !predict_luma(0, mv, ax0, ay0, bw, bh, pred)) {
-    return false;
+  // The probe prices the reference the leaf would actually use.  A B frame
+  // has two (past/future anchors) and the block layer selects one per leaf,
+  // so run the NEWMV + residual model for each reference and keep the cheaper
+  // one.  A single-reference frame takes the same ref-0 path as before, so the
+  //  P-chain stream stays byte-identical.
+  const int ref_count = std::max(1, num_total_refs_);
+  double best = partition::kInfiniteCost;
+  bool modeled = false;
+  for (int ref = 0; ref < ref_count; ++ref) {
+    std::string probe_error;
+    inter::mc::Mv mv{};
+    std::vector<std::uint8_t> pred;
+    if (!search_me(ref, ax0, ay0, bw, bh, mv, probe_error) ||
+        !predict_luma(ref, mv, ax0, ay0, bw, bh, pred)) {
+      continue;
+    }
+    modeled = true;
+    const double pred_sse = static_cast<double>(
+        sse_against_source(source_, 0, ax0, ay0, bw, bh, pred));
+    double candidate = pred_sse + lambda * kPartitionProbeSkipBits;
+    TxPlan plan;
+    if (compute_tx(source_, 0, ax0, ay0, bw, bh, pred, plane_quant_[0], plan,
+                   probe_error, /*qm_state=*/nullptr, /*allow_tcq=*/false,
+                   /*qctx_slice=*/0, /*is_inter=*/true)) {
+      const double res_sse = static_cast<double>(
+          sse_against_source(source_, 0, ax0, ay0, bw, bh, plan.recon));
+      const double bits =
+          kPartitionProbeModeBits +
+          plan_rate_bits(plan, 0, true, static_cast<int>(info.size));
+      candidate = std::min(candidate, res_sse + lambda * bits);
+    }
+    best = std::min(best, candidate);
   }
-  const double pred_sse = static_cast<double>(
-      sse_against_source(source_, 0, ax0, ay0, bw, bh, pred));
-  double best = pred_sse + lambda * kPartitionProbeSkipBits;
-  TxPlan plan;
-  if (compute_tx(source_, 0, ax0, ay0, bw, bh, pred, plane_quant_[0], plan,
-                 probe_error, /*qm_state=*/nullptr, /*allow_tcq=*/false,
-                 /*qctx_slice=*/0, /*is_inter=*/true)) {
-    const double res_sse = static_cast<double>(
-        sse_against_source(source_, 0, ax0, ay0, bw, bh, plan.recon));
-    const double bits =
-        kPartitionProbeModeBits +
-        plan_rate_bits(plan, 0, true, static_cast<int>(info.size));
-    best = std::min(best, res_sse + lambda * bits);
+  if (!modeled) {
+    return false;
   }
   cost = best;
   return true;

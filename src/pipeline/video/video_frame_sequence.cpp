@@ -268,6 +268,7 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
                               options.trace, fp->is_key, 0, 0, 0, 0, {}, nullptr,
                               nullptr, ref_order_hints,
                               /*primary_ref_is_none=*/true, &temporal_ctx);
+    encoder.set_display_ordinal(display);
     std::vector<std::uint8_t> tile;
     std::vector<syntax::BlockSyntax> blocks;
     std::vector<std::int32_t> levels;
@@ -447,9 +448,49 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   const int gop = options.temporal_layers;
   const std::uint32_t width = frames[0].width;
   const std::uint32_t height = frames[0].height;
-  if (frames.size() != static_cast<std::size_t>(gop)) {
+  const int total = static_cast<int>(frames.size());
+  // Chained single-key mode (default off). --video-gops M chains M 8-frame
+  // hierarchical-P blocks under the first key; the input may carry one smaller
+  // final block of 4 pictures (60 = 7*8 + 4). A later block starts with a P
+  // anchor that references the previous block's anchor, never a key.
+  bool chained = false;
+  int num_gops = 1;
+  int tail_gop_size = 0;
+  // Chained hierarchical-B schedule (default off): the same one-key chain
+  // with the dyadic B block instead of the P block. Each block's past anchor
+  // (local 0) references the previous block's future anchor and the future
+  // anchor (local 7) references the past anchor; the interior B frames
+  // reference the two anchors. No CLK after the first. Compound prediction is
+  // not used: the block layer selects one of the two references per leaf.
+  const bool chained_b =
+      options.tlayer_chain && options.video_gops > 1 && options.tlayer_b;
+  if (options.tlayer_chain && options.video_gops > 1) {
+    chained = true;
+    num_gops = options.video_gops;
+    if (total < gop * num_gops || total > gop * num_gops + 4) {
+      error = "--video-tlayers --video-gops " + std::to_string(num_gops) +
+              " codes " + std::to_string(gop * num_gops) +
+              " frames (plus an optional 4-frame tail block); got " +
+              std::to_string(total);
+      return false;
+    }
+    tail_gop_size = total - gop * num_gops;
+    if (tail_gop_size != 0 && tail_gop_size != 4) {
+      error = "--video-tlayers chain tail must be 0 or 4 frames; got " +
+              std::to_string(tail_gop_size);
+      return false;
+    }
+  } else if (total != gop) {
     error = "--video-tlayers codes one closed GOP: pass exactly " +
             std::to_string(gop) + " input frames";
+    return false;
+  }
+  if (chained && options.tlayer_drop >= 0) {
+    // The drop path filters coding order globally; a chained plan reuses the
+    // reference store across blocks, so a layer drop changes the order-hint
+    // context of the retained pictures. Keep it off until it has its own gate.
+    error = "--video-tlayer-drop is not wired for the chained --video-gops "
+            "plan";
     return false;
   }
   if (!options.frame_base_q_idx.empty() &&
@@ -461,18 +502,37 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
 
   tl::PlanConfig pc;
   pc.gop_size = gop;
-  pc.schedule = tl::Schedule::kHierarchicalP;
+  pc.num_gops = num_gops;
+  pc.tail_gop_size = tail_gop_size;
+  pc.schedule = chained_b ? tl::Schedule::kHierarchicalB
+                          : tl::Schedule::kHierarchicalP;
   // Two references per interior frame (the base inter picture keeps the key
   // as its only reference).  The default TLayerDependencyMap admits both, and
-  // the §7.22 fields then let §7.9 project real ref-MV candidates.
+  // the §7.22 fields then let §7.9 project real ref-MV candidates. The B
+  // schedule supplies its own past/future reference pairs, so ref_mode only
+  // applies to the P schedule.
   pc.ref_mode = tl::RefMode::kTwo;
   pc.dependency = tl::DependencyMode::kAllLower;
   pc.explicit_dependency_map = false;  // pinned dav2d parses the default map
-  // A 16-frame GOP needs OrderHintBits 5: the display hint of the anchor at
-  // index 8 is a half-span away from the key's hint 0, which the §5.18.2
-  // modulo reconstruction cannot resolve with 4 bits.
-  pc.order_hint_bits = gop >= 16 ? 5 : 4;
-  pc.num_slots = gop;
+  // OrderHintBits must span the whole plan: 16 pictures fit 4 bits, 60 need 6.
+  // A 16-frame single pyramid needs 5 because its anchor sits a half-span from
+  // the key; the chained plan's cross-block reference is only 4 away, so the
+  // plan's §5.18.2 replay decides the exact value (it rejects an ambiguous
+  // hint).
+  pc.order_hint_bits = 4;
+  while ((1 << pc.order_hint_bits) < total) {
+    ++pc.order_hint_bits;
+  }
+  // A chained 16-picture plan references across the block boundary at a
+  // distance of up to 8 (the P carrier's d8 -> d0 edge).  The encoder's
+  // relative_dist() is modulo the hint span while the decoder's
+  // §5.18.3.1 get_relative_dist() is the absolute difference, so an 8-picture
+  // edge at 4 bits changes the sign of the reference.  Five bits keeps every
+  // chained edge below the half-span.
+  if (chained && pc.order_hint_bits < 5) {
+    pc.order_hint_bits = 5;
+  }
+  pc.num_slots = std::min(16, total);
   pc.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   tl::Plan plan;
   tl::PlanError plan_error = tl::PlanError::kOk;
@@ -491,7 +551,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
             std::to_string(bad_coding) + ")";
     return false;
   }
-  if (plan.display_count() != gop) {
+  if (plan.display_count() != total) {
     error = "temporal-layer plan display count mismatch";
     return false;
   }
@@ -525,6 +585,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.max_drl_bits_minus_1 = 4;
   config.disable_cdf_update = !options.adaptive_cdf;
   config.minimal_tile_trailer = options.minimal_tile_trailer;
+  config.seq_tile_info_present = options.seq_tile_info_present;
   config.enable_avg_cdf = options.avg_cdf;
   config.avg_cdf_type = true;
   config.disable_drl_reorder = true;
@@ -576,6 +637,18 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   const int mi_rows = 2 * static_cast<int>((height + 7U) >> 3U);
   std::vector<VideoReconFrame> recon_by_display(
       static_cast<std::size_t>(plan.display_count()));
+  // --video-edge-inter: the cropped VideoReconFrame is not a reference (it
+  // drops the padded bottom rows).  Keep the encoder's full Plane
+  // reconstruction per display; the reference bank then carries the same
+  // extent the decoder keeps.
+  std::vector<std::array<Plane, 3>> plane_by_display(
+      static_cast<std::size_t>(plan.display_count()));
+  // Selective anchor refresh accounting (--video-tlayer-refresh-*).
+  bool have_anchor_psnr = false;
+  double anchor_psnr = 0.0;
+  double anchor_spent_bytes = 0.0;
+  double anchor_mean_payload = 0.0;
+  std::uint64_t anchor_payload_count = 0;
   std::vector<SlotField> t_fields(static_cast<std::size_t>(plan.num_slots));
   std::vector<bool> t_is_key(static_cast<std::size_t>(plan.num_slots), false);
 
@@ -606,11 +679,65 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
     const int tlayer_id = pf.obu_tlayer_id();
     // Per-frame rate control follows display order (the planner's indexing),
     // while units are emitted in coding order.
-    const std::uint8_t base_q =
+    std::uint8_t base_q =
         options.frame_base_q_idx.empty()
             ? static_cast<std::uint8_t>(options.base_q_idx)
             : options.frame_base_q_idx[static_cast<std::size_t>(display)];
+    // Per-temporal-layer allocation (--video-tlayer-qp-offsets): the layer
+    // offset is applied on top of the key/per-frame plan, so the anchors stay
+    // at the key-QP plan and the upper layers get coarser.
+    if (options.tlayer_qp_active) {
+      const int q =
+          static_cast<int>(base_q) +
+          options.tlayer_qp_offset[static_cast<std::size_t>(tlayer_id)];
+      base_q = static_cast<std::uint8_t>(std::clamp(q, 1, 255));
+    }
     frame_options.base_q_idx = base_q;
+    // Drift-refresh probe: force the inter residual on the chained layer-0
+    // anchors (the past/future anchors). The key is intra and is skipped.
+    // A threshold of 0 forces every anchor (the measured unconditional form);
+    // a positive threshold is the flat chain's drift trigger ported to the
+    // anchor: only force when the primary reference is that far below the key
+    // anchor, within the extra-payload budget.
+    bool anchor_refresh = false;
+    if (options.tlayer_anchor_residual && tlayer_id == 0 && !pf.is_key) {
+      ++result.tlayer_anchor_total;
+      if (options.tlayer_refresh_threshold_db <= 0.0) {
+        anchor_refresh = true;
+      } else if (pf.num_refs > 0) {
+        if (!have_anchor_psnr && !plane_by_display[0][0].samples.empty()) {
+          anchor_psnr = reference_luma_psnr(plane_by_display[0][0],
+                                            frames[0], static_cast<int>(width),
+                                            static_cast<int>(height));
+          have_anchor_psnr = true;
+        }
+        const int rd = pf.ref_display[0];
+        double ref_psnr = 99.0;
+        if (have_anchor_psnr && rd >= 0 &&
+            !plane_by_display[static_cast<std::size_t>(rd)][0]
+                 .samples.empty()) {
+          ref_psnr = reference_luma_psnr(
+              plane_by_display[static_cast<std::size_t>(rd)][0],
+              frames[static_cast<std::size_t>(rd)],
+              static_cast<int>(width), static_cast<int>(height));
+        }
+        anchor_refresh =
+            have_anchor_psnr &&
+            ref_psnr < anchor_psnr - options.tlayer_refresh_threshold_db &&
+            (options.tlayer_refresh_budget < 0 ||
+             anchor_spent_bytes <
+                 static_cast<double>(options.tlayer_refresh_budget));
+        if (options.trace) {
+          std::cerr << "tl-anchor display=" << display
+                    << " ref_display=" << rd << " anchor_psnr=" << anchor_psnr
+                    << " ref_psnr=" << ref_psnr
+                    << " spent=" << anchor_spent_bytes
+                    << " refresh=" << (anchor_refresh ? 1 : 0) << "\n";
+        }
+      }
+      if (anchor_refresh) ++result.tlayer_anchor_refresh;
+    }
+    frame_options.force_inter_residual = anchor_refresh;
     VideoConfig frame_config = config;
     frame_config.base_q_idx = base_q;
 
@@ -672,20 +799,23 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
     for (int r = 0; r < num_refs; ++r) {
       const int ref_display = ref_displays[static_cast<std::size_t>(r)];
       if (ref_display < 0 ||
-          recon_by_display[static_cast<std::size_t>(ref_display)].y.empty()) {
+          plane_by_display[static_cast<std::size_t>(ref_display)][0]
+              .samples.empty()) {
         error = "temporal-layer reference is not available";
         return false;
       }
-      const VideoReconFrame& rf =
-          recon_by_display[static_cast<std::size_t>(ref_display)];
+      // The reference is the padded Plane reconstruction, not the cropped
+      // VideoReconFrame: --video-edge-inter needs the rows past the coded MI
+      // edge, and the decoder keeps them too.  mi_rows follows the luma plane
+      // height so the MC bounds cover the padded extent.
+      const std::array<Plane, 3>& rp =
+          plane_by_display[static_cast<std::size_t>(ref_display)];
       inter::mc::RefFrame ref;
-      ref.plane[0] = inter::mc::PlaneView{rf.y.data(), static_cast<int>(width)};
-      ref.plane[1] = inter::mc::PlaneView{
-          rf.u.data(), static_cast<int>((width + 1U) / 2U)};
-      ref.plane[2] = inter::mc::PlaneView{
-          rf.v.data(), static_cast<int>((width + 1U) / 2U)};
+      ref.plane[0] = inter::mc::PlaneView{rp[0].samples.data(), rp[0].stride};
+      ref.plane[1] = inter::mc::PlaneView{rp[1].samples.data(), rp[1].stride};
+      ref.plane[2] = inter::mc::PlaneView{rp[2].samples.data(), rp[2].stride};
       ref.mi_cols = mi_cols;
-      ref.mi_rows = mi_rows;
+      ref.mi_rows = rp[0].height / 4;
       references.push_back(ref);
     }
 
@@ -730,12 +860,21 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
                               options.trace, pf.is_key, 0, 0, 0, 0, {}, nullptr,
                               nullptr, ref_order_hints,
                               /*primary_ref_is_none=*/true, &temporal_ctx);
+    encoder.set_display_ordinal(display);
     std::vector<std::uint8_t> tile;
     std::vector<syntax::BlockSyntax> blocks;
     std::vector<std::int32_t> levels;
     if (!encoder.encode(tile, blocks, levels, error)) {
       error = "temporal-layer frame " + std::to_string(display) + ": " + error;
       return false;
+    }
+    // --video-edge-inter: the in-loop filters have run inside encode().  Pad
+    // the reconstruction past the coded MI edge exactly where the decoder
+    // pads the reference, then copy the full planes into the reference bank.
+    encoder.pad_edge_recon();
+    for (int plane = 0; plane < 3; ++plane) {
+      plane_by_display[static_cast<std::size_t>(display)]
+                      [static_cast<std::size_t>(plane)] = encoder.recon(plane);
     }
     result.temporal_candidates +=
         static_cast<std::uint64_t>(encoder.temporal_added());
@@ -811,6 +950,25 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
     result.intra_blocks.push_back(encoder.intra_blocks());
     result.frame_bytes.push_back(
         static_cast<std::uint32_t>(result.units.back().size()));
+    if (options.tlayer_anchor_residual && !pf.is_key) {
+      const double payload = static_cast<double>(tile.size());
+      if (anchor_refresh) {
+        const double extra = payload - anchor_mean_payload;
+        if (extra > 0.0) {
+          anchor_spent_bytes += extra;
+          result.drift_refresh_bytes +=
+              static_cast<std::uint64_t>(extra);
+        }
+        ++result.drift_refresh_frames;
+      } else {
+        anchor_mean_payload =
+            (anchor_mean_payload *
+                 static_cast<double>(anchor_payload_count) +
+             payload) /
+            static_cast<double>(anchor_payload_count + 1);
+        ++anchor_payload_count;
+      }
+    }
     recon_by_display[static_cast<std::size_t>(display)] = to_recon_frame(
         encoder.recon(0), encoder.recon(1), encoder.recon(2), width, height);
     if (options.implicit_ref_map) {

@@ -44,6 +44,15 @@ See `docs/qp-scaled-lambda.md` and `bench/space8k_720p/README.md`.
 the single-tile low-delay P chain (no B/reorder/temporal-layer modes, no
 `--video-ref-mvs`); the normal combination validation enforces that.
 
+`--video-rd-preset best` (`docs/video-rd-preset.md`) is the opt-in **lead
+stack** measured on top of this aggregate: the nine env-only RD tools
+(eff-perc, UVFULL/UVLEVEL, key TX, the tail band descent), the RD driver, the
+head/tail exact-rate TX windows, the drift-refresh 1.5 dB / 3250 B point and
+`--video-key-qp-offset -39`. It reproduces the explicit env command byte for
+byte at QP 114/116/118, measures **K 86.33 at 100 kbps (+0.097 over the 86.232
+flat aggregate)**, and is documented as a **LEAD, not a KEEP** (inside the
+adjacent-QP ripple and sharing the driver headroom with the head/tail TX).
+
 ## Current pins
 
 | Purpose | QP | Bytes | Rate | CVVDP | PSNR-Y | K | MD5 |

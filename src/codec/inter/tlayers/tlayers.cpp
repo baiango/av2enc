@@ -51,43 +51,146 @@ bool checked_power_of_two(int n, PlanError* error) {
 }
 
 // Builds the display -> coding-order schedule. `layer` and `refs` are filled
-// per display index.
+// per display index. A chained plan (`num_gops > 1` and/or a tail block)
+// concatenates one hierarchical-P schedule per block under a single key.
 bool build_schedule(const PlanConfig& config, std::vector<int>& coding_order,
                     std::vector<int>& layer, std::vector<std::vector<int>>& refs,
+                    std::vector<int>& gop_starts, std::vector<int>& block_of,
                     PlanError* error) {
   const int n = config.gop_size;
-  if (!checked_power_of_two(n, error)) {
-    return false;
-  }
   if (config.schedule == Schedule::kHierarchicalB) {
+    if (!checked_power_of_two(n, error)) {
+      return false;
+    }
     if (n > 8) {
       // A 16-frame B pyramid needs temporal layer 4, but max_tlayer_id is
       // f(2) and can only represent 0..3.
       set_error(error, PlanError::kTooManyLayers);
       return false;
     }
-    layer.assign(static_cast<std::size_t>(n), 0);
-    refs.assign(static_cast<std::size_t>(n), {});
+    if (config.num_gops < 1) {
+      set_error(error, PlanError::kBadGopSize);
+      return false;
+    }
+    if (config.tail_gop_size != 0 &&
+        (!is_power_of_two(config.tail_gop_size) ||
+         config.tail_gop_size > n)) {
+      set_error(error, PlanError::kBadGopSize);
+      return false;
+    }
+    const int total = n * config.num_gops + config.tail_gop_size;
+    layer.assign(static_cast<std::size_t>(total), 0);
+    refs.assign(static_cast<std::size_t>(total), {});
+    block_of.assign(static_cast<std::size_t>(total), 0);
+    gop_starts.clear();
     coding_order.clear();
-    coding_order.push_back(0);
-    coding_order.push_back(n - 1);
-    refs[static_cast<std::size_t>(n - 1)] = {0};
+    // One dyadic B block. The block's past anchor is local 0 (the key in the
+    // first block); its future anchor is local block_size-1. In a chained
+    // block the past anchor references the previous block's future anchor and
+    // the future anchor references the past anchor, so the layer-0 chain is
+    // key -> future0 -> past1 -> future1 -> ... with no CLK after the first.
+    const auto build_b_block = [&](int block_size, int offset,
+                                   int block_index) {
+      const int future = block_size - 1;
+      for (int local = 0; local < block_size; ++local) {
+        block_of[static_cast<std::size_t>(offset + local)] = block_index;
+      }
+      coding_order.push_back(offset);
+      coding_order.push_back(offset + future);
+      if (offset == 0) {
+        // The only key: no references.
+      } else {
+        refs[static_cast<std::size_t>(offset)] = {offset - 1};
+      }
+      refs[static_cast<std::size_t>(offset + future)] = {offset};
+      struct Interval {
+        int lo;
+        int hi;
+        int layer;
+      };
+      std::vector<Interval> work;
+      work.push_back(Interval{0, future, 1});
+      for (std::size_t wi = 0; wi < work.size(); ++wi) {
+        const Interval interval = work[wi];
+        if (interval.hi - interval.lo <= 1) {
+          continue;
+        }
+        const int mid = (interval.lo + interval.hi) / 2;
+        layer[static_cast<std::size_t>(offset + mid)] = interval.layer;
+        refs[static_cast<std::size_t>(offset + mid)] = {offset + interval.lo,
+                                                        offset + interval.hi};
+        coding_order.push_back(offset + mid);
+        const bool splits_further =
+            (mid - interval.lo > 1) || (interval.hi - mid > 1);
+        if (splits_further && interval.layer + 1 > kMaxTemporalLayerId) {
+          set_error(error, PlanError::kTooManyLayers);
+          return false;
+        }
+        work.push_back(Interval{interval.lo, mid, interval.layer + 1});
+        work.push_back(Interval{mid, interval.hi, interval.layer + 1});
+      }
+      return true;
+    };
+    for (int b = 0; b < config.num_gops; ++b) {
+      gop_starts.push_back(b * n);
+      if (!build_b_block(n, b * n, b)) {
+        return false;
+      }
+    }
+    if (config.tail_gop_size != 0) {
+      gop_starts.push_back(config.num_gops * n);
+      if (!build_b_block(config.tail_gop_size, config.num_gops * n,
+                         config.num_gops)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  if (config.schedule != Schedule::kHierarchicalP) {
+    set_error(error, PlanError::kBadSchedule);
+    return false;
+  }
+  if (config.num_gops < 1) {
+    set_error(error, PlanError::kBadGopSize);
+    return false;
+  }
+  if (!is_power_of_two(n) || n > 16) {
+    set_error(error, PlanError::kBadGopSize);
+    return false;
+  }
+  if (config.tail_gop_size != 0 &&
+      (!is_power_of_two(config.tail_gop_size) ||
+       config.tail_gop_size > config.gop_size)) {
+    set_error(error, PlanError::kBadGopSize);
+    return false;
+  }
+
+  // One coding order per block, concatenated in display order. The only key
+  // is the first coded frame of the whole plan; every later block starts with
+  // its layer-0 anchor.
+  const auto build_block = [&](int block_size, int offset, int block_index) {
+    std::vector<int> coding;
+    std::vector<int> block_layer(static_cast<std::size_t>(block_size), 0);
+    const int anchor = block_size / 2;
+    coding.push_back(0);
+    coding.push_back(anchor);
     struct Interval {
       int lo;
-      int hi;
+      int hi;  // exclusive
       int layer;
     };
     std::vector<Interval> work;
-    work.push_back(Interval{0, n - 1, 1});
+    work.push_back(Interval{0, anchor, 1});
+    work.push_back(Interval{anchor, block_size, 1});
     for (std::size_t wi = 0; wi < work.size(); ++wi) {
       const Interval interval = work[wi];
       if (interval.hi - interval.lo <= 1) {
         continue;
       }
       const int mid = (interval.lo + interval.hi) / 2;
-      layer[static_cast<std::size_t>(mid)] = interval.layer;
-      refs[static_cast<std::size_t>(mid)] = {interval.lo, interval.hi};
-      coding_order.push_back(mid);
+      block_layer[static_cast<std::size_t>(mid)] = interval.layer;
+      coding.push_back(mid);
       const bool splits_further =
           (mid - interval.lo > 1) || (interval.hi - mid > 1);
       if (splits_further && interval.layer + 1 > kMaxTemporalLayerId) {
@@ -97,55 +200,55 @@ bool build_schedule(const PlanConfig& config, std::vector<int>& coding_order,
       work.push_back(Interval{interval.lo, mid, interval.layer + 1});
       work.push_back(Interval{mid, interval.hi, interval.layer + 1});
     }
-    return true;
-  }
-
-  if (config.schedule != Schedule::kHierarchicalP) {
-    set_error(error, PlanError::kBadSchedule);
-    return false;
-  }
-  if (n > 16) {
-    set_error(error, PlanError::kTooManyLayers);
-    return false;
-  }
-  layer.assign(static_cast<std::size_t>(n), 0);
-  refs.assign(static_cast<std::size_t>(n), {});
-  coding_order.clear();
-  const int anchor = n / 2;
-  coding_order.push_back(0);
-  coding_order.push_back(anchor);
-  refs[static_cast<std::size_t>(anchor)] = {0};
-  struct Interval {
-    int lo;
-    int hi;  // exclusive; n is a valid one-past-the-end boundary
-    int layer;
-  };
-  std::vector<Interval> work;
-  work.push_back(Interval{0, anchor, 1});
-  work.push_back(Interval{anchor, n, 1});
-  for (std::size_t wi = 0; wi < work.size(); ++wi) {
-    const Interval interval = work[wi];
-    if (interval.hi - interval.lo <= 1) {
-      continue;
+    for (const int local : coding) {
+      coding_order.push_back(local + offset);
+      layer[static_cast<std::size_t>(local + offset)] =
+          block_layer[static_cast<std::size_t>(local)];
+      block_of[static_cast<std::size_t>(local + offset)] = block_index;
     }
-    const int mid = (interval.lo + interval.hi) / 2;
-    layer[static_cast<std::size_t>(mid)] = interval.layer;
-    coding_order.push_back(mid);
-    const bool splits_further =
-        (mid - interval.lo > 1) || (interval.hi - mid > 1);
-    if (splits_further && interval.layer + 1 > kMaxTemporalLayerId) {
-      set_error(error, PlanError::kTooManyLayers);
+    return true;
+  };
+
+  const int total = n * config.num_gops + config.tail_gop_size;
+  layer.assign(static_cast<std::size_t>(total), 0);
+  refs.assign(static_cast<std::size_t>(total), {});
+  block_of.assign(static_cast<std::size_t>(total), 0);
+  gop_starts.clear();
+  coding_order.clear();
+  for (int b = 0; b < config.num_gops; ++b) {
+    gop_starts.push_back(b * n);
+    if (!build_block(n, b * n, b)) {
       return false;
     }
-    work.push_back(Interval{interval.lo, mid, interval.layer + 1});
-    work.push_back(Interval{mid, interval.hi, interval.layer + 1});
+  }
+  if (config.tail_gop_size != 0) {
+    gop_starts.push_back(config.num_gops * n);
+    if (!build_block(config.tail_gop_size, config.num_gops * n,
+                     config.num_gops)) {
+      return false;
+    }
   }
   if (config.ref_mode == RefMode::kSingle) {
-    // Single-reference carrier: every frame after the anchor references the
-    // immediately preceding frame in coding order. Lower layers are always
-    // decoded before higher layers.
-    for (std::size_t c = 2; c < coding_order.size(); ++c) {
-      refs[static_cast<std::size_t>(coding_order[c])] = {coding_order[c - 1]};
+    // Single-reference carrier: every frame references the most recently
+    // coded picture whose temporal layer is <= its own. Inside a block that
+    // is the immediately preceding coding-order frame; the first frame of a
+    // later block picks that block's predecessor anchor (layer 0), which is
+    // the only legal cross-block reference under TLayerDependencyMap.
+    for (std::size_t c = 1; c < coding_order.size(); ++c) {
+      const int display = coding_order[c];
+      const int layer_id = layer[static_cast<std::size_t>(display)];
+      for (std::ptrdiff_t back = static_cast<std::ptrdiff_t>(c) - 1; back >= 0;
+           --back) {
+        const int cand = coding_order[static_cast<std::size_t>(back)];
+        if (layer[static_cast<std::size_t>(cand)] <= layer_id) {
+          refs[static_cast<std::size_t>(display)] = {cand};
+          break;
+        }
+      }
+      if (refs[static_cast<std::size_t>(display)].empty()) {
+        set_error(error, PlanError::kReferenceNotDecoded);
+        return false;
+      }
     }
     return true;
   }
@@ -157,7 +260,7 @@ bool build_schedule(const PlanConfig& config, std::vector<int>& coding_order,
   // are already in coding order and whose temporal layer is <= this frame's
   // layer.  Sorting by (layer, |display distance|, display) is deterministic
   // and keeps every reference inside the default TLayerDependencyMap.
-  std::vector<int> coding_index(static_cast<std::size_t>(n), -1);
+  std::vector<int> coding_index(static_cast<std::size_t>(total), -1);
   for (std::size_t c = 0; c < coding_order.size(); ++c) {
     coding_index[static_cast<std::size_t>(coding_order[c])] =
         static_cast<int>(c);
@@ -166,7 +269,7 @@ bool build_schedule(const PlanConfig& config, std::vector<int>& coding_order,
     const int display = coding_order[c];
     const int layer_id = layer[static_cast<std::size_t>(display)];
     std::vector<int> candidates;
-    for (int e = 0; e < n; ++e) {
+    for (int e = 0; e < total; ++e) {
       if (coding_index[static_cast<std::size_t>(e)] >=
               static_cast<int>(c) ||
           e == display) {
@@ -233,6 +336,148 @@ bool build_dependency_map(const PlanConfig& config, const Plan& plan,
   return true;
 }
 
+// §7.21 output simulation (single embedded layer). The pinned decoder must
+// emit every picture exactly once, in display order, through the §7.21.3
+// successive-hint path plus the §7.21.6 frame_buffers() drain and the
+// end-of-stream flush. Mirrors the bframes OutputSim, which gates the same
+// process for the B schedules; the chained plan is the first temporal-layer
+// plan whose store is smaller than its display count.
+bool simulate_output_order(const Plan& plan, PlanError* error) {
+  const int count = plan.display_count();
+  struct SlotMeta {
+    bool valid = false;
+    int frame = -1;
+    int hint = 0;
+    bool implicit = false;
+  };
+  std::array<SlotMeta, kNumRefFrames> meta{};
+  std::vector<char> output_done(static_cast<std::size_t>(count), 0);
+  std::vector<int> order;
+  order.reserve(static_cast<std::size_t>(count));
+
+  const auto eligible = [&](int s) {
+    const SlotMeta& m = meta[static_cast<std::size_t>(s)];
+    return m.valid && m.frame >= 0 && m.frame < count && m.implicit &&
+           output_done[static_cast<std::size_t>(m.frame)] == 0;
+  };
+  const auto mark_output = [&](int s) {
+    if (s < 0 || s >= plan.num_slots) return;
+    SlotMeta& m = meta[static_cast<std::size_t>(s)];
+    if (!m.valid || m.frame < 0 || m.frame >= count ||
+        output_done[static_cast<std::size_t>(m.frame)] != 0) {
+      return;
+    }
+    output_done[static_cast<std::size_t>(m.frame)] = 1;
+    order.push_back(m.frame);
+  };
+  const auto output_successive = [&](int hint) {
+    int current = hint;
+    for (;;) {
+      const int target = current + 1;
+      bool made_output = false;
+      for (int s = 0; s < plan.num_slots; ++s) {
+        if (eligible(s) && meta[static_cast<std::size_t>(s)].hint == target) {
+          mark_output(s);
+          made_output = true;
+        }
+      }
+      if (!made_output) break;
+      current = target;
+    }
+  };
+  const auto output_slot = [&](int s) {
+    if (s < 0 || s >= plan.num_slots) return;
+    const int hint = meta[static_cast<std::size_t>(s)].hint;
+    const int frame = meta[static_cast<std::size_t>(s)].frame;
+    mark_output(s);
+    if (frame >= 0 && frame < count &&
+        output_done[static_cast<std::size_t>(frame)] != 0) {
+      output_successive(hint);
+    }
+  };
+  const auto frame_buffers = [&](int ref_idx, int current_frame,
+                                 int current_hint) {
+    const int output_hint =
+        ref_idx >= 0 ? meta[static_cast<std::size_t>(ref_idx)].hint
+                     : current_hint;
+    for (;;) {
+      int best = -1;
+      int best_hint = 0;
+      for (int s = 0; s < plan.num_slots; ++s) {
+        if (!eligible(s)) continue;
+        const int hint = meta[static_cast<std::size_t>(s)].hint;
+        if (hint >= output_hint) continue;
+        if (best < 0 || hint < best_hint) {
+          best = s;
+          best_hint = hint;
+        }
+      }
+      if (best < 0) break;
+      output_slot(best);
+    }
+    if (ref_idx >= 0) {
+      output_slot(ref_idx);
+    } else if (current_frame >= 0 && current_frame < count &&
+               output_done[static_cast<std::size_t>(current_frame)] == 0) {
+      output_done[static_cast<std::size_t>(current_frame)] = 1;
+      order.push_back(current_frame);
+      output_successive(output_hint);
+    }
+  };
+
+  for (const int display : plan.coding_order) {
+    const PlannedFrame& f = plan.frames[static_cast<std::size_t>(display)];
+    // §7.23: an eligible picture in a slot that is about to be overwritten is
+    // output first.
+    for (int s = 0; s < plan.num_slots; ++s) {
+      if (((f.refresh_frame_flags >> s) & 1U) == 0U) continue;
+      if (eligible(s)) {
+        frame_buffers(s, -1, -1);
+      }
+    }
+    for (int s = 0; s < plan.num_slots; ++s) {
+      if (((f.refresh_frame_flags >> s) & 1U) == 0U) continue;
+      SlotMeta& m = meta[static_cast<std::size_t>(s)];
+      // §7.23: a key/dependent-switch frame marks only the first refreshed
+      // slot valid.
+      m.valid = !f.is_key || s == first_refreshed_slot(f.refresh_frame_flags);
+      m.frame = m.valid ? display : -1;
+      m.hint = static_cast<int>(f.display_order_hint);
+      m.implicit = f.implicit_output_frame;
+    }
+    if (f.immediate_output_frame) {
+      frame_buffers(-1, display, static_cast<int>(f.display_order_hint));
+    }
+  }
+  for (;;) {
+    int best = -1;
+    int best_hint = 0;
+    for (int s = 0; s < plan.num_slots; ++s) {
+      if (!eligible(s)) continue;
+      const int hint = meta[static_cast<std::size_t>(s)].hint;
+      if (best < 0 || hint < best_hint) {
+        best = s;
+        best_hint = hint;
+      }
+    }
+    if (best < 0) break;
+    output_slot(best);
+  }
+  for (int d = 0; d < count; ++d) {
+    if (output_done[static_cast<std::size_t>(d)] == 0) {
+      set_error(error, PlanError::kOutputMissingFrame);
+      return false;
+    }
+  }
+  for (std::size_t i = 0; i < order.size(); ++i) {
+    if (order[i] != static_cast<int>(i)) {
+      set_error(error, PlanError::kOutputOrderMismatch);
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 std::vector<int> Plan::coding_order_up_to_layer(int max_layer) const {
@@ -254,6 +499,16 @@ bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error) {
     set_error(error, PlanError::kBadGopSize);
     return false;
   }
+  if (config.num_gops < 1) {
+    set_error(error, PlanError::kBadGopSize);
+    return false;
+  }
+  if (config.tail_gop_size != 0 &&
+      (!is_power_of_two(config.tail_gop_size) ||
+       config.tail_gop_size > n)) {
+    set_error(error, PlanError::kBadGopSize);
+    return false;
+  }
   if (config.order_hint_bits < 1 || config.order_hint_bits > 16) {
     set_error(error, PlanError::kBadOrderHintBits);
     return false;
@@ -267,23 +522,37 @@ bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error) {
     return false;
   }
 
+  const int total = n * config.num_gops + config.tail_gop_size;
   std::vector<int> coding_order;
   std::vector<int> layer;
   std::vector<std::vector<int>> refs;
-  if (!build_schedule(config, coding_order, layer, refs, error)) {
+  std::vector<int> gop_starts;
+  std::vector<int> block_of;
+  if (!build_schedule(config, coding_order, layer, refs, gop_starts, block_of,
+                      error)) {
+    return false;
+  }
+  if (static_cast<int>(coding_order.size()) != total ||
+      static_cast<int>(gop_starts.size()) !=
+          config.num_gops + (config.tail_gop_size != 0 ? 1 : 0)) {
+    set_error(error, PlanError::kInternal);
     return false;
   }
 
-  plan.frames.assign(static_cast<std::size_t>(n), PlannedFrame{});
+  plan.frames.assign(static_cast<std::size_t>(total), PlannedFrame{});
   plan.coding_order = coding_order;
   plan.num_slots = config.num_slots;
+  plan.num_gops = config.num_gops;
+  plan.tail_gop_size = config.tail_gop_size;
+  plan.gop_starts = gop_starts;
 
-  for (int c = 0; c < n; ++c) {
+  for (int c = 0; c < total; ++c) {
     const int display = coding_order[static_cast<std::size_t>(c)];
     PlannedFrame& f = plan.frames[static_cast<std::size_t>(display)];
     f.display_index = display;
     f.coding_index = c;
     f.tlayer_id = layer[static_cast<std::size_t>(display)];
+    f.gop_index = block_of[static_cast<std::size_t>(display)];
     f.is_key = (c == 0);
     f.is_anchor = (f.tlayer_id == 0 && !f.is_key);
     f.display_order_hint =
@@ -292,6 +561,15 @@ bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error) {
     for (int i = 0; i < f.num_refs; ++i) {
       f.ref_display[i] = refs[static_cast<std::size_t>(display)][static_cast<std::size_t>(i)];
     }
+    // Output flags. The first picture is immediate; every later picture is
+    // implicit (monotonic_output_order_flag = 0). A chained plan is a normal
+    // implicit-output stream: the §7.21 output process emits it in display
+    // order. The pinned dav2d f9dafbc does not run the §7.21.6 drain for a
+    // non-key refresh that overwrites an implicit picture (a single-key
+    // 60-picture stream emits only the final store contents); chained streams
+    // are therefore validated with avmdec (docs/validation.md) until the pin
+    // moves. Do not make a block anchor immediate: that constrains the
+    // output floor and costs schedule freedom for a decoder defect.
     f.immediate_output_frame = (c == 0);
     f.implicit_output_frame = (c != 0);
   }
@@ -330,12 +608,12 @@ bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error) {
 
   // Slot allocation: prefer an empty slot, otherwise recycle the lowest slot
   // whose frame is no longer referenced by any later-coded frame.
-  std::vector<int> last_use(static_cast<std::size_t>(n), -1);
+  std::vector<int> last_use(static_cast<std::size_t>(total), -1);
   for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
     const PlannedFrame& f = plan.frames[static_cast<std::size_t>(plan.coding_order[c])];
     for (int i = 0; i < f.num_refs; ++i) {
       const int d = f.ref_display[i];
-      if (d >= 0 && d < n) {
+      if (d >= 0 && d < total) {
         last_use[static_cast<std::size_t>(d)] =
             std::max(last_use[static_cast<std::size_t>(d)], static_cast<int>(c));
       }
@@ -343,16 +621,38 @@ bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error) {
   }
   std::array<int, kNumRefFrames> occupant{};
   occupant.fill(-1);
-  std::vector<int> slot_of_display(static_cast<std::size_t>(n), -1);
+  std::vector<int> slot_of_display(static_cast<std::size_t>(total), -1);
+  // Display-order frontier: before coding position c, the smallest display
+  // index that has not been coded yet. Recycling is only safe when the
+  // occupant is strictly below the frontier: every lower picture is already
+  // coded, so the §7.21 process can drain them in display order before the
+  // overwrite. (The pinned dav2d does not run that drain for a non-key
+  // refresh; avmdec does. See docs/validation.md.)
+  std::vector<int> frontier(plan.coding_order.size(), 0);
+  {
+    std::vector<int> coding_index(static_cast<std::size_t>(total), -1);
+    for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
+      coding_index[static_cast<std::size_t>(plan.coding_order[c])] =
+          static_cast<int>(c);
+    }
+    int next = 0;
+    for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
+      while (next < total &&
+             coding_index[static_cast<std::size_t>(next)] <
+                 static_cast<int>(c)) {
+        ++next;
+      }
+      frontier[c] = next;
+    }
+  }
   for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
     const int display = plan.coding_order[c];
     PlannedFrame& f = plan.frames[static_cast<std::size_t>(display)];
     int chosen = -1;
     // Prefer an empty slot: an implicitly output frame must stay in the store
     // until the decoder emits it, so recycling is only used when the store is
-    // full. In that case pick the lowest slot whose frame is no longer
-    // referenced by any later-coded frame. Use num_slots >= display_count when
-    // implicit output must retain every frame (the decoder gate does).
+    // full. In that case pick the lowest display index below the coding
+    // frontier whose frame is no longer referenced by any later-coded frame.
     for (int s = 0; s < plan.num_slots; ++s) {
       if (occupant[static_cast<std::size_t>(s)] == -1) {
         chosen = s;
@@ -360,11 +660,16 @@ bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error) {
       }
     }
     if (chosen < 0) {
+      int best_display = -1;
       for (int s = 0; s < plan.num_slots; ++s) {
         const int occ = occupant[static_cast<std::size_t>(s)];
-        if (occ >= 0 && last_use[static_cast<std::size_t>(occ)] <= static_cast<int>(c)) {
+        if (occ < 0 || occ >= frontier[c] ||
+            last_use[static_cast<std::size_t>(occ)] > static_cast<int>(c)) {
+          continue;
+        }
+        if (best_display < 0 || occ < best_display) {
+          best_display = occ;
           chosen = s;
-          break;
         }
       }
     }
@@ -487,7 +792,12 @@ bool validate_plan(const Plan& plan, PlanError* error, int* bad_display_index,
 
   const PlanConfig& c = plan.config;
   const int n = plan.display_count();
-  if (!is_power_of_two(n) || n != c.gop_size || n > 16) {
+  const int expected_frames = c.gop_size * c.num_gops + c.tail_gop_size;
+  if (!is_power_of_two(c.gop_size) || c.gop_size > 16 ||
+      n != expected_frames || c.num_gops < 1 ||
+      (c.tail_gop_size != 0 &&
+       (!is_power_of_two(c.tail_gop_size) || c.tail_gop_size > c.gop_size)) ||
+      plan.num_gops != c.num_gops || plan.tail_gop_size != c.tail_gop_size) {
     return fail(PlanError::kBadGopSize, -1, -1);
   }
   if (c.order_hint_bits < 1 || c.order_hint_bits > 16) {
@@ -729,6 +1039,13 @@ bool validate_plan(const Plan& plan, PlanError* error, int* bad_display_index,
       return fail(drop_error, -1, -1);
     }
   }
+  // §7.21: every picture must be output exactly once, in display order. This
+  // is what the chained-GOP plan adds to the single-GOP carrier (the store is
+  // now smaller than the display count for 60-frame inputs).
+  PlanError output_error = PlanError::kOk;
+  if (!simulate_output_order(plan, &output_error)) {
+    return fail(output_error, -1, -1);
+  }
   return true;
 }
 
@@ -809,6 +1126,10 @@ const char* plan_error_name(PlanError error) {
       return "bad coding order";
     case PlanError::kBadDisplayOrder:
       return "bad display order";
+    case PlanError::kOutputMissingFrame:
+      return "output is missing a picture";
+    case PlanError::kOutputOrderMismatch:
+      return "output order is not display order";
     case PlanError::kInternal:
       return "internal invariant";
   }
@@ -833,6 +1154,15 @@ const char* dependency_mode_name(DependencyMode mode) {
       return "all-lower";
   }
   return "unknown";
+}
+
+bool chained_gops_enabled() {
+  const char* value = std::getenv("AV2ENC_TLAYERS_CHAIN");
+  if (value == nullptr || value[0] == '\0') {
+    return false;
+  }
+  // Default-off: only an explicit non-zero value enables the chained plan.
+  return value[0] != '0';
 }
 
 }  // namespace av2enc::inter::tlayers

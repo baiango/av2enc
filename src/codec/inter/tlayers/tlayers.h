@@ -87,6 +87,16 @@ struct PlanConfig {
   // Power of two. kHierarchicalP accepts 2..16; kHierarchicalB accepts 2..8
   // because max_tlayer_id is f(2) and a 16-frame B pyramid needs layer 4.
   int gop_size = 8;
+  // Chained GOPs under ONE key. `num_gops` blocks of `gop_size` display
+  // frames are coded in sequence; every block after the first starts with a
+  // P anchor (layer 0) that references the previous block's anchor, not a
+  // key. 1 reproduces the historical single-GOP plan byte for byte.
+  //
+  // The final block may be smaller (`tail_gop_size`, power of two) so a clip
+  // whose length is not a multiple of gop_size stays codable. 0 = no tail.
+  // kHierarchicalB accepts only one block (plan-only schedule).
+  int num_gops = 1;
+  int tail_gop_size = 0;
   Schedule schedule = Schedule::kHierarchicalB;
   DependencyMode dependency = DependencyMode::kAllLower;
   // Hierarchical-P reference count.  kTwo leaves the coding order and the
@@ -112,6 +122,8 @@ struct PlannedFrame {
   int display_index = 0;
   int coding_index = 0;
   int tlayer_id = 0;
+  // Chained-GOP block this display frame belongs to (0-based).
+  int gop_index = 0;
   bool is_key = false;
   bool is_anchor = false;  // P anchor (layer 0, no B split below it)
 
@@ -146,6 +158,10 @@ struct Plan {
   int num_layers = 1;
   int layer_frame_count[kMaxTLayers] = {0, 0, 0, 0};
   int num_slots = 0;
+  int num_gops = 1;
+  int tail_gop_size = 0;
+  // Display index where each chained block starts (size num_gops + tail?).
+  std::vector<int> gop_starts;
 
   // frames[display_index]
   std::vector<PlannedFrame> frames;
@@ -199,13 +215,20 @@ enum class PlanError {
   kDependencyMapIncomplete,
   kBadCodingOrder,
   kBadDisplayOrder,
+  kOutputMissingFrame,
+  kOutputOrderMismatch,
   kInternal,
 };
 
-// Builds and self-validates a complete GOP. Returns false and sets *error on
+// Builds and self-validates a complete plan. Returns false and sets *error on
 // failure. The explicit gate is validate_plan(); callers must not write bits
 // unless it passes.
 bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error);
+
+// Default-off gate for the chained (single-key) multi-GOP plan. The CLI only
+// accepts --video-tlayers 8 --video-gops M > 1 when this is on, and the
+// historical one-GOP path is byte-identical when it is off.
+bool chained_gops_enabled();
 
 // Structural validation + full decoder-side replay of the coding order:
 // reference availability, slot identity, TLayerDependencyMap, §7.23 refresh and

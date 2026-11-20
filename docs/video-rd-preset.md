@@ -1,4 +1,4 @@
-# CPU video RD preset (`--video-rd-preset quality`)
+# CPU video RD presets (`--video-rd-preset quality|best`)
 
 `--video-rd-preset quality` expands to the opt-in CPU tool set that measured
 best on the project's CPU quality gate (480x240, 30 fps, 60 frames, ~100 kbps).
@@ -34,6 +34,63 @@ model, the lambda/depth sweep and the measured table.
 It is CPU `--video` only (single tile, P-only chain); `--still` and
 `--video-gpu` reject it. It does not change `--qp`, the TX lambda (256) or any
 default.
+
+## The lead stack (`--video-rd-preset best`)
+
+`--video-rd-preset best` is the measured **flat lead stack**: the whole
+`--fast-decode` aggregate (so it implies `--video` and the `quality` row)
+plus the nine env-only RD tools, the drift-refresh allocation point the stack
+was measured at, and the funded key spend:
+
+| Setting | Value |
+|---|---|
+| `AV2ENC_EFF_PERC` | `1` (exact-rate / BA-shaped perceptual pipe) |
+| `AV2ENC_RD_UVFULL` | `1` (full chroma intra mode search) |
+| `AV2ENC_RD_UVLEVEL` | `1` (chroma coefficient-level RD) |
+| `AV2ENC_RD_KEY_TX` | `1` (key TX/level exact-rate RD) |
+| `AV2ENC_TX_DETAIL_SEARCH_TAIL` | `1` (band-gated tail TX descent) |
+| `AV2ENC_TX_DETAIL_MIN` | `0.50` (2-4 px band share threshold) |
+| `--video-eff-perc` | the same exact-rate pipe as a CLI form |
+| `--video-rd-driver` | sequential key-frame RD driver |
+| `--video-head-tx` / `--video-tail-tx` | display-order exact-rate TX windows |
+| `--video-key-qp-offset` | `-39` (a caller value, including `0`, wins) |
+| `--video-drift-refresh-threshold` | `1.5` (a caller value wins) |
+| `--video-drift-refresh-budget` | `3250` (a caller value wins) |
+
+The five env-only gates are set by the preset application, which runs during
+validation **before the first encoder reads its static configs**. An explicit
+env value always wins, including `0`, so every arm stays inspectable:
+
+```sh
+# the preset (byte-identical to the explicit command below)
+av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
+    --frames 60 --qp 116 --cpu-threads 8 --video-rd-preset best
+
+# the explicit stack it expands to
+env AV2ENC_EFF_PERC=1 AV2ENC_RD_UVFULL=1 \
+    AV2ENC_TX_DETAIL_SEARCH_TAIL=1 AV2ENC_TX_DETAIL_MIN=0.50 \
+    AV2ENC_RD_KEY_TX=1 AV2ENC_RD_UVLEVEL=1 AV2ENC_RD_DRIVER=1 \
+    AV2ENC_RD_HEAD_TX=1 AV2ENC_RD_TAIL_TX=1 \
+    av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/e.ivf \
+    --video --frames 60 --qp 116 --cpu-threads 8 --fast-decode \
+    --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250 \
+    --video-key-qp-offset -39
+```
+
+`tools/gate_video_nightly.sh` asserts `cmp` equality at QP 114/116/118, that
+`AV2ENC_RD_UVLEVEL=0` changes the stream, and that the preset decodes under the
+pinned `dav2d --strict 1`.
+
+**Verdict: LEAD, not a KEEP.** The funded key spend on top of the merged
+head/tail exact-rate base composes to **K 86.33 at 100 kbps, +0.097 over the
+86.232 flat aggregate** (base bracket 86.236/86.161/85.801 at QP 114/116/118 vs
+k39 86.447/86.608/85.889 at QP 116/118/120). The head/tail TX already spends the
+same driver headroom, so the fundable bytes are fungible: the identical spend
+unfunded *loses* 0.78 K, and adding both the -39 offset and the +0.540
+rd-spend result would double-count the same bytes. The gain is also inside the
+±0.2-1 K adjacent-QP ripple, so it is not a new quality level; it stays an
+explicit opt-in row (`docs/negative-results.md`). The chained B path remains
+research-only and does not change this.
 
 ## Measured RD
 

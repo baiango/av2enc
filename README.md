@@ -628,6 +628,12 @@ Current gates:
   rejects `--video-gpu`, so the default and GPU streams keep the historical CPU
   decisions (`a1d0dba1...`, 25,009 B). The measured tables, per-tool
   contributions and exact flags are in `docs/video-nightly.md`.
+  Opt-in lead stack: `--video-rd-preset best` layers the nine measured env-only
+  RD tools, the head/tail exact-rate TX, the key RD driver and
+  `--video-key-qp-offset -39` on the fast-decode aggregate. It measures
+  **K 86.33 at 100 kbps, +0.097 over the flat aggregate** — a **LEAD, not a
+  KEEP** (inside the adjacent-QP ripple and sharing the driver headroom).
+  See `docs/video-rd-preset.md`.
 - **GPU calibration:** same 240p30 decisions at QP 189, with **zero** drift
   allowed: the gate compares the GPU IVF against the CPU stream with `cmp` and
   requires byte-identical output and decoded planes. The QP189 stream is

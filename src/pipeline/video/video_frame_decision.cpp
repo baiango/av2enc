@@ -250,6 +250,9 @@ bool InterFrameEncoder::decide(std::string& error) {
   const bool whole_picture =
       tile_w_ <= 0 || tile_w_ >= static_cast<int>(source_.width);
   if (!tip_leaf_armed_ && whole_picture) tx_detail::begin_picture();
+  // Chained B: the band-gated descent arms on display order, not coding order.
+  // -1 on the flat chain keeps the historical picture ordinal.
+  tx_detail::display_ordinal() = display_ordinal_;
   if (options_.trace && whole_picture && !tip_leaf_armed_) {
     std::cerr << "  tx-detail picture " << tx_detail::picture_ordinal()
               << " tail=" << (tx_detail::tail_armed() ? 1 : 0)
@@ -346,7 +349,7 @@ bool InterFrameEncoder::decide(std::string& error) {
     // 32x32 -> 32x16 -> 16x16), so the sub-16 descent needs depth 5 or it can
     // never fire on the blocks it is meant for.  Still below the CLI cap's
     // legal range and below the encoder's 8x8 inter floor.
-    if (!keyframe_ && tail_tx::tail_armed(tx_detail::picture_ordinal()) &&
+    if (!keyframe_ && tail_tx::tail_armed(arming_ordinal()) &&
         tail_tx::config().act > 0.0) {
       poptions.max_depth = std::max(
           poptions.max_depth,
@@ -377,7 +380,7 @@ bool InterFrameEncoder::decide(std::string& error) {
   // 8x4 / 4x4 transform partitions of an 8x8-class leaf.  The driver's
   // AV2ENC_RD_DRIVER_ACT is the same screen on the key picture.
   const bool tail_act_descent =
-      !keyframe_ && tail_tx::tail_armed(tx_detail::picture_ordinal()) &&
+      !keyframe_ && tail_tx::tail_armed(arming_ordinal()) &&
       tail_tx::config().act > 0.0;
   const double tail_act = tail_tx::config().act;
   // One leaf model for both solvers.  It is exactly the historical keyframe
@@ -3436,7 +3439,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       // re-searches with the uncalibrated model and the coefficient trellis,
       // then scores both plans with the driver's assembled-block BA-shaped D
       // and the live §8.2.6 interval rate.  Everything is inside the gate.
-      if (tail_tx::tail_armed(tx_detail::picture_ordinal()) && pipe_on &&
+      if (tail_tx::tail_armed(arming_ordinal()) && pipe_on &&
           !keyframe_ && !chroma_part && out.res_y.searched &&
           !out.cand.compound && !out.interintra && !seg_skip_leaf) {
         const tail_tx::Config& tcfg = tail_tx::config();

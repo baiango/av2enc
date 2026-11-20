@@ -65,6 +65,7 @@ repro and kept rejected.
 | 34 | `cfl_ds_filter_index` 1..3 | DONE `610e92b` (format video core; M2 8-bit 4:2:0 rejects) |
 | 35 | Screen-content force-on, `reduce_pb_aspect_ratio` | DONE (`--video-scc-force`, `--video-force-integer-mv`, `--video-reduce-pb-aspect`; `gate_video_seq_surface.sh`) |
 | 36 | Arbitrary frame dimensions | DONE `8042ff2` (`gate_video_any_dims.sh`; 4:2:0 even W/H, 4:2:2 even W, 4:4:4 any; GPU non-/8 rejected) |
+| 37 | Chained single-key hierarchical P/B across GOPs (`--nightly-b`; raw `AV2ENC_TLAYERS_CHAIN`/`_B`), with the bottom-edge path, partition-RD and anchor refresh | EXPRESSIBLE + decoder-exact (`avmdec` for the 60-frame chains; `gate_video_tlayers_chain.sh` 15/15). `--nightly-b` **85.47 K** at 100 kbps (+8.51 over the edge+key+BAWP arm 76.96, +6.43 over the flat edge control 79.04, −0.76 vs 86.232). Layer-QP vectors and the selective anchor trigger measured below the +0.15 gate and are not in the preset; the key RD driver, key-QP −50, eff-perc pipe, tail TX, key TX, UV pair and band descent are. `docs/tlayers-chain.md` |
 
 ## Hard dav2d rejections (out of scope; stay documented)
 

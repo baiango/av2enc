@@ -54,7 +54,7 @@ Header: `src/encoder/inter/tlayers/tlayers.h`
 
 | Symbol | Purpose |
 |---|---|
-| `PlanConfig` | `gop_size`, `schedule`, `dependency`, `explicit_dependency_map`, `start_order_hint`, `order_hint_bits`, `num_slots`, `base_q_idx` |
+| `PlanConfig` | `gop_size`, `num_gops`, `tail_gop_size`, `schedule`, `dependency`, `explicit_dependency_map`, `start_order_hint`, `order_hint_bits`, `num_slots`, `base_q_idx` |
 | `Schedule` | `kHierarchicalP` (single-reference carrier, M2-encodable), `kHierarchicalB` (two references) |
 | `DependencyMode` | `kDirect` (code only direct reference edges), `kAllLower` (transitive closure = every lower layer) |
 | `PlannedFrame` | display/coding index, `tlayer_id`, absolute and signalled order hint, refs (display, slot, saved hint), refresh slot/flags, output flags, `obu_tlayer_id()` |
@@ -98,8 +98,10 @@ hints:    0   1   2   3   4   5   6   7
 
 ### `kHierarchicalB`
 
-Dyadic B pyramid, two references per interior frame. Encoder-side planning and
-validation only; the M2 block layer is single-reference. `gop_size = 8`:
+Dyadic B pyramid, two references per interior frame. The block layer carries it
+as a two-entry explicit reference map: `reference_select = 0`, and each leaf
+picks one of the two references with single-reference prediction. The
+compound/masked-compound form is not carried. `gop_size = 8`:
 
 ```text
 display:  0   1   2   3   4   5   6   7
@@ -115,6 +117,61 @@ plan otherwise. "Forward reference" in this component means a reference to a
 intentionally references future-display frames that were coded earlier (for
 example display 2 references display 4), and those are legal because layer 0
 was decoded first.
+
+### Chained GOPs (`num_gops > 1`)
+
+`PlanConfig::num_gops` concatenates that many blocks under a single key;
+`tail_gop_size` (0, 2, 4, …) appends one smaller final block so a clip whose
+length is not a multiple of `gop_size` stays codable. Only display 0 is a key.
+
+* **P schedule.** The first coded picture of every later block is a regular
+  layer-0 P anchor that references the previous block (the `kTwo` carrier picks
+  the two nearest already-coded layer-0 pictures; `kSingle` picks the most
+  recent picture with a legal layer).
+* **B schedule.** A later block's past anchor (local 0) references the previous
+  block's future anchor (local N−1); the future anchor references the past
+  anchor; the interior B pictures keep the dyadic past/future pattern. The
+  layer-0 chain is `key → future0 → past1 → future1 → …` with no CLK.
+
+`num_slots` may be smaller than the display count, so the plan recycles slots;
+the allocator only reuses a picture below the coding-order frontier and never a
+live reference. `validate_plan()` simulates the §7.21 output process and
+rejects a plan that loses a picture or emits it out of display order.
+`build_plan` rejects an `OrderHintBits` span that cannot reconstruct the
+chained cross-block edges; the pipeline uses 5 bits for chained 16-picture
+plans because the P carrier's `d8 → d0` edge is a half-span at 4 bits (the
+encoder's modulo `relative_dist` vs the decoder's absolute §5.18.3.1 differ in
+sign at exactly 8 pictures).
+
+Output flags: display 0 is `immediate_output_frame = 1`; every later picture is
+implicit. The pinned `dav2d` f9dafbc has a §7.21.6 drain defect for a non-key
+refresh that overwrites an implicit picture (a 60-picture chain emits 17/60),
+so chained streams are validated with `tools/validate_avmdec.py`
+(`docs/validation.md`). The 16-picture plans fit the store and decode on both
+decoders.
+
+**Edge-capable reference bank.** The CLI carrier stores the full `Plane`
+reconstruction per display, not the cropped `VideoReconFrame`, and calls
+`InterFrameEncoder::pad_edge_recon()` after the in-loop filters. That makes
+`--video-edge-inter --video-edge-mask` exact on the chained form: the bottom
+band codes inter, the padded rows survive into the next picture's MC, and the
+16-picture B proof halves at the same QP (25,662 → 13,040 B). The key-QP
+offset and BAWP/carrier are also legal on the chain.
+
+`AV2ENC_TLAYERS_CHAIN` gates the chained CLI form and `AV2ENC_TLAYERS_B`
+selects the B block; see
+[`docs/tlayers-chain.md`](../../../../docs/tlayers-chain.md) for the measured
+result (both schedules decoder-exact; `--nightly-b` **85.47 K** at 100 kbps vs
+43.36 no-edge and the 79.04 flat edge control; 86.232 target).
+
+`--nightly-b` is the opt-in aggregate for the chained B form: it sets the
+8-frame B block, edge-inter/mask, the key-QP offset, BAWP/carrier,
+partition-RD (probe per reference, min), the layer-0 anchor residual, the
+sequential key-frame RD driver, the eff-perc pipe, the display-order tail TX,
+the key TX/chroma level RD, the UV full+level pair and the band-gated TX
+descent, on top of the reordering-legal measured tool set. `--video-tlayer-qp-offsets` and
+`--video-tlayer-anchor-residual` are the raw knobs; the layer-QP vector was
+measured neutral/negative on top of partition-RD and is not in the preset.
 
 ## Dependency maps
 
@@ -238,12 +295,16 @@ compared byte-for-byte against `av2enc::video::make_sequence_header_obu()` /
 
 ## Limitations
 
-1. One GOP. `PlanConfig::gop_size` frames, one key, no cross-GOP references.
-2. At most two references per frame; the B schedule is plan-only until the M2
-   block layer supports compound references.
+1. A single plan codes at most 16 reference slots; longer chained clips recycle
+   slots under the display-order frontier rule.
+2. At most two references per frame; the B schedule is carried as a two-entry
+   explicit map with per-leaf single-reference selection (compound prediction
+   is not carried).
 3. `max_mlayer_id = 0`; no embedded/multi-layer dependency table.
 4. No leading pictures, switch/bridge/SEF frames, or long-term references.
-5. Implicit-output retention is not modelled; use `num_slots >= display_count()`.
+5. Implicit-output retention is modelled for scheduling, but the pinned
+   `dav2d` does not drain on a non-key overwrite; use
+   `tools/validate_avmdec.py` for chained streams.
 6. Explicit dependency maps are spec-exact but the pinned decoder nightly parses
    a later syntax; see the caveat above.
 7. `validate_plan()` checks relative bitstream validity, not decoder timing.

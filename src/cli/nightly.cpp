@@ -3,6 +3,7 @@
 // therefore the stream) is unchanged.
 #include "cli/options.h"
 
+#include <cstdlib>
 #include <string>
 
 // Expansion of the measured video RD presets (--video-rd-preset <name>).  The
@@ -13,13 +14,21 @@
 //
 // The 'quality' row is measured on the CPU --video reference at the 240p30 /
 // 100 kbps point (see docs/video-rd-preset.md): a single tile, P-only chain.
+// The 'best' row is the measured flat lead stack: the whole --fast-decode
+// aggregate plus the nine env-only RD tools, the drift-refresh allocation
+// point and --video-key-qp-offset -39.  It is a LEAD (K 86.33, +0.097 over the
+// 86.232 flat aggregate), not a KEEP.
 bool apply_video_rd_preset(Options& options, std::string& error) {
   if (options.video_rd_preset.empty()) return true;
-  if (options.video_rd_preset != "quality") {
-    error = "--video-rd-preset expects 'quality' (the only measured row)";
+  const bool best = options.video_rd_preset == "best";
+  if (options.video_rd_preset != "quality" && !best) {
+    error = "--video-rd-preset expects 'quality' or 'best' (the measured rows)";
     return false;
   }
-  if (!options.video) {
+  // 'best' is the flat --fast-decode aggregate plus the env-only lead tools, so
+  // it implies the video path; 'quality' is the plain preset and still requires
+  // an explicit --video.
+  if (!options.video && !best) {
     error = "--video-rd-preset applies to the CPU --video encoder; pass "
             "--video (the --still writer pins its own tool set)";
     return false;
@@ -34,6 +43,55 @@ bool apply_video_rd_preset(Options& options, std::string& error) {
   options.video_ccso = true;
   options.video_tx_search = true;
   options.video_intra_full = true;
+  if (!best) return true;
+
+  // 'best' also expands the --fast-decode aggregate through its one
+  // implementation: this sets the flag, so the caller runs
+  // apply_video_nightly() next, and that expansion accepts 'best' as its
+  // preset row.
+  if (options.rc_mode != "cqp") {
+    error = "--video-rd-preset best is measured on the fixed --qp stream; use "
+            "--rc cqp";
+    return false;
+  }
+  options.video = true;
+  options.fast_decode = true;
+  // Reference-intro allocation: the lead stack's funded key spend.  An
+  // explicit --video-key-qp-offset wins (0 is a valid ablation) and
+  // --video-key-qp-offset-off drops it, exactly like --nightly-b.
+  if (!options.video_key_qp_offset_given &&
+      !options.video_key_qp_offset_off) {
+    options.video_key_qp_offset = -39;
+    options.video_key_qp_offset_given = true;
+  }
+  // The measured head/tail allocation point the lead stack was measured at;
+  // an explicit CLI value wins.
+  if (!flag_given(options, "--video-drift-refresh-threshold")) {
+    options.video_drift_refresh_threshold = 1.5;
+  }
+  if (!flag_given(options, "--video-drift-refresh-budget")) {
+    options.video_drift_refresh_budget = 3250;
+  }
+  // The five env-only tools.  They are read lazily on the first decision,
+  // after this expansion and before the first encoder runs, so the static
+  // configs they feed see the preset values.  An explicit env value wins,
+  // including "0" for a caller ablation, so the stack stays inspectable.
+  const auto set_gate = [](const char* name, const char* value) {
+    if (std::getenv(name) == nullptr) {
+      setenv(name, value, 1);
+    }
+  };
+  set_gate("AV2ENC_RD_UVFULL", "1");
+  set_gate("AV2ENC_RD_UVLEVEL", "1");
+  set_gate("AV2ENC_RD_KEY_TX", "1");
+  set_gate("AV2ENC_TX_DETAIL_SEARCH_TAIL", "1");
+  set_gate("AV2ENC_TX_DETAIL_MIN", "0.50");
+  // The four CLI-form lead tools: the exact-rate pipe, the key-frame RD
+  // driver and the display-order head/tail TX windows.
+  options.video_eff_perc = true;
+  options.video_rd_driver = true;
+  options.video_head_tx = true;
+  options.video_tail_tx = true;
   return true;
 }
 
@@ -57,7 +115,8 @@ bool apply_video_nightly(Options& options, std::string& error) {
   options.video = true;
   if (options.video_rd_preset.empty()) {
     options.video_rd_preset = "quality";
-  } else if (options.video_rd_preset != "quality") {
+  } else if (options.video_rd_preset != "quality" &&
+             options.video_rd_preset != "best") {
     error = "--fast-decode wraps the measured 'quality' preset; drop the other "
             "--video-rd-preset value";
     return false;
@@ -206,13 +265,13 @@ bool apply_video_nightly(Options& options, std::string& error) {
   return true;
 }
 
-// --nightly-b: the chained single-key B structure (docs/tlayers-chain.md).
-// Research opt-in: it is decoder-exact under tools/validate_avmdec.py while
-// the pinned dav2d has the §7.21.6 drain defect, and it measured -42.9 K
-// against the flat aggregate at 100 kbps because every reordering schedule
-// rejects --video-edge-inter.  It is NOT the default and NOT implied by
-// --fast-decode.  It sets the tlayers/B chain gates and validates as a
-// single-tile, single-key stream; the caller passes --video-gops.
+// --nightly-b: the measured chained single-key hierarchical-B aggregate.
+// Expands the reordering-legal tool set plus the ports measured on the chain
+// (edge path, key-QP offset, BAWP/carrier, partition-RD, anchor residual).
+// The caller still supplies --video-gops and the frame count.  Research
+// opt-in: decoder-exact under tools/validate_avmdec.py while the pinned dav2d
+// has the §7.21.6 drain defect.  It is NOT the default and NOT implied by
+// --fast-decode.
 bool apply_video_nightly_b(Options& options, std::string& error) {
   if (!options.nightly_b) return true;
   if (options.m1 || options.still_gpu) {
@@ -220,14 +279,99 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
     return false;
   }
   if (options.video_gpu) {
-    error = "--nightly-b is CPU-only: drop --video-gpu";
+    error = "--nightly-b is CPU-only: the CUDA backend keeps the historical "
+            "decisions (drop --video-gpu)";
+    return false;
+  }
+  if (options.fast_decode) {
+    error = "--nightly-b and --fast-decode are separate measured aggregates; "
+            "pick one";
+    return false;
+  }
+  if (options.rc_mode != "cqp") {
+    error = "--nightly-b layers on the fixed --qp stream; use --rc cqp";
+    return false;
+  }
+  if (options.video_gops <= 1) {
+    error = "--nightly-b is the chained single-key form: pass --video-gops M "
+            "> 1 (M 8-frame B blocks)";
     return false;
   }
   options.video = true;
-  if (options.video_tlayers == 0) {
-    error = "--nightly-b codes the chained B structure: pass --video-tlayers 8 "
-            "(and --video-gops M for M 8-frame blocks)";
+  if (options.video_rd_preset.empty()) {
+    options.video_rd_preset = "quality";
+  } else if (options.video_rd_preset != "quality") {
+    error = "--nightly-b wraps the measured 'quality' preset; drop the other "
+            "--video-rd-preset value";
     return false;
   }
+  if (!apply_video_rd_preset(options, error)) return false;
+
+  // Sequential key-frame RD driver: the one key is measured in the
+  // reconstruction its layout builds before the block anchors predict from it.
+  options.video_rd_driver = true;
+  // Exact-rate / BA-shaped pipe and the tail exact-rate TX window: the
+  // measured head/tail delta on the B carrier is the tail alone.
+  options.video_eff_perc = true;
+  options.video_tail_tx = true;
+
+  // The chained 8-frame dyadic B block with one key.
+  options.video_tlayers = 8;
+  options.video_tlayers_chain = true;
+  options.video_tlayers_b = true;
+
+  // The measured chained-form ports.
+  options.video_edge_inter = !options.video_edge_inter_off;
+  options.video_edge_mask = !options.video_edge_mask_off;
+  if (!options.video_key_qp_offset_given && !options.video_key_qp_offset_off) {
+    options.video_key_qp_offset = -50;
+    options.video_key_qp_offset_given = true;
+  }
+  options.video_bawp = !options.video_bawp_off;
+  options.video_bawp_carrier = !options.video_bawp_off;
+  options.video_partition_rd = !options.video_partition_rd_off;
+  // Nightly base lambda; with --video-qp-lambda the probe uses the measured
+  // QP fit (the explicit flag would pin the constant instead).
+  if (!flag_given(options, "--video-partition-rd-lambda")) {
+    options.video_partition_lambda = 2.75e-6;
+  }
+  if (!flag_given(options, "--video-partition-rd-depth")) {
+    options.video_partition_depth = 1;
+  }
+  // Drift refresh: force the inter residual on the chained layer-0 anchors.
+  options.video_tlayer_anchor_residual = true;
+
+  // B_LEGAL: the reordering-legal measured tool set (docs/bframes.md).
+  options.video_ccso_rd = true;
+  options.video_ccso_bands = 6;
+  options.video_ccso_lambda = 22.0;
+  options.video_ccso_refit_passes = 2;
+  options.video_ccso_unit_bits = 2.0;
+  options.video_rdoq = true;
+  options.video_cdef = true;
+  options.video_cdef_rd = true;
+  options.video_leaf_rd = true;
+  options.video_subpel_eighth = true;
+  options.video_key_intra_txpart = true;
+  options.video_qp_lambda = true;
+  options.avg_cdf = true;
+  options.adaptive_cdf = true;
+  options.cdf_continuity = true;
+  options.video_tile_flush_min = true;
+  options.video_ccso_header_rd = true;
+
+  // The four measured env-only research gates.  They are read lazily on the
+  // first decision, after this expansion.  An explicit env value wins,
+  // including "0" for a caller ablation, so the aggregate stays inspectable.
+  const auto set_gate = [](const char* name, const char* value) {
+    if (std::getenv(name) == nullptr) {
+      setenv(name, value, 1);
+    }
+  };
+  set_gate("AV2ENC_RD_KEY_TX", "1");
+  set_gate("AV2ENC_RD_UVFULL", "1");
+  set_gate("AV2ENC_RD_UVLEVEL", "1");
+  set_gate("AV2ENC_TX_DETAIL_SEARCH_TAIL", "1");
+  set_gate("AV2ENC_TX_DETAIL_MIN", "0.50");
   return true;
 }

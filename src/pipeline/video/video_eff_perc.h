@@ -69,8 +69,15 @@ inline bool parse_off(const char* value) {
   return equal("false") || equal("off") || equal("no");
 }
 
+// Process-wide CLI flag set by the InterFrameEncoder constructor from
+// VideoOptions::eff_perc (--video-eff-perc / --nightly-b).
+inline bool& cli_flag() {
+  static bool value = false;
+  return value;
+}
+
 inline bool enabled() {
-  static const bool value = [] {
+  static const bool env = [] {
     // AV2ENC_PIPE_BA is a superset pipeline: it reuses this exact-rate front
     // end (the live-CDF probe, the R19 interval coefficient term, top-2
     // re-scoring) and the keyframe intra TX surface, and replaces the CSF with
@@ -79,7 +86,7 @@ inline bool enabled() {
     return !parse_off(std::getenv("AV2ENC_EFF_PERC")) ||
            pipe_ba::enabled();
   }();
-  return value;
+  return env || cli_flag();
 }
 
 inline double env_double(const char* name, double fallback) {

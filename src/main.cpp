@@ -899,12 +899,25 @@ bool validate_video_sequence_length(const Options& options,
       return false;
     }
   }
-  if (options.video_tlayers != 0 &&
-      frame_count != static_cast<std::size_t>(options.video_tlayers)) {
-    error = "--video-tlayers codes one closed GOP: pass exactly " +
-            std::to_string(options.video_tlayers) + " input frames; got " +
-            std::to_string(frame_count);
-    return false;
+  if (options.video_tlayers != 0) {
+    const std::size_t gop = static_cast<std::size_t>(options.video_tlayers);
+    if (options.video_gops > 1 &&
+        tlayers_chain_enabled(options)) {
+      const std::size_t full =
+          gop * static_cast<std::size_t>(options.video_gops);
+      if (frame_count != full && frame_count != full + 4U) {
+        error = "--video-tlayers --video-gops " +
+                std::to_string(options.video_gops) + " codes " +
+                std::to_string(full) + " frames (plus an optional 4-frame tail "
+                "block); got " + std::to_string(frame_count);
+        return false;
+      }
+    } else if (frame_count != gop) {
+      error = "--video-tlayers codes one closed GOP: pass exactly " +
+              std::to_string(options.video_tlayers) + " input frames; got " +
+              std::to_string(frame_count);
+      return false;
+    }
   }
   if (options.b_frames != 0) {
     const std::size_t per_gop = static_cast<std::size_t>(options.b_frames) + 2U;
@@ -1808,6 +1821,18 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.ras = options.video_ras;
   video_options.temporal_layers = options.video_tlayers;
   video_options.tlayer_drop = options.video_tlayer_drop;
+  video_options.tlayer_chain = tlayers_chain_enabled(options);
+  video_options.tlayer_b = tlayers_b_enabled(options);
+  video_options.rd_driver = options.video_rd_driver;
+  video_options.eff_perc = options.video_eff_perc;
+  video_options.tail_tx = options.video_tail_tx;
+  video_options.head_tx = options.video_head_tx;
+  video_options.tlayer_qp_active = options.video_tlayer_qp_given;
+  video_options.tlayer_qp_offset = options.video_tlayer_qp_offset;
+  video_options.tlayer_anchor_residual = options.video_tlayer_anchor_residual;
+  video_options.tlayer_refresh_threshold_db =
+      options.video_tlayer_refresh_threshold;
+  video_options.tlayer_refresh_budget = options.video_tlayer_refresh_budget;
   video_options.force_single_block = options.video_force_single;
   video_options.skip_collapse = options.video_skip_collapse;
   video_options.sb128 = options.video_sb128;
@@ -2124,6 +2149,11 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   if (options.video_drift_refresh) {
     std::cout << ", drift refresh frames " << result.drift_refresh_frames
               << " (" << result.drift_refresh_bytes << " extra payload bytes)";
+  }
+  if (options.video_tlayer_anchor_residual) {
+    std::cout << ", anchor refresh " << result.tlayer_anchor_refresh << "/"
+              << result.tlayer_anchor_total << " (" << result.drift_refresh_bytes
+              << " extra payload bytes)";
   }
   // --video-drift-refresh block end.
   if (result.amvd_selected != 0) {

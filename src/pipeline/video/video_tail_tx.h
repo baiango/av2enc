@@ -175,11 +175,21 @@ inline double source_activity(const std::uint8_t* src, int width, int height,
 // by the TIP second pass).  Passed in by the caller so this header stays
 // independent of the frame encoder's declaration order.  -1 means the ordinal
 // is unavailable.
+// Process-wide CLI modes set by the InterFrameEncoder constructor from
+// VideoOptions::tail_tx/head_tx (--video-tail-tx / --video-head-tx /
+// --nightly-b).  Bit 0 = tail window, bit 1 = head window.
+inline int& cli_mode() {
+  static int value = 0;
+  return value;
+}
+
 inline bool tail_armed(int ordinal) {
   const Config& cfg = config();
-  const bool tail = cfg.on && ordinal >= cfg.first && ordinal <= cfg.last;
+  const bool tail =
+      (cfg.on || (cli_mode() & 1) != 0) && ordinal >= cfg.first &&
+      ordinal <= cfg.last;
   if (tail) return true;
-  if (head_enabled()) {
+  if (head_enabled() || (cli_mode() & 2) != 0) {
     return ordinal >= head_first() && ordinal <= head_last();
   }
   return false;
@@ -201,7 +211,7 @@ struct Counters {
 
   ~Counters() {
     const Config& cfg = config();
-    if (!cfg.on && !cfg.stats) return;
+    if (!cfg.on && !cfg.stats && cli_mode() == 0) return;
     std::fprintf(
         stderr,
         "rd-tail-tx: leaves=%lld exact_ok=%lld failed=%lld kept=%lld "

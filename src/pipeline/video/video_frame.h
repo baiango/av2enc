@@ -22,6 +22,7 @@
 #include <span>
 #include <string>
 #include <vector>
+#include <array>
 
 #include "formats/format.h"
 #include "codec/transform/delta_q/dcdeltaq.h"
@@ -91,6 +92,17 @@ struct VideoOptions {
   // path. Used by the opt-in --rc crf/vbr path; the frame header and the
   // coefficient-CDF qctx slice both follow the per-frame value.
   std::vector<std::uint8_t> frame_base_q_idx;
+  // Per-temporal-layer base_q_idx offsets (layers 0..3), applied by the
+  // chained --video-tlayers --video-gops carrier in coding order on top of the
+  // per-frame plan above. Default off.
+  std::array<int, 4> tlayer_qp_offset = {0, 0, 0, 0};
+  bool tlayer_qp_active = false;
+  // Force the inter residual on the chained layer-0 anchors (drift probe).
+  bool tlayer_anchor_residual = false;
+  // Selective anchor refresh: 0 dB forces every layer-0 anchor; >0 triggers
+  // only when the anchor's primary reference is that far below the key.
+  double tlayer_refresh_threshold_db = 0.0;
+  int tlayer_refresh_budget = 3250;
   // Opt-in per-frame drift refresh (--video-drift-refresh).  The flat key+P
   // chain codes almost every P leaf as skip, so a prediction error that a
   // frame inherits from its reference is never repaid: per-frame PSNR decays
@@ -343,6 +355,14 @@ struct VideoOptions {
   //   leaf = variance + lambda_sse * leaf_bits,  split = lambda_sse * 2 bits.
   // All pinned default streams keep the historical path.
   bool partition_rd = false;
+  // Sequential key-frame RD driver (--video-rd-driver / AV2ENC_RD_DRIVER).
+  // Key picture only; inert elsewhere.
+  bool rd_driver = false;
+  // Exact-rate / BA-shaped perceptual pipe (CLI form; AV2ENC_EFF_PERC env).
+  bool eff_perc = false;
+  // Head/tail exact-rate TX windows (CLI forms; AV2ENC_RD_*_TX env).
+  bool tail_tx = false;
+  bool head_tx = false;
   // SSE-per-bit scale for the measured partition probe:
   //   lambda = partition_probe_lambda * step^2.
   // The 1.1e-5 default was calibrated at the 240p30 / ~100 kbps point; the
@@ -454,6 +474,10 @@ struct VideoOptions {
   // Hierarchical-P temporal layers (§5.4.1 max_tlayer_id, §5.2.2
   // obu_tlayer_id).  0 = off.  N = one closed GOP of N frames (4 or 8).
   int temporal_layers = 0;
+  // Chained single-key form (--nightly-b or AV2ENC_TLAYERS_CHAIN=1) and the
+  // dyadic B block selection (--nightly-b or AV2ENC_TLAYERS_B=1).
+  bool tlayer_chain = false;
+  bool tlayer_b = false;
   // Emit only the temporal layers <= this id (a decodable substream).  -1
   // keeps every layer.
   int tlayer_drop = -1;
@@ -773,6 +797,9 @@ struct VideoSequenceResult {
   // inter payload).
   std::uint64_t drift_refresh_frames = 0;
   std::uint64_t drift_refresh_bytes = 0;
+  // Chained anchor refresh evidence: layer-0 anchors seen / forced.
+  std::uint64_t tlayer_anchor_total = 0;
+  std::uint64_t tlayer_anchor_refresh = 0;
   // Per-frame lpl36 error of the reconstruction against its source (lower is
   // better), one entry per coded frame, when VideoOptions::lpl_refresh_measure
   // is set.
