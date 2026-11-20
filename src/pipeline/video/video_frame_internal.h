@@ -28,6 +28,7 @@
 #include "pipeline/video/video_temporal.h"
 #include "pipeline/video/video_tx_search.h"
 #include "pipeline/video/video_tail_tx.h"
+#include "pipeline/video/video_tail_floor.h"
 #include "pipeline/video/video_decision_rate.h"
 #include "codec/partition/tree/partition.h"
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
@@ -3092,7 +3093,23 @@ class InterFrameEncoder {
 
     bool collect_node(SbSink& sink, const PartitionNode& node,
                     std::string& error,
-                    const ChromaInfo& inherited_chroma = ChromaInfo{});
+                    const ChromaInfo& inherited_chroma = ChromaInfo{},
+                    PartitionNode* emitted = nullptr);
+
+  // AV2ENC_RD_TAIL_FLOOR: sequential, measured P-frame coding-block descent on
+  // the tail pictures.  `emitted` is the node the coder actually wrote: the
+  // reference node itself, or the measured HORZ/VERT/8x8 layout when the exact
+  // trial won.  The per-superblock walk in collect_frame() feeds it back into
+  // base_superblocks so the writer sees the committed tree.
+    bool tail_floor_collect_node(SbSink& sink, const PartitionNode& node,
+                               const ChromaInfo& inherited,
+                               PartitionNode* emitted, std::string& error);
+    bool tail_floor_leaf_cost(SbSink& sink, std::size_t index, double lambda,
+                            double* d_out, double* r_out, std::string& error);
+    bool tail_floor_trial_cost(SbSink& sink, std::size_t begin, double lambda,
+                             int splits, double* d_out, double* r_out,
+                             std::string& error);
+    bool tail_floor_candidate(const PartitionNode& node) const;
 
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
   // Extended-partition variant of collect_node().  The solver already resolved
@@ -3384,6 +3401,17 @@ class InterFrameEncoder {
     bool seq_driver_decide_sb(std::size_t sb_index,
                             const PartitionNode& reference,
                             PartitionNode* out, std::string& error);
+
+  // AV2ENC_RD_TAIL_FLOOR state, live only during one armed tail picture's
+  // sequential superblock walk.  `active` arms the collect_node() hook,
+  // `trial` suppresses it for the candidate encodes, and the per-leaf
+  // inter-syntax bits are stashed by encode_leaf() from the live probe state
+  // it is about to commit (sink-local block index).
+    bool tail_floor_active_ = false;
+    bool tail_floor_trial_ = false;
+    const PartitionNode* tail_floor_sb_root_ = nullptr;
+    std::vector<double> tail_floor_leaf_bits_;
+    std::vector<char> tail_floor_leaf_bits_ok_;
 
   // ---------------------------------------------------------------------
   // §5.20.7.10 / §5.20.7.6 block-level TIP reference
