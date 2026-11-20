@@ -9,7 +9,7 @@ gives matched K @100 kbps **86.013 vs base 85.634 (+0.379)** for
 (L5 alone); the two fits sum to +0.124. Every stream decodes 60/60 and the
 encoder recon equals the decoded payload.
 
-Branch `exp/rd-merge` (from `315a7fbb`), worktree `/Users/arin/work/rd-merge`.
+Branch `exp/rd-merge` (from `315a7fbb`), worktree `../rd-merge`.
 This report is the only new document; both mechanisms keep their own lane docs
 (`docs/rd-lane3.md`, `docs/rd-lane5.md`).
 

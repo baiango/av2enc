@@ -15,26 +15,26 @@
 ## Build provenance
 
 Token usage recorded by OpenCode for the work on this checkout — all top-level
-sessions and their subagents — as of **2026-11-20**:
+sessions and their subagents — as of **2026-11-21**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 310,437,762 |
-| Output | 43,506,339 |
-| Reasoning | 51,262,329 |
-| **Input + output + reasoning** | **~405.2 M** |
-| Cached context reads | 28,328,893,787 |
-| **Including cache reads** | **~28.73 B** |
+| Fresh input | 337,870,063 |
+| Output | 47,372,886 |
+| Reasoning | 57,756,908 |
+| **Input + output + reasoning** | **~443.0 M** |
+| Cached context reads | 31,153,878,235 |
+| **Including cache reads** | **~31.60 B** |
 
-880 sessions (290 top-level + 590 subagents). The count spans the three
-OpenCode project ids that touch the checkout (the parent workspace, the repo
-root and the publish clone), because the work moved roots while the project was
-re-scoped. Cache reads dominate because every subagent re-reads a long context;
-they are normally billed at a fraction of fresh input. Measured from
-`session_v2` (`tokens_input`, `tokens_output`, `tokens_reasoning`,
-`tokens_cache_read`) in the OpenCode state database.
-The figures keep growing while work continues, so treat them as a snapshot, not
-a final total.
+991 sessions (369 top-level + 622 subagents). The count spans the four
+OpenCode project ids that touch the checkout (the parent workspace, the shared
+work root that owns the lane worktrees, the repo root and the
+publish clone), because the work moved roots while the project was re-scoped.
+Cache reads dominate because every subagent re-reads a long context; they are
+normally billed at a fraction of fresh input. Measured from `session_v2`
+(`tokens_input`, `tokens_output`, `tokens_reasoning`, `tokens_cache_read`) in
+the OpenCode state database. The figures keep growing while work continues, so
+treat them as a snapshot, not a final total.
 
 ## Status (2026-11-18)
 

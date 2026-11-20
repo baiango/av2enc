@@ -12,7 +12,7 @@ the ceiling is higher on every reading, which meets the ceiling rule.  The
 prescribed 4x4/8x4 coding-block extension was built, measured and is
 **negative** (default off, §7).
 
-Branch `exp/rd-tail`, worktree `/Users/arin/work/rd-tail`, from `e3234b96`
+Branch `exp/rd-tail`, worktree `../rd-tail`, from `e3234b96`
 (the merged L3+L5+driver recipe).
 
 ## 1. Defect

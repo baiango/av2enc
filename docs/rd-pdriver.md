@@ -10,7 +10,7 @@ drift-aware skip/reference term (`AV2ENC_P_DRIFT`) was implemented, measured,
 and is a **no-op on this clip** with a precise reason (§4); the head's
 under-spend is a TX/level defect, not a drift defect.
 
-Branch `exp/rd-pdriver`, worktree `/Users/arin/work/rd-pdriver`, from `c6116f04`.
+Branch `exp/rd-pdriver`, worktree `../rd-pdriver`, from `c6116f04`.
 Base K **86.013** bracket (reproduced as **86.041** on this six-point ladder;
 `docs/rd-engine0.md` §6 gives 86.041 for the same five base points), 240p /
 100 kbps, the merged L3+L5+driver recipe plus `--fast-decode

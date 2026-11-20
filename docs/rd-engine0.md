@@ -10,7 +10,7 @@ the 6-point full-ladder fit (R² 0.463); its key and clip BA/SS2 are better at
 the matched rate. The bracket is inside the QP ripple, so it does not clear the
 +0.15 KEEP bar.
 
-Branch `exp/rd-engine0`, worktree `/Users/arin/work/rd-engine0`.
+Branch `exp/rd-engine0`, worktree `../rd-engine0`.
 Base (unchanged): K **86.013** at 240p / 100 kbps, L3+L5 recipe.
 
 History: iteration 1 (commit `71c901b7`) built the sequential driver and

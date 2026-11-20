@@ -14,7 +14,7 @@ mechanism is real at fixed QP: the key is **0.75-1.57 % smaller at
 -0.05..+0.04 dB over QP 114-121** (122-124 are flat), and the TX weight sweep
 peaks at the calibrated 0.25.
 
-Branch `exp/rd-lane3`, worktree `/Users/arin/work/rd-lane3`.
+Branch `exp/rd-lane3`, worktree `../rd-lane3`.
 
 ## Files
 
