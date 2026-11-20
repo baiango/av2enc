@@ -223,8 +223,11 @@ void finish_tip_obu_payload(BitWriter* writer);
 
 // Complete Annex B OBU (leb128 length + §5.2.2 header + payload) for a TIP
 // frame whose frame-header bits were already written into `writer`.
+// `obu_tlayer_id` is the §5.2.2 obu_tlayer_id; it is 0 for the standalone
+// --video-tip schedule and the plan's layer for a chained TIP picture.
 std::vector<std::uint8_t> make_tip_frame_obu(TipObuType type,
-                                             BitWriter* writer);
+                                             BitWriter* writer,
+                                             std::uint8_t obu_tlayer_id = 0);
 
 // Convenience: the §5.18.2 TIP slice alone, with §5.2.3 trailing bits.  A
 // complete TIP OBU also needs the surrounding frame_header_info() fields

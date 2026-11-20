@@ -767,7 +767,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
       ts.tip_global_mv =
           tip::Mv{h.tip_global_mv_row, h.tip_global_mv_col};
       ts.tip_sharp = h.tip_sharp;
-      ts.tip_regular = false;
+      ts.tip_regular = h.tip_regular;
       if (tip::write_tip_frame_syntax(writer, ts) !=
           tip::TemporalStatus::kOk) {
         // The header writer has no error channel; every value above is
@@ -1255,7 +1255,8 @@ std::vector<std::uint8_t> make_frame_obu(const VideoConfig& config,
 
 std::vector<std::uint8_t> make_tip_frame_obu(const VideoConfig& config,
                                              const VideoFrameHeader& header,
-                                             std::string& error) {
+                                             std::string& error,
+                                             std::uint8_t obu_tlayer_id) {
   error.clear();
   if (!header.tip_frame) {
     error = "TIP OBU requested for a non-TIP frame header";
@@ -1275,7 +1276,7 @@ std::vector<std::uint8_t> make_tip_frame_obu(const VideoConfig& config,
   // payload before the §5.2.3 trailing bits.
   write_frame_header_syntax(writer, config, header);
   std::vector<std::uint8_t> obu = tip::make_tip_frame_obu(
-      tip::TipObuType::kRegularTip, &writer);
+      tip::TipObuType::kRegularTip, &writer, obu_tlayer_id);
   if (obu.empty()) {
     error = "TIP OBU payload assembly failed";
     return {};

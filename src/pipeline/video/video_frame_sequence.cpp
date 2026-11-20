@@ -575,6 +575,76 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
     }
   }
 
+  // Research composition AV2ENC_TIP_LEAF on the chained hierarchical B
+  // (--nightly-b): a display frame that no other planned frame references is a
+  // dead end in the prediction graph, so it can be coded as a §7.10
+  // TIP_FRAME_AS_OUTPUT picture synthesized from its two plan references
+  // instead of a tile-coded B.  The plan, coding order, slots, order hints and
+  // output flags stay exactly as planned; only the unit for that display
+  // changes (TIP OBU, no tile payload).
+  //
+  // Modes: 1 = dead-end pictures only (the temporal-layer-3 leaves);
+  //        2 = every picture at temporal layer >= 2, including the layer-2
+  //            B pictures that the leaves reference.  Mode 2 stores the TIP
+  //            §7.22 field so a later TIP can predict from it.
+  const char* tip_leaf_env = std::getenv("AV2ENC_TIP_LEAF");
+  int tip_leaf_mode = 0;
+  if (tip_leaf_env != nullptr) {
+    if (std::string(tip_leaf_env) == "all") {
+      tip_leaf_mode = 2;
+    } else {
+      tip_leaf_mode = std::atoi(tip_leaf_env);
+      if (tip_leaf_mode < 0 || tip_leaf_mode > 2) tip_leaf_mode = 0;
+    }
+  }
+  const bool tip_leaf = chained_b && tip_leaf_mode != 0;
+  std::vector<bool> tip_skip;
+  if (tip_leaf) {
+    tip_skip.assign(static_cast<std::size_t>(plan.display_count()), false);
+    if (const char* skip = std::getenv("AV2ENC_TIP_LEAF_SKIP")) {
+      // Research control: a comma-separated display list that keeps the
+      // normal tile-coded B for those pictures.
+      const std::string text(skip);
+      std::size_t start = 0;
+      while (start <= text.size()) {
+        const std::size_t comma = text.find(',', start);
+        const std::string item =
+            text.substr(start, comma == std::string::npos
+                                   ? std::string::npos
+                                   : comma - start);
+        if (!item.empty()) {
+          const int d = std::atoi(item.c_str());
+          if (d >= 0 && d < plan.display_count()) {
+            tip_skip[static_cast<std::size_t>(d)] = true;
+          }
+        }
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+      }
+    }
+  }
+  std::vector<bool> display_referenced;
+  if (tip_leaf) {
+    if (options.implicit_ref_map) {
+      error = "AV2ENC_TIP_LEAF needs the explicit reference map";
+      return false;
+    }
+    if (options.film_grain) {
+      error = "AV2ENC_TIP_LEAF does not compose with --video-grain yet";
+      return false;
+    }
+    display_referenced.assign(
+        static_cast<std::size_t>(plan.display_count()), false);
+    for (const tl::PlannedFrame& f : plan.frames) {
+      for (int r = 0; r < f.num_refs; ++r) {
+        const int rd = f.ref_display[r];
+        if (rd >= 0 && rd < plan.display_count()) {
+          display_referenced[static_cast<std::size_t>(rd)] = true;
+        }
+      }
+    }
+  }
+
   VideoConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
@@ -621,7 +691,16 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.enable_adaptive_mvd = options.enable_adaptive_mvd;
   config.enable_mvd_sign_derive = options.enable_mvd_sign_derive;
   config.enable_flex_mvres = options.enable_flex_mvres;
-  config.enable_ref_frame_mvs = options.enable_ref_frame_mvs;
+  config.enable_ref_frame_mvs =
+      options.enable_ref_frame_mvs || tip_leaf;
+  if (tip_leaf) {
+    // A TIP OBU needs the sequence enable_tip / enable_ref_frame_mvs bits and
+    // a per-frame use_ref_frame_mvs = 1.  The regular frames keep
+    // use_ref_frame_mvs = 0, so their block decisions are unchanged.
+    config.enable_tip = true;
+    config.disable_tip_output = false;
+    config.enable_tip_hole_fill = options.tip_hole_fill;
+  }
   config.max_tlayer_id = static_cast<std::uint8_t>(plan.max_tlayer_id);
   config.monotonic_output_order_flag = false;
   // SVC layered encodes carry seq_lcr_id / max_mlayer_id from the layer plan;
@@ -659,6 +738,11 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   std::uint64_t anchor_payload_count = 0;
   std::vector<SlotField> t_fields(static_cast<std::size_t>(plan.num_slots));
   std::vector<bool> t_is_key(static_cast<std::size_t>(plan.num_slots), false);
+  // True when t_fields[slot] holds the §7.22 field of the picture that last
+  // refreshed the slot.  The field store runs when ref-mvs or the TIP-leaf
+  // composition needs it; a TIP leaf's slot is a dead end and stays unset.
+  std::vector<bool> t_field_ready(static_cast<std::size_t>(plan.num_slots),
+                                  false);
 
   VideoOptions frame_options = options;
   frame_options.temporal_layers = 0;
@@ -862,6 +946,415 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       temporal_ctx.closest_future = motion_field.result.closest_future;
       temporal_ctx.field = &motion_field.field;
     }
+    // AV2ENC_TIP_LEAF: a chained-B dead end coded as TIP_FRAME_AS_OUTPUT.
+    // The schedule is unchanged, so the two plan references are already coded
+    // and their §7.22 fields are the exact decoder input for §7.10.3/.4.  The
+    // TIP picture codes no tile and no residual; its synthesis is the display
+    // reconstruction.
+    const bool is_tip_leaf =
+        tip_leaf && !pf.is_key && num_refs == 2 &&
+        !tip_skip[static_cast<std::size_t>(display)] &&
+        (tip_leaf_mode == 1
+             ? !display_referenced[static_cast<std::size_t>(display)]
+             : pf.tlayer_id >= 2) &&
+        ref_displays[0] >= 0 && ref_displays[1] >= 0 &&
+        ref_displays[0] < display && display < ref_displays[1];
+    if (is_tip_leaf) {
+      const int past_slot = map_slots[0];
+      const int future_slot = map_slots[1];
+      if (past_slot < 0 || past_slot >= plan.num_slots || future_slot < 0 ||
+          future_slot >= plan.num_slots) {
+        error = "TIP leaf display " + std::to_string(display) +
+                ": reference slot outside the encoder DPB";
+        return false;
+      }
+      if (!t_field_ready[static_cast<std::size_t>(past_slot)] ||
+          !t_field_ready[static_cast<std::size_t>(future_slot)]) {
+        error = "TIP leaf display " + std::to_string(display) +
+                ": a reference has no stored §7.22 field";
+        return false;
+      }
+      const SlotField& past = t_fields[static_cast<std::size_t>(past_slot)];
+      const SlotField& future =
+          t_fields[static_cast<std::size_t>(future_slot)];
+      const int hint = static_cast<int>(pf.display_order_hint);
+      const int past_hint = ref_order_hints[0];
+      const int future_hint = ref_order_hints[1];
+
+      // §7.10 input mirrors the gated --video-tip builder: one past and one
+      // future reference, the live §7.22 field of each, and the same
+      // pre-estimation scratch the standalone path uses.
+      temporal::MotionFieldConfig mf;
+      mf.mi_cols = mi_cols;
+      mf.mi_rows = mi_rows;
+      mf.proj_step = 1;
+      mf.sb_64x64 = true;
+      mf.enable_tip = true;
+      mf.order_hint = hint;
+      mf.num_total_refs = 2;
+      mf.num_past_refs = 1;
+      mf.num_future_refs = 1;
+      mf.frame_width = static_cast<int>(width);
+      mf.frame_height = static_cast<int>(height);
+      const int ref_slots[2] = {past_slot, future_slot};
+      const SlotField* ref_fields[2] = {&past, &future};
+      for (int rf = 0; rf < 2; ++rf) {
+        const SlotField& ref = *ref_fields[rf];
+        mf.ref_order_hint[rf] = ref.order_hint;
+        mf.refs[rf].slot = ref_slots[rf];
+        mf.refs[rf].type =
+            t_is_key[static_cast<std::size_t>(ref_slots[rf])]
+                ? temporal::FrameType::kKey
+                : temporal::FrameType::kInter;
+        mf.refs[rf].width = static_cast<int>(width);
+        mf.refs[rf].height = static_cast<int>(height);
+        mf.refs[rf].order_hint = ref.order_hint;
+        mf.refs[rf].num_saved_refs = ref.num_saved_refs;
+        for (int k = 0; k < ref.num_saved_refs; ++k) {
+          mf.refs[rf].saved_order_hint[k] = ref.saved_order_hint[k];
+        }
+        mf.saved[rf] = ref.saved();
+      }
+
+      // Tip_Weighting_Factor and TipInterpFilter are explicit §5.18.2 header
+      // values, so the encoder can pick the SSE-best pair for this display
+      // picture: the decoder derives neither.  The temporal-position weight is
+      // the fallback when the source planes are not the 8-bit 4:2:0 core.
+      const int span = future_hint - past_hint;
+      const int ideal =
+          span > 0 ? (16 * (future_hint - hint) + span / 2) / span : 8;
+      static constexpr int kWeightIndices[] = {0, 1, 3, 4, 5, 6};
+      static constexpr temporal::InterpFilter kFilters[] = {
+          temporal::InterpFilter::kEighttapSharp,
+          temporal::InterpFilter::kEighttap,
+          temporal::InterpFilter::kEighttapSmooth};
+      int ideal_wtd = 0;
+      {
+        int wtd_diff = 0x7fffffff;
+        for (const int index : kWeightIndices) {
+          const int diff =
+              std::abs(temporal::kTipWeightingFactor[index] - ideal);
+          if (diff < wtd_diff) {
+            wtd_diff = diff;
+            ideal_wtd = index;
+          }
+        }
+      }
+
+      temporal::TipConfig tip;
+      tip.mode = temporal::TipFrameMode::kAsOutput;
+      tip.tip_global_wtd_index = ideal_wtd;
+      tip.tip_global_mv = temporal::Mv{0, 0};
+      tip.interp_filter = temporal::InterpFilter::kEighttapSharp;
+      tip.allow_tip_hole_fill = options.tip_hole_fill;
+      tip.enable_tip_refinemv = false;
+      tip.enable_refinemv = false;
+      tip.opfl_refine_type = temporal::RefineType::kNone;
+      tip.num_past_refs = 1;
+      tip.num_future_refs = 1;
+      tip.order_hint = hint;
+
+      std::array<Plane, 3> tip_plane;
+      for (int plane = 0; plane < 3; ++plane) {
+        const int pw = plane == 0 ? mi_cols * 4 : mi_cols * 2;
+        const int ph = plane == 0 ? mi_rows * 4 : mi_rows * 2;
+        tip_plane[static_cast<std::size_t>(plane)].resize(pw, ph, 0);
+      }
+
+      const int field_w8 = mi_cols / 2;
+      const int field_h8 = mi_rows / 2;
+      std::vector<std::int32_t> field_mv(
+          static_cast<std::size_t>(field_w8) *
+              static_cast<std::size_t>(field_h8) * 2U,
+          0);
+      std::vector<std::uint8_t> field_valid(
+          static_cast<std::size_t>(field_w8) *
+              static_cast<std::size_t>(field_h8),
+          0);
+      std::vector<std::int32_t> field_offset(field_valid.size(), 0);
+      std::vector<std::int32_t> avg_mv(field_mv.size(), 0);
+      std::vector<std::uint8_t> avg_valid(field_valid.size(), 0);
+      temporal::MotionField field;
+      field.w8 = field_w8;
+      field.h8 = field_h8;
+      field.mv = field_mv.data();
+      field.valid = field_valid.data();
+      field.offset = field_offset.data();
+      temporal::MotionFieldScratch scratch;
+      scratch.avg_mv = avg_mv.data();
+      scratch.avg_valid = avg_valid.data();
+
+      const int capacity = ((mi_cols + 3) / 4) * ((mi_rows + 3) / 4);
+      std::vector<temporal::TipBlock> blocks(
+          static_cast<std::size_t>(capacity));
+      std::vector<temporal::Mv> grid0(
+          static_cast<std::size_t>(mi_cols) *
+          static_cast<std::size_t>(mi_rows));
+      std::vector<temporal::Mv> grid1(grid0.size());
+      temporal::TipPlan tip_plan;
+      tip_plan.num_blocks = capacity;
+      tip_plan.blocks = blocks.data();
+      tip_plan.mv_grid = grid0.data();
+      tip_plan.mv_grid1 = grid1.data();
+      std::vector<std::int16_t> pred_scratch(2U * 16U * 16U, 0);
+      std::vector<std::uint8_t> block_scratch(16U * 16U, 0);
+
+      tip::TipBuildInput in;
+      in.config = mf;
+      in.tip = tip;
+      in.field = &field;
+      in.scratch = &scratch;
+      in.plan = &tip_plan;
+      for (int plane = 0; plane < 3; ++plane) {
+        const int pw = plane == 0 ? static_cast<int>(width)
+                                  : static_cast<int>(width) / 2;
+        const int ph = plane == 0 ? static_cast<int>(height)
+                                  : static_cast<int>(height) / 2;
+        for (int rf = 0; rf < 2; ++rf) {
+          const Plane& rp =
+              plane_by_display[static_cast<std::size_t>(
+                  ref_displays[static_cast<std::size_t>(rf)])]
+                              [static_cast<std::size_t>(plane)];
+          in.ref[static_cast<std::size_t>(plane)]
+                [static_cast<std::size_t>(rf)] =
+              temporal::PlaneView{rp.samples.data(), rp.stride, pw, ph};
+        }
+        in.dst[static_cast<std::size_t>(plane)] =
+            tip_plane[static_cast<std::size_t>(plane)].samples.data();
+        in.dst_stride[static_cast<std::size_t>(plane)] =
+            tip_plane[static_cast<std::size_t>(plane)].stride;
+        in.dst_width[plane] = pw;
+        in.dst_height[plane] = ph;
+        in.sub_x[plane] = plane == 0 ? 0 : 1;
+        in.sub_y[plane] = plane == 0 ? 0 : 1;
+      }
+      in.pred_scratch = pred_scratch.data();
+      in.block_scratch = block_scratch.data();
+      tip::TipBuildOutput out;
+
+      auto build = [&](int wtd, temporal::InterpFilter filter) -> bool {
+        for (int plane = 0; plane < 3; ++plane) {
+          std::fill(tip_plane[static_cast<std::size_t>(plane)].samples.begin(),
+                    tip_plane[static_cast<std::size_t>(plane)].samples.end(), 0);
+        }
+        in.tip = tip;
+        in.tip.tip_global_wtd_index = wtd;
+        in.tip.interp_filter = filter;
+        if (tip::build_tip_frame(in, &out) !=
+            temporal::TemporalStatus::kOk) {
+          error = "TIP leaf display " + std::to_string(display) +
+                  ": build TIP failed";
+          return false;
+        }
+        return true;
+      };
+
+      int wtd_index = ideal_wtd;
+      int filter_index = 0;
+      const VideoInputFrame& source = frames[static_cast<std::size_t>(display)];
+      if (!source.y.empty()) {
+        // C420p 8-bit source: score the TIP synthesis against the input.
+        auto sse = [&]() -> double {
+          double total = 0.0;
+          for (int plane = 0; plane < 3; ++plane) {
+            const std::uint8_t* src =
+                plane == 0 ? source.y.data()
+                           : (plane == 1 ? source.u.data() : source.v.data());
+            const int pw = plane == 0 ? static_cast<int>(width)
+                                      : static_cast<int>(width) / 2;
+            const int ph = plane == 0 ? static_cast<int>(height)
+                                      : static_cast<int>(height) / 2;
+            const Plane& rp = tip_plane[static_cast<std::size_t>(plane)];
+            for (int y = 0; y < ph; ++y) {
+              for (int x = 0; x < pw; ++x) {
+                const int d =
+                    static_cast<int>(rp.samples[static_cast<std::size_t>(
+                        y * rp.stride + x)]) -
+                    static_cast<int>(src[static_cast<std::size_t>(
+                        y * pw + x)]);
+                total += static_cast<double>(d) * d;
+              }
+            }
+          }
+          return total;
+        };
+        double best_sse = 0.0;
+        bool have_best = false;
+        for (const int wi : kWeightIndices) {
+          for (int fi = 0; fi < 3; ++fi) {
+            if (!build(wi, kFilters[fi])) return false;
+            const double value = sse();
+            if (!have_best || value < best_sse) {
+              have_best = true;
+              best_sse = value;
+              wtd_index = wi;
+              filter_index = fi;
+            }
+          }
+        }
+      }
+      if (!build(wtd_index, kFilters[filter_index])) return false;
+      if (options.trace) {
+        std::cerr << "tip-leaf display=" << display
+                  << " refs=" << ref_displays[0] << "," << ref_displays[1]
+                  << " wtd=" << wtd_index << " filter=" << filter_index
+                  << " est_valid=" << out.field_valid_after_estimation
+                  << " setup_valid=" << out.field_valid_after_setup
+                  << " holes=" << out.hole_filled
+                  << " invalid=" << out.field_invalid << "\n";
+      }
+
+      // Probe the coded alternative.  A TIP output picture codes no residual,
+      // so on content where the two-sided synthesis is visibly worse than a
+      // coded B the picture stays tile-coded: accept TIP only when its luma
+      // PSNR is within AV2ENC_TIP_LEAF_PSNR_MARGIN dB (default 0.30) of the
+      // coded picture.  The probe encoder is local; nothing it produces is
+      // committed, so the normal path below reproduces the coded leaf exactly.
+      bool keep_tip = true;
+      const VideoInputFrame& tip_source =
+          frames[static_cast<std::size_t>(display)];
+      if (!tip_source.y.empty()) {
+        std::vector<inter::mc::RefFrame> probe_refs = references;
+        InterFrameEncoder probe(
+            tip_source, std::move(probe_refs), frame_distance,
+            std::max(1, num_refs), frame_options, /*trace=*/false, pf.is_key, 0,
+            0, 0, 0, {}, nullptr, nullptr, ref_order_hints,
+            /*primary_ref_is_none=*/true, &temporal_ctx);
+        probe.set_display_ordinal(display);
+        std::vector<std::uint8_t> probe_tile;
+        std::vector<syntax::BlockSyntax> probe_blocks;
+        std::vector<std::int32_t> probe_levels;
+        if (!probe.encode(probe_tile, probe_blocks, probe_levels, error)) {
+          error = "TIP leaf probe display " + std::to_string(display) + ": " +
+                  error;
+          return false;
+        }
+        probe.pad_edge_recon();
+        auto luma_sse = [&](const Plane& plane) -> double {
+          double total = 0.0;
+          for (std::uint32_t y = 0; y < height; ++y) {
+            for (std::uint32_t x = 0; x < width; ++x) {
+              const std::size_t src =
+                  static_cast<std::size_t>(y) *
+                      static_cast<std::size_t>(plane.stride) +
+                  static_cast<std::size_t>(x);
+              const std::size_t tip =
+                  static_cast<std::size_t>(y) *
+                      static_cast<std::size_t>(width) +
+                  static_cast<std::size_t>(x);
+              const int d =
+                  static_cast<int>(plane.samples[src]) -
+                  static_cast<int>(tip_source.y[tip]);
+              total += static_cast<double>(d) * d;
+            }
+          }
+          return total;
+        };
+        const double sse_tip = luma_sse(tip_plane[0]);
+        const double sse_coded = luma_sse(probe.recon(0));
+        double margin_db = 0.30;
+        if (const char* margin = std::getenv("AV2ENC_TIP_LEAF_PSNR_MARGIN")) {
+          margin_db = std::atof(margin);
+        }
+        const double limit = std::pow(10.0, margin_db / 10.0);
+        keep_tip = sse_tip <= sse_coded * limit;
+        if (options.trace) {
+          std::cerr << "tip-leaf decide display=" << display
+                    << " sse_tip=" << sse_tip << " sse_coded=" << sse_coded
+                    << " keep=" << (keep_tip ? 1 : 0) << "\n";
+        }
+      }
+
+      if (keep_tip) {
+        // §7.22: a TIP output picture that later TIP frames predict from stores
+        // its §7.10.3/.4-derived field.  The decoder's §7.23 store runs on the
+        // same synthesis, so a dependent TIP reads identical MVs.
+        if (pf.slot >= 0 && pf.slot < plan.num_slots) {
+          temporal::TipConfig used = tip;
+          used.tip_global_wtd_index = wtd_index;
+          used.interp_filter = kFilters[filter_index];
+          tip::fill_tip_closest_refs(mf, out.field_result, &used);
+          SlotField& slot = t_fields[static_cast<std::size_t>(pf.slot)];
+          init_slot_field(&slot, mi_cols, mi_rows);
+          slot.order_hint = hint;
+          slot.num_saved_refs = 2;
+          slot.saved_order_hint[0] = past_hint;
+          slot.saved_order_hint[1] = future_hint;
+          temporal::RefMvField stored;
+          stored.w8 = slot.w8;
+          stored.h8 = slot.h8;
+          stored.ref = slot.field_ref.data();
+          stored.mv = slot.field_mv.data();
+          tip::TipStoreInput store;
+          store.mi_cols = mi_cols;
+          store.mi_rows = mi_rows;
+          store.order_hint = hint;
+          store.closest_past = out.field_result.closest_past;
+          store.closest_future = out.field_result.closest_future;
+          store.closest_past_order_hint = used.closest_past_order_hint;
+          store.closest_future_order_hint = used.closest_future_order_hint;
+          store.weight16 = temporal::kTipWeightingFactor[wtd_index] == 16;
+          if (tip::store_tip_frame_motion_field(tip_plan, store, &stored) !=
+              temporal::TemporalStatus::kOk) {
+            error = "TIP leaf display " + std::to_string(display) +
+                    ": §7.22 store failed";
+            return false;
+          }
+          t_is_key[static_cast<std::size_t>(pf.slot)] = false;
+          t_field_ready[static_cast<std::size_t>(pf.slot)] = true;
+        }
+
+        VideoFrameHeader header;
+        header.keyframe = false;
+        header.tip_frame = true;
+        header.order_hint = pf.order_hint_lsbs;
+        header.num_total_refs = 2;
+        header.ref_frame_idx[0] = static_cast<std::uint8_t>(past_slot);
+        header.ref_frame_idx[1] = static_cast<std::uint8_t>(future_slot);
+        header.ref_slot = header.ref_frame_idx[0];
+        header.frame_explicit_ref_frame_map = true;
+        header.refresh_frame_flags = pf.refresh_frame_flags;
+        header.immediate_output_frame = pf.immediate_output_frame;
+        header.implicit_output_frame = pf.implicit_output_frame;
+        header.use_ref_frame_mvs = true;
+        header.tip_global_wtd_index = static_cast<std::uint8_t>(wtd_index);
+        header.tip_global_mv_row = 0;
+        header.tip_global_mv_col = 0;
+        header.tip_sharp =
+            kFilters[filter_index] == temporal::InterpFilter::kEighttapSharp;
+        header.tip_regular =
+            kFilters[filter_index] == temporal::InterpFilter::kEighttap;
+        header.allow_tip_hole_fill = options.tip_hole_fill;
+
+        std::vector<std::uint8_t> tip_obu =
+            make_tip_frame_obu(frame_config, header, error,
+                               static_cast<std::uint8_t>(pf.obu_tlayer_id()));
+        if (tip_obu.empty()) {
+          error = "TIP leaf display " + std::to_string(display) + ": " + error;
+          return false;
+        }
+        std::vector<std::uint8_t> unit;
+        const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
+        unit.insert(unit.end(), td.begin(), td.end());
+        unit.insert(unit.end(), tip_obu.begin(), tip_obu.end());
+        result.units.push_back(std::move(unit));
+        result.frame_bytes.push_back(
+            static_cast<std::uint32_t>(result.units.back().size()));
+        result.tile_bytes.push_back(0);
+        result.inter_blocks.push_back(0);
+        result.intra_blocks.push_back(0);
+        ++result.tip_leaf_frames;
+
+        recon_by_display[static_cast<std::size_t>(display)] = to_recon_frame(
+            tip_plane[0], tip_plane[1], tip_plane[2], width, height);
+        plane_by_display[static_cast<std::size_t>(display)] =
+            std::move(tip_plane);
+        // The §7.22 field was stored above; a later plan frame reads it only
+        // when the plan references this TIP slot (mode 2's layer-2 pictures).
+        continue;
+      }
+    }
+
     InterFrameEncoder encoder(frames[static_cast<std::size_t>(display)],
                               std::move(references), frame_distance,
                               std::max(1, num_refs), frame_options,
@@ -1006,7 +1499,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
 
 
     // §7.22/§7.23: refresh the plan slot with this frame's motion field.
-    if (options.enable_ref_frame_mvs) {
+    if (options.enable_ref_frame_mvs || tip_leaf) {
       if (pf.is_key) {
         for (int slot = 0; slot < plan.num_slots; ++slot) {
           init_slot_field(&t_fields[static_cast<std::size_t>(slot)], mi_cols,
@@ -1014,6 +1507,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
           t_fields[static_cast<std::size_t>(slot)].order_hint =
               static_cast<int>(pf.display_order_hint);
           t_is_key[static_cast<std::size_t>(slot)] = true;
+          t_field_ready[static_cast<std::size_t>(slot)] = true;
         }
       } else if (pf.slot >= 0 && pf.slot < plan.num_slots) {
         SlotField& field = t_fields[static_cast<std::size_t>(pf.slot)];
@@ -1036,6 +1530,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
               ref_order_hints[static_cast<std::size_t>(r)];
         }
         t_is_key[static_cast<std::size_t>(pf.slot)] = false;
+        t_field_ready[static_cast<std::size_t>(pf.slot)] = true;
       }
     }
   }

@@ -33,17 +33,19 @@ is the product and must produce a **byte-identical** stream (the parity gate use
 |---|---:|---:|---:|---:|---:|
 | `--fast-decode` QP106 (pin) | 100.0 | 9.733 | 3.42 | 80.84 | 82.2 |
 | **`--video-rd-preset best`** QP118 | 101.5 | 9.844 | 2.02 | 84.65 | **86.33** |
-| **`--nightly-b` QP125 (chained B + compound, opt-in)** | 100.0 | 9.864 | 2.06 | 84.76 | **86.61** |
+| **`--nightly-b` QP122 (chained B + compound + TIP, opt-in)** | 100.0 | 9.859 | 2.02 | 85.40 | **86.81** |
 | AVM `e6f99d3` QP124 | 99.3 | 9.862 | 1.29 | 90.38 | **90.2** |
 | SVT-AV1 p0 CRF36.5 | 100.0 | 9.828 | 1.55 | 88.89 | **88.8** |
 | rav1e 0.8.1 speed 2 | 100.1 | 9.717 | 2.71 | 81.67 | 83.7 |
 
 `best` is a **LEAD**, not a KEEP: +0.097 over the flat aggregate, inside the
-adjacent-QP ripple. `--nightly-b` is the best measured point (**86.61**, +0.375
-over flat) but research-only: its 60-frame stream is `avmdec`-exact while the
-pinned `dav2d` has a §7.21.6 drain defect (17/60), so it is not the shipped
-path. Compound (AVERAGE) is on by default; `--video-compound-off` reproduces
-the 85.47 single-prediction arm.
+adjacent-QP ripple. `--nightly-b` is the best measured point (**86.805**, +0.573
+over flat, +0.198 over the 86.607 compound arm) but research-only: its 60-frame
+stream is `avmdec`-exact while the pinned `dav2d` has a §7.21.6 drain defect
+(17/60), so it is not the shipped path. AVERAGE compound and the TIP-output
+composition on the dead-end leaves are on by default; `--video-compound-off`
+reproduces the 85.47 single-prediction arm and `AV2ENC_TIP_LEAF=0` the 86.61
+compound arm.
 
 **720p (1440×720/60, ~293 kbps):** av2enc **45.6**, AVM **55.8**, SVT **56.6**,
 rav1e **53.0**. The 720p gap is content-dependent; see
@@ -63,9 +65,9 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/fd.ivf \
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/best.ivf \
   --video --frames 60 --qp 118 --cpu-threads 8 --video-rd-preset best
 
-# chained B research path (85.47; avmdec-validated)
+# chained B research path (86.805; avmdec-validated)
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
-  --video --frames 60 --qp 125 --cpu-threads 8 --video-gops 7 --nightly-b
+  --video --frames 60 --qp 122 --cpu-threads 8 --video-gops 7 --nightly-b
 ```
 
 ### Presets
@@ -76,7 +78,7 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
 | `--video-rd-preset quality` | measured still/keyframe preset |
 | **`--fast-decode`** | measured CPU RD aggregate (was `--nightly`; the old name is an alias) |
 | **`--video-rd-preset best`** | flat lead stack (86.33): EFF_PERC, head/tail TX, driver, key −39, drift 1.5/3250 |
-| **`--nightly-b`** | chained single-key B + compound, opt-in research (**86.61**; `--video-compound-off` → 85.47) |
+| **`--nightly-b`** | chained single-key B + compound + TIP, opt-in research (**86.805**; `--video-compound-off` → 85.47, `AV2ENC_TIP_LEAF=0` → 86.61) |
 
 ### Pins
 
@@ -87,8 +89,9 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
 | fast-decode QP106 | 25,008 | `0639b43630abb454f7be5ac494d2efb4` |
 | fast-decode QP110 | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
 | 720p QP217 (key −57, leaf 250, ext partitions) | 36,572 | `c4ba28138d8f6569d5e08721a66d755c` |
-| `--nightly-b` 16 f (QP116, gops 2) | 19,865 | `325ce3ddad26a81efbf5ae7cc9b90f0b` |
-| `--nightly-b` 60 f (QP125, gops 7) | 24,988 | `3dbbad9847ab661c6c154903990ade75` |
+| `--nightly-b` 16 f TIP (QP116, gops 2) | 19,727 | `f6c7b79b6ddeab45b5447a7c50522685` |
+| `--nightly-b` 60 f TIP (QP121, gops 7) | 25,299 | `ca314db24a71fc1c28d7a1ba8eb1515f` |
+| `--nightly-b` 60 f TIP (QP122, gops 7) | 24,918 | `537115cf0ab942a38202f64049d24991` |
 | basic 64×64 / 640×360 | — | `c9294fa4…` / `0d90c958…` |
 | still 64×64 / 640×360 | — | `2b31e378…` / `8ffbe059…` |
 

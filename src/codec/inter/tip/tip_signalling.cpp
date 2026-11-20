@@ -555,10 +555,13 @@ void finish_tip_obu_payload(BitWriter* writer) {
 }
 
 std::vector<std::uint8_t> make_tip_frame_obu(TipObuType type,
-                                             BitWriter* writer) {
+                                             BitWriter* writer,
+                                             std::uint8_t obu_tlayer_id) {
   assert(writer != nullptr && is_tip_obu_type(type));
   finish_tip_obu_payload(writer);
-  return av2enc::basic::make_obu(av2enc::basic::ObuHeader{tip_obu_type(type)}, writer->take_bytes());
+  av2enc::basic::ObuHeader header{tip_obu_type(type)};
+  header.tlayer_id = obu_tlayer_id;
+  return av2enc::basic::make_obu(header, writer->take_bytes());
 }
 
 std::vector<std::uint8_t> make_tip_slice_bytes(

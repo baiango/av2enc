@@ -46,13 +46,22 @@ The remaining gap is the flat-chain-only tool set (drift refresh scheduling,
 ref-signal-compact, tile-group-compact) and the chained structure itself.
 
 **AVERAGE compound closes the gap (2026-11-21).** The plan's interior B
-pictures already hold a true past/future pair, so compound uses it: the product
-preset `--nightly-b` now measures **K 86.607 at 100.0 kbps** (QP125, 24,988 B),
-**+1.135 K** over the 85.472 single-prediction arm and **+0.375 K** over the
-flat 86.232 aggregate — the best measured point in the tree. The 16-picture
-proof is exact on both decoders; the 60-picture streams are `avmdec`-only
-until the pinned dav2d §7.21.6 drain fix lands, so B remains **research-only**.
-`--video-compound-off` restores the 85.472 arm byte for byte.
+pictures already hold a true past/future pair, so compound uses it: compound
+measured **K 86.607 at 100.0 kbps** (QP125, 24,988 B), **+1.135 K** over the
+85.472 single-prediction arm and **+0.375 K** over the flat 86.232 aggregate.
+
+**TIP output on the dead ends is the promoted point (2026-11-21).** The
+temporal-layer leaves no planned frame references are now
+`TIP_FRAME_AS_OUTPUT` pictures synthesized from their two plan references
+(mode 1, with a 0.30 dB coded-leaf PSNR floor). The product preset
+`--nightly-b` measures **K 86.805 at 100.0 kbps** (QP121/122, 25,299/24,918 B):
+**+0.198 K** over the 86.607 compound arm and **+0.573 K** over the flat
+86.232 aggregate — the best measured point in the tree. The 16-picture proof
+is exact on both decoders; the 60-picture streams are `avmdec`-only until the
+pinned dav2d §7.21.6 drain fix lands, so B remains **research-only** and the
+shipped flat `--fast-decode` aggregate is unchanged. `--video-compound-off`
+restores the 85.472 arm byte for byte; an explicit `AV2ENC_TIP_LEAF=0` keeps
+compound and restores the 86.607/24,988 arm.
 
 Default-off env gates (the raw spike flags; `--nightly-b` sets the same
 options):
@@ -297,11 +306,12 @@ SS2 83.112, PSNR-Y 45.6 dB; key share 64.9%. Against the references:
 **+1.574** over the 83.898 arm, **+6.43** over the flat edge control 79.04,
 **−0.76** vs 86.232.
 
-AVERAGE compound on that arm is **+1.135 K**, so the product preset (compound
-on) measures **K 86.607 at 100.0 kbps**: QP125, 24,988 B,
-`3dbbad9847ab661c6c154903990ade75`, +0.375 over the flat 86.232. The pins,
-the `--video-compound-off` control and the sub-gate arms are in "Compound on
-the chained B" below.
+AVERAGE compound on that arm is **+1.135 K**, so the compound control (TIP
+off, `AV2ENC_TIP_LEAF=0`) measures **K 86.607 at 100.0 kbps**: QP125, 24,988 B,
+`3dbbad9847ab661c6c154903990ade75`, +0.375 over the flat 86.232. The TIP
+composition below adds +0.198 on top of it (the promoted `--nightly-b` at
+86.805). The pins, both controls and the sub-gate arms are in "Compound on the
+chained B" and "TIP output on the chained-B dead ends".
 
 ## Rate-matched measurements (QP116 is not comparable)
 
@@ -507,7 +517,8 @@ winners for the user unless an explicit env value overrides them.
   The key TX/UV/band tools flatten the offset curve: −45 is +0.020, well
   below the +0.15 gate, so −50 is kept. The final single-prediction B point
   remains **K 85.472, −0.76 vs the 86.232 flat aggregate**; AVERAGE compound
-  (below) crosses it at **86.607, +0.375**.
+  crosses it at **86.607, +0.375**, and the TIP-output composition at
+  **86.805, +0.573**.
 
 `--nightly-b` expands to the winning set (B_LEGAL + edge + key-QP −50 + BAWP +
 AVERAGE compound + partition-RD + anchor residual + key RD driver + eff-perc
@@ -537,7 +548,7 @@ against the 85.472 single-prediction baseline; the gate is +0.15 K.
 | arm | QP bracket | kbps | JOD | BA | SS2 | K | Δ | decision |
 |---|---|---|---:|---:|---:|---:|---:|---|
 | `--nightly-b --video-compound-off` (baseline) | 130/131 | 100.000 | 9.8353 | 2.316 | 83.112 | 85.472 | — | control |
-| **`--nightly-b`** (AVERAGE compound) | 124/125 | 100.000 | 9.8632 | 2.057 | 84.763 | **86.607** | **+1.135** | **in the preset** |
+| **`--nightly-b`** (AVERAGE compound) | 124/125 | 100.000 | 9.8632 | 2.057 | 84.763 | **86.607** | **+1.135** | in the preset; TIP then adds +0.198 |
 | + wedge + diffwtd | 126/128 | 100.000 | 9.8527 | 2.058 | 84.637 | 86.533 | +1.061 | −0.074 vs AVERAGE; drop |
 | + near-near | 124/125 | 100.000 | 9.8430 | 2.061 | 84.723 | 86.488 | +1.016 | −0.119 vs AVERAGE |
 | + near-near + `--video-opfl` | 124/125 | 100.000 | 9.8463 | 2.042 | 84.756 | 86.567 | +1.095 | +0.079 vs near-near; drop |
@@ -554,11 +565,13 @@ against the 85.472 single-prediction baseline; the gate is +0.15 K.
   against AVERAGE; OPFL adds +0.079 over its own near-near carrier and
   refine-MV +0.002. Neither clears +0.15, so both stay out of the preset.
   (They remain available and decoder-exact for future content.)
-* **Promoted 2026-11-21.** `--nightly-b` now expands to the 86.607 arm;
-  `--video-compound-off` is the A/B control that reproduces the 85.472
-  single-prediction arm byte for byte. The preset stays CPU-only and
-  research-only (avmdec for the 60-picture chains) until the pinned dav2d
-  §7.21.6 drain defect is fixed.
+* **Promoted 2026-11-21, then extended by TIP.** Compound entered
+  `--nightly-b` at 86.607 and the TIP-output composition below raised the
+  preset to **86.805**. `--video-compound-off` is the A/B control that
+  reproduces the 85.472 single-prediction arm byte for byte;
+  `AV2ENC_TIP_LEAF=0` reproduces the 86.607 compound arm. The preset stays
+  CPU-only and research-only (avmdec for the 60-picture chains) until the
+  pinned dav2d §7.21.6 drain defect is fixed.
 
 Reproduction (16-picture proof and the 60-picture bracket):
 
@@ -579,6 +592,139 @@ python3 tools/validate_avmdec.py /tmp/c60.ivf --ref "$REF" --recon /tmp/c60.y4m
 python3 tools/oracle.py --ref "$REF" --ivf c@124=/tmp/c60q124.ivf \
   --ivf c@125=/tmp/c60.ivf --target-kbps 100 --no-segments
 ```
+
+## TIP output on the chained-B dead ends (2026-11-21)
+
+**Verdict: promoted, +0.198 K over 86.607 at 100 kbps, decoder-exact.** The
+chained B plan already holds a past/future anchor pair for every interior
+picture, and its highest temporal-layer pictures are *dead ends*: no planned
+frame references them. A dead-end picture can therefore be replaced by a §7.10
+`TIP_FRAME_AS_OUTPUT` picture synthesized from its two plan references. The
+plan, coding order, slots, order hints, refresh flags and output flags are
+unchanged; only the unit for that display changes (a 10-byte TIP OBU instead of
+a tile-coded B). No TIP picture is a reference in this composition, so the
+reference map, the §7.22 slot store and every other picture's prediction are
+untouched.
+
+`--nightly-b` sets mode 1 and the 0.30 dB floor when they are unset, so the
+preset is the 86.805 point. The env gates stay available (an explicit value,
+including `0`, wins) and are not reachable from `--fast-decode`:
+
+```sh
+AV2ENC_TIP_LEAF=1        # mode 1: dead ends only (the measured arm; preset)
+AV2ENC_TIP_LEAF=0        # control: the 86.607 compound arm (24,988 B at QP125)
+AV2ENC_TIP_LEAF=2        # mode 2: layer >= 2 pictures; the TIP is a reference
+AV2ENC_TIP_LEAF_SKIP=<d,d,...>     # research control: keep those B pictures
+AV2ENC_TIP_LEAF_PSNR_MARGIN=0.30   # quality floor, dB (preset default)
+```
+
+**Sequence and header delta.** Mode 1 sets `enable_tip = 1`,
+`enable_ref_frame_mvs = 1` (both required for a TIP OBU) and
+`disable_tip_output = 0`; the regular pictures keep
+`use_ref_frame_mvs = 0`. Their block decisions are unchanged; the only extra
+bits on a regular picture are the two sequence/tool bits and the per-frame
+`use_ref_frame_mvs`/`TipFrameMode` bits. Each TIP header codes the plan's two
+reference slots (past, future), the plan's refresh flag and output flags, the
+`Tip_Weighting_Factor` and the `TipInterpFilter`; there is no tile payload.
+
+**TIP parameters are searched, not guessed.** `Tip_Weighting_Factor` (6 legal
+two-sided indices) and `TipInterpFilter` (sharp / regular / smooth) are
+explicit header values, so the encoder builds all 18 combinations and keeps
+the SSE-best one. At QP125 this gains +0.06 dB mean over the
+temporal-position sharp-only choice and up to +1.07 dB on the worst picture.
+The §7.22 field of
+the TIP slot is stored from the chosen build (the standalone `--video-tip`
+path's `store_tip_frame_motion_field`) even though mode 1 never reads it.
+
+**Per-picture quality floor.** A TIP output picture codes no residual, so a
+few leaves where the two-sided synthesis fails (occlusion / disocclusion) are
+visibly worse than a coded B. Before committing a TIP unit the encoder probes
+the coded alternative with a second `InterFrameEncoder` over the same
+references (a local encode; nothing is committed) and keeps TIP only when its
+luma PSNR is within `AV2ENC_TIP_LEAF_PSNR_MARGIN` dB (default **0.30**) of the
+coded picture. A rejected picture falls through to the normal tile-coded B;
+because every leaf is a dead end and the CDF chain resets per picture
+(`disable_cross_frame_cdf_init = 1`), the fallback is byte-identical to the
+normal chain and does not perturb any other picture. At QP121 the probe
+rejects displays 36, 46, 50 and 52 (luma deficits 0.33-1.10 dB); the other 18
+leaves become TIP. Measured selection variants at 100 kbps: 3-skip 86.821,
+4-skip 86.805, 5-skip 86.830, full TIP 86.726 (+0.119, below the gate); the
+probe rule is the 4-skip point.
+
+**16-picture proof** (one key + two chained 8-frame B blocks, QP116): 19,727 B,
+5 TIP pictures (displays 2, 4, 10, 12, 14) and one coded leaf (display 6).
+`tools/validate_avmdec.py` reports 16/16 with `--video-recon` equality and the
+pinned `dav2d f9dafbc` is 16/16 sample-exact (`cmp` of the Y4M outputs).
+
+**60-picture rate-matched measurement** (`--video-gops 7`, `tools/oracle.py
+--target-kbps 100`, AVM decode). The compound control is an explicit
+`AV2ENC_TIP_LEAF=0`; the TIP rows are the promoted `--nightly-b`:
+
+| arm | QP | bytes | kbps | JOD | BA | SS2 | K | Δ vs 86.607 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| compound control (`AV2ENC_TIP_LEAF=0`) | 125 | 24,988 | 99.952 | 9.8635 | 2.0574 | 84.755 | 86.606 | — |
+| compound control | 124 | 25,261 | 101.044 | 9.8564 | 2.0543 | 84.938 | 86.610 | — |
+| **TIP leaves** | **121** | **25,299** | **101.196** | **9.8679** | **2.0013** | **85.391** | **86.901** | — |
+| TIP leaves | 122 | 24,918 | 99.672 | 9.8562 | 2.0237 | 85.407 | 86.778 | — |
+| **TIP leaves, matched** | — | — | **100.000** | — | — | — | **86.805** | **+0.198** |
+
+The win is Butteraugli and SSIMULACRA2 (BA 2.055 → 2.001, SS2 84.91 → 85.39 at
+the matched rate) with CVVDP flat to slightly better (9.863 → 9.868): the QP
+drop the 4-5% rate saving buys outweighs the lost residual on the TIP pictures.
+All 60-picture streams are `avmdec` 60/60 with `--video-recon` equality; the
+pinned dav2d still has the §7.21.6 drain defect for the 60-picture chains.
+Encode time on the dev build is ~64 s for the 60-picture stream vs ~41 s for
+the compound control (the coded-leaf probe plus the 18 TIP parameter builds);
+the preset is a research lead, not a speed claim.
+
+**Negatives measured on the way** (do not repeat):
+
+* **TIP on the layer-2 pictures too (mode 2).** It saves more bits (QP118
+  24,711 B vs QP125 24,988 baseline) but the TIP-synthesized reference chain
+  drops CVVDP: matched K **86.538**, i.e. −0.069 vs baseline. The layer-2
+  pictures are referenced by the leaves, so their synthesis error propagates;
+  the dead-end leaves are the right scope.
+* **§7.16 TIP deblocking.** Filtering the TIP output pictures with the CPU
+  `tip_deblock` core (sharp/regular/smooth, QP121) leaves JOD unchanged
+  (9.8463), BA 2.0084 → 2.0088, SS2 85.335 → 85.333 and lowers PSNR-Y by
+  0.006 dB. It is not wired.
+* **The raw skip list is not the product.** Tuning the copied display list by
+  hand reaches 86.830 but does not generalise; the shipped decision is the
+  per-picture 0.30 dB luma-PSNR floor computed by the probe.
+
+Reproduction:
+
+```sh
+REF=testdata/nasa_480x240_30fps_60f.y4m
+# 16-picture proof (mode 1 + 0.30 dB floor are the preset defaults)
+build-dev/av2enc "$REF" -o /tmp/tip16.ivf \
+  --video --frames 16 --qp 116 --cpu-threads 8 --video-gops 2 --nightly-b \
+  --video-recon /tmp/tip16.y4m
+python3 tools/validate_avmdec.py /tmp/tip16.ivf --ref "$REF" \
+  --recon /tmp/tip16.y4m
+tools/bin/dav2d-macos --strict 1 --threads 1 -i /tmp/tip16.ivf -o /tmp/tip16.dec.y4m
+cmp /tmp/tip16.y4m /tmp/tip16.dec.y4m
+
+# 60-picture bracket (QP121 is 101.196 kbps, QP122 is 99.672)
+build-dev/av2enc "$REF" -o /tmp/tip121.ivf \
+  --video --frames 60 --qp 121 --cpu-threads 8 --video-gops 7 --nightly-b \
+  --video-recon /tmp/tip121.y4m
+build-dev/av2enc "$REF" -o /tmp/tip122.ivf \
+  --video --frames 60 --qp 122 --cpu-threads 8 --video-gops 7 --nightly-b \
+  --video-recon /tmp/tip122.y4m
+# compound control: the pre-TIP 86.607 arm
+env AV2ENC_TIP_LEAF=0 build-dev/av2enc "$REF" -o /tmp/base125.ivf \
+  --video --frames 60 --qp 125 --cpu-threads 8 --video-gops 7 --nightly-b
+python3 tools/oracle.py --ref "$REF" --ivf tip@121=/tmp/tip121.ivf \
+  --ivf tip@122=/tmp/tip122.ivf --ivf base@124=/tmp/base124.ivf \
+  --ivf base@125=/tmp/base125.ivf --target-kbps 100 --no-segments
+```
+
+Controls are byte-identical: `--video-compound-off` reproduces the 85.472
+single-prediction arm (16 f 19,759 B `87204257…`, 60 f QP131 24,911 B
+`a4c8853e…`); an explicit `AV2ENC_TIP_LEAF=0` reproduces the 86.607 compound
+arm (16 f 19,865 B `325ce3dd…`, 60 f QP125 24,988 B `3dbbad98…`). The flat
+pins are 25,008 B `0639b436…` (QP106) and 23,690 B `1b99127a…` (QP110).
 
 ## What would change the answer
 

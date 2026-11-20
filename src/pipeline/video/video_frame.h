@@ -792,6 +792,9 @@ struct VideoSequenceResult {
   // Coded leaves with RefFrame[0] == TIP_FRAME (§5.20.7.10 block form, gate
   // evidence for --video-tip-block-ref).
   std::uint64_t tip_block_refs = 0;
+  // Chained-B dead-end display frames coded as TIP_FRAME_AS_OUTPUT
+  // (§7.10; research gate AV2ENC_TIP_LEAF, gate evidence for the composition).
+  std::uint64_t tip_leaf_frames = 0;
   // --video-drift-refresh evidence: inter frames coded as a refresh, and the
   // payload bytes they were charged (frame payload minus the running mean
   // inter payload).

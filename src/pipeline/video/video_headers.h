@@ -382,6 +382,10 @@ struct VideoFrameHeader {
   std::int16_t tip_global_mv_row = 0;     // TipGlobalMv, 1/8 luma samples
   std::int16_t tip_global_mv_col = 0;
   bool tip_sharp = true;                   // TipInterpFilter
+  // §5.18.2 TipInterpFilter when tip_sharp == 0: true is the regular 8-tap,
+  // false the smooth 8-tap.  Only coded for a TIP frame with tip_sharp == 0,
+  // so the default leaves every sharp stream byte-identical.
+  bool tip_regular = false;
   // §5.18.2 allow_tip_hole_fill: written only for a non-disabled
   // TipFrameMode when the sequence enables §5.4.6 enable_tip_hole_fill.
   bool allow_tip_hole_fill = false;
@@ -496,6 +500,7 @@ std::vector<std::uint8_t> make_temporal_delimiter_obu();
 // must have `tip_frame = true`.  Returns an empty vector on error.
 std::vector<std::uint8_t> make_tip_frame_obu(const VideoConfig& config,
                                              const VideoFrameHeader& header,
-                                             std::string& error);
+                                             std::string& error,
+                                             std::uint8_t obu_tlayer_id = 0);
 
 }  // namespace av2enc::video

@@ -55,11 +55,13 @@ adjacent-QP ripple and sharing the driver headroom with the head/tail TX).
 
 `--nightly-b` (`docs/tlayers-chain.md`) is a separate **research** preset, not
 part of this aggregate: the chained single-key hierarchical-B stream with
-AVERAGE compound measures **K 86.607 at 100 kbps (+0.375 over the 86.232 flat
-aggregate, +1.135 over its own 85.472 single-prediction control)**. Its
+AVERAGE compound and TIP output on the dead-end leaves measures **K 86.805 at
+100 kbps (+0.573 over the 86.232 flat aggregate, +0.198 over its own 86.607
+compound control, +1.333 over the 85.472 single-prediction control)**. Its
 60-picture chains are `avmdec`-validated only (the pinned `dav2d` has the
 §7.21.6 drain defect), so it stays opt-in and the shipped flat decisions here
-are unchanged.
+are unchanged. The compound control is `AV2ENC_TIP_LEAF=0`; the
+single-prediction control is `--video-compound-off`. See the same doc.
 
 ## Current pins
 

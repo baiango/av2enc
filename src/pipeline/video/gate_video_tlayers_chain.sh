@@ -11,7 +11,9 @@
 # and the future anchor (local N-1) references the past anchor, while the
 # interior B pictures reference the two anchors.  --nightly-b enables AVERAGE
 # compound on the chained B carrier (the plan's past/future (0,1) pair on the
-# interior pictures); --video-compound-off restores the pre-compound arm.
+# interior pictures) and the TIP-output composition on the dead-end leaves
+# (AV2ENC_TIP_LEAF=1, 0.30 dB coded-leaf floor).  --video-compound-off restores
+# the pre-compound arm; AV2ENC_TIP_LEAF=0 restores the compound-only arm.
 #
 # Validation: chained streams are decoded with avmdec
 # (tools/validate_avmdec.py, frame count + recon equality).  The pinned dav2d
@@ -26,8 +28,10 @@
 #   chain16_b   one key + two chained 8-frame B blocks, 16/16 + recon
 #   chain60_p   one key + 7x8 + 4 tail (P), 60/60 + recon
 #   chain60_b   one key + 7x8 + 4 tail (B), 60/60 + recon
-#   nightly_b_*  the compound preset, 16 and 60 pictures (dav2d exact at 16)
+#   nightly_b_*  the TIP-output compound preset, 16 and 60 pictures (dav2d
+#                exact at 16)
 #   nightly_b_*_compound_off  the pre-compound 85.472 arm (A/B control)
+#   nightly_b_*_tip_off  the compound 86.607 arm without TIP (A/B control)
 #   pin106/110  the nightly gate pins are byte-identical with the gate off
 #
 # Usage:
@@ -286,21 +290,34 @@ run_chain chain60_b_edge B 60 7 60 - - \
   --video-edge-inter --video-edge-mask
 
 # 3b. The product aggregate: --nightly-b (edge + key-QP + BAWP + AVERAGE
-# compound + partition-RD + partition fit + layer-0 anchor residual).  The
-# 16-picture proof must also be pinned-dav2d exact; the 60-picture streams are
-# avmdec-only (dav2d §7.21.6 drain).  QP125 is the measured first bracket
-# (24,988 B; K 86.607 at 100 kbps); QP124 brackets it from above.
-run_nightly_b nightly_b_16 16 2 16 116 19865 \
-  325ce3ddad26a81efbf5ae7cc9b90f0b
-run_nightly_b nightly_b_60 60 7 60 125 24988 \
-  3dbbad9847ab661c6c154903990ade75
+# compound + TIP output on the dead-end leaves + partition-RD + partition fit
+# + layer-0 anchor residual).  The 16-picture proof must also be pinned-dav2d
+# exact; the 60-picture streams are avmdec-only (dav2d §7.21.6 drain).  QP121
+# (25,299 B) and QP122 (24,918 B) bracket the measured K 86.805 at 100 kbps.
+run_nightly_b nightly_b_16 16 2 16 116 19727 \
+  f6c7b79b6ddeab45b5447a7c50522685
+run_nightly_b nightly_b_60_121 60 7 60 121 25299 \
+  ca314db24a71fc1c28d7a1ba8eb1515f
+run_nightly_b nightly_b_60_122 60 7 60 122 24918 \
+  537115cf0ab942a38202f64049d24991
 
-# 3c. The pre-compound control: --video-compound-off reproduces the 85.472 B
-# baseline byte for byte (the ablation switch keeps the old arm inspectable).
+# 3c. Controls.  --video-compound-off drops compound and the TIP composition
+# with it: the pre-compound 85.472 arm byte for byte.  An explicit
+# AV2ENC_TIP_LEAF=0 keeps compound and drops only TIP: the 86.607 compound arm
+# (QP125 24,988 B) byte for byte.
 run_nightly_b nightly_b_16_compound_off 16 2 16 116 19759 \
   8720425796fe80f3ddce067643adfec2 --video-compound-off
 run_nightly_b nightly_b_60_compound_off 60 7 60 131 24911 \
   a4c8853e3abd752503db17be769b80a4 --video-compound-off
+run_nightly_b_tip_off() {
+  export AV2ENC_TIP_LEAF=0
+  run_nightly_b "$@"
+  unset AV2ENC_TIP_LEAF
+}
+run_nightly_b_tip_off nightly_b_16_tip_off 16 2 16 116 19865 \
+  325ce3ddad26a81efbf5ae7cc9b90f0b
+run_nightly_b_tip_off nightly_b_60_tip_off 60 7 60 125 24988 \
+  3dbbad9847ab661c6c154903990ade75
 
 # 4. Gate off must keep the nightly pins byte-identical (dav2d territory).
 pin_case() {

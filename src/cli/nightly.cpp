@@ -366,9 +366,9 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   options.video_tile_flush_min = true;
   options.video_ccso_header_rd = true;
 
-  // The four measured env-only research gates.  They are read lazily on the
-  // first decision, after this expansion.  An explicit env value wins,
-  // including "0" for a caller ablation, so the aggregate stays inspectable.
+  // The measured env-only research gates.  They are read lazily on the first
+  // decision, after this expansion.  An explicit env value wins, including "0"
+  // for a caller ablation, so the aggregate stays inspectable.
   const auto set_gate = [](const char* name, const char* value) {
     if (std::getenv(name) == nullptr) {
       setenv(name, value, 1);
@@ -379,5 +379,15 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   set_gate("AV2ENC_RD_UVLEVEL", "1");
   set_gate("AV2ENC_TX_DETAIL_SEARCH_TAIL", "1");
   set_gate("AV2ENC_TX_DETAIL_MIN", "0.50");
+  // TIP output on the chained-B dead ends (docs/tlayers-chain.md): the leaves
+  // no planned frame references become TIP_FRAME_AS_OUTPUT pictures.  Mode 1
+  // is the measured arm, and the coded-leaf probe keeps TIP only when its luma
+  // PSNR is within 0.30 dB of the tile-coded alternative.  It is gated on
+  // compound: --video-compound-off is therefore the exact 86.607 control.
+  // An explicit AV2ENC_TIP_LEAF (including 0) wins.
+  if (options.video_compound) {
+    set_gate("AV2ENC_TIP_LEAF", "1");
+    set_gate("AV2ENC_TIP_LEAF_PSNR_MARGIN", "0.30");
+  }
   return true;
 }
