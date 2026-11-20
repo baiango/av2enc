@@ -57,6 +57,31 @@ cd /workspace/av2enc
 tools/validate_dav2d.sh out.ivf source.y4m
 ```
 
+## Alternate validator: chained multi-GOP streams (2026-11-20)
+
+The pinned `dav2d` f9dafbc has a §7.21.6 output-drain defect: a non-key refresh
+that overwrites an implicit picture is not drained, so an unconstrained
+single-key chained multi-GOP stream emits only the final store contents. The
+encoder's slot-floor workaround makes the current chain drain, but the
+unconstrained structure needs the fix.
+
+Until the pin moves, chained multi-GOP streams are validated with AVM's
+reference decoder:
+
+```sh
+tools/validate_avmdec.py out.ivf --ref source.y4m --recon encoder.recon.y4m
+```
+
+This is an owner-authorized exception, scoped to **chained multi-GOP streams
+only**. Flat key+P streams, every reference pin and every production stream
+still pass `tools/validate_dav2d.sh`. A stream that only `avmdec` accepts is
+not shippable on the pinned product decoder; it is a research stream until the
+pin moves.
+
+The Nov 19 dav2d nightly `4d6266a` passes the QP106/QP110 pins with recon
+equality and decodes the current chained stream byte-identically. It is the
+candidate pin move; it is not adopted yet.
+
 ## CTest
 
 `ctest --test-dir build --output-on-failure` includes `dav2d_smoke`. It runs
