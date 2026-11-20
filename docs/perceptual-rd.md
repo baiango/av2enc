@@ -44,7 +44,7 @@ nightly pin is byte-identical (25,008 B, MD5
 
 ## Measurement
 
-`testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--nightly --cpu-threads 8`.
+`testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--fast-decode --cpu-threads 8`.
 Quality: `tools/quality.py` (CVVDP JOD), `tools/extra_metrics.py` (Butteraugli,
 SSIMULACRA2), `tools/kpi.py`.  One metric job at a time, `nice -n 10`.  The
 baseline QP106 point is the pin: 100.032 kbps, JOD 9.7334, BA 3.4202,

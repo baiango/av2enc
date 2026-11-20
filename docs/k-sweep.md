@@ -1,9 +1,9 @@
-# K-optimal operating point at 240p30 / 100 kbps (`--nightly`)
+# K-optimal operating point at 240p30 / 100 kbps (`--fast-decode`)
 
 Status: **measured; one flag pair moves K by +1.6 at iso-rate and nothing else
 outside the metric's own QP ripple does.** No source changes. This document is
 the record of a flag-only sweep of the 60-frame 240p / 100 kbps operating point
-(`testdata/nasa_480x240_30fps_60f.y4m`, `--nightly`, `--qp` bracketing 100 kbps).
+(`testdata/nasa_480x240_30fps_60f.y4m`, `--fast-decode`, `--qp` bracketing 100 kbps).
 
 `K = 100 * (0.5*clamp(JOD/10) + 0.25/(1+BA/3) + 0.25*clamp((SS2+50)/150))`
 (`tools/kpi.py`). Every number below is K, and every comparison is at a matched
@@ -14,7 +14,7 @@ interpolated linearly in rate.
 
 | Arm | QP | Bytes | kbps | JOD | Butteraugli | SSIMULACRA2 | PSNR-Y | K |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| baseline `--nightly` | 106 | 25,008 | 100.03 | 9.7334 | 3.420 | 80.84 | 44.67 | **82.16** |
+| baseline `--fast-decode` | 106 | 25,008 | 100.03 | 9.7334 | 3.420 | 80.84 | 44.67 | **82.16** |
 | **best: + threshold 1.5 / budget 3250** | 110 | 25,146 | 100.58 | 9.7605 | 2.656 | 81.25 | 44.79 | **83.94** |
 | same arm at QP111 | 111 | 24,950 | 99.80 | 9.7513 | 2.731 | 81.42 | 44.70 | 83.75 |
 | **best arm, iso-rate 100.0** | — | 25,000 | 100.00 | 9.7536 | 2.712 | 81.38 | 44.73 | **83.80** |
@@ -37,12 +37,12 @@ K decomposition of that +1.64: **+1.45 from Butteraugli** (q_ba 0.4673 → 0.525
 The gain lands almost entirely on the metric that lags SVT, which is the point
 of scoring K instead of JOD.
 
-Recipe (`--nightly` plus two overrides; byte-identical to typing the whole
+Recipe (`--fast-decode` plus two overrides; byte-identical to typing the whole
 expansion out with those values):
 
 ```sh
 build-dev/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/x.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 110 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 110 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 
@@ -66,7 +66,7 @@ Stream: 25,146 B, MD5 `c60250c02a315d725af19c74c4d1a5df`. `dav2d-macos
 
 ### Baseline reproduction
 
-QP106 `--nightly` reproduces the pin exactly — 25,008 B, 100.032 kbps,
+QP106 `--fast-decode` reproduces the pin exactly — 25,008 B, 100.032 kbps,
 9.7334 JOD, 3.4202 BA, 80.8366 SS2, K 82.155, MD5
 `0639b43630abb454f7be5ac494d2efb4` — so the harness and the tool versions match
 the recorded baseline.
@@ -74,7 +74,7 @@ the recorded baseline.
 ### The expansion actually used
 
 `docs/video-nightly.md` lists the expansion without the four overhead levers, so
-typing that list out is **not** byte-identical to `--nightly` any more (it is
+typing that list out is **not** byte-identical to `--fast-decode` any more (it is
 25,756 B vs 25,008 B). The current expansion, which reproduces the pin byte for
 byte, is:
 
@@ -93,7 +93,7 @@ byte, is:
 
 `--video-rd-preset quality` is `--video-inter-residual --video-deblock
 --video-ccso --video-tx-search --video-intra-full`. A flag sweep on top of
-`--nightly` is equivalent to editing this list, with one trap: an explicit
+`--fast-decode` is equivalent to editing this list, with one trap: an explicit
 `--video-partition-rd-lambda` also re-pins the partition fallback price to the
 legacy 700 SSE/bit (the QP-scaled aggregate uses ~6), so that flag's rows below
 mix two changes.
@@ -262,13 +262,13 @@ Every scored point (one row per encode; `INVALID` and CLI rejects are listed in
 the text above). ΔK against the baseline anchor is only indicative for rows more
 than ~1% away from 100 kbps.
 
-| config | change vs `--nightly` | QP | bytes | kbps | JOD | BA | SS2 | K | PSNR-Y |
+| config | change vs `--fast-decode` | QP | bytes | kbps | JOD | BA | SS2 | K | PSNR-Y |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `base` | `--nightly` (the pin) | 104 | 26,158 | 104.63 | 9.7185 | 4.172 | 80.11 | 80.73 | 44.49 |
-| `base` | `--nightly` (the pin) | 105 | 25,342 | 101.37 | 9.7216 | 3.541 | 80.40 | 81.81 | 44.54 |
-| `base` | `--nightly` (the pin) | 106 | 25,008 | 100.03 | 9.7334 | 3.420 | 80.84 | 82.16 | 44.67 |
-| `base` | `--nightly` (the pin) | 107 | 24,885 | 99.54 | 9.7113 | 4.323 | 80.26 | 80.51 | 44.55 |
-| `base` | `--nightly` (the pin) | 108 | 24,291 | 97.16 | 9.7216 | 3.682 | 80.63 | 81.60 | 44.60 |
+| `base` | `--fast-decode` (the pin) | 104 | 26,158 | 104.63 | 9.7185 | 4.172 | 80.11 | 80.73 | 44.49 |
+| `base` | `--fast-decode` (the pin) | 105 | 25,342 | 101.37 | 9.7216 | 3.541 | 80.40 | 81.81 | 44.54 |
+| `base` | `--fast-decode` (the pin) | 106 | 25,008 | 100.03 | 9.7334 | 3.420 | 80.84 | 82.16 | 44.67 |
+| `base` | `--fast-decode` (the pin) | 107 | 24,885 | 99.54 | 9.7113 | 4.323 | 80.26 | 80.51 | 44.55 |
+| `base` | `--fast-decode` (the pin) | 108 | 24,291 | 97.16 | 9.7216 | 3.682 | 80.63 | 81.60 | 44.60 |
 | `cctx` | + `--video-cctx` | 104 | 25,690 | 102.76 | 9.7029 | 4.315 | 80.08 | 80.45 | 44.43 |
 | `cctx` | + `--video-cctx` | 105 | 24,861 | 99.44 | 9.7139 | 4.124 | 80.63 | 80.87 | 44.61 |
 | `cctx` | + `--video-cctx` | 106 | 24,390 | 97.56 | 9.7234 | 3.380 | 80.65 | 82.15 | 44.61 |
@@ -355,7 +355,7 @@ than ~1% away from 100 kbps.
 ## 720p recipe check
 
 Same clip family as `bench/space8k_720p` (`testdata/space8k_1440x720_60f.y4m`,
-60 frames, `--nightly`, QP bracketing 300 kbps). At this rate the refresh budget
+60 frames, `--fast-decode`, QP bracketing 300 kbps). At this rate the refresh budget
 is only ~3% of the stream, so the 240p optimum is not expected to transfer
 unchanged — it does transfer, but through the *threshold*, not the budget.
 
@@ -387,7 +387,7 @@ what selects the frames, and the budget must be large enough to finish them.
 - **The recipe moves the matched-rate QP, not just the flags.** The refresh
   payload costs ~0.5% more rate at a fixed QP, so the 100 kbps point moves from
   QP106 (baseline) to QP110 (candidate). Quote the pair as an operating point,
-  not as "QP106 plus two flags". The flags are also `cqp`-only: `--nightly`
+  not as "QP106 plus two flags". The flags are also `cqp`-only: `--fast-decode`
   applies the refresh (and the carried CDFs) only in `--rc cqp`, so a `crf`/`vbr`
   arm would measure a different aggregate.
 - **JOD is nearly saturated** at this point (q_cvvdp 0.973 baseline → 0.975
@@ -410,7 +410,7 @@ cmake --preset dev && cmake --build build-dev -j2
 
 REF=testdata/nasa_480x240_30fps_60f.y4m
 build-dev/av2enc "$REF" -o /tmp/x.ivf --video --frames 60 --cpu-threads 8 \
-  --qp 110 --nightly --video-drift-refresh-threshold 1.5 \
+  --qp 110 --fast-decode --video-drift-refresh-threshold 1.5 \
   --video-drift-refresh-budget 3250
 tools/bin/dav2d-macos --strict 1 -i /tmp/x.ivf -o /tmp/x.y4m --muxer yuv4mpeg2
 DAV2D=tools/bin/dav2d-macos python3 tools/quality.py --ref "$REF" --ivf /tmp/x.ivf --json /tmp/q.json

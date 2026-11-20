@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Extended partitions on the nightly chain (--nightly --video-ext-partitions).
+# Extended partitions on the nightly chain (--fast-decode --video-ext-partitions).
 #
 # 1. Flag-off pins are byte-identical: default QP189 25,009 B, quality QP190
 #    25,141 B, nightly QP110 24,113 B.  The composition must not move them.
@@ -124,16 +124,16 @@ expect_bytes "$TMP/quality.ivf" "$PIN_QUALITY_BYTES" "quality pin"
     echo "FAIL quality pin md5" >&2; exit 1; }
 
 "$BIN" "$NASA" -o "$TMP/nightly.ivf" --video --frames 60 --qp 110 \
-    --cpu-threads 8 --nightly >"$TMP/nightly.log" 2>&1
+    --cpu-threads 8 --fast-decode >"$TMP/nightly.log" 2>&1
 expect_bytes "$TMP/nightly.ivf" "$PIN_NIGHTLY_BYTES" "nightly pin"
 [ "$(md5_of "$TMP/nightly.ivf")" = "$PIN_NIGHTLY_MD5" ] || {
     echo "FAIL nightly pin md5" >&2; exit 1; }
 
 # --- 2. composed stream ----------------------------------------------------
 "$BIN" "$NASA" -o "$TMP/ext.ivf" --video --frames 60 --qp 110 \
-    --cpu-threads 8 --nightly --video-ext-partitions \
+    --cpu-threads 8 --fast-decode --video-ext-partitions \
     --video-recon "$TMP/ext.recon.y4m" >"$TMP/ext.log" 2>&1 || {
-    echo "FAIL: --nightly --video-ext-partitions encode" >&2
+    echo "FAIL: --fast-decode --video-ext-partitions encode" >&2
     cat "$TMP/ext.log" >&2; exit 1; }
 expect_bytes "$TMP/ext.ivf" "$EXT_Q110_BYTES" "ext nightly"
 [ "$(md5_of "$TMP/ext.ivf")" = "$EXT_Q110_MD5" ] || {
@@ -147,7 +147,7 @@ decode_exact "$TMP/ext.ivf" "$TMP/ext.recon.y4m" 60 ext
 # --- 3. keyframe tree: composed, extended and inside the safe geometry -----
 AV2ENC_PART_TREE="$TMP/ext-key.tree" \
 "$BIN" "$NASA" -o "$TMP/ext-key.ivf" --video --frames 1 --qp 120 \
-    --cpu-threads 8 --nightly --video-ext-partitions \
+    --cpu-threads 8 --fast-decode --video-ext-partitions \
     --video-recon "$TMP/ext-key.recon.y4m" >"$TMP/ext-key.log" 2>&1 || {
     echo "FAIL: extended QP120 keyframe encode" >&2
     cat "$TMP/ext-key.log" >&2; exit 1; }
@@ -157,7 +157,7 @@ expect_bytes "$TMP/ext-key.ivf" "$EXT_KEY_BYTES" "ext keyframe"
 decode_exact "$TMP/ext-key.ivf" "$TMP/ext-key.recon.y4m" 1 ext-key
 
 "$BIN" "$NASA" -o "$TMP/base-key.ivf" --video --frames 1 --qp 120 \
-    --cpu-threads 8 --nightly >"$TMP/base-key.log" 2>&1
+    --cpu-threads 8 --fast-decode >"$TMP/base-key.log" 2>&1
 expect_bytes "$TMP/base-key.ivf" "$PIN_KEY_BYTES" "rect QP120 keyframe"
 [ "$(md5_of "$TMP/base-key.ivf")" = "$PIN_KEY_MD5" ] || {
     echo "FAIL rect QP120 keyframe md5" >&2; exit 1; }
@@ -180,7 +180,7 @@ fi
 # --- 4. bottom-edge min-block 8 keyframe -----------------------------------
 AV2ENC_PART_TREE="$TMP/ext-key8.tree" \
 "$BIN" "$NASA" -o "$TMP/ext-key8.ivf" --video --frames 1 --qp 120 \
-    --cpu-threads 8 --nightly --video-ext-partitions --video-min-block 8 \
+    --cpu-threads 8 --fast-decode --video-ext-partitions --video-min-block 8 \
     --video-recon "$TMP/ext-key8.recon.y4m" >"$TMP/ext-key8.log" 2>&1 || {
     echo "FAIL: extended min-block 8 keyframe encode" >&2
     cat "$TMP/ext-key8.log" >&2; exit 1; }
@@ -220,7 +220,7 @@ with open(sys.argv[1], "wb") as f:
         f.write(bytes(plane))
 PY
 "$BIN" "$TMP/bottom80.y4m" -o "$TMP/bottom80.ivf" --video --frames 2 \
-    --qp 110 --cpu-threads 8 --nightly --video-ext-partitions \
+    --qp 110 --cpu-threads 8 --fast-decode --video-ext-partitions \
     --video-recon "$TMP/bottom80.recon.y4m" >"$TMP/bottom80.log" 2>&1 || {
     echo "FAIL: 16-row bottom superblock encode" >&2
     cat "$TMP/bottom80.log" >&2; exit 1; }

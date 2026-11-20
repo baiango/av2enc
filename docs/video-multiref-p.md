@@ -33,7 +33,7 @@ carried-CDF chain (see §2).
 
 ## 2. Legal control and flag conflicts
 
-`--nightly` expands `--video-ref-signal-compact`, which pins `NumRefFrames = 1`
+`--fast-decode` expands `--video-ref-signal-compact`, which pins `NumRefFrames = 1`
 and therefore requires `--video-refs 1`:
 
 ```text
@@ -65,15 +65,15 @@ Legal controls used here:
 ```sh
 # nightly control (reference count 1, same explicit map as the arms)
 av2enc REF -o ctrl.ivf --video --frames 60 --cpu-threads 8 --qp Q \
-    --nightly --video-ref-signal-off --video-refs 1
+    --fast-decode --video-ref-signal-off --video-refs 1
 
 # multi-reference arms
 av2enc REF -o ref2.ivf --video --frames 60 --cpu-threads 8 --qp Q \
-    --nightly --video-ref-signal-off --video-refs 2
+    --fast-decode --video-ref-signal-off --video-refs 2
 
 # eff-perc drift composition (control takes --video-refs 1)
 AV2ENC_EFF_PERC=1 av2enc REF -o eff-ref3.ivf --video --frames 60 \
-    --cpu-threads 8 --qp Q --nightly --video-ref-signal-off --video-refs 3 \
+    --cpu-threads 8 --qp Q --fast-decode --video-ref-signal-off --video-refs 3 \
     --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 
@@ -224,12 +224,12 @@ BIN=build-release/av2enc
 # QP106/107 step is a 1.65 K K-jump, so a 106/108 interpolation is not usable.
 for QP in 104 106 107 108; do
   "$BIN" "$REF" -o /tmp/base-$QP.ivf --video --frames 60 --cpu-threads 8 \
-      --qp "$QP" --nightly
+      --qp "$QP" --fast-decode
   "$BIN" "$REF" -o /tmp/ctrl-$QP.ivf --video --frames 60 --cpu-threads 8 \
-      --qp "$QP" --nightly --video-ref-signal-off --video-refs 1
+      --qp "$QP" --fast-decode --video-ref-signal-off --video-refs 1
   for R in 2 3; do
     "$BIN" "$REF" -o /tmp/ref$R-$QP.ivf --video --frames 60 --cpu-threads 8 \
-        --qp "$QP" --nightly --video-ref-signal-off --video-refs "$R"
+        --qp "$QP" --fast-decode --video-ref-signal-off --video-refs "$R"
   done
 done
 
@@ -247,12 +247,12 @@ python3 tools/oracle.py --ref "$REF" --no-segments \
 # eff-perc composition
 for QP in 119 120; do
   AV2ENC_EFF_PERC=1 "$BIN" "$REF" -o /tmp/eff-ctrl-$QP.ivf --video \
-      --frames 60 --cpu-threads 8 --qp "$QP" --nightly \
+      --frames 60 --cpu-threads 8 --qp "$QP" --fast-decode \
       --video-ref-signal-off --video-refs 1 \
       --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
   for R in 2 3; do
     AV2ENC_EFF_PERC=1 "$BIN" "$REF" -o /tmp/eff-ref$R-$QP.ivf --video \
-        --frames 60 --cpu-threads 8 --qp "$QP" --nightly \
+        --frames 60 --cpu-threads 8 --qp "$QP" --fast-decode \
         --video-ref-signal-off --video-refs "$R" \
         --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
   done

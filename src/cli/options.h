@@ -175,10 +175,15 @@ struct Options {
   // intra/inter syntax bits for the leaf decision.  Off keeps every historical
   // stream byte-identical.
   bool video_leaf_rd = false;
-  // --nightly: the latest measured CPU-only algorithmic RD aggregate.  It is
-  // deliberately not the default and is rejected on --video-gpu, so the GPU
-  // path keeps the historical CPU decisions and stream bytes.
-  bool nightly = false;
+  // --fast-decode: the latest measured CPU-only algorithmic RD aggregate
+  // (renamed from --nightly 2026-11-20, which stays accepted as an alias).
+  // It is deliberately not the default and is rejected on --video-gpu, so the
+  // GPU path keeps the historical CPU decisions and stream bytes.
+  bool fast_decode = false;
+  // --nightly-b: the chained single-key B structure (opt-in research path,
+  // validated with tools/validate_avmdec.py while the dav2d pin has the
+  // §7.21.6 drain defect).
+  bool nightly_b = false;
   // Opt-in measured CPU RD preset (--video-rd-preset <name>).  Empty means no
   // expansion, so the default stream stays byte-identical.  The expansion only
   // sets existing CLI options and then the normal validation runs.
@@ -497,6 +502,7 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options,
 // cli/nightly.cpp
 bool apply_video_rd_preset(Options& options, std::string& error);
 bool apply_video_nightly(Options& options, std::string& error);
+bool apply_video_nightly_b(Options& options, std::string& error);
 
 // cli/validate.cpp
 ParseStatus validate_options(Options& options, std::string& error);

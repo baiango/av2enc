@@ -125,7 +125,12 @@ ParseStatus validate_options(Options& options, std::string& error) {
     }
   }
 
-  if (options.nightly) {
+  if (options.nightly_b) {
+    if (!apply_video_nightly_b(options, error)) {
+      return ParseStatus::kError;
+    }
+  }
+  if (options.fast_decode) {
     if (!apply_video_nightly(options, error)) {
       return ParseStatus::kError;
     }
@@ -181,7 +186,7 @@ ParseStatus validate_options(Options& options, std::string& error) {
   // --video-qp-lambda: CPU reference decisions only.
   if (options.video_qp_lambda) {
     // An explicit numeric lambda still wins over the scaled value for that
-    // site (the documented escape hatch).  The nightly expansion therefore
+    // site (the documented escape hatch).  The --fast-decode expansion therefore
     // omits --video-tx-lambda and --video-partition-rd-lambda: listing them
     // would pin those two sites by hand and quietly change the stream.
     if (!options.video || options.m1 || options.still_gpu) {

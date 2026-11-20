@@ -148,7 +148,7 @@ rate = type_bits + coefficient_bits * nonzero      (coefficient_bits = 1.0)
 ```
 
 unless `use_context_rate` (`--video-tx-context-rate`) or the inter-only RDOQ
-model is active. `--nightly` does not enable either on the key, and no caller
+model is active. `--fast-decode` does not enable either on the key, and no caller
 ever changes `coefficient_bits`. Measured consequence: the key's summed
 `rate_bits` is **4,406 B** while the same field costs **22,933 B** in the
 stream — 1.05 vs 5.4 bits per nonzero, a 5.2× underprice. The TX

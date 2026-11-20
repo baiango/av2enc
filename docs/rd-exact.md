@@ -94,13 +94,13 @@ Worktree `exp/rd-exact` from `main`, `cmake --preset dev`,
 `dav2d-macos --strict 1` -> `tools/quality.py` (CVVDP 0.5.7, `standard_fhd`,
 MPS) -> `tools/extra_metrics.py` -> `tools/kpi.py`. One metric job at a time,
 `nice -n 10`. Every measured stream decoded 60/60 pictures. K is interpolated
-linearly in rate; the local `--nightly` baseline is 82.048 at 100.0 kbps
+linearly in rate; the local `--fast-decode` baseline is 82.048 at 100.0 kbps
 (QP105/106/107: 81.81/82.15/80.51), the tuned drift baseline is 83.795
 (QP110/111: 83.94/83.75).
 
 ## Results
 
-### `--nightly` (bar: QP106 pin K 82.15 at 100.03 kbps; local K@100 = 82.05)
+### `--fast-decode` (bar: QP106 pin K 82.15 at 100.03 kbps; local K@100 = 82.05)
 
 | Arm | QP | Bytes | kbps | JOD | BA | SS2 | K |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -135,12 +135,12 @@ The leaf-only and leaf+partition ablations disagree by more than 1 K in both
 directions at the same QP (N=2: +1.93 for partition refinement; N=3: -1.02).
 That is the same order as the metric's QP ripple, so neither partition
 component is a resolvable lever on its own. The bracketed N=3 leaf-only number
-(82.12) is the best `--nightly` variant and it is flat against the 82.05
+(82.12) is the best `--fast-decode` variant and it is flat against the 82.05
 local baseline.
 
 ### Tuned drift recipe (bar: K 83.80 at 100.0 kbps)
 
-`--nightly --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget
+`--fast-decode --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget
 3250`, QP109..112 (QP112 added to bracket 100 kbps):
 
 | Arm | QP | Bytes | kbps | JOD | BA | SS2 | K |
@@ -192,7 +192,7 @@ priced.
 
 ## Encode cost
 
-Dev build (`-O1`), QP106 `--nightly`, 8 threads, median of 3 wall-clock runs:
+Dev build (`-O1`), QP106 `--fast-decode`, 8 threads, median of 3 wall-clock runs:
 
 | Arm | Median | vs baseline |
 |---|---:|---:|
@@ -219,7 +219,7 @@ rest.
 
 ## Verdict
 
-**No K gain, do not enable.** At `--nightly` the best measured iso-rate point
+**No K gain, do not enable.** At `--fast-decode` the best measured iso-rate point
 is 82.12 (N=3 leaf-only) against the 82.05 local baseline / 82.15 pin; at the
 tuned drift operating point every arm is 83.13-83.26 against 83.80. The
 differences are inside the documented +/-1.6 K QP ripple, but every bracket is

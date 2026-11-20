@@ -54,7 +54,7 @@ if configure_build "$ASAN_BUILD" "address,undefined"; then
     note "ASan+UBSan: 240p encode"
     if [ -f "$NASA" ]; then
         if "$ASAN_BUILD/av2enc" "$NASA" -o "$ASAN_BUILD/smoke.ivf" \
-            --video --frames 8 --cpu-threads 8 --qp 106 --nightly \
+            --video --frames 8 --cpu-threads 8 --qp 106 --fast-decode \
             >"$ASAN_BUILD/smoke.log" 2>&1; then
             echo "240p encode: ok ($(wc -c <"$ASAN_BUILD/smoke.ivf" | tr -d ' ') bytes)"
         else
@@ -74,7 +74,7 @@ if configure_build "$TSAN_BUILD" "thread"; then
     note "TSan: trace-enabled 8-thread encode"
     if [ -f "$NASA" ]; then
         if "$TSAN_BUILD/av2enc" "$NASA" -o "$TSAN_BUILD/smoke.ivf" \
-            --video --frames 8 --cpu-threads 8 --qp 106 --nightly \
+            --video --frames 8 --cpu-threads 8 --qp 106 --fast-decode \
             --video-trace >"$TSAN_BUILD/smoke.log" 2>"$TSAN_BUILD/smoke.trace"; then
             echo "trace encode: ok ($(wc -l <"$TSAN_BUILD/smoke.trace" | tr -d ' ') trace lines)"
         else

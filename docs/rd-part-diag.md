@@ -59,7 +59,7 @@ AV2ENC_EFF_PERC=1 AV2ENC_RD_UVFULL=1 AV2ENC_TX_DETAIL_SEARCH_TAIL=1 \
 AV2ENC_TX_DETAIL_MIN=0.50 AV2ENC_RD_KEY_TX=1 AV2ENC_RD_UVLEVEL=1 \
 AV2ENC_RD_DRIVER=1 AV2ENC_RD_HEAD_TX=1 AV2ENC_RD_TAIL_TX=1 \
 AV2ENC_PART_DIAG=1 av2enc testdata/nasa_480x240_30fps_60f.y4m \
-  -o /tmp/d.ivf --video --frames 60 --qp 116 --cpu-threads 8 --nightly \
+  -o /tmp/d.ivf --video --frames 60 --qp 116 --cpu-threads 8 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 
@@ -98,7 +98,7 @@ which is inside the same noise band. The pools overlap and do not stack.
 A first run measured the tail at **−604.7 B** and 44 % split wins. That run
 used `env $BASE …` from zsh, which does not word-split `$BASE`: only
 `AV2ENC_EFF_PERC` was set and the rest of the recipe was silently dropped, so
-the tree under test was plain `--nightly` (27,393 B at QP116 instead of the
+the tree under test was plain `--fast-decode` (27,393 B at QP116 instead of the
 recipe's 24,843 B). On the real recipe the depth-1 pool is 67 B. Any future
 lane must set the environment with `env ${=BASE}` (zsh), an array, or `bash`.
 

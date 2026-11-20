@@ -3,7 +3,7 @@
 
 Why
 ---
-A leave-one-out ablation of `--nightly` is ~40 encode+metric jobs. On one Mac
+A leave-one-out ablation of `--fast-decode` is ~40 encode+metric jobs. On one Mac
 they serialise at 30-60 s per CVVDP job; here every (config, QP) is an
 independent container, so the wall time is one job plus scheduling.
 
@@ -20,7 +20,7 @@ Usage
 
 `--mode matrix` takes
 
-    [{"name": "cand", "qps": [110, 111], "flags": ["--video", "--nightly"],
+    [{"name": "cand", "qps": [110, 111], "flags": ["--video", "--fast-decode"],
       "env": {"AV2ENC_TOOL": "1"}, "clip": "240p", "frames": 60}]
 
 `env` is applied to the encoder subprocess, which is how every new gate in this
@@ -130,13 +130,13 @@ CLIPS = {
 PINS = {
     "default": ("240p", 189, ["--video"]),
     "quality": ("240p", 190, ["--video", "--video-rd-preset", "quality"]),
-    "nightly": ("240p", 110, ["--video", "--nightly"]),
+    "nightly": ("240p", 110, ["--video", "--fast-decode"]),
     "explambda": (
         "240p",
         110,
         [
             "--video",
-            "--nightly",
+            "--fast-decode",
             "--video-qp-lambda",
             "--video-tx-lambda",
             "136",
@@ -155,7 +155,7 @@ PINS = {
         217,
         [
             "--video",
-            "--nightly",
+            "--fast-decode",
             "--video-key-qp-offset",
             "-57",
             "--video-leaf-rd-lambda",
@@ -387,7 +387,7 @@ def _jobs_for(mode: str, clip: str, qps_text: str, matrix: str, add_text: str,
 
     qps = _parse_qps(qps_text) if qps_text else ([109, 110, 111] if mode == "ablate"
                                                  else [105, 106, 107])
-    base_flags = ["--video", "--nightly"] + (DRIFT if base == "drift" else [])
+    base_flags = ["--video", "--fast-decode"] + (DRIFT if base == "drift" else [])
     jobs = []
     if mode == "ablate":
         for qp in qps:

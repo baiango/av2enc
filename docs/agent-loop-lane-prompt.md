@@ -18,7 +18,7 @@ with three required parts:
 3. Every change keeps the exact-rate probe, CDF carry and decoder-exact fixes.
 
 **Start from zero tool flags.** `base_args` is `--video --frames 60
---cpu-threads 8` only: no `--nightly`, no drift refresh, no pre-enabled tool.
+--cpu-threads 8` only: no `--fast-decode`, no drift refresh, no pre-enabled tool.
 The new pipeline builds its own tool set up inside the new driver, default-off
 and env-gated, and the gate's base arm is that same pipeline with the new tool
 off. Re-enabling the old nightly stack is neither the baseline nor a gain.

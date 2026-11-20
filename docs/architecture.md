@@ -246,7 +246,7 @@ Rules:
   on fixed published anchors; the definition is in `README.md`. Quality is the
   KPI; CPU speed is not. **Target to beat: SVT-AV1 v4.1.0 preset 0.** Current
   NASA points at ~100 kbps: default 28.5 K (4.802 JOD), `quality` 42.5 (6.302),
-  `--nightly` **80.6 K (9.713 JOD / 43.89 dB at 96.5 kbps)**, SVT preset 4 85.7,
+  `--fast-decode` **80.6 K (9.713 JOD / 43.89 dB at 96.5 kbps)**, SVT preset 4 85.7,
   SVT preset 0 **88.8 (9.830 JOD / 48.80 dB)**. AVM (8.452 JOD at 99.5 kbps) is
   kept as a historical calibration point only.
 - **GPU calibration:** encode the CPU point (240p30, 100 kbps, QP 189) on GPU

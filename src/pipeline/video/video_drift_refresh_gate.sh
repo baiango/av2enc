@@ -65,8 +65,8 @@ fail() { echo "FAIL: $*" >&2; FAILED=1; }
 
 QP=110
 THREADS=8
-# The `--nightly` expansion with `--video-drift-refresh` left out, so the gate
-# keeps a true flag-off control now that the flag is part of `--nightly`.
+# The `--fast-decode` expansion with `--video-drift-refresh` left out, so the gate
+# keeps a true flag-off control now that the flag is part of `--fast-decode`.
 COMMON=(--video --frames 60 --qp "$QP" --cpu-threads "$THREADS"
         --video-rd-preset quality
         --video-ccso-rd --video-ccso-bands 6 --video-ccso-lambda 22

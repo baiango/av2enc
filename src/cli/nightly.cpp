@@ -1,4 +1,4 @@
-// --video-rd-preset and --nightly expansions.  Both only set existing CLI
+// --video-rd-preset and --fast-decode expansions.  Both only set existing CLI
 // options; moved verbatim from src/main.cpp so the expanded flag set (and
 // therefore the stream) is unchanged.
 #include "cli/options.h"
@@ -37,17 +37,19 @@ bool apply_video_rd_preset(Options& options, std::string& error) {
   return true;
 }
 
-// --nightly expands the measured CPU-only algorithmic aggregate.  It is the
-// only place the new decision models are enabled together; the default path,
-// --video-rd-preset quality and every GPU path keep the historical decisions.
+// --fast-decode expands the measured CPU-only algorithmic aggregate (renamed
+// from --nightly 2026-11-20; --nightly is accepted as an alias and expands the
+// same flag set).  It is the only place the new decision models are enabled
+// together; the default path, --video-rd-preset quality and every GPU path
+// keep the historical decisions.
 bool apply_video_nightly(Options& options, std::string& error) {
-  if (!options.nightly) return true;
+  if (!options.fast_decode) return true;
   if (options.m1 || options.still_gpu) {
-    error = "--nightly is a CPU --video mode; drop --still/--still-gpu";
+    error = "--fast-decode is a CPU --video mode; drop --still/--still-gpu";
     return false;
   }
   if (options.video_gpu) {
-    error = "--nightly is CPU-only: the CUDA backend keeps the historical "
+    error = "--fast-decode is CPU-only: the CUDA backend keeps the historical "
             "decisions so its streams stay CPU-reference exact (drop "
             "--video-gpu)";
     return false;
@@ -56,7 +58,7 @@ bool apply_video_nightly(Options& options, std::string& error) {
   if (options.video_rd_preset.empty()) {
     options.video_rd_preset = "quality";
   } else if (options.video_rd_preset != "quality") {
-    error = "--nightly wraps the measured 'quality' preset; drop the other "
+    error = "--fast-decode wraps the measured 'quality' preset; drop the other "
             "--video-rd-preset value";
     return false;
   }
@@ -201,5 +203,31 @@ bool apply_video_nightly(Options& options, std::string& error) {
   }
   // The §8.3.2 context rate is a separate opt-in: it helps the old tree but
   // measured worse when stacked on the full nightly aggregate.
+  return true;
+}
+
+// --nightly-b: the chained single-key B structure (docs/tlayers-chain.md).
+// Research opt-in: it is decoder-exact under tools/validate_avmdec.py while
+// the pinned dav2d has the §7.21.6 drain defect, and it measured -42.9 K
+// against the flat aggregate at 100 kbps because every reordering schedule
+// rejects --video-edge-inter.  It is NOT the default and NOT implied by
+// --fast-decode.  It sets the tlayers/B chain gates and validates as a
+// single-tile, single-key stream; the caller passes --video-gops.
+bool apply_video_nightly_b(Options& options, std::string& error) {
+  if (!options.nightly_b) return true;
+  if (options.m1 || options.still_gpu) {
+    error = "--nightly-b is a CPU --video mode; drop --still/--still-gpu";
+    return false;
+  }
+  if (options.video_gpu) {
+    error = "--nightly-b is CPU-only: drop --video-gpu";
+    return false;
+  }
+  options.video = true;
+  if (options.video_tlayers == 0) {
+    error = "--nightly-b codes the chained B structure: pass --video-tlayers 8 "
+            "(and --video-gops M for M 8-frame blocks)";
+    return false;
+  }
   return true;
 }

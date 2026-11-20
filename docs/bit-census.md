@@ -19,7 +19,7 @@ AV2ENC_DECISION_DUMP=/tmp/base.dec \
   TX, EOB, segment and qindex.
 
 Both are diagnostics only. A run with them produces the same IVF as a run
-without them (verified against the `--nightly` QP110 pin, 23,690 B /
+without them (verified against the `--fast-decode` QP110 pin, 23,690 B /
 `1b99127a...`).
 
 ## Comparing two runs

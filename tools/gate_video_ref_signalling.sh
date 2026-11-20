@@ -126,7 +126,7 @@ else
         fail "quality md5 is $MD5, expected 3984677b..."
 fi
 if ! "$BIN" "$NASA" -o "$TMP/nightly.ivf" --video --frames 60 --qp 110 \
-        --cpu-threads 8 --nightly >"$TMP/nightly.log" 2>&1; then
+        --cpu-threads 8 --fast-decode >"$TMP/nightly.log" 2>&1; then
     fail "the nightly operating-point encode failed"
 else
     BYTES=$(wc -c <"$TMP/nightly.ivf" | tr -d ' ')
@@ -142,10 +142,10 @@ probe_sum() {  # $1 = ledger file -> "hint primary cdf refresh map nrefs refidx 
                    ri+=$17; tr+=$23} END {print h, p, c, r, m, n, ri, tr}' "$1"
 }
 AV2ENC_TRACE_REF_BITS=1 "$BIN" "$NASA" -o "$TMP/probe-base.ivf" --video \
-    --frames 60 --qp 110 --cpu-threads 8 --nightly --video-ref-signal-off \
+    --frames 60 --qp 110 --cpu-threads 8 --fast-decode --video-ref-signal-off \
     >"$TMP/probe-base.log" 2>"$TMP/probe-base.err" || fail "probe baseline encode failed"
 AV2ENC_TRACE_REF_BITS=1 "$BIN" "$NASA" -o "$TMP/probe-cmp.ivf" --video \
-    --frames 60 --qp 110 --cpu-threads 8 --nightly --video-ref-signal-compact \
+    --frames 60 --qp 110 --cpu-threads 8 --fast-decode --video-ref-signal-compact \
     >"$TMP/probe-cmp.log" 2>"$TMP/probe-cmp.err" || fail "probe compact encode failed"
 grep refsig "$TMP/probe-base.err" >"$TMP/probe-base.txt" || true
 grep refsig "$TMP/probe-cmp.err" >"$TMP/probe-cmp.txt" || true
@@ -178,10 +178,10 @@ echo "reference bits (60 frames): compact  hint=$ch primary=$cp cdf=$cc" \
 # --- 3. exactness on the full stream and the 2/6-frame prefixes ----------
 for N in 2 6 60; do
     "$BIN" "$NASA" -o "$TMP/off$N.ivf" --video --frames "$N" --qp 110 \
-        --cpu-threads 8 --nightly >"$TMP/off$N.log" 2>&1 ||
+        --cpu-threads 8 --fast-decode >"$TMP/off$N.log" 2>&1 ||
         { fail "off encode ($N frames) failed"; continue; }
     "$BIN" "$NASA" -o "$TMP/cmp$N.ivf" --video --frames "$N" --qp 110 \
-        --cpu-threads 8 --nightly --video-ref-signal-compact \
+        --cpu-threads 8 --fast-decode --video-ref-signal-compact \
         --video-recon "$TMP/cmp$N.recon.y4m" >"$TMP/cmp$N.log" 2>&1 ||
         { fail "compact encode ($N frames) failed"; continue; }
     decode_check "$TMP/off$N.ivf" "$N" "off$N" || continue

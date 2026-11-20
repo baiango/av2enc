@@ -84,7 +84,7 @@ echo "== tile_group_obu header gate =="
     fail "quality stream md5 drifted"
 
 AV2ENC_TRACE_FRAME_OBU=1 "$BIN" "$NASA" -o "$TMP/base.ivf" --video \
-    --frames 60 --qp 110 --cpu-threads 8 --nightly --video-tile-group-off \
+    --frames 60 --qp 110 --cpu-threads 8 --fast-decode --video-tile-group-off \
     >"$TMP/base.log" 2>"$TMP/base.trace" ||
     fail "the nightly pin encode failed"
 [ "$(size_of "$TMP/base.ivf")" = "23735" ] ||
@@ -94,7 +94,7 @@ AV2ENC_TRACE_FRAME_OBU=1 "$BIN" "$NASA" -o "$TMP/base.ivf" --video \
 
 # --- compact stream -------------------------------------------------------
 AV2ENC_TRACE_FRAME_OBU=1 "$BIN" "$NASA" -o "$TMP/compact.ivf" --video \
-    --frames 60 --qp 110 --cpu-threads 8 --nightly --video-tile-group-compact \
+    --frames 60 --qp 110 --cpu-threads 8 --fast-decode --video-tile-group-compact \
     --video-recon "$TMP/compact_recon.y4m" \
     >"$TMP/compact.log" 2>"$TMP/compact.trace" ||
     fail "the --video-tile-group-compact encode failed"

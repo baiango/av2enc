@@ -47,9 +47,9 @@ Points A and B use `testdata/nasa_480x240_30fps_60f.y4m`; point C uses
 
 | Point | Recipe | Bar QP | Bytes | kbps | JOD | BA | SS2 | K |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| A: 240p plain | `--nightly` | 106 | 25,008 | 100.032 | 9.7334 | 3.4202 | 80.84 | **82.155** |
-| B: 240p tuned drift | `--nightly --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250` | 110 | 25,146 | 100.584 | 9.7605 | 2.6562 | 81.25 | **83.937** |
-| C: 720p pin | `--nightly --video-key-qp-offset -57 --video-leaf-rd-lambda 250 --video-ext-partitions` | 217 | 36,572 | 146.288 | 7.3236 | 28.8713 | −10.146 | **45.6135** |
+| A: 240p plain | `--fast-decode` | 106 | 25,008 | 100.032 | 9.7334 | 3.4202 | 80.84 | **82.155** |
+| B: 240p tuned drift | `--fast-decode --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250` | 110 | 25,146 | 100.584 | 9.7605 | 2.6562 | 81.25 | **83.937** |
+| C: 720p pin | `--fast-decode --video-key-qp-offset -57 --video-leaf-rd-lambda 250 --video-ext-partitions` | 217 | 36,572 | 146.288 | 7.3236 | 28.8713 | −10.146 | **45.6135** |
 
 All three reproduce byte- and metric-exactly (A MD5 `0639b436…`, B
 `c60250c…`, C `c4ba2813…`). The quoted 82.15 / 83.80 / 45.61 are the verdict
@@ -98,9 +98,9 @@ tools, the loop filters compose with the nightly aggregate, the drift refresh,
 the carried CDF chain, the QP-scaled lambdas and `--video-ext-partitions`:
 
 ```text
-A: --nightly                        + wiener / chroma / pc / wiener+chroma  rc 0
+A: --fast-decode                        + wiener / chroma / pc / wiener+chroma  rc 0
 B: + drift threshold 1.5 budget 3250 + wiener / chroma / pc / wiener+chroma  rc 0
-C: --nightly --video-key-qp-offset -57 --video-leaf-rd-lambda 250
+C: --fast-decode --video-key-qp-offset -57 --video-leaf-rd-lambda 250
    --video-ext-partitions            + wiener / chroma / pc / wiener+chroma  rc 0
 ```
 
@@ -384,19 +384,19 @@ encode-time penalty at the measured points.
 REF=testdata/nasa_480x240_30fps_60f.y4m
 # point A arm
 build-dev/av2enc "$REF" -o /tmp/a.ivf --video --frames 60 --cpu-threads 8 \
-  --qp 121 --nightly --video-wiener
+  --qp 121 --fast-decode --video-wiener
 # point B arm
 build-dev/av2enc "$REF" -o /tmp/b.ivf --video --frames 60 --cpu-threads 8 \
-  --qp 125 --nightly --video-drift-refresh-threshold 1.5 \
+  --qp 125 --fast-decode --video-drift-refresh-threshold 1.5 \
   --video-drift-refresh-budget 3250 --video-wiener
 # point C arm (720p)
 build-dev/av2enc testdata/space8k_1440x720_60f.y4m -o /tmp/c.ivf --video \
-  --frames 60 --cpu-threads 8 --qp 224 --nightly \
+  --frames 60 --cpu-threads 8 --qp 224 --fast-decode \
   --video-key-qp-offset -57 --video-leaf-rd-lambda 250 \
   --video-ext-partitions --video-wiener
 # recon equality (Wiener/chroma) and divergence (PC-Wiener)
 build-dev/av2enc "$REF" -o /tmp/r.ivf --video --frames 60 --cpu-threads 8 \
-  --qp 121 --nightly --video-wiener --video-recon /tmp/r.y4m
+  --qp 121 --fast-decode --video-wiener --video-recon /tmp/r.y4m
 tools/bin/dav2d-macos --strict 1 -i /tmp/r.ivf -o /tmp/r.dec.y4m \
   --muxer yuv4mpeg2
 ```

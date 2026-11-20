@@ -95,7 +95,7 @@ grouped by model, mode and block size; the report prints median, p90 of
 |error| and signed bias of `predicted - actual`, and the number of fallback
 leaves (compound / TIP / AMVD / flex-MV-resolution, none at the measured point).
 
-### 240p `--nightly` QP110, 60 frames (measurement arm, 2,893 inter leaves)
+### 240p `--fast-decode` QP110, 60 frames (measurement arm, 2,893 inter leaves)
 
 | Scope | Term | Predicted | Actual | Median | p90 abs | Bias |
 |---|---|---:|---:|---:|---:|---:|
@@ -181,7 +181,7 @@ kbps between the two encoder QPs that bracket the bar's rate; cells are
 
 ### 240p plain (bar: K 82.15 at 100.0 kbps)
 
-`--nightly`, QPs 105/106/107:
+`--fast-decode`, QPs 105/106/107:
 
 | Arm | QP105 | QP106 | QP107 | K @ 100.0 kbps |
 |---|---|---|---|---|
@@ -203,7 +203,7 @@ vs 9.733, SSIMULACRA2 79.75 vs 80.84).
 
 ### 240p drift (bar: K 83.80 at 100.0 kbps)
 
-`--nightly --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250`,
+`--fast-decode --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250`,
 QPs 109/110/111:
 
 | Arm | QP109 | QP110 | QP111 | K @ 100.0 kbps |
@@ -217,7 +217,7 @@ inside the adjacent-QP ripple.  The drift point uses the same per-leaf model
 
 ### 720p pin (bar: K 45.61 / JOD 7.3236 at 146.288 kbps)
 
-`--qp Q --nightly --video-key-qp-offset -57 --video-leaf-rd-lambda 250
+`--qp Q --fast-decode --video-key-qp-offset -57 --video-leaf-rd-lambda 250
 --video-ext-partitions`, QPs 216/217/218 (an extra QP215 point brackets the
 full arm at the pin rate because it codes ~4.7% smaller at the same QP):
 
@@ -251,12 +251,12 @@ BIN=build-dev/av2enc
 
 # model error first: historical decisions, stream byte-identical
 AV2ENC_RATE_HYBRID_S_MEASURE=1 "$BIN" "$REF" -o /tmp/m.ivf --video --frames 60 \
-    --qp 110 --cpu-threads 8 --nightly
+    --qp 110 --cpu-threads 8 --fast-decode
 
 # model on (and the 2x2 ablation)
-AV2ENC_RATE_HYBRID_S=1 "$BIN" ... --nightly
-AV2ENC_RATE_HYBRID_S=1 AV2ENC_RATE_HYBRID_S_COEFF=0 "$BIN" ... --nightly
-AV2ENC_RATE_HYBRID_S=1 AV2ENC_RATE_HYBRID_S_SYNTAX=0 "$BIN" ... --nightly
+AV2ENC_RATE_HYBRID_S=1 "$BIN" ... --fast-decode
+AV2ENC_RATE_HYBRID_S=1 AV2ENC_RATE_HYBRID_S_COEFF=0 "$BIN" ... --fast-decode
+AV2ENC_RATE_HYBRID_S=1 AV2ENC_RATE_HYBRID_S_SYNTAX=0 "$BIN" ... --fast-decode
 ```
 
 The one-line summary and the per-term/per-mode tables print to stderr at
@@ -265,7 +265,7 @@ could not model (zero on every measured point).
 
 ## Encode cost
 
-60-frame 240p, QP106 `--nightly`, same build, interleaved runs:
+60-frame 240p, QP106 `--fast-decode`, same build, interleaved runs:
 
 | Threads | Arm | user CPU (s) | wall (s) |
 |---|---|---:|---:|

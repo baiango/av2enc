@@ -35,7 +35,7 @@ ffmpeg -v error -i out/svt.ivf -pix_fmt yuv420p out/svt.y4m
 # ours, the BA-refresh recipe; `build/av2enc` is the current main build
 AV2ENC_PIPE_BA_REFRESH=1 build/av2enc \
   testdata/nasa_480x240_30fps_60f.y4m -o out/ba.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 111 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 111 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 tools/bin/dav2d-macos -i out/ba.ivf -o out/ba.y4m --muxer yuv4mpeg2 -q
 ```

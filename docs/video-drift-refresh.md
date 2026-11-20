@@ -9,7 +9,7 @@ byte-identical.
 
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/x.ivf \
-    --video --frames 60 --cpu-threads 8 --qp 110 --nightly --video-drift-refresh
+    --video --frames 60 --cpu-threads 8 --qp 110 --fast-decode --video-drift-refresh
 ```
 
 ## What it does
@@ -55,7 +55,7 @@ the chain restarts from ~43 dB instead of continuing at 41-42 dB.
 Host: Apple M4, `--cpu-threads 8`, `testdata/nasa_480x240_30fps_60f.y4m`
 (60 frames). Quality: `tools/quality.py` (CVVDP 0.5.7, `standard_fhd`, MPS)
 with `dav2d-macos`; PSNR/`tools/perframe_psnr.py` straight from the decoded
-Y4M. `--nightly` at every point.
+Y4M. `--fast-decode` at every point.
 
 ### QP sweep (flag off vs flag on, defaults)
 
@@ -86,8 +86,8 @@ PSNR-Y     = 43.0382 + 0.3546 * (43.2233 - 43.0382) = 43.1038
 
 | Stream | Rate | CVVDP | PSNR-Y |
 |---|---:|---:|---:|
-| `--nightly` QP110 (pin) | 99.976 kbps | 9.6802 | 42.9799 dB |
-| `--nightly --video-drift-refresh`, linear interp. QP112/113 | 99.976 kbps | **9.7023** | **43.1038 dB** |
+| `--fast-decode` QP110 (pin) | 99.976 kbps | 9.6802 | 42.9799 dB |
+| `--fast-decode --video-drift-refresh`, linear interp. QP112/113 | 99.976 kbps | **9.7023** | **43.1038 dB** |
 | **iso-rate delta** | — | **+0.0221 JOD** | **+0.1239 dB** |
 
 Two cross-checks, both honest views of the same measurements:
@@ -180,7 +180,7 @@ of the aggregate since it stacked with the CDF/key-QP move).
 ## Caveats
 
 * The trigger only fires where the P chain is *good*: on this clip it refreshes
-  at the `--nightly`/QP104-114 operating points and is completely inert on the
+  at the `--fast-decode`/QP104-114 operating points and is completely inert on the
   `quality` preset at QP150/170/190 and on the default QP189 chain (byte
   identical streams, 0 refreshes). At those rates the per-frame error is
   dominated by quantisation, which a refresh cannot repay.

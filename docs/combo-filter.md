@@ -3,7 +3,7 @@
 Status: **measured; no architecture clears SVT 88.8.** Branch `exp/combo-filter`,
 base `0bf1d001`; no encoder code changed. Every candidate is a distinct legal
 flag set formed from the existing filter/allocation CLI tools on top of the
-`--nightly` aggregate (prediction/transform/entropy stay at the nightly
+`--fast-decode` aggregate (prediction/transform/entropy stay at the nightly
 defaults). The one exception is `--video-cfl`, the prediction probe the
 tool-matrix handoff explicitly requested; it is reported separately and was
 not promoted. 22 legal combinations were screened, ten named rejections and
@@ -33,7 +33,7 @@ Butteraugli, SSIMULACRA2, `tools/kpi.py`). Fixture:
 **Best exact flags (only promotion):**
 
 ```sh
---nightly --video-key-qp-offset -26 \
+--fast-decode --video-key-qp-offset -26 \
   --video-drift-refresh-threshold 2.0 --video-drift-refresh-budget 2500
 ```
 
@@ -56,7 +56,7 @@ encodable point 88.9.
   current main build). The worktree has no code changes; `testdata` and
   `tools/bin` are the main-worktree symlinks.
 - Screen: two QPs per arm. All arms are `--video --frames 60 --cpu-threads 8
-  --qp <Q> --nightly <overrides>`. Filter/CCSO/allocation arms use QP106/108.
+  --qp <Q> --fast-decode <overrides>`. Filter/CCSO/allocation arms use QP106/108.
   The Wiener+GDF stack uses QP119/121 because luma Wiener costs ~15 QP at this
   point. The promoted arm adds QP104/110 to bracket 100 kbps.
 - Rate matching: `tools/oracle.py --target-kbps 100`; a two-point linear
@@ -75,7 +75,7 @@ encodable point 88.9.
   100.032 kbps / K 82.155 (the documented pin); QP108 24,291 B / 97.164 kbps /
   K 81.604. Local K at exactly 100.0 is 82.149.
 
-### Canonical `--nightly` expansion
+### Canonical `--fast-decode` expansion
 
 Every row is this expansion plus the listed overrides; explicit CLI values win
 (the key offset, drift threshold/budget, CDEF/CCSO parameters and leaf lambda
@@ -101,7 +101,7 @@ are all caller-wins knobs). `--video-rd-preset quality` expands to
 The hash preimage is exactly
 
 ```text
-av2enc --video --frames 60 --cpu-threads 8 --qp {ladder} --nightly {overrides}
+av2enc --video --frames 60 --cpu-threads 8 --qp {ladder} --fast-decode {overrides}
 ```
 
 where `{ladder}` is the literal comma-separated screen QP list in the row.
@@ -110,7 +110,7 @@ hashes are distinct.
 
 ### Candidate registry
 
-| id | category | overrides on `--nightly` | screen QPs | canonical sha256 |
+| id | category | overrides on `--fast-decode` | screen QPs | canonical sha256 |
 |---|---|---|---|---|
 | `f_pc_gdf` | filter stack | `--video-pc-wiener --video-gdf` | 106,108 | `01d0fb84000f135efbbb47c07ce6d1d1d65e4a91bd1570f1616bf6bd850015fa` |
 | `f_pc_cdef4` | filter stack | `--video-pc-wiener --video-cdef-strength 4` | 106,108 | `8da63932c3bdbcce938ad73e1b72b20a0993856cc311af65f12f1daaca781d56` |
@@ -252,7 +252,7 @@ ceiling numerically but are not screen winners (negative at QP106 for
 
 ## Promoted ladder: `d_k26_th20_b2500`
 
-Exact flags: `--nightly --video-key-qp-offset -26
+Exact flags: `--fast-decode --video-key-qp-offset -26
 --video-drift-refresh-threshold 2.0 --video-drift-refresh-budget 2500`.
 
 | QP | bytes | kbps | JOD | BA | SS2 | K |
@@ -306,21 +306,21 @@ but out of lane.
 
 | combination | status | exact result |
 |---|---|---|
-| `--nightly --video-aq` | **rejected** | `segmentation/delta-Q composes with the CDF chain only under --video-cdf-per-frame-qp: the per-tile delta/segment CDFs are not part of the §8.2.4 image, so the image is re-derived from the §9.3 defaults per frame rather than carried` |
-| `--nightly --video-aq --video-cdf-per-frame-qp` | legal (rc 0), out of lane | the only legal AQ composition; it replaces the carried CDF chain with the per-frame reset. `docs/video-aq.md` already measures it at -0.47 K under nightly, so it is not re-measured here |
-| `--nightly --video-aq --video-delta-q` | **rejected** | `--video-aq replaces the --video-delta-q staircase with an activity-driven plan; pass only one of them` |
-| `--nightly --video-pc-wiener --video-wiener` | **rejected** | `--video-pc-wiener replaces the luma Wiener NS decision; do not combine the two luma restoration tools` |
-| `--nightly --video-wiener --tiles 2x1` (with `--video-edge-inter-off --video-edge-mask-off --video-deblock-off --video-drift-refresh-off --video-tile-flush-off --video-ref-signal-off --video-tile-group-off`) | **rejected** | `--video-wiener/--video-chroma-lr do not support --tiles > 1x1: the pinned decoder's loop-restoration unit and window handling at shared tile edges does not match a frame-level filter (docs/negative-results.md)` |
-| `--nightly --tiles 2x1` | **rejected** | `--video-edge-inter needs the single-tile writer; the tiled path keeps its tile-local reconstruction` (first blocker; tiles also require deblock off, which the nightly filter stack owns) |
-| `--nightly --video-cdef-strength 9` | **rejected** | `--video-cdef-strength must be an integer in [1, 8]` |
-| `--nightly --video-cdef-strength 0` | **rejected** | same range message |
-| `--nightly --video-ccso-bands 7` | **rejected** | `--video-ccso-bands must be an integer in [0, 6]` |
-| `--nightly --video-ccso-unit-bits -1` | **rejected** | `--video-ccso-unit-bits needs a non-negative bit count` |
-| `--nightly --video-ibp --video-cfl` | **rejected** | `--video-ibp requires the plain DC chroma path: --video-cfl/--video-mhccp do not apply the §7.13.2.12 IBP DC post-filter` |
-| `--nightly --video-ibp` | legal but left out of lane | IBP is prediction, not filter/allocation; the matrix says untested with nightly and `docs/k-sweep.md` measures K 81.25. Not re-measured here |
-| `--nightly --video-drift-refresh-qp 8 --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250` | legal, rate probe only | QP106 27,487 B / 109.9 kbps; it needs a QP112+ bracket, not the 104/106/108 ladder. Not registered |
+| `--fast-decode --video-aq` | **rejected** | `segmentation/delta-Q composes with the CDF chain only under --video-cdf-per-frame-qp: the per-tile delta/segment CDFs are not part of the §8.2.4 image, so the image is re-derived from the §9.3 defaults per frame rather than carried` |
+| `--fast-decode --video-aq --video-cdf-per-frame-qp` | legal (rc 0), out of lane | the only legal AQ composition; it replaces the carried CDF chain with the per-frame reset. `docs/video-aq.md` already measures it at -0.47 K under nightly, so it is not re-measured here |
+| `--fast-decode --video-aq --video-delta-q` | **rejected** | `--video-aq replaces the --video-delta-q staircase with an activity-driven plan; pass only one of them` |
+| `--fast-decode --video-pc-wiener --video-wiener` | **rejected** | `--video-pc-wiener replaces the luma Wiener NS decision; do not combine the two luma restoration tools` |
+| `--fast-decode --video-wiener --tiles 2x1` (with `--video-edge-inter-off --video-edge-mask-off --video-deblock-off --video-drift-refresh-off --video-tile-flush-off --video-ref-signal-off --video-tile-group-off`) | **rejected** | `--video-wiener/--video-chroma-lr do not support --tiles > 1x1: the pinned decoder's loop-restoration unit and window handling at shared tile edges does not match a frame-level filter (docs/negative-results.md)` |
+| `--fast-decode --tiles 2x1` | **rejected** | `--video-edge-inter needs the single-tile writer; the tiled path keeps its tile-local reconstruction` (first blocker; tiles also require deblock off, which the nightly filter stack owns) |
+| `--fast-decode --video-cdef-strength 9` | **rejected** | `--video-cdef-strength must be an integer in [1, 8]` |
+| `--fast-decode --video-cdef-strength 0` | **rejected** | same range message |
+| `--fast-decode --video-ccso-bands 7` | **rejected** | `--video-ccso-bands must be an integer in [0, 6]` |
+| `--fast-decode --video-ccso-unit-bits -1` | **rejected** | `--video-ccso-unit-bits needs a non-negative bit count` |
+| `--fast-decode --video-ibp --video-cfl` | **rejected** | `--video-ibp requires the plain DC chroma path: --video-cfl/--video-mhccp do not apply the §7.13.2.12 IBP DC post-filter` |
+| `--fast-decode --video-ibp` | legal but left out of lane | IBP is prediction, not filter/allocation; the matrix says untested with nightly and `docs/k-sweep.md` measures K 81.25. Not re-measured here |
+| `--fast-decode --video-drift-refresh-qp 8 --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250` | legal, rate probe only | QP106 27,487 B / 109.9 kbps; it needs a QP112+ bracket, not the 104/106/108 ladder. Not registered |
 
-Already-measured paths deliberately not repeated: the exact `--nightly`
+Already-measured paths deliberately not repeated: the exact `--fast-decode`
 expansion (82.155), eff-perc (85.10), plain `--video-wiener`/`--video-chroma-lr`/
 `--video-pc-wiener` (lr-quality.md), plain `--video-gdf` (k-sweep), plain CDEF
 strength 2/4 single points (k-sweep), the tuned 1.5/3250 drift recipe
@@ -331,7 +331,7 @@ strength 2/4 single points (k-sweep), the tuned 1.5/3250 drift recipe
 These are the rows the matrix asked this lane to fill. All values are
 matched-rate K at 240p/100 kbps unless marked as a point.
 
-| tool / combination | legality on `--nightly` | measured result |
+| tool / combination | legality on `--fast-decode` | measured result |
 |---|---|---|
 | `--video-cdef-strength 4` | legal, FP single tile | QP106 25,029 B / 100.116 kbps / JOD 9.7319 / BA 3.3535 / SS2 80.597 / K 82.230; QP108 24,523 B / 98.092 / JOD 9.7536 / BA 3.5988 / SS2 80.812 / K 81.936; matched **82.213** at 100.0. Ceiling 88.313. Same sign +, but +0.06 is inside the QP ripple; no ladder |
 | `--video-cdef-strength 2` | legal | QP106 24,976 B / 99.904 kbps / JOD 9.7069 / BA 3.6907 / SS2 80.748 / K 81.535; QP108 K 81.098. Both below baseline; ceiling 88.381 |
@@ -369,7 +369,7 @@ result.
 BIN=build-release/av2enc
 REF=testdata/nasa_480x240_30fps_60f.y4m
 "$BIN" "$REF" -o /tmp/d26_108.ivf --video --frames 60 --cpu-threads 8 --qp 108 \
-  --nightly --video-key-qp-offset -26 \
+  --fast-decode --video-key-qp-offset -26 \
   --video-drift-refresh-threshold 2.0 --video-drift-refresh-budget 2500
 python3 tools/oracle.py --ref "$REF" --ivf d26@108=/tmp/d26_108.ivf \
   --target-kbps 100 --json /tmp/d26.json

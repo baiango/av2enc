@@ -1,7 +1,7 @@
 # Lane-2 horizon term on the nightly / eff-perc base
 
 Status: **ported and measured. KEEP at K=4 on the non-perceptual bases
-(`--nightly` and the tuned drift recipe); do not combine it with
+(`--fast-decode` and the tuned drift recipe); do not combine it with
 `AV2ENC_EFF_PERC` (it loses 0.26–0.50 K there).** The gate is default off, so
 the pinned streams and the current best are untouched.
 
@@ -69,9 +69,9 @@ AV2ENC_PORT_HORIZON_K=2|4|8    # horizon depth, default 2
 
 | Stream | Bytes | MD5 |
 |---|---:|---|
-| `--nightly --qp 106` pin | 25,008 | `0639b43630abb454f7be5ac494d2efb4` |
-| `--nightly --qp 110` pin | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
-| `AV2ENC_PORT_HORIZON=0 --nightly --qp 106` | 25,008 | `0639b436…` (identical to unset) |
+| `--fast-decode --qp 106` pin | 25,008 | `0639b43630abb454f7be5ac494d2efb4` |
+| `--fast-decode --qp 110` pin | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
+| `AV2ENC_PORT_HORIZON=0 --fast-decode --qp 106` | 25,008 | `0639b436…` (identical to unset) |
 | flag-less `--qp 189` pin | 25,009 | `a1d0dba1259b20a4b628d4cd1e14c33c` |
 
 `ctest --test-dir build-dev-cache`: 12/12. `tools/gate_video_nightly.sh` and
@@ -80,16 +80,16 @@ AV2ENC_PORT_HORIZON_K=2|4|8    # horizon depth, default 2
 ## 2. Matched-rate result
 
 Each arm is its own QP ladder around 100 kbps (the tool spends ~7–10% more bits
-at a fixed QP on `--nightly`, 0.4–1.7% on eff-perc, so the matched point
+at a fixed QP on `--fast-decode`, 0.4–1.7% on eff-perc, so the matched point
 moves).
 `K @ 100` is the oracle's linear interpolation over the bracketing pair.
 
 | base | arm | QPs | matched kbps (points) | K @ 100 | Δ vs base |
 |---|---|---|---:|---:|---:|
-| `--nightly` | base | 104/106/108 | 100.032 / 97.164 | **82.149** | — |
-| `--nightly` | `=1`, K=2 | 110/111 | 100.504 / 98.520 | 81.968 | **−0.181** |
-| `--nightly` | `=1`, K=4 | 111/112 | 100.268 / 98.400 | **83.286** | **+1.137** |
-| `--nightly` | `=1`, K=8 | 111/112 | 100.324 / 99.264 | 83.005 | +0.856 |
+| `--fast-decode` | base | 104/106/108 | 100.032 / 97.164 | **82.149** | — |
+| `--fast-decode` | `=1`, K=2 | 110/111 | 100.504 / 98.520 | 81.968 | **−0.181** |
+| `--fast-decode` | `=1`, K=4 | 111/112 | 100.268 / 98.400 | **83.286** | **+1.137** |
+| `--fast-decode` | `=1`, K=8 | 111/112 | 100.324 / 99.264 | 83.005 | +0.856 |
 | eff-perc (`AV2ENC_EFF_PERC=1` + drift 1.5/3250) | base | 118/119/120 | 100.920 / 98.696 | **85.099** | — |
 | eff-perc | `=1`, K=2 | 120/121 | 100.760 / 97.120 | 84.634 | −0.465 |
 | eff-perc | `=1`, K=4 | 119/120 | 101.868 / 99.824 | 84.837 | −0.262 |
@@ -207,13 +207,13 @@ the IVF header's 60/60 pictures decoded. The base pins decode 60/60 as before.
 **KEEP (default off), K=4.**
 
 - The mechanism transfers to the non-perceptual skip decision: +1.14 K over the
-  `--nightly` base, +0.28 K over the tuned drift recipe — both clear the
+  `--fast-decode` base, +0.28 K over the tuned drift recipe — both clear the
   +0.15 K bar, and the nightly bracket is consistent across four rates.
 - It does **not** transfer onto `AV2ENC_EFF_PERC`: −0.26 K at K=4, −0.47/−0.50
   at K=2/K=8, with every segment PSNR lower and skip share rising. The
   perceptual base already prices the skip correctly; the added plain-SSE
   future term double-counts in the wrong units.
-- K=2 is the unstable arm on `--nightly` (81.97, −0.18): the decaying sum with
+- K=2 is the unstable arm on `--fast-decode` (81.97, −0.18): the decaying sum with
   only one future picture does not price the tail. K=4 is the best arm on
   every non-perceptual base; K=8 is within noise of K=4 and more expensive.
 - This does not move the current best (85.297 tail-TX 3-point, eff-perc-based):

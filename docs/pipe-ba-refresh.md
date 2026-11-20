@@ -29,11 +29,11 @@ key+P chain.
 ```sh
 AV2ENC_PIPE_BA_REFRESH=1 build-dev/av2enc \
   testdata/nasa_480x240_30fps_60f.y4m -o /tmp/ba.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 111 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 111 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 
-`--nightly` supplies the enabled drift-refresh plumbing; the env gate replaces
+`--fast-decode` supplies the enabled drift-refresh plumbing; the env gate replaces
 its PSNR trigger. `--video-drift-refresh-threshold 1.5` is part of the tuned
 recipe and is ignored by the BA planner; the budget is not.
 
@@ -106,7 +106,7 @@ cancels; every reported K number is measured by the external
 
 ## Results at 240p
 
-`testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--nightly`, QP / budget
+`testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--fast-decode`, QP / budget
 bracketing 100 kbps. Quality: `tools/quality.py` (CVVDP 0.5.7, `standard_fhd`,
 MPS), `tools/extra_metrics.py`, `tools/kpi.py`.
 
@@ -214,6 +214,6 @@ The BA stream is 24,975 B / 99.900 kbps; the PSNR stream is 24,950 B /
 ## Named scope
 
 The env gate only replaces the trigger of an already-enabled
-`--video-drift-refresh` chain (`--nightly` includes it). Without that chain it
+`--video-drift-refresh` chain (`--fast-decode` includes it). Without that chain it
 is inert. It keeps the drift-refresh restrictions (CPU, single tile, flat
 key+P, 8-bit 4:2:0) and adds no syntax, no CLI flag and no default-on path.

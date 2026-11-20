@@ -17,7 +17,7 @@ irreducible part from the one removable field, and documents
 `--video-tile-group-compact`, the opt-in that removes it.
 
 Measurement host: Apple M4, CPU-only build (`build-t`), `--cpu-threads 8`.
-Pin: `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, QP110, `--nightly`,
+Pin: `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, QP110, `--fast-decode`,
 24,885 B / MD5 `5e316100ce7fd709b4298ccfebfffccd`.
 
 ## 1. What the header costs
@@ -88,7 +88,7 @@ Reproduce the measurement:
 
 ```sh
 AV2ENC_TRACE_FRAME_OBU=1 av2enc testdata/nasa_480x240_30fps_60f.y4m \
-    -o /tmp/pin.ivf --video --frames 60 --qp 110 --cpu-threads 8 --nightly 2>&1 |
+    -o /tmp/pin.ivf --video --frames 60 --qp 110 --cpu-threads 8 --fast-decode 2>&1 |
     grep tile_group_header          # body_bits= / pad_bits= per frame
 ```
 
@@ -182,7 +182,7 @@ magnitude smaller.
 
 ## 5. Scope
 
-- Opt-in and default off: `--nightly` does not include it, so the three pins stay
+- Opt-in and default off: `--fast-decode` does not include it, so the three pins stay
   byte-identical (25,009 `a1d0dba1...`, 25,141 `3984677b...`, 24,885
   `5e316100...`).
 - Single tile, plain key+P chain. `--tiles > 1x1` and the B/TIP/frame-type
@@ -196,7 +196,7 @@ magnitude smaller.
 
 ```sh
 build-t/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/tg.ivf \
-    --video --frames 60 --qp 110 --cpu-threads 8 --nightly \
+    --video --frames 60 --qp 110 --cpu-threads 8 --fast-decode \
     --video-tile-group-compact --video-recon /tmp/tg-recon.y4m
 tools/bin/dav2d-macos -q --strict 1 -i /tmp/tg.ivf -o /tmp/tg.y4m --threads 1
 tools/gate_video_tile_group.sh --bin build-t/av2enc

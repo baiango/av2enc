@@ -1904,7 +1904,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   // AV2ENC_FRAME_QP_PLAN=<head>:<tail> adds a per-frame QP offset to the head
   // (frames 1-32) and the tail (frames 33-59) on the fixed-QP path.  This is
   // the head/tail allocation probe: a per-frame base_q_idx is legal with the
-  // carried CDF image (--cdf-continuity, which --nightly enables), unlike
+  // carried CDF image (--cdf-continuity, which --fast-decode enables), unlike
   // delta-Q/segmentation.  Unset leaves every pin byte-identical.
   if (options.rc_mode == "cqp" && !options.video_gpu) {
     if (const char* env_plan = std::getenv("AV2ENC_FRAME_QP_PLAN")) {

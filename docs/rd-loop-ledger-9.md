@@ -72,7 +72,7 @@ the base arm measures **K 85.942** at QP114/116 (iteration 1 below).
 Base args:
 
 ```
---video --frames 60 --cpu-threads 8 --nightly
+--video --frames 60 --cpu-threads 8 --fast-decode
 --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 
@@ -141,7 +141,7 @@ units.
 **Target.** Queue item 2, per-block MC filter. The GME/warp half is blocked on
 this point: the 240p global-motion fit is IDENTITY (bit-level no-op) and the
 escape-hatch warp predictor is conformance-unproven and cannot compose with
-`--nightly` (`--video-inter-residual`). The per-block switchable filter is
+`--fast-decode` (`--video-inter-residual`). The per-block switchable filter is
 already in the tree (`AV2ENC_INTERP_BLOCK`); it was measured at +0.131 on the
 old 85.099 base but had never been scored on the current L3+L5+driver base.
 
@@ -158,7 +158,7 @@ it, which is the drift mechanism in `docs/luma-audit.md` §4.5. Gate off
 **Bracket.** The live lane-9 runner base env is the six 86.013 variables plus
 `AV2ENC_RD_DRIVER=1`. Its QP118 stream is already 95.8 kbps, so the spec starts
 at QP114 (the envelope's secant step stalls on a seen QP when both points are
-below target). All arms used `--video --frames 60 --cpu-threads 8 --nightly
+below target). All arms used `--video --frames 60 --cpu-threads 8 --fast-decode
 --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250`; base
 env also `AV2ENC_EFF_PERC=1 AV2ENC_RD_UVFULL=1
 AV2ENC_TX_DETAIL_SEARCH_TAIL=1 AV2ENC_TX_DETAIL_MIN=0.50 AV2ENC_RD_KEY_TX=1

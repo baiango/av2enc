@@ -27,7 +27,7 @@ cmake -S . -B build-t -DAV2ENC_ENABLE_CUDA=OFF -DAV2ENC_ALLOW_CPU_ONLY=ON \
 cmake --build build-t -j1
 
 AV2ENC_SYMBOL_COST=1 build-t/av2enc testdata/nasa_480x240_30fps_60f.y4m \
-    -o /tmp/kf.ivf --video --frames 1 --qp 120 --nightly
+    -o /tmp/kf.ivf --video --frames 1 --qp 120 --fast-decode
 ```
 
 `--qp 120` resolves to `base_q_idx` 93 (nightly applies the −27 keyframe
@@ -185,7 +185,7 @@ search charges 1.0 bit/nonzero against the writer's measured 3.99; see §5).
 
 ## 4. Where the rate goes: the keyframe RD weight
 
-`--nightly` sets the TX-search rate weight to a **constant**
+`--fast-decode` sets the TX-search rate weight to a **constant**
 `--video-tx-lambda 136` (SSE per bit). It is passed unchanged to
 `search_luma_tx()` for every keyframe leaf and to
 `encode_intra_luma_tx_partition()`'s NONE/SPLIT/HORZ/VERT comparison. A
@@ -212,7 +212,7 @@ Measured on the same keyframe, only the weight changed:
 plateau, not a cliff.
 
 It is not only a keyframe effect. On the pinned nightly operating point
-(480x240, 60 frames, `--qp 110 --nightly`), changing only the weight:
+(480x240, 60 frames, `--qp 110 --fast-decode`), changing only the weight:
 
 | λ | bytes | frames | mean PSNR-Y | key PSNR-Y |
 |---:|---:|---:|---:|---:|

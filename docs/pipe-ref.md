@@ -220,7 +220,7 @@ BIN=build-dev/av2enc
 # corrected free allocator, λ1, QP111
 AV2ENC_PIPE_REF=1 AV2ENC_PIPE_REF_TRACE=/tmp/pipe.csv \
   "$BIN" "$REF" -o /tmp/p.ivf --video --frames 60 --cpu-threads 8 \
-  --qp 111 --nightly \
+  --qp 111 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 
 # recent-primary ablation
@@ -238,8 +238,8 @@ Forced compound syntax check (gate stress only):
 
 ```sh
 AV2ENC_PIPE_REF=1 AV2ENC_PIPE_REF_MINREFS=2 AV2ENC_PIPE_REF_FORCE_COMPOUND=1 \
-  "$BIN" "$REF" -o /tmp/c.ivf --video --frames 10 --cpu-threads 8 --qp 106 --nightly
+  "$BIN" "$REF" -o /tmp/c.ivf --video --frames 10 --cpu-threads 8 --qp 106 --fast-decode
 AV2ENC_PIPE_REF=1 AV2ENC_PIPE_REF_MINREFS=2 AV2ENC_PIPE_REF_FORCE_COMPOUND=1 \
   AV2ENC_PIPE_REF_FORCE_MASK=1 \
-  "$BIN" "$REF" -o /tmp/m.ivf --video --frames 10 --cpu-threads 8 --qp 106 --nightly
+  "$BIN" "$REF" -o /tmp/m.ivf --video --frames 10 --cpu-threads 8 --qp 106 --fast-decode
 ```

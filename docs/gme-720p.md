@@ -67,7 +67,7 @@ Pin (reproduced byte-exactly in this worktree):
 
 ```sh
 build/av2enc testdata/space8k_1440x720_60f.y4m -o /tmp/pin.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 217 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 217 --fast-decode \
   --video-key-qp-offset -57 --video-leaf-rd-lambda 250 \
   --video-ext-partitions
 ```
@@ -80,7 +80,7 @@ judgement below is made on JOD first.
 
 `--video-gme`/`--video-warp` are rejected with `--video-inter-residual`
 (`src/cli/validate.cpp:1712-1726`) and `--video-bawp` rejects GME
-(`:1743-1771`). `--nightly` enables inter-residual through the `quality` preset
+(`:1743-1771`). `--fast-decode` enables inter-residual through the `quality` preset
 (`src/cli/nightly.cpp:32` → `apply_video_rd_preset`) and BAWP/BAWP-carrier
 directly (`:169-170`). `--video-rdoq` in turn requires `--video-inter-residual`
 (`src/cli/validate.cpp:1657-1662`). The minimum set that unblocks GME is

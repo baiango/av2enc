@@ -118,7 +118,7 @@ Recipe (the merged 86.013 base plus the driver):
 BASE_ENV="AV2ENC_EFF_PERC=1 AV2ENC_RD_UVFULL=1 \
   AV2ENC_TX_DETAIL_SEARCH_TAIL=1 AV2ENC_TX_DETAIL_MIN=0.50 \
   AV2ENC_RD_KEY_TX=1 AV2ENC_RD_UVLEVEL=1 AV2ENC_RD_DRIVER=1"
-COMMON="--video --frames 60 --cpu-threads 8 --nightly \
+COMMON="--video --frames 60 --cpu-threads 8 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250"
 ```
 

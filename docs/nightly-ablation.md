@@ -8,11 +8,11 @@ largest marginals are the loop-filter stack (K −5.85 if removed), the CDF carr
 (−0.04), compact reference signalling (−0.07), minimum tile flush (−0.11) and
 CCSO header RD (−0.25).
 
-The only sign flip found is BAWP at the *plain* `--nightly` control: removing
+The only sign flip found is BAWP at the *plain* `--fast-decode` control: removing
 it there measures +0.29 K, but the plain control's own QP106→107 segment moves
 1.65 K over 0.49 kbps, so the sign is not resolvable. At the measured operating
 point (the tuned drift recipe) BAWP is −0.36 K. A reduced preset built from
-that one positive point (`--nightly --video-bawp-off`) is 82.34 K at 100 kbps,
+that one positive point (`--fast-decode --video-bawp-off`) is 82.34 K at 100 kbps,
 1.45 K below the tuned recipe; adding `--video-refs 3` to it does not change
 the result (82.34 K). No swap wins.
 
@@ -23,7 +23,7 @@ time under `nice -n 10`.
 
 ## 1. Method
 
-* **Baseline**: `--nightly --video-drift-refresh-threshold 1.5
+* **Baseline**: `--fast-decode --video-drift-refresh-threshold 1.5
   --video-drift-refresh-budget 3250`. Re-verified on the merged tree: QP110 is
   25,146 B, 100.584 kbps, JOD 9.7605, BA 2.656, SS2 81.25, K 83.937 (MD5
   `c60250c0…`, unchanged), and the four-point curve gives **K = 83.795 at
@@ -32,7 +32,7 @@ time under `nice -n 10`.
 * **Protocol**: identical to `docs/reference-structure.md` — encode-only rate
   scans, then 2–4 quality QPs bracketing 100 kbps, linear interpolation of K vs
   kbps. Every scored stream decodes 60/60 under `dav2d --strict 1`.
-* **Sign check**: the plain `--nightly` control was measured at QP105/106/107
+* **Sign check**: the plain `--fast-decode` control was measured at QP105/106/107
   (K@100 = 82.048; QP106 is the familiar 82.155 at 100.032 kbps), and the
   near-zero ablations were repeated there.
 * **No-op check**: the three overhead-only ablations (tile-group, compact
@@ -119,7 +119,7 @@ Notes:
 | tile-group off | 110 | 25,184 | 100.736 | 9.7605 | 2.656 | 81.25 | 83.937 |
 | tile-group off | 111 | 24,990 | 99.960 | 9.7513 | 2.731 | 81.42 | 83.747 |
 
-### Sign check at the plain `--nightly` point
+### Sign check at the plain `--fast-decode` point
 
 Plain control curve: QP105 101.368 / 81.806, QP106 100.032 / 82.155,
 QP107 99.540 / 80.508 → **K@100 = 82.048**.
@@ -237,11 +237,11 @@ K 83.77, a −0.03 tie inside the ripple, and it requires the same
 ```sh
 # baseline
 build-dev/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 110 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 110 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 # an ablation (example: loop-filter stack)
 build-dev/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/a.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 115 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 115 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250 \
   --video-loop-filters-off
 ```

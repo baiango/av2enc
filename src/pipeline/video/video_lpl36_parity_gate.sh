@@ -76,7 +76,7 @@ FRAMES=4
 echo "== lpl36 C++/Python parity gate =="
 
 if ! "$BIN" "$NASA" -o "$TMP/parity.ivf" --video --frames "$FRAMES" \
-        --qp 111 --cpu-threads 4 --nightly >"$TMP/enc.log" 2>&1; then
+        --qp 111 --cpu-threads 4 --fast-decode >"$TMP/enc.log" 2>&1; then
     fail "the parity encode failed"
     cat "$TMP/enc.log" >&2
 fi

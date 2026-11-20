@@ -7,8 +7,8 @@ off, and judged only on K at matched rate. No model ships on a single QP point.
 
 | Point | Flags | QPs | Bar |
 |---|---|---|---|
-| 240p plain | `--nightly` | 105/106/107 | **K 82.15** at 100.0 kbps |
-| 240p drift | `--nightly --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250` | 109/110/111 | **K 83.80** |
+| 240p plain | `--fast-decode` | 105/106/107 | **K 82.15** at 100.0 kbps |
+| 240p drift | `--fast-decode --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250` | 109/110/111 | **K 83.80** |
 | 720p pin | pin recipe | 216/217/218 | **K 45.61**, JOD 7.3236 |
 
 ## Measurement

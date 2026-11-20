@@ -291,8 +291,8 @@ Gate off, release build (`cmake --preset release`, warnings + `-Werror`):
 |---|---:|---|
 | default `--video --frames 60 --qp 189` | 25,009 | `a1d0dba1259b20a4b628d4cd1e14c33c` |
 | quality `--qp 190 --video-rd-preset quality` | 25,141 | `3984677b9b665952984b07b7cf75c6ea` |
-| nightly `--qp 110 --nightly` | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
-| explicit-λ `--nightly --video-qp-lambda …` | 24,113 | `7f03eb6e82d6ba4cf6666c78285f945b` |
+| nightly `--qp 110 --fast-decode` | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
+| explicit-λ `--fast-decode --video-qp-lambda …` | 24,113 | `7f03eb6e82d6ba4cf6666c78285f945b` |
 | 720p `space8k` QP217 nightly recipe | 36,572 | `c4ba28138d8f6569d5e08721a66d755c` |
 
 `tools/test.sh --build build-release` is 10/10. `gate_video_tlayer_refs.sh`

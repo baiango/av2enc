@@ -51,7 +51,7 @@ AV2ENC_EFF_PERC=1 AV2ENC_RD_UVFULL=1 \
 AV2ENC_TX_DETAIL_SEARCH_TAIL=1 AV2ENC_TX_DETAIL_MIN=0.50 \
 AV2ENC_RD_KEY_TX=1 \
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o out.ivf \
-    --video --frames 60 --qp 119 --cpu-threads 8 --nightly \
+    --video --frames 60 --qp 119 --cpu-threads 8 --fast-decode \
     --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 
@@ -121,7 +121,7 @@ QP119 are 8x8 632, 16x16 24, 32x32 3, 64x64 8; the historical path selects
 8x8 432, 16x16 32, 32x32 3, 64x64 8. The exact coefficient rate moves work
 from 16x16 into 8x8.
 
-IDTX is not evaluated: `--nightly` leaves `enable_idtx_intra = 0`, and the
+IDTX is not evaluated: `--fast-decode` leaves `enable_idtx_intra = 0`, and the
 intra TX-set query forces the DCT_IDTX set to DCT_DCT (`tx_type.cpp`
 `transform_type()` override). Turning the sequence bit on changes the key
 header and is a separate measurement; it is not part of this gate.
@@ -441,7 +441,7 @@ mean 44.893.
   interface. When lane 1 lands, replace `exact_partition_bits` + the exact-rate
   `block_syntax_bits` calls with its per-family rate and re-calibrate
   `AV2ENC_RD_KEY_TX_SCALE`; do not run both.
-- **IDTX is not in the candidate set** under `--nightly` (`enable_idtx_intra`
+- **IDTX is not in the candidate set** under `--fast-decode` (`enable_idtx_intra`
   is 0 and the intra TX-set query forces DCT_IDTX to DCT_DCT). Measuring it
   needs the sequence bit and a header change, which is outside this lane's
   no-syntax-change rule.

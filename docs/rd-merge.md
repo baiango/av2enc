@@ -73,7 +73,7 @@ driver `tools/lane-merge/ladder.sh`.
 both build clean; `ctest` on the release build is 12/12. There were no warnings
 to fix after the cherry-picks.
 
-Gate-off pins, plain `--nightly`, release build:
+Gate-off pins, plain `--fast-decode`, release build:
 
 | QP | bytes | MD5 |
 |---|---:|---|
@@ -89,7 +89,7 @@ the reported streams.
 REF=testdata/nasa_480x240_30fps_60f.y4m
 BASE_ENV="AV2ENC_EFF_PERC=1 AV2ENC_RD_UVFULL=1 \
           AV2ENC_TX_DETAIL_SEARCH_TAIL=1 AV2ENC_TX_DETAIL_MIN=0.50"
-COMMON="--video --frames 60 --cpu-threads 8 --nightly \
+COMMON="--video --frames 60 --cpu-threads 8 --fast-decode \
         --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250"
 
 env $BASE_ENV build-release/av2enc "$REF" -o out.ivf --qp Q $COMMON

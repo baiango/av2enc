@@ -3,12 +3,12 @@
 `--video-partition-rd` replaces the CPU `--video` P-frame partition cost with a
 measured inter RD probe: each candidate leaf is priced by one NEWMV prediction
 plus one quantised luma residual. It is an explicit CPU opt-in and is part of
-the `--nightly` aggregate. The flag-less default, the stable `quality` preset
+the `--fast-decode` aggregate. The flag-less default, the stable `quality` preset
 and every GPU path keep the historical tree and byte-identical streams.
 
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/n.ivf \
-    --video --frames 60 --qp 136 --cpu-threads 8 --nightly
+    --video --frames 60 --qp 136 --cpu-threads 8 --fast-decode
 ```
 
 ## The defect
@@ -46,7 +46,7 @@ lambda = scale * step^2,  step = rc::quant_step_from_qindex(base_q_idx)
 
 * `D` comes from one NEWMV search and one `compute_tx()` on the winner; the
   plan's `luma_plan_bits()` is the encoder's existing residual-rate estimate.
-* `lambda` is quantiser-scaled. The default scale is `1.1e-5`; `--nightly`
+* `lambda` is quantiser-scaled. The default scale is `1.1e-5`; `--fast-decode`
   uses the measured `2.75e-6` (see the sweep below). Both are exposed as
   `--video-partition-rd-lambda <S>`.
 * The probe is bounded to the first split level: a superblock leaf against its
@@ -74,7 +74,7 @@ CPU `--video`, `--cpu-threads 8`, `AV2ENC_CPU_FAST=ON`, Apple M4. Quality:
 `tools/quality.py` (CVVDP 0.5.7, `standard_fhd`, MPS) against the pinned
 `dav2d-macos`.
 
-`--nightly` + probe (`--qp`, probe lambda `2.75e-6`, depth 1):
+`--fast-decode` + probe (`--qp`, probe lambda `2.75e-6`, depth 1):
 
 | QP | kbps | CVVDP JOD | PSNR-Y |
 |---:|---:|---:|---:|
@@ -86,8 +86,8 @@ At the established ~100.25 kbps point:
 
 | Stream | Rate | CVVDP | PSNR-Y |
 |---|---:|---:|---:|
-| `--nightly` QP142 (edge + CCSO, historical tree) | 100.248 kbps | 8.7465 | 35.3754 dB |
-| `--nightly` QP136 (edge + CCSO + probe) | 100.116 kbps | **9.1542** | **36.946 dB** |
+| `--fast-decode` QP142 (edge + CCSO, historical tree) | 100.248 kbps | 8.7465 | 35.3754 dB |
+| `--fast-decode` QP136 (edge + CCSO + probe) | 100.116 kbps | **9.1542** | **36.946 dB** |
 | probe, interpolated to 100.248 kbps (QP 135/136) | 100.248 kbps | **9.1546** | **~36.95 dB** |
 | **delta (interpolated)** | matched | **+0.408 JOD** | **+1.57 dB** |
 
@@ -136,7 +136,7 @@ frame pool; the per-leaf ME/TX work is parallel.
 BIN=build-a/av2enc
 DAV2D=$PWD/tools/bin/dav2d-macos
 $BIN testdata/nasa_480x240_30fps_60f.y4m -o /tmp/n.ivf --video --frames 60 \
-     --qp 136 --cpu-threads 8 --nightly --video-recon /tmp/n.y4m
+     --qp 136 --cpu-threads 8 --fast-decode --video-recon /tmp/n.y4m
 tools/validate_dav2d.sh /tmp/n.ivf                 # OK, 60 frames
 $DAV2D -q --strict 1 -i /tmp/n.ivf -o /tmp/n_dec.y4m --threads 1
 # encoder recon payload == decoder payload, 10,368,000 B, byte for byte
@@ -144,7 +144,7 @@ tools/quality.py --ref testdata/nasa_480x240_30fps_60f.y4m --ivf /tmp/n.ivf \
      --json /tmp/n.json                            # 9.1542 JOD, 36.946 dB
 ```
 
-`tools/gate_video_nightly.sh` checks the `--nightly` expansion (including the
+`tools/gate_video_nightly.sh` checks the `--fast-decode` expansion (including the
 probe flags), the pinned default (`25,009 B`, `a1d0dba1...`) and `quality`
 (`25,141 B`, `3984677b...`) streams, `--strict 1` decode and visible recon
 equality.
@@ -159,6 +159,6 @@ equality.
 * The probe is not a tool toggle: it replaces the partition decision cost. The
   surrounding tools (`--video-inter-residual`, `--video-deblock`,
   `--video-ccso`, `--video-tx-search`, `--video-intra-full`) make the extra
-  leaves affordable; `--nightly` adds rate-aware CCSO and bottom-edge inter.
+  leaves affordable; `--fast-decode` adds rate-aware CCSO and bottom-edge inter.
 * `--video-tx-context-rate` still measures negative when stacked on this path
   (9.109 JOD at 101.13 kbps with the probe), so it stays a separate opt-in.

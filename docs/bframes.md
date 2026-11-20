@@ -1,10 +1,10 @@
 # B frames and closed-GOP structures at 240p30 / 100 kbps
 
-`--nightly` is a flat key+P chain, so no B-frame tool had ever been scored at
+`--fast-decode` is a flat key+P chain, so no B-frame tool had ever been scored at
 the 240p / 100 kbps point. `--video-opfl`, `--video-refine-mv` and
 `--video-compound-near-near` need the two-reference B carrier, `--video-compound`
 needs two references that the one-reference nightly chain does not have, and
-`--b-frames` itself is rejected by `--video-edge-inter`, which `--nightly`
+`--b-frames` itself is rejected by `--video-edge-inter`, which `--fast-decode`
 enables. This doc builds a P control under the *same* tool set B can use,
 rate-matches four closed-GOP shapes and the three refinement tools to 100 kbps,
 and reports the gap to the 82.15 nightly pin and the 83.80 tuned-drift point.
@@ -51,7 +51,7 @@ For the record, 4 and 8 input frames do encode and decode 4/4 and 8/8, but a
 
 ## Baseline construction log
 
-`--nightly` cannot be combined with B frames directly, and neither can six of
+`--fast-decode` cannot be combined with B frames directly, and neither can six of
 the decisions it turns on. All of these are named rejections, verified on this
 build:
 
@@ -92,8 +92,8 @@ The control ladder (the two nightly rows are absolute references, not
 
 | control | composition | QP | kbps | JOD | BA | SS2 | K |
 |---|---|---:|---:|---:|---:|---:|---:|
-| nightly pin (verified) | the real `--nightly` | 106 | 100.032 | 9.7334 | 3.420 | 80.84 | **82.15** |
-| current best (verified) | `--nightly` + drift threshold 1.5 / budget 3250 | 110/111 | 100.584 / 99.800 | 9.7536 | 2.712 | 81.38 | **83.80** |
+| nightly pin (verified) | the real `--fast-decode` | 106 | 100.032 | 9.7334 | 3.420 | 80.84 | **82.15** |
+| current best (verified) | `--fast-decode` + drift threshold 1.5 / budget 3250 | 110/111 | 100.584 / 99.800 | 9.7536 | 2.712 | 81.38 | **83.80** |
 | **edge control** | `B_LEGAL` + `--video-edge-inter --video-edge-mask` | 86/87 | 100.916 / 98.700 | 9.6542 | 4.886 | 77.57 | **79.04** |
 | three-lever control | `B_LEGAL` + `--video-key-qp-offset -27 --video-bawp --video-bawp-carrier` + tuned drift | 187/188/189 | 103.544 / 100.488 / 98.080 | 7.0450 | 19.073 | 15.11 | **49.48** |
 | **fair P control** | `B_LEGAL` alone | 183/184/185 | 103.392 / 100.080 / 97.316 | 6.5122 | 20.359 | 3.45 | **44.68** |

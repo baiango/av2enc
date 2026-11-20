@@ -72,7 +72,7 @@ python3 -m modal run tools/modal_rd.py --mode matrix --matrix /tmp/jobs.json \
 python3 -m modal run tools/modal_rd.py --mode ablate --dry-run
 ```
 
-`--base drift` is `--nightly --video-drift-refresh-threshold 1.5
+`--base drift` is `--fast-decode --video-drift-refresh-threshold 1.5
 --video-drift-refresh-budget 3250`, the current 240p/100 kbps best
 (**K 83.80**). Every table should carry its own baseline row; the interpolated
 ΔK is computed against it, not against a number from another host.

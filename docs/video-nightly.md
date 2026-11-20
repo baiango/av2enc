@@ -1,12 +1,14 @@
-# Nightly CPU RD mode (`--nightly`)
+# Fast-decode CPU RD mode (`--fast-decode`)
 
-`--nightly` is the latest measured CPU-only algorithmic RD aggregate. It is
+`--fast-decode` (renamed from `--nightly` on 2026-11-20; the old spelling is an
+exact alias and expands the same flag set) is the latest measured CPU-only
+algorithmic RD aggregate. It is
 **opt-in and CPU-only**: the default stream, the stable `quality` preset and
 every GPU path keep their historical decisions and byte-identical streams.
 
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/nightly.ivf \
-    --video --frames 60 --qp 106 --cpu-threads 8 --nightly
+    --video --frames 60 --qp 106 --cpu-threads 8 --fast-decode
 ```
 
 Expansion (the gate asserts this is byte-identical to typing the flags out):
@@ -35,10 +37,10 @@ Expansion (the gate asserts this is byte-identical to typing the flags out):
 expansion above therefore omits `--video-tx-lambda` and
 `--video-partition-rd-lambda`: those set one site by hand, and the two modes are
 mutually exclusive by name (an explicit numeric lambda used to silently re-pin a
-site, which made the typed-out expansion differ from `--nightly` by 724 B).
+site, which made the typed-out expansion differ from `--fast-decode` by 724 B).
 See `docs/qp-scaled-lambda.md` and `bench/space8k_720p/README.md`.
 
-`--nightly` rejects `--video-gpu` and `--still`. The bottom-edge path requires
+`--fast-decode` rejects `--video-gpu` and `--still`. The bottom-edge path requires
 the single-tile low-delay P chain (no B/reorder/temporal-layer modes, no
 `--video-ref-mvs`); the normal combination validation enforces that.
 
@@ -82,7 +84,7 @@ At the established 100 kbps point:
 | `quality` QP190 | 100.564 kbps | 6.3021 | 27.5816 dB |
 | previous nightly QP117 (no intra TX part) | 100.088 kbps | 9.5467 | 40.8670 dB |
 | previous nightly QP110 (no CDF/drift) | 99.976 kbps | 9.6802 | 42.9799 dB |
-| **`--nightly` QP110, key -25 + CDF + drift** | **99.616 kbps** | **9.7069** | **43.8667 dB** |
+| **`--fast-decode` QP110, key -25 + CDF + drift** | **99.616 kbps** | **9.7069** | **43.8667 dB** |
 | at iso-rate 99.976 kbps | 99.976 kbps | **≈9.707** | **≈43.88 dB** |
 
 The keyframe intra luma TX partition with per-part prediction/recon adds
@@ -141,7 +143,7 @@ strength. It also cannot carry the CDF image: delta-Q requires
 aggregate is −0.47 K versus the pin. The same work made delta-Q compose with
 the chain (RDOQ, the measured partition probe, the per-superblock plan and
 `--video-drift-refresh-qp 0`); with a zero plan the stream is recon-identical
-to `--nightly --video-cdf-per-frame-qp`, and `tools/gate_video_aq.sh` checks
+to `--fast-decode --video-cdf-per-frame-qp`, and `tools/gate_video_aq.sh` checks
 that composition.
 
 Positive changes that did **not** stack and are therefore explicit opt-ins,
@@ -158,7 +160,7 @@ CDF/key-QP move above. It is CPU-only, single-tile, cqp and 8-bit 4:2:0, and it
 composes with the CDF chain only while the refresh keeps every frame's QP
 (`--video-drift-refresh-qp 0`, the default).
 
-Cross-frame CDF carry is now decoder-gated and opt-in: `--nightly
+Cross-frame CDF carry is now decoder-gated and opt-in: `--fast-decode
 --cdf-continuity` keeps every decision (identical `--video-recon`, 60/60
 pictures under `dav2d --strict 1`) and cuts the pin from 24,904 B / 99.616 kbps
 to 24,214 B / 96.856 kbps, i.e. −2.77% rate. Spending it on the reference
@@ -167,7 +169,7 @@ intro (`--video-key-qp-offset -27`) puts the iso-rate point at 24,885 B /
 (24,822 B / 99.288 kbps, same quality): **+0.01 JOD / +0.07 dB** at 99.616
 kbps. The carried form also composes with `--video-drift-refresh` (the image
 follows the coded symbols, so a refresh frame needs no §9.3 re-derivation) and
-replaces the reset-per-frame opt-in inside `--nightly`; the reset form stays
+replaces the reset-per-frame opt-in inside `--fast-decode`; the reset form stays
 the fallback. See `docs/video-cdf-carry.md` and
 `src/pipeline/video/gate_video_cdf_carry.sh`.
 
@@ -213,7 +215,7 @@ at 99.288 instead of 99.540 kbps.
 all-zero set as a candidate at `CdefStrengths == 1` and drops frames whose
 measured visible-area gain cannot pay `L × bits`. That arm **changes the padded
 reconstruction** (the gain metric only covers the visible area, but the padded
-rows are reference data), so it is not in `--nightly`: L=200 costs +3 B versus
+rows are reference data), so it is not in `--fast-decode`: L=200 costs +3 B versus
 the exact form and already changes samples, L=1000 saves a further 116 B
 (24,706 B) but would need an iso-rate CVVDP sweep to justify. The exact form is
 the shipped default.
@@ -240,7 +242,7 @@ zero bytes, so they cannot be recovered. The only removable field is the 3-bit
 (§5.4.2 `seq_tile_info_present_flag = 1` + `allow_tile_info_change = 0`) moves it
 into the sequence header and codes no per-frame tile bits: **24,885 → 24,863 B**
 at 60 frames with a byte-identical decode. It is an opt-in and is **not** part of
-`--nightly`, so the pins above are unchanged. Measurements, the alignment
+`--fast-decode`, so the pins above are unchanged. Measurements, the alignment
 distribution and the decoder evidence are in `docs/video-tile-group-header.md`.
 
 ## Inter residual RD (`--video-leaf-rd-lambda`)
@@ -278,7 +280,7 @@ QP 110, so the fit follows `sqrt(step)` instead.
 ## Adaptive CDFs with per-frame QP (`--video-cdf-per-frame-qp`)
 
 `--avg-cdf --adaptive-cdf` used to require one fixed `base_q_idx`: the §8.2.2
-CDF image was seeded once from that frame-level quantizer. `--nightly` codes a
+CDF image was seeded once from that frame-level quantizer. `--fast-decode` codes a
 per-frame QP plan (key `--qp - 16`, P `--qp`), so the aggregate could not turn
 adaptation on.
 
@@ -307,7 +309,7 @@ and 3, i.e. exactly the case that used to be rejected.
 
 | Stream | Bytes | kbps | CVVDP | PSNR-Y |
 |---|---:|---:|---:|---:|
-| `--nightly` QP110 (key 94) | 24,994 | 99.976 | 9.6802 | 42.9799 |
+| `--fast-decode` QP110 (key 94) | 24,994 | 99.976 | 9.6802 | 42.9799 |
 | same, `+ --video-cdf-per-frame-qp` | 21,530 | 86.120 | 9.6802 | 42.9799 |
 
 That is −13.86% rate at identical reconstruction. The QP110 CDF stream is
@@ -432,7 +434,7 @@ keyframe, residual coding in P), not frame-level rate allocation.
 
 ## The static floor
 
-`--video-skip-collapse` (opt-in, not part of `--nightly`) rewrites a P-frame
+`--video-skip-collapse` (opt-in, not part of `--fast-decode`) rewrites a P-frame
 superblock whose leaves are all plain zero-motion inter skips into one
 superblock-sized skip leaf: the reconstruction is unchanged, the partition tree
 bits disappear. On an all-identical 60-frame clip it takes the steady-state P
@@ -445,7 +447,7 @@ The symbol table and the §8.2.4 2-byte floor: `docs/video-skip-collapse.md`.
 
 This is one clip at one quality point on one host. The bottom-edge and BAWP
 gains are content-dependent; the partition probe, RDOQ, CDEF and CCSO
-contributions should be re-measured on other content and rates. `--nightly` is
+contributions should be re-measured on other content and rates. `--fast-decode` is
 a CPU development mode, not the GPU product path, and it is deliberately not
 the default.
 

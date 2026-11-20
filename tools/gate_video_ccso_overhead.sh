@@ -83,12 +83,12 @@ grep -q "8-bit 4:2:0" "$TMP/ten.err" ||
 
 # --- flag-off pin, flag-on stream -----------------------------------------
 AV2ENC_TRACE_CCSO=1 "$BIN" "$NASA" -o "$TMP/pin.ivf" --video --frames 60 \
-    --qp 110 --cpu-threads 8 --nightly --video-ccso-header-off \
+    --qp 110 --cpu-threads 8 --fast-decode --video-ccso-header-off \
     >/dev/null 2>"$TMP/pin.trace" ||
     fail "the flag-off nightly encode failed"
 
 AV2ENC_TRACE_CCSO=1 "$BIN" "$NASA" -o "$TMP/hdr.ivf" --video --frames 60 \
-    --qp 110 --cpu-threads 8 --nightly --video-ccso-header-rd \
+    --qp 110 --cpu-threads 8 --fast-decode --video-ccso-header-rd \
     --video-recon "$TMP/hdr.y4m" >/dev/null 2>"$TMP/hdr.trace" ||
     fail "the --video-ccso-header-rd encode failed"
 

@@ -1,6 +1,6 @@
 # Video coefficient RDOQ (`--video-rdoq`)
 
-Status: **measured positive on the nightly tree; enabled by `--nightly`.**
+Status: **measured positive on the nightly tree; enabled by `--fast-decode`.**
 The flag wires the full coefficient trellis from `src/codec/rate/rdoq/` into
 the CPU `--video` luma inter-residual path and prices the luma TX plan search
 with the same static AV2 §8.3 coefficient model. It changes coefficient levels
@@ -9,11 +9,11 @@ are untouched, so there is no new syntax element and no header change.
 
 Without the flag nothing is read: the default stream (25,009 B /
 `a1d0dba1...`) and the `quality` preset stream (25,141 B / `3984677b...`) keep
-their bytes. `--nightly` now turns the flag on, so its own stream changes.
+their bytes. `--fast-decode` now turns the flag on, so its own stream changes.
 
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/x.ivf \
-    --video --frames 60 --qp 117 --cpu-threads 8 --nightly
+    --video --frames 60 --qp 117 --cpu-threads 8 --fast-decode
 ```
 
 `--video-rdoq-scale X` overrides the SSE-domain lambda calibration
@@ -69,11 +69,11 @@ each is individually consistent with its own quantiser.
 Host: Apple M4 (10 cores, shared), `AV2ENC_CPU_FAST=ON`, `--cpu-threads 8`.
 Clip: `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames. Quality:
 `tools/quality.py` (CVVDP 0.5.7, `standard_fhd`, MPS) with the pinned
-`dav2d-macos` decoder. The reference is `--nightly` **without** RDOQ (the
+`dav2d-macos` decoder. The reference is `--fast-decode` **without** RDOQ (the
 previous edge + CCSO aggregate), whose operating point is QP 142 at
 100.248 kbps / 8.7465 JOD / 35.3754 dB.
 
-`--nightly` (now with RDOQ at the default scale 0.1):
+`--fast-decode` (now with RDOQ at the default scale 0.1):
 
 | QP | kbps | CVVDP | PSNR-Y |
 |---:|---:|---:|---:|
@@ -151,7 +151,7 @@ the CPU reference mode, not a speed target.
   stays **25,141 B / `3984677b...`**.
 * `tools/gate_video_rdoq.sh` checks the usage rejections, both pins, that the
   stream changes and shrinks, `--strict 1`, and the recon equality.
-* `tools/gate_video_nightly.sh` checks that `--nightly` expands to the
+* `tools/gate_video_nightly.sh` checks that `--fast-decode` expands to the
   documented flags (now including `--video-rdoq`) with byte-identical IVF.
 
 ## Caveat

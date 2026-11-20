@@ -22,7 +22,7 @@
 #     a 6-frame prefix (a delta-Q desynchronisation shows up as a later
 #     picture failing), and the encoder reconstruction equals the decoded
 #     payload byte for byte;
-#   * --nightly --video-aq composes: the CDF chain under
+#   * --fast-decode --video-aq composes: the CDF chain under
 #     --video-cdf-per-frame-qp still decodes strictly and recon-exact.
 #
 # Usage: tools/gate_video_aq.sh [--bin build/av2enc] [--dav2d PATH]
@@ -215,10 +215,10 @@ done
 # composes only with the per-frame reset (--video-cdf-per-frame-qp).  Gate the
 # strict decode and the recon equality on a short nightly stream.
 if ! "$BIN" "$NASA" -o "$TMP/nightly.ivf" --video --frames 4 --qp 110 \
-        --cpu-threads 8 --nightly --video-cdf-per-frame-qp --video-aq \
+        --cpu-threads 8 --fast-decode --video-cdf-per-frame-qp --video-aq \
         --video-recon "$TMP/nightly-recon.y4m" \
         >"$TMP/nightly.log" 2>&1; then
-    fail "the --nightly --video-aq encode failed"
+    fail "the --fast-decode --video-aq encode failed"
     cat "$TMP/nightly.log" >&2
 else
     decode_and_compare "$TMP/nightly.ivf" "$TMP/nightly-recon.y4m" 4 \

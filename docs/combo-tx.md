@@ -10,11 +10,11 @@ oracle ran.
 
 The search asked for novel architectures formed only by combining existing
 transform/quantisation/entropy/rate CLI flags on top of the measured
-`--nightly` aggregate. The prediction and filter tools stay at their nightly
+`--fast-decode` aggregate. The prediction and filter tools stay at their nightly
 values for the primary registry (the tool-matrix section is the only exception,
 and says so).
 
-Result in one line: **the best internal combination is `--nightly
+Result in one line: **the best internal combination is `--fast-decode
 --video-rdoq-scale 0.2 --video-tx-lambda 24` at K 82.490 / 99.176 kbps
 (QP 106); its rate-free (source-replacement) ceiling is 88.459, still 0.341
 below the SVT 88.8 wall, so it is not promoted to a full ladder and no
@@ -28,10 +28,10 @@ matched-rate gain is claimed.** The current internal best remains eff-perc
 * Base flag template for every registry row:
 
   ```text
-  --video --frames 60 --cpu-threads 8 --qp <QP> --nightly <extra flags>
+  --video --frames 60 --cpu-threads 8 --qp <QP> --fast-decode <extra flags>
   ```
 
-  `--nightly` expands deterministically at `0bf1d001` (see
+  `--fast-decode` expands deterministically at `0bf1d001` (see
   `src/cli/nightly.cpp`): quality preset (inter residual, deblock, CCSO, TX
   search, intra full), rate-aware CCSO + header RD, bottom-edge inter + mask,
   partition probe at `2.75e-6` depth 1, key QP offset −27, RDOQ at 0.1,
@@ -62,7 +62,7 @@ matched-rate gain is claimed.** The current internal best remains eff-perc
 Control:
 
 ```text
---video --frames 60 --cpu-threads 8 --qp 106 --nightly
+--video --frames 60 --cpu-threads 8 --qp 106 --fast-decode
 25,008 B / 100.032 kbps / JOD 9.7334 / BA 3.4202 / SS2 80.837 / K 82.155
 (--qp 108: 24,291 B / 97.164 kbps / 81.604; two-point matched K 82.149)
 ```
@@ -122,18 +122,18 @@ another row.
 
 ## 3. Legal control for the explicit-lambda vs QP-lambda exclusion
 
-`--nightly` forces `--video-qp-lambda` and therefore the five per-site power
+`--fast-decode` forces `--video-qp-lambda` and therefore the five per-site power
 laws (`src/pipeline/video/qp_lambda.h`). An explicit numeric lambda flag is
 legal **with** `--video-qp-lambda`: it pins exactly that one site and keeps the
 legacy form; it is not multiplied by the fit a second time, and the other four
 sites keep their fits. There is no CLI switch that turns `--video-qp-lambda`
-off under `--nightly`.
+off under `--fast-decode`.
 
 The legal constant-lambda control is therefore the all-explicit set
 `legacyexplicit`:
 
 ```text
---video --frames 60 --cpu-threads 8 --qp 106 --nightly \
+--video --frames 60 --cpu-threads 8 --qp 106 --fast-decode \
   --video-tx-lambda 136 --video-key-tx-lambda 136 \
   --video-leaf-rd-lambda 125 --video-rdoq-scale 0.1 \
   --video-partition-rd-lambda 2.75e-6
@@ -162,7 +162,7 @@ av2enc: --video-qp-lambda needs a fixed --qp stream: the rate-controlled paths o
 | `--video-qm --qp 90` | `av2enc: --video-qm does not compose with --video-tx-search: the device TX search module has its own scalar quantizer` |
 | `--video-qp-lambda --rc crf --crf 32` | `av2enc: --video-qp-lambda needs a fixed --qp stream: the rate-controlled paths own base_q_idx and would re-scale every frame` |
 | `--video-tcq` | `av2enc: --video-rdoq replaces the scalar quantiser, it does not compose with --video-tcq (its half-step trellis owns the levels)` |
-| `--video-tcq --video-cctx` | same `--video-rdoq ... does not compose with --video-tcq` line (RDOQ is on in `--nightly`) |
+| `--video-tcq --video-cctx` | same `--video-rdoq ... does not compose with --video-tcq` line (RDOQ is on in `--fast-decode`) |
 | `--video-mhccp` | `av2enc: --video-mhccp does not compose with --avg-cdf/--adaptive-cdf: the §8.2.4 bank does not carry the §5.20.7.32 cfl_mhccp/cfl_mh_dir CDFs` |
 | `--video-cfl --video-ibp` | `av2enc: --video-ibp requires the plain DC chroma path: --video-cfl/--video-mhccp do not apply the §7.13.2.12 IBP DC post-filter` |
 | `--video-idtx --video-min-block 4` | exit 1: `av2enc: error: --video-min-block 4 does not compose with --video-idtx yet (the key+P chain is not decoder-exact at the sub-8 search depths)` |
@@ -285,7 +285,7 @@ with the entropy/header levers that had a positive same-QP screen
 (`--video-tile-group-off --video-ref-signal-off --video-ccso-header-off`):
 
 ```text
---video --frames 60 --cpu-threads 8 --qp 106 --nightly \
+--video --frames 60 --cpu-threads 8 --qp 106 --fast-decode \
   --video-rdoq-scale 0.2 --video-tx-lambda 24 \
   --video-tile-group-off --video-ref-signal-off --video-ccso-header-off
 ```
@@ -314,7 +314,7 @@ Exact flags at the measured point:
 BIN=build-release/av2enc
 REF=testdata/nasa_480x240_30fps_60f.y4m
 "$BIN" "$REF" -o /tmp/rdoq_tx_106.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 106 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 106 --fast-decode \
   --video-rdoq-scale 0.2 --video-tx-lambda 24
 ```
 
@@ -387,7 +387,7 @@ REF=testdata/nasa_480x240_30fps_60f.y4m
 BIN=build-release/av2enc
 for q in 106 108; do
   "$BIN" "$REF" -o /tmp/rdoq_tx_$q.ivf --video --frames 60 \
-    --cpu-threads 8 --qp $q --nightly \
+    --cpu-threads 8 --qp $q --fast-decode \
     --video-rdoq-scale 0.2 --video-tx-lambda 24
   tools/bin/dav2d-macos -q --strict 1 -i /tmp/rdoq_tx_$q.ivf \
     -o /tmp/rdoq_tx_$q.y4m --threads 1

@@ -155,12 +155,12 @@ BIN=/path/to/clean/build/av2enc
 REF=testdata/nasa_480x240_30fps_60f.y4m
 
 "$BIN" "$REF" -o /tmp/nightly.ivf --video --frames 60 --cpu-threads 8 \
-    --qp 106 --nightly
+    --qp 106 --fast-decode
 AV2ENC_EFF_PERC=1 "$BIN" "$REF" -o /tmp/eff119.ivf --video --frames 60 \
-    --cpu-threads 8 --qp 119 --nightly \
+    --cpu-threads 8 --qp 119 --fast-decode \
     --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 AV2ENC_EFF_PERC=1 "$BIN" "$REF" -o /tmp/eff120.ivf --video --frames 60 \
-    --cpu-threads 8 --qp 120 --nightly \
+    --cpu-threads 8 --qp 120 --fast-decode \
     --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 
@@ -314,7 +314,7 @@ rejected by name or decoder; `—` = not applicable.
   The partition probe is flat-P, single-tile, 8-bit 4:2:0 and rejects B/TL/TIP/W,
   SVC, tiles and the 128/256 trees. AQ/segmentation/delta-Q need the CDF reset
   and reject frame schedules. `--video-qp-lambda` needs cqp; `--rc crf/vbr` is
-  therefore hard-blocked inside `--nightly` (nightly always sets qp-lambda and
+  therefore hard-blocked inside `--fast-decode` (nightly always sets qp-lambda and
   has no off switch).
 * **Structural carriers.** Compound overlays need B (or refs 2 on P);
   OPFL/refine-MV/CWP/IMP need B + `--video-compound-near-near`; TIP needs its
@@ -326,13 +326,13 @@ rejected by name or decoder; `—` = not applicable.
 
 | tool | single-toggle result | untested combination |
 |---|---|---|
-| `--video-tcq` | +0.01 JOD for ~60x encode on the quality preset (`video-rd-preset.md`) | TCQ + CCTX on `--nightly --video-rdoq-off` |
+| `--video-tcq` | +0.01 JOD for ~60x encode on the quality preset (`video-rd-preset.md`) | TCQ + CCTX on `--fast-decode --video-rdoq-off` |
 | `--video-cctx` | neutral on the quality preset | same |
 | `--video-ddt` | −1.22 K matched rate (`partition-tools.md`) | SDP+DDT already measured below its control; no open pair |
 | `--video-mrl` | selected 64/189 key leaves without a measured win (`negative-results.md`) | MRL on the nightly aggregate, with the keyframe TX part |
 | `--video-aq` | +0.05 K inside ripple; −0.47 K under nightly (`video-aq.md`) | AQ with the drift/partition relaxations at a different strength — measured null, not a path |
 | `--video-delta-q` | 6.161 JOD vs 6.302 preset (`video-rd-preset.md`) | delta-Q with the probe + drift at `--video-drift-refresh-qp 0`; the zero-plan stream is recon-identical |
-| `--video-adaptive-mvd` | neutral on the quality preset | adaptive MVD + flex precision + sign derivation on `--nightly --video-bawp-off` |
+| `--video-adaptive-mvd` | neutral on the quality preset | adaptive MVD + flex precision + sign derivation on `--fast-decode --video-bawp-off` |
 | `--video-ext-partitions` | −0.47 K on tuned recipe | ext + `--video-min-block 4` together (both compose with nightly) |
 | `--video-min-block 4` | −0.74 K on tuned recipe | same pair |
 | `--video-idtx`, `--video-ist`, `--video-ibp`, `--video-dip`, `--video-cfl` | no composite K | each on the full nightly aggregate |
@@ -349,10 +349,10 @@ Ranked by expected oracle headroom. Full flag lists and carriers are in
 | rank | candidate | carrier | status | next |
 |---:|---|---|---|---|
 | 1 | TIP future anchor on the stripped flat-P carrier | TIP (3–8 pictures) | untested; decoder-gated only | intermediate gate K > 86.0, then a matched ladder |
-| 2 | CDEF per-block strength (`--nightly --video-cdef-strength 4`) | FP | untested on K; CDEF is 60-frame gated | one ladder; stop if below the local control |
-| 3 | CfL on the nightly tree (`--nightly --video-cfl`) | FP | accepted in a 2-frame probe; 60-frame composition untested | one ladder; chroma owns 0.61 K of the gap |
-| 4 | Adaptive MVD + flex precision + sign derivation (`--nightly --video-bawp-off ...`) | FP | gated alone, untested together | one ladder; costs 0.36 K to make legal |
-| 5 | IBP on every intra leaf (`--nightly --video-ibp`) | FP | gated alone; 60-frame composition untested | one ladder; keyframe-weighted |
+| 2 | CDEF per-block strength (`--fast-decode --video-cdef-strength 4`) | FP | untested on K; CDEF is 60-frame gated | one ladder; stop if below the local control |
+| 3 | CfL on the nightly tree (`--fast-decode --video-cfl`) | FP | accepted in a 2-frame probe; 60-frame composition untested | one ladder; chroma owns 0.61 K of the gap |
+| 4 | Adaptive MVD + flex precision + sign derivation (`--fast-decode --video-bawp-off ...`) | FP | gated alone, untested together | one ladder; costs 0.36 K to make legal |
+| 5 | IBP on every intra leaf (`--fast-decode --video-ibp`) | FP | gated alone; 60-frame composition untested | one ladder; keyframe-weighted |
 
 Every measured dead combination (B, compound, multi-ref, GME, SDP, AQ,
 delta-Q, ext partitions, min-block 4, skip collapse, Wiener/PC-Wiener/
@@ -367,7 +367,7 @@ an encodable 100 kbps stream.
 
 | candidate | recipe / gate | ladder | matched K @100 | ceiling | vs 88.8 wall |
 |---|---|---|---:|---:|---:|
-| nightly | `--qp 106 --nightly` | 1 point | **82.155** | — | −6.65 |
+| nightly | `--qp 106 --fast-decode` | 1 point | **82.155** | — | −6.65 |
 | drift | nightly + threshold 1.5 / budget 3250 | 2 points | **83.80** (83.94 @100.58) | — | −5.00 |
 | pipe-perc | perceptual RD pipeline | 2 points | **84.85** | — | −3.95 |
 | eff-hierb | hierarchical B + two-sided + BAWP | envelope | **84.40** | — | −4.40 |
@@ -463,7 +463,7 @@ flat-P branch are different architectures.
   "build": null,
   "flags": ["{bin}", "{ref}", "-o", "{out}", "--video", "--frames",
             "{frames}", "--cpu-threads", "{threads}", "--qp", "{qp}",
-            "--nightly", "--video-drift-refresh-threshold", "1.5",
+            "--fast-decode", "--video-drift-refresh-threshold", "1.5",
             "--video-drift-refresh-budget", "3250"],
   "env": {
     "AV2ENC_EFF_PERC": "1",
@@ -600,7 +600,7 @@ the same oracle:
      },
      "flags": ["{bin}", "{ref}", "-o", "{out}", "--video", "--frames",
                "{frames}", "--cpu-threads", "{threads}", "--qp", "{qp}",
-               "--nightly", "<proposal flags>"],
+               "--fast-decode", "<proposal flags>"],
      "env": {"AV2ENC_HIDDEN_ARF": "1"},
      "qp_ladder": [118, 119, 120, 121],
      "knobs": {},

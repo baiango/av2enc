@@ -8,13 +8,13 @@ Butteraugli term is lost at the 100 kbps nightly point.
 ```sh
 # off (default): historical SSE ranking, byte-identical stream
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o out.ivf \
-    --video --frames 60 --qp 106 --cpu-threads 8 --nightly
+    --video --frames 60 --qp 106 --cpu-threads 8 --fast-decode
 
 # conservative form: keep the SSE frame-level set, veto it per block
-AV2ENC_PERCEPTUAL_FILTER=veto av2enc ... --nightly
+AV2ENC_PERCEPTUAL_FILTER=veto av2enc ... --fast-decode
 
 # full perceptual ranking, 4 CdefStrengths, CdefDamping 4
-AV2ENC_PERCEPTUAL_FILTER=cdef:4 av2enc ... --nightly --video-cdef-damping 4
+AV2ENC_PERCEPTUAL_FILTER=cdef:4 av2enc ... --fast-decode --video-cdef-damping 4
 ```
 
 ## What the encoder actually decides
@@ -107,7 +107,7 @@ pinned MD5).
 
 ## Measurement
 
-Clip `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--nightly`,
+Clip `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--fast-decode`,
 `--cpu-threads 8`; metrics exactly the acceptance chain (`tools/quality.py`,
 `tools/extra_metrics.py`, `tools/kpi.py`).
 

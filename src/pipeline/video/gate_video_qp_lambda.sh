@@ -139,7 +139,7 @@ else
     check_pin "$TMP/quality.ivf" "$QUAL_BYTES" "$QUAL_MD5" "quality"
 fi
 if ! "$BIN" "$NASA" -o "$TMP/nightly.ivf" --video --frames 60 --qp 110 \
-        --cpu-threads 8 --nightly >"$TMP/nightly.log" 2>&1; then
+        --cpu-threads 8 --fast-decode >"$TMP/nightly.log" 2>&1; then
     fail "the nightly pin encode failed"
     exit 1
 fi
@@ -147,7 +147,7 @@ check_pin "$TMP/nightly.ivf" "$NIGHT_BYTES" "$NIGHT_MD5" "nightly"
 
 # --- 2. the numeric flags stay exact under scaling -----------------------
 if ! "$BIN" "$NASA" -o "$TMP/legacy.ivf" --video --frames 60 --qp 110 \
-        --cpu-threads 8 --nightly --video-qp-lambda "${LEGACY[@]}" \
+        --cpu-threads 8 --fast-decode --video-qp-lambda "${LEGACY[@]}" \
         >"$TMP/legacy.log" 2>&1; then
     fail "the all-explicit control encode failed"
 else
@@ -171,28 +171,28 @@ run_quick() {
     return 0
 }
 # leaf only (tx/key/rdoq/partition legacy).
-if run_quick leaf.ivf leaf --nightly --video-qp-lambda \
+if run_quick leaf.ivf leaf --fast-decode --video-qp-lambda \
         --video-tx-lambda 136 --video-key-tx-lambda 136 \
         --video-rdoq-scale 0.1 --video-partition-rd-lambda 2.75e-6; then
     cmp -s "$TMP/leaf.ivf" "$TMP/legacy.ivf" &&
         fail "the leaf QP fit is inert at 240p"
 fi
 # key only (key fit 8; everything else exact).
-if run_quick key.ivf key --nightly --video-qp-lambda \
+if run_quick key.ivf key --fast-decode --video-qp-lambda \
         --video-tx-lambda 136 --video-leaf-rd-lambda 125 \
         --video-rdoq-scale 0.1 --video-partition-rd-lambda 2.75e-6; then
     cmp -s "$TMP/key.ivf" "$TMP/legacy.ivf" &&
         fail "the key TX QP fit is inert at 240p"
 fi
 # partition only (probe fit == anchor at QP110, fallback fit is live).
-if run_quick part.ivf part --nightly --video-qp-lambda \
+if run_quick part.ivf part --fast-decode --video-qp-lambda \
         --video-tx-lambda 136 --video-key-tx-lambda 136 \
         --video-leaf-rd-lambda 125 --video-rdoq-scale 0.1; then
     cmp -s "$TMP/part.ivf" "$TMP/legacy.ivf" &&
         fail "the partition fallback QP fit is inert at 240p"
 fi
 # rdoq only: the fitted scale is exactly 0.1 at the QP110 anchor.
-if run_quick rdoq.ivf rdoq --nightly --video-qp-lambda \
+if run_quick rdoq.ivf rdoq --fast-decode --video-qp-lambda \
         --video-tx-lambda 136 --video-key-tx-lambda 136 \
         --video-leaf-rd-lambda 125 --video-partition-rd-lambda 2.75e-6; then
     cmp -s "$TMP/rdoq.ivf" "$TMP/legacy.ivf" ||
@@ -201,7 +201,7 @@ fi
 
 # --- 4. composed operating points ---------------------------------------
 if ! "$BIN" "$NASA" -o "$TMP/qp240.ivf" --video --frames 60 --qp 110 \
-        --cpu-threads 8 --nightly --video-qp-lambda \
+        --cpu-threads 8 --fast-decode --video-qp-lambda \
         --video-recon "$TMP/qp240.y4m" >"$TMP/qp240.log" 2>&1; then
     fail "the composed 240p encode failed"
 else
@@ -213,7 +213,7 @@ if [ ! -f "$SPACE" ]; then
     echo "SKIP: no space8k_1440x720_60f.y4m (720p arm not checked)"
 else
     if ! "$BIN" "$SPACE" -o "$TMP/qp720.ivf" --video --frames 60 \
-            --cpu-threads 8 --qp 217 --nightly --video-key-qp-offset -57 \
+            --cpu-threads 8 --qp 217 --fast-decode --video-key-qp-offset -57 \
             --video-qp-lambda --video-recon "$TMP/qp720.y4m" \
             >"$TMP/qp720.log" 2>&1; then
         fail "the composed 720p encode failed"

@@ -10,7 +10,7 @@
 # restored.
 #
 # What a fully-skipped P frame still pays after the rewrite (60 identical
-# frames, --nightly): partition 35 symbols / 7.2 bits, is_inter 33 / 0.05 bits,
+# frames, --fast-decode): partition 35 symbols / 7.2 bits, is_inter 33 / 0.05 bits,
 # skip 33 / 0.04 bits, mode 33 / 0.12 bits -> 7.4 information bits, a 3-byte
 # tile.  Before the rewrite: 78 partition symbols / 32.1 bits and a 7-byte
 # tile.  The 2-byte SB-level floor (--video-force-single) is the §8.2.4 marker
@@ -116,7 +116,7 @@ fi
     fail "quality QP190 pin moved"
 
 if ! "$BIN" "$NASA" -o "$TMP/nightly.ivf" --video --frames 60 --qp "$QP" \
-        --cpu-threads "$THREADS" --nightly >"$TMP/nightly.log" 2>&1; then
+        --cpu-threads "$THREADS" --fast-decode >"$TMP/nightly.log" 2>&1; then
     fail "the nightly encode failed"
 fi
 [ "$(wc -c <"$TMP/nightly.ivf" | tr -d ' ')" = "23690" ] ||
@@ -141,12 +141,12 @@ with open(dst, 'wb') as f:
 PY
 
 if ! "$BIN" "$TMP/static.y4m" -o "$TMP/static_off.ivf" --video --frames 60 \
-        --qp "$QP" --cpu-threads "$THREADS" --nightly \
+        --qp "$QP" --cpu-threads "$THREADS" --fast-decode \
         --video-recon "$TMP/static_off_recon.y4m" >"$TMP/static_off.log" 2>&1; then
     fail "the static flag-off encode failed"
 fi
 if ! "$BIN" "$TMP/static.y4m" -o "$TMP/static_on.ivf" --video --frames 60 \
-        --qp "$QP" --cpu-threads "$THREADS" --nightly \
+        --qp "$QP" --cpu-threads "$THREADS" --fast-decode \
         --video-skip-collapse --video-recon "$TMP/static_on_recon.y4m" \
         >"$TMP/static_on.log" 2>&1; then
     fail "the static flag-on encode failed"
@@ -226,7 +226,7 @@ PY
 
 # --- the real clip --------------------------------------------------------
 if ! "$BIN" "$NASA" -o "$TMP/real_on.ivf" --video --frames 60 --qp "$QP" \
-        --cpu-threads "$THREADS" --nightly --video-skip-collapse \
+        --cpu-threads "$THREADS" --fast-decode --video-skip-collapse \
         --video-recon "$TMP/real_on_recon.y4m" >"$TMP/real_on.log" 2>&1; then
     fail "the real-clip flag-on encode failed"
 fi
@@ -241,7 +241,7 @@ echo "real clip: pin=23690 B collapse=$REAL_ON B"
 # AV2ENC_SYMBOL_COST=1 turns on the diagnostic table.  It must not change a
 # single byte of the stream.
 if ! AV2ENC_SYMBOL_COST=1 "$BIN" "$TMP/static.y4m" -o "$TMP/meter.ivf" \
-        --video --frames 60 --qp "$QP" --cpu-threads "$THREADS" --nightly \
+        --video --frames 60 --qp "$QP" --cpu-threads "$THREADS" --fast-decode \
         --video-skip-collapse >"$TMP/meter.log" 2>&1; then
     fail "the metered encode failed"
 fi

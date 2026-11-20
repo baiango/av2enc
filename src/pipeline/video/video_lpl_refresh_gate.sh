@@ -74,7 +74,7 @@ fail() { echo "FAIL: $*" >&2; FAILED=1; }
 QP=111
 BUDGET=3250
 THREADS=8
-COMMON=(--video --frames 60 --qp "$QP" --cpu-threads "$THREADS" --nightly
+COMMON=(--video --frames 60 --qp "$QP" --cpu-threads "$THREADS" --fast-decode
         --video-drift-refresh-threshold 1.5
         --video-drift-refresh-budget "$BUDGET")
 
@@ -88,7 +88,7 @@ PY
 
 # --- gate off keeps the pinned nightly stream ---------------------------
 if ! "$BIN" "$NASA" -o "$TMP/off.ivf" --video --frames 60 --qp 110 \
-        --cpu-threads "$THREADS" --nightly >/dev/null 2>&1; then
+        --cpu-threads "$THREADS" --fast-decode >/dev/null 2>&1; then
     fail "the env-unset nightly control encode failed"
 fi
 OFF_MD5=$(md5_of "$TMP/off.ivf")
@@ -96,7 +96,7 @@ OFF_MD5=$(md5_of "$TMP/off.ivf")
     fail "env-unset nightly md5 is $OFF_MD5, expected 1b99127a..."
 
 if ! AV2ENC_PIPE_LPL_REFRESH=0 "$BIN" "$NASA" -o "$TMP/zero.ivf" \
-        --video --frames 60 --qp 110 --cpu-threads "$THREADS" --nightly \
+        --video --frames 60 --qp 110 --cpu-threads "$THREADS" --fast-decode \
         >/dev/null 2>&1; then
     fail "the AV2ENC_PIPE_LPL_REFRESH=0 control encode failed"
 fi

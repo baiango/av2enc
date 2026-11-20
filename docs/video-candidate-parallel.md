@@ -136,7 +136,7 @@ streams cannot pass. It is not registered in `tools/run_gates.sh` yet.
 ## What was rejected
 
 **TX-partition plan candidates** (task target 2). Parallelising the plan loop
-is the wrong axis: `--nightly` selects about 2 plans per inter leaf, and the
+is the wrong axis: `--fast-decode` selects about 2 plans per inter leaf, and the
 plans are dominated by the TX-type loop inside them (up to 16 candidates per
 leaf). With plans concurrent, each plan's type loop becomes a nested serial
 region, so the coarse axis *suppresses* the fine one. Measured 8T medians of 3:

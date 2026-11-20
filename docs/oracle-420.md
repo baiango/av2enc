@@ -410,9 +410,9 @@ PY
 
 # pins and 100 kbps ladders
 av2enc "$REF" -o /tmp/nightly.ivf --video --frames 60 --cpu-threads 8 \
-  --qp 106 --nightly
+  --qp 106 --fast-decode
 AV2ENC_EFF_PERC=1 av2enc "$REF" -o /tmp/eff119.ivf --video --frames 60 \
-  --cpu-threads 8 --qp 119 --nightly \
+  --cpu-threads 8 --qp 119 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 SvtAv1EncApp -i "$REF" -b /tmp/svt.ivf --preset 0 --crf 36.5 \
   --fps-num 30 --fps-denom 1 --progress 0

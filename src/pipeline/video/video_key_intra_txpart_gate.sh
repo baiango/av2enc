@@ -4,7 +4,7 @@
 #
 # Checks:
 #   * the flag is rejected without --video-tx-search and with --video-gpu;
-#   * the flag-off stream is unchanged (the --nightly 60-frame pin);
+#   * the flag-off stream is unchanged (the --fast-decode 60-frame pin);
 #   * the flag-on keyframe decodes under dav2d --strict 1, the visible encoder
 #     recon equals the decoded payload for every frame, and the trace proves
 #     intra SPLIT/HORZ/VERT partitions were signalled;
@@ -55,8 +55,8 @@ FAILED=0
 fail() { echo "FAIL: $*" >&2; FAILED=1; }
 
 FRAMES=12
-# The `--nightly` expansion with `--video-key-intra-txpart` left out, so the
-# gate keeps a true flag-off reference now that the flag is part of `--nightly`.
+# The `--fast-decode` expansion with `--video-key-intra-txpart` left out, so the
+# gate keeps a true flag-off reference now that the flag is part of `--fast-decode`.
 COMMON=(
     --video --frames "$FRAMES" --qp 117 --cpu-threads 8
     --video-rd-preset quality
@@ -79,7 +79,7 @@ fi
 grep -q "requires --video-tx-search" "$TMP/notx.err" ||
     fail "missing the --video-tx-search requirement message"
 
-if "$BIN" "$NASA" -o "$TMP/gpu.ivf" --nightly --frames 1 --qp 117 \
+if "$BIN" "$NASA" -o "$TMP/gpu.ivf" --fast-decode --frames 1 --qp 117 \
         --video-key-intra-txpart --video-gpu >/dev/null 2>"$TMP/gpu.err"; then
     fail "accepted --video-key-intra-txpart with --video-gpu"
 fi
@@ -183,7 +183,7 @@ fi
 
 # --- nightly pin (60 frames) ---------------------------------------------
 "$BIN" "$NASA" -o "$TMP/pin.ivf" --video --frames 60 --qp 110 \
-    --cpu-threads 8 --nightly >/dev/null 2>&1 ||
+    --cpu-threads 8 --fast-decode >/dev/null 2>&1 ||
     fail "the 60-frame nightly pin encode failed"
 if [ -f "$TMP/pin.ivf" ]; then
     PIN_BYTES=$(wc -c <"$TMP/pin.ivf" | tr -d ' ')

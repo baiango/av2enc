@@ -55,18 +55,18 @@ they compile out under `NDEBUG`.
 ## S1 allocations
 
 Local `DYLD_INSERT_LIBRARIES` shim (not part of the repo), 60-frame 240p
-`--nightly` at `--qp 106`:
+`--fast-decode` at `--qp 106`:
 
 ```sh
 DYLD_INSERT_LIBRARIES=/tmp/allocprof/allocprof.dylib build-dev/av2enc \
   testdata/nasa_480x240_30fps_60f.y4m -o /tmp/a.ivf --video --frames 60 \
-  --cpu-threads 1 --qp 106 --nightly
+  --cpu-threads 1 --qp 106 --fast-decode
 grep -m1 ALLOC /tmp/a.err
 ```
 
 | Run | Before | After | Change |
 |---|---:|---:|---:|
-| 240p QP106 `--nightly`, 1T | 1,886,163 calls / 6,627.1 MB | **807,716 / 2,432.5 MB** | **−57.2% calls / −63.3% bytes** |
+| 240p QP106 `--fast-decode`, 1T | 1,886,163 calls / 6,627.1 MB | **807,716 / 2,432.5 MB** | **−57.2% calls / −63.3% bytes** |
 | same, 8T | 1,903,053 / 6,684.5 MB | 814,861 / 2,487.6 MB | −57.2% / −62.8% |
 
 Derived rates (1T, 31,364 `search()` calls and 103,913 candidate evaluations
@@ -99,14 +99,14 @@ md5 alone), at 1 and 8 threads.
 |---|---:|---|
 | default `--video --qp 189` | 25,009 | `a1d0dba1259b20a4b628d4cd1e14c33c` |
 | quality `--video --qp 190 --video-rd-preset quality` | 25,141 | `3984677b9b665952984b07b7cf75c6ea` |
-| nightly `--video --qp 110 --nightly` | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
+| nightly `--video --qp 110 --fast-decode` | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
 | explicit-lambda (the 136/125/0.1 recipe) | 24,113 | `7f03eb6e82d6ba4cf6666c78285f945b` |
-| 720p `--qp 217 --nightly --video-key-qp-offset -57 ...` | 36,572 | `c4ba28138d8f6569d5e08721a66d755c` |
+| 720p `--qp 217 --fast-decode --video-key-qp-offset -57 ...` | 36,572 | `c4ba28138d8f6569d5e08721a66d755c` |
 
 All ten checks (5 recipes x {1T, 8T}) are `cmp`-identical on both presets, for
 the 240p fixture `nasa_480x240_30fps_60f.y4m` and the 720p fixture
 `space8k_1440x720_60f.y4m`. The allocation-run stream
-(`qp 106 --nightly`) is also identical to the pre-change binary's
+(`qp 106 --fast-decode`) is also identical to the pre-change binary's
 (`0639b43630abb454f7be5ac494d2efb4`, 25,008 B).
 
 Every stream produced by the timing runs below (78 files: 60 measured plus

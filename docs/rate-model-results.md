@@ -5,7 +5,7 @@ The purpose of this document is to stop the next person from repeating the
 same experiment: the shipped rate constants are **RD controls**, not estimates
 of the bit count.
 
-Bars: 240p `--nightly` **82.15** at 100.0 kbps; tuned drift **83.80**;
+Bars: 240p `--fast-decode` **82.15** at 100.0 kbps; tuned drift **83.80**;
 720p pin JOD 7.3236 / **45.61**.
 
 ## Completed models

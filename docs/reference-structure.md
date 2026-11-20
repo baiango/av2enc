@@ -38,11 +38,11 @@ the deltas.
 
 | Stream | QP | Bytes | kbps | JOD | BA | SS2 | K | Decode |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `--nightly` | 106 | 25,008 | 100.032 | 9.7334 | 3.4202 | 80.84 | **82.155** | 60/60 |
+| `--fast-decode` | 106 | 25,008 | 100.032 | 9.7334 | 3.4202 | 80.84 | **82.155** | 60/60 |
 | tuned drift | 110 | 25,146 | 100.584 | 9.7605 | 2.6562 | 81.25 | **83.937** | 60/60 |
 | tuned drift | 111 | 24,950 | 99.800 | 9.7513 | 2.7310 | 81.42 | **83.747** | 60/60 |
 
-The tuned recipe is `--nightly --video-drift-refresh-threshold 1.5
+The tuned recipe is `--fast-decode --video-drift-refresh-threshold 1.5
 --video-drift-refresh-budget 3250`. Two extra bar points were measured to
 characterise the curve:
 
@@ -66,7 +66,7 @@ Every rejection below was reproduced with `build-dev/av2enc` on this branch.
 
 ### Reference signalling
 
-`--nightly` expands `--video-ref-signal-compact`, which pins `NumRefFrames = 1`.
+`--fast-decode` expands `--video-ref-signal-compact`, which pins `NumRefFrames = 1`.
 Any `--video-refs > 1` is therefore rejected:
 
 ```text
@@ -408,7 +408,7 @@ size are stable, the exact percentage is not.
   `--video-cdf-chain-off`, `--video-key-qp-offset-off`,
   `--video-deblock-off`, `--video-loop-filters-off`,
   `--video-tx-search-off`, `--video-rdoq-off`, `--video-partition-rd-off`.
-  They only suppress the matching `--nightly` expansion element, are off by
+  They only suppress the matching `--fast-decode` expansion element, are off by
   default, and leave the pinned streams byte-identical (nightly QP106 is still
   25,008 B MD5 `0639b43630abb454f7be5ac494d2efb4`; tuned drift QP110 is still
   25,146 B MD5 `c60250c02a315d725af19c74c4d1a5df`). They exist so the arms are
@@ -425,19 +425,19 @@ size are stable, the exact percentage is not.
 ```sh
 # baseline
 build-dev/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/n.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 106 --nightly
+  --video --frames 60 --cpu-threads 8 --qp 106 --fast-decode
 # bar
 build-dev/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/d.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 110 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 110 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 # best reference arm
 build-dev/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/r3.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 112 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 112 --fast-decode \
   --video-ref-signal-off --video-refs 3 \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 # compound control (also the CDF-workaround A/B)
 build-dev/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/c.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 116 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 116 --fast-decode \
   --video-ref-signal-off --video-refs 2 --video-bawp-off \
   --video-drift-refresh-off --video-cdf-chain-off
 ```

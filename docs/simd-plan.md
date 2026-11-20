@@ -211,8 +211,8 @@ Encode wall time only; quality is already fixed by byte-identical output.
 
 | Workload | Command shape | Why |
 |---|---|---|
-| 240p 60f | `--qp 106 --nightly --cpu-threads 1` and `8` | the RD search loop, single vs parallel |
-| 720p 60f | `--qp 217 --nightly --video-key-qp-offset -57 --video-leaf-rd-lambda 250 --video-ext-partitions` | real detail, filter-heavy |
+| 240p 60f | `--qp 106 --fast-decode --cpu-threads 1` and `8` | the RD search loop, single vs parallel |
+| 720p 60f | `--qp 217 --fast-decode --video-key-qp-offset -57 --video-leaf-rd-lambda 250 --video-ext-partitions` | real detail, filter-heavy |
 | gate suite | `tools/run_gates.sh` | the actual dev loop |
 
 Protocol: 3 runs each, median, `AV2ENC_SIMD=scalar` vs `neon`, same binary.
@@ -281,7 +281,7 @@ null/zero-size degenerate cases.  Pins byte-identical: 25,009 `a1d0dba1`,
 
 ### Encode time (M4, idle, medians of 3)
 
-`nasa_480x240_30fps_60f.y4m --video --frames 60 --qp 106 --nightly`:
+`nasa_480x240_30fps_60f.y4m --video --frames 60 --qp 106 --fast-decode`:
 
 | Threads | scalar | neon | delta | Output |
 |---|---:|---:|---:|---|
@@ -394,14 +394,14 @@ NEON vertical rounding bias by 1 LSB fails 5,751 checks.
 
 ### Encode time (M4, idle, same binary, interleaved A/B)
 
-`nasa_480x240_30fps_60f.y4m --video --frames 60 --qp 106 --nightly`:
+`nasa_480x240_30fps_60f.y4m --video --frames 60 --qp 106 --fast-decode`:
 
 | Threads | scalar (same binary) | neon | speedup | Output |
 |---|---:|---:|---:|---|
 | 1 | 13.47 s | 6.11 s | **2.20x** | 25,008 B `0639b436…` |
 | 8 | 7.46 s | 5.30 s | **1.41x** | 25,008 B `0639b436…` |
 
-`space8k_1440x720_60f.y4m --video --frames 60 --qp 217 --nightly
+`space8k_1440x720_60f.y4m --video --frames 60 --qp 217 --fast-decode
 --video-key-qp-offset -57 --video-leaf-rd-lambda 250 --video-ext-partitions`,
 `--cpu-threads 8` (medians of 2, ~2 min/run):
 

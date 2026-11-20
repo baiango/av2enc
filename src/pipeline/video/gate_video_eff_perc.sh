@@ -89,20 +89,20 @@ check_pin "$TMP/quality.ivf" 25141 3984677b9b665952984b07b7cf75c6ea \
     "quality QP190"
 
 "$BIN" "$NASA" -o "$TMP/nightly.ivf" --video --frames 60 --qp 110 \
-    --cpu-threads 8 --nightly >"$TMP/nightly.log" 2>&1 ||
+    --cpu-threads 8 --fast-decode >"$TMP/nightly.log" 2>&1 ||
     fail "the nightly encode failed"
 check_pin "$TMP/nightly.ivf" 23690 1b99127a4cd1d386fa5600fb63c57a83 \
     "nightly QP110 pin"
 
 AV2ENC_EFF_PERC=0 "$BIN" "$NASA" -o "$TMP/off.ivf" --video --frames 60 \
-    --qp 110 --cpu-threads 8 --nightly >"$TMP/off.log" 2>&1 ||
+    --qp 110 --cpu-threads 8 --fast-decode >"$TMP/off.log" 2>&1 ||
     fail "the AV2ENC_EFF_PERC=0 encode failed"
 cmp -s "$TMP/nightly.ivf" "$TMP/off.ivf" ||
     fail "AV2ENC_EFF_PERC=0 is not byte-identical to unset"
 
 # The merged pipe-perc point must still reproduce under the extended tree.
 AV2ENC_PIPE_PERC=1 "$BIN" "$NASA" -o "$TMP/pipe.ivf" --video --frames 60 \
-    --qp 119 --cpu-threads 8 --nightly \
+    --qp 119 --cpu-threads 8 --fast-decode \
     --video-drift-refresh-threshold 1.5 \
     --video-drift-refresh-budget 3250 >"$TMP/pipe.log" 2>&1 ||
     fail "the merged pipe-perc point failed"
@@ -112,7 +112,7 @@ check_pin "$TMP/pipe.ivf" 24994 650f2e3514978257c78f373f7bf99a50 \
 # 720p pin (gate off).  Skip only when the fixture is not staged locally.
 if [ -f "$SPACE8K" ]; then
     "$BIN" "$SPACE8K" -o "$TMP/720.ivf" --video --frames 60 \
-        --cpu-threads 8 --qp 217 --nightly --video-key-qp-offset -57 \
+        --cpu-threads 8 --qp 217 --fast-decode --video-key-qp-offset -57 \
         --video-leaf-rd-lambda 250 --video-ext-partitions \
         >"$TMP/720.log" 2>&1 || fail "the 720p pin encode failed"
     check_pin "$TMP/720.ivf" 36572 c4ba28138d8f6569d5e08721a66d755c \
@@ -123,7 +123,7 @@ fi
 
 # --- gate on: tuned drift point ------------------------------------------
 if ! AV2ENC_EFF_PERC=1 "$BIN" "$NASA" -o "$TMP/on.ivf" --video --frames 60 \
-        --qp 119 --cpu-threads 8 --nightly \
+        --qp 119 --cpu-threads 8 --fast-decode \
         --video-drift-refresh-threshold 1.5 \
         --video-drift-refresh-budget 3250 --video-recon "$TMP/on.recon.y4m" \
         >"$TMP/on.log" 2>&1; then

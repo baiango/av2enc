@@ -68,7 +68,7 @@ fail() { echo "FAIL: $*" >&2; FAILED=1; }
 QP=111
 BUDGET=3250
 THREADS=8
-COMMON=(--video --frames 60 --qp "$QP" --cpu-threads "$THREADS" --nightly
+COMMON=(--video --frames 60 --qp "$QP" --cpu-threads "$THREADS" --fast-decode
         --video-drift-refresh-threshold 1.5
         --video-drift-refresh-budget "$BUDGET")
 
@@ -92,7 +92,7 @@ PY
 
 # --- gate off keeps the pinned streams -----------------------------------
 if ! "$BIN" "$NASA" -o "$TMP/off.ivf" --video --frames 60 --qp 110 \
-        --cpu-threads "$THREADS" --nightly >/dev/null 2>&1; then
+        --cpu-threads "$THREADS" --fast-decode >/dev/null 2>&1; then
     fail "the env-unset nightly control encode failed"
 fi
 OFF_MD5=$(md5_of "$TMP/off.ivf")
@@ -100,7 +100,7 @@ OFF_MD5=$(md5_of "$TMP/off.ivf")
     fail "env-unset nightly md5 is $OFF_MD5, expected 1b99127a..."
 
 if ! AV2ENC_PIPE_LPL_DEEP=0 "$BIN" "$NASA" -o "$TMP/zero.ivf" \
-        --video --frames 60 --qp 110 --cpu-threads "$THREADS" --nightly \
+        --video --frames 60 --qp 110 --cpu-threads "$THREADS" --fast-decode \
         >/dev/null 2>&1; then
     fail "the AV2ENC_PIPE_LPL_DEEP=0 control encode failed"
 fi
@@ -186,7 +186,7 @@ fi
 # --- CDF slice cross: anchor QP 71 vs static 111, first P frame ----------
 if [ -f "$PUB" ]; then
     if ! AV2ENC_PIPE_LPL_DEEP=1 "$BIN" "$PUB" -o "$TMP/cross.ivf" \
-            --video --frames 2 --cpu-threads "$THREADS" --qp "$QP" --nightly \
+            --video --frames 2 --cpu-threads "$THREADS" --qp "$QP" --fast-decode \
             --video-drift-refresh-budget 20000 --video-drift-refresh-qp 40 \
             --video-recon "$TMP/cross_recon.y4m" --video-trace \
             >"$TMP/cross.log" 2>"$TMP/cross.trace"; then
@@ -231,7 +231,7 @@ grep -q "needs the §9.3 CDF image re-seeded" "$TMP/mixed.err" ||
 # --- the other legal composition: per-frame §9.3 reset -------------------
 if [ -f "$PUB" ]; then
     if ! AV2ENC_PIPE_LPL_DEEP=1 "$BIN" "$PUB" -o "$TMP/reset.ivf" \
-            --video --frames 2 --cpu-threads "$THREADS" --qp "$QP" --nightly \
+            --video --frames 2 --cpu-threads "$THREADS" --qp "$QP" --fast-decode \
             --video-cdf-per-frame-qp --video-drift-refresh-budget 20000 \
             --video-drift-refresh-qp 40 --video-recon "$TMP/reset_recon.y4m" \
             --video-trace >"$TMP/reset.log" 2>"$TMP/reset.trace"; then

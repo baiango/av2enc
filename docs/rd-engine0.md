@@ -118,7 +118,7 @@ stream (~6× the 7.5 s base).
 
 ## 6. Measurements
 
-Recipe: `--video --frames 60 --cpu-threads 8 --nightly
+Recipe: `--video --frames 60 --cpu-threads 8 --fast-decode
 --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250`,
 `AV2ENC_EFF_PERC=1 AV2ENC_RD_UVFULL=1 AV2ENC_TX_DETAIL_SEARCH_TAIL=1
 AV2ENC_TX_DETAIL_MIN=0.50 AV2ENC_RD_KEY_TX=1 AV2ENC_RD_UVLEVEL=1`; arm adds
@@ -241,7 +241,7 @@ plus 0.06 clip BA. On this clip the matched-K objective prefers no HF term.
 
 ## 8. Conformance
 
-* Gate off pins (release, plain `--nightly`): QP106 **25,008 B /
+* Gate off pins (release, plain `--fast-decode`): QP106 **25,008 B /
   `0639b43630abb454f7be5ac494d2efb4`**, QP110 **23,690 B /
   `1b99127a4cd1d386fa5600fb63c57a83`**.
 * Final ladder: 12/12 streams `validate_dav2d.sh` OK, `dav2d --strict 1`

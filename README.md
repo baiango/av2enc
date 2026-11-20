@@ -60,7 +60,7 @@ The parity gate enforces exact equality (`cmp` on the IVF), not a tolerance.
 **Measured baselines** (NASA clip, 60 frames). The benchmark source is
 [`First-8K-Video-from-Space_orig.mp4`](https://images-assets.nasa.gov/video/First-8K-Video-from-Space/First-8K-Video-from-Space~orig.mp4)
 (8192x4096, 2:1, bt709). The **default** CPU point is QP 189 at 480x240/30;
-the measured opt-in points are `quality` at QP 190 and `--nightly` at QP 106
+the measured opt-in points are `quality` at QP 190 and `--fast-decode` at QP 106
 (the rate-matched 100 kbps point; QP 110 is the gate regression configuration).
 Rows recorded on the retired unlicensed clip are historical.
 
@@ -68,7 +68,7 @@ Rows recorded on the retired unlicensed clip are historical.
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | CPU 240p30, default QP 189 (NASA) | Apple M4 | 100.0 / - kbps | 4.802 JOD | 21.79 | -41.17 | 28.5 | 24.47 dB | 89.6 fps (1 thread) / 95.2 fps (8 threads) |
 | CPU 240p30, `quality` QP 190 | Apple M4 | 100.6 / - kbps | 6.302 JOD | 19.73 | -4.07 | 42.5 | 27.58 dB | 50.9 fps (8 threads) |
-| CPU 240p30, `--nightly` QP 106 | Apple M4 | 100.0 / - kbps | **9.733 JOD** | **3.42** | **80.84** | **82.2** | **44.67 dB** | 19.0 fps (8 threads) |
+| CPU 240p30, `--fast-decode` QP 106 | Apple M4 | 100.0 / - kbps | **9.733 JOD** | **3.42** | **80.84** | **82.2** | **44.67 dB** | 19.0 fps (8 threads) |
 | CPU 240p30, nightly + `AV2ENC_EFF_PERC=1` | Apple M4 | 100.0 / - kbps | 9.771 JOD | 2.26 | 82.44 | **85.1** | 44.46 dB | 7.5 fps (8 threads) ‡ |
 | AVM e6f99d3, QP 124 (NASA) | Apple M4 | 99.3 / - kbps | 9.862 JOD | 1.29 | 90.38 | **90.2** | 50.27 dB | 1.4 fps (8 threads) |
 | SVT-AV1 4.3.0, CRF 42, preset 4 (NASA) | Apple M4 | 98.6 / - kbps | 9.740 JOD | 2.15 | 85.04 | 85.8 | 45.81 dB | 300 fps |
@@ -100,7 +100,7 @@ identical streams, so quality rows are unaffected by the choice.
 
 The project optimises a single number, **K**, built from three full-reference
 metrics because they disagree in ways that matter. **CVVDP** (JOD, higher better)
-is the display-model measure every `--nightly` decision was tuned against.
+is the display-model measure every `--fast-decode` decision was tuned against.
 **Butteraugli** (distance, lower better) is a contrast-masking model that reacts
 to low-frequency error. **SSIMULACRA2** (0-100, higher better; negative means
 badly broken) is a learned multi-scale metric.
@@ -148,17 +148,17 @@ Legacy recon gates still invoke `dav2d` and are being migrated.
 |---|---:|---:|---:|---:|---:|
 | default QP189 | 100.0 kbps | 4.802 | 21.79 | -41.17 | 28.5 |
 | `quality` QP190 | 100.6 | 6.302 | 19.73 | -4.07 | 42.5 |
-| **`--nightly` QP106** | **100.0** | **9.733** | **3.42** | **80.84** | **82.2** |
-| **`--nightly` + `AV2ENC_EFF_PERC=1`** | 100.0 | 9.771 | 2.26 | 82.44 | **85.1** |
+| **`--fast-decode` QP106** | **100.0** | **9.733** | **3.42** | **80.84** | **82.2** |
+| **`--fast-decode` + `AV2ENC_EFF_PERC=1`** | 100.0 | 9.771 | 2.26 | 82.44 | **85.1** |
 | AVM e6f99d3 QP124 | 99.3 | 9.862 | 1.29 | 90.38 | **90.2** |
 | SVT-AV1 p4 CRF42 | 98.6 | 9.740 | 2.15 | 85.04 | 85.8 |
 | SVT-AV1 p0 CRF36.5 | 100.0 | **9.828** | **1.55** | **88.89** | **88.8** |
 | rav1e speed 2 Q120 | 100.1 | 9.717 | 2.71 | 81.67 | 83.7 |
 
-One opt-in pipeline improves on `--nightly` without changing its defaults: the
+One opt-in pipeline improves on `--fast-decode` without changing its defaults: the
 perceptual RD core (`AV2ENC_EFF_PERC=1`) at **85.1 K** at 240p/100 kbps (it is
 negative at 720p: **43.6 K** at 293.7 kbps against the 45.61 pin). It is
-environment-gated, off by default, and not part of `--nightly`. The lpl36 refresh
+environment-gated, off by default, and not part of `--fast-decode`. The lpl36 refresh
 (`AV2ENC_PIPE_LPL_REFRESH=1`) revives the frame-refresh allocator with a
 first-party metric: **83.9 K** at 240p/100 kbps (at the 83.80 wall) and flat at
 the 720p pin, so it is a metric experiment rather than a new best; see
@@ -188,7 +188,7 @@ diagnostic build, so the instrumentation did not affect encoding. The older
 CBR row (99.5 kbps / 8.452 JOD)
 and the retired-clip sweep are kept in `bench/avm_baseline/README.md` for
 history; the binaries and modes are not directly comparable. `quality` and
-`--nightly` are CPU-only; the default and GPU paths keep the historical
+`--fast-decode` are CPU-only; the default and GPU paths keep the historical
 25,009-byte stream / MD5 `a1d0dba1259b20a4b628d4cd1e14c33c`. The `quality`
 stream is 25,141 B / MD5 `3984677b9b665952984b07b7cf75c6ea`; the nightly QP110
 stream is 24,113 B / MD5 `7f03eb6e82d6ba4cf6666c78285f945b` (96.5 kbps). At
@@ -208,9 +208,9 @@ build and the full ladder: `bench/space8k_720p/README.md`.
 
 | Encoder | Setting | Rate | CVVDP | Butteraugli | SSIMULACRA2 | K | Encode |
 |---|---|---:|---:|---:|---:|---:|---:|
-| av2enc `--nightly` | QP217, key -57, leaf 250, ext-partitions | 292.6 kbps | 7.324 | 28.87 | -10.15 | **45.6** | 2.4 fps |
-| av2enc `--nightly` + `AV2ENC_EFF_PERC=1` | QP225 | 293.7 kbps | 7.118 | 32.41 | -14.90 | 43.6 | 0.76 fps § |
-| av2enc `--nightly` + `AV2ENC_PIPE_LPL_REFRESH=1` | QP216/217 interp. | 292.6 kbps | 7.339 | 29.78 | -9.78 | 45.7 | 0.53 fps ¶ |
+| av2enc `--fast-decode` | QP217, key -57, leaf 250, ext-partitions | 292.6 kbps | 7.324 | 28.87 | -10.15 | **45.6** | 2.4 fps |
+| av2enc `--fast-decode` + `AV2ENC_EFF_PERC=1` | QP225 | 293.7 kbps | 7.118 | 32.41 | -14.90 | 43.6 | 0.76 fps § |
+| av2enc `--fast-decode` + `AV2ENC_PIPE_LPL_REFRESH=1` | QP216/217 interp. | 292.6 kbps | 7.339 | 29.78 | -9.78 | 45.7 | 0.53 fps ¶ |
 | AVM e6f99d3† | QP203 | 293.3 | 8.130 | 22.03 | 22.83 | **55.8** | 0.17 fps |
 | SVT-AV1 4.3.0 p0 | CRF63/62 interpolated to 292.6 | 292.6 | 8.244 | 20.89 | 23.21 | **56.6** | 1.7 fps |
 | rav1e 0.8.1 speed 2 | Q209/210 interpolated to 292.6 | 292.6 | 7.788 | 20.12 | 14.90 | **53.0** | 2.3 fps |
@@ -337,7 +337,7 @@ Video options: `--p-frames`, `--b-frames`, `--video-refs 1..7`,
 `--video-mhccp`, `--video-pc-wiener`, `--video-qm`, `--video-deblock`,
 `--video-cdef`, `--video-ccso`, `--video-wiener`, `--video-chroma-lr`,
 `--video-gdf`, `--video-intra-full`, `--video-tx-search`,
-`--video-partition-rd`, `--video-rd-preset quality`, `--nightly`, `--tiles CxR`,
+`--video-partition-rd`, `--video-rd-preset quality`, `--fast-decode`, `--tiles CxR`,
 `--video-mfh`, `--video-timing`, `--avg-cdf`/`--adaptive-cdf`,
 `--video-cdf-per-frame-qp`, and
 `--rc cqp|crf|vbr` with `--crf` / `--bitrate`. `--video-gpu` supports the same
@@ -616,7 +616,7 @@ Current gates:
   (+1.50 JOD), PSNR-Y 27.58 dB (+3.11 dB)** at QP190 / 100.56 kbps; the
   interpolated 100.04 kbps point is 6.273 JOD. The per-tool table and exact
   flags are in `docs/video-rd-preset.md`.
-  Algorithmic nightly aggregate: **`--nightly` measures 9.733 JOD /
+  Algorithmic nightly aggregate: **`--fast-decode` measures 9.733 JOD /
   44.67 dB PSNR-Y at 100.0 kbps (QP106), K = 82.2** — +4.91 JOD over the default
   and +3.41 JOD over the stable preset at essentially the same rate. It combines
   64-band/refit/priced-unit CCSO, bottom-edge inter and residual masking, the

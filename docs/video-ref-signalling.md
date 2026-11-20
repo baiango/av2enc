@@ -11,7 +11,7 @@ stream. Code: `src/pipeline/video/video_headers.cpp` (probe),
 
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/compact.ivf \
-    --video --frames 60 --qp 110 --cpu-threads 8 --nightly \
+    --video --frames 60 --qp 110 --cpu-threads 8 --fast-decode \
     --video-ref-signal-compact
 # 24,824 B, md5 d4c151b25e8472b9688378a11a1fca9a
 ```
@@ -48,12 +48,12 @@ what the carried-CDF chain needs; `nrefs` is `num_total_refs`; `refidx` is the
 `ref_frame_idx[]` list. Sum with awk on `=`/space:
 
 ```sh
-AV2ENC_TRACE_REF_BITS=1 av2enc … --nightly 2>&1 >/dev/null | grep refsig |
+AV2ENC_TRACE_REF_BITS=1 av2enc … --fast-decode 2>&1 >/dev/null | grep refsig |
   awk -F'[= ]' '{h+=$5; p+=$7; c+=$9; r+=$11; m+=$13; n+=$15; i+=$17; t+=$23}
                  END {print h,p,c,r,m,n,i,t}'
 ```
 
-Nightly pin (`--nightly`, 60 frames, 59 P + 1 key):
+Nightly pin (`--fast-decode`, 60 frames, 59 P + 1 key):
 
 | Field | § | baseline bits/frame | baseline total | compact bits/frame | compact total |
 |---|---|---:|---:|---:|---:|

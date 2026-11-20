@@ -19,7 +19,7 @@ AV2ENC_RD_KEY_TX=1 AV2ENC_RD_UVLEVEL=1
 Base args:
 
 ```
---video --frames 60 --cpu-threads 1 --nightly
+--video --frames 60 --cpu-threads 1 --fast-decode
 --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 

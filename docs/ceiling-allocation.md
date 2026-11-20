@@ -11,7 +11,7 @@ where the bits go.
 matched to 100.000 kbps. `AV2ENC_FRAME_QP_PLAN=<head>:<tail>` is the new
 default-off probe: it adds a per-frame `base_q_idx` offset to frames 1-32 and
 33-59. A per-frame base_q_idx is legal with the carried CDF image that
-`--nightly` enables (`--cdf-continuity`); the 2.9% reset applies to
+`--fast-decode` enables (`--cdf-continuity`); the 2.9% reset applies to
 delta-Q/segmentation, not to this path.
 
 ## Results

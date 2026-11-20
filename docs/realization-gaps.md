@@ -175,7 +175,7 @@ BIN=build-dev/av2enc
 # eff baseline (3 points)
 for q in 118 119 120; do
   AV2ENC_EFF_PERC=1 "$BIN" "$REF" -o /tmp/eff$q.ivf --video --frames 60 \
-    --cpu-threads 8 --qp $q --nightly \
+    --cpu-threads 8 --qp $q --fast-decode \
     --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 done
 python3 tools/oracle.py --ref "$REF" \
@@ -185,7 +185,7 @@ python3 tools/oracle.py --ref "$REF" \
 # filter/allocation base
 for q in 108 110; do
   "$BIN" "$REF" -o /tmp/d$q.ivf --video --frames 60 --cpu-threads 8 --qp $q \
-    --nightly --video-key-qp-offset -26 \
+    --fast-decode --video-key-qp-offset -26 \
     --video-drift-refresh-threshold 2.0 --video-drift-refresh-budget 2500
 done
 python3 tools/oracle.py --ref "$REF" --ivf d@108=/tmp/d108.ivf \

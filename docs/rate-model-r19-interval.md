@@ -75,7 +75,7 @@ hidden assumption.
 
 ## Model error (protocol requirement)
 
-`--nightly --qp 110` on `nasa_480x240_30fps_60f.y4m`, 60 frames, 8 threads,
+`--fast-decode --qp 110` on `nasa_480x240_30fps_60f.y4m`, 60 frames, 8 threads,
 gate on with `AV2ENC_RATE_INTERVAL_STATS=1`.  Error = predicted minus the
 writer's symbol information cost for the same groups (mode + residual for an
 inter leaf, residual only for an intra leaf; the intra mode group is excluded
@@ -149,11 +149,11 @@ REF=testdata/nasa_480x240_30fps_60f.y4m
 # model error + decision counters (one 60-frame run)
 AV2ENC_RATE_INTERVAL=1 AV2ENC_RATE_INTERVAL_STATS=1 \
   "$BIN" "$REF" -o /tmp/x.ivf --video --frames 60 --qp 110 \
-  --cpu-threads 8 --nightly
+  --cpu-threads 8 --fast-decode
 
 # one K point (run the protocol's five commands, gate on)
 AV2ENC_RATE_INTERVAL=1 "$BIN" "$REF" -o /tmp/x.ivf --video --frames 60 \
-  --cpu-threads 8 --qp Q --nightly
+  --cpu-threads 8 --qp Q --fast-decode
 tools/bin/dav2d-macos --strict 1 -i /tmp/x.ivf -o /tmp/x.y4m --muxer yuv4mpeg2
 DAV2D=tools/bin/dav2d-macos python3 tools/quality.py --ref "$REF" --ivf /tmp/x.ivf --json /tmp/q.json
 python3 tools/extra_metrics.py --ref "$REF" --test /tmp/x.y4m --json /tmp/e.json
@@ -197,7 +197,7 @@ Rate is interpolated linearly in bytes (30 fps for 240p, and the pin's own
 36,572-byte axis for 720p).  Bars are the protocol's fixed gate-off references
 (240p plain K 82.15 at 100.0 kbps; drift K 83.80; 720p K 45.61 / JOD 7.3236).
 
-240p plain (`--nightly`, QP 105/106/107):
+240p plain (`--fast-decode`, QP 105/106/107):
 
 | QP | bytes | kbps | JOD | BA | SS2 | K |
 |---|---:|---:|---:|---:|---:|---:|
@@ -208,7 +208,7 @@ Rate is interpolated linearly in bytes (30 fps for 240p, and the pin's own
 | bar | | | 9.7334 | 3.4202 | 80.837 | 82.15 |
 | delta | | +0.65% @ QP106 | -0.018 | +0.58 | -0.51 | **-1.14** |
 
-240p drift (`--nightly --video-drift-refresh-threshold 1.5
+240p drift (`--fast-decode --video-drift-refresh-threshold 1.5
 --video-drift-refresh-budget 3250`, QP 109..113; the gate-on arm spends more
 bits per QP, so the 100 kbps interpolation needs two QPs below the protocol's
 top bracket):

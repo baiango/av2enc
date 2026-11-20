@@ -63,7 +63,7 @@ The gate rejects the flag without `--video-tx-search` and with `--video-gpu`,
 proves intra SPLIT/HORZ/VERT partitions are selected, decodes both streams with
 `dav2d --strict 1`, checks the visible encoder recon equals the decoded payload
 for every frame, requires the keyframe to get smaller and higher-PSNR, and
-re-checks the 60-frame `--nightly` pin (`24,939 B`, MD5
+re-checks the 60-frame `--fast-decode` pin (`24,939 B`, MD5
 `8f8713dac14eaa74af770e9142e5eae9`).
 
 ## Measured RD
@@ -75,7 +75,7 @@ documented nightly point plus the flag:
 
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o out.ivf --video --frames 60 \
-    --qp 117 --cpu-threads 8 --nightly --video-key-intra-txpart
+    --qp 117 --cpu-threads 8 --fast-decode --video-key-intra-txpart
 ```
 
 | QP | Bytes | kbps | CVVDP | PSNR-Y | keyframe B | keyframe PSNR-Y |
@@ -117,4 +117,4 @@ matches the decoder's own chain.
 * 8-bit 4:2:0 only (the format-video core rejects it).
 * DIP leaves and blocks that would need a part outside `MiCols`/`MiRows` keep
   `TX_PARTITION_NONE`.
-* Not part of the default, `quality` or `--nightly` presets.
+* Not part of the default, `quality` or `--fast-decode` presets.

@@ -19,7 +19,7 @@ The spec is written by the iteration (``build/agent-loop/spec.json``):
       "ref": "testdata/nasa_480x240_30fps_60f.y4m",
       "bin": "build-release/av2enc",
       "base_args": ["--video", "--frames", "60", "--cpu-threads", "8",
-                    "--nightly"],
+                    "--fast-decode"],
       "qp": 106,
       "target_kbps": 100.0,
       "arms": [

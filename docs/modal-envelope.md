@@ -50,7 +50,7 @@ the merged env with each encode job. `tools/modal_rd.py --mode matrix` accepts
 ```json
 [
   {"name": "cand", "qps": [106, 108],
-   "flags": ["--video", "--frames", "60", "--nightly"],
+   "flags": ["--video", "--frames", "60", "--fast-decode"],
    "env": {"AV2ENC_RD_UVFULL": "1", "AV2ENC_TOOL": "1"},
    "clip": "240p", "frames": 60}
 ]

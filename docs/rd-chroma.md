@@ -12,7 +12,7 @@ recipe is the measured best aggregate:
 REF=testdata/nasa_480x240_30fps_60f.y4m
 AV2ENC_EFF_PERC=1 AV2ENC_TX_DETAIL_SEARCH_TAIL=1 AV2ENC_TX_DETAIL_MIN=0.50 \
   build-dev-cache/av2enc "$REF" -o /tmp/x.ivf --video --frames 60 \
-  --cpu-threads 8 --qp <Q> --nightly \
+  --cpu-threads 8 --qp <Q> --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 
@@ -23,7 +23,7 @@ The base arm is that command; the candidate arm adds `AV2ENC_RD_UVFULL=1`.
 On the 240p30 / 100 kbps point the key picture is ~76% of the bits and the
 video key path coded **every** chroma leaf as DC_PRED (`entry.uv_mode = 0` in
 `video_frame_decision.cpp`) plus the opt-in `--video-cfl` hypothesis, which the
-nightly aggregate did not enable. `--nightly` closes with Chroma-from-Luma
+nightly aggregate did not enable. `--fast-decode` closes with Chroma-from-Luma
 off, so 100% of key chroma leaves were DC and no chroma directional / smooth /
 Paeth predictor was ever coded.
 
@@ -106,7 +106,7 @@ exactly (`UVMode is SMOOTH/SMOOTH_V/SMOOTH_H and not CfL`).
 
 * Gate off (unset, `0`, `off`): the pinned streams are byte-identical —
   QP106 25,008 B `0639b43630abb454f7be5ac494d2efb4`, QP110 23,690 B
-  `1b99127a4cd1d386fa5600fb63c57a83` (plain `--nightly`, both QPs).
+  `1b99127a4cd1d386fa5600fb63c57a83` (plain `--fast-decode`, both QPs).
 * Gate on: **encoder recon == decoder output** byte for byte on
   240p 480x240x60 (measured QP120 stream `49228567…`, recon `c3de26a8…`) and on
   720p `nasa_1440x720` 12 frames (`2ce0ea7b…`), i.e. the chroma

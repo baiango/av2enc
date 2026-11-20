@@ -2,7 +2,7 @@
 
 Status: **measured; no novel prediction/ME combination wins.** Twenty-two
 60-frame flag sets plus a three-arm TIP lane were built, hashed and screened at
-QP106/108 against `--nightly`. Nothing outside the known BAWP-off marginal is
+QP106/108 against `--fast-decode`. Nothing outside the known BAWP-off marginal is
 positive; the best source-replacement ceiling is **88.555**, below the 88.8
 gate, so no arm was promoted to a QP104/106/108 ladder. No encoder code, tool or
 preset was changed.
@@ -22,11 +22,11 @@ Baseline is the current nightly pin:
 
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o nightly.ivf \
-    --video --frames 60 --cpu-threads 8 --qp 106 --nightly
+    --video --frames 60 --cpu-threads 8 --qp 106 --fast-decode
 # 25,008 B / 100.032 kbps / JOD 9.7334 / BA 3.4202 / SS2 80.837 / K 82.155
 ```
 
-Every candidate holds `--video --frames 60 --cpu-threads 8 --qp Q --nightly`
+Every candidate holds `--video --frames 60 --cpu-threads 8 --qp Q --fast-decode`
 and changes **only prediction/ME flags**. Transform, quantisation, entropy,
 loop filters and rate control stay at the nightly expansion; the flags that had
 to be turned off to reach a legal carrier are the nightly-implied prediction
@@ -35,7 +35,7 @@ ablation switches (`--video-bawp-off`, `--video-cdf-chain-off`,
 `--video-tx-search-off`, ...); their cost is part of the measured set and is
 reported as such.
 
-Screen: QP106 and QP108, compared with `--nightly` at the **same QP**. A gain is
+Screen: QP106 and QP108, compared with `--fast-decode` at the **same QP**. A gain is
 reported only when both QPs have the same sign; the QP106→108 baseline itself
 moves 0.551 K (nightly K 82.155 → 81.604). Matched-rate K at 100 kbps is a
 linear interpolation over the two points where they bracket; otherwise the
@@ -58,35 +58,35 @@ hash; there are none.
 
 | id | F | SHA-1 | exact flags beyond `--video --frames F --cpu-threads 8 --qp Q` | status |
 |---|---:|---|---|---|
-| `nightly` | 60 | `67adea12d5d382b2caee38ef56cf6bbf314b707d` | `--nightly` | baseline |
-| `ctl-bawpoff` | 60 | `f89d61c29d4e223c117817da2bb98b9008db5cfc` | `--nightly --video-bawp-off` | control (known ablation) |
-| `amvd` | 60 | `781e0b8cc0f16f98f3f6ccccf47e10ac0183f51f` | `--nightly --video-bawp-off --video-adaptive-mvd` | measured |
-| `amvd-q` | 60 | `33305299929652e5f764c478a71d641ae9ecd116` | `--nightly --video-bawp-off --video-adaptive-mvd --video-mv-precision quarter` | measured |
-| `amvd-drl` | 60 | `fff92a3e303fb3f458dd2cc9419f70336f28fbbb` | `--nightly --video-bawp-off --video-adaptive-mvd --video-drl-reorder-always` | measured (combined best) |
-| `amvd-q-drl` | 60 | `7aa355e0c86f852ecae0fff0b0017bccefb2fcf0` | `--nightly --video-bawp-off --video-adaptive-mvd --video-mv-precision quarter --video-drl-reorder-always` | measured |
-| `amvd-flex` | 60 | `43514f6d6aebd8fc670f1cfa97daaa04ff27cd2e` | `--nightly --video-bawp-off --video-adaptive-mvd --video-flex-mvres --video-mv-precision quarter` | measured |
-| `amvd-flex-sign` | 60 | `5df7adad052ad78516fbe58d989bb3263c5c9688` | `--nightly --video-bawp-off --video-adaptive-mvd --video-flex-mvres --video-mv-precision quarter --video-mvd-sign-derive` | measured |
-| `mvd-sign` | 60 | `befa570c428ca04e4df5891e320acf3df9045241` | `--nightly --video-bawp-off --video-flex-mvres --video-mv-precision quarter --video-mvd-sign-derive` | measured |
-| `flex-cdfoff` | 60 | `4bfd5b91f5c7864269770daaaf329984aaa9bb74` | `--nightly --video-bawp-off --video-flex-mvres --video-cdf-chain-off` | measured |
-| `flex` | 60 | `e77458ed159195836d2565231a5ae7dfbcb977ad` | `--nightly --video-bawp-off --video-flex-mvres` | **decoder-invalid** |
-| `flex-q` | 60 | `d1d31390e529c997505cba5dfb2790a324a5cbc4` | `--nightly --video-bawp-off --video-flex-mvres --video-mv-precision quarter` | measured |
-| `drl-always` | 60 | `8b1cbe70f2dd6a3fc59f85a67f757faaa663d825` | `--nightly --video-drl-reorder-always` | measured |
-| `interintra` | 60 | `bcf7575b06d5cdf2af6d06c04a2bc76ba7d4f9b9` | `--nightly --video-bawp-off --video-cdf-chain-off --video-compound-interintra` | measured |
-| `interintra-q` | 60 | `d56fb73cba32f9e4474e5c319653a4cab29483ec` | `--nightly --video-bawp-off --video-cdf-chain-off --video-compound-interintra --video-mv-precision quarter` | measured |
-| `bank` | 60 | `850d188f108bee0e2ead116c8f4cf92df250b638` | `--nightly --video-cdf-chain-off --video-ref-signal-off --video-refs 2 --video-refmvbank` | measured |
-| `refmvs-bank` | 60 | `f929c5ef884d69303cda3ba0a49207d563e5b03e` | `--nightly --video-edge-inter-off --video-edge-mask-off --video-cdf-chain-off --video-ref-signal-off --video-refs 2 --video-ref-mvs --video-refmvbank` | measured |
-| `refmvs-traj` | 60 | `269d5a961b6871c0b69388e6c0ffe4909917f6e6` | `--nightly --video-edge-inter-off --video-edge-mask-off --video-cdf-chain-off --video-ref-signal-off --video-refs 3 --video-bawp-off --video-ref-mvs --video-mv-traj` | measured |
-| `ibc` | 60 | `5f534b5320eaa13c178556b3548a5716353fc8d1` | `--nightly --video-cdf-chain-off --video-ibc` | measured |
-| `palette` | 60 | `bc15cf41b405a60fb58d634f56ea610e978e1dcd` | `--nightly --video-cdf-chain-off --video-tx-search-off --video-palette` | measured |
-| `morph` | 60 | `45ac73b6c285ba79db68a6ff4abfb59cf9f7ffc9` | `--nightly --video-loop-filters-off --video-cdf-chain-off --video-ref-signal-off --video-tile-group-off --video-morph` | measured |
-| `implicit` | 60 | `ac8bbcb3838fa253b084446cf3d9e79247c72101` | `--nightly --video-implicit-ref-map --video-ref-signal-off --video-cdf-chain-off` | measured |
+| `nightly` | 60 | `67adea12d5d382b2caee38ef56cf6bbf314b707d` | `--fast-decode` | baseline |
+| `ctl-bawpoff` | 60 | `f89d61c29d4e223c117817da2bb98b9008db5cfc` | `--fast-decode --video-bawp-off` | control (known ablation) |
+| `amvd` | 60 | `781e0b8cc0f16f98f3f6ccccf47e10ac0183f51f` | `--fast-decode --video-bawp-off --video-adaptive-mvd` | measured |
+| `amvd-q` | 60 | `33305299929652e5f764c478a71d641ae9ecd116` | `--fast-decode --video-bawp-off --video-adaptive-mvd --video-mv-precision quarter` | measured |
+| `amvd-drl` | 60 | `fff92a3e303fb3f458dd2cc9419f70336f28fbbb` | `--fast-decode --video-bawp-off --video-adaptive-mvd --video-drl-reorder-always` | measured (combined best) |
+| `amvd-q-drl` | 60 | `7aa355e0c86f852ecae0fff0b0017bccefb2fcf0` | `--fast-decode --video-bawp-off --video-adaptive-mvd --video-mv-precision quarter --video-drl-reorder-always` | measured |
+| `amvd-flex` | 60 | `43514f6d6aebd8fc670f1cfa97daaa04ff27cd2e` | `--fast-decode --video-bawp-off --video-adaptive-mvd --video-flex-mvres --video-mv-precision quarter` | measured |
+| `amvd-flex-sign` | 60 | `5df7adad052ad78516fbe58d989bb3263c5c9688` | `--fast-decode --video-bawp-off --video-adaptive-mvd --video-flex-mvres --video-mv-precision quarter --video-mvd-sign-derive` | measured |
+| `mvd-sign` | 60 | `befa570c428ca04e4df5891e320acf3df9045241` | `--fast-decode --video-bawp-off --video-flex-mvres --video-mv-precision quarter --video-mvd-sign-derive` | measured |
+| `flex-cdfoff` | 60 | `4bfd5b91f5c7864269770daaaf329984aaa9bb74` | `--fast-decode --video-bawp-off --video-flex-mvres --video-cdf-chain-off` | measured |
+| `flex` | 60 | `e77458ed159195836d2565231a5ae7dfbcb977ad` | `--fast-decode --video-bawp-off --video-flex-mvres` | **decoder-invalid** |
+| `flex-q` | 60 | `d1d31390e529c997505cba5dfb2790a324a5cbc4` | `--fast-decode --video-bawp-off --video-flex-mvres --video-mv-precision quarter` | measured |
+| `drl-always` | 60 | `8b1cbe70f2dd6a3fc59f85a67f757faaa663d825` | `--fast-decode --video-drl-reorder-always` | measured |
+| `interintra` | 60 | `bcf7575b06d5cdf2af6d06c04a2bc76ba7d4f9b9` | `--fast-decode --video-bawp-off --video-cdf-chain-off --video-compound-interintra` | measured |
+| `interintra-q` | 60 | `d56fb73cba32f9e4474e5c319653a4cab29483ec` | `--fast-decode --video-bawp-off --video-cdf-chain-off --video-compound-interintra --video-mv-precision quarter` | measured |
+| `bank` | 60 | `850d188f108bee0e2ead116c8f4cf92df250b638` | `--fast-decode --video-cdf-chain-off --video-ref-signal-off --video-refs 2 --video-refmvbank` | measured |
+| `refmvs-bank` | 60 | `f929c5ef884d69303cda3ba0a49207d563e5b03e` | `--fast-decode --video-edge-inter-off --video-edge-mask-off --video-cdf-chain-off --video-ref-signal-off --video-refs 2 --video-ref-mvs --video-refmvbank` | measured |
+| `refmvs-traj` | 60 | `269d5a961b6871c0b69388e6c0ffe4909917f6e6` | `--fast-decode --video-edge-inter-off --video-edge-mask-off --video-cdf-chain-off --video-ref-signal-off --video-refs 3 --video-bawp-off --video-ref-mvs --video-mv-traj` | measured |
+| `ibc` | 60 | `5f534b5320eaa13c178556b3548a5716353fc8d1` | `--fast-decode --video-cdf-chain-off --video-ibc` | measured |
+| `palette` | 60 | `bc15cf41b405a60fb58d634f56ea610e978e1dcd` | `--fast-decode --video-cdf-chain-off --video-tx-search-off --video-palette` | measured |
+| `morph` | 60 | `45ac73b6c285ba79db68a6ff4abfb59cf9f7ffc9` | `--fast-decode --video-loop-filters-off --video-cdf-chain-off --video-ref-signal-off --video-tile-group-off --video-morph` | measured |
+| `implicit` | 60 | `ac8bbcb3838fa253b084446cf3d9e79247c72101` | `--fast-decode --video-implicit-ref-map --video-ref-signal-off --video-cdf-chain-off` | measured |
 | `tip` | 8 | `7a4df352635f4d6c4eb4517bb3b4a107fe644b87` | `--video-tip` | TIP lane |
 | `tipref` | 8 | `beb574f9194b6966da689c74c5469567ff0b34d3` | `--video-tip --video-ref-mvs --video-tip-block-ref --video-force-single` | TIP lane |
 | `ctl-tip` | 8 | `c8e380edd0928a98ce43a6c79ff8964ce37bfc1d` | (plain P chain, no `--video-tip`) | TIP control |
 
 ## 3. Two-QP screen (60 frames)
 
-`ΔK` is against `--nightly` at the same QP. `sign` requires both QPs to agree.
+`ΔK` is against `--fast-decode` at the same QP. `sign` requires both QPs to agree.
 Points that do not bracket 100 kbps are still valid screen points; they are not
 rate-matched.
 
@@ -238,7 +238,7 @@ boost.
 
 ## 5. Legal / illegal combinations
 
-Exact CLI first line for one-factor additions to `--nightly` (2-frame usage
+Exact CLI first line for one-factor additions to `--fast-decode` (2-frame usage
 run, `--video --frames 2 --qp 106 --cpu-threads 8`). Rejections are by design;
 nothing was patched.
 
@@ -293,7 +293,7 @@ Tool-matrix targets asked for by the parent, in one place:
 - `--video-same-ref-compound`: legal only on the plain AVERAGE compound
   carrier, not with wedge/diff masks (exact rejection above); prior measurement
   −7.2 K (`docs/reference-structure.md`), not repeated.
-- `--video-ibp`: legal on `--nightly`; prior K 81.25 at 98.59 kbps
+- `--video-ibp`: legal on `--fast-decode`; prior K 81.25 at 98.59 kbps
   (`docs/k-sweep.md`), not repeated.
 - `--video-mv-traj` / `--video-ref-mvs` / `--video-refmvbank` with the
   compact-map blocker handled: `bank` −2.03/−2.06, `refmvs-bank`
@@ -342,11 +342,11 @@ operating point.
   `--video-adaptive-mvd` on top of it. BAWP-off is the known ablation, already
   recorded as +0.29 (unresolvable) at the plain nightly point and −0.36 at the
   tuned-drift point; it is not a new architecture and does not clear the wall.
-- **Best internal combination:** `--nightly --video-bawp-off` at 2-point
+- **Best internal combination:** `--fast-decode --video-bawp-off` at 2-point
   matched K **82.331** (100.0 kbps), i.e. +0.18 over the nightly 2-point
   interpolation. It is inside the documented QP ripple and below the 88.8
   gate. **Best novel combination:**
-  `--nightly --video-bawp-off --video-adaptive-mvd --video-drl-reorder-always`
+  `--fast-decode --video-bawp-off --video-adaptive-mvd --video-drl-reorder-always`
   at 2-point matched K **82.229**, which is its own control minus the reorder
   cost; plainly, no novel architecture won. The best novel one-factor is
   adaptive MVD, and its contribution over the BAWP-off control is zero.
@@ -364,13 +364,13 @@ BIN=/path/to/build-release/av2enc
 
 # baseline
 "$BIN" "$REF" -o /tmp/n106.ivf --video --frames 60 --cpu-threads 8 \
-  --qp 106 --nightly
+  --qp 106 --fast-decode
 # best internal arm (known BAWP marginal, not a novel architecture)
 "$BIN" "$REF" -o /tmp/b106.ivf --video --frames 60 --cpu-threads 8 \
-  --qp 106 --nightly --video-bawp-off
+  --qp 106 --fast-decode --video-bawp-off
 # combined best (adaptive MVD is neutral; DRL_ALWAYS costs 0.10-0.23)
 "$BIN" "$REF" -o /tmp/c106.ivf --video --frames 60 --cpu-threads 8 \
-  --qp 106 --nightly --video-bawp-off --video-adaptive-mvd \
+  --qp 106 --fast-decode --video-bawp-off --video-adaptive-mvd \
   --video-drl-reorder-always
 # screen
 python3 tools/oracle.py --ref "$REF" \

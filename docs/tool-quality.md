@@ -89,7 +89,7 @@ Deterministic content hashes (SHA-256 prefixes, first 16 hex):
 
 | Label | Encoder | Command |
 |---|---|---|
-| `nightly` | av2enc `--nightly` | `av2enc in.y4m -o out.ivf --video --frames 60 --qp Q --cpu-threads 8 --nightly` |
+| `nightly` | av2enc `--fast-decode` | `av2enc in.y4m -o out.ivf --video --frames 60 --qp Q --cpu-threads 8 --fast-decode` |
 | `eff-perc` | av2enc nightly + `AV2ENC_EFF_PERC=1` + the documented drift recipe | same, plus `--video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250` |
 | `svt` | SVT-AV1 4.3.0 preset 0 | `SvtAv1EncApp -i in.y4m -b out.ivf --preset 0 --crf C --fps-num 30 --fps-denom 1 --keyint -1 --scd 0` |
 | `avm` | AVM `e6f99d3` | `avmenc in.y4m -o out.ivf --ivf --end-usage=q --qp Q --cpu-used=6 --threads=8 --limit=60 --psnr=1` |

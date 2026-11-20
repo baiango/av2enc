@@ -5,7 +5,7 @@ range-coder termination. This note measures that trailer on the nightly pin,
 derives what the specification actually requires, and describes
 `--video-tile-flush-min`, the opt-in minimum form.
 
-Measured on `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, QP110 `--nightly`
+Measured on `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, QP110 `--fast-decode`
 (24,885 B, MD5 `5e316100ce7fd709b4298ccfebfffccd`), Apple M4. Every number below
 comes from the writer's own trace (`AV2ENC_TRACE_TILE_FLUSH=1`), not from an
 estimate.
@@ -132,7 +132,7 @@ for about a fifth of the tiles.
   only).
 * `tools/gate_video_nightly.sh` and `tools/test.sh --build build-t` stay green;
   the pins in `docs/video-nightly.md` are untouched because the flag is off by
-  default and is not part of the `--nightly` expansion.
+  default and is not part of the `--fast-decode` expansion.
 
 ## Trace
 

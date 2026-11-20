@@ -39,7 +39,7 @@ The comparison wall is **84.85** (the merged pipe-perc point at 99.976 kbps)
 and the target is 86.0.
 
 **Method.** Every arm was encoded on `testdata/nasa_480x240_30fps_60f.y4m`
-with 60 frames, 8-bit 4:2:0, `--nightly --cpu-threads 8`, the measured drift
+with 60 frames, 8-bit 4:2:0, `--fast-decode --cpu-threads 8`, the measured drift
 recipe (`--video-drift-refresh-threshold 1.5 --video-drift-refresh-budget
 3250`), and two or three QPs that bracket 100.0 kbps. Streams were decoded
 with `dav2d --strict 1` and scored with `tools/quality.py` (CVVDP 0.5.7,
@@ -241,7 +241,7 @@ BIN=build-dev/av2enc
 
 # shipped point (defaults: scale 0.18, shape 0, CSF 1.5, rate 1, chroma 1)
 AV2ENC_EFF_PERC=1 "$BIN" "$REF" -o /tmp/ep.ivf --video --frames 60 \
-    --cpu-threads 8 --qp 119 --nightly \
+    --cpu-threads 8 --qp 119 --fast-decode \
     --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 
 # lambda sweep
@@ -293,7 +293,7 @@ is coarser.
   is 3.32 K luma + 0.61 K chroma, and this pipeline changes only which
   existing leaves/modes/transforms the encoder emits; it cannot change the
   prediction class, the frame allocation or the quantiser floor.
-* Measured on the CPU single-tile, low-delay flat-P `--nightly` surface.
+* Measured on the CPU single-tile, low-delay flat-P `--fast-decode` surface.
   Tiles/B frames/TIP/compound/AMVD/flex-precision leaves fall back to the
   historical constants (the measured point has zero fallbacks). The CUDA
   device path is not wired.

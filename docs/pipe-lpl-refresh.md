@@ -42,11 +42,11 @@ per-frame `Error` call performs no allocation. On the parity gate's lossy
 ```sh
 AV2ENC_PIPE_LPL_REFRESH=1 build-release/av2enc \
   testdata/nasa_480x240_30fps_60f.y4m -o /tmp/lpl.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 111 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 111 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 
-`--nightly` supplies the enabled drift-refresh plumbing; the env gate replaces
+`--fast-decode` supplies the enabled drift-refresh plumbing; the env gate replaces
 its PSNR trigger. `--video-drift-refresh-threshold 1.5` is part of the tuned
 recipe and is ignored by the planner; the budget is not.
 
@@ -55,7 +55,7 @@ The 720p pin recipe is unchanged:
 ```sh
 AV2ENC_PIPE_LPL_REFRESH=1 build-release/av2enc \
   testdata/space8k_1440x720_60f.y4m -o /tmp/lpl720.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 217 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 217 --fast-decode \
   --video-key-qp-offset -57 --video-leaf-rd-lambda 250 \
   --video-ext-partitions
 ```
@@ -83,7 +83,7 @@ when the env gate is on.
 
 ## Results at 240p
 
-`testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--nightly`, QP / budget
+`testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--fast-decode`, QP / budget
 bracketing 100 kbps. Quality: `tools/quality.py` (CVVDP 0.5.7,
 `standard_fhd`, MPS), `tools/extra_metrics.py`, `tools/kpi.py`.
 

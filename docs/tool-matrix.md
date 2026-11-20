@@ -17,7 +17,7 @@ preset is an inventory item, not a composition primitive.
 
 | Column | Meaning |
 |---|---|
-| `D/Q/N/E` | Enabled in `D` = bare `--video`; `Q` = `--video-rd-preset quality`; `N` = `--nightly`; `E` = eff-perc (`--nightly` + `AV2ENC_EFF_PERC=1` + `--video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250`, the recipe in `docs/eff-perc.md` and `docs/oracle-search.md`). `off` = not enabled; a number = default value; `-` = not applicable because the owning tool is off. |
+| `D/Q/N/E` | Enabled in `D` = bare `--video`; `Q` = `--video-rd-preset quality`; `N` = `--fast-decode`; `E` = eff-perc (`--fast-decode` + `AV2ENC_EFF_PERC=1` + `--video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250`, the recipe in `docs/eff-perc.md` and `docs/oracle-search.md`). `off` = not enabled; a number = default value; `-` = not applicable because the owning tool is off. |
 | family | prediction, transform, entropy, filter, allocation, structure |
 | carrier required | the syntactic/structural surface the tool needs |
 | state | `gated` = has a decoder/recon gate; `gated, no RD` = correctness only; `rejected` = named decoder rejection; `untested` = accepted but never measured on K |
@@ -38,11 +38,11 @@ Baseline measured points (`docs/video-nightly.md`, `docs/luma-audit.md`,
 |---|---:|---:|---:|---:|---:|
 | default `--video` | 189 | 25,009 | 100.036 | 4.8021 | — |
 | `quality` | 190 | 25,141 | 100.564 | 6.3021 | — |
-| `--nightly` | 106 | 25,008 | 100.032 | 9.7334 | **82.155** |
+| `--fast-decode` | 106 | 25,008 | 100.032 | 9.7334 | **82.155** |
 | tuned drift | 110 | 25,146 | 100.584 | 9.7605 | **83.795** |
 | eff-perc | 119 | 25,230 | 100.920 | 9.7713 | **85.10** |
 
-`--nightly` is a CPU-only aggregate. It rejects `--still`, `--still-gpu` and
+`--fast-decode` is a CPU-only aggregate. It rejects `--still`, `--still-gpu` and
 `--video-gpu` by name. `--video-rd-preset quality` is a subset: inter residual,
 deblock, CCSO, TX search, full intra.
 
@@ -51,9 +51,9 @@ deblock, CCSO, TX search, full intra.
 | flag | family | D/Q/N/E | carrier required | named conflicts / rejections | state | measured result | legal carriers | untapped |
 |---|---|---|---|---|---|---|---|---|
 | `--video` | structure | on/on/on/on | any video writer | rejects `--still`, `--still-gpu`, `--lossless` | core, gated everywhere | nightly 82.155; drift 83.795; eff 85.10 | FP, B, TL, TIP, T, SVC, W, LL, FMT | — |
-| `--video-rd-preset quality` | structure | off/on/on/on | FP | GPU; still; unknown name | gated (`gate_video_rd_preset.sh`) | Q 25,141 B / 6.3021 JOD at QP190 (`video-rd-preset.md`) | FP | `--nightly` wraps it |
+| `--video-rd-preset quality` | structure | off/on/on/on | FP | GPU; still; unknown name | gated (`gate_video_rd_preset.sh`) | Q 25,141 B / 6.3021 JOD at QP190 (`video-rd-preset.md`) | FP | `--fast-decode` wraps it |
 | `--p-frames N` | structure | all/all/all/all | FP | still modes; `--frames 1` | core | part of every P measurement | FP, B, TL, TIP | — |
-| `--video-refs N` | structure | 1/1/1/1 | FP or B | `--nightly` sets `--video-ref-signal-compact` (needs refs 1); B owns its list | gated (`video_cli_gate.sh`) | refs2/3 lose 0.67/0.86 K vs nightly; −2.35/−2.54 vs blocker control (`video-multiref-p.md`, `reference-structure.md`) | FP (refs 2–7), B (refs 1) | refs 2–4 already measured dead; no untapped count |
+| `--video-refs N` | structure | 1/1/1/1 | FP or B | `--fast-decode` sets `--video-ref-signal-compact` (needs refs 1); B owns its list | gated (`video_cli_gate.sh`) | refs2/3 lose 0.67/0.86 K vs nightly; −2.35/−2.54 vs blocker control (`video-multiref-p.md`, `reference-structure.md`) | FP (refs 2–7), B (refs 1) | refs 2–4 already measured dead; no untapped count |
 | `--video-num-ref-frames N` | structure | auto/auto/auto/auto | FP | ref-compact sets NumRefFrames 1; B/TL/W own the field | gated | no RD claim | FP | — |
 | `--video-implicit-ref-map` | structure | off/off/off/off | FP, B, TL | ref-compact; compound; tiles; W; SVC; FMT | gated (`gate_implicit_ref_map.sh`) | derived list changes decisions, stream not smaller (`negative-results.md`) | FP, B, TL | derived-map + refs>1 untested |
 | `--video-ref-signal-compact` | entropy | off/off/on/on | FP, refs 1 | refs>1; short-refresh; mfh/timing/multi-seq; non-8bit420 | gated (`gate_video_ref_signalling.sh`) | −0.07 K marginal (`nightly-ablation.md`); −61 B at 60 frames | FP | cheapest nightly off-switch for header work |
@@ -215,7 +215,7 @@ deblock, CCSO, TX search, full intra.
 | `--video-force-single` | structure | off/off/off/off | debug | no RD claim | gated | reconstruction identical, smaller tree | FP | debug only |
 | `--rc cqp/crf/vbr` (+crf/bitrate) | allocation | cqp | FP, B, TL, SVC | `--video-qp-lambda`; W for olk/leading/ras; CDF chain without reset | gated (`gate_video_schedule_rc.sh`) | VBR ±10%; no quality claim (`negative-results.md`) | FP, B, TL, SVC | not a 240p RD lever |
 
-## 6. Ablation switches (only suppress a `--nightly` element)
+## 6. Ablation switches (only suppress a `--fast-decode` element)
 
 These are not coding tools. They are the legal escape hatch that makes a
 composition expressible. Off by default; they leave every pin byte-identical
@@ -239,13 +239,13 @@ composition expressible. Off by default; they leave every pin byte-identical
 | `--video-tile-group-off` | sequence tile config | −0.04 K |
 | `--video-ccso-header-off` | CCSO params row pricing | −0.25 K |
 
-## 7. Implemented but not composable with plain `--nightly`
+## 7. Implemented but not composable with plain `--fast-decode`
 
-"Not composable" here means `av2enc … --nightly <flag>` exits 2 (or, for TIP,
+"Not composable" here means `av2enc … --fast-decode <flag>` exits 2 (or, for TIP,
 fails at encode) before a stream is produced. The right-hand column says
 whether a named ablation buys legality and what that ablation is worth.
 
-| tool | first `--nightly` rejection | rescue | cost of rescue |
+| tool | first `--fast-decode` rejection | rescue | cost of rescue |
 |---|---|---|---|
 | `--b-frames`, `--video-gops` | `--video-edge-inter is measured on the low-delay P chain; drop the B-frame / reorder / temporal-layer mode` | edge-inter/mask, BAWP, drift, RDOQ, probe, key offset, ref-compact, tile-group, tile-flush off; TX search may stay on | ≈13.4 K of measured marginal before the B tool is measured; B arm is 45 K down (`bframes.md`) |
 | `--video-tlayers`, `--video-tlayer-drop` | same edge-inter rejection | same strip as B | same structural loss; one 4/8-frame GOP only |
@@ -276,14 +276,14 @@ whether a named ablation buys legality and what that ablation is worth.
 | `--video-sb128`, `--video-sb256` | `--video-partition-rd does not compose with the 128/256 superblock trees` | probe, loop filters, drift off | loop filters alone −5.85 K; measured −0.83/−0.54 K on stripped chain |
 | `--video-adaptive-mvd`, `--video-mvd-sign-derive`, `--video-flex-mvres` | `… does not compose with --video-compound, --video-compound-interintra, --video-bawp, --video-gme/--video-warp …` | `--video-bawp-off` | −0.36 K; **cheapest real composition candidate** |
 | `--video-force-integer-mv` | `--video-scc-force needs one of --video-palette/--video-ibc/--video-morph` | screen-content carrier plus strip | ≈11.5 K; screen only |
-| `--rc crf/--rc vbr` | `--video-qp-lambda needs a fixed --qp stream` | none: nightly always enables `--video-qp-lambda` and has no off switch | hard-blocked; rate control not available in `--nightly` |
+| `--rc crf/--rc vbr` | `--video-qp-lambda needs a fixed --qp stream` | none: nightly always enables `--video-qp-lambda` and has no off switch | hard-blocked; rate control not available in `--fast-decode` |
 | `--video-lossless`, `--video-lossless-b` | `--video-rdoq is not applied by the --video-lossless writer`; then `--video-intra-full is not applied …` | none: nightly's `--video-intra-full` and `--video-inter-residual` have no off switches | hard-blocked; separate writer |
 | `--svc-layers` and `--svc-*` | `--video-key-qp-offset is wired for the plain --video chain, not the SVC layers` | key-offset, probe, RDOQ, TX search, BAWP, drift, CDF, ref-compact, edge off; refs/tlayers/tiles already excluded | high; no RD measured |
 | `--video-idtx-1d` | `--video-idtx-1d is rejected: the one-axis V/H_DCT … pinned dav2d f9dafbc rejects …` | none | decoder rejection |
 | `--video-bru` | `--video-bru is not decoder-gated: the pinned dav2d does not parse enable_bru/use_bru` | none | decoder rejection |
 | `--svc-inter-layer` | `--svc-inter-layer is not a conforming AV2 v1.0.0 feature: §6.8.2 requires lcr_dependent_xlayers_flag = 0` | none | non-conforming |
 
-Tools that **do** compose with plain `--nightly` (no ablation): `--video-cfl`,
+Tools that **do** compose with plain `--fast-decode` (no ablation): `--video-cfl`,
 `--video-mrl`, `--video-ibp`, `--video-dip`, `--video-ist`, `--video-idtx`,
 `--video-cctx`, `--video-ddt`, `--video-wiener`, `--video-pc-wiener`,
 `--video-chroma-lr`, `--video-gdf`, `--video-grain`, `--video-ext-partitions`,
@@ -299,7 +299,7 @@ Tools that **do** compose with plain `--nightly` (no ablation): `--video-cfl`,
 ## 8. Exact rejection log (build-release/av2enc, 0bf1d001)
 
 All commands are `build-release/av2enc <input> -o /tmp/x.ivf --video --frames 2
---qp 110 --nightly <flags>` on `tests/data/basic_64x64_1f.y4m` unless marked
+--qp 110 --fast-decode <flags>` on `tests/data/basic_64x64_1f.y4m` unless marked
 `nasa` (60-frame clip, `--frames 4`). The first line is verbatim.
 
 ```text
@@ -440,16 +440,16 @@ have **no composite-K measurement**. They are not claims.
 
 | # | combination | carrier | why untested | expected |
 |---|---|---|---|---|
-| 1 | `--nightly --video-tip` plus the flat-P strip (`--video-edge-inter-off --video-edge-mask-off --video-bawp-off --video-drift-refresh-off --video-cdf-chain-off --video-key-qp-offset-off --video-rdoq-off --video-partition-rd-off --video-ref-signal-off --video-tile-group-off --video-tile-flush-off --video-loop-filters-off --video-tx-search-off`) | TIP, 3–8 frames | only decoder-gated; the oracle queue's one open prediction class | highest structural headroom; expensive and not a 60-frame sequence |
-| 2 | ~~`--nightly --video-cdef-strength 4`~~ | FP | **measured: +0.065 K matched, per-QP 80.164/82.230/81.936 (sign-inconsistent)** | closed (`tool-improvement-queue.md` attempt 2) |
-| 3 | ~~`--nightly --video-cfl`~~ | FP | **measured: −0.497 K** | closed (`tool-improvement-queue.md` attempt 4) |
-| 4 | ~~`--nightly --video-bawp-off --video-adaptive-mvd --video-flex-mvres --video-mvd-sign-derive --video-mv-precision quarter`~~ | FP | **measured: −2.486 K** (the BAWP/quarter-pel rescue dominates) | closed (`tool-improvement-queue.md` attempt 9) |
-| 5 | ~~`--nightly --video-ibp`~~ | FP | **measured: −0.820 K** | closed (`tool-improvement-queue.md` attempt 6) |
-| 6 | ~~`--nightly --video-ist`~~ | FP | **measured: −0.008 K (inert)** | closed (`tool-improvement-queue.md` attempt 5) |
-| 7 | ~~`--nightly --video-dip`~~ | FP | **measured: −0.391 K** | closed (`tool-improvement-queue.md` attempt 8) |
-| 8 | ~~`--nightly --video-idtx`~~ | FP/B/TL | **measured: −0.219 K** | closed (`tool-improvement-queue.md` attempt 7) |
-| 9 | `--nightly --video-rdoq-off --video-tcq --video-cctx` | FP/B/TL | TCQ and CCTX are individually neutral; the pair composes and is untested | low; TCQ costs ~60x |
-| 10 | `--nightly --video-cdf-chain-off --video-mhccp` | FP | only blocker-free form; no K | low; pays −4.51 K for the CDF chain |
+| 1 | `--fast-decode --video-tip` plus the flat-P strip (`--video-edge-inter-off --video-edge-mask-off --video-bawp-off --video-drift-refresh-off --video-cdf-chain-off --video-key-qp-offset-off --video-rdoq-off --video-partition-rd-off --video-ref-signal-off --video-tile-group-off --video-tile-flush-off --video-loop-filters-off --video-tx-search-off`) | TIP, 3–8 frames | only decoder-gated; the oracle queue's one open prediction class | highest structural headroom; expensive and not a 60-frame sequence |
+| 2 | ~~`--fast-decode --video-cdef-strength 4`~~ | FP | **measured: +0.065 K matched, per-QP 80.164/82.230/81.936 (sign-inconsistent)** | closed (`tool-improvement-queue.md` attempt 2) |
+| 3 | ~~`--fast-decode --video-cfl`~~ | FP | **measured: −0.497 K** | closed (`tool-improvement-queue.md` attempt 4) |
+| 4 | ~~`--fast-decode --video-bawp-off --video-adaptive-mvd --video-flex-mvres --video-mvd-sign-derive --video-mv-precision quarter`~~ | FP | **measured: −2.486 K** (the BAWP/quarter-pel rescue dominates) | closed (`tool-improvement-queue.md` attempt 9) |
+| 5 | ~~`--fast-decode --video-ibp`~~ | FP | **measured: −0.820 K** | closed (`tool-improvement-queue.md` attempt 6) |
+| 6 | ~~`--fast-decode --video-ist`~~ | FP | **measured: −0.008 K (inert)** | closed (`tool-improvement-queue.md` attempt 5) |
+| 7 | ~~`--fast-decode --video-dip`~~ | FP | **measured: −0.391 K** | closed (`tool-improvement-queue.md` attempt 8) |
+| 8 | ~~`--fast-decode --video-idtx`~~ | FP/B/TL | **measured: −0.219 K** | closed (`tool-improvement-queue.md` attempt 7) |
+| 9 | `--fast-decode --video-rdoq-off --video-tcq --video-cctx` | FP/B/TL | TCQ and CCTX are individually neutral; the pair composes and is untested | low; TCQ costs ~60x |
+| 10 | `--fast-decode --video-cdf-chain-off --video-mhccp` | FP | only blocker-free form; no K | low; pays −4.51 K for the CDF chain |
 
 Honourable mentions, legal but with a measured blocker: screen-content
 palette/IBC/morph on the stripped carrier; `--video-refs 2 --video-ref-mvs
@@ -464,11 +464,11 @@ names exact flags and a legal carrier. None is a cap claim.
 
 | rank | candidate | exact flags | carrier | status | expected headroom | cost |
 |---:|---|---|---|---|---|---|
-| 1 | TIP future anchor | `--nightly --video-tip --video-loop-filters-off --video-tx-search-off --video-rdoq-off --video-partition-rd-off --video-bawp-off --video-drift-refresh-off --video-cdf-chain-off --video-key-qp-offset-off --video-edge-inter-off --video-edge-mask-off --video-ref-signal-off --video-tile-group-off --video-tile-flush-off` | TIP (3–8 pictures: key + future anchor P + TIP output) | untested; decoder-gated only | the only untested prediction class in the queue; intermediate gate K > 86 before any further work (`oracle-search.md` §4) | high: 8-frame sequences, strip 13.4 K of flat-P marginal, new oracle ladder |
-| 2 | CDEF per-block strength | `--nightly --video-cdef-strength 4` (keep `--video-cdef-rd`, which is already on) | FP | untested on K; CDEF itself is 60-frame gated | small, ≤0.2 K; plausible BA path because BA carries the gap | low: one encode ladder, ≈1.3x, +6.4 B/frame |
-| 3 | CfL chroma on the nightly tree | `--nightly --video-cfl` | FP | accepted on a 2-frame probe; 60-frame composition untested | small; chroma is 0.61 K of the SVT gap (`eff-perc.md`) | low: one ladder, ≈1.05x |
-| 4 | Adaptive MVD + flex precision + sign derivation | `--nightly --video-bawp-off --video-adaptive-mvd --video-flex-mvres --video-mvd-sign-derive --video-mv-precision quarter` | FP | each is gated alone; the trio is untested | small; MV syntax only | very low: `--video-bawp-off` costs 0.36 K, one ladder |
-| 5 | IBP on every intra leaf | `--nightly --video-ibp` | FP | gated alone; 60-frame nightly composition untested | small; mostly keyframe, which is not the dominant gap | low: one ladder |
+| 1 | TIP future anchor | `--fast-decode --video-tip --video-loop-filters-off --video-tx-search-off --video-rdoq-off --video-partition-rd-off --video-bawp-off --video-drift-refresh-off --video-cdf-chain-off --video-key-qp-offset-off --video-edge-inter-off --video-edge-mask-off --video-ref-signal-off --video-tile-group-off --video-tile-flush-off` | TIP (3–8 pictures: key + future anchor P + TIP output) | untested; decoder-gated only | the only untested prediction class in the queue; intermediate gate K > 86 before any further work (`oracle-search.md` §4) | high: 8-frame sequences, strip 13.4 K of flat-P marginal, new oracle ladder |
+| 2 | CDEF per-block strength | `--fast-decode --video-cdef-strength 4` (keep `--video-cdef-rd`, which is already on) | FP | untested on K; CDEF itself is 60-frame gated | small, ≤0.2 K; plausible BA path because BA carries the gap | low: one encode ladder, ≈1.3x, +6.4 B/frame |
+| 3 | CfL chroma on the nightly tree | `--fast-decode --video-cfl` | FP | accepted on a 2-frame probe; 60-frame composition untested | small; chroma is 0.61 K of the SVT gap (`eff-perc.md`) | low: one ladder, ≈1.05x |
+| 4 | Adaptive MVD + flex precision + sign derivation | `--fast-decode --video-bawp-off --video-adaptive-mvd --video-flex-mvres --video-mvd-sign-derive --video-mv-precision quarter` | FP | each is gated alone; the trio is untested | small; MV syntax only | very low: `--video-bawp-off` costs 0.36 K, one ladder |
+| 5 | IBP on every intra leaf | `--fast-decode --video-ibp` | FP | gated alone; 60-frame nightly composition untested | small; mostly keyframe, which is not the dominant gap | low: one ladder |
 
 Why not the measured-dead families: B/compound, GME, SDP, refs 2–4, AQ,
 delta-Q, ext partitions, min-block 4, skip-collapse, Wiener/PC-Wiener/
@@ -515,11 +515,11 @@ B=build-release/av2enc
 I=tests/data/basic_64x64_1f.y4m
 
 # one rejection probe
-$B $I -o /tmp/x.ivf --video --frames 2 --qp 110 --nightly --video-tcq
+$B $I -o /tmp/x.ivf --video --frames 2 --qp 110 --fast-decode --video-tcq
 
 # one accepted composition (untested RD)
 $B testdata/nasa_480x240_30fps_60f.y4m -o /tmp/ibp.ivf \
-    --video --frames 60 --cpu-threads 8 --qp 106 --nightly --video-ibp
+    --video --frames 60 --cpu-threads 8 --qp 106 --fast-decode --video-ibp
 ```
 
 No source, build-system, or gate file was modified by this audit. The only

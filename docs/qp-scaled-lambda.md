@@ -8,7 +8,7 @@ both at iso-rate, with 60/60 pictures decoded and `--video-recon` equal to the
 decoded payload.
 
 The mode is opt-in (`--video-qp-lambda`) and CPU-only. With the flag off every
-default, `quality` and `--nightly` stream is byte-identical
+default, `quality` and `--fast-decode` stream is byte-identical
 (25,009 `a1d0dba1`, 25,141 `3984677b`, 24,113 `7f03eb6e`).
 
 ## The defect
@@ -158,7 +158,7 @@ explicitly, which is the control.
 | partition fallback | `7.344 * (step/944)^1.44` | 7.34 | 617 |
 
 An explicitly supplied numeric flag keeps the legacy form (the leaf anchor, or
-the exact constant for the other sites) and is the A/B control. `--nightly`
+the exact constant for the other sites) and is the A/B control. `--fast-decode`
 sets `--video-tx-lambda 136` and the probe scale internally only when the user
 did not; under `--video-qp-lambda` those are treated as anchors and the fits
 above apply.
@@ -187,7 +187,7 @@ is positive at both, so no point is traded for the other.
 ```sh
 # 240p, --qp 110
 build-t/av2enc testdata/nasa_480x240_30fps_60f.y4m -o n.ivf --video \
-  --frames 60 --cpu-threads 8 --qp 110 --nightly --video-qp-lambda
+  --frames 60 --cpu-threads 8 --qp 110 --fast-decode --video-qp-lambda
 # 240p QP ladder: 109 -> 95.988 kbps / 9.7270 / 44.5714
 #                  108 -> 97.164 kbps / 9.7216 / 44.5985
 # at 96.452 kbps:                9.7249 / 44.5821   (+0.0119 / +0.692)
@@ -195,7 +195,7 @@ build-t/av2enc testdata/nasa_480x240_30fps_60f.y4m -o n.ivf --video \
 
 # 720p, --qp 217, key offset -57
 build-t/av2enc testdata/space8k_1440x720_60f.y4m -o h.ivf --video \
-  --frames 60 --cpu-threads 8 --qp 217 --nightly \
+  --frames 60 --cpu-threads 8 --qp 217 --fast-decode \
   --video-key-qp-offset -57 --video-qp-lambda
 # 720p QP ladder: 215 -> 292.944 kbps / 7.3120 / 31.2555
 #                  214 -> 302.488 kbps / 7.3313 / 31.2996
@@ -239,7 +239,7 @@ same shape as the refresh-budget and leaf-lambda results).
   signals there. The 720p gain (+0.046) is above the ripple.
 * The 720p content has a pulldown cadence and sits at the quantiser ceiling;
   the key site's −0.006 there is within the local QP scatter.
-* The fits are measured on the `--nightly` aggregate. They are gated to the
+* The fits are measured on the `--fast-decode` aggregate. They are gated to the
   same surface (CPU `--video`, cqp, 8-bit 4:2:0, single tile); other tools can
   change which site binds, and the flag stays opt-in until it is re-measured on
   them.

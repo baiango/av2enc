@@ -1,6 +1,6 @@
 # Extended partitions on the nightly chain
 
-`--video-ext-partitions` now composes with `--nightly`, including the carried
+`--video-ext-partitions` now composes with `--fast-decode`, including the carried
 CDF chain, the loop filters (CDEF / CCSO / deblock), the BAWP carrier, the
 bottom-edge mask and the drift-refresh frames. The measured win is the one the
 keyframe partition oracle predicted (`docs/ce-partition-oracle.md`, branch
@@ -11,7 +11,7 @@ reconstruction — at the nightly operating point.
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/ext.ivf \
     --video --frames 60 --qp 110 --cpu-threads 8 \
-    --nightly --video-ext-partitions
+    --fast-decode --video-ext-partitions
 ```
 
 ## What made the two trees incompatible
@@ -94,8 +94,8 @@ configured floor. This is the trap the earlier component gate documented; the
 
 ## Measured: 240p front-end, QP 108..112
 
-`testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--nightly`, both arms with
-`--nightly`'s own flags (key offset -27, drift refresh on). Quality:
+`testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--fast-decode`, both arms with
+`--fast-decode`'s own flags (key offset -27, drift refresh on). Quality:
 `tools/quality.py` (CVVDP 0.5.7, `standard_fhd`, MPS) with the pinned `dav2d`.
 
 | QP | nightly B | kbps | CVVDP | PSNR-Y | +ext B | kbps | CVVDP | PSNR-Y | bytes | PSNR |
@@ -124,7 +124,7 @@ price), so the same 36 nodes appear at QP90/105/120.
 
 ## Measured: keyframe curve
 
-One picture, `--nightly` (which applies the -27 key offset), `--frames 1`:
+One picture, `--fast-decode` (which applies the -27 key offset), `--frames 1`:
 
 | QP | nightly B | CVVDP | PSNR-Y | +ext B | CVVDP | PSNR-Y | bytes | PSNR |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -189,17 +189,17 @@ build-t/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/p.ivf \
 build-t/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/q.ivf \
     --video --frames 60 --qp 190 --video-rd-preset quality
 build-t/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/n.ivf \
-    --video --frames 60 --qp 110 --cpu-threads 8 --nightly
+    --video --frames 60 --qp 110 --cpu-threads 8 --fast-decode
 
 # the composed stream
 build-t/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/e.ivf \
     --video --frames 60 --qp 110 --cpu-threads 8 \
-    --nightly --video-ext-partitions
+    --fast-decode --video-ext-partitions
 
 # the emitted tree
 AV2ENC_PART_TREE=/tmp/tree.txt build-t/av2enc \
     testdata/nasa_480x240_30fps_60f.y4m -o /tmp/k.ivf \
     --video --frames 1 --qp 120 --cpu-threads 8 \
-    --nightly --video-ext-partitions
+    --fast-decode --video-ext-partitions
 awk '{print $9}' /tmp/tree.txt | sort | uniq -c
 ```

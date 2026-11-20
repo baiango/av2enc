@@ -335,8 +335,8 @@ Measured on the two clips (block counts printed by the encoder):
 
 | Stream | frames | inter leaves | intra leaves | leaves/frame | SBs/frame | leaves per SB |
 |---|---:|---:|---:|---:|---:|---:|
-| 480×240 `--qp 110 --nightly` | 60 | 2893 | 259 | ~52 | 32 | **~1.6** |
-| 1440×720 `--qp 217 --nightly --video-ext-partitions` | 24 | 7761 | 3581 | ~473 | 276 | **~1.7** |
+| 480×240 `--qp 110 --fast-decode` | 60 | 2893 | 259 | ~52 | 32 | **~1.6** |
+| 1440×720 `--qp 217 --fast-decode --video-ext-partitions` | 24 | 7761 | 3581 | ~473 | 276 | **~1.7** |
 
 The trees are *coarse*: on average one to two leaves per superblock, mostly one
 64×64 or a pair of 32×32. A 64×64 leaf occupies a 4×4 block of the 16×16 cell
@@ -534,7 +534,7 @@ Introduce `SbSink`, thread it through `encode_leaf`, split `collect_frame` into
 `plan → run_one_sb → merge`, but keep the loop serial and in raster order. No
 threads. Gate: all four pins byte-identical (`a1d0dba1`/`3984677b`/`1b99127a`/
 `7f03eb6e`), the Stage-0 dump unchanged, `dav2d --strict 1` on each pin, and the
-`--nightly` gate suite (`tools/run_gates.sh`). This stage is *guaranteed*
+`--fast-decode` gate suite (`tools/run_gates.sh`). This stage is *guaranteed*
 safe and is 80 % of the work.
 
 **Stage 2 — 2-way wavefront.**
@@ -620,10 +620,10 @@ Commands (both reproduce the pinned decisions):
 
 ```
 build/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/a.ivf \
-  --video --frames 60 --qp 110 --cpu-threads {1,8} --nightly
+  --video --frames 60 --qp 110 --cpu-threads {1,8} --fast-decode
 
 build/av2enc testdata/space8k_1440x720_60f.y4m -o /tmp/b.ivf \
-  --video --frames 24 --qp 217 --cpu-threads {1,8} --nightly \
+  --video --frames 24 --qp 217 --cpu-threads {1,8} --fast-decode \
   --video-key-qp-offset -57 --video-leaf-rd-lambda 250 --video-ext-partitions
 ```
 
@@ -673,8 +673,8 @@ Dump md5s, 480×240 pins (60 frames):
 |---|---|---|
 | default, 25,009 `a1d0dba1` | `--video --frames 60 --qp 189` | `ab38bfb606c46f109f2102303fafa9e0` |
 | quality, 25,141 `3984677b` | `… --qp 190 --video-rd-preset quality` | `2558da60a0918b0205bf32f9da086e5a` |
-| nightly, 23,690 `1b99127a` | `… --qp 110 --nightly` | `d96b3a5368411d8a960d821271a49b52` |
-| explicit-λ, 24,113 `7f03eb6e` | `… --qp 110 --nightly --video-qp-lambda --video-tx-lambda 136 --video-key-tx-lambda 136 --video-leaf-rd-lambda 125 --video-rdoq-scale 0.1 --video-partition-rd-lambda 2.75e-6` | `3deaf2520bf2b137e8336437e073ea31` |
+| nightly, 23,690 `1b99127a` | `… --qp 110 --fast-decode` | `d96b3a5368411d8a960d821271a49b52` |
+| explicit-λ, 24,113 `7f03eb6e` | `… --qp 110 --fast-decode --video-qp-lambda --video-tx-lambda 136 --video-key-tx-lambda 136 --video-leaf-rd-lambda 125 --video-rdoq-scale 0.1 --video-partition-rd-lambda 2.75e-6` | `3deaf2520bf2b137e8336437e073ea31` |
 
 Each md5 is identical across 10 repeated runs and across `--cpu-threads 1` and
 `--cpu-threads 8` (11 runs per pin, one distinct dump md5 per pin; the IVF is
@@ -888,8 +888,8 @@ schedules code identical bytes.
 
 | Workload | stage 1 | stage 3 | ratio |
 |---|---:|---:|---:|
-| 480x240 `--qp 106 --nightly`, t=1 | 6.498 s | 6.440 s | 0.99 (no change) |
-| 480x240 `--qp 106 --nightly`, t=8 | 4.816 s | 3.655 s | **1.32x** |
+| 480x240 `--qp 106 --fast-decode`, t=1 | 6.498 s | 6.440 s | 0.99 (no change) |
+| 480x240 `--qp 106 --fast-decode`, t=8 | 4.816 s | 3.655 s | **1.32x** |
 | 1440x720 recipe, 24 f, t=1 | 33.250 s | 33.226 s | 1.00 (no change) |
 | 1440x720 recipe, 24 f, t=8 | 21.578 s | 14.959 s | **1.44x** |
 

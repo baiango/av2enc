@@ -255,7 +255,7 @@ The spec is one JSON object:
 ```json
 {"ref": "testdata/nasa_480x240_30fps_60f.y4m",
  "bin": "build-release/av2enc", "frames": 60,
- "base_args": ["--video","--frames","60","--cpu-threads","8","--nightly"],
+ "base_args": ["--video","--frames","60","--cpu-threads","8","--fast-decode"],
  "qp": 106, "target_kbps": 100.0,
  "arms": [{"name": "base", "env": {}},
           {"name": "cand", "env": {"AV2ENC_TOOL": "1"}}]}

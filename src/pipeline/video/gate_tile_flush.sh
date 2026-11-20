@@ -56,8 +56,8 @@ trap 'rm -rf "$TMP"' EXIT
 FAILED=0
 fail() { echo "FAIL: $*" >&2; FAILED=1; }
 
-NIGHTLY=(--video --frames 60 --nightly --qp 110 --cpu-threads 8)
-# --nightly enables the minimal trailer; the legacy form is the A/B control.
+NIGHTLY=(--video --frames 60 --fast-decode --qp 110 --cpu-threads 8)
+# --fast-decode enables the minimal trailer; the legacy form is the A/B control.
 NIGHTLY_LEGACY=("${NIGHTLY[@]}" --video-tile-flush-off)
 encode60() {
     # $1 = output, $2... = the full video flag set
@@ -213,13 +213,13 @@ fi
 # --- 2- and 6-frame streams, encoder reconstruction ----------------------
 for FRAMES in 2 6; do
     if ! "$BIN" "$NASA" -o "$TMP/on-$FRAMES.ivf" --video --frames "$FRAMES" \
-            --nightly --qp 110 --cpu-threads 8 --video-tile-flush-min \
+            --fast-decode --qp 110 --cpu-threads 8 --video-tile-flush-min \
             --video-recon "$TMP/on-$FRAMES.y4m" >"$TMP/on-$FRAMES.log" 2>&1; then
         fail "the $FRAMES-frame minimum-termination encode failed"
         continue
     fi
     if ! "$BIN" "$NASA" -o "$TMP/off-$FRAMES.ivf" --video --frames "$FRAMES" \
-            --nightly --qp 110 --cpu-threads 8 \
+            --fast-decode --qp 110 --cpu-threads 8 \
             --video-recon "$TMP/off-$FRAMES.y4m" \
             >"$TMP/off-$FRAMES.log" 2>&1; then
         fail "the $FRAMES-frame historical encode failed"

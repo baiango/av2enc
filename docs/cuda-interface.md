@@ -159,7 +159,7 @@ same host, `cmp` with no tolerance.
 | Still `build_pipeline_test.sh` | OK |
 | CPU cross-architecture (Linux x86_64 vs macOS arm64) | identical IVF |
 
-`--nightly` is CPU-only by design (the CUDA backend keeps the historical
+`--fast-decode` is CPU-only by design (the CUDA backend keeps the historical
 decisions so its streams stay CPU-reference exact) and `--cpu-threads` is a CPU
 knob; both are rejected by name with `--video-gpu`.
 

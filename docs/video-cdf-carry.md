@@ -7,7 +7,7 @@ runs §7.4.4 `load_cdfs(ref_frame_idx[0])`, and both sides derive the next
 frame's image with §8.2.4 `exit_symbol()` + §7.5 `frame_end_update_cdf()`.
 
 It is CPU-only, single tile, 8-bit 4:2:0, and wired for the flat key+P chain
-(including `--video-drift-refresh` and the whole `--nightly` aggregate). Gated
+(including `--video-drift-refresh` and the whole `--fast-decode` aggregate). Gated
 by `src/pipeline/video/gate_video_cdf_carry.sh`.
 
 ## What the encoder has to mirror
@@ -93,17 +93,17 @@ static clip decodes.
    byte; carry is 15,780 B against 17,304 B for the same decisions with the
    reset-per-frame image.
 5. **Composition.** `--cdf-continuity` no longer needs the reset-per-frame
-   opt-in, so `--nightly` stops implying `--video-cdf-per-frame-qp` when the
+   opt-in, so `--fast-decode` stops implying `--video-cdf-per-frame-qp` when the
    carry is on, and the drift-refresh prohibition is gone (`--video-drift-refresh`
    is allowed: the carried image follows the coded symbols, so a refresh
    frame's extra residual needs no §9.3 re-derivation). The CLI gate is gone:
    pinned `dav2d` f9dafbc decodes the carried form.
 
-## Measurements (240p30 clip, 60 pictures, `--nightly --qp 110`, 8 threads)
+## Measurements (240p30 clip, 60 pictures, `--fast-decode --qp 110`, 8 threads)
 
 | Stream | Bytes | kbps | CVVDP (JOD) | PSNR-Y |
 |---|---:|---:|---:|---:|
-| `--nightly` (reset-per-frame pin) | 24,904 | 99.616 | 9.7069 | 43.8667 |
+| `--fast-decode` (reset-per-frame pin) | 24,904 | 99.616 | 9.7069 | 43.8667 |
 | `+ --cdf-continuity` | 24,214 | 96.856 | 9.7069 | 43.8667 |
 | `+ --cdf-continuity --video-key-qp-offset -27` | 24,885 | 99.540 | 9.7177 | 43.9358 |
 | `+ --video-cdef-rd` (nightly pin) | 24,822 | 99.288 | 9.7177 | 43.9358 |

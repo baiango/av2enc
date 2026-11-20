@@ -48,7 +48,7 @@ reference (it is the B-frame oracle, not an encoder we can copy). K is
 
 | stream | recipe | bytes | kbps | JOD | BA | SS2 | K |
 |---|---|---:|---:|---:|---:|---:|---:|
-| nightly QP106 | `--qp 106 --nightly` | 25,008 | 100.032 | 9.7334 | 3.4202 | 80.837 | **82.155** |
+| nightly QP106 | `--qp 106 --fast-decode` | 25,008 | 100.032 | 9.7334 | 3.4202 | 80.837 | **82.155** |
 | drift QP110 | nightly + threshold 1.5 / budget 3250 | 25,146 | 100.584 | 9.7605 | 2.6562 | 81.250 | **83.937** (83.795 @100.0) |
 | eff-perc QP119 | drift recipe + `AV2ENC_EFF_PERC=1` | 25,230 | 100.920 | 9.7713 | 2.2630 | 82.441 | **85.180** (85.10 @100.0) |
 | SVT-AV1 4.3.0 p0 | preset 0, CRF 36.5 | 24,844 | 99.376 | 9.8262 | 1.5827 | 88.866 | **88.641** (88.8 @100.0) |
@@ -463,7 +463,7 @@ does not pay.
 | mechanism | measured result | verdict |
 |---|---|---|
 | Coefficient entropy/context | The coder is 1.015× its own per-context bound; pooled contexts cost 39% more (`docs/keyframe-bit-accounting.md`). `--video-tx-context-rate` is neutral to worse (QP120 15,764 B / 44.13 dB vs 16,130 B / 44.90 dB; QP60 36,285 B / 47.32 dB at λ=136, 52.75 vs 55.94 dB at the best λ=8) | ≤0.3 K; no |
-| Adaptive quantisation (`--video-aq`) | Best strength +0.05 K at iso-rate, inside the ±1.5 K QP ripple; under `--nightly` it forces `--video-cdf-per-frame-qp` and is −0.47 K | no |
+| Adaptive quantisation (`--video-aq`) | Best strength +0.05 K at iso-rate, inside the ±1.5 K QP ripple; under `--fast-decode` it forces `--video-cdf-per-frame-qp` and is −0.47 K | no |
 | QM / coring / dead zone | Five families at QP104-108: best iso-rate −0.75 K, worst −1.78 K. The fixed-QP "win" is a decision lottery | no |
 | Perceptual source weights | At matched rate every D-shape is neutral or negative; the surviving piece is the error CSF, not a source mask | no |
 | Explicit frame allocators (`AV2ENC_PIPE_LPL_REFRESH`) | 83.9 K at 240p, at the 83.80 wall; flat at 720p | no |
@@ -699,11 +699,11 @@ All commands are on `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, 8-bit
 
 ```sh
 # the five streams
-build-dev/av2enc REF -o /tmp/nightly.ivf --video --frames 60 --qp 106 --nightly
-build-dev/av2enc REF -o /tmp/drift.ivf --video --frames 60 --qp 110 --nightly \
+build-dev/av2enc REF -o /tmp/nightly.ivf --video --frames 60 --qp 106 --fast-decode
+build-dev/av2enc REF -o /tmp/drift.ivf --video --frames 60 --qp 110 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 AV2ENC_EFF_PERC=1 build-dev/av2enc REF -o /tmp/eff.ivf --video --frames 60 \
-  --qp 119 --nightly --video-drift-refresh-threshold 1.5 \
+  --qp 119 --fast-decode --video-drift-refresh-threshold 1.5 \
   --video-drift-refresh-budget 3250
 SvtAv1EncApp -i REF -b /tmp/svt.ivf --preset 0 --crf 36.5 \
   --fps-num 30 --fps-denom 1 --progress 0
@@ -727,8 +727,8 @@ orthonormal 8x8 DCT on non-overlapping blocks, ring index
 
 ```sh
 AV2ENC_BLOCKDUMP=/tmp/blocks.txt AV2ENC_SYMBOL_COST=1 \
-  build-dev/av2enc REF -o /tmp/x.ivf --video --frames 60 --qp 106 --nightly
-./build-dev/av2enc REF -o /tmp/x.ivf --video --frames 60 --qp 106 --nightly \
+  build-dev/av2enc REF -o /tmp/x.ivf --video --frames 60 --qp 106 --fast-decode
+./build-dev/av2enc REF -o /tmp/x.ivf --video --frames 60 --qp 106 --fast-decode \
   --video-trace 2>/tmp/trace.log
 ```
 
@@ -879,7 +879,7 @@ eff-perc and AVM, same frames:
 
 ## Appendix B: key RD and tail efficiency
 
-Keyframe RD on the current encoder (`--nightly`, key offset −27; bytes are the
+Keyframe RD on the current encoder (`--fast-decode`, key offset −27; bytes are the
 single-picture IVF size, PSNR the decoded luma):
 
 | QP | key qidx | bytes | PSNR-Y | lp2 | lp8 |

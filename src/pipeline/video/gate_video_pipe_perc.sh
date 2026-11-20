@@ -87,20 +87,20 @@ check_pin "$TMP/quality.ivf" 25141 3984677b9b665952984b07b7cf75c6ea \
     "quality QP190"
 
 "$BIN" "$NASA" -o "$TMP/nightly.ivf" --video --frames 60 --qp 110 \
-    --cpu-threads 8 --nightly >"$TMP/nightly.log" 2>&1 ||
+    --cpu-threads 8 --fast-decode >"$TMP/nightly.log" 2>&1 ||
     fail "the nightly encode failed"
 check_pin "$TMP/nightly.ivf" 23690 1b99127a4cd1d386fa5600fb63c57a83 \
     "nightly QP110 pin"
 
 AV2ENC_PIPE_PERC=0 "$BIN" "$NASA" -o "$TMP/off.ivf" --video --frames 60 \
-    --qp 110 --cpu-threads 8 --nightly >"$TMP/off.log" 2>&1 ||
+    --qp 110 --cpu-threads 8 --fast-decode >"$TMP/off.log" 2>&1 ||
     fail "the AV2ENC_PIPE_PERC=0 encode failed"
 cmp -s "$TMP/nightly.ivf" "$TMP/off.ivf" ||
     fail "AV2ENC_PIPE_PERC=0 is not byte-identical to unset"
 
 # --- gate on: tuned drift point ------------------------------------------
 if ! AV2ENC_PIPE_PERC=1 "$BIN" "$NASA" -o "$TMP/on.ivf" --video --frames 60 \
-        --qp 119 --cpu-threads 8 --nightly \
+        --qp 119 --cpu-threads 8 --fast-decode \
         --video-drift-refresh-threshold 1.5 \
         --video-drift-refresh-budget 3250 --video-recon "$TMP/on.recon.y4m" \
         >"$TMP/on.log" 2>&1; then

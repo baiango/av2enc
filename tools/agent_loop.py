@@ -49,7 +49,7 @@ Perform EXACTLY ONE iteration. Do not start a second one.
    syntax, no preset/pin change, no third-party code or source copying.
 3. Write build/agent-loop/spec.json for the script's envelope gate:
    {"ref": ..., "bin": "build-release/av2enc", "frames": 60,
-    "base_args": ["--video","--frames","60","--cpu-threads","8","--nightly"],
+    "base_args": ["--video","--frames","60","--cpu-threads","8","--fast-decode"],
     "qp": 106, "target_kbps": 100.0,
     "arms": [{"name":"base","env":{}},
              {"name":"cand","env":{"AV2ENC_TOOL":"1"}}]}
@@ -190,7 +190,7 @@ def run_envelope(worktree: Path, args, iteration: int, log_dir: Path) -> str:
             run(["git", "-C", str(worktree), "clean", "-fd", "src"], worktree)
         return "MISSING (no spec; src/ reverted)"
     out = log_dir / f"envelope-{iteration:03d}.json"
-    cmd = [sys.executable, str(Path(__file__).resolve().parent / "envelope.py"),
+    cmd = [sys.executable, str(args.envelope_tool_resolved),
            "--spec", str(spec), "--worktree", str(worktree),
            "--threshold", str(args.envelope_threshold),
            "--base-env", args.envelope_base_env, "--json", str(out)]
@@ -266,6 +266,10 @@ def main() -> int:
                     help="stop before the next iteration when this file exists")
     ap.add_argument("--envelope-gate", action="store_true",
                     help="run tools/envelope.py after each agent call")
+    ap.add_argument("--envelope-tool", default=os.environ.get("AV2ENC_ENVELOPE", ""),
+                    help="measurement tool (default: tools/envelope.py; set "
+                         "tools/envelope_modal.py to run the ten-lane gate on "
+                         "Modal, or use env AV2ENC_ENVELOPE)")
     ap.add_argument("--envelope-spec", default="build/agent-loop/spec.json",
                     help="candidate spec, relative to the worktree")
     ap.add_argument("--envelope-threshold", type=float, default=0.15,
@@ -289,6 +293,12 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="print commands and prompts without invoking the agent")
     args = ap.parse_args()
+
+    args.envelope_tool_resolved = (
+        Path(args.envelope_tool).expanduser().resolve() if args.envelope_tool
+        else Path(__file__).resolve().parent / "envelope.py")
+    if not args.envelope_tool_resolved.is_file():
+        raise SystemExit(f"envelope tool not found: {args.envelope_tool_resolved}")
 
     repo = args.repo.resolve()
     check = run(["git", "-C", str(repo), "rev-parse", "--is-inside-work-tree"], repo)

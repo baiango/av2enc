@@ -59,7 +59,7 @@ else
     exit 77
 fi
 
-ARGS=(--video --frames "$FRAMES" --cpu-threads "$THREADS" --qp 106 --nightly)
+ARGS=(--video --frames "$FRAMES" --cpu-threads "$THREADS" --qp 106 --fast-decode)
 [ "$TRACE" = "--trace" ] && ARGS+=(--video-trace)
 
 if ! "$BIN" "$TMP/in.y4m" -o "$TMP/out.ivf" "${ARGS[@]}" \

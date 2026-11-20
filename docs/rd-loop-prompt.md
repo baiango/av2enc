@@ -13,7 +13,7 @@ second.
 3. Write build/agent-loop/spec.json:
    {"ref":"testdata/nasa_480x240_30fps_60f.y4m","bin":"build-release/av2enc",
     "frames":60,
-    "base_args":["--video","--frames","60","--cpu-threads","1","--nightly",
+    "base_args":["--video","--frames","60","--cpu-threads","1","--fast-decode",
      "--video-drift-refresh-threshold","1.5","--video-drift-refresh-budget","3250"],
     "qp":118,"target_kbps":100.0,
     "arms":[{"name":"base","env":{}},

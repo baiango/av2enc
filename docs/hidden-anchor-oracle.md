@@ -75,7 +75,7 @@ python3 tools/oracle.py --ref testdata/nasa_480x240_30fps_60f.y4m \
 
 All ladders change only QP. The spacing-4 ladder uses key offset −35 and
 `--video-rdoq-scale 0.2`; spacing 8/16 the same; the tool set is the
-`--nightly`-compatible CPU set minus the tools that reject the temporal
+`--fast-decode`-compatible CPU set minus the tools that reject the temporal
 schedule (`--video-edge-inter --video-edge-mask --video-deblock --video-cdef
 --video-cdef-rd --video-tx-search --video-intra-full --video-rdoq
 --video-leaf-rd --video-key-intra-txpart --video-subpel-eighth
@@ -194,13 +194,13 @@ tool subset. The alt-ref carrier rejects six nightly elements by name:
 
 `--video-edge-inter` is also rejected without the open gate
 (`--video-edge-inter is measured on the low-delay P chain; ...`); this branch
-allows it when `AV2ENC_OPEN_GOP` is set. Everything else in `--nightly` (RDOQ,
+allows it when `AV2ENC_OPEN_GOP` is set. Everything else in `--fast-decode` (RDOQ,
 CDEF/CDEF-RD, CCSO/CCSO-header-RD, deblock, TX search, key intra TX-part,
 leaf RD, 1/8-pel, QP-scaled λ, the CDF chain, edge mask) encodes on the
 alt-ref path.
 
 A full-nightly-tool alt-ref is therefore **not legal**. The maximal legal
-subset is `--nightly` with those six elements off (key QP −27 is applied to
+subset is `--fast-decode` with those six elements off (key QP −27 is applied to
 both arms through the experiment env on the alt-ref side):
 
 | arm (identical legal nightly subset) | QP | bytes | kbps | JOD | BA | SS2 | K |
@@ -245,7 +245,7 @@ Implementation blockers for the record (all after the negative result):
 * `--rc vbr` still cannot allocate this schedule
   (`rate-control schedule does not cover every input picture`), so the QP
   offsets are global, not per-frame;
-* the `--nightly` tool aggregate cannot compose with the temporal schedule
+* the `--fast-decode` tool aggregate cannot compose with the temporal schedule
   (`--video-edge-inter`, `--video-rdoq`, `--video-partition-rd`,
   `--video-key-qp-offset`, BAWP and the drift refresh all reject it), so the
   comparison is against the same-tool flat control (79.0/79.6), not the
@@ -259,8 +259,8 @@ Gate off, release build (`cmake --preset release`, warnings + `-Werror`):
 |---|---:|---|
 | default `--video --frames 60 --qp 189` | 25,009 | `a1d0dba1259b20a4b628d4cd1e14c33c` |
 | quality `--qp 190 --video-rd-preset quality` | 25,141 | `3984677b9b665952984b07b7cf75c6ea` |
-| nightly `--qp 110 --nightly` | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
-| explicit-λ `--nightly --video-qp-lambda …` | 24,113 | `7f03eb6e82d6ba4cf6666c78285f945b` |
+| nightly `--qp 110 --fast-decode` | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
+| explicit-λ `--fast-decode --video-qp-lambda …` | 24,113 | `7f03eb6e82d6ba4cf6666c78285f945b` |
 | 720p `space8k` QP217 nightly recipe | 36,572 | `c4ba28138d8f6569d5e08721a66d755c` |
 
 `tools/test.sh --build build-release` is 10/10; the alt-ref streams decode

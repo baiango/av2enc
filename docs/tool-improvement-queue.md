@@ -27,7 +27,7 @@ come from `tools/oracle.py` (AVM `avmdec` only, 8-bit 4:2:0). All rows are
 | 9 | prediction/entropy | adaptive-MVD trio + quarter pel + BAWP off | 79.663 | −2.486 | negative |
 | 10 | ME/skip (drift) | skip-non-zero-MV penalty (`AV2ENC_SKIP_MV_PENALTY=8`) | 81.977 | −0.172 | negative |
 
-Baseline for every row is the local `--nightly` bracket QP104/106/108:
+Baseline for every row is the local `--fast-decode` bracket QP104/106/108:
 26,158 / 25,008 / 24,291 B, K 80.734 / 82.155 / 81.604, **matched 82.149**.
 The tuned drift recipe (`--video-drift-refresh-threshold 1.5
 --video-drift-refresh-budget 3250`, QP108/110/112) is the baseline for row 3
@@ -119,7 +119,7 @@ matched **83.218** against base **83.781** → −0.563 K. **Negative**, reverte
 
 ## 5. Attempts 4-9 — previously unmeasured legal tools (all negative)
 
-These compose with plain `--nightly` and had no K measurement
+These compose with plain `--fast-decode` and had no K measurement
 (`docs/tool-matrix.md` §9). Each was screened with the same QP104/106/108
 bracket and AVM oracle.
 
@@ -136,7 +136,7 @@ bracket and AVM oracle.
 --video-mvd-sign-derive --video-mv-precision quarter`.
 
 IST is a genuine no-op on this clip (+11 B at QP106, K flat to 0.01), so its
-`--nightly` composition is inert rather than harmful. IDTX and DIP move
+`--fast-decode` composition is inert rather than harmful. IDTX and DIP move
 decisions but lose. The adaptive-MVD trio is dominated by its rescue strip:
 removing BAWP costs 0.36 K and quarter-pel precision costs the rest (PSNR-Y
 drops 2.0 dB at QP106), which confirms the `--video-bawp-off` rescue as the
@@ -197,7 +197,7 @@ the same reference-chain lottery that produced the negative CDEF/AQ rows.
 ```sh
 REF=testdata/nasa_480x240_30fps_60f.y4m
 for q in 104 106 108; do
-  build-release/av2enc $REF -o /tmp/b$q.ivf --video --frames 60 --qp $q --nightly
+  build-release/av2enc $REF -o /tmp/b$q.ivf --video --frames 60 --qp $q --fast-decode
 done
 python3 tools/oracle.py --ref $REF \
   --ivf base@104=/tmp/b104.ivf --ivf base@106=/tmp/b106.ivf \
@@ -205,10 +205,10 @@ python3 tools/oracle.py --ref $REF \
 
 # attempt 1 (keyframe probe)
 AV2ENC_RDOQ_INTRA=1 AV2ENC_RDOQ_INTRA_SCALE=0.005 \
-  build-release/av2enc $REF -o /tmp/k.ivf --video --frames 1 --qp 106 --nightly
+  build-release/av2enc $REF -o /tmp/k.ivf --video --frames 1 --qp 106 --fast-decode
 
 # attempt 3
 AV2ENC_DRIFT_BAND=1 build-release/av2enc $REF -o /tmp/d.ivf --video \
-  --frames 60 --qp 110 --nightly --video-drift-refresh-threshold 1.5 \
+  --frames 60 --qp 110 --fast-decode --video-drift-refresh-threshold 1.5 \
   --video-drift-refresh-budget 3250 --video-trace
 ```

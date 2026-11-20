@@ -7,7 +7,7 @@ plan is coded through the existing `--video-delta-q` machinery (so
 `rc::plan_delta_q()`, the §5.20.5.11 full-SB-skip rewrite and the writer's
 `write_superblock_delta_q()` verification all apply unchanged).
 
-It composes with the whole `--nightly` aggregate when the CDF chain uses the
+It composes with the whole `--fast-decode` aggregate when the CDF chain uses the
 per-frame reset (`--video-cdf-per-frame-qp`), including `--video-rdoq`, the
 measured partition probe and the decision-level drift refresh.
 
@@ -16,18 +16,18 @@ strength moves K by **+0.05** (JOD −0.003, Butteraugli −0.090, SSIMULACRA2
 −0.530) — and that +0.05 is inside the control curve's own QP-to-QP K ripple,
 which is ±0.2–0.5. The BA gain is real but small; SSIMULACRA2 gives back more
 than BA gains. The flag stays an opt-in with rate-neutral defaults and is
-**not** part of `--nightly`.
+**not** part of `--fast-decode`.
 
 A second, independent cost is the CDF composition: delta-Q cannot carry the
 §8.2.4 image, so an AQ stream must use `--video-cdf-per-frame-qp`. That mode
 costs 2.9% rate at the same QP; at iso-rate the matched AQ-off control is
-**0.52 K lower** than the plain `--nightly` pin (81.63 vs 82.15). Even if AQ
-were +0.05 in isolation, turning it on under `--nightly` is **−0.47 K** versus
+**0.52 K lower** than the plain `--fast-decode` pin (81.63 vs 82.15). Even if AQ
+were +0.05 in isolation, turning it on under `--fast-decode` is **−0.47 K** versus
 the pin.
 
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/aq.ivf \
-    --video --frames 60 --cpu-threads 8 --qp 106 --nightly \
+    --video --frames 60 --cpu-threads 8 --qp 106 --fast-decode \
     --video-cdf-per-frame-qp --video-aq --video-aq-strength 3
 ```
 
@@ -77,7 +77,7 @@ target = clamp(base_q_idx + (raw_i + bias) << delta_q_res, 1, 255)
 
 Host: Apple M4, `--cpu-threads 8`, clip
 `testdata/nasa_480x240_30fps_60f.y4m`, 60 frames. Every row is
-`--nightly --video-cdf-per-frame-qp` with the listed AQ strength. The protocol
+`--fast-decode --video-cdf-per-frame-qp` with the listed AQ strength. The protocol
 grid is QP 104/106/108; because the plan spends rate, most strengths put QP108
 above 100 kbps, so QP110 is added where needed to bracket the target. Each
 config is interpolated linearly in rate to **100.0 kbps**. Quality via
@@ -181,9 +181,9 @@ re-validated and relaxed (see `docs/negative-results.md`):
    the frame `base_q_idx` (`--video-drift-refresh-qp != 0`); at the default 0
    the refresh is decision-level and composes.
 
-With the plan at zero, `--nightly --video-cdf-per-frame-qp --video-delta-q
+With the plan at zero, `--fast-decode --video-cdf-per-frame-qp --video-delta-q
 --video-delta-q-res 1 --video-seg-delta 0` is recon-identical to
-`--nightly --video-cdf-per-frame-qp` (the control that proves the
+`--fast-decode --video-cdf-per-frame-qp` (the control that proves the
 probe/refresh/CDF relaxations do not move pixels).
 
 ## Limits

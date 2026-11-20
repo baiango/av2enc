@@ -3,7 +3,7 @@
 `§5.18.7.12 ccso_params()` is the only per-frame filter row whose size is
 content-dependent: it codes `2^ccso_max_band_log2` `tu(7)` offset symbols per
 enabled plane. The nightly aggregate
-(`--nightly --video-ccso-rd --video-ccso-bands 6 --video-ccso-lambda 22
+(`--fast-decode --video-ccso-rd --video-ccso-bands 6 --video-ccso-lambda 22
 --video-ccso-refit 2 --video-ccso-unit-bits 2`) pinned the band count at 64 and
 the rate-aware fit priced only the *extra* bits of a non-zero band offset, so
 the row was invisible to the decision that produced it. This document measures
@@ -18,7 +18,7 @@ Everything below is CPU-only, single tile, 8-bit 4:2:0, `--qp 110`, 60 frames of
 (the accounting is `filters_stream::CcsoHeaderBits`, pinned by
 `filters_stream_test`), plus the change against the previous frame's table.
 
-Pin (`--nightly`, MD5 `5e316100ce7fd709b4298ccfebfffccd`, 24,885 B):
+Pin (`--fast-decode`, MD5 `5e316100ce7fd709b4298ccfebfffccd`, 24,885 B):
 
 | Part | Bits (60 frames) | Bytes | Per enabled frame |
 |---|---:|---:|---:|
@@ -154,7 +154,7 @@ between QPs and they land off the curve), so the table starts at QP 108.
   2.4% rate cut on this clip is worth only +0.015-0.02 JOD because the loss is
   spread over every frame (see the oracle table in `docs/video-nightly.md`);
   the bytes are better spent on the keyframe. The flag is therefore an
-  **opt-in**, not part of `--nightly`: the nightly pin, the `quality` preset
+  **opt-in**, not part of `--fast-decode`: the nightly pin, the `quality` preset
   and the default stream must stay byte-identical.
 * **Reuse (b) does not pay** at this band count and content (§3).
 * **The 64-band table is not always wrong.** 25 of 60 frames still choose 64

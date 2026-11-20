@@ -291,7 +291,7 @@ BIN=build-dev/av2enc
 
 # shipped point (defaults: scale 0.2, detail 1, top 2)
 AV2ENC_PIPE_PERC=1 "$BIN" "$REF" -o /tmp/pp.ivf --video --frames 60 \
-    --cpu-threads 8 --qp 119 --nightly \
+    --cpu-threads 8 --qp 119 --fast-decode \
     --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 
 # lambda sweep
@@ -321,7 +321,7 @@ python3 tools/kpi.py --quality-json /tmp/q.json --extra-json /tmp/e.json
 
 ## Limits
 
-* Measured on the CPU single-tile, low-delay flat P chain (the `--nightly`
+* Measured on the CPU single-tile, low-delay flat P chain (the `--fast-decode`
   surface). Tiles/B frames/TIP/compound/AMVD/flex-precision leaves fall back
   to the historical constants (the probe report counts them; the measured
   point has zero fallbacks). The CUDA device path is not wired.

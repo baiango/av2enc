@@ -284,7 +284,7 @@ void print_usage(std::ostream& out) {
   item("--video-leaf-rd", {"Opt-in leaf RD cost: intra/inter decided by one",
                              "cost with a QP-derived lambda and real-ish",
                              "intra mode/MRL/CfL and inter mode/MV bits"});
-  item("--nightly", {"Latest CPU-only algorithmic RD mode: the measured",
+  item("--fast-decode", {"Latest CPU-only algorithmic RD mode: the measured",
                        "quality preset plus 64-band/refit/priced-unit CCSO,",
                        "bottom-edge inter and mask, the measured partition",
                        "probe, the reference-intro key/first-P QP offset, luma",
@@ -292,7 +292,13 @@ void print_usage(std::ostream& out) {
                        "and the calibrated leaf RD cost (--video-leaf-rd).",
                        "The §8.3.2 TX context rate is not part of the aggregate.",
                        "--video-gpu is rejected; the default and GPU paths keep",
-                       "the historical CPU decisions and byte-identical streams"});
+                       "the historical CPU decisions and byte-identical streams.",
+                       "--nightly (the pre-2026-11-20 name) is an exact alias."});
+  item("--nightly-b", {"Chained single-key B research path (docs/tlayers-chain.md):",
+                       "pairs with --video-tlayers 8 --video-gops M. Decoder-exact",
+                       "under tools/validate_avmdec.py (the pinned dav2d has the",
+                       "§7.21.6 drain defect on this structure). Measured below",
+                       "the flat --fast-decode aggregate; not the default"});
   item("--video-rd-preset <name>", {"Expand a measured CPU RD preset:",
                                      "'quality' = --video-inter-residual",
                                      "--video-deblock --video-ccso",

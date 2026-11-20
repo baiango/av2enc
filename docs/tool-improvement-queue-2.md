@@ -50,7 +50,7 @@ reference and copied forward through subpel MC. The probe control that
 disables `--video-leaf-rd` gains +4.1 K on `me_half`.
 
 **Pinned first control (required before coding).** Nightly minus
-`--video-leaf-rd` (the flag set spelled out, since `--nightly` forces it on) at
+`--video-leaf-rd` (the flag set spelled out, since `--fast-decode` forces it on) at
 QP112/116/120: 26,757 / 25,029 / 23,638 B, matched **84.494 K**. It wins on
 natural 240p as well as on the probe (+2.35 K over the 82.149 baseline), so
 the skip pricing, not the probe texture, is the lever.
@@ -315,7 +315,7 @@ change; the default stays 4.0.
 REF=testdata/nasa_480x240_30fps_60f.y4m
 for q in 104 108 110 112; do
   AV2ENC_SKIP_DRIFT=1 build-release/av2enc $REF -o /tmp/z$q.ivf --video \
-    --frames 60 --qp $q --nightly --cpu-threads 8
+    --frames 60 --qp $q --fast-decode --cpu-threads 8
 done
 python3 tools/oracle.py --ref $REF \
   --ivf base@104=/tmp/base104.ivf --ivf base@106=/tmp/base106.ivf \
@@ -327,7 +327,7 @@ python3 tools/tool_probes.py --out-dir build/tool-probes --frames 60
 P=build/tool-probes/me_half.y4m
 for q in 150 152; do
   AV2ENC_SKIP_DRIFT=1 build-release/av2enc $P -o /tmp/meh$q.ivf --video \
-    --frames 60 --qp $q --nightly --cpu-threads 8
+    --frames 60 --qp $q --fast-decode --cpu-threads 8
 done
 python3 tools/oracle.py --ref $P --ivf b@142=... --ivf z@150=/tmp/meh150.ivf \
   --ivf z@152=/tmp/meh152.ivf --no-segments

@@ -1143,8 +1143,10 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
-    if (argument == "--nightly") {
-      options.nightly = true;
+    if (argument == "--fast-decode" || argument == "--nightly") {
+      // --nightly is the pre-2026-11-20 name for this aggregate; it stays an
+      // exact alias so every existing gate and recipe keeps its stream.
+      options.fast_decode = true;
       continue;
     }
 

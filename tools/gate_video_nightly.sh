@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Gate for --nightly, the CPU-only algorithmic RD aggregate.
+# Gate for --fast-decode, the CPU-only algorithmic RD aggregate.
 #
 # Checks:
-#   * --nightly expands to the documented flags (same IVF bytes as spelling
+#   * --fast-decode expands to the documented flags (same IVF bytes as spelling
 #     every flag out);
-#   * the reference-intro QP offset is live under --nightly and an explicit 0
+#   * the reference-intro QP offset is live under --fast-decode and an explicit 0
 #     restores the fixed-QP decisions;
 #   * the flag-less default, the stable quality preset and the nightly
 #     operating point keep their pins;
-#   * --nightly decodes under dav2d --strict 1 and the visible encoder recon
+#   * --fast-decode decodes under dav2d --strict 1 and the visible encoder recon
 #     equals the decoded payload;
 #   * the BAWP carrier selects fitted predictors on interior and bottom-edge
 #     leaves, decodes --strict 1 and reproduces the visible recon;
-#   * --nightly --video-gpu and --nightly --still are rejected by name, and the
+#   * --fast-decode --video-gpu and --fast-decode --still are rejected by name, and the
 #     CPU-only BAWP carrier rejects --video-gpu/--tiles/--b-frames.
 #
 # Usage: tools/gate_video_nightly.sh [--bin build/av2enc] [--dav2d PATH]
@@ -75,23 +75,23 @@ NIGHTLY_FLAGS=(--video-rd-preset quality --video-ccso-rd --video-edge-inter
 echo "== nightly RD gate =="
 
 # --- usage rejections -----------------------------------------------------
-if "$BIN" "$PUB_CLIP" -o "$TMP/gpu.ivf" --nightly --video-gpu >/dev/null 2>"$TMP/gpu.err"; then
-    fail "--nightly accepted --video-gpu"
+if "$BIN" "$PUB_CLIP" -o "$TMP/gpu.ivf" --fast-decode --video-gpu >/dev/null 2>"$TMP/gpu.err"; then
+    fail "--fast-decode accepted --video-gpu"
 fi
-grep -q "nightly is CPU-only" "$TMP/gpu.err" ||
-    fail "--nightly --video-gpu did not report the CPU-only rejection"
+grep -q "fast-decode is CPU-only" "$TMP/gpu.err" ||
+    fail "--fast-decode --video-gpu did not report the CPU-only rejection"
 
-if "$BIN" "$PUB_CLIP" -o "$TMP/still.ivf" --nightly --still >/dev/null 2>"$TMP/still.err"; then
-    fail "--nightly accepted --still"
+if "$BIN" "$PUB_CLIP" -o "$TMP/still.ivf" --fast-decode --still >/dev/null 2>"$TMP/still.err"; then
+    fail "--fast-decode accepted --still"
 fi
-grep -q "nightly is a CPU --video mode" "$TMP/still.err" ||
-    fail "--nightly --still did not report the video-only rejection"
+grep -q "fast-decode is a CPU --video mode" "$TMP/still.err" ||
+    fail "--fast-decode --still did not report the video-only rejection"
 
 # --- expansion identity ---------------------------------------------------
 FRAMES=4
-if ! "$BIN" "$PUB_CLIP" -o "$TMP/nightly.ivf" --nightly --frames "$FRAMES" \
+if ! "$BIN" "$PUB_CLIP" -o "$TMP/nightly.ivf" --fast-decode --frames "$FRAMES" \
         --qp 190 >"$TMP/nightly.log" 2>&1; then
-    fail "--nightly encode failed"
+    fail "--fast-decode encode failed"
     cat "$TMP/nightly.log" >&2
 fi
 if ! "$BIN" "$PUB_CLIP" -o "$TMP/explicit.ivf" --video --frames "$FRAMES" \
@@ -100,19 +100,19 @@ if ! "$BIN" "$PUB_CLIP" -o "$TMP/explicit.ivf" --video --frames "$FRAMES" \
 fi
 if [ -f "$TMP/nightly.ivf" ] && [ -f "$TMP/explicit.ivf" ]; then
     cmp -s "$TMP/nightly.ivf" "$TMP/explicit.ivf" ||
-        fail "--nightly differs from its documented flag expansion"
+        fail "--fast-decode differs from its documented flag expansion"
 fi
 
 # --- reference-intro QP offset -------------------------------------------
-# --nightly owns the key/first-P QP offset; an explicit 0 must restore the
+# --fast-decode owns the key/first-P QP offset; an explicit 0 must restore the
 # historical fixed-QP decisions, so the two streams must differ.
-if ! "$BIN" "$PUB_CLIP" -o "$TMP/nightly-off0.ivf" --nightly --frames "$FRAMES" \
+if ! "$BIN" "$PUB_CLIP" -o "$TMP/nightly-off0.ivf" --fast-decode --frames "$FRAMES" \
         --qp 190 --video-key-qp-offset 0 >"$TMP/nightly-off0.log" 2>&1; then
-    fail "the --nightly --video-key-qp-offset 0 encode failed"
+    fail "the --fast-decode --video-key-qp-offset 0 encode failed"
 fi
 if [ -f "$TMP/nightly.ivf" ] && [ -f "$TMP/nightly-off0.ivf" ]; then
     cmp -s "$TMP/nightly.ivf" "$TMP/nightly-off0.ivf" &&
-        fail "the reference-intro QP offset is not live under --nightly"
+        fail "the reference-intro QP offset is not live under --fast-decode"
 fi
 if "$BIN" "$PUB_CLIP" -o "$TMP/off-still.ivf" --still \
         --video-key-qp-offset -16 >/dev/null 2>"$TMP/off-still.err"; then
@@ -161,7 +161,7 @@ PY
     fi
 
     if ! "$BIN" "$NASA" -o "$TMP/nightly60.ivf" --video --frames 60 \
-            --qp 110 --cpu-threads 8 --nightly >"$TMP/nightly60.log" 2>&1; then
+            --qp 110 --cpu-threads 8 --fast-decode >"$TMP/nightly60.log" 2>&1; then
         fail "the nightly operating-point encode failed"
     fi
     if [ -f "$TMP/nightly60.ivf" ]; then
@@ -221,12 +221,12 @@ fi
 # --- strict decode + visible recon ---------------------------------------
 if ! "$DAV2D" -q --strict 1 -i "$TMP/nightly.ivf" -o "$TMP/decoded.y4m" \
         --threads 1 >"$TMP/strict.log" 2>&1; then
-    fail "--nightly stream failed dav2d --strict 1"
+    fail "--fast-decode stream failed dav2d --strict 1"
     cat "$TMP/strict.log" >&2
 fi
-if ! "$BIN" "$PUB_CLIP" -o "$TMP/recon.ivf" --nightly --frames "$FRAMES" \
+if ! "$BIN" "$PUB_CLIP" -o "$TMP/recon.ivf" --fast-decode --frames "$FRAMES" \
         --qp 190 --video-recon "$TMP/recon.y4m" >"$TMP/recon.log" 2>&1; then
-    fail "the --nightly --video-recon encode failed"
+    fail "the --fast-decode --video-recon encode failed"
 elif ! python3 - "$TMP/recon.y4m" "$TMP/decoded.y4m" <<'PY'
 import sys
 
@@ -250,16 +250,16 @@ then
 fi
 
 # --- BAWP + inter residual on the edge path ------------------------------
-# --nightly carries the CPU-only BAWP carrier: a GLOBALMV winner on a fade is
+# --fast-decode carries the CPU-only BAWP carrier: a GLOBALMV winner on a fade is
 # re-expressed as NEARMV/NEWMV so §5.20.7.6 can code use_bawp, and the residual
 # is coded against the fitted predictor.  The 60-frame fade clip must select
 # the fitted predictor on both interior and bottom-edge leaves, decode under
 # --strict 1 and reproduce the visible encoder reconstruction.
 if [ -f "$NASA" ]; then
-    if ! "$BIN" "$NASA" -o "$TMP/bawp.ivf" --nightly --frames 60 \
+    if ! "$BIN" "$NASA" -o "$TMP/bawp.ivf" --fast-decode --frames 60 \
             --qp 142 --cpu-threads 8 --video-recon "$TMP/bawp.y4m" \
             --video-trace >"$TMP/bawp.log" 2>"$TMP/bawp.trace"; then
-        fail "the --nightly BAWP encode failed"
+        fail "the --fast-decode BAWP encode failed"
         cat "$TMP/bawp.log" >&2
     else
         APPLIED=$(grep -c "carrier=.*applied=1" "$TMP/bawp.trace" || true)
@@ -273,7 +273,7 @@ if [ -f "$NASA" ]; then
             fail "only $EDGE_APPLIED BAWP bottom-row leaves (expected >= 8)"
         if ! "$DAV2D" -q --strict 1 -i "$TMP/bawp.ivf" \
                 -o "$TMP/bawp_dec.y4m" --threads 1 >"$TMP/bawp_strict.log" 2>&1; then
-            fail "the --nightly BAWP stream failed dav2d --strict 1"
+            fail "the --fast-decode BAWP stream failed dav2d --strict 1"
             cat "$TMP/bawp_strict.log" >&2
         elif ! python3 - "$TMP/bawp.y4m" "$TMP/bawp_dec.y4m" <<'PY'
 import sys

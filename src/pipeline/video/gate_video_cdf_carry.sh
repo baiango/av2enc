@@ -13,7 +13,7 @@
 #    frame.  A key+P chain with --cdf-continuity must decode under
 #    dav2d --strict 1 and reproduce the encoder reconstruction exactly (this is
 #    the frame whose carried image used to desynchronise the whole chain).
-# 2. §8.2 CDF image completeness.  A 60-frame --nightly stream with the carried
+# 2. §8.2 CDF image completeness.  A 60-frame --fast-decode stream with the carried
 #    image decodes all 60 pictures (dav2d --strict 1, frame count not exit
 #    status) and the decoded payload equals --video-recon byte for byte.  The
 #    same decisions with the reset-per-frame image are 24,904 B, so the carry
@@ -106,10 +106,10 @@ decode_exact "$TMP/chain.ivf" "$TMP/chain.y4m" 4 chain
 
 # --- 2. full 60-frame carry stream at the nightly operating point ----------
 if ! "$BIN" "$NASA" -o "$TMP/carry.ivf" --video --frames 60 --qp 110 \
-        --cpu-threads 8 --nightly --cdf-continuity \
+        --cpu-threads 8 --fast-decode --cdf-continuity \
         --video-key-qp-offset -25 \
         --video-recon "$TMP/carry.y4m" >"$TMP/carry.log" 2>&1; then
-    echo "FAIL: --nightly --cdf-continuity encode" >&2
+    echo "FAIL: --fast-decode --cdf-continuity encode" >&2
     cat "$TMP/carry.log" >&2; exit 1
 fi
 decode_exact "$TMP/carry.ivf" "$TMP/carry.y4m" 60 carry
@@ -168,10 +168,10 @@ for lr in wiener chroma-lr pc-wiener; do
         pc-wiener) LR_FLAG=--video-pc-wiener ;;
     esac
     if ! "$BIN" "$NASA" -o "$TMP/lr-$lr.ivf" --video --frames 60 \
-            --qp 110 --cpu-threads 8 --nightly --cdf-continuity \
+            --qp 110 --cpu-threads 8 --fast-decode --cdf-continuity \
             --video-key-qp-offset -25 "$LR_FLAG" \
             --video-recon "$TMP/lr-$lr.y4m" >"$TMP/lr-$lr.log" 2>&1; then
-        echo "FAIL: --nightly --cdf-continuity $LR_FLAG encode" >&2
+        echo "FAIL: --fast-decode --cdf-continuity $LR_FLAG encode" >&2
         cat "$TMP/lr-$lr.log" >&2
         exit 1
     fi
@@ -276,12 +276,12 @@ print(f"{sum(p) / len(p):.1f}")
 PY
 }
 "$BIN" "$TMP/static.y4m" -o "$TMP/static-reset.ivf" --video --frames 16 \
-    --qp 110 --cpu-threads 8 --nightly --video-cdf-per-frame-qp \
+    --qp 110 --cpu-threads 8 --fast-decode --video-cdf-per-frame-qp \
     >"$TMP/static-reset.log" 2>&1 || {
     echo "FAIL: static reset encode" >&2; cat "$TMP/static-reset.log" >&2
     exit 1; }
 "$BIN" "$TMP/static.y4m" -o "$TMP/static-carry.ivf" --video --frames 16 \
-    --qp 110 --cpu-threads 8 --nightly --cdf-continuity \
+    --qp 110 --cpu-threads 8 --fast-decode --cdf-continuity \
     --video-key-qp-offset -25 --video-recon "$TMP/static-carry.y4m" >"$TMP/static-carry.log" 2>&1 || {
     echo "FAIL: static carry encode" >&2; cat "$TMP/static-carry.log" >&2
     exit 1; }

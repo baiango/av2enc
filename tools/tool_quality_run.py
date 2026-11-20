@@ -7,8 +7,8 @@ rate for every encoder/probe, scores the bracket with the project's own
 quality stack, and interpolates K at the target rate.
 
 Encoders:
-  nightly   av2enc --nightly
-  eff-perc  av2enc --nightly + AV2ENC_EFF_PERC=1 + the documented drift recipe
+  nightly   av2enc --fast-decode
+  eff-perc  av2enc --fast-decode + AV2ENC_EFF_PERC=1 + the documented drift recipe
   svt       SVT-AV1 4.3.0 preset 0, CRF (`--keyint -1 --scd 0`)
   avm       AVM e6f99d3 --end-usage=q --cpu-used=6
 
@@ -143,7 +143,7 @@ class Encoder:
                     "--threads=8", f"--limit={frames}", "--psnr=1"]
         cmd = [bin_av2enc, str(probe), "-o", str(out), "--video",
                "--frames", str(frames), "--qp", str(qp),
-               "--cpu-threads", "8", "--nightly"]
+               "--cpu-threads", "8", "--fast-decode"]
         if self.name == "eff-perc":
             cmd += ["--video-drift-refresh-threshold", "1.5",
                     "--video-drift-refresh-budget", "3250"]

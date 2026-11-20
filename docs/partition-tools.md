@@ -20,7 +20,7 @@ on every stream quoted below.
 
 Reference points: **nightly QP106 = 100.032 kbps / K 82.15** (reproduced
 exactly: 25,008 B, MD5 `0639b436…`) and the tuned drift recipe
-(`--nightly --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget
+(`--fast-decode --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget
 3250`) **= 83.80 K at 100.0 kbps** (QP110 100.584 / 83.94, QP111 99.800 /
 83.75, reproduced exactly).
 
@@ -31,8 +31,8 @@ exactly: 25,008 B, MD5 `0639b436…`) and the tuned drift recipe
 probe is therefore removed for set A, so each partition tool is compared
 against the same flags minus the probe, not against nightly.
 
-* **A** — explicit `--nightly` expansion (all flags byte-identical to
-  `--nightly` when `--video-partition-rd` is added back; verified on a 4-frame
+* **A** — explicit `--fast-decode` expansion (all flags byte-identical to
+  `--fast-decode` when `--video-partition-rd` is added back; verified on a 4-frame
   clip) with `--video-partition-rd` removed. Control **A0**.
 * **B** — `--video-rd-preset quality` plus the tool.
 * **C** — a stripped chain for the superblock arms. `--video-sb128/256` reject
@@ -197,7 +197,7 @@ clip (see encode cost), so neither is a candidate.
 
 ## Retuned drift recipe
 
-The two arms that compose with the tuned recipe (`--nightly
+The two arms that compose with the tuned recipe (`--fast-decode
 --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250`) are
 ext partitions and min-block-4. The SDP and superblock arms cannot be stacked
 (constraint log), and the standalone numbers above are 7-10 K below this
@@ -332,8 +332,8 @@ meaningful):
 * Pins re-checked after the revert and rebuild:
   * default QP189: 25,009 B, MD5 `a1d0dba1…`
   * `quality` QP190: 25,141 B, MD5 `3984677b…`
-  * `--nightly` QP110: 23,690 B, MD5 `1b99127a…`
-  * `--nightly` QP106: 25,008 B, MD5 `0639b436…`, 60/60 decode
+  * `--fast-decode` QP110: 23,690 B, MD5 `1b99127a…`
+  * `--fast-decode` QP106: 25,008 B, MD5 `0639b436…`, 60/60 decode
 * `tools/gate_video_nightly.sh --bin build-dev/av2enc`: OK (expansion, pins,
   strict decode, visible recon, BAWP).
 
@@ -361,13 +361,13 @@ $BIN "$REF" -o /tmp/am.ivf --video --frames 60 --cpu-threads 8 --qp 110 $A0 \
 
 # tuned recipe + the two arms that stack
 $BIN "$REF" -o /tmp/d0.ivf --video --frames 60 --cpu-threads 8 --qp 110 \
-     --nightly --video-drift-refresh-threshold 1.5 \
+     --fast-decode --video-drift-refresh-threshold 1.5 \
      --video-drift-refresh-budget 3250
 $BIN "$REF" -o /tmp/de.ivf --video --frames 60 --cpu-threads 8 --qp 110 \
-     --nightly --video-drift-refresh-threshold 1.5 \
+     --fast-decode --video-drift-refresh-threshold 1.5 \
      --video-drift-refresh-budget 3250 --video-ext-partitions
 ```
 
 `A0` above is the typed nightly expansion; the probe is omitted on purpose.
-Adding `--video-partition-rd` reproduces `--nightly` byte for byte (verified on
+Adding `--video-partition-rd` reproduces `--fast-decode` byte for byte (verified on
 `testdata/pub_640x360_4f.y4m`: MD5 `cd4b0f24…` both ways).

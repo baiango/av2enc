@@ -27,11 +27,11 @@ is anchor *coverage* and prediction, not the quantizer depth of the refresh.
 ```sh
 AV2ENC_PIPE_DEEP=1 build/av2enc \
   testdata/nasa_480x240_30fps_60f.y4m -o /tmp/deep.ivf \
-  --video --frames 60 --cpu-threads 8 --qp 111 --nightly \
+  --video --frames 60 --cpu-threads 8 --qp 111 --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 
-`--nightly` supplies the enabled drift-refresh chain and the CDF chain
+`--fast-decode` supplies the enabled drift-refresh chain and the CDF chain
 (`--avg-cdf --adaptive-cdf --cdf-continuity`). The env gate replaces the PSNR
 trigger with the BA planner (same as `AV2ENC_PIPE_BA_REFRESH=1`) and deepens
 every scheduled anchor. The default depth is the measured key offset (27 QP at
@@ -272,7 +272,7 @@ at 240p in an unloaded standalone build).
 ## Named scope
 
 The env gate only changes the refresh QP of an already-enabled
-`--video-drift-refresh` chain (`--nightly` includes it). Without that chain it
+`--video-drift-refresh` chain (`--fast-decode` includes it). Without that chain it
 is inert. It keeps the drift-refresh restrictions (CPU, single tile, flat
 key+P, 8-bit 4:2:0), adds no CLI flag of its own, and emits no syntax the
 existing writer cannot already signal. `--video-drift-refresh-qp` remains the

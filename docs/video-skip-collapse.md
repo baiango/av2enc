@@ -8,7 +8,7 @@ leaves are all plain zero-motion inter skips into one superblock-sized skip
 leaf. The reconstruction is unchanged on static content; the tree bits go away.
 
 Opt-in, CPU-only, whole-frame single tile, 8-bit 4:2:0, flat key+P chain. Off by
-default, so the default, `quality` and `--nightly` streams and every GPU path
+default, so the default, `quality` and `--fast-decode` streams and every GPU path
 stay byte-identical (pins 25,009 `a1d0dba1…`, 25,141 `3984677b…`, 24,885
 `5e316100…`). Gated by `src/pipeline/video/video_skip_collapse_gate.sh`.
 
@@ -101,12 +101,12 @@ the only thing worth attacking:
 ## Measured floor
 
 Static clip: `testdata/nasa_480x240_30fps_60f.y4m` frame 0 repeated 60 times,
-`--nightly` (QP110, key offset −27, carried CDFs), `--cpu-threads 8`.
+`--fast-decode` (QP110, key offset −27, carried CDFs), `--cpu-threads 8`.
 
 | stream | total | key | P mean | P steady | P tile steady |
 |---|---:|---:|---:|---:|---:|
-| `--nightly` | 20,915 B | 18,901 B | 21.39 B | 21 B | 7 B |
-| `--nightly --video-skip-collapse` | **20,695 B** | 18,901 B | **17.66 B** | **17 B** | **3 B** |
+| `--fast-decode` | 20,915 B | 18,901 B | 21.39 B | 21 B | 7 B |
+| `--fast-decode --video-skip-collapse` | **20,695 B** | 18,901 B | **17.66 B** | **17 B** | **3 B** |
 
 Per P frame that is **−3.73 B (−17.4 %)**; at steady state 21 B → 17 B
 (**−19 %**). The 17 B is 12 B of IVF framing, 2 B of OBU/frame header and the
@@ -120,7 +120,7 @@ one rejected superblock above.
 
 ## Real clip
 
-`testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--nightly`:
+`testdata/nasa_480x240_30fps_60f.y4m`, 60 frames, `--fast-decode`:
 
 | stream | bytes | kbps | PSNR-Y | CVVDP | MD5 |
 |---|---:|---:|---:|---:|---|
@@ -132,7 +132,7 @@ itself is reconstruction-exact, but the neighbouring-block *shape* changes, and
 §7.12.2 reads block sizes when it builds the merge/DRL stack, so later blocks in
 the same frame and later frames can pick different modes. On a static clip that
 never happens (below). This is a floor tool, not a quality tool: it is a wash on
-moving content, so it stays out of `--nightly`.
+moving content, so it stays out of `--fast-decode`.
 
 ## Decode exactness
 
@@ -163,7 +163,7 @@ the §8.2.4 marker and padding, so `tile_bytes` can exceed `info_bits / 8`.
 
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/static.ivf \
-    --video --frames 60 --qp 110 --cpu-threads 8 --nightly \
+    --video --frames 60 --qp 110 --cpu-threads 8 --fast-decode \
     --video-skip-collapse
 ```
 

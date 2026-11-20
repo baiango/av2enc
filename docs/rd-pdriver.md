@@ -13,7 +13,7 @@ under-spend is a TX/level defect, not a drift defect.
 Branch `exp/rd-pdriver`, worktree `/Users/arin/work/rd-pdriver`, from `c6116f04`.
 Base K **86.013** bracket (reproduced as **86.041** on this six-point ladder;
 `docs/rd-engine0.md` §6 gives 86.041 for the same five base points), 240p /
-100 kbps, the merged L3+L5+driver recipe plus `--nightly
+100 kbps, the merged L3+L5+driver recipe plus `--fast-decode
 --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250`.
 
 ## 1. Scope
@@ -194,7 +194,7 @@ tail's own objective.
 
 ## 6. Measurements
 
-Recipe: `--video --frames 60 --cpu-threads 8 --nightly
+Recipe: `--video --frames 60 --cpu-threads 8 --fast-decode
 --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250`,
 `AV2ENC_EFF_PERC=1 AV2ENC_RD_UVFULL=1 AV2ENC_TX_DETAIL_SEARCH_TAIL=1
 AV2ENC_TX_DETAIL_MIN=0.50 AV2ENC_RD_KEY_TX=1 AV2ENC_RD_UVLEVEL=1

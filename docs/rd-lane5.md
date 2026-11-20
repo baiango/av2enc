@@ -11,7 +11,7 @@ Worktree `exp/rd-lane5`, base `315a7fbb`.  Reference recipe:
 REF=testdata/nasa_480x240_30fps_60f.y4m
 AV2ENC_EFF_PERC=1 AV2ENC_RD_UVFULL=1 AV2ENC_TX_DETAIL_SEARCH_TAIL=1 \
   AV2ENC_TX_DETAIL_MIN=0.50 build-release/av2enc "$REF" -o /tmp/x.ivf \
-  --video --frames 60 --cpu-threads 8 --qp <Q> --nightly \
+  --video --frames 60 --cpu-threads 8 --qp <Q> --fast-decode \
   --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250
 ```
 
@@ -110,7 +110,7 @@ No CLI, CMake, `main.cpp`, options/parse or gate/pin file is touched.
 ## 3. Correctness
 
 * Gate off: pins byte-identical — QP106 **25,008 B `0639b43630abb454f7be5ac494d2efb4`**,
-  QP110 **23,690 B `1b99127a4cd1d386fa5600fb63c57a83`** (plain `--nightly`).
+  QP110 **23,690 B `1b99127a4cd1d386fa5600fb63c57a83`** (plain `--fast-decode`).
 * `AV2ENC_RD_UVLEVEL` unset with `AV2ENC_RD_UVFULL=1` reproduces every M4
   stream byte for byte (the level stage is the only consumer of the new
   header; the `have_plans` reuse is gated on `level_variants > 0`).

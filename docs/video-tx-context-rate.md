@@ -120,7 +120,7 @@ The first nightly measurement (`quality + edge + tx-context`, lambda 256)
 lost ground because of the weight, not the model: the context rate charges
 real bits, ~2.5–3× the historical heuristic, while the outer decisions and
 the preset still use `--video-tx-lambda 256`. Sweeping the weight at the
-100 kbps point (480x240x60, `--nightly --video-tx-context-rate
+100 kbps point (480x240x60, `--fast-decode --video-tx-context-rate
 --video-tx-lambda L`, CVVDP measured at every point) moves the optimum to
 40–56:
 
@@ -138,7 +138,7 @@ the preset still use `--video-tx-lambda 256`. Sweeping the weight at the
 | 128 | 137 | 25,168 | 100.672 | 8.7663 | 35.3680 | 8.7635 |
 | 256 | 139 | 25,009 | 100.036 | 8.5696 | 33.8140 | 8.5696 |
 
-Baseline `--nightly` without the context model at 100.248 kbps is 8.7465 JOD /
+Baseline `--fast-decode` without the context model at 100.248 kbps is 8.7465 JOD /
 35.3754 dB. The plateau (40–56) is +0.02 to +0.05 JOD and the interpolated
 values wiggle by ±0.01 with the QP-to-QP mode changes, so 48 is picked as the
 plateau centre, not as a uniquely better point: at QP 138 it is a direct
@@ -146,7 +146,7 @@ same-rate win (99.760 kbps vs the baseline's 99.760 kbps interpolation,
 +0.062 JOD / +0.21 dB), and lambda 52 independently wins at 100.284 kbps
 (+0.034 JOD).
 
-Control: `--nightly --video-tx-lambda 48` **without** the context model is
+Control: `--fast-decode --video-tx-lambda 48` **without** the context model is
 disastrous (QP 146: 103.160 kbps, 8.6581 JOD; iso-rate ≈8.637), because the
 heuristic under-charges every leaf and the low weight removes the rate
 penalty. The pairing of the true-bit model with a matching weight is what
@@ -175,7 +175,7 @@ wins.
 
 After the `--video-tx-lambda 48` calibration (this tree):
 
-* `--nightly` expands to `--video-rd-preset quality --video-ccso-rd
+* `--fast-decode` expands to `--video-rd-preset quality --video-ccso-rd
   --video-edge-inter --video-tx-context-rate --video-tx-lambda 48` and its
   480x240 QP 138 stream is pinned at 24,940 B /
   `c4797f3bef07da3ed608caf5340875c5`;
@@ -219,7 +219,7 @@ After the `--video-tx-lambda 48` calibration (this tree):
   still used the heuristic, silently breaking `gate_video_tx_search`.  The
   preset-only gate keeps that contract; the explicit
   `--video-tx-context-rate --video-gpu` is rejected by name. The model stays
-  an explicit CPU opt-in; `--nightly` turns it on with
+  an explicit CPU opt-in; `--fast-decode` turns it on with
   `--video-tx-lambda 48` (`docs/video-nightly.md`). With the historical
   weight (256) it still measures worse than edge + CCSO, so it is calibrated
   only inside the nightly aggregate.

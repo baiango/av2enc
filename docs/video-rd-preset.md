@@ -23,7 +23,7 @@ preset stream is byte-identical to typing the flags out):
 | `--video-intra-full` | 61-candidate luma intra search for the keyframe and intra leaves |
 
 The measured partition decision is a **separate opt-in** (`--video-partition-rd`,
-also carried by `--nightly`); the preset stream is pinned without it. The
+also carried by `--fast-decode`); the preset stream is pinned without it. The
 historical `decide()` charged a source-variance leaf (SSE units) against a
 SAD-domain signal cost, so at QP 190 the signal cost (`1.44e9`) exceeded the
 largest possible 64x64 variance reduction (`6.66e7`) and every optional split
@@ -39,7 +39,7 @@ default.
 
 The stable `quality` rows below use the historical TX-search rate. The
 newer algorithmic changes are **not** in this preset; they are the CPU-only
-`--nightly` aggregate (`docs/video-nightly.md`), which adds rate-aware CCSO,
+`--fast-decode` aggregate (`docs/video-nightly.md`), which adds rate-aware CCSO,
 bottom-edge inter and the measured partition probe. `--video-tx-context-rate`
 turns on the TX context model explicitly.
 
@@ -49,7 +49,7 @@ Host: Apple M4 (10 cores), `AV2ENC_CPU_FAST=ON`, `--cpu-threads 8`. Clip:
 
 ### Measured partition probe (separate opt-in)
 
-The probe was re-measured on top of the `--nightly` aggregate (this preset plus
+The probe was re-measured on top of the `--fast-decode` aggregate (this preset plus
 rate-aware CCSO and bottom-edge inter), which is the combination that carries
 it. A 60-frame QP sweep:
 
@@ -99,7 +99,7 @@ Linear interpolation between the two bracketing measured QPs, same clip:
 
 The CDEF+GDF row is historical. Re-measured after the edge/CCSO work
 (`docs/video-nightly.md`), the 10x cost was almost all GDF: CDEF alone is now
-**+0.20 JOD at iso-rate for ≈1.3x** encode time and is part of `--nightly`,
+**+0.20 JOD at iso-rate for ≈1.3x** encode time and is part of `--fast-decode`,
 while GDF on top of CDEF is negative (8.931 vs 8.943 JOD at iso-rate for 3.8x
 the pre-CDEF nightly's CPU time). `--video-cdef-search ladder|step|fast` bounds
 the CDEF decision search if even that cost is too high.
@@ -235,13 +235,13 @@ Nothing in the syntax or the legal-partition rules changes. On an
 SB-aligned height (256x256, 128x128, ...) no leaf straddles the bottom edge and
 the flag is byte-identical (gated).
 
-Measured at QP 138 on the 480x240 clip (same host, `--nightly`), against the
+Measured at QP 138 on the 480x240 clip (same host, `--fast-decode`), against the
 previous aggregate:
 
 | Point | Bytes | kbps | JOD | PSNR-Y |
 |---|---:|---:|---:|---:|
-| previous `--nightly` QP 142 | 25,062 | 100.248 | 8.7465 | 35.3754 |
-| `--nightly --video-edge-mask` QP 138 | 25,023 | 100.092 | **8.8195** | **35.7563** |
+| previous `--fast-decode` QP 142 | 25,062 | 100.248 | 8.7465 | 35.3754 |
+| `--fast-decode --video-edge-mask` QP 138 | 25,023 | 100.092 | **8.8195** | **35.7563** |
 | same, QP 137 | 26,318 | 105.272 | 8.8244 | 35.8648 |
 | same, QP 136 | 25,634 | 102.536 | 8.8562 | 35.9149 |
 
@@ -264,10 +264,10 @@ model (see `docs/video-partition-rd.md`).
 | `price` scaled by `step²` (calibrated at QP 190) | 8.08 JOD at 100.56 kbps (QP 172/174 interpolation) | over-splits at lower QP; the variance proxy is QP-independent, so a QP-scaled Lagrangian under-prices splits at high quality |
 | `price` scaled linearly with `step` | 8.12 JOD at 100.56 kbps (QP 170/172 interpolation) | same over-split |
 | domain-fix `price` 16,000 (less splitting) | 8.09 JOD at 97.1 kbps (QP 170); below the chosen curve at iso-rate | loses ~0.2 JOD at 100 kbps |
-| `--video-cdef --video-gdf` | +0.05 JOD | re-measured after the edge/CCSO work: CDEF alone is +0.20 JOD for ≈1.3x and is in `--nightly`; GDF on top is negative (8.931 vs 8.943 iso) for 3.8x CPU time |
+| `--video-cdef --video-gdf` | +0.05 JOD | re-measured after the edge/CCSO work: CDEF alone is +0.20 JOD for ≈1.3x and is in `--fast-decode`; GDF on top is negative (8.931 vs 8.943 iso) for 3.8x CPU time |
 | `--video-cdef --video-gdf` (pre-CDEF tree) | +0.05 JOD | 10x encode time (14.4 s vs 1.5 s) for a small filter gain |
 | `--video-tcq` | 6.223 JOD at 98.1 kbps | 145 s encode (60x) for ~+0.01 JOD |
-| `--video-rdoq` (on `--nightly`) | +0.202 JOD / +0.87 dB at 100.25 kbps | measured on the edge+CCSO tree; now part of `--nightly`, see `docs/video-rdoq.md` |
+| `--video-rdoq` (on `--fast-decode`) | +0.202 JOD / +0.87 dB at 100.25 kbps | measured on the edge+CCSO tree; now part of `--fast-decode`, see `docs/video-rdoq.md` |
 | `--video-tx-lambda 128/512/1024` | 6.18/6.17/6.18 | default 256 is already on the plateau |
 | `--video-subpel-eighth` | +0.02–0.03 JOD | real but marginal; leave it as an explicit add-on |
 | `--video-per-segment-q` | ~+0.02 JOD | marginal, adds a rate knob (`--video-seg-delta`) |
@@ -279,7 +279,7 @@ model (see `docs/video-partition-rd.md`).
 | `--video-ccso-bands 5/6` | neutral / worse | no gain |
 | `--video-pc-wiener`, `--video-wiener`, `--video-chroma-lr` | small / neutral / rate explosion | not worth the symbol cost at 100 kbps |
 | `--video-gme/--video-warp` | rejected by the CLI | gated on the plain P chain; incompatible with the preset's `--video-inter-residual` |
-| `--video-bawp` | rejected by the CLI with the preset | skip-only CPU/CUDA parity path; `--video-bawp-carrier` enables BAWP over the residual path and is in `--nightly` |
+| `--video-bawp` | rejected by the CLI with the preset | skip-only CPU/CUDA parity path; `--video-bawp-carrier` enables BAWP over the residual path and is in `--fast-decode` |
 | `--video-opfl`, `--video-compound` | rejected / needs B frames | requires `--b-frames`, which this 60-frame P chain does not use |
 | `--video-qm` | rejected | gated at QP 90 |
 
