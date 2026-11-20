@@ -1,4 +1,16 @@
 
+## Composition result (do not re-run)
+
+Matched K does NOT stack across the merged KEEPs. Dense 6-point ladders
+(QP113-118, docs/rd-compose.md): base driver 86.041, +MC 86.184, +tail 86.266,
++both 86.160 (robust fit, R2 0.012). MC's early +0.341 was a 2-point bracket
+artefact; the dense-ladder value is +0.143. They compose on rate (both is 2-4%
+smaller at every QP), not on matched K.
+
+Gap decomposition vs AVM: CVVDP 9.836 vs 9.862 (equal); BA -2.82 K (70%), SS2
+-1.06 K (26%). Split 48% head f1-32 / 48% tail f33-59 / 1% key. The head
+spends 45-65 B/frame vs AVM ~197.
+
 ## Closed by lane 9 (per-block MC)
 
 - Per-block MC filter (`AV2ENC_INTERP_BLOCK`, CSF 2): KEEP +0.341, merged,
