@@ -18,7 +18,7 @@ normal flow is therefore **encode on Modal, score here**:
 python3 -m modal run tools/modal_rd.py --mode ablate --base drift \
     --encode-only --out-dir /tmp/modal-ablate
 
-# 2. Decode and score locally with the pinned dav2d + MPS CVVDP + local libjxl.
+# 2. Decode and score locally with the pinned avmdec + MPS CVVDP + local libjxl.
 python3 tools/score_ivf.py --manifest /tmp/modal-ablate/manifest.json \
     --parallel 3 --out /tmp/modal-ablate/results.json
 ```
