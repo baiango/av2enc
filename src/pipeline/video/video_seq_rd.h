@@ -172,11 +172,16 @@ inline double partition_bits() { return 2.0; }
 // it; the causal neighbours the EDGE term reads are already in that plane, so
 // the same call is exact for a trial encode and for the post-pass verification.
 // `rows` is the visible-row clip (-1 = all).
-inline double leaf_distortion(const std::uint8_t* src, int src_w, int src_h,
-                              int src_stride, int sx, int sy, int w, int h,
-                              int rows, const std::uint8_t* plane,
-                              int plane_stride, int plane_h, int rx, int ry,
-                              double lowpass_gain, double lowpass2_gain) {
+//
+// The explicit-weight form below is the same measured D with the caller's own
+// high-pass / block-edge weights.  AV2ENC_RD_TAIL_TX uses it so the tail
+// residual plan comparison and the key driver do not share one env knob; the
+// historical wrapper reads the driver's AV2ENC_RD_DRIVER_HF/EDGE knobs.
+inline double leaf_distortion_gains(
+    const std::uint8_t* src, int src_w, int src_h, int src_stride, int sx,
+    int sy, int w, int h, int rows, const std::uint8_t* plane,
+    int plane_stride, int plane_h, int rx, int ry, double lowpass_gain,
+    double lowpass2_gain, double hf, double edge) {
   if (src == nullptr || plane == nullptr || w <= 0 || h <= 0) return 0.0;
   if (src_w <= 0 || src_h <= 0 || plane_stride <= 0) return 0.0;
   const int count = rows >= 0 && rows < h ? rows : h;
@@ -190,8 +195,6 @@ inline double leaf_distortion(const std::uint8_t* src, int src_w, int src_h,
   double sum = eff_perc::weighted_sse(/*weights=*/nullptr, w, h, src, src_stride,
                                       sx, sy, rec, plane_stride, 0, 0, count,
                                       lowpass_gain, lowpass2_gain);
-  const double hf = hf_gain();
-  const double edge = edge_gain();
   if (hf <= 0.0 && edge <= 0.0) return sum;
   const auto source = [&](int x, int y) -> int {
     const int px = std::clamp(sx + x, 0, src_w - 1);
@@ -251,6 +254,17 @@ inline double leaf_distortion(const std::uint8_t* src, int src_w, int src_h,
     sum += edge * step;
   }
   return sum;
+}
+
+inline double leaf_distortion(const std::uint8_t* src, int src_w, int src_h,
+                              int src_stride, int sx, int sy, int w, int h,
+                              int rows, const std::uint8_t* plane,
+                              int plane_stride, int plane_h, int rx, int ry,
+                              double lowpass_gain, double lowpass2_gain) {
+  return leaf_distortion_gains(src, src_w, src_h, src_stride, sx, sy, w, h,
+                               rows, plane, plane_stride, plane_h, rx, ry,
+                               lowpass_gain, lowpass2_gain, hf_gain(),
+                               edge_gain());
 }
 
 struct Counters {

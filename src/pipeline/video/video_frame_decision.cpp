@@ -340,6 +340,17 @@ bool InterFrameEncoder::decide(std::string& error) {
       poptions.max_depth =
           std::min(options_.max_partition_depth, 4);
     }
+    // AV2ENC_RD_TAIL_ACT: one level deeper than the band gate's bound.  A
+    // rect-path 16x16 coding block can sit at depth 4 (e.g. 64 -> 64x32 ->
+    // 32x32 -> 32x16 -> 16x16), so the sub-16 descent needs depth 5 or it can
+    // never fire on the blocks it is meant for.  Still below the CLI cap's
+    // legal range and below the encoder's 8x8 inter floor.
+    if (!keyframe_ && tail_tx::tail_armed(tx_detail::picture_ordinal()) &&
+        tail_tx::config().act > 0.0) {
+      poptions.max_depth = std::max(
+          poptions.max_depth,
+          std::min(options_.max_partition_depth + 1, 6));
+    }
     probe_costs = build_partition_probe_costs(
         poptions.max_depth,
         std::max(poptions.min_block_size_px, partition::kMinBlockPixels));
@@ -358,6 +369,15 @@ bool InterFrameEncoder::decide(std::string& error) {
   const bool detail_descent = !keyframe_ && tx_detail::tail_armed();
   const int detail_max_depth = poptions.max_depth;
   const double detail_min_share = tx_detail::config().min_share;
+  // AV2ENC_RD_TAIL_ACT: the tail residual's sub-16 coding-block gate.  When
+  // armed, a 16x16 node whose source high-pass activity clears the threshold
+  // may not stay a coding block, so its residual can reach the legal 8x8 /
+  // 8x4 / 4x4 transform partitions of an 8x8-class leaf.  The driver's
+  // AV2ENC_RD_DRIVER_ACT is the same screen on the key picture.
+  const bool tail_act_descent =
+      !keyframe_ && tail_tx::tail_armed(tx_detail::picture_ordinal()) &&
+      tail_tx::config().act > 0.0;
+  const double tail_act = tail_tx::config().act;
   // One leaf model for both solvers.  It is exactly the historical keyframe
   // / P-frame estimate (variance + price * leaf_bits) or, when the measured
   // probe is active, the probe's measured residual RD on the node's own
@@ -367,13 +387,17 @@ bool InterFrameEncoder::decide(std::string& error) {
   const auto partition_leaf_cost =
       [this, syntax_bit_price, leaf_bits, partition_probe, &probe_costs,
        &exact_costs, detail_descent, detail_max_depth,
-       detail_min_share](const partition::PartitionNodeInfo& info) {
+       detail_min_share, tail_act_descent, tail_act](
+          const partition::PartitionNodeInfo& info) {
         // The leaf coder handles coding blocks up to 64x64.  A larger node
         // must split (the 128/256 root and its rectangular children); the
         // spec never implies NONE at those sizes, so the solver always has a
         // partition.
         const int bw = partition::block_width(info.size);
         const int bh = partition::block_height(info.size);
+        if (tail_act_descent && bw == 16 && bh == 16) {
+          ++tail_tx::counters().act_nodes16;
+        }
         if (bw > 64 || bh > 64) return partition::kInfiniteCost;
         // AV2ENC_TX_DETAIL_SEARCH_TAIL: in the armed tail, a node that is
         // strictly larger than 16x16 on at least one axis and carries the
@@ -398,24 +422,57 @@ bool InterFrameEncoder::decide(std::string& error) {
             return partition::kInfiniteCost;
           }
         }
+        // AV2ENC_RD_TAIL_ACT: the same forced descent one level deeper.  A
+        // 16x16 node with real high-pass activity should not stay a coding
+        // block, which is what makes an 8x8-class leaf (and therefore a legal
+        // 4x4/8x4 transform partition) reachable in the tail.  Flat sky keeps
+        // the 16x16 block: the screen is the source, not the measured D.  The
+        // NONE candidate is priced with a large finite penalty rather than
+        // kInfiniteCost: a depth-5 16x8/8x16 child can be outside what the
+        // leaf coder accepts at the picture edge, and dropping NONE entirely
+        // then leaves the node with no partition at all.
+        bool tail_force_split = false;
+        if (tail_act_descent && bw == 16 && bh == 16 &&
+            info.depth + 1 <= detail_max_depth &&
+            (info.allowed.is_allowed(partition::PartitionType::kHorz) ||
+             info.allowed.is_allowed(partition::PartitionType::kVert))) {
+          ++tail_tx::counters().act_nodes;
+          const partition::BlockRect rect = partition::block_rect(
+              geometry_, info.mi_row, info.mi_col, info.size);
+          if (rect.visible_width > 0 && rect.visible_height > 0 &&
+              tail_tx::source_activity(source_.y.data(),
+                                       static_cast<int>(source_.width),
+                                       static_cast<int>(source_.height),
+                                       static_cast<int>(source_.width),
+                                       tile_x_ + rect.x, tile_y_ + rect.y,
+                                       rect.visible_width,
+                                       rect.visible_height) >= tail_act) {
+            ++tail_tx::counters().act_fired;
+            tail_force_split = true;
+          }
+        }
+        const double force_penalty =
+            tail_force_split ? 1.0e9 : 0.0;
         double leaf = static_cast<double>(block_variance_cost_at(info)) +
-                      syntax_bit_price * leaf_bits;
+                      syntax_bit_price * leaf_bits + force_penalty;
         if (partition_probe) {
           const std::uint64_t key =
               partition_probe_key(info.mi_row, info.mi_col, info.size);
           if (exact_costs != nullptr) {
             const auto exact = exact_costs->find(key);
-            if (exact != exact_costs->end()) return exact->second;
+            if (exact != exact_costs->end()) {
+              return exact->second + force_penalty;
+            }
           }
           const auto it = probe_costs.find(key);
           if (it != probe_costs.end()) {
-            leaf = it->second;
+            leaf = it->second + force_penalty;
           } else {
             double measured = 0.0;
             if (partition_probe_leaf_cost(
                     info, probe_syntax_price(info.mi_row, info.mi_col),
                     measured)) {
-              leaf = measured;
+              leaf = measured + force_penalty;
             }
           }
         }
@@ -3273,6 +3330,131 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       }
       if (trace_ && options_.enable_cctx) {
         std::cerr << "  cand inter cctx=" << out.cctx << "\n";
+      }
+      // AV2ENC_RD_TAIL_TX (default off): the L3 exact-rate mechanism on the
+      // tail's inter luma residual.  The screen above ranked its plans with
+      // the RDOQ-calibrated §8.3 model and a per-leaf distortion; this stage
+      // re-searches with the uncalibrated model and the coefficient trellis,
+      // then scores both plans with the driver's assembled-block BA-shaped D
+      // and the live §8.2.6 interval rate.  Everything is inside the gate.
+      if (tail_tx::tail_armed(tx_detail::picture_ordinal()) && pipe_on &&
+          !keyframe_ && !chroma_part && out.res_y.searched &&
+          !out.cand.compound && !out.interintra && !seg_skip_leaf) {
+        const tail_tx::Config& tcfg = tail_tx::config();
+        tail_tx::Counters& tc = tail_tx::counters();
+        ++tc.leaves;
+        // One J for the plan: D is the driver's BA-shaped leaf distortion on
+        // the assembled block (causal top/left neighbours included so the
+        // block-edge term is the error the decoder will show), R is the live
+        // interval rate through the §5.20.7.30 scan order.
+        const int rx = x0 > 0 ? 1 : 0;
+        const int ry = y0 > 0 ? 1 : 0;
+        const int pw = w + rx;
+        const int ph = h + ry;
+        const double csf =
+            ba_on ? pipe_ba::config().low_band_gain
+                  : (eff_on ? eff_perc::csf_gain() : 0.0);
+        const double csf2 =
+            ba_on ? 0.0 : (eff_on ? eff_perc::csf2_gain() : 0.0);
+        std::vector<std::uint8_t> padded(
+            static_cast<std::size_t>(pw) * static_cast<std::size_t>(ph), 0);
+        const auto score_plan = [&](const TxPlan& plan, double* d_out,
+                                    double* r_out) {
+          for (int yy = 0; yy < h; ++yy) {
+            std::memcpy(
+                &padded[static_cast<std::size_t>(yy + ry) *
+                            static_cast<std::size_t>(pw) +
+                        static_cast<std::size_t>(rx)],
+                &plan.recon[static_cast<std::size_t>(yy) *
+                            static_cast<std::size_t>(w)],
+                static_cast<std::size_t>(w));
+          }
+          if (ry > 0) {
+            for (int xx = 0; xx < w; ++xx) {
+              padded[static_cast<std::size_t>(rx + xx)] =
+                  recon_[0].at(x0 + xx, y0 - 1);
+            }
+          }
+          if (rx > 0) {
+            for (int yy = 0; yy < h; ++yy) {
+              padded[static_cast<std::size_t>(yy + ry) *
+                         static_cast<std::size_t>(pw)] =
+                  recon_[0].at(x0 - 1, y0 + yy);
+            }
+          }
+          if (tcfg.ba_d) {
+            *d_out = seq_rd::leaf_distortion_gains(
+                source_.y.data(), static_cast<int>(source_.width),
+                static_cast<int>(source_.height),
+                static_cast<int>(source_.width), ax0, ay0, w, h,
+                luma_mask_row, padded.data(), pw, ph, rx, ry, csf, csf2,
+                tcfg.hf, tcfg.edge);
+          } else {
+            *d_out = static_cast<double>(sse_against_source(
+                source_, 0, ax0, ay0, w, h, plan.recon, luma_mask_row));
+          }
+          *r_out = tcfg.live_rate
+                       ? plan_rate_bits(plan, 0, true,
+                                        static_cast<int>(node.size))
+                       : plan.rate_bits;
+        };
+        double screen_d = 0.0;
+        double screen_r = 0.0;
+        const double screen_j = [&] {
+          score_plan(out.res_y, &screen_d, &screen_r);
+          return screen_d + pipe_lambda * tcfg.lambda * screen_r;
+        }();
+        // Exact re-search: uncalibrated §8.3 candidate rate (model_rate_scale
+        // 1.0) and the L3 coefficient trellis, same lambda as the leaf.
+        const double level_scale =
+            rdoq_sse_scale_at(options_, st.current_qindex) *
+            (tcfg.level ? tcfg.level_scale : 1.0);
+        TxPlan exact_y;
+        std::string exact_error;
+        const bool exact_ok = search_luma_tx(
+            source_, ax0, ay0, w, h, out.y, st.current_qindex,
+            txtsearch::Mode::kInter, pipe_lambda * tcfg.lambda,
+            /*allow_idtx=*/false, /*intra_mapped_mode=*/0, options_.enable_tcq,
+            ::av2enc::still::qctx::slice_for_base_q_idx(
+                (pipe_on || options_.tx_context_rate) ? base_q_index()
+                                                     : st.current_qindex),
+            options_.enable_inter_ddt,
+            /*search_partition=*/options_.enable_tx_search,
+            /*context_rate=*/true, options_.trace,
+            /*allow_rdoq=*/tcfg.level && options_.enable_rdoq,
+            ::av2enc::still::qctx::slice_for_base_q_idx(
+                static_cast<int>(options_.base_q_idx)),
+            level_scale, exact_y, exact_error, luma_mask_row,
+            pipe_leaf_weights.empty() ? nullptr : pipe_leaf_weights.data(),
+            eff_slice, csf, csf2, /*intra_rdoq=*/false,
+            /*model_rate_scale=*/1.0);
+        if (exact_ok) {
+          ++tc.exact_ok;
+          double exact_d = 0.0;
+          double exact_r = 0.0;
+          score_plan(exact_y, &exact_d, &exact_r);
+          const double exact_j = exact_d + pipe_lambda * tcfg.lambda * exact_r;
+          tc.screen_d += screen_d;
+          tc.screen_r += screen_r;
+          tc.exact_d += exact_d;
+          tc.exact_r += exact_r;
+          if (exact_j < screen_j) {
+            if (exact_y.partition != out.res_y.partition ||
+                exact_y.parts.size() != out.res_y.parts.size()) {
+              ++tc.plan_changed;
+            }
+            out.res_y = std::move(exact_y);
+            ++tc.kept_exact;
+            if (trace_) {
+              std::cerr << "  tail-tx exact kept parts="
+                        << out.res_y.parts.size() << " D=" << exact_d
+                        << " R=" << exact_r << " screen D=" << screen_d
+                        << " R=" << screen_r << "\n";
+            }
+          }
+        } else {
+          ++tc.exact_failed;
+        }
       }
       const double res_total =
           sse_pipe(0, ax0, ay0, w, h, out.res_y.recon) +

@@ -27,6 +27,7 @@
 #include "pipeline/video/video_pipe_ba.h"
 #include "pipeline/video/video_temporal.h"
 #include "pipeline/video/video_tx_search.h"
+#include "pipeline/video/video_tail_tx.h"
 #include "pipeline/video/video_decision_rate.h"
 #include "codec/partition/tree/partition.h"
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
