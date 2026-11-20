@@ -172,6 +172,8 @@ These three failures were encoder bugs, not decoder limits.  Each is now
 
 | Status | Do not do | Why | Do instead |
 |---|---|---|---|
+| CONFIRMED | Expect a first-party BA-fitted leaf D to lift K (`exp/ba-metric` `ee224bce`) | 6,240 crops from 780 frames (13 streams), 103 cheap features; held-out **Spearman 0.793** (passes the 0.6 gate), mask = 24/(24+act), the 2-4 px band term adds +0.064 within-frame rho. As an RD objective it fails: mask-only **+0.017** (neutral); the pure fitted D collapses the late tail (f44-59 BA **8.10 vs 2.46**, PSNR 42.7 vs 45.9) because it drops the quadratic large-error penalty that holds the P reference chain together; head-only costs **+19.4 kbps** at the same QP | Keep `AV2ENC_BA_METRIC` off. BA is predictable from cheap masked features, but the leaf-D lever does not pay at 240p/100 kbps: the quadratic term is load-bearing. The corpus/tooling (`tools/ba_metric/`, `docs/ba-metric.md`) is kept for a content-aware selector, not for the D |
+
 | CONFIRMED | Use the default RDOQ rate model for quality decisions | It is a bring-up/test model, not an entropy-derived estimate | Replace the coefficient/EOB rate callbacks with real entropy costs |
 | CONFIRMED | Trust the placeholder QP→lambda calibration | It is documented as a placeholder | Use `lambda_sse_from_quant_step()` and calibrate `sse_scale` |
 | CONFIRMED | Port RDO to GPU before it matches CPU decisions | The CPU framework is the reference | Bit-exact decision tests first |
