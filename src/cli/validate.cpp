@@ -777,10 +777,13 @@ ParseStatus validate_options(Options& options, std::string& error) {
         error = "--video-compound-near-near needs --video-compound";
         return ParseStatus::kError;
       }
-      if (options.b_frames == 0) {
+      const bool chained_b =
+          options.video_tlayers != 0 && options.video_gops > 1 &&
+          tlayers_chain_enabled(options) && tlayers_b_enabled(options);
+      if (options.b_frames == 0 && !chained_b) {
         error = "--video-compound-near-near is gated on the two-reference "
                 "B-frame path (one past and one future reference): pass "
-                "--b-frames";
+                "--b-frames or the chained --video-tlayers B form";
         return ParseStatus::kError;
       }
       if (options.video_gpu) {
@@ -1792,9 +1795,14 @@ ParseStatus validate_options(Options& options, std::string& error) {
       const bool chained_tlayers =
           options.video_tlayers != 0 && options.video_gops > 1 &&
           tlayers_chain_enabled(options);
+      // The chained B carrier codes use_bawp only on its single-prediction
+      // leaves (the §5.20.7.6 gate excludes compound blocks), so BAWP can
+      // stay on while compound is enabled and each leaf decides.
+      const bool chained_b =
+          chained_tlayers && tlayers_b_enabled(options);
       if (options.b_frames != 0 ||
           (options.video_tlayers != 0 && !chained_tlayers) ||
-          frame_modes != 0 || options.video_compound ||
+          frame_modes != 0 || (options.video_compound && !chained_b) ||
           options.video_gme || options.video_warp ||
           options.video_switch || options.video_ras || options.video_olk ||
           options.video_leading != 0 || options.video_sef || !residual_ok) {
@@ -1802,7 +1810,9 @@ ParseStatus validate_options(Options& options, std::string& error) {
                 "single-prediction P chain: it cannot be combined with "
                 "--b-frames, --video-tlayers (except the chained "
                 "--video-gops form), a frame-type wrapper, "
-                "--video-compound or --video-gme/--video-warp"
+                "--video-compound (except the chained --video-gops B form, "
+                "where BAWP applies only to non-compound leaves) or "
+                "--video-gme/--video-warp"
                 " (and --video-inter-residual needs "
                 "--video-bawp-carrier)";
         return ParseStatus::kError;
@@ -1863,7 +1873,13 @@ ParseStatus validate_options(Options& options, std::string& error) {
       }
     }
     if (options.video_compound) {
-      if (options.b_frames == 0 && options.video_refs != 2) {
+      // The chained single-key hierarchical-B carrier owns a two-entry
+      // per-frame reference map (past/future anchors), so the compound pair
+      // is the plan's (0,1) pair and --video-refs is not the source of it.
+      const bool chained_b =
+          options.video_tlayers != 0 && options.video_gops > 1 &&
+          tlayers_chain_enabled(options) && tlayers_b_enabled(options);
+      if (options.b_frames == 0 && options.video_refs != 2 && !chained_b) {
         error = "--video-compound needs --video-refs 2 (the (0,1) pair is "
                 "implied by NumTotalRefs == 2)";
         return ParseStatus::kError;
@@ -1871,9 +1887,10 @@ ParseStatus validate_options(Options& options, std::string& error) {
       if (options.video_drl_reorder || options.video_long_term ||
           options.video_olk || options.video_leading != 0 || options.video_sef ||
           options.video_switch || options.video_ras ||
-          options.video_tlayers != 0) {
+          (options.video_tlayers != 0 && !chained_b)) {
         error = "--video-compound cannot be combined with the frame-type or "
-                "DRL-reorder modes";
+                "DRL-reorder modes (the chained --video-tlayers B form is the "
+                "exception)";
         return ParseStatus::kError;
       }
     } else if (options.video_compound_wedge ||

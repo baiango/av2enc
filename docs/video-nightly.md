@@ -53,6 +53,14 @@ byte at QP 114/116/118, measures **K 86.33 at 100 kbps (+0.097 over the 86.232
 flat aggregate)**, and is documented as a **LEAD, not a KEEP** (inside the
 adjacent-QP ripple and sharing the driver headroom with the head/tail TX).
 
+`--nightly-b` (`docs/tlayers-chain.md`) is a separate **research** preset, not
+part of this aggregate: the chained single-key hierarchical-B stream with
+AVERAGE compound measures **K 86.607 at 100 kbps (+0.375 over the 86.232 flat
+aggregate, +1.135 over its own 85.472 single-prediction control)**. Its
+60-picture chains are `avmdec`-validated only (the pinned `dav2d` has the
+§7.21.6 drain defect), so it stays opt-in and the shipped flat decisions here
+are unchanged.
+
 ## Current pins
 
 | Purpose | QP | Bytes | Rate | CVVDP | PSNR-Y | K | MD5 |

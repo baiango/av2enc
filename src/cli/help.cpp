@@ -316,15 +316,21 @@ void print_usage(std::ostream& out) {
                        "--nightly (the pre-2026-11-20 name) is an exact alias."});
   item("--nightly-b", {"Measured chained single-key hierarchical-B aggregate:",
                        "the reordering-legal tool set plus the chained-form",
-                       "bottom-edge path, key-QP offset -50, BAWP/carrier, the",
+                       "bottom-edge path, key-QP offset -50, BAWP/carrier,",
+                       "AVERAGE compound on the interior B pictures, the",
                        "partition probe, the layer-0 anchor residual, the key",
                        "RD driver, the eff-perc pipe, the tail exact-rate TX,",
                        "the key TX/UV RD gates and the band-gated TX descent.",
+                       "K 86.607 at 100 kbps (+0.375 over the flat 86.232;",
+                       "+1.135 over the 85.472 single-prediction arm).",
                        "Pass --video-gops M > 1 (M 8-frame blocks; a 4-frame",
                        "tail is allowed) and the matching --frames. CPU only.",
                        "Research opt-in (docs/tlayers-chain.md): decoder-exact",
                        "under tools/validate_avmdec.py while the pinned dav2d",
-                       "has the §7.21.6 drain defect; not the default"});
+                       "has the §7.21.6 drain defect; not the default.",
+                       "Wedge/diffwtd, NEAR_NEARMV, OPFL and refine-MV stay",
+                       "off (below the +0.15 gate); --video-compound-off",
+                       "reproduces the 85.472 arm"});
 
   item("--video-rd-preset <name>", {"Expand a measured CPU RD preset:",
                                      "'quality' = --video-inter-residual",
@@ -526,25 +532,26 @@ void print_usage(std::ostream& out) {
   item("--video-compound-near-near", {"Opt-in §5.20.7.6 NEAR_NEARMV compound",
                                       "on a two-reference B frame (shifted MVs",
                                       "from the per-list merge stacks); needs",
-                                      "--video-compound and --b-frames"});
+                                      "--video-compound and --b-frames (or the chained --video-tlayers B form)"});
   item("--video-cwp-weighted", {"Search non-equal §5.20.7.6 CWP weights",
                                  "(enable_cwp + cwp_idx) for NEAR_NEARMV",
                                  "compound blocks; needs",
-                                 "--video-compound-near-near and --b-frames"});
+                                 "--video-compound-near-near and --b-frames (or the chained --video-tlayers B form)"});
   item("--video-imp-mask", {"Enable §5.4.6 enable_imp_msk_bld and apply the",
                              "derived §7.13.3.14 get_mask() blend on eligible",
                              "NEAR_NEARMV compound blocks; needs",
-                             "--video-compound-near-near and --b-frames"});
+                             "--video-compound-near-near and --b-frames (or the chained --video-tlayers B form)"});
   item("--video-df-sub-pu", {"Code the §5.18.2 allow_df_sub_pu bit and use",
                               "§7.13.3.15 sub-PU edges in §7.17 deblocking;",
                               "CPU --video only, off by default"});
   item("--video-opfl", {"CPU §7.13.3.8-.12 optical-flow refinement on a",
                         "NEAR_NEARMV compound block (codes use_optflow);",
-                        "needs --video-compound-near-near and --b-frames"});
+                        "needs --video-compound-near-near and --b-frames",
+                        "(or the chained --video-tlayers B form)"});
   item("--video-refine-mv", {"CPU §7.13.3.3-.6 refine-MV on a NEAR_NEARMV",
                              "compound block (derived, no bit: §5.20.7.17",
                              "makes it non-switchable); needs",
-                             "--video-compound-near-near and --b-frames"});
+                             "--video-compound-near-near and --b-frames (or the chained --video-tlayers B form)"});
   item("--video-cdef", {"Enable §7.18 CDEF on the reconstructed frame before",
                         "it becomes the output/reference (single strength set)"});
   item("--video-cdef-rd", {"Price the §5.18.7.10 params row in the per-frame",

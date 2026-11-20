@@ -329,6 +329,12 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   }
   options.video_bawp = !options.video_bawp_off;
   options.video_bawp_carrier = !options.video_bawp_off;
+  // AVERAGE compound on the interior B pictures: the plan's (0,1) past/future
+  // pair is a true two-reference pair, and §5.20.7.6 codes use_bawp only on
+  // single-prediction leaves, so the BAWP carrier above coexists per leaf.
+  // Measured +1.135 K (85.472 -> 86.607).  Wedge/diffwtd, NEAR_NEARMV, OPFL
+  // and refine-MV are below the +0.15 gate and stay off (docs/tlayers-chain.md).
+  options.video_compound = !options.video_compound_off;
   options.video_partition_rd = !options.video_partition_rd_off;
   // Nightly base lambda; with --video-qp-lambda the probe uses the measured
   // QP fit (the explicit flag would pin the constant instead).

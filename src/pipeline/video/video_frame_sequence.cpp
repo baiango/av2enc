@@ -460,8 +460,9 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   // with the dyadic B block instead of the P block. Each block's past anchor
   // (local 0) references the previous block's future anchor and the future
   // anchor (local 7) references the past anchor; the interior B frames
-  // reference the two anchors. No CLK after the first. Compound prediction is
-  // not used: the block layer selects one of the two references per leaf.
+  // reference the two anchors. With --video-compound the interior frames code
+  // reference_select over that (0,1) pair; the block layer still picks one
+  // reference per leaf on the anchors.
   const bool chained_b =
       options.tlayer_chain && options.video_gops > 1 && options.tlayer_b;
   if (options.tlayer_chain && options.video_gops > 1) {
@@ -588,6 +589,13 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   config.seq_tile_info_present = options.seq_tile_info_present;
   config.enable_avg_cdf = options.avg_cdf;
   config.avg_cdf_type = true;
+  config.enable_masked_compound =
+      options.compound && (options.compound_wedge || options.compound_diffwtd);
+  config.enable_cwp = options.enable_cwp_weighted;
+  config.enable_imp_msk_bld = options.enable_imp_msk_bld;
+  config.num_same_ref_compound = 0;
+  config.enable_opfl_refine = options.compound ? options.opfl_refine_type : 0;
+  config.enable_refinemv = options.compound && options.enable_refinemv;
   config.disable_drl_reorder = true;
   config.constrain_drl_reorder = true;
   config.enable_cfl_intra = true;
@@ -900,9 +908,9 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
     header.refresh_frame_flags = pf.refresh_frame_flags;
     header.immediate_output_frame = pf.immediate_output_frame;
     header.implicit_output_frame = pf.implicit_output_frame;
-    // reference_select stays 0: the block layer uses one reference per block;
-    // the two-entry map is what feeds the §7.9 field.
-    header.reference_select = false;
+    // Two-reference frames (the interior B pictures) may code a compound
+    // block; the anchors keep the single-reference form.
+    header.reference_select = options.compound && num_refs > 1;
     header.use_qtr_precision_mv = options.mv_precision == 1;
     header.allow_high_precision_mv = options.mv_precision != 2;
     header.use_ref_frame_mvs =

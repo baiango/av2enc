@@ -36,13 +36,23 @@ measures **K 85.472 at 100.0 kbps**:
 
 ```sh
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
-  --video --frames 60 --qp 131 --cpu-threads 8 --video-gops 7 --nightly-b
+  --video --frames 60 --qp 131 --cpu-threads 8 --video-gops 7 --nightly-b \
+  --video-compound-off
 ```
 
 That is **+8.51 K** over the 76.962 edge+key+BAWP arm, **+6.43 K** over the
 flat edge control (79.04), and **−0.76 K** against the 86.232 nightly target.
 The remaining gap is the flat-chain-only tool set (drift refresh scheduling,
 ref-signal-compact, tile-group-compact) and the chained structure itself.
+
+**AVERAGE compound closes the gap (2026-11-21).** The plan's interior B
+pictures already hold a true past/future pair, so compound uses it: the product
+preset `--nightly-b` now measures **K 86.607 at 100.0 kbps** (QP125, 24,988 B),
+**+1.135 K** over the 85.472 single-prediction arm and **+0.375 K** over the
+flat 86.232 aggregate — the best measured point in the tree. The 16-picture
+proof is exact on both decoders; the 60-picture streams are `avmdec`-only
+until the pinned dav2d §7.21.6 drain fix lands, so B remains **research-only**.
+`--video-compound-off` restores the 85.472 arm byte for byte.
 
 Default-off env gates (the raw spike flags; `--nightly-b` sets the same
 options):
@@ -111,9 +121,12 @@ Two candidates were available:
   anchor (local 0) references the previous block's future anchor (local N−1),
   and the future anchor references the past anchor. The existing
   `encode_temporal_sequence` carries it unchanged: a two-entry explicit ref map
-  per picture, `reference_select = 0`, and the block layer selects one of the
-  two references per leaf with single-reference prediction. No compound
-  prediction is used (the owner's initial constraint).
+  per picture, `reference_select = 0` by default, and the block layer selects
+  one of the two references per leaf with single-reference prediction.
+  `--nightly-b` enables AVERAGE compound on this carrier: the interior B
+  pictures code `reference_select = 1` over the plan's (0,1) past/future pair
+  (measured 2026-11-21, +1.135 K; see below). `--video-compound-off` keeps the
+  single-reference form.
 
 The temporal-layer B plan is therefore the carrier; `inter::bframes` is not
 extended.
@@ -219,7 +232,8 @@ the single-key allocation tools:
 |---|---|
 | `--video-edge-inter --video-edge-mask` | **legal** (single tile, no ref-mvs, CPU) |
 | `--video-key-qp-offset` | **legal** (the key is display 0; the plan is the existing display-indexed `frame_base_q_idx`) |
-| `--video-bawp --video-bawp-carrier` | **legal** (single-prediction leaves; compound stays off) |
+| `--video-bawp --video-bawp-carrier` | **legal** (single-prediction leaves; with `--video-compound` the compound leaves skip BAWP, so both tools coexist per leaf) |
+| `--video-compound` | **legal** (interior B pictures code `reference_select = 1` over the plan's (0,1) pair; +1.135 K, see "Compound on the chained B") |
 | `--video-partition-rd` | rejected: `--video-partition-rd does not compose with the B/temporal-layer/random-access/TIP frame schedules` |
 | `--video-drift-refresh` | rejected: wired for the flat key+P chain |
 | `--video-ref-signal-compact` (nightly default) | rejected: gated on the plain key+P chain |
@@ -269,7 +283,8 @@ operating point directly, against 303 kbps for the no-edge chain. The pinned
 dav2d stops at 17/60 on every 60-picture chain (the §7.21.6 defect), so all
 60-picture numbers are `avmdec`-validated with recon equality.
 
-The `--nightly-b` aggregate (the final arm) at the operating point:
+The pre-compound `--nightly-b` aggregate (now reachable as `--nightly-b
+--video-compound-off`) at the operating point:
 
 | case | bytes | MD5 | decoders |
 |---|---:|---|---|
@@ -281,6 +296,12 @@ against QP130 (25,322 B / 101.288 kbps): **K 85.472**, JOD 9.8353, BA 2.316,
 SS2 83.112, PSNR-Y 45.6 dB; key share 64.9%. Against the references:
 **+1.574** over the 83.898 arm, **+6.43** over the flat edge control 79.04,
 **−0.76** vs 86.232.
+
+AVERAGE compound on that arm is **+1.135 K**, so the product preset (compound
+on) measures **K 86.607 at 100.0 kbps**: QP125, 24,988 B,
+`3dbbad9847ab661c6c154903990ade75`, +0.375 over the flat 86.232. The pins,
+the `--video-compound-off` control and the sub-gate arms are in "Compound on
+the chained B" below.
 
 ## Rate-matched measurements (QP116 is not comparable)
 
@@ -484,14 +505,80 @@ winners for the user unless an explicit env value overrides them.
 | −57 | 134/135 | 85.066 | −0.406 |
 
   The key TX/UV/band tools flatten the offset curve: −45 is +0.020, well
-  below the +0.15 gate, so −50 is kept. The final B point remains
-  **K 85.472, −0.76 vs the 86.232 flat aggregate**; the two arms do not cross
-  it.
+  below the +0.15 gate, so −50 is kept. The final single-prediction B point
+  remains **K 85.472, −0.76 vs the 86.232 flat aggregate**; AVERAGE compound
+  (below) crosses it at **86.607, +0.375**.
 
 `--nightly-b` expands to the winning set (B_LEGAL + edge + key-QP −50 + BAWP +
-partition-RD + anchor residual + key RD driver + eff-perc pipe + tail TX +
-key TX + UVFULL/UVLEVEL + band-gated descent + the chained 8-frame B carrier).
-It requires `--video-gops M > 1`; `--frames` must be `M*8` or `M*8 + 4`.
+AVERAGE compound + partition-RD + anchor residual + key RD driver + eff-perc
+pipe + tail TX + key TX + UVFULL/UVLEVEL + band-gated descent + the chained
+8-frame B carrier). It requires `--video-gops M > 1`; `--frames` must be
+`M*8` or `M*8 + 4`; `--video-compound-off` drops the compound arm.
+
+## Compound on the chained B (2026-11-21)
+
+The B carrier's interior pictures already hold a true past/future pair, so the
+compound tools become usable once the frame header codes `reference_select = 1`
+and the sequence header carries the compound tool flags. `--video-compound` is
+now legal with the chained `--video-tlayers` B form; BAWP stays on because
+§5.20.7.6 codes `use_bawp` only on the single-prediction leaves, so a frame can
+mix BAWP single-pred blocks and compound blocks.
+
+The old closed-GOP compound recon bug (BUG-INTER-003/004) is fixed in this
+tree: the 16-picture chained proof is `dav2d --strict 1` exact and every
+measured 60-picture stream is `avmdec` 60/60 with `--video-recon` equality.
+The documented b4/QP197 reproducer is also exact now (25,592 B).
+
+Each arm is measured on the compound-legal chained B carrier (the AVERAGE arm
+is what `--nightly-b` now expands to) and rate-matched to 100.0 kbps with
+`tools/oracle.py` (first 60 frames of the NASA clip, `--video-gops 7`). `Δ` is
+against the 85.472 single-prediction baseline; the gate is +0.15 K.
+
+| arm | QP bracket | kbps | JOD | BA | SS2 | K | Δ | decision |
+|---|---|---|---:|---:|---:|---:|---:|---|
+| `--nightly-b --video-compound-off` (baseline) | 130/131 | 100.000 | 9.8353 | 2.316 | 83.112 | 85.472 | — | control |
+| **`--nightly-b`** (AVERAGE compound) | 124/125 | 100.000 | 9.8632 | 2.057 | 84.763 | **86.607** | **+1.135** | **in the preset** |
+| + wedge + diffwtd | 126/128 | 100.000 | 9.8527 | 2.058 | 84.637 | 86.533 | +1.061 | −0.074 vs AVERAGE; drop |
+| + near-near | 124/125 | 100.000 | 9.8430 | 2.061 | 84.723 | 86.488 | +1.016 | −0.119 vs AVERAGE |
+| + near-near + `--video-opfl` | 124/125 | 100.000 | 9.8463 | 2.042 | 84.756 | 86.567 | +1.095 | +0.079 vs near-near; drop |
+| + near-near + `--video-refine-mv` | 124/125 | 100.000 | 9.8435 | 2.061 | 84.717 | 86.490 | +1.018 | +0.002 vs near-near; drop |
+
+* **AVERAGE compound is the win.** It saves ~1.5 kB at a fixed QP and moves
+  the 100 kbps point five QP steps lower. At the same QP the gain is
+  Butteraugli and SSIMULACRA2, not CVVDP: BA 2.316 → 2.057, SS2 83.11 → 84.76.
+* **Masked compound is not additive.** Wedge/diffwtd spends 625 B more at
+  QP125 than AVERAGE and scores 86.533, inside the QP ripple and below
+  AVERAGE. The §7.13.3.27 mask syntax is exact but the clip does not ask for
+  it.
+* **NEAR_NEARMV / OPFL / refine-MV are sub-gate.** Near-near alone is −0.119
+  against AVERAGE; OPFL adds +0.079 over its own near-near carrier and
+  refine-MV +0.002. Neither clears +0.15, so both stay out of the preset.
+  (They remain available and decoder-exact for future content.)
+* **Promoted 2026-11-21.** `--nightly-b` now expands to the 86.607 arm;
+  `--video-compound-off` is the A/B control that reproduces the 85.472
+  single-prediction arm byte for byte. The preset stays CPU-only and
+  research-only (avmdec for the 60-picture chains) until the pinned dav2d
+  §7.21.6 drain defect is fixed.
+
+Reproduction (16-picture proof and the 60-picture bracket):
+
+```sh
+REF=testdata/nasa_480x240_30fps_60f.y4m
+# 16 pictures: one key + two chained B blocks; dav2d and avmdec exact
+build-dev/av2enc "$REF" -o /tmp/c16.ivf --video --frames 16 --qp 116 \
+  --cpu-threads 8 --video-gops 2 --nightly-b \
+  --video-recon /tmp/c16.y4m
+tools/bin/dav2d-macos --strict 1 --threads 1 -i /tmp/c16.ivf -o /tmp/c16.dec.y4m
+cmp /tmp/c16.y4m /tmp/c16.dec.y4m
+
+# 60 pictures, QP 125 (99.952 kbps); QP 124 brackets at 101.044
+build-dev/av2enc "$REF" -o /tmp/c60.ivf --video --frames 60 --qp 125 \
+  --cpu-threads 8 --video-gops 7 --nightly-b \
+  --video-recon /tmp/c60.y4m
+python3 tools/validate_avmdec.py /tmp/c60.ivf --ref "$REF" --recon /tmp/c60.y4m
+python3 tools/oracle.py --ref "$REF" --ivf c@124=/tmp/c60q124.ivf \
+  --ivf c@125=/tmp/c60.ivf --target-kbps 100 --no-segments
+```
 
 ## What would change the answer
 
@@ -505,11 +592,13 @@ It requires `--video-gops M > 1`; `--frames` must be `M*8` or `M*8 + 4`.
    partition-RD, but a per-frame or per-superblock allocation (the display-
    indexed `frame_base_q_idx` and delta-Q machinery exist) is still open. The
    key-QP offset is the one allocation lever that measured positive.
-3. **Compound prediction.** The owner kept it off for this proof. The
-   `docs/bframes.md` compound recon bugs were fixed on 2026-11-17
-   (BUG-INTER-003), so a gated `--video-compound` arm could use both references
-   jointly instead of selecting one per leaf. The earlier closed-GOP B
-   measurement was inert (+0.04 K), so this is a low expectation.
+3. **Compound prediction — measured 2026-11-21, promoted.** AVERAGE on the
+   chained B carrier is **86.607 K** (+1.135 over 85.472, +0.375 over the flat
+   86.232) and recon-exact at 16 and 60 pictures; masked compound (wedge +
+   diffwtd) is 86.533 and NEAR_NEARMV / OPFL / refine-MV are
+   86.488 / 86.567 / 86.490. Only the AVERAGE arm clears the +0.15 gate, so it
+   is in `--nightly-b` and the others stay off. The old closed-GOP B result
+   (+0.04 K) is a different schedule and does not apply.
 4. **Reference selection.** The P chained plan's `kTwo` carrier is
    anchor-biased; the B plan already uses the true past/future pair. A local
    predictor for the P plan would make the P control fairer, not the B arm

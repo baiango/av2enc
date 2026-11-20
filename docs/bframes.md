@@ -344,8 +344,13 @@ the 82.15 pin and the B-legal controls are.
   and the other B-incompatible nightly decisions (+3.11 K) are not available
   to any B stream, so a B arm starts 37 K behind before it codes a B picture.
 * `--video-compound`, `--video-compound-near-near`, `--video-opfl` and
-  `--video-refine-mv` are inert here (+0.04 K, ≤33 B) and compound is not
-  recon-exact, so there is no partial credit to bank.
+  `--video-refine-mv` are inert on the **closed-GOP** arm (+0.04 K, ≤33 B).
+  Compound is recon-exact since BUG-INTER-003/004; the chained single-key B
+  (`--nightly-b`) is a different structure and measures AVERAGE compound at
+  **+1.135 K** (85.472 → 86.607, +0.375 over the flat 86.232), so that preset
+  carries compound (see `docs/tlayers-chain.md`). This doc's negative is about
+  the closed-GOP schedule, not the chained one; the closed-GOP B arm stays
+  rejected.
 * The structure cannot be rate-matched honestly at this point: 42-62% of a
   25 kB budget goes to 10-20 key pictures, which forces QP197-204 and a 25-26 dB
   stream. This confirms the existing `docs/negative-results.md` row ("Expect a

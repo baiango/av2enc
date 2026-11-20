@@ -1268,6 +1268,11 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-compound-off") {
+      options.video_compound_off = true;
+      continue;
+    }
+
     if (argument == "--video-drift-refresh-off") {
       options.video_drift_refresh_off = true;
       continue;
