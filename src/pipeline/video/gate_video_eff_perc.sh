@@ -168,9 +168,18 @@ then
     fail "gate-on visible recon differs from the decoded payload"
 fi
 
-if "$BIN" "$NASA" -o "$TMP/flag.ivf" --video --frames 1 --qp 119 \
+# The integration promoted the env gate to a CLI form.  It must be accepted
+# and byte-identical to the env form (the env form remains the lane carrier).
+if ! "$BIN" "$NASA" -o "$TMP/flag.ivf" --video --frames 1 --qp 119 \
         --video-eff-perc >/dev/null 2>"$TMP/flag.err"; then
-    fail "a --video-eff-perc CLI flag exists (the gate must be env-only)"
+    fail "--video-eff-perc CLI flag was rejected"
+fi
+if ! env AV2ENC_EFF_PERC=1 "$BIN" "$NASA" -o "$TMP/flag_env.ivf" \
+        --video --frames 1 --qp 119 >/dev/null 2>&1; then
+    fail "AV2ENC_EFF_PERC=1 env form failed"
+fi
+if ! cmp -s "$TMP/flag.ivf" "$TMP/flag_env.ivf"; then
+    fail "--video-eff-perc differs from AV2ENC_EFF_PERC=1"
 fi
 
 if [ "$FAILED" = "0" ]; then
