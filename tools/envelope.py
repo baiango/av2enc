@@ -209,7 +209,16 @@ def score_arm(worktree: Path, spec: dict, arm: dict, outdir: Path) -> dict:
         raise RuntimeError(f"{arm['name']}: oracle failed: "
                            f"{(proc.stderr or proc.stdout or '')[-300:]}")
     report = json.loads((outdir / f"{arm['name']}.oracle.json").read_text())
-    matched = report["candidates"][0]["matched"]
+    matched = (report.get("candidates") or [{}])[0].get("matched")
+    if not matched:
+        # The ladder bracketed the target (bracket_arm succeeded) but the
+        # oracle could not interpolate: record an honest no-match rather than
+        # crashing the whole envelope.  main() treats k=None as "not measured"
+        # and the arm cannot win.
+        result["k"] = None
+        result["method"] = "no-match"
+        result["matched_kbps"] = None
+        return result
     result["k"] = float(matched["kpi"])
     result["method"] = matched.get("method", "linear")
     result["matched_kbps"] = float(matched["kbps"])
@@ -282,7 +291,9 @@ def main() -> int:
 
     base = next(row for row in scored if row["arm"] == "base")
     if base["k"] is None:
-        print("envelope: the base arm did not bracket the target", file=sys.stderr)
+        print("envelope: the base arm did not bracket the target (or the oracle "
+              "could not interpolate it): widen the spec's qp so the ladder "
+              "spans 100 kbps", file=sys.stderr)
         return 1
     measured = [row for row in scored if row["k"] is not None]
     best = max(measured, key=lambda row: row["k"])
