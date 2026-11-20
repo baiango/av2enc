@@ -8,6 +8,8 @@
 #include "pipeline/video/video_skip_drift.h"
 #include "pipeline/video/video_uv_rd.h"
 #include "pipeline/video/video_uv_search.h"
+#include "pipeline/video/video_rd_engine.h"
+#include "pipeline/video/video_seq_rd.h"
 
 namespace av2enc::video {
 
@@ -554,6 +556,38 @@ bool InterFrameEncoder::decide(std::string& error) {
   // lives: raster serial at --cpu-threads 1, the skew-2 wavefront above.
   const auto collect_frame = [&]() -> bool {
     plan_pass();
+    // AV2ENC_RD_DRIVER: one superblock at a time on the key picture.  The
+    // frame-wide tree above is only a fallback/reference; here every
+    // superblock's layout is re-decided against the reconstruction the
+    // previous superblocks actually built, then committed through the normal
+    // collect_node()/encode_leaf() walk so recon + §6.19.2.3 BlockDecoded
+    // advance before the next decision.
+    bool sequential_key =
+        keyframe_ && rd_driver::enabled() && !options_.enable_sdp &&
+        !options_.force_single_block && !palette_enabled_ && !ibc_enabled_ &&
+        !qp_tools_active();
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+    // The driver walks the rect tree; the extended solver has no
+    // base_superblocks to drive.
+    sequential_key = sequential_key && !options_.ext_partitions;
+#endif
+    if (sequential_key) {
+      sb_sinks_.resize(base_superblocks.size());
+      for (std::size_t sb = 0; sb < base_superblocks.size(); ++sb) {
+        PartitionNode chosen;
+        if (!seq_driver_decide_sb(sb, base_superblocks[sb], &chosen, error)) {
+          return false;
+        }
+        base_superblocks[sb] = std::move(chosen);
+        sb_sinks_[sb].reset();
+        seed_unit_state(sb_sinks_[sb]);
+        if (!collect_node(sb_sinks_[sb], base_superblocks[sb], error)) {
+          return false;
+        }
+      }
+      merge_sinks();
+      return true;
+    }
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
     if (options_.ext_partitions) {
       sb_sinks_.resize(ext_superblocks.size());
@@ -4953,6 +4987,628 @@ bool InterFrameEncoder::apply_tip_block_ref(std::string& error) {
         "leaf";
     return false;
   }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// AV2ENC_RD_DRIVER: sequential key-frame driver
+// ---------------------------------------------------------------------------
+namespace {
+
+struct SeqChildSlot {
+  int mi_row = 0;
+  int mi_col = 0;
+  partition::BlockSize size = partition::BlockSize::kInvalid;
+  bool has_chroma = false;
+  bool chroma_offset = false;
+};
+
+// Decode-order children of one partition candidate.  Mirrors the spec-only
+// rules of codec/partition/tree/partition.cpp (own tree, not third-party
+// code): SPLIT is four children with chromaOffset = 0, HORZ/VERT are two and
+// hand the ChromaMi offset to the first child only.
+int seq_child_slots(const partition::FrameGeometry& geometry, int mi_row,
+                    int mi_col, partition::BlockSize size,
+                    partition::PartitionType partition, bool has_chroma,
+                    bool chroma_offset, SeqChildSlot slots[4]) {
+  if (partition == partition::PartitionType::kNone) return 0;
+  const partition::BlockSize subsize =
+      partition::partition_subsize(partition, size);
+  if (!partition::is_valid_block_size(subsize)) return 0;
+  const int w4 = partition::num_4x4_blocks_wide(size);
+  const int h4 = partition::num_4x4_blocks_high(size);
+  const int half_w = w4 >> 1;
+  const int half_h = h4 >> 1;
+  bool next_offset = chroma_offset;
+  if (has_chroma && !next_offset) {
+    next_offset =
+        partition::is_chroma_offset_for_partition(geometry, partition, size);
+  }
+  switch (partition) {
+    case partition::PartitionType::kSplit:
+      slots[0] = {mi_row, mi_col, subsize, has_chroma, false};
+      slots[1] = {mi_row, mi_col + half_w, subsize, has_chroma, false};
+      slots[2] = {mi_row + half_h, mi_col, subsize, has_chroma, false};
+      slots[3] = {mi_row + half_h, mi_col + half_w, subsize, has_chroma,
+                  false};
+      return 4;
+    case partition::PartitionType::kHorz:
+      slots[0] = {mi_row, mi_col, subsize, has_chroma && !next_offset,
+                  next_offset};
+      slots[1] = {mi_row + half_h, mi_col, subsize, has_chroma, next_offset};
+      return 2;
+    case partition::PartitionType::kVert:
+      slots[0] = {mi_row, mi_col, subsize, has_chroma && !next_offset,
+                  next_offset};
+      slots[1] = {mi_row, mi_col + half_w, subsize, has_chroma, next_offset};
+      return 2;
+    case partition::PartitionType::kNone:
+      break;
+  }
+  return 0;
+}
+
+bool seq_child_coded(const partition::FrameGeometry& geometry,
+                     const SeqChildSlot& slot) {
+  return slot.mi_row < partition::mi_rows(geometry) &&
+         slot.mi_col < partition::mi_cols(geometry);
+}
+
+// Mean squared high-pass energy of a source block: the same (d - box3x3(d))^2
+// term the BA-shaped leaf D uses, but on the *source*, not the error.  It is
+// the activity screen for the sub-16 gate: a flat sky does not need 4x4/8x4
+// coding blocks just because the measured D says the split is cheap.
+double seq_source_activity(const std::uint8_t* src, int width, int height,
+                           int stride, int sx, int sy, int bw, int bh) {
+  if (src == nullptr || bw <= 0 || bh <= 0 || width <= 0 || height <= 0) {
+    return 0.0;
+  }
+  const auto sample = [&](int x, int y) -> int {
+    const int px = std::clamp(sx + x, 0, width - 1);
+    const int py = std::clamp(sy + y, 0, height - 1);
+    return static_cast<int>(
+        src[static_cast<std::size_t>(py) * static_cast<std::size_t>(stride) +
+            static_cast<std::size_t>(px)]);
+  };
+  double sum = 0.0;
+  for (int y = 0; y < bh; ++y) {
+    for (int x = 0; x < bw; ++x) {
+      int low = 0;
+      int used = 0;
+      for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+          low += sample(x + dx, y + dy);
+          ++used;
+        }
+      }
+      const double d =
+          static_cast<double>(sample(x, y)) -
+          static_cast<double>(low) / static_cast<double>(used);
+      sum += d * d;
+    }
+  }
+  return sum / static_cast<double>(bw * bh);
+}
+
+// Build a uniform layout: split each node along its long axis until the block
+// fits `target` in both dimensions.  A square block first becomes two wide
+// rectangles, which then split into the two square children, so an 8x8 target
+// is reached in two partition depths per halving.  Spec-forced partitions are
+// honoured, so a boundary superblock can never produce an invalid tree.
+partition::PartitionNode seq_build_uniform(
+    const partition::FrameGeometry& geometry, int mi_row, int mi_col,
+    partition::BlockSize size, int depth, bool has_chroma, bool chroma_offset,
+    int target, int max_depth, int min_px,
+    const std::function<bool(int, int, partition::BlockSize)>& can_split) {
+  partition::PartitionNode node;
+  node.mi_row = mi_row;
+  node.mi_col = mi_col;
+  node.size = size;
+  node.depth = depth;
+  node.has_chroma = has_chroma;
+  node.chroma_offset = chroma_offset;
+  node.boundary = partition::partition_implied(geometry, mi_row, mi_col, size);
+  node.allowed = partition::init_allowed_partitions(
+      geometry, mi_row, mi_col, size, has_chroma, chroma_offset);
+  bool forced = false;
+  partition::PartitionType forced_partition =
+      partition::PartitionType::kNone;
+  if (node.boundary.implied &&
+      node.allowed.is_allowed(node.boundary.implied_partition)) {
+    forced = true;
+    forced_partition = node.boundary.implied_partition;
+  } else if (node.allowed.count == 1) {
+    forced = true;
+    for (int index = 0; index < partition::kPartitionTypeCount; ++index) {
+      if (node.allowed.allowed[index]) {
+        forced_partition = static_cast<partition::PartitionType>(index);
+        break;
+      }
+    }
+  }
+  const auto policy = [&](partition::PartitionType partition) {
+    if (partition == partition::PartitionType::kNone) return true;
+    if (depth + 1 > max_depth) return false;
+    const partition::BlockSize sub =
+        partition::partition_subsize(partition, size);
+    if (!partition::is_valid_block_size(sub)) return false;
+    return partition::block_width(sub) >= min_px &&
+           partition::block_height(sub) >= min_px;
+  };
+  partition::PartitionType chosen = partition::PartitionType::kNone;
+  if (forced) {
+    chosen = forced_partition;
+  } else {
+    const int bw = partition::block_width(size);
+    const int bh = partition::block_height(size);
+    if (bw <= target && bh <= target) {
+      chosen = partition::PartitionType::kNone;
+    } else if (can_split && !can_split(mi_row, mi_col, size)) {
+      chosen = partition::PartitionType::kNone;
+    } else {
+      const partition::PartitionType prefer =
+          bw > bh ? partition::PartitionType::kVert
+                  : partition::PartitionType::kHorz;
+      const partition::PartitionType other =
+          prefer == partition::PartitionType::kVert
+              ? partition::PartitionType::kHorz
+              : partition::PartitionType::kVert;
+      if (node.allowed.is_allowed(prefer) && policy(prefer)) {
+        chosen = prefer;
+      } else if (node.allowed.is_allowed(other) && policy(other)) {
+        chosen = other;
+      } else if (node.allowed.is_allowed(partition::PartitionType::kNone)) {
+        chosen = partition::PartitionType::kNone;
+      } else {
+        for (int index = 0; index < partition::kPartitionTypeCount; ++index) {
+          if (node.allowed.allowed[index] && policy(
+                  static_cast<partition::PartitionType>(index))) {
+            chosen = static_cast<partition::PartitionType>(index);
+            break;
+          }
+        }
+      }
+    }
+  }
+  node.partition = chosen;
+  node.forced = forced;
+  if (chosen != partition::PartitionType::kNone) {
+    SeqChildSlot slots[4];
+    const int count = seq_child_slots(geometry, mi_row, mi_col, size, chosen,
+                                      has_chroma, chroma_offset, slots);
+    for (int i = 0; i < count; ++i) {
+      if (!seq_child_coded(geometry, slots[i])) continue;
+      node.children.push_back(seq_build_uniform(
+          geometry, slots[i].mi_row, slots[i].mi_col, slots[i].size,
+          depth + 1, slots[i].has_chroma, slots[i].chroma_offset, target,
+          max_depth, min_px, can_split));
+    }
+    if (node.children.empty()) {
+      // A policy/geometry disagreement must not leave a childless split.
+      node.partition = partition::PartitionType::kNone;
+    }
+  }
+  return node;
+}
+
+int seq_depth_for_target(int target) {
+  int depth = 0;
+  int size = 64;
+  while (size > target && depth < 16) {
+    size >>= 1;
+    depth += 2;
+  }
+  return depth;
+}
+
+// Exact §8.3 information rate of one emitted leaf.  The entry carries the
+// writer's levels in scan order; `rd_engine::plan_rate()` prices exactly those
+// levels with the §9.3 static model, and `apply_calibration()` maps the model
+// onto the live §8.3 cost (docs/rd-lane1.md §3).  A block the model cannot
+// price contributes no bits, which only under-prices an unsupported TX class
+// (IDTX is off in this recipe).
+double seq_entry_rate(const syntax::BlockSyntax& entry,
+                      const std::vector<std::int32_t>& levels, int qctx) {
+  std::vector<std::vector<std::int32_t>> storage;
+  storage.reserve(8);
+  std::vector<rd_engine::BlockPlan> blocks;
+  blocks.reserve(8);
+  const auto add = [&](int plane, int tx_size, int tx_type, int eob,
+                       std::size_t offset) {
+    const int area = txpartition::tx_scan_area(tx_size);
+    if (area <= 0 || eob <= 0) return;
+    storage.emplace_back(static_cast<std::size_t>(area), 0);
+    std::vector<std::int32_t>& scan_levels = storage.back();
+    for (int i = 0; i < eob && i < area; ++i) {
+      if (offset + static_cast<std::size_t>(i) < levels.size()) {
+        scan_levels[static_cast<std::size_t>(i)] =
+            levels[offset + static_cast<std::size_t>(i)];
+      }
+    }
+    rd_engine::BlockPlan block;
+    block.tx_size = tx_size;
+    block.tx_type = tx_type;
+    block.plane = plane;
+    block.area = area;
+    block.levels_scan = scan_levels.data();
+    blocks.push_back(block);
+  };
+  if (entry.tx_part_count > 0) {
+    const int count = std::min<int>(entry.tx_part_count, 4);
+    for (int i = 0; i < count; ++i) {
+      add(0, entry.tx_part_tx_size[i], entry.tx_part_tx_type[i],
+          static_cast<int>(entry.tx_part_eob[i]),
+          entry.tx_part_levels_offset[i]);
+    }
+  } else {
+    add(0, entry.tx_size[0], entry.tx_type[0],
+        static_cast<int>(entry.eob[0]), entry.levels_offset);
+  }
+  std::size_t chroma_offset =
+      entry.levels_offset + static_cast<std::size_t>(entry.eob[0]);
+  add(1, entry.tx_size[1], entry.tx_type[1],
+      static_cast<int>(entry.eob[1]), chroma_offset);
+  chroma_offset += static_cast<std::size_t>(entry.eob[1]);
+  add(2, entry.tx_size[2], entry.tx_type[2],
+      static_cast<int>(entry.eob[2]), chroma_offset);
+  rd_engine::RateBreakdown rate =
+      rd_engine::plan_rate(blocks, /*is_inter=*/false, qctx,
+                           /*cdf=*/nullptr);
+  rd_engine::apply_calibration(&rate);
+  return rate.total();
+}
+
+}  // namespace
+
+bool InterFrameEncoder::seq_driver_measure_leaf(const PartitionNode& node,
+                                                const ChromaInfo& chroma,
+                                                SbSink& sink, double* cost,
+                                                std::string& error) {
+  if (cost == nullptr || node.partition != PartitionType::kNone) return false;
+  const int w = partition::block_width(node.size);
+  const int h = partition::block_height(node.size);
+  const int x0 = node.mi_col * 4;
+  const int y0 = node.mi_row * 4;
+  const int ax0 = x0 + tile_x_;
+  const int ay0 = y0 + tile_y_;
+  const bool owns_chroma = node.has_chroma;
+  int cw = w / 2;
+  int ch = h / 2;
+  int cx0 = x0 / 2;
+  int cy0 = y0 / 2;
+  if (chroma.valid) {
+    const partition::BlockSize residual =
+        partition::chroma_plane_residual_size(geometry_, chroma.size);
+    cw = partition::block_width(residual);
+    ch = partition::block_height(residual);
+    cx0 = (chroma.mi_col * 4) / 2;
+    cy0 = (chroma.mi_row * 4) / 2;
+  }
+  const int acx0 = cx0 + tile_x_ / 2;
+  const int acy0 = cy0 + tile_y_ / 2;
+  const int luma_mask = visible_rows(0, y0, h);
+  const int chroma_mask = visible_rows(1, cy0, ch);
+
+  const std::size_t index = sink.blocks.size();
+  sink.blocks.emplace_back();
+  syntax::BlockSyntax& entry = sink.blocks.back();
+  entry.levels_offset = kNoLevels;
+  entry.mi_row = static_cast<std::uint16_t>(node.mi_row);
+  entry.mi_col = static_cast<std::uint16_t>(node.mi_col);
+  entry.bsize = static_cast<std::uint8_t>(node.size);
+  entry.partition = static_cast<std::uint8_t>(node.partition);
+  entry.flags |= syntax::kFlagHasChromaInfo;
+  entry.has_chroma = node.has_chroma ? 1 : 0;
+  entry.chroma_offset = node.chroma_offset ? 1 : 0;
+  entry.chroma_bsize =
+      chroma.valid ? static_cast<std::uint8_t>(chroma.size) : 0;
+  entry.chroma_mi_row = static_cast<std::uint16_t>(chroma.mi_row);
+  entry.chroma_mi_col = static_cast<std::uint16_t>(chroma.mi_col);
+  if (!encode_leaf(sink, node, index, error, /*tree_type=*/0,
+                   node.has_chroma, chroma.mi_row, chroma.mi_col,
+                   chroma.valid ? static_cast<int>(chroma.size) : -1)) {
+    return false;
+  }
+  const syntax::BlockSyntax& emitted = sink.blocks[index];
+  const double key_csf =
+      eff_perc::enabled() ? eff_perc::key_csf_gain() : 0.0;
+  const double key_csf2 =
+      eff_perc::enabled() ? eff_perc::csf2_gain() : 0.0;
+  const double chroma_csf = eff_perc::enabled() ? eff_perc::csf_gain() : 0.0;
+  const double chroma_csf2 = eff_perc::enabled() ? eff_perc::csf2_gain() : 0.0;
+  const double chroma_weight =
+      eff_perc::enabled() ? eff_perc::chroma_weight() : 1.0;
+  // BA-shaped luma D: eff-perc key low-band distortion plus the high-pass and
+  // block-edge terms from `seq_rd::leaf_distortion()`, measured on this leaf's
+  // own reconstruction.  The low-band key CSF alone is blind to the error a
+  // partition boundary leaves behind, which is the term Butteraugli charges.
+  double distortion = seq_rd::leaf_distortion(
+      source_.y.data(), static_cast<int>(source_.width),
+      static_cast<int>(source_.height), static_cast<int>(source_.width), ax0,
+      ay0, w, h, luma_mask, recon_[0].samples.data(), recon_[0].stride,
+      recon_[0].height, x0, y0, key_csf, key_csf2);
+  if (owns_chroma) {
+    const double u = eff_perc::weighted_sse(
+        /*weights=*/nullptr, cw, ch, source_.u.data(),
+        static_cast<int>(source_.width) / 2, acx0, acy0,
+        recon_[1].samples.data(), recon_[1].stride, cx0, cy0, chroma_mask,
+        chroma_csf, chroma_csf2);
+    const double v = eff_perc::weighted_sse(
+        /*weights=*/nullptr, cw, ch, source_.v.data(),
+        static_cast<int>(source_.width) / 2, acx0, acy0,
+        recon_[2].samples.data(), recon_[2].stride, cx0, cy0, chroma_mask,
+        chroma_csf, chroma_csf2);
+    distortion += (u + v) * chroma_weight;
+  }
+  const int qctx = ::av2enc::still::qctx::slice_for_base_q_idx(
+      options_.tx_context_rate ? base_q_index() : current_qindex_);
+  double rate = seq_entry_rate(emitted, sink.levels, qctx);
+  rate += intra_luma_syntax_bits(emitted.y_mode, emitted.y_angle_delta,
+                                 emitted.mrl_index,
+                                 emitted.mrl_sec_index != 0,
+                                 emitted.use_dip != 0);
+  rate += intra_chroma_syntax_bits(
+      (emitted.flags & syntax::kFlagIsCfl) != 0, emitted.cctx_type != 0);
+  if (emitted.tx_part_count > 0) rate += 2.0;
+  const double lambda =
+      key_tx_rd_lambda(options_, current_qindex_) *
+      rd_driver::env_positive("AV2ENC_RD_KEY_TX_SCALE", 0.25) *
+      rd_driver::env_positive("AV2ENC_RD_DRIVER_LAMBDA", 1.0);
+  *cost = distortion + lambda * rate;
+  ++rd_driver::counters().measured_leaves;
+  return true;
+}
+
+bool InterFrameEncoder::seq_driver_decide_sb(std::size_t sb_index,
+                                             const PartitionNode& reference,
+                                             PartitionNode* out,
+                                             std::string& error) {
+  if (out == nullptr) return false;
+  rd_driver::Counters& stats = rd_driver::counters();
+  ++stats.superblocks;
+  (void)sb_index;
+
+  // Expand the historical layout to the driver's deepest candidate leaf so
+  // every collapse point is available to the prune.  Every split in the
+  // expanded tree is a real §5.20.3.2 partition for the geometry.
+  const int target = rd_driver::prune_target();
+  const int max_depth = std::max(options_.max_partition_depth,
+                                 seq_depth_for_target(target));
+  // High-activity gate for sub-16 leaves (AV2ENC_RD_DRIVER_ACT, default 0 =
+  // off).  A 16x16 or smaller node may only descend to 8x8/4x4 when the source
+  // high-pass energy clears the threshold, so flat regions keep the larger
+  // coding block even when the measured D would call the split cheap.
+  const double activity_threshold =
+      rd_driver::env_positive("AV2ENC_RD_DRIVER_ACT", 0.0);
+  const auto can_split = [&](int mi_row, int mi_col,
+                             partition::BlockSize size) {
+    if (activity_threshold <= 0.0) return true;
+    const int bw = partition::block_width(size);
+    const int bh = partition::block_height(size);
+    if (bw > 16 || bh > 16) return true;
+    const int sx = mi_col * 4 + tile_x_;
+    const int sy = mi_row * 4 + tile_y_;
+    return seq_source_activity(source_.y.data(),
+                               static_cast<int>(source_.width),
+                               static_cast<int>(source_.height),
+                               static_cast<int>(source_.width), sx, sy, bw,
+                               bh) >= activity_threshold;
+  };
+  std::function<PartitionNode(const PartitionNode&, const ChromaInfo&)> expand;
+  expand = [&](const PartitionNode& node,
+               const ChromaInfo& inherited) -> PartitionNode {
+    const ChromaInfo chroma = chroma_step(node, inherited);
+    if (node.partition == PartitionType::kNone) {
+      const int bw = partition::block_width(node.size);
+      const int bh = partition::block_height(node.size);
+      if (bw <= target && bh <= target) return node;
+      return seq_build_uniform(geometry_, node.mi_row, node.mi_col, node.size,
+                               node.depth, node.has_chroma, node.chroma_offset,
+                               target, max_depth, partition::kMinBlockPixels,
+                               can_split);
+    }
+    PartitionNode grown = node;
+    grown.children.clear();
+    for (const PartitionNode& child : node.children) {
+      grown.children.push_back(expand(child, chroma));
+    }
+    return grown;
+  };
+  PartitionNode expanded = expand(reference, ChromaInfo{});
+  std::string validate_error;
+  if (!partition::validate_tree(geometry_, expanded, validate_error)) {
+    ++stats.layout_failures;
+    ++stats.fallback_reference;
+    *out = reference;
+    return true;
+  }
+
+  // Snapshot every surface the leaf coder mutates.  The prune runs entirely on
+  // a scratch sink and always restores the frame state before returning, so
+  // the committed pass in collect_frame() is the only writer of the stream.
+  struct Snap {
+    std::array<std::vector<std::uint8_t>, 3> samples;
+    std::array<int, 3> stride{};
+    std::array<int, 3> width{};
+    std::array<int, 3> height{};
+    std::vector<std::uint8_t> joint;
+    std::vector<std::uint8_t> uv;
+    std::vector<inter::mc::MiInfo> mv;
+    SbSink::State state;
+    std::size_t blocks = 0;
+    std::size_t levels = 0;
+    std::size_t palettes = 0;
+    std::size_t sub_pus = 0;
+    std::size_t leaf_dump = 0;
+    std::size_t leaf_costs = 0;
+  };
+  SbSink sink;
+  sink.reset();
+  seed_unit_state(sink);
+  sink.state.decoded[0].reset(mi_cols_, mi_rows_);
+  sink.state.decoded[1].reset(mi_cols_ / 2, mi_rows_ / 2);
+  sink.state.decoded[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+  const auto capture = [&]() {
+    Snap snap;
+    for (int plane = 0; plane < 3; ++plane) {
+      const std::size_t p = static_cast<std::size_t>(plane);
+      snap.samples[p] = recon_[p].samples;
+      snap.stride[p] = recon_[p].stride;
+      snap.width[p] = recon_[p].width;
+      snap.height[p] = recon_[p].height;
+    }
+    snap.joint = intra_joint_;
+    snap.uv = uv_smooth_;
+    snap.mv = mv_grid_;
+    snap.state = sink.state;
+    snap.blocks = sink.blocks.size();
+    snap.levels = sink.levels.size();
+    snap.palettes = sink.palettes.size();
+    snap.sub_pus = sink.sub_pus.size();
+    snap.leaf_dump = sink.leaf_dump.size();
+    snap.leaf_costs = sink.leaf_costs.size();
+    return snap;
+  };
+  const auto apply = [&](const Snap& snap) {
+    for (int plane = 0; plane < 3; ++plane) {
+      const std::size_t p = static_cast<std::size_t>(plane);
+      recon_[p].samples = snap.samples[p];
+      recon_[p].stride = snap.stride[p];
+      recon_[p].width = snap.width[p];
+      recon_[p].height = snap.height[p];
+    }
+    intra_joint_ = snap.joint;
+    uv_smooth_ = snap.uv;
+    mv_grid_ = snap.mv;
+    sink.state = snap.state;
+    sink.blocks.resize(snap.blocks);
+    sink.levels.resize(snap.levels);
+    sink.palettes.resize(snap.palettes);
+    sink.sub_pus.resize(snap.sub_pus);
+    sink.leaf_dump.resize(snap.leaf_dump);
+    sink.leaf_costs.resize(snap.leaf_costs);
+  };
+
+  struct PruneResult {
+    PartitionNode node;
+    double cost = partition::kInfiniteCost;
+    bool ok = false;
+  };
+  const double lambda =
+      key_tx_rd_lambda(options_, current_qindex_) *
+      rd_driver::env_positive("AV2ENC_RD_KEY_TX_SCALE", 0.25) *
+      rd_driver::env_positive("AV2ENC_RD_DRIVER_LAMBDA", 1.0);
+  // Sequential prune: at every node the split children are measured in the
+  // reconstruction of the already-chosen preceding children, so a candidate
+  // is always priced in the recon it builds.  The NONE trial is restored
+  // before the split trial; the winner is re-encoded to keep the state
+  // coherent for the following sibling.
+  std::function<PruneResult(const PartitionNode&, const ChromaInfo&)> prune;
+  prune = [&](const PartitionNode& node,
+              const ChromaInfo& inherited) -> PruneResult {
+    PruneResult result;
+    const ChromaInfo chroma = chroma_step(node, inherited);
+    if (node.partition == PartitionType::kNone) {
+      double cost = 0.0;
+      if (!seq_driver_measure_leaf(node, chroma, sink, &cost, error)) {
+        result.node = node;
+        return result;
+      }
+      result.node = node;
+      result.cost = cost;
+      result.ok = true;
+      return result;
+    }
+    const Snap start = capture();
+    // A spec-forced split has no NONE candidate: the decoder derives the
+    // partition without syntax, so collapsing it would be an invalid tree.
+    const bool can_leaf =
+        !node.forced && node.allowed.is_allowed(PartitionType::kNone);
+    PartitionNode leaf = node;
+    leaf.partition = PartitionType::kNone;
+    leaf.forced = false;
+    leaf.children.clear();
+    leaf.cost = 0.0;
+    double leaf_cost = partition::kInfiniteCost;
+    bool leaf_ok = false;
+    if (can_leaf) {
+      leaf_ok = seq_driver_measure_leaf(leaf, chroma, sink, &leaf_cost, error);
+    }
+    apply(start);
+
+    double split_cost = lambda * 2.0;
+    bool split_ok = true;
+    std::vector<PartitionNode> kids;
+    for (const PartitionNode& child : node.children) {
+      PruneResult child_result = prune(child, chroma);
+      if (!child_result.ok) {
+        split_ok = false;
+        break;
+      }
+      split_cost += child_result.cost;
+      kids.push_back(std::move(child_result.node));
+    }
+    if (split_ok && leaf_ok && leaf_cost <= split_cost) {
+      // Collapse: drop the measured children and commit the leaf instead.
+      apply(start);
+      double committed = 0.0;
+      if (!seq_driver_measure_leaf(leaf, chroma, sink, &committed, error)) {
+        result.node = node;
+        return result;
+      }
+      result.node = std::move(leaf);
+      result.cost = committed;
+      result.ok = true;
+      return result;
+    }
+    if (split_ok) {
+      PartitionNode chosen = node;
+      chosen.children = std::move(kids);
+      chosen.cost = split_cost;
+      result.node = std::move(chosen);
+      result.cost = split_cost;
+      result.ok = true;
+      return result;
+    }
+    // The split could not be measured.  Keep the leaf when it could.
+    apply(start);
+    if (!leaf_ok) {
+      result.node = node;
+      return result;
+    }
+    double committed = 0.0;
+    if (!seq_driver_measure_leaf(leaf, chroma, sink, &committed, error)) {
+      result.node = node;
+      return result;
+    }
+    result.node = std::move(leaf);
+    result.cost = committed;
+    result.ok = true;
+    return result;
+  };
+
+  const Snap frame_start = capture();
+  ++stats.layouts;
+  rd_driver::measuring_flag() = true;
+  PruneResult chosen = prune(expanded, ChromaInfo{});
+  rd_driver::measuring_flag() = false;
+  // Discard the scratch reconstruction: collect_node() is the commit pass and
+  // the only writer of the emitted syntax.
+  apply(frame_start);
+  if (!chosen.ok || !std::isfinite(chosen.cost)) {
+    ++stats.fallback_reference;
+    *out = reference;
+    return true;
+  }
+  std::string chosen_error;
+  if (!partition::validate_tree(geometry_, chosen.node, chosen_error)) {
+    ++stats.layout_failures;
+    ++stats.fallback_reference;
+    *out = reference;
+    return true;
+  }
+  stats.chosen_cost += chosen.cost;
+  *out = std::move(chosen.node);
   return true;
 }
 

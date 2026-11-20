@@ -800,7 +800,7 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
       }
     }
   }
-  if (kcfg.on || kcfg.stats) {
+  if ((kcfg.on || kcfg.stats) && !rd_driver::measuring()) {
     KeyTxRdStats& stats = key_tx_rd_stats();
     ++stats.leaves;
     if (kcfg.on) {

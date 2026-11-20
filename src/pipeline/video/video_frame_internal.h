@@ -157,6 +157,99 @@ constexpr std::int8_t kRefIntraAv2 = 8;
 constexpr double kPartitionProbeSkipBits = 8.0;
 constexpr double kPartitionProbeModeBits = 8.0;
 
+// AV2ENC_RD_DRIVER (default off): the sequential key-frame driver.  It
+// replaces the frame-wide variance partition tree on the key picture with a
+// per-superblock decision that measures every candidate layout in the
+// reconstruction the layout itself builds.  The gate is env-only (no CLI) and
+// leaves every existing stream byte-identical when unset.
+namespace rd_driver {
+
+inline bool parse_off(const char* value) {
+  if (value == nullptr || *value == '\0') return true;
+  if (std::strcmp(value, "0") == 0) return true;
+  auto equal = [value](const char* word) {
+    for (std::size_t i = 0; word[i] != '\0'; ++i) {
+      if (std::tolower(static_cast<unsigned char>(value[i])) != word[i]) {
+        return false;
+      }
+    }
+    return value[std::strlen(word)] == '\0';
+  };
+  return equal("false") || equal("off") || equal("no");
+}
+
+inline bool enabled() {
+  static const bool value = [] {
+    const char* env = std::getenv("AV2ENC_RD_DRIVER");
+    return !parse_off(env);
+  }();
+  return value;
+}
+
+inline double env_positive(const char* name, double fallback) {
+  const char* value = std::getenv(name);
+  if (value == nullptr || *value == '\0') return fallback;
+  char* end = nullptr;
+  const double parsed = std::strtod(value, &end);
+  if (end == value || !std::isfinite(parsed) || parsed <= 0.0) return fallback;
+  return parsed;
+}
+
+// Candidate uniform leaf sizes (px).  The reference tree is always measured as
+// well, so a target that loses cannot change the layout from the historical
+// solver when the gate is on.  AV2ENC_RD_DRIVER_TARGETS is a comma list.
+// Deepest uniform leaf size the prune may consider.  The expanded reference
+// tree is split to this size and then collapsed node by node, so the search
+// covers every uniform layout and every mixture in between.  The default 4
+// keeps the full legal key tree (4x4/8x8/16x16/32x32/64x64); there is no
+// 16x16 floor.  AV2ENC_RD_DRIVER_MIN=8/16 is the coarser ablation.
+inline int prune_target() {
+  static const int value = [] {
+    const char* env = std::getenv("AV2ENC_RD_DRIVER_MIN");
+    if (env == nullptr || *env == '\0') return 4;
+    char* end = nullptr;
+    const long parsed = std::strtol(env, &end, 10);
+    if (end == env || parsed < 4 || parsed > 64) return 4;
+    return static_cast<int>(parsed);
+  }();
+  return value;
+}
+
+// Set while a candidate layout is measured.  The diagnostic counters in the
+// leaf coder (TX-plan histogram, UV-level counters) only count committed
+// leaves, so a measured candidate cannot inflate the reported plan counts.
+inline bool& measuring_flag() {
+  static bool value = false;
+  return value;
+}
+inline bool measuring() { return measuring_flag(); }
+
+// Driver counters, printed once at process exit when the gate is on.
+struct Counters {
+  long long superblocks = 0;
+  long long layouts = 0;
+  long long layout_failures = 0;
+  long long measured_leaves = 0;
+  long long fallback_reference = 0;
+  double chosen_cost = 0.0;
+
+  ~Counters() {
+    if (!enabled()) return;
+    std::fprintf(stderr,
+                 "rd-driver: sbs=%lld layouts=%lld failed=%lld leaves=%lld "
+                 "fallback=%lld chosen_cost=%.1f\n",
+                 superblocks, layouts, layout_failures, measured_leaves,
+                 fallback_reference, chosen_cost);
+  }
+};
+
+inline Counters& counters() {
+  static Counters value;
+  return value;
+}
+
+}  // namespace rd_driver
+
 // Diagnosis-only final-tree dump (AV2ENC_PART_TREE=<path>).  It walks the tree
 // the encoder will actually code — not the solver trace — so every emitted node
 // is guaranteed to exist in the stream.  Unset means no file is opened and the
@@ -3268,6 +3361,28 @@ class InterFrameEncoder {
                    std::string& error, int tree_type = 0,
                    bool leaf_has_chroma = true, int chroma_mi_row = -1,
                    int chroma_mi_col = -1, int chroma_bsize = -1);
+
+  // ---------------------------------------------------------------------
+  // AV2ENC_RD_DRIVER: sequential key-frame layout decision.
+  //
+  // The historical key tree is solved for the whole picture before any leaf
+  // is coded, so every node is priced by a variance proxy.  The driver keeps
+  // the same legal tree (4x4..64x64) but decides one superblock at a time:
+  // every candidate layout is walked in decode order in the encoder's current
+  // reconstruction, its leaves are encoded for real, and the next candidate
+  // starts from the same snapshot.  The winner is then committed through the
+  // normal collect_node()/encode_leaf() path, which is what updates the
+  // reconstruction and §6.19.2.3 BlockDecoded for the next superblock.
+  //
+  // A candidate that cannot be measured (leaf encode failure, invalid tree)
+  // is not scored; if no candidate is finite the reference tree is returned.
+  // ---------------------------------------------------------------------
+    bool seq_driver_measure_leaf(const PartitionNode& node,
+                                 const ChromaInfo& chroma, SbSink& sink,
+                                 double* cost, std::string& error);
+    bool seq_driver_decide_sb(std::size_t sb_index,
+                            const PartitionNode& reference,
+                            PartitionNode* out, std::string& error);
 
   // ---------------------------------------------------------------------
   // §5.20.7.10 / §5.20.7.6 block-level TIP reference
