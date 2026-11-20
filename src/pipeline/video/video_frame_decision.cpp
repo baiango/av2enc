@@ -645,8 +645,25 @@ bool InterFrameEncoder::decide(std::string& error) {
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
     sequential_tail = sequential_tail && !options_.ext_partitions;
 #endif
+    // AV2ENC_PART_DIAG: the same sequential walk, used only to measure both
+    // sides of each P leaf.  It commits the reference tree, so the stream is
+    // unchanged; it exists to size the P-partition pool before a driver is
+    // built.  Mutually exclusive with the tail floor's measured descent.
+    bool sequential_diag =
+        !keyframe_ && part_diag::armed(tx_detail::picture_ordinal()) &&
+        !sequential_tail && !options_.enable_sdp &&
+        !options_.force_single_block && !palette_enabled_ && !ibc_enabled_ &&
+        !qp_tools_active() &&
+        (tile_w_ <= 0 || tile_w_ >= static_cast<int>(source_.width)) &&
+        (tile_h_ <= 0 || tile_h_ >= static_cast<int>(source_.height)) &&
+        pipe_probe_ready_;
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+    sequential_diag = sequential_diag && !options_.ext_partitions;
+#endif
     tail_floor_active_ = sequential_tail;
     tail_floor_trial_ = false;
+    part_diag_active_ = sequential_diag;
+    part_diag_trial_ = false;
     if (sequential_key) {
       sb_sinks_.resize(base_superblocks.size());
       for (std::size_t sb = 0; sb < base_superblocks.size(); ++sb) {
@@ -671,28 +688,34 @@ bool InterFrameEncoder::decide(std::string& error) {
     // in the reconstruction its own layout and every earlier coded block
     // built.  Nothing here runs on the key picture or outside pictures
     // 33-59.
-    if (sequential_tail) {
+    if (sequential_tail || sequential_diag) {
       sb_sinks_.resize(base_superblocks.size());
       for (std::size_t sb = 0; sb < base_superblocks.size(); ++sb) {
         sb_sinks_[sb].reset();
         seed_unit_state(sb_sinks_[sb]);
         PartitionNode chosen;
         tail_floor_sb_root_ = &base_superblocks[sb];
+        part_diag_sb_root_ = &base_superblocks[sb];
         const bool ok = collect_node(sb_sinks_[sb], base_superblocks[sb],
                                      error, ChromaInfo{}, &chosen);
         tail_floor_sb_root_ = nullptr;
+        part_diag_sb_root_ = nullptr;
         if (!ok) {
           tail_floor_active_ = false;
+          part_diag_active_ = false;
           return false;
         }
         base_superblocks[sb] = std::move(chosen);
       }
       tail_floor_active_ = false;
       tail_floor_trial_ = false;
+      part_diag_active_ = false;
+      part_diag_trial_ = false;
       merge_sinks();
       return true;
     }
     tail_floor_active_ = false;
+    part_diag_active_ = false;
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
     if (options_.ext_partitions) {
       sb_sinks_.resize(ext_superblocks.size());
@@ -1320,6 +1343,11 @@ bool InterFrameEncoder::collect_node(SbSink& sink, const PartitionNode& node,
   // the gate for this picture; `emitted` lets the sequential walk carry the
   // chosen layout back into the frame tree.  Trials re-enter this function
   // with `tail_floor_trial_` set, so they never recurse into the hook.
+  if (part_diag_active_ && !part_diag_trial_ && !keyframe_ &&
+      !tail_floor_active_ && part_diag_candidate(node)) {
+    return part_diag_collect_node(sink, node, inherited_chroma, emitted,
+                                  error);
+  }
   if (tail_floor_active_ && !tail_floor_trial_ && !keyframe_ &&
       tail_floor_candidate(node)) {
     return tail_floor_collect_node(sink, node, inherited_chroma, emitted,
@@ -4954,7 +4982,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
   // The measured coding-block decision prices every candidate leaf with it, so
   // a 16x16 leaf and its 8x8-class children are compared in the same coded
   // context.  Inert unless the gate armed this picture.
-  if (tail_floor_active_ && pipe_on) {
+  if ((tail_floor_active_ || part_diag_active_) && pipe_on) {
     rate_hybrid::Terms tail_terms;
     const bool priced = pipe_probe_.price_full(entry, &tail_terms);
     if (tail_floor_leaf_bits_.size() <= index) {
@@ -6555,6 +6583,322 @@ bool InterFrameEncoder::tail_floor_collect_node(SbSink& sink,
   ++tc.leaves_16;
   *emitted = leaf;
   return true;
+}
+
+// AV2ENC_PART_DIAG -----------------------------------------------------------
+//
+// Measure one emitted P leaf against each legal one-level split and commit the
+// reference.  Both sides use the tail floor's exact objective, so the only
+// difference between the two numbers is the coder's own leaf decision:
+//
+//   J = D_BA(leaf recon) + lambda * (R_exact + 2 bits per partition symbol)
+//
+// The stream is unchanged; the counters printed at exit answer whether the
+// probe's depth-1 clamp is leaving splits on the table.  Prediction for an
+// inter leaf comes from the reference picture, so a trial is exact for it;
+// an intra leaf inside P reads the current reconstruction and is the
+// approximation this diagnostic accepts.
+bool InterFrameEncoder::part_diag_candidate(const PartitionNode& node) const {
+  if (node.partition != partition::PartitionType::kNone) return false;
+  if (node.forced || node.depth == 0) return false;
+  const int w = partition::block_width(node.size);
+  const int h = partition::block_height(node.size);
+  if (w <= 0 || h <= 0 || w > 64 || h > 64) return false;
+  if ((w < h ? w : h) < part_diag::config().min_px) return false;
+  return node.allowed.is_allowed(partition::PartitionType::kHorz) ||
+         node.allowed.is_allowed(partition::PartitionType::kVert) ||
+         node.allowed.is_allowed(partition::PartitionType::kSplit);
+}
+
+bool InterFrameEncoder::part_diag_collect_node(SbSink& sink,
+                                               const PartitionNode& node,
+                                               const ChromaInfo& inherited,
+                                               PartitionNode* emitted,
+                                               std::string& error) {
+  part_diag::Counters& c = part_diag::counters();
+  const part_diag::Config& cfg = part_diag::config();
+  const auto commit_reference = [&]() -> bool {
+    part_diag_trial_ = true;
+    const bool ok = collect_node(sink, node, error, inherited, emitted);
+    part_diag_trial_ = false;
+    return ok;
+  };
+  static bool cap_logged = false;
+  if (cfg.max_nodes > 0 &&
+      c.total.nodes + c.fails >= cfg.max_nodes) {
+    if (!cap_logged) {
+      ++c.capped;
+      cap_logged = true;
+    }
+    return commit_reference();
+  }
+
+  const bool eff_on =
+      !pipe_ba::enabled() && eff_perc::enabled() && pipe_probe_ready_;
+  const bool pipe_on =
+      (pipe_perc::enabled() || eff_perc::enabled() || pipe_ba::enabled()) &&
+      pipe_probe_ready_;
+  if (!pipe_on) return commit_reference();
+  const double pipe_lambda =
+      leaf_rd_lambda(sink.state.current_qindex, options_) *
+      (pipe_ba::enabled() ? pipe_ba::config().lambda
+                          : (eff_on ? eff_perc::lambda_scale()
+                                    : pipe_perc::lambda_scale()));
+  const double lambda = pipe_lambda * cfg.lambda;
+  if (!(lambda > 0.0)) return commit_reference();
+  c.lambda_ = lambda;
+
+  // Snapshot every surface encode_leaf() mutates.  Only the reconstruction
+  // and the two probes need their bytes back; the sink vectors only grow, so
+  // restoring their sizes is enough.
+  struct DiagSnap {
+    std::array<std::vector<std::uint8_t>, 3> samples;
+    std::array<int, 3> stride{};
+    std::array<int, 3> width{};
+    std::array<int, 3> height{};
+    std::vector<std::uint8_t> joint;
+    std::vector<std::uint8_t> uv;
+    std::vector<inter::mc::MiInfo> mv;
+    SbSink::State state;
+    std::size_t blocks = 0;
+    std::size_t levels = 0;
+    std::size_t palettes = 0;
+    std::size_t sub_pus = 0;
+    std::size_t leaf_dump = 0;
+    std::size_t leaf_costs = 0;
+    std::size_t leaf_bits = 0;
+    std::size_t leaf_bits_ok = 0;
+    rate_hybrid::SyntaxProbe probe;
+    rate_hybrid::SyntaxProbe rate_probe;
+  };
+  const auto capture = [&]() {
+    DiagSnap s;
+    for (int plane = 0; plane < 3; ++plane) {
+      const std::size_t p = static_cast<std::size_t>(plane);
+      s.samples[p] = recon_[p].samples;
+      s.stride[p] = recon_[p].stride;
+      s.width[p] = recon_[p].width;
+      s.height[p] = recon_[p].height;
+    }
+    s.joint = intra_joint_;
+    s.uv = uv_smooth_;
+    s.mv = mv_grid_;
+    s.state = sink.state;
+    s.blocks = sink.blocks.size();
+    s.levels = sink.levels.size();
+    s.palettes = sink.palettes.size();
+    s.sub_pus = sink.sub_pus.size();
+    s.leaf_dump = sink.leaf_dump.size();
+    s.leaf_costs = sink.leaf_costs.size();
+    s.leaf_bits = tail_floor_leaf_bits_.size();
+    s.leaf_bits_ok = tail_floor_leaf_bits_ok_.size();
+    s.probe = pipe_probe_;
+    s.rate_probe = rate_probe_;
+    return s;
+  };
+  const auto restore = [&](const DiagSnap& s) {
+    for (int plane = 0; plane < 3; ++plane) {
+      const std::size_t p = static_cast<std::size_t>(plane);
+      recon_[p].samples = s.samples[p];
+      recon_[p].stride = s.stride[p];
+      recon_[p].width = s.width[p];
+      recon_[p].height = s.height[p];
+    }
+    intra_joint_ = s.joint;
+    uv_smooth_ = s.uv;
+    mv_grid_ = s.mv;
+    sink.state = s.state;
+    sink.blocks.resize(s.blocks);
+    sink.levels.resize(s.levels);
+    sink.palettes.resize(s.palettes);
+    sink.sub_pus.resize(s.sub_pus);
+    sink.leaf_dump.resize(s.leaf_dump);
+    sink.leaf_costs.resize(s.leaf_costs);
+    tail_floor_leaf_bits_.resize(s.leaf_bits);
+    tail_floor_leaf_bits_ok_.resize(s.leaf_bits_ok);
+    pipe_probe_ = s.probe;
+    rate_probe_ = s.rate_probe;
+  };
+
+  PartitionNode leaf = node;
+  leaf.partition = partition::PartitionType::kNone;
+  leaf.forced = false;
+  leaf.children.clear();
+  leaf.cost = 0.0;
+
+  const DiagSnap start = capture();
+  std::size_t begin = sink.blocks.size();
+  part_diag_trial_ = true;
+  const bool leaf_encoded = collect_node(sink, leaf, error, inherited, nullptr);
+  part_diag_trial_ = false;
+  double d_leaf = 0.0;
+  double r_leaf = 0.0;
+  const bool leaf_priced =
+      leaf_encoded && tail_floor_trial_cost(sink, begin, lambda, 0, &d_leaf,
+                                            &r_leaf, error);
+  restore(start);
+  if (!leaf_priced) {
+    ++c.fails;
+    error.clear();
+    return commit_reference();
+  }
+
+  double best_j = d_leaf + lambda * r_leaf;
+  double best_d = d_leaf;
+  double best_r = r_leaf;
+  int best_part = 0;
+  PartitionNode best_split;
+  bool best_split_ok = false;
+  static int trace_left = -1;
+  if (trace_left < 0) {
+    trace_left = std::getenv("AV2ENC_PART_DIAG_TRACE") != nullptr ? 12 : 0;
+  }
+  for (int trial = 0; trial < 3; ++trial) {
+    const partition::PartitionType part =
+        trial == 0 ? partition::PartitionType::kHorz
+        : trial == 1 ? partition::PartitionType::kVert
+                     : partition::PartitionType::kSplit;
+    const auto trace = [&](const char* why) {
+      if (trace_left <= 0) return;
+      --trace_left;
+      std::fprintf(stderr,
+                   "rd-part-diag trace: %dx%d depth=%d part=%d allowed=%d "
+                   "why=%s\n",
+                   partition::block_width(node.size),
+                   partition::block_height(node.size), node.depth,
+                   static_cast<int>(part),
+                   node.allowed.is_allowed(part) ? 1 : 0, why);
+    };
+    if (!node.allowed.is_allowed(part)) {
+      trace("not-allowed");
+      continue;
+    }
+    const partition::BlockSize sub =
+        partition::partition_subsize(part, node.size);
+    if (!partition::is_valid_block_size(sub)) {
+      trace("bad-subsize");
+      continue;
+    }
+    SeqChildSlot slots[4];
+    const int count = seq_child_slots(geometry_, node.mi_row, node.mi_col,
+                                      node.size, part, node.has_chroma,
+                                      node.chroma_offset, slots);
+    if (count < 2) {
+      trace("no-slots");
+      continue;
+    }
+    PartitionNode split;
+    split.mi_row = node.mi_row;
+    split.mi_col = node.mi_col;
+    split.size = node.size;
+    split.partition = part;
+    split.depth = node.depth;
+    split.has_chroma = node.has_chroma;
+    split.chroma_offset = node.chroma_offset;
+    split.boundary =
+        partition::partition_implied(geometry_, node.mi_row, node.mi_col,
+                                     node.size);
+    split.allowed = node.allowed;
+    split.forced = false;
+    split.cost = 0.0;
+    bool built = true;
+    for (int i = 0; i < count; ++i) {
+      if (!seq_child_coded(geometry_, slots[i])) continue;
+      PartitionNode child;
+      child.mi_row = slots[i].mi_row;
+      child.mi_col = slots[i].mi_col;
+      child.size = slots[i].size;
+      child.depth = node.depth + 1;
+      child.has_chroma = slots[i].has_chroma;
+      child.chroma_offset = slots[i].chroma_offset;
+      child.boundary = partition::partition_implied(
+          geometry_, child.mi_row, child.mi_col, child.size);
+      child.allowed = partition::init_allowed_partitions(
+          geometry_, child.mi_row, child.mi_col, child.size,
+          child.has_chroma, child.chroma_offset);
+      child.forced = false;
+      child.partition = partition::PartitionType::kNone;
+      child.cost = 0.0;
+      split.children.push_back(std::move(child));
+    }
+    if (split.children.size() < 2) {
+      built = false;
+      trace("children<2");
+    }
+    if (built && part_diag_sb_root_ != nullptr) {
+      PartitionNode probe_root = *part_diag_sb_root_;
+      bool replaced = false;
+      std::string build_error;
+      if (!tail_floor_replace(probe_root, node.mi_row, node.mi_col,
+                              node.size, split, &replaced) ||
+          !replaced) {
+        built = false;
+        trace("not-found");
+      } else if (!partition::validate_tree(geometry_, probe_root,
+                                           build_error)) {
+        built = false;
+        if (trace_left > 0) {
+          --trace_left;
+          std::fprintf(stderr,
+                       "rd-part-diag trace: %dx%d depth=%d part=%d "
+                       "invalid-tree: %s\n",
+                       partition::block_width(node.size),
+                       partition::block_height(node.size), node.depth,
+                       static_cast<int>(part), build_error.c_str());
+        }
+      }
+    }
+    if (!built) {
+      trace("build-fail");
+      continue;
+    }
+
+    ++c.trials;
+    begin = sink.blocks.size();
+    part_diag_trial_ = true;
+    const bool split_encoded = collect_node(sink, split, error, inherited,
+                                            nullptr);
+    part_diag_trial_ = false;
+    double d_split = 0.0;
+    double r_split = 0.0;
+    const bool split_priced =
+        split_encoded && tail_floor_trial_cost(sink, begin, lambda, 1,
+                                               &d_split, &r_split, error);
+    restore(start);
+    if (!split_priced) {
+      ++c.fails;
+      error.clear();
+      continue;
+    }
+    const double j = d_split + lambda * r_split;
+    if (j < best_j) {
+      best_j = j;
+      best_d = d_split;
+      best_r = r_split;
+      best_part = trial + 1;
+      best_split = split;
+      best_split_ok = true;
+    }
+  }
+
+  part_diag::Sample sample;
+  sample.shape = part_diag::shape_of(partition::block_width(node.size),
+                                     partition::block_height(node.size));
+  sample.d_leaf = d_leaf;
+  sample.r_leaf = r_leaf;
+  sample.d_split = best_d;
+  sample.r_split = best_r;
+  sample.part = best_part;
+  sample.ok = true;
+  c.add(sample);
+  error.clear();
+  if (cfg.commit && best_split_ok) {
+    part_diag_trial_ = true;
+    const bool ok = collect_node(sink, best_split, error, inherited, emitted);
+    part_diag_trial_ = false;
+    return ok;
+  }
+  return commit_reference();
 }
 
 }  // namespace av2enc::video

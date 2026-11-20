@@ -28,6 +28,7 @@
 #include "pipeline/video/video_temporal.h"
 #include "pipeline/video/video_tx_search.h"
 #include "pipeline/video/video_tail_tx.h"
+#include "pipeline/video/video_part_diag.h"
 #include "pipeline/video/video_tail_floor.h"
 #include "pipeline/video/video_decision_rate.h"
 #include "codec/partition/tree/partition.h"
@@ -3137,6 +3138,13 @@ class InterFrameEncoder {
                              std::string& error);
     bool tail_floor_candidate(const PartitionNode& node) const;
 
+  // AV2ENC_PART_DIAG: measure both sides of an emitted P leaf and commit the
+  // reference.  The stream never changes; only the counters move.
+    bool part_diag_candidate(const PartitionNode& node) const;
+    bool part_diag_collect_node(SbSink& sink, const PartitionNode& node,
+                              const ChromaInfo& inherited,
+                              PartitionNode* emitted, std::string& error);
+
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
   // Extended-partition variant of collect_node().  The solver already resolved
   // §5.20.3.1 ChromaMi* for every node (including the HORZ_3/VERT_3 middle
@@ -3438,6 +3446,14 @@ class InterFrameEncoder {
     const PartitionNode* tail_floor_sb_root_ = nullptr;
     std::vector<double> tail_floor_leaf_bits_;
     std::vector<char> tail_floor_leaf_bits_ok_;
+
+  // AV2ENC_PART_DIAG state, live only during one armed picture's sequential
+  // walk.  `active` arms both the collect_node() hook and the per-leaf
+  // inter-syntax stash the exact trial cost needs; `trial` suppresses the
+  // hook inside candidate encodes.
+    bool part_diag_active_ = false;
+    bool part_diag_trial_ = false;
+    const PartitionNode* part_diag_sb_root_ = nullptr;
 
   // ---------------------------------------------------------------------
   // §5.20.7.10 / §5.20.7.6 block-level TIP reference
