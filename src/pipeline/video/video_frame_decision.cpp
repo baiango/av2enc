@@ -3762,29 +3762,53 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       return distortion + lambda * (bits + kInterpFilterSymbolBits);
     };
     const int saved_override = interp_block_filter_override();
+    // AV2ENC_INTERP_BLOCK_SKIP: EIGHTTAP's skip/residual decision is the
+    // historical one.  Evaluate it first so the guard can preserve that
+    // decision; the non-zero filters may then refine a leaf that already
+    // codes residual, but they cannot introduce a filtered skip.
+    const int skip_guard = interp_block_skip_guard();
+    interp_block_filter_override() = 0;
     InterLeafResult chosen;
-    double chosen_cost = 0.0;
-    bool have_chosen = false;
-    for (int filter = 0; filter <= 2; ++filter) {
-      interp_block_filter_override() = filter;
-      InterLeafResult result;
-      if (!evaluate_inter_leaf(input, result)) {
-        interp_block_filter_override() = saved_override;
-        return false;
+    if (!evaluate_inter_leaf(input, chosen)) {
+      interp_block_filter_override() = saved_override;
+      return false;
+    }
+    chosen.filter = 0;
+    double chosen_cost = filter_cost(chosen);
+    const bool base_residual = chosen.residual;
+    const bool base_zero_mv = input.mv.y == 0 && input.mv.x == 0;
+    const bool guard_this_leaf =
+        skip_guard == 1 || (skip_guard == 2 && !base_zero_mv);
+    if (!(guard_this_leaf && !base_residual)) {
+      for (int filter = 1; filter <= 2; ++filter) {
+        interp_block_filter_override() = filter;
+        InterLeafResult result;
+        if (!evaluate_inter_leaf(input, result)) {
+          interp_block_filter_override() = saved_override;
+          return false;
+        }
+        const double cost = filter_cost(result);
+        if (cost < chosen_cost) {
+          chosen = std::move(result);
+          chosen.filter = filter;
+          chosen_cost = cost;
+        }
       }
-      const double cost = filter_cost(result);
-      if (!have_chosen || cost < chosen_cost) {
-        chosen = std::move(result);
-        chosen.filter = filter;
-        chosen_cost = cost;
-        have_chosen = true;
+      if (guard_this_leaf && base_residual && !chosen.residual) {
+        // A non-zero filter would have turned EIGHTTAP's residual leaf into
+        // a skip.  Re-evaluate EIGHTTAP and keep its uncorrected path; the
+        // filter must not reshape the reference decision.
+        interp_block_filter_override() = 0;
+        InterLeafResult fallback;
+        if (!evaluate_inter_leaf(input, fallback)) {
+          interp_block_filter_override() = saved_override;
+          return false;
+        }
+        fallback.filter = 0;
+        chosen = std::move(fallback);
       }
     }
     interp_block_filter_override() = saved_override;
-    if (!have_chosen) {
-      error = "interp filter evaluation produced no candidate";
-      return false;
-    }
     out = std::move(chosen);
     out.filter_coded = true;
     out.pipe_bits += kInterpFilterSymbolBits;

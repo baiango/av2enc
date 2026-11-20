@@ -66,6 +66,36 @@ inline double interp_block_csf_weight() {
   return value;
 }
 
+// AV2ENC_INTERP_BLOCK_SKIP: keep the per-block switchable filter from changing
+// the leaf's skip/residual decision.  A switchable filter is a prediction
+// refinement: when a leaf codes residual the filter error is corrected in the
+// same picture, but a skip leaf installs the filtered prediction into the
+// reference and the following frames copy it through MC (the drift mechanism
+// in docs/luma-audit.md §4.5).  The per-block RD sees only this frame's
+// distortion, so a filter that makes the skip copy look better can still
+// reshape the reference and cost the tail.
+//
+//   0 (default)  the historical rule: compare all three filters and let the
+//                winner decide skip/residual, as measured in
+//                docs/interp-filter.md.
+//   1            EIGHTTAP keeps its own skip/residual decision; a non-zero
+//                filter can refine a leaf that already codes residual, but it
+//                cannot turn an EIGHTTAP skip into a filtered skip (or an
+//                EIGHTTAP residual into a filtered skip).
+//   2            the same guard only for a non-zero-MV skip, whose subpel MC
+//                is the measured drift path; a zero-MV skip may still choose
+//                a non-zero filter.
+inline int interp_block_skip_guard() {
+  static const int value = [] {
+    const char* env = std::getenv("AV2ENC_INTERP_BLOCK_SKIP");
+    if (env == nullptr || *env == '\0' || env[0] == '0') return 0;
+    if (env[0] == 'n' || env[0] == 'N') return 0;
+    const int parsed = std::atoi(env);
+    return parsed >= 1 && parsed <= 2 ? parsed : 1;
+  }();
+  return value;
+}
+
 // Current per-leaf prediction filter.  The decision path sets the override
 // while it evaluates one filter hypothesis; MC then reads it through
 // leaf_interp_filter().  -1 means "no override": the frame-global filter is
