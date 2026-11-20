@@ -60,6 +60,24 @@ struct Config {
   double act = 0.0;
 };
 
+// Per-picture arming for the exact-rate TX stage.  The historical gate is a
+// fixed window (`first`..`last`, the tail 33..59).  AV2ENC_RD_HEAD_TX re-uses
+// the same objective on the head pictures 1..32, where docs/rd-compose.md
+// measures the other half of the Butteraugli gap.  Both arms keep every
+// default off.
+inline int head_first() { return 1; }
+inline int head_last() {
+  static const int value = [] {
+    const char* env = std::getenv("AV2ENC_RD_HEAD_LAST");
+    if (env == nullptr || *env == '\0') return 32;
+    char* end = nullptr;
+    const long parsed = std::strtol(env, &end, 10);
+    if (end == env || parsed < 0) return 32;
+    return static_cast<int>(parsed);
+  }();
+  return value;
+}
+
 inline bool parse_off(const char* value) {
   if (value == nullptr || *value == '\0') return true;
   if (std::strcmp(value, "0") == 0) return true;
@@ -72,6 +90,15 @@ inline bool parse_off(const char* value) {
     return value[std::strlen(word)] == '\0';
   };
   return equal("false") || equal("off") || equal("no");
+}
+
+// AV2ENC_RD_HEAD_TX (default off): arm the same exact-rate / BA-shaped TX and
+// level stage on the head pictures 1..32 only.  The drift-refresh schedule code
+// and thresholds are unchanged (its refresh count still moves: it is decided
+// from the reconstruction the head has just changed).
+inline bool head_enabled() {
+  static const bool value = !parse_off(std::getenv("AV2ENC_RD_HEAD_TX"));
+  return value;
 }
 
 inline double env_double(const char* name, double fallback, bool allow_zero) {
@@ -150,8 +177,12 @@ inline double source_activity(const std::uint8_t* src, int width, int height,
 // is unavailable.
 inline bool tail_armed(int ordinal) {
   const Config& cfg = config();
-  if (!cfg.on) return false;
-  return ordinal >= cfg.first && ordinal <= cfg.last;
+  const bool tail = cfg.on && ordinal >= cfg.first && ordinal <= cfg.last;
+  if (tail) return true;
+  if (head_enabled()) {
+    return ordinal >= head_first() && ordinal <= head_last();
+  }
+  return false;
 }
 
 struct Counters {

@@ -1706,6 +1706,31 @@ inline bool tail_armed() {
   return cfg.enabled && ordinal >= 33 && ordinal <= 59;
 }
 
+// AV2ENC_RD_HEAD_PART (default off): the band-gated partition descent
+// (AV2ENC_TX_DETAIL_SEARCH_TAIL) on the head pictures instead of the tail.
+// The head's tree is otherwise clamped to the measured probe's first level
+// (`partition_probe_depth` = 1), which is why the head codes nearly every
+// leaf at 64x64 / 64x32 (`tools/lane-pdriver/head_stats.py`).
+inline bool head_part_enabled() {
+  static const bool value = [] {
+    const char* env = std::getenv("AV2ENC_RD_HEAD_PART");
+    if (env == nullptr || env[0] == '\0') return false;
+    return std::strcmp(env, "0") != 0;
+  }();
+  return value;
+}
+
+inline int head_part_last() { return 32; }
+
+// Armed pictures for the *band-gated descent*: the tail window under the
+// historical gate, or pictures 1-32 under AV2ENC_RD_HEAD_PART.
+inline bool band_descent_armed() {
+  const int ordinal = picture_ordinal();
+  if (config().enabled && ordinal >= 33 && ordinal <= 59) return true;
+  if (head_part_enabled()) return ordinal >= 1 && ordinal <= head_part_last();
+  return false;
+}
+
 // 2-4 px source band share of one luma block:
 //   sum((mean_2x2 - mean_5x5)^2) / sum((src - mean_5x5)^2)
 // over the block's visible rect.  The 2x2 mean is the aligned 2x2 cell that
@@ -1830,7 +1855,8 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   // price then lets the legal 16x16 -> four 8x8 SPLIT win on RD where the
   // source carries that band; the plan is never forced.
   if (mode == txtsearch::Mode::kInter && cw <= 16 && ch <= 16 &&
-      tx_detail::tail_armed() && tx_detail::band_high(frame, x0, y0, cw, ch)) {
+      tx_detail::band_descent_armed() &&
+      tx_detail::band_high(frame, x0, y0, cw, ch)) {
     options.detail_band_gain = 4.0;
   }
   // §5.20.7.24 predicts per *transform block*, in decode order, and each part's

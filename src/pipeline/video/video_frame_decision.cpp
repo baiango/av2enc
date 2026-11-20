@@ -4,6 +4,7 @@
 #include "pipeline/video/video_interp_filter.h"
 #include "pipeline/video/video_horizon_port.h"
 #include "pipeline/video/video_perceptual.h"
+#include "pipeline/video/video_p_drift.h"
 #include "pipeline/video/video_pipe_perc.h"
 #include "pipeline/video/video_skip_drift.h"
 #include "pipeline/video/video_uv_rd.h"
@@ -336,7 +337,7 @@ bool InterFrameEncoder::decide(std::string& error) {
     // its first-level bound, which cannot reach a 16x16 coding block.  The
     // armed tail opens the four rect levels (64 -> 32 -> 16) it needs; the
     // per-node band gate below decides which nodes actually descend.
-    if (tx_detail::tail_armed()) {
+    if (tx_detail::band_descent_armed()) {
       poptions.max_depth =
           std::min(options_.max_partition_depth, 4);
     }
@@ -364,9 +365,10 @@ bool InterFrameEncoder::decide(std::string& error) {
   // probe-only path is bit-for-bit unchanged when the gate is off.
   const std::unordered_map<std::uint64_t, double>* exact_costs = nullptr;
   // AV2ENC_TX_DETAIL_SEARCH_TAIL: the band-gated descent.  `detail_descent`
-  // is only true on an armed tail picture; `detail_max_depth` is the depth the
-  // probe was just built for, and `detail_min_share` the swept threshold.
-  const bool detail_descent = !keyframe_ && tx_detail::tail_armed();
+  // is only true on an armed picture (the tail window, or the head window under
+  // AV2ENC_RD_HEAD_PART); `detail_max_depth` is the depth the probe was just
+  // built for, and `detail_min_share` the swept threshold.
+  const bool detail_descent = !keyframe_ && tx_detail::band_descent_armed();
   const int detail_max_depth = poptions.max_depth;
   const double detail_min_share = tx_detail::config().min_share;
   // AV2ENC_RD_TAIL_ACT: the tail residual's sub-16 coding-block gate.  When
@@ -3549,8 +3551,51 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
             horizon_future_, horizon, ax0, ay0, w, h, out.res_y.recon.data(),
             out.res_u.recon.data(), out.res_v.recon.data());
       }
-      const double skip_distortion = pred_total + horizon_skip;
-      const double res_distortion = res_total + horizon_res;
+      // AV2ENC_P_DRIFT (default off): head-only drift-aware skip/reference
+      // cost.  A skipped leaf installs its prediction error in the reference,
+      // where the following pictures copy it through fractional-pel MC.  The
+      // term prices the error each arm installs in the next K real source
+      // pictures, in the same eff-perc D units as the current-frame term (the
+      // merged horizon port added a plain SSE and lost on this recipe,
+      // docs/port-lane2.md).  Head pictures only; the drift-refresh schedule
+      // code and thresholds are untouched.
+      double pdrift_skip = 0.0;
+      double pdrift_res = 0.0;
+      if (p_drift::armed(keyframe_, tx_detail::picture_ordinal()) &&
+          !horizon_future_.empty()) {
+        const p_drift::Config& pcfg = p_drift::config();
+        std::vector<double> drift_scratch;
+        const double drift_csf1 = eff_on ? eff_perc::csf_gain() : 0.0;
+        const double drift_csf2 = eff_on ? eff_perc::csf2_gain() : 0.0;
+        const double drift_chroma = eff_perc::chroma_weight();
+        pdrift_skip = pcfg.alpha * p_drift::future_distortion_perc(
+                                     horizon_future_, pcfg.k, ax0, ay0, w, h,
+                                     out.y.data(), out.u.data(), out.v.data(),
+                                     cw, ch, luma_mask_row, chroma_mask_row,
+                                     drift_csf1, drift_csf2, drift_chroma,
+                                     pipe_leaf_weights.empty()
+                                         ? nullptr
+                                         : pipe_leaf_weights.data(),
+                                     &drift_scratch);
+        pdrift_res = pcfg.alpha * p_drift::future_distortion_perc(
+                                    horizon_future_, pcfg.k, ax0, ay0, w, h,
+                                    out.res_y.recon.data(),
+                                    out.res_u.recon.data(),
+                                    out.res_v.recon.data(), cw, ch,
+                                    luma_mask_row, chroma_mask_row, drift_csf1,
+                                    drift_csf2, drift_chroma,
+                                    pipe_leaf_weights.empty()
+                                        ? nullptr
+                                        : pipe_leaf_weights.data(),
+                                    &drift_scratch);
+        ++p_drift::counters().leaves;
+        p_drift::counters().future_skip += pdrift_skip;
+        p_drift::counters().future_res += pdrift_res;
+        p_drift::counters().now_skip += pred_total;
+        p_drift::counters().now_res += res_total;
+      }
+      const double skip_distortion = pred_total + horizon_skip + pdrift_skip;
+      const double res_distortion = res_total + horizon_res + pdrift_res;
       // Reconstruction step is qlookup/8 (66 at QP 90); sse_scale 0.5 is
       // the M1 calibrated value.  --video-leaf-rd swaps in the same
       // QP-derived lambda the intra/inter decision uses.
@@ -3665,6 +3710,13 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
           if (want != hist_want) {
             ++(eff_on ? eff_perc::counters().skip_flips
                       : pipe_perc::counters().skip_flips);
+            if (p_drift::armed(keyframe_, tx_detail::picture_ordinal())) {
+              if (want) {
+                ++p_drift::counters().skip_to_residual;
+              } else {
+                ++p_drift::counters().residual_to_skip;
+              }
+            }
           }
           out.pipe_modeled = true;
           out.pipe_distortion = want ? res_total : pred_total;
