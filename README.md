@@ -32,20 +32,25 @@ is the product and must produce a **byte-identical** stream (the parity gate use
 | config | kbps | JOD | BA | SS2 | K @100 |
 |---|---:|---:|---:|---:|---:|
 | `--fast-decode` QP106 (pin) | 100.0 | 9.733 | 3.42 | 80.84 | 82.2 |
-| **`--video-rd-preset best`** QP118 | 101.5 | 9.844 | 2.02 | 84.65 | **86.33** |
-| **`--nightly-b` QP122 (chained B + compound + TIP + CWP depth + exact rate, opt-in)** | 100.0 | 9.876 | 1.91 | 85.84 | **87.28** |
+| **`--video-rd-preset best`** QP112 (joint plan, opt-in research) | 100.0 | 9.883 | 1.99 | 86.45 | **87.19** |
+| **`--nightly-b`** QP119 (chained B + compound + TIP + CWP depth + exact rate + joint plan, opt-in research) | 100.0 | 9.885 | 1.84 | 86.38 | **87.57** |
 | AVM `e6f99d3` QP124 | 99.3 | 9.862 | 1.29 | 90.38 | **90.2** |
 | SVT-AV1 p0 CRF36.5 | 100.0 | 9.828 | 1.55 | 88.89 | **88.8** |
 | rav1e 0.8.1 speed 2 | 100.1 | 9.717 | 2.71 | 81.67 | 83.7 |
 
-`best` is a **LEAD**, not a KEEP: +0.097 over the flat aggregate, inside the
-adjacent-QP ripple. `--nightly-b` is the best measured point (**87.284**, +1.052
-over flat, +0.261 over the 87.023 depth arm) but research-only: its 60-frame
-stream is `avmdec`-exact while the pinned `dav2d` has a §7.21.6 drain defect
-(17/60), so it is not the shipped path. AVERAGE compound, the TIP-output
-composition on the dead-end leaves, the CWP NEAR_NEARMV depth pair and the
-exact compound-rate probe are on by default (the depth arm needs the TIP field
-guard); `AV2ENC_COMPOUND_EXACT_RATE=0` reproduces the 87.023 depth arm,
+`best` now carries the **joint plan solve**: a KEEP at **87.19** (+0.68
+bracket / +0.92 fit over the 86.51/86.30 non-joint best), but a **research
+gate** — the serial raster walk costs ~12 min per 60-frame encode, so
+`--fast-decode` remains the shipped fast path.  `AV2ENC_RD_JOINT_P=0` restores
+the 86.33 lead stack (a LEAD, not a KEEP: +0.097 over the flat aggregate,
+inside the adjacent-QP ripple).  `--nightly-b` is **87.570** (+1.338 over flat,
++0.286 over the 87.284 exact-rate arm) and also a 12-min research gate;
+research-only because its 60-frame stream is `avmdec`-exact while the pinned
+`dav2d` has a §7.21.6 drain defect (17/60).  AVERAGE compound, the TIP-output
+composition on the dead-end leaves, the CWP NEAR_NEARMV depth pair, the exact
+compound-rate probe and the joint solve are on by default in `--nightly-b`
+(the depth arm needs the TIP field guard); `AV2ENC_RD_JOINT_P=0` reproduces the
+87.284 exact-rate arm, `AV2ENC_COMPOUND_EXACT_RATE=0` the 87.023 depth arm,
 `--video-compound-depth-off` the 86.805 TIP arm, `AV2ENC_TIP_LEAF=0` with the
 depth off the 86.61 compound arm, and `--video-compound-off` the 85.47
 single-prediction arm. The compound NEWMV modes are exact but +0.054 and stay
@@ -65,13 +70,13 @@ cmake --build --preset release -j8
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/fd.ivf \
   --video --frames 60 --qp 106 --cpu-threads 8 --fast-decode
 
-# best measured flat point (LEAD, 86.33)
+# best measured flat point (joint plan KEEP, 87.19; ~12 min)
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/best.ivf \
-  --video --frames 60 --qp 118 --cpu-threads 8 --video-rd-preset best
+  --video --frames 60 --qp 112 --cpu-threads 8 --video-rd-preset best
 
-# chained B research path (87.284; avmdec-validated)
+# chained B research path (87.570; avmdec-validated, ~12 min)
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
-  --video --frames 60 --qp 122 --cpu-threads 8 --video-gops 7 --nightly-b
+  --video --frames 60 --qp 119 --cpu-threads 8 --video-gops 7 --nightly-b
 ```
 
 ### Presets
@@ -81,8 +86,8 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
 | *(default)* | historical key-only/basic decisions, byte-pinned |
 | `--video-rd-preset quality` | measured still/keyframe preset |
 | **`--fast-decode`** | measured CPU RD aggregate (was `--nightly`; the old name is an alias) |
-| **`--video-rd-preset best`** | flat lead stack (86.33): EFF_PERC, head/tail TX, driver, key −39, drift 1.5/3250 |
-| **`--nightly-b`** | chained single-key B + compound + TIP + CWP depth + exact rate, opt-in research (**87.284**; `AV2ENC_COMPOUND_EXACT_RATE=0` → 87.023, `--video-compound-depth-off` → 86.805, `AV2ENC_TIP_LEAF=0` with depth off → 86.61, `--video-compound-off` → 85.47) |
+| **`--video-rd-preset best`** | flat best stack (**87.19** joint plan KEEP, ~12 min): EFF_PERC, head/tail TX, driver, key −39, drift 1.5/3250 + joint solve; `AV2ENC_RD_JOINT_P=0` → 86.33 LEAD |
+| **`--nightly-b`** | chained single-key B + compound + TIP + CWP depth + exact rate + joint plan, opt-in research (**87.570**, ~12 min; `AV2ENC_RD_JOINT_P=0` → 87.284, `AV2ENC_COMPOUND_EXACT_RATE=0` → 87.023, `--video-compound-depth-off` → 86.805, `AV2ENC_TIP_LEAF=0` with depth off → 86.61, `--video-compound-off` → 85.47) |
 
 ### Pins
 
@@ -93,10 +98,13 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
 | fast-decode QP106 | 25,008 | `0639b43630abb454f7be5ac494d2efb4` |
 | fast-decode QP110 | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
 | 720p QP217 (key −57, leaf 250, ext partitions) | 36,572 | `c4ba28138d8f6569d5e08721a66d755c` |
-| `--nightly-b` 16 f exact (QP116, gops 2) | 19,774 | `51b664515a897a3b19be4131790867fa` |
-| `--nightly-b` 60 f exact (QP121, gops 7) | 25,163 | `dfa6b1aadd565a2adf47c7e186c1a973` |
-| `--nightly-b` 60 f exact (QP122, gops 7) | 24,859 | `1d21367557f3025ceaaff088a4a7f490` |
-| `--nightly-b` 60 f exact (QP123, gops 7) | 24,598 | `bb2d606b8172ea5b8ec9602f79944aab` |
+| `--video-rd-preset best` joint QP112 | 25,007 | `9a36aeb7c02733342e4ec5db300e4d6d` |
+| `--nightly-b` 16 f joint (QP116, gops 2) | 19,723 | `505430de620af361a18b42503543dbda` |
+| `--nightly-b` 60 f joint (QP118, gops 7) | 25,093 | `34103c1f26ca7225ebaf74f67e771175` |
+| `--nightly-b` 60 f joint (QP119, gops 7) | 24,845 | `40de8b687d929652a312407764227398` |
+| joint-off control: `best` QP116 | 26,334 | `fba63446670b43888c3ac7b280ad44dc` |
+| joint-off control: `--nightly-b` 16 f exact (QP116) | 19,774 | `51b664515a897a3b19be4131790867fa` |
+| joint-off control: `--nightly-b` 60 f exact (QP121) | 25,163 | `dfa6b1aadd565a2adf47c7e186c1a973` |
 | basic 64×64 / 640×360 | — | `c9294fa4…` / `0d90c958…` |
 | still 64×64 / 640×360 | — | `2b31e378…` / `8ffbe059…` |
 

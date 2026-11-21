@@ -80,6 +80,11 @@ command -v python3 >/dev/null 2>&1 || {
   echo "gate_video_tlayers_chain: python3 is required" >&2; exit 77; }
 
 OUT="${OUT:-${TMPDIR:-/tmp}/video_tlayers_chain_gate}"
+# The promoted --nightly-b preset carries the joint plan solve, which is a
+# ~12 min/60-frame research gate.  This gate pins the joint-off controls (the
+# exact-rate B arm); the joint B streams are pinned by
+# gate_video_joint_plan.sh.
+export AV2ENC_RD_JOINT_P=0
 mkdir -p "$OUT"
 FAIL=0
 PASS=0

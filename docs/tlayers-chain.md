@@ -57,29 +57,40 @@ TIP measured **K 86.805 at 100.0 kbps** (QP121/122, 25,299/24,918 B):
 **+0.198 K** over the 86.607 compound arm and **+0.573 K** over the flat
 86.232 aggregate.
 
-**The CWP compound-depth + exact-rate arm is the promoted point
-(2026-11-21).** One NEAR_NEARMV stack pair per list with the five CWP weights
-takes the TIP arm to 87.023; pricing the compound symbol set exactly
+**The CWP compound-depth + exact-rate arm (2026-11-21).** One NEAR_NEARMV
+stack pair per list with the five CWP weights takes the TIP arm to 87.023;
+pricing the compound symbol set exactly
 (`comp_mode`/`is_joint`/`compound_mode`/`jmvd_scale_mode`/both DRLs/
 `comp_group_idx`/`cwp_idx`/the compound filter, with the CWP index alphabet
-fixed to 0..4) takes the preset to **K 87.284 at 100.0 kbps** (QP121/122/123,
+fixed to 0..4) takes it to **K 87.284 at 100.0 kbps** (QP121/122/123,
 25,163/24,859/24,598 B): **+0.261 K** over the depth arm, **+0.479 K** over the
 86.805 TIP arm and **+1.052 K** over the flat 86.232. The arm needs
 `AV2ENC_TIP_LEAF_FIELD_GUARD=3`: unguarded TIP+compound is not
 encoder/decoder-exact at 60 pictures (2-31 LSB on displays 20/30/35/42), so
 the guarding fallback to the coded B is part of the measured point, and the
-unguarded K 87.363 is invalid. The 16-picture proof is exact on both decoders;
-the 60-picture streams are `avmdec`-only until the pinned dav2d §7.21.6 drain
-fix lands, so B remains **research-only** and the shipped flat `--fast-decode`
-aggregate is unchanged. The compound NEWMV modes are signallable and exact but
-measure 87.077 (+0.054) and stay off. Controls are byte-exact:
-`AV2ENC_COMPOUND_EXACT_RATE=0` restores the 87.023 depth arm,
-`--video-compound-depth-off` restores the 86.805 TIP arm,
-`AV2ENC_TIP_LEAF=0` with the depth off restores the 86.607/24,988 compound
-arm, and `--video-compound-off` restores the 85.472 arm.  The implicit mask is
-**not** in the promoted arm: it selects no different block but changes the
-reconstructed blend and re-keys the pins at the same byte lengths
-(`docs/compound-depth.md`).
+unguarded K 87.363 is invalid. The compound NEWMV modes are signallable and
+exact but measure 87.077 (+0.054) and stay off.
+
+**The joint plan solve is the promoted B point (2026-11-21).** Phase 2 ports
+the flat P joint partition + TX/level solve to this carrier with the compound
+leaf priced through the interval model and the exact `SyntaxProbe`.  It takes
+the preset to **K 87.570 bracket / 87.587 fit at 100.0 kbps** (QP119 24,845 B /
+99.380 kbps / 87.664 and QP118 25,093 B / 100.372 kbps / 87.513):
+**+0.286 K** over the 87.284 exact-rate arm, **+0.765 K** over the 86.805 TIP
+arm and **+1.338 K** over the flat 86.232.  The 16-picture joint proof is
+**19,723 B / `505430de…`** and is pinned-dav2d exact; the 60-picture streams
+are `avmdec` 60/60.  The same caveats hold: B is research-only until the pinned
+dav2d §7.21.6 drain fix lands, and the joint solve's serial raster walk costs
+~12 min per 60-frame 240p encode, so it is a research gate, not the fast path
+(`--fast-decode` is unchanged).  Controls are byte-exact:
+`AV2ENC_RD_JOINT_P=0` restores the 87.284 exact-rate arm,
+`AV2ENC_COMPOUND_EXACT_RATE=0` the 87.023 depth arm,
+`--video-compound-depth-off` the 86.805 TIP arm,
+`AV2ENC_TIP_LEAF=0` with the depth off the 86.607/24,988 compound arm, and
+`--video-compound-off` the 85.472 arm.  The implicit mask is **not** in the
+promoted arm: it selects no different block but changes the reconstructed
+blend and re-keys the pins at the same byte lengths
+(`docs/compound-depth.md`, `docs/rd-joint-plan.md` §12-§13).
 
 Default-off env gates (the raw spike flags; `--nightly-b` sets the same
 options):
@@ -629,7 +640,7 @@ reference map, the §7.22 slot store and every other picture's prediction are
 untouched.
 
 `--nightly-b` sets mode 1, the 0.30 dB floor and the depth arm's field guard
-when they are unset, so the TIP step is 86.805 inside the 87.284 preset
+when they are unset, so the TIP step is 86.805 inside the 87.570 preset
 (`docs/compound-depth.md`). The env gates stay available (an explicit value,
 including `0`, wins) and are not reachable from `--fast-decode`:
 
@@ -643,6 +654,8 @@ AV2ENC_TIP_LEAF_FIELD_GUARD=3      # preset: fall back on a CWP/compound field
 AV2ENC_COMPOUND_PAIR_LIMIT=1       # preset: first NEAR_NEARMV stack pair
 AV2ENC_COMPOUND_RATE=1             # preset: charge the compound-mode syntax
 AV2ENC_COMPOUND_EXACT_RATE=1       # preset: exact §5.20.7.6 symbol pricing
+AV2ENC_RD_JOINT_P=1                # preset: joint partition + TX/level solve
+AV2ENC_RD_JOINT_P_TARGET=8         # preset: deepest measured uniform leaf
 AV2ENC_COMPOUND_NEWMV=1            # NOT in the preset (sub-gate modes)
 ```
 

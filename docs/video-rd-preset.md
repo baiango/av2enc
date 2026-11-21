@@ -35,12 +35,12 @@ It is CPU `--video` only (single tile, P-only chain); `--still` and
 `--video-gpu` reject it. It does not change `--qp`, the TX lambda (256) or any
 default.
 
-## The lead stack (`--video-rd-preset best`)
+## The best stack (`--video-rd-preset best`)
 
-`--video-rd-preset best` is the measured **flat lead stack**: the whole
+`--video-rd-preset best` is the measured **flat best stack**: the whole
 `--fast-decode` aggregate (so it implies `--video` and the `quality` row)
-plus the nine env-only RD tools, the drift-refresh allocation point the stack
-was measured at, and the funded key spend:
+plus the nine env-only RD tools, the drift-refresh allocation point, the
+funded key spend and the **joint plan solve**:
 
 | Setting | Value |
 |---|---|
@@ -50,6 +50,7 @@ was measured at, and the funded key spend:
 | `AV2ENC_RD_KEY_TX` | `1` (key TX/level exact-rate RD) |
 | `AV2ENC_TX_DETAIL_SEARCH_TAIL` | `1` (band-gated tail TX descent) |
 | `AV2ENC_TX_DETAIL_MIN` | `0.50` (2-4 px band share threshold) |
+| `AV2ENC_RD_JOINT_P` | `1` (joint partition + TX/level solve; ~12 min/60 f) |
 | `--video-eff-perc` | the same exact-rate pipe as a CLI form |
 | `--video-rd-driver` | sequential key-frame RD driver |
 | `--video-head-tx` / `--video-tail-tx` | display-order exact-rate TX windows |
@@ -57,40 +58,48 @@ was measured at, and the funded key spend:
 | `--video-drift-refresh-threshold` | `1.5` (a caller value wins) |
 | `--video-drift-refresh-budget` | `3250` (a caller value wins) |
 
-The five env-only gates are set by the preset application, which runs during
+The env-only gates are set by the preset application, which runs during
 validation **before the first encoder reads its static configs**. An explicit
 env value always wins, including `0`, so every arm stays inspectable:
 
 ```sh
 # the preset (byte-identical to the explicit command below)
 av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
-    --frames 60 --qp 116 --cpu-threads 8 --video-rd-preset best
+    --frames 60 --qp 112 --cpu-threads 8 --video-rd-preset best
 
 # the explicit stack it expands to
 env AV2ENC_EFF_PERC=1 AV2ENC_RD_UVFULL=1 \
     AV2ENC_TX_DETAIL_SEARCH_TAIL=1 AV2ENC_TX_DETAIL_MIN=0.50 \
     AV2ENC_RD_KEY_TX=1 AV2ENC_RD_UVLEVEL=1 AV2ENC_RD_DRIVER=1 \
-    AV2ENC_RD_HEAD_TX=1 AV2ENC_RD_TAIL_TX=1 \
+    AV2ENC_RD_HEAD_TX=1 AV2ENC_RD_TAIL_TX=1 AV2ENC_RD_JOINT_P=1 \
     av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/e.ivf \
-    --video --frames 60 --qp 116 --cpu-threads 8 --fast-decode \
+    --video --frames 60 --qp 112 --cpu-threads 8 --fast-decode \
     --video-drift-refresh-threshold 1.5 --video-drift-refresh-budget 3250 \
     --video-key-qp-offset -39
+
+# the 86.33 lead stack (joint off, the fast path)
+env AV2ENC_RD_JOINT_P=0 av2enc ... --video-rd-preset best
 ```
 
-`tools/gate_video_nightly.sh` asserts `cmp` equality at QP 114/116/118, that
-`AV2ENC_RD_UVLEVEL=0` changes the stream, and that the preset decodes under the
-pinned `dav2d --strict 1`.
+`tools/gate_video_nightly.sh` asserts the preset expansion at QP 114/116/118
+with `AV2ENC_RD_JOINT_P=0` (the 86.33 lead stack), that
+`AV2ENC_RD_UVLEVEL=0` changes the stream, and that the preset decodes under
+the pinned `dav2d --strict 1`.  `src/pipeline/video/gate_video_joint_plan.sh`
+owns the joint pins: flat **QP112 25,007 B /
+`9a36aeb7c02733342e4ec5db300e4d6d`**, plus the joint-off controls.
 
-**Verdict: LEAD, not a KEEP.** The funded key spend on top of the merged
-head/tail exact-rate base composes to **K 86.33 at 100 kbps, +0.097 over the
-86.232 flat aggregate** (base bracket 86.236/86.161/85.801 at QP 114/116/118 vs
-k39 86.447/86.608/85.889 at QP 116/118/120). The head/tail TX already spends the
-same driver headroom, so the fundable bytes are fungible: the identical spend
-unfunded *loses* 0.78 K, and adding both the -39 offset and the +0.540
-rd-spend result would double-count the same bytes. The gain is also inside the
-±0.2-1 K adjacent-QP ripple, so it is not a new quality level; it stays an
-explicit opt-in row (`docs/negative-results.md`). The chained B path remains
-research-only and does not change this.
+**Verdict: the joint best is a KEEP; the joint-off lead stack is a LEAD.**
+The joint plan solve measures **K 87.194 bracket / 87.214 fit at 100 kbps**
+(QP112 25,007 B / 100.028 kbps / K 87.196), **+0.680 / +0.916 over the
+non-joint best 86.514 / 86.298** (`AV2ENC_RD_JOINT_P=0`).  It is a **research
+gate**: the serial raster walk costs ~12 min per 60-frame 240p encode, so
+`--fast-decode` remains the shipped fast path and the default streams are
+byte-identical.  The joint-off lead stack's funded key spend composes to
+**K 86.33 at 100 kbps, +0.097 over the 86.232 flat aggregate**, which is a
+**LEAD, not a KEEP**: the head/tail TX already spends the same driver
+headroom, the identical spend unfunded *loses* 0.78 K, and the gain is inside
+the ±0.2-1 K adjacent-QP ripple.  The chained B path is a separate research
+preset (`docs/tlayers-chain.md`).
 
 ## Measured RD
 

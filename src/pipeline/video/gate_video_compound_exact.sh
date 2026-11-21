@@ -69,6 +69,9 @@ fi
   echo "gate_video_compound_exact: missing fixture $INPUT" >&2; exit 77; }
 
 OUT="${OUT:-${TMPDIR:-/tmp}/video_compound_exact_gate}"
+# This gate is the joint-off exact-rate arm; the promoted preset carries the
+# joint solve (gate_video_joint_plan.sh).
+export AV2ENC_RD_JOINT_P=0
 mkdir -p "$OUT"
 FAIL=0
 PASS=0

@@ -1221,6 +1221,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
             0, 0, 0, {}, nullptr, nullptr, ref_order_hints,
             /*primary_ref_is_none=*/true, &temporal_ctx);
         probe.set_display_ordinal(display);
+        probe.set_joint_plan_off();
         std::vector<std::uint8_t> probe_tile;
         std::vector<syntax::BlockSyntax> probe_blocks;
         std::vector<std::int32_t> probe_levels;

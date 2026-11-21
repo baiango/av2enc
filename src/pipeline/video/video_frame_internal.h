@@ -30,6 +30,7 @@
 #include "pipeline/video/video_tail_tx.h"
 #include "pipeline/video/video_part_diag.h"
 #include "pipeline/video/video_tail_floor.h"
+#include "pipeline/video/video_joint_plan.h"
 #include "pipeline/video/video_decision_rate.h"
 #include "codec/partition/tree/partition.h"
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
@@ -2568,6 +2569,9 @@ class InterFrameEncoder {
     // The chained B coding order is not display order; -1 keeps the historical
     // coding-order `picture_ordinal()`.
     void set_display_ordinal(int display) { display_ordinal_ = display; }
+    // The TIP-output quality probe must reproduce the base coded alternative,
+    // not the joint tree: the probe is a PSNR guard, not a rate decision.
+    void set_joint_plan_off() { joint_plan_off_ = true; }
     int arming_ordinal() const {
       return display_ordinal_ >= 0 ? display_ordinal_
                                    : tx_detail::picture_ordinal();
@@ -3167,7 +3171,8 @@ class InterFrameEncoder {
                                const ChromaInfo& inherited,
                                PartitionNode* emitted, std::string& error);
     bool tail_floor_leaf_cost(SbSink& sink, std::size_t index, double lambda,
-                            double* d_out, double* r_out, std::string& error);
+                            double hf, double edge, double* d_out,
+                            double* r_out, std::string& error);
     bool tail_floor_trial_cost(SbSink& sink, std::size_t begin, double lambda,
                              int splits, double* d_out, double* r_out,
                              std::string& error);
@@ -3489,6 +3494,20 @@ class InterFrameEncoder {
     bool part_diag_active_ = false;
     bool part_diag_trial_ = false;
     const PartitionNode* part_diag_sb_root_ = nullptr;
+
+  // AV2ENC_RD_JOINT_P: measured joint partition + TX/levels search on the P
+  // chain.  `active` arms the sequential walk for the picture and marks the
+  // leaf the coder writes so the inter-syntax price is stashed for the trial
+  // cost.  `off` is the TIP-output quality probe's opt-out.
+    bool joint_p_active_ = false;
+    bool joint_plan_off_ = false;
+    bool joint_p_measure_leaf(const PartitionNode& node,
+                              const ChromaInfo& inherited, SbSink& sink,
+                              double lambda, double* cost,
+                              std::string& error);
+    bool joint_p_decide_sb(std::size_t sb_index,
+                           const PartitionNode& reference, PartitionNode* out,
+                           std::string& error);
 
   // ---------------------------------------------------------------------
   // §5.20.7.10 / §5.20.7.6 block-level TIP reference

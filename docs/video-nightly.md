@@ -44,28 +44,33 @@ See `docs/qp-scaled-lambda.md` and `bench/space8k_720p/README.md`.
 the single-tile low-delay P chain (no B/reorder/temporal-layer modes, no
 `--video-ref-mvs`); the normal combination validation enforces that.
 
-`--video-rd-preset best` (`docs/video-rd-preset.md`) is the opt-in **lead
-stack** measured on top of this aggregate: the nine env-only RD tools
-(eff-perc, UVFULL/UVLEVEL, key TX, the tail band descent), the RD driver, the
-head/tail exact-rate TX windows, the drift-refresh 1.5 dB / 3250 B point and
-`--video-key-qp-offset -39`. It reproduces the explicit env command byte for
-byte at QP 114/116/118, measures **K 86.33 at 100 kbps (+0.097 over the 86.232
-flat aggregate)**, and is documented as a **LEAD, not a KEEP** (inside the
-adjacent-QP ripple and sharing the driver headroom with the head/tail TX).
+`--video-rd-preset best` (`docs/video-rd-preset.md`) is the opt-in **flat
+best stack** on top of this aggregate: the nine env-only RD tools (eff-perc,
+UVFULL/UVLEVEL, key TX, the tail band descent), the RD driver, the head/tail
+exact-rate TX windows, the drift-refresh 1.5 dB / 3250 B point,
+`--video-key-qp-offset -39` and the **joint P plan solve**
+(`AV2ENC_RD_JOINT_P=1`).  The joint solve measures **K 87.194 bracket /
+87.214 fit at 100 kbps** (QP112 25,007 B / 100.028 kbps / K 87.196) and is a
+**KEEP**, but it is a **research gate**: the serial raster walk costs ~12 min
+per 60-frame 240p encode, so `--fast-decode` remains the shipped fast path.
+`AV2ENC_RD_JOINT_P=0` reproduces the **86.33 lead stack** (+0.097 over the
+86.232 flat aggregate), which stays a **LEAD, not a KEEP**.
 
 `--nightly-b` (`docs/tlayers-chain.md`) is a separate **research** preset, not
 part of this aggregate: the chained single-key hierarchical-B stream with
 AVERAGE compound, TIP output on the dead-end leaves, the CWP NEAR_NEARMV depth
-pair and the exact compound-rate probe measures **K 87.284 at 100 kbps
-(+1.052 over the 86.232 flat aggregate, +0.261 over its 87.023 depth control,
-+0.479 over its 86.805 TIP control, +1.812 over the 85.472 single-prediction
-control)**.  The compound NEWMV modes are exact but +0.054 and stay off.  Its
-60-picture chains are `avmdec`-validated only (the pinned `dav2d` has the
-§7.21.6 drain defect), so it stays opt-in and the shipped flat decisions here
-are unchanged.  The depth control is `AV2ENC_COMPOUND_EXACT_RATE=0`; the TIP
-control is `--video-compound-depth-off`; the compound control is that plus
+pair, the exact compound-rate probe and the joint plan solve measures **K
+87.570 bracket / 87.587 fit at 100 kbps (+1.338 over the 86.232 flat
+aggregate, +0.286 over its 87.284 exact-rate control, +0.765 over its 86.805
+TIP control, +2.098 over the 85.472 single-prediction control)**.  The compound
+NEWMV modes are exact but +0.054 and stay off.  Its 60-picture chains are
+`avmdec`-validated only (the pinned `dav2d` has the §7.21.6 drain defect), so
+it stays opt-in and the shipped flat decisions here are unchanged.  The joint
+control is `AV2ENC_RD_JOINT_P=0`; the exact-rate control is that plus
+`AV2ENC_COMPOUND_EXACT_RATE=0`; the TIP control is
+`--video-compound-depth-off`; the compound control is that plus
 `AV2ENC_TIP_LEAF=0`; the single-prediction control is `--video-compound-off`.
-See the same doc and `docs/compound-depth.md`.
+See the same doc, `docs/compound-depth.md` and `docs/rd-joint-plan.md`.
 
 ## Current pins
 

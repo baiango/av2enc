@@ -1588,6 +1588,20 @@ default-off and not in the preset.  `AV2ENC_COMPOUND_NEWMV_MODES` (bit 1/2/4),
 `src/pipeline/video/gate_video_compound_exact.sh` (exact-rate 16/60, the
 signallable-NEWMV trace, and the controls).
 
+## Joint plan solve (CPU, opt-in research)
+
+`AV2ENC_RD_JOINT_P=1` replaces the sequential partition → leaf → TX/levels
+stages with one objective: every candidate coding block is encoded with the
+coder's own leaf path and scored with the P leaf D (eff-perc inter CSF +
+chroma), the exact §8.2.6 interval rate and the live inter-syntax price.  The
+reference tree is always a candidate, so the solve cannot make a stream worse
+under J.  It is promoted into `--video-rd-preset best` and `--nightly-b`:
+flat **87.194 bracket / 87.214 fit**, chained B **87.570 / 87.587** at 100
+kbps.  The serial raster walk costs ~12 min per 60-frame 240p encode, so it is
+a research gate, not the fast path; `AV2ENC_RD_JOINT_P=0` restores the 86.33 /
+87.284 controls.  Gate: `src/pipeline/video/gate_video_joint_plan.sh`.  See
+`docs/rd-joint-plan.md`.
+
 ## DF sub-PU (opt-in, CPU)
 
 `--video-df-sub-pu` signals sequence `enable_df_sub_pu = 1` and frame

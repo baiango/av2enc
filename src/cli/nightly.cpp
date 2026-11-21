@@ -86,6 +86,13 @@ bool apply_video_rd_preset(Options& options, std::string& error) {
   set_gate("AV2ENC_RD_KEY_TX", "1");
   set_gate("AV2ENC_TX_DETAIL_SEARCH_TAIL", "1");
   set_gate("AV2ENC_TX_DETAIL_MIN", "0.50");
+  // The measured joint P plan solve: one objective over partition and
+  // TX/levels collapses the probe's over-priced coarse blocks.  +0.68 K
+  // bracket / +0.92 fit at 100 kbps, but the serial raster walk costs
+  // ~12 min per 60-frame 240p encode, so this is an opt-in research gate,
+  // not the fast path (--fast-decode is unchanged).  An explicit env value
+  // (including 0) wins and restores the 86.33 lead stack.
+  set_gate("AV2ENC_RD_JOINT_P", "1");
   // The four CLI-form lead tools: the exact-rate pipe, the key-frame RD
   // driver and the display-order head/tail TX windows.
   options.video_eff_perc = true;
@@ -416,6 +423,14 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
       // NOT enabled (AV2ENC_COMPOUND_NEWMV is left unset; they measure +0.054,
       // below the gate).
       set_gate("AV2ENC_COMPOUND_EXACT_RATE", "1");
+      // The Phase-2 joint plan solve on the chained-B carrier: the same
+      // one-objective tree search with the compound leaf priced exactly.
+      // +0.286 K bracket / +0.278 fit at 100 kbps; the serial raster walk is
+      // ~12 min per 60-frame 240p encode, so it is a research gate, not the
+      // fast path.  An explicit env value (including 0) wins and restores
+      // the 87.284 exact-rate arm.
+      set_gate("AV2ENC_RD_JOINT_P", "1");
+      set_gate("AV2ENC_RD_JOINT_P_TARGET", "8");
     }
   }
   return true;

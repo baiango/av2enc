@@ -703,6 +703,22 @@ bool InterFrameEncoder::decide(std::string& error) {
     // previous superblocks actually built, then committed through the normal
     // collect_node()/encode_leaf() walk so recon + §6.19.2.3 BlockDecoded
     // advance before the next decision.
+    // AV2ENC_RD_JOINT_P: the measured P-frame joint tree + TX/levels solve.
+    // Same surface restrictions as the key/tail sequential walks; it is
+    // mutually exclusive with the tail floor and the diagnostic, which it
+    // subsumes (it prices those nodes with the same objective and can also
+    // collapse ancestors).
+    bool joint_p =
+        !keyframe_ && !joint_plan_off_ && joint_plan::armed(arming_ordinal()) &&
+        !options_.enable_sdp && !options_.force_single_block &&
+        !palette_enabled_ && !ibc_enabled_ && !qp_tools_active() &&
+        !options_.enable_tcq && !options_.tip_block_ref &&
+        (tile_w_ <= 0 || tile_w_ >= static_cast<int>(source_.width)) &&
+        (tile_h_ <= 0 || tile_h_ >= static_cast<int>(source_.height)) &&
+        pipe_probe_ready_;
+#if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
+    joint_p = joint_p && !options_.ext_partitions;
+#endif
     bool sequential_key =
         keyframe_ && rd_driver::enabled() && !options_.enable_sdp &&
         !options_.force_single_block && !palette_enabled_ && !ibc_enabled_ &&
@@ -746,6 +762,29 @@ bool InterFrameEncoder::decide(std::string& error) {
     tail_floor_trial_ = false;
     part_diag_active_ = sequential_diag;
     part_diag_trial_ = false;
+    if (joint_p) {
+      tail_floor_active_ = false;
+      part_diag_active_ = false;
+      joint_p_active_ = true;
+      sb_sinks_.resize(base_superblocks.size());
+      for (std::size_t sb = 0; sb < base_superblocks.size(); ++sb) {
+        sb_sinks_[sb].reset();
+        seed_unit_state(sb_sinks_[sb]);
+        PartitionNode chosen;
+        if (!joint_p_decide_sb(sb, base_superblocks[sb], &chosen, error)) {
+          joint_p_active_ = false;
+          return false;
+        }
+        base_superblocks[sb] = std::move(chosen);
+        if (!collect_node(sb_sinks_[sb], base_superblocks[sb], error)) {
+          joint_p_active_ = false;
+          return false;
+        }
+      }
+      joint_p_active_ = false;
+      merge_sinks();
+      return true;
+    }
     if (sequential_key) {
       sb_sinks_.resize(base_superblocks.size());
       for (std::size_t sb = 0; sb < base_superblocks.size(); ++sb) {
@@ -5500,7 +5539,8 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
   // The measured coding-block decision prices every candidate leaf with it, so
   // a 16x16 leaf and its 8x8-class children are compared in the same coded
   // context.  Inert unless the gate armed this picture.
-  if ((tail_floor_active_ || part_diag_active_) && pipe_on) {
+  if ((tail_floor_active_ || part_diag_active_ || joint_p_active_) &&
+      pipe_on) {
     rate_hybrid::Terms tail_terms;
     const bool priced = pipe_probe_.price_full(entry, &tail_terms);
     if (tail_floor_leaf_bits_.size() <= index) {
@@ -6591,21 +6631,27 @@ bool InterFrameEncoder::tail_floor_candidate(const PartitionNode& node) const {
 }
 
 bool InterFrameEncoder::tail_floor_leaf_cost(SbSink& sink, std::size_t index,
-                                             double lambda, double* d_out,
+                                             double lambda, double hf,
+                                             double edge, double* d_out,
                                              double* r_out,
                                              std::string& error) {
   (void)lambda;
   (void)error;
   if (d_out == nullptr || r_out == nullptr) return false;
-  if (index >= sink.blocks.size()) return false;
+  if (index >= sink.blocks.size()) {
+    if (joint_p_active_) ++joint_plan::counters().fail_entry;
+    return false;
+  }
   if (index >= tail_floor_leaf_bits_ok_.size() ||
       tail_floor_leaf_bits_ok_[index] == 0) {
+    if (joint_p_active_) ++joint_plan::counters().fail_entry;
     return false;
   }
   const syntax::BlockSyntax& entry = sink.blocks[index];
   if (entry.partition !=
           static_cast<std::uint8_t>(partition::PartitionType::kNone) ||
       entry.subtree != 0) {
+    if (joint_p_active_) ++joint_plan::counters().fail_entry;
     return false;
   }
   const auto size = static_cast<partition::BlockSize>(entry.bsize);
@@ -6631,8 +6677,7 @@ bool InterFrameEncoder::tail_floor_leaf_cost(SbSink& sink, std::size_t index,
       source_.y.data(), static_cast<int>(source_.width),
       static_cast<int>(source_.height), static_cast<int>(source_.width), ax0,
       ay0, w, h, rows, recon_[0].samples.data(), recon_[0].stride,
-      recon_[0].height, x0, y0, csf, csf2, tail_floor::config().hf,
-      tail_floor::config().edge);
+      recon_[0].height, x0, y0, csf, csf2, hf, edge);
   if (entry.has_chroma != 0 && entry.chroma_bsize != 0) {
     const auto chroma_size =
         static_cast<partition::BlockSize>(entry.chroma_bsize);
@@ -6671,13 +6716,17 @@ bool InterFrameEncoder::tail_floor_leaf_cost(SbSink& sink, std::size_t index,
   double r = 0.0;
   const bool skip = entry.is_inter != 0 && entry.skip_flag != 0;
   if (!skip) {
-    if (options_.enable_tcq || entry.tree_type != 0) return false;
+    if (options_.enable_tcq || entry.tree_type != 0) {
+      if (joint_p_active_) ++joint_plan::counters().fail_entry;
+      return false;
+    }
     rate_interval::LeafRateInput in;
     rate_interval::LeafLevelStorage storage;
     if (!rate_interval::build_from_syntax(
             entry, sink.levels, options_.enable_tx_search,
             options_.adaptive_cdf, static_cast<int>(options_.base_q_idx), &in,
-            &storage)) {
+            &storage, /*mode_less_inter=*/true)) {
+      if (joint_p_active_) ++joint_plan::counters().fail_build;
       return false;
     }
     const rate_interval::Mode mode =
@@ -6685,11 +6734,15 @@ bool InterFrameEncoder::tail_floor_leaf_cost(SbSink& sink, std::size_t index,
          eff_perc::enabled() && (eff_perc::rate_mode() & 1) != 0)
             ? rate_interval::Mode::kInterval
             : rate_interval::mode();
-    if (mode == rate_interval::Mode::kOff) return false;
+    if (mode == rate_interval::Mode::kOff) {
+      if (joint_p_active_) ++joint_plan::counters().fail_entry;
+      return false;
+    }
     const rate_interval::LeafRate rate =
         rate_interval::estimate(in, rate_interval_cdfs_, mode);
     if (rate.failed ||
         !(rate.residual_bits < rate_interval::detail::kImpossibleBits)) {
+      if (joint_p_active_) ++joint_plan::counters().fail_estimate;
       return false;
     }
     r += rate.residual_bits;
@@ -6724,7 +6777,10 @@ bool InterFrameEncoder::tail_floor_trial_cost(SbSink& sink, std::size_t begin,
     }
     double d = 0.0;
     double r = 0.0;
-    if (!tail_floor_leaf_cost(sink, i, lambda, &d, &r, error)) return false;
+    if (!tail_floor_leaf_cost(sink, i, lambda, tail_floor::config().hf,
+                              tail_floor::config().edge, &d, &r, error)) {
+      return false;
+    }
     d_sum += d;
     r_sum += r;
   }
@@ -7417,6 +7473,376 @@ bool InterFrameEncoder::part_diag_collect_node(SbSink& sink,
     return ok;
   }
   return commit_reference();
+}
+
+// AV2ENC_RD_JOINT_P ----------------------------------------------------------
+//
+// The P-frame port of the key driver (`seq_driver_decide_sb`).  Every leaf is
+// encoded with the coder's own field (mode search, TX/levels, coeff trellis)
+// through collect_node(), priced with the P leaf objective (eff-perc inter CSF
+// + exact §8.3 interval rate + live inter-syntax price), and every partition
+// node is decided with one J.  Unlike the key driver the leaves are measured
+// through collect_node() (not encode_leaf() directly) because the P path owns
+// the inter syntax probe, §6.19.2.3 maps and the rate stash the exact cost
+// reads; the sequential raster walk is what makes an intra leaf inside P
+// priced in the reconstruction the decoder will see.
+bool InterFrameEncoder::joint_p_measure_leaf(const PartitionNode& node,
+                                             const ChromaInfo& inherited,
+                                             SbSink& sink, double lambda,
+                                             double* cost,
+                                             std::string& error) {
+  if (cost == nullptr || node.partition != PartitionType::kNone) return false;
+  const std::size_t index = sink.blocks.size();
+  const bool ok = collect_node(sink, node, error, inherited, nullptr);
+  if (!ok) {
+    ++joint_plan::counters().fail_collect;
+    error.clear();
+    return false;
+  }
+  // A coding-block candidate must write exactly one syntax entry; anything
+  // else (a chroma tree, a palette/SDP split) is outside this objective.
+  if (sink.blocks.size() != index + 1) {
+    ++joint_plan::counters().fail_blocks;
+    error.clear();
+    return false;
+  }
+  double d = 0.0;
+  double r = 0.0;
+  if (!tail_floor_leaf_cost(sink, index, lambda, joint_plan::config().hf,
+                            joint_plan::config().edge, &d, &r, error)) {
+    ++joint_plan::counters().fail_cost;
+    error.clear();
+    return false;
+  }
+  ++joint_plan::counters().leaves_measured;
+  joint_plan::counters().d_measured += d;
+  joint_plan::counters().r_measured += r;
+  *cost = d + lambda * r;
+  return true;
+}
+
+bool InterFrameEncoder::joint_p_decide_sb(std::size_t sb_index,
+                                          const PartitionNode& reference,
+                                          PartitionNode* out,
+                                          std::string& error) {
+  if (out == nullptr) return false;
+  joint_plan::Counters& stats = joint_plan::counters();
+  const joint_plan::Config& cfg = joint_plan::config();
+  ++stats.superblocks;
+  (void)sb_index;
+
+  const int target = std::max(cfg.target, 8);
+  const int max_depth = std::max(options_.max_partition_depth,
+                                 seq_depth_for_target(target));
+  // Expand the reference layout to the driver's deepest candidate leaf.  For
+  // a reference leaf larger than `target` this is the uniform split; every
+  // split in the expanded tree is a real §5.20.3.2 partition for the geometry.
+  std::function<PartitionNode(const PartitionNode&, const ChromaInfo&)> expand;
+  expand = [&](const PartitionNode& node,
+               const ChromaInfo& inherited) -> PartitionNode {
+    const ChromaInfo chroma = chroma_step(node, inherited);
+    if (node.partition == PartitionType::kNone) {
+      const int bw = partition::block_width(node.size);
+      const int bh = partition::block_height(node.size);
+      if (bw <= target && bh <= target) return node;
+      return seq_build_uniform(geometry_, node.mi_row, node.mi_col, node.size,
+                               node.depth, node.has_chroma, node.chroma_offset,
+                               target, max_depth, target, nullptr);
+    }
+    PartitionNode grown = node;
+    grown.children.clear();
+    for (const PartitionNode& child : node.children) {
+      grown.children.push_back(expand(child, chroma));
+    }
+    return grown;
+  };
+  PartitionNode expanded = expand(reference, ChromaInfo{});
+  std::string validate_error;
+  if (!partition::validate_tree(geometry_, expanded, validate_error)) {
+    ++stats.failed;
+    *out = reference;
+    return true;
+  }
+
+  // Snapshot every surface the leaf coder mutates; every trial restores it and
+  // only the committed collect_node() in collect_frame() advances the frame.
+  struct Snap {
+    std::array<std::vector<std::uint8_t>, 3> samples;
+    std::array<int, 3> stride{};
+    std::array<int, 3> width{};
+    std::array<int, 3> height{};
+    std::vector<std::uint8_t> joint;
+    std::vector<std::uint8_t> uv;
+    std::vector<inter::mc::MiInfo> mv;
+    SbSink::State state;
+    std::size_t blocks = 0;
+    std::size_t levels = 0;
+    std::size_t palettes = 0;
+    std::size_t sub_pus = 0;
+    std::size_t leaf_dump = 0;
+    std::size_t leaf_costs = 0;
+    std::size_t leaf_bits = 0;
+    std::size_t leaf_bits_ok = 0;
+    rate_hybrid::SyntaxProbe probe;
+    rate_hybrid::SyntaxProbe rate_probe;
+  };
+  SbSink sink;
+  sink.reset();
+  seed_unit_state(sink);
+  sink.state.decoded[0].reset(mi_cols_, mi_rows_);
+  sink.state.decoded[1].reset(mi_cols_ / 2, mi_rows_ / 2);
+  sink.state.decoded[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+  const auto capture = [&]() {
+    Snap snap;
+    for (int plane = 0; plane < 3; ++plane) {
+      const std::size_t p = static_cast<std::size_t>(plane);
+      snap.samples[p] = recon_[p].samples;
+      snap.stride[p] = recon_[p].stride;
+      snap.width[p] = recon_[p].width;
+      snap.height[p] = recon_[p].height;
+    }
+    snap.joint = intra_joint_;
+    snap.uv = uv_smooth_;
+    snap.mv = mv_grid_;
+    snap.state = sink.state;
+    snap.blocks = sink.blocks.size();
+    snap.levels = sink.levels.size();
+    snap.palettes = sink.palettes.size();
+    snap.sub_pus = sink.sub_pus.size();
+    snap.leaf_dump = sink.leaf_dump.size();
+    snap.leaf_costs = sink.leaf_costs.size();
+    snap.leaf_bits = tail_floor_leaf_bits_.size();
+    snap.leaf_bits_ok = tail_floor_leaf_bits_ok_.size();
+    snap.probe = pipe_probe_;
+    snap.rate_probe = rate_probe_;
+    return snap;
+  };
+  const auto apply = [&](const Snap& snap) {
+    for (int plane = 0; plane < 3; ++plane) {
+      const std::size_t p = static_cast<std::size_t>(plane);
+      recon_[p].samples = snap.samples[p];
+      recon_[p].stride = snap.stride[p];
+      recon_[p].width = snap.width[p];
+      recon_[p].height = snap.height[p];
+    }
+    intra_joint_ = snap.joint;
+    uv_smooth_ = snap.uv;
+    mv_grid_ = snap.mv;
+    sink.state = snap.state;
+    sink.blocks.resize(snap.blocks);
+    sink.levels.resize(snap.levels);
+    sink.palettes.resize(snap.palettes);
+    sink.sub_pus.resize(snap.sub_pus);
+    sink.leaf_dump.resize(snap.leaf_dump);
+    sink.leaf_costs.resize(snap.leaf_costs);
+    tail_floor_leaf_bits_.resize(snap.leaf_bits);
+    tail_floor_leaf_bits_ok_.resize(snap.leaf_bits_ok);
+    pipe_probe_ = snap.probe;
+    rate_probe_ = snap.rate_probe;
+  };
+
+  const bool eff_on =
+      !pipe_ba::enabled() && eff_perc::enabled() && pipe_probe_ready_;
+  const double pipe_lambda =
+      leaf_rd_lambda(current_qindex_, options_) *
+      (pipe_ba::enabled() ? pipe_ba::config().lambda
+                          : (eff_on ? eff_perc::lambda_scale()
+                                    : pipe_perc::lambda_scale()));
+  const double lambda = pipe_lambda * cfg.lambda;
+  if (!(lambda > 0.0)) {
+    ++stats.failed;
+    *out = reference;
+    return true;
+  }
+
+  struct PruneResult {
+    PartitionNode node;
+    double cost = partition::kInfiniteCost;
+    bool ok = false;
+  };
+  // Measure the reference tree itself with the same objective (it is the
+  // gate-off stream's own layout).  The search keeps it whenever it wins, so
+  // the gate can never make the tree worse under J; a changed tree is then a
+  // measured improvement, not a side effect of the expanded candidate set.
+  std::function<bool(const PartitionNode&, const ChromaInfo&, double*)>
+      measure_ref;
+  measure_ref = [&](const PartitionNode& node, const ChromaInfo& inherited,
+                    double* cost) -> bool {
+    const ChromaInfo chroma = chroma_step(node, inherited);
+    if (node.partition == PartitionType::kNone) {
+      ++stats.layouts_measured;
+      double leaf_cost = 0.0;
+      if (!joint_p_measure_leaf(node, inherited, sink, lambda, &leaf_cost,
+                                error)) {
+        ++stats.failed;
+        return false;
+      }
+      *cost = leaf_cost;
+      return true;
+    }
+    double sum = lambda * 2.0;
+    for (const PartitionNode& child : node.children) {
+      double child_cost = 0.0;
+      if (!measure_ref(child, chroma, &child_cost)) return false;
+      sum += child_cost;
+    }
+    *cost = sum;
+    return true;
+  };
+  const Snap ref_start = capture();
+  double ref_cost = partition::kInfiniteCost;
+  const bool ref_ok = measure_ref(reference, ChromaInfo{}, &ref_cost);
+  apply(ref_start);
+  // Sequential prune: at every node the split children are measured in the
+  // reconstruction the already-chosen preceding children built, so a
+  // candidate is always priced in the recon it produces.  The NONE trial is
+  // restored before the split trial; the winner is re-encoded only when it is
+  // the leaf (the split trial's state is already the committed layout).
+  std::function<PruneResult(const PartitionNode&, const ChromaInfo&)> prune;
+  prune = [&](const PartitionNode& node,
+              const ChromaInfo& inherited) -> PruneResult {
+    PruneResult result;
+    ++stats.nodes;
+    const ChromaInfo chroma = chroma_step(node, inherited);
+    if (node.partition == PartitionType::kNone) {
+      double cost = 0.0;
+      ++stats.layouts_measured;
+      if (!joint_p_measure_leaf(node, inherited, sink, lambda, &cost,
+                                error)) {
+        ++stats.failed;
+        result.node = node;
+        return result;
+      }
+      result.node = node;
+      result.cost = cost;
+      result.ok = true;
+      return result;
+    }
+    const Snap start = capture();
+    const bool can_leaf =
+        !node.forced && node.allowed.is_allowed(PartitionType::kNone);
+    PartitionNode leaf = node;
+    leaf.partition = PartitionType::kNone;
+    leaf.forced = false;
+    leaf.children.clear();
+    leaf.cost = 0.0;
+    double leaf_cost = partition::kInfiniteCost;
+    bool leaf_ok = false;
+    if (can_leaf) {
+      ++stats.layouts_measured;
+      leaf_ok =
+          joint_p_measure_leaf(leaf, inherited, sink, lambda, &leaf_cost,
+                               error);
+      if (!leaf_ok) ++stats.failed;
+    }
+    apply(start);
+
+    double split_cost = lambda * 2.0;
+    bool split_ok = true;
+    std::vector<PartitionNode> kids;
+    for (const PartitionNode& child : node.children) {
+      PruneResult child_result = prune(child, chroma);
+      if (!child_result.ok) {
+        split_ok = false;
+        break;
+      }
+      split_cost += child_result.cost;
+      kids.push_back(std::move(child_result.node));
+    }
+    if (split_ok) ++stats.split_trials;
+    if (split_ok && (!leaf_ok || split_cost < leaf_cost)) {
+      PartitionNode chosen = node;
+      chosen.children = std::move(kids);
+      chosen.cost = split_cost;
+      ++stats.split_kept;
+      result.node = std::move(chosen);
+      result.cost = split_cost;
+      result.ok = true;
+      return result;
+    }
+    if (leaf_ok) {
+      // Collapse: drop the measured children and commit the leaf instead.
+      apply(start);
+      double committed = 0.0;
+      if (!joint_p_measure_leaf(leaf, inherited, sink, lambda, &committed,
+                                error)) {
+        ++stats.failed;
+        result.node = node;
+        return result;
+      }
+      ++stats.leaf_kept;
+      result.node = std::move(leaf);
+      result.cost = committed;
+      result.ok = true;
+      return result;
+    }
+    apply(start);
+    ++stats.reference_kept;
+    result.node = node;
+    return result;
+  };
+
+  const Snap frame_start = capture();
+  rd_driver::measuring_flag() = true;
+  PruneResult chosen = prune(expanded, ChromaInfo{});
+  rd_driver::measuring_flag() = false;
+  apply(frame_start);
+  if (ref_ok) stats.ref_j += ref_cost;
+  if (!ref_ok) {
+    // The reference layout could not be measured (a compound/TIP carrier the
+    // exact leaf cost does not cover).  Keep it; an unmeasured tree is not a
+    // decision.
+    ++stats.reference_kept;
+    *out = reference;
+    return true;
+  }
+  if (!chosen.ok || ref_cost <= chosen.cost) {
+    // The gate-off layout is at least as good under the measured objective.
+    ++stats.reference_wins;
+    stats.chosen_j += ref_cost;
+    *out = reference;
+    return true;
+  }
+  if (!chosen.ok || !std::isfinite(chosen.cost)) {
+    ++stats.reference_kept;
+    *out = reference;
+    return true;
+  }
+  std::string chosen_error;
+  if (!partition::validate_tree(geometry_, chosen.node, chosen_error)) {
+    ++stats.failed;
+    *out = reference;
+    return true;
+  }
+  // Reference/chosen leaf histograms for the Phase-1 tree report.
+  const auto count_leaves = [](auto&& self, const PartitionNode& node,
+                               long long (&out)[5]) -> void {
+    if (node.partition != PartitionType::kNone) {
+      for (const PartitionNode& child : node.children) {
+        self(self, child, out);
+      }
+      return;
+    }
+    ++out[joint_plan::bucket(partition::block_width(node.size),
+                             partition::block_height(node.size))];
+  };
+  long long ref_hist[5] = {0, 0, 0, 0, 0};
+  long long chosen_hist[5] = {0, 0, 0, 0, 0};
+  count_leaves(count_leaves, reference, ref_hist);
+  count_leaves(count_leaves, chosen.node, chosen_hist);
+  const bool head = arming_ordinal() <= 32;
+  bool changed = false;
+  for (int i = 0; i < 5; ++i) {
+    stats.ref_leaves[i] += ref_hist[i];
+    stats.chosen_leaves[i] += chosen_hist[i];
+    (head ? stats.head_ref : stats.tail_ref)[i] += ref_hist[i];
+    (head ? stats.head_chosen : stats.tail_chosen)[i] += chosen_hist[i];
+    if (ref_hist[i] != chosen_hist[i]) changed = true;
+  }
+  if (changed) ++stats.layouts_changed;
+  stats.chosen_j += chosen.cost;
+  *out = std::move(chosen.node);
+  return true;
 }
 
 }  // namespace av2enc::video

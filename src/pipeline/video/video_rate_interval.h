@@ -602,13 +602,20 @@ inline void set_part_raster(LeafRateInput& in, int index, int plane,
   set_part_scan(in, index, plane, tx_size, tx_type, eob, ordered, storage);
 }
 
-// Build the input for one emitted leaf.  Covers the single-reference
-// no-compound inter profile the nightly aggregate codes; anything else is
-// reported unsupported so the caller falls back.
+// Build the input for one emitted leaf.  The default covers the
+// single-reference no-compound inter profile the nightly aggregate codes;
+// anything else is reported unsupported so the caller falls back.
+//
+// `mode_less_inter` is the joint-plan path: a compound or TIP leaf's mode
+// syntax is priced exactly by the SyntaxProbe (`AV2ENC_COMPOUND_EXACT_RATE`),
+// so this build contributes only the coefficient symbols (`inter_mode = -1`
+// suppresses the probe's mode rows inside estimate()).  The writer's own
+// diagnostics keep the default and never mis-price a compound leaf.
 inline bool build_from_syntax(const syntax::BlockSyntax& node,
                               std::span<const std::int32_t> levels,
                               bool tx_mode_select, bool adapt, int base_q_idx,
-                              LeafRateInput* in, LeafLevelStorage* storage) {
+                              LeafRateInput* in, LeafLevelStorage* storage,
+                              bool mode_less_inter = false) {
   *in = LeafRateInput{};
   in->is_inter = node.is_inter != 0;
   in->adapt = adapt;
@@ -619,12 +626,16 @@ inline bool build_from_syntax(const syntax::BlockSyntax& node,
   in->skip_flag = node.is_inter != 0 && node.skip_flag != 0;
   in->has_chroma = true;
   if (node.is_inter) {
-    if (node.compound || node.use_amvd || node.tip_mode) return false;
-    in->inter_mode = static_cast<int>(node.inter_mode);
-    in->drl_index = node.drl_index;
-    in->mvd_y = node.mvd_y;
-    in->mvd_x = node.mvd_x;
-    in->use_bawp = node.use_bawp != 0;
+    if (mode_less_inter && (node.compound || node.tip_mode)) {
+      in->inter_mode = -1;
+    } else {
+      if (node.compound || node.use_amvd || node.tip_mode) return false;
+      in->inter_mode = static_cast<int>(node.inter_mode);
+      in->drl_index = node.drl_index;
+      in->mvd_y = node.mvd_y;
+      in->mvd_x = node.mvd_x;
+      in->use_bawp = node.use_bawp != 0;
+    }
   }
   if (in->skip_flag) return true;
 

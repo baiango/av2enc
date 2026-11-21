@@ -53,6 +53,11 @@ if [ ! -f "$PUB_CLIP" ]; then
 fi
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/av2enc-nightly.XXXXXX")
+# --video-rd-preset best now carries the joint plan solve (a ~12 min/60-frame
+# research gate).  This gate checks the preset expansion against the joint-off
+# lead stack so it stays fast; the joint arm is pinned by
+# gate_video_joint_plan.sh.  --fast-decode never uses the best preset.
+export AV2ENC_RD_JOINT_P=0
 trap 'rm -rf "$TMP"' EXIT
 FAILED=0
 fail() { echo "FAIL: $*" >&2; FAILED=1; }
