@@ -686,6 +686,7 @@ bool InterFrameEncoder::decide(std::string& error) {
   // The partition tree is final, so the pure NEWMV searches can run ahead
   // of the coding-order walk on the host worker pool.  Serial at 1 thread.
   if (!base_superblocks.empty()) {
+    joint_plan::ScopedTimer me_timer(&joint_plan::profile().me);
     precompute_leaf_me(base_superblocks, options_.cpu_threads);
   }
 
@@ -765,20 +766,41 @@ bool InterFrameEncoder::decide(std::string& error) {
     if (joint_p) {
       tail_floor_active_ = false;
       part_diag_active_ = false;
+      if (joint_plan::config().batch > 0) {
+        joint_plan::ScopedTimer timer(&joint_plan::profile().solve);
+        return joint_p_batch_frame(base_superblocks, error);
+      }
       joint_p_active_ = true;
       sb_sinks_.resize(base_superblocks.size());
       for (std::size_t sb = 0; sb < base_superblocks.size(); ++sb) {
         sb_sinks_[sb].reset();
         seed_unit_state(sb_sinks_[sb]);
         PartitionNode chosen;
-        if (!joint_p_decide_sb(sb, base_superblocks[sb], &chosen, error)) {
-          joint_p_active_ = false;
-          return false;
+        {
+          joint_plan::ScopedTimer timer(&joint_plan::profile().solve);
+          if (!joint_p_decide_sb(sb, base_superblocks[sb], &chosen, error)) {
+            joint_p_active_ = false;
+            return false;
+          }
         }
         base_superblocks[sb] = std::move(chosen);
-        if (!collect_node(sb_sinks_[sb], base_superblocks[sb], error)) {
-          joint_p_active_ = false;
-          return false;
+        {
+          const std::size_t before = sb_sinks_[sb].blocks.size();
+          joint_plan::ScopedTimer timer(&joint_plan::profile().commit);
+          if (!collect_node(sb_sinks_[sb], base_superblocks[sb], error)) {
+            joint_p_active_ = false;
+            return false;
+          }
+          for (std::size_t i = before; i < sb_sinks_[sb].blocks.size(); ++i) {
+            const syntax::BlockSyntax& entry = sb_sinks_[sb].blocks[i];
+            if (entry.partition != static_cast<std::uint8_t>(
+                                       PartitionType::kNone) ||
+                entry.subtree != 0) {
+              continue;
+            }
+            ++joint_plan::profile().committed_leaves;
+            if (entry.is_inter == 0) ++joint_plan::profile().committed_intra;
+          }
         }
       }
       joint_p_active_ = false;
@@ -6673,7 +6695,10 @@ bool InterFrameEncoder::tail_floor_leaf_cost(SbSink& sink, std::size_t index,
       pipe_ba::enabled()
           ? 0.0
           : (eff_perc::enabled() ? eff_perc::csf2_gain() : 0.0);
-  double d = seq_rd::leaf_distortion_gains(
+  double d = 0.0;
+  {
+  joint_plan::ScopedTimer d_timer(&joint_plan::profile().cost_d);
+  d = seq_rd::leaf_distortion_gains(
       source_.y.data(), static_cast<int>(source_.width),
       static_cast<int>(source_.height), static_cast<int>(source_.width), ax0,
       ay0, w, h, rows, recon_[0].samples.data(), recon_[0].stride,
@@ -6708,6 +6733,7 @@ bool InterFrameEncoder::tail_floor_leaf_cost(SbSink& sink, std::size_t index,
         eff_perc::enabled() ? eff_perc::chroma_weight() : 1.0;
     d += (u + v) * chroma_weight;
   }
+  }
 
   // Exact residual rate: the emitted §8.3 symbol sequence through the live
   // §8.2.6 interval model against the frame-start CDF image (the same call the
@@ -6722,12 +6748,15 @@ bool InterFrameEncoder::tail_floor_leaf_cost(SbSink& sink, std::size_t index,
     }
     rate_interval::LeafRateInput in;
     rate_interval::LeafLevelStorage storage;
-    if (!rate_interval::build_from_syntax(
-            entry, sink.levels, options_.enable_tx_search,
-            options_.adaptive_cdf, static_cast<int>(options_.base_q_idx), &in,
-            &storage, /*mode_less_inter=*/true)) {
-      if (joint_p_active_) ++joint_plan::counters().fail_build;
-      return false;
+    {
+      joint_plan::ScopedTimer build_timer(&joint_plan::profile().cost_build);
+      if (!rate_interval::build_from_syntax(
+              entry, sink.levels, options_.enable_tx_search,
+              options_.adaptive_cdf, static_cast<int>(options_.base_q_idx), &in,
+              &storage, /*mode_less_inter=*/true)) {
+        if (joint_p_active_) ++joint_plan::counters().fail_build;
+        return false;
+      }
     }
     const rate_interval::Mode mode =
         (rate_interval::mode() == rate_interval::Mode::kOff &&
@@ -6738,8 +6767,11 @@ bool InterFrameEncoder::tail_floor_leaf_cost(SbSink& sink, std::size_t index,
       if (joint_p_active_) ++joint_plan::counters().fail_entry;
       return false;
     }
-    const rate_interval::LeafRate rate =
-        rate_interval::estimate(in, rate_interval_cdfs_, mode);
+    rate_interval::LeafRate rate;
+    {
+      joint_plan::ScopedTimer estimate_timer(&joint_plan::profile().cost_estimate);
+      rate = rate_interval::estimate(in, rate_interval_cdfs_, mode);
+    }
     if (rate.failed ||
         !(rate.residual_bits < rate_interval::detail::kImpossibleBits)) {
       if (joint_p_active_) ++joint_plan::counters().fail_estimate;
@@ -7475,6 +7507,376 @@ bool InterFrameEncoder::part_diag_collect_node(SbSink& sink,
   return commit_reference();
 }
 
+InterFrameEncoder::JointTrialSnap InterFrameEncoder::joint_p_capture(
+    const SbSink& sink) const {
+  JointTrialSnap snap;
+  for (int plane = 0; plane < 3; ++plane) {
+    const std::size_t p = static_cast<std::size_t>(plane);
+    snap.samples[p] = recon_[p].samples;
+    snap.stride[p] = recon_[p].stride;
+    snap.width[p] = recon_[p].width;
+    snap.height[p] = recon_[p].height;
+  }
+  snap.joint = intra_joint_;
+  snap.uv = uv_smooth_;
+  snap.mv = mv_grid_;
+  snap.state = sink.state;
+  snap.blocks = sink.blocks.size();
+  snap.levels = sink.levels.size();
+  snap.palettes = sink.palettes.size();
+  snap.sub_pus = sink.sub_pus.size();
+  snap.leaf_dump = sink.leaf_dump.size();
+  snap.leaf_costs = sink.leaf_costs.size();
+  snap.leaf_bits = tail_floor_leaf_bits_.size();
+  snap.leaf_bits_ok = tail_floor_leaf_bits_ok_.size();
+  snap.probe = pipe_probe_;
+  snap.rate_probe = rate_probe_;
+  return snap;
+}
+
+void InterFrameEncoder::joint_p_apply(SbSink& sink,
+                                      const JointTrialSnap& snap) {
+  for (int plane = 0; plane < 3; ++plane) {
+    const std::size_t p = static_cast<std::size_t>(plane);
+    recon_[p].samples = snap.samples[p];
+    recon_[p].stride = snap.stride[p];
+    recon_[p].width = snap.width[p];
+    recon_[p].height = snap.height[p];
+  }
+  intra_joint_ = snap.joint;
+  uv_smooth_ = snap.uv;
+  mv_grid_ = snap.mv;
+  sink.state = snap.state;
+  sink.blocks.resize(snap.blocks);
+  sink.levels.resize(snap.levels);
+  sink.palettes.resize(snap.palettes);
+  sink.sub_pus.resize(snap.sub_pus);
+  sink.leaf_dump.resize(snap.leaf_dump);
+  sink.leaf_costs.resize(snap.leaf_costs);
+  tail_floor_leaf_bits_.resize(snap.leaf_bits);
+  tail_floor_leaf_bits_ok_.resize(snap.leaf_bits_ok);
+  pipe_probe_ = snap.probe;
+  rate_probe_ = snap.rate_probe;
+}
+
+bool InterFrameEncoder::joint_p_same_layout(const PartitionNode& a,
+                                            const PartitionNode& b) {
+  // Everything `collect_node` reads to decide which partition symbols are
+  // coded, not just the geometry: `forced`/`boundary`/`allowed` change the
+  // bitstream, so two trees that differ there are not the same layout even
+  // when they hold the same leaves.
+  if (a.mi_row != b.mi_row || a.mi_col != b.mi_col || a.size != b.size ||
+      a.partition != b.partition || a.depth != b.depth ||
+      a.has_chroma != b.has_chroma || a.chroma_offset != b.chroma_offset ||
+      a.forced != b.forced || a.boundary.has_rows != b.boundary.has_rows ||
+      a.boundary.has_cols != b.boundary.has_cols ||
+      a.boundary.implied != b.boundary.implied ||
+      a.boundary.implied_partition != b.boundary.implied_partition ||
+      a.allowed.count != b.allowed.count) {
+    return false;
+  }
+  for (int p = 0; p < partition::kPartitionTypeCount; ++p) {
+    if (a.allowed.allowed[p] != b.allowed.allowed[p]) return false;
+  }
+  if (a.children.size() != b.children.size()) return false;
+  for (std::size_t i = 0; i < a.children.size(); ++i) {
+    if (!joint_p_same_layout(a.children[i], b.children[i])) return false;
+  }
+  return true;
+}
+
+bool InterFrameEncoder::joint_p_measure_tree(const PartitionNode& root,
+                                             SbSink& sink, double lambda,
+                                             double* cost,
+                                             std::string& error) {
+  if (cost == nullptr) return false;
+  double total = 0.0;
+  std::function<bool(const PartitionNode&, const ChromaInfo&)> walk;
+  walk = [&](const PartitionNode& node,
+             const ChromaInfo& inherited) -> bool {
+    const ChromaInfo chroma = chroma_step(node, inherited);
+    if (node.partition == PartitionType::kNone) {
+      double leaf_cost = 0.0;
+      if (!joint_p_measure_leaf(node, inherited, sink, lambda, &leaf_cost,
+                                error)) {
+        return false;
+      }
+      total += leaf_cost;
+      return true;
+    }
+    total += lambda * 2.0;
+    for (const PartitionNode& child : node.children) {
+      if (!walk(child, chroma)) return false;
+    }
+    return true;
+  };
+  if (!walk(root, ChromaInfo{})) return false;
+  *cost = total;
+  return true;
+}
+
+void InterFrameEncoder::joint_p_copy_frame_state(const InterFrameEncoder& src) {
+  // The frame-start decision state pass 1 must see.  Everything here is either
+  // rebuilt identically by plan_pass() (the source-driven weights, the masks,
+  // the probes) or is genuinely raster state (the reconstruction and the
+  // neighbour maps).  Copying the reconstruction is what lets a worker price a
+  // leaf whose prediction or BAWP fit reads a neighbour it will not code.
+  for (int plane = 0; plane < 3; ++plane) {
+    const std::size_t p = static_cast<std::size_t>(plane);
+    recon_[p] = src.recon_[p];
+    compound_pred_[p] = src.compound_pred_[p];
+  }
+  intra_joint_ = src.intra_joint_;
+  uv_smooth_ = src.uv_smooth_;
+  mv_grid_ = src.mv_grid_;
+  me_cache_ = src.me_cache_;
+  qm_state_ = src.qm_state_;
+  quant_step_ = src.quant_step_;
+  for (int plane = 0; plane < 3; ++plane) {
+    plane_quant_[plane] = src.plane_quant_[plane];
+  }
+  current_qindex_ = src.current_qindex_;
+#if defined(AV2ENC_VIDEO_DELTAQ)
+  sb_target_q_ = src.sb_target_q_;
+  sb_qindex_ = src.sb_qindex_;
+#endif
+  palettes_.clear();
+  blocks_.clear();
+  levels_.clear();
+}
+
+std::unique_ptr<InterFrameEncoder> InterFrameEncoder::joint_p_trial_clone()
+    const {
+  auto clone = std::make_unique<InterFrameEncoder>(
+      source_, references_, frame_distance_, num_total_refs_, options_,
+      /*trace=*/false, keyframe_, tile_x_, tile_y_, tile_w_, tile_h_,
+      cdf_seed_, /*cdf_final=*/nullptr, gm_plan_, ref_order_hints_,
+      primary_ref_is_none_, &temporal_ctx_, prev_segment_ids_, illum_delta_,
+      ref_deficit_db_, census_frame_, horizon_future_);
+  clone->set_display_ordinal(display_ordinal_);
+  if (joint_plan_off_) clone->set_joint_plan_off();
+  // plan_pass() rebuilds the deterministic per-frame surfaces (weights, BA
+  // mask, exact-syntax probe, frame-start CDF image) from the source and the
+  // options; the copy below only carries the state that is raster-dependent.
+  clone->plan_pass();
+  clone->joint_p_copy_frame_state(*this);
+  return clone;
+}
+
+bool InterFrameEncoder::joint_p_batch_frame(
+    std::vector<PartitionNode>& superblocks, std::string& error) {
+  const joint_plan::Config& cfg = joint_plan::config();
+  const std::size_t count = superblocks.size();
+  if (count == 0) return true;
+  // --cpu-threads owns the worker count; the gate only selects the batch.
+  const unsigned workers = std::max<unsigned>(
+      1U, std::min<unsigned>(
+              static_cast<unsigned>(cfg.batch),
+              parallel::resolve_workers(options_.cpu_threads)));
+  const std::size_t chunks =
+      std::max<std::size_t>(1, std::min<std::size_t>(workers, count));
+  const bool chain = cfg.batch_chain;
+  const bool eff_on =
+      !pipe_ba::enabled() && eff_perc::enabled() && pipe_probe_ready_;
+  const double pipe_lambda =
+      leaf_rd_lambda(current_qindex_, options_) *
+      (pipe_ba::enabled() ? pipe_ba::config().lambda
+                          : (eff_on ? eff_perc::lambda_scale()
+                                    : pipe_perc::lambda_scale()));
+  const double lambda = pipe_lambda * cfg.lambda;
+
+  const auto fresh_sink = [&](SbSink& sink) {
+    sink.reset();
+    seed_unit_state(sink);
+    sink.state.decoded[0].reset(mi_cols_, mi_rows_);
+    sink.state.decoded[1].reset(mi_cols_ / 2, mi_rows_ / 2);
+    sink.state.decoded[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+  };
+  SbSink scratch;
+  fresh_sink(scratch);
+  const JointTrialSnap frame_start = joint_p_capture(scratch);
+
+  joint_p_active_ = true;
+  const auto fail = [&]() {
+    joint_p_active_ = false;
+    return false;
+  };
+
+  // Optional pass 0 (AV2ENC_RD_JOINT_BATCH_SEED=1): commit the reference
+  // layouts serially and record the frame state every superblock starts from,
+  // so pass 1 searches in the raster context the reference tree builds instead
+  // of the frame-start one.
+  std::vector<JointTrialSnap> starts;
+  if (cfg.batch_seed_ref) {
+    starts.resize(count);
+    for (std::size_t i = 0; i < count; ++i) {
+      starts[i] = joint_p_capture(scratch);
+      if (!collect_node(scratch, superblocks[i], error)) return fail();
+    }
+    joint_p_apply(scratch, frame_start);
+    blocks_.clear();
+    levels_.clear();
+    palettes_.clear();
+  }
+
+  // The gate-off tree is the anchor of every round: it is what the serial walk
+  // passes to `joint_p_decide_sb` (the expansion start and the reference
+  // guard), and holding it fixed is what makes the iteration a fixed point of
+  // the same map instead of a re-solve of the previous round's answer.
+  const std::vector<PartitionNode> reference = superblocks;
+  std::vector<PartitionNode> candidate(count);
+  std::vector<char> candidate_ok(count, 0);
+  std::vector<JointTrialSnap> committed_starts;
+  sb_sinks_.resize(count);
+  long long changed_total = 0;
+
+  for (int round = 0; round < cfg.batch_rounds; ++round) {
+    // Pass 1: candidate layout per superblock, searched on a private clone
+    // whose only shared inputs are the source and the reference frames.
+    for (std::size_t i = 0; i < count; ++i) {
+      candidate[i] = reference[i];
+      candidate_ok[i] = 0;
+    }
+    const std::vector<JointTrialSnap>* seeds =
+        starts.empty() ? nullptr : &starts;
+    const auto run_chunk = [&](std::size_t chunk) {
+      std::unique_ptr<InterFrameEncoder> worker = joint_p_trial_clone();
+      joint_plan::trial_worker() = true;
+      worker->joint_p_active_ = true;
+      SbSink seed_sink;
+      seed_sink.reset();
+      seed_sink.state.decoded[0].reset(mi_cols_, mi_rows_);
+      seed_sink.state.decoded[1].reset(mi_cols_ / 2, mi_rows_ / 2);
+      seed_sink.state.decoded[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+      // Chained range: contiguous in raster order, so the worker's own
+      // committed state is the serial walk's state for every superblock after
+      // the first one.
+      const std::size_t chain_begin = chunks == 0 ? 0 : chunk * count / chunks;
+      const std::size_t chain_end =
+          chunks == 0 ? count : (chunk + 1) * count / chunks;
+      if (chain && seeds != nullptr) {
+        worker->joint_p_apply(seed_sink, (*seeds)[chain_begin]);
+      }
+      for (std::size_t step = 0;; ++step) {
+        const std::size_t index =
+            chain ? chain_begin + step : chunk + step * chunks;
+        if (chain ? index >= chain_end : index >= count) break;
+        if (!chain && seeds != nullptr) {
+          worker->joint_p_apply(seed_sink, (*seeds)[index]);
+        }
+        PartitionNode chosen;
+        std::string chunk_error;
+        if (!worker->joint_p_decide_sb(index, reference[index], &chosen,
+                                       chunk_error)) {
+          continue;
+        }
+        if (chain) {
+          // Advance the worker to the state this layout builds, exactly what
+          // pass 2 will commit: collect_node() reads the quantiser/segment
+          // state off the sink, so the sink has to be seeded the way
+          // collect_frame() seeds it before the commit.
+          seed_sink.reset();
+          worker->seed_unit_state(seed_sink);
+          if (worker->collect_node(seed_sink, chosen, chunk_error)) {
+            candidate[index] = std::move(chosen);
+            candidate_ok[index] = 1;
+          }
+        } else {
+          candidate[index] = std::move(chosen);
+          candidate_ok[index] = 1;
+        }
+      }
+      joint_plan::trial_worker() = false;
+    };
+    {
+      joint_plan::ScopedTimer timer(&joint_plan::profile().pass1);
+      if (chunks <= 1) {
+        run_chunk(0);
+      } else {
+        parallel::parallel_for(chunks, workers, run_chunk);
+      }
+    }
+
+    // Pass 2: exact re-price in raster order, then commit the winner.
+    joint_plan::ScopedTimer pass2_timer(&joint_plan::profile().pass2);
+    committed_starts.resize(count);
+    long long changed_round = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+      SbSink& sink = sb_sinks_[i];
+      fresh_sink(sink);
+      committed_starts[i] = joint_p_capture(sink);
+      PartitionNode committed = reference[i];
+      if (candidate_ok[i] != 0 && lambda > 0.0) {
+        if (joint_p_same_layout(candidate[i], reference[i])) {
+          // The batch reproduced the reference layout: commit it as the
+          // serial walk would, with no extra measurement.
+          if (joint_plan::counting()) {
+            ++joint_plan::counters().batch_candidate_kept;
+          }
+        } else {
+          const JointTrialSnap start = joint_p_capture(sink);
+          std::string measure_error;
+          double candidate_cost = partition::kInfiniteCost;
+          const bool priced = joint_p_measure_tree(
+              candidate[i], sink, lambda, &candidate_cost, measure_error);
+          joint_p_apply(sink, start);
+          if (priced) {
+            double reference_cost = partition::kInfiniteCost;
+            const bool reference_priced = joint_p_measure_tree(
+                reference[i], sink, lambda, &reference_cost, measure_error);
+            joint_p_apply(sink, start);
+            if (reference_priced && std::isfinite(reference_cost)) {
+              if (joint_plan::counting()) {
+                joint_plan::counters().ref_j += reference_cost;
+                ++joint_plan::counters().batch_reference_priced;
+              }
+              // The serial guard: keep the reference layout whenever the
+              // exact objective does not prefer the candidate.
+              if (candidate_cost < reference_cost) {
+                committed = std::move(candidate[i]);
+                if (joint_plan::counting()) {
+                  ++joint_plan::counters().batch_candidate_kept;
+                  joint_plan::counters().chosen_j += candidate_cost;
+                }
+              } else if (joint_plan::counting()) {
+                ++joint_plan::counters().batch_reference_wins;
+              }
+            }
+          }
+        }
+      }
+      std::string validate_error;
+      if (committed.partition != PartitionType::kNone &&
+          !partition::validate_tree(geometry_, committed, validate_error)) {
+        committed = reference[i];
+      }
+      if (!joint_p_same_layout(committed, reference[i])) ++changed_round;
+      superblocks[i] = std::move(committed);
+      if (!collect_node(sink, superblocks[i], error)) return fail();
+    }
+    changed_total = changed_round;
+    if (joint_plan::counting()) {
+      joint_plan::counters().layouts_changed += changed_round;
+    }
+    if (round + 1 < cfg.batch_rounds) {
+      // Reset the frame and re-seed pass 1 from the state this round actually
+      // committed at each superblock start (Jacobi iteration on the raster
+      // recurrence).
+      joint_p_apply(scratch, frame_start);
+      blocks_.clear();
+      levels_.clear();
+      palettes_.clear();
+      starts = std::move(committed_starts);
+    }
+  }
+  if (joint_plan::counting()) {
+    joint_plan::counters().batch_changed = changed_total;
+  }
+  joint_p_active_ = false;
+  merge_sinks();
+  return true;
+}
+
 // AV2ENC_RD_JOINT_P ----------------------------------------------------------
 //
 // The P-frame port of the key driver (`seq_driver_decide_sb`).  Every leaf is
@@ -7492,8 +7894,13 @@ bool InterFrameEncoder::joint_p_measure_leaf(const PartitionNode& node,
                                              double* cost,
                                              std::string& error) {
   if (cost == nullptr || node.partition != PartitionType::kNone) return false;
-  const std::size_t index = sink.blocks.size();
-  const bool ok = collect_node(sink, node, error, inherited, nullptr);
+  joint_plan::ScopedTimer leaf_timer(&joint_plan::profile().leaf);
+  std::size_t index = sink.blocks.size();
+  bool ok = false;
+  {
+    joint_plan::ScopedTimer timer(&joint_plan::profile().leaf_encode);
+    ok = collect_node(sink, node, error, inherited, nullptr);
+  }
   if (!ok) {
     ++joint_plan::counters().fail_collect;
     error.clear();
@@ -7506,13 +7913,26 @@ bool InterFrameEncoder::joint_p_measure_leaf(const PartitionNode& node,
     error.clear();
     return false;
   }
+  {
+    const syntax::BlockSyntax& probe = sink.blocks[index];
+    ++joint_plan::profile().trials;
+    if (probe.is_inter == 0) {
+      ++joint_plan::profile().trials_intra;
+    } else {
+      ++joint_plan::profile().trials_inter;
+      if (probe.skip_flag != 0) ++joint_plan::profile().trials_skip;
+    }
+  }
   double d = 0.0;
   double r = 0.0;
-  if (!tail_floor_leaf_cost(sink, index, lambda, joint_plan::config().hf,
-                            joint_plan::config().edge, &d, &r, error)) {
-    ++joint_plan::counters().fail_cost;
-    error.clear();
-    return false;
+  {
+    joint_plan::ScopedTimer timer(&joint_plan::profile().leaf_cost);
+    if (!tail_floor_leaf_cost(sink, index, lambda, joint_plan::config().hf,
+                              joint_plan::config().edge, &d, &r, error)) {
+      ++joint_plan::counters().fail_cost;
+      error.clear();
+      return false;
+    }
   }
   ++joint_plan::counters().leaves_measured;
   joint_plan::counters().d_measured += d;
@@ -7691,7 +8111,11 @@ bool InterFrameEncoder::joint_p_decide_sb(std::size_t sb_index,
   };
   const Snap ref_start = capture();
   double ref_cost = partition::kInfiniteCost;
-  const bool ref_ok = measure_ref(reference, ChromaInfo{}, &ref_cost);
+  bool ref_ok = false;
+  {
+    joint_plan::ScopedTimer timer(&joint_plan::profile().ref_walk);
+    ref_ok = measure_ref(reference, ChromaInfo{}, &ref_cost);
+  }
   apply(ref_start);
   // Sequential prune: at every node the split children are measured in the
   // reconstruction the already-chosen preceding children built, so a
@@ -7784,7 +8208,11 @@ bool InterFrameEncoder::joint_p_decide_sb(std::size_t sb_index,
 
   const Snap frame_start = capture();
   rd_driver::measuring_flag() = true;
-  PruneResult chosen = prune(expanded, ChromaInfo{});
+  PruneResult chosen;
+  {
+    joint_plan::ScopedTimer timer(&joint_plan::profile().prune);
+    chosen = prune(expanded, ChromaInfo{});
+  }
   rd_driver::measuring_flag() = false;
   apply(frame_start);
   if (ref_ok) stats.ref_j += ref_cost;

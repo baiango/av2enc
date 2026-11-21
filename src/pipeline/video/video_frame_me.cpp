@@ -293,13 +293,16 @@ bool InterFrameEncoder::predict_all(int ref_index, inter::mc::Mv mv, int x0, int
 
 bool InterFrameEncoder::run_me(int ref_index, int x0, int y0, int w, int h,
             inter::mc::Mv& mv, std::string& error) {
+  ++joint_plan::profile().me_calls;
   if (!me_cache_.empty()) {
     const auto it = me_cache_.find(me_cache_key(ref_index, x0, y0, w, h));
     if (it != me_cache_.end()) {
+      ++joint_plan::profile().me_hits;
       mv = it->second;
       return true;
     }
   }
+  joint_plan::ScopedTimer me_timer(&joint_plan::profile().me_search);
   return search_me(ref_index, x0, y0, w, h, mv, error);
 }
 

@@ -1068,6 +1068,7 @@ inline bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, 
                 int rdoq_qctx = 0,
                 double rdoq_sse_scale = kVideoRdoqSseScale,
                 int mask_row = -1) {
+  joint_plan::ScopedTimer tx_timer(&joint_plan::profile().tx_plain);
   auto params_opt = txv::make_tx_params(cw, ch, txv::TxType::kDctDct);
   if (!params_opt.has_value()) {
     error = "unsupported transform size";
@@ -1834,6 +1835,7 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
                     double lowpass2_gain = 0.0,
                     bool intra_rdoq = false,
                     double model_rate_scale = 0.4) {
+  joint_plan::ScopedTimer tx_timer(&joint_plan::profile().tx_search);
   std::vector<std::int16_t> residual(
       static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
   for (int y = 0; y < ch; ++y) {
@@ -3508,6 +3510,62 @@ class InterFrameEncoder {
     bool joint_p_decide_sb(std::size_t sb_index,
                            const PartitionNode& reference, PartitionNode* out,
                            std::string& error);
+
+  // AV2ENC_RD_JOINT_BATCH: the two-pass port of the same solve.
+  //
+  //   pass 1  every superblock's candidate layout is searched in parallel on
+  //           a private trial clone seeded with the frame-start decision state
+  //           (reconstruction, exact-syntax probe, §8.2 CDF image).  Nothing
+  //           is committed: a clone's only output is a layout.
+  //   pass 2  the candidate layouts are re-priced exactly in raster order
+  //           against the live state, the reference layout is priced with the
+  //           same objective, and the better one is committed through the
+  //           normal collect_node() walk.
+  //
+  // The stream is therefore still produced entirely by the serial raster
+  // commit, and the reference guard is now evaluated on live prices, so a
+  // superblock can never commit a layout the exact objective prefers less
+  // than its reference.
+    bool joint_p_batch_frame(std::vector<PartitionNode>& superblocks,
+                             std::string& error);
+  // The serial objective (D + lambda * R) of one whole layout, measured in the
+  // live state in pre-order.  This is `joint_p_decide_sb`'s measure_ref walk,
+  // factored out so pass 2 prices the candidate and the reference with the
+  // exact same code.
+    bool joint_p_measure_tree(const PartitionNode& root, SbSink& sink,
+                              double lambda, double* cost, std::string& error);
+  // A trial clone: a second encoder over the same source/references with this
+  // one's frame-start decision state copied in.  Used only by pass 1.
+    std::unique_ptr<InterFrameEncoder> joint_p_trial_clone() const;
+    void joint_p_copy_frame_state(const InterFrameEncoder& src);
+  // The surface one candidate encode mutates, captured and restored around a
+  // measurement.  Shared by the serial walk and pass 2 so both price a layout
+  // from exactly the same starting state.
+    struct JointTrialSnap {
+      std::array<std::vector<std::uint8_t>, 3> samples;
+      std::array<int, 3> stride{};
+      std::array<int, 3> width{};
+      std::array<int, 3> height{};
+      std::vector<std::uint8_t> joint;
+      std::vector<std::uint8_t> uv;
+      std::vector<inter::mc::MiInfo> mv;
+      SbSink::State state;
+      std::size_t blocks = 0;
+      std::size_t levels = 0;
+      std::size_t palettes = 0;
+      std::size_t sub_pus = 0;
+      std::size_t leaf_dump = 0;
+      std::size_t leaf_costs = 0;
+      std::size_t leaf_bits = 0;
+      std::size_t leaf_bits_ok = 0;
+      rate_hybrid::SyntaxProbe probe;
+      rate_hybrid::SyntaxProbe rate_probe;
+    };
+    JointTrialSnap joint_p_capture(const SbSink& sink) const;
+    void joint_p_apply(SbSink& sink, const JointTrialSnap& snap);
+  // Structural tree identity (mi_row/mi_col/size/partition/chroma/children).
+    static bool joint_p_same_layout(const PartitionNode& a,
+                                    const PartitionNode& b);
 
   // ---------------------------------------------------------------------
   // §5.20.7.10 / §5.20.7.6 block-level TIP reference
