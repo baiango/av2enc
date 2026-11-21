@@ -112,10 +112,10 @@ InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
 #endif
   if (temporal != nullptr) temporal_ctx_ = *temporal;
   census_frame_ = census_frame;
-  if (options_.rd_driver) rd_driver::cli_flag() = true;
-  if (options_.eff_perc) eff_perc::cli_flag() = true;
-  if (options_.tail_tx) tail_tx::cli_mode() |= 1;
-  if (options_.head_tx) tail_tx::cli_mode() |= 2;
+  if (options_.rd_driver) rd_driver::cli_flag().store(true);
+  if (options_.eff_perc) eff_perc::cli_flag().store(true);
+  if (options_.tail_tx) tail_tx::cli_mode().fetch_or(1);
+  if (options_.head_tx) tail_tx::cli_mode().fetch_or(2);
   // Coded (tile-local) geometry.  A zero tile_w/tile_h means "whole frame",
   // which keeps the historical single-tile path untouched.  Source reads and
   // motion-compensated predictions add tile_x_/tile_y_ so the reference frame

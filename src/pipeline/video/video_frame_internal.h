@@ -3,6 +3,8 @@
 // lives here that was not in video_frame.cpp before the split.
 #pragma once
 
+#include <atomic>
+
 #include "pipeline/video/video_frame.h"
 
 #include "codec/intra/modes/intra_modes.h"
@@ -184,8 +186,8 @@ inline bool parse_off(const char* value) {
 
 // Process-wide CLI flag set by the InterFrameEncoder constructor from
 // VideoOptions::rd_driver (--video-rd-driver / --nightly-b).
-inline bool& cli_flag() {
-  static bool value = false;
+inline std::atomic<bool>& cli_flag() {
+  static std::atomic<bool> value{false};
   return value;
 }
 
@@ -196,7 +198,7 @@ inline bool enabled() {
   }();
   // --video-rd-driver / --nightly-b sets the process-wide CLI flag from the
   // encoder constructor; the env form stays for the raw gates.
-  return env || cli_flag();
+  return env || cli_flag().load();
 }
 
 inline double env_positive(const char* name, double fallback) {
@@ -232,7 +234,10 @@ inline int prune_target() {
 // leaf coder (TX-plan histogram, UV-level counters) only count committed
 // leaves, so a measured candidate cannot inflate the reported plan counts.
 inline bool& measuring_flag() {
-  static bool value = false;
+  // Per-thread: the joint-plan batch measures candidate layouts on parallel
+  // trial workers, so a process-global flag races (TSan
+  // video_frame_decision.cpp:8216).
+  static thread_local bool value = false;
   return value;
 }
 inline bool measuring() { return measuring_flag(); }

@@ -798,8 +798,10 @@ bool InterFrameEncoder::decide(std::string& error) {
                 entry.subtree != 0) {
               continue;
             }
-            ++joint_plan::profile().committed_leaves;
-            if (entry.is_inter == 0) ++joint_plan::profile().committed_intra;
+            joint_plan::profile_bump(&joint_plan::profile().committed_leaves);
+            if (entry.is_inter == 0) {
+              joint_plan::profile_bump(&joint_plan::profile().committed_intra);
+            }
           }
         }
       }
@@ -7915,12 +7917,14 @@ bool InterFrameEncoder::joint_p_measure_leaf(const PartitionNode& node,
   }
   {
     const syntax::BlockSyntax& probe = sink.blocks[index];
-    ++joint_plan::profile().trials;
+    joint_plan::profile_bump(&joint_plan::profile().trials);
     if (probe.is_inter == 0) {
-      ++joint_plan::profile().trials_intra;
+      joint_plan::profile_bump(&joint_plan::profile().trials_intra);
     } else {
-      ++joint_plan::profile().trials_inter;
-      if (probe.skip_flag != 0) ++joint_plan::profile().trials_skip;
+      joint_plan::profile_bump(&joint_plan::profile().trials_inter);
+      if (probe.skip_flag != 0) {
+        joint_plan::profile_bump(&joint_plan::profile().trials_skip);
+      }
     }
   }
   double d = 0.0;

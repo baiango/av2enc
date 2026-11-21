@@ -65,7 +65,7 @@ ARGS=(--video --frames "$FRAMES" --cpu-threads "$THREADS" --qp 106 --fast-decode
 if ! "$BIN" "$TMP/in.y4m" -o "$TMP/out.ivf" "${ARGS[@]}" \
     >"$TMP/out.log" 2>"$TMP/err.log"; then
     echo "ci_encode_smoke: encode failed" >&2
-    tail -10 "$TMP/out.log" "$TMP/err.log" >&2
+    tail -n 10 "$TMP/out.log" "$TMP/err.log" >&2
     exit 1
 fi
 if [ ! -s "$TMP/out.ivf" ]; then

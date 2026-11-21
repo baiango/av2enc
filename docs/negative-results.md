@@ -363,6 +363,7 @@ synthetic FFmpeg CUDA-hwframe handoff works: device pointers,
 | CONFIRMED | Use `rsync` to the Vast.ai box | Not installed | `tools/sync_remote.sh` tar pipe |
 | CONFIRMED | Assume `/workspace` persists | It is not a volume | Back up with `tools/backup_to_mac.sh` |
 | CONFIRMED | Rely on `perf`/`ncu` for deep profiling | Container restrictions | `nsys` + built-in profiler; `gprof` for host-only |
+| CONFIRMED | Expect the parallel partition probe or the joint-plan batch to be TSan-clean with process-global statics | TSan: `joint_plan::Profile` timers (the default `--fast-decode` probe), `cli_flag`/`cli_mode` in every encoder constructor, `tail_tx::Counters` in pass-1 leaves, `rd_driver::measuring_flag` | Mutex / atomics / `thread_local`; `docs/rd-joint-batch.md` §11 |
 
 ## Metadata / HRD OBU verdicts (CPU integration)
 

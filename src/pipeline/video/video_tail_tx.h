@@ -27,6 +27,7 @@
 // encodes, and the gate is unset everywhere by default.
 #pragma once
 
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -178,48 +179,52 @@ inline double source_activity(const std::uint8_t* src, int width, int height,
 // Process-wide CLI modes set by the InterFrameEncoder constructor from
 // VideoOptions::tail_tx/head_tx (--video-tail-tx / --video-head-tx /
 // --nightly-b).  Bit 0 = tail window, bit 1 = head window.
-inline int& cli_mode() {
-  static int value = 0;
+inline std::atomic<int>& cli_mode() {
+  static std::atomic<int> value{0};
   return value;
 }
 
 inline bool tail_armed(int ordinal) {
   const Config& cfg = config();
   const bool tail =
-      (cfg.on || (cli_mode() & 1) != 0) && ordinal >= cfg.first &&
+      (cfg.on || (cli_mode().load() & 1) != 0) && ordinal >= cfg.first &&
       ordinal <= cfg.last;
   if (tail) return true;
-  if (head_enabled() || (cli_mode() & 2) != 0) {
+  if (head_enabled() || (cli_mode().load() & 2) != 0) {
     return ordinal >= head_first() && ordinal <= head_last();
   }
   return false;
 }
 
+// Atomic: the joint-plan batch measures leaves on parallel trial workers, and
+// a plain static here is a data race (TSan video_frame_decision.cpp:4020).
 struct Counters {
-  long long leaves = 0;
-  long long exact_ok = 0;
-  long long exact_failed = 0;
-  long long kept_exact = 0;
-  long long plan_changed = 0;
-  long long act_nodes = 0;
-  long long act_fired = 0;
-  long long act_nodes16 = 0;
-  double screen_d = 0.0;
-  double screen_r = 0.0;
-  double exact_d = 0.0;
-  double exact_r = 0.0;
+  std::atomic<long long> leaves{0};
+  std::atomic<long long> exact_ok{0};
+  std::atomic<long long> exact_failed{0};
+  std::atomic<long long> kept_exact{0};
+  std::atomic<long long> plan_changed{0};
+  std::atomic<long long> act_nodes{0};
+  std::atomic<long long> act_fired{0};
+  std::atomic<long long> act_nodes16{0};
+  std::atomic<double> screen_d{0.0};
+  std::atomic<double> screen_r{0.0};
+  std::atomic<double> exact_d{0.0};
+  std::atomic<double> exact_r{0.0};
 
   ~Counters() {
     const Config& cfg = config();
-    if (!cfg.on && !cfg.stats && cli_mode() == 0) return;
+    if (!cfg.on && !cfg.stats && cli_mode().load() == 0) return;
     std::fprintf(
         stderr,
         "rd-tail-tx: leaves=%lld exact_ok=%lld failed=%lld kept=%lld "
         "plan_changed=%lld act_nodes=%lld act_fired=%lld act16=%lld "
         "screen[D=%.0f R=%.0f] exact[D=%.0f R=%.0f] "
         "lambda=%.2f level_scale=%.2f hf=%.2f edge=%.2f\n",
-        leaves, exact_ok, exact_failed, kept_exact, plan_changed, act_nodes,
-        act_fired, act_nodes16, screen_d, screen_r, exact_d, exact_r, cfg.lambda,
+        leaves.load(), exact_ok.load(), exact_failed.load(),
+        kept_exact.load(), plan_changed.load(), act_nodes.load(),
+        act_fired.load(), act_nodes16.load(), screen_d.load(),
+        screen_r.load(), exact_d.load(), exact_r.load(), cfg.lambda,
         cfg.level_scale, cfg.hf, cfg.edge);
   }
 };

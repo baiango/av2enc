@@ -274,3 +274,41 @@ chained-B carrier the same effect is inside ±0.25 %.
 | `src/pipeline/video/video_frame_decision.cpp` | `joint_p_batch_frame`, `joint_p_measure_tree`, `joint_p_capture`/`apply`, `joint_p_same_layout`, `joint_p_trial_clone`, the pass hook, profile timers |
 | `src/pipeline/video/video_frame_internal.h` | declarations, timers in `search_luma_tx`/`compute_tx` |
 | `src/pipeline/video/video_frame_me.cpp` | ME call/cache counters |
+
+## 11. Thread safety of the pass-1 workers
+
+Pass 1 builds one `InterFrameEncoder` clone per chunk and measures leaves on
+`parallel_for` workers. The leaf coder was written for the serial walk and
+updates process-global diagnostic statics, so the batch is also a TSan audit.
+Four races were real (not just noise):
+
+| # | object | writer | fix |
+|---|---|---|---|
+| 1 | `joint_plan::profile()::value` | `ScopedTimer` in `compute_tx`, called from the partition probe's own parallel workers | `profile_mutex()` + `profile_bump()`; the destructor returns early when profiling is off, so the default path never touches the static |
+| 2 | `rd_driver::cli_flag()`, `eff_perc::cli_flag()`, `tail_tx::cli_mode()` | every `InterFrameEncoder` constructor; clone construction runs concurrently | `std::atomic` (`store`, `fetch_or`) |
+| 3 | `tail_tx::counters()` | leaf trials (`encode_leaf`, `video_frame_decision.cpp:4020`) | atomic counters, `.load()` in the exit print |
+| 4 | `rd_driver::measuring_flag()` | `joint_p_decide_sb` on every worker | `thread_local`: the flag describes the measuring thread, not the process |
+
+`joint_plan::Counters` was already isolated: pass 1 sets
+`joint_plan::trial_worker() = true` before the first leaf, and `counters()`
+returns a `thread_local` silent copy on those threads. That copy is now
+constructed silent, so it cannot print an empty duplicate stats line at exit.
+
+Race 1 predates the batch: it fires in the default `--fast-decode` partition
+probe whenever a joint-plan build runs under TSan. The CI failure was hidden
+because `tools/ci_encode_smoke.sh` printed the encoder's stderr with
+`tail -10 <file1> <file2>`, which GNU `tail` rejects, so the log was empty; it
+now uses `tail -n 10`.
+
+Evidence, `clang++ -fsanitize=thread`, `halt_on_error=1`, 8 threads, 320x240:
+
+| run | result |
+|---|---|
+| trace smoke (`tools/ci_encode_smoke.sh`, default preset) | ok, 0 warnings |
+| serial joint, 3 frames, `AV2ENC_RD_JOINT_P=1` | 0 warnings |
+| batch joint, 3 frames, `BATCH=8 ROUNDS=1` | 0 warnings |
+| batch joint, 8 frames, `BATCH=8 ROUNDS=2` | 0 warnings |
+
+The fixes are stats/flag plumbing only. Gate-off pins (QP106 25,008 /
+`0639b436`, QP110 23,690 / `1b99127a`) and the 16-frame chained-B stream
+(19,723 / `505430de`) are byte-identical after them.

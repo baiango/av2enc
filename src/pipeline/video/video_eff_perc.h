@@ -71,8 +71,8 @@ inline bool parse_off(const char* value) {
 
 // Process-wide CLI flag set by the InterFrameEncoder constructor from
 // VideoOptions::eff_perc (--video-eff-perc / --nightly-b).
-inline bool& cli_flag() {
-  static bool value = false;
+inline std::atomic<bool>& cli_flag() {
+  static std::atomic<bool> value{false};
   return value;
 }
 
@@ -86,7 +86,7 @@ inline bool enabled() {
     return !parse_off(std::getenv("AV2ENC_EFF_PERC")) ||
            pipe_ba::enabled();
   }();
-  return env || cli_flag();
+  return env || cli_flag().load();
 }
 
 inline double env_double(const char* name, double fallback) {

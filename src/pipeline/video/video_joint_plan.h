@@ -44,6 +44,7 @@
 
 #include <cctype>
 #include <chrono>
+#include <mutex>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -263,12 +264,30 @@ inline Profile& profile() {
   return value;
 }
 
+// The profile is a process-global static; the partition probe and the batch
+// pass 1 call compute_tx/search_me from parallel workers.  Every write goes
+// through this mutex so TSan (and the numbers) stay clean.
+inline std::mutex& profile_mutex() {
+  static std::mutex value;
+  return value;
+}
+
+inline void profile_bump(long long* field) {
+  if (!profile().on || field == nullptr) return;
+  std::lock_guard<std::mutex> lock(profile_mutex());
+  ++*field;
+}
+
 // A scoped monotonic-clock accumulator: `ScopedTimer t(&profile().me);`
 class ScopedTimer {
  public:
   explicit ScopedTimer(double* sink) : sink_(sink), start_(Now()) {}
   ~ScopedTimer() {
-    if (sink_ != nullptr) *sink_ += Now() - start_;
+    // Off is the common case: do not touch the shared static at all.
+    if (sink_ == nullptr || !profile().on) return;
+    const double elapsed = Now() - start_;
+    std::lock_guard<std::mutex> lock(profile_mutex());
+    *sink_ += elapsed;
   }
   ScopedTimer(const ScopedTimer&) = delete;
   ScopedTimer& operator=(const ScopedTimer&) = delete;
@@ -359,7 +378,14 @@ struct Counters {
 
 inline Counters& counters() {
   static Counters value;
-  static thread_local Counters worker;
+  // The worker is always silent: it is constructed on the first `counters()`
+  // call of any thread, including a main thread that is counting, and its
+  // destructor must not print an empty duplicate line at thread exit.
+  static thread_local Counters worker = [] {
+    Counters out;
+    out.silent = true;
+    return out;
+  }();
   if (!counting()) {
     worker.silent = true;
     return worker;
