@@ -169,14 +169,14 @@ sessions and their subagents — as of **2026-11-21**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 337,870,063 |
-| Output | 47,372,886 |
-| Reasoning | 57,756,908 |
-| **Input + output + reasoning** | **~443.0 M** |
-| Cached context reads | 31,153,878,235 |
-| **Including cache reads** | **~31.60 B** |
+| Fresh input | 339,929,451 |
+| Output | 48,093,981 |
+| Reasoning | 58,686,811 |
+| **Input + output + reasoning** | **~446.7 M** |
+| Cached context reads | 31,775,275,739 |
+| **Including cache reads** | **~32.22 B** |
 
-991 sessions (369 top-level + 622 subagents) across the four OpenCode project
+999 sessions (369 top-level + 630 subagents) across the four OpenCode project
 ids that touch the checkout (the parent workspace, the shared work root that
 owns the lane worktrees, the repo root and the publish clone). Cache reads are
 billed at a fraction of fresh input and dominate because every subagent re-reads
