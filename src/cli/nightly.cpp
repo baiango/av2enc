@@ -331,7 +331,12 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   options.video_edge_inter = !options.video_edge_inter_off;
   options.video_edge_mask = !options.video_edge_mask_off;
   if (!options.video_key_qp_offset_given && !options.video_key_qp_offset_off) {
-    options.video_key_qp_offset = -50;
+    // -37 is the re-swept optimum on the final stack (compound + TIP + CWP
+    // depth + exact compound rate + joint plan). The -50 value was tuned
+    // before those landed; at matched 100 kbps -37 measures K 88.207 against
+    // 87.513 (+0.694) with both arms avmdec 60/60 recon-exact. See
+    // docs/rd-alloc-post-joint.md.
+    options.video_key_qp_offset = -37;
     options.video_key_qp_offset_given = true;
   }
   options.video_bawp = !options.video_bawp_off;

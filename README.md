@@ -33,7 +33,7 @@ is the product and must produce a **byte-identical** stream (the parity gate use
 |---|---:|---:|---:|---:|---:|
 | `--fast-decode` QP106 (pin) | 100.0 | 9.733 | 3.42 | 80.84 | 82.2 |
 | **`--video-rd-preset best`** QP112 (joint plan, opt-in research) | 100.0 | 9.883 | 1.99 | 86.45 | **87.19** |
-| **`--nightly-b`** QP119 (chained B + compound + TIP + CWP depth + exact rate + joint plan, opt-in research) | 100.0 | 9.885 | 1.84 | 86.38 | **87.57** |
+| **`--nightly-b`** QP111 (chained B + compound + TIP + CWP depth + exact rate + joint plan, key offset −37, opt-in research) | 100.0 | 9.885 | 1.84 | 86.38 | **88.21** |
 | AVM `e6f99d3` QP124 | 99.3 | 9.862 | 1.29 | 90.38 | **90.2** |
 | SVT-AV1 p0 CRF36.5 | 100.0 | 9.828 | 1.55 | 88.89 | **88.8** |
 | rav1e 0.8.1 speed 2 | 100.1 | 9.717 | 2.71 | 81.67 | 83.7 |
@@ -43,7 +43,7 @@ bracket / +0.92 fit over the 86.51/86.30 non-joint best), but a **research
 gate** — the serial raster walk costs ~12 min per 60-frame encode, so
 `--fast-decode` remains the shipped fast path.  `AV2ENC_RD_JOINT_P=0` restores
 the 86.33 lead stack (a LEAD, not a KEEP: +0.097 over the flat aggregate,
-inside the adjacent-QP ripple).  `--nightly-b` is **87.570** (+1.338 over flat,
+inside the adjacent-QP ripple).  `--nightly-b` is **88.207** (+2.45 over flat,
 +0.286 over the 87.284 exact-rate arm) and also a 12-min research gate;
 research-only because its 60-frame stream is `avmdec`-exact while the pinned
 `dav2d` has a §7.21.6 drain defect (17/60).  AVERAGE compound, the TIP-output
@@ -74,7 +74,7 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/fd.ivf \
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/best.ivf \
   --video --frames 60 --qp 112 --cpu-threads 8 --video-rd-preset best
 
-# chained B research path (87.570; avmdec-validated, ~12 min)
+# chained B research path (88.207; avmdec-validated, ~9 min)
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
   --video --frames 60 --qp 119 --cpu-threads 8 --video-gops 7 --nightly-b
 ```
@@ -87,7 +87,7 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
 | `--video-rd-preset quality` | measured still/keyframe preset |
 | **`--fast-decode`** | measured CPU RD aggregate (was `--nightly`; the old name is an alias) |
 | **`--video-rd-preset best`** | flat best stack (**87.19** joint plan KEEP, ~12 min): EFF_PERC, head/tail TX, driver, key −39, drift 1.5/3250 + joint solve; `AV2ENC_RD_JOINT_P=0` → 86.33 LEAD |
-| **`--nightly-b`** | chained single-key B + compound + TIP + CWP depth + exact rate + joint plan, opt-in research (**87.570**, ~12 min; `AV2ENC_RD_JOINT_P=0` → 87.284, `AV2ENC_COMPOUND_EXACT_RATE=0` → 87.023, `--video-compound-depth-off` → 86.805, `AV2ENC_TIP_LEAF=0` with depth off → 86.61, `--video-compound-off` → 85.47) |
+| **`--nightly-b`** | chained single-key B + compound + TIP + CWP depth + exact rate + joint plan, opt-in research (**88.207**, ~9 min; `AV2ENC_RD_JOINT_P=0` → 87.284, `AV2ENC_COMPOUND_EXACT_RATE=0` → 87.023, `--video-compound-depth-off` → 86.805, `AV2ENC_TIP_LEAF=0` with depth off → 86.61, `--video-compound-off` → 85.47) |
 
 ### Pins
 

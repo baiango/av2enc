@@ -79,9 +79,17 @@ the preset to **K 87.570 bracket / 87.587 fit at 100.0 kbps** (QP119 24,845 B /
 **+0.286 K** over the 87.284 exact-rate arm, **+0.765 K** over the 86.805 TIP
 arm and **+1.338 K** over the flat 86.232.  The 16-picture joint proof is
 **19,723 B / `505430de…`** and is pinned-dav2d exact; the 60-picture streams
-are `avmdec` 60/60.  The same caveats hold: B is research-only until the pinned
-dav2d §7.21.6 drain fix lands, and the joint solve's serial raster walk costs
-~12 min per 60-frame 240p encode, so it is a research gate, not the fast path
+are `avmdec` 60/60.
+
+The key offset then moved from −50 to −37 on the final stack
+(`docs/rd-alloc-post-joint.md`): **K 88.207 at 100.364 kbps** (QP111,
+22,318 B), **+0.694** over the −50 point at matched rate with both arms
+`avmdec` 60/60 recon-exact.  The 16-picture proof re-keys to
+**17,066 B / `1de2bb9a…`**.
+
+The same caveats hold: B is research-only until the pinned dav2d §7.21.6 drain
+fix lands, and the joint solve's serial raster walk costs ~9 min per 60-frame
+240p encode, so it is a research gate, not the fast path
 (`--fast-decode` is unchanged).  Controls are byte-exact:
 `AV2ENC_RD_JOINT_P=0` restores the 87.284 exact-rate arm,
 `AV2ENC_COMPOUND_EXACT_RATE=0` the 87.023 depth arm,
@@ -549,7 +557,7 @@ winners for the user unless an explicit env value overrides them.
   crosses it at **86.607, +0.375**, and the TIP-output composition at
   **86.805, +0.573**.
 
-`--nightly-b` expands to the winning set (B_LEGAL + edge + key-QP −50 + BAWP +
+`--nightly-b` expands to the winning set (B_LEGAL + edge + key-QP −37 + BAWP +
 AVERAGE compound + partition-RD + anchor residual + key RD driver + eff-perc
 pipe + tail TX + key TX + UVFULL/UVLEVEL + band-gated descent + the chained
 8-frame B carrier). It requires `--video-gops M > 1`; `--frames` must be
@@ -640,7 +648,7 @@ reference map, the §7.22 slot store and every other picture's prediction are
 untouched.
 
 `--nightly-b` sets mode 1, the 0.30 dB floor and the depth arm's field guard
-when they are unset, so the TIP step is 86.805 inside the 87.570 preset
+when they are unset, so the TIP step is 86.805 inside the 88.207 preset
 (`docs/compound-depth.md`). The env gates stay available (an explicit value,
 including `0`, wins) and are not reachable from `--fast-decode`:
 
