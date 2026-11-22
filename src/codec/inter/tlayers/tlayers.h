@@ -225,6 +225,19 @@ enum class PlanError {
 // unless it passes.
 bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error);
 
+// Smallest reference-store size (`PlanConfig::num_slots`) the plan's schedule
+// can be coded in, found by asking the slot allocator itself.  This is a
+// property of the schedule, not of the clip length: an 8-frame hierarchical
+// block needs 4 slots in both the P and the B schedule, because the two anchors
+// stay live while the second layer is coded, so the allocator cannot recycle
+// down to fewer.  Callers should size the store from this instead of guessing;
+// returns 0 when no store up to kNumRefFrames can code the plan.
+//
+// Exposed so a test can assert the derived requirement rather than a
+// hand-picked count (see test_single_slot_chain in tlayers_test.cpp, which
+// originally asserted 1 slot for an 8-frame hierarchical-P chain).
+int minimum_slot_requirement(const PlanConfig& config);
+
 // Default-off gate for the chained (single-key) multi-GOP plan. The CLI only
 // accepts --video-tlayers 8 --video-gops M > 1 when this is on, and the
 // historical one-GOP path is byte-identical when it is off.

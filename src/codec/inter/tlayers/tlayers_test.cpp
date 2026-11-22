@@ -781,16 +781,39 @@ void test_concatenated_units() {
   CHECK_EQ_INT(frame_index, 8);
 }
 
-void test_single_slot_chain() {
-  // One slot is legal for a P chain: the frame reads and refreshes the same
-  // slot. This documents that slots alone do not retain implicit-output frames.
-  PlanConfig config = p8_config();
-  config.num_slots = 1;
-  Plan plan;
-  CHECK(build(config, plan));
-  for (const PlannedFrame& f : plan.frames) {
-    CHECK_EQ_INT(f.slot, 0);
+void test_slot_requirement() {
+  // The minimum reference store is a property of the schedule, not of the clip
+  // length: the slot allocator may only recycle a store entry once its picture
+  // is below the coding frontier AND no later-coded frame still references it.
+  // During an 8-frame hierarchical block both anchors stay live while the
+  // second layer is coded, so the requirement is 4 in the P and B schedules
+  // alike. This test used to assert that 1 slot was enough for a P chain (true
+  // for a FLAT P chain, where each frame reads and refreshes the same slot) and
+  // therefore failed against the planner; it now asserts the derived number, so
+  // a change in the allocator's recycling rule updates the expectation instead
+  // of leaving a stale hand-picked constant.
+  PlanConfig p8 = p8_config();
+  CHECK_EQ_INT(minimum_slot_requirement(p8), 4);
+  PlanConfig b8 = b8_config();
+  CHECK_EQ_INT(minimum_slot_requirement(b8), 4);
+  // One slot below the requirement is rejected, the exact requirement accepted.
+  PlanConfig under = p8_config();
+  under.num_slots = 3;
+  Plan rejected;
+  CHECK(!build(under, rejected));
+  for (int slots = 4; slots <= 8; ++slots) {
+    PlanConfig cfg = p8_config();
+    cfg.num_slots = slots;
+    Plan plan;
+    CHECK(build(cfg, plan));
   }
+  // A single 2-frame block needs fewer slots than the 8-frame block, so the
+  // requirement follows the schedule rather than a constant: key + one frame
+  // where the second picture reuses the first's slot needs only 1.
+  PlanConfig two = p8_config();
+  two.gop_size = 2;
+  two.order_hint_bits = 2;
+  CHECK_EQ_INT(minimum_slot_requirement(two), 1);
 }
 
 }  // namespace
@@ -809,7 +832,7 @@ int main() {
   test_frame_header_plan();
   test_dependency_modes();
   test_concatenated_units();
-  test_single_slot_chain();
+  test_slot_requirement();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "tlayers_test: %d of %d checks FAILED\n", g_failures,

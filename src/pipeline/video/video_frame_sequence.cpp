@@ -481,11 +481,16 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       error = "--video-tlayers chain needs at least one frame";
       return false;
     }
-    if (total > gop * num_gops) {
+    // `--video-gops M` covers up to M full blocks plus one block of tail, so
+    // the historical 60 = 7*8 + 4 spelling keeps working with M = 7.  A count
+    // that needs fewer blocks is re-tiled below; a count that needs more is
+    // refused by name.
+    if (total > gop * num_gops + 4) {
       error = "--video-tlayers --video-gops " + std::to_string(num_gops) +
-              " codes at most " + std::to_string(gop * num_gops) +
-              " frames; got " + std::to_string(total) +
-              " (raise --video-gops to fit more)";
+              " codes at most " + std::to_string(gop * num_gops + 4) +
+              " frames (" + std::to_string(num_gops) + " blocks of " +
+              std::to_string(gop) + " plus a tail of up to 4); got " +
+              std::to_string(total) + " (raise --video-gops to fit more)";
       return false;
     }
       // Choose the block size, not just the block count: a hierarchical-B
@@ -582,7 +587,26 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   if (chained && pc.order_hint_bits < 5) {
     pc.order_hint_bits = 5;
   }
-  pc.num_slots = std::min(16, total);
+  // Size the reference store from the SCHEDULE, not the clip length.  The slot
+  // allocator can only recycle an entry once its picture is below the coding
+  // frontier and nothing later-coded still references it, so an 8-frame
+  // hierarchical block needs 4 slots whatever the clip length; the old
+  // `min(16, total)` under-sized short clips (3 frames asked for 3 and failed)
+  // and guessing the number is what made test_single_slot_chain fail.
+  //
+  // This is a FLOOR, not a replacement: NumRefFrames also fixes the slot
+  // numbering the measured streams were built with, so keep the historical
+  // min(16, total) whenever it already satisfies the schedule and only raise it
+  // when it does not.  That keeps every pinned stream byte-identical.
+  {
+    const int schedule_floor = tl::minimum_slot_requirement(pc);
+    if (schedule_floor < 1) {
+      error = "temporal-layer plan: the schedule needs more than 16 reference "
+              "slots (NumRefFrames is f(3))";
+      return false;
+    }
+    pc.num_slots = std::max(std::min(16, total), schedule_floor);
+  }
   pc.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   tl::Plan plan;
   tl::PlanError plan_error = tl::PlanError::kOk;

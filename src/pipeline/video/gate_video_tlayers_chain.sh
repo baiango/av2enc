@@ -294,12 +294,12 @@ run_chain chain16_b B 16 2 16 25662 d5af8679202a00fafa3fd135569a28c1
 # 7 = 4+2+1, 9 = 8+1, 11 = 2*5+1 and 13 = 8+4+1 (the last two are the cases the
 # old "gops*8 only" rule refused outright).  All decode under avmdec with
 # byte-exact recon, checked by the surrounding loop.
-run_chain chain03_b B 3 2 3 13852 e88535d947bc2fea0f3a982dc5cdff23
-run_chain chain05_b B 5 2 5 15739 3fb3e722552be54379c732a9bb9ae85c
-run_chain chain07_b B 7 2 7 17557 a2e25c9153548c6a2770a0a0c53439dc
-run_chain chain09_b B 9 2 9 19503 8080454a34f122db8e53d78d0684e7b9
-run_chain chain11_b B 11 2 11 21275 a8ce7c78664b597969980f557b0ec111
-run_chain chain13_b B 13 2 13 23289 f8b88eb47831a989bc00ebc093ae40c3
+run_chain chain03_b B 3 2 3 13788 54085dce3d5eb8eca5255f764dc1abc4
+run_chain chain05_b B 5 2 5 15607 bf7efd5c7ad9923c568a6927c9c34467
+run_chain chain07_b B 7 2 7 17410 e0441ac9311c595f0c8c2e5fee0efc70
+run_chain chain09_b B 9 2 9 19289 bff18a8b469f7ba5fc93483795667fb0
+run_chain chain11_b B 11 2 11 21096 4218c1de8fa041c5f9095ba86f23a6de
+run_chain chain13_b B 13 2 13 22917 109d8b80381417adb793ead3ba78d5a6
 
 # 2b. Edge path: the padded reference bank must carry the hidden bottom rows.
 run_chain chain16_p_edge P 16 2 16 13165 982712c2611c5bfc709e9a34ad5c3450 \

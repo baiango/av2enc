@@ -910,10 +910,14 @@ bool validate_video_sequence_length(const Options& options,
       // cannot fit at all.
       const std::size_t full =
           gop * static_cast<std::size_t>(options.video_gops);
-      if (frame_count > full) {
+      // One tail block of up to 4 pictures past the full blocks, so the
+      // historical 60 = 7*8 + 4 spelling still fits --video-gops 7.
+      if (frame_count > full + 4U) {
         error = "--video-tlayers --video-gops " +
                 std::to_string(options.video_gops) + " codes at most " +
-                std::to_string(full) + " frames; got " +
+                std::to_string(full + 4U) + " frames (" +
+                std::to_string(options.video_gops) + " blocks of " +
+                std::to_string(gop) + " plus a tail of up to 4); got " +
                 std::to_string(frame_count) +
                 " (raise --video-gops to fit more)";
         return false;

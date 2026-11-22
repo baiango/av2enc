@@ -514,6 +514,187 @@ std::vector<int> Plan::coding_order_up_to_layer(int max_layer) const {
   return out;
 }
 
+// Slot allocation for one plan under a fixed reference-store size.  The plan's
+// frames are rewritten in place (slot / ref_slot / order_hint_lsbs); returns
+// false when the store is too small for the schedule's live-reference set.
+//
+// Separated from build_plan() so the minimum store size can be found by asking
+// this allocator directly (minimum_slot_requirement()) instead of restating its
+// recycling rule in a second estimate that could drift from it.
+bool allocate_slots(Plan& plan, int num_slots, PlanError* error) {
+  const int total = plan.display_count();
+    // Slot allocation: prefer an empty slot, otherwise recycle the lowest slot
+    // whose frame is no longer referenced by any later-coded frame.
+    std::vector<int> last_use(static_cast<std::size_t>(total), -1);
+    for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
+      const PlannedFrame& f = plan.frames[static_cast<std::size_t>(plan.coding_order[c])];
+      for (int i = 0; i < f.num_refs; ++i) {
+        const int d = f.ref_display[i];
+        if (d >= 0 && d < total) {
+          last_use[static_cast<std::size_t>(d)] =
+              std::max(last_use[static_cast<std::size_t>(d)], static_cast<int>(c));
+        }
+      }
+    }
+    std::array<int, kNumRefFrames> occupant{};
+    occupant.fill(-1);
+    std::vector<int> slot_of_display(static_cast<std::size_t>(total), -1);
+    // Display-order frontier: before coding position c, the smallest display
+    // index that has not been coded yet. Recycling is only safe when the
+    // occupant is strictly below the frontier: every lower picture is already
+    // coded, so the §7.21 process can drain them in display order before the
+    // overwrite. (The pinned dav2d does not run that drain for a non-key
+    // refresh; avmdec does. See docs/validation.md.)
+    std::vector<int> frontier(plan.coding_order.size(), 0);
+    {
+      std::vector<int> coding_index(static_cast<std::size_t>(total), -1);
+      for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
+        coding_index[static_cast<std::size_t>(plan.coding_order[c])] =
+            static_cast<int>(c);
+      }
+      int next = 0;
+      for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
+        while (next < total &&
+               coding_index[static_cast<std::size_t>(next)] <
+                   static_cast<int>(c)) {
+          ++next;
+        }
+        frontier[c] = next;
+      }
+    }
+    for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
+      const int display = plan.coding_order[c];
+      PlannedFrame& f = plan.frames[static_cast<std::size_t>(display)];
+      int chosen = -1;
+      // Prefer an empty slot: an implicitly output frame must stay in the store
+      // until the decoder emits it, so recycling is only used when the store is
+      // full. In that case pick the lowest display index below the coding
+      // frontier whose frame is no longer referenced by any later-coded frame.
+      for (int s = 0; s < num_slots; ++s) {
+        if (occupant[static_cast<std::size_t>(s)] == -1) {
+          chosen = s;
+          break;
+        }
+      }
+      if (chosen < 0) {
+        int best_display = -1;
+        for (int s = 0; s < num_slots; ++s) {
+          const int occ = occupant[static_cast<std::size_t>(s)];
+          if (occ < 0 || occ >= frontier[c] ||
+              last_use[static_cast<std::size_t>(occ)] > static_cast<int>(c)) {
+            continue;
+          }
+          if (best_display < 0 || occ < best_display) {
+            best_display = occ;
+            chosen = s;
+          }
+        }
+      }
+      if (chosen < 0) {
+        // The store is too small for this schedule's live-reference set.
+        // Callers size it from minimum_slot_requirement(); report the deficit
+        // here so a caller that did not does not have to bisect the count.
+        set_error(error, PlanError::kNotEnoughSlots);
+        return false;
+      }
+      f.slot = chosen;
+      occupant[static_cast<std::size_t>(chosen)] = display;
+      slot_of_display[static_cast<std::size_t>(display)] = chosen;
+
+      for (int i = 0; i < f.num_refs; ++i) {
+        const int d = f.ref_display[i];
+        f.ref_slot[i] = slot_of_display[static_cast<std::size_t>(d)];
+        if (f.ref_slot[i] < 0) {
+          set_error(error, PlanError::kReferenceNotDecoded);
+          return false;
+        }
+        f.ref_order_hint[i] =
+            plan.frames[static_cast<std::size_t>(d)].display_order_hint;
+      }
+
+      if (f.is_key) {
+        // CLK refresh invalidates every slot except the first refreshed one.
+        occupant.fill(-1);
+        occupant[static_cast<std::size_t>(chosen)] = display;
+        f.refresh_frame_flags = (1U << num_slots) - 1U;
+      } else {
+        f.refresh_frame_flags = 1U << chosen;
+      }
+    }
+
+    // Derive the order-hint LSBs with the §5.18.2 replay. The reference store is
+    // the only state get_disp_order_hint() consults.
+    {
+      std::array<int, kNumRefFrames> hint{};
+      std::array<int, kNumRefFrames> layer_of_slot{};
+      std::array<bool, kNumRefFrames> valid{};
+      std::array<bool, kNumRefFrames> showable{};
+      for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
+        PlannedFrame& f = plan.frames[static_cast<std::size_t>(plan.coding_order[c])];
+        int max_disp = 0;
+        if (!f.is_key) {
+          for (int s = 0; s < num_slots; ++s) {
+            if (valid[static_cast<std::size_t>(s)] &&
+                showable[static_cast<std::size_t>(s)] &&
+                plan.tlayer_dependency[static_cast<std::size_t>(f.tlayer_id)]
+                                       [static_cast<std::size_t>(
+                                           layer_of_slot[static_cast<std::size_t>(s)])]) {
+              max_disp = std::max(max_disp, hint[static_cast<std::size_t>(s)]);
+            }
+          }
+        }
+        const int span = 1 << plan.config.order_hint_bits;
+        const std::uint32_t absolute = f.display_order_hint;
+        if (absolute >= static_cast<std::uint32_t>(span)) {
+          set_error(error, PlanError::kBadOrderHintBits);
+          return false;
+        }
+        std::uint32_t lsbs = absolute;
+        if (!f.is_key) {
+          lsbs = static_cast<std::uint32_t>(
+              static_cast<int>(absolute) & (span - 1));
+          if (display_order_hint_from_lsbs(static_cast<int>(lsbs),
+                                           plan.config.order_hint_bits, max_disp) !=
+              static_cast<int>(absolute)) {
+            set_error(error, PlanError::kOrderHintReconstruct);
+            return false;
+          }
+        }
+        f.order_hint_lsbs = lsbs;
+        if (f.is_key) {
+          // CLK refresh: only the first refreshed slot stays valid.
+          const int key_slot = first_refreshed_slot(f.refresh_frame_flags);
+          valid.fill(false);
+          hint[static_cast<std::size_t>(key_slot)] =
+              static_cast<int>(f.display_order_hint);
+          layer_of_slot[static_cast<std::size_t>(key_slot)] = f.tlayer_id;
+          showable[static_cast<std::size_t>(key_slot)] = true;
+          valid[static_cast<std::size_t>(key_slot)] = true;
+        } else {
+          hint[static_cast<std::size_t>(f.slot)] =
+              static_cast<int>(f.display_order_hint);
+          layer_of_slot[static_cast<std::size_t>(f.slot)] = f.tlayer_id;
+          showable[static_cast<std::size_t>(f.slot)] =
+              f.implicit_output_frame || f.immediate_output_frame;
+          valid[static_cast<std::size_t>(f.slot)] = true;
+        }
+      }
+    }
+  return true;
+}
+
+int minimum_slot_requirement(const PlanConfig& config) {
+  for (int slots = 1; slots <= kNumRefFrames; ++slots) {
+    PlanConfig probe_config = config;
+    probe_config.num_slots = slots;
+    Plan probe;
+    PlanError probe_error = PlanError::kOk;
+    if (build_plan(probe_config, probe, &probe_error)) return slots;
+  }
+  return 0;
+}
+
+
 bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error) {
   set_error(error, PlanError::kOk);
   plan = Plan{};
@@ -630,160 +811,9 @@ bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error) {
     }
   }
 
-  // Slot allocation: prefer an empty slot, otherwise recycle the lowest slot
-  // whose frame is no longer referenced by any later-coded frame.
-  std::vector<int> last_use(static_cast<std::size_t>(total), -1);
-  for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
-    const PlannedFrame& f = plan.frames[static_cast<std::size_t>(plan.coding_order[c])];
-    for (int i = 0; i < f.num_refs; ++i) {
-      const int d = f.ref_display[i];
-      if (d >= 0 && d < total) {
-        last_use[static_cast<std::size_t>(d)] =
-            std::max(last_use[static_cast<std::size_t>(d)], static_cast<int>(c));
-      }
-    }
-  }
-  std::array<int, kNumRefFrames> occupant{};
-  occupant.fill(-1);
-  std::vector<int> slot_of_display(static_cast<std::size_t>(total), -1);
-  // Display-order frontier: before coding position c, the smallest display
-  // index that has not been coded yet. Recycling is only safe when the
-  // occupant is strictly below the frontier: every lower picture is already
-  // coded, so the §7.21 process can drain them in display order before the
-  // overwrite. (The pinned dav2d does not run that drain for a non-key
-  // refresh; avmdec does. See docs/validation.md.)
-  std::vector<int> frontier(plan.coding_order.size(), 0);
-  {
-    std::vector<int> coding_index(static_cast<std::size_t>(total), -1);
-    for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
-      coding_index[static_cast<std::size_t>(plan.coding_order[c])] =
-          static_cast<int>(c);
-    }
-    int next = 0;
-    for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
-      while (next < total &&
-             coding_index[static_cast<std::size_t>(next)] <
-                 static_cast<int>(c)) {
-        ++next;
-      }
-      frontier[c] = next;
-    }
-  }
-  for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
-    const int display = plan.coding_order[c];
-    PlannedFrame& f = plan.frames[static_cast<std::size_t>(display)];
-    int chosen = -1;
-    // Prefer an empty slot: an implicitly output frame must stay in the store
-    // until the decoder emits it, so recycling is only used when the store is
-    // full. In that case pick the lowest display index below the coding
-    // frontier whose frame is no longer referenced by any later-coded frame.
-    for (int s = 0; s < plan.num_slots; ++s) {
-      if (occupant[static_cast<std::size_t>(s)] == -1) {
-        chosen = s;
-        break;
-      }
-    }
-    if (chosen < 0) {
-      int best_display = -1;
-      for (int s = 0; s < plan.num_slots; ++s) {
-        const int occ = occupant[static_cast<std::size_t>(s)];
-        if (occ < 0 || occ >= frontier[c] ||
-            last_use[static_cast<std::size_t>(occ)] > static_cast<int>(c)) {
-          continue;
-        }
-        if (best_display < 0 || occ < best_display) {
-          best_display = occ;
-          chosen = s;
-        }
-      }
-    }
-    if (chosen < 0) {
-      set_error(error, PlanError::kNotEnoughSlots);
-      return false;
-    }
-    f.slot = chosen;
-    occupant[static_cast<std::size_t>(chosen)] = display;
-    slot_of_display[static_cast<std::size_t>(display)] = chosen;
 
-    for (int i = 0; i < f.num_refs; ++i) {
-      const int d = f.ref_display[i];
-      f.ref_slot[i] = slot_of_display[static_cast<std::size_t>(d)];
-      if (f.ref_slot[i] < 0) {
-        set_error(error, PlanError::kReferenceNotDecoded);
-        return false;
-      }
-      f.ref_order_hint[i] =
-          plan.frames[static_cast<std::size_t>(d)].display_order_hint;
-    }
+  if (!allocate_slots(plan, plan.num_slots, error)) return false;
 
-    if (f.is_key) {
-      // CLK refresh invalidates every slot except the first refreshed one.
-      occupant.fill(-1);
-      occupant[static_cast<std::size_t>(chosen)] = display;
-      f.refresh_frame_flags = (1U << plan.num_slots) - 1U;
-    } else {
-      f.refresh_frame_flags = 1U << chosen;
-    }
-  }
-
-  // Derive the order-hint LSBs with the §5.18.2 replay. The reference store is
-  // the only state get_disp_order_hint() consults.
-  {
-    std::array<int, kNumRefFrames> hint{};
-    std::array<int, kNumRefFrames> layer_of_slot{};
-    std::array<bool, kNumRefFrames> valid{};
-    std::array<bool, kNumRefFrames> showable{};
-    for (std::size_t c = 0; c < plan.coding_order.size(); ++c) {
-      PlannedFrame& f = plan.frames[static_cast<std::size_t>(plan.coding_order[c])];
-      int max_disp = 0;
-      if (!f.is_key) {
-        for (int s = 0; s < plan.num_slots; ++s) {
-          if (valid[static_cast<std::size_t>(s)] &&
-              showable[static_cast<std::size_t>(s)] &&
-              plan.tlayer_dependency[static_cast<std::size_t>(f.tlayer_id)]
-                                     [static_cast<std::size_t>(
-                                         layer_of_slot[static_cast<std::size_t>(s)])]) {
-            max_disp = std::max(max_disp, hint[static_cast<std::size_t>(s)]);
-          }
-        }
-      }
-      const int span = 1 << plan.config.order_hint_bits;
-      const std::uint32_t absolute = f.display_order_hint;
-      if (absolute >= static_cast<std::uint32_t>(span)) {
-        set_error(error, PlanError::kBadOrderHintBits);
-        return false;
-      }
-      std::uint32_t lsbs = absolute;
-      if (!f.is_key) {
-        lsbs = static_cast<std::uint32_t>(
-            static_cast<int>(absolute) & (span - 1));
-        if (display_order_hint_from_lsbs(static_cast<int>(lsbs),
-                                         plan.config.order_hint_bits, max_disp) !=
-            static_cast<int>(absolute)) {
-          set_error(error, PlanError::kOrderHintReconstruct);
-          return false;
-        }
-      }
-      f.order_hint_lsbs = lsbs;
-      if (f.is_key) {
-        // CLK refresh: only the first refreshed slot stays valid.
-        const int key_slot = first_refreshed_slot(f.refresh_frame_flags);
-        valid.fill(false);
-        hint[static_cast<std::size_t>(key_slot)] =
-            static_cast<int>(f.display_order_hint);
-        layer_of_slot[static_cast<std::size_t>(key_slot)] = f.tlayer_id;
-        showable[static_cast<std::size_t>(key_slot)] = true;
-        valid[static_cast<std::size_t>(key_slot)] = true;
-      } else {
-        hint[static_cast<std::size_t>(f.slot)] =
-            static_cast<int>(f.display_order_hint);
-        layer_of_slot[static_cast<std::size_t>(f.slot)] = f.tlayer_id;
-        showable[static_cast<std::size_t>(f.slot)] =
-            f.implicit_output_frame || f.immediate_output_frame;
-        valid[static_cast<std::size_t>(f.slot)] = true;
-      }
-    }
-  }
   PlanError validation_error = PlanError::kOk;
   int bad_display = -1;
   int bad_coding = -1;
