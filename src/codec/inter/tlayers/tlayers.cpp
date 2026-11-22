@@ -10,6 +10,17 @@ namespace {
 
 bool is_power_of_two(int value) { return value > 1 && (value & (value - 1)) == 0; }
 
+// A block size may be 1 even though 1 is not a "power of two" under the helper
+// above (which excludes 1 so that degenerate sizes are rejected elsewhere).  A
+// 1-picture block is the legal case for a clip whose frame count is one more
+// than a whole number of 8-frame blocks: build_b_block() handles
+// `block_size == 1` as a key-only anchor with no interior B picture.  Keep the
+// two notions separate rather than loosening is_power_of_two(), which other
+// callers rely on to reject 1.
+bool is_dyadic_block(int value) {
+  return value == 1 || is_power_of_two(value);
+}
+
 // §7.23: a key frame becomes valid only in the first refreshed slot.
 int first_refreshed_slot(std::uint32_t flags) {
   int slot = 0;
@@ -73,7 +84,7 @@ bool build_schedule(const PlanConfig& config, std::vector<int>& coding_order,
       return false;
     }
     if (config.tail_gop_size != 0 &&
-        (!is_power_of_two(config.tail_gop_size) ||
+        (!is_dyadic_block(config.tail_gop_size) ||
          config.tail_gop_size > n)) {
       set_error(error, PlanError::kBadGopSize);
       return false;
@@ -92,6 +103,19 @@ bool build_schedule(const PlanConfig& config, std::vector<int>& coding_order,
     const auto build_b_block = [&](int block_size, int offset,
                                    int block_index) {
       const int future = block_size - 1;
+      if (block_size == 1) {
+        // A 1-picture block is a single anchor with no interior B picture:
+        // there is no future anchor and no past/future pair, so the whole
+        // block is the past anchor.  It must still reference the previous
+        // block (never be a second key), which keeps the layer-0 chain going
+        // and leaves every picture coded exactly once.
+        block_of[static_cast<std::size_t>(offset)] = block_index;
+        coding_order.push_back(offset);
+        if (offset != 0) {
+          refs[static_cast<std::size_t>(offset)] = {offset - 1};
+        }
+        return true;
+      }
       for (int local = 0; local < block_size; ++local) {
         block_of[static_cast<std::size_t>(offset + local)] = block_index;
       }
@@ -504,7 +528,7 @@ bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error) {
     return false;
   }
   if (config.tail_gop_size != 0 &&
-      (!is_power_of_two(config.tail_gop_size) ||
+      (!is_dyadic_block(config.tail_gop_size) ||
        config.tail_gop_size > n)) {
     set_error(error, PlanError::kBadGopSize);
     return false;
@@ -796,7 +820,7 @@ bool validate_plan(const Plan& plan, PlanError* error, int* bad_display_index,
   if (!is_power_of_two(c.gop_size) || c.gop_size > 16 ||
       n != expected_frames || c.num_gops < 1 ||
       (c.tail_gop_size != 0 &&
-       (!is_power_of_two(c.tail_gop_size) || c.tail_gop_size > c.gop_size)) ||
+       (!is_dyadic_block(c.tail_gop_size) || c.tail_gop_size > c.gop_size)) ||
       plan.num_gops != c.num_gops || plan.tail_gop_size != c.tail_gop_size) {
     return fail(PlanError::kBadGopSize, -1, -1);
   }

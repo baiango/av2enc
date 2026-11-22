@@ -30,6 +30,9 @@
 #   off_reject  gate off: --video-gops is rejected for --video-tlayers
 #   chain16_p   one key + two chained 8-frame P blocks, 16/16 + recon
 #   chain16_b   one key + two chained 8-frame B blocks, 16/16 + recon
+#   chainNN_b   arbitrary frame counts (3/5/7/9/11/13): --video-gops is a cap,
+#               the block size shrinks so any dyadic tiling codes every
+#               picture once, N/N + recon
 #   chain60_p   one key + 7x8 + 4 tail (P), 60/60 + recon
 #   chain60_b   one key + 7x8 + 4 tail (B), 60/60 + recon
 #   nightly_b_*  the TIP + CWP-depth + exact-rate compound preset, 16 and 60
@@ -283,6 +286,20 @@ run_nightly_b() {
 # 2. 16-picture proofs: one key + two chained 8-frame blocks.
 run_chain chain16_p P 16 2 16 25827 f5485b57748a0a1afc2057f223269fb1
 run_chain chain16_b B 16 2 16 25662 d5af8679202a00fafa3fd135569a28c1
+
+# 1b. Any frame count: --video-gops is a cap, not an exact count.  A count that
+# is not a whole number of 8-frame blocks is tiled by shrinking the block size
+# (and/or adding a dyadic tail of 1/2/4), so every picture is coded exactly
+# once.  These pin the shapes the tiling has to reach: 3 = 2+1, 5 = 4+1,
+# 7 = 4+2+1, 9 = 8+1, 11 = 2*5+1 and 13 = 8+4+1 (the last two are the cases the
+# old "gops*8 only" rule refused outright).  All decode under avmdec with
+# byte-exact recon, checked by the surrounding loop.
+run_chain chain03_b B 3 2 3 13852 e88535d947bc2fea0f3a982dc5cdff23
+run_chain chain05_b B 5 2 5 15739 3fb3e722552be54379c732a9bb9ae85c
+run_chain chain07_b B 7 2 7 17557 a2e25c9153548c6a2770a0a0c53439dc
+run_chain chain09_b B 9 2 9 19503 8080454a34f122db8e53d78d0684e7b9
+run_chain chain11_b B 11 2 11 21275 a8ce7c78664b597969980f557b0ec111
+run_chain chain13_b B 13 2 13 23289 f8b88eb47831a989bc00ebc093ae40c3
 
 # 2b. Edge path: the padded reference bank must carry the hidden bottom rows.
 run_chain chain16_p_edge P 16 2 16 13165 982712c2611c5bfc709e9a34ad5c3450 \

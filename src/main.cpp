@@ -903,13 +903,19 @@ bool validate_video_sequence_length(const Options& options,
     const std::size_t gop = static_cast<std::size_t>(options.video_tlayers);
     if (options.video_gops > 1 &&
         tlayers_chain_enabled(options)) {
+      // `--video-gops M` is the maximum number of 8-frame blocks; any frame
+      // count up to M*gop is legal and the remainder becomes a dyadic tail
+      // block (video_frame_sequence.cpp does the decomposition and names an
+      // unrepresentable remainder).  This check only rejects a count that
+      // cannot fit at all.
       const std::size_t full =
           gop * static_cast<std::size_t>(options.video_gops);
-      if (frame_count != full && frame_count != full + 4U) {
+      if (frame_count > full) {
         error = "--video-tlayers --video-gops " +
-                std::to_string(options.video_gops) + " codes " +
-                std::to_string(full) + " frames (plus an optional 4-frame tail "
-                "block); got " + std::to_string(frame_count);
+                std::to_string(options.video_gops) + " codes at most " +
+                std::to_string(full) + " frames; got " +
+                std::to_string(frame_count) +
+                " (raise --video-gops to fit more)";
         return false;
       }
     } else if (frame_count != gop) {

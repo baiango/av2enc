@@ -445,7 +445,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
                               const VideoOptions& options,
                               VideoSequenceResult& result, std::string& error) {
   namespace tl = inter::tlayers;
-  const int gop = options.temporal_layers;
+  int gop = options.temporal_layers;  // may shrink for a short clip
   const std::uint32_t width = frames[0].width;
   const std::uint32_t height = frames[0].height;
   const int total = static_cast<int>(frames.size());
@@ -467,20 +467,69 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       options.tlayer_chain && options.video_gops > 1 && options.tlayer_b;
   if (options.tlayer_chain && options.video_gops > 1) {
     chained = true;
+    // `--video-gops M` caps the number of blocks; the frame count only has to
+    // fit under it.  Two shapes cover any clip length without padding or
+    // dropping pictures:
+    //   * total >= one block: `total / 8` full 8-frame blocks plus a dyadic
+    //     tail block (1, 2 or 4 pictures) for the remainder;
+    //   * total < one block: shrink the block itself to the largest power of
+    //     two <= total, so 1..7 pictures are a single closed dyadic block.
+    // A remainder of 3, 5, 6 or 7 is not a dyadic block, so it is named rather
+    // than silently rounded.
     num_gops = options.video_gops;
-    if (total < gop * num_gops || total > gop * num_gops + 4) {
+    if (total == 0) {
+      error = "--video-tlayers chain needs at least one frame";
+      return false;
+    }
+    if (total > gop * num_gops) {
       error = "--video-tlayers --video-gops " + std::to_string(num_gops) +
-              " codes " + std::to_string(gop * num_gops) +
-              " frames (plus an optional 4-frame tail block); got " +
-              std::to_string(total);
+              " codes at most " + std::to_string(gop * num_gops) +
+              " frames; got " + std::to_string(total) +
+              " (raise --video-gops to fit more)";
       return false;
     }
-    tail_gop_size = total - gop * num_gops;
-    if (tail_gop_size != 0 && tail_gop_size != 4) {
-      error = "--video-tlayers chain tail must be 0 or 4 frames; got " +
-              std::to_string(tail_gop_size);
-      return false;
-    }
+      // Choose the block size, not just the block count: a hierarchical-B
+      // block bisects [0, future] into halves, so a block must be dyadic (and
+      // a 1-picture block is a lone anchor).  With the requested block size
+      // the remainder may be non-dyadic (11 = 8+3, 13 = 8+5, 17 = 8+8+1 with
+      // 3 full blocks).  If a smaller block size gives a dyadic remainder, use
+      // it and raise the block count so every picture is still coded; only if
+      // no dyadic block size fits is the count refused.
+      int chosen_block = 0;
+      int chosen_gops = 0;
+      int chosen_tail = 0;
+      int chosen_leftover = 0;
+      // Prefer the largest block size (fewest blocks, the measured shape), then
+      // the most blocks, so the remainder is as small as possible.
+      for (int block = gop; block >= 2; block /= 2) {
+        const int full = total / block;
+        const int tail = total - block * full;
+        if (full < 1) continue;
+        const bool dyadic_tail = tail == 0 || tail == 1 || tail == 2 ||
+                                 tail == 4 || tail == 8;
+        if (!dyadic_tail || tail > block) continue;
+        chosen_block = block;
+        chosen_gops = full;
+        chosen_tail = tail;
+        chosen_leftover = 0;
+        break;
+      }
+      if (chosen_block == 0) {
+        // No block size leaves a dyadic remainder: the count cannot be tiled by
+        // past/future blocks at all.  Name the nearest legal counts instead of
+        // guessing on the caller's behalf.
+        const int lo = (total / gop) * gop;
+        error = "--video-tlayers chained B cannot tile " +
+                std::to_string(total) + " frames into dyadic blocks (an "
+                "8/4/2-frame past/future block plus a 0/1/2/4/8 tail); use " +
+                std::to_string(lo) + " or " + std::to_string(lo + gop) +
+                " frames, or raise --video-gops to cover the clip";
+        return false;
+      }
+      gop = chosen_block;
+      num_gops = chosen_gops;
+      tail_gop_size = chosen_tail;
+      (void)chosen_leftover;
   } else if (total != gop) {
     error = "--video-tlayers codes one closed GOP: pass exactly " +
             std::to_string(gop) + " input frames";
