@@ -55,14 +55,40 @@ done
 mkdir -p "${BUILD}" "${OUT}"
 
 TEST_BIN="${BUILD}/tlayers_test"
-"${CXX}" "${FLAGS[@]}" \
-  "${HERE}/tlayers_test.cpp" \
-  "${HERE}/tlayers.cpp" \
-  "${HERE}/tlayers_syntax.cpp" \
-  "${ROOT}/src/pipeline/video/video_headers.cpp" \
-  "${ROOT}/src/core/bitstream/bitwriter.cpp" \
-  "${ROOT}/src/core/bitstream/basic_headers.cpp" \
-  -o "${TEST_BIN}"
+
+# The unit test needs the whole video-header dependency closure, which is what
+# CMake already models as av2enc_core.  This script used to carry its own hand
+# written source list; it went stale the moment video_headers.cpp grew (CCSO,
+# Wiener, GDF, film grain, QM, TIP, delta-Q writers) and the test stopped
+# linking on main.  Prefer the CMake-built archive so there is exactly one list
+# of dependencies; fall back to the historical explicit list only when no build
+# tree is present, and say so.
+# CORE_LIB may be preset by the caller; otherwise use the newest archive found,
+# because a stale build tree silently hides symbols a recent change added.
+CORE_LIB="${CORE_LIB:-}"
+if [[ -z "${CORE_LIB}" ]]; then
+  CORE_LIB="$(ls -t "${ROOT}"/build*/libav2enc_core.a 2>/dev/null | head -1 || true)"
+fi
+
+if [[ -n "${CORE_LIB}" ]]; then
+  # Only the test source is compiled here: tlayers.cpp / tlayers_syntax.cpp come
+  # from the archive.  Compiling them again would shadow the archive's copies
+  # (one-definition-rule violations, and a symbol defined twice).
+  echo "tlayers_test: linking against ${CORE_LIB#"${ROOT}/"}"
+  "${CXX}" "${FLAGS[@]}" "${HERE}/tlayers_test.cpp" "${CORE_LIB}" \
+    -o "${TEST_BIN}"
+else
+  echo "tlayers_test: no libav2enc_core.a found (configure with cmake);" >&2
+  echo "  falling back to the explicit source list, which may be stale" >&2
+  "${CXX}" "${FLAGS[@]}" \
+    "${HERE}/tlayers_test.cpp" \
+    "${HERE}/tlayers.cpp" \
+    "${HERE}/tlayers_syntax.cpp" \
+    "${ROOT}/src/pipeline/video/video_headers.cpp" \
+    "${ROOT}/src/core/bitstream/bitwriter.cpp" \
+    "${ROOT}/src/core/bitstream/basic_headers.cpp" \
+    -o "${TEST_BIN}"
+fi
 "${TEST_BIN}"
 
 if [[ "${RUN_GATE}" == "0" ]]; then
@@ -70,36 +96,48 @@ if [[ "${RUN_GATE}" == "0" ]]; then
 fi
 
 GATE_BIN="${BUILD}/tlayers_gate"
-VIDEO_CORE=(
-  "${ROOT}/src/core/io/y4m.cpp"
-  "${ROOT}/src/core/io/ivf.cpp"
-  "${ROOT}/src/core/bitstream/bitwriter.cpp"
-  "${ROOT}/src/core/bitstream/obu.cpp"
-  "${ROOT}/src/core/bitstream/basic_headers.cpp"
-  "${ROOT}/src/codec/partition/tree/partition.cpp"
-  "${ROOT}/src/codec/intra/modes/intra_modes.cpp"
-  "${ROOT}/src/codec/transform/variants/tx_variants.cpp"
-  "${ROOT}/src/codec/transform/variants/tx_select.cpp"
-  "${ROOT}/src/codec/entropy/av2/av2_entropy.cpp"
-  "${ROOT}/src/codec/inter/me/me.cpp"
-  "${ROOT}/src/codec/inter/mc/mc.cpp"
-  "${ROOT}/src/codec/inter/merge/merge.cpp"
-  "${ROOT}/src/pipeline/video/video_headers.cpp"
-  "${ROOT}/src/pipeline/video/video_syntax.cpp"
-  "${ROOT}/src/pipeline/video/video_syntax_block.cpp"
-  "${ROOT}/src/pipeline/video/video_syntax_inter.cpp"
-  "${ROOT}/src/pipeline/video/video_syntax_coeff.cpp"
-  "$ROOT/src/codec/transform/delta_q/syntax.cpp"
-  "${ROOT}/src/pipeline/video/video_frame.cpp"
-  "${ROOT}/src/codec/inter/temporal/ref_mv_bank.cpp"
-)
-# M2 core is not -Werror clean; the gate build keeps the warnings visible.
-"${CXX}" "${FLAGS[@]}" \
-  "${HERE}/tlayers_gate.cpp" \
-  "${HERE}/tlayers.cpp" \
-  "${HERE}/tlayers_syntax.cpp" \
-  "${VIDEO_CORE[@]}" \
-  -o "${GATE_BIN}"
+# Same reasoning as the unit test above: the gate's source list is the whole M2
+# video core, which is exactly what CMake models as av2enc_core.  Linking the
+# archive keeps one list of dependencies; the explicit VIDEO_CORE list is kept
+# only as a fallback for a checkout with no CMake build tree, and it is known to
+# drift (it missed the CSSO/Wiener/GDF/QM/TIP writers that video_headers.cpp now
+# needs).  The M2 core is not -Werror clean, so the fallback build keeps the
+# warnings visible.
+if [[ -n "${CORE_LIB}" ]]; then
+  echo "tlayers_gate: linking against ${CORE_LIB#"${ROOT}/"}"
+  "${CXX}" "${FLAGS[@]}" "${HERE}/tlayers_gate.cpp" "${CORE_LIB}" \
+    -o "${GATE_BIN}"
+else
+  VIDEO_CORE=(
+    "${ROOT}/src/core/io/y4m.cpp"
+    "${ROOT}/src/core/io/ivf.cpp"
+    "${ROOT}/src/core/bitstream/bitwriter.cpp"
+    "${ROOT}/src/core/bitstream/obu.cpp"
+    "${ROOT}/src/core/bitstream/basic_headers.cpp"
+    "${ROOT}/src/codec/partition/tree/partition.cpp"
+    "${ROOT}/src/codec/intra/modes/intra_modes.cpp"
+    "${ROOT}/src/codec/transform/variants/tx_variants.cpp"
+    "${ROOT}/src/codec/transform/variants/tx_select.cpp"
+    "${ROOT}/src/codec/entropy/av2/av2_entropy.cpp"
+    "${ROOT}/src/codec/inter/me/me.cpp"
+    "${ROOT}/src/codec/inter/mc/mc.cpp"
+    "${ROOT}/src/codec/inter/merge/merge.cpp"
+    "${ROOT}/src/pipeline/video/video_headers.cpp"
+    "${ROOT}/src/pipeline/video/video_syntax.cpp"
+    "${ROOT}/src/pipeline/video/video_syntax_block.cpp"
+    "${ROOT}/src/pipeline/video/video_syntax_inter.cpp"
+    "${ROOT}/src/pipeline/video/video_syntax_coeff.cpp"
+    "$ROOT/src/codec/transform/delta_q/syntax.cpp"
+    "${ROOT}/src/pipeline/video/video_frame.cpp"
+    "${ROOT}/src/codec/inter/temporal/ref_mv_bank.cpp"
+  )
+  "${CXX}" "${FLAGS[@]}" \
+    "${HERE}/tlayers_gate.cpp" \
+    "${HERE}/tlayers.cpp" \
+    "${HERE}/tlayers_syntax.cpp" \
+    "${VIDEO_CORE[@]}" \
+    -o "${GATE_BIN}"
+fi
 
 if [[ -z "${DAV2D:-}" ]]; then
   for candidate in "${ROOT}/tools/bin/dav2d" "${ROOT}/tools/bin/dav2d-macos"; do

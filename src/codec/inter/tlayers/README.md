@@ -233,10 +233,10 @@ v1.0.0. This is also why M2 integration keeps
 ## Build and test
 
 ```sh
-./src/encoder/inter/tlayers/build_and_test.sh
-./src/encoder/inter/tlayers/build_and_test.sh --no-gate
-WERROR=1 ./src/encoder/inter/tlayers/build_and_test.sh --no-gate
-SANITIZE=1 ./src/encoder/inter/tlayers/build_and_test.sh --no-gate
+./src/codec/inter/tlayers/build_and_test.sh
+./src/codec/inter/tlayers/build_and_test.sh --no-gate
+WERROR=1 ./src/codec/inter/tlayers/build_and_test.sh --no-gate
+SANITIZE=1 ./src/codec/inter/tlayers/build_and_test.sh --no-gate
 ```
 
 Expected:
