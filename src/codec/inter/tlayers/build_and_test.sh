@@ -63,11 +63,37 @@ TEST_BIN="${BUILD}/tlayers_test"
 # linking on main.  Prefer the CMake-built archive so there is exactly one list
 # of dependencies; fall back to the historical explicit list only when no build
 # tree is present, and say so.
-# CORE_LIB may be preset by the caller; otherwise use the newest archive found,
-# because a stale build tree silently hides symbols a recent change added.
+# The suite links libav2enc_core.a so the dependency list lives in CMake and
+# cannot drift from the tree.  But linking whatever archive happens to exist
+# tests whatever was last built, not the sources in front of you: a stale
+# archive made this script report "undefined symbol: minimum_slot_requirement"
+# for a function that was plainly in the tree, and it would just as happily
+# PASS against code you had already changed.
+#
+# So rebuild the library first.  CORE_LIB may preset the archive path, in which
+# case its build directory is rebuilt; otherwise the newest archive is chosen and
+# rebuilt.  If no build tree exists the explicit source lists below are used, so
+# the script still works from a bare checkout.
 CORE_LIB="${CORE_LIB:-}"
 if [[ -z "${CORE_LIB}" ]]; then
   CORE_LIB="$(ls -t "${ROOT}"/build*/libav2enc_core.a 2>/dev/null | head -1 || true)"
+fi
+if [[ -n "${CORE_LIB}" ]]; then
+  CORE_BUILD_DIR="$(dirname "${CORE_LIB}")"
+  if [[ ! -f "${CORE_BUILD_DIR}/build.ninja" && ! -f "${CORE_BUILD_DIR}/Makefile" ]]; then
+    echo "tlayers: ${CORE_BUILD_DIR#"${ROOT}/"} has an archive but no build files;" >&2
+    echo "  re-run cmake in that directory, or set CORE_LIB to a real build tree" >&2
+    exit 2
+  fi
+  echo "tlayers: rebuilding av2enc_core in ${CORE_BUILD_DIR#"${ROOT}/"}"
+  if ! cmake --build "${CORE_BUILD_DIR}" --target av2enc_core >/dev/null; then
+    echo "tlayers: av2enc_core rebuild failed; refusing to test a stale archive" >&2
+    exit 2
+  fi
+  if [[ ! -f "${CORE_LIB}" ]]; then
+    echo "tlayers: rebuild produced no ${CORE_LIB#"${ROOT}/"}" >&2
+    exit 2
+  fi
 fi
 
 if [[ -n "${CORE_LIB}" ]]; then
