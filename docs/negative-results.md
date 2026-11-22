@@ -461,6 +461,106 @@ Remaining blockers for this surface (all rejected by name, not silent):
 | CONFIRMED | Expect the TIP leaf accept/reject probe to be stale under the joint plan (`AV2ENC_TIP_PROBE_JOINT`) | The joint-tree probe recon is sample-exact **32/32**, but only 1 of 22 candidates at 60 f QP119 changes probe value, by **0.005 dB** at the 0.30 dB boundary and already field-guard-masked; committed flips are **0** at 16/60 f | Keep the base-tree probe; `docs/rd-tip-decision.md` |
 | CONFIRMED | Expect the full §5.20.3 tree DP to transfer to the key driver (`AV2ENC_RD_KEY_DP`) | **0/32** key SBs improve at 60 f QP119 on the B carrier, QP112 flat and the 16 f head; the DP's own tree is **+10.5 to +11.1 %** worse under the exact objective. Memoising intra leaves from the superblock entry state misses the reconstructed above/left neighbours, so it overprices fine leaves and proposes coarser trees; the check run re-prices the prune tree with delta 0.0 | Keep the key prune — its exact raster context is the mechanism; `docs/rd-key-dp.md` |
 
+## Dark-fade chroma artifacts (video)
+
+Symptom: red/cyan speckle on neutral, low-luma content — the f44-59 tail of
+`testdata/nasa_480x240_30fps_60f.y4m`, where the letterboxed text panel drops
+from luma 58 to 36. Every row below is measured on that clip at `--video --qp
+119 --fast-decode`, decoded with `dav2d --strict 1` (60/60 pictures; the
+published decode equals `--video-recon`), so this is an **encoder-side**
+decision, not a writer or decoder defect.
+
+Measurement conventions, because the obvious metrics mislead:
+
+- **Split the error by region, not by frame average.** On f59 the letterbox
+  (69 % of the chroma area) has U/V rmse **0.64 / 0.58**; the lit text panel
+  (31 % of the area) has **1.39 / 1.46** and carries **83-87 % of the total
+  chroma error energy**. A full-frame chroma rmse therefore reports a number
+  that is mostly about the region nobody is looking at (the map's own 0.656 /
+  0.628).
+- **Split the error into per-8x8-block DC and AC.** Within the lit panel 8x8
+  AC is **78 %** of the region's error energy and DC 22 %; in the letterbox AC
+  is **88-90 %**. It is an AC/texture artifact, not a colour cast, so any
+  "dark chroma is biased" family is the wrong family.
+- **Score luma and chroma separately** in the same region, and check the sign
+  of the chroma change: several arms below buy UV PSNR while making the
+  visible artifact (and BA) worse.
+- On text, watch `corr(source high-pass, luma error)`. Healthy arms give
+  **+0.11 (base) / +0.13 (SVT)**: error behaves like noise. An arm at **-0.47**
+  is *subtracting* detail, which is what the eye sees as smeared glyphs.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Raise the eff-perc chroma distortion weight (`AV2ENC_EFF_PERC_CHROMA`) and call it fixed | It *does* clean the chroma: at rate-matched weight 48, f59 chroma is **0.79/0.85** (U/V) against 1.06/1.02 at weight 1, and flat-region chroma **0.73 vs SVT 0.88**. But it costs the luma: f59 text-block luma **1.06 -> 2.24** RMSE (weight 64 rate-matched: **3.08**, i.e. -9.5 dB), and the texture-block luma **3.9-5.1 vs SVT 4.3**. The same weight also re-prices every mode/MV/partition decision, and those decisions carry the luma | Nothing shippable. The knob trades one visible artifact for a worse one; keep it at 1 |
+| CONFIRMED | Buy the chroma gain back by re-weighting only the leaf **skip-vs-residual** arm (`AV2ENC_CHROMA_SKIP_WEIGHT`) | The leaf arm is genuinely lost on merit, not blocked: `decide: leaves=2000 codeable=789 res_wins=31, meanJ_res=11813 vs meanJ_skip=8415`. But re-weighting that one comparison moves almost nothing (weight 64: chroma 1.06 -> **1.10**, i.e. *worse*), so the gain lives in the candidate/mode search, not in this arm | Do not split the weight at the skip decision; the term is not where the effect is |
+| CONFIRMED | Separate the chroma weight for the chroma-part leaf and mode cancellation cost (`AV2ENC_EFF_PERC_CHROMA_MODE`) | Byte-identical at 4/16/64 (24,669 B), and `chroma_weight=64` with this knob at 1 gives the identical 27,552 B, so those two sites are full no-ops on this content | Leave them at the single weight |
+| CONFIRMED | Neutralise chroma in the candidate-selection costs (`AV2ENC_CHROMA_SELECT_WEIGHT`) | Select-weight 4 restores the luma (text 2.24 -> **1.10**, bytes 26,945 -> 25,316) but wipes out the chroma gain (0.79 -> **1.065**). The gain and the loss are produced by **one** decision, not two, so they cannot be dialled apart. At 0.25 the effective RC goes unstable (48,868 B) | Do not assume the search and the coding are separable here |
+| CONFIRMED | Code the chroma residual with the luma plan zeroed when luma "does not pay" inside the residual arm (`AV2ENC_CHROMA_ONLY_LEAF`) | The leaf-local verdict is true per frame and false per chain. Dropping the luma residual raises f59 luma **1.86 -> 9.91** with the error climbing monotonically from f8 (1.4 -> 2.1 -> 4.4 -> 10.3 at f8/20/32/40): the removed residual is what stops error accumulating in the reference, so every later picture inherits it. It also costs more bits (26,945 -> 31,936 B), so it is not a trade | Keep the three-plane residual unit. Per-leaf RD cannot price a reference-chain decision; see the drift rows in `## Drift / frame-level allocation (video)` |
+| CONFIRMED | Expect a chroma dead-zone or a smooth-region TX-size floor to fix it (`AV2ENC_CHROMA_DEADZONE`, TX floor) | Dead-zone 0 -> 0.6 made the error 6 % worse (it removes the small levels that partially cancel prediction error). The TX floor bound on **418 of 36,592** parts and changed no byte | Nothing; the quantiser rounding is not the source |
+| CONFIRMED | Expect a single tool (BAWP / compound / deblock / MV precision / TX search / inter-intra) to be responsible | Six toggles each left f59 chroma within **±5 %** of the base. No tool owns the error | Do not bisect the tool set again for this symptom |
+| CONFIRMED | Expect chroma motion compensation (integer vs subpel) to be the cause | Instrumented prediction probe: integer-MV leaves **2.760** chroma MSE vs subpel **2.902**. Subpel chroma prediction is not worse | Nothing; MC is fine |
+| CONFIRMED | Expect a `cbf` / DC-tint mechanism on flat-luma leaves | Two checks: (1) a leaf whose luma plan quantises to zero yet has chroma is already `codeable` (`!all_zero` admits it), so the "chroma-only leaf is forced to skip" hypothesis is unfounded — a diagnostic placed there never fires; (2) the error is 99.8 % AC with DC rms 0.05-0.08 | Nothing |
+
+**Where the lever actually is.** The residual arm is not broken — it is priced
+against skip with the same lambda and loses ("meanJ_res 11813 vs meanJ_skip
+8415"). What makes the chroma correction *worth* its bits is whatever term
+raises its weight, and that term also re-prices luma. A real fix therefore has
+to change the **structure**: code a chroma-only residual while keeping the
+luma/mode/search decisions and reference-update accounting unchanged. That is a
+design change to the leaf arm, not a weight tweak, and it is **not** proven —
+the four separability attempts above all failed. For reference at f59 rate
+matched to the base 24,669 B: base chroma 1.06 luma 1.41, SVT chroma **0.86**
+luma 2.27. SVT holds chroma error flat through the fade (~0.85 at every frame),
+which is the behaviour to match.
+
+Four env knobs were added and reverted while measuring this
+(`AV2ENC_CHROMA_SKIP_WEIGHT`, `AV2ENC_EFF_PERC_CHROMA_MODE`,
+`AV2ENC_CHROMA_SELECT_WEIGHT`, `AV2ENC_CHROMA_ONLY_LEAF`); none is in the tree.
+
+### Where the f59 error map actually lives
+
+The error-map panel for f59 (`base` vs CCTX) looks like a chroma field problem.
+Splitting it by region says otherwise, and changes what any future attempt has
+to target. Base arm, f59, QP119:
+
+| region | share of chroma area | U rmse | V rmse | share of chroma error energy |
+|---|---:|---:|---:|---:|
+| letterbox (dark, source luma ~30) | 69.3 % | **0.64** | **0.58** | 13-17 % |
+| lit text panel (source luma 40-80) | 30.7 % | **1.39** | **1.46** | **83-87 %** |
+
+Within the lit panel, 8x8 AC is 78 % of the region's error energy (DC 22 %);
+in the letterbox AC is 88-90 %. Correlation between the 2x-upsampled chroma
+error and the luma error is **-0.01 to +0.08** at f40 and f59, so the chroma
+error is *not* a passive copy of the luma error either — it is its own
+quantisation error, concentrated where the source has chroma edges (the
+rendered text and the yellow payload markings).
+
+Consequence: the tail is ~90 % skip (**59 of 625** f48-59 leaves carry any
+residual at all), so the chroma error there is the reference's inherited error
+plus the few coded leaves. Every chroma-side knob below moves the *letterbox*
+half of the map and leaves the panel where it is.
+
+### Coding the chroma residual itself
+
+The chroma level stage (`src/pipeline/video/video_uv_rd.h`, `AV2ENC_RD_UVLEVEL`)
+is the only RD on inter chroma coefficients, because `compute_tx` quantises
+planes 1/2 with `allow_rdoq = false` and lambda 0. It is **already on in
+`--nightly-b`** (the preset sets `AV2ENC_RD_UVLEVEL=1`): 16 f at QP119 is
+16,694 B with it off and 16,490 B with it on.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| **WRONG** (reverted) | Raise `AV2ENC_RD_UVLEVEL_TRIES` from 3 to 5 on the strength of a matched-rate comparison | First reported as LANDED (+0.04..+0.06 dB chroma at matched rate on `--nightly-b`, three QP brackets). The **same-QP** check on the arm the stage actually runs in (`--fast-decode` QP119, 60 f) is a wash and costs bytes: tries=3 **24,216 B / Y 44.494 / U 48.223 / V 48.799 / UV 48.511**, tries=5 **24,230 B / Y 44.494 / U 48.229 / V 48.785 / UV 48.507**; 4/5/6 all give 24,230. Only **1.19 %** of U samples differ and they are scattered single-sample noise with no structure | Keep 3. When a rate-matched delta is under ~0.1 dB, the **same-QP** comparison decides, because there is no interpolation to hide in |
+| CONFIRMED | Split the level lambda per chroma plane (`AV2ENC_RD_UVLEVEL_LAMBDA_U`) | Flat: every arm is within **±0.17 dB** of the shared value at matched rate. The shared 0.125 is already optimal for both planes | Leave one lambda for U and V |
+| CONFIRMED | Expect `--video-uv-delta-q` to be a chroma rate lever | It applies **+D to U and -D to V**, so it only redistributes: +8 widens the U/V gap from 0.54 to 2.80 dB at an unchanged total and does not reduce bytes. It needs `--video-cdf-per-frame-qp` and rejects `--video-rdoq` | Not a rate tool. If U/V balance is ever wanted it is a distortion-weight question, not a quantiser one |
+| CONFIRMED | Expect the inter chroma level stage to be silently skipped on the K carrier | The `inter_level_ok` gate (`!enable_cctx && !qm && dc == ac && ac > 0`) is satisfied on `--nightly-b`: the stage reports **224,243 blocks, 2.38 M trellis plans, 24,609 flips** in a 16 f encode | Nothing; it runs. It does *not* run under plain `--fast-decode`, where `RD_UVLEVEL` is unset |
+| **LEAD (+0.245 K)** | Reach for coefficient-level RD (`AV2ENC_RD_UVLEVEL`) as *the* chroma-residual lever | The cross-component transform (`--video-cctx`) beats it outright. At 100 kbps matched on the 60 f production recipe it is **K 85.171 vs base 84.926 (+0.245)**, and positive at all ten rates checked (95..104 kbps). At matched rate it is **UV +0.99 dB / dark tail (f48-59) +0.67 dB** for **-0.15 dB luma** | Prefer CCTX over the level stage for chroma. They are **mutually exclusive** (`inter_level_ok` requires `!enable_cctx`) |
+| CONFIRMED | Read the f59 CCTX gain as the error map's panel getting fixed | CCTX does improve the aggregate (f59 same-QP: U 44.42 -> 44.50 dB, V 44.20 -> 44.39; BA 3.875 -> 3.785 on a slightly smaller stream, 20,936 -> 20,560 B), but the f59 diff map is concentrated in the **letterbox half**: on lit-panel chroma samples the U error is **2.52 -> 2.50** rmse, i.e. unchanged, while the dark field improves. The visible artifact is not what CCTX is buying | Do not treat a CCTX UV/tail delta as evidence the panel artifact is addressed; report the region split (§ above), not the frame mean |
+| CONFIRMED | Add a coefficient-rate term to the CCTX `cctx_type` decision (`compute_chroma_cctx` prices candidates on plain SSE + the `cctx_type` symbol only) | Two variants measured at QP119 60 f, both decode 60/60: exact §8.3 coefficient bits of the planes each type would emit -> 20,845 B / f59 U 45.24 / UV tail 46.65, but **BA 3.785 -> 4.211 and tail BA 4.84 -> 6.30**; eff-perc CSF-shaped type cost (e^2 + 1.5*mean3x3(e)^2) -> 20,798 B / f59 U 44.68 / UV tail 46.46, **tail BA 7.04**. UV improves and the perceptual metric collapses: on a fade the cheapest-rate rotation puts its error exactly where BA sees it | The SSE-only type cost is not a defect to "fix". Leave `compute_chroma_cctx` as is |
+| CONFIRMED | Weight the V plane inside the inter skip/residual D (`AV2ENC_PROBE_VWEIGHT`, scale applied to V's share of `res_distortion`) | Weight 1.5 / 2 / 3 are **byte-identical to each other** (20,971 B) and weight 0.5/2/4 differ by <0.5 %: f59 V moves 44.20 -> 44.52 while **tail BA degrades 5.17 -> 5.81 (w2) / 6.96 (w4)**. Confirms the documented "one decision, two effects" at the *inter* site as well as the key/mode sites | Do not re-open per-plane D weights for this symptom |
+| CONFIRMED | Add a chroma-only residual arm at the inter skip decision (price only U/V SSE, then code the residual) as the structural fix the section above asks for | It does not isolate chroma. `all_zero` is false when *any* plane has an EOB, so a U/V win commits the **live luma plan on the same leaf** too. With counters at QP119 60 f it fires **once** in 60 frames, removing **7,797 luma SSE for 338 UV SSE** (23x more luma than chroma). The decision dump agrees: `eob_u/v` leaves move 227/128 -> 230/131 while UV-without-luma leaves stay **15 -> 15**. Relaxing the arm's lambda (x0.3: 12 firings, 20,760 B; x0.1: 38 firings, 21,020 B) buys SSIMULACRA2 strongly (tail SS2 66.39 -> 69.66 -> 70.08) at a BA cost (3.785 -> 3.806 -> 4.217), the same indivisible trade the `AV2ENC_CHROMA_SELECT_WEIGHT` row records — and the x1.0 point that looks like "best tail BA + smallest stream" is a single luma coin-flip, not a chroma lever | Do not implement a chroma-only arm as a D-term change. It needs a real split of the emitted residual unit (a syntax-level change), which no measured arm has reached |
+| CONFIRMED | Spend rate on the keyframe chroma to rescue the tail chroma (finer key chroma plane step, U and V together) | Key-only chroma QP -4 / -8 / -12 at QP119 60 f: 21,219 / 21,405 / 21,495 B, mean UV 48.69 / 49.08 / 49.55 but **tail f48-59 UV 46.35 / 46.19 / 46.11** against base 45.95 — i.e. +2 % bytes for a tail that is flat or worse. All-frame chroma QP -4 / -8 behaves the same (tail UV 46.25 / 46.35) | The tail chroma is not inherited from the key; it is the tail's own skip chain. Do not fund key chroma for this symptom |
+
 ## Open items — do not claim these
 
 - Multi-GPU scaling is only simulated; no 2-GPU host.
