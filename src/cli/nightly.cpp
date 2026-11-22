@@ -380,6 +380,11 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   options.video_ccso_refit_passes = 2;
   options.video_ccso_unit_bits = 2.0;
   options.video_rdoq = true;
+  // Ablation switch, applied immediately so an explicit --video-rdoq-off can
+  // reach the RDOQ/TCQ exclusion (the two own the same levels).  This mirrors
+  // apply_video_nightly's last-wins handling of the same flag; without it the
+  // chained preset has no way to price the TCQ arm at all.
+  if (options.video_rdoq_off) options.video_rdoq = false;
   options.video_cdef = true;
   options.video_cdef_rd = true;
   options.video_leaf_rd = true;
