@@ -26,6 +26,16 @@
 # picture) but emits 17/60 for the 60-picture chains.  Flat key+P streams and
 # the nightly pins still go through tools/validate_dav2d.sh.
 #
+# avmdec is the ONLY validator for the chained form until the dav2d pin moves
+# (docs/validation.md "Alternate validator").  Two consequences for this gate:
+#   * it never requires dav2d for a chained case.  run_chain only cross-checks
+#     dav2d for `pictures == 16`, which the old store kept whole; that check is
+#     the historical 16-picture proof and stays, but it is not the gate.
+#   * any stream here is a RESEARCH stream, not a shippable product stream, even
+#     when avmdec reports recon=ok.  A future dav2d pin must re-run this file.
+# The arbitrary frame counts (chain03..chain13) were validated the same way:
+# avmdec N/N frames with recon=ok for every case.
+#
 # Cases:
 #   off_reject  gate off: --video-gops is rejected for --video-tlayers
 #   chain16_p   one key + two chained 8-frame P blocks, 16/16 + recon
