@@ -188,7 +188,8 @@ InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
 
   quant_step_ = frame_quant_step(options_);
   current_qindex_ = static_cast<int>(options_.base_q_idx);
-  uv_delta_enabled_ = options_.enable_uv_delta_q;
+  uv_delta_enabled_ =
+      options_.enable_uv_delta_q || options_.enable_uv_qp_offset;
   resolved_delta_q_ = dcdeltaq::resolve_delta_q(options_.seq_delta_q,
                                                 options_.frame_delta_q);
   frame_plane_quant(current_qindex_, plane_quant_, quant_step_);
@@ -1631,6 +1632,23 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
   const bool qp_tools = options.enable_segmentation || options.enable_delta_q ||
                         options.per_segment_q || options.enable_uv_delta_q ||
                         options.enable_aq;
+  // The symmetric chroma offset (--video-uv-qp-offset) is a SEQUENCE-header
+  // field (§5.4.8 base_uv_ac_delta_q) plus a constant per-plane step.  It
+  // touches no per-superblock delta/segment row, so it must NOT inherit the
+  // segmentation planner's restrictions below -- those would bar it from every
+  // chained and CDF-carrying schedule for no reason.  A constant base is safe
+  // under a carried CDF image: the sequence header is written once and every
+  // frame reads the same value.  It IS ambiguous with the segmentation /
+  // delta-Q machinery, which owns the same fields.
+  if ((options.seq_delta_q.base_uv_ac_delta_q != 0 ||
+       options.seq_delta_q.base_uv_dc_delta_q != 0) &&
+      (options.enable_uv_delta_q || options.enable_segmentation ||
+       options.enable_delta_q || options.per_segment_q)) {
+    error = "the symmetric chroma offset (--video-uv-qp-offset) sets the "
+            "§5.4.8 base_uv_*_delta_q fields; drop --video-uv-delta-q / "
+            "--video-segmentation / --video-delta-q / --video-per-segment-q";
+    return false;
+  }
   if (qp_tools) {
 #if !defined(AV2ENC_VIDEO_DELTAQ)
     error = "segmentation/delta-Q (--video-segmentation/--video-delta-q/"

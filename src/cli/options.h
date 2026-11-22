@@ -249,6 +249,14 @@ struct Options {
   // Opt-in §5.4.8/§5.18.6.1 separate UV/DC delta-Q (--video-uv-delta-q D).
   bool video_uv_delta_q = false;
   int video_uv_delta_q_value = 4;
+  // Opt-in symmetric chroma quantiser offset (--video-uv-qp-offset N): both U
+  // and V get the SAME delta, so negative N codes chroma finer than luma at the
+  // same luma QP.  Unlike --video-uv-delta-q this does not swap bits between the
+  // planes: it changes the chroma step itself, which is the only lever that
+  // addresses chroma error concentrated in dark saturated regions (large DC
+  // offsets where a coarse step reads as a visible hue shift).
+  bool video_uv_qp_offset_given = false;
+  int video_uv_qp_offset = 0;
   // Opt-in segmentation extensions (--video-seg-skip/--video-seg-globalmv/
   // --video-seg-temporal/--video-segments N).  All default off.
   bool video_seg_skip = false;

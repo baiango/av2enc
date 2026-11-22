@@ -69,6 +69,7 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
   VideoConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
+  apply_video_sequence_delta_q(config, options);
   config.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   config.order_hint_bits = static_cast<std::uint8_t>(plan.order_hint_bits);
   config.num_ref_frames = static_cast<std::uint8_t>(plan.num_slots);
@@ -721,6 +722,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   VideoConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
+  apply_video_sequence_delta_q(config, options);
   config.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   config.order_hint_bits = static_cast<std::uint8_t>(pc.order_hint_bits);
   config.num_ref_frames = static_cast<std::uint8_t>(plan.num_slots);
@@ -1730,6 +1732,7 @@ bool encode_video_refinement_sequence(
   VideoConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
+  apply_video_sequence_delta_q(config, options);
   config.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   config.order_hint_bits = 4;
   config.num_ref_frames = static_cast<std::uint8_t>(refinement.num_ref_frames);
@@ -1969,6 +1972,7 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
   VideoConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(width);
   config.max_frame_height = static_cast<std::uint16_t>(height);
+  apply_video_sequence_delta_q(config, options);
   config.base_q_idx = static_cast<std::uint8_t>(options.base_q_idx);
   config.order_hint_bits = static_cast<std::uint8_t>(kOrderHintBits);
   config.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);

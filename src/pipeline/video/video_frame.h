@@ -727,6 +727,13 @@ struct VideoOptions {
   // §7.14.2 quantizer.  Off keeps the historical sequence/frame header and a
   // single qlookup() step for all planes.
   bool enable_uv_delta_q = false;
+  // --video-uv-qp-offset: a CONSTANT sequence-level §5.4.8 base_uv_*_delta_q
+  // only.  Kept separate from enable_uv_delta_q because that flag also switches
+  // on the per-superblock segmentation/delta-Q planner, whose restrictions
+  // (no B schedule, no carried CDF, fixed base_q_idx) a constant offset does not
+  // need.  The frame encoder resolves the per-plane steps when either flag is
+  // set; the header writes the base fields from seq_delta_q either way.
+  bool enable_uv_qp_offset = false;
   int uv_delta_q = 0;
   // §5.4.4 enable_ext_seg / MaxSegments = 16 (--video-segments 9..16).
   bool enable_ext_seg = false;

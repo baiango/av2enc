@@ -104,11 +104,20 @@ bool InterFrameEncoder::deblock(std::string& error) {
     // (DeltaQU/VAc + BaseUVAcDeltaQ).  Omitting it desynchronises the
     // decoder's chroma reconstruction even though the tile bytes are
     // unchanged (docs/negative-results.md).
+    //
+    // The two terms are SEPARATE: adaptive_filter_strength() adds
+    // delta_q_u_ac + base_uv_ac_delta_q itself.  resolved_delta_q_ already
+    // holds frame + base, so passing it as delta_q_u_ac and the base again
+    // counts the base twice -- with --video-uv-qp-offset -8 the encoder then
+    // deblocks chroma at -16 while the decoder uses -8, which shows up as
+    // +-1 sample differences along the 4x4 chroma block edges.
     if (uv_delta_enabled_) {
-      grid.options.delta_q_u_ac = resolved_delta_q_.u_ac;
-      grid.options.delta_q_v_ac = resolved_delta_q_.v_ac;
       grid.options.base_uv_ac_delta_q =
           options_.seq_delta_q.base_uv_ac_delta_q;
+      grid.options.delta_q_u_ac =
+          resolved_delta_q_.u_ac - grid.options.base_uv_ac_delta_q;
+      grid.options.delta_q_v_ac =
+          resolved_delta_q_.v_ac - grid.options.base_uv_ac_delta_q;
     }
     std::uint8_t* data[3] = {recon_[0].samples.data(),
                              recon_[1].samples.data(),

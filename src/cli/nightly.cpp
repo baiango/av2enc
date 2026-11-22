@@ -438,5 +438,25 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
       set_gate("AV2ENC_RD_JOINT_P_TARGET", "8");
     }
   }
+
+  // Symmetric §5.4.8 chroma quantizer offset.  Measured on the 720p waterfall
+  // still (docs/negative-results.md): the frame's chroma error is concentrated
+  // in dark saturated content, where a single coarse chroma step over a large
+  // DC offset reads as a visible hue shift.
+  //
+  // Judge this by chroma fidelity, not by the PSNR-like aggregates: at the
+  // same luma QP, coding both planes 8 qindex steps finer costs ~2.1 % of the
+  // payload and cuts the visible hue error -- the dark foliage above the falls
+  // goes 8.68 -> 7.82 LSB rms and the worst pixel 35.0 -> 27.0, and the
+  // moss/rock band between the falls and the leaves goes 4.40 -> 4.04 rms with
+  // the peak 26.2 -> 24.5.  SSIMULACRA2 and butteraugli are reported in the
+  // docs for continuity but are not the reason for this default: they weight
+  // chroma like PSNR and disagree with each other here.
+  //
+  // An explicit --video-uv-qp-offset N always wins, including 0 (the opt-out
+  // that restores the historical single-step stream).
+  if (!options.video_uv_qp_offset_given && !options.video_uv_delta_q) {
+    options.video_uv_qp_offset = -8;
+  }
   return true;
 }

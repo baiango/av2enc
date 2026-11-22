@@ -1749,9 +1749,49 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.aq_bias_auto = !options.video_aq_bias_given;
   video_options.per_segment_q = options.video_per_segment_q;
   video_options.seg_q_delta = options.video_seg_delta;
+  // enable_uv_delta_q also switches on the segmentation/delta-Q planner, which
+  // the symmetric offset does not need: it is a constant sequence field.
   video_options.enable_uv_delta_q = options.video_uv_delta_q;
   video_options.uv_delta_q = options.video_uv_delta_q_value;
-  if (options.video_uv_delta_q) {
+  if (!options.video_uv_qp_offset_given && !options.video_uv_delta_q) {
+    // --nightly-b sets video_uv_qp_offset without video_uv_qp_offset_given:
+    // the preset default (see apply_video_nightly_b).  An explicit
+    // --video-uv-qp-offset 0 sets _given and leaves the value 0, which is the
+    // opt-out: it must stay a TRUE no-op, because coding the §5.4.8 group with
+    // base 0 costs the enable bit and changes the bytes while leaving the step
+    // identical.
+    if (options.video_uv_qp_offset != 0) {
+      video_options.seq_delta_q = av2enc::dcdeltaq::SequenceDeltaQ{};
+      video_options.seq_delta_q.equal_ac_dc_q = true;
+      video_options.seq_delta_q.separate_uv_delta_q = false;
+      video_options.seq_delta_q.uv_ac_delta_q_enabled = true;
+      video_options.seq_delta_q.base_uv_ac_delta_q = options.video_uv_qp_offset;
+      video_options.frame_delta_q = av2enc::dcdeltaq::FrameDeltaQ{};
+      video_options.enable_uv_qp_offset = true;
+    }
+  } else if (options.video_uv_qp_offset_given && options.video_uv_qp_offset == 0) {
+    // Explicit --video-uv-qp-offset 0: the default quantizer, no §5.4.8 group.
+  } else if (options.video_uv_qp_offset_given) {
+    // §5.4.8 symmetric chroma offset: BOTH planes take the SAME delta, so a
+    // negative value codes U and V finer than luma at the same luma QP.
+    // equal_ac_dc_q = 1 keeps the group to one base field plus one enable bit,
+    // and normalized_sequence_delta_q() then infers
+    // BaseUVDcDeltaQ = BaseUVAcDeltaQ, so both DC and AC land on the offset
+    // step.  equal_ac_dc_q = 0 would additionally code base_y_dc_delta_q and a
+    // per-frame Y-DC field that this path does not need.  The per-plane FRAME
+    // deltas stay 0: the sequence base carries the whole offset.
+    video_options.seq_delta_q = av2enc::dcdeltaq::SequenceDeltaQ{};
+    video_options.seq_delta_q.equal_ac_dc_q = true;
+    video_options.seq_delta_q.separate_uv_delta_q = false;
+    video_options.seq_delta_q.uv_ac_delta_q_enabled = true;
+    video_options.seq_delta_q.base_uv_ac_delta_q = options.video_uv_qp_offset;
+    video_options.frame_delta_q = av2enc::dcdeltaq::FrameDeltaQ{};
+    // enable_uv_delta_q is deliberately NOT set: it also switches on the
+    // per-superblock segmentation/delta-Q planner, which bars every chained and
+    // CDF-carrying schedule.  A constant sequence field needs none of that; the
+    // frame encoder resolves the per-plane steps when either flag is set.
+    video_options.enable_uv_qp_offset = true;
+  } else if (options.video_uv_delta_q) {
     // §5.4.8: separate U/V deltas with the DC fields enabled.  equal_ac_dc_q=0
     // is required to code base_uv_dc_delta_q / uv_dc_delta_q_enabled.  U uses
     // +D and V uses -D so diff_uv_delta=1 exercises both chroma planes.

@@ -434,6 +434,13 @@ void print_usage(std::ostream& out) {
                                   "delta-Q: U uses +D and V uses -D for both DC",
                                   "and AC (separate_uv_delta_q=1,",
                                   "equal_ac_dc_q=0, diff_uv_delta=1)"});
+  item("--video-uv-qp-offset <N>", {"Symmetric §5.4.8 chroma quantizer",
+                                    "offset in [-23, 8], coded once in the",
+                                    "sequence header: BOTH U and V take the",
+                                    "same delta, so negative N codes chroma",
+                                    "finer than luma at the same luma QP.",
+                                    "--nightly-b defaults to -8; pass 0 to",
+                                    "restore the single-step stream"});
   item("--video-seg-skip", {"Opt-in SEG_LVL_SKIP on the lowest-variance",
                             "segment (implies --video-segmentation)"});
   item("--video-seg-globalmv", {"Opt-in SEG_LVL_GLOBALMV on a segment",

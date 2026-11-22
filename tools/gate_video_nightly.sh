@@ -387,6 +387,36 @@ PY
         fail "the BAWP+residual rejection did not name --video-bawp-carrier"
 fi
 
+# --- the --nightly-b chroma offset default -------------------------------
+# --nightly-b codes both chroma planes 8 qindex steps finer than luma (a
+# constant §5.4.8 sequence base).  Pin the preset default and its opt-out so a
+# later edit cannot silently drop or double-apply the offset: the default must
+# equal an explicit -8, and an explicit 0 must restore the single-step stream
+# (strictly smaller, because the §5.4.8 group is not coded at all).
+echo "== nightly-b chroma offset =="
+if [ -f "$NASA" ]; then
+    nb() { "$BIN" "$NASA" -o "$1" --video --frames 1 --qp 110 --cpu-threads 8 \
+               --nightly-b "${@:2}" >/dev/null 2>&1; }
+    if nb "$TMP/nb_def.ivf"; then
+        nb "$TMP/nb_off.ivf" --video-uv-qp-offset 0
+        if cmp -s "$TMP/nb_def.ivf" "$TMP/nb_off.ivf"; then
+            fail "--nightly-b default equals --video-uv-qp-offset 0: the -8 " \
+                 "chroma offset is not being applied"
+        fi
+        DEF=$(wc -c <"$TMP/nb_def.ivf" | tr -d ' ')
+        OFF=$(wc -c <"$TMP/nb_off.ivf" | tr -d ' ')
+        [ "$DEF" = "10588" ] ||
+            fail "--nightly-b default is $DEF B, expected 10588 (offset -8)"
+        [ "$OFF" = "10441" ] ||
+            fail "--nightly-b opt-out is $OFF B, expected 10441 (no offset)"
+        echo "nightly-b chroma offset: default -8 = $DEF B, opt-out 0 = $OFF B"
+    else
+        fail "the --nightly-b chroma offset encode failed"
+    fi
+else
+    echo "nightly-b chroma offset: SKIP (no nasa clip)" >&2
+fi
+
 if [ "$FAILED" -ne 0 ]; then
     echo "gate_video_nightly: FAILED" >&2
     exit 1

@@ -995,6 +995,17 @@ inline bool same_segmentation_table(const rc::SegmentationParams& a,
   return true;
 }
 
+// §5.4.8 sequence delta-Q fields.  Every writer that builds its own
+// VideoConfig (the B / temporal-layer / TIP / refinement sequence writers, the
+// InterFrameEncoder writer) must copy these from the VideoOptions the frame
+// codec itself resolves its quantizer from.  Omitting them makes the encoder
+// quantise chroma at the offset step while the stream carries the default
+// group, which decodes at a different step and is not a valid stream.
+inline void apply_video_sequence_delta_q(VideoConfig& config,
+                                         const VideoOptions& options) {
+  config.seq_delta_q = options.seq_delta_q;
+}
+
 // §5.18.7.1 segmentation_params() / §5.18.7.8 delta_q_params() for one frame.
 // The feature table is coded per frame; the per-frame map lives in the tile
 // payload.  Validates the plan before the header writer runs (the writer has no

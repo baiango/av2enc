@@ -1463,6 +1463,19 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
       continue;
     }
 
+    if (argument == "--video-uv-qp-offset") {
+      if (i + 1 >= argc ||
+          !parse_int(argv[++i], options.video_uv_qp_offset) ||
+          options.video_uv_qp_offset < -23 ||
+          options.video_uv_qp_offset > 8) {
+        error = "--video-uv-qp-offset must be an integer in [-23, 8] "
+                "(DELTA_DCQUANT_MIN..DELTA_DCQUANT_MAX)";
+        return ParseStatus::kError;
+      }
+      options.video_uv_qp_offset_given = true;
+      continue;
+    }
+
     if (argument == "--video-seg-skip") {
       options.video_seg_skip = true;
       options.video_segmentation = true;

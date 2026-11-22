@@ -1142,6 +1142,17 @@ ParseStatus validate_options(Options& options, std::string& error) {
               "joint U/V search uses one scalar chroma step";
       return ParseStatus::kError;
     }
+    if (options.video_uv_qp_offset_given && options.video_uv_delta_q) {
+      error = "--video-uv-qp-offset is the symmetric chroma offset; drop "
+              "--video-uv-delta-q (which splits U and V in opposite "
+              "directions)";
+      return ParseStatus::kError;
+    }
+    if (options.video_uv_qp_offset_given && options.video_cctx) {
+      error = "--video-uv-qp-offset does not compose with --video-cctx: the "
+              "joint U/V search uses one scalar chroma step";
+      return ParseStatus::kError;
+    }
     if (options.video_uv_delta_q && options.video_qm) {
       error = "--video-uv-delta-q does not compose with --video-qm: the "
               "per-coefficient QM quantiser is not the scalar DC/AC step";
