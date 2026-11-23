@@ -69,6 +69,20 @@ bool build_schedule(const PlanConfig& config, std::vector<int>& coding_order,
                     std::vector<int>& gop_starts, std::vector<int>& block_of,
                     PlanError* error) {
   const int n = config.gop_size;
+  // A one-picture stream is a lone key: no B block, no interior picture, no
+  // references.  It is the still-image case of the chained form (and what
+  // --nightly-b reduces to for --frames 1), so accept it ahead of the dyadic
+  // block checks, which exist to constrain past/future pyramids.
+  if (config.num_gops == 1 && n == 1 && config.tail_gop_size == 0) {
+    coding_order = {0};
+    layer.assign(1, 0);
+    refs.assign(1, {});
+    block_of.assign(1, 0);
+    // build_plan() asserts gop_starts.size() == num_gops + (tail ? 1 : 0), so
+    // the lone-key plan contributes exactly one block start (at display 0).
+    gop_starts.assign(1, 0);
+    return true;
+  }
   if (config.schedule == Schedule::kHierarchicalB) {
     if (!checked_power_of_two(n, error)) {
       return false;
@@ -700,7 +714,10 @@ bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error) {
   plan = Plan{};
   plan.config = config;
   const int n = config.gop_size;
-  if (!is_power_of_two(n) || n > 16) {
+  // gop_size 1 is legal only for the one-picture (lone key) plan.
+  const bool single = config.num_gops == 1 && n == 1 &&
+                      config.tail_gop_size == 0;
+  if ((!single && !is_power_of_two(n)) || n > 16) {
     set_error(error, PlanError::kBadGopSize);
     return false;
   }
@@ -847,7 +864,9 @@ bool validate_plan(const Plan& plan, PlanError* error, int* bad_display_index,
   const PlanConfig& c = plan.config;
   const int n = plan.display_count();
   const int expected_frames = c.gop_size * c.num_gops + c.tail_gop_size;
-  if (!is_power_of_two(c.gop_size) || c.gop_size > 16 ||
+  const bool single_plan = c.num_gops == 1 && c.gop_size == 1 &&
+                           c.tail_gop_size == 0;
+  if ((!single_plan && !is_power_of_two(c.gop_size)) || c.gop_size > 16 ||
       n != expected_frames || c.num_gops < 1 ||
       (c.tail_gop_size != 0 &&
        (!is_dyadic_block(c.tail_gop_size) || c.tail_gop_size > c.gop_size)) ||

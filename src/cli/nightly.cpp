@@ -299,9 +299,13 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
     error = "--nightly-b layers on the fixed --qp stream; use --rc cqp";
     return false;
   }
-  if (options.video_gops <= 1) {
-    error = "--nightly-b is the chained single-key form: pass --video-gops M "
-            "> 1 (M 8-frame B blocks)";
+  // --video-gops M > 1 is the chained form.  A single-picture stream is legal
+  // without it (--frames 1): the schedule reduces to a lone key, which is what
+  // a one-picture stream is anyway.  Requiring a chain for a still forced the
+  // caller to pad it with 7 duplicate frames.
+  if (options.video_gops < 1) {
+    error = "--nightly-b needs --video-gops M >= 1 (M 8-frame B blocks); "
+            "omit it only for a single picture (--frames 1)";
     return false;
   }
   options.video = true;
@@ -327,10 +331,20 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   options.video_tlayers_chain = true;
   options.video_tlayers_b = true;
 
-  // The measured chained-form ports.
-  options.video_edge_inter = !options.video_edge_inter_off;
-  options.video_edge_mask = !options.video_edge_mask_off;
-  if (!options.video_key_qp_offset_given && !options.video_key_qp_offset_off) {
+  // The measured chained-form ports.  These are measured ON A CHAIN and the
+  // validation rejects them without one, so a single-picture stream
+  // (--frames 1, no --video-gops) keeps them off; nothing here can act across
+  // time on a lone key.
+  if (options.video_gops > 1) {
+    options.video_edge_inter = !options.video_edge_inter_off;
+    options.video_edge_mask = !options.video_edge_mask_off;
+  }
+  // A single picture has no inter chain, so the key-offset allocation (a
+  // reference-intro spend) and BAWP (an inter tool) do not apply and are
+  // rejected by validation without a chain.
+  const bool single_picture = options.video_gops <= 1;
+  if (!single_picture && !options.video_key_qp_offset_given &&
+      !options.video_key_qp_offset_off) {
     // -37 is the re-swept optimum on the final stack (compound + TIP + CWP
     // depth + exact compound rate + joint plan). The -50 value was tuned
     // before those landed; at matched 100 kbps -37 measures K 88.207 against
@@ -339,8 +353,8 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
     options.video_key_qp_offset = -37;
     options.video_key_qp_offset_given = true;
   }
-  options.video_bawp = !options.video_bawp_off;
-  options.video_bawp_carrier = !options.video_bawp_off;
+  options.video_bawp = !single_picture && !options.video_bawp_off;
+  options.video_bawp_carrier = !single_picture && !options.video_bawp_off;
   // AVERAGE compound on the interior B pictures: the plan's (0,1) past/future
   // pair is a true two-reference pair, and §5.20.7.6 codes use_bawp only on
   // single-prediction leaves, so the BAWP carrier above coexists per leaf.
@@ -352,7 +366,9 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   // (docs/compound-depth.md).  Wedge/diffwtd, OPFL and refine-MV stay off.
   // --video-compound-off drops compound and the depth arm; the TIP-only
   // control is --video-compound-depth-off.  Explicit depth flags win.
-  options.video_compound = !options.video_compound_off;
+  // Compound and the depth arm need two references (past + future), so a lone
+  // key keeps both off.
+  options.video_compound = !single_picture && !options.video_compound_off;
   const bool compound_depth =
       options.video_compound && !options.video_compound_depth_off;
   if (!flag_given(options, "--video-compound-near-near")) {
@@ -361,7 +377,9 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   if (!flag_given(options, "--video-cwp-weighted")) {
     options.video_cwp_weighted = compound_depth;
   }
-  options.video_partition_rd = !options.video_partition_rd_off;
+  // The partition probe is an inter-tree tool and is rejected without a chain.
+  options.video_partition_rd =
+      !single_picture && !options.video_partition_rd_off;
   // Nightly base lambda; with --video-qp-lambda the probe uses the measured
   // QP fit (the explicit flag would pin the constant instead).
   if (!flag_given(options, "--video-partition-rd-lambda")) {
@@ -371,7 +389,8 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
     options.video_partition_depth = 1;
   }
   // Drift refresh: force the inter residual on the chained layer-0 anchors.
-  options.video_tlayer_anchor_residual = true;
+  // No anchors exist in a single-picture stream, so keep it off there.
+  options.video_tlayer_anchor_residual = !single_picture;
 
   // B_LEGAL: the reordering-legal measured tool set (docs/bframes.md).
   options.video_ccso_rd = true;

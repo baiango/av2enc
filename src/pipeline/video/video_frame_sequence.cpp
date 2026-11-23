@@ -465,8 +465,12 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
   // reference_select over that (0,1) pair; the block layer still picks one
   // reference per leaf on the anchors.
   const bool chained_b =
-      options.tlayer_chain && options.video_gops > 1 && options.tlayer_b;
-  if (options.tlayer_chain && options.video_gops > 1) {
+      options.tlayer_chain && options.video_gops >= 1 && options.tlayer_b;
+  // The chain branch also serves a ONE-picture stream (--frames 1): there the
+  // schedule reduces to a lone key, which is why --nightly-b no longer demands
+  // a padded chain for a still.
+  bool single_picture = false;
+  if (options.tlayer_chain && options.video_gops >= 1) {
     chained = true;
     // `--video-gops M` caps the number of blocks; the frame count only has to
     // fit under it.  Two shapes cover any clip length without padding or
@@ -482,6 +486,20 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       error = "--video-tlayers chain needs at least one frame";
       return false;
     }
+    if (total == 1) {
+      // One picture: a lone key.  There is no second picture to form a
+      // past/future block from, so the chained schedule reduces to what a
+      // one-picture stream is anyway -- an intra picture.  This is what makes
+      // the chained presets (--nightly-b) usable on a still image instead of
+      // forcing the caller to pad it with duplicate frames.  `chained` stays
+      // false so the chain-only gates below (layer drop) do not apply.
+      gop = 1;
+      num_gops = 1;
+      tail_gop_size = 0;
+      chained = false;
+      single_picture = true;
+    }
+    if (!single_picture) {
     // `--video-gops M` covers up to M full blocks plus one block of tail, so
     // the historical 60 = 7*8 + 4 spelling keeps working with M = 7.  A count
     // that needs fewer blocks is re-tiled below; a count that needs more is
@@ -536,6 +554,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       num_gops = chosen_gops;
       tail_gop_size = chosen_tail;
       (void)chosen_leftover;
+    }
   } else if (total != gop) {
     error = "--video-tlayers codes one closed GOP: pass exactly " +
             std::to_string(gop) + " input frames";

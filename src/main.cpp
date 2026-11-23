@@ -901,8 +901,12 @@ bool validate_video_sequence_length(const Options& options,
   }
   if (options.video_tlayers != 0) {
     const std::size_t gop = static_cast<std::size_t>(options.video_tlayers);
-    if (options.video_gops > 1 &&
-        tlayers_chain_enabled(options)) {
+    // `--video-gops > 1` is the chained form.  A single picture is legal with
+    // or without it (--frames 1): video_frame_sequence.cpp reduces the schedule
+    // to a lone key, which is what a one-picture stream is.  Without this the
+    // chained presets (--nightly-b) could not be used on a still.
+    if (tlayers_chain_enabled(options) &&
+        (options.video_gops > 1 || frame_count == 1)) {
       // `--video-gops M` is the maximum number of 8-frame blocks; any frame
       // count up to M*gop is legal and the remainder becomes a dyadic tail
       // block (video_frame_sequence.cpp does the decomposition and names an
