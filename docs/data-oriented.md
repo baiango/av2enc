@@ -174,12 +174,30 @@ quoted. The allocation counts and the identity evidence are final.
 
 ## Follow-ups (not done here)
 
-1. `tcq::Result` / `rdoq::RdoqResult` free their vectors on every call
-   (`result = Result{}`). Moving the buffers to a caller-provided span would
-   remove another ~3 allocations per trellis call; those files are owned by
-   the trellis/rate owners.
+1. **DONE 2026-11-24.** `tcq::Result` / `rdoq::RdoqResult` freed their vectors
+   on every call (`result = Result{}`). They now expose a capacity-preserving
+   `clear()`; the trellis functions clear in place and the two result objects
+   live in the per-worker `TxScratch`, so the buffers survive the encode.
+   Byte-identical: all five wavefront pins exact at `--cpu-threads 1` and `8`
+   with matching Stage-0 block dumps. **Measured benefit is ~0.3-0.5 %** on
+   16 f QP116 `--nightly-b` (CPU time, 5 interleaved paired reps: median
+   186 s -> 185 s, same direction in 5/5) and nil on `--fast-decode`. It is
+   kept because it is free and correct, not because it is a speedup: the joint
+   solve's leaf trials dominate the workload, so allocation churn rounds to
+   zero there. An earlier "~1.3 %" figure came from one median of three
+   wall-clock samples and did not reproduce.
 2. The per-leaf containers (`types`, `order`, the plan vector) still allocate
    ~10 times per `search()` call. A small per-thread container arena would
    take the 25.8/leaf down further, at the cost of more state in this TU.
 3. Re-run S2 on an idle host. Locally the dispatch axis is bounded by the
    noise; the doc's earlier threshold table remains the best available data.
+4. **Measured, not pursued 2026-11-24: TX-search memoisation.** The search is
+   a pure function of its inputs (the partition cost reads the static §9.3
+   defaults, not a live CDF), and under `--nightly-b` **73 % of the 398,047
+   searches on 16 f QP116 repeat an earlier tuple** (17 % on the flat chain);
+   a bounded 4k-slot direct-mapped cache still hits **57 %**. It is not worth
+   building: the 107,828 distinct tuples each need a whole `TxPlan` (levels,
+   per-part scan arrays, coded-size recon), i.e. tens of MB per thread against
+   the frame buffers, and the callers consume the plan in full so there is no
+   smaller thing to cache.
+
