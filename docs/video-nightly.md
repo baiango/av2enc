@@ -343,6 +343,16 @@ and 3, i.e. exactly the case that used to be rejected.
 That is −13.86% rate at identical reconstruction. The QP110 CDF stream is
 21,530 B, MD5 `b6220e473ef46b367d27c7925b1e8c23`.
 
+> **Does not reproduce on the current tree (2026-11-24).** The 24,994 B baseline
+> above is the old pipe-perc shipped point (QP119), not today's QP110
+> `--fast-decode` pin, and `--video-cdf-per-frame-qp` now measures **+3.0 %**
+> rather than −13.86 %: 23,690 B (`1b99127a…`) without it against 24,395 B
+> (`b77ce512…`) with it. The flag re-seeds the §9.3 image every frame, which
+> forgoes cross-frame adaptation instead of enabling it. The carry form
+> (`--avg-cdf --adaptive-cdf --cdf-continuity --video-cdf-per-frame-qp`) gives
+> the same 24,395 B, so the carried image is not reaching the decisions.
+> See the 2026-11-24 row in `docs/negative-results.md`.
+
 ### Spending the saving: the key QP, not the global QP
 
 Freeing 13.9% of the stream does not help by itself, because lowering the
