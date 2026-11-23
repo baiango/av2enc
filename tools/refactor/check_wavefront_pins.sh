@@ -82,15 +82,18 @@ done
 # flapped between 53 and 56 on the same binary.  Trace-enabled encodes therefore
 # keep the serial superblock walk, and the text must match across thread counts.
 if [ -f "$NASA" ]; then
-    for t in 1 "$(echo "$THREADS" | awk '{print $NF}')"; do
+    LAST_T=$(echo "$THREADS" | awk '{print $NF}')
+    for t in 1 "$LAST_T"; do
         "$BIN" "$NASA" -o "$TMP/trace-$t.ivf" --video --frames 8 --qp 190 \
             --cpu-threads "$t" --video-rd-preset quality --video-edge-inter \
             --video-edge-mask --video-trace \
             >"$TMP/trace-$t.log" 2>"$TMP/trace-$t.txt" || {
             echo "FAIL trace encode t=$t"; fail=1; }
     done
-    if cmp -s "$TMP/trace-1.txt" "$TMP/trace-8.txt"; then
-        echo "  trace t=1 == t=8 ($(wc -l <"$TMP/trace-1.txt" | tr -d ' ') lines)"
+    # Compare against the *last* thread count in the list, not a hard-coded 8:
+    # with --threads "1 10" the file is trace-10.txt.
+    if cmp -s "$TMP/trace-1.txt" "$TMP/trace-$LAST_T.txt"; then
+        echo "  trace t=1 == t=$LAST_T ($(wc -l <"$TMP/trace-1.txt" | tr -d ' ') lines)"
     else
         echo "FAIL --video-trace output differs across thread counts"; fail=1
     fi
