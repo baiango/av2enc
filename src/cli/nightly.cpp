@@ -463,5 +463,19 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   if (!options.video_uv_qp_offset_given && !options.video_uv_delta_q) {
     options.video_uv_qp_offset = -8;
   }
+  // Ablation switch, applied last so it wins over the assignments above (the
+  // RD preset sets video_deblock/video_ccso and this function sets cdef/ccso_rd
+  // earlier).  Mirrors apply_video_nightly's --video-loop-filters-off list
+  // exactly, so the two aggregates treat the flag the same way; without it the
+  // flag was silently ignored under --nightly-b because only the other
+  // expansion ever read it.
+  if (options.video_loop_filters_off) {
+    options.video_deblock = false;
+    options.video_cdef = false;
+    options.video_cdef_rd = false;
+    options.video_ccso = false;
+    options.video_ccso_rd = false;
+    options.video_ccso_header_rd = false;
+  }
   return true;
 }

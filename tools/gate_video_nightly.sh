@@ -417,6 +417,35 @@ else
     echo "nightly-b chroma offset: SKIP (no nasa clip)" >&2
 fi
 
+# --video-loop-filters-off used to be read only by apply_video_nightly, so
+# under --nightly-b the flag was accepted and silently ignored: the streams were
+# byte-identical.  Assert it actually changes the stream (and that the default
+# still matches its pin, so the switch cannot leak into the default).
+echo "== nightly-b loop-filters-off =="
+if [ -f "$NASA" ]; then
+    if "$BIN" "$NASA" -o "$TMP/lf_def.ivf" --video --frames 1 --qp 110 \
+            --cpu-threads 8 --nightly-b >/dev/null 2>"$TMP/lf_def.err"; then
+        if ! "$BIN" "$NASA" -o "$TMP/lf_off.ivf" --video --frames 1 --qp 110 \
+                --cpu-threads 8 --nightly-b --video-loop-filters-off \
+                >/dev/null 2>"$TMP/lf_off.err"; then
+            fail "--nightly-b --video-loop-filters-off was rejected"
+        elif cmp -s "$TMP/lf_def.ivf" "$TMP/lf_off.ivf"; then
+            fail "--video-loop-filters-off is silently ignored under " \
+                 "--nightly-b (identical streams)"
+        else
+            LF_DEF=$(wc -c <"$TMP/lf_def.ivf" | tr -d ' ')
+            LF_OFF=$(wc -c <"$TMP/lf_off.ivf" | tr -d ' ')
+            [ "$LF_DEF" = "10588" ] ||
+                fail "--nightly-b default is $LF_DEF B, expected 10588"
+            echo "nightly-b loop-filters-off: $LF_DEF B -> $LF_OFF B (takes effect)"
+        fi
+    else
+        fail "the --nightly-b loop-filters-off encode failed"
+    fi
+else
+    echo "nightly-b loop-filters-off: SKIP (no nasa clip)" >&2
+fi
+
 if [ "$FAILED" -ne 0 ]; then
     echo "gate_video_nightly: FAILED" >&2
     exit 1
