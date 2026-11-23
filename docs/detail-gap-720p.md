@@ -109,3 +109,48 @@ Do not re-try: TX/partition shape widening (`--video-max-depth` 5/6,
 `--video-min-block 4` are byte-inert; `--video-ext-partitions` is rejected with
 the B schedule), TX lambda, keyframe RDOQ, or AC-spend knobs — all measured
 inert in §6a and re-confirmed here.
+
+## Per-block rate at fixed error (2026-11-24)
+
+The measurement the previous section asked for. `AV2ENC_LEAFBITS=<path>` dumps
+the exact bits each coded leaf cost, read from the coder's cumulative
+`prefix_bits` across `write_leaf()` — emitted bits, not a model estimate. The
+stream is byte-identical with the dump on. Per-leaf bits are spread over the
+8x8 blocks the leaf covers and bucketed by source variance, the same buckets
+as the distortion tables above.
+
+**Our marginal cost per dB is cheapest on texture:** QP145 -> QP132 buys
++2.76 dB on texture, +2.24 on mid and only +1.34 on flat, for the same +40,475
+bytes — 14,686 B/dB on texture against 30,183 B/dB on flat. We are not
+over-spending on detail; we get the most per bit exactly where the gap is.
+
+Allocation is also roughly proportionate to where the error sits:
+
+| band | share of our bits | share of our MSE | our vs AVM error |
+|---|---:|---:|---:|
+| flat | 5.2 % | 2.8 % | 1.13x |
+| mid | 32.0 % | 33.5 % | 1.68x |
+| texture | **62.8 %** | **63.7 %** | **2.02x** |
+
+**Conclusion: the bits are in the right place.** The deficit is not
+misallocation and not over-spending — the same bytes produce ~2x the error on
+texture. That rules out both candidates in the previous section (prediction
+bloat *and* quantiser inefficiency as allocator problems) and points at the
+cost of coding a textured residual itself.
+
+Practical consequence: allocator-shaped fixes (rate shaping, band weighting,
+AQ, per-band lambdas) cannot close this, which is consistent with every one of
+them measuring inert in `docs/negative-results.md`. What remains is how
+expensively we represent textured coefficients — the intra mode / prediction
+side of those 4x4 and 8x4 leaves (28,586 + 7,367 of 39,142 parts) is the
+untested variable.
+
+### Per-band spend, exact
+
+| QP | leaf total | flat B/blk | mid B/blk | texture B/blk |
+|---:|---:|---:|---:|---:|
+| 145 | 123,190 | 1.24 | 3.75 | 6.29 |
+| 135 | 153,415 | 1.54 | 4.97 | 7.86 |
+| 132 | 163,726 | 1.59 | 5.41 | 8.37 |
+
+(Leaf totals are below the IVF size by ~4 kB of headers and CDF image.)
