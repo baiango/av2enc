@@ -73,6 +73,12 @@ struct TxScratch {
   // pass.
   tcq::av2::Model tcq_model;
   rdoq::av2::Model rdoq_model;
+  // Trellis results, reused across calls.  These used to be function-local in
+  // `evaluate_candidate()`, so every trellis call freed and reallocated three
+  // vectors (TCQ) or one (RDOQ).  `quantize()`/`rdoq_quantize()` now clear in
+  // place, so the capacity survives the whole encode.
+  tcq::Result tcq_result;
+  rdoq::RdoqResult rdoq_result;
 
   // Returns the cached scan for `(tx_size, cls)`, generating it on the first
   // call.  The table is a pure function of those two values, so the result is

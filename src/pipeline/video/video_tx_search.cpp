@@ -679,7 +679,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     config.lambda = av2enc::rdo::lambda_sse_from_quant_step(
         config.quant_step, /*sse_scale=*/0.125);
     config.max_coefficients = area;
-    av2enc::tcq::Result result;
+    av2enc::tcq::Result& result = scratch.tcq_result;
     if (!av2enc::tcq::quantize(input, config, model.rate_model(), result,
                                &tcq_error)) {
       if (error != nullptr) *error = "tcq quantize failed: " + tcq_error;
@@ -737,7 +737,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     config.lambda = av2enc::rdo::lambda_sse_from_quant_step(
         config.quant_step, options.rdoq_sse_scale);
     config.max_coefficients = area;
-    av2enc::rdoq::RdoqResult result;
+    av2enc::rdoq::RdoqResult& result = scratch.rdoq_result;
     if (!av2enc::rdoq::rdoq_quantize(input, config, model.rate_model(), result,
                                      &rdoq_error)) {
       if (error != nullptr) *error = "rdoq quantize failed: " + rdoq_error;

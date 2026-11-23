@@ -158,6 +158,20 @@ struct RdoqResult {
   // True when the loop cap (derived+margin or Config::level_cap) was reached
   // without the distortion stop rule proving that higher levels cannot win.
   bool level_range_truncated = false;
+
+  // Empties the result without releasing `levels`.  `rdoq_quantize()` clears
+  // through this instead of assigning a fresh `RdoqResult{}`, so a caller that
+  // reuses one object (the per-worker TX scratch) keeps the vector capacity.
+  // Semantically identical to assignment: size 0, all scalars at defaults.
+  void clear() noexcept {
+    levels.clear();
+    eob = 0;
+    distortion = 0.0;
+    rate_bits = 0.0;
+    cost = 0.0;
+    max_level_searched = 0;
+    level_range_truncated = false;
+  }
 };
 
 // Runs the trellis.  Returns false and sets `error` on an invalid config, a

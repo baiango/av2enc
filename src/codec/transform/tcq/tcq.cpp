@@ -203,7 +203,7 @@ bool estimate_scalar_levels(std::span<const Coefficient> coefficients,
 bool quantize(std::span<const Coefficient> coefficients, const Config& config,
               const RateModel& rate_model, Result& result,
               std::string* error) {
-  result = Result{};
+  result.clear();
   if (!validate_config(config, error)) return false;
   if (rate_model.coefficient_rate == nullptr || rate_model.eob_rate == nullptr) {
     if (error != nullptr) *error = "TCQ rate model callbacks must be set";

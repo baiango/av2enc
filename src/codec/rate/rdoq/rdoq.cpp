@@ -238,7 +238,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
                    const RateModel& rate_model,
                    RdoqResult& result,
                    std::string* error) {
-  result = RdoqResult{};
+  result.clear();
 
   if (!validate_rdoq_config(config, error)) {
     return false;
@@ -281,7 +281,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
     result.cost = lambda * bits;
     if (!std::isfinite(result.cost)) {
       if (error != nullptr) *error = "RDOQ cost is not finite";
-      result = RdoqResult{};
+      result.clear();
       return false;
     }
     return true;
@@ -517,7 +517,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
         coefficients[static_cast<std::size_t>(i)].level_context, is_eob);
     if (!valid_rate(bits)) {
       if (error != nullptr) *error = "RdoqRateFn returned an invalid value";
-      result = RdoqResult{};
+      result.clear();
       return false;
     }
     rate_bits += bits;
@@ -527,7 +527,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
   if (!std::isfinite(distortion) || !std::isfinite(rate_bits) ||
       !valid_rate(rate_bits) || !std::isfinite(cost)) {
     if (error != nullptr) *error = "RDOQ result is not finite";
-    result = RdoqResult{};
+    result.clear();
     return false;
   }
 

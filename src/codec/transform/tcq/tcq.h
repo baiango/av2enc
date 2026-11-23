@@ -211,6 +211,23 @@ struct Result {
   double cost = 0.0;
   std::int32_t max_level_searched = 0;
   bool level_range_truncated = false;
+
+  // Empties the result without releasing the buffers.  `quantize()` clears
+  // through this instead of assigning a fresh `Result{}`, so a caller that
+  // reuses one object (the per-worker TX scratch) keeps the vector capacity
+  // across calls.  Semantically identical to assignment: size 0, all scalars
+  // at their defaults.
+  void clear() noexcept {
+    base_levels.clear();
+    quant_levels.clear();
+    states.clear();
+    eob = 0;
+    distortion = 0.0;
+    rate_bits = 0.0;
+    cost = 0.0;
+    max_level_searched = 0;
+    level_range_truncated = false;
+  }
 };
 
 bool quantize(std::span<const Coefficient> coefficients, const Config& config,
