@@ -406,6 +406,29 @@ Remaining blockers for this surface (all rejected by name, not silent):
 - The nested §5.4.13 form stays opt-in; do not enable it by default, because
   `dav2d f9dafbc` cannot parse the sequence header.
 
+## Mosquito noise in textured AC (video)
+
+Measured on the 720p waterfall still, 1 frame, `--nightly-b --qp 145`, against a
+same-session AVM encode (`~/work/avm_latest/build/avmenc --qp 127 --end-usage=q
+--cpu-used=8`, 124,467 B) and SVT-AV1 p0 cqp 52 (127,313 B).  Binary available
+at `~/work/avm_latest/build/avmenc` -- it is NOT in `tools/bin` or on PATH.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Fix the mosquito noise with a filter, a rate change, or block-size/QP tuning | Every reachable lever is measured and excluded: **rate** -- QP139 costs +13 % bytes and moves the zone HF 30.24 -> 28.67 only; **CDEF** -- `--video-cdef-strength 8` changes it 17.97 -> 17.99 and HF 2396 -> 2400; **block zeroing** -- the `eob_y = 0` blocks near edges are the *best* ones (err 2.23 vs 3.14 for coded ones), so zeroing is the right call; **RDOQ** -- only runs on inter residuals (`compute_tx`: `use_rdoq` requires `is_inter`), so it is not even present on a keyframe; **block boundaries** -- edge/interior error ratio is 1.02 (AVM 1.00), so this is not a boundary artifact; **the transform and quantiser** -- a step edge at step 2560 reconstructs at rmse 5.52, correct | The defect is AC-coefficient magnitude, not any of the above. Go to the next row |
+| LEAD | Expect a frequency-flat quantiser dead-zone to fix it | The error is **entirely AC**: at the two worst textured blocks DC error is 0.04 / 0.54 against AC error 9.64 / 8.94 (AVM 0.15 / 1.38 and 5.67 / 6.09). A synthetic textured 8x8 residual at QP145's step 2560 keeps **7/64** coefficients and loses **71 %** of its AC energy (`/tmp/txp4`), and real 8x8 blocks host the noise at a weighted mean EOB of 14. Our 8x8 error spectrum is 11.78 hf/lf against AVM's 9.61 -- we lose detail *and* leave more error in high frequency, i.e. the coefficients we keep are wrong, not merely few | A frequency-dependent dead-zone (wider toward high frequency) is the shape to try, but it must be validated with a texture-retention measure, not rms -- see the TCQ row, where lower rms meant smoothing |
+
+Totals for reference (same frame, same metrics):
+
+| arm | bytes | mosquito-zone HF | injected-noise px | err at injected px | luma |
+|---|---|---|---|---|---|
+| av2enc | 127,324 | 17.45 | 225,428 | 7.76 | 5.031 |
+| AVM | 124,467 | 11.89 | 146,481 | 5.57 | 3.741 |
+| SVT-AV1 p0 | 127,313 | 20.49 | -- | -- | -- |
+
+Extra error by source activity: +0.01..0.06 in flat areas (we match AVM) and
++1.51..1.96 where the source has detail -- the gap is textured AC only.
+
 ## Segmentation / UV-DC extensions (video)
 
 | Status | Do not do | Why | Do instead |
