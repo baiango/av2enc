@@ -2,6 +2,7 @@
 // state setup.  The syntax helpers live in the sibling video_syntax_*.cpp TUs;
 // see video_syntax_writer.h for the class and video_syntax.h for the contract.
 #include "pipeline/video/video_syntax_writer.h"
+#include "codec/transform/variants/tx_tables.h"
 
 #include <fstream>
 #include <mutex>
@@ -515,7 +516,36 @@ void Writer::dump_decision(const BlockSyntax& node) const {
       << ",\"eob_y\":" << node.eob[0] << ",\"eob_u\":" << node.eob[1]
       << ",\"eob_v\":" << node.eob[2]
       << ",\"segment\":" << static_cast<int>(node.segment_id)
-      << ",\"qindex\":" << static_cast<int>(node.qindex) << "}\n";
+      << ",\"qindex\":" << static_cast<int>(node.qindex);
+  // Diagnostic-only: the dead-zone shape as it reaches the writer.  For the
+  // luma leaf, report the number of non-zero levels and the highest scan
+  // position that survived with its magnitude.  A frequency-flat dead-zone
+  // keeps coefficients whose |level| ~ 1 anywhere in the scan; a band-limited
+  // one keeps nothing past a low position.  Never affects the bitstream.
+  if (node.levels_offset != 0xFFFFFFFFu &&
+      node.levels_offset < levels_.size()) {
+    // The adjusted transform area; the scan length the writer used.
+    const std::uint32_t ts = node.tx_size[0];
+    const std::uint32_t area =
+        ts < 25u ? static_cast<std::uint32_t>(txv::kTxSizes[ts].adj_width) *
+                       static_cast<std::uint32_t>(txv::kTxSizes[ts].adj_height)
+                 : 0u;
+    const auto* lv = levels_.data() + node.levels_offset;
+    std::uint32_t nz = 0;
+    std::uint32_t hi_pos = 0;
+    std::int32_t hi_mag = 0;
+    for (std::uint32_t c = 0; c < area && c < node.eob[0]; ++c) {
+      const std::int32_t m = lv[c] < 0 ? -lv[c] : lv[c];
+      if (m != 0) {
+        ++nz;
+        hi_pos = c;
+        hi_mag = m;
+      }
+    }
+    out << ",\"nz_y\":" << nz << ",\"hi_pos_y\":" << hi_pos
+        << ",\"hi_mag_y\":" << hi_mag << ",\"tx_area_y\":" << area;
+  }
+  out << "}\n";
 }
 
 }  // namespace detail
