@@ -432,6 +432,22 @@ Totals for reference (same frame, same metrics):
 Extra error by source activity: +0.01..0.06 in flat areas (we match AVM) and
 +1.51..1.96 where the source has detail -- the gap is textured AC only.
 
+## Single-picture encodes miss the bottom-edge path
+
+Measured on `testdata`-independent content: 60 frames of the 4K loral clip
+downscaled to 240p (`/tmp/loral240_60.y4m`), filters off (`--video-loop-filters-off`),
+luma PSNR of the key against source, cross-checked with `avmdec`.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Compare `--frames 1` quality numbers against AVM/SVT, or judge a QP ladder from a single picture | `--nightly-b` sets `video_edge_inter/edge_mask/compound/bawp/partition_rd` only when `video_gops > 1`, and `validate.cpp` rejects `--video-edge-inter` outside the low-delay/chained form. So a single picture never gets the bottom-edge path. At **equal bytes** (8,341 vs 8,427 B) and equal qindex 145: single **27.30 dB** vs chain key **35.39 dB**; at q108, single **27.91** vs chain **42.10**. Bisection: chain with those tools off reproduces single *exactly* (27.30 / 27.91), and `--video-edge-inter` alone restores 35.39 with `--video-edge-mask-off` | Measure single-picture quality only against other single-picture encodes (arms on the same path cancel), or use a chain for absolute comparisons. The defect is localised: rows 0..180 are **identical** (1.00x) between paths, rows 180..224 are 3.11x worse and rows 224..240 4.55x worse without the edge path |
+| CONFIRMED | Expect `--frames 1` PSNR to respond to QP | Single-picture bottom band: rows 180..240 mean abs error 10.90 (q145) -> 8.86 (q108), i.e. barely moves, so it caps the whole-frame PSNR at 27.3..27.9 dB for +80 % bytes. With the edge path the same band goes 3.35 -> 1.53, i.e. it scales normally | Do not read a flat QP curve as a quantiser defect until the bottom-edge path is ruled out. Above row 180 the encoder behaves correctly in both modes |
+
+Regional crops above the last superblock row (for 720p: rows >= ~704) are unaffected, so
+per-region measurements on those bands still hold; whole-frame SS2/PSNR/BD-rate numbers
+taken from `--frames 1` runs are handicapped and should not be compared with encoders that
+do have a bottom-edge path.
+
 ## Segmentation / UV-DC extensions (video)
 
 | Status | Do not do | Why | Do instead |

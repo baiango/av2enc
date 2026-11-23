@@ -1,5 +1,9 @@
 #include "pipeline/video/video_frame_internal.h"
 
+#include <cstdio>
+#include <cstdlib>
+#include <cmath>
+
 #include "codec/transform/tx_partition/tx_scan.h"
 #include "pipeline/video/video_interp_filter.h"
 #include "pipeline/video/video_horizon_port.h"
@@ -91,6 +95,124 @@ double pipe_plan_coefficient_bits(
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// AV2ENC_PRED_DUMP: split the luma error into what intra prediction already got
+// wrong and what the residual coding left behind.
+//
+// encode_leaf runs on interior candidate nodes too (a --frames 1 run counted
+// 11.6x the frame area), and it may run several times per final leaf, so
+// counting calls is meaningless.  Instead the values are written into
+// full-frame arrays on every call and the LAST write per pixel wins; the
+// coverage mask counts each pixel once and is asserted against the frame area
+// at exit.  Recorded recon can then be compared with the recon file, which is
+// what makes the numbers checkable rather than merely plausible.
+// ---------------------------------------------------------------------------
+struct PredDump {
+  long frame_pixels = 0;
+  long covered = 0;
+  double pred_sse = 0.0;
+  double recon_sse = 0.0;
+  bool allocated = false;
+  std::vector<float> src;
+  std::vector<float> pred;
+  std::vector<float> recon;
+  std::vector<unsigned char> hit;
+};
+
+inline PredDump& pred_dump() {
+  static PredDump d;
+  return d;
+}
+
+inline bool pred_dump_enabled() {
+  // One getenv on the whole run: this is called per leaf, so the flag must be
+  // a one-time static rather than a lookup each time.
+  static const bool on = [] {
+    if (std::getenv("AV2ENC_PRED_DUMP") == nullptr) return false;
+    // Construct the accumulator BEFORE registering the handler: destruction
+    // runs in reverse construction order, so a handler registered first would
+    // otherwise see the object already destroyed and print nothing.
+    (void)pred_dump();
+    std::atexit([] {
+        const PredDump& q = pred_dump();
+        const std::size_t n = q.src.size();
+        double pe = 0.0;
+        double re = 0.0;
+        long cov = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+          if (q.hit.empty() || !q.hit[i]) continue;
+          const double dp = static_cast<double>(q.src[i]) -
+                            static_cast<double>(q.pred[i]);
+          const double dr = static_cast<double>(q.src[i]) -
+                            static_cast<double>(q.recon[i]);
+          pe += dp * dp;
+          re += dr * dr;
+          ++cov;
+        }
+        if (cov == 0) return;
+        const bool ok = q.frame_pixels > 0 && cov == q.frame_pixels;
+        const double px = static_cast<double>(cov);
+        std::fprintf(stderr,
+                     "pred-dump leaves_covered=%ld pixels=%ld "
+                     "frame_pixels=%ld coverage=%s pred_rmse=%.4f "
+                     "recon_rmse=%.4f residual_keeps=%.1f%%\n",
+                     cov, cov, q.frame_pixels, ok ? "OK" : "MISMATCH",
+                     std::sqrt(pe / px), std::sqrt(re / px),
+                     100.0 * std::sqrt(re / pe));
+        if (!ok) {
+          std::fprintf(stderr,
+                       "pred-dump WARNING: coverage != frame area; these "
+                       "numbers are not trustworthy\n");
+        }
+      });
+    return true;
+  }();
+  return on;
+}
+
+// Records one leaf's (source, prediction, reconstruction) for every pixel it
+// covers; later calls overwrite, so the last write per pixel wins.
+inline void pred_dump_record(const VideoInputFrame& frame, int x0, int y0,
+                             int w, int h, const std::vector<std::uint8_t>& pred,
+                             const std::vector<std::uint8_t>& recon) {
+  PredDump& d = pred_dump();
+  const std::size_t n =
+      static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+  if (pred.size() != n || recon.size() != n) return;
+  const int width = static_cast<int>(frame.width);
+  const int height = static_cast<int>(frame.height);
+  const std::size_t area =
+      static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+  if (!d.allocated) {
+    d.allocated = true;
+    d.frame_pixels = static_cast<long>(area);
+    d.src.assign(area, 0.0f);
+    d.pred.assign(area, 0.0f);
+    d.recon.assign(area, 0.0f);
+    d.hit.assign(area, 0);
+  }
+  if (d.src.size() != area) return;
+  for (int yy = 0; yy < h; ++yy) {
+    const int y = y0 + yy;
+    if (y < 0 || y >= height) continue;
+    for (int xx = 0; xx < w; ++xx) {
+      const int x = x0 + xx;
+      if (x < 0 || x >= width) continue;
+      const std::size_t i =
+          static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+          static_cast<std::size_t>(x);
+      d.src[i] = static_cast<float>(source_sample(frame, 0, x, y));
+      d.pred[i] = static_cast<float>(pred[static_cast<std::size_t>(yy) *
+                                               static_cast<std::size_t>(w) +
+                                           static_cast<std::size_t>(xx)]);
+      d.recon[i] = static_cast<float>(recon[static_cast<std::size_t>(yy) *
+                                             static_cast<std::size_t>(w) +
+                                         static_cast<std::size_t>(xx)]);
+      if (!d.hit[i]) d.hit[i] = 1;
+    }
+  }
+}
 
 namespace {
 
@@ -3325,6 +3447,9 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     // reconstruction must be in the plane before the chroma decision.  A
     // losing intra candidate is overwritten by the inter reconstruction.
     write_plane_block(recon_[0], x0, y0, w, h, intra_y.recon);
+    if (pred_dump_enabled() && keyframe_) {
+      pred_dump_record(source_, x0, y0, w, h, intra_y_pred, intra_y.recon);
+    }
     }  // !chroma_part
     if (owns_chroma) {
     if (!intra_dc_predict(recon_[1], source_, 1, cx0, cy0, cw, ch,
