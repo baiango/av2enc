@@ -171,8 +171,21 @@ bool Writer::write_node(std::size_t index, std::size_t* next, std::string& error
   // R19 diagnostic: every coded leaf runs through this wrapper so the report
   // can compare the model's prediction with the symbols the writer charged.
   const auto write_leaf = [&](const BlockSyntax& leaf) -> bool {
+    // AV2ENC_LEAFBITS: exact bits this leaf cost, from the coder's cumulative
+    // bit counter.  Diagnostic only; it never feeds the bitstream.
+    static const bool leafbits = [] {
+      const char* p = std::getenv("AV2ENC_LEAFBITS");
+      return p != nullptr && p[0] != '\0';
+    }();
+    const std::uint64_t leaf_before = enc_.prefix_bits;
+    const auto finish_leaf = [&]() {
+      if (!leafbits) return;
+      dump_leaf_bits(leaf, enc_.prefix_bits - leaf_before);
+    };
     if (!rate_interval::detail::stats_enabled()) {
-      return write_block(leaf, error);
+      if (!write_block(leaf, error)) return false;
+      finish_leaf();
+      return true;
     }
     double before[kCostTagCount];
     for (int tag = 0; tag < kCostTagCount; ++tag) {
@@ -181,6 +194,7 @@ bool Writer::write_node(std::size_t index, std::size_t* next, std::string& error
     const std::uint64_t prefix_before = enc_.prefix_bits;
     if (!write_block(leaf, error)) return false;
     record_rate_interval_leaf(leaf, before, prefix_before);
+    finish_leaf();
     return true;
   };
   const BlockSyntax& node = blocks_[index];
@@ -1131,6 +1145,20 @@ bool Writer::write_ccso_index(const BlockSyntax& node, std::string& error) {
 //     here in the writer and is not part of the model).
 // The exact (R05) column is the same symbol sequence through a real §8.2
 // encoder, reported for the error/cost trade-off.
+void Writer::dump_leaf_bits(const BlockSyntax& leaf, std::uint64_t bits) {
+  static FILE* out = []() {
+    const char* path = std::getenv("AV2ENC_LEAFBITS");
+    return (path != nullptr && path[0] != '\0') ? std::fopen(path, "w") : nullptr;
+  }();
+  if (out == nullptr) return;
+  const auto size = static_cast<BlockSize>(leaf.bsize);
+  std::fprintf(out, "%d %d %d %d %d %d %d %.0f\n", leaf.mi_row, leaf.mi_col,
+               partition::block_width(size), partition::block_height(size),
+               static_cast<int>(leaf.is_inter), static_cast<int>(leaf.skip_flag),
+               static_cast<int>(leaf.eob[0]),
+               static_cast<double>(bits));
+}
+
 void Writer::record_rate_interval_leaf(const BlockSyntax& leaf,
                                        const double* meter_before,
                                        std::uint64_t prefix_before) {

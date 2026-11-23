@@ -1545,6 +1545,9 @@ class Writer {
   void record_rate_interval_leaf(const BlockSyntax& leaf,
                                  const double* meter_before,
                                  std::uint64_t prefix_before);
+  // AV2ENC_LEAFBITS: one line per coded leaf with the exact bits it cost.
+  // Diagnostic only (docs/detail-gap-720p.md measures per-block rate with it).
+  void dump_leaf_bits(const BlockSyntax& leaf, std::uint64_t bits);
   rate_interval::CdfStore rate_store_{};
   bool rate_store_ready_ = false;
 };
