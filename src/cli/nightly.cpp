@@ -335,10 +335,20 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   // validation rejects them without one, so a single-picture stream
   // (--frames 1, no --video-gops) keeps them off; nothing here can act across
   // time on a lone key.
-  if (options.video_gops > 1) {
-    options.video_edge_inter = !options.video_edge_inter_off;
-    options.video_edge_mask = !options.video_edge_mask_off;
-  }
+  // The bottom-edge path is not only an inter tool: it reconstructs and pads
+  // the hidden rows of the last superblock row, which a lone key also straddles
+  // (docs/negative-results.md, "Single-picture encodes miss the bottom-edge
+  // path": single 27.30 dB vs chain key 35.39 dB at equal bytes/qindex, with
+  // rows 0..180 identical and rows 180..240 3.11x/4.55x worse without it).
+  // It was gated on video_gops > 1 while the preset sets tlayers = 8 even for a
+  // lone key, so --frames 1 was both *not given* it and *rejected* if asked.
+  // Now always set, mirroring apply_video_nightly; the _off switches opt out.
+  options.video_edge_inter = !options.video_edge_inter_off;
+  options.video_edge_mask = !options.video_edge_mask_off;
+  // --video-edge-mask is only legal with --video-edge-inter, so a caller who
+  // turns the inter half off means "the whole edge path off"; without this the
+  // lone switch would be rejected by validation instead of disabling it.
+  if (options.video_edge_inter_off) options.video_edge_mask = false;
   // A single picture has no inter chain, so the key-offset allocation (a
   // reference-intro spend) and BAWP (an inter tool) do not apply and are
   // rejected by validation without a chain.

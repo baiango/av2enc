@@ -184,8 +184,15 @@ ParseStatus validate_options(Options& options, std::string& error) {
     const bool chained_tlayers =
         options.video_tlayers != 0 && options.video_gops > 1 &&
         tlayers_chain_enabled(options);
+    // A single picture (--frames 1) has no references and no reorder at all, so
+    // the failure mode this gate exists for -- a reorder schedule whose
+    // reference bank drops the padded bottom rows -- cannot occur.  Without the
+    // exception the nightly preset's own temporal-layer settings (tlayers = 8,
+    // set even for a lone key) rejected the bottom-edge path and silently left
+    // the last superblock row 3-4x worse off than a chain produces.
+    const bool single_picture = options.max_frames == 1;
     if (options.b_frames != 0 ||
-        (options.video_tlayers != 0 && !chained_tlayers) ||
+        (options.video_tlayers != 0 && !chained_tlayers && !single_picture) ||
         options.video_long_term || options.video_olk ||
         options.video_leading != 0 || options.video_sef ||
         options.video_switch || options.video_ras || options.video_tip) {

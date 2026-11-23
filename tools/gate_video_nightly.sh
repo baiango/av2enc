@@ -405,10 +405,10 @@ if [ -f "$NASA" ]; then
         fi
         DEF=$(wc -c <"$TMP/nb_def.ivf" | tr -d ' ')
         OFF=$(wc -c <"$TMP/nb_off.ivf" | tr -d ' ')
-        [ "$DEF" = "10588" ] ||
-            fail "--nightly-b default is $DEF B, expected 10588 (offset -8)"
-        [ "$OFF" = "10441" ] ||
-            fail "--nightly-b opt-out is $OFF B, expected 10441 (no offset)"
+        [ "$DEF" = "11139" ] ||
+            fail "--nightly-b default is $DEF B, expected 11139 (offset -8)"
+        [ "$OFF" = "10998" ] ||
+            fail "--nightly-b opt-out is $OFF B, expected 10998 (no offset)"
         echo "nightly-b chroma offset: default -8 = $DEF B, opt-out 0 = $OFF B"
     else
         fail "the --nightly-b chroma offset encode failed"
@@ -435,8 +435,8 @@ if [ -f "$NASA" ]; then
         else
             LF_DEF=$(wc -c <"$TMP/lf_def.ivf" | tr -d ' ')
             LF_OFF=$(wc -c <"$TMP/lf_off.ivf" | tr -d ' ')
-            [ "$LF_DEF" = "10588" ] ||
-                fail "--nightly-b default is $LF_DEF B, expected 10588"
+            [ "$LF_DEF" = "11139" ] ||
+                fail "--nightly-b default is $LF_DEF B, expected 11139"
             echo "nightly-b loop-filters-off: $LF_DEF B -> $LF_OFF B (takes effect)"
         fi
     else
