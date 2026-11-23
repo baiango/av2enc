@@ -1305,6 +1305,8 @@ inline bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, 
     }
   }
 
+
+
   std::vector<std::int32_t> dequant(
       static_cast<std::size_t>(params.w) * static_cast<std::size_t>(params.h));
   std::vector<std::int16_t> recon_residual(

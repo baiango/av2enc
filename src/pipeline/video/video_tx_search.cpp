@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <span>
 #include <string>
@@ -33,6 +35,68 @@ namespace txv = av2enc::txv;
 namespace txtype = av2enc::txtype;
 namespace txpart = av2enc::video::txpartition;
 namespace residual = av2enc::video::residual;
+
+// ---------------------------------------------------------------------------
+// AV2ENC_DZ_DUMP: aggregate of what the scalar quantiser rounds away, measured
+// in level units before any trellis touches the result.  Per-trial output
+// would flood stderr (the search evaluates many candidates per leaf), so the
+// totals accumulate and print once at exit.  Diagnostic only.
+// ---------------------------------------------------------------------------
+struct DeadZoneDump {
+  long trials = 0;
+  long coeff_total = 0;
+  long kept = 0;
+  long dropped = 0;
+  // Energy (in level^2) of the residual the quantiser threw away vs kept.
+  double dropped_energy = 0.0;
+  double kept_energy = 0.0;
+  // Dropped coefficients bucketed by their PRE-rounding magnitude in level
+  // units.  Everything dropped sits in [0, 0.5), because |x| >= 0.5 rounds to
+  // a non-zero level and is kept; the buckets show how close to the decision
+  // the discarded residual sits.
+  long dropped_mag[4] = {0, 0, 0, 0};  // <0.125, <0.25, <0.375, <0.5
+  // Coefficients dropped while carrying more than a quarter level of magnitude.
+  long dropped_material = 0;
+};
+
+inline DeadZoneDump& dead_zone_dump() {
+  static DeadZoneDump d;
+  return d;
+}
+
+inline void dead_zone_dump_register() {
+  static const bool once = [] {
+    std::atexit([] {
+      const DeadZoneDump& d = dead_zone_dump();
+      if (d.coeff_total == 0) return;
+      std::fprintf(stderr,
+                   "dz-scalar coeffs=%ld kept=%ld (%.1f%%) dropped=%ld "
+                   "dropped_material=%ld (%.1f%% of dropped)\n"
+                   "dz-energy kept=%.0f dropped=%.0f -> dropped share %.2f%%\n"
+                   "dz-dropped-by-magnitude <.125=%ld <.25=%ld <.375=%ld <.5=%ld\n",
+                   d.coeff_total, d.kept,
+                   100.0 * static_cast<double>(d.kept) /
+                       static_cast<double>(d.coeff_total),
+                   d.dropped, d.dropped_material,
+                   d.dropped ? 100.0 * static_cast<double>(d.dropped_material) /
+                                   static_cast<double>(d.dropped)
+                             : 0.0,
+                   d.kept_energy, d.dropped_energy,
+                   100.0 * d.dropped_energy /
+                       (d.kept_energy + d.dropped_energy),
+                   d.dropped_mag[0], d.dropped_mag[1], d.dropped_mag[2],
+                   d.dropped_mag[3]);
+    });
+    return true;
+  }();
+  (void)once;
+}
+
+inline const bool g_dump_dead_zone = [] {
+  const bool on = std::getenv("AV2ENC_DZ_DUMP") != nullptr;
+  if (on) dead_zone_dump_register();
+  return on;
+}();
 namespace ddt = av2enc::video::ddt;
 
 // Partition bit indices, identical to VideoTxPartitionBit.
@@ -542,9 +606,24 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     const double source =
         use_ddt ? static_cast<double>(coeff_i[static_cast<std::size_t>(i)])
                 : coeff[static_cast<std::size_t>(i)];
-    const std::int32_t level = static_cast<std::int32_t>(
-        std::lround(source * factor));
+    const double x = source * factor;
+    const std::int32_t level = static_cast<std::int32_t>(std::lround(x));
     levels[static_cast<std::size_t>(i)] = level;
+    if (g_dump_dead_zone) {
+      DeadZoneDump& d = dead_zone_dump();
+      d.coeff_total++;
+      if (level != 0) {
+        d.kept++;
+        d.kept_energy += x * x;
+      } else {
+        d.dropped++;
+        d.dropped_energy += x * x;
+        const double a = x < 0.0 ? -x : x;
+        if (a >= 0.25) d.dropped_material++;
+        const int b = a < 0.125 ? 0 : a < 0.25 ? 1 : a < 0.375 ? 2 : 3;
+        d.dropped_mag[b]++;
+      }
+    }
   }
 
   const txpart::TxScanClass cls =
