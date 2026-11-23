@@ -154,3 +154,69 @@ untested variable.
 | 132 | 163,726 | 1.59 | 5.41 | 8.37 |
 
 (Leaf totals are below the IVF size by ~4 kB of headers and CDF image.)
+
+## Intra mode distribution and the prediction/residual split (2026-11-24)
+
+Tool: `docs/profiles/block_report.py` (parameterised — explicit paths for the
+source, any number of decode arms, the block dump and the leaf-bit dump).
+
+### The intra search is not the problem
+
+Every one of the 13 §6.19.5.5 modes is used on this still, and DC_PRED is only
+10.4 % of the 26,461 intra leaves:
+
+| mode | share | mode | share | mode | share |
+|---|---:|---|---:|---|---:|
+| D203 | 15.9 % | D157 | 9.4 % | D135 | 6.3 % |
+| SMOOTH | 11.6 % | D45 | 8.6 % | D67 | 4.3 % |
+| H | 11.0 % | SMOOTH_H | 7.5 % | D113 | 3.6 % |
+| DC | 10.4 % | SMOOTH_V | 7.0 % | V | 3.0 % |
+| | | | | PAETH | 1.4 % |
+
+This kills the last hypothesis carried over from the previous section: the small
+leaves are not "mostly DC-predicted", so their residual is not bloated by a
+missing predictor. Textured leaves also code real content — mean `eob` 11.6 of
+64, with only 6.7 % coding no coefficient at all.
+
+### Where the error is lost: the quantiser, not the predictor
+
+`AV2ENC_PRED_DUMP` splits the luma error at the quantiser (coverage asserted
+against the frame area: `coverage=OK`, 921,600 px):
+
+| QP | `pred_rmse` | `recon_rmse` | residual keeps |
+|---:|---:|---:|---:|
+| 145 | 18.80 | 7.03 | **37.4 %** |
+| 120 | 18.45 | 3.90 | 21.1 % |
+| 90 | 17.73 | 1.85 | 10.4 % |
+
+`pred_rmse` is essentially rate-independent (18.8 -> 17.7 across a 2.6x rate
+change) while `recon_rmse` falls 3.8x. **Prediction quality is fixed; every
+dB of improvement comes from representing the residual more cheaply.**
+
+At the matched point AVM's `recon_rmse` is 5.04 against our 7.03 (1.40x), while
+`pred_rmse` is a property of prediction plus source, not of the rate — so on a
+like-for-like basis AVM only needs to keep ~72 % of the prediction error we
+keep. Combined with the previous section (our bits are already allocated
+correctly, and our marginal B/dB is *cheapest* on texture), the deficit is
+narrowly located: **our residual representation costs more per unit of error
+removed, at low rate, and the gap closes as rate rises (we overtake AVM at
+QP90).**
+
+### What this rules out
+
+- Better intra prediction (mode search, smooth/directional candidates): the
+  distribution is already varied and prediction error is rate-independent.
+- Rate reallocation between bands: already proportionate (62.8 % of bits on
+  63.7 % of the error).
+- More AC spend / trellis weighting / TX-shape widening: all measured inert.
+
+### What remains
+
+The residual coder's cost per unit of error at low rate. The concrete untested
+item is the **coefficient context model**: `--video-tx-context-rate` prices
+with a *static* §8.3 model (`txpart::TxPartitionCdfs::reset()`), and
+`docs/keyframe-bit-accounting.md` measured the coder at 1.015x its own
+per-context bound with pooled contexts costing 39 % more. A keyframe
+coefficient coder that adapts across the picture rather than resetting to
+defaults is the mechanism that would show up exactly this way — same bits, more
+error, worse at low rate, converging at high rate.
