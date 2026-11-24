@@ -111,7 +111,7 @@ void evaluate_compound_modes(const CompoundPrediction& prediction,
                              std::vector<EvaluatedMode>& out);
 
 // Main decision entry point.
-bool decide_compound(const DecisionInput& input, DecisionResult& result,
+[[nodiscard]] bool decide_compound(const DecisionInput& input, DecisionResult& result,
                      std::string& error);
 
 }  // namespace av2enc::video::multiref

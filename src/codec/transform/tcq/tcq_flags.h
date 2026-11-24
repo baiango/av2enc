@@ -56,7 +56,7 @@ struct HeaderFlags {
 // Returns false only for contradictory input (currently: lossless with a
 // requested non-zero frame allow flag when that flag is not codable is not an
 // error; it is normalised below).  The function is total and deterministic.
-bool derive_header_flags(const HeaderInput& input, HeaderFlags* flags,
+[[nodiscard]] bool derive_header_flags(const HeaderInput& input, HeaderFlags* flags,
                          std::string* error = nullptr);
 
 }  // namespace av2enc::tcq

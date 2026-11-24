@@ -101,17 +101,17 @@ struct SccEncodeResult {
 
 // Validate the plan against the frame geometry and the tool constraints, then
 // encode.  On failure `error` explains which symbol/step failed.
-bool encode_scc_frame(const SccFramePlan& plan, SccEncodeResult& out,
+[[nodiscard]] bool encode_scc_frame(const SccFramePlan& plan, SccEncodeResult& out,
                       std::string& error);
 
 // Write one complete IVF file (32-byte DKIF header + one frame) using the
 // existing IvfWriter.  The frame payload is `result.frame`.
-bool write_scc_ivf(const SccEncodeResult& result, const SccConfig& config,
+[[nodiscard]] bool write_scc_ivf(const SccEncodeResult& result, const SccConfig& config,
                    const std::string& path, std::string& error);
 
 // Write the writer's reconstruction as a one-frame 4:2:0 Y4M.  The gate
 // scripts compare this with dav2d's decoded Y4M byte-for-byte.
-bool write_scc_y4m(const SccEncodeResult& result, const SccConfig& config,
+[[nodiscard]] bool write_scc_y4m(const SccEncodeResult& result, const SccConfig& config,
                    const std::string& path, std::string& error);
 
 // §7.13.3.17 IBC plane offset: luma BV (1/8 samples) -> integer sample offset
@@ -121,7 +121,7 @@ int ibc_plane_offset(int bv8, int subsampling);
 // Global-only BV validity check used by the gate writer (§6.19.7.12).  Returns
 // false and a reason if the source is outside the tile or inside the
 // INTRABC_DELAY_SB64 window.
-bool validate_global_bv(const SccConfig& config, int mi_row, int mi_col,
+[[nodiscard]] bool validate_global_bv(const SccConfig& config, int mi_row, int mi_col,
                         int bsize, int bv_row, int bv_col,
                         std::string& error);
 

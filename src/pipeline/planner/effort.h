@@ -65,7 +65,7 @@ double budget_for_cpu_used(int cpu_used);
 // option tokens the user typed: an explicitly requested feature is kept by the
 // caller and not charged to the budget.  Returns false only for invalid input;
 // an empty selection is a valid result ("nothing measured fits").
-bool select(double budget, Mode mode,
+[[nodiscard]] bool select(double budget, Mode mode,
             const std::vector<std::string_view>& explicit_flags,
             const Constraints& constraints, Selection& selection,
             std::string& error);

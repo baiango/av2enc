@@ -95,7 +95,7 @@ inline bool is_identity_type(TxType type) {
 int tx_class(TxType type);
 
 // Tx_Type_In_Set_Intra[set][type] for the 7 intra sets.
-bool intra_set_allows(Set set, TxType type);
+[[nodiscard]] bool intra_set_allows(Set set, TxType type);
 
 // One transform block query.
 struct Query {
@@ -135,13 +135,13 @@ struct TypeSet {
 // selects `reduced_tx_set` (0) or `enable_chroma_dctonly` (1/2).  Returns
 // false for a size that is not one of the 25 AV2 transform sizes or an
 // out-of-range reduced set.
-bool get_tx_set(const Query& query, Set* set);
+[[nodiscard]] bool get_tx_set(const Query& query, Set* set);
 
 // Legal candidates in §5.20.8.2 symbol order.  For plane > 0 this is the
 // *syntax* capability of the chroma set; the effective chroma type is the
 // derived one from derive_chroma_type().  `eob <= 1` always yields exactly
 // DCT_DCT with symbol -1.
-bool enumerate_types(const Query& query, TypeSet* out,
+[[nodiscard]] bool enumerate_types(const Query& query, TypeSet* out,
                      std::string* error = nullptr);
 
 // One concrete decision: the effective PlaneTxType plus its coding.
@@ -158,7 +158,7 @@ struct TypePlan {
 // for a type the set cannot signal fails (`error` says why): identity types
 // with enable_idtx_intra == 0, wrong reduced set, a 1D type at an INTRA_2 /
 // DCT-only size, etc.
-bool plan_type(const Query& query, TxType requested, TypePlan* plan,
+[[nodiscard]] bool plan_type(const Query& query, TxType requested, TypePlan* plan,
                std::string* error = nullptr);
 
 // Deterministic default: DCT_DCT (legal in every intra set).  For chroma with
@@ -170,7 +170,7 @@ TxType default_type(const Query& query);
 // else Mode_To_Txfm[mapped UVMode] filtered through is_tx_type_in_set().
 // `uv_mode` 13 (UV_CFL_PRED) maps to DCT_DCT.  Returns false only for an
 // invalid size / mode / angle.
-bool derive_chroma_type(int uv_mode, int uv_angle_delta, int coded_w,
+[[nodiscard]] bool derive_chroma_type(int uv_mode, int uv_angle_delta, int coded_w,
                         int coded_h, const SeqFlags& flags, TxType* type,
                         Set* set = nullptr);
 

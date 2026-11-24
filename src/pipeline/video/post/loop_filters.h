@@ -201,7 +201,7 @@ class VideoPostFilterFrame {
 // `blk_cols/rows` are filled from the frame's default grids when they are null;
 // a caller-supplied grid is kept.  Returns false and fills `error` on a filter
 // validation failure; no output is claimed in that case.
-bool run_video_post_filters(VideoPostFilterFrame& frame,
+[[nodiscard]] bool run_video_post_filters(VideoPostFilterFrame& frame,
                          const VideoPostFilterConfig& config,
                          VideoPostFilterReport& report,
                          std::string* error = nullptr);

@@ -124,7 +124,7 @@ struct WarpCodingDecision {
 WarpCodingDecision select_warp_coding(const WarpSearchInput& in);
 
 // True when the decoder's §7.13.3.14 fallback forces the extended warp pass.
-bool warp_requires_extended(const ia::WarpParams& params,
+[[nodiscard]] bool warp_requires_extended(const ia::WarpParams& params,
                             const ia::WarpBlockGeometry& geom);
 
 // ---------------------------------------------------------------------------
@@ -162,7 +162,7 @@ void build_inter_intra_weights(int mode, int w, int h, std::uint8_t* out,
                                int stride);
 
 // §7.13.3.27 wedge weights (0..64).
-bool build_wedge_weights(int bsize, int wedge_sign, int wedge_index,
+[[nodiscard]] bool build_wedge_weights(int bsize, int wedge_sign, int wedge_index,
                          std::uint8_t* out, int stride);
 
 // ---------------------------------------------------------------------------

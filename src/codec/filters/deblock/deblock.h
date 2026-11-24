@@ -96,7 +96,7 @@ DeblockStatus deblock_frame(DeblockFrame& frame, const DeblockOptions& options);
 
 // 10/12-bit variant (uint16_t sample container).  Supports 4:2:0, 4:2:2,
 // 4:4:4 and 4:0:0; `options.bit_depth` must be 10 or 12.
-bool deblock_supported16(const DeblockFrame16& frame,
+[[nodiscard]] bool deblock_supported16(const DeblockFrame16& frame,
                          const DeblockOptions& options, DeblockStatus* status);
 DeblockCoreFrame16 deblock_to_core16(const DeblockFrame16& frame);
 DeblockStatus deblock_frame16(DeblockFrame16& frame,
@@ -116,7 +116,7 @@ DeblockEdgeInfo deblock_inspect_edge(const DeblockFrame& frame,
 DeblockCoreFrame deblock_to_core(const DeblockFrame& frame);
 
 // True when `options` + plane geometry are inside the supported subset.
-bool deblock_supported(const DeblockFrame& frame, const DeblockOptions& options,
+[[nodiscard]] bool deblock_supported(const DeblockFrame& frame, const DeblockOptions& options,
                        DeblockStatus* status);
 
 }  // namespace av2enc::deblock

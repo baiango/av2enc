@@ -150,7 +150,7 @@ int cdef_plane_height(const CdefFrame& frame, int plane);
 
 // Validates geometry, options and pointers.  Returns false and sets `status`
 // on failure.
-bool cdef_supported(const CdefFrame& frame, const CdefOptions& options,
+[[nodiscard]] bool cdef_supported(const CdefFrame& frame, const CdefOptions& options,
                     CdefStatus* status);
 
 // Runs CDEF over the whole frame.  Every 8x8 luma block (4x4 chroma) is
@@ -159,7 +159,7 @@ CdefStatus cdef_frame(const CdefFrame& frame, const CdefOptions& options);
 
 // 10/12-bit variant (uint16_t sample container).  Supports 4:2:0, 4:2:2, 4:4:4
 // and 4:0:0; `options.bit_depth` must be 10 or 12.
-bool cdef_supported16(const CdefFrame16& frame, const CdefOptions& options,
+[[nodiscard]] bool cdef_supported16(const CdefFrame16& frame, const CdefOptions& options,
                       CdefStatus* status);
 CdefStatus cdef_frame16(const CdefFrame16& frame,
                         const CdefOptions& options);

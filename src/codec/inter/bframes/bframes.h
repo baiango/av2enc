@@ -227,13 +227,13 @@ std::vector<FrameKind> coding_frame_types(const Plan& plan);
 // key frame is at display `leading_pictures`. The builder assigns slots, order
 // hint LSBs and output flags, then runs validate_plan(). On failure, returns
 // false and sets *error (when non-null).
-bool build_gop(const GopConfig& config, Plan& plan, PlanError* error);
+[[nodiscard]] bool build_gop(const GopConfig& config, Plan& plan, PlanError* error);
 
 // Builds `num_gops` independent closed GOP units. The first unit has no leading
 // pictures; later units use config.leading_pictures. No reference crosses a GOP
 // boundary (each unit starts with a key frame). On failure, returns false and
 // sets *error.
-bool build_sequence(const SequenceConfig& config, Plan& plan, PlanError* error);
+[[nodiscard]] bool build_sequence(const SequenceConfig& config, Plan& plan, PlanError* error);
 
 // ---------------------------------------------------------------------------
 // Decoder simulation
@@ -286,7 +286,7 @@ struct DecodeReport {
 // Walks the coding order, checks every reference against the live slot state,
 // applies §7.23, and runs the §7.21.4/.5/.6 output processes. Never crashes on a
 // malformed plan: it reports an error.
-bool simulate_decode(const Plan& plan, DecodeReport* report);
+[[nodiscard]] bool simulate_decode(const Plan& plan, DecodeReport* report);
 
 struct ValidationReport {
   bool ok = false;
@@ -301,7 +301,7 @@ struct ValidationReport {
 
 // Structural checks + simulate_decode(). This is the gate the M2 integration
 // must call before writing any bits.
-bool validate_plan(const Plan& plan, ValidationReport* report);
+[[nodiscard]] bool validate_plan(const Plan& plan, ValidationReport* report);
 
 }  // namespace av2enc::inter::bframes
 

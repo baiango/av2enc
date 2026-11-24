@@ -85,7 +85,7 @@ std::size_t write_sequence_filter_config(BitWriter& writer,
 
 // Mirror.  `sb_64x64` is only needed when a future GDF flag is present; M1
 // rejects enable_gdf.
-bool read_sequence_filter_config(BitReader& reader,
+[[nodiscard]] bool read_sequence_filter_config(BitReader& reader,
                                  bool single_picture_header_flag,
                                  bool sb_64x64,
                                  SequenceFilterConfig* config,
@@ -129,7 +129,7 @@ std::size_t write_cdef_params(BitWriter& writer, const CdefParams& params,
                               const CdefHeaderContext& context,
                               std::string* error);
 
-bool read_cdef_params(BitReader& reader, const CdefHeaderContext& context,
+[[nodiscard]] bool read_cdef_params(BitReader& reader, const CdefHeaderContext& context,
                       CdefParams* params, std::string* error);
 
 // §5.20.10.1 read_cdef().  The existing helper in
@@ -143,17 +143,17 @@ struct CdefTileState {
   int sb_width_log2 = 4;
 };
 
-bool cdef_tile_init(CdefTileState* state, int mi_cols, int mi_rows,
+[[nodiscard]] bool cdef_tile_init(CdefTileState* state, int mi_cols, int mi_rows,
                     int strengths, int sb_width_log2, std::string* error);
 
 // §5.20.9.6 clear_cdef() for the 64x64 block containing (mi_row, mi_col).
 void cdef_clear_superblock(CdefTileState* state, int mi_row, int mi_col);
 
-bool cdef_write_block(av2::Encoder& encoder, CdefTileState& state,
+[[nodiscard]] bool cdef_write_block(av2::Encoder& encoder, CdefTileState& state,
                       int tile_mi_col_start, int tile_mi_row_start,
                       int mi_row, int mi_col, int idx, std::string* error);
 
-bool cdef_read_block(av2::Decoder& decoder, CdefTileState& state,
+[[nodiscard]] bool cdef_read_block(av2::Decoder& decoder, CdefTileState& state,
                      int tile_mi_col_start, int tile_mi_row_start,
                      int mi_row, int mi_col, int* idx, std::string* error);
 
@@ -219,12 +219,12 @@ std::size_t write_ccso_params(BitWriter& writer, CcsoParams& params,
                               std::string* error,
                               CcsoHeaderBits* bits = nullptr);
 
-bool read_ccso_params(BitReader& reader, const CcsoHeaderContext& context,
+[[nodiscard]] bool read_ccso_params(BitReader& reader, const CcsoHeaderContext& context,
                       CcsoParams* params, std::string* error);
 
 // Fills restoration::CcsoParams.offsets from params.offset_idx.  Does not link
 // restoration.cpp: the offset table is inline in restoration_common.h.
-bool ccso_fill_offsets(const CcsoPlaneParams& params,
+[[nodiscard]] bool ccso_fill_offsets(const CcsoPlaneParams& params,
                        restoration::CcsoParams* out, std::string* error);
 
 // Number of ccso_offset_idx values a plane reads.
@@ -243,16 +243,16 @@ struct CcsoTileState {
   std::uint16_t cdf[3][4][3] = {};
 };
 
-bool ccso_tile_init(CcsoTileState* state, const CcsoParams& params,
+[[nodiscard]] bool ccso_tile_init(CcsoTileState* state, const CcsoParams& params,
                     int mi_cols, int mi_rows, int sub_x, int sub_y,
                     std::string* error);
 
 // `blk` is the CcsoBlks value for each plane (ignored when the plane is
 // disabled).  A call at a non-unit-origin block is a no-op.
-bool ccso_write_block(av2::Encoder& encoder, CcsoTileState& state, int mi_row,
+[[nodiscard]] bool ccso_write_block(av2::Encoder& encoder, CcsoTileState& state, int mi_row,
                       int mi_col, const int blk[3], std::string* error);
 
-bool ccso_read_block(av2::Decoder& decoder, CcsoTileState& state, int mi_row,
+[[nodiscard]] bool ccso_read_block(av2::Decoder& decoder, CcsoTileState& state, int mi_row,
                      int mi_col, int blk[3], std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -318,7 +318,7 @@ std::size_t write_lr_params(BitWriter& writer, LrParams& params,
                             const LrHeaderContext& context,
                             std::string* error);
 
-bool read_lr_params(BitReader& reader, const LrHeaderContext& context,
+[[nodiscard]] bool read_lr_params(BitReader& reader, const LrHeaderContext& context,
                     LrParams* params, std::string* error);
 
 // Largest per-plane unit grid, used by the frame filters and the §7.20 stage.
@@ -380,7 +380,7 @@ struct LrState {
 
 // Initialises CDFs, banks (as decode_tile() does), unit grids and the frame
 // filter state from `params`.
-bool lr_state_init(LrState* state, const LrParams& params, int mi_cols,
+[[nodiscard]] bool lr_state_init(LrState* state, const LrParams& params, int mi_cols,
                    int mi_rows, int sub_x, int sub_y, int sb_size,
                    std::string* error);
 
@@ -396,7 +396,7 @@ void lr_state_store_cdfs(
 
 // §5.20.10.4 read_lr(): the restoration units covered by one superblock.
 // `w4`/`h4` are Num_4x4_Blocks_Wide/High of the block (16 for a 64x64 SB).
-bool lr_unit_range(const LrState& state, int plane, int mi_row, int mi_col,
+[[nodiscard]] bool lr_unit_range(const LrState& state, int plane, int mi_row, int mi_col,
                    int w4, int h4, int tile_mi_row_start,
                    int tile_mi_col_start, LrUnitRange* range,
                    std::string* error);
@@ -411,7 +411,7 @@ int lr_block_unit_count(const LrState& state, int mi_row, int mi_col, int w4,
 // the smallest Wiener_Ns_Taps_Present subset that covers every non-zero
 // coefficient, and sets uv_sym when the chroma pairs are equal.  It does not
 // invent coefficients or bank merges.
-bool lr_build_decisions(const LrState& state, int mi_row, int mi_col, int w4,
+[[nodiscard]] bool lr_build_decisions(const LrState& state, int mi_row, int mi_col, int w4,
                         int h4, int tile_mi_row_start,
                         int tile_mi_col_start,
                         std::vector<LrUnitDecision>* decisions,
@@ -420,24 +420,24 @@ bool lr_build_decisions(const LrState& state, int mi_row, int mi_col, int w4,
 // Writes read_lr() for one superblock.  `decisions` must contain exactly
 // lr_block_unit_count() entries, in the order read_lr() visits them
 // (plane-major, then unitRow, then unitCol).
-bool lr_write_block(av2::Encoder& encoder, LrState& state, int mi_row,
+[[nodiscard]] bool lr_write_block(av2::Encoder& encoder, LrState& state, int mi_row,
                     int mi_col, int w4, int h4, int tile_mi_row_start,
                     int tile_mi_col_start,
                     const std::vector<LrUnitDecision>& decisions,
                     std::string* error);
 
 // Mirror.  Fills `decisions` (when non-null) and the LrType/coefficient grids.
-bool lr_read_block(av2::Decoder& decoder, LrState& state, int mi_row,
+[[nodiscard]] bool lr_read_block(av2::Decoder& decoder, LrState& state, int mi_row,
                    int mi_col, int w4, int h4, int tile_mi_row_start,
                    int tile_mi_col_start,
                    std::vector<LrUnitDecision>* decisions, std::string* error);
 
 // §5.20.10.5 read_lr_unit() / §5.20.10.6 read_wienerns_filter(), exposed for
 // callers that already know the unit indices.
-bool lr_write_unit(av2::Encoder& encoder, LrState& state, int plane,
+[[nodiscard]] bool lr_write_unit(av2::Encoder& encoder, LrState& state, int plane,
                    int unit_row, int unit_col,
                    const LrUnitDecision& decision, std::string* error);
-bool lr_read_unit(av2::Decoder& decoder, LrState& state, int plane,
+[[nodiscard]] bool lr_read_unit(av2::Decoder& decoder, LrState& state, int plane,
                   int unit_row, int unit_col, LrUnitDecision* decision,
                   std::string* error);
 

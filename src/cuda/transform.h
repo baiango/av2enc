@@ -46,7 +46,7 @@ std::optional<TxParams> make_tx_params(int coded_w, int coded_h, bool luma);
 
 // True for an adjusted transform size handled by the kernels: any combination
 // of {4, 8, 16, 32} x {4, 8, 16, 32}.
-bool tx_size_supported(int w, int h);
+[[nodiscard]] bool tx_size_supported(int w, int h);
 
 // ---------------------------------------------------------------------------
 // Stage kernels. `nblocks` independent blocks are processed per call; block b

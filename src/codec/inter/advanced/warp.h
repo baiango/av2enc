@@ -71,19 +71,19 @@ struct WarpBlockGeometry {
 };
 
 // True when §7.13.3.14 must fall back from block warp to extended warp.
-bool warp_needs_extended(const WarpParams& params, const WarpBlockGeometry& geom);
+[[nodiscard]] bool warp_needs_extended(const WarpParams& params, const WarpBlockGeometry& geom);
 
 // §7.13.3.19 over a whole block: 8x8 sections.
-bool warp_predict(const WarpParams& params, const PlaneView& ref, const WarpBlockGeometry& geom,
+[[nodiscard]] bool warp_predict(const WarpParams& params, const PlaneView& ref, const WarpBlockGeometry& geom,
                   bool compound, std::int16_t* dst, int dst_stride);
 
 // §7.13.3.20 over a whole block: 4x4 sections of one translation each.
-bool warp_predict_ext(const WarpParams& params, const PlaneView& ref, const WarpBlockGeometry& geom,
+[[nodiscard]] bool warp_predict_ext(const WarpParams& params, const PlaneView& ref, const WarpBlockGeometry& geom,
                       bool compound, std::int16_t* dst, int dst_stride);
 
 // Convenience for the single-reference path: writes clipped uint8 samples into
 // `dst` at (geom.dst_x, geom.dst_y).
-bool warp_predict_u8(const WarpParams& params, const PlaneView& ref, const WarpBlockGeometry& geom,
+[[nodiscard]] bool warp_predict_u8(const WarpParams& params, const PlaneView& ref, const WarpBlockGeometry& geom,
                      const MutablePlaneView& dst);
 
 // Encoder-side: estimate the local warp model from candidate correspondences.
@@ -108,7 +108,7 @@ std::int64_t warp_block_sse(const WarpParams& params, const PlaneView& ref,
                             int scratch_stride);
 
 // True if the reference is scaled relative to the current frame.
-bool warp_ref_is_scaled(const WarpBlockGeometry& geom);
+[[nodiscard]] bool warp_ref_is_scaled(const WarpBlockGeometry& geom);
 
 }  // namespace av2enc::inter::adv
 

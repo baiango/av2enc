@@ -87,14 +87,14 @@ struct CandidateOutcome {
 
 // Evaluates every candidate of every request.  `requests[i].residual_coded`
 // points at host memory.  Outcomes are grouped by block in candidate order.
-bool evaluate_batch(const Request* requests, int count,
+[[nodiscard]] bool evaluate_batch(const Request* requests, int count,
                     const BatchOptions& options,
                     std::vector<CandidateOutcome>* outcomes,
                     std::string* error = nullptr);
 
 // Full decision batch.  Fills `decisions[0..count)`; on failure returns false
 // and leaves decisions reset (`valid == false`).
-bool quantize_batch(const Request* requests, int count,
+[[nodiscard]] bool quantize_batch(const Request* requests, int count,
                     const BatchOptions& options, Decision* decisions,
                     std::string* error = nullptr);
 

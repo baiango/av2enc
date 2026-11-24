@@ -100,7 +100,7 @@ struct TileOutput {
 // `leaves` is raster order, one per 4x4 block.  On success `stats[i].chosen_mv`
 // is the MV the encoder reconstructs with and the tile writer used for the
 // MiInfo grid.
-bool write_drl_tile(int width, int height, const std::vector<LeafPlan>& leaves,
+[[nodiscard]] bool write_drl_tile(int width, int height, const std::vector<LeafPlan>& leaves,
                     const TileConfig& config, TileOutput* out,
                     std::string* error);
 

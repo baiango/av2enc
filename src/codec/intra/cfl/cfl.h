@@ -70,7 +70,7 @@ struct SearchResult {
 
 // Structural validation. Returns false for a descriptor the reference does not
 // handle (null plane, block larger than 64x64, bad bit depth / subsampling).
-bool valid(const Block& block);
+[[nodiscard]] bool valid(const Block& block);
 
 // §7.13.5: fills scratch.luma_avg, scratch.luma_above[0..w),
 // scratch.luma_left[0..h) and scratch.luma[i*w+j]. Call once per block; both
@@ -118,7 +118,7 @@ void apply_prediction_pair(const Block& u, const Block& v,
 // §5.20.5.6 cflAllowed derivation for the current chroma residual size.
 // `chroma_w`/`chroma_h` are the plane residual dimensions (Block_Width/
 // Block_Height of planeSz). Lossless CfL is limited to 4x4.
-bool cfl_allowed(int chroma_w, int chroma_h, bool enable_cfl_intra,
+[[nodiscard]] bool cfl_allowed(int chroma_w, int chroma_h, bool enable_cfl_intra,
                  bool is_chroma_part, bool frame_is_intra,
                  bool cfl_allowed_in_sdp, bool lossless);
 

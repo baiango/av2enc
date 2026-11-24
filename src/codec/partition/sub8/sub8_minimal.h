@@ -28,7 +28,7 @@ StillConfig minimal_config(const FrameGeometry& geometry,
 // payload uses the supplied superblock trees.  Optionally returns the leaves
 // parsed back by the independent reader so callers can assert round-trip
 // agreement.
-bool make_minimal_frame(const FrameGeometry& geometry,
+[[nodiscard]] bool make_minimal_frame(const FrameGeometry& geometry,
                         std::span<const Node> superblocks,
                         const SyntaxOptions& options,
                         std::vector<std::uint8_t>& frame,

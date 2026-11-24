@@ -37,7 +37,7 @@ constexpr int mrl_angle_delta(int mrl_index) {
   return mrl_index == 1 ? 1 : (mrl_index == 2 ? -1 : 0);
 }
 
-bool mode_allows_mrl(Mode mode) noexcept;
+[[nodiscard]] bool mode_allows_mrl(Mode mode) noexcept;
 
 enum class MrlStatus : std::uint8_t {
   kOk = 0,

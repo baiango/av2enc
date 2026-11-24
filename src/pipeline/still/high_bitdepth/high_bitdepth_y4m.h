@@ -22,15 +22,15 @@ struct Y4mFrameInfo {
 
 // Reads the first frame of `path`.  Accepts C420/C420jpeg/C420mpeg2/C420paldv
 // (8-bit) and C420p10.
-bool read_y4m_10bit(const std::string& path, fmt::Picture* picture,
+[[nodiscard]] bool read_y4m_10bit(const std::string& path, fmt::Picture* picture,
                     Y4mFrameInfo* info, std::string* error);
 
 // Writes one C420p10 frame using the visible rectangle of `picture`.
-bool write_y4m_10bit(const std::string& path, const fmt::Picture& picture,
+[[nodiscard]] bool write_y4m_10bit(const std::string& path, const fmt::Picture& picture,
                      std::string* error);
 
 // Writes the visible 10-bit planes of an M10 reconstruction.
-bool write_y4m_10bit_planes(const std::string& path, std::uint32_t width,
+[[nodiscard]] bool write_y4m_10bit_planes(const std::string& path, std::uint32_t width,
                             std::uint32_t height,
                             const std::uint16_t* y, int y_stride,
                             const std::uint16_t* u, int u_stride,

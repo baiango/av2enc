@@ -27,7 +27,7 @@ namespace av2enc::cuda::tcq {
 // buffer capacity; the adjusted block area must fit.  `tx_class` is
 // 0 = TX_CLASS_2D, 1 = TX_CLASS_HORIZ, 2 = TX_CLASS_VERT; `plane` is 0..2.
 // `count`, `w` and `h` receive the adjusted area and dimensions.
-bool tcq_scan_and_pre_max(int tx_size, int tx_class, int plane,
+[[nodiscard]] bool tcq_scan_and_pre_max(int tx_size, int tx_class, int plane,
                           int max_coefficients, int* count, int* w, int* h,
                           std::int32_t* scan, std::int32_t* pre_max,
                           std::string* error = nullptr);
@@ -39,7 +39,7 @@ bool tcq_scan_and_pre_max(int tx_size, int tx_class, int plane,
 // evaluates, so the stored doubles are the exact callback results.  Returns
 // false (with a diagnostic) if a callback returns a non-finite or negative
 // rate, or if a derived level bound does not fit `job.table_levels`.
-bool tcq_fill_rate_tables(const TcqJob& job, const double* original,
+[[nodiscard]] bool tcq_fill_rate_tables(const TcqJob& job, const double* original,
                           const std::int32_t* pre_max,
                           const std::int32_t* level_context,
                           const av2enc::tcq::RateModel& model,

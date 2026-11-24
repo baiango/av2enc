@@ -190,6 +190,6 @@ cudaError_t inverse_batch_device(const std::int32_t* d_input,
 // True when every field of `job` is a legal AV2 transform configuration for
 // the requested direction (used by the arena entry points).  When `error` is
 // non-null it receives a description of the first failure.
-bool valid_job(const DdtJob& job, Direction direction, std::string* error);
+[[nodiscard]] bool valid_job(const DdtJob& job, Direction direction, std::string* error);
 
 }  // namespace av2enc::cuda::ddt

@@ -45,8 +45,8 @@ struct PartitionDecideConfig {
   double sse_only_split_cost = 0.0;
 };
 
-bool partition_config_valid(const PartitionDecideConfig& config) noexcept;
-bool validate_partition_config(const PartitionDecideConfig& config,
+[[nodiscard]] bool partition_config_valid(const PartitionDecideConfig& config) noexcept;
+[[nodiscard]] bool validate_partition_config(const PartitionDecideConfig& config,
                                std::string* error = nullptr);
 
 // Converts one node's raw inputs to the partition module's cost form.

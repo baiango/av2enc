@@ -57,22 +57,22 @@ class WienerBitReader {
   std::size_t bit_pos_ = 0;
 };
 
-bool wiener_put_ns(BitWriter& writer, unsigned n, std::uint32_t value,
+[[nodiscard]] bool wiener_put_ns(BitWriter& writer, unsigned n, std::uint32_t value,
                    std::string* error);
 
 // §5.18.9.3–§5.18.9.6.
-bool wiener_encode_signed_subexp_with_ref(BitWriter& writer, int low,
+[[nodiscard]] bool wiener_encode_signed_subexp_with_ref(BitWriter& writer, int low,
                                           int high, int r, int k,
                                           int target, std::string* error);
-bool wiener_decode_signed_subexp_with_ref(WienerBitReader& reader, int low,
+[[nodiscard]] bool wiener_decode_signed_subexp_with_ref(WienerBitReader& reader, int low,
                                           int high, int r, int k,
                                           int* target, std::string* error);
 
 // §5.20.10.6 decode_4part()/decode_signed_4part() (S()-coded).
-bool wiener_encode_signed_4part(av2::Encoder& encoder,
+[[nodiscard]] bool wiener_encode_signed_4part(av2::Encoder& encoder,
                                 std::uint16_t* base_cdf, int low, int k,
                                 int r, int target, std::string* error);
-bool wiener_decode_signed_4part(av2::Decoder& decoder,
+[[nodiscard]] bool wiener_decode_signed_4part(av2::Decoder& decoder,
                                 std::uint16_t* base_cdf, int low, int k,
                                 int r, int* target, std::string* error);
 
@@ -166,12 +166,12 @@ WienerSearchResult wiener_search_frame_filters(
     int plane, int target, const WienerLrHeaderParams& params,
     const WienerReferenceSet& refs, bool nopcw);
 
-bool wiener_write_lr_params(BitWriter& writer,
+[[nodiscard]] bool wiener_write_lr_params(BitWriter& writer,
                             const WienerLrHeaderConfig& config,
                             WienerLrHeaderParams* params,
                             const WienerReferenceSet& refs,
                             std::string* error);
-bool wiener_read_lr_params(WienerBitReader& reader,
+[[nodiscard]] bool wiener_read_lr_params(WienerBitReader& reader,
                            const WienerLrHeaderConfig& config,
                            WienerLrHeaderParams* params,
                            const WienerReferenceSet& refs,
@@ -221,26 +221,26 @@ struct WienerTileState {
   int bank_size[3][kWienerNsClasses] = {};
 };
 
-bool wiener_tile_init(WienerTileState* state,
+[[nodiscard]] bool wiener_tile_init(WienerTileState* state,
                       const WienerLrHeaderParams& params, int mi_cols,
                       int mi_rows, int sub_x, int sub_y,
                       std::string* error);
 
-bool wiener_write_unit(av2::Encoder& encoder, WienerTileState& state,
+[[nodiscard]] bool wiener_write_unit(av2::Encoder& encoder, WienerTileState& state,
                        int plane, int unit_row, int unit_col,
                        const WienerUnitSyntax& unit, std::string* error);
-bool wiener_read_unit(av2::Decoder& decoder, WienerTileState& state,
+[[nodiscard]] bool wiener_read_unit(av2::Decoder& decoder, WienerTileState& state,
                       int plane, int unit_row, int unit_col,
                       WienerUnitSyntax* unit, std::string* error);
 
 // Writes/reads a whole tile in the exact §5.20.10.4 read_lr() order:
 // superblocks in raster order, planes 0..2, then the units covered by that
 // superblock.  `plans[plane]` is indexed by unit_row * unit_cols + unit_col.
-bool wiener_write_tile(av2::Encoder& encoder, WienerTileState& state,
+[[nodiscard]] bool wiener_write_tile(av2::Encoder& encoder, WienerTileState& state,
                        const std::vector<WienerUnitSyntax> plans[3],
                        int sb_size, int tile_mi_row_start,
                        int tile_mi_col_start, std::string* error);
-bool wiener_read_tile(av2::Decoder& decoder, WienerTileState& state,
+[[nodiscard]] bool wiener_read_tile(av2::Decoder& decoder, WienerTileState& state,
                       std::vector<WienerUnitSyntax> plans[3], int sb_size,
                       int tile_mi_row_start, int tile_mi_col_start,
                       std::string* error);
@@ -255,7 +255,7 @@ struct WienerUnitRange {
   int col_end = 0;
 };
 
-bool wiener_unit_range(const WienerTileState& state, int plane, int mi_row,
+[[nodiscard]] bool wiener_unit_range(const WienerTileState& state, int plane, int mi_row,
                        int mi_col, int w4, int h4, int tile_mi_row_start,
                        int tile_mi_col_start, WienerUnitRange* range,
                        std::string* error);

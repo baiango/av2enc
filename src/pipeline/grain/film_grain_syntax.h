@@ -60,7 +60,7 @@ GrainChromaLayout ChromaLayout(GrainChromaIdc idc);
 
 // GrainChromaIdc values must equal chroma_format_idc (§6.17.10.1), so this is
 // a checked cast.
-bool ChromaIdcFromSequence(int chroma_format_idc, GrainChromaIdc* idc);
+[[nodiscard]] bool ChromaIdcFromSequence(int chroma_format_idc, GrainChromaIdc* idc);
 
 // film_grain_model() syntax elements, in the *writer* representation:
 //   * point_*_value[] hold the final (cumulative) x coordinates, 0..255;
@@ -134,7 +134,7 @@ GrainModel NormalizeModel(const GrainModel& model, GrainChromaIdc idc);
 
 // §6.17.10.2 bitstream conformance checks that this writer enforces.  If
 // `why` is non-null it receives a short reason on failure.
-bool ValidateModel(const GrainModel& model, GrainChromaIdc idc, std::string* why);
+[[nodiscard]] bool ValidateModel(const GrainModel& model, GrainChromaIdc idc, std::string* why);
 
 // §5.14 payload: fgm_update_flags, fgm_chroma_idc, and one
 // film_grain_model() + save_grain_model() per set flag bit.
@@ -144,15 +144,15 @@ struct FilmGrainObu {
   GrainModel models[kNumGrainSlots];  // slot i used iff bit i is set
 };
 
-bool ValidateObu(const FilmGrainObu& obu, std::string* why);
+[[nodiscard]] bool ValidateObu(const FilmGrainObu& obu, std::string* why);
 
 // Payload writers/readers.  `WriteObuPayload` writes the §5.14 syntax followed
 // by §5.2.3 trailing_bits().  `ReadObuPayload` parses the syntax, verifies the
 // trailing bits, and reports how many payload bits were consumed (including
 // the trailing one bit, up to but not including zero padding).
-bool WriteObuPayload(BitWriter& writer, const FilmGrainObu& obu,
+[[nodiscard]] bool WriteObuPayload(BitWriter& writer, const FilmGrainObu& obu,
                      std::string* error);
-bool ReadObuPayload(std::span<const std::uint8_t> payload, FilmGrainObu* obu,
+[[nodiscard]] bool ReadObuPayload(std::span<const std::uint8_t> payload, FilmGrainObu* obu,
                     std::size_t* consumed_bits, std::string* error);
 
 // Annex B.2 framing: leb128(size) obu_header() payload.  No extension flag:
@@ -162,7 +162,7 @@ std::vector<std::uint8_t> MakeFilmGrainObu(const FilmGrainObu& obu,
 
 // Parses one complete Annex B OBU starting at `data[0]`.  `consumed` receives
 // the number of bytes (leb128 prefix + header + payload).
-bool ReadFilmGrainObu(std::span<const std::uint8_t> data, FilmGrainObu* obu,
+[[nodiscard]] bool ReadFilmGrainObu(std::span<const std::uint8_t> data, FilmGrainObu* obu,
                       std::size_t* consumed, std::string* error);
 
 // §5.18.10.1 film_grain_config().
@@ -190,16 +190,16 @@ struct FilmGrainConfigContext {
 // Returns true when §5.18.10.1 infers apply_grain (no bit is coded) and stores
 // the inferred value in `value`.  Returns false when apply_grain f(1) is
 // present in the bitstream.
-bool ApplyGrainIsInferred(const FilmGrainConfigContext& ctx, bool* value);
+[[nodiscard]] bool ApplyGrainIsInferred(const FilmGrainConfigContext& ctx, bool* value);
 
 // Writes the syntax.  `error` is set for an invalid config (e.g. fgm_id > 7,
 // apply_grain required by inference but false).
-bool WriteFilmGrainConfig(BitWriter& writer, const FilmGrainConfig& config,
+[[nodiscard]] bool WriteFilmGrainConfig(BitWriter& writer, const FilmGrainConfig& config,
                           const FilmGrainConfigContext& ctx,
                           std::string* error);
 
 // Reads the syntax.  `ctx` supplies the sequence/frame-header state.
-bool ReadFilmGrainConfig(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool ReadFilmGrainConfig(std::span<const std::uint8_t> payload,
                          std::size_t* bit_position,
                          const FilmGrainConfigContext& ctx,
                          FilmGrainConfig* config, std::string* error);
@@ -255,7 +255,7 @@ class GrainSlotState {
 //   FgmChromaIdc[fgm_id] == chroma_format_idc,
 //   TLayerDependencyMap[mlayer][tlayer][FgmTLayerId[fgm_id]] == 1,
 //   MLayerDependencyMap[mlayer][FgmMLayerId[fgm_id]] == 1.
-bool ValidateConfigAvailability(const GrainSlotState& state,
+[[nodiscard]] bool ValidateConfigAvailability(const GrainSlotState& state,
                                 const FilmGrainConfig& config,
                                 GrainChromaIdc frame_chroma_idc,
                                 int tlayer_id, int mlayer_id,
@@ -264,7 +264,7 @@ bool ValidateConfigAvailability(const GrainSlotState& state,
 // Converts to the decode-side synthesis struct (field-for-field; no
 // validation).  Callers pass the frame geometry to
 // spec::FilmGrainModelValid().
-bool ToSynthesisModel(const GrainModel& model,
+[[nodiscard]] bool ToSynthesisModel(const GrainModel& model,
                       spec::FilmGrainModel* out);
 
 // Minimal MSB-first bit reader used to parse OBU payloads and frame headers.

@@ -83,7 +83,7 @@ struct HbdConfig {
 // True when the config is a legal 10-bit still configuration.  Rejects 8-bit
 // and 12-bit (only 10-bit is implemented here), zero/oversized dimensions,
 // base_q_idx 0 (lossless) and base_q_idx > 303.
-bool validate_config(const HbdConfig& config, std::string* error);
+[[nodiscard]] bool validate_config(const HbdConfig& config, std::string* error);
 
 // sequence_header_obu() syntax bits only (no obu_extension_flag, no trailing
 // bits).  bit_depth_idc comes from fmt::bit_depth_idc(k10) == 0.

@@ -134,13 +134,13 @@ LegalSplits legal_splits(int mi_size, bool reduced_tx_part_set = false);
 // Resolves one TxPartition into concrete TX blocks.  Returns false when the
 // partition is not legal for this block size (including HORZ4/VERT4 in the
 // reduced set and HORZ5/VERT5, which the syntax cannot signal).
-bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
+[[nodiscard]] bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
                            TxPartition part, SplitGeometry* out,
                            std::string* error = nullptr);
 
 // True when the *syntax* can represent this partition for this block size,
 // independent of the caller's reduced-set configuration.
-bool tx_partition_signallable(int mi_size, TxPartition part);
+[[nodiscard]] bool tx_partition_signallable(int mi_size, TxPartition part);
 
 // ---------------------------------------------------------------------------
 // §9.3 CDF state (one copy per tile/frame; the entropy coder adapts in place).
@@ -240,12 +240,12 @@ struct LumaTxGrid {
 // The returned part origins are relative to (0,0); use the driver functions
 // (or tx_partition_geometry() with the real coding-block origin) when the
 // block is not at the tile origin.
-bool write_tx_partition(SymbolSink& sink, TxPartitionCdfs& cdfs,
+[[nodiscard]] bool write_tx_partition(SymbolSink& sink, TxPartitionCdfs& cdfs,
                         const BlockTxContext& ctx, TxPartition decision,
                         SplitGeometry* geometry, std::string& error);
 
 // Independent reader for one read_tx_partition() call.
-bool read_tx_partition(SymbolSource& source, TxPartitionCdfs& cdfs,
+[[nodiscard]] bool read_tx_partition(SymbolSource& source, TxPartitionCdfs& cdfs,
                        const BlockTxContext& ctx, int mi_row, int mi_col,
                        TxPartition* decision, SplitGeometry* geometry,
                        std::string& error);
@@ -258,22 +258,22 @@ using PartitionDecider = std::function<bool(
 
 // Mirrors read_tx_size(allowSelect).  Returns true and fills `grid`; also
 // reports whether partition syntax was coded (`partitioned`).
-bool write_tx_size(SymbolSink& sink, TxPartitionCdfs& cdfs,
+[[nodiscard]] bool write_tx_size(SymbolSink& sink, TxPartitionCdfs& cdfs,
                    const TxSizeContext& ctx, bool allow_select,
                    const PartitionDecider& decide, LumaTxGrid& grid,
                    bool* partitioned, std::string& error);
 
 // Mirrors read_block_tx_size().
-bool write_block_tx_size(SymbolSink& sink, TxPartitionCdfs& cdfs,
+[[nodiscard]] bool write_block_tx_size(SymbolSink& sink, TxPartitionCdfs& cdfs,
                          const TxSizeContext& ctx,
                          const PartitionDecider& decide, LumaTxGrid& grid,
                          std::string& error);
 
 // Independent readers for the two drivers.
-bool read_tx_size(SymbolSource& source, TxPartitionCdfs& cdfs,
+[[nodiscard]] bool read_tx_size(SymbolSource& source, TxPartitionCdfs& cdfs,
                   const TxSizeContext& ctx, bool allow_select,
                   LumaTxGrid& grid, bool* partitioned, std::string& error);
-bool read_block_tx_size(SymbolSource& source, TxPartitionCdfs& cdfs,
+[[nodiscard]] bool read_block_tx_size(SymbolSource& source, TxPartitionCdfs& cdfs,
                         const TxSizeContext& ctx, LumaTxGrid& grid,
                         std::string& error);
 

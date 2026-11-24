@@ -81,7 +81,7 @@ struct TxTypeDecision {
 // `levels_out` and `recon_out` receive the winner.  All are caller-owned.  The
 // stream workspace must be initialised internally from each candidate, so it
 // is passed in to avoid a 28 KiB object per candidate.
-bool decide_tx_type(const std::int16_t* residual_coded, int coded_w,
+[[nodiscard]] bool decide_tx_type(const std::int16_t* residual_coded, int coded_w,
                     int coded_h, int mapped_mode, int reduced_tx_set,
                     bool dct_only, const TxTypeDecisionConfig& config,
                     std::span<std::int32_t> levels_scratch,
@@ -123,12 +123,12 @@ struct RdoqDecision {
   bool level_range_truncated = false;
 };
 
-bool rdoq_config_valid(const RdoqConfig& config) noexcept;
+[[nodiscard]] bool rdoq_config_valid(const RdoqConfig& config) noexcept;
 
 // Runs the trellis.  `scalar_levels_scan` seeds the rate contexts and is not
 // modified.  `levels_out` has w*h entries and receives the winner in scan
 // order; positions at/after eob are zero.  No allocation.
-bool decide_rdoq(std::span<const double> original_scan,
+[[nodiscard]] bool decide_rdoq(std::span<const double> original_scan,
                  std::span<const std::int32_t> scalar_levels_scan,
                  int plane, int tx_size, int w, int h,
                  int txb_skip_context, int dc_sign_context,

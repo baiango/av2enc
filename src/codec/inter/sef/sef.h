@@ -172,7 +172,7 @@ std::vector<std::uint8_t> make_sef_temporal_unit(const SefParams& params,
 
 // Parses a complete SEF OBU and verifies its leb128 framing and trailing bits.
 // On success `bytes_consumed` is the OBU size (prefix + header + payload).
-bool parse_sef_obu(std::span<const std::uint8_t> bytes, const SefParams& params,
+[[nodiscard]] bool parse_sef_obu(std::span<const std::uint8_t> bytes, const SefParams& params,
                    SefHeader& header, std::size_t& bytes_consumed,
                    SefError* error);
 
@@ -180,7 +180,7 @@ bool parse_sef_obu(std::span<const std::uint8_t> bytes, const SefParams& params,
 // `bits_consumed` is the number of frame_header syntax bits, i.e. the bit
 // position before trailing_bits. The trailing pattern is verified against the
 // end of the payload.
-bool parse_sef_frame_header(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool parse_sef_frame_header(std::span<const std::uint8_t> payload,
                             const SefParams& params, SefHeader& header,
                             std::size_t& bits_consumed, SefError* error);
 
@@ -240,7 +240,7 @@ void mark_shown(SlotMap& map, std::uint8_t index);
 //   * derive=0: get_disp_order_hint(sef_order_hint) is in range.
 // It deliberately does not require the explicit hint to equal the referenced
 // frame's OrderHint; the pinned decoder does (see validate_dav2d_compat).
-bool validate_sef_reference(const SlotMap& map, const SefParams& params,
+[[nodiscard]] bool validate_sef_reference(const SlotMap& map, const SefParams& params,
                             const SefHeader& header, SefError* error);
 
 // §5.18.2 get_disp_order_hint() for the SEF path. `order_hint_lsbs` is the
@@ -253,7 +253,7 @@ std::uint32_t disp_order_hint(std::uint32_t order_hint_lsbs,
 // Finds the OrderHintBits-wide value the decoder must read to reconstruct
 // `target_order_hint`. Returns false when the target is outside the
 // reconstructible window.
-bool sef_order_hint_lsbs(std::uint32_t target_order_hint,
+[[nodiscard]] bool sef_order_hint_lsbs(std::uint32_t target_order_hint,
                          std::uint32_t max_disp_order_hint,
                          std::uint8_t order_hint_bits,
                          std::uint32_t& order_hint_lsbs);
@@ -263,7 +263,7 @@ bool sef_order_hint_lsbs(std::uint32_t target_order_hint,
 //   * otherwise derive=0 with sef_order_hint chosen so the decoder
 //     reconstructs the referenced frame's OrderHint.
 // Returns false with a SefError when the slot cannot be shown.
-bool make_show_header(const SlotMap& map, const SefParams& params,
+[[nodiscard]] bool make_show_header(const SlotMap& map, const SefParams& params,
                       std::uint8_t index, SefKind kind, SefHeader& header,
                       SefError* error);
 
@@ -277,13 +277,13 @@ bool make_show_header(const SlotMap& map, const SefParams& params,
 // normal case when an SEF re-shows an already-output frame; `--outputinvisible
 // 1` bypasses that dedup. These two helpers make those behaviours explicit so
 // the gate can state exactly what it expects.
-bool validate_dav2d_compat(const SlotMap& map, const SefParams& params,
+[[nodiscard]] bool validate_dav2d_compat(const SlotMap& map, const SefParams& params,
                            const SefHeader& header, SefError* error);
 
 // True when the pinned decoder will suppress the extra output unless run with
 // --outputinvisible 1: the referenced frame has already been output and the
 // SEF uses the explicit-hint path (derive=0).
-bool dav2d_needs_output_invisible(const RefSlotState& slot);
+[[nodiscard]] bool dav2d_needs_output_invisible(const RefSlotState& slot);
 
 // ---------------------------------------------------------------------------
 // Small helpers shared by the gate / tests

@@ -65,7 +65,7 @@ struct VideoBitDepthChecklist {
 // only requires even dimensions; the MI-aligned padded region is reconstructed
 // and cropped back to the visible size on output.
 // Returns false with `reason` on a geometry the current writer cannot code.
-bool video_geometry_supported(int width, int height, int sb_size,
+[[nodiscard]] bool video_geometry_supported(int width, int height, int sb_size,
                            std::string* reason = nullptr);
 
 // Build the checklist from the frame geometry, format and frame qindex.

@@ -130,16 +130,16 @@ struct GrainObuView {
 };
 
 // True for OBU types that carry a coded frame (§7.3.3/§7.3.4).
-bool IsFrameObuType(std::uint8_t type);
+[[nodiscard]] bool IsFrameObuType(std::uint8_t type);
 
 // Splits an Annex B temporal unit into OBUs.
-bool ParseTemporalUnit(std::span<const std::uint8_t> unit,
+[[nodiscard]] bool ParseTemporalUnit(std::span<const std::uint8_t> unit,
                        std::vector<GrainObuView>* obus, std::string* error);
 
 // Inserts a film grain OBU immediately before the coded-frame OBU.  Fails if
 // the unit already contains a film grain OBU (at most one model OBU per
 // frame unit in this encoder) or has no frame OBU.
-bool InsertFilmGrainObu(std::span<const std::uint8_t> unit,
+[[nodiscard]] bool InsertFilmGrainObu(std::span<const std::uint8_t> unit,
                         std::span<const std::uint8_t> obu_bytes,
                         std::vector<std::uint8_t>* out, std::string* error);
 
@@ -148,7 +148,7 @@ bool InsertFilmGrainObu(std::span<const std::uint8_t> unit,
 // schedule puts the hidden OLK and its leading P in one unit); the model OBU
 // belongs immediately before the frame OBU it applies to, and §7.3.8.8 only
 // requires the model to be available before that header is parsed.
-bool InsertFilmGrainObuBeforeFrame(std::span<const std::uint8_t> unit,
+[[nodiscard]] bool InsertFilmGrainObuBeforeFrame(std::span<const std::uint8_t> unit,
                                    std::size_t frame_ordinal,
                                    std::span<const std::uint8_t> obu_bytes,
                                    std::vector<std::uint8_t>* out,
@@ -162,9 +162,9 @@ bool InsertFilmGrainObuBeforeFrame(std::span<const std::uint8_t> unit,
 // followed by trailing_bits().  The last set bit in the payload is therefore
 // trailing_one_bit, the bit before it is obu_extension_flag, and the bit
 // before that is film_grain_params_present.
-bool ReadSequenceHeaderFilmGrainPresent(std::span<const std::uint8_t> unit,
+[[nodiscard]] bool ReadSequenceHeaderFilmGrainPresent(std::span<const std::uint8_t> unit,
                                         bool* present, std::string* error);
-bool PatchSequenceHeaderFilmGrainPresent(std::vector<std::uint8_t>* unit,
+[[nodiscard]] bool PatchSequenceHeaderFilmGrainPresent(std::vector<std::uint8_t>* unit,
                                          bool present, std::string* error);
 
 }  // namespace av2enc::filters::grain

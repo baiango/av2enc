@@ -42,12 +42,12 @@ void build_wedge_mask(int bsize, int wedge_sign, int wedge_index, std::uint8_t* 
 int wedge_index_from_angle_dist(int wedge_angle, int wedge_dist);
 
 // True when `read_wedge_mode()` can signal this wedge index.
-bool wedge_index_signalable(int wedge_index);
+[[nodiscard]] bool wedge_index_signalable(int wedge_index);
 
 // Applies a fully specified job. Returns false for a structurally invalid job
 // (null planes, block outside the destination plane, illegal type/size) without
 // touching memory.
-bool apply_compound(const CompoundJob& job);
+[[nodiscard]] bool apply_compound(const CompoundJob& job);
 
 struct CompoundSearchInput {
   int bsize = tables::kBlock64x64;
@@ -149,7 +149,7 @@ std::optional<InterIntraDecision> search_inter_intra(const InterIntraSearchInput
 
 // Applies one inter-intra candidate to `scratch` (used by the search and by
 // apply_compound()). `inter_pred` is copied into scratch first.
-bool apply_inter_intra(const InterIntraSearchInput& in, InterIntraMode mode, bool wedge_interintra,
+[[nodiscard]] bool apply_inter_intra(const InterIntraSearchInput& in, InterIntraMode mode, bool wedge_interintra,
                        int wedge_index);
 
 // ---------------------------------------------------------------------------

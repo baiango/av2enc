@@ -50,7 +50,7 @@ void filter_corner(av2enc::intra::EdgeRow& above,
 
 // Applies the reference when `filter_corner_applies(w, h, p_angle)`.  Returns
 // true when the corner was modified.
-bool filter_corner_if_applicable(int w, int h, int p_angle,
+[[nodiscard]] bool filter_corner_if_applicable(int w, int h, int p_angle,
                                  av2enc::intra::EdgeRow& above,
                                  av2enc::intra::EdgeRow& left) noexcept;
 

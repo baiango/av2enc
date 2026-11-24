@@ -139,7 +139,7 @@ std::size_t WriteSequenceFilterConfig(BitWriter& writer,
                                       const SequenceFilterConfig& config,
                                       bool single_picture_header_flag,
                                       std::string* error);
-bool ReadSequenceFilterConfig(Reader& reader, bool single_picture_header_flag,
+[[nodiscard]] bool ReadSequenceFilterConfig(Reader& reader, bool single_picture_header_flag,
                               SequenceFilterConfig* config, std::string* error);
 std::size_t SequenceFilterConfigBits(const SequenceFilterConfig& config,
                                      bool single_picture_header_flag,
@@ -201,7 +201,7 @@ struct LrHeaderContext {
 // with what a decoder will reconstruct.  Returns exact bits or 0 on error.
 std::size_t WriteLrParams(BitWriter& writer, LrParams* params,
                           const LrHeaderContext& context, std::string* error);
-bool ReadLrParams(Reader& reader, const LrHeaderContext& context,
+[[nodiscard]] bool ReadLrParams(Reader& reader, const LrHeaderContext& context,
                   LrParams* params, std::string* error);
 std::size_t LrParamsBits(LrParams* params, const LrHeaderContext& context,
                          std::string* error);
@@ -247,7 +247,7 @@ struct TileState {
   std::uint16_t wiener_ns_base[5] = {};
 };
 
-bool InitTileState(TileState* state, const LrParams& params, int mi_cols,
+[[nodiscard]] bool InitTileState(TileState* state, const LrParams& params, int mi_cols,
                    int mi_rows, int sub_x, int sub_y, std::string* error);
 
 // §8.2.2: seed the tile LR CDFs from the §8.2 frame image and store the
@@ -257,10 +257,10 @@ bool InitTileState(TileState* state, const LrParams& params, int mi_cols,
 void TileStateSeedCdfs(TileState* state, const lr_cdf::Image& image);
 void TileStateStoreCdfs(const TileState& state, lr_cdf::Image* image);
 
-bool WriteUnit(av2::Encoder& encoder, TileState& state, int plane,
+[[nodiscard]] bool WriteUnit(av2::Encoder& encoder, TileState& state, int plane,
                int unit_row, int unit_col, const UnitDecision& decision,
                std::string* error);
-bool ReadUnit(av2::Decoder& decoder, TileState& state, int plane,
+[[nodiscard]] bool ReadUnit(av2::Decoder& decoder, TileState& state, int plane,
               int unit_row, int unit_col, UnitDecision* decision,
               std::string* error);
 
@@ -271,16 +271,16 @@ struct UnitRange {
   int col_end = 0;
 };
 
-bool UnitRangeFor(TileState& state, int plane, int mi_row, int mi_col, int w4,
+[[nodiscard]] bool UnitRangeFor(TileState& state, int plane, int mi_row, int mi_col, int w4,
                   int h4, int tile_mi_row_start, int tile_mi_col_start,
                   UnitRange* range, std::string* error);
 
-bool WriteBlock(av2::Encoder& encoder, TileState& state, int mi_row,
+[[nodiscard]] bool WriteBlock(av2::Encoder& encoder, TileState& state, int mi_row,
                 int mi_col, int w4, int h4, int tile_mi_row_start,
                 int tile_mi_col_start,
                 const std::vector<UnitDecision>& decisions,
                 std::string* error);
-bool ReadBlock(av2::Decoder& decoder, TileState& state, int mi_row, int mi_col,
+[[nodiscard]] bool ReadBlock(av2::Decoder& decoder, TileState& state, int mi_row, int mi_col,
                int w4, int h4, int tile_mi_row_start, int tile_mi_col_start,
                std::vector<UnitDecision>* decisions, std::string* error);
 
@@ -330,13 +330,13 @@ struct DecisionResult {
 
 // Mode A: FrameRestorationType[0] = RESTORE_PC_WIENER; per-unit on/off.
 // `lambda` is in SSE units per syntax bit (0 = turn on any SSE reduction).
-bool DecidePerUnitPcWiener(const DecisionPlanes& planes, double lambda,
+[[nodiscard]] bool DecidePerUnitPcWiener(const DecisionPlanes& planes, double lambda,
                            DecisionResult* result, std::string* error);
 
 // Mode B: frame_filters_on[0] = 1 and NumFilterClasses = num_classes > 1;
 // each class selects a translated PC-Wiener filter with match + merged bits.
 // The frame type is RESTORE_WIENER_NONSEP.
-bool DecideFrameClassPcWiener(const DecisionPlanes& planes, int num_classes,
+[[nodiscard]] bool DecideFrameClassPcWiener(const DecisionPlanes& planes, int num_classes,
                               double lambda, DecisionResult* result,
                               std::string* error);
 

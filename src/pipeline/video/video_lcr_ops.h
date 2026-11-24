@@ -38,7 +38,7 @@ struct LcrOpsObu {
 // The records are validated with `ops_full::validate_stream()` against the
 // sequence-header values in `config` before any bytes are returned.  `config`
 // must already carry seq_lcr_id = 1 and the final level/tier/layer limits.
-bool make_full_lcr_ops_obus(const VideoConfig& config,
+[[nodiscard]] bool make_full_lcr_ops_obus(const VideoConfig& config,
                             std::vector<LcrOpsObu>& obus, std::string& error);
 
 }  // namespace av2enc::video

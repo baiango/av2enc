@@ -194,13 +194,13 @@ int ccso_offset_count(const CcsoParams& params);
 
 // Fills `params.offsets` from the 7-bit ccso_offset_idx values in the order the
 // syntax reads them.  Returns false on bad indices/counts.
-bool ccso_set_offsets(CcsoParams& params, const std::uint8_t* indices,
+[[nodiscard]] bool ccso_set_offsets(CcsoParams& params, const std::uint8_t* indices,
                       std::size_t count);
 
 // True when the scalar fields are representable by §5.18.7.12: max_band_log2
 // fits f(2 + bo_only) and edge_clf fits f(1).  The filter core accepts a wider
 // range for diagnostics; a real bitstream writer must pass this check.
-bool ccso_header_conforms(const CcsoParams& params);
+[[nodiscard]] bool ccso_header_conforms(const CcsoParams& params);
 
 // Applies §7.19 / §7.19.1 in place to `frame.cdef`.
 RestorationStatus ccso_frame(const RestorationFrame& frame,
@@ -208,7 +208,7 @@ RestorationStatus ccso_frame(const RestorationFrame& frame,
 
 // 10/12-bit CCSO.  `frame.bit_depth` must be 10 or 12; every product chroma
 // format (4:2:0/4:2:2/4:4:4/4:0:0) is supported.
-bool ccso_supported16(const RestorationFrame16& frame,
+[[nodiscard]] bool ccso_supported16(const RestorationFrame16& frame,
                       const CcsoFrameParams& params,
                       RestorationStatus* status);
 RestorationStatus ccso_frame16(const RestorationFrame16& frame,

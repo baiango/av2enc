@@ -30,12 +30,12 @@ struct BridgedSccConfig {
 // palette_stream::ScreenContentFlags -> SCC config.  The palette adapter keeps
 // single_picture_header in its flag block; when it is false the non-single
 // §5.4.7 branch is selected.
-bool from_palette_flags(const palette_stream::ScreenContentFlags& flags,
+[[nodiscard]] bool from_palette_flags(const palette_stream::ScreenContentFlags& flags,
                         BridgedSccConfig& out, std::string& error);
 
 // ibc_stream::StreamConfig -> SCC config.  The M1 IBC stream always uses the
 // single-picture sequence header, so the sequence branch is inferred.
-bool from_ibc_config(const ibc_stream::StreamConfig& config,
+[[nodiscard]] bool from_ibc_config(const ibc_stream::StreamConfig& config,
                      BridgedSccConfig& out, std::string& error);
 
 }  // namespace av2enc::still::scc_flags

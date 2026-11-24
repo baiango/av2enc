@@ -216,7 +216,7 @@ class VideoLoopFilterHooks {
 // `frame.plane`.  Fills `plan` with everything the frame header and the tile
 // writer need.  `hooks` may be null (CPU component cores); when set, every
 // stage's pixels come from the hook instead.
-bool run_video_loop_filters(VideoLoopFilterFrame& frame,
+[[nodiscard]] bool run_video_loop_filters(VideoLoopFilterFrame& frame,
                             const VideoLoopFilterOptions& options,
                             VideoFilterPlan* plan, VideoLoopFilterHooks* hooks,
                             std::string* error);
@@ -224,7 +224,7 @@ bool run_video_loop_filters(VideoLoopFilterFrame& frame,
 // Applies one stage's pixels with the CPU component cores against the plan's
 // decision.  `frame.plane` is filtered in place.  Used by
 // run_video_loop_filters() and by the CPU-emulation backend.
-bool apply_video_filter_stage(VideoFilterStage stage,
+[[nodiscard]] bool apply_video_filter_stage(VideoFilterStage stage,
                               VideoLoopFilterFrame& frame,
                               const VideoFilterPlan& plan,
                               std::string* error);

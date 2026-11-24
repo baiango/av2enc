@@ -83,7 +83,7 @@ struct MinimalMrlFrame {
 
 // Builds the complete temporal unit and the expected luma reconstruction.
 // Returns false with a non-empty error on any inconsistency.
-bool write_minimal_mrl_frame(const MinimalMrlConfig& config,
+[[nodiscard]] bool write_minimal_mrl_frame(const MinimalMrlConfig& config,
                              MinimalMrlFrame& out);
 
 // Sequence header OBU written by this module.  With enable_mrls == false the

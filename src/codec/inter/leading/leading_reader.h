@@ -28,11 +28,11 @@ struct ParsedObu {
 
 // Parses one OBU.  Fails on a truncated leb128, a zero-length OBU, an
 // out-of-range payload size, or a reserved OBU type this module does not know.
-bool parse_obu(std::span<const std::uint8_t> bytes, ParsedObu& obu,
+[[nodiscard]] bool parse_obu(std::span<const std::uint8_t> bytes, ParsedObu& obu,
                std::string& error);
 
 // Parses every OBU in `bytes`.  Trailing bytes that are not a whole OBU fail.
-bool parse_obu_sequence(std::span<const std::uint8_t> bytes,
+[[nodiscard]] bool parse_obu_sequence(std::span<const std::uint8_t> bytes,
                         std::vector<ParsedObu>& obus, std::string& error);
 
 // Fields recovered from §5.18.2 frame_header_info().  Only the fields that vary
@@ -60,13 +60,13 @@ struct ParsedFrameHeader {
 // Parses the tile_group_obu() header from a frame OBU payload.  `type` is the
 // OBU type recovered by parse_obu().  SEF/TIP OBUs are rejected here (they have
 // no tile payload).
-bool parse_frame_header(std::span<const std::uint8_t> payload, ObuType type,
+[[nodiscard]] bool parse_frame_header(std::span<const std::uint8_t> payload, ObuType type,
                         const SequenceConfig& config, ParsedFrameHeader& header,
                         std::string& error);
 
 // Parses and validates sequence_header_obu() for the tool set leading.cpp
 // writes.  Round-trips with make_sequence_header_obu().
-bool parse_sequence_header(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool parse_sequence_header(std::span<const std::uint8_t> payload,
                            SequenceConfig& config, std::string& error);
 
 }  // namespace av2enc::inter::leading

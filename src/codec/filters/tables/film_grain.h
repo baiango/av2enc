@@ -73,7 +73,7 @@ struct FilmGrainFrame {
 
 // Checks the §6.17.10.2 bitstream conformance requirements that matter to the
 // synthesis process.  Returns false and fills `why` on failure.
-bool FilmGrainModelValid(const FilmGrainModel& model, int sub_x, int sub_y,
+[[nodiscard]] bool FilmGrainModelValid(const FilmGrainModel& model, int sub_x, int sub_y,
                          int bit_depth, int num_planes, std::string* why);
 
 // §7.21.7 film grain synthesis.  Modifies frame.plane[0..num_planes-1].

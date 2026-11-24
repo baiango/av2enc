@@ -89,7 +89,7 @@ struct HbdTxBuffers {
 
 // Fills `job->params` from the coded size and TX_TYPE and resets the offsets.
 // Returns false when the coded size is not one of the 25 AV2 transform sizes.
-bool hbd_tx_init_job(HbdTxJob* job, int coded_w, int coded_h,
+[[nodiscard]] bool hbd_tx_init_job(HbdTxJob* job, int coded_w, int coded_h,
                      TxType type = TxType::kDctDct);
 
 // Runs `nblocks` jobs in one launch on `stream`.

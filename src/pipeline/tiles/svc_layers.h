@@ -42,7 +42,7 @@ struct LayerId {
 
 bool operator==(const LayerId& a, const LayerId& b);
 bool operator<(const LayerId& a, const LayerId& b);
-bool validate_layer_id(const LayerId& id, std::string& error);
+[[nodiscard]] bool validate_layer_id(const LayerId& id, std::string& error);
 const char* layer_id_name(const LayerId& id);  // short-lived static buffer
 
 // §5.4.1 dependency arrays. MLayerDependencyMap[curr][ref] and
@@ -61,17 +61,17 @@ struct LayerDependencyMaps {
 
 LayerDependencyMaps default_dependency_maps(int max_mlayer_id,
                                             int max_tlayer_id);
-bool validate_dependency_maps(const LayerDependencyMaps& maps,
+[[nodiscard]] bool validate_dependency_maps(const LayerDependencyMaps& maps,
                               int max_mlayer_id, int max_tlayer_id,
                               std::string& error);
 
 // Returns true when every dependency of every present embedded layer is also
 // present. Bits outside 0..7 are ignored but rejected separately by callers.
-bool mlayer_dependencies_satisfied(std::uint32_t mlayer_map,
+[[nodiscard]] bool mlayer_dependencies_satisfied(std::uint32_t mlayer_map,
                                    const LayerDependencyMaps& maps,
                                    std::string& error);
 
-bool tlayer_dependencies_satisfied(
+[[nodiscard]] bool tlayer_dependencies_satisfied(
     std::uint32_t mlayer_map,
     const std::array<std::uint8_t, kEmbeddedLayerCount>& tlayer_map,
     const LayerDependencyMaps& maps, std::string& error);
@@ -95,7 +95,7 @@ SequenceLayerConfig default_sequence_layer_config(int max_mlayer_id,
                                                   int max_tlayer_id,
                                                   bool single_picture_header);
 
-bool validate_sequence_layer_config(const SequenceLayerConfig& config,
+[[nodiscard]] bool validate_sequence_layer_config(const SequenceLayerConfig& config,
                                     std::string& error);
 
 struct AggregateInfo {
@@ -138,7 +138,7 @@ struct LayerConfigRecord {
   std::vector<ExtendedLayerConfig> layers;
 };
 
-bool validate_layer_config_record(const LayerConfigRecord& record,
+[[nodiscard]] bool validate_layer_config_record(const LayerConfigRecord& record,
                                   const SequenceLayerConfig& sequence,
                                   std::string& error);
 
@@ -160,7 +160,7 @@ struct OperatingPointSet {
   std::vector<OperatingPoint> points;        // ops_cnt entries
 };
 
-bool validate_operating_point_set(const OperatingPointSet& set,
+[[nodiscard]] bool validate_operating_point_set(const OperatingPointSet& set,
                                   const SequenceLayerConfig& sequence,
                                   const LayerConfigRecord* record,
                                   std::string& error);
@@ -176,7 +176,7 @@ struct RetentionMap {
   std::array<bool, kExtendedLayerCount> xlayer_selected{};
 };
 
-bool build_retention_map(const OperatingPointSet& set, int op_index,
+[[nodiscard]] bool build_retention_map(const OperatingPointSet& set, int op_index,
                          const LayerDependencyMaps& maps,
                          RetentionMap& retention, std::string& error);
 

@@ -50,7 +50,7 @@ struct ArenaBudget {
 
 // Returns false with a message when the inputs cannot produce a usable arena.
 // `total` and `free` must both be zero (unknown) or both positive (known).
-bool compute_arena_budget(std::uint64_t total_bytes, std::uint64_t free_bytes,
+[[nodiscard]] bool compute_arena_budget(std::uint64_t total_bytes, std::uint64_t free_bytes,
                           std::uint64_t headroom_bytes,
                           std::uint64_t cap_bytes, ArenaBudget& budget,
                           std::string* error = nullptr);
@@ -93,7 +93,7 @@ struct GpuWorkerPlan {
 // every tile is assigned exactly once, that the GPU index matches the
 // assignment, and that the per-GPU VRAM estimate fits the arena when the plan
 // was built with require_vram_fit = false (callers may still inspect fits).
-bool build_gpu_dispatch(const av2enc::pipeline::FramePipelinePlan& plan,
+[[nodiscard]] bool build_gpu_dispatch(const av2enc::pipeline::FramePipelinePlan& plan,
                         std::uint64_t arena_capacity_bytes,
                         std::vector<GpuWorkerPlan>& workers,
                         std::string* error = nullptr);

@@ -95,7 +95,7 @@ struct ChromaFilterPlanes {
 // `planes->plane`.  Returns false with a precise reason (including the
 // decoder-exactness constraints inherited from the 10-bit writer) and leaves
 // the planes unspecified on failure.
-bool run_chroma_filters(const fmt::Format& format,
+[[nodiscard]] bool run_chroma_filters(const fmt::Format& format,
                         const ChromaFilterPlanes& planes,
                         const std::vector<ChromaFilterBlock>& blocks,
                         const ChromaFilterOptions& options,

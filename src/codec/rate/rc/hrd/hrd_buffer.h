@@ -56,7 +56,7 @@ struct ClockDerivation {
   bool exact_ticks_per_picture = false;
 };
 
-bool derive_clock(const TimingInfo& timing,
+[[nodiscard]] bool derive_clock(const TimingInfo& timing,
                   std::uint32_t num_units_in_decoding_tick,
                   ClockDerivation& clock, std::string* error = nullptr);
 
@@ -96,7 +96,7 @@ struct HrdBufferConfig {
 //     otherwise vbv.buffer_frames * the nominal frame budget.
 // The caller supplies num_units_in_decoding_tick (the DecCT granularity) and
 // can still override any field before planning.
-bool hrd_config_from_twopass(const rc::twopass::TwoPassConfig& config,
+[[nodiscard]] bool hrd_config_from_twopass(const rc::twopass::TwoPassConfig& config,
                              const rc::twopass::VbvState& vbv,
                              std::uint32_t num_units_in_decoding_tick,
                              HrdBufferConfig& out,
@@ -145,7 +145,7 @@ struct BufferTimingPlan {
 // false. frames[0] must be a random access point. The schedule follows the
 // nominal display interval where possible and pushes a frame later (in whole
 // DecCT ticks) only when the arrival model requires it.
-bool plan_buffer_removal(const HrdBufferConfig& config,
+[[nodiscard]] bool plan_buffer_removal(const HrdBufferConfig& config,
                          std::span<const FrameBits> frames,
                          BufferTimingPlan& plan,
                          std::string* error = nullptr);
@@ -183,7 +183,7 @@ struct OpsBufferTimingPlan {
 // br_time_op index. Every timeline must have the same number of frames and
 // frame 0 must be a RAP. All operating points must select the same
 // sequence-level delays (the planner errors if adjustment diverges).
-bool plan_ops_buffer_removal(const HrdBufferConfig& config,
+[[nodiscard]] bool plan_ops_buffer_removal(const HrdBufferConfig& config,
                              std::uint8_t br_ops_id,
                              std::span<const OperatingPointTimeline> ops,
                              OpsBufferTimingPlan& plan,
@@ -204,7 +204,7 @@ enum class TwopassBitSource {
 // the non-kActual sources, otherwise it must have one non-negative entry per
 // plan. Keyframes become random access points. Values are rounded to the
 // nearest bit with deterministic round-half-up.
-bool frames_from_twopass_plans(std::span<const rc::twopass::FramePlan> plans,
+[[nodiscard]] bool frames_from_twopass_plans(std::span<const rc::twopass::FramePlan> plans,
                                std::span<const std::int64_t> actual_bits,
                                TwopassBitSource source,
                                std::vector<FrameBits>& out,

@@ -50,7 +50,7 @@ using partition::PartitionType;
 
 // True when min(block_width, block_height) == 4.  The seven 4xN / Nx4 sizes
 // that are valid AV2 block sizes (4x4, 4x8, 8x4, 4x16, 16x4, 4x32, 32x4).
-bool is_sub8(BlockSize size) noexcept;
+[[nodiscard]] bool is_sub8(BlockSize size) noexcept;
 
 // Smallest side of the block in samples (4, 8, 16, ...), 0 when invalid.
 int min_dim_px(BlockSize size) noexcept;
@@ -90,7 +90,7 @@ PartitionPlan plan_partition(const FrameGeometry& geometry, int mi_row,
 
 // True when `partition` is spec-valid for this node (delegates to
 // partition::is_partition_allowed and mirrors the PARTITION_NONE fallback).
-bool partition_allowed(const FrameGeometry& geometry, int mi_row, int mi_col,
+[[nodiscard]] bool partition_allowed(const FrameGeometry& geometry, int mi_row, int mi_col,
                        BlockSize size, PartitionType partition,
                        bool has_chroma, bool chroma_offset);
 
@@ -129,7 +129,7 @@ using ChoosePartition = std::function<PartitionType(const Node&, const Partition
 // the superblock size and in frame.  Only the four M1 partitions are modelled
 // and the superblock must be 64x64 (M1 configuration); 128x128 (where
 // PARTITION_SPLIT exists) is rejected instead of guessed.
-bool build_superblock(const FrameGeometry& geometry, int sb_mi_row,
+[[nodiscard]] bool build_superblock(const FrameGeometry& geometry, int sb_mi_row,
                       int sb_mi_col, const ChoosePartition& choose, Node& out,
                       std::string& error);
 
@@ -201,6 +201,6 @@ TxPlan tx_plan(const FrameGeometry& geometry, const Node& leaf, int eob_luma);
 int eob_multisize(int tx_size);
 
 // True when the transform type set for this intra transform is TX_SET_INTRA_1.
-bool tx_type_set1(int tx_size);
+[[nodiscard]] bool tx_type_set1(int tx_size);
 
 }  // namespace av2enc::still::sub8

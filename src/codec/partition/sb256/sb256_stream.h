@@ -55,15 +55,15 @@ struct SbFlags {
 
 // The reference tile uses square leaves from 8x8 to 64x64.  Reject geometries
 // whose boundary recursion forces anything else.
-bool stream_geometry_supported(const Geometry& geometry, std::string& error);
+[[nodiscard]] bool stream_geometry_supported(const Geometry& geometry, std::string& error);
 
 // use_256x256_superblock = 1 (the §5.4.3 flag under test).
-bool make_sb256_stream(const StreamConfig& config, StreamResult& out,
+[[nodiscard]] bool make_sb256_stream(const StreamConfig& config, StreamResult& out,
                        std::string& error);
 
 // use_256x256_superblock = 0, use_128x128_superblock = 1.  Same intra tile as
 // make_sb256_stream(); used by tests and the gate as a positive control.
-bool make_use128_control_stream(const StreamConfig& config, StreamResult& out,
+[[nodiscard]] bool make_use128_control_stream(const StreamConfig& config, StreamResult& out,
                                 std::string& error);
 
 // Header pieces, exported for tests and for a future CLI/GPU integration.

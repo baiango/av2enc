@@ -71,7 +71,7 @@ enum class Y4mReadResult {
 // Parses one YUV4MPEG2 header line (the reader's untrusted-input surface).
 // Exposed separately from Y4mReader so a fuzzer can drive it without a file;
 // the reader's member function is a thin wrapper.
-bool parse_y4m_header(std::string_view line, Y4mHeader* header,
+[[nodiscard]] bool parse_y4m_header(std::string_view line, Y4mHeader* header,
                       std::string* error);
 
 class Y4mReader {

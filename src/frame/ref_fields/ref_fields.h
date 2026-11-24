@@ -141,7 +141,7 @@ struct FrameRefState {
   std::int32_t order_hint = 0;  // OrderHint of the frame being signalled
 };
 
-bool slot_constraints_ok(const FrameRefState& state, std::uint32_t slot,
+[[nodiscard]] bool slot_constraints_ok(const FrameRefState& state, std::uint32_t slot,
                          std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -190,17 +190,17 @@ struct PrimaryRefResolved {
 // Writes/reads the primary-ref block.  `frame_type` decides whether any bit is
 // present (intra/switch frames code nothing).  `is_tip` removes the
 // disable_cross_frame_cdf_init bit (§5.18.2 skips it for TIP frames).
-bool write_primary_ref_signal(BitWriter& writer, FrameType frame_type,
+[[nodiscard]] bool write_primary_ref_signal(BitWriter& writer, FrameType frame_type,
                               bool is_tip, const PrimaryRefSignal& signal,
                               std::string* error);
-bool read_primary_ref_signal(RefBitReader& reader, FrameType frame_type,
+[[nodiscard]] bool read_primary_ref_signal(RefBitReader& reader, FrameType frame_type,
                              bool is_tip, PrimaryRefSignal* signal,
                              std::string* error);
 
 // Validates the signalled values and resolves the whole block, including the
 // §5.18.2 derived primary reference (choose_primary_secondary_ref_frame) and
 // the CDF-init consequence.
-bool resolve_primary_ref(FrameType frame_type, const PrimaryRefSignal& signal,
+[[nodiscard]] bool resolve_primary_ref(FrameType frame_type, const PrimaryRefSignal& signal,
                          const RefList& refs, const FrameRefState& state,
                          std::uint8_t base_q_idx, PrimaryRefResolved* out,
                          std::string* error);
@@ -258,14 +258,14 @@ struct BvDrlSignal {
   std::uint32_t max_bvp_drl_bits_minus_1 = 0;
 };
 
-bool write_drl(BitWriter& writer, const DrlConfig& config,
+[[nodiscard]] bool write_drl(BitWriter& writer, const DrlConfig& config,
                const DrlSignal& signal, std::string* error);
-bool read_drl(RefBitReader& reader, const DrlConfig& config, DrlSignal* signal,
+[[nodiscard]] bool read_drl(RefBitReader& reader, const DrlConfig& config, DrlSignal* signal,
               std::string* error);
 
-bool write_bvp_drl(BitWriter& writer, const BvDrlConfig& config,
+[[nodiscard]] bool write_bvp_drl(BitWriter& writer, const BvDrlConfig& config,
                    const BvDrlSignal& signal, std::string* error);
-bool read_bvp_drl(RefBitReader& reader, const BvDrlConfig& config,
+[[nodiscard]] bool read_bvp_drl(RefBitReader& reader, const BvDrlConfig& config,
                   BvDrlSignal* signal, std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -303,16 +303,16 @@ struct RefreshSignal {
 
 // `immediate_output_frame` participates because §6.17.2 requires a non-zero
 // refresh mask for every frame that is not output immediately.
-bool write_refresh_frame_flags(BitWriter& writer, FrameType frame_type,
+[[nodiscard]] bool write_refresh_frame_flags(BitWriter& writer, FrameType frame_type,
                                const RefreshConfig& config,
                                const RefreshSignal& signal,
                                bool immediate_output_frame,
                                std::string* error);
-bool read_refresh_frame_flags(RefBitReader& reader, FrameType frame_type,
+[[nodiscard]] bool read_refresh_frame_flags(RefBitReader& reader, FrameType frame_type,
                               const RefreshConfig& config,
                               bool immediate_output_frame,
                               RefreshSignal* signal, std::string* error);
-bool validate_refresh_frame_flags(FrameType frame_type,
+[[nodiscard]] bool validate_refresh_frame_flags(FrameType frame_type,
                                   const RefreshConfig& config,
                                   const RefreshSignal& signal,
                                   bool immediate_output_frame,
@@ -364,12 +364,12 @@ struct FrameSizeResolved {
   std::uint32_t mi_rows = 0;
 };
 
-bool write_frame_size_with_refs(BitWriter& writer, const SizeConfig& config,
+[[nodiscard]] bool write_frame_size_with_refs(BitWriter& writer, const SizeConfig& config,
                                 const RefList& refs,
                                 const FrameRefState& state,
                                 const FrameSizeSignal& signal,
                                 FrameSizeResolved* out, std::string* error);
-bool read_frame_size_with_refs(RefBitReader& reader, const SizeConfig& config,
+[[nodiscard]] bool read_frame_size_with_refs(RefBitReader& reader, const SizeConfig& config,
                                const RefList& refs,
                                const FrameRefState& state,
                                FrameSizeResolved* out, std::string* error);
@@ -377,7 +377,7 @@ bool read_frame_size_with_refs(RefBitReader& reader, const SizeConfig& config,
 // §6.17.4.3 ratio bounds: for every reference in the list,
 //   2 * FrameWidth  >= RefFrameWidth,  FrameWidth  <= 16 * RefFrameWidth
 //   2 * FrameHeight >= RefFrameHeight, FrameHeight <= 16 * RefFrameHeight
-bool validate_frame_size_against_refs(const FrameSizeResolved& size,
+[[nodiscard]] bool validate_frame_size_against_refs(const FrameSizeResolved& size,
                                       const RefList& refs,
                                       const FrameRefState& state,
                                       std::string* error);
@@ -411,7 +411,7 @@ HeaderBits capture_bits(std::span<const std::uint8_t> writer_bytes,
 
 std::size_t write_frame_header_copy(BitWriter& writer, const HeaderBits& bits,
                                     std::string* error);
-bool read_frame_header_copy(RefBitReader& reader, const HeaderBits& expected,
+[[nodiscard]] bool read_frame_header_copy(RefBitReader& reader, const HeaderBits& expected,
                             std::string* error);
 
 // Shared state for the multi-tile-group path: the first tile group of a frame
@@ -437,11 +437,11 @@ class FrameHeaderStore {
 // §5.19 tile_group_obu() header for a non-first tile group:
 //   frame_header_present_flag f(1)
 //   if ( frame_header_present_flag ) frame_header_copy()
-bool write_nonfirst_tile_group_header(BitWriter& writer,
+[[nodiscard]] bool write_nonfirst_tile_group_header(BitWriter& writer,
                                       const FrameHeaderStore& store,
                                       bool frame_header_present,
                                       std::string* error);
-bool read_nonfirst_tile_group_header(RefBitReader& reader,
+[[nodiscard]] bool read_nonfirst_tile_group_header(RefBitReader& reader,
                                      const FrameHeaderStore& store,
                                      bool* frame_header_present,
                                      std::string* error);

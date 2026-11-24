@@ -75,7 +75,7 @@ struct TileOutput {
   int derived_sign_blocks = 0;
 };
 
-bool write_tile(int width, int height, const TileConfig& config,
+[[nodiscard]] bool write_tile(int width, int height, const TileConfig& config,
                 TileOutput* output, std::string* error);
 
 }  // namespace av2enc::inter::mvprec::gate

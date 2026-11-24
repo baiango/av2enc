@@ -33,7 +33,7 @@ struct StreamOutput {
   std::uint32_t sequence_bits = 0;
 };
 
-bool build_drl_stream(const StreamInput& input, StreamOutput* output,
+[[nodiscard]] bool build_drl_stream(const StreamInput& input, StreamOutput* output,
                       std::string* error);
 
 }  // namespace av2enc::inter::drl::gate

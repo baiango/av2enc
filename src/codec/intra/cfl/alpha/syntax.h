@@ -92,7 +92,7 @@ constexpr CflCdfs default_cfl_cdfs() {
 
 // Structural check of every array: monotonic inverse CDF, base-rate index in
 // range, use count <= 32 (§8.2). Returns false if any row is malformed.
-bool cdfs_valid(const CflCdfs& cdfs);
+[[nodiscard]] bool cdfs_valid(const CflCdfs& cdfs);
 
 // §8.3 is_cfl context: count of available above/left chroma neighbours whose
 // UVCfls flag is set. Availability is derived by the caller at chroma-mi

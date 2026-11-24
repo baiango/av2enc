@@ -111,7 +111,7 @@ struct FrameComplexity {
   }
 };
 
-bool frame_complexity_valid(const FrameComplexity& complexity,
+[[nodiscard]] bool frame_complexity_valid(const FrameComplexity& complexity,
                             std::string* error = nullptr);
 
 // Residual sigma used by the model and by CRF complexity adaptation:
@@ -146,7 +146,7 @@ struct BitrateModelParams {
   double mad_to_sigma = 1.2533;
 };
 
-bool bitrate_model_params_valid(const BitrateModelParams& params,
+[[nodiscard]] bool bitrate_model_params_valid(const BitrateModelParams& params,
                                 std::string* error = nullptr);
 
 // Direct model evaluation (caller must pass valid inputs). base_q_idx is
@@ -168,13 +168,13 @@ struct BitrateEstimator {
   BitrateEstimateFn estimate = nullptr;
 };
 
-bool bitrate_estimator_valid(const BitrateEstimator& estimator,
+[[nodiscard]] bool bitrate_estimator_valid(const BitrateEstimator& estimator,
                              std::string* error = nullptr);
 
 // Validates the inputs, dispatches to the hook or built-in model, and writes
 // the bit estimate. Returns false and fills `error` on invalid input or an
 // invalid (NaN/Inf/negative) hook result.
-bool estimate_frame_bits(const BitrateEstimator& estimator,
+[[nodiscard]] bool estimate_frame_bits(const BitrateEstimator& estimator,
                          const FrameComplexity& complexity,
                          int base_q_idx,
                          double& bits,
@@ -207,13 +207,13 @@ struct SegmentationParams {
 };
 
 SegmentationParams disabled_segmentation() noexcept;
-bool segmentation_params_valid(const SegmentationParams& params,
+[[nodiscard]] bool segmentation_params_valid(const SegmentationParams& params,
                                std::string* error = nullptr);
 
 // Enables segmentation and sets SEG_LVL_ALT_Q for `segment_id`. delta_q is a
 // quantizer index delta (base + delta, or CurrentQIndex + delta when delta-Q is
 // present), not a bitstream-scaled value.
-bool set_segment_alt_q(SegmentationParams& params,
+[[nodiscard]] bool set_segment_alt_q(SegmentationParams& params,
                        int segment_id,
                        int delta_q,
                        std::string* error = nullptr);
@@ -223,7 +223,7 @@ struct DeltaQParams {
   int res = 0;  // delta_q_res, [0, 3]; must be 0 when !present
 };
 
-bool delta_q_params_valid(const DeltaQParams& params,
+[[nodiscard]] bool delta_q_params_valid(const DeltaQParams& params,
                           std::string* error = nullptr);
 
 // Mirrors get_qindex(ignoreDeltaQ, segmentId) (§7.14.2). `current_q_index` is
@@ -240,9 +240,9 @@ struct QpContext {
   SegmentationParams segmentation{};
 };
 
-bool qp_context_valid(const QpContext& context, std::string* error = nullptr);
+[[nodiscard]] bool qp_context_valid(const QpContext& context, std::string* error = nullptr);
 
-bool effective_qindex(const QpContext& context,
+[[nodiscard]] bool effective_qindex(const QpContext& context,
                       int segment_id,
                       bool ignore_delta_q,
                       int& qindex,
@@ -255,14 +255,14 @@ struct DeltaQState {
 
 // Sets CurrentQIndex = base_q_idx at the start of a tile (§5.20.2.1). Requires
 // base_q_idx in [1, 255] because delta_q_present is only read when base > 0.
-bool delta_q_reset(int base_q_idx,
+[[nodiscard]] bool delta_q_reset(int base_q_idx,
                    DeltaQState& state,
                    std::string* error = nullptr);
 
 // Applies one coded reduced delta: current = Clip3(1, 255,
 // current + (reduced_delta << res)). Requires params.present and an initialized
 // state. This is the state update performed by read_delta_qindex().
-bool delta_q_apply(const DeltaQParams& params,
+[[nodiscard]] bool delta_q_apply(const DeltaQParams& params,
                    int reduced_delta,
                    DeltaQState& state,
                    std::string* error = nullptr);
@@ -297,7 +297,7 @@ struct DeltaQPlan {
   void clear() noexcept;
 };
 
-bool delta_q_plan_config_valid(const DeltaQPlanConfig& config,
+[[nodiscard]] bool delta_q_plan_config_valid(const DeltaQPlanConfig& config,
                                std::string* error = nullptr);
 
 // Builds the plan. `target_qindex` is row-major, cols * rows entries, and must
@@ -305,7 +305,7 @@ bool delta_q_plan_config_valid(const DeltaQPlanConfig& config,
 // be expressed with a segmentation ALT_Q value instead. Each step chooses the
 // nearest reachable qindex given delta_q_res; achieved values may differ from
 // the target by up to 2^res - 1 when clipping does not intervene.
-bool plan_delta_q(const DeltaQPlanConfig& config,
+[[nodiscard]] bool plan_delta_q(const DeltaQPlanConfig& config,
                   std::span<const int> target_qindex,
                   DeltaQPlan& plan,
                   std::string* error = nullptr);
@@ -318,7 +318,7 @@ struct SegmentationMap {
   std::vector<std::uint8_t> segment_id;
 };
 
-bool segmentation_map_valid(const SegmentationMap& map,
+[[nodiscard]] bool segmentation_map_valid(const SegmentationMap& map,
                             std::string* error = nullptr);
 
 // ---------------------------------------------------------------------------
@@ -373,7 +373,7 @@ struct RateControlConfig {
   double lambda_sse_scale = 0.125;  // calibration placeholder, see rdo.h
 };
 
-bool rate_control_config_valid(const RateControlConfig& config,
+[[nodiscard]] bool rate_control_config_valid(const RateControlConfig& config,
                                std::string* error = nullptr);
 
 struct QpDecision {

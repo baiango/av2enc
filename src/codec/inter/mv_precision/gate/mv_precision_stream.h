@@ -48,7 +48,7 @@ struct StreamOutput {
   std::size_t sequence_bytes = 0;
 };
 
-bool build_stream(const StreamInput& input, StreamOutput* output,
+[[nodiscard]] bool build_stream(const StreamInput& input, StreamOutput* output,
                   std::string* error);
 
 }  // namespace av2enc::inter::mvprec::gate

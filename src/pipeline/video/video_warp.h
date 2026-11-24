@@ -21,14 +21,14 @@ namespace av2enc::video {
 // in plane samples; `mi_col`/`mi_row`/`bw4`/`bh4` are the §7.12.2.2 luma MI
 // geometry.  Chooses block warp vs extended warp exactly like
 // `adv::warp_needs_extended()`.
-bool warp_predict_plane(const inter::gme::GmParams& params,
+[[nodiscard]] bool warp_predict_plane(const inter::gme::GmParams& params,
                         const inter::mc::RefFrame& reference, int plane, int x,
                         int y, int w, int h, int mi_row, int mi_col, int bw4,
                         int bh4, std::vector<std::uint8_t>& out,
                         std::string& error);
 
 // Luma + 4:2:0 chroma warped prediction at the block origin (x, y).
-bool warp_predict_420(const inter::gme::GmParams& params,
+[[nodiscard]] bool warp_predict_420(const inter::gme::GmParams& params,
                       const inter::mc::RefFrame& reference, int x, int y, int w,
                       int h, int mi_row, int mi_col, int bw4, int bh4,
                       std::vector<std::uint8_t>& y_out,

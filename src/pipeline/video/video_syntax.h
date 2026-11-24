@@ -459,10 +459,10 @@ bool assemble_video_frame(const FramePlan& plan,
 // from the primary reference's saved CDFs and exports the adapted tile CDFs so
 // the average-CDF bank can run §8.2.4 / §7.5.
 std::size_t cdf_image_words();
-bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
+[[nodiscard]] bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
                                        std::vector<std::uint16_t>& out,
                                        std::string* error = nullptr);
-bool cdf_image_tables(std::vector<std::uint16_t>& frame,
+[[nodiscard]] bool cdf_image_tables(std::vector<std::uint16_t>& frame,
                       std::vector<std::uint16_t>& tile,
                       std::vector<std::uint16_t>& saved,
                       std::vector<std::uint16_t>& defaults,

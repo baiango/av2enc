@@ -166,14 +166,14 @@ struct Result {
 // price an already-quantised plan (for example the intra candidate) without
 // re-running the search.  Returns false for a non-2D transform class or an
 // unsupported geometry; the caller then keeps its historical estimate.
-bool scan_coefficient_bits(std::int32_t tx_size, std::int32_t tx_type,
+[[nodiscard]] bool scan_coefficient_bits(std::int32_t tx_size, std::int32_t tx_type,
                            std::int32_t plane,
                            const std::int32_t* levels_scan,
                            std::int32_t area, std::int32_t qctx,
                            bool is_inter, double* out_bits);
 
 // Same model against explicit CDF rows (AV2ENC_EFF_PERC live-slice variant).
-bool scan_coefficient_bits(std::int32_t tx_size, std::int32_t tx_type,
+[[nodiscard]] bool scan_coefficient_bits(std::int32_t tx_size, std::int32_t tx_type,
                            std::int32_t plane,
                            const std::int32_t* levels_scan,
                            std::int32_t area, std::int32_t qctx,
@@ -190,7 +190,7 @@ bool scan_coefficient_bits(std::int32_t tx_size, std::int32_t tx_type,
 //
 // Returns false and fills `*error` for an invalid block size or an internal
 // geometry failure.
-bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
+[[nodiscard]] bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
             std::int32_t coded_h, Mode mode, std::int32_t qindex,
             std::int32_t delta_dc, std::int32_t delta_ac,
             const std::uint8_t* prediction, const Options& options,

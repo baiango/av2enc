@@ -66,7 +66,7 @@ struct CompoundStreamOutput {
 // average / CWP(12) / wedge / diffwtd over the superblocks.
 std::vector<GateLeaf> make_default_gate_leaves(int superblock_count);
 
-bool build_compound_stream(const CompoundStreamInput& input,
+[[nodiscard]] bool build_compound_stream(const CompoundStreamInput& input,
                            CompoundStreamOutput& output, std::string& error);
 
 }  // namespace av2enc::video::multiref::gate

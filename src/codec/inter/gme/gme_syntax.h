@@ -107,7 +107,7 @@ std::size_t write_global_motion_params(BitWriter& writer, const GmSyntaxContext&
                                        std::string* error);
 
 // Reads global_motion_params() and fills `params_out[0..num_total_refs-1]`.
-bool read_global_motion_params(GmBitReader& reader, const GmSyntaxContext& context,
+[[nodiscard]] bool read_global_motion_params(GmBitReader& reader, const GmSyntaxContext& context,
                                std::array<GmParams, kMaxRefsPerFrame>* params_out,
                                std::string* error, bool* use_global_motion_out = nullptr);
 
@@ -116,9 +116,9 @@ void scale_warp_model(const std::int32_t base[6], int base_distance, int distanc
                       std::int32_t out[6]);
 
 // Exposed for tests: one read/write_global_param() pair.
-bool write_global_param(BitWriter& writer, int ref, int index, const std::int32_t prev[6],
+[[nodiscard]] bool write_global_param(BitWriter& writer, int ref, int index, const std::int32_t prev[6],
                         const GmParams& params, std::string* error);
-bool read_global_param(GmBitReader& reader, int ref, int index, const std::int32_t prev[6],
+[[nodiscard]] bool read_global_param(GmBitReader& reader, int ref, int index, const std::int32_t prev[6],
                        std::int32_t out[6], std::string* error);
 
 }  // namespace av2enc::inter::gme

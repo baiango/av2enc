@@ -65,7 +65,7 @@ std::size_t WriteSequenceGdfFlags(BitWriter& writer,
                                   const SequenceGdfFlags& flags, int sb_size,
                                   std::string* error);
 
-bool ReadSequenceGdfFlags(av2enc::still::filters_stream::BitReader& reader, int sb_size,
+[[nodiscard]] bool ReadSequenceGdfFlags(av2enc::still::filters_stream::BitReader& reader, int sb_size,
                           SequenceGdfFlags* flags, std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ std::size_t WriteFrameGdfParams(BitWriter& writer,
                                 FrameGdfParams* params, std::string* error);
 
 // Independent mirror.  Re-derives GdfBlkSize and validates the field ranges.
-bool ReadFrameGdfParams(av2enc::still::filters_stream::BitReader& reader,
+[[nodiscard]] bool ReadFrameGdfParams(av2enc::still::filters_stream::BitReader& reader,
                         const FrameGdfContext& context, FrameGdfParams* params,
                         std::string* error);
 
@@ -157,7 +157,7 @@ struct GdfSymbolPosition {
 // and `mi_col` are the values read_gdf() sees: tile-relative for a multi-tile
 // frame.  GdfBlks is frame-global in the specification, so multi-tile streams
 // are not modelled here (see README).
-bool GdfSymbolAt(const GdfUnitLayout& layout, const FrameGdfParams& params,
+[[nodiscard]] bool GdfSymbolAt(const GdfUnitLayout& layout, const FrameGdfParams& params,
                  int sb_size, int mi_row, int mi_col,
                  GdfSymbolPosition* position);
 

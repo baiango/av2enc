@@ -96,7 +96,7 @@ int derive_ccso_luma_size_log2(int sb_size, int tile_start_or,
                                bool ccso_unit_matches_sb_size);
 
 // §5.18.7.12 field representability (ranges, offset count, bo_only zeros).
-bool validate_plane_params(const PlaneParams& p, std::string* error);
+[[nodiscard]] bool validate_plane_params(const PlaneParams& p, std::string* error);
 
 // Number of ccso_offset_idx values a plane reads.
 int ccso_offset_count(const PlaneParams& p);
@@ -151,7 +151,7 @@ struct SavedFrame {
 };
 
 // §7.23 save_ccso_params().  `i` must be a refreshed reference slot.
-bool save_ccso_params(SlotStore& store, int i, const SavedFrame& frame,
+[[nodiscard]] bool save_ccso_params(SlotStore& store, int i, const SavedFrame& frame,
                       std::string* error);
 
 // Header context.  Fields not used by the syntax (mi_cols/mi_rows,
@@ -188,7 +188,7 @@ std::size_t write_ccso_params(BitWriter& writer, FrameParams& params,
 // Independent §5.18.7.12 reader.  Reuse planes are loaded from
 // context.slots (load_ccso_params); context.slots is therefore required as
 // soon as a reuse bit is set.  On error returns false.
-bool read_ccso_params(BitReader& reader, const HeaderContext& context,
+[[nodiscard]] bool read_ccso_params(BitReader& reader, const HeaderContext& context,
                       FrameParams* params, std::string* error);
 
 // The frame-level state a decoder derives from the header + saved slots.
@@ -212,7 +212,7 @@ struct EffectiveFrame {
 // values the decoder will filter with.  For sb_reuse_ccso the saved CcsoBlks
 // are copied into `out`; otherwise the grid is zeroed and tile decoding fills
 // it.  This is the function to call after read_ccso_params().
-bool resolve_ccso_params(const HeaderContext& context,
+[[nodiscard]] bool resolve_ccso_params(const HeaderContext& context,
                          const FrameParams& syntax, const SlotStore& slots,
                          EffectiveFrame* out, std::string* error);
 
@@ -231,7 +231,7 @@ struct ReuseChoice {
   int bits_saved = 0;
 };
 
-bool use_ccso(const PlaneParams& desired,
+[[nodiscard]] bool use_ccso(const PlaneParams& desired,
               const std::vector<std::uint8_t>& desired_blks, int blk_cols,
               int blk_rows, int plane, const HeaderContext& context,
               const SlotStore& slots, ReuseChoice* out, std::string* error);
@@ -297,7 +297,7 @@ class TileState {
 // Fills a restoration::CcsoFrameParams that aliases TileState's grids.  The
 // TileState must outlive the returned struct.  `offsets` is filled from the
 // plane's offset_idx values, so the filter core sees the exact §7.19 table.
-bool make_restoration_params(const TileState& state,
+[[nodiscard]] bool make_restoration_params(const TileState& state,
                              restoration::CcsoFrameParams* out,
                              std::string* error);
 

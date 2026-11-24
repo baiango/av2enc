@@ -54,7 +54,7 @@ std::size_t write_enable_inter_ddt(BitWriter& writer,
 // `*enable_inter_ddt` is set (false when the bit is absent) and `*next_bit`
 // advances by 0 or 1.  Returns false only when the bit is present and out of
 // range.
-bool read_enable_inter_ddt(std::span<const std::uint8_t> data,
+[[nodiscard]] bool read_enable_inter_ddt(std::span<const std::uint8_t> data,
                            std::size_t bit_offset,
                            bool single_picture_header_flag,
                            bool* enable_inter_ddt, std::size_t* next_bit);

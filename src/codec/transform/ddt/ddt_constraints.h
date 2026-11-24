@@ -95,6 +95,6 @@ Validation validate(const BlockSignal& signal);
 TxType plane_tx_type(const BlockSignal& signal);
 
 // §5.20.8.2 get_tx_class() == TX_CLASS_2D.
-bool tx_class_is_2d(TxType type);
+[[nodiscard]] bool tx_class_is_2d(TxType type);
 
 }  // namespace av2enc::video::ddt

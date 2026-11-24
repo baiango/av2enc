@@ -93,7 +93,7 @@ std::uint16_t* cdf_row(TilePartitionCdfs& cdfs, pe::SymbolKind kind,
 
 // 10-bit mask from a partition_ext allowed set.
 std::uint16_t to_allowed_mask(const pe::PartitionSet& allowed);
-bool mask_allows(std::uint16_t mask, PartitionType partition);
+[[nodiscard]] bool mask_allows(std::uint16_t mask, PartitionType partition);
 int mask_count(std::uint16_t mask);
 
 // The base-rect view the *current* M1 writer understands:
@@ -108,7 +108,7 @@ int mask_count(std::uint16_t mask);
 std::uint8_t to_writer_mask8(std::uint16_t full_mask);
 
 // True when every set bit fits the current uint8 mask (i.e. no VERT_4B/SPLIT).
-bool mask_fits_writer_u8(std::uint16_t full_mask);
+[[nodiscard]] bool mask_fits_writer_u8(std::uint16_t full_mask);
 
 // ---------------------------------------------------------------------------
 // Contexts (§8.3.2)
@@ -241,11 +241,11 @@ BlockSyntaxV2 to_block_syntax_v2(const StillNode& node);
 // Build a validated preorder stream for one superblock (flags gains
 // kFlagSbRoot) or for a whole frame.  Both call the partition_ext validators
 // and fail rather than emit a stale tree.
-bool build_superblock_stream(const base::FrameGeometry& geometry,
+[[nodiscard]] bool build_superblock_stream(const base::FrameGeometry& geometry,
                              const pe::Tools& tools,
                              const pe::PartitionNode& root,
                              FrameStream& out, std::string& error);
-bool build_frame_stream(const base::FrameGeometry& geometry,
+[[nodiscard]] bool build_frame_stream(const base::FrameGeometry& geometry,
                         const pe::Tools& tools,
                         const pe::FrameDecision& frame, FrameStream& out,
                         std::string& error);
@@ -276,7 +276,7 @@ NodePlan plan_node(const base::FrameGeometry& geometry, const pe::Tools& tools,
 // Emit a symbol plan into `encoder`.  The caller owns the CDF copies and must
 // set encoder.disable_cdf_update before the first symbol.  Literals use
 // encode_bool() and adapt no CDF (§5.20.3.2 uneven_4way_partition_type).
-bool emit_symbols(const pe::SymbolPlan& plan, TilePartitionCdfs& cdfs,
+[[nodiscard]] bool emit_symbols(const pe::SymbolPlan& plan, TilePartitionCdfs& cdfs,
                   av2::Encoder& encoder, pe::SyntaxStats* stats,
                   std::string& error);
 
@@ -287,7 +287,7 @@ bool emit_symbols(const pe::SymbolPlan& plan, TilePartitionCdfs& cdfs,
 // Encode one superblock's partition symbols into a standalone payload.  Used
 // by the tests to compare byte-for-byte against
 // partition_ext::encode_tree_symbols().  `root` must be superblock-aligned.
-bool encode_superblock_partitions(const base::FrameGeometry& geometry,
+[[nodiscard]] bool encode_superblock_partitions(const base::FrameGeometry& geometry,
                                   const pe::Tools& tools,
                                   const pe::PartitionNode& root,
                                   TilePartitionCdfs& cdfs,
@@ -298,7 +298,7 @@ bool encode_superblock_partitions(const base::FrameGeometry& geometry,
 // Encode `frame`'s partition symbols for every superblock in raster order into
 // one tile payload.  The grid is filled as the walk proceeds, exactly like the
 // decoder; `frame` must already pass partition_ext::validate_frame().
-bool encode_frame_partitions(const base::FrameGeometry& geometry,
+[[nodiscard]] bool encode_frame_partitions(const base::FrameGeometry& geometry,
                              const pe::Tools& tools,
                              const pe::FrameDecision& frame,
                              TilePartitionCdfs& cdfs, bool disable_cdf_update,
@@ -308,7 +308,7 @@ bool encode_frame_partitions(const base::FrameGeometry& geometry,
 // Independent decoder: reads one frame of partition symbols and rebuilds the
 // trees.  Per-SB roots are raster-ordered; `frame.superblocks` matches
 // partition_ext::decide_frame()'s output order.
-bool decode_frame_partitions(const base::FrameGeometry& geometry,
+[[nodiscard]] bool decode_frame_partitions(const base::FrameGeometry& geometry,
                              const pe::Tools& tools, TilePartitionCdfs& cdfs,
                              av2::Decoder& decoder, bool disable_cdf_update,
                              pe::FrameDecision& frame, pe::SyntaxStats* stats,

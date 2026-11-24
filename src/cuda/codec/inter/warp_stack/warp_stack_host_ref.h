@@ -23,19 +23,19 @@ void predict(const WarpPredictJob& job, std::int16_t* dst, int dst_stride,
              WarpPredictResult* result);
 
 // §7.12.2.3/.4 corner generation against host memory.
-bool corners(const WarpCornerJob& job, WarpCornerResult* result);
+[[nodiscard]] bool corners(const WarpCornerJob& job, WarpCornerResult* result);
 
 // §7.12.3 sample collection against host memory.
-bool samples(const inter::warp::WarpSampleParams& params,
+[[nodiscard]] bool samples(const inter::warp::WarpSampleParams& params,
              inter::warp::WarpSampleSet* result);
 
 // §7.13.3.23 least-squares derivation.
 ia::WarpParams estimate(const WarpEstimateJob& job);
 
 // §7.13.3.14 fallback decision and §7.13.3.21 validity, for parity checks.
-bool needs_extended(const ia::WarpParams& params, int w, int h, int ref_w, int ref_h,
+[[nodiscard]] bool needs_extended(const ia::WarpParams& params, int w, int h, int ref_w, int ref_h,
                     int frame_w, int frame_h);
-bool shear_valid(const ia::WarpParams& params);
+[[nodiscard]] bool shear_valid(const ia::WarpParams& params);
 
 }  // namespace av2enc::cuda::warpstack::hostref
 

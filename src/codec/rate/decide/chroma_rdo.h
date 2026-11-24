@@ -40,7 +40,7 @@ using ChromaRateEstimator = bool (*)(void* context,
                                      const ChromaRateRequest& request,
                                      ChromaRateEstimate& out);
 
-bool estimate_chroma_rates(ChromaRateEstimator estimator, void* context,
+[[nodiscard]] bool estimate_chroma_rates(ChromaRateEstimator estimator, void* context,
                            const ChromaRateRequest& request,
                            ChromaRateEstimate& out,
                            std::string* error = nullptr);

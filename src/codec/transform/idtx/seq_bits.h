@@ -56,7 +56,7 @@ std::vector<std::uint8_t> write_transform_quant_entropy_config(
 
 // Reads from `bit_offset` in `data`.  Returns false on truncation or an
 // out-of-range field.  `bits_consumed` receives the field bits.
-bool read_transform_quant_entropy_config(const std::uint8_t* data,
+[[nodiscard]] bool read_transform_quant_entropy_config(const std::uint8_t* data,
                                          std::size_t byte_count,
                                          std::size_t bit_offset,
                                          TransformSeqConfig* config,

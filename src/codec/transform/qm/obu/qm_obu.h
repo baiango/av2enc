@@ -73,18 +73,18 @@ struct ParsedObu {
   std::vector<std::uint8_t> raw;      // leb128 prefix + header + payload
 };
 
-bool write_obu_header(const ObuHeader& header, std::vector<std::uint8_t>* out,
+[[nodiscard]] bool write_obu_header(const ObuHeader& header, std::vector<std::uint8_t>* out,
                       std::string* error);
-bool read_obu_header(std::span<const std::uint8_t> bytes, ObuHeader* header,
+[[nodiscard]] bool read_obu_header(std::span<const std::uint8_t> bytes, ObuHeader* header,
                      std::size_t* consumed, std::string* error);
 
 // leb128(obu size) | obu_header() | payload  (§5.2.1, Annex B.2).
-bool frame_obu(const ObuHeader& header, std::span<const std::uint8_t> payload,
+[[nodiscard]] bool frame_obu(const ObuHeader& header, std::span<const std::uint8_t> payload,
                std::vector<std::uint8_t>* out, std::string* error);
 
 // Parses a whole length-delimited OBU sequence.  Fails on a truncated leb128,
 // a zero length, an OBU that overruns the input, or a truncated extension byte.
-bool parse_obu_sequence(std::span<const std::uint8_t> bytes,
+[[nodiscard]] bool parse_obu_sequence(std::span<const std::uint8_t> bytes,
                         std::vector<ParsedObu>* obus, std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -109,26 +109,26 @@ struct QuantizerMatrixObu {
 // qm_is_default_flag = 0 levels whose matrix contains a zero coefficient
 // (§6.4.11), and deltas outside [-128, 127].  The caller supplies a fresh
 // BitWriter; the function appends and byte-aligns.
-bool write_quantizer_matrix_payload(BitWriter& writer,
+[[nodiscard]] bool write_quantizer_matrix_payload(BitWriter& writer,
                                     const QuantizerMatrixObu& obu,
                                     std::string* error);
 
 // Parses one complete payload (exactly the bytes after the OBU header).
 // Enforces the trailing-bit syntax, the svlc() range, and the §6.4.11
 // "no UserQm entry is zero" requirement.
-bool read_quantizer_matrix_payload(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool read_quantizer_matrix_payload(std::span<const std::uint8_t> payload,
                                    QuantizerMatrixObu* obu,
                                    std::string* error);
 
 // Complete Annex B.2 OBU for the given layer ids.
-bool make_quantizer_matrix_obu(const QuantizerMatrixObu& obu,
+[[nodiscard]] bool make_quantizer_matrix_obu(const QuantizerMatrixObu& obu,
                                const ObuHeader* header,
                                std::vector<std::uint8_t>* out,
                                std::string* error);
 
 // Convenience: one level, user-defined matrix.  Fills `out` with the complete
 // OBU.  `value` must be non-zero (a constant matrix, 32 == identity).
-bool make_constant_user_qm_obu(int level, std::uint8_t value,
+[[nodiscard]] bool make_constant_user_qm_obu(int level, std::uint8_t value,
                                bool chroma_info_present,
                                std::vector<std::uint8_t>* out,
                                std::string* error);
@@ -152,7 +152,7 @@ struct FrameQm {
 // Writes using_qmatrix and, when set, the pic_qm_num_minus_1 / qm_* fields.
 // `num_planes` is NumPlanes from the sequence header (1..3).
 // `segmentation_enabled` controls whether pic_qm_num_minus_1 is coded.
-bool write_frame_qm_params(BitWriter& writer, const FrameQm& qm,
+[[nodiscard]] bool write_frame_qm_params(BitWriter& writer, const FrameQm& qm,
                            int num_planes, bool segmentation_enabled,
                            std::string* error);
 
@@ -160,7 +160,7 @@ bool write_frame_qm_params(BitWriter& writer, const FrameQm& qm,
 // comes from the surrounding quantizer_params() syntax, which precedes
 // setup_qm_params().  `bits_consumed` is optional and receives the exact
 // syntax length.  Levels are validated as f(4) values (0..15).
-bool read_frame_qm_params(std::span<const std::uint8_t> bytes, int num_planes,
+[[nodiscard]] bool read_frame_qm_params(std::span<const std::uint8_t> bytes, int num_planes,
                           bool segmentation_enabled, bool separate_uv_delta_q,
                           FrameQm* qm, std::size_t* bits_consumed,
                           std::string* error);

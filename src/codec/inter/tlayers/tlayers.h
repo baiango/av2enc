@@ -223,7 +223,7 @@ enum class PlanError {
 // Builds and self-validates a complete plan. Returns false and sets *error on
 // failure. The explicit gate is validate_plan(); callers must not write bits
 // unless it passes.
-bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error);
+[[nodiscard]] bool build_plan(const PlanConfig& config, Plan& plan, PlanError* error);
 
 // Smallest reference-store size (`PlanConfig::num_slots`) the plan's schedule
 // can be coded in, found by asking the slot allocator itself.  This is a
@@ -241,19 +241,19 @@ int minimum_slot_requirement(const PlanConfig& config);
 // Default-off gate for the chained (single-key) multi-GOP plan. The CLI only
 // accepts --video-tlayers 8 --video-gops M > 1 when this is on, and the
 // historical one-GOP path is byte-identical when it is off.
-bool chained_gops_enabled();
+[[nodiscard]] bool chained_gops_enabled();
 
 // Structural validation + full decoder-side replay of the coding order:
 // reference availability, slot identity, TLayerDependencyMap, §7.23 refresh and
 // get_disp_order_hint() reconstruction.
-bool validate_plan(const Plan& plan, PlanError* error, int* bad_display_index,
+[[nodiscard]] bool validate_plan(const Plan& plan, PlanError* error, int* bad_display_index,
                    int* bad_coding_index);
 
 // Checks that dropping every frame with tlayer_id > max_layer leaves a
 // decodable prefix: retained frames may only reference retained frames, and
 // each reference satisfies the dependency map. This is the invariant behind
 // the decoder drop test.
-bool validate_layer_drop(const Plan& plan, int max_layer, PlanError* error);
+[[nodiscard]] bool validate_layer_drop(const Plan& plan, int max_layer, PlanError* error);
 
 const char* plan_error_name(PlanError error);
 const char* schedule_name(Schedule schedule);

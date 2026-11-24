@@ -143,7 +143,7 @@ struct HorizonRefPlanes {
   int height = 0;  // luma MI-aligned height (4 * MiRows)
 };
 
-bool horizon_predict_mv(const HorizonRefPlanes& ref, int x0, int y0, int w,
+[[nodiscard]] bool horizon_predict_mv(const HorizonRefPlanes& ref, int x0, int y0, int w,
                         int h, int mv_y, int mv_x, std::uint8_t* out[3]);
 
 }  // namespace av2enc::video

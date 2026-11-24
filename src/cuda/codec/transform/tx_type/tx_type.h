@@ -144,7 +144,7 @@ void tx_type_pack_layout(TxTypeBlockRequest* requests, int nblocks,
 // The returned offsets are trusted by the device entry point (validating them
 // on the device would need a sync), so build plans with this function or
 // reproduce its layout exactly.
-bool tx_type_build_plan(const TxTypeBlockRequest* requests, int nblocks,
+[[nodiscard]] bool tx_type_build_plan(const TxTypeBlockRequest* requests, int nblocks,
                         TxTypePlan* plan, std::string* error);
 
 // ---------------------------------------------------------------------------

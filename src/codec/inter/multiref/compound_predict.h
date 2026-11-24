@@ -46,7 +46,7 @@ struct WedgeSyntax {
 };
 
 // Decoder-side lookups used by the encoder to keep its decisions signallable.
-bool wedge_index_to_syntax(int wedge_index, WedgeSyntax& out);
+[[nodiscard]] bool wedge_index_to_syntax(int wedge_index, WedgeSyntax& out);
 int wedge_syntax_to_index(int quad, int angle, int dist);
 // Bit count of read_wedge_mode() for the given index (0 if not signalable).
 int wedge_syntax_bits(int wedge_index);
@@ -65,7 +65,7 @@ struct CompoundModeParams {
   bool use_imp_mask = false;
 };
 
-bool same_mode(const CompoundModeParams& a, const CompoundModeParams& b);
+[[nodiscard]] bool same_mode(const CompoundModeParams& a, const CompoundModeParams& b);
 
 // RDO-free proxy for the number of §5.20.7.16 mode symbols, used by the
 // decision API.  This is an encoder model, not the real range-coder cost.
@@ -105,13 +105,13 @@ struct CompoundPrediction {
 
 // §7.13.3.18 compound form: InterRound1 = 7, no Clip1.  `mv` is 1/8 luma
 // samples.  `rect` is in plane samples.
-bool predict_plane_compound_1_16(const mc::RefFrame& ref, int plane,
+[[nodiscard]] bool predict_plane_compound_1_16(const mc::RefFrame& ref, int plane,
                                  const mc::BlockRect& rect, mc::Mv mv,
                                  mc::InterpFilter filter, std::int16_t* dst,
                                  int dst_stride, std::string& error);
 
 // Predicts both references for Y/U/V.  References are unscaled.
-bool build_compound_prediction(const mc::RefFrame& ref0,
+[[nodiscard]] bool build_compound_prediction(const mc::RefFrame& ref0,
                                const mc::RefFrame& ref1,
                                const mc::BlockRect& luma_rect, int bsize,
                                mc::Mv mv0, mc::Mv mv1,
@@ -122,7 +122,7 @@ bool build_compound_prediction(const mc::RefFrame& ref0,
 // True when the implicit-mask blend applies to this block (§7.13.3.14):
 // enable_imp_msk_bld, CWP_EQUAL, YMode != GLOBAL_GLOBALMV, both references
 // unscaled, no compound warp.  `global_global_mv` is the caller's YMode test.
-bool implicit_mask_eligible(bool seq_enable_imp_msk_bld,
+[[nodiscard]] bool implicit_mask_eligible(bool seq_enable_imp_msk_bld,
                             const CompoundModeParams& params,
                             bool global_global_mv, bool refs_scaled,
                             bool compound_warp);
@@ -136,7 +136,7 @@ bool implicit_mask_eligible(bool seq_enable_imp_msk_bld,
 //     subsampled for chroma exactly as §7.13.3.30 requires.
 //   * `params.use_imp_mask` is taken as given; derive it with
 //     implicit_mask_eligible().
-bool apply_compound_prediction(const CompoundPrediction& prediction,
+[[nodiscard]] bool apply_compound_prediction(const CompoundPrediction& prediction,
                                const CompoundModeParams& params,
                                std::uint8_t* dst[3], int dst_stride[3],
                                std::string& error);

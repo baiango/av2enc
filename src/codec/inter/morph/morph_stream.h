@@ -94,13 +94,13 @@ struct MorphStreamResult {
 
 // Validates every block (including §6.19.5.4 for morph_pred=1) before emitting
 // a bit. Returns false with a diagnosis in `error` for any illegal plan.
-bool encode_morph_stream(const MorphStreamPlan& plan, MorphStreamResult& out,
+[[nodiscard]] bool encode_morph_stream(const MorphStreamPlan& plan, MorphStreamResult& out,
                          std::string& error);
 
-bool write_morph_ivf(const MorphStreamResult& result,
+[[nodiscard]] bool write_morph_ivf(const MorphStreamResult& result,
                      const MorphStreamConfig& config, const std::string& path,
                      std::string& error);
-bool write_morph_y4m(const MorphStreamResult& result,
+[[nodiscard]] bool write_morph_y4m(const MorphStreamResult& result,
                      const MorphStreamConfig& config, const std::string& path,
                      std::string& error);
 

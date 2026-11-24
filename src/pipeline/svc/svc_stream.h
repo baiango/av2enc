@@ -77,14 +77,14 @@ struct SvcStreamResult {
 
 // LCR / OPS OBU wrappers (INTEGRATION.md step 2).  Global layer ids; the
 // payload writers already include the extensible-OBU tail.
-bool make_layer_config_record_obu(const LayerPlan& plan,
+[[nodiscard]] bool make_layer_config_record_obu(const LayerPlan& plan,
                                   std::vector<std::uint8_t>& out,
                                   std::string& error);
-bool make_operating_point_set_obu(const LayerPlan& plan,
+[[nodiscard]] bool make_operating_point_set_obu(const LayerPlan& plan,
                                   std::vector<std::uint8_t>& out,
                                   std::string& error);
 
-bool encode_svc_sequence(std::span<const video::VideoInputFrame> frames,
+[[nodiscard]] bool encode_svc_sequence(std::span<const video::VideoInputFrame> frames,
                          const SvcEncodeOptions& options,
                          SvcStreamResult& result, std::string& error);
 

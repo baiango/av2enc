@@ -67,14 +67,14 @@ void init_cdfs(CdfState& cdfs, const SyntaxOptions& options);
 
 // Writes the tile payload for all superblocks (raster order).  Each Node must
 // be a root built by build_superblock().  Leaves are coded DC_PRED with EOB 0.
-bool write_tile(const FrameGeometry& geometry,
+[[nodiscard]] bool write_tile(const FrameGeometry& geometry,
                 std::span<const Node> superblocks,
                 const SyntaxOptions& options, std::vector<std::uint8_t>& tile,
                 std::string& error);
 
 // Parses a tile payload and returns leaves in decode order.  Verifies that
 // every leaf is DC_PRED with all_zero = 1 in all three planes.
-bool read_tile(const FrameGeometry& geometry,
+[[nodiscard]] bool read_tile(const FrameGeometry& geometry,
                std::span<const std::uint8_t> tile,
                const SyntaxOptions& options,
                std::vector<DecodedLeaf>& leaves, std::string& error);

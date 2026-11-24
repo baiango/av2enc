@@ -35,12 +35,12 @@ int tx_scan_area(int tx_size);
 
 // Writes w*h raster positions into `out` in scan order.  `out` must have at
 // least tx_scan_area(tx_size) entries.  Returns false for an invalid size.
-bool get_scan(int tx_size, TxScanClass cls, std::span<std::uint16_t> out);
+[[nodiscard]] bool get_scan(int tx_size, TxScanClass cls, std::span<std::uint16_t> out);
 
 // §5.20.7.30 get_tx_row_col(pos, txSz) on the adjusted grid.
-bool get_tx_row_col(int pos, int tx_size, int* row, int* col);
+[[nodiscard]] bool get_tx_row_col(int pos, int tx_size, int* row, int* col);
 
 // §5.20.7.30 get_lf_limits(row, col, txClass, plane).
-bool get_lf_limits(int row, int col, TxScanClass cls, int plane);
+[[nodiscard]] bool get_lf_limits(int row, int col, TxScanClass cls, int plane);
 
 }  // namespace av2enc::video::txpartition

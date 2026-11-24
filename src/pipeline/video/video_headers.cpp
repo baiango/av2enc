@@ -793,7 +793,8 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
         context.immediate_output_frame = h.immediate_output_frame;
         context.implicit_output_frame = h.implicit_output_frame;
         std::string grain_error;
-        grain::WriteFilmGrainConfig(writer, config, context, &grain_error);
+        (void)grain::WriteFilmGrainConfig(writer, config, context,
+                                          &grain_error);
         assert(grain_error.empty());
       }
       emit_ref_bit_probe(probe, h, writer.bit_size() - start);
@@ -894,8 +895,9 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
         qm_state.qm_v[0] = 0;
       }
       std::string qm_error;
-      qm::write_setup_qm_params(writer, qm_state, /*num_planes=*/3,
-                                /*segmentation_enabled=*/false, &qm_error);
+      (void)qm::write_setup_qm_params(writer, qm_state, /*num_planes=*/3,
+                                      /*segmentation_enabled=*/false,
+                                      &qm_error);
       assert(qm_error.empty());
     }
     writer.put_bit(false);              // delta_q_present (base_q_idx > 0)
@@ -1158,7 +1160,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     context.immediate_output_frame = h.immediate_output_frame;
     context.implicit_output_frame = h.implicit_output_frame;
     std::string grain_error;
-    grain::WriteFilmGrainConfig(writer, config, context, &grain_error);
+    (void)grain::WriteFilmGrainConfig(writer, config, context, &grain_error);
     assert(grain_error.empty());
   }
 

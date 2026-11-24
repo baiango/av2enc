@@ -151,11 +151,11 @@ const char* mrl_syntax_status_name(MrlSyntaxStatus status) noexcept;
 
 // §5.20.5.5 is_directional_mode(YMode): 1..8 (V, H, D45, D135, D113, D157,
 // D203, D67).  0 = DC_PRED and 9..12 are non-directional.
-bool is_directional_y_mode(int y_mode) noexcept;
+[[nodiscard]] bool is_directional_y_mode(int y_mode) noexcept;
 
 // The decoder's `not4x4` test.  §7.13.2.7 applies the secondary blend only when
 // MrlIndex > 0, mrl_sec_index == 1 and the block is not exactly 4x4.
-bool mrl_secondary_applies(int block_w, int block_h, int mrl_index,
+[[nodiscard]] bool mrl_secondary_applies(int block_w, int block_h, int mrl_index,
                            bool mrl_sec_index) noexcept;
 
 // Exact writer.  Writes nothing for a non-directional mode (and requires the

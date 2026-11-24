@@ -52,13 +52,13 @@ struct TxShape {
 
 // Returns false for zero/unsupported nominal sizes.  The minimal still writer
 // uses 16x4..64x64; all adjusted sizes are <= 32.
-bool make_tx_shape(int nominal_width, int nominal_height, TxShape& shape);
+[[nodiscard]] bool make_tx_shape(int nominal_width, int nominal_height, TxShape& shape);
 
 // §8.3.2 coefficient context from an adjusted (<=32) shape.
 int tx_size_context(int nominal_width, int nominal_height);
 
 // §7.15.4.1 rectangular pre-scale predicate.
-bool odd_rect_transform(int width, int height);
+[[nodiscard]] bool odd_rect_transform(int width, int height);
 
 // §4.8 Round2(x, n) = (x + (1 << (n-1))) >> n.
 int round2(int value, int n);

@@ -825,7 +825,7 @@ struct VideoSequenceResult {
 // historical single-reference chain.
 int resolved_num_ref_frames(const VideoOptions& options);
 
-bool encode_video_sequence(std::span<const VideoInputFrame> frames,
+[[nodiscard]] bool encode_video_sequence(std::span<const VideoInputFrame> frames,
                         const VideoOptions& options, VideoSequenceResult& result,
                         std::string& error);
 
@@ -848,7 +848,7 @@ struct RefinementOptions {
   int num_ref_frames = 8;
 };
 
-bool encode_video_refinement_sequence(
+[[nodiscard]] bool encode_video_refinement_sequence(
     std::span<const VideoInputFrame> frames,
     std::span<const VideoReconFrame> references, const VideoOptions& options,
     const RefinementOptions& refinement, VideoSequenceResult& result,
@@ -858,7 +858,7 @@ bool encode_video_refinement_sequence(
 // 4:2:2/4:4:4/4:0:0).  `encode_video_sequence()` calls this when
 // `options.format` is not the historical 8-bit 4:2:0.  The CUDA sibling is
 // `encode_video_sequence_gpu()` in the video GPU target.
-bool encode_video_sequence_format(std::span<const VideoInputFrame> frames,
+[[nodiscard]] bool encode_video_sequence_format(std::span<const VideoInputFrame> frames,
                                   const VideoOptions& options,
                                   VideoSequenceResult& result,
                                   std::string& error);

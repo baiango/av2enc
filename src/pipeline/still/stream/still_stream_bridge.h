@@ -163,7 +163,7 @@ bool pack_gpu_frame(const cuda::still_gpu::FramePlan& plan,
 // per superblock).  The spec's allowed/forced partition flags are derived here
 // exactly as partition::solve_node() derives them, so the emitted do_split
 // symbols match the CPU encoder in force_single_block mode.
-bool pack_gpu_raster_frame(const cuda::still_gpu::FramePlan& plan,
+[[nodiscard]] bool pack_gpu_raster_frame(const cuda::still_gpu::FramePlan& plan,
                            std::span<const cuda::still_gpu::BlockPlan> blocks,
                            std::span<const cuda::still_gpu::BlockDecision> decisions,
                            const GpuCoefficients& coeffs, PackedFrame& out,
@@ -183,7 +183,7 @@ bool assemble_gpu_frame(const cuda::still_gpu::FramePlan& plan,
                         std::span<const std::uint16_t> cdf_seed = {},
                         std::vector<std::uint16_t>* cdf_final = nullptr);
 
-bool assemble_gpu_raster_frame(
+[[nodiscard]] bool assemble_gpu_raster_frame(
     const cuda::still_gpu::FramePlan& plan,
     std::span<const cuda::still_gpu::BlockPlan> blocks,
     std::span<const cuda::still_gpu::BlockDecision> decisions,
@@ -210,20 +210,20 @@ bool assemble_gpu_raster_frame(
 // written.  (Deriving the tree from the leaf list alone is ambiguous — a 32x32
 // node made of four 16x16 leaves can be HORZ→VERT or VERT→HORZ — which is why
 // the plan exports the tree.)
-bool plan_tree_to_nodes(const plan::FramePlan& plan,
+[[nodiscard]] bool plan_tree_to_nodes(const plan::FramePlan& plan,
                         std::vector<TreeNode>& tree, std::string& error);
 
 // Decisions are the same POD the GPU path uses (`BlockDecision`); one entry per
 // plan leaf, in plan order.  Coefficients are indexed by the plan's per-plane
 // `PlaneTxPlan::coeff_offset` and converted to the flat Y/U/V-interleaved
 // layout exactly as described above.
-bool pack_plan_frame(const plan::FramePlan& plan,
+[[nodiscard]] bool pack_plan_frame(const plan::FramePlan& plan,
                      std::span<const plan::BlockPlan> blocks,
                      std::span<const cuda::still_gpu::BlockDecision> decisions,
                      const GpuCoefficients& coeffs, PackedFrame& out,
                      std::string& error);
 
-bool assemble_plan_frame(const plan::FramePlan& plan,
+[[nodiscard]] bool assemble_plan_frame(const plan::FramePlan& plan,
                          std::span<const plan::BlockPlan> blocks,
                          std::span<const cuda::still_gpu::BlockDecision> decisions,
                          const GpuCoefficients& coeffs, const StillConfig& config,

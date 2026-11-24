@@ -193,7 +193,7 @@ struct MultiGpuPlan {
 };
 
 // LPT / optimal contiguous partition. `every tile <= 1`.
-bool assign_tiles(const TileLayout& layout, int gpu_count,
+[[nodiscard]] bool assign_tiles(const TileLayout& layout, int gpu_count,
                   AssignmentPolicy policy, GpuTileAssignment& assignment,
                   std::string& error);
 
@@ -217,7 +217,7 @@ ScalingModel estimate_scaling_model(const TileLayout& layout,
                                     const GpuTileAssignment& assignment,
                                     double transfer_ms);
 
-bool plan_multi_gpu(const TileLayout& layout, const PlannerConfig& config,
+[[nodiscard]] bool plan_multi_gpu(const TileLayout& layout, const PlannerConfig& config,
                     MultiGpuPlan& plan, std::string& error);
 
 }  // namespace av2enc::multigpu

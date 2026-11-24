@@ -62,9 +62,9 @@ int morph_symbol_context(const std::uint8_t* morph_grid, int mi_cols,
                          int mi_rows, int mi_row, int mi_col, int bw4,
                          int bh4, int sb_size) noexcept;
 
-bool write_morph_pred(av2::Encoder& enc, MorphCdfs& cdfs, int ctx, bool value,
+[[nodiscard]] bool write_morph_pred(av2::Encoder& enc, MorphCdfs& cdfs, int ctx, bool value,
                       std::string& error);
-bool read_morph_pred(av2::Decoder& dec, MorphCdfs& cdfs, int ctx, bool& value,
+[[nodiscard]] bool read_morph_pred(av2::Decoder& dec, MorphCdfs& cdfs, int ctx, bool& value,
                      std::string& error);
 
 // The three conditions in the syntax table. When false, morph_pred is
@@ -78,11 +78,11 @@ struct MorphPredGate {
   bool enable_imp_msk_bld = false;
 };
 
-bool morph_pred_present(const MorphPredGate& gate) noexcept;
+[[nodiscard]] bool morph_pred_present(const MorphPredGate& gate) noexcept;
 
 // Syntax condition + use_intrabc + the §6.19.5.4 conformance condition
 // is_offset_mv_valid(-1, -1) == 1.
-bool morph_pred_allowed(const MorphPredGate& gate, bool offset_mv_valid,
+[[nodiscard]] bool morph_pred_allowed(const MorphPredGate& gate, bool offset_mv_valid,
                         std::string* reason = nullptr);
 
 }  // namespace av2enc::inter::morph

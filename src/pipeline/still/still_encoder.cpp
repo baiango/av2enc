@@ -45,7 +45,8 @@ Encoder::Encoder(const StillPicture& picture, const StillOptions& options,
         // is the identity (Round2(q * 32, 5) == q), so the §7.14.4 dequant is
         // unchanged while the stream carries genuine user QM data.
         qm_state_.qm_data_present[level] = true;
-        qm::fill_user_qm_constant(&qm_state_.user_qm[level], 32);
+        // value 32 is the identity matrix; false is only returned for 0.
+        (void)qm::fill_user_qm_constant(&qm_state_.user_qm[level], 32);
       }
     }
 

@@ -33,7 +33,7 @@ inline constexpr int kM2MaxCoeffCdfSlice0QIndex = 90;
 
 // True when the M2 coefficient-CDF tables cover `qctx`.  All four §8.3.1
 // slices are available from the shared `encoder/m1/qctx/` tables.
-bool video_coeff_cdf_slice_available(int qctx) noexcept;
+[[nodiscard]] bool video_coeff_cdf_slice_available(int qctx) noexcept;
 
 // §5.18.6.1: base_q_idx is f(8) for 8-bit and f(9) otherwise.
 int video_base_q_idx_bits(fmt::BitDepth depth) noexcept;
@@ -82,7 +82,7 @@ struct VideoRcConfig {
   fmt::BitDepth depth = fmt::BitDepth::k8;
 };
 
-bool video_rc_config_valid(const VideoRcConfig& config,
+[[nodiscard]] bool video_rc_config_valid(const VideoRcConfig& config,
                         std::string* error = nullptr);
 
 // Stateful per-frame controller: one instance per encode.  One begin_frame()

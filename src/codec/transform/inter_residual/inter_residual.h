@@ -53,7 +53,7 @@ struct BlockGeometry {
 
 // §5.20.7.25/26 TX sizes for TX_MODE_LARGEST.  Returns false when the coded
 // size is not one of the 25 AV2 transforms.
-bool inter_tx_sizes(const BlockGeometry& geometry, int* luma_tx_size,
+[[nodiscard]] bool inter_tx_sizes(const BlockGeometry& geometry, int* luma_tx_size,
                     int* chroma_tx_size);
 
 struct DecisionOptions {
@@ -117,13 +117,13 @@ struct BlockInput {
 
 // Decides skip vs inter residual for one block and returns the quantised
 // levels plus the reconstruction the decoder will produce.
-bool decide_inter_block(const BlockInput& input, const DecisionOptions& options,
+[[nodiscard]] bool decide_inter_block(const BlockInput& input, const DecisionOptions& options,
                         BlockDecision& decision, std::string& error);
 
 // Fills the syntax-side description of a non-skip decision and appends the
 // block's scan-order levels (Y, U, V) to `levels_out` (which is *appended*).
 // `decision.skip` must be false.
-bool make_syntax_block(const BlockGeometry& geometry,
+[[nodiscard]] bool make_syntax_block(const BlockGeometry& geometry,
                        const BlockDecision& decision,
                        InterResidualBlock* block,
                        std::vector<std::int32_t>* levels_out,
@@ -193,7 +193,7 @@ struct BatchOutput {
 // Runs the batch on the CPU reference path.  Output spans must be large enough
 // for every block's offsets; `status` receives one entry per block and the
 // function returns false if any block failed (per-block status is still set).
-bool decide_inter_batch(const BatchInput& input, BatchOutput& output,
+[[nodiscard]] bool decide_inter_batch(const BatchInput& input, BatchOutput& output,
                         std::string* error);
 
 // Rate estimate in bits for one plane's syntax (TX type symbol, EOB, base/br

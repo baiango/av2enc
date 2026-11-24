@@ -82,12 +82,12 @@ struct StreamResult {
 
 // Validate the plan, write all symbols, and reconstruct.  Every IBC BV is
 // checked with is_bv_encodable() before a single bit is emitted.
-bool encode_ibc_stream(const StreamPlan& plan, StreamResult& out,
+[[nodiscard]] bool encode_ibc_stream(const StreamPlan& plan, StreamResult& out,
                        std::string& error);
 
-bool write_ibc_ivf(const StreamResult& result, const StreamConfig& config,
+[[nodiscard]] bool write_ibc_ivf(const StreamResult& result, const StreamConfig& config,
                    const std::string& path, std::string& error);
-bool write_ibc_y4m(const StreamResult& result, const StreamConfig& config,
+[[nodiscard]] bool write_ibc_y4m(const StreamResult& result, const StreamConfig& config,
                    const std::string& path, std::string& error);
 
 // §5.20.4.1 add_neighbor() locations.  NPos (buffered=false) is the

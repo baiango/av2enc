@@ -107,7 +107,7 @@ struct VbvState {
 // Validates and initializes the bucket. `average_frame_bits` is the nominal
 // per-frame budget (target_bitrate * frame_duration). `frame_duration` is in
 // seconds and must be > 0. A disabled config produces a disabled state.
-bool make_vbv_state(const VbvConfig& config,
+[[nodiscard]] bool make_vbv_state(const VbvConfig& config,
                     double average_frame_bits,
                     double frame_duration,
                     VbvState& state,
@@ -124,7 +124,7 @@ double vbv_min_bits(const VbvState& state) noexcept;
 // clamped into [underflow_margin, size - overflow_margin] after an event so
 // subsequent planning continues from a defined state. Returns false only for
 // invalid inputs (negative/NaN bits); a disabled state is a no-op.
-bool vbv_apply(VbvState& state,
+[[nodiscard]] bool vbv_apply(VbvState& state,
                double bits,
                bool& underflow,
                bool& overflow) noexcept;
@@ -178,7 +178,7 @@ struct FrameStats {
 // tile list. Width/height must be positive (superblock geometry is derived
 // from them) and statistics must be finite. On success, `normalized` has the
 // same content with the implicit single tile materialized.
-bool normalize_frame_stats(const FrameStats& input,
+[[nodiscard]] bool normalize_frame_stats(const FrameStats& input,
                            FrameStats& normalized,
                            std::string* error = nullptr);
 
@@ -191,7 +191,7 @@ bool normalize_frame_stats(const FrameStats& input,
 // deterministic spatial-activity estimate, not a motion-compensated residual
 // and not a normative distortion metric. `luma` may be padded (`stride >=
 // width`); samples outside width x height are ignored.
-bool first_pass_luma(std::span<const std::uint8_t> luma,
+[[nodiscard]] bool first_pass_luma(std::span<const std::uint8_t> luma,
                      int width,
                      int height,
                      int stride,
@@ -269,7 +269,7 @@ struct TwoPassConfig {
   bool redistribute_bits = true;
 };
 
-bool two_pass_config_valid(const TwoPassConfig& config,
+[[nodiscard]] bool two_pass_config_valid(const TwoPassConfig& config,
                            std::string* error = nullptr);
 
 // ---------------------------------------------------------------------------
@@ -305,7 +305,7 @@ struct AllocationResult {
 // VBV pass that caps underflowing frames and redistributes the unused budget
 // to later frames. `total_bits` is the window budget; `initial_buffer` is the
 // bucket state before the first frame and is not modified.
-bool allocate_frames(std::span<const FrameStats> stats,
+[[nodiscard]] bool allocate_frames(std::span<const FrameStats> stats,
                      const TwoPassConfig& config,
                      double total_bits,
                      const VbvState& initial_buffer,

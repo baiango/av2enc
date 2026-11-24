@@ -110,7 +110,7 @@ int ii_weights_1d(int index) noexcept;
 
 // Fills a w*h row-major mask (stride w) exactly as §7.13.3.29.
 // Returns false if w/h are outside 4..64 or the span is too small.
-bool build_inter_intra_mask(int w, int h, InterIntraMode mode,
+[[nodiscard]] bool build_inter_intra_mask(int w, int h, InterIntraMode mode,
                             std::span<int> mask) noexcept;
 
 // ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ struct Decision {
 Decision decide(const DecisionParams& params) noexcept;
 
 // §7.13.2.7 conditions for the IBP DC process (§7.13.2.12).
-bool ibp_dc_applicable(bool enable_ibp, bool use_dip, Mode mode, int w, int h,
+[[nodiscard]] bool ibp_dc_applicable(bool enable_ibp, bool use_dip, Mode mode, int w, int h,
                        int plane, bool uv_is_cfl) noexcept;
 
 // A candidate is a (mode, angle_delta) pair.  For an IBP-enabled sequence,
@@ -249,7 +249,7 @@ class BitReader {
 
 void write_sequence_intra_config(const SequenceIntraConfig& config,
                                  bool monochrome, BitWriter& writer);
-bool read_sequence_intra_config(bool monochrome, BitReader& reader,
+[[nodiscard]] bool read_sequence_intra_config(bool monochrome, BitReader& reader,
                                 SequenceIntraConfig& config);
 
 }  // namespace av2enc::ibp

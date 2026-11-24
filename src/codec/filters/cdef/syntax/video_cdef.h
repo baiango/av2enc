@@ -168,13 +168,13 @@ struct Plan {
 };
 
 // Runs the strength search.  Does not touch pixels.
-bool plan(const FrameView& frame, const Options& options, Plan* out,
+[[nodiscard]] bool plan(const FrameView& frame, const Options& options, Plan* out,
           std::string* error);
 
 // Applies §7.18 to `frame.recon` and writes the filtered frame.  `dst` is the
 // CDEF output (`CdefFrame`); `src` and `dst` must not alias.  When no CDEF
 // stage runs, the caller keeps the post-deblock frame as the reference.
-bool filter(const FrameView& frame, const Plan& plan,
+[[nodiscard]] bool filter(const FrameView& frame, const Plan& plan,
             std::uint8_t* const dst[3], const int dst_stride[3],
             std::string* error);
 
@@ -214,24 +214,24 @@ struct TileIndexWriter {
 };
 
 // Decoder mirror for round-trip tests.
-bool read_tile_index(av2::Decoder& decoder, TileIndexWriter* tile, int mi_row,
+[[nodiscard]] bool read_tile_index(av2::Decoder& decoder, TileIndexWriter* tile, int mi_row,
                      int mi_col, int* idx, std::string* error);
 
 // Writes the whole frame's cdef_idx grid as a standalone §8.2 stream, in the
 // exact coding order (64x64 raster).  This is the byte/bit cost of the index
 // syntax and the reference for the tile-writer hook.
-bool write_index_symbols(const Plan& plan, std::vector<std::uint8_t>* payload,
+[[nodiscard]] bool write_index_symbols(const Plan& plan, std::vector<std::uint8_t>* payload,
                          std::string* error);
 
 // Decodes a standalone stream produced by write_index_symbols() and checks it
 // against `plan.cdef_idx`.
-bool read_index_symbols(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool read_index_symbols(std::span<const std::uint8_t> payload,
                         const Plan& plan, std::vector<std::int8_t>* grid,
                         std::string* error);
 
 // Best-effort §7.18.1 grid materialisation from optional per-MI inputs.
 // Returns false when a segment id falls outside the lossless array.
-bool build_mi_grids(int mi_cols, int mi_rows, const std::uint8_t* skip,
+[[nodiscard]] bool build_mi_grids(int mi_cols, int mi_rows, const std::uint8_t* skip,
                     const std::uint8_t* segment_id,
                     const std::uint8_t* chroma_segment_id,
                     const std::uint8_t* lossless_array,

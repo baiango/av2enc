@@ -263,10 +263,10 @@ struct ObuView {
 
 // Parses one leb128-prefixed OBU starting at `offset`; advances `offset` past
 // it. Rejects truncated/overflowing leb128, size 0, and size beyond the buffer.
-bool parse_obu(std::span<const std::uint8_t> data, std::size_t& offset,
+[[nodiscard]] bool parse_obu(std::span<const std::uint8_t> data, std::size_t& offset,
                ObuView& out, std::string& error);
 
-bool parse_obu_sequence(std::span<const std::uint8_t> data,
+[[nodiscard]] bool parse_obu_sequence(std::span<const std::uint8_t> data,
                         std::vector<ObuView>& out, std::string& error);
 
 struct ContentInterpretationView {
@@ -285,7 +285,7 @@ struct ContentInterpretationView {
 // trailing 1 bit, zero padding) and, when `strict`, the hard §6.14/§6.4.12
 // conformance limits. Reserved colour codepoints remain warnings because
 // §6.14 requires decoders to ignore them.
-bool parse_content_interpretation(
+[[nodiscard]] bool parse_content_interpretation(
     std::span<const std::uint8_t> payload, ContentInterpretationView& out,
     std::string& error, bool strict = true,
     ChromaFormat format = ChromaFormat::k420);
@@ -315,18 +315,18 @@ struct ContentInterpretationScanResult {
 // payload) are failures; a structurally valid CI OBU with an invalid payload
 // increments invalid_ci_obus and is skipped. An invalid CI OBU does not make
 // the whole scan fail, so a tool can report every instance.
-bool scan_content_interpretation(std::span<const std::uint8_t> temporal_unit,
+[[nodiscard]] bool scan_content_interpretation(std::span<const std::uint8_t> temporal_unit,
                                  ContentInterpretationScanResult& out,
                                  std::string& error, bool strict = true,
                                  ChromaFormat format = ChromaFormat::k420);
 
 // True for OBU types that carry coded frame data (§6.2.2 Table 6.1).
-bool is_frame_obu_type(std::uint8_t type);
+[[nodiscard]] bool is_frame_obu_type(std::uint8_t type);
 
 // True for OBU types that precede the coded output frame unit inside a coded
 // extended layer unit or temporal unit: TD, sequence header, MSDO, LCR, atlas
 // segment, operating point set (§7.3.6, §7.3.7).
-bool is_tu_prefix_obu_type(std::uint8_t type);
+[[nodiscard]] bool is_tu_prefix_obu_type(std::uint8_t type);
 
 // ---------------------------------------------------------------------------
 // Ordering
@@ -342,7 +342,7 @@ bool is_tu_prefix_obu_type(std::uint8_t type);
 // than one sequence header (multiple coded extended layer units make a single
 // insertion point ambiguous). `inserted_at`, when non-null, receives the byte
 // offset of the inserted OBU.
-bool insert_content_interpretation(
+[[nodiscard]] bool insert_content_interpretation(
     std::span<const std::uint8_t> temporal_unit,
     std::span<const std::uint8_t> ci_obu, std::vector<std::uint8_t>& out,
     std::string& error, std::size_t* inserted_at = nullptr);

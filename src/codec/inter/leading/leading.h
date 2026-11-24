@@ -56,10 +56,10 @@ enum class FrameKind : std::uint8_t {
 };
 
 ObuType obu_type_for(FrameKind kind) noexcept;
-bool is_leading_obu(ObuType type) noexcept;
-bool is_regular_obu(ObuType type) noexcept;
-bool is_key_obu(ObuType type) noexcept;
-bool is_tile_group_obu(ObuType type) noexcept;
+[[nodiscard]] bool is_leading_obu(ObuType type) noexcept;
+[[nodiscard]] bool is_regular_obu(ObuType type) noexcept;
+[[nodiscard]] bool is_key_obu(ObuType type) noexcept;
+[[nodiscard]] bool is_tile_group_obu(ObuType type) noexcept;
 
 // §5.4.1 sequence header configuration.  The defaults match VideoConfig so that an
 // M2-coded tile payload can be rewrapped without changing sequence-level tools.
@@ -130,7 +130,7 @@ struct Plan {
 //   * output-leading frames require monotonic_output_order_flag = 0;
 //   * an OLK needs monotonic_output_order_flag = 0 (its immediate flag is
 //     inferred 0 and this plan has no second output frame in the OLK TU).
-bool validate_plan(const SequenceConfig& config, const Plan& plan,
+[[nodiscard]] bool validate_plan(const SequenceConfig& config, const Plan& plan,
                    std::string& error);
 
 // §5.18.2 frame_header_info() bits (without is_first_tile_group and without

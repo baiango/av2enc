@@ -64,7 +64,7 @@ struct CompoundStreamOutput {
 // Builds the three temporal units.  `config.ref_map` must already describe
 // frame 2: NumTotalRefs = 2, ref_frame_idx = {0,1}, the order hints and
 // reference_select.  Every other sequence-header flag is derived from config.
-bool build_compound_stream(const CompoundStreamInput& input,
+[[nodiscard]] bool build_compound_stream(const CompoundStreamInput& input,
                            CompoundStreamOutput& output, std::string& error);
 
 // Re-encodes frame 2's tile with the given features forced off and compares it
@@ -72,7 +72,7 @@ bool build_compound_stream(const CompoundStreamInput& input,
 // This is the "all disabled" byte-identity control: it proves the new writer
 // does not change the pre-existing single-reference syntax.  Returns the tile
 // byte count on success.
-bool check_disabled_byte_identity(int width, int height,
+[[nodiscard]] bool check_disabled_byte_identity(int width, int height,
                                   std::uint8_t base_q_idx,
                                   bool* identical, std::size_t* bytes,
                                   std::string& error);

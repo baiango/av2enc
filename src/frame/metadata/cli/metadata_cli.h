@@ -86,7 +86,7 @@ std::vector<std::uint8_t> default_icc_profile();
 // Appends every enabled unit as a §5.17.2 suffix short OBU (current layer,
 // global persistence) to `unit`.  Returns false with `error` on a payload or
 // framing failure; `unit` is left untouched on failure.
-bool append_suffix_metadata(std::vector<std::uint8_t>& unit,
+[[nodiscard]] bool append_suffix_metadata(std::vector<std::uint8_t>& unit,
                             const Options& options,
                             const Options::FramePlanes* planes,
                             std::string& error);

@@ -58,7 +58,7 @@ struct GateTileConfig {
 };
 
 // Writes the range-coded tile payload including exit_symbol().
-bool write_gate_compound_tile(const GateTilePlan& plan,
+[[nodiscard]] bool write_gate_compound_tile(const GateTilePlan& plan,
                               const RefFrameMap& map,
                               const GateTileConfig& config,
                               std::vector<std::uint8_t>& payload,

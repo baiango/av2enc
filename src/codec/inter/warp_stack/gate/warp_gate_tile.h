@@ -68,7 +68,7 @@ struct GateTileConfig {
 // Writes the range-coded tile payload including exit_symbol().  `grid_out`
 // receives the final MI grid (block MVs, modes and warp models) so the gate
 // reconstructs from exactly the decoded state.
-bool write_gate_warp_tile(const GateTilePlan& plan, const GateTileConfig& config,
+[[nodiscard]] bool write_gate_warp_tile(const GateTilePlan& plan, const GateTileConfig& config,
                           std::vector<std::uint8_t>& payload,
                           std::vector<WarpMi>* grid_out, int* mi_cols_out,
                           int* mi_rows_out, std::string& error);

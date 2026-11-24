@@ -226,7 +226,7 @@ struct RefState {
 };
 
 // §6.17: long_term_id_in_use(longTermId) scans num_key_ref_frames entries.
-bool long_term_id_in_use(std::int32_t long_term_id,
+[[nodiscard]] bool long_term_id_in_use(std::int32_t long_term_id,
                          std::span<const std::uint8_t> ref_long_term_ids);
 
 // Slots a frame of `obu_type` may legally reference.
@@ -336,12 +336,12 @@ struct ObuView {
 
 // Parses an Annex B length-delimited OBU (§5.2.1/§5.2.2, Annex B.2).
 // `consumed` receives the number of bytes read including the leb128 prefix.
-bool parse_obu(std::span<const std::uint8_t> bytes, ObuView& out,
+[[nodiscard]] bool parse_obu(std::span<const std::uint8_t> bytes, ObuView& out,
                std::size_t& consumed, std::string& error);
 
 // Reads sequence_header_obu() payload bits (without the OBU extension flag or
 // trailing bits). Returns false with an error on truncation/unsupported bits.
-bool read_sequence_header(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool read_sequence_header(std::span<const std::uint8_t> payload,
                           SequenceHeaderView& out, std::string& error);
 
 // Reads one tile_group_obu() header from `payload` (the OBU payload, starting
@@ -350,7 +350,7 @@ bool read_sequence_header(std::span<const std::uint8_t> payload,
 // derived fields (refresh_frame_flags for RAS, frame dimensions) are filled.
 // `ras_codes_refresh_frame_flags` mirrors
 // SequenceConfig::ras_codes_refresh_frame_flags and must match the writer.
-bool read_frame_header(std::span<const std::uint8_t> payload, ObuType obu_type,
+[[nodiscard]] bool read_frame_header(std::span<const std::uint8_t> payload, ObuType obu_type,
                        const SequenceHeaderView& sequence, FrameHeader& out,
                        std::size_t& bits_consumed, std::string& error,
                        bool ras_codes_refresh_frame_flags = false);

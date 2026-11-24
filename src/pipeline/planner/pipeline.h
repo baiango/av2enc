@@ -80,7 +80,7 @@ struct LayoutPolicy {
 const char* layout_policy_mode_name(LayoutPolicyMode mode) noexcept;
 
 // True when the preset may be selected under `policy`.
-bool layout_preset_allowed(tiles::TileLayoutPreset preset,
+[[nodiscard]] bool layout_preset_allowed(tiles::TileLayoutPreset preset,
                            const LayoutPolicy& policy) noexcept;
 
 // Default preset for a GPU count before geometry validation:
@@ -136,7 +136,7 @@ struct TileQpConfig {
   int delta_q_res = 0;
 };
 
-bool tile_qp_config_valid(const TileQpConfig& config,
+[[nodiscard]] bool tile_qp_config_valid(const TileQpConfig& config,
                           std::string* error = nullptr);
 
 // ---------------------------------------------------------------------------
@@ -192,7 +192,7 @@ struct PipelineConfig {
   // legacy 7,500 MB field is not the product policy.
 };
 
-bool pipeline_config_valid(const PipelineConfig& config,
+[[nodiscard]] bool pipeline_config_valid(const PipelineConfig& config,
                            std::string* error = nullptr);
 
 // Per-tile statistics for tile-QP redistribution. `tile_index` may be -1 for
@@ -211,7 +211,7 @@ struct FrameStats {
   std::vector<TileStats> tiles;
 };
 
-bool frame_stats_valid(const FrameStats& stats, int tile_count,
+[[nodiscard]] bool frame_stats_valid(const FrameStats& stats, int tile_count,
                        std::string* error = nullptr);
 
 // ---------------------------------------------------------------------------
@@ -339,7 +339,7 @@ struct SequencePlan {
 // entry per frame. When empty, the rate-control model estimate is fed back as
 // a deterministic preview; that is a planning aid, not a substitute for
 // end_frame(actual payload bits) in a real encode.
-bool plan_sequence(const PipelineConfig& config,
+[[nodiscard]] bool plan_sequence(const PipelineConfig& config,
                    std::span<const FrameStats> stats,
                    std::span<const std::int64_t> actual_bits,
                    SequencePlan& plan, std::string* error = nullptr);

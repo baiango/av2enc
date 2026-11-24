@@ -77,13 +77,13 @@ struct StillFormatStats {
 // True when the requested format is served by a wired format component.
 // 10-bit serves 4:2:0/4:2:2/4:4:4/4:0:0 (qindex 1..303); 8-bit serves
 // 4:2:0/4:2:2/4:4:4/4:0:0.
-bool format_still_supported(ChromaFormat chroma, BitDepth depth,
+[[nodiscard]] bool format_still_supported(ChromaFormat chroma, BitDepth depth,
                             std::string* reason);
 
 // Reads `input`, encodes one still picture in the requested format and writes
 // `output` (IVF).  The input coloursapce must match the requested format; no
 // implicit conversion is done.  Returns false with a precise error.
-bool encode_still_format(const std::filesystem::path& input,
+[[nodiscard]] bool encode_still_format(const std::filesystem::path& input,
                          const std::filesystem::path& output,
                          const StillFormatOptions& options,
                          StillFormatStats* stats, std::string* error);

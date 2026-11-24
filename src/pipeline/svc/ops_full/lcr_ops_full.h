@@ -287,50 +287,50 @@ struct OperatingPointSet {
 // Syntax writers (payload bits + extensible-OBU tail, no OBU header)
 // ---------------------------------------------------------------------------
 
-bool write_lcr_payload(const LayerConfigRecord& record,
+[[nodiscard]] bool write_lcr_payload(const LayerConfigRecord& record,
                        std::vector<std::uint8_t>& out, std::string& error);
-bool write_ops_payload(const OperatingPointSet& set,
+[[nodiscard]] bool write_ops_payload(const OperatingPointSet& set,
                        std::vector<std::uint8_t>& out, std::string& error);
 
 // Individual syntax structures, exposed for goldens and for callers that
 // already own the surrounding bit writer.
-bool write_lcr_aggregate_info(BitWriter& writer, const AggregateInfo& aggregate,
+[[nodiscard]] bool write_lcr_aggregate_info(BitWriter& writer, const AggregateInfo& aggregate,
                               std::string& error);
-bool write_lcr_seq_profile_tier_level_info(
+[[nodiscard]] bool write_lcr_seq_profile_tier_level_info(
     BitWriter& writer, const ProfileTierLevelInfo& info, std::string& error);
-bool write_lcr_xlayer_color_info(BitWriter& writer,
+[[nodiscard]] bool write_lcr_xlayer_color_info(BitWriter& writer,
                                  const ColorDescription& color,
                                  std::string& error);
-bool write_lcr_rep_info(BitWriter& writer, const RepInfo& rep,
+[[nodiscard]] bool write_lcr_rep_info(BitWriter& writer, const RepInfo& rep,
                         std::string& error);
-bool write_lcr_embedded_layer_info(BitWriter& writer,
+[[nodiscard]] bool write_lcr_embedded_layer_info(BitWriter& writer,
                                    const EmbeddedLayerInfo& embedded,
                                    bool atlas_segment_present,
                                    std::string& error);
-bool write_lcr_xlayer_info(BitWriter& writer, const XLayerInfo& info,
+[[nodiscard]] bool write_lcr_xlayer_info(BitWriter& writer, const XLayerInfo& info,
                            bool is_global, bool atlas_id_present,
                            std::string& error);
 
-bool write_ops_aggregate_info(BitWriter& writer,
+[[nodiscard]] bool write_ops_aggregate_info(BitWriter& writer,
                               const OpsAggregateInfo& aggregate,
                               std::string& error);
-bool write_ops_seq_profile_tier_level_info(
+[[nodiscard]] bool write_ops_seq_profile_tier_level_info(
     BitWriter& writer, const OpsProfileTierLevelInfo& info, std::string& error);
-bool write_ops_decoder_model_info(BitWriter& writer,
+[[nodiscard]] bool write_ops_decoder_model_info(BitWriter& writer,
                                   const OpsDecoderModelInfo& info,
                                   std::string& error);
-bool write_ops_color_info(BitWriter& writer, const ColorDescription& color,
+[[nodiscard]] bool write_ops_color_info(BitWriter& writer, const ColorDescription& color,
                           std::string& error);
-bool write_ops_mlayer_info(BitWriter& writer, const OpsLayerMlayerInfo& info,
+[[nodiscard]] bool write_ops_mlayer_info(BitWriter& writer, const OpsLayerMlayerInfo& info,
                            std::string& error);
 
 // ---------------------------------------------------------------------------
 // Syntax readers (inverse of the writers; validates the extensible tail)
 // ---------------------------------------------------------------------------
 
-bool read_lcr_payload(std::span<const std::uint8_t> payload, bool is_global,
+[[nodiscard]] bool read_lcr_payload(std::span<const std::uint8_t> payload, bool is_global,
                       LayerConfigRecord& record, std::string& error);
-bool read_ops_payload(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool read_ops_payload(std::span<const std::uint8_t> payload,
                       std::uint8_t xlayer_id, OperatingPointSet& set,
                       std::string& error);
 
@@ -401,7 +401,7 @@ struct ValidationReport {
 
 // Layer-map closure (§6.8.9 / §6.10.7): every layer selected in a map must
 // also select the layers it depends on in the activated sequence header.
-bool validate_layer_map_closure(std::uint8_t xlayer_id,
+[[nodiscard]] bool validate_layer_map_closure(std::uint8_t xlayer_id,
                                 std::uint32_t mlayer_map,
                                 std::span<const std::uint8_t> tlayer_map,
                                 const layers::LayerDependencyMaps& dependencies,
@@ -410,16 +410,16 @@ bool validate_layer_map_closure(std::uint8_t xlayer_id,
 // §6.8: mandatory LCR rules, PTL/level consistency against the sequence
 // headers, rep-info agreement, aggregate dominance, xlayer-map closure and
 // the doh_constraint rule.
-bool validate_lcr(const LayerConfigRecord& record,
+[[nodiscard]] bool validate_lcr(const LayerConfigRecord& record,
                   const StreamContext& context, ValidationReport& report);
 
 // §6.10: mandatory OPS rules, PTL/level consistency, aggregate dominance,
 // idc-2 inheritance bounds and layer-map closure.
-bool validate_ops(const OperatingPointSet& set, const StreamContext& context,
+[[nodiscard]] bool validate_ops(const OperatingPointSet& set, const StreamContext& context,
                   ValidationReport& report);
 
 // Both, plus the cross-structure rules (local LCR parent, OPS xlayer subsets).
-bool validate_stream(const LayerConfigRecord& record,
+[[nodiscard]] bool validate_stream(const LayerConfigRecord& record,
                      const OperatingPointSet& set,
                      const StreamContext& context, ValidationReport& report);
 
@@ -427,7 +427,7 @@ bool validate_stream(const LayerConfigRecord& record,
 // global LCR for its obu_xlayer_id. This is the rule behind avmdec's
 // "Local LCR xlayer_info for xlayer_id %d does not match the parent global
 // LCR xlayer_info" message.
-bool validate_local_lcr_matches_global(const LayerConfigRecord& global,
+[[nodiscard]] bool validate_local_lcr_matches_global(const LayerConfigRecord& global,
                                        const LayerConfigRecord& local,
                                        ValidationReport& report);
 
@@ -441,7 +441,7 @@ struct BrtCorrespondence {
   std::vector<std::uint32_t> br_time_op;  // present BRT times, rg(4)
 };
 
-bool validate_brt_against_ops(const BrtCorrespondence& brt,
+[[nodiscard]] bool validate_brt_against_ops(const BrtCorrespondence& brt,
                               std::span<const OpsSummary> known_ops,
                               ValidationReport& report);
 
@@ -454,7 +454,7 @@ struct OpsInheritanceSource {
   std::array<std::uint8_t, kMaxEmbeddedLayers> tlayer_map{};
 };
 
-bool resolve_ops_inheritance(
+[[nodiscard]] bool resolve_ops_inheritance(
     const OpsLayerMlayerInfo& inherited,
     std::span<const OpsInheritanceSource> sources,
     OpsLayerMlayerInfo& resolved, std::string& error);
@@ -464,8 +464,8 @@ bool resolve_ops_inheritance(
 // ---------------------------------------------------------------------------
 
 std::size_t popcount32(std::uint32_t value);
-bool global_xlayer(const OperatingPointSet& set);
-bool global_xlayer(const LayerConfigRecord& record);
+[[nodiscard]] bool global_xlayer(const OperatingPointSet& set);
+[[nodiscard]] bool global_xlayer(const LayerConfigRecord& record);
 
 // (obu_xlayer_id, ops_id, ops_cnt) of a written or parsed OPS, for the BRT
 // hook and for cross-checks.

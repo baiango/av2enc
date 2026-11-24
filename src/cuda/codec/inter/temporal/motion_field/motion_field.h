@@ -308,7 +308,7 @@ MfStatus allocate_checked(Arena& arena, const MfConfig& config,
 // Arena watermark wrappers.  mark() is stable across calls; rewind() returns
 // false for a mark newer than the current bump pointer.
 std::uint64_t motion_field_mark(const Arena& arena) noexcept;
-bool motion_field_rewind(Arena& arena, std::uint64_t mark) noexcept;
+[[nodiscard]] bool motion_field_rewind(Arena& arena, std::uint64_t mark) noexcept;
 
 // Setup copies into the persistent buffers.  These are the only copies in the
 // module and are never called by a launcher.

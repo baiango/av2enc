@@ -40,7 +40,7 @@ AV2ENC_ADV_HD inline int obmc_overlap_for(const ObmcConfig& config) {
 
 // Applies the above neighbour first, then the left neighbour (sequential, the
 // same convention as AV1). `above`/`left` may be null when unavailable.
-bool obmc_apply(const ObmcConfig& config, const ObmcNeighbourPred* above,
+[[nodiscard]] bool obmc_apply(const ObmcConfig& config, const ObmcNeighbourPred* above,
                 const ObmcNeighbourPred* left);
 
 // Total squared difference between an OBMC blend and the plain prediction,

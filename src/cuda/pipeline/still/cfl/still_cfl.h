@@ -102,7 +102,7 @@ StillCflPair make_still_cfl_pair(const StillCflFrame& frame, const StillCflRect&
 // share luma geometry, and the two chroma planes are distinct. When `error`
 // is non-null it receives a short reason on failure. This is plan validation,
 // not a device operation.
-bool still_cfl_valid_pair(const StillCflPair& pair, std::string* error = nullptr);
+[[nodiscard]] bool still_cfl_valid_pair(const StillCflPair& pair, std::string* error = nullptr);
 
 // Default M1 path (CFL_DERIVED_ALPHA): derives alpha per plane from that
 // plane's reconstructed chroma above/left neighbours, then applies

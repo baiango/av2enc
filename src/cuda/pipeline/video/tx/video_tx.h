@@ -314,7 +314,7 @@ struct VideoTxPlanData {
 //
 // Returns false and fills `*error` on an invalid request, an unsupported size,
 // or a plan that would exceed the module caps.
-bool video_tx_build_plan(const VideoTxJobRequest* requests, int count,
+[[nodiscard]] bool video_tx_build_plan(const VideoTxJobRequest* requests, int count,
                          VideoTxPlanData* plan, std::string* error);
 
 // Candidate types for one size/mode (exposed for the orchestrator and tests).

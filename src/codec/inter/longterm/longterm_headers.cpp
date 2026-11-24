@@ -491,8 +491,8 @@ std::size_t write_frame_header(BitWriter& writer, const SequenceConfig& c,
     context.immediate_output_frame =
         h.role == FrameRole::kOpenLoopKey ? false : h.immediate_output_frame;
     std::string grain_error;
-    filters::grain::WriteFilmGrainConfig(writer, h.grain, context,
-                                         &grain_error);
+    (void)filters::grain::WriteFilmGrainConfig(
+        writer, h.grain, context, &grain_error);
     assert(grain_error.empty());
   }
 

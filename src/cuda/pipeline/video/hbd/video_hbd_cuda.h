@@ -17,7 +17,7 @@ class Arena;
 
 namespace av2enc::cuda::video::hbd_gpu {
 
-bool encode_video_sequence_format_gpu(
+[[nodiscard]] bool encode_video_sequence_format_gpu(
     std::span<const av2enc::video::VideoInputFrame> frames,
     const av2enc::video::VideoOptions& options,
     av2enc::video::VideoSequenceResult& result, std::string& error,

@@ -157,7 +157,7 @@ struct Reconstruction {
 // caller must signal that stored level (encode() does). Rejects
 // non-representable grids (for example 16x2 at 640x360, whose 10 superblock
 // columns cannot be split into 16 tiles).
-bool build_layout(int width, int height, tiles::TileLayoutPreset preset, int sb_size,
+[[nodiscard]] bool build_layout(int width, int height, tiles::TileLayoutPreset preset, int sb_size,
                   int seq_level_idx, tiles::TileLayout* layout, std::string* error);
 
 // Minimal TileSizeBytes that can hold the largest payload, or 0 with `error`
@@ -191,7 +191,7 @@ struct TilePayloadView {
 // order `le(TileSizeBytes) (size - 1)` + payload for every tile except the
 // last (whose size is implied by the OBU length). On success `tile_size_bytes`
 // receives the selected field width.
-bool make_tile_group_payload(const tiles::TileLayout& layout, const Config& config,
+[[nodiscard]] bool make_tile_group_payload(const tiles::TileLayout& layout, const Config& config,
                              std::span<const TilePayloadView> payloads,
                              std::vector<std::uint8_t>* clk_payload, int* tile_size_bytes,
                              std::string* error);
@@ -200,7 +200,7 @@ bool make_tile_group_payload(const tiles::TileLayout& layout, const Config& conf
 // disable_loopfilters_across_tiles = 0 sequence header with the M1 core
 // writers. encode() runs this before doing any work, so a core header change
 // can never silently desynchronise the tiled stream.
-bool core_header_parity(const Config& config, std::string* error);
+[[nodiscard]] bool core_header_parity(const Config& config, std::string* error);
 
 // Per-tile output for a caller-supplied tile encoder.
 struct TileEncodeOutput {
@@ -233,6 +233,6 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame,
 // Paste the per-tile visible reconstructions into one full frame. Validates
 // coverage and plane sizes; used by the gate and by any caller that wants the
 // expected decoder output.
-bool assemble_reconstruction(const Frame& frame, Reconstruction* out, std::string* error);
+[[nodiscard]] bool assemble_reconstruction(const Frame& frame, Reconstruction* out, std::string* error);
 
 }  // namespace av2enc::still::tiles_stream

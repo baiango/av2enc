@@ -83,7 +83,7 @@ struct CdefHeaderParams {
 // is M1's case: cdef_frame_enable is inferred to 1 and no bit is coded for it.
 // Returns false for non-signallable options (strength out of range, sec not in
 // {0,1,2,4}, damping outside 3..6, count outside 1..8).
-bool still_cdef_build_header(const cdef::CdefOptions& options,
+[[nodiscard]] bool still_cdef_build_header(const cdef::CdefOptions& options,
                           bool single_picture_header, CdefHeaderParams* out,
                           std::string* error);
 
@@ -114,7 +114,7 @@ struct CdefMiGrids {
 
 // Materialises the three MI grids the filter reads.  `lossless` is
 // `LosslessArray[SegmentIds[mi]]` (0 when no segment/lossless data is given).
-bool still_cdef_build_mi_grids(const CdefMiInputs& inputs, CdefMiGrids* out,
+[[nodiscard]] bool still_cdef_build_mi_grids(const CdefMiInputs& inputs, CdefMiGrids* out,
                             std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -192,7 +192,7 @@ struct CdefStagePlan {
 // filter pixels and does not touch device memory: on the GPU path the
 // orchestrator uploads `cdef_idx` (or uses the device search) and calls
 // `still_cdef_filter()` in `still_cdef_cuda.h`.
-bool still_cdef_plan(const CdefStageFrame& frame, const CdefStageOptions& options,
+[[nodiscard]] bool still_cdef_plan(const CdefStageFrame& frame, const CdefStageOptions& options,
                   CdefStagePlan* plan, std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -222,7 +222,7 @@ struct CdefDeviceFrame {
 
 // Host-side validation shared by the device entries: geometry, strides,
 // non-aliasing planes, metadata presence, option ranges.
-bool still_cdef_validate_device_frame(const CdefDeviceFrame& frame,
+[[nodiscard]] bool still_cdef_validate_device_frame(const CdefDeviceFrame& frame,
                                    const cdef::CdefOptions& options,
                                    std::string* error);
 

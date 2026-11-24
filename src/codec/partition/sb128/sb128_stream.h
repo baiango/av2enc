@@ -44,11 +44,11 @@ struct StreamResult {
 
 // The reference tree writes 64x64 leaves.  Reject geometries whose right or
 // bottom partial superblock must recurse below 64x64.
-bool stream_geometry_supported(const Geometry& geometry, std::string& error);
+[[nodiscard]] bool stream_geometry_supported(const Geometry& geometry, std::string& error);
 
 // Build the complete IVF frame payload.  Returns false with `error` on any
 // spec or plan inconsistency.
-bool make_sb128_stream(const StreamConfig& config, StreamResult& out,
+[[nodiscard]] bool make_sb128_stream(const StreamConfig& config, StreamResult& out,
                        std::string& error);
 
 // Header pieces, exported for tests and for a future CLI/GPU integration.

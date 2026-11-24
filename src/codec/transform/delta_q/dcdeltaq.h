@@ -77,7 +77,7 @@ struct SequenceDeltaQ {
 //   * equal_ac_dc_q = 1 forces BaseYDcDeltaQ = BaseUVDcDeltaQ = 0 and both DC
 //     enables off (the fields are not coded);
 //   * BaseUVDcDeltaQ is BaseUVAcDeltaQ when equal_ac_dc_q = 1.
-bool validate_sequence_delta_q(const SequenceDeltaQ& seq, std::string* error);
+[[nodiscard]] bool validate_sequence_delta_q(const SequenceDeltaQ& seq, std::string* error);
 
 // Normalized view: with equal_ac_dc_q = 1, BaseUVDcDeltaQ := BaseUVAcDeltaQ.
 SequenceDeltaQ normalized_sequence_delta_q(const SequenceDeltaQ& seq);
@@ -108,7 +108,7 @@ struct SeqTransformQuantEntropyConfig {
 std::size_t write_sequence_transform_quant_entropy_config(
     BitWriter& writer, const SeqTransformQuantEntropyConfig& config,
     const SequenceDeltaQ& seq, std::string* error = nullptr);
-bool read_sequence_transform_quant_entropy_config(
+[[nodiscard]] bool read_sequence_transform_quant_entropy_config(
     av2enc::deltaq::BitReader& reader, SeqTransformQuantEntropyConfig& config,
     SequenceDeltaQ& seq, std::string* error = nullptr);
 
@@ -118,7 +118,7 @@ bool read_sequence_transform_quant_entropy_config(
 std::size_t write_sequence_delta_q_fields(BitWriter& writer,
                                           const SequenceDeltaQ& seq,
                                           std::string* error = nullptr);
-bool read_sequence_delta_q_fields(av2enc::deltaq::BitReader& reader, bool monochrome,
+[[nodiscard]] bool read_sequence_delta_q_fields(av2enc::deltaq::BitReader& reader, bool monochrome,
                                   SequenceDeltaQ& seq,
                                   std::string* error = nullptr);
 
@@ -151,7 +151,7 @@ struct QuantizationParams {
   FrameDeltaQ delta;
 };
 
-bool validate_frame_delta_q(const SequenceDeltaQ& seq,
+[[nodiscard]] bool validate_frame_delta_q(const SequenceDeltaQ& seq,
                             const FrameDeltaQ& frame, std::string* error);
 
 // Complete §5.18.6.1 `quantization_params()` for a non-TIP frame:
@@ -161,7 +161,7 @@ std::size_t write_quantization_params(BitWriter& writer, int base_q_idx,
                                       const SequenceDeltaQ& seq,
                                       const FrameDeltaQ& frame,
                                       std::string* error = nullptr);
-bool read_quantization_params(av2enc::deltaq::BitReader& reader,
+[[nodiscard]] bool read_quantization_params(av2enc::deltaq::BitReader& reader,
                               const SequenceDeltaQ& seq, int bit_depth,
                               QuantizationParams& out,
                               std::string* error = nullptr);
@@ -175,7 +175,7 @@ std::size_t write_disabled_quantization_params(BitWriter& writer,
 // `read_delta_q()` itself: f(1) delta_coded; if set, su(7) delta_q.
 std::size_t write_delta_q(BitWriter& writer, int value,
                           std::string* error = nullptr);
-bool read_delta_q(av2enc::deltaq::BitReader& reader, int& value,
+[[nodiscard]] bool read_delta_q(av2enc::deltaq::BitReader& reader, int& value,
                   bool* coded = nullptr, std::string* error = nullptr);
 
 // ---------------------------------------------------------------------------
@@ -272,19 +272,19 @@ int adjusted_height(int coded_h);
 
 // Fills `q2[tw * th]` with the §7.14.4 q2 matrix (DC at index 0, AC elsewhere,
 // QM applied when active).  Returns false on bad parameters.
-bool build_q2_matrix(const QuantBlock& block, std::int32_t* q2,
+[[nodiscard]] bool build_q2_matrix(const QuantBlock& block, std::int32_t* q2,
                      std::string* error = nullptr);
 
 // `coeff[tw * th]` -> levels.  In lossless mode the coefficients are passed
 // through with Round2(x, 0) (the reversible WHT/IDTX path does not use this
 // quantizer; the pass-through keeps the API total and is what a lossless
 // encoder calls).
-bool quantize_block(const double* coeff, const QuantBlock& block,
+[[nodiscard]] bool quantize_block(const double* coeff, const QuantBlock& block,
                     std::int32_t* levels, std::string* error = nullptr);
 
 // levels -> dequant.  In lossless mode this copies the levels (the decoder's
 // lossless path does not invoke §7.14.4 dequantization).
-bool dequantize_block(const std::int32_t* levels, const QuantBlock& block,
+[[nodiscard]] bool dequantize_block(const std::int32_t* levels, const QuantBlock& block,
                       std::int32_t* dequant, std::string* error = nullptr);
 
 // §4.8 Round2 for the non-negative domain used by dequantization.
@@ -344,7 +344,7 @@ struct DeltaQSearchResult {
 // Chooses the frame deltas that minimise SSE + lambda * rate for one frame.
 // The result is the legal sequence/frame header pair plus its derived
 // quantizers.  `error` is set on invalid input.
-bool search_frame_delta_q(const FramePlanesView& planes,
+[[nodiscard]] bool search_frame_delta_q(const FramePlanesView& planes,
                           const DeltaQSearchConfig& config,
                           DeltaQSearchResult* result,
                           std::string* error = nullptr);

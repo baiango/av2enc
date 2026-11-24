@@ -336,8 +336,8 @@ std::size_t write_frame_header_syntax(BitWriter& writer,
     context.immediate_output_frame = outputs.immediate;
     context.implicit_output_frame = outputs.implicit;
     std::string grain_error;
-    filters::grain::WriteFilmGrainConfig(writer, h.grain, context,
-                                         &grain_error);
+    (void)filters::grain::WriteFilmGrainConfig(
+        writer, h.grain, context, &grain_error);
     assert(grain_error.empty());
   }
 

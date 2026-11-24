@@ -68,7 +68,7 @@ CctxPair cctx_dequant_pair(std::int32_t u, std::int32_t v, CctxType type,
 
 // §5.20.7.27 is_cctx_allowed().  `chroma_w`/`chroma_h` are the chroma residual
 // block dimensions, used only for the non-4:2:0 branch.
-bool cctx_allowed(bool enable_cctx, bool lossless, bool is420, int chroma_w,
+[[nodiscard]] bool cctx_allowed(bool enable_cctx, bool lossless, bool is420, int chroma_w,
                   int chroma_h) noexcept;
 
 // Ideal code length of one `cctx_type` symbol under Default_Cctx_Type_Cdf.
@@ -98,7 +98,7 @@ struct CctxResult {
 // model plus `cctx_type_bits(candidate.type)` when the frame signals the
 // symbol.  The vector is ordered by increasing type value and always contains
 // CCTX_NONE when `config.enabled` is false.
-bool cctx_enumerate_scalar(std::span<const double> u_coeff,
+[[nodiscard]] bool cctx_enumerate_scalar(std::span<const double> u_coeff,
                            std::span<const double> v_coeff, int w, int h,
                            const CctxConfig& config,
                            std::vector<CctxResult>* candidates,
@@ -106,7 +106,7 @@ bool cctx_enumerate_scalar(std::span<const double> u_coeff,
 
 // Convenience: minimum-distortion candidate (no rate).  Use
 // cctx_enumerate_scalar() for an RD decision.
-bool cctx_quantize_scalar(std::span<const double> u_coeff,
+[[nodiscard]] bool cctx_quantize_scalar(std::span<const double> u_coeff,
                           std::span<const double> v_coeff, int w, int h,
                           const CctxConfig& config, CctxResult* result,
                           std::string* error = nullptr);

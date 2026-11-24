@@ -122,7 +122,7 @@ struct Geometry {
 
 // Builds the geometry for a legal TX size.  Rejects tx_size outside 0..24 and
 // plane outside 0..2.
-bool make_geometry(std::int32_t tx_size, TxClass tx_class, std::int32_t plane,
+[[nodiscard]] bool make_geometry(std::int32_t tx_size, TxClass tx_class, std::int32_t plane,
                    Geometry* geometry, std::string* error = nullptr);
 
 inline std::int32_t tx_size_sqr(std::int32_t tx_size) noexcept {
@@ -163,11 +163,11 @@ struct Eligibility {
   bool is_inter = false;             // EOB / txb_skip CDF context
 };
 
-bool parity_hiding_eligible(const Geometry& geometry,
+[[nodiscard]] bool parity_hiding_eligible(const Geometry& geometry,
                             const Eligibility& eligibility) noexcept;
 
 // `get_lf_limits(row, col, txClass, plane)` (§5.20.7.27).
-bool is_low_frequency(std::int32_t row, std::int32_t col, TxClass tx_class,
+[[nodiscard]] bool is_low_frequency(std::int32_t row, std::int32_t col, TxClass tx_class,
                       std::int32_t plane) noexcept;
 
 // Syntax parameters at one raster position.
@@ -215,7 +215,7 @@ struct EobCdfDecision {
 
 // §5.20.7.27 sign class: true when the sign uses TileDcSignCdf (the DC, or
 // the col/row-zero coefficient of a HORIZ/VERT transform).
-bool sign_is_dc_style(std::int32_t plane, TxClass tx_class, std::int32_t pos,
+[[nodiscard]] bool sign_is_dc_style(std::int32_t plane, TxClass tx_class, std::int32_t pos,
                       std::int32_t row, std::int32_t col) noexcept;
 
 // §5.20.7.27 EOB prefix CDF selection (`eobMultisize` + plane/inter context).
@@ -229,7 +229,7 @@ std::int32_t eob_pt_for_eob(std::int32_t eob) noexcept;
 // §5.20.7.30 get_scan(): 2D diagonal, HORIZ column-major, VERT row-major.
 void build_scan(std::int32_t w, std::int32_t h, TxClass tx_class,
                 std::span<std::int32_t> scan) noexcept;
-bool build_scan(const Geometry& geometry, std::span<std::int32_t> scan,
+[[nodiscard]] bool build_scan(const Geometry& geometry, std::span<std::int32_t> scan,
                 std::string* error = nullptr);
 
 // ---------------------------------------------------------------------------
@@ -319,7 +319,7 @@ struct DecodedBlock {
 // (`|DC| & 1 == sumAbs1`) when `is_hidden` would be selected.  Use
 // `quantize()`/`apply_parity_hiding()` to produce such levels.  Returns false
 // with a diagnostic rather than silently changing a level.
-bool derive_syntax(std::span<const std::int32_t> levels_scan,
+[[nodiscard]] bool derive_syntax(std::span<const std::int32_t> levels_scan,
                    const Geometry& geometry, const Eligibility& eligibility,
                    BlockSyntax* syntax, std::string* error = nullptr);
 
@@ -327,12 +327,12 @@ bool derive_syntax(std::span<const std::int32_t> levels_scan,
 // `sumAbs1` from the coded base/br symbols, then applies
 // `Quant = 2 * Quant + sumAbs1` at the DC.  This is the reader oracle; the
 // entropy reader in `parity_entropy.h` produces the same record from bytes.
-bool decode_syntax(const BlockSyntax& syntax, const Geometry& geometry,
+[[nodiscard]] bool decode_syntax(const BlockSyntax& syntax, const Geometry& geometry,
                    DecodedBlock* decoded, std::string* error = nullptr);
 
 // Full-level magnitude a syntax record reconstructs, scan order.  This is the
 // `Quant[]` array the §7.14.4 dequant consumes.
-bool decoded_levels(const BlockSyntax& syntax, const Geometry& geometry,
+[[nodiscard]] bool decoded_levels(const BlockSyntax& syntax, const Geometry& geometry,
                     std::span<std::int32_t> levels_scan,
                     std::string* error = nullptr);
 
@@ -406,7 +406,7 @@ struct QuantizeResult {
   double cost = 0.0;
 };
 
-bool quantize_config_valid(const QuantizeConfig& config) noexcept;
+[[nodiscard]] bool quantize_config_valid(const QuantizeConfig& config) noexcept;
 
 // Chooses levels so the hidden parity bit is signalled correctly.
 //
@@ -415,20 +415,20 @@ bool quantize_config_valid(const QuantizeConfig& config) noexcept;
 // output.  The returned `levels` are always representable; `syntax` is built
 // with `derive_syntax()` and round-tripped through `decode_syntax()` before
 // being returned.
-bool quantize(std::span<const double> original,
+[[nodiscard]] bool quantize(std::span<const double> original,
               std::span<const std::int32_t> levels_seed,
               const Geometry& geometry, const QuantizeConfig& config,
               QuantizeResult* result, std::string* error = nullptr);
 
 // Convenience: scalar-quantise `original` at `quant_step`, then `quantize()`.
-bool quantize_scalar(std::span<const double> original,
+[[nodiscard]] bool quantize_scalar(std::span<const double> original,
                      const Geometry& geometry, const QuantizeConfig& config,
                      QuantizeResult* result, std::string* error = nullptr);
 
 // Post-processing entry point: fix `levels_seed` in place so the hidden DC
 // parity is legal.  Kept separate from `quantize()` for callers that already
 // own an RDOQ decision and only need the parity constraint.
-bool apply_parity_hiding(std::span<const double> original,
+[[nodiscard]] bool apply_parity_hiding(std::span<const double> original,
                          std::span<std::int32_t> levels,
                          const Geometry& geometry, const QuantizeConfig& config,
                          BlockSyntax* syntax, std::string* error = nullptr);

@@ -96,7 +96,7 @@ TileInfoCdfField tile_info_cdf_field(bool enable_avg_cdf, bool avg_cdf_type,
 // §6.17.7.3: it is a requirement of bitstream conformance that
 // context_update_tile_id < TileCols * TileRows when it is coded.  When it is
 // absent the caller must pass 0 (the inference).
-bool validate_context_update_tile_id(const TileInfoCdfField& field,
+[[nodiscard]] bool validate_context_update_tile_id(const TileInfoCdfField& field,
                                      std::uint32_t context_update_tile_id,
                                      std::string* error = nullptr);
 
@@ -178,7 +178,7 @@ struct FrameCdfPlan {
 // Pure planner; never asserts on malformed input (use the validator below).
 FrameCdfPlan plan_frame_cdfs(const FrameCdfInput& input) noexcept;
 
-bool validate_frame_cdfs(const FrameCdfInput& input,
+[[nodiscard]] bool validate_frame_cdfs(const FrameCdfInput& input,
                          std::string* error = nullptr);
 
 enum class ContinuityStatus {

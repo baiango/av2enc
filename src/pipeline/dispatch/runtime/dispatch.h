@@ -61,7 +61,7 @@ struct MergedFrame {
 // Requires exactly one payload of at least 2 bytes per tile in
 // [0, tile_count). Duplicate
 // or missing tiles abort the whole frame; a partial merge is never returned.
-bool merge_payloads(const MultiGpuPlan& plan,
+[[nodiscard]] bool merge_payloads(const MultiGpuPlan& plan,
                     std::span<const TilePayloadView> payloads,
                     MergedFrame& out, std::string* error = nullptr);
 

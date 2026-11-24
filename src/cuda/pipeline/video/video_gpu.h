@@ -113,7 +113,7 @@ struct VideoGpuStats {
 // required_device_bytes()); the CPU-emulation backend ignores it.  An external
 // arena must be at least required_device_bytes() for the frame size and must
 // not be released while the call is running.
-bool encode_video_sequence_gpu(
+[[nodiscard]] bool encode_video_sequence_gpu(
     std::span<const av2enc::video::VideoInputFrame> frames,
     const av2enc::video::VideoOptions& options,
     av2enc::video::VideoSequenceResult& result, std::string& error,
@@ -126,7 +126,7 @@ const char* video_backend_name();
 // residual path.  The M2 baseline codes every inter leaf with skip_flag = 1,
 // so this chain is not selected by encode_video_sequence_gpu(); this entry point
 // verifies it against the CPU transform reference on the linked backend.
-bool video_inter_residual_selftest(int trials, std::string& error);
+[[nodiscard]] bool video_inter_residual_selftest(int trials, std::string& error);
 
 }  // namespace av2enc::cuda::video
 

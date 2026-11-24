@@ -212,7 +212,7 @@ struct CornerResult {
 };
 
 // §7.12.2.4.  `adjust_col` is the `iter` argument of generate_points_from_corners.
-bool warp_corner_process(const WarpGrid& grid, int sb_h4, int mi_row, int mi_col,
+[[nodiscard]] bool warp_corner_process(const WarpGrid& grid, int sb_h4, int mi_row, int mi_col,
                          int bw4, int bh4, std::int8_t ref_frame0, int delta_row,
                          int delta_col, int adjust_col, CornerResult* out);
 
@@ -388,14 +388,14 @@ struct WarpSampleParams {
 };
 
 // §7.12.3. Returns true when at least one sample was produced.
-bool find_warp_samples(const WarpSampleParams& params, WarpSampleSet* out);
+[[nodiscard]] bool find_warp_samples(const WarpSampleParams& params, WarpSampleSet* out);
 
 // §7.12.3.2 add sample process.  `delta_row`/`delta_col` are MI offsets.
 void add_warp_sample(const WarpSampleParams& params, int delta_row, int delta_col,
                      WarpSampleSet* out);
 
 // §7.12.3 helper above_sample_stored(deltaCol).
-bool above_sample_stored(const WarpSampleParams& params, int delta_col);
+[[nodiscard]] bool above_sample_stored(const WarpSampleParams& params, int delta_col);
 
 // Inputs for the full local-warp derivation of §7.13.3.23.
 struct LocalWarpParams {

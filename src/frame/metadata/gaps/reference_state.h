@@ -251,17 +251,17 @@ struct CcsoParams {
 // Return false and set `error` when the snapshot cannot be a §7.23 save of a
 // real frame (shape mismatch, out-of-range coded field, or a field that is
 // inferred when a flag is clear but left non-zero).
-bool validate_saved_mvs(const SavedMvs& value, std::string& error);
-bool validate_saved_ref_frames(const SavedRefFrames& value,
+[[nodiscard]] bool validate_saved_mvs(const SavedMvs& value, std::string& error);
+[[nodiscard]] bool validate_saved_ref_frames(const SavedRefFrames& value,
                                std::string& error);
-bool validate_saved_gm_params(const SavedGmParams& value, std::string& error);
-bool validate_saved_segment_ids(const SavedSegmentIds& value,
+[[nodiscard]] bool validate_saved_gm_params(const SavedGmParams& value, std::string& error);
+[[nodiscard]] bool validate_saved_segment_ids(const SavedSegmentIds& value,
                                 std::string& error);
-bool validate_reference_slot(const ReferenceSlot& value, std::string& error);
+[[nodiscard]] bool validate_reference_slot(const ReferenceSlot& value, std::string& error);
 
-bool validate_grain_params(const GrainParams& value, std::string& error);
-bool validate_ccso_plane(const CcsoPlaneParams& value, std::string& error);
-bool validate_ccso_params(const CcsoParams& value, std::string& error);
+[[nodiscard]] bool validate_grain_params(const GrainParams& value, std::string& error);
+[[nodiscard]] bool validate_ccso_plane(const CcsoPlaneParams& value, std::string& error);
+[[nodiscard]] bool validate_ccso_params(const CcsoParams& value, std::string& error);
 
 // ---------------------------------------------------------------------------
 // Store

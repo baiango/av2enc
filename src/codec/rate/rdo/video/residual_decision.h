@@ -26,7 +26,7 @@ residual::DecisionOptions make_residual_options(const RdoConfig& config);
 // Runs the shared residual decision with this layer's lambda.  `force_residual`
 // is the stress-gate behaviour (code a residual even when skip is cheaper);
 // the reconstruction still comes from the decision and is decoder-exact.
-bool decide_residual(const residual::BlockInput& input,
+[[nodiscard]] bool decide_residual(const residual::BlockInput& input,
                      const RdoConfig& config, bool allow_residual,
                      bool force_residual, residual::BlockDecision& decision,
                      std::string* error = nullptr);

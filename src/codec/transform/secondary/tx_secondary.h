@@ -75,14 +75,14 @@ struct SecondarySizeInfo {
 };
 
 // Derives the §7.15.3 block facts.  Returns false for an unsupported TX size.
-bool secondary_size_info(const TxParams& params, TxType plane_tx_type,
+[[nodiscard]] bool secondary_size_info(const TxParams& params, TxType plane_tx_type,
                          SecondarySizeInfo* out);
 
 // §5.20.8.2 eobLim (8, 20 or 32).
 int secondary_eob_limit(const TxParams& params, TxType plane_tx_type);
 
 // YMode 1..8 are directional (V..D67); DC/SMOOTH/PAETH are not.
-bool is_directional_mode(int y_mode) noexcept;
+[[nodiscard]] bool is_directional_mode(int y_mode) noexcept;
 
 // §5.20.8.2 mode derivation used by the IST kernel selection:
 //   pAngle = Mode_To_Angle[mode] + AngleDeltaY*ANGLE_STEP
@@ -102,12 +102,12 @@ int most_probable_stx_set_count(TxType plane_tx_type, int coded_w,
 // For inter blocks kernel is always 0 and `most_probable_stx_set` is ignored
 // (the syntax does not code it).  Returns false for an out-of-range set or a
 // kernel index outside the selected 4x4/8x8 table.
-bool kernel_for_syntax(int mapped_mode, TxType plane_tx_type,
+[[nodiscard]] bool kernel_for_syntax(int mapped_mode, TxType plane_tx_type,
                        int most_probable_stx_set, bool is_inter, int coded_w,
                        int coded_h, int* kernel) noexcept;
 
 // §7.15.3 transpose = H_PRED / D157_PRED / D67_PRED / SMOOTH_H_PRED.
-bool transpose_for_mode(int mapped_mode) noexcept;
+[[nodiscard]] bool transpose_for_mode(int mapped_mode) noexcept;
 
 // ---------------------------------------------------------------------------
 // Syntax legality (§5.20.8.2 + §5.4.8)
@@ -129,13 +129,13 @@ struct SecondarySyntax {
 
 // True when §5.20.8.2 would code sec_tx_type for this block (regardless of the
 // value, including 0).  `eob` is the coded scan-position EOB.
-bool secondary_syntax_applicable(int plane, int eob,
+[[nodiscard]] bool secondary_syntax_applicable(int plane, int eob,
                                  const SecondarySyntax& syntax,
                                  const SecondaryTransformConfig& config);
 
 // Full validation for a nonzero sec_tx_type, including the kernel, set range,
 // bit depth and EOB limit.
-bool secondary_syntax_valid(int plane, int eob, const SecondarySyntax& syntax,
+[[nodiscard]] bool secondary_syntax_valid(int plane, int eob, const SecondarySyntax& syntax,
                             const SecondaryTransformConfig& config);
 
 // One legal (sec_tx_type, most_probable_stx_set) pair and its resolved kernel.
@@ -169,7 +169,7 @@ enum class SecondaryStatus : std::uint8_t {
 // `kernel` is the resolved §7.15.3 kernel index; this entry point does not
 // re-derive it, so tests can exercise every legal set.  Returns false for an
 // invalid kernel/sec_tx_type/bit depth or a too-small buffer.
-bool inverse_secondary_dequant_kernel(const TxParams& params,
+[[nodiscard]] bool inverse_secondary_dequant_kernel(const TxParams& params,
                                       TxType plane_tx_type, int kernel,
                                       int sec_tx_type, bool transpose,
                                       int bit_depth, std::int32_t* dequant,
@@ -191,7 +191,7 @@ SecondaryStatus apply_inverse_secondary(const TxParams& params, int plane,
 // This is the transpose of the inverse matrix with the same Round2Signed(.,7),
 // which is the least-squares projection when the kernel rows are orthonormal
 // (they are within rounding; see README).
-bool forward_secondary_coeffs_kernel(const TxParams& params,
+[[nodiscard]] bool forward_secondary_coeffs_kernel(const TxParams& params,
                                      TxType plane_tx_type, int kernel,
                                      int sec_tx_type, bool transpose,
                                      int bit_depth, std::int32_t* coeff,
@@ -205,7 +205,7 @@ bool forward_secondary_coeffs_kernel(const TxParams& params,
 // (Min(32,W) x Min(32,H)) raster level array; it is rewritten in place.
 // This is the M1 still encoder's project_ist_levels(), moved here so the video
 // writer can share it.
-bool project_ist_levels(const TxParams& params, TxType plane_tx_type,
+[[nodiscard]] bool project_ist_levels(const TxParams& params, TxType plane_tx_type,
                         int kernel, int sec_tx_type, bool transpose,
                         std::int32_t* levels, std::size_t levels_len);
 

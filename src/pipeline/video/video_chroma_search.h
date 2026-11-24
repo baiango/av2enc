@@ -72,7 +72,7 @@ struct Choice {
 // On return `recon_u`/`recon_v` hold the winning prediction over the block
 // (the caller overwrites them with the final reconstruction).  `dc_sse_u` is the
 // DC candidate score the caller measured on the U plane.
-bool choose(const PlaneView& u_plane, const PlaneView& v_plane,
+[[nodiscard]] bool choose(const PlaneView& u_plane, const PlaneView& v_plane,
             const std::uint8_t* recon_luma, int luma_stride,
             int luma_coded_max_x, int luma_coded_max_y, int sb_top_y,
             int x, int y, int w, int h, int coded_width, int coded_height,

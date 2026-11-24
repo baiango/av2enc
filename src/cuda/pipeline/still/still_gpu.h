@@ -717,7 +717,7 @@ struct GpuResult {
 // CUDA failure, or a GPU/CPU parity failure when `verify_against_cpu` is set.
 // On success `result.frame` matches the CPU M1 reference for the same picture
 // and the equivalent StillOptions.
-bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
+[[nodiscard]] bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
                    const GpuOptions& options,
                    GpuResult& result, std::string& error);
 
@@ -726,7 +726,7 @@ bool encode_still_gpu(const ::av2enc::still::StillPicture& picture,
 // `av2enc::hbd` and its GPU block stage is `cuda::high_bitdepth`.  This entry
 // point is the stable seam between the CLI/format composition root and that
 // stage, so `--still-gpu --bit-depth 10` never falls back to the CPU encoder.
-bool encode_format_gpu(const ::av2enc::fmt::Picture& picture,
+[[nodiscard]] bool encode_format_gpu(const ::av2enc::fmt::Picture& picture,
                        const ::av2enc::high_bitdepth::HighBitDepthOptions& options,
                        ::av2enc::high_bitdepth::HighBitDepthResult& result,
                        std::string& error);
@@ -768,27 +768,27 @@ make_chroma_gpu_executor();
 
 namespace stage {
 
-bool build_plan(const ::av2enc::still::StillPicture& picture,
+[[nodiscard]] bool build_plan(const ::av2enc::still::StillPicture& picture,
                 const GpuOptions& options,
                 FramePlan& plan, std::vector<BlockPlan>& blocks,
                 std::string& error) AV2ENC_STILL_GPU_WEAK;
 
-bool search(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
+[[nodiscard]] bool search(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
 
-bool transform(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
+[[nodiscard]] bool transform(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
 
-bool reconstruct(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
+[[nodiscard]] bool reconstruct(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
 
-bool chroma(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
+[[nodiscard]] bool chroma(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
 
-bool cfl(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
+[[nodiscard]] bool cfl(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
 
-bool deblock(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
+[[nodiscard]] bool deblock(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
 
 // Optional wavefront/CUDA-graph adapter.  When present and it returns true it
 // owns the block-stage launches (search/tx/recon/chroma/cfl/deblock); returning
 // false means "no graph", and the orchestrator calls the individual hooks.
-bool schedule(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
+[[nodiscard]] bool schedule(const GpuFrame& frame, std::string& error) AV2ENC_STILL_GPU_WEAK;
 
 }  // namespace stage
 

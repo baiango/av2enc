@@ -104,7 +104,7 @@ struct MultiFrameHeader {
 // writer is strict: it rejects values that would be silently clipped or
 // ignored by the syntax (for example frame_width != 0 without the present
 // flag).
-bool validate_multi_frame_header(const MultiFrameHeader& header,
+[[nodiscard]] bool validate_multi_frame_header(const MultiFrameHeader& header,
                                  std::string* error);
 
 // §5.7 syntax bits only: no OBU header, no §5.2.3 trailing_bits.  Returns the
@@ -141,19 +141,19 @@ struct ObuView {
 
 // Parses one Annex B.2 OBU starting at `offset` (§5.2.1/§5.2.2).  `bytes` may
 // contain a whole temporal unit; the caller advances by `out->total_size`.
-bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
+[[nodiscard]] bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
                ObuView* out, std::string* error);
 
 // Parses and validates a §5.7 MFH payload (excluding the OBU header).  The
 // §5.2.1 extensible-OBU trailer is checked: obu_extension_flag must be 0 and
 // trailing_bits() must be a one bit followed by zero padding.  `out->tlayer_id`
 // is not set here: the OBU header carries it.
-bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
                                       MultiFrameHeader* out, std::string* error);
 
 // Parses one MFH OBU at `offset`; rejects a non-MFH OBU type.  On success
 // copies obu_tlayer_id into out->tlayer_id and fills `obu` when non-null.
-bool parse_multi_frame_header_obu(std::span<const std::uint8_t> bytes,
+[[nodiscard]] bool parse_multi_frame_header_obu(std::span<const std::uint8_t> bytes,
                                   std::size_t offset, MultiFrameHeader* out,
                                   ObuView* obu, std::string* error);
 
@@ -271,7 +271,7 @@ struct ResolvedFrameFields {
 // Applies the §5.18.2 / §5.18.4.1 / §5.18.5.2 / §5.18.7.1 inheritance and
 // precedence rules and enforces the bitstream-conformance requirements that
 // can be checked from the values in hand.
-bool resolve_frame_fields(const MfhStore& mfh_store,
+[[nodiscard]] bool resolve_frame_fields(const MfhStore& mfh_store,
                           const SequenceFrameFields& sequence,
                           const FrameHeaderFields& frame,
                           const LayerDependencyMap* deps,
@@ -280,7 +280,7 @@ bool resolve_frame_fields(const MfhStore& mfh_store,
 // Reads every MFH OBU in a byte range (temporal unit or whole stream) and
 // inserts each one into `store`.  Non-MFH OBUs are skipped.  Useful for a
 // decoder front end and tests.
-bool scan_multi_frame_headers(std::span<const std::uint8_t> bytes,
+[[nodiscard]] bool scan_multi_frame_headers(std::span<const std::uint8_t> bytes,
                               MfhStore* store, std::size_t* mfh_count,
                               std::string* error);
 

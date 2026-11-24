@@ -106,7 +106,7 @@ struct UniformTileLayout {
   std::vector<int> sb_row_starts;
 };
 
-bool compute_uniform_tile_layout(const SequenceConfig& sequence,
+[[nodiscard]] bool compute_uniform_tile_layout(const SequenceConfig& sequence,
                                  const FrameConfig& frame,
                                  UniformTileLayout& out, std::string& error);
 
@@ -132,7 +132,7 @@ std::size_t write_tile_group_header(BitWriter& writer,
 // Encodes one tile payload for the BRU gate subset.  `tile_modes` is row-major
 // over the tile's superblocks.  When `tile_active` is false no symbols are
 // written at all: decode_tile() infers BRU_INACTIVE for every superblock.
-bool encode_tile_payload(std::span<const BruMode> tile_modes,
+[[nodiscard]] bool encode_tile_payload(std::span<const BruMode> tile_modes,
                          int tile_sb_cols, int tile_sb_rows,
                          std::uint8_t bru_ref, bool tile_active,
                          std::vector<std::uint8_t>& out, std::string& error);
@@ -148,17 +148,17 @@ std::vector<std::uint8_t> make_tile_group_obu(
 
 // §7.2 p378.  `modes` is the per-superblock BruModes map (one entry per
 // superblock, not per MI unit).
-bool bru_region_valid(int sb_cols, int sb_rows,
+[[nodiscard]] bool bru_region_valid(int sb_cols, int sb_rows,
                       std::span<const BruMode> modes);
 
 // §7.17.2 p531.  An edge in the superblock containing (mi_row, mi_col) is
 // filtered only when use_bru == 0 or the superblock is BRU_ACTIVE.
-bool deblock_edge_allowed(bool use_bru, int sb_shift, int mi_row, int mi_col,
+[[nodiscard]] bool deblock_edge_allowed(bool use_bru, int sb_shift, int mi_row, int mi_col,
                           int sb_cols, std::span<const BruMode> modes);
 
 // §5.20.2.1 p169 / update_ibc_buffers(): an IBC buffer cached at a superblock
 // is invalidated when that superblock is BRU_INACTIVE.
-bool bru_ibc_buffer_valid(int sb_shift, int mi_row, int mi_col, int sb_cols,
+[[nodiscard]] bool bru_ibc_buffer_valid(int sb_shift, int mi_row, int mi_col, int sb_cols,
                           std::span<const BruMode> modes);
 
 // --- Independent reader -------------------------------------------------
@@ -184,7 +184,7 @@ struct ParsedStream {
 // Parses one or more concatenated temporal units (as written into IVF
 // frames).  The reader never shares state with the writer: it re-derives CDF
 // state, tile geometry and the BruModes map from the bytes.
-bool parse_stream(std::span<const std::uint8_t> bytes, ParsedStream& out,
+[[nodiscard]] bool parse_stream(std::span<const std::uint8_t> bytes, ParsedStream& out,
                   std::string& error);
 
 }  // namespace av2enc::inter::bru

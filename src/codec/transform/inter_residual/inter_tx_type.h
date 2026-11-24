@@ -92,24 +92,24 @@ struct InterTxSetInfo {
 // withholds ADST/FDST types because the decoder would use DDTX/FDDT kernels
 // this component does not model.  Returns false for an unsupported TX size or
 // a set that is not an inter set.
-bool inter_tx_candidates(TxSize tx_size, int reduced_tx_set,
+[[nodiscard]] bool inter_tx_candidates(TxSize tx_size, int reduced_tx_set,
                          bool enable_inter_ddt, InterTxSetInfo* out);
 
 // Inverse of the candidate table: the symbols needed to signal `type`.
 // Returns false only when `type` is outside the decoder's set for this size
 // (§5.20.7.29 aliases it to DCT_DCT).  `enable_inter_ddt` does not change the
 // symbol mapping.
-bool inter_tx_symbol(TxSize tx_size, int reduced_tx_set, bool enable_inter_ddt,
+[[nodiscard]] bool inter_tx_symbol(TxSize tx_size, int reduced_tx_set, bool enable_inter_ddt,
                      TxType type, InterTxCandidate* out);
 
 // True when §7.15.4.1 would swap an ADST/FDST 1-D component for DDTX/FDDT
 // (enable_inter_ddt && is_inter && sz != 4).  Identity types are not DDT.
-bool inter_tx_type_is_ddt(TxType type);
+[[nodiscard]] bool inter_tx_type_is_ddt(TxType type);
 
 // §5.20.7.29 Tx_Type_In_Set_Inter, i.e. whether the decoder's
 // compute_tx_type() would keep this type for the set.  Types outside the set
 // are aliased to DCT_DCT by the decoder, so an encoder must never signal one.
-bool inter_tx_type_in_set(InterTxSet set, TxType type);
+[[nodiscard]] bool inter_tx_type_in_set(InterTxSet set, TxType type);
 
 // CDF context for `inter_tx_type` (§8.3.2): 0/1/2 from the EOB diagonal.
 // eob must be >= 1 (the syntax is only reached for a non-zero block).

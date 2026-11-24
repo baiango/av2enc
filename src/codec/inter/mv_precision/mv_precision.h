@@ -134,10 +134,10 @@ struct SequenceMotionModeSyntax {
 //   seq_enabled_motion_modes[INTERINTRA..EXTENDWARP]
 //   seq_frame_motion_modes_present_flag      (iff any mode enabled)
 //   enable_six_param_warp_delta              (iff DELTAWARP enabled)
-bool write_sequence_motion_modes(BitWriter& writer,
+[[nodiscard]] bool write_sequence_motion_modes(BitWriter& writer,
                                  const SequenceMotionModeSyntax& syntax,
                                  std::string* error);
-bool read_sequence_motion_modes(BitReader& reader,
+[[nodiscard]] bool read_sequence_motion_modes(BitReader& reader,
                                 SequenceMotionModeSyntax* syntax,
                                 std::string* error);
 
@@ -145,11 +145,11 @@ bool read_sequence_motion_modes(BitReader& reader,
 // seq_frame_motion_modes_present_flag == 0 the frame values are inferred from
 // the sequence and no bits are coded; when it is 1 only the sequence-enabled
 // modes code a bit.  `frame` modes that the sequence disabled are forced 0.
-bool write_frame_motion_modes(BitWriter& writer,
+[[nodiscard]] bool write_frame_motion_modes(BitWriter& writer,
                               const SequenceMotionModeSyntax& sequence,
                               const MotionModeSet& frame,
                               std::string* error);
-bool read_frame_motion_modes(BitReader& reader,
+[[nodiscard]] bool read_frame_motion_modes(BitReader& reader,
                              const SequenceMotionModeSyntax& sequence,
                              MotionModeSet* frame, std::string* error);
 
@@ -160,10 +160,10 @@ struct SequenceMvResSyntax {
   bool enable_flex_mvres = false;
 };
 
-bool write_sequence_mv_res(BitWriter& writer,
+[[nodiscard]] bool write_sequence_mv_res(BitWriter& writer,
                            const SequenceMvResSyntax& syntax,
                            std::string* error);
-bool read_sequence_mv_res(BitReader& reader, SequenceMvResSyntax* syntax,
+[[nodiscard]] bool read_sequence_mv_res(BitReader& reader, SequenceMvResSyntax* syntax,
                           std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -176,10 +176,10 @@ bool read_sequence_mv_res(BitReader& reader, SequenceMvResSyntax* syntax,
 
 // `force_integer_mv` comes from screen_content_params().  It removes both bits
 // and pins FrameMvPrecision to MV_PRECISION_ONE_PEL.
-bool write_frame_mv_precision(BitWriter& writer,
+[[nodiscard]] bool write_frame_mv_precision(BitWriter& writer,
                               const me2::FramePrecisionSyntax& syntax,
                               int force_integer_mv, std::string* error);
-bool read_frame_mv_precision(BitReader& reader, int force_integer_mv,
+[[nodiscard]] bool read_frame_mv_precision(BitReader& reader, int force_integer_mv,
                              int enable_flex_mvres,
                              me2::FramePrecisionSyntax* syntax,
                              std::string* error);
@@ -189,9 +189,9 @@ bool read_frame_mv_precision(BitReader& reader, int force_integer_mv,
 // bit and leaves `filter` at SWITCHABLE (4).
 inline constexpr int kInterpSwitchable = 4;
 
-bool write_frame_interp_filter(BitWriter& writer, bool is_switchable,
+[[nodiscard]] bool write_frame_interp_filter(BitWriter& writer, bool is_switchable,
                                int filter, std::string* error);
-bool read_frame_interp_filter(BitReader& reader, bool* is_switchable,
+[[nodiscard]] bool read_frame_interp_filter(BitReader& reader, bool* is_switchable,
                               int* filter, std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -212,10 +212,10 @@ enum YMode : std::int32_t {
   kYModeJointNewMv = 24,
 };
 
-bool allow_amvd_mode(int y_mode);
-bool has_newmv(int y_mode);
-bool has_nearmv(int y_mode);
-bool is_joint_mvd_coding_mode(int y_mode);
+[[nodiscard]] bool allow_amvd_mode(int y_mode);
+[[nodiscard]] bool has_newmv(int y_mode);
+[[nodiscard]] bool has_nearmv(int y_mode);
+[[nodiscard]] bool is_joint_mvd_coding_mode(int y_mode);
 
 // §5.20.7.20 constants.
 inline constexpr int kMvJoints = 4;
@@ -325,12 +325,12 @@ int interp_filter_ctx(const NeighborSet& neighbours, int ref0,
                       bool is_compound);
 
 // §5.20.7.6 needs_interp_filter().
-bool needs_interp_filter(bool large, int y_mode, int motion_mode);
+[[nodiscard]] bool needs_interp_filter(bool large, int y_mode, int motion_mode);
 
 // Legal block-level interp_filter values.  BILINEAR (3) is a frame-header
 // value and is not in TileInterpFilterCdf's three-symbol alphabet.
-bool block_interp_filter_legal(int filter);
-bool frame_interp_filter_legal(int filter, bool is_switchable);
+[[nodiscard]] bool block_interp_filter_legal(int filter);
+[[nodiscard]] bool frame_interp_filter_legal(int filter, bool is_switchable);
 
 // ---------------------------------------------------------------------------
 // Per-block precision plan (§5.20.7.6).
@@ -347,7 +347,7 @@ struct MvResConfig {
 // AV2; the function returns false only for an internally impossible state
 // (none today), and exists so a future core integration has one place to add
 // encoder-side policy.
-bool validate_mv_res_config(const MvResConfig& config, std::string* error);
+[[nodiscard]] bool validate_mv_res_config(const MvResConfig& config, std::string* error);
 
 struct BlockPrecisionSyntax {
   // IsAdaptiveMvd = enable_adaptive_mvd && use_amvd.
@@ -367,16 +367,16 @@ struct BlockPrecisionSyntax {
 // UsePerBlockMvPrecision.  `target_precision` is the desired block precision;
 // when the block cannot signal it this returns false rather than silently
 // emitting a different precision.
-bool plan_block_precision(const MvResConfig& config,
+[[nodiscard]] bool plan_block_precision(const MvResConfig& config,
                           const me2::FramePrecisionSyntax& frame,
                           int y_mode, bool use_amvd, int target_precision,
                           BlockPrecisionSyntax* plan, std::string* error);
 
-bool write_block_precision(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
+[[nodiscard]] bool write_block_precision(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
                            int most_probable_ctx, int pb_ctx,
                            const BlockPrecisionSyntax& plan,
                            std::string* error);
-bool read_block_precision(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
+[[nodiscard]] bool read_block_precision(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
                           int most_probable_ctx, int pb_ctx,
                           const me2::FramePrecisionSyntax& frame,
                           int y_mode, bool use_amvd,
@@ -387,19 +387,19 @@ bool read_block_precision(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
 // §5.20.7.6 / §5.20.7.20 / §5.20.7.21 AMVD symbols.
 // ---------------------------------------------------------------------------
 
-bool write_use_amvd(av2::Encoder& enc, MvPrecisionCdfState& cdfs, int index,
+[[nodiscard]] bool write_use_amvd(av2::Encoder& enc, MvPrecisionCdfState& cdfs, int index,
                     int ctx, bool value, std::string* error);
-bool read_use_amvd(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int index,
+[[nodiscard]] bool read_use_amvd(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int index,
                    int ctx, bool* value, std::string* error);
 
-bool write_mv_joint(av2::Encoder& enc, MvPrecisionCdfState& cdfs, int joint,
+[[nodiscard]] bool write_mv_joint(av2::Encoder& enc, MvPrecisionCdfState& cdfs, int joint,
                     std::string* error);
-bool read_mv_joint(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int* joint,
+[[nodiscard]] bool read_mv_joint(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int* joint,
                    std::string* error);
 
-bool write_amvd_index(av2::Encoder& enc, MvPrecisionCdfState& cdfs, int comp,
+[[nodiscard]] bool write_amvd_index(av2::Encoder& enc, MvPrecisionCdfState& cdfs, int comp,
                       int index, std::string* error);
-bool read_amvd_index(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int comp,
+[[nodiscard]] bool read_amvd_index(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int comp,
                      int* index, std::string* error);
 
 // One AMVD MVD as read by read_mv(): mv_joint plus one amvd_index per nonzero
@@ -412,19 +412,19 @@ struct AmvdMvSyntax {
 
 // Inverse table lookup for one component.  Returns false when `value` is not
 // in Amvd_Index_To_Mvd (an AMVD block cannot signal any other magnitude).
-bool amvd_index_for_magnitude(std::int32_t value, int* index);
+[[nodiscard]] bool amvd_index_for_magnitude(std::int32_t value, int* index);
 
 // Selects the legal (mv_joint, index, magnitude) triple for `mvd`.
-bool amvd_mv_from_mv(mc::Mv mvd, AmvdMvSyntax* syntax, std::string* error);
+[[nodiscard]] bool amvd_mv_from_mv(mc::Mv mvd, AmvdMvSyntax* syntax, std::string* error);
 
-bool write_amvd_mv(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
+[[nodiscard]] bool write_amvd_mv(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
                    const AmvdMvSyntax& syntax, std::string* error);
-bool read_amvd_mv(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
+[[nodiscard]] bool read_amvd_mv(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
                   AmvdMvSyntax* syntax, std::string* error);
 
-bool write_jmvd_scale_mode(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
+[[nodiscard]] bool write_jmvd_scale_mode(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
                            bool use_amvd, int mode, std::string* error);
-bool read_jmvd_scale_mode(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
+[[nodiscard]] bool read_jmvd_scale_mode(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
                           bool use_amvd, int* mode, std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -475,7 +475,7 @@ struct MvdSignConfig {
   int ref_mv_idx = 0;
 };
 
-bool mvd_sign_derive_allowed(const MvdSignConfig& config);
+[[nodiscard]] bool mvd_sign_derive_allowed(const MvdSignConfig& config);
 
 // Number of mv_sign L(1) bits emitted for these magnitudes.  With derivation
 // enabled the last nonzero component is omitted.
@@ -485,20 +485,20 @@ int mvd_sign_symbol_count(const MvdSignConfig& config, const mc::Mv mvd[2],
 // Writes the sign bits.  When the last sign is derived it must equal
 // `lastSign & 1`; otherwise this returns false (the caller would emit a
 // different MV than it predicted).
-bool write_mvd_signs(av2::Encoder& enc, const MvdSignConfig& config,
+[[nodiscard]] bool write_mvd_signs(av2::Encoder& enc, const MvdSignConfig& config,
                      const mc::Mv mvd[2], int lists, std::string* error);
 
 // Reads the sign bits into `mvd` (which arrives with unsigned magnitudes).
-bool read_mvd_signs(av2::Decoder& dec, const MvdSignConfig& config,
+[[nodiscard]] bool read_mvd_signs(av2::Decoder& dec, const MvdSignConfig& config,
                     mc::Mv mvd[2], int lists, std::string* error);
 
 // ---------------------------------------------------------------------------
 // §5.20.7.6 switchable interp_filter.
 // ---------------------------------------------------------------------------
 
-bool write_block_interp_filter(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
+[[nodiscard]] bool write_block_interp_filter(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
                                int ctx, int filter, std::string* error);
-bool read_block_interp_filter(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
+[[nodiscard]] bool read_block_interp_filter(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
                               int ctx, int* filter, std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -512,10 +512,10 @@ bool read_block_interp_filter(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
 // `dy`/`dx` are in 1/8-sample units and must be divisible by the precision
 // radix.  Signs are not written here; use write_mvd_signs() after this call,
 // matching assign_mv()'s mv_sign loop.
-bool write_shell_mv(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
+[[nodiscard]] bool write_shell_mv(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
                     std::int32_t dy, std::int32_t dx, int precision,
                     std::string* error);
-bool read_shell_mv(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
+[[nodiscard]] bool read_shell_mv(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
                    int precision, mc::Mv* mvd, std::string* error);
 
 // §5.20.7.13 mv_clamp_to_integer().

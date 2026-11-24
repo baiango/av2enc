@@ -29,7 +29,7 @@ std::uint64_t fnv1a64(std::span<const std::uint8_t> bytes);
 // Convenience: serialized record hash.
 std::uint64_t stack_record_hash(const Stack& stack, int num_lists);
 
-bool write_stack_record(const std::string& path, const Stack& stack,
+[[nodiscard]] bool write_stack_record(const std::string& path, const Stack& stack,
                         int num_lists, std::string* error);
 
 }  // namespace av2enc::inter::mv_stack_full

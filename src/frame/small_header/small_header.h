@@ -86,21 +86,21 @@ struct DisplaySize {
 
 // Offset limits are max_frame_width_minus_1 / max_frame_height_minus_1. Also
 // rejects a window that derives an empty crop rectangle at maximum frame size.
-bool validate_cropping_window(const CroppingWindow& window,
+[[nodiscard]] bool validate_cropping_window(const CroppingWindow& window,
                               std::uint32_t max_frame_width,
                               std::uint32_t max_frame_height,
                               std::string* error);
 
-bool write_cropping_window(BitWriter& writer, const CroppingWindow& window,
+[[nodiscard]] bool write_cropping_window(BitWriter& writer, const CroppingWindow& window,
                            std::string* error);
 
-bool read_cropping_window(BitReader& reader, CroppingWindow* window,
+[[nodiscard]] bool read_cropping_window(BitReader& reader, CroppingWindow* window,
                           std::string* error);
 
 // §5.18.4.4 compute_image_size(): CropLeft/CropRight/CropTop/CropBottom and
 // CropWidth/CropHeight. `max_*` are max_frame_width_minus_1 + 1; `frame_*` are
 // the actual FrameWidth/FrameHeight (they may be smaller than the maximum).
-bool derive_display_size(const CroppingWindow& window,
+[[nodiscard]] bool derive_display_size(const CroppingWindow& window,
                          std::uint32_t max_frame_width,
                          std::uint32_t max_frame_height,
                          std::uint32_t frame_width,
@@ -120,26 +120,26 @@ struct PbAspectRatio {
 // MaxPbAspectRatio: 8 when not reduced, else 1 << (log2_minus_1 + 1).
 int max_pb_aspect_ratio(const PbAspectRatio& config);
 
-bool validate_pb_aspect_ratio(const PbAspectRatio& config,
+[[nodiscard]] bool validate_pb_aspect_ratio(const PbAspectRatio& config,
                               std::string* error);
 
-bool write_pb_aspect_ratio(BitWriter& writer, const PbAspectRatio& config,
+[[nodiscard]] bool write_pb_aspect_ratio(BitWriter& writer, const PbAspectRatio& config,
                            std::string* error);
 
-bool read_pb_aspect_ratio(BitReader& reader, PbAspectRatio* config,
+[[nodiscard]] bool read_pb_aspect_ratio(BitReader& reader, PbAspectRatio* config,
                           std::string* error);
 
 // §6.19.4.1 conformance: bw4 <= bh4 * MaxPbAspectRatio and
 // bh4 <= bw4 * MaxPbAspectRatio for every decoded leaf block.
-bool pb_leaf_aspect_allowed(int bw4, int bh4, int max_ratio);
+[[nodiscard]] bool pb_leaf_aspect_allowed(int bw4, int bh4, int max_ratio);
 
 // §6.19.3.2 is_partition_allowed() aspect-ratio fragment. `bw`/`bh` are the
 // candidate subsize in 4x4 units.
 //   * too thin => PARTITION_NONE forbidden;
 //   * ratio >= 8:1 => no partition at all (returns false from the fragment);
 //   * otherwise the non-NONE partitions remain eligible.
-bool pb_partition_none_allowed_by_aspect(int bw4, int bh4, int max_ratio);
-bool pb_non_none_partition_allowed_by_aspect(int bw4, int bh4, int max_ratio);
+[[nodiscard]] bool pb_partition_none_allowed_by_aspect(int bw4, int bh4, int max_ratio);
+[[nodiscard]] bool pb_non_none_partition_allowed_by_aspect(int bw4, int bh4, int max_ratio);
 
 // ---------------------------------------------------------------------------
 // §5.4.10 df_par_bits_minus_2
@@ -155,13 +155,13 @@ struct DfPar {
   int max_value() const { return (1 << (bits() - 1)) - 1; }
 };
 
-bool validate_df_par(const DfPar& config, std::string* error);
+[[nodiscard]] bool validate_df_par(const DfPar& config, std::string* error);
 
-bool write_df_par(BitWriter& writer, const DfPar& config, std::string* error);
+[[nodiscard]] bool write_df_par(BitWriter& writer, const DfPar& config, std::string* error);
 
-bool read_df_par(BitReader& reader, DfPar* config, std::string* error);
+[[nodiscard]] bool read_df_par(BitReader& reader, DfPar* config, std::string* error);
 
-bool df_delta_q_representable(int value, const DfPar& config);
+[[nodiscard]] bool df_delta_q_representable(int value, const DfPar& config);
 
 // The four §5.18.5.2 DfDeltaQ values. When present[i] is false, DfDeltaQ[i] is
 // 0 except DfDeltaQ[1], which is inferred equal to DfDeltaQ[0]. The encoder
@@ -172,7 +172,7 @@ struct DfDeltaQSet {
   std::array<int, 4> value = {0, 0, 0, 0};
 };
 
-bool validate_df_delta_q(const DfPar& config, const DfDeltaQSet& values,
+[[nodiscard]] bool validate_df_delta_q(const DfPar& config, const DfDeltaQSet& values,
                          std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -201,27 +201,27 @@ struct SequenceSegmentConfig {
   int max_segments() const { return enable_ext_seg ? kMaxSegments : kBaseSegments; }
 };
 
-bool validate_segment_info(const SegmentInfo& info, int num_segments,
+[[nodiscard]] bool validate_segment_info(const SegmentInfo& info, int num_segments,
                            std::string* error);
 
 // seg_info(numSegments) exactly as §5.4.9. For SEG_LVL_ALT_Q the value is
 // su(1 + 9) and clipped to [-MAXQ_BITS, MAXQ_BITS] by the decoder; the writer
 // rejects out-of-range values rather than relying on the clip. SEG_LVL_SKIP and
 // SEG_LVL_GLOBALMV have zero value bits.
-bool write_segment_info(BitWriter& writer, const SegmentInfo& info,
+[[nodiscard]] bool write_segment_info(BitWriter& writer, const SegmentInfo& info,
                         int num_segments, std::string* error);
 
-bool read_segment_info(BitReader& reader, int num_segments, SegmentInfo* info,
+[[nodiscard]] bool read_segment_info(BitReader& reader, int num_segments, SegmentInfo* info,
                        std::string* error);
 
-bool validate_sequence_segment_config(const SequenceSegmentConfig& config,
+[[nodiscard]] bool validate_sequence_segment_config(const SequenceSegmentConfig& config,
                                       std::string* error);
 
-bool write_sequence_segment_config(BitWriter& writer,
+[[nodiscard]] bool write_sequence_segment_config(BitWriter& writer,
                                    const SequenceSegmentConfig& config,
                                    std::string* error);
 
-bool read_sequence_segment_config(BitReader& reader,
+[[nodiscard]] bool read_sequence_segment_config(BitReader& reader,
                                   SequenceSegmentConfig* config,
                                   std::string* error);
 
@@ -251,7 +251,7 @@ struct FrameSegmentState {
 // `derived_primary_ref_none` is PRIMARY_REF_NONE for key/intra frames, which
 // infers segmentation_update_map = 1 and codes no map-update bits.
 // `frame_type_switch` is FrameType == SWITCH_FRAME.
-bool write_frame_segmentation_params(BitWriter& writer,
+[[nodiscard]] bool write_frame_segmentation_params(BitWriter& writer,
                                      const SequenceSegmentConfig& config,
                                      const FrameSegmentRequest& request,
                                      bool derived_primary_ref_none,
@@ -259,7 +259,7 @@ bool write_frame_segmentation_params(BitWriter& writer,
                                      FrameSegmentState* state,
                                      std::string* error);
 
-bool read_frame_segmentation_params(BitReader& reader,
+[[nodiscard]] bool read_frame_segmentation_params(BitReader& reader,
                                     const SequenceSegmentConfig& config,
                                     bool derived_primary_ref_none,
                                     bool frame_type_switch,
@@ -276,7 +276,7 @@ enum class SbSize : int {
   k256x256 = 256,
 };
 
-bool valid_sb_size(SbSize size);
+[[nodiscard]] bool valid_sb_size(SbSize size);
 int sb_width_4x4(SbSize size);   // Num_4x4_Blocks_Wide[BLOCK_*]
 int sb_shift(SbSize size);       // Mi_Width_Log2[BLOCK_*]
 const char* sb_size_name(SbSize size);
@@ -325,13 +325,13 @@ struct TileParamsRequest {
   std::vector<int> height_in_sbs;
 };
 
-bool write_tile_params(BitWriter& writer, int frame_width, int frame_height,
+[[nodiscard]] bool write_tile_params(BitWriter& writer, int frame_width, int frame_height,
                        SbSize uniform_sb_size, SbSize sb_size,
                        int seq_level_idx, int seq_tier,
                        const TileParamsRequest& request, TileParams* params,
                        std::string* error);
 
-bool read_tile_params(BitReader& reader, int frame_width, int frame_height,
+[[nodiscard]] bool read_tile_params(BitReader& reader, int frame_width, int frame_height,
                       SbSize uniform_sb_size, SbSize sb_size,
                       int seq_level_idx, int seq_tier, TileParams* params,
                       std::string* error);
@@ -343,25 +343,25 @@ struct SequenceTileConfig {
   TileParams params;          // writer output / reader output
 };
 
-bool validate_sequence_tile_config(const SequenceTileConfig& config,
+[[nodiscard]] bool validate_sequence_tile_config(const SequenceTileConfig& config,
                                    int max_frame_width, int max_frame_height,
                                    SbSize sb_size, int seq_level_idx,
                                    int seq_tier, std::string* error);
 
-bool write_sequence_tile_config(BitWriter& writer,
+[[nodiscard]] bool write_sequence_tile_config(BitWriter& writer,
                                 SequenceTileConfig* config,
                                 int max_frame_width, int max_frame_height,
                                 SbSize sb_size, int seq_level_idx,
                                 int seq_tier, std::string* error);
 
-bool read_sequence_tile_config(BitReader& reader,
+[[nodiscard]] bool read_sequence_tile_config(BitReader& reader,
                                SequenceTileConfig* config,
                                int max_frame_width, int max_frame_height,
                                SbSize sb_size, int seq_level_idx,
                                int seq_tier, std::string* error);
 
 // §5.18.7.3 uniform_eligible().
-bool uniform_eligible(int tile_log2_value, int sb_num);
+[[nodiscard]] bool uniform_eligible(int tile_log2_value, int sb_num);
 
 struct FrameTileRequest {
   // Only consulted when the sequence tile params are eligible and
@@ -379,14 +379,14 @@ struct FrameTileInfo {
 // Writes the tile_info() body that a frame header needs *after* accounting for
 // sequence-level tile parameters. When seq present + eligible + no change
 // allowed, this writes nothing (the decoder infers reuse).
-bool write_frame_tile_info(BitWriter& writer,
+[[nodiscard]] bool write_frame_tile_info(BitWriter& writer,
                            const SequenceTileConfig& sequence,
                            int frame_width, int frame_height, SbSize sb_size,
                            int seq_level_idx, int seq_tier,
                            const FrameTileRequest& request,
                            FrameTileInfo* info, std::string* error);
 
-bool read_frame_tile_info(BitReader& reader,
+[[nodiscard]] bool read_frame_tile_info(BitReader& reader,
                           const SequenceTileConfig& sequence,
                           int frame_width, int frame_height, SbSize sb_size,
                           int seq_level_idx, int seq_tier, FrameTileInfo* info,

@@ -95,22 +95,22 @@ std::uint16_t* dc_sign_horz_vert_cdf_slot(DcSignCdfTable table, int ptype,
 // Writer / reader for one `dc_sign_horz_vert S()`.  `cdf` must be the
 // `TileDcSignCdf[ptype][isHidden][0]` slot.  `sign` is 0 (positive) or 1
 // (negative), matching §5.20.7.27's `sign = dc_sign_horz_vert`.
-bool write_dc_sign_horz_vert(av2::Encoder& encoder, std::uint16_t* cdf,
+[[nodiscard]] bool write_dc_sign_horz_vert(av2::Encoder& encoder, std::uint16_t* cdf,
                              int sign) noexcept;
-bool read_dc_sign_horz_vert(av2::Decoder& decoder, std::uint16_t* cdf,
+[[nodiscard]] bool read_dc_sign_horz_vert(av2::Decoder& decoder, std::uint16_t* cdf,
                             int* sign) noexcept;
 
-bool write_dc_sign(av2::Encoder& encoder, std::uint16_t* cdf, int ctx,
+[[nodiscard]] bool write_dc_sign(av2::Encoder& encoder, std::uint16_t* cdf, int ctx,
                    int sign) noexcept;
-bool read_dc_sign(av2::Decoder& decoder, std::uint16_t* cdf, int ctx,
+[[nodiscard]] bool read_dc_sign(av2::Decoder& decoder, std::uint16_t* cdf, int ctx,
                   int* sign) noexcept;
 
 // Dispatches the element chosen by select_sign_element().  For kSignBit a raw
 // §8.2.3 bit is coded.  `cdf` must be the TileDcSignCdf slot for the selected
 // element (ignored for kSignBit); `dc_sign_ctx` is ignored for horz/vert.
-bool write_sign_element(av2::Encoder& encoder, SignElement element,
+[[nodiscard]] bool write_sign_element(av2::Encoder& encoder, SignElement element,
                         std::uint16_t* cdf, int dc_sign_ctx, int sign) noexcept;
-bool read_sign_element(av2::Decoder& decoder, SignElement element,
+[[nodiscard]] bool read_sign_element(av2::Decoder& decoder, SignElement element,
                        std::uint16_t* cdf, int dc_sign_ctx,
                        int* sign) noexcept;
 

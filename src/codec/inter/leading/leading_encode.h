@@ -29,11 +29,11 @@ struct EncodedPicture {
 
 // Encodes one intra picture (the tile payload is the same for a CLK and an
 // OLK; only the frame/OBU header differs).
-bool encode_intra_picture(const Picture& source, const av2enc::video::VideoOptions& options,
+[[nodiscard]] bool encode_intra_picture(const Picture& source, const av2enc::video::VideoOptions& options,
                           EncodedPicture& out, std::string& error);
 
 // Encodes `source` as a single-reference P picture against `reference`.
-bool encode_inter_picture(const Picture& reference, const Picture& source,
+[[nodiscard]] bool encode_inter_picture(const Picture& reference, const Picture& source,
                           const av2enc::video::VideoOptions& options, EncodedPicture& out,
                           std::string& error);
 

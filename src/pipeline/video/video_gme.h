@@ -60,17 +60,17 @@ GmFramePlan make_gm_frame_plan(
 
 // AV2ENC_GME_UNPROVEN_WARP=1 (parsed once per process) opts back into emitting
 // the fitted warp model and the §7.13.3.19/.20 predictor.  Default false.
-bool gme_unproven_warp_enabled();
+[[nodiscard]] bool gme_unproven_warp_enabled();
 
 // True when the model has a non-identity linear part (rotation, zoom, shear or
 // a general affine).  This is the condition that applies warp geometry in the
 // §7.13.3.19-.24 predictor; the §7.13.3.21 shear check is deliberately not part
 // of this predicate: an invalid-shear affine still runs the extended warp, so
 // it is not safe to treat as translational.
-bool gm_params_have_warp_linear(const inter::gme::GmParams& params);
+[[nodiscard]] bool gm_params_have_warp_linear(const inter::gme::GmParams& params);
 
 // CPU reference: collect + fit + plan for one frame.
-bool estimate_gm_plan_cpu(
+[[nodiscard]] bool estimate_gm_plan_cpu(
     const VideoInputFrame& source,
     std::span<const inter::mc::RefFrame> references,
     std::span<const int> ref_order_hint,
@@ -91,7 +91,7 @@ bool estimate_gm_plan_cpu(
 // whose top-left luma sample is (pixel_x, pixel_y) in MI/coded coordinates.
 
 // True when the §5.18.9-quantised model derives a warp type (ROTZOOM/AFFINE).
-bool gm_model_uses_warp(const inter::gme::GmParams& params);
+[[nodiscard]] bool gm_model_uses_warp(const inter::gme::GmParams& params);
 
 // §7.22 per-8x8 warped MV (1/8 luma samples), evaluated at the 8x8 centre.
 void gm_sub_block_warp_mv(const inter::gme::GmParams& params, int pixel_x,
@@ -100,6 +100,6 @@ void gm_sub_block_warp_mv(const inter::gme::GmParams& params, int pixel_x,
 // Unit check for the §7.22 warp store: model classification (identity /
 // translation / warp / invalid shear) and the per-8x8 projection against
 // hand-computed values.  Returns false and fills `error` on a mismatch.
-bool ref_mvs_field_selftest(std::string* error);
+[[nodiscard]] bool ref_mvs_field_selftest(std::string* error);
 
 }  // namespace av2enc::video

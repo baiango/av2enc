@@ -74,14 +74,14 @@ struct ChromaUnitSize {
 
 // Selects the shift flags for a desired chroma unit size.  Fails when the size
 // is not representable for the given superblock size.
-bool chroma_select_unit_size(int desired_size, int sb_size, int sub_x,
+[[nodiscard]] bool chroma_select_unit_size(int desired_size, int sb_size, int sub_x,
                              int sub_y, ChromaUnitSize* out,
                              std::string* error);
 
 // Writes/reads the `lr_chroma_use_*` row exactly as §5.18.7.11 orders it.
-bool chroma_write_unit_size(BitWriter& writer, const ChromaUnitSize& size,
+[[nodiscard]] bool chroma_write_unit_size(BitWriter& writer, const ChromaUnitSize& size,
                             std::string* error);
-bool chroma_read_unit_size(classes::WienerBitReader& reader, int sb_size,
+[[nodiscard]] bool chroma_read_unit_size(classes::WienerBitReader& reader, int sb_size,
                            int sub_x, int sub_y, ChromaUnitSize* size,
                            std::string* error);
 
@@ -96,7 +96,7 @@ struct ChromaUnitGrid {
   int count() const { return unit_cols * unit_rows; }
   void index(int unit_row, int unit_col, std::size_t* at) const;
 };
-bool chroma_make_unit_grid(int plane_width, int plane_height, int unit_size,
+[[nodiscard]] bool chroma_make_unit_grid(int plane_width, int plane_height, int unit_size,
                            ChromaUnitGrid* grid, std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -129,14 +129,14 @@ int chroma_present_coeffs(int subset);
 int chroma_coded_coeffs(int subset, bool uv_sym);
 // True when the filter can be represented by `subset` (all non-present taps
 // are zero).  `uv_sym` also requires mirrored pairs.
-bool chroma_filter_fits_subset(const ChromaFilter& filter, int subset);
+[[nodiscard]] bool chroma_filter_fits_subset(const ChromaFilter& filter, int subset);
 // Smallest subset that can represent the filter, or -1 if no subset does.
 int chroma_derive_subset(const ChromaFilter& filter);
 // Mirrors pairs j and j+1 for j >= 6.  Returns false for planes other than
 // U/V or when a pair is not representable in the chosen subset.
-bool chroma_mirror_filter(ChromaFilter* filter, std::string* error);
+[[nodiscard]] bool chroma_mirror_filter(ChromaFilter* filter, std::string* error);
 // Full syntax-range and layout validation.
-bool chroma_filter_validate(const ChromaFilter& filter, std::string* error);
+[[nodiscard]] bool chroma_filter_validate(const ChromaFilter& filter, std::string* error);
 // Sets every absent tap to zero (the decoder infers 0 for those taps).
 void chroma_zero_absent_taps(ChromaFilter* filter);
 
@@ -227,21 +227,21 @@ struct ChromaDecision {
 //   SSE(recon after §7.20.3, source) + lambda_bits * exact signalled bits.
 // `input.curr`/`cdef` must be the real reconstruction; `source` the original
 // picture.  The result maps 1:1 onto §5.20.10.4 read_lr() for planes 1 and 2.
-bool chroma_decide(const ChromaLrInput& input, const ChromaLrOptions& options,
+[[nodiscard]] bool chroma_decide(const ChromaLrInput& input, const ChromaLrOptions& options,
                    ChromaDecision* decision, std::string* error);
 
 // Fills fs::LrParams for a chroma-only decision.  Luma stays RESTORE_NONE.
 // `frame_filters_on` is always false: this module codes per-unit filters.
-bool chroma_make_lr_params(const ChromaDecision& decision, fs::LrParams* params,
+[[nodiscard]] bool chroma_make_lr_params(const ChromaDecision& decision, fs::LrParams* params,
                            std::string* error);
 
 // Builds the fs::LrState used by the writer and reader.
-bool chroma_init_tile_state(const ChromaDecision& decision,
+[[nodiscard]] bool chroma_init_tile_state(const ChromaDecision& decision,
                             const ChromaLrInput& input, fs::LrState* state,
                             std::string* error);
 
 // Exact §5.18.7.11 header cost of the chroma-only configuration.
-bool chroma_measure_header_bits(const ChromaDecision& decision, int sb_size,
+[[nodiscard]] bool chroma_measure_header_bits(const ChromaDecision& decision, int sb_size,
                                 int base_q_idx, int* bits, std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -251,12 +251,12 @@ bool chroma_measure_header_bits(const ChromaDecision& decision, int sb_size,
 // Writes the chroma units covered by one superblock in the exact
 // §5.20.10.4 read_lr() order (plane 1 units, then plane 2 units, each in
 // row-major order).  Luma units are not emitted.
-bool chroma_write_read_lr(av2::Encoder& encoder, fs::LrState& state,
+[[nodiscard]] bool chroma_write_read_lr(av2::Encoder& encoder, fs::LrState& state,
                           int mi_row, int mi_col, int w4, int h4,
                           int tile_mi_row_start, int tile_mi_col_start,
                           const ChromaDecision& decision, std::string* error);
 
-bool chroma_read_read_lr(av2::Decoder& decoder, fs::LrState& state, int mi_row,
+[[nodiscard]] bool chroma_read_read_lr(av2::Decoder& decoder, fs::LrState& state, int mi_row,
                          int mi_col, int w4, int h4, int tile_mi_row_start,
                          int tile_mi_col_start, ChromaDecision* decision,
                          std::string* error);
@@ -264,17 +264,17 @@ bool chroma_read_read_lr(av2::Decoder& decoder, fs::LrState& state, int mi_row,
 // Single-unit forms (used by the pinned goldens).  The caller must set
 // `decoder.disable_cdf_update` to the stream's value before reading; the
 // writer/reader pair in this module uses 1 (the M1/M2 default).
-bool chroma_write_unit(av2::Encoder& encoder, fs::LrState& state, int plane,
+[[nodiscard]] bool chroma_write_unit(av2::Encoder& encoder, fs::LrState& state, int plane,
                        int unit_row, int unit_col, const ChromaUnitPlan& plan,
                        std::string* error);
-bool chroma_read_unit(av2::Decoder& decoder, fs::LrState& state, int plane,
+[[nodiscard]] bool chroma_read_unit(av2::Decoder& decoder, fs::LrState& state, int plane,
                       int unit_row, int unit_col, ChromaUnitPlan* plan,
                       std::string* error);
 
 // Direct read/write of a unit through the shared §5.20.10.6 coder without a
 // ChromaUnitPlan (the plan is derived from the filter).  Exposed so a caller
 // can pin bytes against the existing luma syntax.
-bool chroma_write_unit_decision(av2::Encoder& encoder, fs::LrState& state,
+[[nodiscard]] bool chroma_write_unit_decision(av2::Encoder& encoder, fs::LrState& state,
                                 int plane, int unit_row, int unit_col,
                                 const ChromaFilter& filter, bool on,
                                 std::string* error);
@@ -283,14 +283,14 @@ bool chroma_write_unit_decision(av2::Encoder& encoder, fs::LrState& state,
 // §5.20.10.4 order) into one fresh coder.  This is the exact symbol payload
 // for the frame's chroma restoration; it excludes other tile syntax and the
 // shared §8.2 termination with the partition stream.
-bool chroma_measure_decision_bytes(const ChromaDecision& decision,
+[[nodiscard]] bool chroma_measure_decision_bytes(const ChromaDecision& decision,
                                    const ChromaLrInput& input,
                                    std::vector<std::uint8_t>* bytes,
                                    std::string* error);
 
 // Serialises one filter's symbols into a fresh coder and returns the payload
 // bytes.  Deterministic; used for RD bit counts and pinned goldens.
-bool chroma_measure_unit_bytes(const fs::LrState& state, int plane,
+[[nodiscard]] bool chroma_measure_unit_bytes(const fs::LrState& state, int plane,
                                int unit_row, int unit_col,
                                const ChromaFilter& filter, bool on,
                                std::vector<std::uint8_t>* bytes,

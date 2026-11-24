@@ -66,7 +66,7 @@ class StackMirror {
 
 // Free-function form of the independent resolution, usable on a MirrorStack
 // that was copied out of a StackMirror.
-bool mirror_resolve_mv(const MirrorStack& stack, int drl_index, int mode,
+[[nodiscard]] bool mirror_resolve_mv(const MirrorStack& stack, int drl_index, int mode,
                        Mv global, Mv mvd, Mv* out, std::string* error);
 
 struct LockstepReport {
@@ -82,7 +82,7 @@ struct LockstepReport {
 // NEARMV and NEWMV (with a fixed non-zero MVD) and GLOBALMV, from both the
 // encoder stack and the mirror, and reports the first mismatch.  `global` is
 // GlobalMvs[0] for the block (the gate records it separately).
-bool lockstep(const Stack& encoder, int num_lists, Mv global,
+[[nodiscard]] bool lockstep(const Stack& encoder, int num_lists, Mv global,
               const MirrorStack& mirror, LockstepReport* report);
 
 }  // namespace av2enc::inter::mv_stack_full

@@ -36,7 +36,7 @@ struct CostTerms {
 };
 
 double total_bits(const CostTerms& terms) noexcept;
-bool cost_terms_valid(const CostTerms& terms) noexcept;
+[[nodiscard]] bool cost_terms_valid(const CostTerms& terms) noexcept;
 
 struct NodeCost {
   CostTerms terms;
@@ -46,7 +46,7 @@ struct NodeCost {
   int leaves = 0;
 };
 
-bool node_cost_valid(const NodeCost& cost) noexcept;
+[[nodiscard]] bool node_cost_valid(const NodeCost& cost) noexcept;
 
 // Builds the Lagrangian cost from the breakdown.  Invalid input returns a cost
 // with +inf cost so a deterministic selector rejects it instead of propagating
@@ -71,7 +71,7 @@ void add_signal_bits(NodeCost& target, double bits) noexcept;
 //   5. lower partition ordinal
 //   6. lower insertion index
 // Exact comparisons only: no epsilon, no tolerance.
-bool node_cost_better(const NodeCost& a, partition::PartitionType part_a,
+[[nodiscard]] bool node_cost_better(const NodeCost& a, partition::PartitionType part_a,
                       int index_a, const NodeCost& b,
                       partition::PartitionType part_b, int index_b) noexcept;
 

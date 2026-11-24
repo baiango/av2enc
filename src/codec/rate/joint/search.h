@@ -71,8 +71,8 @@ struct SearchOptions {
   int max_leaf_probes_per_superblock = 0;
 };
 
-bool search_options_valid(const SearchOptions& options) noexcept;
-bool validate_search_options(const SearchOptions& options,
+[[nodiscard]] bool search_options_valid(const SearchOptions& options) noexcept;
+[[nodiscard]] bool validate_search_options(const SearchOptions& options,
                              std::string* error = nullptr);
 
 // One node's spec-derived state.  `allowed` is the four-value M1 subset; the
@@ -100,14 +100,14 @@ double default_partition_signal_bits(
 // Fills NodeInfo from partition::* and applies the search policy.  A forced or
 // implied partition is reported in `forced`; callers must not probe anything
 // else in that case.
-bool describe_node(const partition::FrameGeometry& geometry,
+[[nodiscard]] bool describe_node(const partition::FrameGeometry& geometry,
                    int mi_row, int mi_col, partition::BlockSize size,
                    int depth, bool has_chroma, bool chroma_offset,
                    NodeInfo* out, std::string* error = nullptr);
 
 // True when the encoder policy allows `partition` at this node (depth and
 // minimum block size).  Spec legality is separate: check NodeInfo::allowed.
-bool policy_allows(const SearchOptions& options, int depth,
+[[nodiscard]] bool policy_allows(const SearchOptions& options, int depth,
                    partition::BlockSize size,
                    partition::PartitionType partition) noexcept;
 
@@ -169,7 +169,7 @@ class NodeDecisionLoop {
 
 // Fills the trace entry for one completed node.  Returns false (and leaves the
 // trace untouched) if the decision has no valid winner.
-bool record_node_trace(const NodeInfo& info, const NodeDecision& decision,
+[[nodiscard]] bool record_node_trace(const NodeInfo& info, const NodeDecision& decision,
                        CostTrace& trace) noexcept;
 
 // ---------------------------------------------------------------------------

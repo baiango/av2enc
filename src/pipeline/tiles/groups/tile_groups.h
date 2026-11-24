@@ -59,13 +59,13 @@ struct FrameHeaderBits {
 
 // Copies the first `bit_count` bits out of a writer/byte buffer. The writer
 // may have zero padding in its final byte; only `bit_count` bits are kept.
-bool capture_frame_header_bits(std::span<const std::uint8_t> bytes,
+[[nodiscard]] bool capture_frame_header_bits(std::span<const std::uint8_t> bytes,
                                std::size_t bit_count, FrameHeaderBits* out,
                                std::string* error = nullptr);
 
 // True when bit `index` is set. Returns false, leaving `*in_range` false, when
 // the index is outside [0, bit_count).
-bool frame_header_bit(const FrameHeaderBits& bits, std::size_t index,
+[[nodiscard]] bool frame_header_bit(const FrameHeaderBits& bits, std::size_t index,
                       bool* in_range);
 
 // §5.19 / §5.18.7.2 state the tile-group syntax depends on.
@@ -88,7 +88,7 @@ TileGroupGeometry geometry_from_layout(const tiles::TileLayout& layout,
                                        int tile_size_bytes, bool use_bru,
                                        bool bru_inactive);
 
-bool validate_tile_group_geometry(const TileGroupGeometry& geometry,
+[[nodiscard]] bool validate_tile_group_geometry(const TileGroupGeometry& geometry,
                                   std::string* error = nullptr);
 
 // One tile group's coverage. `tg_end` is inclusive.
@@ -118,7 +118,7 @@ struct FrameTileGroupPlan {
 
 // Splits NumTiles into contiguous groups of `tiles_per_group` tiles. Fills the
 // per-tile BRU flags with `bru_active_default` when the geometry requires them.
-bool plan_contiguous_tile_groups(const TileGroupGeometry& geometry,
+[[nodiscard]] bool plan_contiguous_tile_groups(const TileGroupGeometry& geometry,
                                  std::span<const int> tiles_per_group,
                                  bool copy_frame_header,
                                  bool bru_active_default,
@@ -133,7 +133,7 @@ bool plan_contiguous_tile_groups(const TileGroupGeometry& geometry,
 //   * no gap and no overlap: group i starts at group i-1's tg_end + 1;
 //   * the last group ends at NumTiles - 1.
 // A bru_inactive frame is a single header-only group and has no coverage.
-bool validate_frame_tile_groups(const FrameTileGroupPlan& plan,
+[[nodiscard]] bool validate_frame_tile_groups(const FrameTileGroupPlan& plan,
                                 std::string* error = nullptr);
 
 // Per-OBU write parameters. The first group's `frame_header_present` is
@@ -150,7 +150,7 @@ struct TileGroupWriteParams {
 // only `span.tg_start .. span.tg_end`. Every used payload must be at least 2
 // bytes (init_symbol reads up to 15 bits). Size fields use `TileSizeBytes` and
 // are interleaved with the payloads (the last tile of the group is implied).
-bool write_tile_group(const TileGroupGeometry& geometry,
+[[nodiscard]] bool write_tile_group(const TileGroupGeometry& geometry,
                       const FrameHeaderBits& frame_header,
                       const TileGroupWriteParams& params,
                       std::span<const std::vector<std::uint8_t>> tile_payloads,
@@ -158,7 +158,7 @@ bool write_tile_group(const TileGroupGeometry& geometry,
                       std::string* error = nullptr);
 
 // Validated whole-frame writer. Produces one payload per group, in order.
-bool write_frame_tile_groups(
+[[nodiscard]] bool write_frame_tile_groups(
     const FrameTileGroupPlan& plan,
     std::span<const std::vector<std::uint8_t>> tile_payloads,
     std::vector<std::vector<std::uint8_t>>* out,
@@ -198,7 +198,7 @@ struct TileGroupSequence {
 // required whenever a group carries a header. The reader never trusts writer
 // state: every framing field is re-read from the bytes and the byte-alignment
 // padding, size fields and payload extent are checked.
-bool read_tile_group(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool read_tile_group(std::span<const std::uint8_t> payload,
                      const TileGroupGeometry& geometry,
                      std::size_t num_frame_header_bits, ParsedTileGroup* out,
                      std::string* error = nullptr);
@@ -207,7 +207,7 @@ bool read_tile_group(std::span<const std::uint8_t> payload,
 // point for gaps, overlap/reordering, a missing final tile, a first group that
 // does not start at tile 0, duplicate `is_first_tile_group` bits, and a
 // `frame_header_copy()` that differs from the first group's header.
-bool read_tile_group_sequence(
+[[nodiscard]] bool read_tile_group_sequence(
     std::span<const std::vector<std::uint8_t>> payloads,
     const TileGroupGeometry& geometry, std::size_t num_frame_header_bits,
     TileGroupSequence* out, std::string* error = nullptr);

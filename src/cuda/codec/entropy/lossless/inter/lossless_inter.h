@@ -104,7 +104,7 @@ struct TxSizeDecision {
   bool signal_lossless_tx_size = false;
 };
 
-bool find_tx_size(int coded_w, int coded_h, int* tx_w, int* tx_h);
+[[nodiscard]] bool find_tx_size(int coded_w, int coded_h, int* tx_w, int* tx_h);
 TxSizeDecision select_tx_size(const TxSizeRequest& request);
 
 // ---------------------------------------------------------------------------

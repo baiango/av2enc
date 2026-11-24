@@ -107,7 +107,7 @@ int map_intra_mode(int mode, int angle_delta, int coded_w, int coded_h);
 
 // §5.20.8.3 get_tx_set(txSz, plane) for an intra block, i.e. is_inter = 0.
 // Returns false for a size that is not one of the 25 AV2 TX sizes.
-bool intra_tx_set(const TxTypeQuery& query, TxSet* set);
+[[nodiscard]] bool intra_tx_set(const TxTypeQuery& query, TxSet* set);
 
 // One codable candidate and the symbols needed to signal it.
 struct TxTypeCandidate {
@@ -136,7 +136,7 @@ struct TxTypeSet {
 // sets follow Tx_Type_Inv_Long[is_long_side_dct][orientation]; WIDE_32/HIGH_32
 // list is_long_side_dct = 0 then 1.  Selection does not depend on this order
 // (see the tie-break), but symbol coding does.
-bool intra_tx_candidates(const TxTypeQuery& query, TxTypeSet* out);
+[[nodiscard]] bool intra_tx_candidates(const TxTypeQuery& query, TxTypeSet* out);
 
 // Every type that *some* intra mode can signal for this size, sorted by TxType
 // value.  Use it for a mode/type joint search; a winner still has to be checked
@@ -149,7 +149,7 @@ int intra_tx_types_for_size(int coded_w, int coded_h, int reduced_tx_set,
 // Returns false when the type is not codable for this size/mode/set.
 // `is_long_side_dct` is set to the signalled flag where one exists, to true for
 // WIDE_64/HIGH_64 (the spec implies 1), and to false otherwise.
-bool tx_type_symbol(const TxTypeQuery& query, TxType type, int* symbol,
+[[nodiscard]] bool tx_type_symbol(const TxTypeQuery& query, TxType type, int* symbol,
                     bool* is_long_side_dct);
 
 // §5.20.8.2: !is_inter && eob == 1 infers DCT_DCT.  A non-DCT type is only
@@ -224,7 +224,7 @@ struct TxTypeEval {
 // tightly packed).  `levels_out` (w*h int32) and `recon_out` (coded_w*coded_h
 // int16) may be null.  Returns false on invalid arguments or when the
 // candidate does not belong to the query's size.
-bool evaluate_intra_tx_type(const std::int16_t* residual_coded,
+[[nodiscard]] bool evaluate_intra_tx_type(const std::int16_t* residual_coded,
                             const TxTypeQuery& query,
                             const TxTypeCandidate& candidate,
                             const TxTypeCostConfig& config, TxTypeEval* out,
@@ -260,7 +260,7 @@ struct TxTypeChoice {
 // `levels_out` (w*h int32) and `recon_out` (coded_w*coded_h int16) receive the
 // winner's quantized coefficients and inverse-transform residual; both may be
 // null.
-bool choose_intra_tx_type(const std::int16_t* residual_coded,
+[[nodiscard]] bool choose_intra_tx_type(const std::int16_t* residual_coded,
                           const TxTypeQuery& query,
                           const TxTypeCostConfig& config, TxTypeChoice* out,
                           std::int32_t* levels_out = nullptr,
@@ -270,7 +270,7 @@ bool choose_intra_tx_type(const std::int16_t* residual_coded,
 // parity-test pair.  The same cost, codability and tie-break rules apply.
 // `candidates[i].params` must match the query size; `symbol` and
 // `is_long_side_dct` must be filled as intra_tx_candidates() would.
-bool choose_tx_type_from_candidates(
+[[nodiscard]] bool choose_tx_type_from_candidates(
     const std::int16_t* residual_coded, const TxTypeQuery& query,
     const TxTypeCandidate* candidates, int count,
     const TxTypeCostConfig& config, TxTypeChoice* out,

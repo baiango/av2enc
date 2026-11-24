@@ -169,7 +169,7 @@ std::vector<std::vector<std::uint8_t>> make_video_ref_frame_obus(
 // Independent reader for the same header subset.  Validates every value
 // against `refs`/`state` exactly like the writer.  `tiles` must describe the
 // same grid; the reader uses it to know how many tile_info bits to consume.
-bool read_video_ref_frame_header(RefBitReader& reader, bool keyframe,
+[[nodiscard]] bool read_video_ref_frame_header(RefBitReader& reader, bool keyframe,
                               const VideoRefConfig& config, const RefList& refs,
                               const FrameRefState& state,
                               const VideoTileInfo& tiles,
@@ -178,7 +178,7 @@ bool read_video_ref_frame_header(RefBitReader& reader, bool keyframe,
 // §5.19 non-first tile group header reader:
 //   frame_header_present_flag f(1)
 //   if present: frame_header_copy()  (verified against `store`)
-bool read_video_ref_nonfirst_tile_group_header(RefBitReader& reader,
+[[nodiscard]] bool read_video_ref_nonfirst_tile_group_header(RefBitReader& reader,
                                             const FrameHeaderStore& store,
                                             bool* frame_header_present,
                                             std::string* error);

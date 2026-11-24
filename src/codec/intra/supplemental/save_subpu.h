@@ -140,7 +140,7 @@ struct SubPuGrid {
 //
 // Returns false (and sets *error when non-null) for an out-of-range plane, a
 // region that has no matching TX size, or a grid write outside mi_rows/mi_cols.
-bool save_subpu(int plane, int x, int y, int w, int h, int subsampling_x,
+[[nodiscard]] bool save_subpu(int plane, int x, int y, int w, int h, int subsampling_x,
                 int subsampling_y, int pu_width, int pu_height,
                 SubPuGrid& grid, std::string* error = nullptr) noexcept;
 

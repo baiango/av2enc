@@ -123,7 +123,7 @@ void deallocate(Arena& arena, GmeBuffers& buffers) noexcept;
 
 // Arena watermark wrappers.
 std::uint64_t gme_mark(const Arena& arena) noexcept;
-bool gme_rewind(Arena& arena, std::uint64_t mark) noexcept;
+[[nodiscard]] bool gme_rewind(Arena& arena, std::uint64_t mark) noexcept;
 
 // Setup copies into the persistent staging arrays.  These are the only copies
 // in the module and are never called from a launcher.

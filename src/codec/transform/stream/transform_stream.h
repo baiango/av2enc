@@ -209,20 +209,20 @@ struct Decision {
 //
 // On success `*decision` is fully populated and true is returned.  On failure
 // `decision->valid` is false and `*error` (when non-null) explains why.
-bool quantize_block(const Request& request, Decision* decision,
+[[nodiscard]] bool quantize_block(const Request& request, Decision* decision,
                     std::string* error = nullptr);
 
 // Scalar-quantisation baseline under the same rate model and TX-type rule.
 // Useful for measuring RDOQ gains without duplicating this logic.  The rate
 // includes the signalled TX-type symbol.  `lambda` only affects `cost`.
-bool quantize_block_scalar(const Request& request, Decision* decision,
+[[nodiscard]] bool quantize_block_scalar(const Request& request, Decision* decision,
                            std::string* error = nullptr);
 
 // Evaluates every legal candidate (after `candidate_types` filtering) without
 // selecting one.  `decisions` receives one entry per candidate in symbol order;
 // `valid` means the evaluation succeeded and `codable` is the §5.20.8.2
 // `eob <= 1` rule.  This is the CPU parity surface for the GPU batch path.
-bool evaluate_candidates(const Request& request,
+[[nodiscard]] bool evaluate_candidates(const Request& request,
                          std::vector<Decision>* decisions,
                          std::string* error = nullptr);
 

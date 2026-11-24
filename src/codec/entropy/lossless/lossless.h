@@ -214,7 +214,7 @@ struct EncodeResult {
 // Encodes one lossless still picture.  Returns false with `error` set on a
 // geometry/syntax failure.  The recon planes are the decoder's exact output;
 // `stats.exact` is true only when every sample matches the source.
-bool encode_still(const StillPicture& picture, const Options& options,
+[[nodiscard]] bool encode_still(const StillPicture& picture, const Options& options,
                   EncodeResult& result, std::string& error);
 
 // ---------------------------------------------------------------------------
@@ -234,7 +234,7 @@ struct DecodeResult {
 // the frame.  This is a full lossless syntax reader, not a shortcut through the
 // encoder's decisions: every partition, mode and coefficient symbol is read
 // from the bitstream with the §8.2 decoder state machine.
-bool decode_temporal_unit(std::span<const std::uint8_t> temporal_unit,
+[[nodiscard]] bool decode_temporal_unit(std::span<const std::uint8_t> temporal_unit,
                           DecodeResult& result, std::string& error);
 
 }  // namespace av2enc::lossless

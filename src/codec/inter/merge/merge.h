@@ -123,14 +123,14 @@ enum YMode : int {
 // Small normative predicates
 // ---------------------------------------------------------------------------
 
-bool is_inter_ref(std::int8_t ref);
-bool is_thin_4xn_nx4_block(BlockSize size);
+[[nodiscard]] bool is_inter_ref(std::int8_t ref);
+[[nodiscard]] bool is_thin_4xn_nx4_block(BlockSize size);
 // is_comp_ref_allowed(): Min(w,h) >= 8 or a thin 4xN/Nx4 block.
-bool is_comp_ref_allowed(BlockSize size);
+[[nodiscard]] bool is_comp_ref_allowed(BlockSize size);
 // §7.12.2.20: MVP-combination candidates are inserted only when both block
 // dimensions are strictly greater than 32 luma samples.
-bool mvp_combinations_allowed(int width, int height);
-bool mvp_combinations_allowed(BlockSize size);
+[[nodiscard]] bool mvp_combinations_allowed(int width, int height);
+[[nodiscard]] bool mvp_combinations_allowed(BlockSize size);
 
 // §5.18.3.1.  `restricted` inputs are represented by RefOrderHint below rather
 // than a magic value; this helper is the unrestricted form.
@@ -225,7 +225,7 @@ Status decode_drl_index(std::span<const std::uint8_t> bits, int start, int m,
 int drl_cdf_row(int idx);
 
 // has_second_drl(YMode) (§5.20.7.6).
-bool has_second_drl(int y_mode, bool skip_mode, bool use_optflow);
+[[nodiscard]] bool has_second_drl(int y_mode, bool skip_mode, bool use_optflow);
 
 // start value for the second read_drl_idx() call.
 Status derive_second_drl_start(int y_mode, bool same_refs, int refmv_idx0,
@@ -243,8 +243,8 @@ enum class SingleMode : std::uint8_t {
 
 Status decode_single_mode(int single_mode, SingleMode* out);
 int single_mode_y_mode(int single_mode);  // 14 + single_mode
-bool single_mode_has_drl(SingleMode mode);
-bool single_mode_has_mvd(SingleMode mode);
+[[nodiscard]] bool single_mode_has_drl(SingleMode mode);
+[[nodiscard]] bool single_mode_has_mvd(SingleMode mode);
 
 // ---------------------------------------------------------------------------
 // Mode contexts (§7.11.2, §9.3 CDF selection)

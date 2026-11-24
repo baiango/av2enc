@@ -59,7 +59,7 @@ TemporalStatus plan_tip_output(const TipOutputConfig& config,
 
 // Convenience: resolve output flags from the sequence's monotonic flag.
 //   monotonic_output_order_flag == 1 -> implicit_output_frame is inferred 0.
-bool tip_implicit_output_inferred(bool monotonic_output_order_flag);
+[[nodiscard]] bool tip_implicit_output_inferred(bool monotonic_output_order_flag);
 
 }  // namespace av2enc::inter::tip
 

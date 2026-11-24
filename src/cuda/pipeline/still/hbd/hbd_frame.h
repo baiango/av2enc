@@ -52,12 +52,12 @@ struct Hbd420Frame {
 // Builds the frame layout from `fmt::make_frame_geometry()`.  `hbd_make_frame`
 // accepts every AV2 chroma format (4:0:0/4:2:0/4:2:2/4:4:4); the depth may be
 // 8/10/12 so the same plumbing can be tested, but the M1 deliverable is 10-bit.
-bool hbd_make_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
+[[nodiscard]] bool hbd_make_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
                     std::string* error);
 // Historical 4:2:0 name; still rejects other chroma formats.
-bool hbd_make_420_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
+[[nodiscard]] bool hbd_make_420_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
                         std::string* error);
-bool hbd_make_420_frame_10(std::uint32_t width, std::uint32_t height,
+[[nodiscard]] bool hbd_make_420_frame_10(std::uint32_t width, std::uint32_t height,
                            Hbd420Frame* out, std::string* error);
 
 // Expands one 8-bit plane into a `uint16_t` destination and fills right/bottom

@@ -135,7 +135,7 @@ struct ChromaSeqConfig {
 
 // Validates the parts of the sequence header that are constrained by the
 // chroma format (Monochrome conditionals, profiles, level, quantizer).
-bool validate_chroma_seq_config(const ChromaSeqConfig& config,
+[[nodiscard]] bool validate_chroma_seq_config(const ChromaSeqConfig& config,
                                 std::string& error);
 
 // Writes exactly the sequence_header_obu() syntax bits (§5.4.1), without the
@@ -191,19 +191,19 @@ struct SequenceHeaderInfo {
 // Reads the sequence_header_obu() syntax from `payload`, which starts at
 // seq_header_id and may or may not include the trailing §5.2.1 extension flag
 // and §5.2.3 trailing_bits.  When present they are validated.
-bool read_sequence_header_syntax(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool read_sequence_header_syntax(std::span<const std::uint8_t> payload,
                                  SequenceHeaderInfo& info, std::string& error);
 
 // Parses one length-delimited OBU_SEQUENCE_HEADER (as produced by
 // make_sequence_header_obu()).  Returns false for a different OBU type,
 // malformed leb128, or invalid syntax.
-bool parse_sequence_header_obu(std::span<const std::uint8_t> obu,
+[[nodiscard]] bool parse_sequence_header_obu(std::span<const std::uint8_t> obu,
                                SequenceHeaderInfo& info, std::string& error);
 
 // Scans a temporal unit (TD + SEQ + CLK, as stored in an IVF frame) and parses
 // the first OBU_SEQUENCE_HEADER.  Useful for gate/tests without depending on
 // src/bitstream's OBU parser.
-bool find_sequence_header(std::span<const std::uint8_t> temporal_unit,
+[[nodiscard]] bool find_sequence_header(std::span<const std::uint8_t> temporal_unit,
                           SequenceHeaderInfo& info, std::string& error);
 
 // Assembles TD -> SEQ -> CLK (§7.3.3) for one still picture.  The CLK OBU and

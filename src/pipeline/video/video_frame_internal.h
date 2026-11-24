@@ -4195,15 +4195,15 @@ inline bool estimate_motion_field(const SavedFieldRef* ref_fields,
 
 namespace vf_detail {
 #if defined(AV2ENC_VIDEO_FRAMES)
-bool encode_b_sequence(std::span<const VideoInputFrame> frames,
+[[nodiscard]] bool encode_b_sequence(std::span<const VideoInputFrame> frames,
                        const VideoOptions& options, int gop_size,
                        VideoSequenceResult& result, std::string& error);
 #endif
-bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
+[[nodiscard]] bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
                               const VideoOptions& options,
                               VideoSequenceResult& result,
                               std::string& error);
-bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
+[[nodiscard]] bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
                          const VideoOptions& options,
                          VideoSequenceResult& result,
                          std::string& error);

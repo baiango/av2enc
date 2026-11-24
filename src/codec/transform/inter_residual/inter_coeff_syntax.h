@@ -147,7 +147,7 @@ struct InterResidualBlock {
 //
 // Returns false with `error` set on any inconsistency (invalid TX size, EOB
 // outside the transform area, level array overflow, sink failure).
-bool write_inter_residual(const SymbolSink& sink, CoeffContextView& contexts,
+[[nodiscard]] bool write_inter_residual(const SymbolSink& sink, CoeffContextView& contexts,
                           InterResidualCdfs& cdfs,
                           const InterResidualBlock& block,
                           std::span<const std::int32_t> levels,
@@ -156,7 +156,7 @@ bool write_inter_residual(const SymbolSink& sink, CoeffContextView& contexts,
 // Emits only the transform-type syntax for one luma TX block (§5.20.8.2).
 // Exposed separately so a caller that codes coefficients elsewhere can still
 // reuse the set/context/symbol logic.
-bool write_inter_tx_type(const SymbolSink& sink, InterResidualCdfs& cdfs,
+[[nodiscard]] bool write_inter_tx_type(const SymbolSink& sink, InterResidualCdfs& cdfs,
                          int tx_size, int tx_type, int eob,
                          std::string& error);
 
@@ -171,7 +171,7 @@ bool write_inter_tx_type(const SymbolSink& sink, InterResidualCdfs& cdfs,
 // Builds the per-scan-position plan for one plane.  `levels_scan[c]` is the
 // signed quantised level at scan position c (c < eob).  `dc_sign_ctx` is the
 // pre-derived luma DC sign context (see dc_sign_context()).
-bool build_coeff_plan(int plane, int eob, int adj_w, int adj_h,
+[[nodiscard]] bool build_coeff_plan(int plane, int eob, int adj_w, int adj_h,
                       std::span<const std::int32_t> levels_scan,
                       int dc_sign_ctx, std::vector<CoeffPlanEntry>* plan,
                       std::string* error);

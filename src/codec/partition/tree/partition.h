@@ -95,14 +95,14 @@ enum class BlockSize : std::uint8_t {
 
 inline constexpr int kBlockSizeCount = 29;
 
-bool is_valid_block_size(BlockSize size);
+[[nodiscard]] bool is_valid_block_size(BlockSize size);
 int block_width(BlockSize size);
 int block_height(BlockSize size);
 int mi_width_log2(BlockSize size);   // Mi_Width_Log2 (§9.2)
 int mi_height_log2(BlockSize size);  // Mi_Height_Log2 (§9.2)
 int num_4x4_blocks_wide(BlockSize size);
 int num_4x4_blocks_high(BlockSize size);
-bool is_square(BlockSize size);
+[[nodiscard]] bool is_square(BlockSize size);
 BlockSize superblock_size(int sb_size_pixels);
 const char* block_size_name(BlockSize size);
 
@@ -152,7 +152,7 @@ struct FrameGeometry {
   int max_pb_aspect_ratio = 8;  // MaxPbAspectRatio: 2, 4, or 8 (§5.4.3)
 };
 
-bool validate_geometry(const FrameGeometry& geometry, std::string& error);
+[[nodiscard]] bool validate_geometry(const FrameGeometry& geometry, std::string& error);
 
 int mi_cols(const FrameGeometry& geometry);  // §5.18.4.4, even 4x4 units
 int mi_rows(const FrameGeometry& geometry);  // §5.18.4.4, even 4x4 units
@@ -166,8 +166,8 @@ int sb_rows(const FrameGeometry& geometry);
 // MiRows/MiCols are rounded to 8 pixels (§5.18.4.4), so a neighbour can be
 // "available" for context while still lying outside the visible width/height;
 // pixel reads must clip to width/height separately.
-bool is_inside(const FrameGeometry& geometry, int mi_row, int mi_col);
-bool block_coded(const FrameGeometry& geometry, int mi_row, int mi_col);
+[[nodiscard]] bool is_inside(const FrameGeometry& geometry, int mi_row, int mi_col);
+[[nodiscard]] bool block_coded(const FrameGeometry& geometry, int mi_row, int mi_col);
 
 struct BlockRect {
   int x = 0;
@@ -229,15 +229,15 @@ PartitionSet init_allowed_partitions(const FrameGeometry& geometry,
 // SHARED_PART.  enable_ext_partitions is treated as 0.
 //   has_chroma    = hasChroma recursion parameter
 //   chroma_offset = chromaOffset recursion parameter
-bool is_partition_allowed(const FrameGeometry& geometry, int mi_row,
+[[nodiscard]] bool is_partition_allowed(const FrameGeometry& geometry, int mi_row,
                           int mi_col, BlockSize size, PartitionType partition,
                           bool has_chroma, bool chroma_offset);
 
 // is_chroma_offset_for_subsize / _partition (§5.20.3.2).  Only the six
 // non-extended partitions exist here, so no HORZ_3/VERT_3 middle-block case.
-bool is_chroma_offset_for_subsize(const FrameGeometry& geometry,
+[[nodiscard]] bool is_chroma_offset_for_subsize(const FrameGeometry& geometry,
                                   BlockSize subsize);
-bool is_chroma_offset_for_partition(const FrameGeometry& geometry,
+[[nodiscard]] bool is_chroma_offset_for_partition(const FrameGeometry& geometry,
                                     PartitionType partition, BlockSize size);
 
 // get_plane_residual_size(subsize, plane=1) for 4:2:0.  Returns
@@ -415,11 +415,11 @@ int count_leaves(const PartitionNode& node);
 //   * stored boundary/allowed fields are not stale
 //   * every in-frame cell in the superblock is covered exactly once
 // Does not check costs or DecisionOptions policy.
-bool validate_tree(const FrameGeometry& geometry, const PartitionNode& root,
+[[nodiscard]] bool validate_tree(const FrameGeometry& geometry, const PartitionNode& root,
                    std::string& error);
 
 // Validates every superblock and the frame-level SB layout.
-bool validate_frame(const FrameGeometry& geometry, const FrameDecision& frame,
+[[nodiscard]] bool validate_frame(const FrameGeometry& geometry, const FrameDecision& frame,
                     std::string& error);
 
 }  // namespace av2enc::partition

@@ -298,10 +298,10 @@ struct ObuView {
 
 // Parses one leb128-prefixed OBU starting at `offset`; advances `offset` past
 // it. Rejects truncated/overflowing leb128, size 0, and size beyond the buffer.
-bool parse_obu(std::span<const std::uint8_t> data, std::size_t& offset,
+[[nodiscard]] bool parse_obu(std::span<const std::uint8_t> data, std::size_t& offset,
                ObuView& out, std::string& error);
 
-bool parse_obu_sequence(std::span<const std::uint8_t> data,
+[[nodiscard]] bool parse_obu_sequence(std::span<const std::uint8_t> data,
                         std::vector<ObuView>& out, std::string& error);
 
 struct MetadataShortView {
@@ -314,7 +314,7 @@ struct MetadataShortView {
 };
 
 // §5.17.2. `payload` is the OBU payload after obu_header().
-bool parse_metadata_short(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool parse_metadata_short(std::span<const std::uint8_t> payload,
                           MetadataShortView& out, std::string& error);
 
 struct MetadataUnitView {
@@ -335,15 +335,15 @@ struct MetadataGroupView {
 
 // §5.17.3. `xlayer_id` is obu_xlayer_id, needed to size muh_xlayer_map when
 // muh_layer_idc == LAYER_VALUES.
-bool parse_metadata_group(std::span<const std::uint8_t> payload,
+[[nodiscard]] bool parse_metadata_group(std::span<const std::uint8_t> payload,
                           std::uint8_t xlayer_id, MetadataGroupView& out,
                           std::string& error);
 
 // Typed unit decoders. Accept the canonical 4/24 bytes and any longer
 // metadata_unit payload (§5.17.1 pads with metadata_unit_remaining_bit).
-bool decode_cll(std::span<const std::uint8_t> unit, ContentLightLevel& out,
+[[nodiscard]] bool decode_cll(std::span<const std::uint8_t> unit, ContentLightLevel& out,
                 std::string& error);
-bool decode_mdcv(std::span<const std::uint8_t> unit,
+[[nodiscard]] bool decode_mdcv(std::span<const std::uint8_t> unit,
                  MasteringDisplayColorVolume& out, std::string& error);
 
 struct HdrMetadataRecord {
@@ -366,11 +366,11 @@ struct HdrScanResult {
 
 // Walks a complete temporal unit. Structural OBU errors are failures; a unit
 // with an invalid CLL/MDCV payload increments invalid_units and is skipped.
-bool scan_hdr_metadata(std::span<const std::uint8_t> temporal_unit,
+[[nodiscard]] bool scan_hdr_metadata(std::span<const std::uint8_t> temporal_unit,
                        HdrScanResult& out, std::string& error);
 
 // True for OBU types that carry coded frame data (§6.2.2 Table 6.1).
-bool is_frame_obu_type(std::uint8_t type);
+[[nodiscard]] bool is_frame_obu_type(std::uint8_t type);
 
 // ---------------------------------------------------------------------------
 // Ordering
@@ -391,7 +391,7 @@ enum class MetadataPlacement : std::uint8_t {
 // must be OBU_METADATA_SHORT/GROUP with metadata_is_suffix matching the
 // placement. Fails if the temporal unit has no frame OBU or no sequence header
 // before the frame. `inserted_at`, when non-null, receives the byte offset.
-bool insert_metadata_obus(std::span<const std::uint8_t> temporal_unit,
+[[nodiscard]] bool insert_metadata_obus(std::span<const std::uint8_t> temporal_unit,
                           std::span<const std::uint8_t> metadata_obus,
                           MetadataPlacement placement,
                           std::vector<std::uint8_t>& out, std::string& error,

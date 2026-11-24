@@ -29,7 +29,7 @@ namespace av2enc::still::plan {
 
 // Builds the frame plan and fills the orchestrator PODs.  `blocks` is resized
 // to the leaf count; `frame.blocks` points at it, so both must outlive use.
-bool build_gpu_frame_plan(int width, int height,
+[[nodiscard]] bool build_gpu_frame_plan(int width, int height,
                           std::span<const std::uint8_t> luma,
                           const PlanOptions& options,
                           std::vector<cuda::still_gpu::BlockPlan>& blocks,
@@ -38,7 +38,7 @@ bool build_gpu_frame_plan(int width, int height,
 #if __has_include("pipeline/still/stream/still_stream_bridge.h")
 // Same, plus the preorder tree in the exact shape `stream::pack_gpu_frame()`
 // consumes.  `tree` is resized to the node count and left in preorder.
-bool build_gpu_frame_plan(int width, int height,
+[[nodiscard]] bool build_gpu_frame_plan(int width, int height,
                           std::span<const std::uint8_t> luma,
                           const PlanOptions& options,
                           std::vector<cuda::still_gpu::BlockPlan>& blocks,

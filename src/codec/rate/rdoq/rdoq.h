@@ -92,8 +92,8 @@ struct Config {
   std::int32_t max_coefficients = 4096;
 };
 
-bool rdoq_config_valid(const Config& config) noexcept;
-bool validate_rdoq_config(const Config& config, std::string* error = nullptr);
+[[nodiscard]] bool rdoq_config_valid(const Config& config) noexcept;
+[[nodiscard]] bool validate_rdoq_config(const Config& config, std::string* error = nullptr);
 
 // Estimated bits for coding one signed coefficient level.
 //
@@ -184,7 +184,7 @@ struct RdoqResult {
 // Runs the trellis.  Returns false and sets `error` on an invalid config, a
 // non-finite coefficient, an invalid rate from a callback, or an oversized
 // block.  `result` is reset before any work, so a failed call leaves it empty.
-bool rdoq_quantize(std::span<const Coefficient> coefficients,
+[[nodiscard]] bool rdoq_quantize(std::span<const Coefficient> coefficients,
                    const Config& config,
                    const RateModel& rate_model,
                    RdoqResult& result,
@@ -201,7 +201,7 @@ std::int32_t rdoq_level_bound(const Coefficient& coefficient,
 // for the same input.  Provided so callers can report the baseline without
 // duplicating the rounding rule.  `levels` receives signed levels in scan
 // order; `eob` the last non-zero position + 1.
-bool estimate_scalar_levels(std::span<const Coefficient> coefficients,
+[[nodiscard]] bool estimate_scalar_levels(std::span<const Coefficient> coefficients,
                             double quant_step,
                             std::span<std::int32_t> levels,
                             std::int32_t* eob,
@@ -257,7 +257,7 @@ struct BatchOutput {
   std::span<std::int32_t> status;   // one per block: 0 = ok, -1 = failed
 };
 
-bool rdoq_quantize_batch(const BatchInput& input,
+[[nodiscard]] bool rdoq_quantize_batch(const BatchInput& input,
                          const BatchConfig& config,
                          const RateModel& rate_model,
                          BatchOutput& output,

@@ -290,7 +290,7 @@ inline void load_from_state(CdfStore& s, const CdfStateT& c) {
 // Fill the store from the packed §8.2 CDF image the tile writer starts from
 // (the carried live state).  Implemented in video_syntax.cpp, where the image
 // layout lives; an empty image loads the §9.3 defaults for `base_q_idx`.
-bool load_store_from_image(std::span<const std::uint16_t> image,
+[[nodiscard]] bool load_store_from_image(std::span<const std::uint16_t> image,
                            int base_q_idx, CdfStore& out);
 
 // A const view of the store in the shape `rdoq::av2::Model` reads.  Arrays the

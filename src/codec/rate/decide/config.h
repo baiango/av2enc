@@ -54,8 +54,8 @@ struct LambdaConfig {
   bool rate_aware = true;
 };
 
-bool lambda_config_valid(const LambdaConfig& config) noexcept;
-bool validate_lambda_config(const LambdaConfig& config,
+[[nodiscard]] bool lambda_config_valid(const LambdaConfig& config) noexcept;
+[[nodiscard]] bool validate_lambda_config(const LambdaConfig& config,
                             std::string* error = nullptr);
 
 // lambda = sse_scale * quant_step^2 via the shared RDO framework.

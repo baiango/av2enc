@@ -253,7 +253,8 @@ void InterFrameEncoder::update_refmvbank_leaf(const syntax::BlockSyntax& entry) 
         inter::temporal::Mv{entry.mv_y, entry.mv_x},
         compound ? inter::temporal::Mv{entry.mv1_y, entry.mv1_x}
                  : inter::temporal::Mv{0, 0}};
-    inter::temporal::update_ref_mv_bank(
+    // false == no entry written; a block that fills the bank is fine.
+    (void)inter::temporal::update_ref_mv_bank(
         &refmv_bank_, ctx, refs, mvs, /*cwp_idx=*/8,
         /*from_within_sb=*/true);
   } else {

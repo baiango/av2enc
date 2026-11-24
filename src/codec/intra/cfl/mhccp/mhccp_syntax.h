@@ -54,17 +54,17 @@ CflSyntax make_multi_syntax(int cfl_mh_dir);
 
 // True when the fields are consistent with read_cfl_alphas() for the given
 // sequence/tool state.
-bool valid_syntax(const CflSyntax& syntax, bool enable_cfl_intra,
+[[nodiscard]] bool valid_syntax(const CflSyntax& syntax, bool enable_cfl_intra,
                   bool mhccp_allowed);
 
 // Parse/emit read_cfl_alphas(). `size_group` is Size_Group[MiSize] (0..3) and
 // selects TileCflMhDirCdf; use size_group_for_chroma_block() for 4:2:0. The
 // coder's disable_cdf_update setting is part of the av2::Encoder/Decoder.
-bool write_cfl_alphas(av2::Encoder& encoder, CflCdfs& cdfs,
+[[nodiscard]] bool write_cfl_alphas(av2::Encoder& encoder, CflCdfs& cdfs,
                       const CflSyntax& syntax, bool enable_cfl_intra,
                       bool mhccp_allowed, int size_group,
                       std::string* error);
-bool read_cfl_alphas(av2::Decoder& decoder, CflCdfs& cdfs,
+[[nodiscard]] bool read_cfl_alphas(av2::Decoder& decoder, CflCdfs& cdfs,
                      bool enable_cfl_intra, bool mhccp_allowed,
                      int size_group, CflSyntax* syntax, std::string* error);
 

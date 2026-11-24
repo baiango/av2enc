@@ -149,8 +149,8 @@ struct Config {
   bool allow_zero_to_one = false;
 };
 
-bool config_valid(const Config& config) noexcept;
-bool validate_config(const Config& config, std::string* error = nullptr);
+[[nodiscard]] bool config_valid(const Config& config) noexcept;
+[[nodiscard]] bool validate_config(const Config& config, std::string* error = nullptr);
 
 // Bits for coding one coefficient.
 //
@@ -230,14 +230,14 @@ struct Result {
   }
 };
 
-bool quantize(std::span<const Coefficient> coefficients, const Config& config,
+[[nodiscard]] bool quantize(std::span<const Coefficient> coefficients, const Config& config,
               const RateModel& rate_model, Result& result,
               std::string* error = nullptr);
 
 std::int32_t level_bound(const Coefficient& coefficient,
                          const Config& config) noexcept;
 
-bool estimate_scalar_levels(std::span<const Coefficient> coefficients,
+[[nodiscard]] bool estimate_scalar_levels(std::span<const Coefficient> coefficients,
                             double quant_step,
                             std::span<std::int32_t> levels, std::int32_t* eob,
                             std::string* error = nullptr);

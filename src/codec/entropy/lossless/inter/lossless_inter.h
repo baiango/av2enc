@@ -103,7 +103,7 @@ struct Geometry {
   ChromaFormat format = ChromaFormat::k420;
 };
 
-bool make_geometry(int width, int height, ChromaFormat format, Geometry* out,
+[[nodiscard]] bool make_geometry(int width, int height, ChromaFormat format, Geometry* out,
                    std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ void dpcm_cumsum_block(const int* in, int w, int h, bool vertical, int* out);
 
 // find_tx_size(Min(32,w), Min(32,h)) for square/rectangular power-of-two
 // sizes.  Returns true and the (coded) transform dimensions.
-bool find_tx_size(int coded_w, int coded_h, int* tx_w, int* tx_h);
+[[nodiscard]] bool find_tx_size(int coded_w, int coded_h, int* tx_w, int* tx_h);
 
 // read_tx_size() lossless branch for one coding block.
 struct TxSizeDecision {
@@ -237,7 +237,7 @@ struct EncodeResult {
   bool exact = false;
 };
 
-bool encode_video(std::span<const Picture> pictures, const Options& options,
+[[nodiscard]] bool encode_video(std::span<const Picture> pictures, const Options& options,
                   EncodeResult* result, std::string* error);
 
 struct DecodeResult {
@@ -248,7 +248,7 @@ struct DecodeResult {
   std::vector<FrameStats> stats;
 };
 
-bool decode_video(std::span<const std::vector<std::uint8_t>> units,
+[[nodiscard]] bool decode_video(std::span<const std::vector<std::uint8_t>> units,
                   DecodeResult* result, std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -283,7 +283,7 @@ struct CoeffContext {
 // writer and reader are independent (separate loops / separate CDF state).
 // `levels` is raster order in the coded transform block.  Returns true on a
 // byte-exact round trip; `decoded` receives the reader's levels.
-bool fsc_coeff_roundtrip(const int* levels, const CoeffContext& context,
+[[nodiscard]] bool fsc_coeff_roundtrip(const int* levels, const CoeffContext& context,
                          int* decoded, std::string* error);
 
 // ---------------------------------------------------------------------------

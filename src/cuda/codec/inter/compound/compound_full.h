@@ -510,11 +510,11 @@ cudaError_t refine_predict_batch_ws(CompoundFullWorkspace& workspace,
 
 // Named host-side validity checks. The batch forms trust device descriptors;
 // these helpers let a caller or a test reject a malformed job before upload.
-bool blend_job_valid(const BlendJob& job);
-bool skip_job_valid(const SkipJob& job);
-bool opfl_job_valid(const OpflJob& job);
-bool refine_search_job_valid(const RefineSearchJob& job);
-bool refine_predict_job_valid(const RefinePredictJob& job);
+[[nodiscard]] bool blend_job_valid(const BlendJob& job);
+[[nodiscard]] bool skip_job_valid(const SkipJob& job);
+[[nodiscard]] bool opfl_job_valid(const OpflJob& job);
+[[nodiscard]] bool refine_search_job_valid(const RefineSearchJob& job);
+[[nodiscard]] bool refine_predict_job_valid(const RefinePredictJob& job);
 
 }  // namespace av2enc::cuda::compound_full
 

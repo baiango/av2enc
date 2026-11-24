@@ -20,7 +20,7 @@ int skip_context_from_neighbours(const merge::NeighborModes& neighbours,
 
 // §7.11.2 NewMvContext via merge::derive_new_mv_context().  Returns false on
 // an invalid parameter set (the merge status is not kOk).
-bool new_mv_context_from_neighbours(
+[[nodiscard]] bool new_mv_context_from_neighbours(
     const merge::NewMvContextParams& params, int* ctx);
 
 // Bundles the contexts the rate model needs.  `is_inter_ctx` stays a caller

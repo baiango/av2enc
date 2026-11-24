@@ -98,8 +98,8 @@ struct LambdaParams {
   double sse_scale = 0.125;
 };
 
-bool lambda_params_valid(const LambdaParams& params) noexcept;
-bool validate_lambda_params(const LambdaParams& params,
+[[nodiscard]] bool lambda_params_valid(const LambdaParams& params) noexcept;
+[[nodiscard]] bool validate_lambda_params(const LambdaParams& params,
                             std::string* error = nullptr);
 
 // Quantiser step for base_q_idx. base_q_idx is clamped to [0, 255].
@@ -171,8 +171,8 @@ struct RdoConfig {
   TieBreak tie_break = TieBreak::kDistortionThenRate;
 };
 
-bool rdo_config_valid(const RdoConfig& config) noexcept;
-bool validate_rdo_config(const RdoConfig& config,
+[[nodiscard]] bool rdo_config_valid(const RdoConfig& config) noexcept;
+[[nodiscard]] bool validate_rdo_config(const RdoConfig& config,
                          std::string* error = nullptr);
 
 // Builds a config whose lambda matches `metric` for base_q_idx.
@@ -198,7 +198,7 @@ struct CandidateScore {
 //   6. lower input_index
 // Comparisons are exact (no epsilon), so the result is deterministic for a
 // given build. Build with -ffp-contract=off when cross-checking CPU vs GPU.
-bool candidate_better(const CandidateScore& a,
+[[nodiscard]] bool candidate_better(const CandidateScore& a,
                       const CandidateScore& b,
                       TieBreak tie_break) noexcept;
 
@@ -290,8 +290,8 @@ struct RdoqConfig {
   std::int32_t max_coefficients = 4096;  // safety cap for the reference path
 };
 
-bool rdoq_config_valid(const RdoqConfig& config) noexcept;
-bool validate_rdoq_config(const RdoqConfig& config,
+[[nodiscard]] bool rdoq_config_valid(const RdoqConfig& config) noexcept;
+[[nodiscard]] bool validate_rdoq_config(const RdoqConfig& config,
                           std::string* error = nullptr);
 
 struct RdoqCoefficient {
@@ -348,7 +348,7 @@ struct RdoqResult {
 // Runs the trellis. Returns false and fills `error` on an invalid config, an
 // invalid rate from the hook, or a block larger than max_coefficients. The
 // result is reset before any work, so a failed call leaves empty levels.
-bool rdoq_quantize(std::span<const RdoqCoefficient> coefficients,
+[[nodiscard]] bool rdoq_quantize(std::span<const RdoqCoefficient> coefficients,
                    const RdoqConfig& config,
                    const RdoqRateModel& rate_model,
                    RdoqResult& result,

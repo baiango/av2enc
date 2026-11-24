@@ -17,7 +17,7 @@ namespace av2enc::inter::temporal {
 int get_rmb_list_index(const int ref_frames[2]);
 
 // §7.12.2.21 rmb_params_equal(): p[1..5], the CWP index is not part of the key.
-bool rmb_params_equal(const RefMvBankEntry& a, const RefMvBankEntry& b);
+[[nodiscard]] bool rmb_params_equal(const RefMvBankEntry& a, const RefMvBankEntry& b);
 
 // Block context for update_ref_mv_count().  `sb_size4` is the superblock
 // extent in 4x4 units (16 for 64x64, 32 for 128x128).
@@ -36,7 +36,7 @@ void update_ref_mv_count(RefMvBank* bank, const RefMvBankBlockContext& ctx);
 // §7.12.2.21 update_ref_mv_bank().  Returns true when an entry was written or
 // refreshed.  `from_within_sb` corresponds to the spec's fromWithinSb: when
 // false (seeding from the row above) the hit budget is not consulted.
-bool update_ref_mv_bank(RefMvBank* bank, const RefMvBankBlockContext& ctx,
+[[nodiscard]] bool update_ref_mv_bank(RefMvBank* bank, const RefMvBankBlockContext& ctx,
                         const int ref_frames[2], const Mv mvs[2],
                         int cwp_idx, bool from_within_sb);
 

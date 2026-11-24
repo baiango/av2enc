@@ -86,7 +86,7 @@ struct ScreenContentFlags {
 // `allow_screen_content_tools` is an error, as is local/global IBC without
 // `allow_intrabc`, and a non-single-picture sequence needs the explicit
 // seq_force_* values (not modelled yet).
-bool validate_screen_content_flags(const ScreenContentFlags& flags,
+[[nodiscard]] bool validate_screen_content_flags(const ScreenContentFlags& flags,
                                    std::string& error);
 
 // Convenience: screen-content tools on, palette on, IBC off, integer MV forced.
@@ -109,7 +109,7 @@ std::size_t write_frame_screen_content_params(BitWriter& writer,
 // §5.20.5.5 gating rule (MiSize / block dimensions / allow_screen_content_tools
 // plus this adapter's allow_palette switch).  A 4x4 block (MiSize
 // BLOCK_4X4) is *not* palette-signallable.
-bool palette_allowed_for_block(const ScreenContentFlags& flags, int bsize,
+[[nodiscard]] bool palette_allowed_for_block(const ScreenContentFlags& flags, int bsize,
                                int block_w, int block_h) noexcept;
 
 // ---------------------------------------------------------------------------
@@ -156,7 +156,7 @@ struct ColorOrderSample {
   std::array<std::uint8_t, pal::kPaletteMaxSize> order{};
 };
 
-bool color_order_at(const pal::PaletteResult& result, int block_w, int r, int c,
+[[nodiscard]] bool color_order_at(const pal::PaletteResult& result, int block_w, int r, int c,
                     ColorOrderSample& out) noexcept;
 
 // ---------------------------------------------------------------------------
@@ -279,15 +279,15 @@ struct MinimalPaletteFrameResult {
   bool transform_skip_eob0 = true;
 };
 
-bool encode_minimal_palette_frame(const MinimalPaletteFramePlan& plan,
+[[nodiscard]] bool encode_minimal_palette_frame(const MinimalPaletteFramePlan& plan,
                                   MinimalPaletteFrameResult& out,
                                   std::string& error);
 
-bool write_minimal_palette_ivf(const MinimalPaletteFrameResult& result,
+[[nodiscard]] bool write_minimal_palette_ivf(const MinimalPaletteFrameResult& result,
                                const MinimalPaletteFramePlan& plan,
                                const std::string& path, std::string& error);
 
-bool write_minimal_palette_y4m(const MinimalPaletteFrameResult& result,
+[[nodiscard]] bool write_minimal_palette_y4m(const MinimalPaletteFrameResult& result,
                                const MinimalPaletteFramePlan& plan,
                                const std::string& path, std::string& error);
 

@@ -26,7 +26,7 @@
 namespace av2enc::cfl::mhccp {
 
 // True when both descriptors are valid and describe the same luma geometry.
-bool valid_pair(const Block& u, const Block& v);
+[[nodiscard]] bool valid_pair(const Block& u, const Block& v);
 
 // Sum of squared error of the MHCCP prediction against `source`.
 // `refs` must come from capture_refs() on `block`.

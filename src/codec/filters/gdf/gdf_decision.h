@@ -68,7 +68,7 @@ int GdfUnitRegions(const GdfUnitLayout& layout, int row, int col,
 // Applies GDF to `out` (which must already contain a copy of CdefFrame).  When
 // `params.per_block` is false every unit is filtered and `unit_flags` is
 // ignored; otherwise it must hold layout.cols * layout.rows flags.
-bool ApplyGdfToFrame(const GdfSourceFrame& source, const GdfFilterInputs& inputs,
+[[nodiscard]] bool ApplyGdfToFrame(const GdfSourceFrame& source, const GdfFilterInputs& inputs,
                      const FrameGdfContext& context,
                      const FrameGdfParams& params,
                      const std::vector<std::uint8_t>& unit_flags,
@@ -116,7 +116,7 @@ struct GdfDecision {
 // flags from reconstruction-vs-source SSE.  `recon` is the §7.20 input
 // (CurrFrame/CdefFrame); `original` is the source frame the SSE is measured
 // against.  `context.enable_gdf` must be true.
-bool DecideGdf(const GdfSourceFrame& recon, const GdfPlane& original,
+[[nodiscard]] bool DecideGdf(const GdfSourceFrame& recon, const GdfPlane& original,
                const FrameGdfContext& context,
                const GdfDecisionOptions& options, GdfDecision* decision,
                std::string* error);
@@ -124,7 +124,7 @@ bool DecideGdf(const GdfSourceFrame& recon, const GdfPlane& original,
 // Exact byte/bit cost of a standalone use_gdf symbol sequence in coding order.
 // Used by the decision and pinned by the unit tests.  `disable_cdf_update`
 // mirrors the frame header bit.
-bool MeasureUseGdfSymbols(const GdfUnitLayout& layout,
+[[nodiscard]] bool MeasureUseGdfSymbols(const GdfUnitLayout& layout,
                           const FrameGdfParams& params, int sb_size,
                           const std::vector<std::uint8_t>& flags,
                           bool disable_cdf_update, std::int64_t* bytes,

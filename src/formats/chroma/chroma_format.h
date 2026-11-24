@@ -70,12 +70,12 @@ std::optional<ChromaFormat> chroma_format_from_name(std::string_view name);
 int chroma_format_idc(ChromaFormat format);
 int subsampling_x(ChromaFormat format);
 int subsampling_y(ChromaFormat format);
-bool is_monochrome(ChromaFormat format);
+[[nodiscard]] bool is_monochrome(ChromaFormat format);
 int num_planes(ChromaFormat format);
 
 // Semantic validation for the encoder.  This component encodes 8-bit only
 // (the 10-bit/12-bit path lives in `src/encoder/format/` and `src/cuda/m1/hbd/`).
-bool validate_encoder_format(const Format& format, std::string& error);
+[[nodiscard]] bool validate_encoder_format(const Format& format, std::string& error);
 
 // ---------------------------------------------------------------------------
 // ChromaMiSize and ChromaMiRow/Col
@@ -97,7 +97,7 @@ std::optional<BlockSize> chroma_mi_size(int luma_width, int luma_height,
 // True when the chroma residual would be smaller than 4x4 in a subsampled
 // direction, i.e. is_chroma_offset_for_subsize(subSize) == 1.  For the 64x64
 // leaf used by the minimal still writer this is always false.
-bool is_chroma_offset_for_subsize(BlockSize luma, ChromaFormat chroma);
+[[nodiscard]] bool is_chroma_offset_for_subsize(BlockSize luma, ChromaFormat chroma);
 
 // ---------------------------------------------------------------------------
 // Plane / frame geometry
@@ -149,7 +149,7 @@ std::optional<FrameShape> make_frame_shape_checked(int width, int height,
 // and §5.20.3.2 requires a legal Subsampled_Size for the chroma residual.
 // 64x64 and 640x360 both satisfy it; geometries that do not are rejected with
 // a precise reason instead of emitting an invalid partition.
-bool supports_64x64_none(const FrameShape& shape, std::string& error);
+[[nodiscard]] bool supports_64x64_none(const FrameShape& shape, std::string& error);
 
 // Sample position of a luma MI coordinate in a plane (ChromaMiRow>>subX)*4.
 int plane_origin_x(int luma_mi_col, int subsampling_x);
@@ -240,7 +240,7 @@ std::vector<ChecklistItem> chroma_checklist(ChromaFormat format);
 const char* block_size_name(BlockSize size);
 int block_width(BlockSize size);
 int block_height(BlockSize size);
-bool is_valid_block_size(BlockSize size);
+[[nodiscard]] bool is_valid_block_size(BlockSize size);
 
 // Number of 4x4 units in a plane dimension.
 inline int mi_units(int pixels) { return pixels >> 2; }

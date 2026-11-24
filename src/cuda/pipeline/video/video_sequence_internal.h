@@ -17,12 +17,12 @@
 namespace av2enc::cuda::video::detail {
 
 // True when the options select one of the wave-3 frame-type wrappers.
-bool is_frame_type_mode(const av2enc::video::VideoOptions& options);
+[[nodiscard]] bool is_frame_type_mode(const av2enc::video::VideoOptions& options);
 
 // Assembles a wrapped sequence.  The actual pixel work for every sub-encode is
 // still performed by encode_video_sequence_gpu(); this function only mirrors
 // src/pipeline/video/video_frames.cpp with the GPU tile payloads.
-bool encode_special_sequence_gpu(
+[[nodiscard]] bool encode_special_sequence_gpu(
     std::span<const av2enc::video::VideoInputFrame> frames,
     const av2enc::video::VideoOptions& options,
     av2enc::video::VideoSequenceResult& result, std::string& error,
@@ -32,12 +32,12 @@ class Backend;
 
 // B-frame (one closed IPBB GOP) and hierarchical-P temporal-layer plans.
 // Both reuse the same device backend/frame encoder as the plain P chain.
-bool encode_b_sequence_gpu(Backend& backend,
+[[nodiscard]] bool encode_b_sequence_gpu(Backend& backend,
                            std::span<const av2enc::video::VideoInputFrame> frames,
                            const av2enc::video::VideoOptions& options,
                            av2enc::video::VideoSequenceResult& result,
                            std::string& error);
-bool encode_temporal_sequence_gpu(
+[[nodiscard]] bool encode_temporal_sequence_gpu(
     Backend& backend,
     std::span<const av2enc::video::VideoInputFrame> frames,
     const av2enc::video::VideoOptions& options,

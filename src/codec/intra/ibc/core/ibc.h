@@ -99,7 +99,7 @@ struct IbcBufferState {
 };
 
 // §6.19.7.12.  `reason` receives a short diagnostic on failure.
-bool is_bv_valid(const FrameView& frame, const IbcConfig& config,
+[[nodiscard]] bool is_bv_valid(const FrameView& frame, const IbcConfig& config,
                  const IbcBufferState& state, int mi_row, int mi_col,
                  int bsize, BlockVector bv, std::string* reason = nullptr);
 
@@ -142,7 +142,7 @@ int find_stack_index(const BvStack& stack, BlockVector bv) noexcept;
 // Copy the source block into the destination planes.  `visible_w/h` clamp the
 // current block to the frame edge (<= block size).  Returns false if the
 // source is outside the plane.
-bool copy_block(const FrameView& frame, int mi_row, int mi_col, int bsize,
+[[nodiscard]] bool copy_block(const FrameView& frame, int mi_row, int mi_col, int bsize,
                 BlockVector bv, std::uint8_t* dst_y, int dst_stride_y,
                 std::uint8_t* dst_u, int dst_stride_u, std::uint8_t* dst_v,
                 int dst_stride_v, int visible_w, int visible_h);
@@ -162,7 +162,7 @@ struct CopyResult {
   std::vector<std::uint8_t> u;
   std::vector<std::uint8_t> v;
 };
-bool predict_copy(const FrameView& frame, int mi_row, int mi_col, int bsize,
+[[nodiscard]] bool predict_copy(const FrameView& frame, int mi_row, int mi_col, int bsize,
                   BlockVector bv, int visible_w, int visible_h,
                   CopyResult& out, std::string* error = nullptr);
 

@@ -49,11 +49,11 @@ struct LevelOps {
 };
 
 // Dispatches one level: predict -> transform -> reconstruct for its batch.
-bool run_level(const Plan& plan, int level, const LevelOps& ops,
+[[nodiscard]] bool run_level(const Plan& plan, int level, const LevelOps& ops,
                cudaStream_t stream, std::string& error);
 
 // Enqueues the full per-frame sequence without a graph.
-bool run_levels_eager(const Plan& plan, const LevelOps& ops,
+[[nodiscard]] bool run_levels_eager(const Plan& plan, const LevelOps& ops,
                       cudaStream_t stream, RunStats* stats,
                       std::string& error);
 

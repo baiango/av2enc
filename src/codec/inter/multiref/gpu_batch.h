@@ -109,9 +109,9 @@ struct CompoundBatch {
 
 // CPU reference executor for the batch.  Returns false on the first invalid
 // item (leaving previous items applied).
-bool run_compound_batch_cpu(CompoundBatch& batch, std::string& error);
+[[nodiscard]] bool run_compound_batch_cpu(CompoundBatch& batch, std::string& error);
 
 // Validates that every offset points inside its pool.
-bool validate_compound_batch(const CompoundBatch& batch, std::string& error);
+[[nodiscard]] bool validate_compound_batch(const CompoundBatch& batch, std::string& error);
 
 }  // namespace av2enc::video::multiref

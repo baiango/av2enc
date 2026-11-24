@@ -86,7 +86,7 @@ int clip_inverse_row(std::int64_t value);
 int clip_inverse_col(std::int64_t value);
 
 // True when a coded residual sample is representable with 1 + BitDepth bits.
-bool residual_representable(std::int64_t value);
+[[nodiscard]] bool residual_representable(std::int64_t value);
 
 // ---------------------------------------------------------------------------
 // §7.14.2 quantizer step and §8.3.1 coefficient-CDF context

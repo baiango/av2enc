@@ -50,8 +50,8 @@ struct RdoConfig {
   bool rate_aware = true;
 };
 
-bool config_valid(const RdoConfig& config) noexcept;
-bool validate_config(const RdoConfig& config, std::string* error = nullptr);
+[[nodiscard]] bool config_valid(const RdoConfig& config) noexcept;
+[[nodiscard]] bool validate_config(const RdoConfig& config, std::string* error = nullptr);
 
 // The M2 profile: M1's calibrated QP-90 config plus SSE metric.  `error` is
 // set only when the M1 calibration is invalid (it is not for QP 90).

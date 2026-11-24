@@ -53,7 +53,7 @@ struct LayerId {
 
 bool operator==(const LayerId& a, const LayerId& b);
 bool operator<(const LayerId& a, const LayerId& b);
-bool validate_layer_id(const LayerId& id, std::string& error);
+[[nodiscard]] bool validate_layer_id(const LayerId& id, std::string& error);
 const char* layer_id_name(const LayerId& id);  // short-lived static buffer
 
 struct LayerDependencyMaps {
@@ -76,22 +76,22 @@ MLayerPresenceMap derive_mlayer_presence_map(
 // Checks range, reflexivity and transitivity. `mlayer` and every `tlayer[m]`
 // must be lower-triangular (ref <= curr); every declared layer is reflexive;
 // entries for undeclared layers are zero.
-bool validate_mlayer_dependency_map(const MLayerDependencyMap& map,
+[[nodiscard]] bool validate_mlayer_dependency_map(const MLayerDependencyMap& map,
                                     int max_mlayer_id, std::string& error);
-bool validate_tlayer_dependency_maps(const TLayerDependencyMaps& maps,
+[[nodiscard]] bool validate_tlayer_dependency_maps(const TLayerDependencyMaps& maps,
                                      int max_mlayer_id, int max_tlayer_id,
                                      std::string& error);
-bool validate_dependency_maps(const LayerDependencyMaps& maps,
+[[nodiscard]] bool validate_dependency_maps(const LayerDependencyMaps& maps,
                               int max_mlayer_id, int max_tlayer_id,
                               std::string& error);
 
 // A selected set of layers must satisfy every dependency it selects. The maps
 // are checked transitively by validate_dependency_maps(), so this is the
 // per-selection availability rule used by LCR/OPS and by the stream auditor.
-bool mlayer_dependencies_satisfied(std::uint32_t mlayer_map,
+[[nodiscard]] bool mlayer_dependencies_satisfied(std::uint32_t mlayer_map,
                                    const LayerDependencyMaps& maps,
                                    std::string& error);
-bool tlayer_dependencies_satisfied(
+[[nodiscard]] bool tlayer_dependencies_satisfied(
     std::uint32_t mlayer_map,
     const std::array<std::uint8_t, kMlayerCount>& tlayer_map,
     const LayerDependencyMaps& maps, std::string& error);
@@ -114,7 +114,7 @@ SequenceLayerConfig default_sequence_layer_config(int max_mlayer_id,
 
 // Checks field ranges, the SeqMaxMlayerCnt <= max_mlayer_id+1 rule (§6.4.1
 // p261), flag/map consistency and the map invariants above.
-bool validate_sequence_layer_config(const SequenceLayerConfig& config,
+[[nodiscard]] bool validate_sequence_layer_config(const SequenceLayerConfig& config,
                                     std::string& error);
 
 // ---------------------------------------------------------------------------

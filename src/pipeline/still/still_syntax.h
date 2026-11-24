@@ -252,7 +252,7 @@ bool assemble_still_frame(const FramePlan& plan,
 std::size_t cdf_image_words();
 
 // §9.3 defaults for the coefficient-CDF slice selected by the raw base_q_idx.
-bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
+[[nodiscard]] bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
                                        std::vector<std::uint16_t>& out,
                                        std::string* error = nullptr);
 
@@ -260,7 +260,7 @@ bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
 // bank may then drive `load_tile_cdfs()` / `save_tile_cdfs()` /
 // `average_at_frame_end()`; the caller copies `tile` into/out of the syntax
 // writer through the `cdf_seed` / `cdf_final` arguments above.
-bool cdf_image_tables(std::vector<std::uint16_t>& frame,
+[[nodiscard]] bool cdf_image_tables(std::vector<std::uint16_t>& frame,
                       std::vector<std::uint16_t>& tile,
                       std::vector<std::uint16_t>& saved,
                       std::vector<std::uint16_t>& defaults,

@@ -234,7 +234,7 @@ struct FramePlan {
 
 // Builds the plan.  `luma` is a tightly packed 8-bit plane of width*height
 // samples (the same data the CPU M1 variance cost reads).
-bool build_frame_plan(int width, int height, std::span<const std::uint8_t> luma,
+[[nodiscard]] bool build_frame_plan(int width, int height, std::span<const std::uint8_t> luma,
                       const PlanOptions& options, FramePlan& plan,
                       std::string& error);
 
@@ -252,7 +252,7 @@ using LeafCostFunction = std::function<std::int64_t(const NodeGeometry&)>;
 
 // Same plan, but leaf variances come from `leaf_cost`.  A device cost kernel
 // (plan_cost.cu) can fill these without changing tree/leaf ordering.
-bool build_frame_plan_with_leaf_cost(
+[[nodiscard]] bool build_frame_plan_with_leaf_cost(
     int width, int height, std::span<const std::uint8_t> luma,
     const PlanOptions& options, const LeafCostFunction& leaf_cost,
     FramePlan& plan, std::string& error);
@@ -260,7 +260,7 @@ bool build_frame_plan_with_leaf_cost(
 // Structural check of a built plan: block geometry, chroma residual rules,
 // coefficient-offset contiguity, availability counts, and exact coverage of
 // MiCols x MiRows cells.  Does not re-run the partition decision.
-bool validate_frame_plan(const FramePlan& plan, std::string& error);
+[[nodiscard]] bool validate_frame_plan(const FramePlan& plan, std::string& error);
 
 // Deterministic text dumps.  Both end with a trailing newline.
 //   TSV:  header lines beginning with '#', one tab-separated data row per block

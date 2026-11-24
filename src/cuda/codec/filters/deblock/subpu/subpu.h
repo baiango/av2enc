@@ -70,7 +70,7 @@ std::uint64_t required_device_bytes(const SubPuConfig& config) noexcept;
 // Arena watermark helpers re-exported so callers can bracket their own scratch
 // with the same alignment contract as this component.
 std::uint64_t mark(const Arena& arena) noexcept;
-bool rewind(Arena& arena, std::uint64_t mark_value) noexcept;
+[[nodiscard]] bool rewind(Arena& arena, std::uint64_t mark_value) noexcept;
 
 // One §7.13.3.15 invocation.  Mirrors the CPU reference arguments exactly.
 struct SubPuJob {

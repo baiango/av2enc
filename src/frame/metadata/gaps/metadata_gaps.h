@@ -184,9 +184,9 @@ struct ParsedGroupObu {
 
 // `obu` is a complete Annex B.2 length-prefixed OBU. The payload spans point
 // into `obu`; keep it alive for as long as the parsed view is used.
-bool parse_short_obu(std::span<const std::uint8_t> obu, ParsedShortObu& out,
+[[nodiscard]] bool parse_short_obu(std::span<const std::uint8_t> obu, ParsedShortObu& out,
                      std::string& error);
-bool parse_group_obu(std::span<const std::uint8_t> obu, ParsedGroupObu& out,
+[[nodiscard]] bool parse_group_obu(std::span<const std::uint8_t> obu, ParsedGroupObu& out,
                      std::string& error);
 
 // ---------------------------------------------------------------------------
@@ -222,7 +222,7 @@ struct GapScanResult {
 
 // Structural OBU/header errors are failures. A known-type unit whose payload
 // does not decode increments invalid_units and is skipped.
-bool scan_gap_metadata(std::span<const std::uint8_t> temporal_unit,
+[[nodiscard]] bool scan_gap_metadata(std::span<const std::uint8_t> temporal_unit,
                        GapScanResult& out, std::string& error);
 
 }  // namespace av2enc::metadata::gaps

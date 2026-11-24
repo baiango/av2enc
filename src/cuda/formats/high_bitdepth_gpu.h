@@ -68,7 +68,7 @@ struct HighBitDepthGpuStatus {
 
 // True when the M10 CUDA stage is compiled in.  (The CLI uses this to report
 // unavailability rather than silently falling back.)
-bool high_bitdepth_gpu_available();
+[[nodiscard]] bool high_bitdepth_gpu_available();
 
 // Arena-backed entry point.  Every device buffer is bump-allocated from
 // `arena` once per call and rewound before return; the caller keeps ownership
@@ -81,7 +81,7 @@ HighBitDepthGpuStatus encode_high_bitdepth_gpu(Arena& arena, const av2enc::fmt::
 // Convenience wrapper for callers that do not own an arena (e.g. the CLI
 // still-picture path).  It creates a short-lived arena sized by
 // required_device_bytes(); prefer the Arena overload in a pipelined caller.
-bool encode_high_bitdepth_gpu(const av2enc::fmt::Picture& picture,
+[[nodiscard]] bool encode_high_bitdepth_gpu(const av2enc::fmt::Picture& picture,
                     const av2enc::high_bitdepth::HighBitDepthOptions& options,
                     av2enc::high_bitdepth::HighBitDepthResult& result, std::string* error);
 

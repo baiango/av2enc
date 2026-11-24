@@ -32,7 +32,7 @@ struct PlanCostRect {
 // plane with `luma_stride` samples per row; `d_costs` receives one int64 per
 // rectangle.  Returns false with a non-empty `error` on a launch failure.  No
 // synchronization is performed.
-bool plan_cost_launch_variance(const std::uint8_t* d_luma, int luma_stride,
+[[nodiscard]] bool plan_cost_launch_variance(const std::uint8_t* d_luma, int luma_stride,
                                const PlanCostRect* d_rects,
                                std::int64_t* d_costs, int count, void* stream,
                                std::string* error);

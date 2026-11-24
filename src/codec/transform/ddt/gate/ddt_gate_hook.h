@@ -13,7 +13,7 @@ namespace av2enc::video::ddt::gate {
 
 // True when DDT_GATE_ENABLE=1.  Read once; used only by the patched header
 // writer so one binary can produce both the flag-0 and flag-1 stream.
-bool enable_inter_ddt();
+[[nodiscard]] bool enable_inter_ddt();
 
 // Drop-in replacement for txv::inverse_transform() in the gate's build-dir
 // copy of inter_residual.cpp.  Always uses the DDT-aware inverse (the header

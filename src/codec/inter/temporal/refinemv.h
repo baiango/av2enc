@@ -22,11 +22,11 @@ namespace av2enc::inter::temporal {
 TemporalStatus refine_mv_syntax(const RefineMvConfig& ctx, RefineMvSyntax* out);
 
 // §5.20.7.17 is_refinemv_allowed_mode().
-bool refine_mv_allowed_mode(const RefineMvConfig& ctx);
+[[nodiscard]] bool refine_mv_allowed_mode(const RefineMvConfig& ctx);
 // §5.20.7.17 is_switchable_refinemv().
-bool refine_mv_switchable(const RefineMvConfig& ctx);
+[[nodiscard]] bool refine_mv_switchable(const RefineMvConfig& ctx);
 // §5.20.7.17 is_refinemv_allowed_reference().
-bool refine_mv_allowed_reference(const RefineMvConfig& ctx);
+[[nodiscard]] bool refine_mv_allowed_reference(const RefineMvConfig& ctx);
 
 // §7.13.3.3 offset_refinemv().
 MvPair offset_refinemv(const MvPair& src, int dx, int dy);

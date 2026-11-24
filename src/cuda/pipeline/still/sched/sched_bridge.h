@@ -41,7 +41,7 @@ class AdaptedFramePlan {
 };
 
 // Builds the wavefront plan directly from the shared PODs.
-bool build_still_plan(const av2enc::cuda::still_gpu::FramePlan& src,
+[[nodiscard]] bool build_still_plan(const av2enc::cuda::still_gpu::FramePlan& src,
                    const av2enc::cuda::still_gpu::BlockDecision* decisions,
                    Plan* out, std::string& error);
 

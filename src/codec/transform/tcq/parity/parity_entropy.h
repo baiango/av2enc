@@ -64,25 +64,25 @@ struct EntropyConfig {
   bool disable_cdf_update = true;
 };
 
-bool entropy_config_valid(const EntropyConfig& config) noexcept;
+[[nodiscard]] bool entropy_config_valid(const EntropyConfig& config) noexcept;
 
 // Writes one block.  `syntax` must come from `derive_syntax()`.
-bool write_block(av2::Encoder& encoder, CdfStore& cdfs,
+[[nodiscard]] bool write_block(av2::Encoder& encoder, CdfStore& cdfs,
                  const BlockSyntax& syntax, const Geometry& geometry,
                  const EntropyConfig& config, std::string* error = nullptr);
 
 // Reads one block and reconstructs `Quant[]` with `decode_syntax()`.  The
 // returned syntax record is identical to the writer's input (including the
 // `isHidden` flag, `sumAbs1`, CDF identifiers and contexts).
-bool read_block(av2::Decoder& decoder, CdfStore& cdfs,
+[[nodiscard]] bool read_block(av2::Decoder& decoder, CdfStore& cdfs,
                 const Geometry& geometry, const EntropyConfig& config,
                 BlockSyntax* syntax, DecodedBlock* decoded,
                 std::string* error = nullptr);
 
 // One `read_quant` escape value.  Exposed for the tests.
-bool write_escape_bits(av2::Encoder& encoder, std::int32_t x,
+[[nodiscard]] bool write_escape_bits(av2::Encoder& encoder, std::int32_t x,
                        std::int32_t predictor, std::string* error = nullptr);
-bool read_escape_bits(av2::Decoder& decoder, std::int32_t predictor,
+[[nodiscard]] bool read_escape_bits(av2::Decoder& decoder, std::int32_t predictor,
                       std::int32_t* x, std::string* error = nullptr);
 
 }  // namespace av2enc::tcq::parity

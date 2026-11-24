@@ -234,11 +234,11 @@ using Value =
                  TemporalPointInfo, DecodedFrameHash, UserDataUnregistered>;
 
 // True for metadata_type values 1..10 (CLL/MDCV and the eight types above).
-bool is_known_type(std::uint32_t type);
-bool is_known_type(Type type);
+[[nodiscard]] bool is_known_type(std::uint32_t type);
+[[nodiscard]] bool is_known_type(Type type);
 
 // False for METADATA_TYPE_TEMPORAL_POINT_INFO, which is short-OBU-only.
-bool is_group_allowed(Type type);
+[[nodiscard]] bool is_group_allowed(Type type);
 
 // "hdr_cll", "itut_t35", ...; "reserved" for unknown values.
 const char* type_name(std::uint32_t type);
@@ -401,27 +401,27 @@ std::vector<std::uint8_t> make_group_obu(std::span<const GroupUnit> units,
 // Each decoder consumes the §5.17 payload (no OBU framing) and returns false
 // on truncation or a reserved field that must be zero. Extra trailing bytes
 // are accepted as §5.17.1 metadata_unit_remaining_bit.
-bool decode_itut_t35(std::span<const std::uint8_t> unit, ItutT35& out,
+[[nodiscard]] bool decode_itut_t35(std::span<const std::uint8_t> unit, ItutT35& out,
                      std::string& error);
-bool decode_timecode(std::span<const std::uint8_t> unit, Timecode& out,
+[[nodiscard]] bool decode_timecode(std::span<const std::uint8_t> unit, Timecode& out,
                      std::string& error);
-bool decode_banding_hints(std::span<const std::uint8_t> unit,
+[[nodiscard]] bool decode_banding_hints(std::span<const std::uint8_t> unit,
                           BandingHints& out, std::string& error);
-bool decode_icc_profile(std::span<const std::uint8_t> unit, IccProfile& out,
+[[nodiscard]] bool decode_icc_profile(std::span<const std::uint8_t> unit, IccProfile& out,
                         std::string& error);
-bool decode_scan_type(std::span<const std::uint8_t> unit, ScanType& out,
+[[nodiscard]] bool decode_scan_type(std::span<const std::uint8_t> unit, ScanType& out,
                       std::string& error);
-bool decode_temporal_point_info(std::span<const std::uint8_t> unit,
+[[nodiscard]] bool decode_temporal_point_info(std::span<const std::uint8_t> unit,
                                 TemporalPointInfo& out, std::string& error);
-bool decode_decoded_frame_hash(std::span<const std::uint8_t> unit,
+[[nodiscard]] bool decode_decoded_frame_hash(std::span<const std::uint8_t> unit,
                                DecodedFrameHash& out, std::string& error);
-bool decode_user_data_unregistered(std::span<const std::uint8_t> unit,
+[[nodiscard]] bool decode_user_data_unregistered(std::span<const std::uint8_t> unit,
                                    UserDataUnregistered& out,
                                    std::string& error);
 
 // Typed decode keyed by metadata_type. Supports CLL/MDCV through the HDR
 // module. Returns false for reserved/unknown types and malformed payloads.
-bool decode_unit(Type type, std::span<const std::uint8_t> unit, Value& out,
+[[nodiscard]] bool decode_unit(Type type, std::span<const std::uint8_t> unit, Value& out,
                  std::string& error);
 
 // ---------------------------------------------------------------------------
@@ -455,7 +455,7 @@ struct ScanResult {
 
 // Walks a complete temporal unit. Structural OBU/group errors are failures;
 // malformed known-type payloads increment invalid_units and are skipped.
-bool scan_metadata(std::span<const std::uint8_t> temporal_unit,
+[[nodiscard]] bool scan_metadata(std::span<const std::uint8_t> temporal_unit,
                    ScanResult& out, std::string& error);
 
 }  // namespace av2enc::metadata

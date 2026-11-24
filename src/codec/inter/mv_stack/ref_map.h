@@ -121,12 +121,12 @@ struct RefMap {
 
 // §7.7 get_ref_frames().  `out->num_total_refs/ref_frame_idx` are the final
 // mapping for this pass.
-bool get_ref_frames(const RefMapParams& params, RefMap* out,
+[[nodiscard]] bool get_ref_frames(const RefMapParams& params, RefMap* out,
                     std::string* error);
 
 // §7.8 get_past_future_cur_ref_lists().  Requires a RefMap produced by
 // get_ref_frames() with the same params.
-bool get_past_future_cur_ref_lists(const RefMapParams& params, RefMap* map,
+[[nodiscard]] bool get_past_future_cur_ref_lists(const RefMapParams& params, RefMap* map,
                                    std::string* error);
 
 // §5.18.2 for an *explicit* map: after frame_size() the decoder sets
@@ -135,7 +135,7 @@ bool get_past_future_cur_ref_lists(const RefMapParams& params, RefMap* map,
 // as the implicit path (scores_*, past/future/cur, ClosestPast/Future,
 // FurthestFuture, SkipSegFrame) so the encoder can use one model for both.
 // The indices are validated against the live slot bank.
-bool derive_explicit_ref_map(const RefMapParams& params, int num_total_refs,
+[[nodiscard]] bool derive_explicit_ref_map(const RefMapParams& params, int num_total_refs,
                              const int* ref_frame_idx, RefMap* out,
                              std::string* error);
 
@@ -146,7 +146,7 @@ struct ImplicitRefMap {
   RefMap stage0;  // checkRes = 0
   RefMap stage1;  // checkRes = 1 (after the frame size is known)
 };
-bool derive_implicit_ref_map(const RefMapParams& params, ImplicitRefMap* out,
+[[nodiscard]] bool derive_implicit_ref_map(const RefMapParams& params, ImplicitRefMap* out,
                              std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -168,14 +168,14 @@ struct DispOrderHintParams {
 };
 
 // Returns the maximum RefOrderHint over the eligible slots (0 when none).
-bool get_max_disp_order_hint(const DispOrderHintParams& params,
+[[nodiscard]] bool get_max_disp_order_hint(const DispOrderHintParams& params,
                              bool only_showable, int* max_disp,
                              std::string* error);
 
 // Returns the derived display order hint (can exceed (1<<OrderHintBits)-1).
 // Fails when the §5.18.2 conformance bound
 // `value < (1 << (DISPLAY_ORDER_HINT_BITS - 1))` is violated.
-bool get_disp_order_hint(const DispOrderHintParams& params, int* disp_order_hint,
+[[nodiscard]] bool get_disp_order_hint(const DispOrderHintParams& params, int* disp_order_hint,
                          std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -206,7 +206,7 @@ struct R77Result {
 //      same indices in every operating point;
 //   3. an explicit map associates each buffer index with the same frame in
 //      every operating point.
-bool validate_r77(std::span<const OperatingPointRefMap> maps, R77Result* out,
+[[nodiscard]] bool validate_r77(std::span<const OperatingPointRefMap> maps, R77Result* out,
                   std::string* error);
 
 // ---------------------------------------------------------------------------
@@ -249,7 +249,7 @@ struct FrameRefMapResult {
 // In implicit mode the supplied stage-1 map is re-derived and checked against
 // `params`; `false` means the encoder's block syntax would not match the
 // decoder's mapping.
-bool write_frame_ref_map_syntax(av2enc::BitWriter* writer,
+[[nodiscard]] bool write_frame_ref_map_syntax(av2enc::BitWriter* writer,
                                 const FrameRefMapSyntax& syntax,
                                 const RefMapParams& params,
                                 const ImplicitRefMap& implicit,
@@ -260,7 +260,7 @@ bool write_frame_ref_map_syntax(av2enc::BitWriter* writer,
 // for the read map; in implicit mode it runs both get_ref_frames() passes over
 // `params`.
 
-bool read_frame_ref_map_syntax(BitReader* reader,
+[[nodiscard]] bool read_frame_ref_map_syntax(BitReader* reader,
                                const FrameRefMapSyntax& gates,
                                const RefMapParams& params,
                                FrameRefMapResult* out, std::string* error);

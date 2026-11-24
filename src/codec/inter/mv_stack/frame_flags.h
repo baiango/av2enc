@@ -105,30 +105,30 @@ FrameStatus validate_warp_block(bool allow_warpmv_mode, bool force_integer_mv,
 
 // Bit-level writer/reader.  `write_allow_warpmv_mode` writes the bit iff `out`
 // says it is present and returns false on a self-inconsistent request.
-bool write_allow_warpmv_mode(BitWriter* writer, const SequenceMotionModes& seq,
+[[nodiscard]] bool write_allow_warpmv_mode(BitWriter* writer, const SequenceMotionModes& seq,
                              const FrameMotionModes& frame,
                              WarpmvMode* out, std::string* error);
-bool read_allow_warpmv_mode(BitReader* reader, const SequenceMotionModes& seq,
+[[nodiscard]] bool read_allow_warpmv_mode(BitReader* reader, const SequenceMotionModes& seq,
                             const FrameMotionModes& frame, WarpmvMode* out,
                             std::string* error);
 
 // §5.4.6 writer: the four motion-mode bits, the presence flag (only when any
 // mode is enabled) and enable_six_param_warp_delta (only when DELTAWARP is
 // enabled).
-bool write_sequence_motion_modes(BitWriter* writer,
+[[nodiscard]] bool write_sequence_motion_modes(BitWriter* writer,
                                  const SequenceMotionModes& config,
                                  std::string* error);
-bool read_sequence_motion_modes(BitReader* reader,
+[[nodiscard]] bool read_sequence_motion_modes(BitReader* reader,
                                 SequenceMotionModes* config,
                                 std::string* error);
 
 // §5.18.2 writer: one f(1) per sequence-enabled mode when the sequence says
 // the frame may override them.
-bool write_frame_motion_modes(BitWriter* writer,
+[[nodiscard]] bool write_frame_motion_modes(BitWriter* writer,
                               const SequenceMotionModes& seq,
                               const FrameMotionModes& frame,
                               std::string* error);
-bool read_frame_motion_modes(BitReader* reader,
+[[nodiscard]] bool read_frame_motion_modes(BitReader* reader,
                              const SequenceMotionModes& seq,
                              FrameMotionModes* frame, std::string* error);
 

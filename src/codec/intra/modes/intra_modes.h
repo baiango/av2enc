@@ -73,7 +73,7 @@ enum class IntraStatus : std::uint8_t {
 
 const char* status_string(IntraStatus status) noexcept;
 
-bool is_directional(Mode mode) noexcept;
+[[nodiscard]] bool is_directional(Mode mode) noexcept;
 
 // Mode_To_Angle[] (§ 5.20.7.29 constants table).
 int mode_to_angle(Mode mode) noexcept;

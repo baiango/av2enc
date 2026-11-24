@@ -104,18 +104,18 @@ std::vector<HighBitDepthBlockDesc> make_block_plan(std::uint32_t width,
 // direction.  Smaller remainders force a normative implied partition and would
 // need the full 32x16/32x8/16x32 tree; M10 rejects them instead of emitting a
 // desynchronized stream.  Returns false with a reason for those geometries.
-bool high_bitdepth_geometry_supported(std::uint32_t width, std::uint32_t height,
+[[nodiscard]] bool high_bitdepth_geometry_supported(std::uint32_t width, std::uint32_t height,
                             std::string* reason);
 
 // CPU reference.  Accepts a 10-bit 4:2:0 picture from `fmt`; visible samples
 // must be in [0,1023].  Produces the complete frame OBUs, the decoder-exact
 // reconstructed planes, and the block/level stream used by the entropy writer.
-bool encode_high_bitdepth_cpu(const fmt::Picture& picture, const HighBitDepthOptions& options,
+[[nodiscard]] bool encode_high_bitdepth_cpu(const fmt::Picture& picture, const HighBitDepthOptions& options,
                     HighBitDepthResult& result, std::string& error);
 
 // Shared entropy/OBU assembly.  `blocks` must be in decode order and `levels`
 // must already be scan-ordered; both the CPU and GPU front ends call this.
-bool assemble_high_bitdepth_stream(const fmt::Picture& picture, const HighBitDepthOptions& options,
+[[nodiscard]] bool assemble_high_bitdepth_stream(const fmt::Picture& picture, const HighBitDepthOptions& options,
                          const HighBitDepthBlock* blocks, std::size_t block_count,
                          const std::int32_t* levels, std::size_t level_count,
                          std::vector<std::uint8_t>* out, std::uint32_t* tile_bytes,
@@ -124,7 +124,7 @@ bool assemble_high_bitdepth_stream(const fmt::Picture& picture, const HighBitDep
 // Tile payload only (no headers), for a caller that writes its own sequence /
 // frame header.  Accepts 10-bit 4:2:0/4:2:2/4:4:4/4:0:0 pictures; `options.qctx`
 // selects the coefficient-CDF slice (§8.3.1) when it is non-negative.
-bool assemble_high_bitdepth_tile_payload(
+[[nodiscard]] bool assemble_high_bitdepth_tile_payload(
     const fmt::Picture& picture, const HighBitDepthOptions& options,
     const HighBitDepthBlock* blocks, std::size_t block_count,
     const std::int32_t* levels, std::size_t level_count,
@@ -133,7 +133,7 @@ bool assemble_high_bitdepth_tile_payload(
 
 // 10-bit samples -> the same planes shifted left by 2.  The format component
 // owns the conversion; this helper is for the Y4M tool's 8-bit input path.
-bool convert_8bit_420_to_picture(const std::uint8_t* y, const std::uint8_t* u,
+[[nodiscard]] bool convert_8bit_420_to_picture(const std::uint8_t* y, const std::uint8_t* u,
                                  const std::uint8_t* v, std::uint32_t width,
                                  std::uint32_t height, std::uint32_t y_stride,
                                  fmt::Picture* picture, std::string* error);

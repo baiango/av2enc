@@ -53,7 +53,7 @@ struct AssembledSequence {
 
 // Extracts the trailing tile payload from each M2 temporal unit. The M2 writer
 // places the tile last, so the payload is the trailing `tile_bytes[i]` bytes.
-bool extract_video_tiles(std::span<const std::vector<std::uint8_t>> units,
+[[nodiscard]] bool extract_video_tiles(std::span<const std::vector<std::uint8_t>> units,
                       std::span<const std::uint32_t> tile_bytes,
                       std::vector<std::vector<std::uint8_t>>* tiles,
                       std::string* error);
@@ -62,7 +62,7 @@ bool extract_video_tiles(std::span<const std::vector<std::uint8_t>> units,
 // validity, open/closed random access) and emits one OBU per frame wrapped in
 // its temporal unit. `sequence_header_in_first_unit` controls whether the
 // sequence header OBU is repeated ahead of the first frame of unit 0.
-bool assemble_sequence(const SequenceConfig& config,
+[[nodiscard]] bool assemble_sequence(const SequenceConfig& config,
                        const std::vector<TemporalUnitPlan>& units,
                        AssembledSequence* out, std::string* error);
 

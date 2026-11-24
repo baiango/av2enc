@@ -68,7 +68,7 @@ struct RefFrameMap {
 };
 
 // §5.18.2 / §5.20.7.10: is_comp_ref_allowed().
-bool is_comp_ref_allowed(int block_w, int block_h);
+[[nodiscard]] bool is_comp_ref_allowed(int block_w, int block_h);
 
 // §4.8 get_relative_dist with RESTRICTED_OH handling.
 int get_relative_dist(int a, int b);
@@ -76,18 +76,18 @@ inline int restricted_order_hint() { return kRestrictedOrderHint; }
 
 // Builds and validates the map.  `ref_frame_idx` holds one slot index per
 // reference; the slots must be valid and (for M2) in range.
-bool build_ref_frame_map(const RefSlotBank& slots,
+[[nodiscard]] bool build_ref_frame_map(const RefSlotBank& slots,
                          std::span<const std::uint8_t> ref_frame_idx,
                          std::uint32_t order_hint, bool reference_select,
                          int num_same_ref_compound, RefFrameMap& out,
                          std::string& error);
 
-bool validate_ref_frame_map(const RefFrameMap& map, std::string& error);
+[[nodiscard]] bool validate_ref_frame_map(const RefFrameMap& map, std::string& error);
 
 // Encoder policy used by the M2 multi-reference path: take the `count` most
 // recent valid slots, newest first, and emit a compound-capable map.  This is
 // an encoder decision, not a normative process.
-bool make_recent_ref_map(const RefSlotBank& slots, int count,
+[[nodiscard]] bool make_recent_ref_map(const RefSlotBank& slots, int count,
                          std::uint32_t order_hint, bool reference_select,
                          RefFrameMap& out, std::string& error);
 
@@ -114,7 +114,7 @@ std::vector<CompoundRefPair> enumerate_compound_pairs(const RefFrameMap& map);
 // Simulates read_compound_ref() for one bit pattern.  `bits` is consumed in
 // order, one bit per coded comp_ref; `forced` bits are not consumed.  Returns
 // false if the stream is malformed.
-bool decode_compound_ref(const RefFrameMap& map, std::span<const int> bits,
+[[nodiscard]] bool decode_compound_ref(const RefFrameMap& map, std::span<const int> bits,
                          CompoundRefPair& out, std::string& error);
 
 // The frame-header fields this module expects a writer to emit.

@@ -45,14 +45,14 @@ struct TxSelectOptions {
 // in the coded (unadjusted) domain with row stride `block_w`.  (x0, y0) and
 // (block_w, block_h) describe the candidate sub-block.  Returns false when the
 // sub-block size is not an AV2 TX size.
-bool tx_block_cost(const std::int16_t* residual_coded, int block_w,
+[[nodiscard]] bool tx_block_cost(const std::int16_t* residual_coded, int block_w,
                    int block_h, int x0, int y0, const TxParams& params,
                    double* cost, double* sse, std::int32_t* nonzero);
 
 // Greedy partition/type selection.  `residual_coded` is `block_w * block_h`
 // int16 residuals in raster order.  Returns false for an unsupported root
 // size or when out is null.
-bool select_tx_partition(const std::int16_t* residual_coded, int block_w,
+[[nodiscard]] bool select_tx_partition(const std::int16_t* residual_coded, int block_w,
                          int block_h, const TxSelectOptions& options,
                          TxSelection* out);
 

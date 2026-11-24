@@ -73,7 +73,7 @@ struct HbdParsedStream {
 // Parses one in-memory still stream.  Returns false with `error` on malformed
 // framing, a non-10-bit sequence header, trailing garbage, or a tile-group
 // header that does not end on a byte boundary.
-bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
+[[nodiscard]] bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
                   std::string* error);
 
 }  // namespace av2enc::hbd

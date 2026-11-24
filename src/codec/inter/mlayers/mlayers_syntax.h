@@ -82,7 +82,7 @@ ObuHeaderFields inferred_obu_header_fields(std::uint8_t obu_type,
 
 // §6.2.2 p257 layer-id constraints (GLOBAL_XLAYER_ID scope, forced zero
 // mlayer/tlayer for non-layer-specific OBUs, forced tlayer 0 for key frames).
-bool validate_obu_header_fields(const ObuHeaderFields& fields,
+[[nodiscard]] bool validate_obu_header_fields(const ObuHeaderFields& fields,
                                 std::string& error);
 
 // Writes the 1- or 2-byte obu_header(). The caller supplies extension_flag and
@@ -91,12 +91,12 @@ std::vector<std::uint8_t> make_obu_header_bytes(const ObuHeaderFields& fields);
 
 // Chooses extension_flag = 1 only when the requested ids differ from the
 // §5.2.2 inference with extension_flag = 0.
-bool make_obu_header(std::uint8_t obu_type, std::uint8_t tlayer_id,
+[[nodiscard]] bool make_obu_header(std::uint8_t obu_type, std::uint8_t tlayer_id,
                      std::uint8_t mlayer_id, std::uint8_t xlayer_id,
                      std::vector<std::uint8_t>& out, std::string& error);
 
 // Parses one obu_header() at `offset` (after the leb128 length prefix).
-bool parse_obu_header(std::span<const std::uint8_t> bytes, std::size_t offset,
+[[nodiscard]] bool parse_obu_header(std::span<const std::uint8_t> bytes, std::size_t offset,
                       ObuHeaderFields& fields, std::size_t& header_bytes,
                       std::string& error);
 
@@ -127,7 +127,7 @@ SequenceHeaderConfig baseline_sequence_header_config(std::uint16_t width,
 // Writes sequence_header_obu() payload bits (no OBU header, no trailing bits).
 // `bit_count` is the exact number of syntax bits; the final byte is zero-padded
 // but the caller must use bit_count when appending the extensible-OBU tail.
-bool write_sequence_header_payload(const SequenceHeaderConfig& config,
+[[nodiscard]] bool write_sequence_header_payload(const SequenceHeaderConfig& config,
                                    SequenceSyntaxDialect dialect,
                                    std::vector<std::uint8_t>& payload,
                                    std::size_t& bit_count,
@@ -136,7 +136,7 @@ bool write_sequence_header_payload(const SequenceHeaderConfig& config,
 // Annex B.2 OBU: leb128(size) + obu_header() + payload + obu_extension_flag(0)
 // + trailing_bits(). The OBU header has extension_flag = 0 (sequence headers
 // are forced to mlayer 0 / xlayer 0 by §6.2.2).
-bool make_sequence_header_obu(const SequenceHeaderConfig& config,
+[[nodiscard]] bool make_sequence_header_obu(const SequenceHeaderConfig& config,
                               SequenceSyntaxDialect dialect,
                               std::vector<std::uint8_t>& out,
                               std::string& error);
@@ -176,7 +176,7 @@ struct ParsedSequenceHeader {
   SequenceSyntaxDialect dialect = SequenceSyntaxDialect::kSpecV1_0_0;
 };
 
-bool parse_sequence_header_obu(std::span<const std::uint8_t> obu,
+[[nodiscard]] bool parse_sequence_header_obu(std::span<const std::uint8_t> obu,
                                SequenceSyntaxDialect dialect,
                                ParsedSequenceHeader& out, std::string& error);
 
@@ -187,7 +187,7 @@ struct ParsedObu {
   std::span<const std::uint8_t> payload;
 };
 
-bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
+[[nodiscard]] bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
                ParsedObu& out, std::string& error);
 
 // Annex B.2 helper: leb128(size) + header + payload.
@@ -208,7 +208,7 @@ struct KeyFrameHeader {
   bool immediate_output_frame = true;
 };
 
-bool write_key_frame_header(const SequenceHeaderConfig& config,
+[[nodiscard]] bool write_key_frame_header(const SequenceHeaderConfig& config,
                             const KeyFrameHeader& header,
                             std::vector<std::uint8_t>& header_bits,
                             std::size_t& bit_count, std::string& error);

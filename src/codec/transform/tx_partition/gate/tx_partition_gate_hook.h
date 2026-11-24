@@ -38,7 +38,7 @@ struct GateSplitPlan {
 void reset(const GateSplitPlan* plan, bool tx_mode_select);
 
 const GateSplitPlan* active_split_plan();
-bool tx_mode_select_enabled();
+[[nodiscard]] bool tx_mode_select_enabled();
 
 // CDF state for the patched writer.  One tile per frame; the gate resets this
 // before assembling a frame that signals TX partitions.

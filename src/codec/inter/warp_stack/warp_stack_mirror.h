@@ -23,7 +23,7 @@ namespace av2enc::inter::warp::mirror {
 
 Status build_stack(const WarpStackParams& params, WarpStack* stack);
 
-bool warp_samples(const WarpSampleParams& params, WarpSampleSet* out);
+[[nodiscard]] bool warp_samples(const WarpSampleParams& params, WarpSampleSet* out);
 
 }  // namespace av2enc::inter::warp::mirror
 

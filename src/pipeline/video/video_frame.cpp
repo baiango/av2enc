@@ -222,7 +222,8 @@ InterFrameEncoder::InterFrameEncoder(const VideoInputFrame& source,
       // identity (Round2(q * 32, 5) == q), so the encoder dequant follows
       // the same state the decoder loads from the QM OBU.
       qm_state_.qm_data_present[0] = true;
-      qm::fill_user_qm_constant(&qm_state_.user_qm[0], 32);
+      // value 32 is the identity matrix; false is only returned for 0.
+      (void)qm::fill_user_qm_constant(&qm_state_.user_qm[0], 32);
     }
     qm_enabled_ = true;
   }
@@ -338,7 +339,7 @@ void InterFrameEncoder::ensure_rate_interval_cdfs() const {
   std::call_once(rate_interval_once_, [this]() {
     // The §8.2 image the tile writer will start from: the carried live state
     // on a CDF-chain frame, the §9.3 defaults otherwise.
-    rate_interval::load_store_from_image(
+    (void)rate_interval::load_store_from_image(
         cdf_seed_, static_cast<int>(options_.base_q_idx),
         rate_interval_cdfs_);
   });
@@ -2230,7 +2231,8 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
     qm_config.bit_map = 1U;  // level 0
     qm_config.chroma_info_present = true;
     qm_config.levels[0].is_default = false;
-    qm::fill_user_qm_constant(&qm_config.levels[0].user, 32);
+    // value 32 is the identity matrix; false is only returned for 0.
+    (void)qm::fill_user_qm_constant(&qm_config.levels[0].user, 32);
     std::string qm_error;
     qm_obu = qm::make_quantizer_matrix_obu(qm_config, &qm_error);
     if (qm_obu.empty()) {

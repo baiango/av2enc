@@ -30,7 +30,7 @@ using ibc::IbcConfig;
 inline constexpr int kMvLow = -65536;
 inline constexpr int kMvUp = 65536;
 
-bool bv_in_range(const BlockVector& bv) noexcept;
+[[nodiscard]] bool bv_in_range(const BlockVector& bv) noexcept;
 
 // Per-4x4 luma record of a decoded block.  `base_*` is the top-left MI of the
 // block containing the sample, used by scan_point_if_valid().
@@ -87,7 +87,7 @@ int find_bv_index(const BvStack& stack, BlockVector bv) noexcept;
 // §6.19.5.4 is_offset_mv_valid(dx, dy).  `dx`/`dy` are integer luma-sample
 // offsets; the spec forms offsetMv = BlockMv + (dy*8, dx*8) and runs
 // is_mv_valid on it.  For morph_pred the conformance call is (-1, -1).
-bool is_bv_offset_valid(const FrameView& frame, const IbcConfig& config,
+[[nodiscard]] bool is_bv_offset_valid(const FrameView& frame, const IbcConfig& config,
                         const IbcBufferState& state, int mi_row, int mi_col,
                         int bsize, BlockVector bv, int dx, int dy,
                         std::string* reason = nullptr);
@@ -95,13 +95,13 @@ bool is_bv_offset_valid(const FrameView& frame, const IbcConfig& config,
 // The ±1 reference border conformance rule: a source block whose extra
 // top-left reference pixel lies outside the tile is rejected.  Integer BVs are
 // not exempt (dav2d --strict 1 enforces this even without morph_pred).
-bool is_bv_border_valid(const FrameView& frame, const IbcConfig& config,
+[[nodiscard]] bool is_bv_border_valid(const FrameView& frame, const IbcConfig& config,
                         const IbcBufferState& state, int mi_row, int mi_col,
                         int bsize, BlockVector bv, std::string* reason = nullptr);
 
 // Full encoder-side gate: range, §6.19.7.12 geometry/local/global, and ±1
 // reference border.
-bool is_bv_encodable(const FrameView& frame, const IbcConfig& config,
+[[nodiscard]] bool is_bv_encodable(const FrameView& frame, const IbcConfig& config,
                      const IbcBufferState& state, int mi_row, int mi_col,
                      int bsize, BlockVector bv, std::string* reason = nullptr);
 

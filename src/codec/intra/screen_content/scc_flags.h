@@ -96,7 +96,7 @@ struct SequenceSccState {
 };
 
 // Rejects configs whose fields are not present on the selected branch.
-bool validate_sequence_scc_config(const SequenceSccConfig& config,
+[[nodiscard]] bool validate_sequence_scc_config(const SequenceSccConfig& config,
                                   std::string& error);
 
 // Pure function: config -> inferred/coded state.  Callers may use this without
@@ -106,7 +106,7 @@ SequenceSccState derive_sequence_scc_state(const SequenceSccConfig& config);
 // Writes §5.4.7.  Returns false (with `error`) on an invalid config.  On
 // success `*bits` is the number of bits written (0 for single picture) and
 // `*state` the decoded state.
-bool write_sequence_scc_config(BitWriter& writer,
+[[nodiscard]] bool write_sequence_scc_config(BitWriter& writer,
                                const SequenceSccConfig& config,
                                SequenceSccState* state, std::size_t* bits,
                                std::string& error);
@@ -114,7 +114,7 @@ bool write_sequence_scc_config(BitWriter& writer,
 // Reads §5.4.7.  The caller must already have parsed
 // single_picture_header_flag (§5.4.1) and positioned the reader at the first
 // §5.4.7 bit (which is absent for a single-picture header).
-bool read_sequence_scc_config(class BitReader& reader,
+[[nodiscard]] bool read_sequence_scc_config(class BitReader& reader,
                               bool single_picture_header_flag,
                               SequenceSccState& state, std::string& error);
 
@@ -197,7 +197,7 @@ struct FrameSccState {
 
 // `seq_max_bvp_drl_bits_minus_1` and `allow_frame_max_bvp_drl_bits` come from
 // §5.4.6 sequence_inter_config().  M1 writes 0 / false (one DRL bit).
-bool validate_frame_scc_config(const SequenceSccState& sequence,
+[[nodiscard]] bool validate_frame_scc_config(const SequenceSccState& sequence,
                                const FrameSccContext& context,
                                const FrameSccConfig& config,
                                int seq_max_bvp_drl_bits_minus_1,
@@ -211,7 +211,7 @@ FrameSccState derive_frame_scc_state(const SequenceSccState& sequence,
                                      bool allow_frame_max_bvp_drl_bits);
 
 // Writes screen_content_params() followed by intrabc_params().
-bool write_frame_scc_params(BitWriter& writer,
+[[nodiscard]] bool write_frame_scc_params(BitWriter& writer,
                             const SequenceSccState& sequence,
                             const FrameSccContext& context,
                             const FrameSccConfig& config,
@@ -220,7 +220,7 @@ bool write_frame_scc_params(BitWriter& writer,
                             FrameSccState* state, std::size_t* bits,
                             std::string& error);
 
-bool read_frame_scc_params(class BitReader& reader,
+[[nodiscard]] bool read_frame_scc_params(class BitReader& reader,
                            const SequenceSccState& sequence,
                            const FrameSccContext& context,
                            int seq_max_bvp_drl_bits_minus_1,
@@ -235,7 +235,7 @@ bool read_frame_scc_params(class BitReader& reader,
 //   PlaneStart == 0 (luma), YMode == DC_PRED,
 //   MiSize >= BLOCK_8X8, Block_Width <= 64, Block_Height <= 64,
 //   allow_screen_content_tools == 1.
-bool palette_allowed_for_block(const FrameSccState& state, int plane,
+[[nodiscard]] bool palette_allowed_for_block(const FrameSccState& state, int plane,
                                int y_mode, int bsize, int block_w,
                                int block_h) noexcept;
 
@@ -244,7 +244,7 @@ bool palette_allowed_for_block(const FrameSccState& state, int plane,
 //   Block_Width <= 64 && Block_Height <= 64 && MiSize != BLOCK_64X64.
 // Inter frames additionally require RegionType == MIXED_REGION
 // (§5.20.7.3).
-bool intrabc_allowed_for_block(const FrameSccState& state, int bsize,
+[[nodiscard]] bool intrabc_allowed_for_block(const FrameSccState& state, int bsize,
                                int block_w, int block_h,
                                bool tree_is_chroma_part,
                                bool region_is_mixed = true,
@@ -252,7 +252,7 @@ bool intrabc_allowed_for_block(const FrameSccState& state, int bsize,
 
 // §5.20.5.4: morph_pred is signalled only for
 //   FrameIsIntra && allow_screen_content_tools && enable_bawp.
-bool morph_pred_allowed(const FrameSccState& state, bool frame_is_intra,
+[[nodiscard]] bool morph_pred_allowed(const FrameSccState& state, bool frame_is_intra,
                         bool enable_bawp) noexcept;
 
 // IBC motion-vector precision for a block (§5.20.5.4): integer when
@@ -320,7 +320,7 @@ struct StillSccResult {
   std::size_t tile_bytes = 0;
 };
 
-bool assemble_still_picture(const StillConfig& config, const StillSccConfig& scc,
+[[nodiscard]] bool assemble_still_picture(const StillConfig& config, const StillSccConfig& scc,
                             int seq_max_bvp_drl_bits_minus_1,
                             bool allow_frame_max_bvp_drl_bits,
                             std::span<const std::uint8_t> tile_payload,
@@ -329,7 +329,7 @@ bool assemble_still_picture(const StillConfig& config, const StillSccConfig& scc
 // Bit size of the still frame header (is_first_tile_group + frame_header()),
 // before and after byte_alignment().  Useful for callers that need to locate
 // the tile payload inside an existing still.
-bool still_frame_header_size(const StillConfig& config,
+[[nodiscard]] bool still_frame_header_size(const StillConfig& config,
                              const StillSccConfig& scc,
                              int seq_max_bvp_drl_bits_minus_1,
                              bool allow_frame_max_bvp_drl_bits,
@@ -341,7 +341,7 @@ bool still_frame_header_size(const StillConfig& config,
 // caller supplies the §5.4.7 sequence state (single-picture M1 infers both
 // SELECT values; use read_sequence_scc_config() for a non-single header).  The
 // CLK tile payload is not touched.
-bool read_still_frame_scc(std::span<const std::uint8_t> frame,
+[[nodiscard]] bool read_still_frame_scc(std::span<const std::uint8_t> frame,
                           const SequenceSccState& sequence,
                           const FrameSccContext& context,
                           int seq_max_bvp_drl_bits_minus_1,

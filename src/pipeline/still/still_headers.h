@@ -88,7 +88,7 @@ struct StillDeltaQConfig {
 // Builds the module parameter blocks that match `config`.  Returns false and
 // sets `error` when the values cannot be represented.  Defined in
 // still_headers.cpp so this header stays independent of the rc implementation.
-bool make_delta_q_params(const StillDeltaQConfig& config,
+[[nodiscard]] bool make_delta_q_params(const StillDeltaQConfig& config,
                          ::av2enc::rc::SegmentationParams& segmentation,
                          ::av2enc::rc::DeltaQParams& delta_q,
                          std::string* error = nullptr);

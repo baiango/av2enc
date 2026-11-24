@@ -133,10 +133,10 @@ struct ParsedObuHeader {
   std::span<const std::uint8_t> payload;
 };
 
-bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
+[[nodiscard]] bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
                ParsedObuHeader& out, std::string& error);
 
-bool parse_sequence_header_obu(std::span<const std::uint8_t> obu,
+[[nodiscard]] bool parse_sequence_header_obu(std::span<const std::uint8_t> obu,
                                ParsedSequenceHeader& out, std::string& error);
 
 // §5.2.2 header-byte helper: (extension_flag << 7) | (obu_type << 2) | tlayer.

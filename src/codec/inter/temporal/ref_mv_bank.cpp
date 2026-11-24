@@ -199,7 +199,9 @@ void reset_ref_mv_bank(RefMvBank* bank, int mi_row, int mi_col, int sb_size4,
       const int ref_frames[2] = {src.ref[0], src.ref[1]};
       const Mv mvs[2] = {Mv{src.mv[0][0], src.mv[0][1]},
                          Mv{src.mv[1][0], src.mv[1][1]}};
-      update_ref_mv_bank(bank, ctx, ref_frames, mvs, src.cwp_idx, false);
+      // false == no entry written; seeding tolerates a full bank.
+      (void)update_ref_mv_bank(bank, ctx, ref_frames, mvs, src.cwp_idx,
+                               false);
     }
     const int step = src.bw4 > 0 ? src.bw4 : 1;
     cand_col += step;

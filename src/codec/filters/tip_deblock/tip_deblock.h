@@ -144,11 +144,11 @@ TipDeblockPlaneInfo tip_deblock_plane_info(const TipDeblockOptions& options,
 
 // True when the bitstream state makes apply_deblocking_filter_tip signallable:
 // TipFrameMode == TIP_FRAME_AS_OUTPUT && enable_df_sub_pu.
-bool tip_deblock_flag_signallable(const TipDeblockOptions& options);
+[[nodiscard]] bool tip_deblock_flag_signallable(const TipDeblockOptions& options);
 
 // True when §7.16 must be invoked: signallable && allow_df_sub_pu &&
 // apply_deblocking_filter_tip.
-bool tip_deblock_is_active(const TipDeblockOptions& options);
+[[nodiscard]] bool tip_deblock_is_active(const TipDeblockOptions& options);
 
 // Validates the frame/options and applies §7.16 in place.
 TipDeblockStatus tip_deblock_frame(TipDeblockFrame& frame,
@@ -171,7 +171,7 @@ TipDeblockEdgeInfo tip_deblock_inspect_edge(const TipDeblockFrame& frame,
                                             int plane, int pass, int x, int y);
 
 // True when `options` + plane geometry are inside the supported subset.
-bool tip_deblock_supported(const TipDeblockFrame& frame,
+[[nodiscard]] bool tip_deblock_supported(const TipDeblockFrame& frame,
                            const TipDeblockOptions& options,
                            TipDeblockStatus* status);
 

@@ -57,12 +57,12 @@ inline constexpr int kMaxEdgeSamples = kMaxBlockDim + kMaxBlockDim / 4;  // 80
 inline constexpr int kUseDipContexts = 3;  // DIP_CTXS
 
 // AV2 transform-block extents accepted by this module.
-bool valid_block_dim(int v) noexcept;
+[[nodiscard]] bool valid_block_dim(int v) noexcept;
 
 // §5.20.7.9 availability: Block_Width > 4 && Block_Height > 4 &&
 // Block_Width * Block_Height >= 128.  This is independent of enable_dip,
 // YMode and palette; see dip_mode_info_present() for the full syntax gate.
-bool dip_block_available(int w, int h) noexcept;
+[[nodiscard]] bool dip_block_available(int w, int h) noexcept;
 
 // ---------------------------------------------------------------------------
 // Source reconstruction and prepared edges
@@ -260,7 +260,7 @@ struct SyntaxContext {
 //   enable_dip && YMode == DC_PRED && PaletteSizeY == 0 &&
 //   Block_Width > 4 && Block_Height > 4 && W*H >= 128 &&
 //   TreeType != CHROMA_PART.
-bool dip_mode_info_present(const SyntaxContext& context) noexcept;
+[[nodiscard]] bool dip_mode_info_present(const SyntaxContext& context) noexcept;
 
 struct DipModeInfo {
   bool use_dip = false;
@@ -269,7 +269,7 @@ struct DipModeInfo {
 };
 
 // Validates a parsed/signalled DipModeInfo against the syntax context.
-bool validate_dip_mode_info(const SyntaxContext& context,
+[[nodiscard]] bool validate_dip_mode_info(const SyntaxContext& context,
                             const DipModeInfo& info,
                             std::string* error = nullptr) noexcept;
 

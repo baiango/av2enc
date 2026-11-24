@@ -105,12 +105,12 @@ struct LayerPlan {
 //     (OP i selects xlayers 0..i, all embedded and temporal layers);
 //   * the deterministic layer list.
 // Rejects every structural inconsistency with a specific message.
-bool build_layer_plan(const LayerConfig& config, LayerPlan& plan,
+[[nodiscard]] bool build_layer_plan(const LayerConfig& config, LayerPlan& plan,
                       std::string& error);
 
 // Revalidates an existing plan (sequence headers, LCR, OPS, layer list) with
 // the tiles validators plus plan-level consistency checks.
-bool validate_layer_plan(const LayerPlan& plan, std::string& error);
+[[nodiscard]] bool validate_layer_plan(const LayerPlan& plan, std::string& error);
 
 // Deterministic frame-to-layer assignment.
 //
@@ -128,7 +128,7 @@ struct FrameSource {
   std::uint8_t mlayer = 0;
 };
 
-bool assign_layers(const LayerPlan& plan,
+[[nodiscard]] bool assign_layers(const LayerPlan& plan,
                    const std::vector<FrameSource>& sources,
                    std::vector<layers::LayerId>& assigned, std::string& error);
 
@@ -152,10 +152,10 @@ struct LayerSelection {
 // GLOBAL_XLAYER_ID, m0/t0) are marked retained whenever the plan carries them,
 // matching Annex F.3.1 Step 2. Rejects selections that do not correspond to
 // the plan.
-bool resolve_selection(const LayerPlan& plan, const LayerSelection& selection,
+[[nodiscard]] bool resolve_selection(const LayerPlan& plan, const LayerSelection& selection,
                        layers::RetentionMap& retention, std::string& error);
 
-bool retention_has_layer(const layers::RetentionMap& retention,
+[[nodiscard]] bool retention_has_layer(const layers::RetentionMap& retention,
                          const layers::LayerId& id);
 
 // Number of retained (xlayer, mlayer, tlayer) triples, excluding the global
@@ -165,13 +165,13 @@ int selected_layer_count(const layers::RetentionMap& retention,
 
 // Checks that the retention map is dependency-closed (Annex F.3.1) and only
 // mentions layers present in the plan. The global OBU entry is exempt.
-bool validate_retention_closed(const LayerPlan& plan,
+[[nodiscard]] bool validate_retention_closed(const LayerPlan& plan,
                                const layers::RetentionMap& retention,
                                std::string& error);
 
 // Helpers used by the framing/pipeline layers.
-bool find_layer(const LayerPlan& plan, const layers::LayerId& id,
+[[nodiscard]] bool find_layer(const LayerPlan& plan, const layers::LayerId& id,
                 const LayerSpec** spec);
-bool layer_is_present(const LayerPlan& plan, const layers::LayerId& id);
+[[nodiscard]] bool layer_is_present(const LayerPlan& plan, const layers::LayerId& id);
 
 }  // namespace av2enc::svc

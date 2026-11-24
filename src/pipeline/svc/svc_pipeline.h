@@ -82,25 +82,25 @@ struct FrameReference {
 
 // Default schedule for a video with `temporal_units` identical temporal units:
 // every configured layer produces one output frame per unit. Deterministic.
-bool plan_emission_order(const LayerPlan& plan, int temporal_units,
+[[nodiscard]] bool plan_emission_order(const LayerPlan& plan, int temporal_units,
                          std::vector<Emission>& order, std::string& error);
 
 // Custom schedule driven by a GOP/temporal-layer scheduler. Emits one global
 // TD per temporal unit plus the frame requests, sorted deterministically by
 // (temporal unit, xlayer, mlayer, tlayer, non-output before output). Config
 // OBUs are not added here; the caller emits them once at the start.
-bool order_frames(const LayerPlan& plan, std::vector<FrameRequest> requests,
+[[nodiscard]] bool order_frames(const LayerPlan& plan, std::vector<FrameRequest> requests,
                   std::vector<Emission>& order, std::string& error);
 
 // True when `reference` may be used to predict `target` under `policy`.
 // Rejections explain the concrete rule that failed.
-bool reference_allowed(const LayerPlan& plan, const ReferencePolicy& policy,
+[[nodiscard]] bool reference_allowed(const LayerPlan& plan, const ReferencePolicy& policy,
                        const layers::LayerId& target,
                        const layers::LayerId& reference, std::string& error);
 
 // Checks every explicit reference in a schedule, including that the reference
 // is emitted before the target in `order`.
-bool validate_frame_references(const LayerPlan& plan,
+[[nodiscard]] bool validate_frame_references(const LayerPlan& plan,
                                const ReferencePolicy& policy,
                                const std::vector<FrameReference>& references,
                                const std::vector<Emission>& order,

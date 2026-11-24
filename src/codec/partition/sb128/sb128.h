@@ -76,14 +76,14 @@ inline constexpr int kBlockSizeCount = 29;
 inline constexpr int kSbSize = 128;
 inline constexpr int kSbSizeMi = kSbSize / 4;
 
-bool is_valid_block_size(BlockSize size);
+[[nodiscard]] bool is_valid_block_size(BlockSize size);
 int mi_width_log2(BlockSize size);
 int mi_height_log2(BlockSize size);
 int num_4x4_blocks_wide(BlockSize size);
 int num_4x4_blocks_high(BlockSize size);
 int block_width(BlockSize size);
 int block_height(BlockSize size);
-bool is_square(BlockSize size);
+[[nodiscard]] bool is_square(BlockSize size);
 BlockSize superblock_size(int sb_size_pixels);
 const char* block_size_name(BlockSize size);
 
@@ -137,7 +137,7 @@ struct Geometry {
   int max_pb_aspect_ratio = 8;  // MaxPbAspectRatio: 2, 4 or 8 (§5.4.3)
 };
 
-bool validate_geometry(const Geometry& geometry, std::string& error);
+[[nodiscard]] bool validate_geometry(const Geometry& geometry, std::string& error);
 
 // §5.18.4.4 compute_image_size():
 //   MiCols = 2 * ((FrameWidth + 7) >> 3)
@@ -148,8 +148,8 @@ int sb_size_mi(const Geometry& geometry);
 int sb_cols(const Geometry& geometry);
 int sb_rows(const Geometry& geometry);
 
-bool is_inside(const Geometry& geometry, int mi_row, int mi_col);
-bool block_coded(const Geometry& geometry, int mi_row, int mi_col);
+[[nodiscard]] bool is_inside(const Geometry& geometry, int mi_row, int mi_col);
+[[nodiscard]] bool block_coded(const Geometry& geometry, int mi_row, int mi_col);
 
 // Visible block rectangle clipped to the frame.  x/y/width/height are the
 // coded block; visible_width/visible_height are clipped to the picture.
@@ -179,8 +179,8 @@ struct ChromaBlock {
 bool operator==(const ChromaBlock& a, const ChromaBlock& b);
 bool operator!=(const ChromaBlock& a, const ChromaBlock& b);
 
-bool is_chroma_offset_for_subsize(const Geometry& geometry, BlockSize subsize);
-bool is_chroma_offset_for_partition(const Geometry& geometry,
+[[nodiscard]] bool is_chroma_offset_for_subsize(const Geometry& geometry, BlockSize subsize);
+[[nodiscard]] bool is_chroma_offset_for_partition(const Geometry& geometry,
                                     PartitionType partition, BlockSize size);
 
 struct ChromaState {
@@ -221,7 +221,7 @@ struct PartitionSet {
 
 // §5.20.3.2 is_partition_allowed() for TreeType == SHARED_PART and the four
 // base partitions.  `chroma_offset` is the recursion argument.
-bool is_partition_allowed(const Geometry& geometry, int mi_row, int mi_col,
+[[nodiscard]] bool is_partition_allowed(const Geometry& geometry, int mi_row, int mi_col,
                           BlockSize size, PartitionType partition,
                           bool has_chroma, bool chroma_offset);
 
@@ -326,10 +326,10 @@ struct LeafBlock {
 // full root, boundary-forced HORZ/VERT at a partial root, 128x64 -> VERT and
 // 64x128 -> HORZ, and PARTITION_NONE 64x64 leaves.  This is the tree the
 // minimal stream writes.
-bool build_reference_frame(const Geometry& geometry, FrameTree& out,
+[[nodiscard]] bool build_reference_frame(const Geometry& geometry, FrameTree& out,
                            std::string& error);
 
-bool validate_frame(const Geometry& geometry, const FrameTree& frame,
+[[nodiscard]] bool validate_frame(const Geometry& geometry, const FrameTree& frame,
                     std::string& error);
 
 void collect_leaves(const Node& node, std::vector<LeafBlock>& out);

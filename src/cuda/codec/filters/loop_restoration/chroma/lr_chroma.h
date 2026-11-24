@@ -58,7 +58,7 @@ inline constexpr Status kArenaTooSmall = Status::kArenaExhausted;
 std::size_t required_device_bytes(const LrChromaConfig& config) noexcept;
 
 // Convenience predicates used by validation and tests.
-bool config_is_valid(const LrChromaConfig& config) noexcept;
+[[nodiscard]] bool config_is_valid(const LrChromaConfig& config) noexcept;
 
 // Explicit mark/rewind for a chroma-LR frame.  These are thin pass-throughs
 // to Arena::mark()/Arena::rewind(); transient caller scratch (e.g. a device

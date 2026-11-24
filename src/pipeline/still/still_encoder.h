@@ -285,7 +285,7 @@ struct StillResult {
   qm::QmFrameState qm_state;
 };
 
-bool encode_still_picture(const StillPicture& picture, const StillOptions& options,
+[[nodiscard]] bool encode_still_picture(const StillPicture& picture, const StillOptions& options,
                              StillResult& result, std::string& error);
 
 }  // namespace av2enc::still

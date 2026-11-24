@@ -1641,8 +1641,9 @@ void check_embedded_maps(const char* what, int x, std::uint32_t mlayer_map,
         << "is " << static_cast<int>(sequence.seq_max_mlayer_cnt);
     report.add(out.str());
   }
-  validate_layer_map_closure(static_cast<std::uint8_t>(x), mlayer_map,
-                             tlayer_map, dependencies, report);
+  // The verdict lives in `report`; the bool is report.ok() again.
+  (void)validate_layer_map_closure(static_cast<std::uint8_t>(x), mlayer_map,
+                                   tlayer_map, dependencies, report);
 }
 
 }  // namespace
@@ -2091,8 +2092,9 @@ bool validate_ops(const OperatingPointSet& set, const StreamContext& context,
 bool validate_stream(const LayerConfigRecord& record,
                      const OperatingPointSet& set,
                      const StreamContext& context, ValidationReport& report) {
-  validate_lcr(record, context, report);
-  validate_ops(set, context, report);
+  // Both append to `report`, which carries the verdict.
+  (void)validate_lcr(record, context, report);
+  (void)validate_ops(set, context, report);
   if (record.is_global && global_xlayer(set)) {
     for (std::size_t i = 0; i < set.points.size(); ++i) {
       const std::uint32_t map = set.points[i].xlayer_map;

@@ -177,12 +177,12 @@ std::unique_ptr<Backend> make_cpu_backend();
 int plane_count(const fmt::Format& format);
 
 // One flat key + P sequence.  The caller has already validated the options.
-bool encode_sequence(std::span<const VideoInputFrame> frames,
+[[nodiscard]] bool encode_sequence(std::span<const VideoInputFrame> frames,
                      const Options& options, Backend& backend,
                      VideoSequenceResult& result, std::string& error);
 
 // Option validation shared by the CLI and both backends.
-bool validate_options(const Options& options, std::size_t frame_count,
+[[nodiscard]] bool validate_options(const Options& options, std::size_t frame_count,
                       std::string& error);
 
 }  // namespace av2enc::video::hbd

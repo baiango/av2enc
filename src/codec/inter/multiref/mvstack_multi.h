@@ -44,7 +44,7 @@ struct RefStackPair {
 // supplies the MI grid, block geometry, global MVs, DRL reorder and (when
 // available) FrameDistance[]/NumRefs for reference projection.  `ref0`/`ref1`
 // are RefFrame indices 0..NumTotalRefs-1.
-bool build_pair_stacks(const merge::StackParams& params, std::int8_t ref0,
+[[nodiscard]] bool build_pair_stacks(const merge::StackParams& params, std::int8_t ref0,
                        std::int8_t ref1, RefStackPair& out,
                        std::string& error);
 
@@ -76,7 +76,7 @@ struct MergeScore {
 // Predicts each candidate's luma block (average compound of the two
 // references at the candidate MVs) and returns the lowest SSE.  Ties keep the
 // earlier candidate.
-bool select_compound_merge_candidate(const CompoundMergeSet& set,
+[[nodiscard]] bool select_compound_merge_candidate(const CompoundMergeSet& set,
                                      const mc::RefFrame refs[2],
                                      const mc::BlockRect& luma_rect,
                                      int bsize, int mi_cols, int mi_rows,
@@ -92,7 +92,7 @@ struct RefMergeScore {
   int drl_index = -1;
   std::int64_t sad = 0;
 };
-bool select_best_ref_merge(const RefStackPair& stacks,
+[[nodiscard]] bool select_best_ref_merge(const RefStackPair& stacks,
                            const mc::RefFrame refs[2],
                            const mc::BlockRect& luma_rect,
                            mc::InterpFilter filter, const std::uint8_t* src,

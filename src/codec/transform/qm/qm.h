@@ -78,8 +78,8 @@ struct QmDequantParams {
 
 // --- Table access -----------------------------------------------------------
 
-bool valid_tx_size(int tx_size);
-bool valid_level(int level);
+[[nodiscard]] bool valid_tx_size(int tx_size);
+[[nodiscard]] bool valid_level(int level);
 inline int tx_width(int tx_size) { return core::coded_width(tx_size); }
 inline int tx_height(int tx_size) { return core::coded_height(tx_size); }
 inline int adjusted_width(int tx_size) {
@@ -99,7 +99,7 @@ std::uint8_t default_matrix_value(int level, int plane, int tx_size, int i,
 // otherwise SegQMLevel[plane][segment_id].
 int resolve_seg_level(const QmFrameState& state, int plane, int tx_size,
                       int segment_id);
-bool uses_user_qm(const QmFrameState& state, int plane, int tx_size,
+[[nodiscard]] bool uses_user_qm(const QmFrameState& state, int plane, int tx_size,
                   int seg_level);
 
 // The m coefficient §7.14.4 would select (user matrix or default table).
@@ -109,11 +109,11 @@ int matrix_value(const QmFrameState& state, int plane, int tx_size,
 // --- Dequantization ---------------------------------------------------------
 
 // Fills `q2` with adjusted_width * adjusted_height entries.
-bool build_q2_matrix(const QmDequantParams& params, std::int32_t* q2);
+[[nodiscard]] bool build_q2_matrix(const QmDequantParams& params, std::int32_t* q2);
 
 // Dequantizes levels[tw*th] (adjusted-size raster order) into dequant[tw*th].
 // Returns false on invalid params (bad tx size/plane/state, null buffers).
-bool dequantize_block(const std::int32_t* levels,
+[[nodiscard]] bool dequantize_block(const std::int32_t* levels,
                       const QmDequantParams& params, std::int32_t* dequant);
 
 // --- Syntax writing ---------------------------------------------------------
@@ -121,13 +121,13 @@ bool dequantize_block(const std::int32_t* levels,
 // setup_qm_params() (§5.18.6.2) without the surrounding frame-header bits.
 // `num_planes` is NumPlanes from the sequence header (3 for 4:2:0).
 // `segmentation_enabled` controls whether pic_qm_num_minus_1 is coded.
-bool write_setup_qm_params(BitWriter& writer, const QmFrameState& state,
+[[nodiscard]] bool write_setup_qm_params(BitWriter& writer, const QmFrameState& state,
                            int num_planes, bool segmentation_enabled,
                            std::string* error);
 
 // Fills a UserQmLevel with one constant coefficient (default 32 == identity
 // because Round2(q * 32, 5) == q).  Returns false for value 0.
-bool fill_user_qm_constant(UserQmLevel* level, std::uint8_t value);
+[[nodiscard]] bool fill_user_qm_constant(UserQmLevel* level, std::uint8_t value);
 
 // Builds the payload of quantizer_matrix_obu() (§5.13), including trailing
 // bits, without the OBU header.  `bit_map` selects levels; level i uses
@@ -141,7 +141,7 @@ struct QmObuConfig {
   bool chroma_info_present = true;
   QmObuLevel levels[kNumQmLevels];
 };
-bool write_quantizer_matrix_obu_payload(BitWriter& writer,
+[[nodiscard]] bool write_quantizer_matrix_obu_payload(BitWriter& writer,
                                         const QmObuConfig& config,
                                         std::string* error);
 

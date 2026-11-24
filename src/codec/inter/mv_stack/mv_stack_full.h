@@ -452,14 +452,14 @@ Status compute_warp_context(const StackParams& params,
 // ---------------------------------------------------------------------------
 // Predicates and small helpers
 // ---------------------------------------------------------------------------
-bool is_thin_4xn_nx4_block(partition::BlockSize size);
-bool is_comp_ref_allowed(partition::BlockSize size);
+[[nodiscard]] bool is_thin_4xn_nx4_block(partition::BlockSize size);
+[[nodiscard]] bool is_comp_ref_allowed(partition::BlockSize size);
 // §7.12.2.20: `Block_Width > 32 && Block_Height > 32`.
-bool mvp_combinations_allowed(int width, int height);
+[[nodiscard]] bool mvp_combinations_allowed(int width, int height);
 
-bool has_newmv_mode(int y_mode);
-bool has_newmv_for_list(int y_mode, int ref_list);
-bool has_nearmv_mode(int y_mode);
+[[nodiscard]] bool has_newmv_mode(int y_mode);
+[[nodiscard]] bool has_newmv_for_list(int y_mode, int ref_list);
+[[nodiscard]] bool has_nearmv_mode(int y_mode);
 
 // §5.20.7.13 lower_mv_precision.
 void lower_mv_precision(int precision, Mv* mv);
@@ -475,7 +475,7 @@ Mv project_mv(Mv mv, int numerator, int denominator);
 Status validate(const StackParams& params, std::string* why = nullptr);
 
 // Structural equality (all candidate fields, weights, offsets, cwp).
-bool equal(const Stack& a, const Stack& b);
+[[nodiscard]] bool equal(const Stack& a, const Stack& b);
 int first_divergence(const Stack& a, const Stack& b);
 
 }  // namespace av2enc::inter::mv_stack_full

@@ -590,7 +590,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   double scaled = params.quant_factor * 528.0;
   if (use_ddt) {
     std::fill(coeff_i, coeff_i + area, 0);
-    ddt::forward_block(adj, params, ddt_ctx, coeff_i);
+    (void)ddt::forward_block(adj, params, ddt_ctx, coeff_i);
     scaled = ddt::quant_factor(params) * 528.0;
   } else {
     std::fill(coeff, coeff + area, 0.0);
@@ -776,7 +776,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   }
   std::int16_t* recon = scratch.recon;
   if (use_ddt) {
-    ddt::inverse_block(dequant, params, ddt_ctx, recon);
+    (void)ddt::inverse_block(dequant, params, ddt_ctx, recon);
   } else {
     txv::inverse_block(dequant, params, recon);
   }

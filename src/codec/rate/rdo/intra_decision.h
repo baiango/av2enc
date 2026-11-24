@@ -79,8 +79,8 @@ struct IntraModeChoice {
   std::int32_t rejected_count = 0;   // invalid candidates ignored
 };
 
-bool intra_rdo_config_valid(const IntraRdoConfig& config) noexcept;
-bool validate_intra_rdo_config(const IntraRdoConfig& config,
+[[nodiscard]] bool intra_rdo_config_valid(const IntraRdoConfig& config) noexcept;
+[[nodiscard]] bool validate_intra_rdo_config(const IntraRdoConfig& config,
                                std::string* error = nullptr);
 
 // Streaming selector. Invalid candidates (bad mode/angle, negative/non-finite
@@ -106,7 +106,7 @@ IntraModeChoice select_intra_mode(std::span<const IntraCandidateCost> candidates
 // Pure comparator for GPU reductions. Equal cost/SSE/rate/mode/angle compare
 // equal (false), so a stable reduction needs no insertion index. The CPU
 // selector uses input order only as the final tie-break.
-bool intra_candidate_better(const IntraCandidateCost& a,
+[[nodiscard]] bool intra_candidate_better(const IntraCandidateCost& a,
                             const IntraCandidateCost& b,
                             const IntraRdoConfig& config) noexcept;
 
@@ -167,7 +167,7 @@ using IntraRateEstimator = bool (*)(void* context,
 
 // Calls the estimator, or fills the documented defaults when estimator is
 // null. Rejects non-finite or negative rates.
-bool estimate_intra_rates(IntraRateEstimator estimator,
+[[nodiscard]] bool estimate_intra_rates(IntraRateEstimator estimator,
                           void* context,
                           const IntraRateRequest& request,
                           IntraRateEstimate& out,

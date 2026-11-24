@@ -64,7 +64,7 @@ struct ScreenContentConfig {
 };
 
 // §5.20.5.3 use_intrabc availability test.
-bool intrabc_available(bool allow_intrabc, int bsize,
+[[nodiscard]] bool intrabc_available(bool allow_intrabc, int bsize,
                        bool tree_is_chroma_part = false) noexcept;
 
 // §5.20.5.4 payload.  `diff` is only coded for NEWMV; it is in 1/8 luma
@@ -76,32 +76,32 @@ struct BvSyntax {
   BlockVector diff{};
 };
 
-bool write_use_intrabc(av2::Encoder& enc, IbcCdfs& cdfs, int ctx, bool value,
+[[nodiscard]] bool write_use_intrabc(av2::Encoder& enc, IbcCdfs& cdfs, int ctx, bool value,
                        std::string& error);
-bool read_use_intrabc(av2::Decoder& dec, IbcCdfs& cdfs, int ctx, bool& value,
+[[nodiscard]] bool read_use_intrabc(av2::Decoder& dec, IbcCdfs& cdfs, int ctx, bool& value,
                       std::string& error);
 
-bool write_skip_flag(av2::Encoder& enc, IbcCdfs& cdfs, int ctx, bool value,
+[[nodiscard]] bool write_skip_flag(av2::Encoder& enc, IbcCdfs& cdfs, int ctx, bool value,
                      std::string& error);
-bool read_skip_flag(av2::Decoder& dec, IbcCdfs& cdfs, int ctx, bool& value,
+[[nodiscard]] bool read_skip_flag(av2::Decoder& dec, IbcCdfs& cdfs, int ctx, bool& value,
                     std::string& error);
 
 // read_mv() §5.20.7.20 in shell form, including the literal sign bits that
 // assign_mv() writes for every nonzero component.  `diff8` is in 1/8 luma
 // samples.  `mv_ctx` is MV_INTRABC_CONTEXT (1) for IBC.
-bool write_mv(av2::Encoder& enc, MvCdfs& cdfs, int mv_ctx, int mv_precision,
+[[nodiscard]] bool write_mv(av2::Encoder& enc, MvCdfs& cdfs, int mv_ctx, int mv_precision,
               BlockVector diff8, bool derive_sign, std::string& error);
-bool read_mv(av2::Decoder& dec, MvCdfs& cdfs, int mv_ctx, int mv_precision,
+[[nodiscard]] bool read_mv(av2::Decoder& dec, MvCdfs& cdfs, int mv_ctx, int mv_precision,
              bool derive_sign, BlockVector& diff8, std::string& error);
 
 // Write/read intrabc_mode + DRL + precision + assign_mv for one block.  The
 // writer needs the absolute target BV; the reader reconstructs it from the
 // stack candidate and MVD.
-bool write_intrabc_info(av2::Encoder& enc, IbcCdfs& cdfs,
+[[nodiscard]] bool write_intrabc_info(av2::Encoder& enc, IbcCdfs& cdfs,
                         const ScreenContentConfig& config,
                         const BvStack& stack, const BvSyntax& syntax,
                         BlockVector target_bv, std::string& error);
-bool read_intrabc_info(av2::Decoder& dec, IbcCdfs& cdfs,
+[[nodiscard]] bool read_intrabc_info(av2::Decoder& dec, IbcCdfs& cdfs,
                        const ScreenContentConfig& config,
                        const BvStack& stack, BvSyntax& syntax,
                        BlockVector& bv, std::string& error);

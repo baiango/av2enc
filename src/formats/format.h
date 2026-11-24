@@ -140,7 +140,7 @@ std::optional<ChromaFormat> chroma_format_from_idc(int idc);
 int subsampling_x(ChromaFormat chroma);
 int subsampling_y(ChromaFormat chroma);
 int num_planes(ChromaFormat chroma);
-bool has_chroma(ChromaFormat chroma);
+[[nodiscard]] bool has_chroma(ChromaFormat chroma);
 const char* chroma_format_name(ChromaFormat chroma);
 
 // ---------------------------------------------------------------------------
@@ -235,8 +235,8 @@ struct FormatCheck {
 // kReservedBitDepth; use `is_internally_supported()` if you only need buffers.
 FormatCheck validate_format(const Format& format);
 
-bool is_internally_supported(const Format& format);
-bool is_signalable(const Format& format);
+[[nodiscard]] bool is_internally_supported(const Format& format);
+[[nodiscard]] bool is_signalable(const Format& format);
 
 // Named profile from Annex A.2: 4:0:0/4:2:0 -> 0, 4:2:2 -> 3, 4:4:4 -> 4.
 // Profile 31 (Configurable) is intentionally not used.  -1 when unavailable.
@@ -266,7 +266,7 @@ struct Picture {
 
 // Allocates coded geometry and zero-fills.  Returns false with `error` on an
 // invalid/unsupported format or allocation failure.
-bool allocate_picture(const Format& format, Picture& picture, std::string& error);
+[[nodiscard]] bool allocate_picture(const Format& format, Picture& picture, std::string& error);
 
 // Reads a sample with coordinates clamped to the *visible* rectangle.  Returns
 // 0 for a plane with no visible samples.  This is the edge-read rule used by
@@ -312,7 +312,7 @@ RangeReport check_sample_range(const Picture& picture);
 // Clips every sample and returns the number of changed samples.
 std::size_t clamp_samples(Picture& picture);
 
-bool samples_in_range(const Picture& picture);
+[[nodiscard]] bool samples_in_range(const Picture& picture);
 
 // ---------------------------------------------------------------------------
 // Conversion from / to the M0 8-bit 4:2:0 input

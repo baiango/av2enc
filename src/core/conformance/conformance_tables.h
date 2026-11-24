@@ -61,9 +61,9 @@ int profile_table_size();
 const ProfileInfo& profile_at(int index);
 // nullptr only when seq_profile_idc is outside 0..31.
 const ProfileInfo* find_profile(int seq_profile_idc);
-bool profile_allows_chroma(const ProfileInfo& profile, int chroma_format_idc);
+[[nodiscard]] bool profile_allows_chroma(const ProfileInfo& profile, int chroma_format_idc);
 // Profile 31 has no Table A.2 row; returns false and leaves the outputs 0/-1.
-bool profile_scaling(int seq_profile_idc, int* profile_scaling_factor,
+[[nodiscard]] bool profile_scaling(int seq_profile_idc, int* profile_scaling_factor,
                      int* pic_size_profile_factor,
                      double* bitrate_profile_factor);
 // Convenience label used in messages: "profile 3 (Main_422_10_IP1)".
@@ -101,9 +101,9 @@ const LevelInfo& level_at(int index);
 // nullptr for 22..30 (reserved) and for out-of-range values.
 const LevelInfo* find_level(int seq_level_idx);
 // 22..30 are Reserved (Table A.7, p1105).
-bool level_is_reserved(int seq_level_idx);
+[[nodiscard]] bool level_is_reserved(int seq_level_idx);
 // 31 means "maximum parameters": no level-based constraints apply (p1111).
-bool level_is_maximum(int seq_level_idx);
+[[nodiscard]] bool level_is_maximum(int seq_level_idx);
 const char* level_name(int seq_level_idx);  // "2.0" ... "8.3", "Reserved", "Max"
 
 // §9.2 / p622. A reserved level/tier combination has reserved == true.
@@ -137,9 +137,9 @@ struct MultiSeqConfigInfo {
 int multi_seq_table_size();
 const MultiSeqConfigInfo& multi_seq_at(int index);
 const MultiSeqConfigInfo* find_multi_seq_config(int lcr_config_idc);
-bool multi_seq_is_reserved(int lcr_config_idc);
-bool multi_seq_allows_profile(const MultiSeqConfigInfo& config, int profile);
-bool multi_seq_allows_chroma(const MultiSeqConfigInfo& config, int chroma);
+[[nodiscard]] bool multi_seq_is_reserved(int lcr_config_idc);
+[[nodiscard]] bool multi_seq_allows_profile(const MultiSeqConfigInfo& config, int profile);
+[[nodiscard]] bool multi_seq_allows_chroma(const MultiSeqConfigInfo& config, int chroma);
 
 // ---------------------------------------------------------------------------
 // §A.3 Tables A.3/A.4 — interoperability points
@@ -162,7 +162,7 @@ struct InteropPointInfo {
 int interop_table_size();
 const InteropPointInfo& interop_at(int index);
 const InteropPointInfo* find_interop_point(int iop);
-bool interop_is_reserved(int iop);
+[[nodiscard]] bool interop_is_reserved(int iop);
 const char* interop_name(int iop);
 
 // Table A.4. `Required` LCR means Required (Local) for IOP 1, and

@@ -40,13 +40,13 @@ int mapped_intra_mode_for_mrl(int y_mode, int angle_delta, int mrl_index,
                               int coded_w, int coded_h) noexcept;
 
 // §7.13.2.7: edge filtering only for the adjacent line.
-bool mrl_allows_edge_filter(int mrl_index) noexcept;
+[[nodiscard]] bool mrl_allows_edge_filter(int mrl_index) noexcept;
 
 // Builds the mrl::Params for prediction.  `sequence_enable_edge_filter` is the
 // sequence-header enable_intra_edge_filter bit; the returned
 // enable_edge_filter is false whenever mrl_index > 0.  Returns false for an
 // invalid mode/delta/index or a secondary flag that cannot apply.
-bool make_predict_params(int y_mode, int angle_delta, int mrl_index,
+[[nodiscard]] bool make_predict_params(int y_mode, int angle_delta, int mrl_index,
                          bool mrl_sec_index, bool sequence_enable_edge_filter,
                          bool above_neighbor_is_smooth,
                          bool left_neighbor_is_smooth, mrl::Params* params,
@@ -55,13 +55,13 @@ bool make_predict_params(int y_mode, int angle_delta, int mrl_index,
 // §5.20.8.2 / §5.20.7.29 query for an intra luma TX block.  On success fills
 // `query` with mapped_mode = mapped_intra_mode_for_mrl(...).  Returns false for
 // an invalid mode/delta/index/size combination.
-bool make_tx_type_query(int y_mode, int angle_delta, int mrl_index,
+[[nodiscard]] bool make_tx_type_query(int y_mode, int angle_delta, int mrl_index,
                         int coded_w, int coded_h, int reduced_tx_set,
                         bool dct_only, txtype::TxTypeQuery* query) noexcept;
 
 // Convenience wrapper around txtype::tx_type_symbol() that takes the MRL-aware
 // query inputs directly.
-bool tx_type_symbol_for_mrl(int y_mode, int angle_delta, int mrl_index,
+[[nodiscard]] bool tx_type_symbol_for_mrl(int y_mode, int angle_delta, int mrl_index,
                             int coded_w, int coded_h, int reduced_tx_set,
                             bool dct_only, txtype::TxType type, int* symbol,
                             bool* is_long_side_dct) noexcept;

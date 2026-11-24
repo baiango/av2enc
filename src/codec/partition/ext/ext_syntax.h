@@ -120,7 +120,7 @@ struct SyntaxStats {
 // MiSizeGrid and must already contain every leaf decoded before this
 // superblock (raster order); the function fills it as it walks.  It recomputes
 // boundary / allowed / chroma and fails on any stale node field.
-bool encode_tree_symbols(const FrameGeometry& geometry, const Tools& tools,
+[[nodiscard]] bool encode_tree_symbols(const FrameGeometry& geometry, const Tools& tools,
                          const PartitionNode& root, PartitionCdfs& cdfs,
                          MiSizeGrid& grid, av2::Encoder& encoder,
                          bool disable_cdf_update, SyntaxStats* stats,
@@ -129,7 +129,7 @@ bool encode_tree_symbols(const FrameGeometry& geometry, const Tools& tools,
 
 // Independent decoder: reads the same symbol sequence and rebuilds the tree.
 // The produced tree passes validate_tree() when the stream is well formed.
-bool decode_tree_symbols(const FrameGeometry& geometry, const Tools& tools,
+[[nodiscard]] bool decode_tree_symbols(const FrameGeometry& geometry, const Tools& tools,
                          PartitionNode& root, PartitionCdfs& cdfs,
                          MiSizeGrid& grid, av2::Decoder& decoder,
                          SyntaxStats* stats, std::string& error);

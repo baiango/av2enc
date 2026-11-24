@@ -101,7 +101,7 @@ struct Stack {
 };
 
 // §7.12.2 step 16.
-bool use_sort(Mode mode, bool use_temporal_first, int num_nearest);
+[[nodiscard]] bool use_sort(Mode mode, bool use_temporal_first, int num_nearest);
 
 // §7.12.2.19, applied to [0, num_nearest).  On return `perm[post] = pre` for
 // post in [0, num_nearest) and perm[i] == i elsewhere in [0, count).  The
@@ -116,8 +116,8 @@ int reorder_stack(Stack* stack, Mode mode, bool use_temporal_first);
 
 // Encoder-side index mapping.  `perm` is the array produced above.
 // pre/post refer to the unsorted / sorted stack positions.
-bool pre_to_post_index(const int* perm, int count, int pre_index, int* post);
-bool post_to_pre_index(const int* perm, int count, int post_index, int* pre);
+[[nodiscard]] bool pre_to_post_index(const int* perm, int count, int pre_index, int* post);
+[[nodiscard]] bool post_to_pre_index(const int* perm, int count, int post_index, int* pre);
 
 // Encoder-side choice: lowest post-reorder index in [start, Min(m, count-1)]
 // whose list-0 MV equals `mv_row`/`mv_col`.  Deterministic; ties resolve to the

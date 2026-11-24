@@ -559,9 +559,9 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options,
                             std::string& error);
 
 // cli/nightly.cpp
-bool apply_video_rd_preset(Options& options, std::string& error);
-bool apply_video_nightly(Options& options, std::string& error);
-bool apply_video_nightly_b(Options& options, std::string& error);
+[[nodiscard]] bool apply_video_rd_preset(Options& options, std::string& error);
+[[nodiscard]] bool apply_video_nightly(Options& options, std::string& error);
+[[nodiscard]] bool apply_video_nightly_b(Options& options, std::string& error);
 
 // cli/validate.cpp
 ParseStatus validate_options(Options& options, std::string& error);

@@ -69,13 +69,13 @@ constexpr int spec_partition_index(PartitionType partition) {
   return static_cast<int>(partition);
 }
 
-bool is_valid_partition(PartitionType partition);
-bool is_extended(PartitionType partition);  // 3..8 (3-way or uneven 4-way)
-bool is_three_way(PartitionType partition);
-bool is_uneven_4way(PartitionType partition);
-bool is_four_way(PartitionType partition);  // 3..8
-bool is_horizontal(PartitionType partition);
-bool is_vertical(PartitionType partition);
+[[nodiscard]] bool is_valid_partition(PartitionType partition);
+[[nodiscard]] bool is_extended(PartitionType partition);  // 3..8 (3-way or uneven 4-way)
+[[nodiscard]] bool is_three_way(PartitionType partition);
+[[nodiscard]] bool is_uneven_4way(PartitionType partition);
+[[nodiscard]] bool is_four_way(PartitionType partition);  // 3..8
+[[nodiscard]] bool is_horizontal(PartitionType partition);
+[[nodiscard]] bool is_vertical(PartitionType partition);
 // Base rect of a partition, or kNone for NONE/SPLIT.  Used for rect_type.
 PartitionType rect_direction(PartitionType partition);
 // Mapping to/from the rect-only enum in src/encoder/partition.
@@ -90,7 +90,7 @@ struct Tools {
   bool enable_ext_partitions = false;
   bool enable_uneven_4way_partitions = false;
 };
-bool validate_tools(const Tools& tools, std::string& error);
+[[nodiscard]] bool validate_tools(const Tools& tools, std::string& error);
 
 // §9.2 Partition_Subsize.  Returns kInvalid when the table entry is
 // BLOCK_INVALID.
@@ -115,9 +115,9 @@ Boundary implied_partition(const FrameGeometry& geometry, int mi_row,
 
 // §5.20.3.2 chroma_offset_for_partition(), including the HORZ_3 middle
 // special case.
-bool chroma_offset_for_subsize(const FrameGeometry& geometry,
+[[nodiscard]] bool chroma_offset_for_subsize(const FrameGeometry& geometry,
                                   BlockSize subsize);
-bool chroma_offset_for_partition(const FrameGeometry& geometry,
+[[nodiscard]] bool chroma_offset_for_partition(const FrameGeometry& geometry,
                                     PartitionType partition, BlockSize size);
 
 struct PartitionSet {
@@ -130,7 +130,7 @@ struct PartitionSet {
 // delegate to partition::is_partition_allowed() so the rect-only behaviour is
 // shared bit-for-bit.  Extended rows add the tool flags and the spec's
 // chromaOffset / block_coded cases.
-bool is_partition_allowed(const FrameGeometry& geometry, int mi_row, int mi_col,
+[[nodiscard]] bool is_partition_allowed(const FrameGeometry& geometry, int mi_row, int mi_col,
                           BlockSize size, PartitionType partition,
                           bool has_chroma, bool chroma_offset,
                           const Tools& tools);
@@ -178,7 +178,7 @@ struct ChildSlot {
   bool chroma_offset = false;
   ChromaBlock chroma;
 };
-bool child_is_coded(const FrameGeometry& geometry, const ChildSlot& slot);
+[[nodiscard]] bool child_is_coded(const FrameGeometry& geometry, const ChildSlot& slot);
 
 // §5.20.3.1 child enumeration in decode order.  Returns 0 for PARTITION_NONE
 // or an undefined Partition_Subsize.  The caller filters with
@@ -335,12 +335,12 @@ int count_leaves(const PartitionNode& node);
 
 // Structural / spec validation, including chroma-block propagation and exact
 // in-frame coverage.  Does not check costs or DecisionOptions policy.
-bool validate_tree(const FrameGeometry& geometry, const Tools& tools,
+[[nodiscard]] bool validate_tree(const FrameGeometry& geometry, const Tools& tools,
                    const PartitionNode& root, std::string& error);
-bool validate_frame(const FrameGeometry& geometry, const Tools& tools,
+[[nodiscard]] bool validate_frame(const FrameGeometry& geometry, const Tools& tools,
                     const FrameDecision& frame, std::string& error);
 
 // Geometry helper used by the tests and the syntax writer.
-bool validate_geometry(const FrameGeometry& geometry, std::string& error);
+[[nodiscard]] bool validate_geometry(const FrameGeometry& geometry, std::string& error);
 
 }  // namespace av2enc::partition_ext

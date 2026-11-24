@@ -39,7 +39,7 @@ namespace av2enc::video::hbd {
 // Returns false with a precise reason and leaves the planes unspecified on
 // failure.  `plan` is all-disabled when every requested tool decides to do
 // nothing, which is what makes a no-filter stream byte-identical.
-bool apply_frame_filters(
+[[nodiscard]] bool apply_frame_filters(
     const fmt::Format& format, int mi_cols, int mi_rows,
     const int visible_w[3], const int visible_h[3],
     std::uint16_t* const recon[3], const int recon_stride[3],

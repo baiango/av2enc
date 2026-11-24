@@ -848,8 +848,8 @@ std::size_t write_frame_header_bits(BitWriter& writer,
     context.film_grain_params_present = true;
     context.immediate_output_frame = h.immediate_output_frame;
     std::string grain_error;
-    filters::grain::WriteFilmGrainConfig(writer, h.grain, context,
-                                         &grain_error);
+    (void)filters::grain::WriteFilmGrainConfig(
+        writer, h.grain, context, &grain_error);
     assert(grain_error.empty());
   }
 

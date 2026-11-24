@@ -50,7 +50,7 @@ enum class BasicPartitionMode {
 };
 
 // Returns false and fills `error` on invalid input or an internal coder error.
-bool encode_still_picture(const StillPicture& picture,
+[[nodiscard]] bool encode_still_picture(const StillPicture& picture,
                           const StillPictureConfig& config,
                           StillEncodeResult& result,
                           std::string& error,
@@ -66,7 +66,7 @@ bool encode_still_picture(const StillPicture& picture,
 // When the boundary recursion requires anything smaller, this returns false
 // and `reason` names the missing size(s). Callers should then use the M1
 // still path rather than emit an invalid stream.
-bool geometry_supported(std::uint32_t width, std::uint32_t height,
+[[nodiscard]] bool geometry_supported(std::uint32_t width, std::uint32_t height,
                         std::string& reason);
 
 }  // namespace av2enc::basic

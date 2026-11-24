@@ -95,13 +95,13 @@ struct BlockResult {
 // prediction.  Source reads are clamped to [0, src_width) x [0, src_height)
 // exactly like `TileEncoder::source_sample()`.  `src` points at element
 // (0, 0) of the plane; `pred` is packed at coded_w.
-bool encode_block(const std::uint16_t* src, int src_stride, int src_width,
+[[nodiscard]] bool encode_block(const std::uint16_t* src, int src_stride, int src_width,
                   int src_height, int x0, int y0, const std::uint16_t* pred,
                   const TxParams& p, int bit_depth, BlockResult* out);
 
 // Same, but the coded-size residual is supplied directly (the RDO / stage-1
 // shape).  `pred` still supplies the reconstruction prediction.
-bool encode_block_residual(const std::int16_t* residual_coded,
+[[nodiscard]] bool encode_block_residual(const std::int16_t* residual_coded,
                            const std::uint16_t* pred, const TxParams& p,
                            int bit_depth, BlockResult* out);
 

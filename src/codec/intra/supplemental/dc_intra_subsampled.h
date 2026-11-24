@@ -89,12 +89,12 @@ int approx_divide(int numerator, int denominator) noexcept;
 // caller narrows (the shipped pipeline is 8-bit).
 // Returns false only for invalid geometry/inputs; the process itself has no
 // failure mode.
-bool dc_intra_subsampled(const DcSubsampledInput& in, std::uint16_t* dst,
+[[nodiscard]] bool dc_intra_subsampled(const DcSubsampledInput& in, std::uint16_t* dst,
                          std::size_t dst_stride,
                          DcSubsampledTrace* trace = nullptr) noexcept;
 
 // Convenience overload writing into a tightly packed w*h buffer.
-bool dc_intra_subsampled(const DcSubsampledInput& in, std::uint16_t* dst,
+[[nodiscard]] bool dc_intra_subsampled(const DcSubsampledInput& in, std::uint16_t* dst,
                          DcSubsampledTrace* trace = nullptr) noexcept;
 
 }  // namespace av2enc::still::missing_bits

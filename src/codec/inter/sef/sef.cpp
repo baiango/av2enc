@@ -206,8 +206,8 @@ std::size_t write_sef_frame_header(BitWriter& writer, const SefParams& params,
   context.film_grain_params_present = params.film_grain_params_present;
   context.immediate_output_frame = true;
   std::string grain_error;
-  filters::grain::WriteFilmGrainConfig(writer, header.grain, context,
-                                       &grain_error);
+  (void)filters::grain::WriteFilmGrainConfig(
+      writer, header.grain, context, &grain_error);
   assert(grain_error.empty());
   return writer.bit_size() - start;
 }

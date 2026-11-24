@@ -73,12 +73,12 @@ enum OpflRefineType : int {
 };
 
 // §5.20.7.6 has_newmv / has_nearmv / has_second_drl.
-bool has_newmv(int y_mode);
-bool has_nearmv(int y_mode);
-bool has_newmv_for_list(int y_mode, int list);
+[[nodiscard]] bool has_newmv(int y_mode);
+[[nodiscard]] bool has_nearmv(int y_mode);
+[[nodiscard]] bool has_newmv_for_list(int y_mode, int list);
 
 // §5.20.7.10 is_comp_ref_allowed() for a rectangular block.
-bool comp_ref_allowed(int block_w, int block_h);
+[[nodiscard]] bool comp_ref_allowed(int block_w, int block_h);
 
 // §5.18.8.2 skip_mode_params(): SkipModeFrame[] for this frame.
 void derive_skip_mode_frames(const multiref::RefFrameMap& map,
@@ -306,11 +306,11 @@ class ModeInfoReader {
 // ---------------------------------------------------------------------------
 // Tile payload (one 64x64 PARTITION_NONE leaf per superblock)
 // ---------------------------------------------------------------------------
-bool write_compound_tile(const std::vector<CompoundBlockPlan>& blocks, int width,
+[[nodiscard]] bool write_compound_tile(const std::vector<CompoundBlockPlan>& blocks, int width,
                          int height, const CompoundFrameConfig& config,
                          std::vector<std::uint8_t>& payload, std::string& error);
 
-bool read_compound_tile(std::span<const std::uint8_t> payload, int width,
+[[nodiscard]] bool read_compound_tile(std::span<const std::uint8_t> payload, int width,
                         int height, const CompoundFrameConfig& config,
                         std::vector<CompoundBlockResult>& blocks,
                         std::string& error);

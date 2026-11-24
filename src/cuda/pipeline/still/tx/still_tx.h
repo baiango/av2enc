@@ -126,7 +126,7 @@ struct StillTxBuffers {
 // Fills `job->params` from the coded size and TX_TYPE and resets the offsets.
 // Returns false when the coded size is not one of the 25 AV2 transform sizes.
 // `src_packed` defaults to 1 and `input` to kSourcePred.
-bool still_tx_init_job(StillTxJob* job, int coded_w, int coded_h,
+[[nodiscard]] bool still_tx_init_job(StillTxJob* job, int coded_w, int coded_h,
                     TxType type = TxType::kDctDct);
 
 // Runs `nblocks` jobs in one launch on `stream`.

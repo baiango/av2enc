@@ -143,7 +143,7 @@ int tx_size_index(int coded_w, int coded_h);
 void tx_1d_types(TxType type, Tx1dType* row, Tx1dType* col);
 
 // Inverse of tx_1d_types; returns false when the pair is not a TX_TYPE.
-bool make_tx_type(Tx1dType row, Tx1dType col, TxType* out);
+[[nodiscard]] bool make_tx_type(Tx1dType row, Tx1dType col, TxType* out);
 
 // Kernel for one 1D transform dimension.  n is 4, 8, 16 or 32.  IDT returns
 // nullptr (identity is not a matrix).  Length 32 always returns kDct32,
@@ -158,7 +158,7 @@ std::optional<TxParams> make_tx_params(TxSize size,
                                        TxType type = TxType::kDctDct);
 
 // True when coded (width, height) map to a supported TxSize.
-bool tx_size_supported(int coded_w, int coded_h);
+[[nodiscard]] bool tx_size_supported(int coded_w, int coded_h);
 
 // Dimensions of the adjusted transform for a coded size (== coded, capped 32).
 void adjusted_size(const TxParams& p, int* w, int* h);
@@ -243,7 +243,7 @@ enum class TxPartition : std::int8_t {
 const char* tx_partition_name(TxPartition part);
 
 // A legal partition must produce coded sub-blocks whose dimensions are >= 4.
-bool tx_partition_legal(int coded_w, int coded_h, TxPartition part);
+[[nodiscard]] bool tx_partition_legal(int coded_w, int coded_h, TxPartition part);
 
 // Enumerates legal partitions for a block into out[0..cap); returns the count.
 int tx_partition_candidates(int coded_w, int coded_h, TxPartition* out,

@@ -1537,7 +1537,7 @@ class Writer {
   const rate_interval::CdfStore& rate_store() {
     if (!rate_store_ready_) {
       rate_store_ready_ = true;
-      rate_interval::load_store_from_image(
+      (void)rate_interval::load_store_from_image(
           cdf_seed_, static_cast<int>(config_.base_q_idx), rate_store_);
     }
     return rate_store_;

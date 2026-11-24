@@ -93,7 +93,7 @@ VideoTilePlan plan_video_tiles(int width, int height, int cols, int rows,
 // current M2 header writer signals only a frame-uniform base_q_idx, so a plan
 // with per-tile qindexes (delta-Q or segmentation) is rejected instead of
 // silently dropping the tile decisions.
-bool adopt_pipeline_frame_plan(const pipeline::FramePipelinePlan& plan,
+[[nodiscard]] bool adopt_pipeline_frame_plan(const pipeline::FramePipelinePlan& plan,
                                VideoTiledFrameHeader* header, VideoTilePlan* tiles,
                                std::string* error = nullptr);
 
@@ -147,14 +147,14 @@ filters_stream::CcsoParams make_tiled_ccso_params(const VideoCcsoPlan& plan);
 // that want the exact bit count.  `context_update_present` is false when
 // enable_avg_cdf && avg_cdf_type, in which case the spec infers
 // context_update_tile_id = 0 and codes no bits for it.
-bool write_video_tile_info(BitWriter& writer, const tiles::TileLayout& layout,
+[[nodiscard]] bool write_video_tile_info(BitWriter& writer, const tiles::TileLayout& layout,
                         int tile_size_bytes, std::string* error,
                         bool context_update_present = true);
 
 // frame_header_info() syntax, without the leading is_first_tile_group bit and
 // without byte_alignment().  The caller must know TileSizeBytes first; for a
 // one-tile frame `tile_size_bytes` is ignored.
-bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& config,
+[[nodiscard]] bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& config,
                                   const VideoPostSequenceOptions& sequence,
                                   const VideoTiledFrameHeader& header,
                                   const tiles::TileLayout& layout,
@@ -175,7 +175,7 @@ struct VideoTileBlocks {
 // Every root must fall inside the tile's superblock rectangle; coordinates are
 // shifted to the tile origin.  Levels are not touched (they are indexed by the
 // caller's absolute levels_offset).
-bool split_video_blocks_for_tile(const tiles::TileLayout& layout, int tile_index,
+[[nodiscard]] bool split_video_blocks_for_tile(const tiles::TileLayout& layout, int tile_index,
                               std::span<const syntax::BlockSyntax> blocks,
                               VideoTileBlocks* out, std::string* error);
 
@@ -191,7 +191,7 @@ struct VideoTiledFrame {
 
 // Encodes every tile and assembles one OBU_CLOSED_LOOP_KEY /
 // OBU_REGULAR_TILE_GROUP payload (Annex B length-delimited OBU).
-bool assemble_video_tiled_frame(const VideoConfig& config,
+[[nodiscard]] bool assemble_video_tiled_frame(const VideoConfig& config,
                              const VideoPostSequenceOptions& sequence,
                              const VideoTiledFrameHeader& header,
                              const tiles::TileLayout& layout,
@@ -208,7 +208,7 @@ std::vector<std::uint8_t> make_video_sequence_header_obu(
 
 // Escape hatch for callers that already have tile payloads (for example a GPU
 // tile coder).  `tile_payloads` must be in raster TileNum order.
-bool assemble_video_tile_group_from_payloads(
+[[nodiscard]] bool assemble_video_tile_group_from_payloads(
     const VideoConfig& config, const VideoPostSequenceOptions& sequence,
     const VideoTiledFrameHeader& header, const tiles::TileLayout& layout,
     std::span<const std::vector<std::uint8_t>> tile_payloads,

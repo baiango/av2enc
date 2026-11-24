@@ -56,11 +56,11 @@ struct BawpJob {
 // Derives and applies the adjustment. On success `fit_out` (optional) receives
 // the fitted alpha/beta/count. For plane 0 the caller should keep
 // `fit.alpha` as the frame's BawpAlpha for the chroma planes.
-bool bawp_apply_block(const BawpJob& job, BawpFit* fit_out);
+[[nodiscard]] bool bawp_apply_block(const BawpJob& job, BawpFit* fit_out);
 
 // Derives the fit only (no writes). Useful for unit tests and for deciding
 // whether BAWP is worth signalling.
-bool bawp_derive_block(const BawpJob& job, BawpFit* fit_out);
+[[nodiscard]] bool bawp_derive_block(const BawpJob& job, BawpFit* fit_out);
 
 // Maps a YMode to the §7.13.3.25 `listIndex` used by explicit BAWP:
 //   NEARMV -> 0, NEWMV && use_amvd -> 1, otherwise -> 2.

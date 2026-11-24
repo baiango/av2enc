@@ -75,7 +75,7 @@ struct StreamOutput {
   StreamCoverage coverage;
 };
 
-bool build_stream(const StreamInput& input, StreamOutput& output,
+[[nodiscard]] bool build_stream(const StreamInput& input, StreamOutput& output,
                   std::string& error);
 
 }  // namespace av2enc::inter::mv_stack_full::gate

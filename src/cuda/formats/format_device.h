@@ -168,7 +168,7 @@ struct PlaneBlockRect {
 // Mirror of `fmt::block_rect()`: luma coordinates are MI-aligned, plane 0 uses
 // the luma block size and planes 1/2 use §5.20.7.26 Subsampled_Size.  Returns
 // false for monochrome chroma planes or BLOCK_INVALID residual shapes.
-bool plane_block_rect(const FrameLayout& layout, int plane, int luma_x,
+[[nodiscard]] bool plane_block_rect(const FrameLayout& layout, int plane, int luma_x,
                       int luma_y, int luma_w, int luma_h,
                       PlaneBlockRect* out);
 

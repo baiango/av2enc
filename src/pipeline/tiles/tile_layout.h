@@ -85,7 +85,7 @@ int mi_cols(int width);  // 2 * ((width + 7) >> 3)  (§5.18.4.4)
 int mi_rows(int height);
 int sb_cols(int width, int sb_size);
 int sb_rows(int height, int sb_size);
-bool is_power_of_two(int value);
+[[nodiscard]] bool is_power_of_two(int value);
 int log2_exact(int value);  // -1 when value is not a positive power of two
 
 // A tile edge is either a frame boundary or an interior tile boundary. Interior
@@ -223,6 +223,6 @@ LayoutResult plan_tile_layout(int width, int height, int cols, int rows,
 // Structural validation of an already-built layout: coverage, raster order,
 // start monotonicity, boundary flags, and level limits. Does not consult a
 // bitstream.
-bool validate_tile_layout(const TileLayout& layout, std::string& error);
+[[nodiscard]] bool validate_tile_layout(const TileLayout& layout, std::string& error);
 
 }  // namespace av2enc::tiles

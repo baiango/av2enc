@@ -78,7 +78,7 @@ struct FormatInfo {
   int profile_idc = 0;         // Annex A.2 named profile
 };
 
-bool format_valid(Format format) noexcept;
+[[nodiscard]] bool format_valid(Format format) noexcept;
 FormatInfo format_info(Format format) noexcept;
 const char* format_name(Format format) noexcept;
 
@@ -153,7 +153,7 @@ ResidualSize chroma_residual_size_block(int block_index,
 
 // §5.20.3.2 is_chroma_offset_for_subsize(): true when a subsampled dimension
 // would shrink below 4 samples.
-bool is_chroma_offset_for_subsize(int luma_w, int luma_h,
+[[nodiscard]] bool is_chroma_offset_for_subsize(int luma_w, int luma_h,
                                   Format format) noexcept;
 
 // Width/height of AV2 BLOCK_SIZE index `block_index` (0..28).
@@ -191,12 +191,12 @@ struct TxShape {
 
 // Same acceptance rule as `av2enc::chroma::make_tx_shape`: 4..64, powers of
 // two.  Returns false for anything else.
-bool make_tx_shape(int nominal_w, int nominal_h, TxShape* shape) noexcept;
+[[nodiscard]] bool make_tx_shape(int nominal_w, int nominal_h, TxShape* shape) noexcept;
 
 // §5.20.7.27 txSzCtx from a nominal size.
 int tx_size_context(int nominal_w, int nominal_h) noexcept;
 // §7.15.4.1 rectangular pre-scale predicate.
-bool odd_rect_transform(int nominal_w, int nominal_h) noexcept;
+[[nodiscard]] bool odd_rect_transform(int nominal_w, int nominal_h) noexcept;
 
 // ---------------------------------------------------------------------------
 // Status and configuration
@@ -227,7 +227,7 @@ struct Config {
   int max_blocks = 16; // per-launch block batch
 };
 
-bool config_valid(const Config& config) noexcept;
+[[nodiscard]] bool config_valid(const Config& config) noexcept;
 
 // Persistent buffers only: planes + per-block work arrays.
 std::uint64_t persistent_device_bytes(const Config& config) noexcept;

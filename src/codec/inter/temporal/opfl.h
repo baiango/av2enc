@@ -19,7 +19,7 @@
 namespace av2enc::inter::temporal {
 
 // §5.20.7.6 opfl_allowed_for_refs().
-bool opfl_allowed_for_refs(int d0, int d1, bool frame_is_switch,
+[[nodiscard]] bool opfl_allowed_for_refs(int d0, int d1, bool frame_is_switch,
                            bool ref0_scaled, bool ref1_scaled);
 
 struct OpflJob {

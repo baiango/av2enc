@@ -83,7 +83,7 @@ struct ScoredInterCandidate {
 // the Lagrangian cost.  `evaluate_residual=false` still measures the skip
 // distortion (Y+U+V SSE) and skip_flag cost through the shared residual path,
 // so every candidate uses the same distortion units.
-bool score_inter_candidate(const InterCandidateSpec& spec,
+[[nodiscard]] bool score_inter_candidate(const InterCandidateSpec& spec,
                            const residual::BlockInput& block,
                            bool evaluate_residual,
                            const RateContext& rate_context,

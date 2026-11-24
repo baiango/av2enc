@@ -30,14 +30,14 @@
 namespace av2enc::cuda::still_lossless {
 
 // True when this build has the CUDA block stage compiled in.
-bool available() noexcept;
+[[nodiscard]] bool available() noexcept;
 
 // Fills `blocks` with one `lossless::BlockCoding` per 8x8 luma block in raster
 // order (ceil(width/8) columns).  `options.precomputed` is ignored; the
 // caller installs the returned array in `options.precomputed` before calling
 // `av2enc::lossless::encode_still()`.  Returns false with `error` set on
 // geometry, device or arena failure.
-bool compute_block_coding(const ::av2enc::lossless::StillPicture& picture,
+[[nodiscard]] bool compute_block_coding(const ::av2enc::lossless::StillPicture& picture,
                           const ::av2enc::lossless::Options& options,
                           std::vector<::av2enc::lossless::BlockCoding>* blocks,
                           std::string& error);

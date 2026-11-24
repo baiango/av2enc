@@ -28,14 +28,14 @@ void append_serialized(std::vector<std::uint8_t>& out, const RawObu& obu);
 
 // TODO(spec): Parse an AV2 OBU header from `bytes` and split it into a RawObu.
 // Not implemented: returns false with an error instead of guessing syntax.
-bool parse_header(std::span<const std::uint8_t> bytes,
+[[nodiscard]] bool parse_header(std::span<const std::uint8_t> bytes,
                   RawObu& out,
                   std::size_t& consumed,
                   std::string& error);
 
 // TODO(spec): Serialize an AV2 OBU header for the given raw type/flags.
 // Not implemented: returns false with an error instead of guessing syntax.
-bool write_header(std::uint8_t obu_type,
+[[nodiscard]] bool write_header(std::uint8_t obu_type,
                   bool has_size_field,
                   std::vector<std::uint8_t>& out,
                   std::string& error);

@@ -110,25 +110,25 @@ Plan make_plan(const TxParams& params, const Context& ctx);
 //   col_tx  = true for the column pass (changes the clip to +-2^BitDepth)
 //   bit_depth is 8 or 10.
 // Returns false for an unsupported length/type combination.
-bool inverse_1d(const std::int32_t* src, int n, int shift, bool col_tx,
+[[nodiscard]] bool inverse_1d(const std::int32_t* src, int n, int shift, bool col_tx,
                 Effective1d type, int bit_depth, std::int32_t* out);
 
 // Encoder-side forward transform (transpose of inverse_1d).  `inverse_shift`
 // is the same Transform_Shift[txSz][dir] the decoder will use.  Output
 // coefficients are in the decoder's dequant scale (see the header comment).
-bool forward_1d(const std::int32_t* src, int n, int inverse_shift,
+[[nodiscard]] bool forward_1d(const std::int32_t* src, int n, int inverse_shift,
                 Effective1d type, std::int32_t* out);
 
 // §7.15.4 + §7.15.4.1 inverse on one transform block.  `dequant` is the
 // adjusted-size raster array (w*h, the layout txv::dequantize produces);
 // `residual_coded` receives coded_w*coded_h samples (adjusted-size sample
 // duplication for 64-wide/tall blocks).
-bool inverse_block(const std::int32_t* dequant, const TxParams& params,
+[[nodiscard]] bool inverse_block(const std::int32_t* dequant, const TxParams& params,
                    const Context& ctx, std::int16_t* residual_coded);
 
 // Encoder counterpart of inverse_block().  `residual_adjusted` is the
 // adjusted-size residual (w*h); `coeff` receives w*h integer coefficients.
-bool forward_block(const std::int16_t* residual_adjusted,
+[[nodiscard]] bool forward_block(const std::int16_t* residual_adjusted,
                    const TxParams& params, const Context& ctx,
                    std::int32_t* coeff);
 
@@ -154,6 +154,6 @@ const std::int16_t* effective_kernel(Effective1d type, int n);
 // True when DDT changes at least one kernel of this block.  This is stricter
 // than plan.any_ddt(): a DDTX/FDDT derived at adjusted length 32 is alias-ed to
 // Dct_Kernel32 by §7.15.2.1, so it does not change the reconstruction.
-bool plan_has_ddt(const TxParams& params, const Context& ctx);
+[[nodiscard]] bool plan_has_ddt(const TxParams& params, const Context& ctx);
 
 }  // namespace av2enc::video::ddt

@@ -142,7 +142,7 @@ struct GpuTimings {
 };
 
 // Runs the block loop on `job.device`.  Defined in basic_pipeline.cu.
-bool run_gpu_job(const GpuJob& job, int device, std::string& error,
+[[nodiscard]] bool run_gpu_job(const GpuJob& job, int device, std::string& error,
                  GpuTimings* timings);
 
 }  // namespace detail
@@ -155,7 +155,7 @@ bool run_gpu_job(const GpuJob& job, int device, std::string& error,
 //
 // `timings` may be null.  The call performs one GPU synchronisation at most
 // (inside the block loop); entropy coding and OBU assembly are CPU-only.
-bool encode_still_picture_cuda(const av2enc::basic::StillPicture& picture,
+[[nodiscard]] bool encode_still_picture_cuda(const av2enc::basic::StillPicture& picture,
                                const av2enc::basic::StillPictureConfig& config,
                                av2enc::basic::StillEncodeResult& result, std::string& error,
                                av2enc::basic::BasicPartitionMode partition_mode,

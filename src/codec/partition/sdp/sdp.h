@@ -61,7 +61,7 @@ enum class TreeType : std::uint8_t {
   kChromaPart = 2,
 };
 const char* tree_type_name(TreeType type);
-bool is_valid_tree_type(TreeType type);
+[[nodiscard]] bool is_valid_tree_type(TreeType type);
 // §8.3.2: do_split / do_square_split / rect_type / do_ext_partition select
 // Tile*Cdf[PlaneStart].  CHROMA_PART codes from plane 1.
 int plane_start(TreeType type);
@@ -91,13 +91,13 @@ struct Tools {
   bool use_bru = false;
   bool is_bridge = false;
 };
-bool sdp_validate_geometry(const FrameGeometry& geometry, std::string& error);
-bool validate_tools(const Tools& tools, std::string& error);
+[[nodiscard]] bool sdp_validate_geometry(const FrameGeometry& geometry, std::string& error);
+[[nodiscard]] bool validate_tools(const Tools& tools, std::string& error);
 // The per-superblock bru_mode: false means read_partition() returns
 // PARTITION_NONE after the implied/numAllowed checks and codes no symbols.
-bool bru_mode_active(const Tools& tools);
+[[nodiscard]] bool bru_mode_active(const Tools& tools);
 // §5.20.3.1 is_bsize_allowed_for_extended_sdp().
-bool is_bsize_allowed_for_extended_sdp(BlockSize size,
+[[nodiscard]] bool is_bsize_allowed_for_extended_sdp(BlockSize size,
                                        PartitionType partition);
 
 struct Boundary {
@@ -131,22 +131,22 @@ int sdp_size_adjust(BlockSize size);
 int sdp_size_adjust_rect(BlockSize size);
 
 // §5.20.3.2 sdp_chroma_offset_for_subsize / _partition.
-bool sdp_chroma_offset_for_subsize(const FrameGeometry& geometry,
+[[nodiscard]] bool sdp_chroma_offset_for_subsize(const FrameGeometry& geometry,
                                    BlockSize subsize);
-bool sdp_chroma_offset_for_partition(const FrameGeometry& geometry,
+[[nodiscard]] bool sdp_chroma_offset_for_partition(const FrameGeometry& geometry,
                                      PartitionType partition, BlockSize size);
 
 // §5.20.3.2 sdp_ext_allowed() / sdp_uneven4_allowed().
 // `horizontal` is the rectType (RECT_HORZ when true).
-bool sdp_ext_allowed(const FrameGeometry& geometry, BlockSize size,
+[[nodiscard]] bool sdp_ext_allowed(const FrameGeometry& geometry, BlockSize size,
                      bool horizontal, TreeType tree_type, const Tools& tools);
-bool sdp_uneven4_allowed(const FrameGeometry& geometry, BlockSize size,
+[[nodiscard]] bool sdp_uneven4_allowed(const FrameGeometry& geometry, BlockSize size,
                          bool horizontal, TreeType tree_type,
                          const Tools& tools);
 
 // §5.20.3.2 sdp_check_chroma(): true only for a LUMA_PART block of at least 64x64
 // whose plane-residual size is representable.
-bool sdp_check_chroma(const FrameGeometry& geometry, BlockSize size,
+[[nodiscard]] bool sdp_check_chroma(const FrameGeometry& geometry, BlockSize size,
                       TreeType tree_type);
 
 // §5.20.3.2 sdp_partition_allowed().  `chroma_offset` is the recursion
@@ -155,7 +155,7 @@ bool sdp_check_chroma(const FrameGeometry& geometry, BlockSize size,
 //   * the chromaOffset/block_coded checks are skipped for LUMA_PART;
 //   * the PARTITION_NONE half-block test has the CHROMA_PART@8x8 exception;
 //   * the !FrameIsIntra && RegionType==MIXED_REGION && subSize==4x4 reject.
-bool sdp_partition_allowed(const FrameGeometry& geometry, int mi_row,
+[[nodiscard]] bool sdp_partition_allowed(const FrameGeometry& geometry, int mi_row,
                            int mi_col, BlockSize size, PartitionType partition,
                            TreeType tree_type, bool has_chroma,
                            bool chroma_offset, RegionType region_type,
@@ -188,15 +188,15 @@ ChromaState sdp_resolve_chroma(const FrameGeometry& geometry, int mi_row,
 // §5.20.3.1 ChromaFollowsLuma for one LUMA_PART 64x64 root.  The spec sets an
 // initial value from the root partition and lets each *direct child* clear it.
 // Reproduced verbatim; do not "fix" the asymmetry.
-bool chroma_follows_luma(PartitionType root_partition,
+[[nodiscard]] bool chroma_follows_luma(PartitionType root_partition,
                          const std::vector<PartitionType>& child_partitions);
 
 // §5.20.3.1 CflAllowedInSdp at a CHROMA_PART 64x64 root.
-bool cfl_allowed_in_sdp(PartitionType luma_partition, bool chroma_follows,
+[[nodiscard]] bool cfl_allowed_in_sdp(PartitionType luma_partition, bool chroma_follows,
                         PartitionType chroma_partition);
 
-bool sdp_is_horizontal(PartitionType partition);
-bool sdp_is_vertical(PartitionType partition);
+[[nodiscard]] bool sdp_is_horizontal(PartitionType partition);
+[[nodiscard]] bool sdp_is_vertical(PartitionType partition);
 
 // ---------------------------------------------------------------------------
 // Tree
@@ -370,9 +370,9 @@ int count_leaves(const Node& node);
 
 // Structural validation; re-derives every spec rule and checks exact in-frame
 // coverage of both planes.  Costs and DecisionOptions are not checked.
-bool validate_tree(const FrameGeometry& geometry, const Tools& tools,
+[[nodiscard]] bool validate_tree(const FrameGeometry& geometry, const Tools& tools,
                    const Node& root, std::string& error);
-bool validate_frame(const FrameGeometry& geometry, const Tools& tools,
+[[nodiscard]] bool validate_frame(const FrameGeometry& geometry, const Tools& tools,
                     const FrameDecision& frame, std::string& error);
 
 // Deterministic canonical string (ignores cost).  Used by tests and the
@@ -474,7 +474,7 @@ SuperblockPlan plan_superblock_symbols(const FrameGeometry& geometry,
 // on a malformed plan; the result passes validate_tree() on success.  The
 // caller-supplied grids carry cross-superblock context and are filled in
 // decode order.
-bool decode_superblock_symbols(const FrameGeometry& geometry,
+[[nodiscard]] bool decode_superblock_symbols(const FrameGeometry& geometry,
                                const Tools& tools, int sb_mi_row,
                                int sb_mi_col,
                                const std::vector<Symbol>& symbols,

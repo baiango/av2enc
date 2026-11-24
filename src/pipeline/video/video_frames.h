@@ -16,7 +16,7 @@ namespace av2enc::video::frames {
 
 // Dispatches every default-off frame-type mode.  Returns false with `error`
 // when no mode is selected or a combination is invalid.
-bool encode_special_sequence(std::span<const VideoInputFrame> frames,
+[[nodiscard]] bool encode_special_sequence(std::span<const VideoInputFrame> frames,
                              const VideoOptions& options,
                              VideoSequenceResult& result, std::string& error);
 

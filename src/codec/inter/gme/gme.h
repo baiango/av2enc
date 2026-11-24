@@ -61,7 +61,7 @@ struct GmParams {
 
 GmParams make_identity_gm();
 GmParams make_gm(GmType type, const std::array<std::int32_t, 6>& p);
-bool is_identity_model(const GmParams& params);
+[[nodiscard]] bool is_identity_model(const GmParams& params);
 
 // ---------------------------------------------------------------------------
 // Correspondences and block MVs.
@@ -197,8 +197,8 @@ GmEstimate estimate_gm_warps(std::span<const GmWarpSample> warps, const GmOption
 
 // True when the model is representable by §5.18.9.1 (type-ranges and the
 // syntax quantisation grid). On failure `reason` (when non-null) explains why.
-bool gm_params_codable(const GmParams& params, std::string* reason);
-bool validate_gm_params(const GmParams& params, const GmOptions& options, GmDiagnostics* diag);
+[[nodiscard]] bool gm_params_codable(const GmParams& params, std::string* reason);
+[[nodiscard]] bool validate_gm_params(const GmParams& params, const GmOptions& options, GmDiagnostics* diag);
 
 // §7.12.2.2 get_warp_motion_vector. `x`/`y` are Q16 luma samples of the
 // projected point. `precision` follows §6.19.7.x: 7 = 1/8, 6 = 1/4,
@@ -252,7 +252,7 @@ GmFramePlan make_gm_frame_plan(std::span<const GmEstimate> estimates,
 
 // Bilinear warp of an 8-bit plane by `params` (current -> reference). This is
 // an encoder-side quality proxy, NOT the normative §7.13.3.19 predictor.
-bool warp_plane_bilinear(const GmParams& params, const std::uint8_t* src, int src_w, int src_h,
+[[nodiscard]] bool warp_plane_bilinear(const GmParams& params, const std::uint8_t* src, int src_w, int src_h,
                          int src_stride, std::uint8_t* dst, int dst_w, int dst_h, int dst_stride,
                          int bit_depth);
 

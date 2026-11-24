@@ -68,16 +68,16 @@ struct ObuHeader {
 bool operator==(const ObuHeader& a, const ObuHeader& b);
 bool operator!=(const ObuHeader& a, const ObuHeader& b);
 
-bool is_temporal_delimiter(ObuType type);
-bool is_global_layer_type(ObuType type);  // TD / MSDO infer GLOBAL_XLAYER_ID
-bool is_frame_obu(ObuType type);
-bool is_config_obu(ObuType type);  // SEQ / LCR / OPS / atlas
+[[nodiscard]] bool is_temporal_delimiter(ObuType type);
+[[nodiscard]] bool is_global_layer_type(ObuType type);  // TD / MSDO infer GLOBAL_XLAYER_ID
+[[nodiscard]] bool is_frame_obu(ObuType type);
+[[nodiscard]] bool is_config_obu(ObuType type);  // SEQ / LCR / OPS / atlas
 
 // §5.2.2 header. The extension byte is emitted only when an xlayer/mlayer id
 // has to be signalled; TD/MSDO infer GLOBAL_XLAYER_ID with no extension.
-bool encode_obu_header(const ObuHeader& header, std::vector<std::uint8_t>& out,
+[[nodiscard]] bool encode_obu_header(const ObuHeader& header, std::vector<std::uint8_t>& out,
                        std::string& error);
-bool decode_obu_header(std::span<const std::uint8_t> bytes, ObuHeader& header,
+[[nodiscard]] bool decode_obu_header(std::span<const std::uint8_t> bytes, ObuHeader& header,
                        std::size_t& consumed, std::string& error);
 
 void append_leb128(std::vector<std::uint8_t>& out, std::uint32_t value);
@@ -85,7 +85,7 @@ std::size_t leb128_size(std::uint32_t value);
 
 // leb128(num_bytes_in_obu) | obu_header | payload (§5.2.1, Annex B.2).
 // `payload` must already include trailing bits for extensible OBUs.
-bool frame_obu(const ObuHeader& header, std::span<const std::uint8_t> payload,
+[[nodiscard]] bool frame_obu(const ObuHeader& header, std::span<const std::uint8_t> payload,
                std::vector<std::uint8_t>& out, std::string& error);
 
 struct ParsedObu {
@@ -94,20 +94,20 @@ struct ParsedObu {
   std::vector<std::uint8_t> raw;  // leb128 prefix + header + payload
 };
 
-bool parse_obus(std::span<const std::uint8_t> bytes,
+[[nodiscard]] bool parse_obus(std::span<const std::uint8_t> bytes,
                 std::vector<ParsedObu>& obus, std::string& error);
 
 // §5.8.2 global and §5.8.1 local LCR payloads, including the extensible-OBU
 // `obu_extension_flag` and trailing bits. Dependency maps drive
 // lcr_dependent_layer_map for mlayer > 0.
-bool write_layer_config_record_payload(
+[[nodiscard]] bool write_layer_config_record_payload(
     const layers::LayerConfigRecord& record,
     const layers::LayerDependencyMaps& dependencies,
     std::vector<std::uint8_t>& out, std::string& error);
 
 // §5.10 / §5.11 OPS payloads, including the extensible-OBU tail. Emits
 // ops_reset_flag = 1 and complete ops_mlayer_info() maps.
-bool write_operating_point_set_payload(const layers::OperatingPointSet& set,
+[[nodiscard]] bool write_operating_point_set_payload(const layers::OperatingPointSet& set,
                                        std::vector<std::uint8_t>& out,
                                        std::string& error);
 
@@ -128,7 +128,7 @@ struct ComposeOptions {
 // TD, global LCR, global OPS, then per-layer sequence/frame OBUs in ascending
 // xlayer order. Deterministic for a given input list. Rejects missing,
 // duplicated, out-of-order, or multi-frame inputs.
-bool compose_layered_stream(const LayerPlan& plan,
+[[nodiscard]] bool compose_layered_stream(const LayerPlan& plan,
                             const std::vector<LayerInput>& inputs,
                             const ComposeOptions& options,
                             std::vector<std::uint8_t>& out,
@@ -137,12 +137,12 @@ bool compose_layered_stream(const LayerPlan& plan,
 // Annex F.3.2 retention decision for one OBU. The TD is always retained;
 // global OBUs are retained through retention[GLOBAL][0][0]; SEQ/LCR/OPS/atlas
 // survive at m0/t0 when their xlayer is selected.
-bool obu_retained(const layers::RetentionMap& retention, const ObuHeader& header,
+[[nodiscard]] bool obu_retained(const layers::RetentionMap& retention, const ObuHeader& header,
                   bool& retained, std::string& error);
 
 // Annex F.3.2 sub-bitstream extraction. Copies retained OBUs byte-for-byte, so
 // an all-layers extraction is identical to the input.
-bool extract_substream(std::span<const std::uint8_t> input,
+[[nodiscard]] bool extract_substream(std::span<const std::uint8_t> input,
                        const layers::RetentionMap& retention,
                        std::vector<std::uint8_t>& output, std::string& error);
 

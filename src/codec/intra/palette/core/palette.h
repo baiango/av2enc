@@ -127,7 +127,7 @@ struct PaletteResult {
 // `visible_w`/`visible_h` clamp partial edge blocks.  Samples outside the
 // visible area are never read; the colour map is replicated to the full block
 // exactly as §5.20.8.4 does after the token loop.
-bool analyze_palette(const std::uint8_t* src, int stride, int block_w,
+[[nodiscard]] bool analyze_palette(const std::uint8_t* src, int stride, int block_w,
                      int block_h, int visible_w, int visible_h,
                      const std::uint8_t* cache, int cache_n,
                      const PaletteParams& params, PaletteResult& out,
@@ -160,7 +160,7 @@ void palette_residual(const std::uint8_t* src, int src_stride,
 // `w`/`h` are the coded block dimensions; the token loop clamps to
 // `visible_w`/`visible_h` per the onscreen formulas.  The encoder mutates
 // `cdfs` exactly like the decoder.
-bool encode_palette_y(av2::Encoder& enc, PaletteCdfState& cdfs,
+[[nodiscard]] bool encode_palette_y(av2::Encoder& enc, PaletteCdfState& cdfs,
                       const PaletteResult& result, int w, int h, int visible_w,
                       int visible_h, const std::uint8_t* cache, int cache_n,
                       std::string& error);
@@ -168,7 +168,7 @@ bool encode_palette_y(av2::Encoder& enc, PaletteCdfState& cdfs,
 // Local decoder used by the tests (and to self-check the encoder before the
 // dav2d gate).  `decode_palette_y` consumes the same symbols and rebuilds the
 // colour map; the caller compares it with the analysis result.
-bool decode_palette_y(av2::Decoder& dec, PaletteCdfState& cdfs, int w, int h,
+[[nodiscard]] bool decode_palette_y(av2::Decoder& dec, PaletteCdfState& cdfs, int w, int h,
                       int visible_w, int visible_h, const std::uint8_t* cache,
                       int cache_n, PaletteResult& out, std::string& error);
 

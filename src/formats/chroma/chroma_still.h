@@ -43,7 +43,7 @@ struct ChromaPicture {
 // Converts an 8-bit 4:2:0 source to `chroma` using
 // fmt::convert_420_8_to_picture() (sample replication, no interpolation), then
 // edge-replicates into the 64x64-superblock padding.
-bool make_chroma_picture(int width, int height, ChromaFormat chroma,
+[[nodiscard]] bool make_chroma_picture(int width, int height, ChromaFormat chroma,
                          std::span<const std::uint8_t> y,
                          std::span<const std::uint8_t> u,
                          std::span<const std::uint8_t> v,
@@ -51,7 +51,7 @@ bool make_chroma_picture(int width, int height, ChromaFormat chroma,
 
 // Same, from an already-converted fmt::Picture.  `picture.format.chroma` must
 // match; the source is expected to be an 8-bit payload (LSB-aligned samples).
-bool make_chroma_picture(const fmt::Picture& source, ChromaPicture& picture,
+[[nodiscard]] bool make_chroma_picture(const fmt::Picture& source, ChromaPicture& picture,
                          std::string& error);
 
 struct TxShape;
@@ -113,18 +113,18 @@ struct ChromaStillResult {
 // Encodes one still picture.  Returns false with `error` for an unsupported
 // geometry, a chroma residual shape with no legal Subsampled_Size entry, an
 // entropy coder failure, or invalid options.
-bool encode_chroma_still_picture(const ChromaPicture& picture,
+[[nodiscard]] bool encode_chroma_still_picture(const ChromaPicture& picture,
                                  const ChromaStillOptions& options,
                                  ChromaStillResult& result, std::string& error);
 
 // Copies the visible rectangle of a reconstructed plane into `out`
 // (visible_width * visible_height, tightly packed).
-bool copy_visible_plane(const ChromaStillResult& result, int plane,
+[[nodiscard]] bool copy_visible_plane(const ChromaStillResult& result, int plane,
                         std::vector<std::uint8_t>& out);
 
 // Writes a Y4M frame header + one frame for the reconstructed visible picture.
 // Used by the gate tool; chroma tags: C420, C422, C444, Cmono.
-bool write_recon_y4m(const ChromaStillResult& result, std::FILE* file,
+[[nodiscard]] bool write_recon_y4m(const ChromaStillResult& result, std::FILE* file,
                      std::uint32_t fps_num, std::uint32_t fps_den,
                      std::string& error);
 
