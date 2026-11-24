@@ -6,6 +6,13 @@
 #include <cstddef>
 
 #include "codec/transform/variants/tx_tables.h"
+
+// The row-pass MACs run in the pixel-kernel seam in the product build
+// (av2enc_core links src/primitives/kernels.cpp and defines AV2ENC_PRIMITIVES).
+// The per-component build_and_test.sh gates compile this TU on its own without
+// that archive, so they keep the inlined loops below, which are the oracle the
+// scalar table transcribes.  Including the header is harmless (it defines no
+// symbols); only `row_kernels()` differs.
 #include "primitives/kernels.h"
 
 namespace av2enc::txv {
@@ -220,6 +227,24 @@ std::int32_t round2(std::int32_t value, int n) {
   return (value + (1 << (n - 1))) >> n;
 }
 
+// Row-pass kernels from the pixel-kernel seam, or null when this TU is compiled
+// without it (the per-component gates).  Null falls through to the inlined
+// loops, which are the reference the scalar table transcribes, so both builds
+// are bit-identical.
+struct RowKernels {
+  primitives::ForwardTxRowFn forward = nullptr;
+  primitives::InverseTxRowFn inverse = nullptr;
+};
+
+inline RowKernels row_kernels() noexcept {
+#if defined(AV2ENC_PRIMITIVES)
+  const primitives::KernelTable& table = primitives::kernels();
+  return RowKernels{table.forward_tx_row, table.inverse_tx_row};
+#else
+  return RowKernels{};
+#endif
+}
+
 void forward_block(const std::int16_t* residual_adjusted, const TxParams& p,
                    double* coeff) {
   const int w = p.w;
@@ -232,8 +257,8 @@ void forward_block(const std::int16_t* residual_adjusted, const TxParams& p,
   const double scale_h = p.scale_h;
   double tmp[kMaxAdjTxElems] = {};
 
-  const auto& kernels = primitives::kernels();
-  const bool use_seam = kw != nullptr && kernels.forward_tx_row != nullptr &&
+  const RowKernels kernels = row_kernels();
+  const bool use_seam = kw != nullptr && kernels.forward != nullptr &&
                         (w == 4 || w == 8 || w == 16 || w == 32);
   for (int i = 0; i < h; ++i) {
     const int row = i * w;
@@ -241,8 +266,8 @@ void forward_block(const std::int16_t* residual_adjusted, const TxParams& p,
       // No transpose here: the forward row pass indexes kw[v * w + j] (output
       // then tap), which is already contiguous.  Only the inverse pass indexes
       // the kernel column-major and needs tx_kernel_transposed().
-      kernels.forward_tx_row(tx_kernel(row_type, w), residual_adjusted + row,
-                             tmp + row, w, scale_w);
+      kernels.forward(tx_kernel(row_type, w), residual_adjusted + row,
+                      tmp + row, w, scale_w);
       continue;
     }
     if (kw == nullptr) {
@@ -332,9 +357,11 @@ void inverse_block(const std::int32_t* dequant, const TxParams& p,
 
   // Row pass.  With a non-identity row kernel the MAC runs in the dispatch
   // seam (NEON on AArch64, scalar elsewhere); the kernel is the transpose of
-  // the §9.6 matrix, cached per (type, size) because it never changes.
-  const auto& kernels = primitives::kernels();
-  const bool use_seam = kw != nullptr && kernels.inverse_tx_row != nullptr &&
+  // the §9.6 matrix, cached per (type, size) because it never changes.  When
+  // this TU is built without the seam (component gates) `kernels.inverse` is
+  // null and the inlined loops below run.
+  const RowKernels kernels = row_kernels();
+  const bool use_seam = kw != nullptr && kernels.inverse != nullptr &&
                         (w == 4 || w == 8 || w == 16 || w == 32);
   for (int i = 0; i < h; ++i) {
     const int row = i * w;
@@ -343,8 +370,8 @@ void inverse_block(const std::int32_t* dequant, const TxParams& p,
       for (int j = 0; j < w; ++j) {
         scaled[j] = prescale(dequant[row + j]);
       }
-      kernels.inverse_tx_row(tx_kernel_transposed(row_type, w), scaled,
-                             intermediate + row, w, p.row_shift);
+      kernels.inverse(tx_kernel_transposed(row_type, w), scaled,
+                      intermediate + row, w, p.row_shift);
       continue;
     }
     if (kw == nullptr) {
