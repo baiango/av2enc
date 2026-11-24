@@ -164,7 +164,8 @@ void fill_random(std::vector<std::int16_t>* data, int n, std::mt19937* rng,
   std::uniform_int_distribution<int> dist(lo, hi);
   data->resize(static_cast<std::size_t>(n));
   for (int i = 0; i < n; ++i) {
-    (*data)[i] = static_cast<std::int16_t>(dist(*rng));
+    (*data)[static_cast<std::size_t>(i)] =
+        static_cast<std::int16_t>(dist(*rng));
   }
 }
 
@@ -185,8 +186,10 @@ void test_forward_idtx_is_identity() {
       // IDTX is a pass-through; odd-log2 rectangles add the 4096/2896
       // compensation, so compare using that factor.
       const double want =
-          static_cast<double>(residual[k]) * p->rect_prescale;
-      check(coeff[k] == want, "IDTX forward is scaled identity");
+          static_cast<double>(residual[static_cast<std::size_t>(k)]) *
+          p->rect_prescale;
+      check(coeff[static_cast<std::size_t>(k)] == want,
+            "IDTX forward is scaled identity");
     }
   }
 }
@@ -207,15 +210,17 @@ void test_inverse_impulse_matches_kernel() {
     const int h = p->h;
     for (int pos = 0; pos < w * h; ++pos) {
       std::fill(dequant.begin(), dequant.end(), 0);
-      dequant[pos] = pos == 0 ? 1000 : 17;
+      dequant[static_cast<std::size_t>(pos)] = pos == 0 ? 1000 : 17;
       inverse_block(dequant.data(), *p, recon.data());
       // Just check that the coded-size residual is clipped and that the
       // adjusted expansion is piecewise equal.  High-frequency coefficients
       // can legitimately round to zero at this magnitude.
       bool nonzero = false;
       for (int k = 0; k < p->coded_w * p->coded_h; ++k) {
-        nonzero = nonzero || recon[k] != 0;
-        check(recon[k] >= -256 && recon[k] <= 255, "inverse clip");
+        nonzero = nonzero || recon[static_cast<std::size_t>(k)] != 0;
+        check(recon[static_cast<std::size_t>(k)] >= -256 &&
+                  recon[static_cast<std::size_t>(k)] <= 255,
+              "inverse clip");
       }
       if (pos == 0) {
         check(nonzero, "DC impulse reconstructs nonzero");
@@ -225,9 +230,12 @@ void test_inverse_impulse_matches_kernel() {
         const int sy = p->coded_h / h;
         for (int y = 0; y < p->coded_h; ++y) {
           for (int x = 0; x < p->coded_w; ++x) {
-            const int ref = recon[static_cast<std::size_t>(y / sy) * w +
-                                  (x / sx)];
-            check(recon[static_cast<std::size_t>(y) * p->coded_w + x] == ref,
+            const int ref = recon[static_cast<std::size_t>(y / sy) *
+                                      static_cast<std::size_t>(w) +
+                                  static_cast<std::size_t>(x / sx)];
+            check(recon[static_cast<std::size_t>(y) *
+                           static_cast<std::size_t>(p->coded_w) +
+                       static_cast<std::size_t>(x)] == ref,
                   "adjusted-size duplication");
           }
         }
@@ -295,7 +303,8 @@ void test_dct_adst_alias_at_32() {
       forward_block(residual.data(), *pd, a.data());
       forward_block(residual.data(), *pt, b.data());
       for (int k = 0; k < n; ++k) {
-        check(a[k] == b[k], "32-length ADST/FDST aliases DCT");
+        check(a[static_cast<std::size_t>(k)] == b[static_cast<std::size_t>(k)],
+              "32-length ADST/FDST aliases DCT");
       }
     }
   }
@@ -316,18 +325,19 @@ void test_quantize_dequantize_exact() {
     for (int i = 0; i < n; ++i) {
       // lround ties: exactly k+0.5 and neighbours.
       const int base = dist(rng);
-      coeff[i] = (static_cast<double>(base) + 0.5) / p->quant_factor;
+      coeff[static_cast<std::size_t>(i)] =
+          (static_cast<double>(base) + 0.5) / p->quant_factor;
     }
     quantize(coeff.data(), *p, levels.data());
     for (int i = 0; i < n; ++i) {
-      check(levels[i] ==
-                static_cast<std::int32_t>(
-                    std::lround(coeff[i] * p->quant_factor)),
+      check(levels[static_cast<std::size_t>(i)] ==
+                static_cast<std::int32_t>(std::lround(
+                    coeff[static_cast<std::size_t>(i)] * p->quant_factor)),
             "quantize lround");
     }
     dequantize(levels.data(), *p, dequant.data());
     for (int i = 0; i < n; ++i) {
-      const std::int32_t qc = levels[i];
+      const std::int32_t qc = levels[static_cast<std::size_t>(i)];
       const std::int32_t aq = qc < 0 ? -qc : qc;
       const std::int32_t high = (aq * kQuantStep) & 0xFFFFFF;
       const std::int32_t dq = round2(high, kQuantTableBits) / p->dq_denom;
@@ -336,7 +346,8 @@ void test_quantize_dequantize_exact() {
           signed_dq < -(1 << 15)
               ? -(1 << 15)
               : (signed_dq > (1 << 15) - 1 ? (1 << 15) - 1 : signed_dq);
-      check(dequant[i] == expected, "dequantize formula");
+      check(dequant[static_cast<std::size_t>(i)] == expected,
+            "dequantize formula");
     }
   }
 }
@@ -361,37 +372,47 @@ void test_residual_helpers() {
     const int x0 = 63;
     const int y0 = 37;
     std::vector<std::int16_t> full(
-        static_cast<std::size_t>(p->coded_w) * p->coded_h);
+        static_cast<std::size_t>(p->coded_w) *
+        static_cast<std::size_t>(p->coded_h));
     for (int y = 0; y < p->coded_h; ++y) {
       const int yy = std::min(std::max(y0 + y, 0), sh - 1);
       for (int x = 0; x < p->coded_w; ++x) {
         const int xx = std::min(std::max(x0 + x, 0), sw - 1);
-        full[static_cast<std::size_t>(y) * p->coded_w + x] =
+        full[static_cast<std::size_t>(y) *
+                 static_cast<std::size_t>(p->coded_w) +
+             static_cast<std::size_t>(x)] =
             static_cast<std::int16_t>(
-                static_cast<int>(src[static_cast<std::size_t>(yy) * sw + xx]) -
+                static_cast<int>(src[static_cast<std::size_t>(yy) *
+                                         static_cast<std::size_t>(sw) +
+                                     static_cast<std::size_t>(xx)]) -
                 pred);
       }
     }
-    std::vector<std::int16_t> a(
-        static_cast<std::size_t>(p->w) * p->h);
-    std::vector<std::int16_t> b(
-        static_cast<std::size_t>(p->w) * p->h);
+    std::vector<std::int16_t> a(static_cast<std::size_t>(p->w) *
+                                static_cast<std::size_t>(p->h));
+    std::vector<std::int16_t> b(static_cast<std::size_t>(p->w) *
+                                static_cast<std::size_t>(p->h));
     make_residual(src.data(), sw, sw, sh, x0, y0, pred, *p, a.data());
     downsample_residual(full.data(), *p, b.data());
     for (int k = 0; k < p->w * p->h; ++k) {
-      check(a[k] == b[k], "make_residual == downsample");
+      check(a[static_cast<std::size_t>(k)] == b[static_cast<std::size_t>(k)],
+            "make_residual == downsample");
     }
 
     // upsample(downsample(x)) is the §7.15.4 expansion.
-    std::vector<std::int16_t> up(
-        static_cast<std::size_t>(p->coded_w) * p->coded_h);
+    std::vector<std::int16_t> up(static_cast<std::size_t>(p->coded_w) *
+                                 static_cast<std::size_t>(p->coded_h));
     upsample_residual(a.data(), *p, up.data());
     const int sx = p->coded_w / p->w;
     const int sy = p->coded_h / p->h;
     for (int y = 0; y < p->coded_h; ++y) {
       for (int x = 0; x < p->coded_w; ++x) {
-        check(up[static_cast<std::size_t>(y) * p->coded_w + x] ==
-                  a[static_cast<std::size_t>(y / sy) * p->w + (x / sx)],
+        check(up[static_cast<std::size_t>(y) *
+                     static_cast<std::size_t>(p->coded_w) +
+                 static_cast<std::size_t>(x)] ==
+                  a[static_cast<std::size_t>(y / sy) *
+                        static_cast<std::size_t>(p->w) +
+                    static_cast<std::size_t>(x / sx)],
               "upsample duplication");
       }
     }
@@ -429,7 +450,8 @@ void test_roundtrip_error() {
       upsample_residual(residual.data(), *p, up.data());
       double sse = 0.0;
       for (int k = 0; k < coded_n; ++k) {
-        const double d = static_cast<double>(recon[k]) - up[k];
+        const double d = static_cast<double>(recon[static_cast<std::size_t>(k)]) -
+                         up[static_cast<std::size_t>(k)];
         sse += d * d;
       }
       const double mse = sse / static_cast<double>(coded_n);
@@ -456,14 +478,16 @@ void test_64x64_equals_duplicated_32x32() {
     }
     std::uniform_int_distribution<int> dist(-100, 100);
     for (int i = 0; i < 32 * 32; ++i) {
-      dequant[i] = dist(rng);
+      dequant[static_cast<std::size_t>(i)] = dist(rng);
     }
     inverse_block(dequant.data(), *p64, a.data());
     inverse_block(dequant.data(), *p32, b.data());
     for (int y = 0; y < 64; ++y) {
       for (int x = 0; x < 64; ++x) {
-        expanded[static_cast<std::size_t>(y) * 64 + x] =
-            b[static_cast<std::size_t>(y / 2) * 32 + (x / 2)];
+        expanded[static_cast<std::size_t>(y) * 64 +
+                 static_cast<std::size_t>(x)] =
+            b[static_cast<std::size_t>(y / 2) * 32 +
+              static_cast<std::size_t>(x / 2)];
       }
     }
     check(std::memcmp(a.data(), expanded.data(), a.size() * sizeof(a[0])) ==
@@ -500,7 +524,9 @@ void test_partition_geometry() {
         area += ws[k] * hs[k];
         for (int y = 0; y < hs[k]; ++y) {
           for (int x = 0; x < ws[k]; ++x) {
-            cover[static_cast<std::size_t>(ys[k] + y) * w + xs[k] + x] += 1;
+            cover[static_cast<std::size_t>(ys[k] + y) *
+                      static_cast<std::size_t>(w) +
+                  static_cast<std::size_t>(xs[k] + x)] += 1;
           }
         }
       }
@@ -528,7 +554,7 @@ void test_selection() {
   std::vector<std::int16_t> vert(16 * 16);
   for (int y = 0; y < 16; ++y) {
     for (int x = 0; x < 16; ++x) {
-      vert[static_cast<std::size_t>(y) * 16 + x] =
+      vert[static_cast<std::size_t>(y) * 16 + static_cast<std::size_t>(x)] =
           static_cast<std::int16_t>(x < 8 ? 0 : 120);
     }
   }

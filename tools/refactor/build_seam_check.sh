@@ -89,6 +89,7 @@ TUS=(
     "src/codec/intra/modes/intra_modes.cpp|"
     "src/codec/intra/dip/dip.cpp|"
     "src/codec/intra/ibc/core/ibc.cpp|"
+    "src/codec/transform/variants/tx_variants.cpp|"
 )
 
 has_kernel_ref() {

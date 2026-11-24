@@ -46,11 +46,20 @@ Legend:
 | 11 | `src/codec/intra/ibc/core/ibc.cpp:253` (chroma copy) | `block_copy` | **no** | **no** | same | **unsafe — rf4-gaps** |
 | 12 | `src/codec/intra/ibc/core/ibc.cpp:379` | `sad` | **no** | **no** | same | **unsafe — rf4-gaps** |
 | 13 | `src/codec/intra/ibc/core/ibc.cpp:393` | `sad` | **no** | **no** | same | **unsafe — rf4-gaps** |
+| 14 | `src/codec/transform/variants/tx_variants.cpp:260` (`forward_block` row pass) | `forward_tx_row` | yes (`row_kernels()`, `:239`) | yes | `src/codec/transform/variants/build_and_test.sh` | **safe** |
+| 15 | `src/codec/transform/variants/tx_variants.cpp:363` (`inverse_block` row pass) | `inverse_tx_row` | yes (`row_kernels()`, `:239`) | yes | same | **safe** |
 
-Summary: **13 call sites in 8 TUs; 7 sites in 3 TUs are unsafe.**  All seven
+Summary: **15 call sites in 9 TUs; 7 sites in 3 TUs are unsafe.**  All seven
 unsafe sites are under `src/codec/intra/**` and are owned by the parallel
-`rf4-gaps` branch; this branch does not edit them.  The other six sites are
+`rf4-gaps` branch; this branch does not edit them.  The other eight sites are
 guarded and their fallbacks compile with no `kernels.cpp`.
+
+Sites 14-15 were the NEON transform row passes.  They landed unguarded (every
+gate that links `tx_variants.cpp` alone failed at link with an undefined
+`primitives::kernels()`) and were fixed by routing both through `row_kernels()`,
+which returns null pointers without `AV2ENC_PRIMITIVES` so the inlined loops
+run.  `tx_variants.cpp` was also missing from `build_seam_check.sh`'s `TUS`
+list, which is why the check did not catch them; it is now listed there.
 
 What "unsafe" means concretely, on `d5aeafe`:
 
@@ -73,8 +82,8 @@ What "unsafe" means concretely, on `d5aeafe`:
 
 `tools/refactor/build_seam_check.sh` reported 5/8 TUs green and the three intra
 TUs red on the rf5 branch alone.  After `rf4-gaps` landed its guards it is
-green — 8 TUs, both configurations — and is registered in `tools/run_gates.sh`
-as `gate_build_seam`.
+green — 9 TUs, both configurations, with the two transform row passes added —
+and is registered in `tools/run_gates.sh` as `gate_build_seam`.
 
 ## Build-system intent
 

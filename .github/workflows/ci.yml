@@ -40,6 +40,15 @@ jobs:
       - name: Kernel gate (fixture-free)
         # Excluded from the -E above because it is itself named gate_*.
         run: ctest --test-dir build-release -R '^gate_primitives$' --output-on-failure
+      - name: Codec unit gates (fixture-free)
+        # The RDOQ trellis and transform-variant gates are pure unit tests, but
+        # they are registered under the additive gate_ label like
+        # gate_primitives, so they need the same explicit selection.  rdoq_test
+        # caught the per-magnitude rate-cache regression that only the component
+        # script had been running.
+        run: >
+          ctest --test-dir build-release
+          -R '^gate_(rdoq|tx_variants)$' --output-on-failure
       - name: Build-seam check
         # Both configurations of every migrated TU; no testdata needed.
         run: bash tools/refactor/build_seam_check.sh

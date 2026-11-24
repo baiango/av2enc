@@ -83,6 +83,37 @@ endif()
 add_test(NAME gate_primitives COMMAND primitives_test)
 set_tests_properties(gate_primitives PROPERTIES LABELS gate)
 
+# RDOQ trellis core: exhaustive canonical-path enumeration plus an independent
+# forward DP on random blocks.  This caught a real regression (the per-magnitude
+# rate cache priced every arrival state with prev = 0), which had landed because
+# the test only ran from the component script.  Registered under the additive
+# `gate_` label for the same reason as gate_primitives: `tools/test.sh` keeps
+# its pinned `ctest -LE gate` unit inventory, while
+# verify_baseline.sh --check tolerates additive gate tests.
+add_executable(rdoq_test "${PROJECT_SOURCE_DIR}/src/codec/rate/rdoq/rdoq_test.cpp")
+target_link_libraries(rdoq_test PRIVATE av2enc_core)
+av2enc_apply_warnings(rdoq_test)
+target_include_directories(rdoq_test PRIVATE "${PROJECT_SOURCE_DIR}/src/codec/rate/rdoq")
+# The trellis cost is diffed against independently recomputed doubles; keep the
+# same no-contraction contract as av2enc_core.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(rdoq_test PRIVATE -ffp-contract=off)
+endif()
+add_test(NAME gate_rdoq COMMAND rdoq_test)
+set_tests_properties(gate_rdoq PROPERTIES LABELS gate)
+
+# Transform variants: kernel tables, forward/inverse round trip and the
+# TX-type/size selection rules.  Also additive (see gate_primitives).
+add_executable(tx_variants_test
+  "${PROJECT_SOURCE_DIR}/src/codec/transform/variants/tx_variants_test.cpp")
+target_link_libraries(tx_variants_test PRIVATE av2enc_core)
+av2enc_apply_warnings(tx_variants_test)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(tx_variants_test PRIVATE -ffp-contract=off)
+endif()
+add_test(NAME gate_tx_variants COMMAND tx_variants_test)
+set_tests_properties(gate_tx_variants PROPERTIES LABELS gate)
+
 # §6.17.2 loop-restoration CDF rows in the §8.2 frame image.  Decoder-free:
 # catches an omitted LR row before the 60-frame dav2d gate sees the
 # frame-3 desynchronisation.
