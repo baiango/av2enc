@@ -190,6 +190,13 @@ using SubpelSadRowsFn = std::int32_t (*)(
 int intra_edge_filter_strength(int w, int h, bool smooth_neighbors,
                                int delta) noexcept;
 
+// Inverse-transform row pass: `out[o] = clip3(-(1<<15), (1<<15)-1,
+// round2(sum_j kernel[o*n + j] * in[j], shift))`, accumulated in int64 to match
+// `txv::inverse_block`.  Returns 0 for an unsupported `n`.
+using InverseTxRowFn = void (*)(const std::int16_t* kernel,
+                                const std::int32_t* in, std::int32_t* out,
+                                int n, int shift) noexcept;
+
 struct KernelTable {
   // Short target name: "scalar" today; "neon"/"avx2" when built.
   const char* name = "scalar";
@@ -209,6 +216,13 @@ struct KernelTable {
   // `me::me_sad_subpel_rows` including the border clamp and the integer-MV
   // bypass.  See docs/simd-plan.md.
   SubpelSadRowsFn subpel_sad_rows = nullptr;
+  // Inverse-transform row pass (§7.15): one length-`n` row of dequantised
+  // coefficients to intermediate samples, `n` in {4, 8, 16, 32}.  `kernel`
+  // points at the transpose of the §9.6 n x n kernel (row-major, so row `o`
+  // holds the taps for output `o`); building that transpose is the caller's
+  // job and is cached per size.  Int64 accumulation, Round2(`shift`), clip to
+  // ±(1<<15) — bit-exact with txv::inverse_block's row pass.
+  InverseTxRowFn inverse_tx_row = nullptr;
 };
 
 // The portable C++ reference table.  Never changes; always available.

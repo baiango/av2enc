@@ -6,6 +6,7 @@
 #include <cstddef>
 
 #include "codec/transform/variants/tx_tables.h"
+#include "primitives/kernels.h"
 
 namespace av2enc::txv {
 namespace {
@@ -130,6 +131,33 @@ const std::int16_t* tx_kernel(Tx1dType type, int n) {
       if (n == 16) return &kDct16[0][0];
       return &kDct32[0][0];
   }
+}
+
+// Transpose of the §9.6 kernel for `(type, n)`, built once.
+//
+// The primitives seam walks the taps contiguously for one output at a time, so
+// it needs row-major `k[o][j]`; `tx_kernel` returns the normative column-major
+// `k[j*n + o]`.  Transposing is a one-time per (type, size) cost, not per block.
+// Returns nullptr when the kernel is the zero placeholder (n not in the §9.6
+// set), which the caller treats as "no seam".
+const std::int16_t* tx_kernel_transposed(Tx1dType type, int n) {
+  const std::int16_t* src = tx_kernel(type, n);
+  if (src == nullptr) return nullptr;
+  const int size_index = (n == 4) ? 0 : (n == 8) ? 1 : (n == 16) ? 2 : (n == 32) ? 3 : -1;
+  if (size_index < 0) return nullptr;
+  constexpr int kTypes = 8;
+  static std::int16_t cache[kTypes][4][32 * 32];
+  static bool built[kTypes][4] = {};
+  const int t = static_cast<int>(type) & (kTypes - 1);
+  if (!built[t][size_index]) {
+    for (int j = 0; j < n; ++j) {
+      for (int o = 0; o < n; ++o) {
+        cache[t][size_index][o * n + j] = src[j * n + o];
+      }
+    }
+    built[t][size_index] = true;
+  }
+  return &cache[t][size_index][0];
 }
 
 std::optional<TxParams> make_tx_params(int coded_w, int coded_h,
@@ -291,9 +319,23 @@ void inverse_block(const std::int32_t* dequant, const TxParams& p,
 
   std::int32_t intermediate[kMaxAdjTxElems] = {};
 
-  // Row pass.
+  // Row pass.  With a non-identity row kernel the MAC runs in the dispatch
+  // seam (NEON on AArch64, scalar elsewhere); the kernel is the transpose of
+  // the §9.6 matrix, cached per (type, size) because it never changes.
+  const auto& kernels = primitives::kernels();
+  const bool use_seam = kw != nullptr && kernels.inverse_tx_row != nullptr &&
+                        (w == 4 || w == 8 || w == 16 || w == 32);
   for (int i = 0; i < h; ++i) {
     const int row = i * w;
+    if (use_seam) {
+      std::int32_t scaled[kMaxAdjTxDim];
+      for (int j = 0; j < w; ++j) {
+        scaled[j] = prescale(dequant[row + j]);
+      }
+      kernels.inverse_tx_row(tx_kernel_transposed(row_type, w), scaled,
+                             intermediate + row, w, p.row_shift);
+      continue;
+    }
     if (kw == nullptr) {
       for (int oj = 0; oj < w; ++oj) {
         const std::int64_t s =

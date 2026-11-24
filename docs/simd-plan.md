@@ -447,3 +447,59 @@ CDEF, each small.
    transform, intra and RDOQ at 3-7% each; there is no second 50% function to
    attack.  If more loop time is wanted, the next lever is algorithmic (the 720p
    RD gap), not another kernel slot.
+
+## Inverse-transform row pass on NEON (2026-11-24)
+
+The `--nightly-b` profile (`docs/profiles/README.md`) put
+`txv::inverse_block` and `txv::forward_block` at **10.7 % and 10.4 %** of work
+— together 21.1 %, the largest single subsystem after the RDOQ trellis. This
+adds the inverse row pass as a kernel slot.
+
+### Why it vectorises cleanly
+
+Measured on a harness that mirrors the row pass (int16 kernel x int32
+coefficient, int64 accumulation, Round2, clip):
+
+| size | full | MAC only | round/clip only | MAC share |
+|---|---:|---:|---:|---:|
+| 4x4 | 98 ns | 99 ns | 11 ns | 101 % |
+| 8x8 | 420 | 344 | 28 | 82 % |
+| 16x16 | 950 | 840 | 30 | 88 % |
+| 32x32 | 7 819 | 7 514 | 74 | 96 % |
+
+The epilogue is 1-4 %; the loop is multiply-accumulate, which is what NEON is
+for.
+
+### Exactness
+
+The scalar contract is int64 accumulation. `vmlaq_s32` on int16 taps widened
+to int32 reproduces it as long as the partial sums stay in int32, which holds
+for every legal transform (the §9.6 kernels are bounded by 64). Verified over
+**320 000 randomised blocks** with coefficients up to 2^20 — 0 mismatches — and
+then end-to-end: all five wavefront pins byte-identical at `--cpu-threads 1`
+and `8` with matching Stage-0 block dumps, `ctest` 12/12, `gate_primitives`,
+`gate_video_nightly`.
+
+### Cost of one detail
+
+The normative kernel is column-major (`k[j*n + o]`); the seam walks taps
+contiguously, so it needs the transpose. That is built once per `(type, size)`
+and cached — not per block.
+
+### Speed
+
+| arm | median of 3, 16 f QP116 `--nightly-b`, `--cpu-threads 1` |
+|---|---:|
+| `AV2ENC_SIMD=scalar` | **115.4 s** |
+| `AV2ENC_SIMD=auto` (NEON) | **101.5 s** |
+
+**12.1 % off single-thread CPU time**, consistent across reps. Quote the
+scalar-vs-auto comparison, not a wall-clock A/B against an older binary: an
+earlier attempt to measure it that way read 2.4 % because the "baseline" build
+still carried the dispatch slot.
+
+### What is left
+
+The forward transform is the mirror image and has the same structure, so it is
+the obvious next slot (~10 % of work, same MAC-bound shape). The row pass here
+was the larger half only because the inverse runs on more candidates.

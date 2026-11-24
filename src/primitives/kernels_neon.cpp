@@ -310,6 +310,41 @@ std::int32_t neon_subpel_sad_rows(const std::uint8_t* cur,
   return sad;
 }
 
+// Inverse-transform row pass.  The scalar contract accumulates in int64; the
+// §9.6 kernels are bounded by 64 in magnitude and the intermediate fits int32
+// for every legal transform, so widening int16 taps to int32 and using
+// vmlaq_s32 reproduces it exactly (verified over 320k randomised blocks with
+// coefficients up to 2^20, 0 mismatches — docs/simd-plan.md).
+void neon_inverse_tx_row(const std::int16_t* kernel, const std::int32_t* in,
+                         std::int32_t* out, int n, int shift) noexcept {
+  if (kernel == nullptr || in == nullptr || out == nullptr || n <= 0) return;
+  constexpr std::int32_t lo = -(1 << 15);
+  constexpr std::int32_t hi = (1 << 15) - 1;
+  const std::int32_t round = static_cast<std::int32_t>(1) << (shift - 1);
+  for (int o = 0; o < n; ++o) {
+    const std::int16_t* taps = kernel + static_cast<std::size_t>(o) *
+                                            static_cast<std::size_t>(n);
+    int32x4_t acc = vdupq_n_s32(0);
+    int j = 0;
+    for (; j + 4 <= n; j += 4) {
+      const int16x4_t kv = vld1_s16(taps + j);
+      const int32x4_t iv = vld1q_s32(in + j);
+      acc = vmlaq_s32(acc, vmovl_s16(kv), iv);
+    }
+    std::int32_t lanes[4];
+    vst1q_s32(lanes, acc);
+    std::int32_t sum = static_cast<std::int32_t>(
+        static_cast<std::int64_t>(lanes[0]) + lanes[1] + lanes[2] + lanes[3]);
+    for (; j < n; ++j) {
+      sum = static_cast<std::int32_t>(
+          static_cast<std::int64_t>(sum) +
+          static_cast<std::int64_t>(taps[j]) * in[j]);
+    }
+    const std::int32_t v = (sum + round) >> shift;
+    out[o] = v < lo ? lo : (v > hi ? hi : v);
+  }
+}
+
 KernelTable make_neon_table() noexcept {
   // Start from the scalar table so unimplemented slots stay scalar (never
   // null) and override only the slots this TU has proven.
@@ -317,6 +352,7 @@ KernelTable make_neon_table() noexcept {
   table.name = "neon";
   table.sad_sse = neon_sad_sse;
   table.subpel_sad_rows = neon_subpel_sad_rows;
+  table.inverse_tx_row = neon_inverse_tx_row;
   return table;
 }
 

@@ -490,6 +490,27 @@ int strength_impl(int w, int h, bool smooth_neighbors, int delta) noexcept {
   return strength;
 }
 
+// Transcribed from `txv::inverse_block`'s row pass: int64 accumulation over the
+// taps, Round2(., shift), clip to int16.  `kernel` is the transposed §9.6
+// matrix, so output `o` reads `kernel[o*n + j]`.
+void scalar_inverse_tx_row(const std::int16_t* kernel, const std::int32_t* in,
+                           std::int32_t* out, int n, int shift) noexcept {
+  if (kernel == nullptr || in == nullptr || out == nullptr || n <= 0) return;
+  constexpr std::int32_t lo = -(1 << 15);
+  constexpr std::int32_t hi = (1 << 15) - 1;
+  for (int o = 0; o < n; ++o) {
+    const std::int16_t* taps = kernel + static_cast<std::size_t>(o) *
+                                            static_cast<std::size_t>(n);
+    std::int64_t sum = 0;
+    for (int j = 0; j < n; ++j) {
+      sum += static_cast<std::int64_t>(taps[j]) * in[j];
+    }
+    std::int32_t v = static_cast<std::int32_t>(sum);
+    v = (v + (1 << (shift - 1))) >> shift;
+    out[o] = v < lo ? lo : (v > hi ? hi : v);
+  }
+}
+
 constexpr KernelTable make_scalar_table() noexcept {
   return KernelTable{"scalar",
                      scalar_sad,
@@ -500,7 +521,8 @@ constexpr KernelTable make_scalar_table() noexcept {
                      scalar_edge_filter,
                      scalar_sad_u16_clamped,
                      scalar_variance_u16,
-                     scalar_subpel_sad_rows};
+                     scalar_subpel_sad_rows,
+                     scalar_inverse_tx_row};
 }
 
 }  // namespace
