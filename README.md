@@ -62,10 +62,34 @@ rav1e **53.0**. The 720p gap is content-dependent; see
 
 ## Quick start
 
+**Just want to see it run?** This generates its own input, needs no test media,
+and prints what each decoder you have on the machine returns:
+
 ```sh
 cmake --preset release
 cmake --build --preset release -j8
+tools/try-it.sh --all-presets      # the three presets below, ~30 s
+```
 
+Pick one with `--preset fast-decode|best|nightly-b`; `--frames`, `--size`,
+`--qp` and `--gops` set the input, and `--verbose` prints the encoder command.
+Every decode is compared picture-for-picture against the encoder's own
+reconstruction (`--video-recon`), not just counted, and nothing is pinned: no
+expected byte counts, no MD5s, so the script stays correct when the presets
+change. Decoders are used only if they are installed (`avmdec`, `dav2d`,
+`splot`; or `tools/bin/`).
+
+At the default 12 frames all three presets come back `recon-equal` on every
+decoder. At `--frames 18` the shipped paths still do (`fast-decode`, `best`),
+while `--preset nightly-b` loses a picture on the pinned `dav2d`
+(`17/18 pictures  <-- short`) — that is the research path the README already
+marks as not shippable, and the script reporting it is the script doing its
+job.
+
+The commands below use the pinned local fixtures under `testdata/`, which are
+gitignored and must be generated first (`docs/testdata-provenance.md`).
+
+```sh
 # rate-matched 240p point
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/fd.ivf \
   --video --frames 60 --qp 106 --cpu-threads 8 --fast-decode
