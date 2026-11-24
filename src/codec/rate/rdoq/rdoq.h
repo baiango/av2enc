@@ -131,6 +131,13 @@ struct RateModel {
   void* context = nullptr;
   CoefficientRateFn coefficient_rate = nullptr;
   EobRateFn eob_rate = nullptr;
+  // True when `coefficient_rate` ignores `prev_abs_state` and `level_context`,
+  // i.e. the bits for one (scan_pos, level, is_eob) are the same for every
+  // arrival state.  The trellis then prices each magnitude once per scan
+  // position instead of once per (state, magnitude).  Leave it false for a
+  // model that reads either argument (the bring-up default does read
+  // `prev_abs_state`); a false value only costs time, never correctness.
+  bool coefficient_rate_ignores_state = false;
 };
 
 // Bring-up model.  It is deliberately simple and is *not* an entropy estimate;

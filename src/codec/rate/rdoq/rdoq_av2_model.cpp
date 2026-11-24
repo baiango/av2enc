@@ -408,6 +408,10 @@ RateModel Model::rate_model() noexcept {
   model.context = this;
   model.coefficient_rate = &Model::coefficient_rate;
   model.eob_rate = &Model::eob_rate;
+  // coefficient_rate() discards `prev_abs_state` and `level_context` (the AV2
+  // symbol cost is a function of scan position, level and EOB only), so the
+  // trellis can price each magnitude once per position.
+  model.coefficient_rate_ignores_state = true;
   return model;
 }
 

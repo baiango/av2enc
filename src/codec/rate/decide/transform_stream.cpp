@@ -562,6 +562,9 @@ av2enc::rdoq::RateModel TransformStreamRate::rdoq_rate_model() noexcept {
   model.context = this;
   model.coefficient_rate = &TransformStreamRate::coefficient_rate_callback;
   model.eob_rate = &TransformStreamRate::eob_rate_callback;
+  // coefficient_rate_callback() discards `prev_abs_state` and `level_context`,
+  // so the trellis may price each magnitude once per scan position.
+  model.coefficient_rate_ignores_state = true;
   return model;
 }
 
