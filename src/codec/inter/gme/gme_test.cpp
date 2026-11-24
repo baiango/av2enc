@@ -19,6 +19,7 @@
 #include <fstream>
 #include <functional>
 #include <limits>
+#include <numbers>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -67,7 +68,7 @@ std::int32_t q16(double value) {
 }
 
 GmParams make_similarity(double scale, double angle_deg, double tx, double ty) {
-  const double radians = angle_deg * 3.14159265358979323846 / 180.0;
+  const double radians = angle_deg * std::numbers::pi / 180.0;
   const double c = std::cos(radians) * scale;
   const double s = std::sin(radians) * scale;
   GmParams params;

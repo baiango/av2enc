@@ -27,6 +27,7 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <numbers>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -430,7 +431,7 @@ void TestI128() {
 
 cpu::GmParams Similarity(double scale, double angle_deg, double tx,
                          double ty) {
-  const double radians = angle_deg * 3.14159265358979323846 / 180.0;
+  const double radians = angle_deg * std::numbers::pi / 180.0;
   const double c = std::cos(radians) * scale;
   const double s = std::sin(radians) * scale;
   cpu::GmParams params;
