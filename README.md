@@ -1,8 +1,8 @@
 # av2enc — from-scratch GPU AV2 encoder
 
-> **Vibe-coded:** built with **DeepSeek V4.1 Flash 1017** in **OpenCode**, with
-> AI subagents writing most of the code and a human directing the architecture
-> and review. Treat it accordingly.
+> **Vibe-coded:** built with **DeepSeek V4.1 Flash 1017** and **MiMo V2.6
+> Flash** in **OpenCode**, with AI subagents writing most of the code and a human
+> directing the architecture and review. Treat it accordingly.
 
 > **Agents:** read `AGENTS.md`, `docs/cuda-interface.md` and
 > `docs/negative-results.md` before coding. Do not repeat listed failed
@@ -128,7 +128,9 @@ python3 tools/oracle.py --ref testdata/nasa_480x240_30fps_60f.y4m \
   is the quality oracle. The chained B path is `avmdec`-only until the drain
   defect is fixed.
 - **Not signalable:** 12-bit. **Not supported:** Windows, macOS CUDA, 8 GB
-  cards, RTX 4070 Super/5070.
+  cards, RTX 5070. The RTX 4070 Super (12 GB, `sm_86`) is a supported CUDA
+  target again: the encoder is compute-bound rather than memory-bound, so the
+  narrower 192-bit bus costs less than the bandwidth figure implies.
 
 ## Performance
 
@@ -144,7 +146,9 @@ python3 tools/oracle.py --ref testdata/nasa_480x240_30fps_60f.y4m \
 - CPU RD: Apple M4 with `--cpu-threads` and `AV2ENC_CPU_FAST=ON`; Modal for
   parallel sweeps. GPU hosts are for CUDA validation and the 720p benchmark.
 - GPU: RTX 3060 12 GB (feature baseline), RTX 3080 Ti (production), RTX 5090
-  (maximum speed). Linux + CUDA 12.8 for the GPU product; macOS arm64 for CPU.
+  (maximum speed), RTX 4070 Super (supported secondary `sm_86` target; the
+  workload is compute-bound, so its smaller bus is not disqualifying). Linux +
+  CUDA 12.8 for the GPU product; macOS arm64 for CPU.
 - VRAM arena: `min(total, free) − 512 MiB`, optionally `--vram-cap <MiB>`.
   No fixed preset.
 
