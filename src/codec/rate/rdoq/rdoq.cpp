@@ -336,6 +336,18 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
   std::int32_t max_level_searched = 0;
   bool truncated = false;
 
+  // Per-magnitude symbol-rate cache, reused across scan positions.  See the
+  // comment at the use site: coefficient_rate() ignores `prev`.
+  struct LevelRate {
+    double normal = 0.0;
+    double eob = 0.0;
+    bool normal_ready = false;
+    bool eob_ready = false;
+    bool normal_ok = false;
+    bool eob_ok = false;
+  };
+  std::vector<LevelRate> level_rates;
+
   for (std::size_t ii = count; ii-- > 0;) {
     const std::int32_t scan_pos = static_cast<std::int32_t>(ii);
     const Coefficient& coefficient = coefficients[ii];
@@ -367,6 +379,35 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
 
     const double zero_after = suffix_zero[ii + 1];
 
+    // Per-magnitude rate cache.  coefficient_rate() ignores prev, so the value
+    // is shared by every `prev`; it is filled lazily so the distortion stop
+    // rule below still exits the magnitude loop early.  `bound + 1` entries,
+    // reset per scan position.
+    level_rates.assign(static_cast<std::size_t>(bound) + 1, LevelRate{});
+    auto rate_for = [&](std::int32_t magnitude, bool is_eob,
+                        bool* ok) -> double {
+      LevelRate& r = level_rates[static_cast<std::size_t>(magnitude)];
+      const std::int32_t signed_level = magnitude == 0 ? 0 : sign * magnitude;
+      if (is_eob) {
+        if (!r.eob_ready) {
+          r.eob = coefficient_rate(rate_context, scan_pos, /*prev=*/0,
+                                   signed_level, coefficient.level_context, 1);
+          r.eob_ok = valid_rate(r.eob);
+          r.eob_ready = true;
+        }
+        *ok = r.eob_ok;
+        return r.eob;
+      }
+      if (!r.normal_ready) {
+        r.normal = coefficient_rate(rate_context, scan_pos, /*prev=*/0,
+                                    signed_level, coefficient.level_context, 0);
+        r.normal_ok = valid_rate(r.normal);
+        r.normal_ready = true;
+      }
+      *ok = r.normal_ok;
+      return r.normal;
+    };
+
     for (std::int32_t prev = 0; prev < states; ++prev) {
       Choice best;
       // The all-zero block is only meaningful at position 0; every other path
@@ -392,10 +433,10 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
 
         // Continue coding: this coefficient is a normal (possibly zero) level
         // and a later coefficient is the EOB coefficient.
-        const double normal_bits = coefficient_rate(
-            rate_context, scan_pos, prev, signed_level,
-            coefficient.level_context, 0);
-        if (!valid_rate(normal_bits)) {
+        bool normal_ok = false;
+        const double normal_bits = rate_for(magnitude, /*is_eob=*/false,
+                                            &normal_ok);
+        if (!normal_ok) {
           if (error != nullptr) *error = "RdoqRateFn returned an invalid value";
           return false;
         }
@@ -417,10 +458,10 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
 
         // This coefficient is the last non-zero coefficient (EOB).
         if (magnitude != 0) {
-          const double eob_coeff_bits = coefficient_rate(
-              rate_context, scan_pos, prev, signed_level,
-              coefficient.level_context, 1);
-          if (!valid_rate(eob_coeff_bits)) {
+          bool eob_ok = false;
+          const double eob_coeff_bits = rate_for(magnitude, /*is_eob=*/true,
+                                                 &eob_ok);
+          if (!eob_ok) {
             if (error != nullptr) *error = "RdoqRateFn returned an invalid value";
             return false;
           }
