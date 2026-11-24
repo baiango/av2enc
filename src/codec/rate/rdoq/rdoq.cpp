@@ -386,7 +386,8 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
     // stop rule below still exits the magnitude loop early.  `bound + 1`
     // entries, reset per scan position.
     const std::size_t bound_count = static_cast<std::size_t>(bound) + 1;
-    if (cache_by_magnitude) level_rates.assign(bound_count, LevelRate{});    auto rate_for = [&](std::int32_t magnitude, std::int32_t prev, bool is_eob,
+    if (cache_by_magnitude) level_rates.assign(bound_count, LevelRate{});
+    auto rate_for = [&](std::int32_t magnitude, std::int32_t prev, bool is_eob,
                         bool* ok) -> double {
       LevelRate* cached =
           cache_by_magnitude ? &level_rates[static_cast<std::size_t>(magnitude)]
@@ -475,8 +476,8 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
         // This coefficient is the last non-zero coefficient (EOB).
         if (magnitude != 0) {
           bool eob_ok = false;
-          const double eob_coeff_bits = rate_for(magnitude, prev, /*is_eob=*/true,
-                                                 &eob_ok);
+          const double eob_coeff_bits =
+              rate_for(magnitude, prev, /*is_eob=*/true, &eob_ok);
           if (!eob_ok) {
             if (error != nullptr) *error = "RdoqRateFn returned an invalid value";
             return false;

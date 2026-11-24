@@ -450,8 +450,9 @@ void test_roundtrip_error() {
       upsample_residual(residual.data(), *p, up.data());
       double sse = 0.0;
       for (int k = 0; k < coded_n; ++k) {
-        const double d = static_cast<double>(recon[static_cast<std::size_t>(k)]) -
-                         up[static_cast<std::size_t>(k)];
+        const double d =
+            static_cast<double>(recon[static_cast<std::size_t>(k)]) -
+            up[static_cast<std::size_t>(k)];
         sse += d * d;
       }
       const double mse = sse / static_cast<double>(coded_n);
