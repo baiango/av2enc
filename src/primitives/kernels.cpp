@@ -511,6 +511,23 @@ void scalar_inverse_tx_row(const std::int16_t* kernel, const std::int32_t* in,
   }
 }
 
+// Transcribed from `txv::forward_block`'s row pass: binary64 accumulation of
+// exact integer products, then `* scale`.  `kernel` is row-major so output `v`
+// reads kernel[v*n + j].
+void scalar_forward_tx_row(const std::int16_t* kernel, const std::int16_t* in,
+                           double* out, int n, double scale) noexcept {
+  if (kernel == nullptr || in == nullptr || out == nullptr || n <= 0) return;
+  for (int v = 0; v < n; ++v) {
+    const std::int16_t* taps = kernel + static_cast<std::size_t>(v) *
+                                            static_cast<std::size_t>(n);
+    double sum = 0.0;
+    for (int j = 0; j < n; ++j) {
+      sum += static_cast<double>(taps[j]) * static_cast<double>(in[j]);
+    }
+    out[v] = sum * scale;
+  }
+}
+
 constexpr KernelTable make_scalar_table() noexcept {
   return KernelTable{"scalar",
                      scalar_sad,
@@ -522,7 +539,8 @@ constexpr KernelTable make_scalar_table() noexcept {
                      scalar_sad_u16_clamped,
                      scalar_variance_u16,
                      scalar_subpel_sad_rows,
-                     scalar_inverse_tx_row};
+                     scalar_inverse_tx_row,
+                     scalar_forward_tx_row};
 }
 
 }  // namespace

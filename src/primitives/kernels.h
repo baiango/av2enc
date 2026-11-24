@@ -197,6 +197,12 @@ using InverseTxRowFn = void (*)(const std::int16_t* kernel,
                                 const std::int32_t* in, std::int32_t* out,
                                 int n, int shift) noexcept;
 
+// Forward-transform row pass (see KernelTable::forward_tx_row).  `in` and
+// `kernel` are int16, `out` receives the binary64 sums scaled by `scale`.
+using ForwardTxRowFn = void (*)(const std::int16_t* kernel,
+                                const std::int16_t* in, double* out, int n,
+                                double scale) noexcept;
+
 struct KernelTable {
   // Short target name: "scalar" today; "neon"/"avx2" when built.
   const char* name = "scalar";
@@ -223,6 +229,12 @@ struct KernelTable {
   // job and is cached per size.  Int64 accumulation, Round2(`shift`), clip to
   // ±(1<<15) — bit-exact with txv::inverse_block's row pass.
   InverseTxRowFn inverse_tx_row = nullptr;
+  // Forward-transform row pass.  `out[v] = scale * sum_j kernel[v*n + j] *
+  // in[j]` with `kernel` the int16 transpose of the §9.6 matrix and int16
+  // residual samples.  Every product is an exact integer and the total stays
+  // far below 2^53, so the binary64 result is order-independent — a vector
+  // reduction is bit-identical to the scalar loop, not an approximation.
+  ForwardTxRowFn forward_tx_row = nullptr;
 };
 
 // The portable C++ reference table.  Never changes; always available.

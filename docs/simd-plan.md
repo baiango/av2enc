@@ -503,3 +503,38 @@ still carried the dispatch slot.
 The forward transform is the mirror image and has the same structure, so it is
 the obvious next slot (~10 % of work, same MAC-bound shape). The row pass here
 was the larger half only because the inverse runs on more candidates.
+
+## Forward-transform row pass on NEON (2026-11-24)
+
+Same shape as the inverse pass above, and the other half of the 21.1 % that
+`txv::forward_block` + `txv::inverse_block` take in the `--nightly-b` profile.
+
+### Why reordering the double sum is safe
+
+The scalar loop accumulates in binary64: `sum += (double)k[j] * (double)r[j]`
+over int16 taps and int16 residual samples. Every product is an **exact
+integer**, and the total is bounded by `n * 64 * 32768` — 67,108,864 at n = 32,
+against 2^53 ≈ 9.0e15. So the sum is exact in binary64 and *any* summation
+order gives the identical double: a vector reduction is bit-identical, not an
+approximation. Verified over 800,000 randomised rows against a reversed sum, a
+4-lane reduction and an int64 accumulate — 0 mismatches — and then end-to-end.
+
+### The bug this caught
+
+The first attempt passed `tx_kernel_transposed()` to the forward slot as well,
+copying the inverse pass. That is wrong: the forward row pass indexes
+`kw[v * w + j]` (output then tap, already contiguous) while the inverse indexes
+`kw[j * w + oj]` (column-major). Only the inverse needs a transpose. The 720p
+and explambda pins failed loudly (36,916 vs 36,572 B) and the fix was to pass
+the kernel untouched. Worth knowing: the two passes do **not** share a layout.
+
+### Speed
+
+| arm | median of 3, 16 f QP116 `--nightly-b`, `--cpu-threads 1` |
+|---|---:|
+| `AV2ENC_SIMD=scalar` | **108.7 s** |
+| `AV2ENC_SIMD=auto` (NEON) | **91.7 s** |
+
+**15.6 % off single-thread CPU time** (reps 108.52-108.76 vs 91.35-91.77), on
+top of the 12.1 % from the inverse pass. Together the two transform slots
+account for the bulk of the 21.1 % the transform subsystem held in the profile.

@@ -232,8 +232,19 @@ void forward_block(const std::int16_t* residual_adjusted, const TxParams& p,
   const double scale_h = p.scale_h;
   double tmp[kMaxAdjTxElems] = {};
 
+  const auto& kernels = primitives::kernels();
+  const bool use_seam = kw != nullptr && kernels.forward_tx_row != nullptr &&
+                        (w == 4 || w == 8 || w == 16 || w == 32);
   for (int i = 0; i < h; ++i) {
     const int row = i * w;
+    if (use_seam) {
+      // No transpose here: the forward row pass indexes kw[v * w + j] (output
+      // then tap), which is already contiguous.  Only the inverse pass indexes
+      // the kernel column-major and needs tx_kernel_transposed().
+      kernels.forward_tx_row(tx_kernel(row_type, w), residual_adjusted + row,
+                             tmp + row, w, scale_w);
+      continue;
+    }
     if (kw == nullptr) {
       for (int v = 0; v < w; ++v) {
         tmp[row + v] = static_cast<double>(residual_adjusted[row + v]);
