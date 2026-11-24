@@ -10,9 +10,10 @@
 > * §5's "shared roots are integrator-only" means a subagent hands the hunk to
 >   the main agent instead of editing it. The main agent edits those files
 >   directly, with no claim, branch or fix worktree of its own.
-> * The claim / worktree / report workflow (§2, §4, §6, §9) is a *subagent*
->   workflow. The main agent does not claim its own bugs or open fix worktrees
->   for shared-root work.
+> * The bug board (`refactor/bugs.csv`) and the claim / worktree / report
+>   workflow (§2, §4, §6, §9) exist so **subagents** can pick up work. The
+>   main agent does not claim bugs or open fix worktrees for shared-root work;
+>   it fixes shared roots directly.
 >
 > Do not cite this protocol to defer work to an integrator that does not exist.
 

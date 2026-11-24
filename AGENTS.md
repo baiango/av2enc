@@ -11,10 +11,13 @@ Read these before writing code:
 3. `docs/cuda-interface.md`
 4. `docs/negative-results.md` — **do not repeat listed failed approaches**
 
-Bug fixing: read `refactor/bugfix-protocol.md` first. Claim a bug with
-`tools/agents/claim.sh`, use `tools/agents/new_fix.sh` for the worktree, and
-leave the shared roots (`src/main.cpp`, `CMakeLists.txt`, `still_*`, `video_*`,
-`baseline.json`) to an integrator.
+Bug fixing: read `refactor/bugfix-protocol.md` first — it is the subagent
+contract, and bugs in `refactor/bugs.csv` are for **subagents** to claim. A
+subagent claims with `tools/agents/claim.sh`, works in a
+`tools/agents/new_fix.sh` worktree, and hands the shared roots (`src/main.cpp`,
+`CMakeLists.txt`, `still_*`, `video_*`, `baseline.json`) to the integrator.
+The main agent is the integrator: it does not claim bugs or open fix worktrees,
+and fixes shared roots directly.
 
 ## Non-negotiables
 
