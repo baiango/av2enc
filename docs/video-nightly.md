@@ -343,15 +343,22 @@ and 3, i.e. exactly the case that used to be rejected.
 That is −13.86% rate at identical reconstruction. The QP110 CDF stream is
 21,530 B, MD5 `b6220e473ef46b367d27c7925b1e8c23`.
 
-> **Does not reproduce on the current tree (2026-11-24).** The 24,994 B baseline
-> above is the old pipe-perc shipped point (QP119), not today's QP110
-> `--fast-decode` pin, and `--video-cdf-per-frame-qp` now measures **+3.0 %**
-> rather than −13.86 %: 23,690 B (`1b99127a…`) without it against 24,395 B
-> (`b77ce512…`) with it. The flag re-seeds the §9.3 image every frame, which
-> forgoes cross-frame adaptation instead of enabling it. The carry form
-> (`--avg-cdf --adaptive-cdf --cdf-continuity --video-cdf-per-frame-qp`) gives
-> the same 24,395 B, so the carried image is not reaching the decisions.
-> See the 2026-11-24 row in `docs/negative-results.md`.
+> **Corrected 2026-11-24.** The 24,994 B baseline above is the old pipe-perc
+> shipped point (QP119), not today's QP110 `--fast-decode` pin, so the −13.86 %
+> is a cross-preset comparison and the 21,530 B stream is not reachable from
+> current flags. The real effect, measured at QP110 on the same build:
+>
+> | arm | bytes | md5 | luma |
+> |---|---:|---|---:|
+> | carry (the pin; `--fast-decode` implies it) | **23,690** | `1b99127a…` | 46.5791 dB |
+> | `--video-cdf-per-frame-qp` (reset control) | 24,395 | `b77ce512…` | 46.5791 dB |
+>
+> So the carry is worth **+2.77 % against its own reset control at identical
+> quality** (both strict-decode 60/60), and that saving is already inside every
+> pin. Under the pin the carried image is live from frame 2 and its hash
+> changes every frame. See the 2026-11-24 rows in
+> `docs/negative-results.md`, and note `fbdfd7bf` for the flag-precedence fix
+> (an explicit `--cdf-continuity` used to be discarded by the reset opt-in).
 
 ### Spending the saving: the key QP, not the global QP
 
