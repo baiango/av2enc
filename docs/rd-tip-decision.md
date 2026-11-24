@@ -210,15 +210,29 @@ All gate-off streams were produced with an explicit
 |---|---:|---|---|
 | flat QP106 `--fast-decode` | 25,008 | `0639b43630abb454f7be5ac494d2efb4` | exact |
 | flat QP110 `--fast-decode` | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` | exact |
-| B 16 f QP116 | 17,222 | `2a7fbe710542a89c3a9d2c93fab94101` | exact |
-| B 60 f QP119 | 22,576 | `4b622b15a0715820114765e17259868f` | exact |
+| B 16 f QP116 | 19,723 | `505430de620af361a18b42503543dbda` | exact |
+| B 60 f QP119 | 24,845 | `40de8b687d929652a312407764227398` | exact |
 | B 16 f QP119 (control) | 18,995 | `bee07dc2c9b22230677e5dd612eaf40c` | — |
 
 The gate-on Phase-1 outputs are **byte-identical** to the gate-off controls:
 
-- B 16 f QP116: 17,222 / `2a7fbe71…`
+- B 16 f QP116: 19,723 / `505430de…`
 - B 16 f QP119: 18,995 / `bee07dc2…`
-- B 60 f QP119: 22,576 / `4b622b15…`
+- B 60 f QP119: 24,845 / `40de8b68…`
+
+> **Historical (2026-11-21), not re-runnable here.** Every row above is from
+> the `exp/tip-decide` branch (§0, "No push, no merge"), never merged:
+> `AV2ENC_TIP_PROBE_JOINT` — the gate this table is built from — has zero hits
+> in `src/`, `tests/` or `tools/` and never appeared in this repository's
+> `src/` history, and no `exp/tip-decide` branch or worktree exists to build
+> it. Setting that variable against `build-pub/av2enc` today is a no-op, so
+> "gate on" and "gate off" produce the same bytes for the trivial reason that
+> neither gate exists: the byte-neutrality claim below cannot be re-verified,
+> only read. The values are internally consistent (gate on == gate off at
+> 19,723) and are what that branch measured against the then-current chain.
+> Do not "update" them: today's chain yields 17,222 B (`6ec51ab4` re-keyed
+> every `--nightly-b` stream, `BUG-GATES-002`) but there is no gate left to
+> compare on both sides.
 
 so the extra joint probe and the trace are byte-neutral. The 16 f stream
 decodes under pinned `dav2d` (`f9dafbc`, 16 frames; `--strict 1 --threads 1`

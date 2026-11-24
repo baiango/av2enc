@@ -212,15 +212,22 @@ superblocks: the DP is not a uniform coarsening, it is a re-shaping of the
   `0639b43630abb454f7be5ac494d2efb4`**; QP110: **23,690 B /
   `1b99127a4cd1d386fa5600fb63c57a83`** — byte-identical, the gate is inert
   without the joint plan.
-* `AV2ENC_RD_JOINT_DP=1` (commit 0) 16 f joint QP116: **17,222 B /
-  `2a7fbe710542a89c3a9d2c93fab94101`** — the Phase-1 overlay does not change
-  the committed stream.  (Re-recorded 2026-11-25 after `6ec51ab4` re-keyed the
-  chain, `BUG-GATES-002`; the 11-21 reading was 19,723 B / `505430de…`.)
+* `AV2ENC_RD_JOINT_DP=1` (commit 0) 16 f joint QP116: **19,723 B /
+  `505430de620af361a18b42503543dbda`** — the Phase-1 overlay does not change
+  the committed stream.
 * `AV2ENC_RD_JOINT_DP=1` (commit 0) 60 f joint QP119, both the stride sample
-  and the full run: **22,576 B /
-  `4b622b15a0715820114765e17259868f`** — the published joint arm's stream
-  (re-recorded 2026-11-25, `BUG-GATES-002`; the 11-21 reading was 24,845 B /
-  `40de8b68…`).
+  and the full run: **24,845 B /
+  `40de8b687d929652a312407764227398`** — the published joint arm's stream.
+
+> **Historical (2026-11-21), not re-runnable here.** These readings are from
+> the `exp/joint-dp` branch (§0, "No push, no merge"), which was never merged:
+> `AV2ENC_RD_JOINT_DP` has zero hits in `src/`, `tests/` or `tools/` and never
+> appeared in this repository's `src/` history, and no `exp/joint-dp` branch or
+> worktree exists to build it. The values are what that branch measured against
+> the then-current chain and are internally consistent (overlay off == on at
+> 19,723). Do not "update" them: today's chain yields 22,576 B (`6ec51ab4`
+> re-keyed every `--nightly-b` stream, `BUG-GATES-002`) but no overlay remains
+> to compare against.
 * Commit-path smoke (not the Phase-2 proof): `AV2ENC_RD_JOINT_DP=1
   AV2ENC_RD_JOINT_DP_COMMIT=1` 16 f QP116 gives **19,716 B /
   `ba8f880361de49b9b718df799f993b5f`**, pinned `dav2d --strict 1` decodes it

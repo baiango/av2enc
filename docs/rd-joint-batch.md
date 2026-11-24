@@ -317,6 +317,8 @@ Evidence, `clang++ -fsanitize=thread`, `halt_on_error=1`, 8 threads, 320x240:
 
 The fixes are stats/flag plumbing only. Gate-off pins (QP106 25,008 /
 `0639b436`, QP110 23,690 / `1b99127a`) and the 16-frame chained-B stream
-(17,222 / `2a7fbe71`) are byte-identical after them.  (Re-recorded
-2026-11-25 after `6ec51ab4` re-keyed the chain, `BUG-GATES-002`; the 11-21
-reading was 19,723 / `505430de`.)
+(19,723 / `505430de`) are byte-identical after them.  The two flat pins still
+hold today; the chained-B value is the 2026-11-21 reading from the
+`exp/joint-batch` branch ("No push, no merge", never merged) and the chain now
+yields 17,222 / `2a7fbe71` (`6ec51ab4`, `BUG-GATES-002`), so that one
+comparison is historical rather than re-runnable.
