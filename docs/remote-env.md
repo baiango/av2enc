@@ -41,8 +41,24 @@ rsync -az --exclude build -e "ssh -p <port> -o BatchMode=yes" \
   <user>@<host>:/workspace/av2enc/bench/hello_cuda/
 ```
 
-Repeat for `bench/vram_budget/` and `bench/vram_config/` with the same parent
-directory already created.
+**Sync whole-tree to a Linux box:** exclude build directories by pattern, not
+by prefix — `--exclude 'build*'` also drops `tools/build_dav2d_linux.sh` and
+every other `build_*.sh`. Also copy `tools/bin` as a directory: locally it is
+a symlink to the macOS checkout, and rsync recreates it as a dangling link that
+makes `tools/build_dav2d_linux.sh` fail at its `install` step.
+
+```sh
+rsync -az --exclude '/build*/' --exclude '/testdata' --exclude '/.git' \
+  --exclude '/tools/bin' -e "ssh -p <port> -o BatchMode=yes" \
+  "$PWD/" <user>@<host>:/workspace/av2enc/
+```
+
+Then `tools/build_dav2d_linux.sh` (needs `meson` and `nasm`; Ubuntu:
+`apt-get install -y meson nasm`) installs the pinned `dav2d` at
+`tools/bin/dav2d`.
+
+Repeat the first sync for `bench/vram_budget/` and `bench/vram_config/` with the
+same parent directory already created.
 
 ### Build and run the main benchmark
 

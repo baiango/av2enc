@@ -82,6 +82,32 @@ The Nov 19 dav2d nightly `4d6266a` passes the QP106/QP110 pins with recon
 equality and decodes the current chained stream byte-identically. It is the
 candidate pin move; it is not adopted yet.
 
+### Reproduced on Linux x86_64 (2026-11-25)
+
+The defect is not an arm64 artifact. Built from `tools/build_dav2d_linux.sh`
+(`f9dafbc`, Ubuntu 24.04, GCC, AVX2 asm) on an x86_64 box, against an av2enc
+built there from the same tree:
+
+| preset (`--frames 18`, 128x96) | dav2d pictures | recon |
+|---|---|---|
+| `--fast-decode` | 18/18, exit 0 | recon-equal |
+| `--video-rd-preset best` | 18/18, exit 0 | recon-equal |
+| `--nightly-b --video-gops 2` | **17/18, exit 0** | n/a (short) |
+
+The decoded Y4M is byte-identical to the macOS run (PSNR-Y `44.967572` /
+`49.905492` to six decimals), and the `--nightly-b` IVF is byte-identical
+across the two architectures (md5 `b2f24f9436aa50fd7c796d2b0c367d27`), so the
+encoder is not the variable.
+
+Two harness notes, both measured here:
+
+- `dav2d --muxer null` **exits 0** on the short stream and reports
+  `Decoded 17/24 frames` only on its progress line; `--muxer md5` emits a
+  single hash for the whole run, so a truncating decode is not detectable from
+  either the exit code or the aggregate hash. Only the picture count catches it.
+- `tools/try-it.sh --preset nightly-b --frames 18` reproduces this on Linux
+  unmodified.
+
 ## CTest
 
 `ctest --test-dir build --output-on-failure` includes `dav2d_smoke`. It runs
