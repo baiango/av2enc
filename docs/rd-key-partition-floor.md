@@ -456,6 +456,31 @@ cost   = D + lambda * (coeff + kappa * syntax)
   gracefully instead of cliffing — which is exactly what a fixed 16 cannot do
   at the ladder's rate.
 
+**Implementation brief (integrator handoff).** All of it sits inside
+`seq_driver_decide_sb` (`video_frame_decision.cpp` 6441-6692), which `AGENTS.md`
+covers under `video_*`, so this is written for whoever holds the video root:
+
+* `seq_driver_measure_leaf` (`:6342`) already splits the two halves
+  explicitly — `coeff = seq_entry_rate(emitted, sink.levels, qctx)` and
+  `syntax = intra_luma_syntax_bits(...) + intra_chroma_syntax_bits(...) +
+  (tx_part_count ? 2 : 0)` — with `*cost = distortion + lambda * rate` at
+  `:6436`. D1 reduces to `lambda * (coeff + kappa * syntax)` on that line.
+* The partition-symbol term `split_cost = lambda * 2.0` at `:6618` is *also*
+  syntax (§3 counts partition's 13.5 %). Decide explicitly whether `kappa`
+  applies to it and record the choice; the §3 share suggests yes.
+* `kappa` must depend on leaves the prune has **committed**, not on trials:
+  `seq_driver_measure_leaf` runs for every candidate, and counting trials
+  would inflate the share by the ~18x the search visits (139,107 against
+  2,935 committed). Commit points are `:6634` and `:6659`. A per-superblock
+  running share updated there is the one-pass option; a meter-then-fix second
+  pass is the fallback and costs ~2x of an arm that is already 4.2x faster
+  than baseline.
+* Config belongs beside `prune_target()` (`video_frame_internal.h:221`),
+  read through the existing `rd_driver::env_positive`. Give `S_max` a default
+  of **2.0** — unreachable, since a share is in `[0,1]` — so unset means
+  `kappa == 1` and every stream stays byte-identical; `0.30` is the measured
+  value, not the default.
+
 ### 7.5 D2 — recalibrate the per-leaf mode/partition price
 
 Feed `kPartitionSignalBits` and `intra_luma_syntax_bits()` a price measured
