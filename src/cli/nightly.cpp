@@ -183,8 +183,14 @@ bool apply_video_nightly(Options& options, std::string& error) {
     // An explicit --video-cdf-per-frame-qp keeps the reset-per-frame image,
     // which is the A/B control the carry gate pins.
     const bool user_reset = flag_given(options, "--video-cdf-per-frame-qp");
-    options.cdf_continuity = !user_reset;
-    options.video_cdf_per_frame_qp = user_reset;
+    // An explicit --cdf-continuity is a request for the carry form and must not
+    // be silently discarded by the reset opt-in: before this, passing both
+    // flags produced continuity=0 and the +2.77% reset stream (24,395 B) while
+    // the user asked for the carry (23,690 B).  The reset flag still selects
+    // the control arm when it is the only one given.
+    const bool user_carry = flag_given(options, "--cdf-continuity");
+    options.cdf_continuity = user_carry || !user_reset;
+    options.video_cdf_per_frame_qp = user_reset && !user_carry;
     options.video_drift_refresh = !options.video_drift_refresh_off;
   }
   // Measured with the final aggregate: 1/8-pel ME refinement and the
