@@ -91,7 +91,7 @@ TestImage read_y4m(const char* path) {
   img.height = std::stoi(header.substr(hpos + 2));
   std::string frame;
   std::getline(in, frame);
-  CHECK(frame.rfind("FRAME", 0) == 0, "Y4M FRAME marker");
+  CHECK(frame.starts_with("FRAME"), "Y4M FRAME marker");
   for (int p = 0; p < 3; ++p) {
     const int w = img.plane_width(p);
     const int h = img.plane_height(p);

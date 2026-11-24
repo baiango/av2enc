@@ -432,7 +432,7 @@ int main(int argc, char** argv) {
       options.no_deblock = true;
     } else if (arg == "--no-qm-obu") {
       options.emit_qm_obu = false;
-    } else if (arg.rfind("--", 0) == 0) {
+    } else if (arg.starts_with("--")) {
       usage();
       return 2;
     } else {

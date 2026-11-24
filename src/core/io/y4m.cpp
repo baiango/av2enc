@@ -244,8 +244,7 @@ Y4mReadResult Y4mReader::read_frame(Y4mFrame& frame, std::string& error) {
   }
   strip_cr(line);
 
-  const bool marker_ok =
-      line == "FRAME" || (line.size() > 6 && line.compare(0, 6, "FRAME ") == 0);
+  const bool marker_ok = line == "FRAME" || line.starts_with("FRAME ");
   if (!marker_ok) {
     std::string preview = line.substr(0, 40);
     error = "expected FRAME marker before frame " + std::to_string(frame_index_) +

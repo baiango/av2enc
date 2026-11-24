@@ -271,7 +271,7 @@ int main(int argc, char** argv) {
       deblock_diagnostic = false;
     } else if (arg == "--deblock-diagnostic-only") {
       deblock_only = true;
-    } else if (arg.rfind("--", 0) == 0) {
+    } else if (arg.starts_with("--")) {
       std::fprintf(stderr, "unknown argument: %s\n", arg.c_str());
       return 2;
     } else {

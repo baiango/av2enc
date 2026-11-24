@@ -190,7 +190,7 @@ int reason_code(const std::string& reason) {
     return dev::kGmeReasonDegradedAfterReject;
   }
   if (reason == "model rejected") return dev::kGmeReasonModelRejected;
-  if (reason.rfind("global motion gain below threshold", 0) == 0) {
+  if (reason.starts_with("global motion gain below threshold")) {
     return dev::kGmeReasonGainBelowThreshold;
   }
   return -1;

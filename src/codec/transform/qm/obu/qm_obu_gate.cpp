@@ -527,7 +527,7 @@ int main(int argc, char** argv) {
       options.no_deblock = true;
     } else if (arg == "--mode" && i + 1 < argc) {
       options.mode = argv[++i];
-    } else if (arg.rfind("--", 0) == 0) {
+    } else if (arg.starts_with("--")) {
       usage();
       return 2;
     } else {

@@ -775,12 +775,12 @@ void test_verifiability_and_coverage() {
   int timing = 0;
   for (const CoverageEntry& entry : coverage) {
     const std::string disposition(entry.disposition);
-    if (disposition.rfind("check:", 0) == 0 ||
-        disposition.rfind("table:", 0) == 0) {
+    if (disposition.starts_with("check:") ||
+        disposition.starts_with("table:")) {
       ++implemented;
-    } else if (disposition.rfind("N/A:", 0) == 0) {
+    } else if (disposition.starts_with("N/A:")) {
       ++not_applicable;
-    } else if (disposition.rfind("timing:", 0) == 0) {
+    } else if (disposition.starts_with("timing:")) {
       ++timing;
     }
   }

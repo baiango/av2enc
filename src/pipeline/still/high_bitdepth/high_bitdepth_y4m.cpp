@@ -120,7 +120,7 @@ bool read_y4m_10bit(const std::string& path, fmt::Picture* picture,
   const std::uint32_t ch = (height + 1U) / 2U;
   const bool ten_bit =
       colorspace == "420p10" || colorspace == "C420p10" ||
-      colorspace.rfind("420p10", 0) == 0;
+      colorspace.starts_with("420p10");
   const std::size_t y_count = static_cast<std::size_t>(width) * height;
   const std::size_t c_count = static_cast<std::size_t>(cw) * ch;
 
