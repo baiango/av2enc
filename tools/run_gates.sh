@@ -340,6 +340,7 @@ if [ "$QUICK" -eq 0 ]; then
     run_gate gate_video_ext_nightly \
         src/pipeline/video/gate_video_ext_nightly.sh
     run_gate gate_build_seam tools/refactor/build_seam_check.sh
+    run_gate gate_glued_statements tools/refactor/check_glued_statements.sh
     run_gate gate_codec_units tools/gate_codec_units.sh
     # Supersedes gate_thread_determinism: same 1-vs-8 thread comparison on the
     # 240p and 720p streams, plus all four 480p pins and the Stage-0 dump oracle.

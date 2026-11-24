@@ -52,6 +52,10 @@ jobs:
       - name: Build-seam check
         # Both configurations of every migrated TU; no testdata needed.
         run: bash tools/refactor/build_seam_check.sh
+      - name: Glued-statement check
+        # Catches a newline lost between a brace and its first statement: the
+        # statements still compile, so nothing else notices.
+        run: bash tools/refactor/check_glued_statements.sh
       - name: Synthetic smoke encode
         # Input is generated (ffmpeg or a Python Y4M writer), so this runs on
         # macOS too, where the runner ships no ffmpeg.
