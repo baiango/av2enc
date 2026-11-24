@@ -2,6 +2,7 @@
 // numeric contract and the list of deliberate differences from the M0 layer.
 #include "codec/transform/variants/tx_variants.h"
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 
@@ -73,6 +74,98 @@ inline int log2_int(int value) {
   return n;
 }
 
+// Kernel for one 1D transform dimension (see tx_kernel).
+constexpr const std::int16_t* kernel_for(Tx1dType type, int n) {
+  switch (type) {
+    case Tx1dType::kIdt:
+      return nullptr;
+    case Tx1dType::kAdst:
+      if (n == 4) return &kAdst4[0][0];
+      if (n == 8) return &kAdst8[0][0];
+      if (n == 16) return &kAdst16[0][0];
+      return &kDct32[0][0];  // §7.15.2.1: sz == 32 uses Dct_Kernel32.
+    case Tx1dType::kFdst:
+      if (n == 4) return &kFdst4[0][0];
+      if (n == 8) return &kFdst8[0][0];
+      if (n == 16) return &kFdst16[0][0];
+      return &kDct32[0][0];
+    case Tx1dType::kDct:
+    default:
+      if (n == 4) return &kDct4[0][0];
+      if (n == 8) return &kDct8[0][0];
+      if (n == 16) return &kDct16[0][0];
+      return &kDct32[0][0];
+  }
+}
+
+constexpr int kKernelTypeCount = 4;  // Tx1dType::kDct .. kFdst
+constexpr int kKernelSizeCount = 4;  // n = 4, 8, 16, 32
+
+// Row-major copy of an NxN kernel (see the transposed-kernel cache below).
+// Indexes the table as `[j][o]` rather than through a flattened pointer so the
+// whole evaluation is a valid constant expression.
+template <int N>
+constexpr std::array<std::int16_t, kKernelSizeCount * 256>
+transpose_kernel(const std::int16_t (&table)[N][N]) {
+  std::array<std::int16_t, kKernelSizeCount * 256> out{};
+  for (int j = 0; j < N; ++j) {
+    for (int o = 0; o < N; ++o) {
+      out[static_cast<std::size_t>(o * N + j)] = table[j][o];
+    }
+  }
+  return out;
+}
+
+// The zero-initialized identity kernel (IDT has no matrix) is fine: callers
+// treat a nullptr from tx_kernel_transposed as "no seam".
+constexpr std::array<std::int16_t, kKernelSizeCount * 256> transposed_kernel(
+    Tx1dType type, int n) {
+  switch (type) {
+    case Tx1dType::kIdt:
+      return {};
+    case Tx1dType::kAdst:
+      if (n == 4) return transpose_kernel(kAdst4);
+      if (n == 8) return transpose_kernel(kAdst8);
+      if (n == 16) return transpose_kernel(kAdst16);
+      return transpose_kernel(kDct32);
+    case Tx1dType::kFdst:
+      if (n == 4) return transpose_kernel(kFdst4);
+      if (n == 8) return transpose_kernel(kFdst8);
+      if (n == 16) return transpose_kernel(kFdst16);
+      return transpose_kernel(kDct32);
+    case Tx1dType::kDct:
+    default:
+      if (n == 4) return transpose_kernel(kDct4);
+      if (n == 8) return transpose_kernel(kDct8);
+      if (n == 16) return transpose_kernel(kDct16);
+      return transpose_kernel(kDct32);
+  }
+}
+
+// Transpose of the §9.6 kernel for every (type, n), built once.
+//
+// The primitives seam walks the taps contiguously for one output at a time, so
+// it needs row-major `k[o][j]`; the table is stored `[j][o]`.  Transposing is a
+// one-time per (type, size) cost, so it happens at compile time: the result is
+// immutable and shared by every encoder thread.
+struct TransposedKernels {
+  std::array<std::int16_t, kKernelSizeCount * 256>
+      data[kKernelTypeCount][kKernelSizeCount];
+};
+
+constexpr TransposedKernels make_transposed_kernels() {
+  TransposedKernels out{};
+  for (int t = 0; t < kKernelTypeCount; ++t) {
+    for (int s = 0; s < kKernelSizeCount; ++s) {
+      out.data[t][s] =
+          transposed_kernel(static_cast<Tx1dType>(t), 4 << s);
+    }
+  }
+  return out;
+}
+
+constexpr TransposedKernels kTransposedKernels = make_transposed_kernels();
+
 }  // namespace
 
 const char* tx_type_name(TxType type) {
@@ -118,53 +211,19 @@ bool make_tx_type(Tx1dType row, Tx1dType col, TxType* out) {
 }
 
 const std::int16_t* tx_kernel(Tx1dType type, int n) {
-  switch (type) {
-    case Tx1dType::kIdt:
-      return nullptr;
-    case Tx1dType::kAdst:
-      if (n == 4) return &kAdst4[0][0];
-      if (n == 8) return &kAdst8[0][0];
-      if (n == 16) return &kAdst16[0][0];
-      return &kDct32[0][0];  // §7.15.2.1: sz == 32 uses Dct_Kernel32.
-    case Tx1dType::kFdst:
-      if (n == 4) return &kFdst4[0][0];
-      if (n == 8) return &kFdst8[0][0];
-      if (n == 16) return &kFdst16[0][0];
-      return &kDct32[0][0];
-    case Tx1dType::kDct:
-    default:
-      if (n == 4) return &kDct4[0][0];
-      if (n == 8) return &kDct8[0][0];
-      if (n == 16) return &kDct16[0][0];
-      return &kDct32[0][0];
-  }
+  return kernel_for(type, n);
 }
 
-// Transpose of the §9.6 kernel for `(type, n)`, built once.
-//
-// The primitives seam walks the taps contiguously for one output at a time, so
-// it needs row-major `k[o][j]`; `tx_kernel` returns the normative column-major
-// `k[j*n + o]`.  Transposing is a one-time per (type, size) cost, not per block.
-// Returns nullptr when the kernel is the zero placeholder (n not in the §9.6
-// set), which the caller treats as "no seam".
+// The transposed table above is compile-time constant: tx_kernel_transposed
+// only reads it, so no thread ever races on a cache fill.
 const std::int16_t* tx_kernel_transposed(Tx1dType type, int n) {
-  const std::int16_t* src = tx_kernel(type, n);
-  if (src == nullptr) return nullptr;
-  const int size_index = (n == 4) ? 0 : (n == 8) ? 1 : (n == 16) ? 2 : (n == 32) ? 3 : -1;
+  const int size_index =
+      (n == 4) ? 0 : (n == 8) ? 1 : (n == 16) ? 2 : (n == 32) ? 3 : -1;
   if (size_index < 0) return nullptr;
-  constexpr int kTypes = 8;
-  static std::int16_t cache[kTypes][4][32 * 32];
-  static bool built[kTypes][4] = {};
-  const int t = static_cast<int>(type) & (kTypes - 1);
-  if (!built[t][size_index]) {
-    for (int j = 0; j < n; ++j) {
-      for (int o = 0; o < n; ++o) {
-        cache[t][size_index][o * n + j] = src[j * n + o];
-      }
-    }
-    built[t][size_index] = true;
-  }
-  return &cache[t][size_index][0];
+  const int t = static_cast<int>(type);
+  if (t < 0 || t >= kKernelTypeCount) return nullptr;
+  if (kernel_for(type, n) == nullptr) return nullptr;
+  return kTransposedKernels.data[t][size_index].data();
 }
 
 std::optional<TxParams> make_tx_params(int coded_w, int coded_h,

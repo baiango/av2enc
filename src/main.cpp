@@ -1939,6 +1939,8 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
       return av2enc::cuda::video::encode_video_sequence_gpu(seq, opts, out,
                                                             error);
     }
+#else
+    (void)options;  // --video-gpu is not callable in this build
 #endif
     return av2enc::video::encode_video_sequence(seq, opts, out, error);
   };

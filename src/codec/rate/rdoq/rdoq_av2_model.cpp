@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -35,19 +36,21 @@ constexpr int kMaxSymbols = 8;
 // returned span is owned by the cache and must not be modified.
 std::span<const std::int32_t> cached_scan(std::int32_t w, std::int32_t h) {
   // Transform dimensions run up to kMaxCodedTxDim (64); index the cache by
-  // (w, h) over that range.
+  // (w, h) over that range.  Model::init() runs on every encoder worker, so
+  // the lazily filled slot is guarded by a once_flag: the fast path is an
+  // atomic load and the sliding-window build runs exactly once per geometry.
   constexpr int kDim = 64;
-  static std::array<std::vector<std::int32_t>, (kDim + 1) * (kDim + 1)> cache;
-  static std::array<char, (kDim + 1) * (kDim + 1)> filled{};
+  constexpr std::size_t kSlots = (kDim + 1) * (kDim + 1);
+  static std::array<std::vector<std::int32_t>, kSlots> cache;
+  static std::array<std::once_flag, kSlots> built;
   if (w <= 0 || h <= 0 || w > kDim || h > kDim) return {};
   const std::size_t slot =
       static_cast<std::size_t>(w) * (kDim + 1) + static_cast<std::size_t>(h);
-  if (filled[slot] == 0) {
+  std::call_once(built[slot], [slot, w, h] {
     cache[slot].assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h),
                        0);
     build_scan(w, h, cache[slot]);
-    filled[slot] = 1;
-  }
+  });
   return std::span<const std::int32_t>(cache[slot]);
 }
 

@@ -29,14 +29,14 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
 
   // Accepted or rejected, the parser must not read out of bounds, hang, or
   // allocate from an unchecked dimension.
-  (void)av2enc::parse_y4m_header(input, &header, &error);
+  (void)av2enc::parse_y4m_header(input, &header, error);
 
   // Feed the same bytes again with a CRLF terminator: the reader strips '\r'
   // before parsing, so this covers a shape the raw corpus may miss.
   std::string with_crlf(input);
   if (with_crlf.size() < 8000) {
     with_crlf.push_back('\r');
-    (void)av2enc::parse_y4m_header(with_crlf, &header, &error);
+    (void)av2enc::parse_y4m_header(with_crlf, &header, error);
   }
   return 0;
 }
