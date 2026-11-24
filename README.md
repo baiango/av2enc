@@ -166,25 +166,25 @@ measured dead ends.
 - `tools/extra_metrics.py` — Butteraugli and SSIMULACRA2 per frame.
 - `tools/kpi.py` — the composite K.
 - `tools/oracle.py` — matched-rate K and segment ceilings.
-- `ctest` 12/12 and `gate_video_nightly.sh`, `gate_video_tlayers_chain.sh`,
+- `ctest` 14/14 and `gate_video_nightly.sh`, `gate_video_tlayers_chain.sh`,
   `gate_video_schedule_rc.sh`, `gate_video_tlayer_refs.sh` pass on the release
   build.
 
 ## Build provenance
 
 Token usage recorded by OpenCode for the work on this checkout — all top-level
-sessions and their subagents — as of **2026-11-21**:
+sessions and their subagents — as of **2026-11-24**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 339,929,451 |
-| Output | 48,093,981 |
-| Reasoning | 58,686,811 |
-| **Input + output + reasoning** | **~446.7 M** |
-| Cached context reads | 31,775,275,739 |
-| **Including cache reads** | **~32.22 B** |
+| Fresh input | 351,990,144 |
+| Output | 49,825,141 |
+| Reasoning | 59,749,303 |
+| **Input + output + reasoning** | **~461.6 M** |
+| Cached context reads | 33,525,690,715 |
+| **Including cache reads** | **~33.53 B** |
 
-999 sessions (369 top-level + 630 subagents) across the four OpenCode project
+1010 sessions (375 top-level + 635 subagents) across the four OpenCode project
 ids that touch the checkout (the parent workspace, the shared work root that
 owns the lane worktrees, the repo root and the publish clone). Cache reads are
 billed at a fraction of fresh input and dominate because every subagent re-reads
