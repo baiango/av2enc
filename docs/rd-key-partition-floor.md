@@ -6,14 +6,19 @@ ladder is not run.** Flooring the key driver's prune at 16x16
 from **K 31.84 to 46.94** (+15.10, closing 81.9 % of the gap to the AVM
 reference) and cuts the encode from **69 s to 16 s**. Unset the variable and
 every pinned stream is byte-identical. This is a measurement at 0.21 bpp, not a
-promotion: the 240p `--nightly-b` ladder has not been run.
+promotion: no ladder K has been measured for the floor arm, and
+`gate_video_joint_plan.sh` fails 4 of 11 checks — all four `--nightly-b` size
+pins are stale (§4, §7.3).
 
 Experiment 0 (§7.3) has since been run and **the calibration branch fired**: a
 tree-only price of `AV2ENC_RD_DRIVER_LAMBDA=1024` reaches **46.74**, so the
 root cause is the driver's *flat* tree price (`kKeyTxLambdaFit`, exponent 0 =>
-2.0 SSE/bit at every qindex) rather than the floor itself. The floor stays the
-recommended lever here because a price cannot shrink the search: 16.3 s
-against 83.7 s.
+2.0 SSE/bit at every qindex) rather than the floor itself. Experiment 1 then
+**rejected that fix**: the same price on the 240p ladder costs **+12.4 % bytes
+and 14.4x key distortion at the same QP**, so a flat increase is ruled out and
+the price must be rate-dependent (~2.0 at qindex 82, ~2048 at qindex 184).
+The floor stays the recommended lever here because a price cannot shrink the
+search: 16.3 s against 83.7 s.
 
 Provenance: measured 2026-11-24/25 on `~/Downloads/src720.png` (1280x720 RGB)
 converted with ffmpeg to `src720_1f.y4m` (1 frame, yuv420p, limited range,
@@ -238,6 +243,28 @@ one and wrong at the other (§7).
 * Not run, and the blocking gate for promotion: the 240p `--nightly-b` ladder
   (88.2 K), validated with `tools/validate_avmdec.py` — pinned `dav2d` f9dafbc
   has the §7.21.6 drain defect on chained multi-GOP streams.
+* **`gate_video_joint_plan.sh` fails 4 of 11 checks** (run 2026-11-25 with
+  `--bin build-pub/av2enc`). Every `--nightly-b` size pin is stale; both flat
+  pins and every decode check pass:
+
+  | check | got | want (2026-11-21) | d bytes |
+  |---|---|---|---:|
+  | `b_joint16` | 17,222 B `2a7fbe71…` | 19,723 B `505430de…` | −12.7 % |
+  | `b_off121` (joint off) | 23,066 B `72e04413…` | 25,163 B `dfa6b1aa…` | −8.3 % |
+  | `b_joint118` | 22,840 B `9c7d37ec…` | 25,093 B `34103c1f…` | −9.0 % |
+  | `b_joint119` | 22,576 B `4b622b15…` | 24,845 B `40de8b68…` | −9.1 % |
+  | `flat_off116` | 26,334 B `fba63446…` | same | **PASS** |
+  | `flat_joint112` | 25,007 B `9a36aeb7…` | same | **PASS** |
+
+  `avmdec 60/60 recon equal` and `encoder recon == decoded payload` pass on
+  every failing rung, so this is a **stale expectation, not a correctness
+  regression**. The split is exact — all four `--nightly-b` rungs fail, both
+  flat rungs pass — which fits `e0ac3707` (tlayers reference-store), `6b71be75`
+  (dyadic frame counts) and `df2730e7` (chroma offset −8, chained-B only) all
+  being `--nightly-b`-specific changes. The control's 22,576 B / `4b622b15…`
+  also matches `docs/negative-results.md`'s 2026-11-24 record, so today's
+  output is the documented one and the pins are what moved. Re-record the four
+  before quoting any ladder K.
 
 ## 5. Prior art — do not repeat
 
@@ -299,7 +326,7 @@ are separated by **42x** (61.0 % against 1.45 %), so any threshold in roughly
 `kappa = 1` exactly. `S_max = 0.30` sits 20x above the high-rate value and 2x
 below the low-rate value — not a knife edge.
 
-### 7.3 Experiment 0 — run; the calibration branch fired
+### 7.3 Experiments 0 and 1 — the price on both carriers
 
 `AV2ENC_RD_DRIVER_LAMBDA` scales *only* the driver's tree lambda, so it is a
 clean tree-only price with no TX side effects. Swept at 25,010 B:
@@ -350,22 +377,61 @@ From `rc::kQlookupQ0To255`, `qp_luma_step(82) = 52.0` and
 qindex 82 published with 2.0; this operating point needs 2.0 x 1024 = 2048 at
 qindex 184, implying **exponent ~2.35**.
 
-Two caveats on that number. One point is "the default the ladder was published
-with", not "the default the ladder was optimised for" — **nobody has ever
-swept the price on the 240p ladder**, which is now the cheapest open question
-and would raise 88.2 as well if it wants more than 2.0. And the sweep is
-*joint* in price and qindex: every arm sits at 25,010 B but at a different
-qindex (x1 -> 229, x1024 -> 184), so the peak says "among all price/quantiser
-pairs that spend 25,010 B, price ~2048 with qindex 184 wins", not that price
-is separable from qindex.
+One caveat stands: the sweep is *joint* in price and qindex — every arm sits
+at 25,010 B but at a different qindex (x1 -> 229, x1024 -> 184) — so the peak
+says "among all price/quantiser pairs that spend 25,010 B, price ~2048 with
+qindex 184 wins", not that price is separable from qindex. Experiment 1 tests
+exactly that.
 
-### 7.4 D1 — syntax-share surcharge in the prune (demoted: not needed for K)
+#### Experiment 1 — the ladder rejects a flat price
 
-Experiment 0 (§7.3) reached the floor's K with a price, so this is **no longer
-the route to K**. It survives as one option only: the share-gated surcharge is
-the one control that is *rate-adaptive by construction*, which neither a fixed
-floor (§1) nor a fixed price (§7.3) is. Reach for it only if the ladder shows
-a fixed price is wrong there — the open question in §7.3.
+The same sweep on the published 240p ladder (`--nightly-b`, 60 f, QP119,
+gops 7), whose key is qindex 82 at ~1.11 bpp with **1.45 %** syntax — the
+opposite end from the still's 0.216 bpp and 61.0 %. The driver is key-only
+(`seq_driver_decide_sb` is the sole caller of `prune_target()` and of both
+`AV2ENC_RD_DRIVER_LAMBDA` sites), so any byte change here is the key's tree:
+
+| arm | bytes | d bytes | key leaves | key tx4 | key distortion | |
+|---|---:|---:|---:|---:|---:|---:|
+| x1 (default) | 22,576 | — | 1,579 | 1,686 | 127,783 | 1.0x |
+| x1024 | 23,625 | **+4.6 %** | 1,279 | 1,280 | 1,055,511 | **8.3x** |
+| x16384 | 25,385 | **+12.4 %** | 1,135 | 1,130 | 1,840,938 | **14.4x** |
+
+**Answer: no.** Raising the price coarsens the ladder's key, inflates its
+distortion 14x and costs +12.4 % bytes *at the same QP* — worse on both axes,
+strictly dominated. At 1.11 bpp there is almost no syntax to over-spend, so
+the default 2.0 is right there. A **flat** price increase is ruled out; any
+fix must be rate-dependent, spanning ~2.0 at qindex 82 to ~2048 at qindex
+184 — a factor of ~1000.
+
+**qindex is only a proxy, though.** The real discriminator is the syntax
+share (§3), and presets reach very different shares at the same qindex. That
+is why §7.4's share gate is the principled control and a qindex threshold
+(§7.6) stays a stopgap rather than a design.
+
+**Harness note — the ladder baseline had to be re-established first.** The
+control returned 22,576 B / `4b622b15…` against the gate's expected 24,845 B /
+`40de8b68…`. The pin was recorded 2026-11-21 (`ea478d9f`); four
+output-changing commits landed after it with no re-record — `e0ac3707`,
+`6b71be75`, `df2730e7` (chroma offset -8 now default under `--nightly-b`) and
+`80b1e267` — and `docs/negative-results.md` already carries the current value
+(22,576 B / `4b622b15…`, dated 2026-11-24). `check_pin` is exact on bytes and
+md5, so all four `--nightly-b` rungs in `gate_video_joint_plan.sh` fail against
+today's code while both flat rungs pass (§4). **No ladder K number is valid
+until the pins are re-recorded**; the A/B above is unaffected because all
+three arms share one binary and one recipe.
+
+### 7.4 D1 — syntax-share surcharge in the prune (now the leading design)
+
+Experiment 0 showed a price *can* reach the floor's K; Experiment 1 (§7.3)
+showed a *flat* price cannot ship, because the ladder wants ~1000x less of
+it. That leaves one control that is right on both carriers without being told
+which carrier it is on: the share gate measures the actual discriminator
+(§3 — 1.45 % against 61.0 %) instead of proxying through qindex, which
+presets reach at very different shares. At `S_max = 0.30` it is byte-identical
+on the ladder by construction and fires only in the regime this document
+measures. The fixed floor (§1) stays the shipped lever *for this operating
+point*, because it is also the only one that shrinks the search.
 
 For the record, the mechanism: keep the driver's measured `D + lambda*R` and
 tax only the syntax half once the tree's syntax share exceeds a budget:
@@ -426,16 +492,20 @@ as a stopgap if no policy change can land.
 
 ### 7.8 Measurement plan
 
-1. ~~§7.3 lambda sweep~~ **done** — the calibration branch fired: 46.74 at
-   x1024, plateau 45.67..46.74 across a 64x price range, turning over toward
-   the 43.60 collapse limit.
-2. **Sweep the price on the 240p ladder** — nobody has. Does the key at
-   qindex 82 want more than 2.0? If yes, a `kKeyTxLambdaFit` recalibration
-   raises 88.2 as well and the floor question becomes secondary. Validate with
-   `tools/validate_avmdec.py`, not `dav2d`.
-3. From step 2's answer, choose fixed floor vs share-gated D1, then run the
-   ladder with `AV2ENC_RD_DRIVER_MIN=16`.
-4. Only then propose promotion, through an integrator.
+1. ~~§7.3 Experiment 0 — the price on the still~~ **done**: the calibration
+   branch fired — 46.74 at x1024, plateau 45.67..46.74 across a 64x range,
+   turning over toward the 43.60 collapse limit.
+2. ~~§7.3 Experiment 1 — the price on the ladder~~ **done**: **NO**. A flat
+   price is worse on both axes there (+12.4 % bytes, 14.4x key distortion at
+   x16384), so a global `kKeyTxLambdaFit` change is off the table.
+3. **Re-record the four `--nightly-b` pins** (§4): `gate_video_joint_plan.sh`
+   fails 4 of 11 checks, all of them chained-B size pins, while both flat pins
+   and every decode check pass. No ladder K number means anything first.
+4. **Implement D1 behind an env gate** (share surcharge, `S_max = 0.30`,
+   `alpha = 2.0`, default off) and check it is byte-identical on the ladder
+   — its 1.45 % share never reaches `S_max` — while reaching >= 46 here.
+5. Then the ladder K with `tools/validate_avmdec.py`, and only then propose
+   promotion, through an integrator.
 
 ## 8. Files
 
@@ -444,7 +514,8 @@ as a stopgap if no policy change can land.
 | `src/pipeline/video/video_frame_internal.h` | `prune_target()` — the knob, default 4, clamp `[4,64]` |
 | `src/pipeline/video/video_frame_decision.cpp:6453` | the single call site, inside `seq_driver_decide_sb`; `seq_depth_for_target` at `:6273`; the split price `lambda * 2.0` at `:6618` |
 | `docs/rd-engine0.md` §5 | the existing knob table this measurement extends |
-| `~/Downloads/av2enc-src720/sweep.py`, `rescore.py` | the harness (outside the tree) |
+| `~/Downloads/av2enc-src720/sweep.py`, `rescore.py` | the still harness (outside the tree) |
+| `~/Downloads/av2enc-src720/run_ladder_price.sh` | Experiment 1: three 60-frame `--nightly-b` QP119 ladder encodes at x1 / x1024 / x16384 |
 
 ## 9. Verdict
 
@@ -458,18 +529,23 @@ It is **not** a promotion. One operating point, the ladder not run, and the
 standing probe negatives in `tool-improvement-queue-3` rows 10-11 are at a
 42x different syntax share through a different knob.
 
-§7.3 has been run and **the calibration branch fired**: a tree-only price of
-x1024 reaches 46.74 against the floor's 46.94, so the underlying defect is
-`kKeyTxLambdaFit`'s zero exponent — a flat 2.0 SSE/bit tree price at every
-qindex — rather than a missing policy. The floor is still the recommended
-lever *here*, because it also shrinks the search 18x (16.3 s against the price
-arm's 83.7 s and the baseline's 68.9 s), which a price cannot do.
+§7.3 has run both experiments. **Experiment 0: the calibration branch fired** —
+a tree-only price of x1024 reaches 46.74 against the floor's 46.94, so the
+underlying defect is `kKeyTxLambdaFit`'s zero exponent, a flat 2.0 SSE/bit tree
+price at every qindex. **Experiment 1: the ladder rejects that fix** — the same
+price on the 240p chain costs +12.4 % bytes and 14.4x key distortion at the
+same QP, so a flat increase is ruled out and any recalibration must be
+rate-dependent. The floor is still the recommended lever *here*, because it
+also shrinks the search 18x (16.3 s against the price arm's 83.7 s and the
+baseline's 68.9 s), which no price can do.
 
-What remains open, cheapest first: (i) **sweep the price on the 240p ladder** —
-nobody ever has, and if it wants more than 2.0 the recalibration raises 88.2 as
-well; (ii) whether a fixed floor or a share-gated one is right at the ladder's
-rate; (iii) the ladder itself, with `tools/validate_avmdec.py` (pinned `dav2d`
-cannot drain a chained multi-GOP stream).
+What remains open, cheapest first: (i) **re-record the four `--nightly-b`
+pins** — `gate_video_joint_plan.sh` fails 4 of 11 checks (all chained-B size
+pins, every decode check passing), so no ladder K claim is valid yet;
+(ii) implement the share-gated D1, which is the only control right on both
+carriers without a qindex proxy; (iii) the ladder K with
+`tools/validate_avmdec.py` (pinned `dav2d` cannot drain a chained multi-GOP
+stream).
 
 The transferable result is the **measurement**, not the constant: at 0.21 bpp
 the key driver spends most of the stream on signalling the tree instead of the
