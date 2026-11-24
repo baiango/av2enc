@@ -122,7 +122,8 @@ bool write_y4m(const std::string& path, const TestFrame& f, int w, int h) {
   return static_cast<bool>(out);
 }
 
-void fill_test_frame(const Y4mFrame& src, TestFrame* f) {  f->mi_cols = src.width / 4;
+void fill_test_frame(const Y4mFrame& src, TestFrame* f) {
+  f->mi_cols = src.width / 4;
   f->mi_rows = src.height / 4;
   f->allocate();
   for (int p = 0; p < 3; ++p) {
@@ -138,7 +139,8 @@ void fill_test_frame(const Y4mFrame& src, TestFrame* f) {  f->mi_cols = src.widt
   }
 }
 
-double psnr_plane(const TestFrame& ref, const TestFrame& out, int p) {  double sse = 0;
+double psnr_plane(const TestFrame& ref, const TestFrame& out, int p) {
+  double sse = 0;
   for (int y = 0; y < ref.height[p]; ++y) {
     for (int x = 0; x < ref.width[p]; ++x) {
       const double d = static_cast<double>(ref.at(ref.curr[p], p, y, x)) -

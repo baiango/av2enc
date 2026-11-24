@@ -1449,7 +1449,8 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
         inter::mvprec::pb_mv_precision_ctx(neigh, frame_prec.frame_precision);
     if (!inter::mvprec::write_block_precision(
             enc_, cdfs_.mv_precision, most_probable_ctx, pb_ctx,
-            precision_plan, &precision_error)) {        error = "write_block_precision failed: " + precision_error;
+            precision_plan, &precision_error)) {
+      error = "write_block_precision failed: " + precision_error;
       return false;
     }
     inter::mvprec::MvdSignConfig sign_config;

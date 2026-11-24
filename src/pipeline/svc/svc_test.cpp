@@ -213,7 +213,8 @@ std::vector<std::uint8_t> sequence_payload_prefix(std::uint8_t lcr_id,
 }
 
 std::vector<std::uint8_t> single_layer_unit(
-    std::uint8_t marker, std::span<const std::uint8_t> sequence_payload) {  std::vector<std::uint8_t> out;
+    std::uint8_t marker, std::span<const std::uint8_t> sequence_payload) {
+  std::vector<std::uint8_t> out;
   std::string error;
   ObuHeader td;
   td.type = ObuType::kTemporalDelimiter;

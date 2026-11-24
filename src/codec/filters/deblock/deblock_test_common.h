@@ -495,7 +495,8 @@ inline bool first_mismatch(const TestFrame& a, const TestFrame& b, int* plane,
   return false;
 }
 
-inline int max_abs_delta(const TestFrame& a, const TestFrame& b) {  int worst = 0;
+inline int max_abs_delta(const TestFrame& a, const TestFrame& b) {
+  int worst = 0;
   for (int plane = 0; plane < 3; ++plane) {
     const int w = a.plane_width(plane);
     const int h = a.plane_height(plane);

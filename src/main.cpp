@@ -344,7 +344,8 @@ bool write_still_recon_y4m(const std::filesystem::path& path,
 bool write_video_recon_y4m(const std::filesystem::path& path,
                            const av2enc::Y4mHeader& header,
                            const std::vector<av2enc::video::VideoReconFrame>& recon,
-                           std::string& error) {  std::ofstream out(path, std::ios::binary);
+                           std::string& error) {
+  std::ofstream out(path, std::ios::binary);
   if (!out) {
     error = "cannot open --video-recon output '" + path.string() + "'";
     return false;

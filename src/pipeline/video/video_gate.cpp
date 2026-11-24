@@ -302,7 +302,8 @@ PsnrResult compute_psnr(const std::vector<OwnedFrame>& frames,
 
 bool write_ivf(const std::string& path,
                const av2enc::video::VideoSequenceResult& sequence,
-               std::uint32_t width, std::uint32_t height, std::string& error) {  av2enc::IvfWriter writer;
+               std::uint32_t width, std::uint32_t height, std::string& error) {
+  av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
   header.height = static_cast<std::uint16_t>(height);
