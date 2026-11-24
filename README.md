@@ -149,6 +149,12 @@ python3 tools/oracle.py --ref testdata/nasa_480x240_30fps_60f.y4m \
   (maximum speed), RTX 4070 Super (supported secondary `sm_86` target; the
   workload is compute-bound, so its smaller bus is not disqualifying). Linux +
   CUDA 12.8 for the GPU product; macOS arm64 for CPU.
+- **Metal (speculative, not committed):** no Metal backend exists today and
+  macOS is not an encoder build target. It may be picked up if the CUDA
+  structure turns out to port more easily than expected, or if it pays for
+  itself by speeding up development — fast local GPU iteration on the M4
+  rather than renting a CUDA host. Any such backend would still have to match
+  the CPU reference bit-for-bit.
 - VRAM arena: `min(total, free) − 512 MiB`, optionally `--vram-cap <MiB>`.
   No fixed preset.
 
