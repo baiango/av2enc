@@ -1,6 +1,14 @@
+# The tree is written to 80 columns.  Measured on the hand-written sources,
+# the over-80 count per file is 0-16 lines and essentially nothing passes 100,
+# so 80 is the real convention; the previous ColumnLimit of 100 made
+# `clang-format -i` rewrite wrapped lines back into 90-100 column ones that
+# matched no surrounding code.
+#
+# Generated tables (`*_tables.h`, `*_generated*`, `*goldens*`) are exempt and
+# keep their one-row-per-entry layout; do not run clang-format on them.
 BasedOnStyle: Google
 Standard: c++20
-ColumnLimit: 100
+ColumnLimit: 80
 IndentWidth: 2
 DerivePointerAlignment: false
 PointerAlignment: Left
