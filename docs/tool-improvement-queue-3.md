@@ -198,6 +198,20 @@ probe-visible 4.7% and a natural-content 0.4%.
 | 19 | allocation | chroma cost split (AVM mono vs 4:2:0) | AVM chroma 1,195 B (5.0%); ours ≈1,094 B | — | — | diagnostic: not the gap |
 | 20 | allocation | key RD curve vs AVM, 7 QPs + 5 AVM QPs | constant 1.6-1.9× rate at equal PSNR | — | — | diagnostic: the blocker |
 
+> **Cross-reference (2026-11-25):** rows 10-11 are **not** a measurement of
+> `AV2ENC_RD_DRIVER_MIN`. They drove `--video-max-depth`, which reaches the key
+> driver only as `max(max_partition_depth, seq_depth_for_target(prune_target()))`
+> — `seq_depth_for_target(4) == 8`, so with the default floor it is `max(D, 8)`
+> and **cannot lower the driver's expansion**. They also ran at ~1.1 bpp, where
+> `AV2ENC_SYMBOL_COST=1` reads **1.45 %** per-leaf syntax against 98.1 %
+> coefficients. `docs/rd-key-partition-floor.md` measures the opposite regime —
+> a 720p still at 0.216 bpp, **61.0 %** syntax — and finds
+> `AV2ENC_RD_DRIVER_MIN=16` worth **+15.10 K** (31.84 → 46.94) and 4.2x faster
+> there. Both results stand and do not conflict: the correct floor is
+> rate-dependent, which is the argument for a share-gated version rather than a
+> constant. What `--video-max-depth` changed on the `detail_edges` probe is an
+> open question, not settled by either measurement.
+
 Non-negotiables held: 4:2:0 only; gate off reproduces the 25,008 B /
 `0639b43630abb454f7be5ac494d2efb4` nightly QP106 pin; `tools/test.sh --build
 build-release` 10/10; warning-free `Release` build. No preset, CLI default,
